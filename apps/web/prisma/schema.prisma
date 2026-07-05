@@ -1,0 +1,285 @@
+// =============================================================================
+// Clinic Workforce MVP — Prisma Schema
+// =============================================================================
+// Phase 0: Data model definition
+// All business rules are externalized to configurable JSON — nothing hardcoded.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+/// User roles for RBAC
+enum UserRole {
+  OWNER
+  MANAGER
+  ACCOUNTANT
+  EMPLOYEE
+}
+
+/// User account status
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  RESIGNED
+}
+
+/// Employee employment status
+enum EmployeeStatus {
+  ACTIVE
+  ON_LEAVE
+  RESIGNED
+  TERMINATED
+}
+
+/// Pay calculation type
+enum PayType {
+  MONTHLY
+  DAILY
+  HOURLY
+  SPLIT
+}
+
+/// Shift status in scheduling workflow
+enum ShiftStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+  SWAPPED
+  COMPLETED
+}
+
+/// Punch record type
+enum PunchType {
+  CLOCK_IN
+  CLOCK_OUT
+}
+
+/// Punch record source
+enum PunchSource {
+  QR_DYNAMIC
+  QR_STATIC
+  CORRECTION
+  MANUAL
+}
+
+/// Audit log action type
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  CORRECT
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+}
+
+// =============================================================================
+// Core Models
+// =============================================================================
+
+/// Clinic entity — represents a clinic location
+model Clinic {
+  id          String         @id @default(uuid())
+  name        String
+  address     String?
+  phone       String?
+  timezone    String         @default("Asia/Hong_Kong")
+  currency    String         @default("HKD")
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  employees   EmployeeClinic[]
+  users       UserClinic[]
+  shifts      Shift[]
+  punches     PunchRecord[]
+
+  @@index([isActive])
+}
+
+/// User entity — system login account
+model User {
+  id        String       @id @default(uuid())
+  name      String
+  phone     String       @unique
+  email     String?      @unique
+  role      UserRole
+  status    UserStatus   @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // Relations
+  employee        Employee?
+  clinics         UserClinic[]
+  createdShifts   Shift[]         @relation("ShiftCreator")
+  auditLogs       AuditLog[]      @relation("Actor")
+  approvedPunches PunchRecord[]   @relation("Approver")
+
+  @@index([role])
+  @@index([status])
+  @@index([phone])
+}
+
+/// Employee entity — links User to employment data
+model Employee {
+  id        String           @id @default(uuid())
+  userId    String           @unique
+  user      User             @relation(fields: [userId], references: [id])
+  clinics   EmployeeClinic[]
+  payRules  PayRule[]
+  shifts    Shift[]
+  punches   PunchRecord[]
+  joinDate  DateTime
+  leaveDate DateTime?
+  status    EmployeeStatus   @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([status])
+  @@index([joinDate])
+  @@index([leaveDate])
+}
+
+/// Join table: User ↔ Clinic (access scope)
+model UserClinic {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinicId  String
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, clinicId])
+  @@index([userId])
+  @@index([clinicId])
+}
+
+/// Join table: Employee ↔ Clinic (work location)
+model EmployeeClinic {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  isPrimary  Boolean  @default(false)
+  position   String?  /// 職位標題（e.g. "值班醫生", "高級護士"）
+  createdAt  DateTime @default(now())
+
+  @@unique([employeeId, clinicId])
+  @@index([employeeId])
+  @@index([clinicId])
+}
+
+/// Pay rule — configurable salary calculation per employee
+model PayRule {
+  id            String     @id @default(uuid())
+  employeeId    String
+  employee      Employee   @relation(fields: [employeeId], references: [id])
+  payType       PayType
+  baseAmount    Float?
+  otMultiplier  Float?     /// 加班倍率 (e.g. 1.5, 2.0)
+  otThreshold   Float?     /// 加班門檻（時數）
+  splitRatio    Float?     /// 拆帳比例（醫生用）
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  configJson    Json?      /// 可擴展的參數（不寫死業務邏輯）
+  createdAt     DateTime   @default(now())
+
+  @@index([employeeId])
+  @@index([payType])
+  @@index([effectiveFrom, effectiveTo])
+}
+
+/// Shift — scheduled work slot
+model Shift {
+  id          String       @id @default(uuid())
+  employeeId  String
+  clinicId    String
+  date        DateTime
+  startTime   DateTime
+  endTime     DateTime
+  role        String       /// 當更角色（e.g. "值班醫生", "早更護士"）
+  status      ShiftStatus  @default(DRAFT)
+  createdBy   String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relations
+  employee    Employee     @relation(fields: [employeeId], references: [id])
+  clinic      Clinic       @relation(fields: [clinicId], references: [id])
+  creator     User         @relation("ShiftCreator", fields: [createdBy], references: [id])
+  punches     PunchRecord[]
+
+  @@index([employeeId])
+  @@index([clinicId])
+  @@index([date])
+  @@index([employeeId, date])
+  @@index([clinicId, date])
+  @@index([status])
+}
+
+/// Punch record — APPEND ONLY (never UPDATE/DELETE)
+model PunchRecord {
+  id          String       @id @default(uuid())
+  employeeId  String
+  shiftId     String?
+  clinicId    String
+  punchTime   DateTime
+  punchType   PunchType
+  source      PunchSource
+  tokenValid  Boolean?
+  approverId  String?      /// 審批人（修正打卡時）
+  note        String?      /// 備註
+  createdAt   DateTime     @default(now())
+
+  // Relations
+  employee    Employee     @relation(fields: [employeeId], references: [id])
+  clinic      Clinic       @relation(fields: [clinicId], references: [id])
+  shift       Shift?       @relation(fields: [shiftId], references: [id])
+  approver    User?        @relation("Approver", fields: [approverId], references: [id])
+
+  // APPEND ONLY — 原始考勤記錄一旦寫入即不可改
+  // 修正用疊加：新增 CORRECTION 類型的 PunchRecord + AuditLog 記錄
+
+  @@index([employeeId, punchTime])
+  @@index([clinicId, punchTime])
+  @@index([shiftId])
+  @@index([createdAt])
+}
+
+/// Audit log — APPEND ONLY (never UPDATE/DELETE)
+model AuditLog {
+  id         String       @id @default(uuid())
+  actorId    String
+  actor      User         @relation("Actor", fields: [actorId], references: [id])
+  action     AuditAction
+  entity     String       /// 實體名稱（e.g. "Shift", "PunchRecord"）
+  entityId   String       /// 被操作實體的 ID
+  clinicId   String?      /// 相關診所 ID（可選）
+  beforeJson Json?        /// 變更前的快照
+  afterJson  Json?        /// 變更後的快照
+  note       String?      /// 備註
+  ipAddress  String?      /// 操作者 IP（可選）
+  userAgent  String?      /// 操作者 User-Agent（可選）
+  createdAt  DateTime     @default(now())
+
+  // APPEND ONLY — 審計日誌永不刪除
+
+  @@index([actorId, createdAt])
+  @@index([entity, entityId])
+  @@index([clinicId, createdAt])
+  @@index([createdAt])
+}
