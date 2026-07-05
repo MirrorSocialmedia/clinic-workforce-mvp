@@ -1,0 +1,186 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+
+interface AuditLog {
+  id: string
+  actorId: string
+  action: string
+  entity: string
+  entityId: string
+  clinicId: string | null
+  beforeJson: string | null
+  afterJson: string | null
+  notes: string | null
+  ipAddress: string | null
+  userAgent: string | null
+  createdAt: string
+  actor: {
+    name: string
+    phone: string
+    role: string
+  }
+}
+
+export default function AuditLogsPage() {
+  const [logs, setLogs] = useState<AuditLog[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [filters, setFilters] = useState({
+    action: '',
+    entity: '',
+    fromDate: '',
+    toDate: '',
+  })
+
+  const fetchLogs = async () => {
+    setLoading(true)
+    const params = new URLSearchParams({ page: String(page), limit: '50' })
+    if (filters.action) params.set('action', filters.action)
+    if (filters.entity) params.set('entity', filters.entity)
+    if (filters.fromDate) params.set('fromDate', filters.fromDate)
+    if (filters.toDate) params.set('toDate', filters.toDate)
+
+    const res = await fetch(`/api/audit-logs?${params}`, { credentials: 'include' })
+    const data = await res.json()
+    setLogs(data.logs || [])
+    setTotal(data.total || 0)
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchLogs() }, [page, filters])
+
+  const totalPages = Math.ceil(total / 50)
+
+  return (
+    <div>
+      <h1 style={{ margin: '0 0 16px 0' }}>📝 審計日誌</h1>
+
+      {/* Filters */}
+      <div className="card mb-4">
+        <h2>篩選條件</h2>
+        <div className="grid-4">
+          <div className="form-group">
+            <label>操作類型</label>
+            <select
+              value={filters.action}
+              onChange={e => { setFilters({ ...filters, action: e.target.value }); setPage(1) }}
+            >
+              <option value="">全部</option>
+              <option value="CREATE">建立</option>
+              <option value="UPDATE">更新</option>
+              <option value="DELETE">刪除</option>
+              <option value="LOGIN">登入</option>
+              <option value="LOGOUT">登出</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>實體</label>
+            <input
+              value={filters.entity}
+              onChange={e => { setFilters({ ...filters, entity: e.target.value }); setPage(1) }}
+              placeholder="例如: Clinic"
+            />
+          </div>
+          <div className="form-group">
+            <label>從日期</label>
+            <input
+              type="date"
+              value={filters.fromDate}
+              onChange={e => { setFilters({ ...filters, fromDate: e.target.value }); setPage(1) }}
+            />
+          </div>
+          <div className="form-group">
+            <label>至日期</label>
+            <input
+              type="date"
+              value={filters.toDate}
+              onChange={e => { setFilters({ ...filters, toDate: e.target.value }); setPage(1) }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Results */}
+      <div className="card">
+        <div className="flex justify-between items-center mb-4">
+          <h2 style={{ margin: 0 }}>日誌記錄 (共 {total} 筆)</h2>
+          <span className="text-muted text-sm">
+            第 {page} / {totalPages || 1} 頁
+          </span>
+        </div>
+
+        {loading ? (
+          <div>載入中...</div>
+        ) : logs.length === 0 ? (
+          <div className="text-muted">暫無審計記錄</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>時間</th>
+                <th>操作者</th>
+                <th>操作</th>
+                <th>實體</th>
+                <th>備註</th>
+                <th>IP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map(log => (
+                <tr key={log.id}>
+                  <td className="text-sm">{new Date(log.createdAt).toLocaleString('zh-HK')}</td>
+                  <td>
+                    <div style={{ fontWeight: 500 }}>{log.actor.name}</div>
+                    <div className="text-muted text-sm">
+                      {log.actor.phone}
+                      <span className={`badge badge-${log.actor.role.toLowerCase()}`} style={{ marginLeft: 4 }}>
+                        {log.actor.role}
+                      </span>
+                    </div>
+                  </td>
+                  <td><code style={{ fontSize: 12, background: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>{log.action}</code></td>
+                  <td>{log.entity}<span className="text-muted text-sm"> #{log.entityId.slice(0, 8)}</span></td>
+                  <td className="text-muted text-sm">{log.notes || '—'}</td>
+                  <td className="text-sm">{log.ipAddress || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex justify-between items-center mt-4">
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={page <= 1}
+              onClick={() => setPage(p => p - 1)}
+            >
+              ← 上一頁
+            </button>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage(p => p + 1)}
+            >
+              下一頁 →
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="card mt-4" style={{ background: '#f0f9ff', border: '1px solid #bae6fd' }}>
+        <h2>⚠️ 防竄改保障</h2>
+        <ul style={{ fontSize: 14, color: '#0c4a6e', lineHeight: 1.8 }}>
+          <li>審計日誌為 <strong>Append-Only</strong> — 只可新增，不可修改或刪除</li>
+          <li>系統不提供任何 AuditLog 的 UPDATE/DELETE API</li>
+          <li>所有 Prisma 操作（CREATE/UPDATE/DELETE）自動記錄審計日誌</li>
+          <li>每筆記錄包含操作者、操作類型、實體、變更前後快照</li>
+        </ul>
+      </div>
+    </div>
+  )
+}

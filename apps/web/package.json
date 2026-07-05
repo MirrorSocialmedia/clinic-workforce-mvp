@@ -1,6 +1,6 @@
 {
   "name": "@clinic/web",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,21 +8,28 @@
     "start": "next start",
     "db:validate": "prisma validate",
     "db:migrate": "prisma migrate dev",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
-    "@prisma/client": "^6.5.0"
+    "@prisma/client": "^6.5.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.6"
   },
   "devDependencies": {
     "prisma": "^6.5.0",
     "typescript": "^5.7.0",
     "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0"
+    "@types/react-dom": "^18.3.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
   },
   "prisma": {
-    "schema": "prisma/schema.prisma"
+    "seed": "tsx prisma/seed.ts"
   }
 }
