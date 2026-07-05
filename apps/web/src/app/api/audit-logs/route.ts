@@ -1,21 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { CONFIG } from '@/lib/config'
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET /api/audit-logs — list audit logs (OWNER/MANAGER/ACCOUNTANT only)
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Only OWNER, MANAGER, ACCOUNTANT can view audit logs
-  if (!['OWNER', 'MANAGER', 'ACCOUNTANT'].includes(session.role)) {
-    return NextResponse.json({ error: 'Forbidden: OWNER/MANAGER/ACCOUNTANT only' }, { status: 403 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const { searchParams } = new URL(req.url)
   const actorId = searchParams.get('actorId')
@@ -35,7 +26,7 @@ export async function GET(req: NextRequest) {
   if (clinicId) where.clinicId = clinicId
 
   // MANAGER only sees their clinic's audit logs
-  if (session.role === 'MANAGER' && session.clinics.length > 0) {
+  if (scope === 'my-clinics' && session.clinics.length > 0) {
     where.clinicId = { in: session.clinics }
   }
 

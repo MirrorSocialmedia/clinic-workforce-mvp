@@ -1,35 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/shifts/my-schedule — get current employee's schedule
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   try {
     const { searchParams } = new URL(req.url)
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
-
-    // For employees, get their own schedule
-    // For managers/owners, they can optionally specify employeeId
     const employeeId = searchParams.get('employeeId') || null
 
     let targetEmployeeId: string | null = null
 
-    if (employeeId) {
-      // Manager/owner viewing specific employee
+    if (employeeId && scope !== 'self') {
       targetEmployeeId = employeeId
     } else {
-      // Get current user's employee record
       const emp = await prisma.employee.findUnique({
         where: { userId: session.userId },
       })
@@ -39,10 +31,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (!targetEmployeeId) {
-      return NextResponse.json(
-        { error: 'No employee record found' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'No employee record found' }, { status: 404 })
     }
 
     const where: any = {
@@ -65,7 +54,6 @@ export async function GET(req: NextRequest) {
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     })
 
-    // Get pending change requests
     const pendingRequests = await prisma.shiftChangeRequest.findMany({
       where: {
         OR: [
@@ -75,17 +63,9 @@ export async function GET(req: NextRequest) {
         status: 'PENDING',
       },
       include: {
-        shift: {
-          include: {
-            clinic: { select: { id: true, name: true } },
-          },
-        },
-        fromEmployee: {
-          include: { user: { select: { id: true, name: true } } },
-        },
-        toEmployee: {
-          include: { user: { select: { id: true, name: true } } },
-        },
+        shift: { include: { clinic: { select: { id: true, name: true } } } },
+        fromEmployee: { include: { user: { select: { id: true, name: true } } } },
+        toEmployee: { include: { user: { select: { id: true, name: true } } } },
       },
     })
 

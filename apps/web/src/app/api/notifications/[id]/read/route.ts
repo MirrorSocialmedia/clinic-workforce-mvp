@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // PUT /api/notifications/[id]/read — Mark notification as read
@@ -10,10 +10,9 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = requireAuth(req, 'PUT', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
   const employee = await prisma.employee.findUnique({
     where: { userId: session.userId },
@@ -27,7 +26,6 @@ export async function PUT(
 
   if (!notification) return NextResponse.json({ error: 'Notification not found' }, { status: 404 })
 
-  // Only the owner can read
   if (notification.employeeId !== employee.id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }

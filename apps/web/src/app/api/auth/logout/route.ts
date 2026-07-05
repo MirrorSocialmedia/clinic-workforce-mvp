@@ -1,21 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { prisma, createAuditLog } from '@/lib/prisma'
-import { setAuditContext } from '@/lib/audit-context'
+import { prisma } from '@/lib/prisma'
+import { runWithAudit } from '@/lib/audit-context'
 
 export async function POST(req: NextRequest) {
   const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  // For logout, accept any valid token but don't require RBAC
+  if (!token) {
+    const response = NextResponse.json({ error: 'No session' }, { status: 401 })
+    response.cookies.set('session', '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 0, path: '/' })
+    return response
+  }
+
+  // Use verifyToken directly for logout (no RBAC needed)
+  const { verifyToken } = await import('@/lib/auth')
+  const session = verifyToken(token)
 
   if (session?.userId) {
-    setAuditContext(session.userId, req.headers.get('x-forwarded-for') || '', req.headers.get('user-agent') || '')
+    const auditCtx = {
+      actorId: session.userId,
+      ip: req.headers.get('x-forwarded-for') || undefined,
+      ua: req.headers.get('user-agent') || undefined,
+    }
 
-    // Write audit log for logout
-    await createAuditLog({
-      action: 'LOGOUT',
-      entity: 'Session',
-      entityId: session.userId,
-      notes: `Logout from ${req.headers.get('x-forwarded-for') || 'unknown'}`,
+    await runWithAudit(auditCtx, async () => {
+      await prisma.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'LOGOUT',
+          entity: 'Session',
+          entityId: session.userId,
+          notes: `Logout from ${req.headers.get('x-forwarded-for') || 'unknown'}`,
+          ipAddress: auditCtx.ip || null,
+          userAgent: auditCtx.ua || null,
+        },
+      })
     })
   }
 

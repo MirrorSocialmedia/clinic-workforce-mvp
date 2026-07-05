@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
-// ============================================================
 // GET /api/payroll-runs/_exceptions — Attendance exceptions report
-// Roles: OWNER, MANAGER, ACCOUNTANT
-// ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const { searchParams } = new URL(req.url)
   const clinicId = searchParams.get('clinicId')
@@ -27,10 +21,7 @@ export async function GET(req: NextRequest) {
   const monthStart = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
   const monthEnd = new Date(parseInt(yearStr), parseInt(monthStr), 0, 23, 59, 59)
 
-  // Get all punch records in the period
-  const punchWhere: any = {
-    punchTime: { gte: monthStart, lte: monthEnd },
-  }
+  const punchWhere: any = { punchTime: { gte: monthStart, lte: monthEnd } }
   if (clinicId) punchWhere.clinicId = clinicId
   if (employeeId) punchWhere.employeeId = employeeId
 
@@ -40,19 +31,13 @@ export async function GET(req: NextRequest) {
       employee: {
         include: {
           user: { select: { name: true } },
-          clinics: {
-            select: {
-              clinicId: true,
-              clinic: { select: { name: true } },
-            },
-          },
+          clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
         },
       },
     },
     orderBy: { punchTime: 'asc' },
   })
 
-  // Get all corrections in the period
   const correctionWhere: any = {
     status: 'APPROVED',
     correctedTime: { gte: monthStart, lte: monthEnd },
@@ -66,18 +51,12 @@ export async function GET(req: NextRequest) {
       employee: {
         include: {
           user: { select: { name: true } },
-          clinics: {
-            select: {
-              clinicId: true,
-              clinic: { select: { name: true } },
-            },
-          },
+          clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
         },
       },
     },
   })
 
-  // Get shifts (scheduled) for the period
   const shiftWhere: any = {
     date: { gte: monthStart, lte: monthEnd },
     status: 'CONFIRMED',
@@ -91,12 +70,7 @@ export async function GET(req: NextRequest) {
       employee: {
         include: {
           user: { select: { name: true } },
-          clinics: {
-            select: {
-              clinicId: true,
-              clinic: { select: { name: true } },
-            },
-          },
+          clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
         },
       },
       clinic: { select: { id: true, name: true } },
@@ -104,29 +78,20 @@ export async function GET(req: NextRequest) {
   })
 
   const exceptions: Array<{
-    employeeId: string
-    employeeName: string
-    clinicName: string
-    date: string
-    type: 'LATE' | 'ABSENT' | 'CORRECTION'
-    detail: string
-    punchTime?: string
-    correctionTime?: string
+    employeeId: string; employeeName: string; clinicName: string;
+    date: string; type: 'LATE' | 'ABSENT' | 'CORRECTION';
+    detail: string; punchTime?: string; correctionTime?: string
   }> = []
 
-  // 1. Detect LATE punches (clock-in after 9:30 AM on weekdays)
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
   for (const p of clockIns) {
     const hour = p.punchTime.getHours()
     const minute = p.punchTime.getMinutes()
     const dow = p.punchTime.getDay()
-
-    // Weekdays only (Mon=1 to Fri=5)
     if (dow >= 1 && dow <= 5 && (hour > 9 || (hour === 9 && minute > 30))) {
       const clinic = p.employee.clinics.find(c => c.clinicId === p.clinicId)?.clinic
       exceptions.push({
-        employeeId: p.employeeId,
-        employeeName: p.employee.user.name,
+        employeeId: p.employeeId, employeeName: p.employee.user.name,
         clinicName: clinic?.name || p.clinicId,
         date: p.punchTime.toISOString().split('T')[0],
         type: 'LATE',
@@ -136,45 +101,33 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 2. Detect ABSENT: scheduled shifts without any punch records
   for (const shift of shifts) {
-    const shiftDate = new Date(shift.date)
-    const shiftDayStr = shiftDate.toISOString().split('T')[0]
-
-    // Check if there's any punch for this employee on this day at this clinic
+    const shiftDayStr = new Date(shift.date).toISOString().split('T')[0]
     const hasPunch = punches.some(p =>
       p.employeeId === shift.employeeId &&
       p.punchTime.toISOString().split('T')[0] === shiftDayStr &&
       p.clinicId === shift.clinicId
     )
-
     if (!hasPunch) {
       exceptions.push({
-        employeeId: shift.employeeId,
-        employeeName: shift.employee.user.name,
-        clinicName: shift.clinic.name,
-        date: shiftDayStr,
-        type: 'ABSENT',
+        employeeId: shift.employeeId, employeeName: shift.employee.user.name,
+        clinicName: shift.clinic.name, date: shiftDayStr, type: 'ABSENT',
         detail: `排班但無打卡記錄 (${shift.startTime.toISOString().split('T')[0]})`,
       })
     }
   }
 
-  // 3. Record corrections
   for (const c of corrections) {
     const clinic = c.employee.clinics.find(cl => cl.clinicId === c.clinicId)?.clinic
     exceptions.push({
-      employeeId: c.employeeId,
-      employeeName: c.employee.user.name,
+      employeeId: c.employeeId, employeeName: c.employee.user.name,
       clinicName: clinic?.name || c.clinicId,
-      date: c.correctedTime.toISOString().split('T')[0],
-      type: 'CORRECTION',
+      date: c.correctedTime.toISOString().split('T')[0], type: 'CORRECTION',
       detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上班' : '下班'} 至 ${c.correctedTime.toLocaleTimeString('zh-HK')}${c.reason ? ` (${c.reason})` : ''}`,
       correctionTime: c.correctedTime.toISOString(),
     })
   }
 
-  // Sort by date descending
   exceptions.sort((a, b) => b.date.localeCompare(a.date))
 
   return NextResponse.json({

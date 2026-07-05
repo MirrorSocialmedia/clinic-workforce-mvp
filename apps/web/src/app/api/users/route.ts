@@ -1,22 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import { verifyToken } from '@/lib/auth'
-import { CONFIG } from '@/lib/config'
-import { prisma, withAudit } from '@/lib/prisma'
-import { setAuditContext } from '@/lib/audit-context'
+import { prisma } from '@/lib/prisma'
+import { runWithAudit } from '@/lib/audit-context'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET /api/users — list users (OWNER only)
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  if (session.role !== CONFIG.ROLES.OWNER) {
-    return NextResponse.json({ error: 'Forbidden: OWNER only' }, { status: 403 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
 
   const { searchParams } = new URL(req.url)
   const role = searchParams.get('role')
@@ -28,81 +19,63 @@ export async function GET(req: NextRequest) {
 
   const users = await prisma.user.findMany({
     where,
-    include: {
-      clinics: { include: { clinic: true } },
-      employee: true,
-    },
+    include: { clinics: { include: { clinic: true } }, employee: true },
     orderBy: { createdAt: 'asc' },
   })
 
-  // Exclude password from response
   const safeUsers = users.map(({ password, ...user }) => user)
-
   return NextResponse.json({ users: safeUsers, total: safeUsers.length })
 }
 
 // POST /api/users — create user (OWNER only)
 export async function POST(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'POST', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  if (session.role !== CONFIG.ROLES.OWNER) {
-    return NextResponse.json({ error: 'Forbidden: OWNER only' }, { status: 403 })
-  }
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const { name, phone, email, password, role, clinicIds, assignEmployee = false } = await req.json()
 
-  setAuditContext(session.userId, req.headers.get('x-forwarded-for') || '', req.headers.get('user-agent') || '')
+      if (!name || !phone || !password || !role) {
+        return NextResponse.json({ error: 'Name, phone, password, and role are required' }, { status: 400 })
+      }
 
-  const { name, phone, email, password, role, clinicIds, assignEmployee = false } = await req.json()
+      const existing = await prisma.user.findUnique({ where: { phone } })
+      if (existing) {
+        return NextResponse.json({ error: 'Phone already registered' }, { status: 409 })
+      }
 
-  if (!name || !phone || !password || !role) {
-    return NextResponse.json({ error: 'Name, phone, password, and role are required' }, { status: 400 })
-  }
+      const hashedPassword = await bcrypt.hash(password, 12)
 
-  // Check phone uniqueness
-  const existing = await prisma.user.findUnique({ where: { phone } })
-  if (existing) {
-    return NextResponse.json({ error: 'Phone already registered' }, { status: 409 })
-  }
+      const clinicData = clinicIds && clinicIds.length > 0
+        ? { create: clinicIds.map((cid: string, idx: number) => ({ clinic: { connect: { id: cid } }, isPrimary: idx === 0 })) }
+        : undefined
 
-  const hashedPassword = await bcrypt.hash(password, 12)
-
-  const clinicData = clinicIds && clinicIds.length > 0
-    ? { create: clinicIds.map((cid: string, idx: number) => ({ clinic: { connect: { id: cid } }, isPrimary: idx === 0 })) }
-    : undefined
-
-  const user = await withAudit(
-    prisma.user.create({
-      data: {
-        name,
-        phone,
-        email: email || null,
-        password: hashedPassword,
-        role,
-        clinics: clinicData,
-      },
-      include: { clinics: { include: { clinic: true } } },
-    }),
-    'User'
-  )
-
-  // Optionally create Employee record
-  if (assignEmployee) {
-    await withAudit(
-      prisma.employee.create({
+      const user = await prisma.user.create({
         data: {
-          userId: user.id,
-          joinDate: new Date(),
-          status: 'ACTIVE',
+          name, phone, email: email || null, password: hashedPassword, role, clinics: clinicData,
         },
-      }),
-      'Employee'
-    )
-  }
+        include: { clinics: { include: { clinic: true } } },
+      })
 
-  const { password: _pwd, ...safeUser } = user
-  return NextResponse.json({ success: true, user: safeUser }, { status: 201 })
+      if (assignEmployee) {
+        await prisma.employee.create({
+          data: { userId: user.id, joinDate: new Date(), status: 'ACTIVE' },
+        })
+      }
+
+      const { password: _pwd, ...safeUser } = user
+      return NextResponse.json({ success: true, user: safeUser }, { status: 201 })
+    } catch (error) {
+      console.error('Create user error:', error)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    }
+  })
 }

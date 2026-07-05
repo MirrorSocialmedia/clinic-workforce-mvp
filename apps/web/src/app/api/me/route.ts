@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET /api/me — get current user info
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
   const user = await prisma.user.findUnique({
     where: { id: session.userId },

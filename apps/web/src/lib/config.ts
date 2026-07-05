@@ -5,7 +5,16 @@ export const CONFIG = {
 
   // Session
   SESSION_MAX_AGE_DAYS: 30,
-  JWT_SECRET: process.env.JWT_SECRET || 'clinic-mvp-dev-secret',
+  JWT_SECRET: (() => {
+    const s = process.env.JWT_SECRET
+    if (!s || s.length < 32) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_SECRET must be set (>=32 chars) in production')
+      }
+      return 'dev-only-secret-do-not-use-in-prod-2024'
+    }
+    return s
+  })(),
 
   // Roles
   ROLES: {
@@ -62,6 +71,7 @@ export const CONFIG = {
     // Shift change request routes
     'POST /api/shift-changes': ['OWNER', 'MANAGER', 'EMPLOYEE'],
     'PUT /api/shift-changes/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/shift-changes/:id': ['OWNER', 'MANAGER', 'EMPLOYEE'],
 
     // Punch / attendance routes
     'POST /api/punch': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
@@ -117,6 +127,10 @@ export const CONFIG = {
     'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/:id/employee/:empId': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/_exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
+    // Consultation revenue routes
+    'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/consultation-revenue': ['OWNER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)

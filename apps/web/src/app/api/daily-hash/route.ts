@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { setAuditContext } from '@/lib/audit-context'
+import { runWithAudit } from '@/lib/audit-context'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { generateDailyHash, listDailyHashes, verifyDailyHash } from '@/lib/daily-hash'
 
 // ============================================================
@@ -9,57 +9,54 @@ import { generateDailyHash, listDailyHashes, verifyDailyHash } from '@/lib/daily
 // Roles: OWNER, MANAGER
 // ============================================================
 export async function POST(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'POST', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  if (!['OWNER', 'MANAGER'].includes(session.role)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const body = await req.json()
+      const { clinicId, date } = body
 
-  setAuditContext(
-    session.userId,
-    req.headers.get('x-forwarded-for') || '',
-    req.headers.get('user-agent') || ''
-  )
+      if (!clinicId || !date) {
+        return NextResponse.json({ error: 'clinicId and date are required' }, { status: 400 })
+      }
 
-  try {
-    const body = await req.json()
-    const { clinicId, date } = body
+      // Clinic access check
+      if (scope !== 'all' && !session.clinics.includes(clinicId)) {
+        return NextResponse.json({ error: 'No access to this clinic' }, { status: 403 })
+      }
 
-    if (!clinicId || !date) {
-      return NextResponse.json(
-        { error: 'clinicId and date are required' },
-        { status: 400 }
-      )
+      const targetDate = new Date(date)
+      targetDate.setHours(0, 0, 0, 0)
+
+      const result = await generateDailyHash(clinicId, targetDate)
+
+      if (!result) {
+        return NextResponse.json(
+          { error: 'No punch records found for this date' },
+          { status: 404 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        clinicId,
+        date: targetDate.toISOString(),
+        hash: result.hash,
+        recordCount: result.recordCount,
+      })
+    } catch (error) {
+      console.error('Daily hash error:', error)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
-
-    const targetDate = new Date(date)
-    targetDate.setHours(0, 0, 0, 0)
-
-    const result = await generateDailyHash(clinicId, targetDate)
-
-    if (!result) {
-      return NextResponse.json(
-        { error: 'No punch records found for this date' },
-        { status: 404 }
-      )
-    }
-
-    return NextResponse.json({
-      success: true,
-      clinicId,
-      date: targetDate.toISOString(),
-      hash: result.hash,
-      recordCount: result.recordCount,
-    })
-  } catch (error) {
-    console.error('Daily hash error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+  })
 }
 
 // ============================================================
@@ -67,12 +64,9 @@ export async function POST(req: NextRequest) {
 // Roles: OWNER, MANAGER, ACCOUNTANT
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const { searchParams } = new URL(req.url)
   const clinicId = searchParams.get('clinicId')
@@ -81,48 +75,33 @@ export async function GET(req: NextRequest) {
   const endDate = searchParams.get('endDate')
   const verify = searchParams.get('verify')
 
-  // Single date lookup
   if (clinicId && date) {
     const targetDate = new Date(date)
     targetDate.setHours(0, 0, 0, 0)
 
     if (verify === 'true') {
       const result = await verifyDailyHash(clinicId, targetDate)
-      return NextResponse.json({
-        clinicId,
-        date: targetDate.toISOString(),
-        ...result,
-      })
+      return NextResponse.json({ clinicId, date: targetDate.toISOString(), ...result })
     }
 
-    // Just get the hash
     const hash = await prisma.dailyHash.findUnique({
-      where: {
-        clinicId_date: { clinicId, date: targetDate },
-      },
-      include: {
-        clinic: { select: { id: true, name: true } },
-      },
+      where: { clinicId_date: { clinicId, date: targetDate } },
+      include: { clinic: { select: { id: true, name: true } } },
     })
 
     return NextResponse.json({ hash })
   }
 
-  // List hashes
   let effectiveClinicId = clinicId
 
   if (!effectiveClinicId) {
-    // Default to first clinic user has access to
-    if (session.role === 'MANAGER' && session.clinics.length > 0) {
+    if (scope === 'my-clinics' && session.clinics.length > 0) {
       effectiveClinicId = session.clinics[0]
     }
   }
 
   if (!effectiveClinicId) {
-    return NextResponse.json(
-      { error: 'clinicId is required' },
-      { status: 400 }
-    )
+    return NextResponse.json({ error: 'clinicId is required' }, { status: 400 })
   }
 
   const hashes = await listDailyHashes(

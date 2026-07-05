@@ -35,8 +35,65 @@ export async function generateQRToken(clinicId: string): Promise<{
 }
 
 /**
- * Validate a QR token. Returns the token record if valid, null otherwise.
- * Checks: token exists, not used, not expired, clinic matches.
+ * Validate + mark used in a single atomic operation.
+ * Prevents TOCTOU race: two concurrent punches with the same token
+ * cannot both succeed because updateMany checks used:false + expiresAt
+ * and sets used:true atomically.
+ */
+export async function validateAndMarkTokenUsed(
+  token: string,
+  employeeId: string
+): Promise<{
+  valid: boolean
+  reason?: string
+  clinicId?: string
+  source?: string
+} | null> {
+  // First check: does the token exist and is it valid?
+  const record = await prisma.qRToken.findUnique({
+    where: { token },
+  })
+
+  if (!record) {
+    return { valid: false, reason: 'Token not found' }
+  }
+
+  if (record.used) {
+    return { valid: false, reason: 'Token already used' }
+  }
+
+  if (new Date() > record.expiresAt) {
+    return { valid: false, reason: 'Token expired' }
+  }
+
+  // Atomic: mark as used — only if still unused and not expired
+  const updated = await prisma.qRToken.updateMany({
+    where: {
+      token,
+      used: false,
+      expiresAt: { gte: new Date() },
+    },
+    data: {
+      used: true,
+      usedBy: employeeId,
+      usedAt: new Date(),
+    },
+  })
+
+  if (updated.count !== 1) {
+    return { valid: false, reason: 'Token invalid or already used (race)' }
+  }
+
+  return {
+    valid: true,
+    clinicId: record.clinicId,
+    source: 'QR_DYNAMIC',
+  }
+}
+
+/**
+ * Validate a QR token without marking as used.
+ * Used for preview / check purposes only.
  */
 export async function validateQRToken(
   token: string,
@@ -70,7 +127,7 @@ export async function validateQRToken(
 }
 
 /**
- * Mark a token as used.
+ * Mark a token as used. (Legacy — prefer validateAndMarkTokenUsed)
  */
 export async function markTokenUsed(token: string, employeeId: string): Promise<void> {
   await prisma.qRToken.updateMany({

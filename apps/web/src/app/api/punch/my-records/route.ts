@@ -1,33 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/punch/my-records — Current employee's punch records
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // For employees, get their employeeId
-  let employeeId: string | undefined
-
-  if (session.role === 'EMPLOYEE') {
-    const emp = await prisma.employee.findUnique({
-      where: { userId: session.userId },
-    })
-    if (!emp) {
-      return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
-    }
-    employeeId = emp.id
-  } else if (session.role !== 'OWNER') {
-    // For MANAGER/ACCOUNTANT, optionally filter by own records or show all
-    employeeId = undefined
+  // Get employeeId for the current user
+  const emp = await prisma.employee.findUnique({
+    where: { userId: session.userId },
+  })
+  if (!emp) {
+    return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
   }
 
   const { searchParams } = new URL(req.url)
@@ -35,9 +24,8 @@ export async function GET(req: NextRequest) {
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
 
-  const where: any = {}
+  const where: any = { employeeId: emp.id } // Always filter by own employee
 
-  if (employeeId) where.employeeId = employeeId
   if (clinicId) where.clinicId = clinicId
 
   if (startDate || endDate) {

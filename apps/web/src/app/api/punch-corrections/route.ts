@@ -1,120 +1,128 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { prisma, createAuditLog } from '@/lib/prisma'
-import { setAuditContext } from '@/lib/audit-context'
+import { prisma } from '@/lib/prisma'
+import { runWithAudit } from '@/lib/audit-context'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // POST /api/punch-corrections — Create a punch correction request
 // Roles: OWNER, MANAGER, EMPLOYEE
 // ============================================================
 export async function POST(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'POST', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  setAuditContext(
-    session.userId,
-    req.headers.get('x-forwarded-for') || '',
-    req.headers.get('user-agent') || ''
-  )
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const body = await req.json()
+      const { date, punchType, reason, clinicId } = body
 
-  try {
-    const body = await req.json()
-    const { date, punchType, reason, clinicId } = body
+      // Validate
+      if (!date || !punchType || !clinicId) {
+        return NextResponse.json(
+          { error: 'date, punchType, and clinicId are required' },
+          { status: 400 }
+        )
+      }
 
-    // Validate
-    if (!date || !punchType || !clinicId) {
+      if (!['CLOCK_IN', 'CLOCK_OUT'].includes(punchType)) {
+        return NextResponse.json(
+          { error: 'punchType must be CLOCK_IN or CLOCK_OUT' },
+          { status: 400 }
+        )
+      }
+
+      // Get employee
+      const employee = await prisma.employee.findUnique({
+        where: { userId: session.userId },
+        include: {
+          clinics: { select: { clinicId: true } },
+        },
+      })
+
+      if (!employee) {
+        return NextResponse.json(
+          { error: 'Employee profile not found' },
+          { status: 400 }
+        )
+      }
+
+      // Verify employee belongs to clinic
+      const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
+      if (!empClinicIds.includes(clinicId)) {
+        return NextResponse.json(
+          { error: 'You are not assigned to this clinic' },
+          { status: 403 }
+        )
+      }
+
+      // Check if there's already an existing punch record for this date+type at this clinic
+      const correctedDate = new Date(date)
+      correctedDate.setHours(0, 0, 0, 0)
+      const endOfDay = new Date(date)
+      endOfDay.setHours(23, 59, 59, 999)
+
+      let punchRecordId: string | null = null
+      const existing = await prisma.punchRecord.findFirst({
+        where: {
+          employeeId: employee.id,
+          clinicId,
+          punchType: punchType as any,
+          punchTime: { gte: correctedDate, lte: endOfDay },
+        },
+      })
+
+      if (existing) {
+        punchRecordId = existing.id
+      }
+
+      // Transaction: create correction + audit log atomically
+      const correction = await prisma.$transaction(async (tx) => {
+        const c = await tx.punchCorrection.create({
+          data: {
+            punchRecordId,
+            employeeId: employee.id,
+            clinicId,
+            correctedTime: new Date(date),
+            punchType: punchType as any,
+            reason: reason || null,
+            requestedBy: session.userId,
+            status: session.role === 'OWNER' || session.role === 'MANAGER' ? 'APPROVED' : 'PENDING',
+            approvedBy: session.role === 'OWNER' || session.role === 'MANAGER' ? session.userId : null,
+          },
+        })
+
+        // Audit log in same transaction
+        await tx.auditLog.create({
+          data: {
+            actorId: session.userId,
+            action: c.status === 'APPROVED' ? 'APPROVE' : 'REQUEST',
+            entity: 'PunchCorrection',
+            entityId: c.id,
+            notes: `Punch correction ${c.status} for ${punchType} on ${date}`,
+            ipAddress: auditCtx.ip || null,
+            userAgent: auditCtx.ua || null,
+          },
+        })
+
+        return c
+      })
+
       return NextResponse.json(
-        { error: 'date, punchType, and clinicId are required' },
-        { status: 400 }
+        { success: true, correction },
+        { status: 201 }
       )
+    } catch (error) {
+      console.error('Punch correction error:', error)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
-
-    if (!['CLOCK_IN', 'CLOCK_OUT'].includes(punchType)) {
-      return NextResponse.json(
-        { error: 'punchType must be CLOCK_IN or CLOCK_OUT' },
-        { status: 400 }
-      )
-    }
-
-    // Get employee
-    const employee = await prisma.employee.findUnique({
-      where: { userId: session.userId },
-      include: {
-        clinics: { select: { clinicId: true } },
-      },
-    })
-
-    if (!employee) {
-      return NextResponse.json(
-        { error: 'Employee profile not found' },
-        { status: 400 }
-      )
-    }
-
-    // Verify employee belongs to clinic
-    const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
-    if (!empClinicIds.includes(clinicId)) {
-      return NextResponse.json(
-        { error: 'You are not assigned to this clinic' },
-        { status: 403 }
-      )
-    }
-
-    // Check if there's already an existing punch record for this date+type
-    const correctedDate = new Date(date)
-    correctedDate.setHours(0, 0, 0, 0)
-    const endOfDay = new Date(date)
-    endOfDay.setHours(23, 59, 59, 999)
-
-    let punchRecordId: string | null = null
-    const existing = await prisma.punchRecord.findFirst({
-      where: {
-        employeeId: employee.id,
-        clinicId,
-        punchType: punchType as any,
-        punchTime: { gte: correctedDate, lte: endOfDay },
-      },
-    })
-
-    if (existing) {
-      punchRecordId = existing.id
-    }
-
-    // Create correction request
-    const correction = await prisma.punchCorrection.create({
-      data: {
-        punchRecordId,
-        employeeId: employee.id,
-        clinicId,
-        correctedTime: new Date(date),
-        punchType: punchType as any,
-        reason: reason || null,
-        requestedBy: session.userId,
-        status: session.role === 'OWNER' || session.role === 'MANAGER' ? 'APPROVED' : 'PENDING',
-        approvedBy: session.role === 'OWNER' || session.role === 'MANAGER' ? session.userId : null,
-      },
-    })
-
-    // Audit log
-    await createAuditLog({
-      action: correction.status === 'APPROVED' ? 'APPROVE' : 'REQUEST',
-      entity: 'PunchCorrection',
-      entityId: correction.id,
-      notes: `Punch correction ${correction.status} for ${punchType} on ${date}`,
-    })
-
-    return NextResponse.json(
-      { success: true, correction },
-      { status: 201 }
-    )
-  } catch (error) {
-    console.error('Punch correction error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+  })
 }
 
 // ============================================================
@@ -122,12 +130,9 @@ export async function POST(req: NextRequest) {
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const { searchParams } = new URL(req.url)
   const clinicId = searchParams.get('clinicId')
@@ -136,8 +141,8 @@ export async function GET(req: NextRequest) {
 
   const where: any = {}
 
-  // Employees only see their own corrections
-  if (session.role === 'EMPLOYEE') {
+  // EMPLOYEE only sees their own corrections
+  if (scope === 'self') {
     const emp = await prisma.employee.findUnique({
       where: { userId: session.userId },
     })
@@ -147,11 +152,11 @@ export async function GET(req: NextRequest) {
   }
 
   if (clinicId) where.clinicId = clinicId
-  if (employeeId && session.role !== 'EMPLOYEE') where.employeeId = employeeId
+  if (employeeId && scope !== 'self') where.employeeId = employeeId
   if (status) where.status = status
 
   // MANAGER only sees their clinics
-  if (session.role === 'MANAGER' && session.clinics.length > 0) {
+  if (scope === 'my-clinics' && session.clinics.length > 0) {
     where.clinicId = { in: session.clinics }
   }
 

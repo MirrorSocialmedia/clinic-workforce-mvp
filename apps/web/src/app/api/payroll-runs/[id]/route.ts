@@ -1,21 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { prisma, createAuditLog } from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { runWithAudit } from '@/lib/audit-context'
 
-// ============================================================
 // GET /api/payroll-runs/[id] — Payroll run detail with items
-// Roles: OWNER, MANAGER, ACCOUNTANT
-// ============================================================
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
 
   const run = await prisma.payrollRun.findUnique({
     where: { id: params.id },
@@ -26,16 +20,8 @@ export async function GET(
           employee: {
             include: {
               user: { select: { id: true, name: true, phone: true } },
-              clinics: {
-                select: {
-                  clinicId: true,
-                  clinic: { select: { name: true } },
-                },
-              },
-              payRules: {
-                where: { isActive: true },
-                take: 1,
-              },
+              clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
+              payRules: { where: { isActive: true }, take: 1 },
             },
           },
         },
@@ -44,11 +30,8 @@ export async function GET(
     },
   })
 
-  if (!run) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
+  if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Calculate summary
   const summary = {
     totalEmployees: run.items.length,
     totalBasePay: run.items.reduce((s, i) => s + i.basePay, 0),
@@ -65,112 +48,97 @@ export async function GET(
   return NextResponse.json({ run, summary })
 }
 
-// ============================================================
 // PUT /api/payroll-runs/[id] — Update payroll run status/notes
-// Roles: OWNER
-// ============================================================
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'PUT', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  if (session.role !== 'OWNER') {
-    return NextResponse.json({ error: 'Forbidden: OWNER only' }, { status: 403 })
-  }
+  return runWithAudit(auditCtx, async () => {
+    const run = await prisma.payrollRun.findUnique({ where: { id: params.id } })
+    if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const run = await prisma.payrollRun.findUnique({
-    where: { id: params.id },
-  })
+    const body = await req.json()
+    const { status, notes } = body
 
-  if (!run) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
-
-  const body = await req.json()
-  const { status, notes } = body
-
-  // Validate transitions
-  if (status) {
-    const validStatuses = ['DRAFT', 'FINALIZED', 'EXPORTED'] as const
-    if (!validStatuses.includes(status as any)) {
-      return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 })
+    if (status) {
+      const validStatuses = ['DRAFT', 'FINALIZED', 'EXPORTED'] as const
+      if (!validStatuses.includes(status as any)) {
+        return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 })
+      }
+      const order: Record<string, number> = { DRAFT: 0, FINALIZED: 1, EXPORTED: 2 }
+      if (order[status] < order[run.status]) {
+        return NextResponse.json({ error: `Cannot downgrade status from ${run.status} to ${status}` }, { status: 400 })
+      }
     }
-    // Can only go forward: DRAFT -> FINALIZED -> EXPORTED
-    const order: Record<string, number> = { DRAFT: 0, FINALIZED: 1, EXPORTED: 2 }
-    if (order[status] < order[run.status]) {
-      return NextResponse.json({ error: `Cannot downgrade status from ${run.status} to ${status}` }, { status: 400 })
-    }
-  }
 
-  const updated = await prisma.payrollRun.update({
-    where: { id: params.id },
-    data: {
-      ...(status && { status }),
-      ...(notes !== undefined && { notes }),
-    },
-    include: {
-      _count: { select: { items: true } },
-      clinic: { select: { id: true, name: true } },
-    },
+    const updated = await prisma.payrollRun.update({
+      where: { id: params.id },
+      data: { ...(status && { status }), ...(notes !== undefined && { notes }) },
+      include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
+    })
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: session.userId,
+        action: 'UPDATE_PAYROLL_RUN',
+        entity: 'PayrollRun',
+        entityId: params.id,
+        notes: `Updated payroll run: ${status ? `status=${status}` : ''} ${notes ? `notes="${notes}"` : ''}`,
+        ipAddress: auditCtx.ip || null,
+        userAgent: auditCtx.ua || null,
+      },
+    })
+
+    return NextResponse.json(updated)
   })
-
-  await createAuditLog({
-    action: 'UPDATE_PAYROLL_RUN',
-    entity: 'PayrollRun',
-    entityId: params.id,
-    notes: `Updated payroll run: ${status ? `status=${status}` : ''} ${notes ? `notes="${notes}"` : ''}`,
-  })
-
-  return NextResponse.json(updated)
 }
 
-// ============================================================
 // DELETE /api/payroll-runs/[id] — Delete payroll run
-// Roles: OWNER, only DRAFT status
-// ============================================================
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'DELETE', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  if (session.role !== 'OWNER') {
-    return NextResponse.json({ error: 'Forbidden: OWNER only' }, { status: 403 })
-  }
+  return runWithAudit(auditCtx, async () => {
+    const run = await prisma.payrollRun.findUnique({ where: { id: params.id } })
+    if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (run.status !== 'DRAFT') {
+      return NextResponse.json({ error: 'Can only delete DRAFT payroll runs' }, { status: 400 })
+    }
 
-  const run = await prisma.payrollRun.findUnique({
-    where: { id: params.id },
+    await prisma.payrollRun.delete({ where: { id: params.id } })
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: session.userId,
+        action: 'DELETE_PAYROLL_RUN',
+        entity: 'PayrollRun',
+        entityId: params.id,
+        notes: `Deleted DRAFT payroll run for ${run.periodMonth.toISOString().slice(0, 7)}`,
+        ipAddress: auditCtx.ip || null,
+        userAgent: auditCtx.ua || null,
+      },
+    })
+
+    return NextResponse.json({ success: true })
   })
-
-  if (!run) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
-
-  if (run.status !== 'DRAFT') {
-    return NextResponse.json({ error: 'Can only delete DRAFT payroll runs' }, { status: 400 })
-  }
-
-  await prisma.payrollRun.delete({
-    where: { id: params.id },
-  })
-
-  await createAuditLog({
-    action: 'DELETE_PAYROLL_RUN',
-    entity: 'PayrollRun',
-    entityId: params.id,
-    notes: `Deleted DRAFT payroll run for ${run.periodMonth.toISOString().slice(0, 7)}`,
-  })
-
-  return NextResponse.json({ success: true })
 }

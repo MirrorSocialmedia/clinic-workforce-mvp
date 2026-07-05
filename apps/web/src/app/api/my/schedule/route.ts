@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/my/schedule — My upcoming schedule
 // All roles — returns the current employee's shifts
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
   const { searchParams } = new URL(req.url)
   const from = searchParams.get('from')
@@ -27,7 +26,6 @@ export async function GET(req: NextRequest) {
   if (from) {
     where.startTime = { gte: new Date(from) }
   } else {
-    // Default: next 7 days
     where.startTime = { gte: new Date() }
   }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/leave-balance — Get leave balance
@@ -8,10 +8,9 @@ import { prisma } from '@/lib/prisma'
 // Employee sees own; managers see all (optionally filtered by employeeId)
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const { searchParams } = new URL(req.url)
   const employeeId = searchParams.get('employeeId')
@@ -20,7 +19,7 @@ export async function GET(req: NextRequest) {
   let targetEmployeeId: string | undefined
 
   // Employees only see their own balance
-  if (session.role === 'EMPLOYEE') {
+  if (scope === 'self') {
     const emp = await prisma.employee.findUnique({
       where: { userId: session.userId },
     })
@@ -38,9 +37,7 @@ export async function GET(req: NextRequest) {
     include: {
       leaveType: { select: { id: true, name: true, isPaid: true, annualQuota: true, color: true } },
       employee: {
-        include: {
-          user: { select: { id: true, name: true } },
-        },
+        include: { user: { select: { id: true, name: true } } },
       },
     },
     orderBy: [{ year: 'desc' }, { leaveType: { name: 'asc' } }],

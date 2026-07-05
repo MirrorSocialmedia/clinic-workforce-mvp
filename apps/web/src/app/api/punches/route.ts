@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { runWithAudit } from '@/lib/audit-context'
+import { requireAuth, applyScopeFilter, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/punches — List punch records with filters
 // Roles: OWNER, MANAGER, ACCOUNTANT
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const { searchParams } = new URL(req.url)
   const clinicId = searchParams.get('clinicId')
@@ -36,8 +34,8 @@ export async function GET(req: NextRequest) {
     if (endDate) where.punchTime.lte = new Date(endDate)
   }
 
-  // MANAGER only sees their clinics
-  if (session.role === 'MANAGER' && session.clinics.length > 0) {
+  // Data scope filtering
+  if (scope === 'my-clinics' && session.clinics.length > 0) {
     where.clinicId = { in: session.clinics }
   }
 

@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { CONFIG } from '@/lib/config'
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET /api/dashboard — dashboard data based on role
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   let clinics: any[] = []
 
-  if (CONFIG.UNRESTRICTED_ROLES.includes(session.role)) {
-    // OWNER sees all clinics
+  if (scope === 'all') {
     clinics = await prisma.clinic.findMany({
       include: {
         _count: {
@@ -29,8 +24,7 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { name: 'asc' },
     })
-  } else if (session.role === 'MANAGER' || session.role === 'ACCOUNTANT') {
-    // MANAGER/ACCOUNTANT sees only their clinics
+  } else {
     clinics = await prisma.clinic.findMany({
       where: { id: { in: session.clinics } },
       include: {
@@ -44,19 +38,13 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { name: 'asc' },
     })
-  } else {
-    // EMPLOYEE sees only their clinic info
-    clinics = await prisma.clinic.findMany({
-      where: { id: { in: session.clinics } },
-      orderBy: { name: 'asc' },
-    })
   }
 
-  // Get recent audit logs for OWNER/MANAGER/ACCOUNTANT
+  // Get recent audit logs for non-EMPLOYEE
   let recentAuditLogs: any[] = []
-  if (['OWNER', 'MANAGER', 'ACCOUNTANT'].includes(session.role)) {
+  if (scope !== 'self') {
     const where: any = {}
-    if (session.role === 'MANAGER' && session.clinics.length > 0) {
+    if (scope === 'my-clinics' && session.clinics.length > 0) {
       where.clinicId = { in: session.clinics }
     }
     recentAuditLogs = await prisma.auditLog.findMany({

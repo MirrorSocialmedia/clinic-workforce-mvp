@@ -1,27 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
 import 'jspdf-autotable'
 
-// ============================================================
 // POST /api/payroll-runs/[id]/export — Export to Excel or PDF
-// Roles: OWNER, MANAGER, ACCOUNTANT
-// ============================================================
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'POST', req.url)
+  if (isAuthError(auth)) return auth.error
 
   const body = await req.json()
-  const format = body.format || 'xlsx' // 'xlsx' or 'pdf'
+  const format = body.format || 'xlsx'
 
   const run = await prisma.payrollRun.findUnique({
     where: { id: params.id },
@@ -32,12 +25,7 @@ export async function POST(
           employee: {
             include: {
               user: { select: { name: true, phone: true } },
-              clinics: {
-                select: {
-                  clinicId: true,
-                  clinic: { select: { name: true } },
-                },
-              },
+              clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
               payRules: { where: { isActive: true }, take: 1 },
             },
           },
@@ -47,30 +35,19 @@ export async function POST(
     },
   })
 
-  if (!run) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
+  if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const periodMonth = run.periodMonth.toISOString().slice(0, 7) // YYYY-MM
+  const periodMonth = run.periodMonth.toISOString().slice(0, 7)
   const clinicName = run.clinic?.name || '全部診所'
 
-  if (format === 'xlsx') {
-    return exportToExcel(run, periodMonth, clinicName)
-  }
-
+  if (format === 'xlsx') return exportToExcel(run, periodMonth, clinicName)
   return exportToPDF(run, periodMonth, clinicName)
 }
 
-function exportToExcel(
-  run: any,
-  periodMonth: string,
-  clinicName: string
-): NextResponse {
+function exportToExcel(run: any, periodMonth: string, clinicName: string): NextResponse {
   const rows = run.items.map((item: any) => {
-    const detail = item.detailJson ? JSON.parse(item.detailJson) : {}
     const clinics = item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
     const payType = item.employee.payRules[0]?.payType || 'N/A'
-
     return {
       '員工姓名': item.employee.user.name,
       '聯絡電話': item.employee.user.phone,
@@ -85,25 +62,20 @@ function exportToExcel(
       '拆帳': item.splitPay ? item.splitPay.toFixed(2) : '0.00',
       '扣款': item.deduction.toFixed(2),
       '應付總額': item.totalPayable.toFixed(2),
-      ...detail,
     }
   })
 
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.json_to_sheet(rows)
-
-  // Set column widths
   ws['!cols'] = [
     { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 },
     { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
     { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
   ]
-
   XLSX.utils.book_append_sheet(wb, ws, '糧單')
 
-  // Summary sheet
   const summary = [
-    { '項目': '計糧期間', '值': `${periodMonth}` },
+    { '項目': '計糧期間', '值': periodMonth },
     { '項目': '診所', '值': clinicName },
     { '項目': '狀態', '值': run.status },
     { '項目': '員工數', '值': run.items.length },
@@ -118,7 +90,6 @@ function exportToExcel(
   XLSX.utils.book_append_sheet(wb, ws2, '摘要')
 
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
-
   return new NextResponse(buf, {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -127,34 +98,22 @@ function exportToExcel(
   })
 }
 
-function exportToPDF(
-  run: any,
-  periodMonth: string,
-  clinicName: string
-): NextResponse {
+function exportToPDF(run: any, periodMonth: string, clinicName: string): NextResponse {
   const doc = new jsPDF('p', 'mm', 'a4')
-
-  // Title
   doc.setFontSize(16)
   doc.text('診所員工糧單', 14, 20)
   doc.setFontSize(10)
   doc.text(`期間: ${periodMonth}  |  診所: ${clinicName}  |  狀態: ${run.status}`, 14, 28)
 
-  // Table
   const tableData = run.items.map((item: any) => {
     const clinics = item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
     return [
-      item.employee.user.name,
-      clinics,
-      item.workedHours.toFixed(1),
-      item.otHours.toFixed(1),
-      item.leaveDays.toFixed(1),
-      item.absentDays.toFixed(1),
-      `$${item.basePay.toFixed(0)}`,
-      `$${item.otPay.toFixed(0)}`,
+      item.employee.user.name, clinics,
+      item.workedHours.toFixed(1), item.otHours.toFixed(1),
+      item.leaveDays.toFixed(1), item.absentDays.toFixed(1),
+      `$${item.basePay.toFixed(0)}`, `$${item.otPay.toFixed(0)}`,
       item.splitPay ? `$${item.splitPay.toFixed(0)}` : '-',
-      `$${item.deduction.toFixed(0)}`,
-      `$${item.totalPayable.toFixed(0)}`,
+      `$${item.deduction.toFixed(0)}`, `$${item.totalPayable.toFixed(0)}`,
     ]
   })
 
@@ -167,7 +126,6 @@ function exportToPDF(
     headStyles: { fillColor: [41, 128, 185] },
   })
 
-  // Summary at bottom
   const finalY = (doc as any).lastAutoTable.finalY + 10
   const totalPayable = run.items.reduce((s: number, i: any) => s + i.totalPayable, 0)
   doc.setFontSize(10)
@@ -175,7 +133,6 @@ function exportToPDF(
   doc.text(`員工數: ${run.items.length}`, 14, finalY + 6)
 
   const buf = Buffer.from(doc.output('arraybuffer') as ArrayBuffer)
-
   return new NextResponse(buf, {
     headers: {
       'Content-Type': 'application/pdf',

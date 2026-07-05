@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/my/summary — Monthly summary (hours/OT/leave)
 // All roles — returns the current employee's summary
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
   const { searchParams } = new URL(req.url)
-  const month = searchParams.get('month') // YYYY-MM format
+  const month = searchParams.get('month')
 
   const employee = await prisma.employee.findUnique({
     where: { userId: session.userId },
@@ -33,47 +32,30 @@ export async function GET(req: NextRequest) {
   const monthEnd = new Date(monthStart)
   monthEnd.setMonth(monthEnd.getMonth() + 1)
 
-  // Count punch records (clock-in pairs = worked days)
   const punches = await prisma.punchRecord.findMany({
-    where: {
-      employeeId: employee.id,
-      punchTime: { gte: monthStart, lt: monthEnd },
-    },
+    where: { employeeId: employee.id, punchTime: { gte: monthStart, lt: monthEnd } },
   })
 
-  // Calculate worked days from clock-in/clock-out pairs
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
   const clockOuts = punches.filter(p => p.punchType === 'CLOCK_OUT')
 
-  // Get shifts
   const shifts = await prisma.shift.findMany({
-    where: {
-      employeeId: employee.id,
-      startTime: { gte: monthStart, lt: monthEnd },
-    },
+    where: { employeeId: employee.id, startTime: { gte: monthStart, lt: monthEnd } },
   })
 
-  // Get approved leave
   const leaveRequests = await prisma.leaveRequest.findMany({
     where: {
       employeeId: employee.id,
       status: 'APPROVED',
       startDate: { gte: monthStart, lt: monthEnd },
     },
-    include: {
-      leaveType: { select: { name: true, isPaid: true } },
-    },
+    include: { leaveType: { select: { name: true, isPaid: true } } },
   })
 
-  // Total leave days
   const totalLeaveDays = leaveRequests.reduce((sum, r) => sum + r.days, 0)
 
-  // Corrections count
   const corrections = await prisma.punchCorrection.count({
-    where: {
-      employeeId: employee.id,
-      status: 'APPROVED',
-    },
+    where: { employeeId: employee.id, status: 'APPROVED' },
   })
 
   return NextResponse.json({

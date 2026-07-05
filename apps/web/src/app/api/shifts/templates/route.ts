@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { CONFIG } from '@/lib/config'
 import { prisma } from '@/lib/prisma'
-import { setAuditContext } from '@/lib/audit-context'
+import { runWithAudit } from '@/lib/audit-context'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/shifts/templates — list shift templates
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
 
   try {
     const templates = await prisma.shiftTemplate.findMany({
@@ -22,21 +17,12 @@ export async function GET(req: NextRequest) {
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     })
 
-    // Seed default templates if none exist
     if (templates.length === 0) {
       const defaults = await seedDefaultTemplates()
-      return NextResponse.json({
-        templates: defaults,
-        seeded: true,
-        total: defaults.length,
-      })
+      return NextResponse.json({ templates: defaults, seeded: true, total: defaults.length })
     }
 
-    return NextResponse.json({
-      templates,
-      seeded: false,
-      total: templates.length,
-    })
+    return NextResponse.json({ templates, seeded: false, total: templates.length })
   } catch (error) {
     console.error('Get templates error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -48,95 +34,73 @@ export async function GET(req: NextRequest) {
 // Roles: OWNER
 // ============================================================
 export async function POST(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'POST', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  if (session.role !== CONFIG.ROLES.OWNER) {
-    return NextResponse.json({ error: 'Forbidden: OWNER only' }, { status: 403 })
-  }
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const body = await req.json()
+      const { name, startHour, startMinute, endHour, endMinute, isNightShift } = body
 
-  setAuditContext(
-    session.userId,
-    req.headers.get('x-forwarded-for') || '',
-    req.headers.get('user-agent') || ''
-  )
+      if (!name || startHour === undefined || endHour === undefined) {
+        return NextResponse.json(
+          { error: 'name, startHour, and endHour are required' },
+          { status: 400 }
+        )
+      }
 
-  try {
-    const body = await req.json()
-    const { name, startHour, startMinute, endHour, endMinute, isNightShift } = body
+      const template = await prisma.shiftTemplate.create({
+        data: {
+          name,
+          startHour,
+          startMinute: startMinute ?? 0,
+          endHour,
+          endMinute: endMinute ?? 0,
+          isNightShift: isNightShift ?? false,
+          createdBy: session.userId,
+        },
+      })
 
-    if (!name || startHour === undefined || endHour === undefined) {
-      return NextResponse.json(
-        { error: 'name, startHour, and endHour are required' },
-        { status: 400 }
-      )
+      await prisma.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'CREATE',
+          entity: 'ShiftTemplate',
+          entityId: template.id,
+          afterJson: JSON.stringify(template),
+          ipAddress: auditCtx.ip || null,
+          userAgent: auditCtx.ua || null,
+        },
+      })
+
+      return NextResponse.json({ success: true, template }, { status: 201 })
+    } catch (error) {
+      console.error('Create template error:', error)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
-
-    const template = await prisma.shiftTemplate.create({
-      data: {
-        name,
-        startHour,
-        startMinute: startMinute ?? 0,
-        endHour,
-        endMinute: endMinute ?? 0,
-        isNightShift: isNightShift ?? false,
-        createdBy: session.userId,
-      },
-    })
-
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'CREATE',
-        entity: 'ShiftTemplate',
-        entityId: template.id,
-        afterJson: JSON.stringify(template),
-      },
-    })
-
-    return NextResponse.json({ success: true, template }, { status: 201 })
-  } catch (error) {
-    console.error('Create template error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+  })
 }
 
-// ============================================================
-// Seed default templates
-// ============================================================
 async function seedDefaultTemplates(): Promise<any[]> {
   const defaults = [
     {
-      name: '早更',
-      startHour: 9,
-      startMinute: 0,
-      endHour: 14,
-      endMinute: 0,
-      isNightShift: false,
-      isDefault: true,
+      name: '早更', startHour: 9, startMinute: 0, endHour: 14, endMinute: 0,
+      isNightShift: false, isDefault: true,
     },
     {
-      name: '全日',
-      startHour: 9,
-      startMinute: 0,
-      endHour: 18,
-      endMinute: 0,
-      isNightShift: false,
-      isDefault: true,
+      name: '全日', startHour: 9, startMinute: 0, endHour: 18, endMinute: 0,
+      isNightShift: false, isDefault: true,
     },
     {
-      name: '夜更',
-      startHour: 20,
-      startMinute: 0,
-      endHour: 6,
-      endMinute: 0,
-      isNightShift: true,
-      isDefault: true,
+      name: '夜更', startHour: 20, startMinute: 0, endHour: 6, endMinute: 0,
+      isNightShift: true, isDefault: true,
     },
   ]
 
@@ -145,6 +109,5 @@ async function seedDefaultTemplates(): Promise<any[]> {
     const template = await prisma.shiftTemplate.create({ data: d })
     created.push(template)
   }
-
   return created
 }

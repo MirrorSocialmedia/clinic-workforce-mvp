@@ -1,59 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { setAuditContext } from '@/lib/audit-context'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { runWithAudit } from '@/lib/audit-context'
 
-// ============================================================
 // PUT /api/shifts/[id] — edit shift
-// Roles: OWNER, MANAGER
-// ============================================================
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'PUT', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  if (!['OWNER', 'MANAGER'].includes(session.role)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
-  setAuditContext(
-    session.userId,
-    req.headers.get('x-forwarded-for') || '',
-    req.headers.get('user-agent') || ''
-  )
-
-  try {
+  return runWithAudit(auditCtx, async () => {
     const id = params.id
     const body = await req.json()
 
-    // Get existing shift
     const existing = await prisma.shift.findUnique({ where: { id } })
-    if (!existing) {
-      return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
-    }
+    if (!existing) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
     const beforeJson = JSON.stringify(existing)
-
     const updateData: any = {}
 
     if (body.employeeId !== undefined) updateData.employeeId = body.employeeId
     if (body.clinicId !== undefined) updateData.clinicId = body.clinicId
-    if (body.date !== undefined) {
-      const date = new Date(body.date)
-      updateData.date = date
-    }
-    if (body.startTime !== undefined) {
-      updateData.startTime = new Date(body.startTime)
-    }
-    if (body.endTime !== undefined) {
-      updateData.endTime = new Date(body.endTime)
-    }
+    if (body.date !== undefined) updateData.date = new Date(body.date)
+    if (body.startTime !== undefined) updateData.startTime = new Date(body.startTime)
+    if (body.endTime !== undefined) updateData.endTime = new Date(body.endTime)
     if (body.role !== undefined) updateData.role = body.role
     if (body.status !== undefined) updateData.status = body.status
     if (body.templateId !== undefined) updateData.templateId = body.templateId
@@ -62,86 +41,57 @@ export async function PUT(
       where: { id },
       data: updateData,
       include: {
-        employee: {
-          include: { user: { select: { id: true, name: true } } },
-        },
+        employee: { include: { user: { select: { id: true, name: true } } } },
         clinic: { select: { id: true, name: true } },
         template: { select: { id: true, name: true } },
       },
     })
 
-    // Audit log
     await prisma.auditLog.create({
       data: {
-        actorId: session.userId,
-        action: 'UPDATE',
-        entity: 'Shift',
-        entityId: id,
-        clinicId: existing.clinicId,
-        beforeJson,
-        afterJson: JSON.stringify(shift),
+        actorId: session.userId, action: 'UPDATE', entity: 'Shift',
+        entityId: id, clinicId: existing.clinicId,
+        beforeJson, afterJson: JSON.stringify(shift),
+        ipAddress: auditCtx.ip || null, userAgent: auditCtx.ua || null,
       },
     })
 
     return NextResponse.json({ success: true, shift })
-  } catch (error) {
-    console.error('Update shift error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+  })
 }
 
-// ============================================================
 // DELETE /api/shifts/[id] — delete shift
-// Roles: OWNER, MANAGER
-// ============================================================
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'DELETE', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
   }
 
-  if (!['OWNER', 'MANAGER'].includes(session.role)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
-  setAuditContext(
-    session.userId,
-    req.headers.get('x-forwarded-for') || '',
-    req.headers.get('user-agent') || ''
-  )
-
-  try {
+  return runWithAudit(auditCtx, async () => {
     const id = params.id
-
     const existing = await prisma.shift.findUnique({ where: { id } })
-    if (!existing) {
-      return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
-    }
+    if (!existing) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
     const beforeJson = JSON.stringify(existing)
-
     await prisma.shift.delete({ where: { id } })
 
-    // Audit log
     await prisma.auditLog.create({
       data: {
-        actorId: session.userId,
-        action: 'DELETE',
-        entity: 'Shift',
-        entityId: id,
-        clinicId: existing.clinicId,
+        actorId: session.userId, action: 'DELETE', entity: 'Shift',
+        entityId: id, clinicId: existing.clinicId,
         beforeJson,
+        ipAddress: auditCtx.ip || null, userAgent: auditCtx.ua || null,
       },
     })
 
     return NextResponse.json({ success: true })
-  } catch (error) {
-    console.error('Delete shift error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+  })
 }

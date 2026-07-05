@@ -1,7 +1,10 @@
 // ============================================================
-// Payroll Engine — Phase 6
+// Payroll Engine — Phase 6 (Audit-Fixed)
 // Parametric salary calculation from PayRule.configJson
 // Sources: PunchRecord (corrected), LeaveRequest, Shift, HKPublicHoliday
+// Fixes: paired hours, cross-clinic OT, clinicId corrections,
+//        single-punch pending, parametric OT thresholds,
+//        consultation revenue lookup
 // ============================================================
 
 import { prisma } from './prisma'
@@ -12,45 +15,20 @@ import type { PayType, RunStatus } from '@prisma/client'
 // ------------------------------------------------------------------
 
 interface PayRuleConfig {
-  // Monthly
   monthly_salary?: number
   deduction_rate?: number       // 0–1, default 1
   ot_multiplier?: number
-  ot_threshold?: number         // hours per month, default 174 (26*6.75)
-
-  // Hourly
+  ot_threshold?: number         // hours per month — REQUIRED, no default
   hourly_rate?: number
-  ot_threshold_daily?: number   // hours per day, default 9
-
-  // Daily
+  ot_threshold_daily?: number   // hours per day — REQUIRED for HOURLY/DAILY, no default
   daily_rate?: number
-
-  // Split (doctor)
   split_ratio?: number          // 0–1
-  consultation_target?: number  // target consultations per month
+  consultation_target?: number  // target (informational only — actual from ConsultationRevenue)
 }
 
-interface EmployeePayrollData {
-  employeeId: string
-  employeeName: string
-  clinicIds: string[]           // clinics this employee works at
-  payRules: Array<{
-    id: string
-    payType: PayType
-    baseAmount: number | null
-    config: PayRuleConfig
-    clinicId?: string | null    // which clinic this rule applies to (from EmployeeClinic)
-  }>
-}
-
-interface PunchDay {
-  date: string   // YYYY-MM-DD
-  clinicId: string
-  clockIn: Date | null
-  clockOut: Date | null
-  hours: number  // calculated hours for this day
-  isLate: boolean
-  isAbsent: boolean
+interface PayrollCalcDetail {
+  payType: PayType
+  [key: string]: any
 }
 
 interface PayrollCalculationResult {
@@ -66,14 +44,19 @@ interface PayrollCalculationResult {
   splitPay: number | null
   deduction: number
   totalPayable: number
-  detail: Record<string, any>
+  detail: PayrollCalcDetail
+}
+
+interface AuditCtx {
+  actorId: string
+  ip?: string
+  ua?: string
 }
 
 // ------------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------------
 
-/** Get first and last day of a month from a YYYY-MM-01 date */
 function getMonthRange(monthDate: Date): { start: Date; end: Date } {
   const year = monthDate.getFullYear()
   const month = monthDate.getMonth()
@@ -83,7 +66,6 @@ function getMonthRange(monthDate: Date): { start: Date; end: Date } {
   }
 }
 
-/** Count working days in a month (exclude Sat/Sun) */
 function countWorkingDays(year: number, month: number): number {
   let count = 0
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -94,18 +76,15 @@ function countWorkingDays(year: number, month: number): number {
   return count
 }
 
-/** Is a date a weekend (Sat=6, Sun=0) */
 function isWeekend(date: Date): boolean {
   const dow = date.getDay()
   return dow === 0 || dow === 6
 }
 
-/** Format date to YYYY-MM-DD */
 function formatDate(d: Date): string {
   return d.toISOString().split('T')[0]
 }
 
-/** Parse configJson safely */
 function parsePayRuleConfig(configJson: string | null | undefined): PayRuleConfig {
   if (!configJson) return {}
   try {
@@ -115,27 +94,47 @@ function parsePayRuleConfig(configJson: string | null | undefined): PayRuleConfi
   }
 }
 
+/**
+ * Get OT threshold from config — no magic defaults.
+ * Throws if not configured.
+ */
+function getOtThreshold(config: PayRuleConfig, payType: PayType): number {
+  if (payType === 'MONTHLY') {
+    if (config.ot_threshold === undefined || config.ot_threshold === null) {
+      throw new Error(`MONTHLY pay rule missing ot_threshold in configJson`)
+    }
+    return config.ot_threshold
+  }
+  // HOURLY or DAILY
+  if (config.ot_threshold_daily === undefined || config.ot_threshold_daily === null) {
+    throw new Error(`${payType} pay rule missing ot_threshold_daily in configJson`)
+  }
+  return config.ot_threshold_daily
+}
+
 // ------------------------------------------------------------------
-// Punch Record Processing
+// Punch Record Processing — FIX: paired in-out + clinicId corrections
 // ------------------------------------------------------------------
 
 /**
  * Calculate actual worked hours from PunchRecords + APPROVED PunchCorrections.
- * Returns per-day breakdown.
- *
- * Logic:
- * - Group by date + clinic
- * - For each day: find earliest CLOCK_IN and latest CLOCK_OUT
- * - APPROVED corrections override original punch times
- * - Calculate hours = (clockOut - clockIn) / 3600000
+ * FIX #6: Pair in-out segments instead of max(out) - min(in).
+ * FIX #5: Correction key includes clinicId to distinguish cross-clinic.
+ * FIX #14: Single punch → PENDING_CORRECTION, not absent.
  */
 async function calculateWorkedHours(
   employeeId: string,
   clinicIds: string[] | null,
   monthStart: Date,
   monthEnd: Date
-): Promise<PunchDay[]> {
-  // Get all punch records for the period
+): Promise<Array<{
+  date: string
+  clinicId: string
+  hours: number
+  isAbsent: boolean
+  isPartial: boolean   // single punch without pair
+  punches: Array<{ type: string; time: Date }>
+}>> {
   const where: any = {
     employeeId,
     punchTime: { gte: monthStart, lte: monthEnd },
@@ -158,112 +157,110 @@ async function calculateWorkedHours(
     }),
   ])
 
-  // Build a correction map: correction overrides punch for the same day/type
-  const correctionMap = new Map<string, Date>() // key: "YYYY-MM-DD:CLOCK_IN|CLOCK_OUT"
+  // Build correction map keyed by day:clinicId:type (FIX #5: include clinicId)
+  const correctionMap = new Map<string, Date>()
   for (const c of corrections) {
-    const key = `${formatDate(c.correctedTime)}:${c.punchType}`
+    const dayStr = formatDate(c.correctedTime)
+    // FIX #5: key includes clinicId to distinguish cross-clinic corrections
+    const key = `${dayStr}:${c.clinicId}:${c.punchType}`
     correctionMap.set(key, c.correctedTime)
   }
 
-  // Also add corrections that don't reference a punch record (standalone)
-  for (const c of corrections) {
-    if (!c.punchRecordId) {
-      // Standalone correction — treat as a new punch
-      const key = `standalone:${formatDate(c.correctedTime)}:${c.punchType}:${c.clinicId}`
-      correctionMap.set(key, c.correctedTime)
-    }
-  }
-
   // Group punches by date + clinic
-  const dayClinicMap = new Map<string, { clockIns: Date[]; clockOuts: Date[]; clinicId: string }>()
+  interface DayClinicEntry {
+    clinicId: string
+    punchIns: Date[]
+    punchOuts: Date[]
+  }
+  const dayClinicMap = new Map<string, DayClinicEntry>()
 
   for (const p of punches) {
     const dayKey = formatDate(p.punchTime)
     const mapKey = `${dayKey}:${p.clinicId}`
     let entry = dayClinicMap.get(mapKey)
     if (!entry) {
-      entry = { clockIns: [], clockOuts: [], clinicId: p.clinicId }
+      entry = { clinicId: p.clinicId, punchIns: [], punchOuts: [] }
+      dayClinicMap.set(mapKey, entry)
+    }
+    if (p.punchType === 'CLOCK_IN') entry.punchIns.push(p.punchTime)
+    else entry.punchOuts.push(p.punchTime)
+  }
+
+  // Apply corrections
+  for (const [key, correctedTime] of correctionMap) {
+    const parts = key.split(':')
+    const dayStr = parts[0]
+    const clinicId = parts[1]
+    const punchType = parts[2]
+
+    const mapKey = `${dayStr}:${clinicId}`
+    let entry = dayClinicMap.get(mapKey)
+    if (!entry) {
+      entry = { clinicId, punchIns: [], punchOuts: [] }
       dayClinicMap.set(mapKey, entry)
     }
 
-    if (p.punchType === 'CLOCK_IN') entry.clockIns.push(p.punchTime)
-    else entry.clockOuts.push(p.punchTime)
+    const arr = punchType === 'CLOCK_IN' ? entry.punchIns : entry.punchOuts
+    // Replace existing entries of same type with corrected time
+    arr.length = 0
+    arr.push(correctedTime)
   }
 
-  // Apply corrections: override original times
-  for (const [key, correctedTime] of correctionMap) {
-    if (key.startsWith('standalone:')) continue // handled separately
+  // FIX #6: Pair in-out segments per day+clinic, sum each segment
+  const results: Array<{
+    date: string
+    clinicId: string
+    hours: number
+    isAbsent: boolean
+    isPartial: boolean
+    punches: Array<{ type: string; time: Date }>
+  }> = []
 
-    const [dayStr, punchType] = key.split(':')
-    const type = punchType === 'CLOCK_IN' ? 'clockIns' : 'clockOuts'
-
-    for (const [mapKey, entry] of dayClinicMap) {
-      if (mapKey.startsWith(dayStr)) {
-        // Remove original, add corrected
-        if (type === 'clockIns') {
-          entry.clockIns = entry.clockIns.filter(t => !correctionMap.has(`${dayStr}:CLOCK_IN`) || t.getTime() === correctedTime.getTime())
-          entry.clockIns.push(correctedTime)
-        } else {
-          entry.clockOuts = entry.clockOuts.filter(t => !correctionMap.has(`${dayStr}:CLOCK_OUT`) || t.getTime() === correctedTime.getTime())
-          entry.clockOuts.push(correctedTime)
-        }
-      }
-    }
-  }
-
-  // Add standalone corrections
-  for (const c of corrections) {
-    if (!c.punchRecordId) {
-      const dayStr = formatDate(c.correctedTime)
-      const mapKey = `${dayStr}:${c.clinicId}`
-      let entry = dayClinicMap.get(mapKey)
-      if (!entry) {
-        entry = { clockIns: [], clockOuts: [], clinicId: c.clinicId }
-        dayClinicMap.set(mapKey, entry)
-      }
-      if (c.punchType === 'CLOCK_IN') entry.clockIns.push(c.correctedTime)
-      else entry.clockOuts.push(c.correctedTime)
-    }
-  }
-
-  // Calculate hours per day
-  const results: PunchDay[] = []
   for (const [mapKey, entry] of dayClinicMap) {
     const dayStr = mapKey.split(':')[0]
     const clinicId = entry.clinicId
 
-    if (entry.clockIns.length === 0 || entry.clockOuts.length === 0) {
-      // Incomplete day — mark as absent or partial
-      results.push({
-        date: dayStr,
-        clinicId,
-        clockIn: entry.clockIns[0] || null,
-        clockOut: entry.clockOuts[0] || null,
-        hours: 0,
-        isLate: false,
-        isAbsent: true,
-      })
-      continue
+    const allPunches = [
+      ...entry.punchIns.map(t => ({ type: 'CLOCK_IN', time: t })),
+      ...entry.punchOuts.map(t => ({ type: 'CLOCK_OUT', time: t })),
+    ].sort((a, b) => a.time.getTime() - b.time.getTime())
+
+    // FIX #6: Pair in-out segments
+    let totalMs = 0
+    let lastIn: Date | null = null
+
+    for (const p of allPunches) {
+      if (p.type === 'CLOCK_IN') {
+        lastIn = p.time
+      } else if (p.type === 'CLOCK_OUT' && lastIn) {
+        totalMs += p.time.getTime() - lastIn.getTime()
+        lastIn = null
+      }
     }
 
-    // Earliest clock-in, latest clock-out
-    const clockIn = entry.clockIns.reduce((a, b) => a < b ? a : b)
-    const clockOut = entry.clockOuts.reduce((a, b) => a > b ? a : b)
-    const hours = Math.max(0, (clockOut.getTime() - clockIn.getTime()) / 3600000)
-    // Cap at 24 hours per day
-    const cappedHours = Math.min(hours, 24)
+    const hours = Math.min(Math.max(0, totalMs / 3600000), 24)
 
-    // Check late: clock-in after 9:30 AM (configurable)
-    const isLate = clockIn.getHours() > 9 || (clockIn.getHours() === 9 && clockIn.getMinutes() > 30)
+    // FIX #14: Single punch → PENDING, not absent
+    const hasIn = entry.punchIns.length > 0
+    const hasOut = entry.punchOuts.length > 0
+    const isPartial = (hasIn && !hasOut) || (!hasIn && hasOut)
+
+    let isAbsent = false
+    if (!hasIn && !hasOut) {
+      // No punches at all → absent
+      isAbsent = true
+    } else if (isPartial) {
+      // Single punch → partial/pending, NOT absent
+      // The payroll engine will flag this for review
+    }
 
     results.push({
       date: dayStr,
       clinicId,
-      clockIn,
-      clockOut,
-      hours: Math.round(cappedHours * 100) / 100,
-      isLate,
-      isAbsent: false,
+      hours: Math.round(hours * 100) / 100,
+      isAbsent,
+      isPartial,
+      punches: allPunches,
     })
   }
 
@@ -295,11 +292,9 @@ async function getApprovedLeaveDays(
   const byType: Array<{ leaveTypeName: string; days: number; isPaid: boolean }> = []
 
   for (const leave of leaves) {
-    // Clamp leave period to month range
     const effectiveStart = new Date(Math.max(leave.startDate.getTime(), monthStart.getTime()))
     const effectiveEnd = new Date(Math.min(leave.endDate.getTime(), monthEnd.getTime()))
 
-    // Count working days in the overlap
     let overlapDays = 0
     const current = new Date(effectiveStart)
     while (current <= effectiveEnd) {
@@ -327,15 +322,9 @@ async function getPublicHolidayDays(
   monthEnd: Date
 ): Promise<Date[]> {
   const holidays = await prisma.hKPublicHoliday.findMany({
-    where: {
-      date: { gte: monthStart, lte: monthEnd },
-    },
+    where: { date: { gte: monthStart, lte: monthEnd } },
   })
-
-  // Filter to working days only (public holidays on weekends don't count as absent)
-  return holidays
-    .map(h => new Date(h.date))
-    .filter(d => !isWeekend(d))
+  return holidays.map(h => new Date(h.date)).filter(d => !isWeekend(d))
 }
 
 // ------------------------------------------------------------------
@@ -345,7 +334,17 @@ async function getPublicHolidayDays(
 async function getEmployeePayData(
   employeeId: string,
   clinicIdFilter: string | null
-): Promise<EmployeePayrollData> {
+): Promise<{
+  employeeId: string
+  employeeName: string
+  clinicIds: string[]
+  payRules: Array<{
+    id: string
+    payType: PayType
+    baseAmount: number | null
+    config: PayRuleConfig
+  }>
+}> {
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
     include: {
@@ -353,15 +352,10 @@ async function getEmployeePayData(
       payRules: {
         where: {
           isActive: true,
-          OR: [
-            { effectiveTo: null },
-            { effectiveTo: { gte: new Date() } },
-          ],
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
         },
       },
-      clinics: {
-        select: { clinicId: true },
-      },
+      clinics: { select: { clinicId: true } },
     },
   })
 
@@ -379,16 +373,38 @@ async function getEmployeePayData(
     config: parsePayRuleConfig(pr.configJson),
   }))
 
-  return {
-    employeeId,
-    employeeName: employee.user.name,
-    clinicIds,
-    payRules,
-  }
+  return { employeeId, employeeName: employee.user.name, clinicIds, payRules }
 }
 
 // ------------------------------------------------------------------
-// Core Calculation
+// FIX #4: Cross-clinic OT — per-day split
+// ------------------------------------------------------------------
+
+interface DailyHoursEntry {
+  date: string
+  totalHours: number
+  byClinic: Map<string, number>
+}
+
+function aggregateDailyHours(punchDays: Awaited<ReturnType<typeof calculateWorkedHours>>): DailyHoursEntry[] {
+  const dayMap = new Map<string, DailyHoursEntry>()
+
+  for (const pd of punchDays) {
+    let entry = dayMap.get(pd.date)
+    if (!entry) {
+      entry = { date: pd.date, totalHours: 0, byClinic: new Map() }
+      dayMap.set(pd.date, entry)
+    }
+    entry.totalHours += pd.hours
+    const existingClinic = entry.byClinic.get(pd.clinicId) || 0
+    entry.byClinic.set(pd.clinicId, existingClinic + pd.hours)
+  }
+
+  return Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date))
+}
+
+// ------------------------------------------------------------------
+// Calculation Functions
 // ------------------------------------------------------------------
 
 function calculateMonthly(
@@ -399,36 +415,32 @@ function calculateMonthly(
   paidLeaveDays: number,
   publicHolidayDays: number,
   totalHours: number,
-  monthStart: Date
-): Pick<PayrollCalculationResult, 'basePay' | 'otPay' | 'deduction' | 'detail'> {
+  otThreshold: number
+): { basePay: number; otPay: number; deduction: number; detail: PayrollCalcDetail; otHours: number; absentDays: number } {
   const monthlySalary = config.monthly_salary || 0
   const deductionRate = config.deduction_rate ?? 1
   const otMultiplier = config.ot_multiplier ?? 1.5
-  const otThreshold = config.ot_threshold ?? 174 // 26 days * 6.75 hours
 
-  // Only unpaid leave counts toward absence
   const unpaidLeaveDays = approvedLeaveDays - paidLeaveDays
-  const publicHolidaysOnWorkingDays = publicHolidayDays
-
-  // Absent days = working days - actual attendance days - unpaid leave - public holidays
-  // Paid leave doesn't count as absence
   const absentDays = Math.max(
     0,
-    workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidaysOnWorkingDays
+    workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidayDays
   )
 
   const basePay = monthlySalary
   const deduction = absentDays * (monthlySalary / 26) * deductionRate
 
-  // Overtime: hours beyond threshold
+  // FIX #7: OT threshold from config, no default
   const otHours = Math.max(0, totalHours - otThreshold)
-  const hourlyEquivalent = monthlySalary / otThreshold
+  const hourlyEquivalent = otThreshold > 0 ? monthlySalary / otThreshold : 0
   const otPay = otHours * hourlyEquivalent * otMultiplier
 
   return {
     basePay,
     otPay,
     deduction,
+    otHours,
+    absentDays,
     detail: {
       payType: 'MONTHLY',
       monthlySalary,
@@ -450,34 +462,37 @@ function calculateMonthly(
 
 function calculateHourly(
   config: PayRuleConfig,
-  totalHours: number,
-): Pick<PayrollCalculationResult, 'basePay' | 'otPay' | 'detail'> {
+  dailyEntries: DailyHoursEntry[],
+  otThresholdDaily: number
+): { basePay: number; otPay: number; detail: PayrollCalcDetail; otHours: number; totalHours: number } {
   const hourlyRate = config.hourly_rate || 0
   const otMultiplier = config.ot_multiplier ?? 1.5
-  const otThresholdDaily = config.ot_threshold_daily ?? 9
 
-  // For hourly, we need per-day OT calculation
-  // Simplified: if total hours exceed threshold proportionally
-  // Proper OT would need per-day data; for now use a monthly threshold
-  const otThresholdMonthly = otThresholdDaily * 26 // approximate
+  let totalNormalHours = 0
+  let totalOtHours = 0
 
-  const normalHours = Math.min(totalHours, otThresholdMonthly)
-  const otHours = Math.max(0, totalHours - otThresholdMonthly)
+  // FIX #4: Per-day OT calculation
+  for (const entry of dailyEntries) {
+    const normal = Math.min(entry.totalHours, otThresholdDaily)
+    const ot = Math.max(0, entry.totalHours - otThresholdDaily)
+    totalNormalHours += normal
+    totalOtHours += ot
+  }
 
-  const basePay = normalHours * hourlyRate
-  const otPay = otHours * hourlyRate * otMultiplier
+  const basePay = totalNormalHours * hourlyRate
+  const otPay = totalOtHours * hourlyRate * otMultiplier
 
   return {
     basePay,
     otPay,
+    otHours: totalOtHours,
+    totalHours: totalNormalHours + totalOtHours,
     detail: {
       payType: 'HOURLY',
       hourlyRate,
-      totalHours,
-      normalHours,
-      otHours,
+      totalNormalHours,
+      otHours: totalOtHours,
       otThresholdDaily,
-      otThresholdMonthly,
       otMultiplier,
     },
   }
@@ -486,46 +501,71 @@ function calculateHourly(
 function calculateDaily(
   config: PayRuleConfig,
   attendanceDays: number,
-  totalHours: number,
-): Pick<PayrollCalculationResult, 'basePay' | 'otPay' | 'detail'> {
+  dailyEntries: DailyHoursEntry[],
+  otThresholdDaily: number
+): { basePay: number; otPay: number; detail: PayrollCalcDetail; otHours: number; totalHours: number } {
   const dailyRate = config.daily_rate || 0
   const otMultiplier = config.ot_multiplier ?? 1.5
-  const dailyHoursThreshold = config.ot_threshold_daily ?? 9
 
   const basePay = attendanceDays * dailyRate
 
-  // OT: simplified — if average hours/day > threshold
-  const avgHoursPerDay = attendanceDays > 0 ? totalHours / attendanceDays : 0
-  const otHours = attendanceDays * Math.max(0, avgHoursPerDay - dailyHoursThreshold)
-  const hourlyEquivalent = dailyRate / dailyHoursThreshold
-  const otPay = otHours * hourlyEquivalent * otMultiplier
+  // FIX #4: Per-day OT
+  let totalOtHours = 0
+  let totalHours = 0
+  for (const entry of dailyEntries) {
+    totalHours += entry.totalHours
+    const ot = Math.max(0, entry.totalHours - otThresholdDaily)
+    totalOtHours += ot
+  }
+
+  const hourlyEquivalent = otThresholdDaily > 0 ? dailyRate / otThresholdDaily : 0
+  const otPay = totalOtHours * hourlyEquivalent * otMultiplier
 
   return {
     basePay,
     otPay,
+    otHours: totalOtHours,
+    totalHours,
     detail: {
       payType: 'DAILY',
       dailyRate,
       attendanceDays,
       totalHours,
-      avgHoursPerDay,
-      otHours,
+      otHours: totalOtHours,
+      otThresholdDaily,
       otMultiplier,
     },
+  }
+}
+
+// ------------------------------------------------------------------
+// FIX #8: Consultation revenue lookup (actual, not target)
+// ------------------------------------------------------------------
+
+async function getConsultationRevenue(
+  employeeId: string,
+  clinicId: string | null,
+  periodMonth: Date
+): Promise<number> {
+  try {
+    const where: any = { employeeId, month: periodMonth }
+    if (clinicId) where.clinicId = clinicId
+
+    const record = await prisma.consultationRevenue.findFirst({ where })
+    return record ? record.amount : 0
+  } catch {
+    // ConsultationRevenue table may not exist yet (migration pending)
+    return 0
   }
 }
 
 function calculateSplit(
   config: PayRuleConfig,
   basePay: number,
-  // consultationFees would come from a separate source (e.g., clinic billing)
-  // For MVP, we read from config or set to 0
-  consultationFees?: number,
-): Pick<PayrollCalculationResult, 'basePay' | 'splitPay' | 'detail'> {
+  consultationFees: number
+): { basePay: number; splitPay: number; detail: PayrollCalcDetail } {
   const splitRatio = config.split_ratio ?? 0
-  const fees = consultationFees ?? config.consultation_target ?? 0
-
-  const splitPay = fees * splitRatio
+  const splitPay = consultationFees * splitRatio
 
   return {
     basePay,
@@ -533,7 +573,7 @@ function calculateSplit(
     detail: {
       payType: 'SPLIT',
       splitRatio,
-      consultationFees: fees,
+      consultationFees,
       splitPay,
     },
   }
@@ -543,10 +583,6 @@ function calculateSplit(
 // Main Calculate Function
 // ------------------------------------------------------------------
 
-/**
- * Calculate payroll for a single employee for a given month.
- * Handles cross-clinic merging (sums hours/pay from all clinics).
- */
 async function calculateEmployeePayroll(
   employeeId: string,
   periodMonth: Date,
@@ -558,43 +594,38 @@ async function calculateEmployeePayroll(
 
   const payData = await getEmployeePayData(employeeId, clinicIdFilter)
 
-  // Get worked hours from all applicable clinics
   const allPunchDays = await calculateWorkedHours(
     employeeId,
-    clinicIdFilter ? [clinicIdFilter] : payData.clinicIds.length > 0 ? payData.clinicIds : null,
+    clinicIdFilter ? [clinicIdFilter] : (payData.clinicIds.length > 0 ? payData.clinicIds : null),
     monthStart,
     monthEnd
   )
 
-  // Merge hours across clinics for the same day
-  const dayHoursMap = new Map<string, number>()
+  // FIX #4: Aggregate daily hours across clinics
+  const dailyEntries = aggregateDailyHours(allPunchDays)
+
   let totalWorkedHours = 0
   const attendanceDaysSet = new Set<string>()
+  const partialDays: string[] = []
 
   for (const pd of allPunchDays) {
-    const existing = dayHoursMap.get(pd.date) || 0
-    dayHoursMap.set(pd.date, existing + pd.hours)
     totalWorkedHours += pd.hours
     if (pd.hours > 0) attendanceDaysSet.add(pd.date)
+    if (pd.isPartial) partialDays.push(pd.date)
   }
 
   const actualAttendanceDays = attendanceDaysSet.size
 
-  // Get approved leave
   const { totalDays: approvedLeaveDays, byType: leaveByType } =
     await getApprovedLeaveDays(employeeId, monthStart, monthEnd)
 
-  // Paid leave days
   const paidLeaveDays = leaveByType.reduce((sum, lt) => sum + (lt.isPaid ? lt.days : 0), 0)
 
-  // Public holidays
   const publicHolidays = await getPublicHolidayDays(monthStart, monthEnd)
   const publicHolidayDays = publicHolidays.length
 
-  // Working days in month
   const workingDays = countWorkingDays(year, month)
 
-  // Determine primary pay type (first active rule)
   const primaryRule = payData.payRules[0]
   if (!primaryRule) {
     return {
@@ -605,12 +636,8 @@ async function calculateEmployeePayroll(
       otHours: 0,
       leaveDays: approvedLeaveDays,
       absentDays: 0,
-      basePay: 0,
-      otPay: 0,
-      splitPay: null,
-      deduction: 0,
-      totalPayable: 0,
-      detail: { error: 'No active pay rule found' },
+      basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
+      detail: { error: 'No active pay rule found', partialDays },
     }
   }
 
@@ -621,59 +648,56 @@ async function calculateEmployeePayroll(
 
   switch (payType) {
     case 'MONTHLY': {
+      const otThreshold = getOtThreshold(config, 'MONTHLY')
       const calc = calculateMonthly(
         config, workingDays, actualAttendanceDays,
         approvedLeaveDays, paidLeaveDays, publicHolidayDays,
-        totalWorkedHours, monthStart
+        totalWorkedHours, otThreshold
       )
-      const absentDays = calc.detail.absentDays ?? 0
-      const otHours = calc.detail.otHours ?? 0
       result = {
         ...calc,
-        absentDays,
-        otHours,
         totalPayable: calc.basePay - calc.deduction + calc.otPay,
+        detail: { ...calc.detail, partialDays },
       }
       break
     }
 
     case 'HOURLY': {
-      const calc = calculateHourly(config, totalWorkedHours)
-      const otHours = calc.detail.otHours ?? 0
+      const otThresholdDaily = getOtThreshold(config, 'HOURLY')
+      const calc = calculateHourly(config, dailyEntries, otThresholdDaily)
       result = {
         ...calc,
-        otHours,
         absentDays: 0,
         totalPayable: calc.basePay + calc.otPay,
+        detail: { ...calc.detail, partialDays },
       }
       break
     }
 
     case 'DAILY': {
-      const calc = calculateDaily(config, actualAttendanceDays, totalWorkedHours)
-      const otHours = 0 // OT handled in daily calc
+      const otThresholdDaily = getOtThreshold(config, 'DAILY')
+      const calc = calculateDaily(config, actualAttendanceDays, dailyEntries, otThresholdDaily)
       result = {
         ...calc,
-        otHours,
         absentDays: 0,
         totalPayable: calc.basePay + calc.otPay,
+        detail: { ...calc.detail, partialDays },
       }
       break
     }
 
     case 'SPLIT': {
-      // For split, base pay could be monthly or 0
+      // FIX #8: Use actual consultation revenue
+      const consultationFees = await getConsultationRevenue(
+        employeeId, clinicIdFilter, periodMonth
+      )
       const basePay = config.monthly_salary ?? 0
-      const calc = calculateSplit(config, basePay)
+      const calc = calculateSplit(config, basePay, consultationFees)
 
-      // Also calculate absence deduction if there's a monthly component
       let deduction = 0
       if (basePay > 0) {
         const unpaidLeaveDays = approvedLeaveDays - paidLeaveDays
-        const absentDays = Math.max(
-          0,
-          workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidayDays
-        )
+        const absentDays = Math.max(0, workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidayDays)
         deduction = absentDays * (basePay / 26) * (config.deduction_rate ?? 1)
       }
 
@@ -682,7 +706,8 @@ async function calculateEmployeePayroll(
         deduction,
         absentDays: 0,
         otHours: 0,
-        totalPayable: calc.basePay - deduction + (calc.splitPay ?? 0),
+        totalPayable: calc.basePay - deduction + calc.splitPay,
+        detail: { ...calc.detail, partialDays },
       }
       break
     }
@@ -690,7 +715,7 @@ async function calculateEmployeePayroll(
     default:
       result = {
         basePay: 0, otPay: 0, splitPay: null, deduction: 0, absentDays: 0,
-        totalPayable: 0, detail: { error: `Unknown pay type: ${payType}` },
+        totalPayable: 0, detail: { error: `Unknown pay type: ${payType}` } as PayrollCalcDetail,
       }
   }
 
@@ -707,7 +732,7 @@ async function calculateEmployeePayroll(
     splitPay: result.splitPay != null ? Math.round(result.splitPay * 100) / 100 : null,
     deduction: Math.round((result.deduction ?? 0) * 100) / 100,
     totalPayable: Math.round((result.totalPayable ?? 0) * 100) / 100,
-    detail: result.detail || {},
+    detail: result.detail || ({} as PayrollCalcDetail),
   }
 }
 
@@ -715,51 +740,35 @@ async function calculateEmployeePayroll(
 // Full Payroll Run
 // ------------------------------------------------------------------
 
-/**
- * Generate a full payroll run. Creates PayrollRun + PayrollItem records.
- */
 export async function generatePayrollRun(
   clinicId: string | null,
-  periodMonth: string // YYYY-MM format
+  periodMonth: string,
+  auditCtx?: AuditCtx
 ): Promise<{ runId: string; itemCount: number; totalPayable: number }> {
   const monthDate = new Date(`${periodMonth}-01T00:00:00`)
 
-  // Check for existing run
   const existing = await prisma.payrollRun.findFirst({
-    where: {
-      clinicId,
-      periodMonth: monthDate,
-    },
+    where: { clinicId, periodMonth: monthDate },
   })
 
   if (existing) {
-    throw new Error(`Payroll run already exists for ${periodMonth}${clinicId ? ` at clinic ${clinicId}` : ' (all clinics)'}`)
+    throw new Error(`Payroll run already exists for ${periodMonth}`)
   }
 
-  // Create the run
+  // Create run
   const run = await prisma.payrollRun.create({
-    data: {
-      clinicId,
-      periodMonth: monthDate,
-      status: 'DRAFT' as RunStatus,
-    },
+    data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
   })
 
-  // Get all active employees (optionally filtered by clinic)
   const where: any = { status: 'ACTIVE' }
-  if (clinicId) {
-    where.clinics = { some: { clinicId } }
-  }
+  if (clinicId) where.clinics = { some: { clinicId } }
 
   const employees = await prisma.employee.findMany({
     where,
-    include: {
-      user: { select: { name: true } },
-    },
+    include: { user: { select: { name: true } } },
     orderBy: { id: 'asc' },
   })
 
-  // Calculate payroll for each employee
   const items: Array<any> = []
   for (const emp of employees) {
     try {
@@ -779,37 +788,39 @@ export async function generatePayrollRun(
         detailJson: JSON.stringify(result.detail),
       })
     } catch (err) {
-      console.error(`Failed to calculate payroll for employee ${emp.id}:`, err)
-      // Create item with zero values and error in detail
+      console.error(`Failed payroll for ${emp.id}:`, err)
       items.push({
         runId: run.id,
         employeeId: emp.id,
-        workedHours: 0,
-        otHours: 0,
-        leaveDays: 0,
-        absentDays: 0,
-        basePay: 0,
-        otPay: 0,
-        splitPay: null,
-        deduction: 0,
-        totalPayable: 0,
+        workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
+        basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
         detailJson: JSON.stringify({ error: String(err) }),
       })
     }
   }
 
-  // Create items in batch
   if (items.length > 0) {
     await prisma.payrollItem.createMany({ data: items })
   }
 
+  // Audit log
+  if (auditCtx?.actorId) {
+    await prisma.auditLog.create({
+      data: {
+        actorId: auditCtx.actorId,
+        action: 'CREATE_PAYROLL_RUN',
+        entity: 'PayrollRun',
+        entityId: run.id,
+        notes: `Generated payroll for ${periodMonth}: ${items.length} employees`,
+        ipAddress: auditCtx.ip || null,
+        userAgent: auditCtx.ua || null,
+      },
+    })
+  }
+
   const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
 
-  return {
-    runId: run.id,
-    itemCount: items.length,
-    totalPayable: Math.round(totalPayable * 100) / 100,
-  }
+  return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100 }
 }
 
 // Export for testing
@@ -823,4 +834,6 @@ export {
   countWorkingDays,
   getMonthRange,
   formatDate,
+  getOtThreshold,
+  aggregateDailyHours,
 }

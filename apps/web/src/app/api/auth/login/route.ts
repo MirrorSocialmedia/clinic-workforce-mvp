@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import { prisma, createAuditLog } from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
 import { createToken } from '@/lib/auth'
 import { CONFIG } from '@/lib/config'
-import { setAuditContext } from '@/lib/audit-context'
+import { runWithAudit } from '@/lib/audit-context'
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,33 +13,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Phone and password required' }, { status: 400 })
     }
 
-    // Find user by phone
     const user = await prisma.user.findUnique({
       where: { phone },
-      include: {
-        clinics: {
-          include: { clinic: true },
-        },
-      },
+      include: { clinics: { include: { clinic: true } } },
     })
 
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
-    }
+    if (!user) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
 
-    // Check password
     const valid = await bcrypt.compare(password, user.password)
-    if (!valid) {
-      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
-    }
+    if (!valid) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
 
-    // Check status
-    if (user.status !== 'ACTIVE') {
-      return NextResponse.json({ error: 'Account is not active' }, { status: 403 })
-    }
-
-    // Set audit context
-    setAuditContext(user.id, req.headers.get('x-forwarded-for') || '', req.headers.get('user-agent') || '')
+    if (user.status !== 'ACTIVE') return NextResponse.json({ error: 'Account is not active' }, { status: 403 })
 
     const clinicIds = user.clinics.map((uc: any) => uc.clinic.id)
     const primaryClinicId = user.clinics.find((uc: any) => uc.isPrimary)?.clinicId
@@ -51,24 +35,31 @@ export async function POST(req: NextRequest) {
       primaryClinicId: primaryClinicId || undefined,
     })
 
-    // Write audit log for login
-    await createAuditLog({
-      action: 'LOGIN',
-      entity: 'Session',
-      entityId: user.id,
-      notes: `Login from ${req.headers.get('x-forwarded-for') || 'unknown'}`,
-    })
+    const ip = req.headers.get('x-forwarded-for') || undefined
+    const ua = req.headers.get('user-agent') || undefined
 
-    // Set cookie
+    await runWithAudit(
+      { actorId: user.id, ip, ua },
+      async () => {
+        await prisma.auditLog.create({
+          data: {
+            actorId: user.id,
+            action: 'LOGIN',
+            entity: 'Session',
+            entityId: user.id,
+            notes: `Login from ${ip || 'unknown'}`,
+            ipAddress: ip || null,
+            userAgent: ua || null,
+          },
+        })
+      }
+    )
+
     const response = NextResponse.json({
       success: true,
       user: {
-        id: user.id,
-        name: user.name,
-        phone: user.phone,
-        role: user.role,
-        clinics: clinicIds,
-        primaryClinicId,
+        id: user.id, name: user.name, phone: user.phone,
+        role: user.role, clinics: clinicIds, primaryClinicId,
       },
     })
 

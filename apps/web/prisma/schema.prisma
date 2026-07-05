@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite" // Change to "postgresql" for production
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -481,4 +481,24 @@ model PayrollItem {
 
   @@unique([runId, employeeId])
   @@index([employeeId, createdAt])
+}
+
+// ============================================================
+// Consultation Revenue — actual monthly revenue per doctor per clinic
+// FIX #8: Replace consultation_target (goal) with actual input
+// ============================================================
+
+model ConsultationRevenue {
+  id          String   @id @default(cuid())
+  employeeId  String
+  clinicId    String
+  month       DateTime // YYYY-MM-01 format
+  amount      Float
+  source      String?  // Source note (e.g., "billing system export")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([employeeId, clinicId, month])
+  @@index([employeeId, month])
+  @@index([clinicId, month])
 }

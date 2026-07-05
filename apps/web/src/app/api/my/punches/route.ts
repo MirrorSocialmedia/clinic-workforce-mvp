@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/my/punches — My punch records
 // All roles — returns the current employee's punches
 // ============================================================
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
-
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
   const { searchParams } = new URL(req.url)
   const from = searchParams.get('from')
@@ -33,14 +32,11 @@ export async function GET(req: NextRequest) {
 
   const punches = await prisma.punchRecord.findMany({
     where,
-    include: {
-      clinic: { select: { id: true, name: true } },
-    },
+    include: { clinic: { select: { id: true, name: true } } },
     orderBy: { punchTime: 'desc' },
     take: 100,
   })
 
-  // Also get corrections for this employee
   const corrections = await prisma.punchCorrection.findMany({
     where: { employeeId: employee.id },
     orderBy: { createdAt: 'desc' },

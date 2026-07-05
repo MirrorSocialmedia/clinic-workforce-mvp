@@ -1,29 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import { prisma, createAuditLog } from '@/lib/prisma'
-import { setAuditContext } from '@/lib/audit-context'
+import { prisma } from '@/lib/prisma'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { runWithAudit } from '@/lib/audit-context'
 
-// ============================================================
 // PUT /api/leave-types/[id] — Update leave type
-// Roles: OWNER
-// ============================================================
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const token = req.cookies.get('session')?.value
-  const session = token ? verifyToken(token) : null
+  const auth = requireAuth(req, 'PUT', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!['OWNER'].includes(session.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
+  }
 
-  setAuditContext(
-    session.userId,
-    req.headers.get('x-forwarded-for') || '',
-    req.headers.get('user-agent') || ''
-  )
-
-  try {
+  return runWithAudit(auditCtx, async () => {
     const body = await req.json()
     const { name, isPaid, annualQuota, color, isActive } = body
     const id = params.id
@@ -31,7 +26,6 @@ export async function PUT(
     const existing = await prisma.leaveType.findUnique({ where: { id } })
     if (!existing) return NextResponse.json({ error: 'Leave type not found' }, { status: 404 })
 
-    // Check name uniqueness (excluding self)
     if (name && name !== existing.name) {
       const dup = await prisma.leaveType.findFirst({
         where: { name, isActive: true, id: { not: id } },
@@ -50,16 +44,18 @@ export async function PUT(
       },
     })
 
-    await createAuditLog({
-      action: 'UPDATE',
-      entity: 'LeaveType',
-      entityId: leaveType.id,
-      notes: `Updated leave type: ${leaveType.name}`,
+    await prisma.auditLog.create({
+      data: {
+        actorId: session.userId,
+        action: 'UPDATE',
+        entity: 'LeaveType',
+        entityId: leaveType.id,
+        notes: `Updated leave type: ${leaveType.name}`,
+        ipAddress: auditCtx.ip || null,
+        userAgent: auditCtx.ua || null,
+      },
     })
 
     return NextResponse.json({ success: true, leaveType })
-  } catch (error) {
-    console.error('Leave type update error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+  })
 }
