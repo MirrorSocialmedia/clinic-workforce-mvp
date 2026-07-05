@@ -39,6 +39,15 @@ export const CONFIG = {
 
     // Dashboard
     'GET /api/dashboard': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Employee routes
+    'GET /api/employees': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/employees': ['OWNER', 'MANAGER'],
+    'PUT /api/employees/:id': ['OWNER', 'MANAGER'],
+    'GET /api/employees/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/employees/:id/pay-rules': ['OWNER'],
+    'POST /api/employees/import': ['OWNER'],
+    'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
