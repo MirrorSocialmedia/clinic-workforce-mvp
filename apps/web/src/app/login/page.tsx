@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -78,6 +79,12 @@ export default function LoginPage() {
           <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '12px' }} disabled={loading}>
             {loading ? '登入中...' : '登入'}
           </button>
+
+          <div style={{ textAlign: 'center', marginTop: 12 }}>
+            <Link href="/reset-password" style={{ fontSize: 13, color: '#1a1a2e', textDecoration: 'underline' }}>
+              忘記密碼？
+            </Link>
+          </div>
         </form>
 
         <div style={{ marginTop: 20, padding: '12px', background: '#f9f9f9', borderRadius: 6, fontSize: 12, color: '#888' }}>

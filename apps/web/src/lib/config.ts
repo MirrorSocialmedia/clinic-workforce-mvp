@@ -7,6 +7,9 @@ export const CONFIG = {
   SESSION_MAX_AGE_DAYS: 30,
   JWT_SECRET: process.env.JWT_SECRET || 'clinic-mvp-dev-secret',
 
+  // Data retention (PDPO compliance)
+  DATA_RETENTION_DAYS: parseInt(process.env.DATA_RETENTION_DAYS || '365', 10),
+
   // Roles
   ROLES: {
     OWNER: 'OWNER',
