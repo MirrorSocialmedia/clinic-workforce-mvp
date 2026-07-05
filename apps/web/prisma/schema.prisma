@@ -58,6 +58,20 @@ enum PunchSource {
   SYSTEM
 }
 
+// Shift change request types
+enum ChangeType {
+  SWAP
+  COVER
+  REPORT
+}
+
+enum ChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
 // Clinic entity
 model Clinic {
   id        String   @id @default(cuid())
@@ -118,6 +132,9 @@ model Employee {
   payRules  PayRule[]
   shifts    Shift[]
   punches   PunchRecord[]
+  changeRequestsFrom ShiftChangeRequest[] @relation("ChangeFrom")
+  changeRequestsTo   ShiftChangeRequest[] @relation("ChangeTo")
+  changeRequestsAsApprover ShiftChangeRequest[] @relation("ChangeApprover")
   joinDate  DateTime
   leaveDate DateTime?
   status    EmployeeStatus   @default(ACTIVE)
@@ -157,7 +174,27 @@ model PayRule {
   updatedAt     DateTime @updatedAt
 }
 
-// Shift
+// Shift template — reusable shift definitions
+model ShiftTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  startHour   Int      // hour of day start (0-23)
+  startMinute Int      // minute of day start (0-59)
+  endHour     Int      // hour of day end (0-23)
+  endMinute   Int      // minute of day end (0-59)
+  isNightShift Boolean @default(false) // true if end crosses midnight
+  isDefault   Boolean  @default(false) // system default template
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shifts      Shift[]
+
+  @@index([isDefault])
+}
+
+// Shift — links employee to a date/time at a clinic
 model Shift {
   id          String      @id @default(cuid())
   employeeId  String
@@ -167,12 +204,19 @@ model Shift {
   endTime     DateTime
   role        String?
   status      ShiftStatus @default(CONFIRMED)
+  templateId  String?
   createdBy   String
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
   employee    Employee    @relation(fields: [employeeId], references: [id])
   clinic      Clinic      @relation(fields: [clinicId], references: [id])
+  template    ShiftTemplate? @relation(fields: [templateId], references: [id])
+  changeRequests ShiftChangeRequest[]
+
+  @@index([employeeId, date])
+  @@index([clinicId, date])
+  @@index([status])
 }
 
 // Punch record — APPEND ONLY
@@ -214,4 +258,27 @@ model AuditLog {
   @@index([actorId, createdAt])
   @@index([entity, entityId])
   @@index([clinicId, createdAt])
+}
+
+// Shift change request — swap/cover/report
+model ShiftChangeRequest {
+  id             String       @id @default(cuid())
+  shiftId        String
+  shift          Shift        @relation(fields: [shiftId], references: [id])
+  fromEmployeeId String
+  fromEmployee   Employee     @relation("ChangeFrom", fields: [fromEmployeeId], references: [id])
+  toEmployeeId   String?
+  toEmployee     Employee?    @relation("ChangeTo", fields: [toEmployeeId], references: [id])
+  type           ChangeType
+  reason         String?
+  status         ChangeStatus @default(PENDING)
+  approverId     String?
+  approver       Employee?    @relation("ChangeApprover", fields: [approverId], references: [id])
+  approvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([fromEmployeeId, status])
+  @@index([toEmployeeId, status])
+  @@index([status])
 }

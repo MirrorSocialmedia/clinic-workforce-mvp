@@ -1,0 +1,128 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "診所排班規則配置 — 所有參數可調整，不寫死業務邏輯",
+    "updated_at": "2026-07-05T00:00:00Z"
+  },
+
+  "min_staff_per_shift": {
+    "description": "每時段最少人員配置（按診所和時段分類）",
+    "rules": [
+      {
+        "clinic_id": "*",
+        "shift_label": "早更",
+        "shift_time": "09:00-14:00",
+        "required": {
+          "doctor": 1,
+          "nurse": 1,
+          "receptionist": 1
+        }
+      },
+      {
+        "clinic_id": "*",
+        "shift_label": "午更",
+        "shift_time": "12:30-18:00",
+        "required": {
+          "doctor": 1,
+          "nurse": 1,
+          "receptionist": 1
+        }
+      },
+      {
+        "clinic_id": "*",
+        "shift_label": "晚更",
+        "shift_time": "17:00-22:00",
+        "required": {
+          "doctor": 1,
+          "nurse": 1
+        }
+      }
+    ],
+    "config": {
+      "allow_partial_coverage": false,
+      "partial_coverage_warning_threshold": 0.8,
+      "description": "allow_partial_coverage=false 時，不滿足最低人數禁止排班"
+    }
+  },
+
+  "working_hour_rules": {
+    "max_consecutive_hours": 12,
+    "max_daily_hours": 12,
+    "max_weekly_hours": 60,
+    "max_weekly_hours_soft": 52,
+    "min_rest_between_shifts": 8,
+    "description": "max_consecutive_hours：連續工時上限；min_rest_between_shifts：班次間最少休息時數；max_weekly_hours_soft：超過此數觸發警告但不強制阻止"
+  },
+
+  "break_rules": {
+    "mandatory_break_after_hours": 5,
+    "minimum_break_minutes": 30,
+    "paid_break_minutes": 30,
+    "max_continuous_work_without_break": 5,
+    "description": "連續工作 5 小時後必須休息至少 30 分鐘"
+  },
+
+  "shift_change_rules": {
+    "min_notice_hours": 12,
+    "self_service_swap": true,
+    "swap_requires_approval": true,
+    "max_swaps_per_month": 4,
+    "description": "改班需提前 12 小時通知；員工可自行互換班次但需審批"
+  },
+
+  "leave_impact_rules": {
+    "leave_requires_coverage": true,
+    "coverage_types": ["self_swap", "manager_assign", "auto_waitlist"],
+    "auto_fill_enabled": false,
+    "description": "請假時段必須有替代人員；覆蓋方式：自行互換 / 經理指派 / 待候補名單"
+  },
+
+  "conflict_rules": {
+    "collision_check": true,
+    "allow_overlap_minutes": 15,
+    "description": "禁止同一員工在同一時段有重叠班次；allow_overlap_minutes 允許 15 分鐘交接重疊"
+  },
+
+  "clinic_specific_overrides": {
+    "description": "特定診所可覆蓋全局規則",
+    "overrides": [
+      {
+        "clinic_id": "clinic_a",
+        "override": {
+          "max_consecutive_hours": 10,
+          "min_rest_between_shifts": 10
+        }
+      },
+      {
+        "clinic_id": "clinic_b",
+        "override": {
+          "min_staff_per_shift": [
+            {
+              "shift_time": "09:00-14:00",
+              "required": {
+                "doctor": 1,
+                "nurse": 2
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "weekend_rules": {
+    "saturday_required": true,
+    "sunday_required": true,
+    "sunday_premium_multiplier": 2.0,
+    "rotating_weekend": true,
+    "min_weekend_off_per_month": 2,
+    "description": "週末需排班；週日有薪酬倍率；支援輪休制；每月最少 2 個週末休息"
+  },
+
+  "holiday_rules": {
+    "statutory_holiday_off": true,
+    "working_on_holiday_multiplier": 3.0,
+    "holiday_surcharge_payable": true,
+    "description": "法定假日放假；如需要上班則 3 倍薪酬"
+  }
+}

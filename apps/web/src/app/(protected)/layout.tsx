@@ -59,6 +59,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/dashboard', label: '📊 儀表板', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] },
     { path: '/clinics', label: '🏥 診所管理', roles: ['OWNER'] },
     { path: '/employees', label: '👥 員工管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/scheduling', label: '📅 排班管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] },
     { path: '/users', label: '🔑 用戶管理', roles: ['OWNER'] },
     { path: '/audit-logs', label: '📝 審計日誌', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
   ]

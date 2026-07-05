@@ -48,6 +48,20 @@ export const CONFIG = {
     'POST /api/employees/:id/pay-rules': ['OWNER'],
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
+    // Shift routes
+    'GET /api/shifts': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/shifts': ['OWNER', 'MANAGER'],
+    'PUT /api/shifts/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/shifts/:id': ['OWNER', 'MANAGER'],
+    'POST /api/shifts/validate': ['OWNER', 'MANAGER'],
+    'GET /api/shifts/templates': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/shifts/templates': ['OWNER'],
+    'GET /api/shifts/my-schedule': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Shift change request routes
+    'POST /api/shift-changes': ['OWNER', 'MANAGER', 'EMPLOYEE'],
+    'PUT /api/shift-changes/:id': ['OWNER', 'MANAGER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
