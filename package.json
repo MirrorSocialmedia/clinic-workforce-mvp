@@ -1,0 +1,9 @@
+{
+  "name": "clinic-workforce-mvp",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @clinic/web dev",
+    "build": "pnpm --filter @clinic/web build"
+  }
+}

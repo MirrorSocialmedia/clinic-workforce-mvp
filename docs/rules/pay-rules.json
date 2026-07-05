@@ -1,0 +1,269 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "診所計薪規則配置 — 所有參數可調整，不寫死業務邏輯",
+    "currency": "HKD",
+    "updated_at": "2026-07-05T00:00:00Z"
+  },
+  "rules": {
+    "doctor_split": {
+      "id": "doctor_split",
+      "label": "醫生拆帳",
+      "pay_type": "SPLIT",
+      "description": "按診金收入拆帳比例計算",
+      "parameters": {
+        "split_ratio": 0.3,
+        "base_guarantee": 20000,
+        "monthly_minimum": true
+      },
+      "formula": "max(base_guarantee, consultation_fees * split_ratio)",
+      "formula_description": "取底薪保證額與拆帳收入的較大值",
+      "config_json": {
+        "split_ratio": {
+          "type": "number",
+          "min": 0,
+          "max": 1,
+          "step": 0.01,
+          "default": 0.3,
+          "description": "拆帳比例（醫生佔診金收入的比例）"
+        },
+        "base_guarantee": {
+          "type": "number",
+          "min": 0,
+          "default": 20000,
+          "description": "每月底薪保證額"
+        },
+        "monthly_minimum": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否啟用底薪保底（拆帳收入低於底薪時按底薪支付）"
+        }
+      }
+    },
+    "nurse_hourly": {
+      "id": "nurse_hourly",
+      "label": "護士時薪+加班",
+      "pay_type": "HOURLY",
+      "description": "按時薪計算，超過門檻時數按倍率計加班",
+      "parameters": {
+        "base_rate": 65,
+        "ot_threshold": 44,
+        "ot_multiplier": 1.5,
+        "ot_double_threshold": 60,
+        "ot_double_multiplier": 2.0
+      },
+      "formula": "tier1 + tier2 + tier3",
+      "formula_description": "tier1 = min(hours, ot_threshold) * base_rate; tier2 = max(0, min(hours, ot_double_threshold) - ot_threshold) * base_rate * ot_multiplier; tier3 = max(0, hours - ot_double_threshold) * base_rate * ot_double_multiplier",
+      "config_json": {
+        "base_rate": {
+          "type": "number",
+          "min": 0,
+          "default": 65,
+          "description": "基本時薪（港幣/小時）"
+        },
+        "ot_threshold": {
+          "type": "number",
+          "min": 0,
+          "default": 44,
+          "description": "加班門檻（每月時數，超過此數開始計加班）"
+        },
+        "ot_multiplier": {
+          "type": "number",
+          "min": 1,
+          "max": 3,
+          "step": 0.1,
+          "default": 1.5,
+          "description": "第一階加班倍率"
+        },
+        "ot_double_threshold": {
+          "type": "number",
+          "min": 0,
+          "default": 60,
+          "description": "雙倍加班門檻（每月時數，超過此數按雙倍計）"
+        },
+        "ot_double_multiplier": {
+          "type": "number",
+          "min": 1,
+          "max": 3,
+          "step": 0.1,
+          "default": 2.0,
+          "description": "第二階加班倍率（雙倍）"
+        }
+      }
+    },
+    "nurse_night_shift": {
+      "id": "nurse_night_shift",
+      "label": "護士夜更津貼",
+      "pay_type": "HOURLY",
+      "description": "夜更班次額外津貼（疊加在時薪之上）",
+      "parameters": {
+        "night_start": "22:00",
+        "night_end": "06:00",
+        "night_allowance_per_hour": 20
+      },
+      "formula": "base_pay + night_hours * night_allowance_per_hour",
+      "formula_description": "正常時薪 + 夜更小時數 × 夜更津貼",
+      "config_json": {
+        "night_start": {
+          "type": "string",
+          "format": "HH:mm",
+          "default": "22:00",
+          "description": "夜更起始時間"
+        },
+        "night_end": {
+          "type": "string",
+          "format": "HH:mm",
+          "default": "06:00",
+          "description": "夜更結束時間"
+        },
+        "night_allowance_per_hour": {
+          "type": "number",
+          "min": 0,
+          "default": 20,
+          "description": "夜更津貼（港幣/小時）"
+        }
+      }
+    },
+    "receptionist_monthly": {
+      "id": "receptionist_monthly",
+      "label": "前台月薪",
+      "pay_type": "MONTHLY",
+      "description": "固定月薪，缺勤按比例扣減",
+      "parameters": {
+        "base_salary": 18000,
+        "working_days_per_month": 26,
+        "absence_deduction_rate": 0.5,
+        "holiday_pay_rate": 1.0
+      },
+      "formula": "base_salary - absent_days * (base_salary / working_days_per_month) * absence_deduction_rate",
+      "formula_description": "月薪 − 缺勤日數 × 日薪 × 扣減比例",
+      "config_json": {
+        "base_salary": {
+          "type": "number",
+          "min": 0,
+          "default": 18000,
+          "description": "基本月薪（港幣）"
+        },
+        "working_days_per_month": {
+          "type": "number",
+          "min": 1,
+          "default": 26,
+          "description": "每月標準工作日數（用於計算日薪）"
+        },
+        "absence_deduction_rate": {
+          "type": "number",
+          "min": 0,
+          "max": 1,
+          "step": 0.1,
+          "default": 0.5,
+          "description": "缺勤扣減比例（0.5 = 請假一天扣半天薪）"
+        },
+        "holiday_pay_rate": {
+          "type": "number",
+          "min": 0,
+          "default": 1.0,
+          "description": "法定假日薪酬倍率"
+        }
+      }
+    },
+    "overtime_general": {
+      "id": "overtime_general",
+      "label": "通用加班規則",
+      "pay_type": "HOURLY",
+      "description": "通用加班倍率（適用所有時薪員工）",
+      "parameters": {
+        "weekday_ot_multiplier": 1.5,
+        "sunday_ot_multiplier": 2.0,
+        "holiday_ot_multiplier": 3.0,
+        "overtime_approval_required": true,
+        "max_ot_hours_per_month": 40
+      },
+      "formula": "sum(hours_by_day * multiplier_for_day)",
+      "formula_description": "按星期分類計算：工作日 1.5x / 星期日 2.0x / 法定假日 3.0x",
+      "config_json": {
+        "weekday_ot_multiplier": {
+          "type": "number",
+          "min": 1,
+          "default": 1.5,
+          "description": "平日（週一至週六）加班倍率"
+        },
+        "sunday_ot_multiplier": {
+          "type": "number",
+          "min": 1,
+          "default": 2.0,
+          "description": "星期日加班倍率"
+        },
+        "holiday_ot_multiplier": {
+          "type": "number",
+          "min": 1,
+          "default": 3.0,
+          "description": "法定假日加班倍率"
+        },
+        "overtime_approval_required": {
+          "type": "boolean",
+          "default": true,
+          "description": "加班是否需事前審批"
+        },
+        "max_ot_hours_per_month": {
+          "type": "number",
+          "min": 0,
+          "default": 40,
+          "description": "每月加班上限（小時，超過需特批）"
+        }
+      }
+    },
+    "bonus_allowance": {
+      "id": "bonus_allowance",
+      "label": "獎金與津貼",
+      "pay_type": "MONTHLY",
+      "description": "可配置的獎金與津貼項目",
+      "parameters": {
+        "items": [
+          {
+            "name": "交通津貼",
+            "type": "fixed",
+            "amount": 500,
+            "conditional": false
+          },
+          {
+            "name": "滿勤獎金",
+            "type": "fixed",
+            "amount": 1000,
+            "conditional": true,
+            "condition": "absent_days == 0"
+          },
+          {
+            "name": "績效獎金",
+            "type": "percentage",
+            "base": "base_salary",
+            "percentage": 0.1,
+            "conditional": true,
+            "condition": "performance_score >= 80"
+          }
+        ]
+      },
+      "formula": "sum(item_amount where condition_met)",
+      "formula_description": "累加所有符合條件的津貼與獎金項目",
+      "config_json": {
+        "items": {
+          "type": "array",
+          "description": "津貼/獎金項目列表，每項可固定或按比例"
+        }
+      }
+    }
+  },
+  "global_settings": {
+    "tax_calculator": {
+      "enabled": true,
+      "mpf_employer_rate": 0.05,
+      "mpf_employee_rate": 0.05,
+      "mpf_cap": 3000,
+      "tax_return_filing_deadline": "06-30"
+    },
+    "payroll_date": {
+      "pay_day": 25,
+      "cut_off_day": 20,
+      "description": "每月 20 日截數，25 日發薪"
+    }
+  }
+}
