@@ -18,6 +18,11 @@ async function main() {
 
   // Clean existing data
   await prisma.auditLog.deleteMany()
+  await prisma.notification.deleteMany()
+  await prisma.leaveRequest.deleteMany()
+  await prisma.leaveBalance.deleteMany()
+  await prisma.leaveType.deleteMany()
+  await prisma.hKPublicHoliday.deleteMany()
   await prisma.punchRecord.deleteMany()
   await prisma.shift.deleteMany()
   await prisma.payRule.deleteMany()
@@ -151,6 +156,131 @@ async function main() {
   console.log(`    MANAGER:     91000002 / demo1234 (仁愛診所)`)
   console.log(`    ACCOUNTANT:  91000003 / demo1234 (全部)`)
   console.log(`    EMPLOYEE:    91000004 / demo1234 (旺角診所)`)
+
+  // Create leave types
+  console.log('🏖️ Creating leave types...')
+  const leaveTypes = await Promise.all([
+    prisma.leaveType.create({
+      data: { name: '年假', isPaid: true, annualQuota: 12, color: '#4CAF50' },
+    }),
+    prisma.leaveType.create({
+      data: { name: '病假', isPaid: true, annualQuota: 12, color: '#2196F3' },
+    }),
+    prisma.leaveType.create({
+      data: { name: '事假', isPaid: false, annualQuota: null, color: '#FF9800' },
+    }),
+    prisma.leaveType.create({
+      data: { name: '無薪假', isPaid: false, annualQuota: null, color: '#9E9E9E' },
+    }),
+    prisma.leaveType.create({
+      data: { name: '產假', isPaid: true, annualQuota: 10, color: '#E91E63' },
+    }),
+    prisma.leaveType.create({
+      data: { name: '侍產假', isPaid: true, annualQuota: 5, color: '#9C27B0' },
+    }),
+  ])
+  console.log(`  ✅ Created ${leaveTypes.length} leave types`)
+
+  // Create leave balances for test employees
+  const allEmployees = await prisma.employee.findMany()
+  const currentYear = new Date().getFullYear()
+  for (const emp of allEmployees) {
+    // Annual leave balance
+    await prisma.leaveBalance.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: leaveTypes[0].id,
+        year: currentYear,
+        entitled: 12,
+        used: 0,
+        remaining: 12,
+      },
+    })
+    // Sick leave balance
+    await prisma.leaveBalance.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: leaveTypes[1].id,
+        year: currentYear,
+        entitled: 12,
+        used: 0,
+        remaining: 12,
+      },
+    })
+  }
+  console.log(`  ✅ Created leave balances for ${allEmployees.length} employees`)
+
+  // Create HK public holidays (2026-2028)
+  console.log('🇭🇰 Creating HK public holidays...')
+  const hkHolidays = [
+    // 2026
+    { date: new Date('2026-01-01'), name: '元旦' },
+    { date: new Date('2026-02-17'), name: '農曆新年（正月初一）' },
+    { date: new Date('2026-02-18'), name: '農曆新年（正月初二）' },
+    { date: new Date('2026-02-19'), name: '農曆新年（正月初三）' },
+    { date: new Date('2026-04-06'), name: '耶穌受難節' },
+    { date: new Date('2026-04-07'), name: '耶穌受難節（星期一）' },
+    { date: new Date('2026-04-20'), name: '復活節後首日星期一' },
+    { date: new Date('2026-04-30'), name: '勞工節' },
+    { date: new Date('2026-05-29'), name: '佛誕' },
+    { date: new Date('2026-06-19'), name: '端午節' },
+    { date: new Date('2026-07-01'), name: '香港特別行政區成立紀念日' },
+    { date: new Date('2026-09-08'), name: '中秋節後一日' },
+    { date: new Date('2026-10-01'), name: '國慶日' },
+    { date: new Date('2026-10-14'), name: '重陽節' },
+    { date: new Date('2026-12-25'), name: '聖誕節' },
+    { date: new Date('2026-12-26'), name: '聖誕節後一日' },
+    // 2027
+    { date: new Date('2027-01-01'), name: '元旦' },
+    { date: new Date('2027-02-06'), name: '農曆新年（正月初一）' },
+    { date: new Date('2027-02-07'), name: '農曆新年（正月初二）' },
+    { date: new Date('2027-02-08'), name: '農曆新年（正月初三）' },
+    { date: new Date('2027-04-02'), name: '耶穌受難節' },
+    { date: new Date('2027-04-05'), name: '復活節後首日星期一' },
+    { date: new Date('2027-04-30'), name: '勞工節' },
+    { date: new Date('2027-05-18'), name: '佛誕' },
+    { date: new Date('2027-06-10'), name: '端午節' },
+    { date: new Date('2027-07-01'), name: '香港特別行政區成立紀念日' },
+    { date: new Date('2027-08-26'), name: '中秋節後一日' },
+    { date: new Date('2027-10-01'), name: '國慶日' },
+    { date: new Date('2027-11-02'), name: '重陽節' },
+    { date: new Date('2027-12-25'), name: '聖誕節' },
+    { date: new Date('2027-12-26'), name: '聖誕節後一日' },
+    // 2028
+    { date: new Date('2028-01-01'), name: '元旦' },
+    { date: new Date('2028-01-26'), name: '農曆新年（正月初一）' },
+    { date: new Date('2028-01-27'), name: '農曆新年（正月初二）' },
+    { date: new Date('2028-01-28'), name: '農曆新年（正月初三）' },
+    { date: new Date('2028-03-30'), name: '耶穌受難節' },
+    { date: new Date('2028-04-02'), name: '復活節後首日星期一' },
+    { date: new Date('2028-04-30'), name: '勞工節' },
+    { date: new Date('2028-05-07'), name: '佛誕' },
+    { date: new Date('2028-06-28'), name: '端午節' },
+    { date: new Date('2028-07-01'), name: '香港特別行政區成立紀念日' },
+    { date: new Date('2028-09-15'), name: '中秋節後一日' },
+    { date: new Date('2028-10-01'), name: '國慶日' },
+    { date: new Date('2028-10-21'), name: '重陽節' },
+    { date: new Date('2028-12-25'), name: '聖誕節' },
+    { date: new Date('2028-12-26'), name: '聖誕節後一日' },
+  ]
+
+  // Deduplicate by date
+  const uniqueHolidays = new Map<string, typeof hkHolidays[0]>()
+  for (const h of hkHolidays) {
+    const key = h.date.toISOString().split('T')[0]
+    if (!uniqueHolidays.has(key)) {
+      uniqueHolidays.set(key, h)
+    }
+  }
+
+  for (const h of uniqueHolidays.values()) {
+    await prisma.hKPublicHoliday.upsert({
+      where: { date: h.date },
+      create: h,
+      update: {},
+    })
+  }
+  console.log(`  ✅ Created ${uniqueHolidays.size} HK public holidays`)
 
   // Create audit log entry to prove it works
   await prisma.auditLog.create({

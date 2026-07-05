@@ -80,6 +80,33 @@ export const CONFIG = {
     // Daily hash routes
     'POST /api/daily-hash': ['OWNER', 'MANAGER'],
     'GET /api/daily-hash/:date': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
+    // Leave type routes
+    'GET /api/leave-types': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/leave-types': ['OWNER'],
+    'PUT /api/leave-types/:id': ['OWNER'],
+
+    // Leave request routes
+    'POST /api/leave-requests': ['OWNER', 'MANAGER', 'EMPLOYEE'],
+    'GET /api/leave-requests': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'PUT /api/leave-requests/:id': ['OWNER', 'MANAGER'],
+
+    // Leave balance routes
+    'GET /api/leave-balance': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // HK public holiday routes
+    'GET /api/hk-public-holidays': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Employee self-service routes
+    'GET /api/my/schedule': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/my/punches': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/my/leave': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/my/summary': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Notification routes
+    'GET /api/notifications': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'PUT /api/notifications/:id/read': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/notifications/read-all': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)

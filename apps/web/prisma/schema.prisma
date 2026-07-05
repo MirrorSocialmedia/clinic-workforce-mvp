@@ -79,6 +79,13 @@ enum CorrectionStatus {
   REJECTED
 }
 
+// Leave request status
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // Clinic entity
 model Clinic {
   id        String   @id @default(cuid())
@@ -145,6 +152,8 @@ model Employee {
   changeRequestsFrom ShiftChangeRequest[] @relation("ChangeFrom")
   changeRequestsTo   ShiftChangeRequest[] @relation("ChangeTo")
   changeRequestsAsApprover ShiftChangeRequest[] @relation("ChangeApprover")
+  leaveRequests LeaveRequest[]
+  leaveBalances LeaveBalance[]
   joinDate  DateTime
   leaveDate DateTime?
   status    EmployeeStatus   @default(ACTIVE)
@@ -349,4 +358,77 @@ model ShiftChangeRequest {
   @@index([fromEmployeeId, status])
   @@index([toEmployeeId, status])
   @@index([status])
+}
+
+// Leave type — 年假/病假/無薪假 etc.
+model LeaveType {
+  id           String   @id @default(cuid())
+  clinicId     String?  // null = global type
+  name         String   // 年假/病假/無薪假
+  isPaid       Boolean  @default(true)
+  annualQuota  Float?   // 年度額度（天）
+  color        String?  // UI 顏色標記
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  requests     LeaveRequest[]
+  balances     LeaveBalance[]
+}
+
+// Leave request — employee applies for leave
+model LeaveRequest {
+  id          String         @id @default(cuid())
+  employeeId  String
+  employee    Employee       @relation(fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType      @relation(fields: [leaveTypeId], references: [id])
+  startDate   DateTime
+  endDate     DateTime
+  days        Float
+  reason      String?
+  status      LeaveStatus    @default(PENDING)
+  approverId  String?
+  approvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+
+  @@index([employeeId, status])
+  @@index([leaveTypeId])
+}
+
+// Leave balance — annual quota tracking per employee
+model LeaveBalance {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+  year        Int       // 年份
+  entitled    Float     // 總額
+  used        Float     @default(0)
+  remaining   Float     @default(0)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@index([employeeId, year])
+}
+
+// Notification — in-app notifications
+model Notification {
+  id             String   @id @default(cuid())
+  employeeId     String
+  type           String   // LEAVE_APPROVED, LEAVE_REJECTED, SHIFT_CHANGED, CORRECTION_APPROVED
+  content        String
+  relatedEntity  String?  // LeaveRequest, Shift, PunchCorrection
+  relatedId      String?
+  isRead         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([employeeId, isRead, createdAt])
+}
+
+// HK Public Holiday
+model HKPublicHoliday {
+  id    String   @id @default(cuid())
+  date  DateTime @unique
+  name  String
 }

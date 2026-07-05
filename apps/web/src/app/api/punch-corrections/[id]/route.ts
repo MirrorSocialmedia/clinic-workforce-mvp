@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import { prisma, createAuditLog } from '@/lib/prisma'
 import { setAuditContext } from '@/lib/audit-context'
+import { createNotification } from '@/lib/notification'
 
 // ============================================================
 // PUT /api/punch-corrections/[id] — Approve/reject a correction
@@ -97,6 +98,17 @@ export async function PUT(
       entity: 'PunchCorrection',
       entityId: correction.id,
       notes: `${action} punch correction #${id}${notes ? `: ${notes}` : ''}`,
+    })
+
+    // Send notification to employee
+    await createNotification({
+      employeeId: correction.employeeId,
+      type: 'CORRECTION_APPROVED',
+      content: action === 'APPROVE'
+        ? `Your punch correction request has been approved.`
+        : `Your punch correction request has been rejected.${notes ? ` Reason: ${notes}` : ''}`,
+      relatedEntity: 'PunchCorrection',
+      relatedId: correction.id,
     })
 
     return NextResponse.json({ success: true, correction: updated })

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { setAuditContext } from '@/lib/audit-context'
+import { createNotification } from '@/lib/notification'
 
 // ============================================================
 // PUT /api/shift-changes/[id] — approve/reject shift change
@@ -111,6 +112,15 @@ export async function PUT(
         },
       })
 
+      // Send notification to requesting employee
+      await createNotification({
+        employeeId: changeRequest.fromEmployeeId,
+        type: 'SHIFT_CHANGED',
+        content: `Your shift change request (${changeRequest.type}) has been rejected.${reason ? ` Reason: ${reason}` : ''}`,
+        relatedEntity: 'ShiftChangeRequest',
+        relatedId: id,
+      })
+
       return NextResponse.json({ success: true, changeRequest: updated })
     }
 
@@ -189,6 +199,15 @@ export async function PUT(
           beforeJson,
           afterJson: JSON.stringify(updated),
         },
+      })
+
+      // Send notification to requesting employee
+      await createNotification({
+        employeeId: changeRequest.fromEmployeeId,
+        type: 'SHIFT_CHANGED',
+        content: `Your shift change request (${changeRequest.type}) has been approved.`,
+        relatedEntity: 'ShiftChangeRequest',
+        relatedId: id,
       })
 
       return NextResponse.json({ success: true, changeRequest: updated })
