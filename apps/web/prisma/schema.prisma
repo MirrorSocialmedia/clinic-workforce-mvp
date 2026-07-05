@@ -72,6 +72,13 @@ enum ChangeStatus {
   COMPLETED
 }
 
+// Punch correction status
+enum CorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // Clinic entity
 model Clinic {
   id        String   @id @default(cuid())
@@ -85,6 +92,8 @@ model Clinic {
   employees EmployeeClinic[]
   shifts    Shift[]
   punches   PunchRecord[]
+  qrTokens  QRToken[]
+  dailyHashes DailyHash[]
 }
 
 // User entity — system login account
@@ -130,8 +139,9 @@ model Employee {
   user      User             @relation(fields: [userId], references: [id])
   clinics   EmployeeClinic[]
   payRules  PayRule[]
-  shifts    Shift[]
-  punches   PunchRecord[]
+  shifts           Shift[]
+  punches          PunchRecord[]
+  punchCorrections PunchCorrection[]
   changeRequestsFrom ShiftChangeRequest[] @relation("ChangeFrom")
   changeRequestsTo   ShiftChangeRequest[] @relation("ChangeTo")
   changeRequestsAsApprover ShiftChangeRequest[] @relation("ChangeApprover")
@@ -219,7 +229,7 @@ model Shift {
   @@index([status])
 }
 
-// Punch record — APPEND ONLY
+// Punch record — APPEND ONLY (no UPDATE/DELETE API)
 model PunchRecord {
   id          String      @id @default(cuid())
   employeeId  String
@@ -235,7 +245,65 @@ model PunchRecord {
   employee    Employee    @relation(fields: [employeeId], references: [id])
   clinic      Clinic      @relation(fields: [clinicId], references: [id])
 
+  corrections PunchCorrection[] // corrections referencing this record
+
   @@index([employeeId, punchTime])
+}
+
+// Punch correction — overlay on top of punch records (never modifies originals)
+model PunchCorrection {
+  id             String           @id @default(cuid())
+  punchRecordId  String?          // null = no original record exists
+  employeeId     String
+  clinicId       String
+  correctedTime  DateTime
+  punchType      PunchType
+  reason         String?
+  requestedBy    String           // userId of requester
+  approvedBy     String?          // userId of approver
+  status         CorrectionStatus @default(PENDING)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  // References
+  punchRecord    PunchRecord?     @relation(fields: [punchRecordId], references: [id])
+  employee       Employee         @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, createdAt])
+  @@index([status])
+}
+
+// QR token — short-lived dynamic tokens for punch verification
+model QRToken {
+  id        String   @id @default(cuid())
+  clinicId  String
+  token     String   @unique
+  issuedAt  DateTime
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  usedBy    String?  // employeeId
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@index([clinicId, expiresAt])
+  @@index([token])
+}
+
+// Daily hash — SHA-256 fingerprint of all punch records for a clinic on a given date
+model DailyHash {
+  id          String   @id @default(cuid())
+  clinicId    String
+  date        DateTime // YYYY-01-01 format (date only)
+  hash        String   // SHA-256 hex string
+  recordCount Int
+  createdAt   DateTime @default(now())
+
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([clinicId, date])
+  @@index([clinicId, date])
 }
 
 // Audit log — APPEND ONLY

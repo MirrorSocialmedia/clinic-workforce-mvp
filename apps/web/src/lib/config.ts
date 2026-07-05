@@ -62,6 +62,24 @@ export const CONFIG = {
     // Shift change request routes
     'POST /api/shift-changes': ['OWNER', 'MANAGER', 'EMPLOYEE'],
     'PUT /api/shift-changes/:id': ['OWNER', 'MANAGER'],
+
+    // Punch / attendance routes
+    'POST /api/punch': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/punches': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/punches/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/punch/my-records': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Punch correction routes
+    'POST /api/punch-corrections': ['OWNER', 'MANAGER', 'EMPLOYEE'],
+    'GET /api/punch-corrections': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'PUT /api/punch-corrections/:id': ['OWNER', 'MANAGER'],
+
+    // QR token routes
+    'GET /api/qr-tokens': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Daily hash routes
+    'POST /api/daily-hash': ['OWNER', 'MANAGER'],
+    'GET /api/daily-hash/:date': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)

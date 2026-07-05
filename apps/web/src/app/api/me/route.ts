@@ -24,6 +24,12 @@ export async function GET(req: NextRequest) {
   }
 
   const { password, ...safeUser } = user
+  const clinicIds = user.clinics.map((uc: any) => uc.clinicId)
 
-  return NextResponse.json({ user: safeUser })
+  return NextResponse.json({
+    user: {
+      ...safeUser,
+      clinicIds,
+    },
+  })
 }

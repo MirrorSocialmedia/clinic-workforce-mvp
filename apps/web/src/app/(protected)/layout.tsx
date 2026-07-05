@@ -57,6 +57,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   const navItems = [
     { path: '/dashboard', label: '📊 儀表板', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] },
+    { path: '/punch', label: '📱 打卡', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] },
+    { path: '/clinic/qr', label: '🏥 診所 QR 碼', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] },
+    { path: '/attendance', label: '📋 考勤記錄', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/hash', label: '🔒 每日雜湊', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/clinics', label: '🏥 診所管理', roles: ['OWNER'] },
     { path: '/employees', label: '👥 員工管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/scheduling', label: '📅 排班管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] },
