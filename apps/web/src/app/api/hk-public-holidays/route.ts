@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
+// Skip static generation — this is a dynamic API
+export const dynamic = 'force-dynamic'
+
 // ============================================================
 // GET /api/hk-public-holidays — List HK public holidays
 // All roles

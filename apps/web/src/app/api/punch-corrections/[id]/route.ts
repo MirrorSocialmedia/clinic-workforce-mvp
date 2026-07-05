@@ -41,37 +41,45 @@ export async function PUT(
 
     const status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED'
 
-    const updated = await prisma.punchCorrection.update({
-      where: { id },
-      data: { status: status as any, approvedBy: session.userId },
-    })
+    // Transaction: correction update + audit log (atomic)
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.punchCorrection.update({
+        where: { id },
+        data: { status: status as any, approvedBy: session.userId },
+      })
 
-    // If approved and no original punch record exists, create one
-    if (status === 'APPROVED' && !correction.punchRecordId) {
-      await prisma.punchRecord.create({
+      // If approved and no original punch record exists, create one
+      if (status === 'APPROVED' && !correction.punchRecordId) {
+        await tx.punchRecord.create({
+          data: {
+            employeeId: correction.employeeId,
+            clinicId: correction.clinicId,
+            punchTime: correction.correctedTime,
+            punchType: correction.punchType,
+            source: 'MANUAL_CORRECTION' as any,
+            tokenValid: null,
+            notes: notes || `Corrected via punch correction #${correction.id}: ${correction.reason || 'N/A'}`,
+          },
+        })
+      }
+
+      // Audit log in same transaction
+      await tx.auditLog.create({
         data: {
-          employeeId: correction.employeeId,
-          clinicId: correction.clinicId,
-          punchTime: correction.correctedTime,
-          punchType: correction.punchType,
-          source: 'MANUAL_CORRECTION',
-          tokenValid: null,
-          notes: notes || `Corrected via punch correction #${correction.id}: ${correction.reason || 'N/A'}`,
+          actorId: session.userId,
+          action: 'CORRECTION_' + action,
+          entity: 'PunchCorrection',
+          entityId: correction.id,
+          notes: `${action} punch correction #${id}${notes ? `: ${notes}` : ''}`,
+          ipAddress: auditCtx.ip || null,
+          userAgent: auditCtx.ua || null,
         },
       })
-    }
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'CORRECTION_' + action,
-        entity: 'PunchCorrection',
-        entityId: correction.id,
-        notes: `${action} punch correction #${id}${notes ? `: ${notes}` : ''}`,
-        ipAddress: auditCtx.ip || null,
-        userAgent: auditCtx.ua || null,
-      },
+      return result
     })
+
+    // Notification outside transaction (non-critical side effect)
 
     await createNotification({
       employeeId: correction.employeeId,
