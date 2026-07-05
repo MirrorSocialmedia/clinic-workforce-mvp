@@ -96,6 +96,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/users', label: '🔑 用戶管理', roles: ['OWNER'] },
     { path: '/hash', label: '🔒 每日雜湊', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/audit-logs', label: '📝 審計日誌', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/payroll', label: '💰 計糧管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/payroll/reports/exceptions', label: '📋 考勤異常', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
   ]
 
   const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))

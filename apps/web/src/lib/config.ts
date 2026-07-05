@@ -107,6 +107,16 @@ export const CONFIG = {
     'GET /api/notifications': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'PUT /api/notifications/:id/read': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/notifications/read-all': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Payroll routes
+    'GET /api/payroll-runs': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/payroll-runs': ['OWNER'],
+    'GET /api/payroll-runs/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'PUT /api/payroll-runs/:id': ['OWNER'],
+    'DELETE /api/payroll-runs/:id': ['OWNER'],
+    'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/payroll-runs/:id/employee/:empId': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/payroll-runs/_exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
