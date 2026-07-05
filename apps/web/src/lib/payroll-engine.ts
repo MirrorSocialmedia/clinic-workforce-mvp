@@ -637,7 +637,7 @@ async function calculateEmployeePayroll(
       leaveDays: approvedLeaveDays,
       absentDays: 0,
       basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
-      detail: { error: 'No active pay rule found', partialDays },
+      detail: { payType: 'MONTHLY' as PayType, error: 'No active pay rule found', partialDays },
     }
   }
 
@@ -715,7 +715,7 @@ async function calculateEmployeePayroll(
     default:
       result = {
         basePay: 0, otPay: 0, splitPay: null, deduction: 0, absentDays: 0,
-        totalPayable: 0, detail: { error: `Unknown pay type: ${payType}` } as PayrollCalcDetail,
+        totalPayable: 0, detail: { payType, error: `Unknown pay type: ${payType}` } as PayrollCalcDetail,
       }
   }
 

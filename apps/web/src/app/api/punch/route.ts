@@ -66,6 +66,10 @@ export async function POST(req: NextRequest) {
 
       const clinicId = validation.clinicId
 
+      if (!clinicId) {
+        return NextResponse.json({ error: 'Token missing clinicId' }, { status: 400 })
+      }
+
       // Verify employee belongs to this clinic
       const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
       if (!empClinicIds.includes(clinicId)) {
