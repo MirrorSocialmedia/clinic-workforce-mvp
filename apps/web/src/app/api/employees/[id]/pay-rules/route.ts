@@ -56,19 +56,6 @@ export async function POST(
         },
       })
 
-      await tx.auditLog.create({
-        data: {
-          actorId: session.userId,
-          action: 'CREATE',
-          entity: 'PayRule',
-          entityId: rule.id,
-          notes: `Added pay rule for employee ${employee.id}. Deactivated ${deactivated.count} existing rule(s).`,
-          afterJson: JSON.stringify(rule),
-          ipAddress: auditCtx.ip || null,
-          userAgent: auditCtx.ua || null,
-        },
-      })
-
       return rule
     })
 

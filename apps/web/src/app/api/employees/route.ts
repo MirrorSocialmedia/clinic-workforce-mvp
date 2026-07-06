@@ -191,19 +191,6 @@ export async function POST(req: NextRequest) {
           },
         })
 
-        // Audit log in same transaction
-        await tx.auditLog.create({
-          data: {
-            actorId: session.userId,
-            action: 'CREATE',
-            entity: 'Employee',
-            entityId: employee.id,
-            afterJson: JSON.stringify(employee),
-            ipAddress: auditCtx.ip || null,
-            userAgent: auditCtx.ua || null,
-          },
-        })
-
         return employee
       })
 

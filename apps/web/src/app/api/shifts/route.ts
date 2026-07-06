@@ -126,6 +126,22 @@ export async function POST(req: NextRequest) {
 
       const shifts: any[] = []
 
+      /**
+       * Check for overlapping shifts (Fix #4: shift overlap validation)
+       */
+      async function checkShiftOverlap(empId: string, dateVal: Date, startVal: Date, endVal: Date) {
+        return prisma.shift.findFirst({
+          where: {
+            employeeId: empId,
+            date: dateVal,
+            status: { not: 'CANCELLED' },
+            OR: [
+              { startTime: { lt: endVal }, endTime: { gt: startVal } },
+            ],
+          },
+        })
+      }
+
       if (bulkDates && Array.isArray(bulkDates) && bulkDates.length > 0) {
         for (const d of bulkDates) {
           const dateBase = new Date(d)
@@ -135,6 +151,15 @@ export async function POST(req: NextRequest) {
           bulkStart.setHours(start.getHours(), start.getMinutes(), start.getSeconds(), start.getMilliseconds())
           const bulkEnd = new Date(dateBase)
           bulkEnd.setHours(end.getHours(), end.getMinutes(), end.getSeconds(), end.getMilliseconds())
+
+          // Fix #4: check overlap before creating
+          const overlap = await checkShiftOverlap(employeeId, bulkStart, bulkStart, bulkEnd)
+          if (overlap) {
+            return NextResponse.json(
+              { error: '該員工在此時段已有排班', conflictShiftId: overlap.id, date: d },
+              { status: 409 }
+            )
+          }
 
           const shift = await prisma.shift.create({
             data: {
@@ -156,24 +181,19 @@ export async function POST(req: NextRequest) {
           })
 
           shifts.push(shift)
-
-          // Audit log
-          await prisma.auditLog.create({
-            data: {
-              actorId: session.userId,
-              action: 'CREATE',
-              entity: 'Shift',
-              entityId: shift.id,
-              clinicId,
-              afterJson: JSON.stringify({ employeeId, clinicId, date: d }),
-              ipAddress: auditCtx.ip || null,
-              userAgent: auditCtx.ua || null,
-            },
-          })
         }
       } else {
         const start = new Date(startTime)
         const end = new Date(endTime)
+
+        // Fix #4: check overlap before creating
+        const overlap = await checkShiftOverlap(employeeId, start, start, end)
+        if (overlap) {
+          return NextResponse.json(
+            { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
+            { status: 409 }
+          )
+        }
 
         const shift = await prisma.shift.create({
           data: {
@@ -195,19 +215,6 @@ export async function POST(req: NextRequest) {
         })
 
         shifts.push(shift)
-
-        await prisma.auditLog.create({
-          data: {
-            actorId: session.userId,
-            action: 'CREATE',
-            entity: 'Shift',
-            entityId: shift.id,
-            clinicId,
-            afterJson: JSON.stringify(shift),
-            ipAddress: auditCtx.ip || null,
-            userAgent: auditCtx.ua || null,
-          },
-        })
       }
 
       return NextResponse.json(

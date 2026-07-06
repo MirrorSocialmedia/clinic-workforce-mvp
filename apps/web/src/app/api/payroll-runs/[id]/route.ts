@@ -87,17 +87,7 @@ export async function PUT(
       include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
     })
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'UPDATE_PAYROLL_RUN',
-        entity: 'PayrollRun',
-        entityId: params.id,
-        notes: `Updated payroll run: ${status ? `status=${status}` : ''} ${notes ? `notes="${notes}"` : ''}`,
-        ipAddress: auditCtx.ip || null,
-        userAgent: auditCtx.ua || null,
-      },
-    })
+    // Audit handled by Prisma extension (PayrollRun ∈ AUDIT_ENTITIES)
 
     return NextResponse.json(updated)
   })
@@ -127,17 +117,7 @@ export async function DELETE(
 
     await prisma.payrollRun.delete({ where: { id: params.id } })
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'DELETE_PAYROLL_RUN',
-        entity: 'PayrollRun',
-        entityId: params.id,
-        notes: `Deleted DRAFT payroll run for ${run.periodMonth.toISOString().slice(0, 7)}`,
-        ipAddress: auditCtx.ip || null,
-        userAgent: auditCtx.ua || null,
-      },
-    })
+    // Audit handled by Prisma extension (PayrollRun ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true })
   })

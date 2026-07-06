@@ -41,7 +41,7 @@ export async function PUT(
 
     const status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED'
 
-    // Transaction: correction update + audit log (atomic)
+    // Transaction: correction update (audit auto-handled by Prisma extension)
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.punchCorrection.update({
         where: { id },
@@ -62,19 +62,6 @@ export async function PUT(
           },
         })
       }
-
-      // Audit log in same transaction
-      await tx.auditLog.create({
-        data: {
-          actorId: session.userId,
-          action: 'CORRECTION_' + action,
-          entity: 'PunchCorrection',
-          entityId: correction.id,
-          notes: `${action} punch correction #${id}${notes ? `: ${notes}` : ''}`,
-          ipAddress: auditCtx.ip || null,
-          userAgent: auditCtx.ua || null,
-        },
-      })
 
       return result
     })

@@ -109,7 +109,23 @@ export async function POST(req: NextRequest) {
 
       const isApprover = session.role === 'OWNER' || session.role === 'MANAGER'
 
-      // Transaction: create request + audit + notification
+      // Fix #5: check for overlapping leave (PENDING or APPROVED)
+      const overlap = await prisma.leaveRequest.findFirst({
+        where: {
+          employeeId: employee.id,
+          status: { in: ['PENDING', 'APPROVED'] },
+          startDate: { lte: new Date(endDate) },
+          endDate: { gte: new Date(startDate) },
+        },
+      })
+      if (overlap) {
+        return NextResponse.json(
+          { error: '該日期範圍已有請假申請' },
+          { status: 409 }
+        )
+      }
+
+      // Transaction: create request (audit handled by Prisma extension)
       const request = await prisma.$transaction(async (tx) => {
         const req = await tx.leaveRequest.create({
           data: {
@@ -125,19 +141,6 @@ export async function POST(req: NextRequest) {
           },
           include: {
             leaveType: { select: { id: true, name: true, isPaid: true, color: true } },
-          },
-        })
-
-        // Audit log
-        await tx.auditLog.create({
-          data: {
-            actorId: session.userId,
-            action: req.status === 'APPROVED' ? 'APPROVE' : 'REQUEST',
-            entity: 'LeaveRequest',
-            entityId: req.id,
-            notes: `Leave request ${req.status}: ${leaveType.name} ${days} days`,
-            ipAddress: auditCtx.ip || null,
-            userAgent: auditCtx.ua || null,
           },
         })
 

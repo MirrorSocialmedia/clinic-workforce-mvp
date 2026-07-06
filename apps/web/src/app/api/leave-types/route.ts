@@ -55,17 +55,7 @@ export async function POST(req: NextRequest) {
         },
       })
 
-      await prisma.auditLog.create({
-        data: {
-          actorId: session.userId,
-          action: 'CREATE',
-          entity: 'LeaveType',
-          entityId: leaveType.id,
-          notes: `Created leave type: ${name}`,
-          ipAddress: auditCtx.ip || null,
-          userAgent: auditCtx.ua || null,
-        },
-      })
+      // Audit handled by Prisma extension (LeaveType ∈ AUDIT_ENTITIES)
 
       return NextResponse.json({ success: true, leaveType }, { status: 201 })
     } catch (error) {

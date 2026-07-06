@@ -76,17 +76,7 @@ export async function PUT(
       relatedId: request.id,
     })
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'LEAVE_' + action,
-        entity: 'LeaveRequest',
-        entityId: request.id,
-        notes: `${action} leave request #${requestId} for ${request.employee.user.name}: ${request.leaveType.name} ${request.days} days${notes ? ` — ${notes}` : ''}`,
-        ipAddress: auditCtx.ip || null,
-        userAgent: auditCtx.ua || null,
-      },
-    })
+    // Audit handled by Prisma extension (LeaveRequest ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true, leaveRequest: updated })
   })

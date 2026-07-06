@@ -68,17 +68,7 @@ export async function POST(req: NextRequest) {
         },
       })
 
-      await prisma.auditLog.create({
-        data: {
-          actorId: session.userId,
-          action: 'CREATE',
-          entity: 'ShiftTemplate',
-          entityId: template.id,
-          afterJson: JSON.stringify(template),
-          ipAddress: auditCtx.ip || null,
-          userAgent: auditCtx.ua || null,
-        },
-      })
+      // Audit handled by Prisma extension
 
       return NextResponse.json({ success: true, template }, { status: 201 })
     } catch (error) {

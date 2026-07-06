@@ -120,19 +120,6 @@ export async function PUT(
         },
       })
 
-      await tx.auditLog.create({
-        data: {
-          actorId: session.userId,
-          action: 'UPDATE',
-          entity: 'Employee',
-          entityId: employee.id,
-          beforeJson,
-          afterJson: JSON.stringify(updated),
-          ipAddress: auditCtx.ip || null,
-          userAgent: auditCtx.ua || null,
-        },
-      })
-
       return updated
     })
 

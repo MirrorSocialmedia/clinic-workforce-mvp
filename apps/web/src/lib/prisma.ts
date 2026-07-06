@@ -9,15 +9,80 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-const rawPrisma = globalForPrisma.prisma ?? new PrismaClient({
+const base = globalForPrisma.prisma ?? new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
 })
 
 if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = rawPrisma
+  globalForPrisma.prisma = base
 }
 
-export const prisma = globalForPrisma.prisma ?? rawPrisma
+// ============================================================
+// Prisma Extension — Auto-audit all write operations
+// ============================================================
+
+const AUDIT_ENTITIES = new Set([
+  'User', 'Clinic', 'Employee', 'PayRule', 'Shift', 'ShiftChangeRequest',
+  'PunchCorrection', 'LeaveRequest', 'LeaveType', 'LeaveBalance',
+  'ConsultationRevenue', 'PayrollRun', 'PayrollItem', 'DailyHash',
+  // NOTE: AuditLog is intentionally excluded to prevent infinite recursion
+  // NOTE: PunchRecord is excluded — punch route handles audit manually in $transaction
+])
+
+const WRITE_OPS = new Set([
+  'create', 'update', 'delete', 'upsert',
+  'createMany', 'updateMany', 'deleteMany',
+])
+
+function safeStringify(o: unknown): string | null {
+  try { return JSON.stringify(o) } catch { return null }
+}
+
+const extended = base.$extends({
+  query: {
+    $allModels: {
+      async $allOperations({ model, operation, args, query }) {
+        const isWrite = WRITE_OPS.has(operation)
+        const shouldAudit = isWrite && model && AUDIT_ENTITIES.has(model)
+
+        if (!shouldAudit) {
+          return query(args)
+        }
+
+        const result = await query(args)
+
+        const ctx = getAuditContext()
+        if (ctx) {
+          const entityId = (result as any)?.id ?? (args as any)?.where?.id ?? 'batch'
+
+          // Use base (raw) client for audit writes to avoid re-triggering the extension
+          await base.auditLog.create({
+            data: {
+              actorId: ctx.actorId,
+              action: operation.toUpperCase(),
+              entity: model,
+              entityId: String(entityId),
+              afterJson: safeStringify(result),
+              ipAddress: ctx.ip ?? null,
+              userAgent: ctx.ua ?? null,
+            },
+          })
+        }
+
+        return result
+      },
+    },
+  },
+})
+
+// ============================================================
+// Exports
+// ============================================================
+
+// Extended client — auto-audit enabled (default for all routes)
+export const prisma = extended as unknown as PrismaClient
+// Raw client — no auto-audit (use inside $transaction or for AuditLog writes)
+export const basePrisma = base
 export default prisma
 
 // ============================================================
@@ -36,14 +101,14 @@ interface AuditWrite {
 }
 
 /**
- * Write an audit log entry using the shared singleton.
+ * Write an audit log entry using the raw singleton (bypasses extension).
  * Uses the ALS audit context for actorId / ip / ua.
  */
 export async function writeAuditLog(data: AuditWrite): Promise<void> {
   const ctx = getAuditContext()
   if (!ctx) return
 
-  await prisma.auditLog.create({
+  await base.auditLog.create({
     data: {
       actorId: ctx.actorId,
       action: data.action,
@@ -60,7 +125,8 @@ export async function writeAuditLog(data: AuditWrite): Promise<void> {
 
 /**
  * Wrap a Prisma mutation with automatic audit logging.
- * Uses the shared singleton (no new PrismaClient).
+ * Uses the raw singleton (no new PrismaClient).
+ * Audit failures now throw instead of being swallowed.
  * Usage: await withAudit(prisma.clinic.create({ data: {...} }))
  */
 export async function withAudit<T>(
@@ -84,9 +150,9 @@ export async function withAudit<T>(
       afterJson: JSON.stringify(result),
     })
   } catch (err) {
-    // Audit write failure is non-fatal for the mutation itself,
-    // but if called within a transaction, the rollback will propagate.
-    console.error('⚠️ Failed to write audit log:', err)
+    // Audit write failure = transaction rollback
+    // No longer silent console.error
+    throw new Error(`Audit write failed: ${err instanceof Error ? err.message : String(err)}`)
   }
 
   return result
@@ -94,7 +160,7 @@ export async function withAudit<T>(
 
 /**
  * Explicit audit log creation (for login/logout etc.)
- * Uses shared singleton — no new PrismaClient().
+ * Uses raw singleton — bypasses extension, no new PrismaClient().
  */
 export async function createAuditLog(data: {
   action: string
@@ -105,7 +171,7 @@ export async function createAuditLog(data: {
   const ctx = getAuditContext()
   if (!ctx) return
 
-  await prisma.auditLog.create({
+  await base.auditLog.create({
     data: {
       actorId: ctx.actorId,
       action: data.action,

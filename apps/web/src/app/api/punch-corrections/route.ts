@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
         punchRecordId = existing.id
       }
 
-      // Transaction: create correction + audit log atomically
+      // Transaction: create correction (audit handled by Prisma extension)
       const correction = await prisma.$transaction(async (tx) => {
         const c = await tx.punchCorrection.create({
           data: {
@@ -95,19 +95,6 @@ export async function POST(req: NextRequest) {
             requestedBy: session.userId,
             status: session.role === 'OWNER' || session.role === 'MANAGER' ? 'APPROVED' : 'PENDING',
             approvedBy: session.role === 'OWNER' || session.role === 'MANAGER' ? session.userId : null,
-          },
-        })
-
-        // Audit log in same transaction
-        await tx.auditLog.create({
-          data: {
-            actorId: session.userId,
-            action: c.status === 'APPROVED' ? 'APPROVE' : 'REQUEST',
-            entity: 'PunchCorrection',
-            entityId: c.id,
-            notes: `Punch correction ${c.status} for ${punchType} on ${date}`,
-            ipAddress: auditCtx.ip || null,
-            userAgent: auditCtx.ua || null,
           },
         })
 

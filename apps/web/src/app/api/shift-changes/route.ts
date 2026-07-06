@@ -72,21 +72,6 @@ export async function POST(req: NextRequest) {
           },
         })
 
-        // Audit log
-        await tx.auditLog.create({
-          data: {
-            actorId: session.userId,
-            action: 'CREATE',
-            entity: 'ShiftChangeRequest',
-            entityId: req.id,
-            clinicId: shift.clinicId,
-            notes: `Shift change ${type} request for shift ${shiftId}`,
-            afterJson: JSON.stringify(req),
-            ipAddress: auditCtx.ip || null,
-            userAgent: auditCtx.ua || null,
-          },
-        })
-
         return req
       })
 

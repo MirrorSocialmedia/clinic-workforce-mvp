@@ -66,6 +66,13 @@ export async function POST(req: NextRequest) {
 
       const clinicId = validation.clinicId
 
+      if (!clinicId) {
+        return NextResponse.json(
+          { error: 'Clinic ID missing from token validation' },
+          { status: 400 }
+        )
+      }
+
       // Verify employee belongs to this clinic
       const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
       if (!empClinicIds.includes(clinicId)) {
@@ -75,7 +82,7 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Transaction: punch record + audit log atomically
+      // Transaction: punch record (audit auto-handled by Prisma extension)
       const result = await prisma.$transaction(async (tx) => {
         const record = await tx.punchRecord.create({
           data: {
@@ -86,19 +93,6 @@ export async function POST(req: NextRequest) {
             source: (validation.source || 'QR_DYNAMIC') as any,
             tokenValid: true,
             deviceInfo: deviceInfo || null,
-          },
-        })
-
-        // Audit log in same transaction
-        await tx.auditLog.create({
-          data: {
-            actorId: session.userId,
-            action: 'PUNCH',
-            entity: 'PunchRecord',
-            entityId: record.id,
-            notes: `${punchType} at clinic ${clinicId}`,
-            ipAddress: auditCtx.ip || null,
-            userAgent: auditCtx.ua || null,
           },
         })
 

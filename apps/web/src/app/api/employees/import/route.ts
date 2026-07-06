@@ -143,17 +143,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'IMPORT',
-        entity: 'Employee',
-        entityId: 'bulk',
-        notes: `CSV import: ${imported.length} imported, ${results.skipped.length} skipped, ${results.errors.length} errors`,
-        ipAddress: auditCtx.ip || null,
-        userAgent: auditCtx.ua || null,
-      },
-    })
+    // Audit handled by Prisma extension (Employee ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({
       success: true, imported, skipped: results.skipped,

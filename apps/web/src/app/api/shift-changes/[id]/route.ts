@@ -55,15 +55,7 @@ export async function PUT(
         },
       })
 
-      await prisma.auditLog.create({
-        data: {
-          actorId: session.userId, action: 'REJECT', entity: 'ShiftChangeRequest',
-          entityId: id, clinicId: changeRequest.shift.clinicId,
-          notes: reason || 'Change request rejected',
-          beforeJson, afterJson: JSON.stringify(updated),
-          ipAddress: auditCtx.ip || null, userAgent: auditCtx.ua || null,
-        },
-      })
+      // Audit handled by Prisma extension (ShiftChangeRequest ∈ AUDIT_ENTITIES)
 
       await createNotification({
         employeeId: changeRequest.fromEmployeeId, type: 'SHIFT_CHANGED',
@@ -112,15 +104,7 @@ export async function PUT(
         },
       })
 
-      await prisma.auditLog.create({
-        data: {
-          actorId: session.userId, action: 'APPROVE', entity: 'ShiftChangeRequest',
-          entityId: id, clinicId: changeRequest.shift.clinicId,
-          notes: reason || `Change request ${changeRequest.type} approved`,
-          beforeJson, afterJson: JSON.stringify(updated),
-          ipAddress: auditCtx.ip || null, userAgent: auditCtx.ua || null,
-        },
-      })
+      // Audit handled by Prisma extension (ShiftChangeRequest ∈ AUDIT_ENTITIES)
 
       await createNotification({
         employeeId: changeRequest.fromEmployeeId, type: 'SHIFT_CHANGED',

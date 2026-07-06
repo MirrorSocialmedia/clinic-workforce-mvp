@@ -47,14 +47,7 @@ export async function PUT(
       },
     })
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId, action: 'UPDATE', entity: 'Shift',
-        entityId: id, clinicId: existing.clinicId,
-        beforeJson, afterJson: JSON.stringify(shift),
-        ipAddress: auditCtx.ip || null, userAgent: auditCtx.ua || null,
-      },
-    })
+    // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true, shift })
   })
@@ -83,14 +76,7 @@ export async function DELETE(
     const beforeJson = JSON.stringify(existing)
     await prisma.shift.delete({ where: { id } })
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId, action: 'DELETE', entity: 'Shift',
-        entityId: id, clinicId: existing.clinicId,
-        beforeJson,
-        ipAddress: auditCtx.ip || null, userAgent: auditCtx.ua || null,
-      },
-    })
+    // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true })
   })

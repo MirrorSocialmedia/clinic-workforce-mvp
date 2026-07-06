@@ -28,6 +28,7 @@ interface PayRuleConfig {
 
 interface PayrollCalcDetail {
   payType: PayType
+  // TODO: strict types — replace with concrete fields or Record<string, unknown>
   [key: string]: any
 }
 
@@ -82,7 +83,12 @@ function isWeekend(date: Date): boolean {
 }
 
 function formatDate(d: Date): string {
-  return d.toISOString().split('T')[0]
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Hong_Kong',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
 }
 
 function parsePayRuleConfig(configJson: string | null | undefined): PayRuleConfig {
@@ -135,6 +141,7 @@ async function calculateWorkedHours(
   isPartial: boolean   // single punch without pair
   punches: Array<{ type: string; time: Date }>
 }>> {
+  // TODO: strict types
   const where: any = {
     employeeId,
     punchTime: { gte: monthStart, lte: monthEnd },
@@ -548,7 +555,8 @@ async function getConsultationRevenue(
   periodMonth: Date
 ): Promise<number> {
   try {
-    const where: any = { employeeId, month: periodMonth }
+    // TODO: strict types
+  const where: any = { employeeId, month: periodMonth }
     if (clinicId) where.clinicId = clinicId
 
     const record = await prisma.consultationRevenue.findFirst({ where })
@@ -637,7 +645,7 @@ async function calculateEmployeePayroll(
       leaveDays: approvedLeaveDays,
       absentDays: 0,
       basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
-      detail: { error: 'No active pay rule found', partialDays },
+      detail: { payType: 'MONTHLY' as PayType, error: 'No active pay rule found', partialDays },
     }
   }
 
@@ -715,7 +723,7 @@ async function calculateEmployeePayroll(
     default:
       result = {
         basePay: 0, otPay: 0, splitPay: null, deduction: 0, absentDays: 0,
-        totalPayable: 0, detail: { error: `Unknown pay type: ${payType}` } as PayrollCalcDetail,
+        totalPayable: 0, detail: { payType, error: `Unknown pay type: ${payType}` } as PayrollCalcDetail,
       }
   }
 
@@ -745,7 +753,9 @@ export async function generatePayrollRun(
   periodMonth: string,
   auditCtx?: AuditCtx
 ): Promise<{ runId: string; itemCount: number; totalPayable: number }> {
-  const monthDate = new Date(`${periodMonth}-01T00:00:00`)
+  // Parse YYYY-MM → Date using local (HK) time, no UTC confusion
+  const [yearStr, monthStr] = periodMonth.split('-')
+  const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
 
   const existing = await prisma.payrollRun.findFirst({
     where: { clinicId, periodMonth: monthDate },
@@ -760,6 +770,7 @@ export async function generatePayrollRun(
     data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
   })
 
+  // TODO: strict types
   const where: any = { status: 'ACTIVE' }
   if (clinicId) where.clinics = { some: { clinicId } }
 
@@ -769,6 +780,7 @@ export async function generatePayrollRun(
     orderBy: { id: 'asc' },
   })
 
+  // TODO: strict types
   const items: Array<any> = []
   for (const emp of employees) {
     try {
