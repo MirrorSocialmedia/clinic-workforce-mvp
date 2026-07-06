@@ -1,0 +1,78 @@
+# Clinic Workforce MVP — Production Docker Compose
+# Usage: docker compose up -d
+
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: clinic_mvp
+      POSTGRES_USER: ${DB_USER:-clinic}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"  # Only localhost, Nginx handles external
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-clinic} -d clinic_mvp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Next.js Application
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-clinic}:${DB_PASSWORD:-change-me-in-production}@db:5432/clinic_mvp
+      JWT_SECRET: ${JWT_SECRET}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://your-domain.com}
+      # Email (for password reset)
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM:-noreply@your-domain.com}
+      # Data retention (days)
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-365}
+    ports:
+      - "127.0.0.1:3000:3000"  # Only localhost
+    volumes:
+      - ./apps/web/prisma:/app/apps/web/prisma:ro
+
+  # Nginx Reverse Proxy + Static Files
+  nginx:
+    image: nginx:alpine
+    restart: always
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_cache:/var/cache/nginx
+    # Healthcheck
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata:
+    driver: local
+  nginx_cache:
+    driver: local

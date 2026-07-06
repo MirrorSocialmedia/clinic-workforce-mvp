@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
+import PWAPrompt from '@/components/PWAPrompt'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -193,6 +194,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       {/* Main content */}
       <div className="main-content">
         {children}
+        <PWAPrompt />
       </div>
     </div>
   )

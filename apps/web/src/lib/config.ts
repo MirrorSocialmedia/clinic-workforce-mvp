@@ -16,6 +16,9 @@ export const CONFIG = {
     return s
   })(),
 
+  // Data retention (PDPO compliance)
+  DATA_RETENTION_DAYS: parseInt(process.env.DATA_RETENTION_DAYS || '365', 10),
+
   // Roles
   ROLES: {
     OWNER: 'OWNER',

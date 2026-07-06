@@ -118,7 +118,9 @@ model User {
 
   clinics   UserClinic[]
   employee  Employee?
-  auditLogs AuditLog[]   @relation("ActorLogs")
+  auditLogs       AuditLog[]   @relation("ActorLogs")
+  resetToken      String?
+  resetTokenExpiry DateTime?
 
   @@index([role])
   @@index([status])

@@ -1,0 +1,30 @@
+# Dependencies
+node_modules
+
+# Next.js
+.next
+out
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# Misc
+coverage
+.vscode-test
+.vscode-test-vsix
+.github
