@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
+import { prisma, basePrisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 
@@ -48,10 +48,29 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       }
     }
 
-    const user = await prisma.user.update({
-      where: { id },
-      data: updateData,
-      include: { clinics: { include: { clinic: true } } },
+    // FIX #1: Use $transaction — user update + audit in same transaction
+    const user = await basePrisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id },
+        data: updateData,
+        include: { clinics: { include: { clinic: true } } },
+      })
+
+      // Manual audit inside same transaction
+      await tx.auditLog.create({
+        data: {
+          actorId: auditCtx.actorId,
+          action: 'UPDATE',
+          entity: 'User',
+          entityId: updated.id,
+          afterJson: JSON.stringify(updated),
+          notes: `User updated: ${Object.keys(updateData).filter(k => k !== 'password').join(', ')}${role ? ', role=' + role : ''}`,
+          ipAddress: auditCtx.ip || null,
+          userAgent: auditCtx.ua || null,
+        },
+      })
+
+      return updated
     })
 
     const { password: _pwd, ...safeUser } = user

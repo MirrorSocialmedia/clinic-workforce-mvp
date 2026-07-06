@@ -29,6 +29,15 @@ const AUDIT_ENTITIES = new Set([
   // NOTE: PunchRecord is excluded — punch route handles audit manually in $transaction
 ])
 
+// Entities whose audit is written manually inside $transaction.
+// Skip auto-audit in the extension for these to avoid double-write.
+const MANUAL_TXN_ENTITIES = new Set([
+  'ConsultationRevenue',
+  'User',
+  'PayrollRun',
+  'PayrollItem',
+])
+
 const WRITE_OPS = new Set([
   'create', 'update', 'delete', 'upsert',
   'createMany', 'updateMany', 'deleteMany',
@@ -49,11 +58,37 @@ const extended = base.$extends({
           return query(args)
         }
 
+        // FIX #1: Skip auto-audit for entities that write audit manually inside $transaction
+        if (MANUAL_TXN_ENTITIES.has(model)) {
+          return query(args)
+        }
+
         const result = await query(args)
 
         const ctx = getAuditContext()
         if (ctx) {
-          const entityId = (result as any)?.id ?? (args as any)?.where?.id ?? 'batch'
+          let entityId = (result as any)?.id ?? (args as any)?.where?.id ?? 'batch'
+
+          // FIX #4: For batch operations, resolve affected IDs for precise audit
+          let notes: string | null = null
+          if (['updateMany', 'deleteMany'].includes(operation)) {
+            const where = (args as any)?.where
+            if (where) {
+              try {
+                const affected = await (base as any)[model].findMany({
+                  where,
+                  select: { id: true },
+                })
+                const ids = affected.map((r: any) => r.id)
+                if (ids.length > 0) {
+                  notes = `Batch ${operation}: affected IDs = [${ids.join(', ')}]`
+                  entityId = ids.join(', ')
+                }
+              } catch {
+                // Fallback: keep entityId='batch'
+              }
+            }
+          }
 
           // Use base (raw) client for audit writes to avoid re-triggering the extension
           await base.auditLog.create({
@@ -63,6 +98,7 @@ const extended = base.$extends({
               entity: model,
               entityId: String(entityId),
               afterJson: safeStringify(result),
+              notes,
               ipAddress: ctx.ip ?? null,
               userAgent: ctx.ua ?? null,
             },

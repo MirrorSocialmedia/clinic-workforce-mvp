@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
+import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
@@ -58,11 +58,30 @@ export async function POST(req: NextRequest) {
         ? { create: clinicIds.map((cid: string, idx: number) => ({ clinic: { connect: { id: cid } }, isPrimary: idx === 0 })) }
         : undefined
 
-      const user = await prisma.user.create({
-        data: {
-          name, phone, email: email || null, password: hashedPassword, role, clinics: clinicData,
-        },
-        include: { clinics: { include: { clinic: true } } },
+      // FIX #1: Use $transaction — user create + audit in same transaction
+      const user = await basePrisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            name, phone, email: email || null, password: hashedPassword, role, clinics: clinicData,
+          },
+          include: { clinics: { include: { clinic: true } } },
+        })
+
+        // Manual audit inside same transaction
+        await tx.auditLog.create({
+          data: {
+            actorId: auditCtx.actorId,
+            action: 'CREATE',
+            entity: 'User',
+            entityId: created.id,
+            afterJson: JSON.stringify(created),
+            notes: `User created: role=${role}`,
+            ipAddress: auditCtx.ip || null,
+            userAgent: auditCtx.ua || null,
+          },
+        })
+
+        return created
       })
 
       if (assignEmployee) {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { prisma, basePrisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 
@@ -81,13 +81,30 @@ export async function PUT(
       }
     }
 
-    const updated = await prisma.payrollRun.update({
-      where: { id: params.id },
-      data: { ...(status && { status }), ...(notes !== undefined && { notes }) },
-      include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
-    })
+    // FIX #1: Use $transaction — status update + audit in same transaction
+    const updated = await basePrisma.$transaction(async (tx) => {
+      const result = await tx.payrollRun.update({
+        where: { id: params.id },
+        data: { ...(status && { status }), ...(notes !== undefined && { notes }) },
+        include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
+      })
 
-    // Audit handled by Prisma extension (PayrollRun ∈ AUDIT_ENTITIES)
+      // Manual audit inside same transaction
+      await tx.auditLog.create({
+        data: {
+          actorId: auditCtx.actorId,
+          action: 'UPDATE',
+          entity: 'PayrollRun',
+          entityId: result.id,
+          afterJson: JSON.stringify(result),
+          notes: `PayrollRun status changed: ${run.status} → ${status ?? 'unchanged'}`,
+          ipAddress: auditCtx.ip || null,
+          userAgent: auditCtx.ua || null,
+        },
+      })
+
+      return result
+    })
 
     return NextResponse.json(updated)
   })
@@ -115,9 +132,23 @@ export async function DELETE(
       return NextResponse.json({ error: 'Can only delete DRAFT payroll runs' }, { status: 400 })
     }
 
-    await prisma.payrollRun.delete({ where: { id: params.id } })
+    // FIX #1: Use $transaction — delete + audit in same transaction
+    await basePrisma.$transaction(async (tx) => {
+      await tx.payrollRun.delete({ where: { id: params.id } })
 
-    // Audit handled by Prisma extension (PayrollRun ∈ AUDIT_ENTITIES)
+      // Manual audit inside same transaction
+      await tx.auditLog.create({
+        data: {
+          actorId: auditCtx.actorId,
+          action: 'DELETE',
+          entity: 'PayrollRun',
+          entityId: params.id,
+          notes: `PayrollRun deleted: ${params.id}`,
+          ipAddress: auditCtx.ip || null,
+          userAgent: auditCtx.ua || null,
+        },
+      })
+    })
 
     return NextResponse.json({ success: true })
   })

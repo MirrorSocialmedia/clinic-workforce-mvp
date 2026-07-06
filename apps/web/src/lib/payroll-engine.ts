@@ -7,7 +7,7 @@
 //        consultation revenue lookup
 // ============================================================
 
-import { prisma } from './prisma'
+import { prisma, basePrisma } from './prisma'
 import type { PayType, RunStatus } from '@prisma/client'
 
 // ------------------------------------------------------------------
@@ -752,26 +752,57 @@ export async function generatePayrollRun(
   clinicId: string | null,
   periodMonth: string,
   auditCtx?: AuditCtx
-): Promise<{ runId: string; itemCount: number; totalPayable: number }> {
+): Promise<
+  | { runId: string; itemCount: number; totalPayable: number }
+  | { error: string; runId: string; status: string }
+> {
   // Parse YYYY-MM → Date using local (HK) time, no UTC confusion
   const [yearStr, monthStr] = periodMonth.split('-')
   const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
+
+  const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
   const existing = await prisma.payrollRun.findFirst({
     where: { clinicId, periodMonth: monthDate },
   })
 
+  // FIX #2: Handle recalculation
+  let run: any = existing
+  const isRecalculation = !!existing
   if (existing) {
-    throw new Error(`Payroll run already exists for ${periodMonth}`)
+    // CONFIRMED (FINALIZED/EXPORTED) — block recalculation
+    if (existing.status === 'FINALIZED' || existing.status === 'EXPORTED') {
+      return {
+        error: '該月已確認出糧，需先解除確認才能重算',
+        runId: existing.id,
+        status: existing.status,
+      }
+    }
+    // DRAFT — allow recalculation: delete old items
+    await prisma.payrollItem.deleteMany({ where: { runId: existing.id } })
   }
 
-  // Create run
-  const run = await prisma.payrollRun.create({
-    data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
-  })
-
-  // TODO: strict types
-  const where: any = { status: 'ACTIVE' }
+  // FIX #5: Include resigned employees who have activity in the month
+  // Include: ACTIVE + those with PunchRecord or Shift in the period
+  const where: any = {
+    OR: [
+      { status: 'ACTIVE' },
+      {
+        punches: {
+          some: {
+            punchTime: { gte: monthStart, lte: monthEnd },
+          },
+        },
+      },
+      {
+        shifts: {
+          some: {
+            date: { gte: monthStart, lte: monthEnd },
+          },
+        },
+      },
+    ],
+  }
   if (clinicId) where.clinics = { some: { clinicId } }
 
   const employees = await prisma.employee.findMany({
@@ -780,59 +811,72 @@ export async function generatePayrollRun(
     orderBy: { id: 'asc' },
   })
 
-  // TODO: strict types
-  const items: Array<any> = []
-  for (const emp of employees) {
-    try {
-      const result = await calculateEmployeePayroll(emp.id, monthDate, clinicId)
-      items.push({
-        runId: run.id,
-        employeeId: emp.id,
-        workedHours: result.workedHours,
-        otHours: result.otHours,
-        leaveDays: result.leaveDays,
-        absentDays: result.absentDays,
-        basePay: result.basePay,
-        otPay: result.otPay,
-        splitPay: result.splitPay,
-        deduction: result.deduction,
-        totalPayable: result.totalPayable,
-        detailJson: JSON.stringify(result.detail),
-      })
-    } catch (err) {
-      console.error(`Failed payroll for ${emp.id}:`, err)
-      items.push({
-        runId: run.id,
-        employeeId: emp.id,
-        workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
-        basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
-        detailJson: JSON.stringify({ error: String(err) }),
+  // FIX #1: Use $transaction — run creation/update + items + audit in same transaction
+  const result = await basePrisma.$transaction(async (tx) => {
+    // Create new run or use existing (DRAFT re-calc)
+    if (!run) {
+      run = await tx.payrollRun.create({
+        data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
       })
     }
-  }
 
-  if (items.length > 0) {
-    await prisma.payrollItem.createMany({ data: items })
-  }
+    // TODO: strict types
+    const items: Array<any> = []
+    for (const emp of employees) {
+      try {
+        // Calculate using the standard function (reads from prisma which is extended)
+        const calcResult = await calculateEmployeePayroll(emp.id, monthDate, clinicId)
+        items.push({
+          runId: run.id,
+          employeeId: emp.id,
+          workedHours: calcResult.workedHours,
+          otHours: calcResult.otHours,
+          leaveDays: calcResult.leaveDays,
+          absentDays: calcResult.absentDays,
+          basePay: calcResult.basePay,
+          otPay: calcResult.otPay,
+          splitPay: calcResult.splitPay,
+          deduction: calcResult.deduction,
+          totalPayable: calcResult.totalPayable,
+          detailJson: JSON.stringify(calcResult.detail),
+        })
+      } catch (err) {
+        console.error(`Failed payroll for ${emp.id}:`, err)
+        items.push({
+          runId: run.id,
+          employeeId: emp.id,
+          workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
+          basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
+          detailJson: JSON.stringify({ error: String(err) }),
+        })
+      }
+    }
 
-  // Audit log
-  if (auditCtx?.actorId) {
-    await prisma.auditLog.create({
-      data: {
-        actorId: auditCtx.actorId,
-        action: 'CREATE_PAYROLL_RUN',
-        entity: 'PayrollRun',
-        entityId: run.id,
-        notes: `Generated payroll for ${periodMonth}: ${items.length} employees`,
-        ipAddress: auditCtx.ip || null,
-        userAgent: auditCtx.ua || null,
-      },
-    })
-  }
+    if (items.length > 0) {
+      await tx.payrollItem.createMany({ data: items })
+    }
 
-  const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
+    // Manual audit inside same transaction
+    if (auditCtx?.actorId) {
+      await tx.auditLog.create({
+        data: {
+          actorId: auditCtx.actorId,
+          action: 'CREATE_PAYROLL_RUN',
+          entity: 'PayrollRun',
+          entityId: run.id,
+          notes: `Generated payroll for ${periodMonth}: ${items.length} employees${isRecalculation ? ' (recalculation)' : ''}`,
+          ipAddress: auditCtx.ip || null,
+          userAgent: auditCtx.ua || null,
+        },
+      })
+    }
 
-  return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100 }
+    const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
+
+    return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100 }
+  })
+
+  return result
 }
 
 // Export for testing

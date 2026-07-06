@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
@@ -68,24 +68,43 @@ export async function POST(req: NextRequest) {
 
       const monthDate = new Date(`${month}-01T00:00:00`)
 
-      const record = await prisma.consultationRevenue.upsert({
-        where: {
-          employeeId_clinicId_month: { employeeId, clinicId, month: monthDate },
-        },
-        create: {
-          employeeId,
-          clinicId,
-          month: monthDate,
-          amount,
-          source: source || null,
-        },
-        update: {
-          amount,
-          source: source || null,
-        },
+      // FIX #1: Use $transaction — business write + audit in same transaction
+      const result = await basePrisma.$transaction(async (tx) => {
+        const record = await tx.consultationRevenue.upsert({
+          where: {
+            employeeId_clinicId_month: { employeeId, clinicId, month: monthDate },
+          },
+          create: {
+            employeeId,
+            clinicId,
+            month: monthDate,
+            amount,
+            source: source || null,
+          },
+          update: {
+            amount,
+            source: source || null,
+          },
+        })
+
+        // Manual audit inside same transaction
+        await tx.auditLog.create({
+          data: {
+            actorId: auditCtx.actorId,
+            action: 'UPSERT',
+            entity: 'ConsultationRevenue',
+            entityId: record.id,
+            afterJson: JSON.stringify(record),
+            notes: `Consultation revenue ${month}: amount=${amount}`,
+            ipAddress: auditCtx.ip || null,
+            userAgent: auditCtx.ua || null,
+          },
+        })
+
+        return record
       })
 
-      return NextResponse.json({ success: true, record }, { status: 201 })
+      return NextResponse.json({ success: true, record: result }, { status: 201 })
     } catch (error) {
       console.error('Consultation revenue error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

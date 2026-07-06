@@ -85,6 +85,11 @@ export async function POST(req: NextRequest) {
 
       const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx)
 
+      // FIX #2: If result has error field (e.g., CONFIRMED blocked), return 409
+      if ((result as any).error) {
+        return NextResponse.json(result, { status: 409 })
+      }
+
       return NextResponse.json(result, { status: 201 })
     } catch (err: any) {
       console.error('Failed to generate payroll:', err)
