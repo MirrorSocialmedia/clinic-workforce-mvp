@@ -20,11 +20,16 @@ export async function POST(
 
   return runWithAudit(auditCtx, async () => {
     const body = await req.json()
-    const { payType, baseAmount, configJson, effectiveFrom } = body
+    const { payType, baseAmount, configJson, effectiveFrom, modularConfig } = body
 
     if (!payType || !effectiveFrom) {
       return NextResponse.json({ error: 'payType and effectiveFrom are required' }, { status: 400 })
     }
+
+    // Support new modular config format
+    const finalConfigJson = modularConfig
+      ? JSON.stringify(modularConfig)
+      : configJson || null
 
     const employee = await prisma.employee.findUnique({ where: { id: params.id } })
     if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
@@ -49,7 +54,7 @@ export async function POST(
           employeeId: employee.id,
           payType,
           baseAmount: baseAmount ?? null,
-          configJson: configJson || null,
+          configJson: finalConfigJson,
           effectiveFrom: effectiveDate,
           createdBy: session.userId,
           isActive: true,

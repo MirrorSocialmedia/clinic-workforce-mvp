@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { RuleComposerModal } from '@/components/RuleComposerModal'
+import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 
 type EmployeeStatus = 'ACTIVE' | 'ON_LEAVE' | 'RESIGNED' | 'PROBATION'
 type PayType = 'MONTHLY' | 'DAILY' | 'HOURLY' | 'SPLIT'
@@ -50,6 +52,71 @@ const STATUS_LABELS: Record<EmployeeStatus, string> = {
   ON_LEAVE: '休假',
   RESIGNED: '離職',
   PROBATION: '試用',
+}
+
+// ── Helper: render modifier tags from PayRuleConfigModular ──
+function renderModifierTags(config: PayRuleConfigModular) {
+  if (!config.modifiers) return null
+  const tags: React.ReactNode[] = []
+  const m = config.modifiers
+
+  if (m.attendance_bonus) {
+    tags.push(
+      <span key="ab" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 11, fontWeight: 600, background: '#e8f5e9', color: '#2e7d32', marginRight: 4, marginBottom: 2 }}>
+        勤工獎 ${m.attendance_bonus.amount}
+      </span>
+    )
+  }
+  if (m.overtime) {
+    const label = m.overtime.mode === 'time_off' ? '加班補時間' : `加班補錢 ${m.overtime.multiplier}x`
+    tags.push(
+      <span key="ot" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 11, fontWeight: 600, background: '#fff3e0', color: '#e65100', marginRight: 4, marginBottom: 2 }}>
+        {label}
+      </span>
+    )
+  }
+  if (m.late_policy) {
+    const parts: string[] = []
+    if (m.late_policy.deduct_salary) parts.push('扣底薪')
+    if (m.late_policy.affects_bonus) parts.push('影響獎金')
+    if (m.late_policy.offset_from_time_bank) parts.push('時間帳')
+    if (parts.length) {
+      tags.push(
+        <span key="lp" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 11, fontWeight: 600, background: '#fce4ec', color: '#c62828', marginRight: 4, marginBottom: 2 }}>
+          遲到{parts.join('/')}
+        </span>
+      )
+    }
+  }
+  if (m.time_bank) {
+    const carryLabels: Record<string, string> = {
+      next_month: '下月欠',
+      deduct_salary: '扣薪',
+      deduct_bonus: '扣獎',
+      reset: '歸零',
+    }
+    tags.push(
+      <span key="tb" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 11, fontWeight: 600, background: '#e3f2fd', color: '#1565c0', marginRight: 4, marginBottom: 2 }}>
+        時間帳{carryLabels[m.time_bank.negative_carry] || ''}
+      </span>
+    )
+  }
+  if (m.working_days && m.working_days.rest_days && m.working_days.rest_days.length > 0) {
+    tags.push(
+      <span key="wd" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 11, fontWeight: 600, background: '#f3e5f5', color: '#7b1fa2', marginRight: 4, marginBottom: 2 }}>
+        工作日{m.working_days.count_public_holidays ? '含紅日' : ''}
+      </span>
+    )
+  }
+  if (m.allowances && m.allowances.length > 0) {
+    tags.push(
+      <span key="al" style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 11, fontWeight: 600, background: '#e0f2f1', color: '#00695c', marginRight: 4, marginBottom: 2 }}>
+        津貼 x{m.allowances.length}
+      </span>
+    )
+  }
+
+  return tags.length > 0 ? <div style={{ marginTop: 2 }}>{tags}</div> : null
 }
 
 const STATUS_COLORS: Record<EmployeeStatus, string> = {
@@ -343,6 +410,9 @@ export default function EmployeeDetailPage({ params }: { params: { id: string } 
                       </div>
                     )}
 
+                    {/* Modular modifier tags */}
+                    {renderModifierTags(config as PayRuleConfigModular)}
+
                     <div className="text-muted text-sm" style={{ marginTop: 4 }}>
                       生效期間：{new Date(rule.effectiveFrom).toLocaleDateString('zh-TW')}
                       {rule.effectiveTo
@@ -372,9 +442,9 @@ export default function EmployeeDetailPage({ params }: { params: { id: string } 
         />
       )}
 
-      {/* Add Pay Rule Modal */}
+      {/* Rule Composer Modal */}
       {showPayRuleModal && (
-        <AddPayRuleModal
+        <RuleComposerModal
           employeeId={employee.id}
           onClose={() => setShowPayRuleModal(false)}
           onSuccess={() => {
@@ -634,194 +704,4 @@ function EditEmployeeModal({
   )
 }
 
-// ============================================================
-// Add Pay Rule Modal
-// ============================================================
-function AddPayRuleModal({
-  employeeId,
-  onClose,
-  onSuccess,
-}: {
-  employeeId: string
-  onClose: () => void
-  onSuccess: () => void
-}) {
-  const [form, setForm] = useState({
-    payType: 'MONTHLY' as PayType,
-    baseAmount: '',
-    overtimeMultiplier: '1.5',
-    overtimeThreshold: '8',
-    effectiveFrom: new Date().toISOString().split('T')[0],
-  })
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-
-    if (!form.effectiveFrom) {
-      setError('請設定生效日期')
-      return
-    }
-
-    setSubmitting(true)
-
-    try {
-      const configJson =
-        form.payType === 'HOURLY'
-          ? JSON.stringify({
-              overtimeMultiplier: parseFloat(form.overtimeMultiplier) || 1.5,
-              overtimeThreshold: parseFloat(form.overtimeThreshold) || 8,
-            })
-          : null
-
-      const res = await fetch(`/api/employees/${employeeId}/pay-rules`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          payType: form.payType,
-          baseAmount: form.baseAmount ? parseFloat(form.baseAmount) : undefined,
-          configJson,
-          effectiveFrom: form.effectiveFrom,
-        }),
-      })
-
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || '新增薪酬規則失敗')
-        return
-      }
-
-      onSuccess()
-    } catch (err: any) {
-      setError(err.message || '新增薪酬規則失敗')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="card"
-        style={{
-          width: '100%',
-          maxWidth: 480,
-          padding: 24,
-          margin: 16,
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 style={{ margin: '0 0 20px 0' }}>💰 新增薪酬規則</h2>
-
-        {error && (
-          <div
-            style={{
-              background: '#fef2f2',
-              color: '#dc2626',
-              padding: '10px 14px',
-              borderRadius: 6,
-              marginBottom: 16,
-              fontSize: 14,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={submit}>
-          <div className="form-group">
-            <label>薪酬類型</label>
-            <select
-              value={form.payType}
-              onChange={(e) => setForm({ ...form, payType: e.target.value as PayType })}
-            >
-              <option value="MONTHLY">月薪</option>
-              <option value="DAILY">日薪</option>
-              <option value="HOURLY">時薪</option>
-              <option value="SPLIT">拆帳</option>
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label>
-              {form.payType === 'SPLIT' ? '拆帳比例 (%)' : '薪資數額'}
-            </label>
-            <input
-              type="number"
-              value={form.baseAmount}
-              onChange={(e) => setForm({ ...form, baseAmount: e.target.value })}
-              placeholder={form.payType === 'SPLIT' ? '如 70' : '如 50000'}
-              step="0.01"
-            />
-          </div>
-
-          {form.payType === 'HOURLY' && (
-            <>
-              <div className="form-group">
-                <label>加班倍率</label>
-                <input
-                  type="number"
-                  value={form.overtimeMultiplier}
-                  onChange={(e) => setForm({ ...form, overtimeMultiplier: e.target.value })}
-                  step="0.1"
-                  min="1"
-                />
-              </div>
-              <div className="form-group">
-                <label>加班門檻（小時/日）</label>
-                <input
-                  type="number"
-                  value={form.overtimeThreshold}
-                  onChange={(e) => setForm({ ...form, overtimeThreshold: e.target.value })}
-                  step="0.5"
-                  min="0"
-                />
-              </div>
-            </>
-          )}
-
-          <div className="form-group">
-            <label>生效日期 *</label>
-            <input
-              type="date"
-              value={form.effectiveFrom}
-              onChange={(e) => setForm({ ...form, effectiveFrom: e.target.value })}
-            />
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn"
-              style={{ background: '#f0f0f0', color: '#333' }}
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={submitting}
-            >
-              {submitting ? '新增中...' : '新增薪酬規則'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
