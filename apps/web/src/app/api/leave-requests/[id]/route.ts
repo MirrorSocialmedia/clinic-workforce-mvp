@@ -81,3 +81,49 @@ export async function PUT(
     return NextResponse.json({ success: true, leaveRequest: updated })
   })
 }
+
+// PATCH /api/leave-requests/[id] — Update isPlanned or approvedDays
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = requireAuth(req, 'PATCH', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
+
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
+  }
+
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const body = await req.json()
+      const { isPlanned, approvedDays } = body
+
+      const request = await prisma.leaveRequest.findUnique({ where: { id: params.id } })
+      if (!request) {
+        return NextResponse.json({ error: 'Leave request not found' }, { status: 404 })
+      }
+
+      const updateData: any = {}
+      if (isPlanned !== undefined) updateData.isPlanned = isPlanned
+      if (approvedDays !== undefined) updateData.days = approvedDays
+
+      if (Object.keys(updateData).length === 0) {
+        return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
+      }
+
+      const updated = await prisma.leaveRequest.update({
+        where: { id: params.id },
+        data: updateData,
+      })
+
+      return NextResponse.json({ success: true, leaveRequest: updated })
+    } catch (error) {
+      console.error('Leave request update error:', error)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    }
+  })
+}

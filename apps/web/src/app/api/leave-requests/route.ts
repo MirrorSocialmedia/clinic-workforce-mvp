@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { leaveTypeId, startDate, endDate, days, reason } = body
+      const { leaveTypeId, startDate, endDate, days, reason, isPlanned } = body
 
       if (!leaveTypeId || !startDate || !endDate || days === undefined || days <= 0) {
         return NextResponse.json(
@@ -135,6 +135,7 @@ export async function POST(req: NextRequest) {
             endDate: new Date(endDate),
             days,
             reason: reason || null,
+            isPlanned: isPlanned !== undefined ? isPlanned : true,
             status: isApprover ? 'APPROVED' : 'PENDING',
             approverId: isApprover ? session.userId : null,
             approvedAt: isApprover ? new Date() : null,

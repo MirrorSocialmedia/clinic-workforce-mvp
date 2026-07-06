@@ -155,6 +155,7 @@ model Employee {
   changeRequestsAsApprover ShiftChangeRequest[] @relation("ChangeApprover")
   leaveRequests LeaveRequest[]
   leaveBalances LeaveBalance[]
+  timeBankRecords TimeBank[]
   payrollItems  PayrollItem[]
   joinDate  DateTime
   leaveDate DateTime?
@@ -391,6 +392,7 @@ model LeaveRequest {
   status      LeaveStatus    @default(PENDING)
   approverId  String?
   approvedAt  DateTime?
+  isPlanned   Boolean        @default(true) // false=臨時/當天假 → 影響勤工
   createdAt   DateTime       @default(now())
 
   @@index([employeeId, status])
@@ -501,4 +503,25 @@ model ConsultationRevenue {
   @@unique([employeeId, clinicId, month])
   @@index([employeeId, month])
   @@index([clinicId, month])
+}
+
+// ============================================================
+// Time Bank — OT / late tracking per employee per month
+// ============================================================
+
+model TimeBank {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  periodMonth   DateTime // YYYY-MM-01
+  otMinutes     Int      @default(0)
+  lateMinutes   Int      @default(0)
+  balance       Int      @default(0) // ot - late
+  carriedFrom   Int      @default(0) // 上月結轉
+  monthEndNote  String?  // 月底結算備註
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([employeeId, periodMonth])
+  @@index([employeeId, periodMonth])
 }

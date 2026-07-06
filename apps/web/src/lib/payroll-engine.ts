@@ -893,3 +893,759 @@ export {
   getOtThreshold,
   aggregateDailyHours,
 }
+
+// ============================================================
+// Part B — Composable Rule Engine (modular base + modifier)
+// New entry: calculatePayrollWithRules()
+// Old calculateEmployeePayroll() preserved for backward compat
+// ============================================================
+
+// ------------------------------------------------------------------
+// Extended PayRuleConfig with modifiers
+// ------------------------------------------------------------------
+
+/**
+ * Work data collected from punch/leave/shift records for a given month
+ */
+interface WorkData {
+  dailyEntries: DailyHoursEntry[]
+  totalWorkedHours: number
+  actualAttendanceDays: number
+  approvedLeaveDays: number
+  paidLeaveDays: number
+  publicHolidayDays: number
+  workingDays: number
+  lateRecords: Array<{ date: string; minutes: number }>
+  leaveRecords: Array<{ isPlanned: boolean; days: number }>
+  partialDays: string[]
+  consultationFees: number
+}
+
+/**
+ * Payroll result from the modular engine
+ */
+interface PayrollResult {
+  basePay: number
+  otPay: number
+  splitPay: number | null
+  attendanceBonus: number
+  attendanceBonusCancelled: boolean
+  attendanceBonusReason?: string
+  deduction: number
+  totalPayable: number
+  absentDays: number
+  otHours: number
+  workedHours: number
+  leaveDays: number
+  error?: string
+  detail: Record<string, unknown>
+}
+
+/**
+ * Composable rule config (stored as JSON in PayRule.configJson)
+ */
+export interface PayRuleConfigModular {
+  // Base module (mutually exclusive, pick one)
+  base_type?: 'monthly' | 'hourly' | 'daily' | 'split'
+
+  // Base parameters
+  monthly_salary?: number
+  hourly_rate?: number
+  daily_rate?: number
+  split_ratio?: number
+  base_guarantee?: number
+  deduction_rate?: number
+  ot_multiplier?: number
+  ot_threshold?: number
+  ot_threshold_daily?: number
+
+  // Modifier modules (composable, any combination)
+  modifiers?: {
+    attendance_bonus?: {
+      amount: number
+      cancel_if: {
+        late_minutes_exceed?: number
+        late_is_cumulative?: boolean
+        any_unplanned_leave?: boolean
+      }
+    }
+    overtime?: {
+      mode: 'pay' | 'time_off'
+      multiplier?: number
+      threshold?: number
+    }
+    late_policy?: {
+      deduct_salary?: boolean
+      affects_bonus?: boolean
+      offset_from_time_bank?: boolean
+    }
+    time_bank?: {
+      negative_carry: 'next_month' | 'deduct_salary' | 'deduct_bonus' | 'reset'
+    }
+    working_days?: {
+      rest_days?: number[]
+      count_public_holidays?: boolean
+    }
+    allowances?: Array<{
+      name: string
+      amount: number
+      type: 'fixed' | 'conditional'
+    }>
+  }
+
+  // Legacy fields (backwards compat)
+  consultation_target?: number
+}
+
+// ------------------------------------------------------------------
+// 2a. Attendance Bonus Evaluation
+// ------------------------------------------------------------------
+
+/**
+ * Evaluate attendance bonus based on config and work data.
+ * @returns { amount, cancelled, reason? }
+ */
+export function evaluateAttendanceBonus(
+  config: {
+    amount: number
+    cancel_if?: {
+      late_minutes_exceed?: number
+      late_is_cumulative?: boolean
+      any_unplanned_leave?: boolean
+    }
+  },
+  workData: {
+    lateRecords: Array<{ minutes: number }>
+    leaveRecords: Array<{ isPlanned: boolean }>
+  }
+): { amount: number; cancelled: boolean; reason?: string } {
+  const cancelIf = config.cancel_if || {}
+  const bonusAmount = config.amount || 0
+
+  // Late check
+  if (cancelIf.late_minutes_exceed !== undefined) {
+    let lateTotal = 0
+    if (cancelIf.late_is_cumulative === true) {
+      lateTotal = workData.lateRecords.reduce((sum, r) => sum + r.minutes, 0)
+    } else {
+      lateTotal = workData.lateRecords.reduce((max, r) => Math.max(max, r.minutes), 0)
+    }
+    if (lateTotal > cancelIf.late_minutes_exceed) {
+      return { amount: 0, cancelled: true, reason: `遲到${lateTotal}分鐘超過${cancelIf.late_minutes_exceed}分鐘門檻` }
+    }
+  }
+
+  // Unplanned leave check
+  if (cancelIf.any_unplanned_leave === true) {
+    const hasUnplanned = workData.leaveRecords.some(r => r.isPlanned === false)
+    if (hasUnplanned) {
+      return { amount: 0, cancelled: true, reason: '有臨時請假' }
+    }
+  }
+
+  return { amount: bonusAmount, cancelled: false }
+}
+
+// ------------------------------------------------------------------
+// 2b. Time Bank Calculation
+// ------------------------------------------------------------------
+
+/**
+ * Calculate monthly time bank for an employee.
+ */
+export async function calculateTimeBank(
+  employeeId: string,
+  monthDate: Date,
+  config: { negative_carry?: string },
+  db: any
+): Promise<{
+  otMinutes: number
+  lateMinutes: number
+  carriedFrom: number
+  balance: number
+  note: string
+}> {
+  const year = monthDate.getFullYear()
+  const month = monthDate.getMonth()
+  const monthStart = new Date(year, month, 1)
+  const monthEnd = new Date(year, month + 1, 0, 23, 59, 59)
+
+  // Previous month carry
+  const lastMonth = month === 0 ? new Date(year - 1, 11, 1) : new Date(year, month - 1, 1)
+  const lastMonthRecord = await db.timeBank.findFirst({
+    where: {
+      employeeId,
+      periodMonth: {
+        gte: lastMonth,
+        lte: new Date(lastMonth.getFullYear(), lastMonth.getMonth() + 1, 0, 23, 59, 59),
+      },
+    },
+  })
+  const carriedFrom = lastMonthRecord?.balance ?? 0
+
+  // OT minutes — placeholder, to be connected with OT calculation logic
+  // TODO: integrate with OT calculation
+  const otMinutes = 0
+
+  // Late minutes from punch records vs shift start times
+  const punches = await db.punchRecord.findMany({
+    where: {
+      employeeId,
+      punchTime: { gte: monthStart, lte: monthEnd },
+      punchType: 'CLOCK_IN',
+    },
+    orderBy: { punchTime: 'asc' },
+  })
+
+  const shifts = await db.shift.findMany({
+    where: {
+      employeeId,
+      date: { gte: monthStart, lte: monthEnd },
+      status: { not: 'CANCELLED' },
+    },
+    orderBy: { date: 'asc' },
+  })
+
+  let lateMinutes = 0
+  for (const shift of shifts) {
+    const dayStart = new Date(shift.date)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setHours(23, 59, 59)
+
+    const dayPunches = punches.filter(
+      (p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd
+    )
+    if (dayPunches.length > 0) {
+      const firstPunch = dayPunches[0]
+      // shift.startTime is a DateTime — compare directly
+      let shiftStartTime: Date
+      if (shift.startTime instanceof Date) {
+        shiftStartTime = shift.startTime
+      } else {
+        // Fallback: parse as string
+        shiftStartTime = new Date(shift.startTime)
+      }
+      if (firstPunch.punchTime > shiftStartTime) {
+        lateMinutes += Math.ceil((firstPunch.punchTime.getTime() - shiftStartTime.getTime()) / 60000)
+      }
+    }
+  }
+
+  const balance = carriedFrom + otMinutes - lateMinutes
+
+  // End-of-month strategy
+  let note = ''
+  if (balance < 0 && config.negative_carry) {
+    switch (config.negative_carry) {
+      case 'next_month':
+        note = `負結餘${balance}分鐘欠到下月`
+        break
+      case 'deduct_salary':
+        note = `負結餘${balance}分鐘從薪資扣除`
+        break
+      case 'deduct_bonus':
+        note = `負結餘${balance}分鐘扣勤工獎`
+        break
+      case 'reset':
+        note = `負結餘${balance}分鐘已清零`
+        break
+    }
+  }
+
+  return { otMinutes, lateMinutes, carriedFrom, balance, note }
+}
+
+// ------------------------------------------------------------------
+// 2c. Working Days with Custom Rest Days + Public Holidays
+// ------------------------------------------------------------------
+
+/**
+ * Check if a date is a HK public holiday (built-in 2026 data).
+ * TODO: Replace with external data source (e.g., HKPublicHoliday table or API)
+ */
+function isPublicHoliday(date: Date): boolean {
+  const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+
+  // 2026 HK statutory public holidays
+  const HK_PUBLIC_HOLIDAYS_2026 = new Set([
+    '2026-01-01', // 元旦
+    '2026-02-17', // 農曆新年（除夕可能變動）
+    '2026-02-18',
+    '2026-02-19',
+    '2026-02-20',
+    '2026-04-01', // 清明
+    '2026-04-06', // 耶穌受難節
+    '2026-04-08', // 耶穌受難節（星期日）
+    '2026-04-09', // 復活節星期一
+    '2026-04-30', // 國慶
+    '2026-05-01', // 勞動節
+    '2026-06-19', // 端午
+    '2026-07-01', // 香港特別行政區成立紀念日
+    '2026-09-25', // 中秋節翌日
+    '2026-10-01', // 國慶（若與7/1重疊則另一日）
+    '2026-10-22', // 重陽節
+    '2026-12-25', // 聖誕節
+    '2026-12-26', // 聖誕節翌日
+  ])
+  return HK_PUBLIC_HOLIDAYS_2026.has(ymd)
+}
+
+/**
+ * Count working days in a month with custom rest_days + public holidays.
+ */
+export function countWorkingDaysInMonth(
+  year: number,
+  month: number, // 0-indexed
+  config: {
+    rest_days?: number[]
+    count_public_holidays?: boolean
+  }
+): { totalDays: number; restDays: number; publicHolidays: number; workingDays: number } {
+  const { rest_days = [6, 0], count_public_holidays = false } = config
+  const totalDaysInMonth = new Date(year, month + 1, 0).getDate()
+
+  let restDays = 0
+  let publicHolidays = 0
+
+  for (let d = 1; d <= totalDaysInMonth; d++) {
+    const date = new Date(year, month, d)
+    const dow = date.getDay()
+    if (rest_days.includes(dow)) {
+      restDays++
+    }
+    if (count_public_holidays && isPublicHoliday(date)) {
+      publicHolidays++
+    }
+  }
+
+  const workingDays = totalDaysInMonth - restDays - publicHolidays
+  return { totalDays: totalDaysInMonth, restDays, publicHolidays, workingDays }
+}
+
+// ------------------------------------------------------------------
+// 3. Modular Engine: Work Data Collection
+// ------------------------------------------------------------------
+
+/**
+ * Collect all work data needed for the modular payroll calculation.
+ */
+async function collectWorkData(
+  employeeId: string,
+  monthDate: Date,
+  clinicId: string | null
+): Promise<WorkData> {
+  const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
+  const year = monthDate.getFullYear()
+  const month = monthDate.getMonth()
+
+  // Get employee clinic IDs
+  const employee = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    include: { clinics: { select: { clinicId: true } } },
+  })
+  const clinicIds = employee
+    ? employee.clinics.map((ec: any) => ec.clinicId).filter((id: string) => !clinicId || id === clinicId)
+    : []
+
+  // Punch days
+  const allPunchDays = await calculateWorkedHours(
+    employeeId,
+    clinicId ? [clinicId] : (clinicIds.length > 0 ? clinicIds : null),
+    monthStart,
+    monthEnd
+  )
+
+  const dailyEntries = aggregateDailyHours(allPunchDays)
+
+  let totalWorkedHours = 0
+  const attendanceDaysSet = new Set<string>()
+  const partialDays: string[] = []
+
+  for (const pd of allPunchDays) {
+    totalWorkedHours += pd.hours
+    if (pd.hours > 0) attendanceDaysSet.add(pd.date)
+    if (pd.isPartial) partialDays.push(pd.date)
+  }
+
+  const { totalDays: approvedLeaveDays, byType: leaveByType } =
+    await getApprovedLeaveDays(employeeId, monthStart, monthEnd)
+  const paidLeaveDays = leaveByType.reduce((sum, lt) => sum + (lt.isPaid ? lt.days : 0), 0)
+
+  // Leave records with isPlanned flag
+  const leaveRecords = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId,
+      status: 'APPROVED',
+      startDate: { lte: monthEnd },
+      endDate: { gte: monthStart },
+    },
+  })
+  const leaveRecordsForEngine = leaveRecords.map((lr: any) => ({
+    isPlanned: lr.isPlanned !== false, // default true if null (legacy)
+    days: lr.days,
+  }))
+
+  const publicHolidays = await getPublicHolidayDays(monthStart, monthEnd)
+  const publicHolidayDays = publicHolidays.length
+  const workingDays = countWorkingDays(year, month)
+
+  // Late records: compare clock-in times with shift start times
+  const punches = await prisma.punchRecord.findMany({
+    where: {
+      employeeId,
+      punchTime: { gte: monthStart, lte: monthEnd },
+      punchType: 'CLOCK_IN',
+    },
+    orderBy: { punchTime: 'asc' },
+  })
+
+  const shifts = await prisma.shift.findMany({
+    where: {
+      employeeId,
+      date: { gte: monthStart, lte: monthEnd },
+      status: { not: 'CANCELLED' },
+    },
+    orderBy: { date: 'asc' },
+  })
+
+  const lateRecords: Array<{ date: string; minutes: number }> = []
+  for (const shift of shifts) {
+    const dayStart = new Date(shift.date)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setHours(23, 59, 59)
+
+    const dayPunches = punches.filter(
+      (p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd
+    )
+    if (dayPunches.length > 0) {
+      const firstPunch = dayPunches[0]
+      let shiftStartTime: Date
+      if (shift.startTime instanceof Date) {
+        shiftStartTime = shift.startTime
+      } else {
+        shiftStartTime = new Date(shift.startTime)
+      }
+      if (firstPunch.punchTime > shiftStartTime) {
+        const minutes = Math.ceil((firstPunch.punchTime.getTime() - shiftStartTime.getTime()) / 60000)
+        lateRecords.push({ date: formatDate(firstPunch.punchTime), minutes })
+      }
+    }
+  }
+
+  // Consultation fees (for split pay)
+  const consultationFees = await getConsultationRevenue(employeeId, clinicId, monthDate)
+
+  return {
+    dailyEntries,
+    totalWorkedHours,
+    actualAttendanceDays: attendanceDaysSet.size,
+    approvedLeaveDays,
+    paidLeaveDays,
+    publicHolidayDays,
+    workingDays,
+    lateRecords,
+    leaveRecords: leaveRecordsForEngine,
+    partialDays,
+    consultationFees,
+  }
+}
+
+// ------------------------------------------------------------------
+// 3. Base Module Calculators
+// ------------------------------------------------------------------
+
+function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+  const monthlySalary = config.monthly_salary || 0
+  const deductionRate = config.deduction_rate ?? 1
+  const otMultiplier = config.ot_multiplier ?? 1.5
+  const otThreshold = config.ot_threshold ?? 0
+
+  const unpaidLeaveDays = workData.approvedLeaveDays - workData.paidLeaveDays
+  const absentDays = Math.max(
+    0,
+    workData.workingDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
+  )
+
+  const basePay = monthlySalary
+  const deduction = absentDays * (monthlySalary / 26) * deductionRate
+
+  const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
+  const hourlyEquivalent = otThreshold > 0 ? monthlySalary / otThreshold : 0
+  const otPay = otHours * hourlyEquivalent * otMultiplier
+
+  return {
+    basePay,
+    otPay,
+    splitPay: null,
+    attendanceBonus: 0,
+    attendanceBonusCancelled: false,
+    deduction,
+    totalPayable: basePay - deduction + otPay,
+    absentDays,
+    otHours,
+    workedHours: workData.totalWorkedHours,
+    leaveDays: workData.approvedLeaveDays,
+    detail: {
+      baseType: 'monthly',
+      monthlySalary,
+      workingDays: workData.workingDays,
+      actualAttendanceDays: workData.actualAttendanceDays,
+      approvedLeaveDays: workData.approvedLeaveDays,
+      paidLeaveDays: workData.paidLeaveDays,
+      unpaidLeaveDays,
+      publicHolidayDays: workData.publicHolidayDays,
+      absentDays,
+      deductionRate,
+      otThreshold,
+      otHours,
+      hourlyEquivalent,
+      otMultiplier,
+    },
+  }
+}
+
+function calcHourlyBase(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+  const hourlyRate = config.hourly_rate || 0
+  const otMultiplier = config.ot_multiplier ?? 1.5
+  const otThresholdDaily = config.ot_threshold_daily ?? 0
+
+  let totalNormalHours = 0
+  let totalOtHours = 0
+
+  for (const entry of workData.dailyEntries) {
+    const normal = Math.min(entry.totalHours, otThresholdDaily)
+    const ot = Math.max(0, entry.totalHours - otThresholdDaily)
+    totalNormalHours += normal
+    totalOtHours += ot
+  }
+
+  const basePay = totalNormalHours * hourlyRate
+  const otPay = totalOtHours * hourlyRate * otMultiplier
+
+  return {
+    basePay,
+    otPay,
+    splitPay: null,
+    attendanceBonus: 0,
+    attendanceBonusCancelled: false,
+    deduction: 0,
+    totalPayable: basePay + otPay,
+    absentDays: 0,
+    otHours: totalOtHours,
+    workedHours: totalNormalHours + totalOtHours,
+    leaveDays: workData.approvedLeaveDays,
+    detail: {
+      baseType: 'hourly',
+      hourlyRate,
+      totalNormalHours,
+      otHours: totalOtHours,
+      otThresholdDaily,
+      otMultiplier,
+    },
+  }
+}
+
+function calcDailyBase(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+  const dailyRate = config.daily_rate || 0
+  const otMultiplier = config.ot_multiplier ?? 1.5
+  const otThresholdDaily = config.ot_threshold_daily ?? 0
+
+  const basePay = workData.actualAttendanceDays * dailyRate
+
+  let totalOtHours = 0
+  let totalHours = 0
+  for (const entry of workData.dailyEntries) {
+    totalHours += entry.totalHours
+    const ot = Math.max(0, entry.totalHours - otThresholdDaily)
+    totalOtHours += ot
+  }
+
+  const hourlyEquivalent = otThresholdDaily > 0 ? dailyRate / otThresholdDaily : 0
+  const otPay = totalOtHours * hourlyEquivalent * otMultiplier
+
+  return {
+    basePay,
+    otPay,
+    splitPay: null,
+    attendanceBonus: 0,
+    attendanceBonusCancelled: false,
+    deduction: 0,
+    totalPayable: basePay + otPay,
+    absentDays: 0,
+    otHours: totalOtHours,
+    workedHours: totalHours,
+    leaveDays: workData.approvedLeaveDays,
+    detail: {
+      baseType: 'daily',
+      dailyRate,
+      attendanceDays: workData.actualAttendanceDays,
+      totalHours,
+      otHours: totalOtHours,
+      otThresholdDaily,
+      otMultiplier,
+    },
+  }
+}
+
+function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+  const splitRatio = config.split_ratio ?? 0
+  const basePay = config.monthly_salary ?? 0
+  const consultationFees = workData.consultationFees
+  const splitPay = consultationFees * splitRatio
+  const deductionRate = config.deduction_rate ?? 1
+
+  let deduction = 0
+  if (basePay > 0) {
+    const unpaidLeaveDays = workData.approvedLeaveDays - workData.paidLeaveDays
+    const absentDays = Math.max(
+      0,
+      workData.workingDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
+    )
+    deduction = absentDays * (basePay / 26) * deductionRate
+  }
+
+  return {
+    basePay,
+    otPay: 0,
+    splitPay,
+    attendanceBonus: 0,
+    attendanceBonusCancelled: false,
+    deduction,
+    totalPayable: basePay - deduction + splitPay,
+    absentDays: 0,
+    otHours: 0,
+    workedHours: workData.totalWorkedHours,
+    leaveDays: workData.approvedLeaveDays,
+    detail: {
+      baseType: 'split',
+      splitRatio,
+      consultationFees,
+      splitPay,
+    },
+  }
+}
+
+/**
+ * Run the selected base module (monthly/hourly/daily/split).
+ */
+export function runBaseModule(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+  const baseType = config.base_type || 'monthly'
+  switch (baseType) {
+    case 'monthly': return calcMonthlyBase(config, workData)
+    case 'hourly': return calcHourlyBase(config, workData)
+    case 'daily': return calcDailyBase(config, workData)
+    case 'split': return calcSplitBase(config, workData)
+    default:
+      return {
+        basePay: 0, otPay: 0, splitPay: null, attendanceBonus: 0,
+        attendanceBonusCancelled: false, deduction: 0, totalPayable: 0,
+        absentDays: 0, otHours: 0, workedHours: 0, leaveDays: 0,
+        detail: {},
+        error: `Unknown base_type: ${baseType}`,
+      }
+  }
+}
+
+// ------------------------------------------------------------------
+// 3. Modifier Application
+// ------------------------------------------------------------------
+
+function applyAttendanceBonusModifier(
+  modConfig: { amount: number; cancel_if: { late_minutes_exceed?: number; late_is_cumulative?: boolean; any_unplanned_leave?: boolean } },
+  result: PayrollResult,
+  workData: WorkData
+): PayrollResult {
+  const bonus = evaluateAttendanceBonus(modConfig, {
+    lateRecords: workData.lateRecords.map(r => ({ minutes: r.minutes })),
+    leaveRecords: workData.leaveRecords,
+  })
+
+  const next = { ...result }
+  next.attendanceBonus = bonus.amount
+  next.attendanceBonusCancelled = bonus.cancelled
+  next.attendanceBonusReason = bonus.reason
+  next.totalPayable = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + bonus.amount
+  next.detail = { ...result.detail, attendanceBonus: bonus }
+  return next
+}
+
+function applyOvertimeModifier(
+  modConfig: { mode: 'pay' | 'time_off'; multiplier?: number; threshold?: number },
+  result: PayrollResult,
+  _workData: WorkData
+): PayrollResult {
+  const next = { ...result }
+  if (modConfig.mode === 'time_off') {
+    // OT converted to time off — no monetary OT pay
+    next.otPay = 0
+    next.totalPayable = result.basePay - result.deduction + (result.splitPay || 0) + result.attendanceBonus
+    next.detail = { ...result.detail, otMode: 'time_off', otHoursOff: result.otHours }
+  }
+  return next
+}
+
+function applyAllowancesModifier(
+  allowances: Array<{ name: string; amount: number; type: 'fixed' | 'conditional' }>,
+  result: PayrollResult
+): PayrollResult {
+  const totalAllowances = allowances.reduce((sum, a) => {
+    if (a.type === 'fixed') return sum + a.amount
+    // Conditional allowances — for now treat as fixed, add condition check later
+    return sum + a.amount
+  }, 0)
+
+  const next = { ...result }
+  next.totalPayable = result.totalPayable + totalAllowances
+  next.detail = { ...result.detail, allowances, totalAllowances }
+  return next
+}
+
+// ------------------------------------------------------------------
+// 3. Main Modular Entry: calculatePayrollWithRules
+// ------------------------------------------------------------------
+
+/**
+ * Main entry for the modular rule engine.
+ * Uses base_type + modifiers pattern from PayRuleConfigModular.
+ */
+export async function calculatePayrollWithRules(
+  employeeId: string,
+  monthDate: Date,
+  clinicId: string | null,
+  config: PayRuleConfigModular
+): Promise<PayrollResult> {
+  // 1. Collect work data
+  const workData = await collectWorkData(employeeId, monthDate, clinicId)
+
+  // 2. Run base module
+  const baseResult = runBaseModule(config, workData)
+
+  // 3. Apply modifiers in order
+  let result: PayrollResult = baseResult
+  const mods = config.modifiers || {}
+
+  if (mods.attendance_bonus) {
+    result = applyAttendanceBonusModifier(mods.attendance_bonus, result, workData)
+  }
+  if (mods.overtime) {
+    result = applyOvertimeModifier(mods.overtime, result, workData)
+  }
+  if (mods.allowances && mods.allowances.length > 0) {
+    result = applyAllowancesModifier(mods.allowances, result)
+  }
+
+  // Round final values
+  return {
+    ...result,
+    basePay: Math.round(result.basePay * 100) / 100,
+    otPay: Math.round(result.otPay * 100) / 100,
+    splitPay: result.splitPay != null ? Math.round(result.splitPay * 100) / 100 : null,
+    attendanceBonus: Math.round(result.attendanceBonus * 100) / 100,
+    deduction: Math.round(result.deduction * 100) / 100,
+    totalPayable: Math.round(result.totalPayable * 100) / 100,
+    workedHours: Math.round(result.workedHours * 100) / 100,
+    otHours: Math.round(result.otHours * 100) / 100,
+    leaveDays: Math.round(result.leaveDays * 100) / 100,
+    absentDays: Math.round(result.absentDays * 100) / 100,
+  }
+}

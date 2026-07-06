@@ -24,7 +24,7 @@ if (process.env.NODE_ENV !== 'production') {
 const AUDIT_ENTITIES = new Set([
   'User', 'Clinic', 'Employee', 'PayRule', 'Shift', 'ShiftChangeRequest',
   'PunchCorrection', 'LeaveRequest', 'LeaveType', 'LeaveBalance',
-  'ConsultationRevenue', 'PayrollRun', 'PayrollItem', 'DailyHash',
+  'ConsultationRevenue', 'PayrollRun', 'PayrollItem', 'DailyHash', 'TimeBank',
   // NOTE: AuditLog is intentionally excluded to prevent infinite recursion
   // NOTE: PunchRecord is excluded — punch route handles audit manually in $transaction
 ])
