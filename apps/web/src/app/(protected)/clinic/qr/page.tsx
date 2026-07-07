@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function ClinicQRPage() {
@@ -10,9 +10,11 @@ export default function ClinicQRPage() {
   const [token, setToken] = useState('')
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
-  const [selectedClinicName, setSelectedClinicName] = useState('')
+  const [selectedClinic, setSelectedClinic] = useState<{ id: string; name: string } | null>(null)
   const [countdown, setCountdown] = useState(30)
   const [error, setError] = useState('')
+  const [isKiosk, setIsKiosk] = useState(false)
+  const prevTokenRef = useRef('')
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -38,6 +40,7 @@ export default function ClinicQRPage() {
 
   const fetchToken = useCallback(async () => {
     if (!clinicId) return
+
     try {
       setError('')
       const res = await fetch(`/api/qr-tokens?clinicId=${clinicId}`, { credentials: 'include' })
@@ -47,8 +50,14 @@ export default function ClinicQRPage() {
         return
       }
       const data = await res.json()
-      setToken(data.token)
+      const newToken = data.token
+      setToken(newToken)
       setCountdown(30)
+      // Only reset kiosk if token actually changed
+      if (prevTokenRef.current !== newToken && prevTokenRef.current) {
+        setIsKiosk(true)
+      }
+      prevTokenRef.current = newToken
     } catch (err: any) {
       setError(err.message || 'Failed to generate token')
     }
@@ -69,15 +78,7 @@ export default function ClinicQRPage() {
     if (user) setLoading(false)
   }, [user])
 
-  // Update clinic name when clinicId changes
-  useEffect(() => {
-    if (clinicId) {
-      const clinic = clinics.find(c => c.id === clinicId)
-      setSelectedClinicName(clinic?.name || '')
-    }
-  }, [clinicId, clinics])
-
-  // Countdown timer
+  // Countdown timer — refresh when hitting 0
   useEffect(() => {
     if (!token) return
     const interval = setInterval(() => {
@@ -92,94 +93,96 @@ export default function ClinicQRPage() {
     return () => clearInterval(interval)
   }, [token, clinicId])
 
-  // Fullscreen handler
-  const handleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen()
-    } else {
-      document.exitFullscreen()
+  // Update selectedClinic when clinicId changes
+  useEffect(() => {
+    if (clinicId) {
+      const found = clinics.find(c => c.id === clinicId)
+      if (found) setSelectedClinic({ id: found.id, name: found.name })
+    }
+  }, [clinicId, clinics])
+
+  // Enter fullscreen
+  const handleFullscreen = async () => {
+    try {
+      await document.documentElement.requestFullscreen()
+    } catch {
+      // ignore
     }
   }
 
-  if (loading) return null // Silent loading for kiosk
+  if (loading) return (
+    <div className="flex justify-center items-center min-h-screen bg-gray-950 text-gray-400">
+      載入中...
+    </div>
+  )
   if (!user) return null
 
-  // Generate QR code image URL
   const qrImageUrl = token
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(token)}`
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(token)}`
     : null
 
-  return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)',
-      color: '#e2e8f0',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '24px',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    }}>
-      {/* Fullscreen button */}
-      <button
-        onClick={handleFullscreen}
-        style={{
-          position: 'fixed',
-          top: 16,
-          right: 16,
-          zIndex: 100,
-          background: 'rgba(59, 130, 246, 0.8)',
-          color: '#fff',
-          border: 'none',
-          borderRadius: 8,
-          padding: '10px 18px',
-          fontSize: 16,
-          cursor: 'pointer',
-          backdropFilter: 'blur(4px)',
-        }}
-      >
-        {document.fullscreenElement ? '⛶ 離開全螢幕' : '⛶ 全螢幕'}
-      </button>
+  // ─── Kiosk mode (fullscreen QR) ───
+  if (isKiosk && qrImageUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white select-none">
+        {/* Exit kiosk hint */}
+        <button
+          onClick={() => setIsKiosk(false)}
+          className="absolute top-4 right-4 text-gray-500 hover:text-white text-xs px-3 py-1 rounded border border-gray-700"
+        >
+          ✕ 退出全屏
+        </button>
 
-      {/* Top instruction */}
-      <div style={{
-        textAlign: 'center',
-        marginBottom: 32,
-        maxWidth: 600,
-      }}>
-        <div style={{ fontSize: 16, color: '#94a3b8', lineHeight: 1.6 }}>
-          此頁供診所櫃檯螢幕顯示。請將此畫面放在櫃檯，員工用手機掃碼打卡。
+        {/* Clinic name */}
+        <h1 className="text-3xl font-bold mb-8 text-center">
+          🏥 {selectedClinic?.name || '診所'}
+        </h1>
+
+        {/* QR Code — 320px */}
+        <div className="bg-white rounded-2xl p-6 shadow-2xl">
+          <img
+            src={qrImageUrl}
+            alt="QR Code"
+            className="w-[320px] h-[320px] rounded-xl"
+          />
+        </div>
+
+        {/* Countdown */}
+        <div className="mt-8 text-xl text-gray-300 font-mono">
+          ⏱️ {countdown} 秒後自動刷新
+        </div>
+
+        {/* Decorative line */}
+        <div className="mt-12 text-sm text-gray-600">
+          請用手機掃描 QR 碼打卡
         </div>
       </div>
+    )
+  }
 
-      {/* Clinic name */}
-      {selectedClinicName && (
-        <div style={{
-          fontSize: 36,
-          fontWeight: 700,
-          color: '#f1f5f9',
-          marginBottom: 8,
-          letterSpacing: 2,
-        }}>
-          🏥 {selectedClinicName}
-        </div>
-      )}
+  // ─── Setup mode (select clinic, enter kiosk) ───
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-6">
+      {/* Header */}
+      <div className="max-w-md w-full text-center mb-8">
+        <h1 className="text-2xl font-bold mb-3">🖥 診所打卡螢幕</h1>
+        <p className="text-gray-400 text-sm leading-relaxed">
+          此頁供診所櫃檯螢幕顯示。請將此畫面放在櫃檯，員工用手機掃碼打卡。
+        </p>
+      </div>
 
-      {/* Clinic selector - small and unobtrusive */}
-      <div style={{ marginBottom: 24 }}>
+      {/* Clinic selector */}
+      <div className="max-w-md w-full mb-6">
+        <label className="block text-sm text-gray-400 mb-2 text-left">
+          選擇診所
+        </label>
         <select
           value={clinicId}
-          onChange={(e) => setClinicId(e.target.value)}
-          style={{
-            background: 'rgba(30, 41, 59, 0.8)',
-            color: '#e2e8f0',
-            border: '1px solid #334155',
-            borderRadius: 6,
-            padding: '6px 10px',
-            fontSize: 14,
-            cursor: 'pointer',
+          onChange={(e) => {
+            setClinicId(e.target.value)
+            setIsKiosk(false)
           }}
+          className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-brand"
         >
           <option value="">請選擇診所...</option>
           {clinics.map((c) => (
@@ -188,53 +191,53 @@ export default function ClinicQRPage() {
         </select>
       </div>
 
-      {/* QR Code Display - big and centered */}
-      <div style={{
-        background: '#ffffff',
-        borderRadius: 24,
-        padding: 32,
-        boxShadow: '0 0 60px rgba(59, 130, 246, 0.15)',
-        marginBottom: 24,
-      }}>
-        {error ? (
-          <div style={{ color: '#e74c3c', padding: 20, fontSize: 18 }}>{error}</div>
-        ) : qrImageUrl ? (
-          <>
-            <img
-              src={qrImageUrl}
-              alt="打卡 QR 碼"
-              style={{ width: 320, height: 320, borderRadius: 12 }}
-            />
-          </>
-        ) : (
-          <div style={{ color: '#888', padding: 40, fontSize: 18 }}>
-            請選擇診所以生成 QR 碼
+      {/* QR Preview */}
+      {error ? (
+        <div className="max-w-md w-full bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-400 text-center">
+          {error}
+        </div>
+      ) : qrImageUrl ? (
+        <div className="max-w-md w-full bg-gray-900 border border-gray-700 rounded-xl p-6 text-center">
+          <img
+            src={qrImageUrl}
+            alt="QR Code"
+            className="w-[240px] h-[240px] mx-auto rounded-lg mb-4"
+          />
+          <div className="text-green-400 font-semibold text-lg mb-1">
+            ⏱️ {countdown} 秒後自動刷新
           </div>
-        )}
-      </div>
+          <div className="text-gray-500 text-xs font-mono break-all">
+            Token: {token.slice(0, 16)}...
+          </div>
 
-      {/* Countdown */}
-      {token && (
-        <div style={{
-          fontSize: 22,
-          fontWeight: 600,
-          color: '#60a5fa',
-          marginTop: 8,
-        }}>
-          ⏱️ {countdown} 秒後自動刷新
+          {/* Enter kiosk button */}
+          <button
+            onClick={() => setIsKiosk(true)}
+            className="mt-6 w-full bg-brand hover:bg-brand/80 text-white font-bold py-3 px-6 rounded-lg text-lg transition-colors"
+          >
+            🖥 進入全螢幕櫃檯模式
+          </button>
+        </div>
+      ) : (
+        <div className="max-w-md w-full bg-gray-900 border border-gray-700 rounded-xl p-8 text-center text-gray-500">
+          請選擇診所以生成 QR 碼
         </div>
       )}
 
-      {/* Footer info */}
-      <div style={{
-        marginTop: 32,
-        fontSize: 14,
-        color: '#64748b',
-        textAlign: 'center',
-        lineHeight: 1.8,
-      }}>
+      {/* Fullscreen button (top-right) */}
+      <button
+        onClick={handleFullscreen}
+        className="mt-6 text-gray-400 hover:text-white text-sm border border-gray-700 rounded-lg px-4 py-2 transition-colors"
+      >
+        ⛶ 瀏覽器全螢幕
+      </button>
+
+      {/* Info */}
+      <div className="max-w-md w-full mt-8 bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 text-left">
+        <div className="font-bold mb-2 text-gray-300">📋 說明</div>
         <div>• QR 碼每 30 秒自動刷新，防止翻拍舊碼</div>
-        <div>• 員工用手機開啟「我要打卡」頁面掃描此碼</div>
+        <div>• 點擊「進入全螢幕櫃檯模式」隱藏操作選項</div>
+        <div>• 員工用手機掃描 QR 碼即可完成打卡</div>
       </div>
     </div>
   )
