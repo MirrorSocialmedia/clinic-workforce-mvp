@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { toHKDateStr } from '@/lib/hk-date'
 
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 
@@ -273,9 +274,9 @@ export default function MyLeavePage() {
                     </span>
                   </td>
                   <td>
-                    {new Date(r.startDate).toISOString().split('T')[0]}
+                    {toHKDateStr(new Date(r.startDate))}
                     {' → '}
-                    {new Date(r.endDate).toISOString().split('T')[0]}
+                    {toHKDateStr(new Date(r.endDate))}
                   </td>
                   <td>{r.days}</td>
                   <td style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

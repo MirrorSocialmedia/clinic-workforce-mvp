@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/my/summary — Monthly summary (hours/OT/leave)
@@ -71,8 +72,8 @@ export async function GET(req: NextRequest) {
         type: r.leaveType.name,
         days: r.days,
         isPaid: r.leaveType.isPaid,
-        startDate: r.startDate.toISOString().split('T')[0],
-        endDate: r.endDate.toISOString().split('T')[0],
+        startDate: toHKDateStr(r.startDate),
+        endDate: toHKDateStr(r.endDate),
       })),
       correctionsCount: corrections,
     },

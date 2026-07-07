@@ -9,6 +9,7 @@ import zhcn from '@fullcalendar/core/locales/zh-cn'
 import '@fullcalendar/core/index.css'
 import '@fullcalendar/daygrid/index.css'
 import '@fullcalendar/timegrid/index.css'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // ============================================================
 // Types
@@ -191,15 +192,15 @@ export default function SchedulingPage() {
       const end = new Date(start)
       end.setDate(start.getDate() + 6)
       return {
-        startDate: start.toISOString().split('T')[0],
-        endDate: end.toISOString().split('T')[0],
+        startDate: toHKDateStr(start),
+        endDate: toHKDateStr(end),
       }
     } else {
       const start = new Date(date.getFullYear(), date.getMonth(), 1)
       const end = new Date(date.getFullYear(), date.getMonth() + 1, 0)
       return {
-        startDate: start.toISOString().split('T')[0],
-        endDate: end.toISOString().split('T')[0],
+        startDate: toHKDateStr(start),
+        endDate: toHKDateStr(end),
       }
     }
   }
@@ -216,7 +217,7 @@ export default function SchedulingPage() {
   }
 
   const formatDate = (date: Date): string => {
-    return date.toISOString().split('T')[0]
+    return toHKDateStr(date)
   }
 
   const formatDateLabel = (date: Date): string => {
@@ -481,7 +482,7 @@ export default function SchedulingPage() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: newDate.toISOString().split('T')[0],
+          date: toHKDateStr(newDate),
           startTime: newStart.toISOString(),
           endTime: newEnd.toISOString(),
         }),

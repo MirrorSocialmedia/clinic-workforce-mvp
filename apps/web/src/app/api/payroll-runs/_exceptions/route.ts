@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // GET /api/payroll-runs/_exceptions — Attendance exceptions report
 export async function GET(req: NextRequest) {
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest) {
       exceptions.push({
         employeeId: p.employeeId, employeeName: p.employee.user.name,
         clinicName: clinic?.name || p.clinicId,
-        date: p.punchTime.toISOString().split('T')[0],
+        date: toHKDateStr(p.punchTime),
         type: 'LATE',
         detail: `上班打卡 ${p.punchTime.toLocaleTimeString('zh-HK')} (超過 09:30)`,
         punchTime: p.punchTime.toISOString(),
@@ -103,17 +104,17 @@ export async function GET(req: NextRequest) {
   }
 
   for (const shift of shifts) {
-    const shiftDayStr = new Date(shift.date).toISOString().split('T')[0]
+    const shiftDayStr = toHKDateStr(new Date(shift.date))
     const hasPunch = punches.some(p =>
       p.employeeId === shift.employeeId &&
-      p.punchTime.toISOString().split('T')[0] === shiftDayStr &&
+      toHKDateStr(p.punchTime) === shiftDayStr &&
       p.clinicId === shift.clinicId
     )
     if (!hasPunch) {
       exceptions.push({
         employeeId: shift.employeeId, employeeName: shift.employee.user.name,
         clinicName: shift.clinic.name, date: shiftDayStr, type: 'ABSENT',
-        detail: `排班但無打卡記錄 (${shift.startTime.toISOString().split('T')[0]})`,
+        detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)})`,
       })
     }
   }
@@ -123,7 +124,7 @@ export async function GET(req: NextRequest) {
     exceptions.push({
       employeeId: c.employeeId, employeeName: c.employee.user.name,
       clinicName: clinic?.name || c.clinicId,
-      date: c.correctedTime.toISOString().split('T')[0], type: 'CORRECTION',
+      date: toHKDateStr(c.correctedTime), type: 'CORRECTION',
       detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上班' : '下班'} 至 ${c.correctedTime.toLocaleTimeString('zh-HK')}${c.reason ? ` (${c.reason})` : ''}`,
       correctionTime: c.correctedTime.toISOString(),
     })

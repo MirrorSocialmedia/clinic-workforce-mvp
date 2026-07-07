@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
+import { toHKDateStr } from '@/lib/hk-date'
 
 type EmployeeStatus = 'ACTIVE' | 'ON_LEAVE' | 'RESIGNED' | 'PROBATION'
 type PayType = 'MONTHLY' | 'DAILY' | 'HOURLY' | 'SPLIT'
@@ -477,7 +478,7 @@ function EditEmployeeModal({
     email: employee.user.email || '',
     password: '',
     clinicIds: employee.clinics.map((c) => c.clinic.id),
-    joinDate: new Date(employee.joinDate).toISOString().split('T')[0],
+    joinDate: toHKDateStr(new Date(employee.joinDate)),
     status: employee.status,
     notes: employee.notes || '',
   })

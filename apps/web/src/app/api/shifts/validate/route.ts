@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { validateShift, validateShiftBatch, type ShiftInput } from '@/lib/shift-validator'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // ============================================================
 // POST /api/shifts/validate — validate shift against rules
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
 
       const existingInputs: ShiftInput[] = existingShifts.map(s => ({
         id: s.id, employeeId: s.employeeId, clinicId: s.clinicId,
-        date: s.date.toISOString().split('T')[0],
+        date: toHKDateStr(s.date),
         startTime: s.startTime.toISOString(), endTime: s.endTime.toISOString(),
         role: s.role || undefined, status: s.status,
       }))
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
 
       const existingInputs: ShiftInput[] = existingShifts.map(s => ({
         id: s.id, employeeId: s.employeeId, clinicId: s.clinicId,
-        date: s.date.toISOString().split('T')[0],
+        date: toHKDateStr(s.date),
         startTime: s.startTime.toISOString(), endTime: s.endTime.toISOString(),
         role: s.role || undefined, status: s.status,
       }))

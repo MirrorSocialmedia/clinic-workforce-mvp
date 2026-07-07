@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
+import { todayHK } from '@/lib/hk-date'
 
 type BaseType = 'monthly' | 'hourly' | 'daily' | 'split'
 
@@ -153,9 +154,7 @@ interface RuleComposerModalProps {
 export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleComposerModalProps) {
   const [baseType, setBaseType] = useState<BaseType>('monthly')
   const [config, setConfig] = useState<PayRuleConfigModular>(buildDefaultConfig('monthly'))
-  const [effectiveFrom, setEffectiveFrom] = useState(
-    new Date().toISOString().split('T')[0]
-  )
+  const [effectiveFrom, setEffectiveFrom] = useState(todayHK())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 

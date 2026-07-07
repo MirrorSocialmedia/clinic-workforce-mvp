@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
+import { todayHK } from '@/lib/hk-date'
 
 type EmployeeStatus = 'ACTIVE' | 'ON_LEAVE' | 'RESIGNED' | 'PROBATION'
 type PayType = 'MONTHLY' | 'DAILY' | 'HOURLY' | 'SPLIT'
@@ -376,7 +377,7 @@ function AddEmployeeModal({
     email: '',
     password: '',
     clinicIds: [] as string[],
-    joinDate: new Date().toISOString().split('T')[0],
+    joinDate: todayHK(),
     payType: 'MONTHLY' as PayType,
     baseAmount: '',
     overtimeMultiplier: '1.5',
