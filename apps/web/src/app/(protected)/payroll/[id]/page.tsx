@@ -199,6 +199,39 @@ export default function PayrollDetailPage() {
 
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+  const parseAttendanceBonus = (item: PayrollItem) => {
+    if (!item.detailJson) return { amount: 0, cancelled: false, reason: '' }
+    try {
+      const detail = JSON.parse(item.detailJson)
+      const bonus = (detail as any)?.attendanceBonus
+      if (bonus && typeof bonus === 'object') {
+        return {
+          amount: bonus.amount ?? 0,
+          cancelled: !!bonus.cancelled,
+          reason: bonus.reason || '',
+        }
+      }
+    } catch {}
+    return { amount: 0, cancelled: false, reason: '' }
+  }
+
+  const renderAttendanceBonus = (item: PayrollItem) => {
+    const { amount, cancelled, reason } = parseAttendanceBonus(item)
+    if (cancelled) {
+      return (
+        <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#dc3545', fontSize: 12 }}>
+          {fmtCurrency(0)}<br />
+          <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>⚠️ {reason || '遲到超30分取消'}</span>
+        </td>
+      )
+    }
+    return (
+      <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: amount > 0 ? '#198754' : 'inherit' }}>
+        {amount > 0 ? fmtCurrency(amount) : '-'}
+      </td>
+    )
+  }
+
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>載入中...</div>
   }
@@ -323,6 +356,7 @@ export default function PayrollDetailPage() {
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>請假</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>缺勤</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>基本薪資</th>
+              <th style={{ textAlign: 'right', padding: '8px 6px' }}>勤工獎</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>加班費</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>拆帳</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>扣款</th>
@@ -352,6 +386,7 @@ export default function PayrollDetailPage() {
                 <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
                   {fmtCurrency(item.basePay)}
                 </td>
+                {renderAttendanceBonus(item)}
                 <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
                   {fmtCurrency(item.otPay)}
                 </td>

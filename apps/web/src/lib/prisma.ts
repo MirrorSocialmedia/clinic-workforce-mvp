@@ -63,6 +63,57 @@ const extended = base.$extends({
           return query(args)
         }
 
+        // D2: Capture before/after diff for UPDATE operations
+        if (operation === 'update') {
+          try {
+            const where = (args as any)?.where
+            if (where) {
+              const before = await (base as any)[model].findUnique({ where })
+              const result = await query(args)
+
+              // Compute diff
+              const changes: Record<string, { from: unknown; to: unknown }> = {}
+              if (before && result) {
+                for (const key of Object.keys(before)) {
+                  if ((before as any)[key] !== (result as any)[key]) {
+                    changes[key] = { from: (before as any)[key], to: (result as any)[key] }
+                  }
+                }
+              }
+
+              // Generate human-readable notes
+              const parts: string[] = []
+              for (const [key, diff] of Object.entries(changes)) {
+                const fromVal = typeof diff.from === 'object' ? JSON.stringify(diff.from) : String(diff.from)
+                const toVal = typeof diff.to === 'object' ? JSON.stringify(diff.to) : String(diff.to)
+                parts.push(`${key} ${fromVal.slice(0, 30)} → ${toVal.slice(0, 30)}`)
+              }
+
+              // Write audit log with diff
+              const ctx = getAuditContext()
+              if (ctx) {
+                await base.auditLog.create({
+                  data: {
+                    actorId: ctx.actorId,
+                    action: operation.toUpperCase(),
+                    entity: model,
+                    entityId: String((result as any)?.id ?? (where as any)?.id ?? ''),
+                    beforeJson: safeStringify(before),
+                    afterJson: safeStringify(result),
+                    notes: parts.join('; '),
+                    ipAddress: ctx.ip ?? null,
+                    userAgent: ctx.ua ?? null,
+                  },
+                })
+              }
+
+              return result
+            }
+          } catch {
+            // If diff capture fails, fall through to standard audit
+          }
+        }
+
         const result = await query(args)
 
         const ctx = getAuditContext()

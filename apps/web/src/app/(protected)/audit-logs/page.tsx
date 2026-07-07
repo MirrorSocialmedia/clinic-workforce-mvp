@@ -137,7 +137,6 @@ export default function AuditLogsPage() {
                 <th>操作者</th>
                 <th>操作</th>
                 <th>實體</th>
-                <th>備註</th>
                 <th>IP</th>
               </tr>
             </thead>
@@ -155,8 +154,11 @@ export default function AuditLogsPage() {
                     </div>
                   </td>
                   <td><span className='text-sm font-medium'>{ACTION_LABELS[log.action] || log.action}</span></td>
-                  <td>{ENTITY_LABELS[log.entity] || log.entity}<span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span></td>
-                  <td className="text-muted text-sm">{log.notes || '—'}</td>
+                  <td>
+                    {ENTITY_LABELS[log.entity] || log.entity}
+                    <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>
+                    {log.notes && <span style={{ color: '#0d7377', marginLeft: 4, fontSize: 12 }}>（{log.notes}）</span>}
+                  </td>
                   <td className="text-sm">{log.ipAddress || '—'}</td>
                 </tr>
               ))}
