@@ -1,19 +1,19 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useRouter, useSearchParams, usePathname } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 
 export default function ClinicQRPage() {
   const router = useRouter()
-  const pathname = usePathname()
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [token, setToken] = useState('')
-  const [expiresAt, setExpiresAt] = useState('')
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
+  const [selectedClinic, setSelectedClinic] = useState<any>(null)
   const [countdown, setCountdown] = useState(30)
   const [error, setError] = useState('')
+  const [, setRefreshTick] = useState(0)
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -39,7 +39,6 @@ export default function ClinicQRPage() {
 
   const fetchToken = useCallback(async () => {
     if (!clinicId) return
-
     try {
       setError('')
       const res = await fetch(`/api/qr-tokens?clinicId=${clinicId}`, { credentials: 'include' })
@@ -50,16 +49,14 @@ export default function ClinicQRPage() {
       }
       const data = await res.json()
       setToken(data.token)
-      setExpiresAt(data.expiresAt)
       setCountdown(30)
+      setRefreshTick(t => t + 1)
     } catch (err: any) {
       setError(err.message || 'Failed to generate token')
     }
   }, [clinicId])
 
-  useEffect(() => {
-    fetchUserData()
-  }, [fetchUserData])
+  useEffect(() => { fetchUserData() }, [fetchUserData])
 
   useEffect(() => {
     if (user) {
@@ -71,6 +68,14 @@ export default function ClinicQRPage() {
   useEffect(() => {
     if (user) setLoading(false)
   }, [user])
+
+  // When clinic list loads, set selected clinic name
+  useEffect(() => {
+    if (clinics.length > 0 && clinicId) {
+      const c = clinics.find(cl => cl.id === clinicId)
+      if (c) setSelectedClinic(c)
+    }
+  }, [clinics, clinicId])
 
   // Countdown timer
   useEffect(() => {
@@ -87,82 +92,98 @@ export default function ClinicQRPage() {
     return () => clearInterval(interval)
   }, [token, clinicId])
 
-  if (loading) return <div style={{ padding: 20 }}>載入中...</div>
+  // Fullscreen toggle
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {})
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }, [])
+
+  if (loading) return (
+    <div className="flex justify-center items-center min-h-screen bg-white">
+      <div className="text-gray-400 text-lg">載入中...</div>
+    </div>
+  )
   if (!user) return null
 
-  // Generate QR code image URL using a public API
   const qrImageUrl = token
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(token)}`
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(token)}`
     : null
 
   return (
-    <div style={{ padding: 20, maxWidth: 400, margin: '0 auto', textAlign: 'center' }}>
-      <h1 style={{ marginBottom: 8 }}>🏥 診所打卡 QR 碼</h1>
-      <p style={{ color: '#888', fontSize: 13, marginBottom: 24 }}>
-        員工掃碼打卡 — QR 碼每 30 秒自動刷新
-      </p>
-
-      {/* Clinic selector */}
-      <div style={{ marginBottom: 20 }}>
-        <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>選擇診所</label>
-        <select
-          value={clinicId}
-          onChange={(e) => setClinicId(e.target.value)}
-          style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 14 }}
-        >
-          <option value="">請選擇診所...</option>
-          {clinics.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
+    <div className="fixed inset-0 bg-white flex flex-col items-center justify-center p-4 select-none" style={{ zIndex: 9999 }}>
+      {/* Top instruction bar */}
+      <div className="absolute top-0 left-0 right-0 bg-gray-50 border-b border-gray-200 px-6 py-3 text-center">
+        <p className="text-sm text-gray-600">
+          此頁供診所櫃檯螢幕顯示。請將此畫面放在櫃檯，員工用手機掃碼打卡。
+        </p>
       </div>
 
-      {/* QR Code Display */}
-      <div style={{
-        background: '#fff', borderRadius: 12, padding: 24,
-        border: '2px solid #3498db', marginBottom: 20,
-      }}>
+      {/* Clinic selector (only when loading or no token) */}
+      {!token && (
+        <div className="mb-6 w-full max-w-xs">
+          <label className="block text-sm font-medium text-gray-700 mb-2 text-center">選擇診所</label>
+          <select
+            value={clinicId}
+            onChange={(e) => setClinicId(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">請選擇診所...</option>
+            {clinics.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Clinic name */}
+      {selectedClinic && (
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">
+          {selectedClinic.name}
+        </h1>
+      )}
+
+      {/* QR Code */}
+      <div className="flex flex-col items-center">
         {error ? (
-          <div style={{ color: '#e74c3c', padding: 20 }}>{error}</div>
+          <div className="text-red-500 text-lg">{error}</div>
         ) : qrImageUrl ? (
           <>
-            <img
-              src={qrImageUrl}
-              alt="QR Code"
-              style={{ width: 280, height: 280, borderRadius: 8 }}
-            />
-            <div style={{
-              marginTop: 16, padding: '8px 12px',
-              background: '#eafaf1', borderRadius: 6,
-              fontSize: 14, color: '#27ae60', fontWeight: 'bold',
-            }}>
-              ⏱️ {countdown} 秒後自動刷新
+            <div className="bg-white p-4 rounded-2xl shadow-lg border-2 border-gray-200">
+              <img
+                src={qrImageUrl}
+                alt="QR Code"
+                className="w-80 h-80"
+              />
             </div>
-            <div style={{
-              marginTop: 8, fontSize: 11, color: '#888',
-              wordBreak: 'break-all',
-            }}>
-              Token: {token.slice(0, 16)}...
+
+            {/* Countdown */}
+            <div className="mt-6 flex items-center gap-2 text-gray-500 text-sm">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{countdown} 秒後自動刷新</span>
             </div>
           </>
         ) : (
-          <div style={{ color: '#888', padding: 20 }}>
+          <div className="text-gray-400 text-lg">
             請選擇診所以生成 QR 碼
           </div>
         )}
       </div>
 
-      {/* Info */}
-      <div style={{
-        background: '#fef9e7', borderRadius: 8, padding: 16,
-        fontSize: 12, color: '#7d6608', textAlign: 'left',
-        border: '1px solid #f9e79f',
-      }}>
-        <div style={{ fontWeight: 'bold', marginBottom: 6 }}>📋 說明</div>
-        <div>• QR 碼每 30 秒自動刷新，防止翻拍舊碼</div>
-        <div>• 員工打卡時需選擇上班/下班</div>
-        <div>• 原始打卡記錄不可修改，所有修正留痕</div>
-      </div>
+      {/* Fullscreen button */}
+      <button
+        onClick={toggleFullscreen}
+        className="absolute bottom-6 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm transition-colors flex items-center gap-2"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+        </svg>
+        全螢幕
+      </button>
     </div>
   )
 }

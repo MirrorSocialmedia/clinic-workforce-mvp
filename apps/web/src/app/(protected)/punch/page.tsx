@@ -140,6 +140,11 @@ export default function PunchPage() {
       </div>
 
       {/* Info */}
+      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-4 text-sm text-blue-700 dark:text-blue-300">
+        💡 請用手機對著診所櫃檯螢幕的 QR 碼掃描打卡。
+      </div>
+
+      {/* Info */}
       <div className="bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 rounded-lg p-4 mb-6 text-sm text-teal-700 dark:text-teal-300">
         <strong>📋 方式：</strong> 打開頁面 → 鏡頭自動開啟 → 對準診所 QR 碼 → 自動打卡
       </div>

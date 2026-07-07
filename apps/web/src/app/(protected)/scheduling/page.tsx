@@ -6,9 +6,6 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
-import '@fullcalendar/core/index.css'
-import '@fullcalendar/daygrid/index.css'
-import '@fullcalendar/timegrid/index.css'
 import { toHKDateStr } from '@/lib/hk-date'
 
 // ============================================================
