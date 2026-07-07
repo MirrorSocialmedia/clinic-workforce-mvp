@@ -258,6 +258,21 @@ export default function AttendancePage() {
                     )}
                   </td>
                   <td style={{ padding: '8px 12px' }}>
+                    <button
+                      onClick={() => {
+                        setCorrectionRecord(record)
+                        setCorrectionForm({ time: '', reason: '' })
+                        setShowCorrectionModal(true)
+                      }}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: '#e67e22', fontSize: 13, padding: '2px 6px',
+                        borderRadius: 4, marginRight: 8,
+                      }}
+                      title="修正此記錄"
+                    >
+                      ✏️ 修正
+                    </button>
                     <Link href={`/attendance/${record.id}`} style={{ color: '#3498db', fontSize: 12 }}>
                       詳情
                     </Link>
@@ -292,6 +307,129 @@ export default function AttendancePage() {
       <div style={{ marginTop: 10, fontSize: 12, color: '#888' }}>
         共 {total} 筆記錄
       </div>
+
+      {/* Correction Modal */}
+      {showCorrectionModal && correctionRecord && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}
+          onClick={() => setShowCorrectionModal(false)}
+        >
+          <div
+            className="card"
+            style={{ width: 440, maxWidth: '90vw', position: 'relative', padding: 24 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowCorrectionModal(false)}
+              style={{
+                position: 'absolute', top: 12, right: 12,
+                background: 'none', border: 'none', fontSize: 18,
+                cursor: 'pointer', color: '#888',
+              }}
+            >
+              ✕
+            </button>
+            <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 16 }}>
+              ✏️ 修正考勤記錄
+            </h2>
+            <div style={{ marginBottom: 12, fontSize: 13, color: '#666' }}>
+              <div>員工: {correctionRecord.employee?.user?.name || correctionRecord.employeeId}</div>
+              <div>診所: {correctionRecord.clinic?.name || correctionRecord.clinicId}</div>
+              <div>原時間: {new Date(correctionRecord.punchTime).toLocaleString('zh-HK')}</div>
+              <div>類型: {correctionRecord.punchType === 'CLOCK_IN' ? '上班' : '下班'}</div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>
+                正確時間
+              </label>
+              <input
+                type="datetime-local"
+                value={correctionForm.time}
+                onChange={e => setCorrectionForm({ ...correctionForm, time: e.target.value })}
+                style={{
+                  width: '100%', padding: '8px 10px', borderRadius: 6,
+                  border: '1px solid #ddd', fontSize: 14, boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>
+                修正原因
+              </label>
+              <textarea
+                value={correctionForm.reason}
+                onChange={e => setCorrectionForm({ ...correctionForm, reason: e.target.value })}
+                placeholder="請說明修正原因"
+                rows={3}
+                style={{
+                  width: '100%', padding: '8px 10px', borderRadius: 6,
+                  border: '1px solid #ddd', fontSize: 14, boxSizing: 'border-box',
+                  resize: 'vertical',
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowCorrectionModal(false)}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd',
+                  background: '#f5f5f5', cursor: 'pointer', fontSize: 13,
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={async () => {
+                  if (!correctionForm.time) {
+                    alert('請填寫正確時間')
+                    return
+                  }
+                  setSubmittingCorrection(true)
+                  try {
+                    const res = await fetch('/api/punch-corrections', {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        date: correctionForm.time,
+                        punchType: correctionRecord.punchType,
+                        reason: correctionForm.reason,
+                        clinicId: correctionRecord.clinicId,
+                        employeeId: correctionRecord.employeeId,
+                      }),
+                    })
+                    if (res.ok) {
+                      alert('修正申請已提交')
+                      setShowCorrectionModal(false)
+                      setCorrectionForm({ time: '', reason: '' })
+                      fetchRecords()
+                    } else {
+                      const err = await res.json()
+                      alert(err.error || '提交失敗')
+                    }
+                  } catch (err) {
+                    alert('網路錯誤')
+                  } finally {
+                    setSubmittingCorrection(false)
+                  }
+                }}
+                disabled={submittingCorrection}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, border: 'none',
+                  background: submittingCorrection ? '#ccc' : '#0d6efd',
+                  color: '#fff', cursor: submittingCorrection ? 'default' : 'pointer',
+                  fontSize: 13, fontWeight: 600,
+                }}
+              >
+                {submittingCorrection ? '提交中...' : '提交修正'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

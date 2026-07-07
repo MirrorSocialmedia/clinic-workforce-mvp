@@ -1112,6 +1112,118 @@ export default function SchedulingPage() {
           </div>
         </div>
       )}
+
+      {/* New Shift Modal */}
+      {showNewShiftModal && canManage && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}
+          onClick={() => setShowNewShiftModal(false)}
+        >
+          <div
+            className="card"
+            style={{ width: 400, maxWidth: '90vw', position: 'relative', padding: 24 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowNewShiftModal(false)}
+              style={{
+                position: 'absolute', top: 12, right: 12,
+                background: 'none', border: 'none', fontSize: 18,
+                cursor: 'pointer', color: '#888',
+              }}
+            >
+              ✕
+            </button>
+            <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 16 }}>
+              ➕ 新增班次
+            </h2>
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>員工</label>
+              <select
+                id="newShiftEmployee"
+                style={{
+                  width: '100%', padding: '6px 10px', borderRadius: 6,
+                  border: '1px solid #ddd', fontSize: 13,
+                }}
+              >
+                <option value="">選擇員工</option>
+                {clinicEmployees.map(emp => (
+                  <option key={emp.id} value={emp.id}>{emp.user.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>日期</label>
+              <input
+                type="date"
+                id="newShiftDate"
+                defaultValue={formatDate(currentDate)}
+                style={{
+                  width: '100%', padding: '6px 10px', borderRadius: 6,
+                  border: '1px solid #ddd', fontSize: 13,
+                }}
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>更次模板</label>
+              <select
+                id="newShiftTemplate"
+                style={{
+                  width: '100%', padding: '6px 10px', borderRadius: 6,
+                  border: '1px solid #ddd', fontSize: 13,
+                }}
+              >
+                <option value="">選擇模板</option>
+                {templates.map(tpl => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name} ({String(tpl.startHour).padStart(2, '0')}:{String(tpl.startMinute).padStart(2, '0')}
+                    -{String(tpl.endHour).padStart(2, '0')}:{String(tpl.endMinute).padStart(2, '0')})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowNewShiftModal(false)}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd',
+                  background: '#f5f5f5', cursor: 'pointer', fontSize: 13,
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={async () => {
+                  const employeeId = (document.getElementById('newShiftEmployee') as HTMLSelectElement).value
+                  const date = (document.getElementById('newShiftDate') as HTMLInputElement).value
+                  const templateId = (document.getElementById('newShiftTemplate') as HTMLSelectElement).value
+
+                  if (!employeeId || !date || !templateId) {
+                    alert('請填寫完整資訊')
+                    return
+                  }
+
+                  const template = templates.find(t => t.id === templateId)
+                  if (!template) return
+
+                  await createShift(employeeId, date, template)
+                  setShowNewShiftModal(false)
+                }}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, border: 'none',
+                  background: '#0d6efd', color: '#fff',
+                  cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                }}
+              >
+                建立班次
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
