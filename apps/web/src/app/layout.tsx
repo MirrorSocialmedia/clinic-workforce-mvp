@@ -22,6 +22,8 @@ export const viewport: Viewport = {
   maximumScale: 1,
 }
 
+import './globals.css'
+
 export default function RootLayout({
   children,
 }: {
@@ -40,7 +42,7 @@ export default function RootLayout({
           `
         }} />
       </head>
-      <body style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', margin: 0 }}>{children}</body>
+      <body>{children}</body>
     </html>
   )
 }
