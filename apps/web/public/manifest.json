@@ -2,10 +2,10 @@
   "name": "診所勞動力管理系統",
   "short_name": "診所系統",
   "description": "防竄改診所人力管理 — 入職、排班、考勤、計糧",
-  "start_url": "/",
+  "start_url": "/my/dashboard",
   "display": "standalone",
-  "background_color": "#f5f5f5",
-  "theme_color": "#1a1a2e",
+  "background_color": "#0f2830",
+  "theme_color": "#0d7377",
   "orientation": "portrait-primary",
   "icons": [
     {

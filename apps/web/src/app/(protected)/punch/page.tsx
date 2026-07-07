@@ -85,7 +85,7 @@ export default function PunchPage() {
   if (!user) return null
 
   return (
-    <div className="main-content max-w-lg mx-auto">
+    <div className="max-w-lg mx-auto py-4 px-2">
       <div className="page-header">
         <div>
           <h1 className="text-xl font-bold">📱 掃碼打卡</h1>

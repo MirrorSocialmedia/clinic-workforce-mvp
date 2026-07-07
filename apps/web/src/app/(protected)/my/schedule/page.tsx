@@ -9,7 +9,6 @@ export default function MySchedulePage() {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   })
-  const [view, setView] = useState<'week' | 'month'>('month')
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -30,13 +29,11 @@ export default function MySchedulePage() {
     }
   }, [month])
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
   const goToMonth = (delta: number) => {
-    const [y, m] = month.split('-').map(Number)
-    const d = new Date(y, m - 1 + delta, 1)
+    const parts = month.split('-').map(Number)
+    const d = new Date(parts[0], parts[1] - 1 + delta, 1)
     setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
   }
 
@@ -50,7 +47,15 @@ export default function MySchedulePage() {
     return map[status] || '#888'
   }
 
-  // Get days in month
+  // Group shifts by date for card display
+  const shiftsByDate: Record<string, any[]> = {}
+  shifts.forEach(s => {
+    const dateKey = new Date(s.startTime).toLocaleDateString('zh-HK')
+    if (!shiftsByDate[dateKey]) shiftsByDate[dateKey] = []
+    shiftsByDate[dateKey].push(s)
+  })
+
+  // Also keep calendar data
   const [y, m] = month.split('-').map(Number)
   const daysInMonth = new Date(y, m, 0).getDate()
   const dayShifts: Record<number, any[]> = {}
@@ -62,117 +67,132 @@ export default function MySchedulePage() {
       dayShifts[day].push(s)
     }
   })
-
-  // Day of week for first day
   const firstDay = new Date(y, m - 1, 1).getDay()
 
-  if (loading) return <div style={{ padding: 24 }}>載入中...</div>
+  if (loading) return <div className="flex justify-center items-center py-12 text-gray-400">載入中...</div>
 
   return (
-    <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', marginBottom: 24 }}>📅 我的班表</h1>
+    <div>
+      <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-4">📅 我的班表</h1>
 
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => goToMonth(-1)}>◀</button>
-            <span style={{ fontSize: 16, fontWeight: 600 }}>{month}</span>
-            <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => goToMonth(1)}>▶</button>
+      <div className="card mb-3">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <button
+              className="btn btn-sm"
+              style={{ background: '#f0f0f0' }}
+              onClick={() => goToMonth(-1)}
+            >
+              ◀
+            </button>
+            <span className="text-base font-semibold">{month}</span>
+            <button
+              className="btn btn-sm"
+              style={{ background: '#f0f0f0' }}
+              onClick={() => goToMonth(1)}
+            >
+              ▶
+            </button>
           </div>
-          <span style={{ fontSize: 13, color: '#888' }}>{shifts.length} 個班次</span>
+          <span className="text-xs text-gray-400">{shifts.length} 個班次</span>
         </div>
 
-        {/* Calendar grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1, background: '#eee', border: '1px solid #eee' }}>
-          {['日', '一', '二', '三', '四', '五', '六'].map(d => (
-            <div key={d} style={{ padding: 8, textAlign: 'center', fontSize: 12, fontWeight: 600, background: '#f5f5f5', color: '#888' }}>
-              {d}
-            </div>
-          ))}
-
-          {/* Empty cells before first day */}
-          {Array.from({ length: firstDay }).map((_, i) => (
-            <div key={`empty-${i}`} style={{ padding: 8, minHeight: 60, background: 'white' }} />
-          ))}
-
-          {/* Day cells */}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1
-            const dayShiftsList = dayShifts[day] || []
-            const isToday = day === new Date().getDate() && m === new Date().getMonth() + 1 && y === new Date().getFullYear()
-            return (
-              <div key={day} style={{
-                padding: 6,
-                minHeight: 60,
-                background: isToday ? '#e3f2fd' : 'white',
-                border: isToday ? '2px solid #1565c0' : '1px solid #f0f0f0',
-              }}>
-                <div style={{ fontSize: 13, fontWeight: isToday ? 700 : 400, marginBottom: 4 }}>
-                  {day}
-                </div>
-                {dayShiftsList.map(s => (
-                  <div key={s.id} style={{
-                    fontSize: 10,
-                    padding: '2px 4px',
-                    borderRadius: 3,
-                    marginBottom: 2,
-                    background: `${getStatusColor(s.status)}20`,
-                    color: getStatusColor(s.status),
-                    cursor: 'default',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }} title={`${s.clinic?.name} ${new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}-${new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}`}>
-                    {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
-                    {' '}{s.clinic?.name?.substring(0, 3)}
-                  </div>
-                ))}
+        {/* Calendar grid - scrollable on mobile */}
+        <div className="overflow-x-auto -mx-2">
+          <div
+            className="grid grid-cols-7 gap-px bg-gray-200 dark:bg-gray-700 border border-gray-200 dark:border-gray-700"
+            style={{ minWidth: '280px' }}
+          >
+            {['日', '一', '二', '三', '四', '五', '六'].map(d => (
+              <div key={d} className="p-2 text-center text-xs font-semibold text-gray-400 bg-gray-50 dark:bg-gray-800">
+                {d}
               </div>
-            )
-          })}
+            ))}
+
+            {Array.from({ length: firstDay }).map((_, i) => (
+              <div key={`empty-${i}`} className="p-1 min-h-[48px] bg-white dark:bg-gray-900" />
+            ))}
+
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1
+              const dayShiftsList = dayShifts[day] || []
+              const isToday =
+                day === new Date().getDate() &&
+                m === new Date().getMonth() + 1 &&
+                y === new Date().getFullYear()
+              return (
+                <div
+                  key={day}
+                  className="p-1 min-h-[48px] bg-white dark:bg-gray-900"
+                  style={{
+                    border: isToday ? '2px solid #0d7377' : '1px solid transparent',
+                  }}
+                >
+                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-0.5">
+                    {day}
+                  </div>
+                  {dayShiftsList.map(s => (
+                    <div
+                      key={s.id}
+                      className="text-[10px] p-0.5 rounded mb-0.5 truncate"
+                      style={{
+                        background: `${getStatusColor(s.status)}20`,
+                        color: getStatusColor(s.status),
+                      }}
+                      title={`${s.clinic?.name} ${new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}-${new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}`}
+                    >
+                      {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Shift list */}
-      {shifts.length > 0 && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <h2>班次詳情</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>日期</th>
-                <th>時間</th>
-                <th>診所</th>
-                <th>角色</th>
-                <th>狀態</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shifts.map(s => (
-                <tr key={s.id}>
-                  <td>{new Date(s.startTime).toLocaleDateString('zh-HK')}</td>
-                  <td>
-                    {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
-                    {' - '}
-                    {new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
-                  </td>
-                  <td>{s.clinic?.name || '-'}</td>
-                  <td>{s.role || '-'}</td>
-                  <td>
-                    <span style={{
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                      fontSize: 12,
-                      background: `${getStatusColor(s.status)}20`,
-                      color: getStatusColor(s.status),
-                    }}>
-                      {getStatusLabel(s.status)}
-                    </span>
-                  </td>
-                </tr>
+      {/* Shift cards (mobile-friendly) */}
+      {Object.keys(shiftsByDate).length > 0 && (
+        <div className="card">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">班次詳情</h2>
+          <div className="space-y-2">
+            {Object.entries(shiftsByDate)
+              .sort(([a], [b]) => b.localeCompare(a))
+              .map(([date, dayShiftsList]) => (
+                <div key={date} className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                  <div className="font-semibold text-sm text-gray-900 dark:text-white mb-2">
+                    {date}
+                  </div>
+                  {dayShiftsList.map(s => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between py-2 border-t border-gray-100 dark:border-gray-600 first:border-0 first:pt-0"
+                    >
+                      <div>
+                        <div className="text-sm text-gray-800 dark:text-gray-200">
+                          {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                          {' - '}
+                          {new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {s.clinic?.name || '-'}
+                          {s.role ? ` · ${s.role}` : ''}
+                        </div>
+                      </div>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded ml-2 flex-shrink-0"
+                        style={{
+                          background: `${getStatusColor(s.status)}20`,
+                          color: getStatusColor(s.status),
+                        }}
+                      >
+                        {getStatusLabel(s.status)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               ))}
-            </tbody>
-          </table>
+          </div>
         </div>
       )}
     </div>

@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { toHKDateStr } from '@/lib/hk-date'
 
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 
@@ -77,9 +76,7 @@ export default function MyLeavePage() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -112,42 +109,46 @@ export default function MyLeavePage() {
     }
   }
 
-  const filteredRequests = filter
-    ? requests.filter(r => r.status === filter)
-    : requests
+  const filteredRequests = filter ? requests.filter(r => r.status === filter) : requests
 
-  if (loading) return <div style={{ padding: 24 }}>載入中...</div>
-  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
+  if (loading) return <div className="flex justify-center items-center py-12 text-gray-400">載入中...</div>
+  if (error) return <div className="p-4 text-red-600 dark:text-red-400">⚠️ {error}</div>
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>🏖️ 我的假期</h1>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? '取消' : '+ 申請假期'}
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-bold text-gray-900 dark:text-white">🏖️ 我的假期</h1>
+        <button
+          className="btn btn-primary"
+          onClick={() => setShowForm(!showForm)}
+        >
+          {showForm ? '取消' : '+ 申請'}
         </button>
       </div>
 
       {/* Leave Balance */}
       {balances.length > 0 && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <h2>假期餘額</h2>
-          <div className="grid-4" style={{ marginBottom: 0 }}>
+        <div className="card mb-3">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">假期餘額</h2>
+          <div className="space-y-2">
             {balances.map(b => (
-              <div key={b.id} style={{
-                padding: 16,
-                borderRadius: 8,
-                background: `${b.leaveType.color || '#1a1a2e'}10`,
-                borderLeft: `4px solid ${b.leaveType.color || '#1a1a2e'}`,
-              }}>
-                <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{b.leaveType.name}</div>
-                <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
-                <div style={{ fontSize: 12, color: '#888' }}>
-                  天剩餘
-                  {b.leaveType.annualQuota !== null && ` / 共 ${b.leaveType.annualQuota} 天`}
+              <div
+                key={b.id}
+                className="flex items-center justify-between p-3 rounded-lg"
+                style={{
+                  background: `${b.leaveType.color || '#0d7377'}10`,
+                  borderLeft: `3px solid ${b.leaveType.color || '#0d7377'}`,
+                }}
+              >
+                <div>
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{b.leaveType.name}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">已用 {b.used.toFixed(1)} 天</div>
                 </div>
-                <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>
-                  已用 {b.used.toFixed(1)} 天
+                <div className="text-right">
+                  <div className="text-lg font-bold text-gray-900 dark:text-white">{b.remaining.toFixed(1)}</div>
+                  <div className="text-xs text-gray-400">
+                    天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}
+                  </div>
                 </div>
               </div>
             ))}
@@ -157,40 +158,47 @@ export default function MyLeavePage() {
 
       {/* Apply Form */}
       {showForm && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <h2>申請假期</h2>
+        <div className="card mb-3">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">申請假期</h2>
           <form onSubmit={handleApply}>
-            <div className="grid-3" style={{ marginBottom: 0 }}>
+            <div className="space-y-3">
               <div className="form-group">
                 <label>假期類型</label>
                 <select
                   value={form.leaveTypeId}
                   onChange={e => setForm({ ...form, leaveTypeId: e.target.value })}
                   required
+                  className="w-full p-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
                   <option value="">請選擇</option>
                   {leaveTypes.map(t => (
-                    <option key={t.id} value={t.id}>{t.name}{t.annualQuota ? ` (${t.annualQuota}天)` : ''}</option>
+                    <option key={t.id} value={t.id}>
+                      {t.name}{t.annualQuota ? ` (${t.annualQuota}天)` : ''}
+                    </option>
                   ))}
                 </select>
               </div>
-              <div className="form-group">
-                <label>開始日期</label>
-                <input
-                  type="date"
-                  value={form.startDate}
-                  onChange={e => setForm({ ...form, startDate: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>結束日期</label>
-                <input
-                  type="date"
-                  value={form.endDate}
-                  onChange={e => setForm({ ...form, endDate: e.target.value })}
-                  required
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="form-group">
+                  <label>開始日期</label>
+                  <input
+                    type="date"
+                    value={form.startDate}
+                    onChange={e => setForm({ ...form, startDate: e.target.value })}
+                    required
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>結束日期</label>
+                  <input
+                    type="date"
+                    value={form.endDate}
+                    onChange={e => setForm({ ...form, endDate: e.target.value })}
+                    required
+                    className="w-full p-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  />
+                </div>
               </div>
               <div className="form-group">
                 <label>天數</label>
@@ -201,20 +209,27 @@ export default function MyLeavePage() {
                   value={form.days}
                   onChange={e => setForm({ ...form, days: e.target.value })}
                   required
+                  className="w-full p-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
               </div>
-              <div className="form-group" style={{ gridColumn: 'span 2' }}>
+              <div className="form-group">
                 <label>原因（可選）</label>
                 <input
                   type="text"
                   value={form.reason}
                   onChange={e => setForm({ ...form, reason: e.target.value })}
                   placeholder="請填寫請假原因"
+                  className="w-full p-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={() => setShowForm(false)}>
+            <div className="flex gap-2 justify-end mt-4">
+              <button
+                type="button"
+                className="btn"
+                style={{ background: '#eee', color: '#333' }}
+                onClick={() => setShowForm(false)}
+              >
                 取消
               </button>
               <button type="submit" className="btn btn-primary">提交申請</button>
@@ -224,16 +239,16 @@ export default function MyLeavePage() {
       )}
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div className="flex gap-2 mb-3 overflow-x-auto pb-1">
         {(['', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(s => (
           <button
             key={s || 'all'}
-            className="btn"
+            className="btn flex-shrink-0"
             style={{
-              background: filter === s ? '#1a1a2e' : '#f0f0f0',
+              background: filter === s ? '#0d7377' : '#f0f0f0',
               color: filter === s ? 'white' : '#333',
               fontSize: 13,
-              padding: '6px 12px',
+              padding: '6px 14px',
             }}
             onClick={() => setFilter(s)}
           >
@@ -242,64 +257,55 @@ export default function MyLeavePage() {
         ))}
       </div>
 
-      {/* Leave Requests */}
+      {/* Leave Requests — card-based */}
       <div className="card">
-        <h2>我的假期申請 ({filteredRequests.length})</h2>
+        <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">
+          我的假期申請 ({filteredRequests.length})
+        </h2>
         {filteredRequests.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#888', padding: 40 }}>尚無假期申請</div>
+          <div className="text-center text-gray-400 py-8">尚無假期申請</div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>類型</th>
-                <th>日期</th>
-                <th>天數</th>
-                <th>原因</th>
-                <th>狀態</th>
-                <th>申請日期</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRequests.map(r => (
-                <tr key={r.id}>
-                  <td>
-                    <span style={{
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                      fontSize: 12,
-                      background: `${r.leaveType.color || '#1a1a2e'}20`,
-                      color: r.leaveType.color || '#1a1a2e',
-                    }}>
-                      {r.leaveType.name}
-                    </span>
-                  </td>
-                  <td>
-                    {toHKDateStr(new Date(r.startDate))}
-                    {' → '}
-                    {toHKDateStr(new Date(r.endDate))}
-                  </td>
-                  <td>{r.days}</td>
-                  <td style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {r.reason || '-'}
-                  </td>
-                  <td>
-                    <span style={{
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                      fontSize: 12,
+          <div className="space-y-2">
+            {filteredRequests.map(r => (
+              <div
+                key={r.id}
+                className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span
+                    className="text-xs px-2 py-0.5 rounded font-medium"
+                    style={{
+                      background: `${r.leaveType.color || '#0d7377'}20`,
+                      color: r.leaveType.color || '#0d7377',
+                    }}
+                  >
+                    {r.leaveType.name}
+                  </span>
+                  <span
+                    className="text-xs px-2 py-0.5 rounded"
+                    style={{
                       background: `${STATUS_COLORS[r.status]}20`,
                       color: STATUS_COLORS[r.status],
-                    }}>
-                      {STATUS_LABELS[r.status]}
-                    </span>
-                  </td>
-                  <td style={{ fontSize: 12, color: '#888' }}>
-                    {new Date(r.createdAt).toLocaleDateString('zh-HK')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    }}
+                  >
+                    {STATUS_LABELS[r.status]}
+                  </span>
+                </div>
+                <div className="text-sm text-gray-800 dark:text-gray-200 mt-1.5">
+                  {new Date(r.startDate).toLocaleDateString('zh-HK')}
+                  {' → '}
+                  {new Date(r.endDate).toLocaleDateString('zh-HK')}
+                  {'  (' + r.days + '天)'}
+                </div>
+                {r.reason && (
+                  <div className="text-xs text-gray-400 mt-1 truncate">{r.reason}</div>
+                )}
+                <div className="text-xs text-gray-400 mt-1">
+                  申請日期: {new Date(r.createdAt).toLocaleDateString('zh-HK')}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

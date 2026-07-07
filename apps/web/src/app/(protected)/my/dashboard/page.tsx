@@ -3,8 +3,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 
-type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
-
 export default function MyDashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -49,78 +47,68 @@ export default function MyDashboardPage() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  useEffect(() => { fetchData() }, [fetchData])
 
-  if (loading) return <div style={{ padding: 24 }}>載入中...</div>
-  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
+  if (loading) return <div className="flex justify-center items-center py-12 text-gray-400">載入中...</div>
+  if (error) return <div className="p-4 text-red-600 dark:text-red-400">⚠️ {error}</div>
 
   return (
-    <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', marginBottom: 24 }}>
+    <div>
+      <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
         👋 我的首頁
       </h1>
 
-      {/* Quick Actions */}
-      <div className="card" style={{ marginBottom: 24 }}>
-        <h2>快捷操作</h2>
-        <div className="grid-4" style={{ marginBottom: 0 }}>
-          <Link href="/punch" className="card" style={{ textAlign: 'center', cursor: 'pointer', textDecoration: 'none', padding: 20 }}>
-            <div style={{ fontSize: 28 }}>📱</div>
-            <div style={{ marginTop: 8, fontSize: 14, color: '#333', fontWeight: 500 }}>打卡</div>
-          </Link>
-          <Link href="/my/schedule" className="card" style={{ textAlign: 'center', cursor: 'pointer', textDecoration: 'none', padding: 20 }}>
-            <div style={{ fontSize: 28 }}>📅</div>
-            <div style={{ marginTop: 8, fontSize: 14, color: '#333', fontWeight: 500 }}>我的班表</div>
-          </Link>
-          <Link href="/my/leave" className="card" style={{ textAlign: 'center', cursor: 'pointer', textDecoration: 'none', padding: 20 }}>
-            <div style={{ fontSize: 28 }}>🏖️</div>
-            <div style={{ marginTop: 8, fontSize: 14, color: '#333', fontWeight: 500 }}>假期</div>
-          </Link>
-          <Link href="/my/notifications" className="card" style={{ textAlign: 'center', cursor: 'pointer', textDecoration: 'none', padding: 20, position: 'relative' }}>
-            <div style={{ fontSize: 28 }}>🔔</div>
-            <div style={{ marginTop: 8, fontSize: 14, color: '#333', fontWeight: 500 }}>通知</div>
-            {unreadCount > 0 && (
-              <span style={{
-                position: 'absolute', top: 8, right: 8,
-                background: '#dc3545', color: 'white',
-                borderRadius: '50%', width: 20, height: 20,
-                fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {unreadCount}
-              </span>
-            )}
-          </Link>
+      {/* Quick Actions — 2x2 grid on mobile */}
+      <div className="card mb-3">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">快捷操作</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { href: '/punch', icon: '📱', label: '打卡' },
+            { href: '/my/schedule', icon: '📅', label: '班表' },
+            { href: '/my/leave', icon: '🏖️', label: '假期' },
+            { href: '/my/notifications', icon: '🔔', label: '通知', badge: unreadCount },
+          ].map(item => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="flex flex-col items-center justify-center p-4 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors relative"
+            >
+              <span className="text-2xl mb-1">{item.icon}</span>
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{item.label}</span>
+              {item.badge && item.badge > 0 && (
+                <span className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-5 h-5 text-[10px] flex items-center justify-center font-semibold">
+                  {item.badge}
+                </span>
+              )}
+            </Link>
+          ))}
         </div>
       </div>
 
       {/* Summary Stats */}
-      <div className="grid-3" style={{ marginBottom: 24 }}>
-        <div className="stat-card">
-          <div className="stat-value">{summary?.shiftCount || 0}</div>
-          <div className="stat-label">本月排班</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{summary?.clockInCount || 0}</div>
-          <div className="stat-label">本月打卡（上班）</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{summary?.leaveDays || 0}</div>
-          <div className="stat-label">本月請假（天）</div>
-        </div>
+      <div className="space-y-2 mb-3">
+        {[
+          { value: summary?.shiftCount || 0, label: '本月排班' },
+          { value: summary?.clockInCount || 0, label: '本月打卡（上班）' },
+          { value: summary?.leaveDays || 0, label: '本月請假（天）' },
+        ].map(s => (
+          <div key={s.label} className="stat-card">
+            <div className="stat-value">{s.value}</div>
+            <div className="stat-label">{s.label}</div>
+          </div>
+        ))}
       </div>
 
       {/* Late Attendance */}
-      <div className="grid-2" style={{ marginBottom: 24 }}>
+      <div className="space-y-2 mb-3">
         <div className="stat-card">
           <div className="stat-value">{summary?.lateCount || 0}</div>
           <div className="stat-label">本月遲到次數</div>
           {summary?.lateMinutes != null && summary.lateMinutes > 0 && (
-            <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>共 {summary.lateMinutes} 分鐘</div>
+            <div className="text-xs text-gray-400 mt-1">共 {summary.lateMinutes} 分鐘</div>
           )}
           {summary?.lateMinutes != null && summary.lateMinutes > 30 && (
-            <div style={{ color: '#c0392b', fontSize: 12, marginTop: 4 }}>⚠️ 已超30分，勤工獎可能取消</div>
+            <div className="text-xs text-red-600 dark:text-red-400 mt-1">⚠️ 已超30分，勤工獎可能取消</div>
           )}
         </div>
         <div className="stat-card">
@@ -131,19 +119,25 @@ export default function MyDashboardPage() {
 
       {/* Leave Balances */}
       {leaveBalances.length > 0 && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <h2>假期餘額</h2>
-          <div className="grid-4" style={{ marginBottom: 0 }}>
+        <div className="card mb-3">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">假期餘額</h2>
+          <div className="space-y-2">
             {leaveBalances.map(b => (
-              <div key={b.id} style={{
-                padding: 16,
-                borderRadius: 8,
-                background: `${b.leaveType.color || '#1a1a2e'}10`,
-                borderLeft: `4px solid ${b.leaveType.color || '#1a1a2e'}`,
-              }}>
-                <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{b.leaveType.name}</div>
-                <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
-                <div style={{ fontSize: 12, color: '#888' }}>天剩餘</div>
+              <div
+                key={b.id}
+                className="flex items-center justify-between p-3 rounded-lg"
+                style={{
+                  background: `${b.leaveType.color || '#0d7377'}10`,
+                  borderLeft: `3px solid ${b.leaveType.color || '#0d7377'}`,
+                }}
+              >
+                <div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">{b.leaveType.name}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-lg font-bold text-gray-900 dark:text-white">{b.remaining.toFixed(1)}</div>
+                  <div className="text-xs text-gray-400">天剩餘</div>
+                </div>
               </div>
             ))}
           </div>
@@ -152,74 +146,65 @@ export default function MyDashboardPage() {
 
       {/* Upcoming Shifts */}
       {schedule.length > 0 && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <h2>即將到來的班次</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>日期</th>
-                <th>時間</th>
-                <th>診所</th>
-                <th>狀態</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schedule.slice(0, 5).map(s => (
-                <tr key={s.id}>
-                  <td>{new Date(s.startTime).toLocaleDateString('zh-HK')}</td>
-                  <td>
-                    {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
-                    {' - '}
-                    {new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
-                  </td>
-                  <td>{s.clinic?.name || '-'}</td>
-                  <td>
-                    <span style={{
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                      fontSize: 12,
-                      background: s.status === 'CONFIRMED' ? '#e8f5e9' : '#fff3e0',
-                      color: s.status === 'CONFIRMED' ? '#2e7d32' : '#e65100',
-                    }}>
-                      {s.status === 'CONFIRMED' ? '已確認' : s.status === 'DRAFT' ? '草稿' : s.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="card mb-3">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">即將到來的班次</h2>
+          <div className="space-y-2">
+            {schedule.slice(0, 5).map(s => (
+              <div
+                key={s.id}
+                className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-sm text-gray-900 dark:text-white">
+                    {new Date(s.startTime).toLocaleDateString('zh-HK')}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded" style={{
+                    background: s.status === 'CONFIRMED' ? '#e6f4ec' : '#fdf6e3',
+                    color: s.status === 'CONFIRMED' ? '#2e7d5b' : '#b8860b',
+                  }}>
+                    {s.status === 'CONFIRMED' ? '已確認' : s.status === 'DRAFT' ? '草稿' : s.status}
+                  </span>
+                </div>
+                <div className="text-sm text-gray-600 dark:text-gray-300">
+                  {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                  {' - '}
+                  {new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">{s.clinic?.name || '-'}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Recent Notifications */}
       {notifications.length > 0 && (
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h2>最近通知</h2>
-            <Link href="/my/notifications" style={{ fontSize: 13, color: '#1565c0', textDecoration: 'none' }}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-white">最近通知</h2>
+            <Link href="/my/notifications" className="text-sm text-[#0d7377] dark:text-teal-400">
               查看全部 →
             </Link>
           </div>
-          {notifications.slice(0, 5).map(n => (
-            <div key={n.id} style={{
-              padding: '10px 12px',
-              borderBottom: '1px solid #eee',
-              background: n.isRead ? 'transparent' : '#f0f7ff',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}>
-              <div>
-                <div style={{ fontSize: 14 }}>{n.content}</div>
-                <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                  {new Date(n.createdAt).toLocaleString('zh-HK')}
+          <div className="space-y-1">
+            {notifications.slice(0, 5).map(n => (
+              <div
+                key={n.id}
+                className="flex items-center justify-between py-2.5 px-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
+                style={{ background: n.isRead ? 'transparent' : '#f0f7ff' }}
+              >
+                <div className="flex-1 min-w-0 mr-2">
+                  <div className="text-sm text-gray-800 dark:text-gray-200 truncate">{n.content}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {new Date(n.createdAt).toLocaleString('zh-HK')}
+                  </div>
                 </div>
+                {!n.isRead && (
+                  <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                )}
               </div>
-              {!n.isRead && (
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc3545', flexShrink: 0 }} />
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
     </div>

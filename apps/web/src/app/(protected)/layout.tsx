@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import PWAPrompt from '@/components/PWAPrompt'
+import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -113,6 +114,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       return other.path.length > itemPath.length
     })
     return !longerMatch
+  }
+
+  // 員工用手機版佈局
+  if (user.role === 'EMPLOYEE') {
+    return (
+      <EmployeeMobileLayout user={{ name: user.name, role: user.role }} onLogout={handleLogout}>
+        {children}
+      </EmployeeMobileLayout>
+    )
   }
 
   const badgeClass = user.role === 'OWNER' ? 'badge-owner'
