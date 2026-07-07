@@ -6,6 +6,9 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
+import '@fullcalendar/core/index.css'
+import '@fullcalendar/daygrid/index.css'
+import '@fullcalendar/timegrid/index.css'
 
 // ============================================================
 // Types
@@ -777,7 +780,12 @@ export default function SchedulingPage() {
               </div>
             )
           }}
-          height="auto"
+          height={650}
+          slotMinTime="07:00:00"
+          slotMaxTime="23:00:00"
+          expandRows={true}
+          allDaySlot={false}
+          slotDuration="00:30:00"
         />
       </div>
 
