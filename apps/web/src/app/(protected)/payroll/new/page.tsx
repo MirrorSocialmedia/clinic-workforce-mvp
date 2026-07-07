@@ -37,7 +37,11 @@ export default function NewPayrollPage() {
 
   useEffect(() => {
     fetchClinics()
-    fetch('/api/me').then(r => r.json()).then(d => setUserRole(d.user?.role || ''))
+    fetch('/api/me').then(async r => {
+      if (!r.ok) return { user: { role: '' } }
+      const d = await r.json()
+      setUserRole(d.user?.role || '')
+    })
   }, [fetchClinics])
 
   // Redirect if not OWNER
