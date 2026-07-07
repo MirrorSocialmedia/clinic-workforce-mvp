@@ -3,6 +3,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
+/** Get start/end of today in HK (UTC+8) */
+function hkTodayBounds() {
+  const now = new Date()
+  const utc = now.getTime() + now.getTimezoneOffset() * 60_000
+  const hkStart = new Date(utc + 8 * 3600_000)
+  hkStart.setHours(0, 0, 0, 0)
+  const hkEnd = new Date(hkStart)
+  hkEnd.setDate(hkEnd.getDate() + 1)
+  return { start: hkStart, end: hkEnd }
+}
+
 // GET /api/dashboard — dashboard data based on role
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req, 'GET', req.url)
@@ -41,6 +52,74 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  // ── Today's daily stats per clinic ──
+  const { start: todayStart, end: todayEnd } = hkTodayBounds()
+
+  const todayStats = await Promise.all(clinics.map(async (clinic) => {
+    // 1. Scheduled shifts today (non-cancelled)
+    const scheduled = await prisma.shift.count({
+      where: {
+        clinicId: clinic.id,
+        date: { gte: todayStart, lt: todayEnd },
+        status: { notIn: ['CANCELLED', 'DRAFT'] },
+      },
+    })
+
+    // 2. Employee IDs who have a scheduled shift today
+    const scheduledEmployees = await prisma.shift.findMany({
+      where: {
+        clinicId: clinic.id,
+        date: { gte: todayStart, lt: todayEnd },
+        status: { notIn: ['CANCELLED', 'DRAFT'] },
+      },
+      select: { employeeId: true, startTime: true },
+    })
+
+    const employeeIds = scheduledEmployees.map((s) => s.employeeId)
+
+    // 3. CLOCK_IN records today at this clinic for scheduled employees
+    const punchRecords =
+      employeeIds.length > 0
+        ? await prisma.punchRecord.findMany({
+            where: {
+              clinicId: clinic.id,
+              employeeId: { in: employeeIds },
+              punchType: 'CLOCK_IN',
+              punchTime: { gte: todayStart, lt: todayEnd },
+            },
+            select: { employeeId: true, punchTime: true },
+          })
+        : []
+
+    const clockedInSet = new Set(punchRecords.map((p) => p.employeeId))
+    const clockedIn = clockedInSet.size
+
+    // 4. Late count: CLOCK_IN punchTime > shift startTime
+    const shiftStartTimeMap = new Map(scheduledEmployees.map((s) => [s.employeeId, s.startTime.getTime()]))
+    let late = 0
+    for (const punch of punchRecords) {
+      const shiftStartTs = shiftStartTimeMap.get(punch.employeeId)
+      if (shiftStartTs != null && punch.punchTime.getTime() > shiftStartTs) {
+        late++
+      }
+    }
+
+    return {
+      clinicId: clinic.id,
+      clinicName: clinic.name,
+      scheduled,
+      clockedIn,
+      late,
+      notArrived: scheduled - clockedIn,
+    }
+  }))
+
+  // Attach todayStats to each clinic object
+  const clinicsWithStats = clinics.map((clinic) => ({
+    ...clinic,
+    todayStats: todayStats.find((s) => s.clinicId === clinic.id) ?? null,
+  }))
+
   // Get recent audit logs for non-EMPLOYEE
   let recentAuditLogs: any[] = []
   if (scope !== 'self') {
@@ -58,7 +137,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     role: session.role,
-    clinics,
+    clinics: clinicsWithStats,
     recentAuditLogs,
   })
 }

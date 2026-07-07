@@ -4,6 +4,15 @@ import { useEffect, useState } from 'react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
+interface TodayStats {
+  clinicId: string
+  clinicName: string
+  scheduled: number
+  clockedIn: number
+  late: number
+  notArrived: number
+}
+
 interface ClinicData {
   id: string
   name: string
@@ -14,6 +23,7 @@ interface ClinicData {
     shifts: number
     punches?: number
   }
+  todayStats: TodayStats | null
 }
 
 interface AuditLogData {
@@ -95,7 +105,66 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Clinics overview */}
+      {/* ── Today's Daily Operations (multi-clinic) ── */}
+      <div className="card mb-4">
+        <h2>📅 今日各店營運</h2>
+        <div className="grid-2">
+          {(data.clinics ?? []).map(clinic => {
+            const stats = clinic.todayStats
+            return (
+              <div
+                key={clinic.id}
+                style={{
+                  border: '1px solid #eee',
+                  borderRadius: 8,
+                  padding: 16,
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 12 }}>
+                  {clinic.name}
+                </div>
+
+                {stats ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>📋 排班</span>
+                      <span style={{ fontWeight: 600 }}>{stats.scheduled} 人</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>✅ 已到</span>
+                      <span style={{ fontWeight: 600, color: '#27ae60' }}>{stats.clockedIn} 人</span>
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        color: stats.late > 0 ? '#c0392b' : 'inherit',
+                      }}
+                    >
+                      <span>⚠️ 遲到</span>
+                      <span style={{ fontWeight: 600 }}>{stats.late} 人</span>
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        color: stats.notArrived > 0 ? '#e67e22' : 'inherit',
+                      }}
+                    >
+                      <span>⏳ 未到</span>
+                      <span style={{ fontWeight: 600 }}>{stats.notArrived} 人</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-muted text-sm">今日無排班資料</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Clinics overview (legacy) */}
       <div className="card">
         <h2>診所概要</h2>
         <div className="grid-2">
