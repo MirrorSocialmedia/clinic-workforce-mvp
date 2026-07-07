@@ -139,6 +139,11 @@ export default function PunchPage() {
         </div>
       </div>
 
+      {/* Instruction */}
+      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4 text-sm text-blue-700 dark:text-blue-300">
+        💡 請用手機對著診所櫃檯螢幕的 QR 碼掃描打卡。
+      </div>
+
       {/* Info */}
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-4 text-sm text-blue-700 dark:text-blue-300">
         💡 請用手機對著診所櫃檯螢幕的 QR 碼掃描打卡。

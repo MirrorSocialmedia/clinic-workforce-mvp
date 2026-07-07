@@ -10,10 +10,9 @@ export default function ClinicQRPage() {
   const [token, setToken] = useState('')
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
-  const [selectedClinic, setSelectedClinic] = useState<any>(null)
+  const [selectedClinicName, setSelectedClinicName] = useState('')
   const [countdown, setCountdown] = useState(30)
   const [error, setError] = useState('')
-  const [, setRefreshTick] = useState(0)
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -50,13 +49,14 @@ export default function ClinicQRPage() {
       const data = await res.json()
       setToken(data.token)
       setCountdown(30)
-      setRefreshTick(t => t + 1)
     } catch (err: any) {
       setError(err.message || 'Failed to generate token')
     }
   }, [clinicId])
 
-  useEffect(() => { fetchUserData() }, [fetchUserData])
+  useEffect(() => {
+    fetchUserData()
+  }, [fetchUserData])
 
   useEffect(() => {
     if (user) {
@@ -69,13 +69,13 @@ export default function ClinicQRPage() {
     if (user) setLoading(false)
   }, [user])
 
-  // When clinic list loads, set selected clinic name
+  // Update clinic name when clinicId changes
   useEffect(() => {
-    if (clinics.length > 0 && clinicId) {
-      const c = clinics.find(cl => cl.id === clinicId)
-      if (c) setSelectedClinic(c)
+    if (clinicId) {
+      const clinic = clinics.find(c => c.id === clinicId)
+      setSelectedClinicName(clinic?.name || '')
     }
-  }, [clinics, clinicId])
+  }, [clinicId, clinics])
 
   // Countdown timer
   useEffect(() => {
@@ -92,98 +92,150 @@ export default function ClinicQRPage() {
     return () => clearInterval(interval)
   }, [token, clinicId])
 
-  // Fullscreen toggle
-  const toggleFullscreen = useCallback(() => {
+  // Fullscreen handler
+  const handleFullscreen = () => {
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {})
+      document.documentElement.requestFullscreen()
     } else {
-      document.exitFullscreen().catch(() => {})
+      document.exitFullscreen()
     }
-  }, [])
+  }
 
-  if (loading) return (
-    <div className="flex justify-center items-center min-h-screen bg-white">
-      <div className="text-gray-400 text-lg">載入中...</div>
-    </div>
-  )
+  if (loading) return null // Silent loading for kiosk
   if (!user) return null
 
+  // Generate QR code image URL
   const qrImageUrl = token
     ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(token)}`
     : null
 
   return (
-    <div className="fixed inset-0 bg-white flex flex-col items-center justify-center p-4 select-none" style={{ zIndex: 9999 }}>
-      {/* Top instruction bar */}
-      <div className="absolute top-0 left-0 right-0 bg-gray-50 border-b border-gray-200 px-6 py-3 text-center">
-        <p className="text-sm text-gray-600">
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)',
+      color: '#e2e8f0',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    }}>
+      {/* Fullscreen button */}
+      <button
+        onClick={handleFullscreen}
+        style={{
+          position: 'fixed',
+          top: 16,
+          right: 16,
+          zIndex: 100,
+          background: 'rgba(59, 130, 246, 0.8)',
+          color: '#fff',
+          border: 'none',
+          borderRadius: 8,
+          padding: '10px 18px',
+          fontSize: 16,
+          cursor: 'pointer',
+          backdropFilter: 'blur(4px)',
+        }}
+      >
+        {document.fullscreenElement ? '⛶ 離開全螢幕' : '⛶ 全螢幕'}
+      </button>
+
+      {/* Top instruction */}
+      <div style={{
+        textAlign: 'center',
+        marginBottom: 32,
+        maxWidth: 600,
+      }}>
+        <div style={{ fontSize: 16, color: '#94a3b8', lineHeight: 1.6 }}>
           此頁供診所櫃檯螢幕顯示。請將此畫面放在櫃檯，員工用手機掃碼打卡。
-        </p>
+        </div>
       </div>
 
-      {/* Clinic selector (only when loading or no token) */}
-      {!token && (
-        <div className="mb-6 w-full max-w-xs">
-          <label className="block text-sm font-medium text-gray-700 mb-2 text-center">選擇診所</label>
-          <select
-            value={clinicId}
-            onChange={(e) => setClinicId(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">請選擇診所...</option>
-            {clinics.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+      {/* Clinic name */}
+      {selectedClinicName && (
+        <div style={{
+          fontSize: 36,
+          fontWeight: 700,
+          color: '#f1f5f9',
+          marginBottom: 8,
+          letterSpacing: 2,
+        }}>
+          🏥 {selectedClinicName}
         </div>
       )}
 
-      {/* Clinic name */}
-      {selectedClinic && (
-        <h1 className="text-2xl font-bold text-gray-800 mb-2">
-          {selectedClinic.name}
-        </h1>
-      )}
+      {/* Clinic selector - small and unobtrusive */}
+      <div style={{ marginBottom: 24 }}>
+        <select
+          value={clinicId}
+          onChange={(e) => setClinicId(e.target.value)}
+          style={{
+            background: 'rgba(30, 41, 59, 0.8)',
+            color: '#e2e8f0',
+            border: '1px solid #334155',
+            borderRadius: 6,
+            padding: '6px 10px',
+            fontSize: 14,
+            cursor: 'pointer',
+          }}
+        >
+          <option value="">請選擇診所...</option>
+          {clinics.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+      </div>
 
-      {/* QR Code */}
-      <div className="flex flex-col items-center">
+      {/* QR Code Display - big and centered */}
+      <div style={{
+        background: '#ffffff',
+        borderRadius: 24,
+        padding: 32,
+        boxShadow: '0 0 60px rgba(59, 130, 246, 0.15)',
+        marginBottom: 24,
+      }}>
         {error ? (
-          <div className="text-red-500 text-lg">{error}</div>
+          <div style={{ color: '#e74c3c', padding: 20, fontSize: 18 }}>{error}</div>
         ) : qrImageUrl ? (
           <>
-            <div className="bg-white p-4 rounded-2xl shadow-lg border-2 border-gray-200">
-              <img
-                src={qrImageUrl}
-                alt="QR Code"
-                className="w-80 h-80"
-              />
-            </div>
-
-            {/* Countdown */}
-            <div className="mt-6 flex items-center gap-2 text-gray-500 text-sm">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>{countdown} 秒後自動刷新</span>
-            </div>
+            <img
+              src={qrImageUrl}
+              alt="打卡 QR 碼"
+              style={{ width: 320, height: 320, borderRadius: 12 }}
+            />
           </>
         ) : (
-          <div className="text-gray-400 text-lg">
+          <div style={{ color: '#888', padding: 40, fontSize: 18 }}>
             請選擇診所以生成 QR 碼
           </div>
         )}
       </div>
 
-      {/* Fullscreen button */}
-      <button
-        onClick={toggleFullscreen}
-        className="absolute bottom-6 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm transition-colors flex items-center gap-2"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-        </svg>
-        全螢幕
-      </button>
+      {/* Countdown */}
+      {token && (
+        <div style={{
+          fontSize: 22,
+          fontWeight: 600,
+          color: '#60a5fa',
+          marginTop: 8,
+        }}>
+          ⏱️ {countdown} 秒後自動刷新
+        </div>
+      )}
+
+      {/* Footer info */}
+      <div style={{
+        marginTop: 32,
+        fontSize: 14,
+        color: '#64748b',
+        textAlign: 'center',
+        lineHeight: 1.8,
+      }}>
+        <div>• QR 碼每 30 秒自動刷新，防止翻拍舊碼</div>
+        <div>• 員工用手機開啟「我要打卡」頁面掃描此碼</div>
+      </div>
     </div>
   )
 }
