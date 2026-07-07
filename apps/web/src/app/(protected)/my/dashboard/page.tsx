@@ -111,6 +111,24 @@ export default function MyDashboardPage() {
         </div>
       </div>
 
+      {/* Late Attendance */}
+      <div className="grid-2" style={{ marginBottom: 24 }}>
+        <div className="stat-card">
+          <div className="stat-value">{summary?.lateCount || 0}</div>
+          <div className="stat-label">本月遲到次數</div>
+          {summary?.lateMinutes != null && summary.lateMinutes > 0 && (
+            <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>共 {summary.lateMinutes} 分鐘</div>
+          )}
+          {summary?.lateMinutes != null && summary.lateMinutes > 30 && (
+            <div style={{ color: '#c0392b', fontSize: 12, marginTop: 4 }}>⚠️ 已超30分，勤工獎可能取消</div>
+          )}
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{summary?.lateMinutes || 0}</div>
+          <div className="stat-label">本月遲到（分鐘）</div>
+        </div>
+      </div>
+
       {/* Leave Balances */}
       {leaveBalances.length > 0 && (
         <div className="card" style={{ marginBottom: 24 }}>

@@ -9,6 +9,25 @@ import { validateAndMarkTokenUsed } from '@/lib/qr-token'
 // POST /api/punch — Clock in/out via QR token
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
+
+/**
+ * Get start of today in Asia/Hong_Kong timezone (UTC+8).
+ * Returns a Date object at midnight HK time, converted to UTC for DB comparison.
+ */
+function getTodayStartHK(): Date {
+  const now = new Date()
+  const hkStr = now.toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })
+  const hkDate = new Date(hkStr)
+  const utc = new Date(Date.UTC(
+    hkDate.getFullYear(),
+    hkDate.getMonth(),
+    hkDate.getDate(),
+    0, 0, 0, 0
+  ))
+  utc.setUTCHours(utc.getUTCHours() - 8)
+  return utc
+}
+
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
@@ -23,15 +42,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { token: qrToken, punchType, deviceInfo } = body
-
-      // Validate punch type
-      if (!['CLOCK_IN', 'CLOCK_OUT'].includes(punchType)) {
-        return NextResponse.json(
-          { error: 'punchType must be CLOCK_IN or CLOCK_OUT' },
-          { status: 400 }
-        )
-      }
+      const { token: qrToken, deviceInfo } = body
 
       if (!qrToken) {
         return NextResponse.json(
@@ -83,6 +94,21 @@ export async function POST(req: NextRequest) {
         )
       }
 
+      // Auto-detect punch type: CLOCK_IN if no CLOCK_IN today, else CLOCK_OUT
+      const todayStart = getTodayStartHK()
+      const todayPunches = await prisma.punchRecord.findMany({
+        where: {
+          employeeId: employee.id,
+          clinicId,
+          punchTime: { gte: todayStart },
+        },
+        orderBy: { punchTime: 'desc' },
+        take: 5,
+      })
+
+      const hasClockInToday = todayPunches.some(p => p.punchType === 'CLOCK_IN')
+      const punchType = hasClockInToday ? 'CLOCK_OUT' : 'CLOCK_IN'
+
       // Transaction: punch record (audit auto-handled by Prisma extension)
       const result = await prisma.$transaction(async (tx) => {
         const record = await tx.punchRecord.create({
@@ -104,7 +130,7 @@ export async function POST(req: NextRequest) {
         success: true,
         recordId: result.id,
         punchTime: result.punchTime.toISOString(),
-        punchType: result.punchType,
+        punchType,
       })
     } catch (error: any) {
       console.error('Punch error:', error)

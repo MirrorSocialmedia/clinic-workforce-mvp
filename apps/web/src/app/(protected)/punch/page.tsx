@@ -46,39 +46,8 @@ export default function PunchPage() {
     }
   }, [user, fetchRecords])
 
-  // QR Scanner
-  useEffect(() => {
-    if (!user) return
-
-    setStatus('開啟鏡頭中...')
-    const scanner = new Html5Qrcode('qr-reader')
-    scannerRef.current = scanner
-
-    scanner.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: 250 },
-      async (decodedText) => {
-        // Success callback - auto punch
-        if (scanningRef.current) {
-          await scanner.pause()
-          scanningRef.current = false
-          await doPunch(decodedText)
-        }
-      },
-      () => {} // ignore scan errors
-    ).catch(() => {
-      setStatus('無法開啟鏡頭，請檢查權限')
-    })
-
-    // Start scanning
-    scanningRef.current = true
-
-    return () => {
-      scanner.stop().catch(() => {})
-    }
-  }, [user])
-
-  async function doPunch(token: string) {
+  // Punch function wrapped in useCallback + ref to avoid stale closure in scanner
+  const doPunch = useCallback(async (token: string) => {
     setStatus('打卡中...')
     setResult(null)
 
@@ -99,16 +68,64 @@ export default function PunchPage() {
       const type = data.punchType === 'CLOCK_IN' ? '上班' : '下班'
       setResult({ success: true, message: `✅ ${type}打卡成功 ${new Date(data.punchTime).toLocaleTimeString('zh-HK')}` })
       fetchRecords()
+
+      // Resume scanning after success
+      setTimeout(() => {
+        try { scannerRef.current?.resume() } catch { /* ignore */ }
+        scanningRef.current = true
+        setStatus('請對準診所 QR 碼')
+      }, 1500)
     } catch (e: any) {
       setResult({ success: false, message: `❌ ${e.message}` })
-      // Resume scanning after 2s
+      // Resume scanning after error
       setTimeout(() => {
-        scannerRef.current?.resume()
+        try { scannerRef.current?.resume() } catch { /* ignore */ }
         scanningRef.current = true
         setStatus('請對準診所 QR 碼')
       }, 2000)
     }
-  }
+  }, [fetchRecords])
+
+  // Keep ref updated so scanner callback always uses latest doPunch
+  const doPunchRef = useRef(doPunch)
+  useEffect(() => { doPunchRef.current = doPunch }, [doPunch])
+
+  // QR Scanner
+  useEffect(() => {
+    if (!user) return
+
+    setStatus('開啟鏡頭中...')
+    const scanner = new Html5Qrcode('qr-reader')
+    scannerRef.current = scanner
+    let started = false
+
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: 250 },
+      async (decodedText) => {
+        // Success callback - auto punch via ref
+        if (scanningRef.current && doPunchRef.current) {
+          await scanner.pause()
+          scanningRef.current = false
+          await doPunchRef.current(decodedText)
+        }
+      },
+      () => {} // ignore scan errors
+    ).then(() => {
+      started = true
+      scanningRef.current = true
+      setStatus('請對準診所 QR 碼')
+    }).catch(() => {
+      setStatus('無法開啟鏡頭，請檢查權限')
+    })
+
+    return () => {
+      if (started) {
+        try { scanner.stop() } catch { /* ignore */ }
+      }
+      try { scanner.clear() } catch { /* ignore */ }
+    }
+  }, [user])
 
   if (loading) return <div className="flex justify-center items-center min-h-[200px]">載入中...</div>
   if (!user) return null

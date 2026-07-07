@@ -45,6 +45,22 @@ export async function GET(req: NextRequest) {
     where: { employeeId: employee.id, startTime: { gte: monthStart, lt: monthEnd } },
   })
 
+  // Late attendance tracking: compare CLOCK_IN vs shift startTime
+  let lateCount = 0
+  let lateMinutes = 0
+
+  for (const clockIn of clockIns) {
+    // Find the matching shift on the same day (same clinic, same HK date)
+    const clockInHKDate = toHKDateStr(clockIn.punchTime)
+    const shift = shifts.find(s => toHKDateStr(s.startTime) === clockInHKDate)
+
+    if (shift && clockIn.punchTime > shift.startTime) {
+      lateCount++
+      const diffMs = clockIn.punchTime.getTime() - shift.startTime.getTime()
+      lateMinutes += Math.round(diffMs / 60000)
+    }
+  }
+
   const leaveRequests = await prisma.leaveRequest.findMany({
     where: {
       employeeId: employee.id,
@@ -68,6 +84,8 @@ export async function GET(req: NextRequest) {
       clockOutCount: clockOuts.length,
       shiftCount: shifts.length,
       leaveDays: totalLeaveDays,
+      lateCount,
+      lateMinutes,
       leaveRequests: leaveRequests.map(r => ({
         type: r.leaveType.name,
         days: r.days,
