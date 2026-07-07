@@ -35,6 +35,10 @@ export default function AttendancePage() {
   const [page, setPage] = useState(1)
   const [pageSize] = useState(20)
   const [error, setError] = useState('')
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false)
+  const [correctionRecord, setCorrectionRecord] = useState<PunchRecord | null>(null)
+  const [correctionForm, setCorrectionForm] = useState({ time: '', reason: '' })
+  const [submittingCorrection, setSubmittingCorrection] = useState(false)
 
   // Filters
   const [clinicFilter, setClinicFilter] = useState('')

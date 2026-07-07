@@ -104,8 +104,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))
 
   const isActive = (itemPath: string) => {
-    if (itemPath === '/my/dashboard' && pathname === '/my/dashboard') return true
-    return pathname.startsWith(itemPath) && (pathname.length === itemPath.length || pathname[itemPath.length] === '/')
+    if (pathname === itemPath) return true
+    const parentPattern = itemPath + '/'
+    if (!pathname.startsWith(parentPattern)) return false
+    const longerMatch = visibleNav.find(other => {
+      if (other.path === itemPath) return false
+      if (!pathname.startsWith(other.path)) return false
+      return other.path.length > itemPath.length
+    })
+    return !longerMatch
   }
 
   const badgeClass = user.role === 'OWNER' ? 'badge-owner'

@@ -59,6 +59,21 @@ export default function PayrollListPage() {
 
   const canGenerate = userRole === 'OWNER'
 
+  const deleteRun = async (runId: string) => {
+    if (!confirm('確定刪除這次計糧？此操作無法復原。')) return
+    try {
+      const res = await fetch('/api/payroll-runs/' + runId, { method: 'DELETE', credentials: 'include' })
+      if (!res.ok) {
+        const d = await res.json()
+        alert(d.error || '刪除失敗')
+        return
+      }
+      fetchRuns()
+    } catch (e) {
+      alert('刪除失敗')
+    }
+  }
+
   const statusBadge = (status: RunStatus) => {
     const colors: Record<RunStatus, string> = {
       DRAFT: '#ffc107',
@@ -189,6 +204,11 @@ export default function PayrollListPage() {
                     }}>
                       詳情
                     </Link>
+                    {run.status === 'DRAFT' && canGenerate && (
+                      <button onClick={() => deleteRun(run.id)} style={{marginLeft: 12, color: '#dc3545', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13}}>
+                        刪除
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

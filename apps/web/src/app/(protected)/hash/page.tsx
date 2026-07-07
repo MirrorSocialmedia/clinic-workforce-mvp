@@ -77,11 +77,11 @@ export default function HashPage() {
       const data = await res.json()
 
       if (!res.ok) {
-        alert(data.error || '生成雜湊失敗')
+        alert(data.error || '生成完整性指紋失敗')
         return
       }
 
-      alert(`雜湊生成成功！記錄數：${data.recordCount}`)
+      alert(`完整性指紋生成成功！記錄數：${data.recordCount}`)
       fetchHashes()
     } finally {
       setGenerating(false)
@@ -128,9 +128,9 @@ export default function HashPage() {
 
   return (
     <div style={{ padding: 20 }}>
-      <h1 style={{ marginBottom: 8 }}>🔒 每日雜湊</h1>
+      <h1 style={{ marginBottom: 8 }}>🔒 考勤完整性驗證</h1>
       <p style={{ color: '#888', fontSize: 13, marginBottom: 24 }}>
-        每日雜湊確保打卡記錄完整性 — 所有記錄的 SHA-256 指紋，改動後可重算比對
+        考勤完整性驗證確保打卡記錄完整性 — 所有記錄的 SHA-256 指紋，改動後可重算比對
       </p>
 
       {/* Clinic selector */}
@@ -154,7 +154,7 @@ export default function HashPage() {
           background: '#f9f9f9', borderRadius: 8, padding: 16,
           marginBottom: 20, border: '1px solid #eee',
         }}>
-          <h3 style={{ marginTop: 0, fontSize: 14 }}>🔧 生成雜湊</h3>
+          <h3 style={{ marginTop: 0, fontSize: 14 }}>🔧 生成完整性指紋</h3>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>日期</label>
@@ -174,7 +174,7 @@ export default function HashPage() {
                 color: '#fff', cursor: generating || !selectedDate ? 'not-allowed' : 'pointer',
               }}
             >
-              {generating ? '生成中...' : '生成雜湊'}
+              {generating ? '生成中...' : '生成完整性指紋'}
             </button>
           </div>
         </div>
@@ -185,7 +185,7 @@ export default function HashPage() {
         background: '#fef9e7', borderRadius: 8, padding: 16,
         marginBottom: 20, border: '1px solid #f9e79f',
       }}>
-        <h3 style={{ marginTop: 0, fontSize: 14 }}>🔍 驗證雜湊</h3>
+        <h3 style={{ marginTop: 0, fontSize: 14 }}>🔍 驗證完整性指紋</h3>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <div>
             <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>日期</label>
@@ -216,7 +216,7 @@ export default function HashPage() {
             border: `1px solid ${verifyResult.valid ? '#a9dfbf' : '#f5b7b1'}`,
           }}>
             <div style={{ fontWeight: 'bold', marginBottom: 6 }}>
-              {verifyResult.valid ? '✅ 雜湊一致 — 記錄完整' : '❌ 雜湊不一致 — 記錄可能被改動'}
+              {verifyResult.valid ? '✅ 完整性指紋一致 — 記錄完整' : '❌ 完整性指紋不一致 — 記錄可能被改動'}
             </div>
             {verifyResult.storedHash && (
               <div style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>
@@ -239,7 +239,7 @@ export default function HashPage() {
 
       {/* Hash list */}
       <div>
-        <h3 style={{ fontSize: 14, marginBottom: 12 }}>雜湊記錄</h3>
+        <h3 style={{ fontSize: 14, marginBottom: 12 }}>完整性指紋記錄</h3>
 
         {/* Date range filter */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'flex-end' }}>
@@ -275,14 +275,14 @@ export default function HashPage() {
         {hashLoading ? (
           <p style={{ color: '#888' }}>載入中...</p>
         ) : hashes.length === 0 ? (
-          <p style={{ color: '#888' }}>沒有雜湊記錄。需要先生成。</p>
+          <p style={{ color: '#888' }}>沒有完整性指紋記錄。需要先生成。</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #eee' }}>
                 <th style={{ textAlign: 'left', padding: '8px 12px' }}>日期</th>
                 <th style={{ textAlign: 'left', padding: '8px 12px' }}>診所</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px' }}>雜湊</th>
+                <th style={{ textAlign: 'left', padding: '8px 12px' }}>完整性指紋</th>
                 <th style={{ textAlign: 'left', padding: '8px 12px' }}>記錄數</th>
                 <th style={{ textAlign: 'left', padding: '8px 12px' }}>生成時間</th>
               </tr>

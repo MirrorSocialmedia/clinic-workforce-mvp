@@ -34,6 +34,20 @@ export default function AuditLogsPage() {
     toDate: '',
   })
 
+  
+  const ENTITY_LABELS: Record<string, string> = {
+    PayRule: '薪酬規則', Shift: '排班', PunchRecord: '打卡', PunchCorrection: '打卡補登',
+    User: '用戶', Employee: '員工', Clinic: '診所', LeaveRequest: '請假',
+    LeaveType: '假期類型', ShiftChangeRequest: '換班申請', ShiftTemplate: '班表模板',
+    DailyHash: '完整性驗證', Notification: '通知',
+  }
+  const ACTION_LABELS: Record<string, string> = {
+    CREATE: '新增', UPDATE: '修改', DELETE: '刪除', LOGIN: '登入', LOGOUT: '登出',
+  }
+  const ROLE_LABELS: Record<string, string> = {
+    OWNER: '院長', MANAGER: '管理', ACCOUNTANT: '會計', EMPLOYEE: '員工',
+  }
+
   const fetchLogs = async () => {
     setLoading(true)
     const params = new URLSearchParams({ page: String(page), limit: '50' })
@@ -136,12 +150,12 @@ export default function AuditLogsPage() {
                     <div className="text-muted text-sm">
                       {log.actor.phone}
                       <span className={`badge badge-${log.actor.role.toLowerCase()}`} style={{ marginLeft: 4 }}>
-                        {log.actor.role}
+                        {ROLE_LABELS[log.actor.role] || log.actor.role}
                       </span>
                     </div>
                   </td>
-                  <td><code style={{ fontSize: 12, background: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>{log.action}</code></td>
-                  <td>{log.entity}<span className="text-muted text-sm"> #{log.entityId.slice(0, 8)}</span></td>
+                  <td><span className='text-sm font-medium'>{ACTION_LABELS[log.action] || log.action}</span></td>
+                  <td>{ENTITY_LABELS[log.entity] || log.entity}<span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span></td>
                   <td className="text-muted text-sm">{log.notes || '—'}</td>
                   <td className="text-sm">{log.ipAddress || '—'}</td>
                 </tr>

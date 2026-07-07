@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { Html5Qrcode } from 'html5-qrcode'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -9,10 +10,11 @@ export default function PunchPage() {
   const router = useRouter()
   const [user, setUser] = useState<{ role: Role; clinics: string[] } | null>(null)
   const [loading, setLoading] = useState(true)
-  const [punching, setPunching] = useState(false)
+  const [status, setStatus] = useState('準備中...')
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
   const [records, setRecords] = useState<any[]>([])
-  const [manualToken, setManualToken] = useState('')
+  const scannerRef = useRef<Html5Qrcode | null>(null)
+  const scanningRef = useRef(false)
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -44,152 +46,118 @@ export default function PunchPage() {
     }
   }, [user, fetchRecords])
 
-  // Auto-refresh records every 30s
+  // QR Scanner
   useEffect(() => {
     if (!user) return
-    const interval = setInterval(fetchRecords, 30000)
-    return () => clearInterval(interval)
-  }, [user, fetchRecords])
 
-  async function handleManualPunch(punchType: 'CLOCK_IN' | 'CLOCK_OUT') {
-    if (!manualToken.trim()) {
-      setResult({ success: false, message: '請輸入 QR Token' })
-      return
+    setStatus('開啟鏡頭中...')
+    const scanner = new Html5Qrcode('qr-reader')
+    scannerRef.current = scanner
+
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: 250 },
+      async (decodedText) => {
+        // Success callback - auto punch
+        if (scanningRef.current) {
+          await scanner.pause()
+          scanningRef.current = false
+          await doPunch(decodedText)
+        }
+      },
+      () => {} // ignore scan errors
+    ).catch(() => {
+      setStatus('無法開啟鏡頭，請檢查權限')
+    })
+
+    // Start scanning
+    scanningRef.current = true
+
+    return () => {
+      scanner.stop().catch(() => {})
     }
+  }, [user])
 
-    setPunching(true)
+  async function doPunch(token: string) {
+    setStatus('打卡中...')
     setResult(null)
 
     try {
-      const punchRes = await fetch('/api/punch', {
+      const res = await fetch('/api/punch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          token: manualToken.trim(),
-          punchType,
+          token,
           deviceInfo: navigator.userAgent,
         }),
       })
 
-      const punchData = await punchRes.json()
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || '打卡失敗')
 
-      if (!punchRes.ok) throw new Error(punchData.error || 'Punch failed')
-
-      setResult({ success: true, message: `打卡成功！${punchType === 'CLOCK_IN' ? '上班' : '下班'}時間：${new Date(punchData.punchTime).toLocaleTimeString('zh-HK')}` })
-      setManualToken('')
+      const type = data.punchType === 'CLOCK_IN' ? '上班' : '下班'
+      setResult({ success: true, message: `✅ ${type}打卡成功 ${new Date(data.punchTime).toLocaleTimeString('zh-HK')}` })
       fetchRecords()
-    } catch (err: any) {
-      setResult({ success: false, message: err.message || '打卡失敗' })
-    } finally {
-      setPunching(false)
+    } catch (e: any) {
+      setResult({ success: false, message: `❌ ${e.message}` })
+      // Resume scanning after 2s
+      setTimeout(() => {
+        scannerRef.current?.resume()
+        scanningRef.current = true
+        setStatus('請對準診所 QR 碼')
+      }, 2000)
     }
   }
 
-  if (loading) return <div style={{ padding: 20 }}>載入中...</div>
+  if (loading) return <div className="flex justify-center items-center min-h-[200px]">載入中...</div>
   if (!user) return null
 
   return (
-    <div className="main-content" style={{ maxWidth: 600, margin: '0 auto' }}>
+    <div className="main-content max-w-lg mx-auto">
       <div className="page-header">
         <div>
-          <h1 style={{ fontSize: 22 }}>📱 打卡</h1>
-          <div className="subtitle">掃描診所 QR 碼，輸入 Token 打卡</div>
+          <h1 className="text-xl font-bold">📱 掃碼打卡</h1>
+          <div className="subtitle">對準診所螢幕 QR 碼，自動完成打卡</div>
         </div>
       </div>
 
-      {/* Info box */}
-      <div style={{
-        background: '#e8f4f4',
-        border: '1px solid #b2dfdb',
-        borderRadius: 8,
-        padding: '14px 18px',
-        marginBottom: 24,
-        fontSize: 13,
-        color: '#00695c',
-        lineHeight: 1.6,
-      }}>
-        <strong>📋 打卡方式：</strong>
-        <br/>
-        1. 掃描診所櫃檯螢幕上的 QR 碼，取得 Token
-        <br/>
-        2. 將 Token 輸入下方方框
-        <br/>
-        3. 選擇上班或下班打卡
+      {/* Info */}
+      <div className="bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 rounded-lg p-4 mb-6 text-sm text-teal-700 dark:text-teal-300">
+        <strong>📋 方式：</strong> 打開頁面 → 鏡頭自動開啟 → 對準診所 QR 碼 → 自動打卡
       </div>
 
-      {/* Token input */}
-      <div className="card">
-        <h2>輸入 QR Token</h2>
-        <div className="form-group">
-          <input
-            type="text"
-            value={manualToken}
-            onChange={(e) => setManualToken(e.target.value)}
-            placeholder="請貼上 QR Token"
-            style={{
-              width: '100%', padding: '12px 14px', borderRadius: 6, border: '1px solid var(--border)',
-              fontSize: 14, boxSizing: 'border-box', fontFamily: 'var(--font-mono)',
-            }}
-          />
-        </div>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <button
-            onClick={() => handleManualPunch('CLOCK_IN')}
-            disabled={punching || !manualToken.trim()}
-            className="btn btn-primary"
-            style={{
-              flex: 1, padding: '14px 20px', fontSize: 15, fontWeight: 600,
-              justifyContent: 'center',
-              opacity: punching || !manualToken.trim() ? 0.5 : 1,
-            }}
-          >
-            ☀️ 上班打卡
-          </button>
-          <button
-            onClick={() => handleManualPunch('CLOCK_OUT')}
-            disabled={punching || !manualToken.trim()}
-            className="btn"
-            style={{
-              flex: 1, padding: '14px 20px', fontSize: 15, fontWeight: 600,
-              justifyContent: 'center',
-              background: '#e67e22', color: '#fff',
-              opacity: punching || !manualToken.trim() ? 0.5 : 1,
-            }}
-          >
-            🌙 下班打卡
-          </button>
-        </div>
+      {/* QR Scanner */}
+      <div className="card mb-4">
+        <div id="qr-reader" className="w-full rounded-lg overflow-hidden" />
+        <p className="text-center mt-3 text-sm text-gray-500">{status}</p>
       </div>
 
-      {/* Result message */}
+      {/* Result */}
       {result && (
         <div className={result.success ? 'success-box' : 'error-box'}>
-          {result.success ? '✅' : '❌'} {result.message}
+          {result.message}
         </div>
       )}
 
       {/* Recent records */}
       <div className="card">
-        <h2>最近打卡記錄</h2>
+        <h2>最近記錄</h2>
         {records.length === 0 ? (
-          <div className="text-muted" style={{ textAlign: 'center', padding: 20 }}>暫無打卡記錄</div>
+          <div className="text-muted text-center py-5">暫無記錄</div>
         ) : (
           records.slice(0, 10).map((r) => (
             <div
               key={r.id}
-              style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '10px 0', borderBottom: '1px solid var(--border)', fontSize: 13,
-              }}
+              className="flex justify-between items-center py-2.5 border-b border-gray-100 dark:border-gray-700 text-sm"
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="flex items-center gap-2">
                 <span className={`badge ${r.punchType === 'CLOCK_IN' ? 'badge-success' : 'badge-warning'}`}>
                   {r.punchType === 'CLOCK_IN' ? '上班' : '下班'}
                 </span>
                 <span>{r.clinic?.name || '診所'}</span>
               </div>
-              <span className="text-muted" style={{ fontSize: 12 }}>
+              <span className="text-muted text-xs">
                 {new Date(r.punchTime).toLocaleString('zh-HK')}
               </span>
             </div>

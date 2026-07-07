@@ -1,6 +1,11 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import FullCalendar from '@fullcalendar/react'
+import dayGridPlugin from '@fullcalendar/daygrid'
+import timeGridPlugin from '@fullcalendar/timegrid'
+import interactionPlugin from '@fullcalendar/interaction'
+import zhcn from '@fullcalendar/core/locales/zh-cn'
 
 // ============================================================
 // Types
@@ -436,6 +441,81 @@ export default function SchedulingPage() {
     e.dataTransfer.dropEffect = 'copy'
   }
 
+  
+  // ============================================================
+  // FullCalendar Event Handlers
+  // ============================================================
+  const handleFcEventClick = (info: any) => {
+    const shift = shifts.find(s => s.id === info.event.id)
+    if (shift) {
+      setEditingShift(shift)
+      if (canManage) {
+        setShowChangePanel(true)
+      }
+    }
+  }
+
+  const handleFcEventDrop = async (info: any) => {
+    const shift = shifts.find(s => s.id === info.event.id)
+    if (!shift) return
+
+    const oldDate = new Date(shift.date)
+    const newDate = new Date(info.event.start)
+    const dayDiff = Math.round((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24))
+
+    // Calculate new start/end times preserving the offset
+    const oldStart = new Date(shift.startTime)
+    const oldEnd = new Date(shift.endTime)
+    const duration = oldEnd.getTime() - oldStart.getTime()
+
+    const newStart = new Date(newDate)
+    newStart.setHours(oldStart.getHours(), oldStart.getMinutes())
+    const newEnd = new Date(newStart.getTime() + duration)
+
+    try {
+      const res = await fetch('/api/shifts/' + shift.id, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: newDate.toISOString().split('T')[0],
+          startTime: newStart.toISOString(),
+          endTime: newEnd.toISOString(),
+        }),
+      })
+      if (!res.ok) {
+        info.revert()
+        alert('排班移動失敗')
+      } else {
+        loadShifts()
+      }
+    } catch {
+      info.revert()
+    }
+  }
+
+  const handleFcDateClick = (info: any) => {
+    if (!canManage || !selectedTemplate) return
+    // Open shift creation modal with selected date
+    setShowNewShiftModal(true)
+    setCurrentDate(new Date(info.dateStr))
+  }
+
+  // Map shifts to FC events
+  const fcEvents = shifts.map(s => ({
+    id: s.id,
+    title: (s.employee?.user?.name || '') + ' ' + (s.template?.name || ''),
+    start: s.startTime,
+    end: s.endTime,
+    backgroundColor: s.status === 'CONFIRMED' ? '#1976d2' :
+                     s.status === 'DRAFT' ? '#f57c00' :
+                     s.status === 'CANCELLED' ? '#dc3545' : '#388e3c',
+    borderColor: s.status === 'CONFIRMED' ? '#1565c0' :
+                 s.status === 'DRAFT' ? '#e65100' :
+                 s.status === 'CANCELLED' ? '#c82333' : '#2e7d32',
+    extendedProps: { shift: s },
+  }))
+
   const handleDrop = async (e: React.DragEvent, employeeId: string, dateStr: string) => {
     e.preventDefault()
     if (!selectedTemplate) {
@@ -664,169 +744,41 @@ export default function SchedulingPage() {
           </div>
         </div>
       )}
+      <div className="card" style={{ padding: 16 }}>
 
-      {/* Schedule Grid */}
-      <div className="card" style={{ overflowX: 'auto', padding: 0 }}>
-        <div style={{ minWidth: Math.max(600, dates.length * 100 + 160) }}>
-          {/* Date Header Row */}
-          <div style={{
-            display: 'flex', borderBottom: '2px solid #eee',
-            position: 'sticky', top: 0, background: 'white', zIndex: 10,
-          }}>
-            <div style={{
-              width: 150, minWidth: 150, padding: '12px 16px',
-              fontWeight: 600, fontSize: 13, color: '#555',
-              borderRight: '1px solid #eee',
-            }}>
-              員工
-            </div>
-            {dates.map((date, i) => {
-              const isToday = formatDate(date) === formatDate(new Date())
-              return (
-                <div key={i} style={{
-                  flex: 1, minWidth: 90, padding: '10px 8px',
-                  textAlign: 'center', fontSize: 12,
-                  borderRight: '1px solid #f0f0f0',
-                  background: isToday ? '#e8f5e9' : 'transparent',
-                  fontWeight: isToday ? 600 : 400,
-                  color: isToday ? '#2e7d32' : '#555',
-                }}>
-                  <div>{formatDateLabel(date)}</div>
-                  <div style={{ fontSize: 11, color: '#aaa' }}>
-                    {date.getMonth() + 1}/{date.getDate()}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
 
-          {/* Employee Rows */}
-          {clinicEmployees.map(emp => (
-            <div key={emp.id} style={{ display: 'flex', borderBottom: '1px solid #f5f5f5' }}>
-              {/* Employee Name */}
-              <div style={{
-                width: 150, minWidth: 150, padding: '10px 16px',
-                borderRight: '1px solid #eee',
-                display: 'flex', flexDirection: 'column', justifyContent: 'center',
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>
-                  {emp.user.name}
-                </div>
-                <div style={{ fontSize: 11, color: '#aaa' }}>
-                  {emp.user.phone}
-                </div>
-                {/* Draggable employee chip (for managers) */}
-                {canManage && selectedTemplate && (
-                  <div
-                    draggable
-                    onDragStart={e => handleDragStart(e, emp.id)}
-                    style={{
-                      marginTop: 4,
-                      padding: '2px 8px',
-                      background: '#e8e8ff',
-                      borderRadius: 10,
-                      fontSize: 10,
-                      color: '#5c6bc0',
-                      cursor: 'grab',
-                      alignSelf: 'flex-start',
-                    }}
-                  >
-                    ✋ 拖放排班
+        <FullCalendar
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          initialView={viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
+          locale={zhcn}
+          headerToolbar={{
+            left: 'prev,next today',
+            center: 'title',
+            right: 'timeGridWeek,dayGridMonth',
+          }}
+          events={fcEvents}
+          editable={canManage}
+          selectable={canManage && !!selectedTemplate}
+          dayMaxEvents={true}
+          nowIndicator={true}
+          eventClick={handleFcEventClick}
+          eventDrop={handleFcEventDrop}
+          dateClick={handleFcDateClick}
+          eventContent={(eventInfo) => {
+            const shift = eventInfo.event.extendedProps.shift
+            return (
+              <div>
+                <b>{eventInfo.event.title}</b>
+                {shift && (
+                  <div style={{ fontSize: 11 }}>
+                    {formatTimeFromShift(shift.startTime)}-{formatTimeFromShift(shift.endTime)}
                   </div>
                 )}
               </div>
-
-              {/* Date Cells */}
-              {dates.map((date, i) => {
-                const dateStr = formatDate(date)
-                const shift = getShiftForCell(emp.id, dateStr)
-                const isToday = formatDate(date) === formatDate(new Date())
-
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      flex: 1, minWidth: 90, padding: 6,
-                      borderRight: '1px solid #f0f0f0',
-                      background: isToday ? '#f9fff9' : 'transparent',
-                      minHeight: 56,
-                    }}
-                    onDragOver={canManage ? handleDragOver : undefined}
-                    onDrop={canManage ? (e) => handleDrop(e, emp.id, dateStr) : undefined}
-                  >
-                    {shift && (
-                      <div
-                        style={{
-                          padding: '4px 8px',
-                          background: shift.status === 'CONFIRMED' ? '#e3f2fd' :
-                            shift.status === 'DRAFT' ? '#fff3e0' :
-                              shift.status === 'CANCELLED' ? '#fde8e8' : '#e8f5e9',
-                          borderRadius: 4,
-                          fontSize: 11,
-                          cursor: canManage ? 'pointer' : 'default',
-                          borderLeft: `3px solid ${shift.status === 'CONFIRMED' ? '#1976d2' :
-                              shift.status === 'DRAFT' ? '#f57c00' :
-                                shift.status === 'CANCELLED' ? '#dc3545' : '#388e3c'
-                            }`,
-                        }}
-                        onClick={() => canManage && setEditingShift(shift)}
-                        title={`點擊${canManage ? '編輯' : '查看'}班次詳情`}
-                      >
-                        <div style={{ fontWeight: 500 }}>
-                          {formatTimeFromShift(shift.startTime)}-{formatTimeFromShift(shift.endTime)}
-                        </div>
-                        {shift.role && <div style={{ color: '#888' }}>{shift.role}</div>}
-                        {shift.template?.name && (
-                          <div style={{ color: '#aaa', fontSize: 10 }}>{shift.template.name}</div>
-                        )}
-                        {canManage && (
-                          <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                            {isCanRead && (
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation()
-                                  setEditingShift(shift)
-                                  setShowChangePanel(true)
-                                }}
-                                style={{
-                                  background: 'none', border: 'none', cursor: 'pointer',
-                                  fontSize: 10, color: '#5c6bc0', padding: 0,
-                                }}
-                                title="發起換更申請"
-                              >
-                                🔄
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                deleteShift(shift.id)
-                              }}
-                              style={{
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                fontSize: 10, color: '#dc3545', padding: 0,
-                              }}
-                              title="刪除班次"
-                            >
-                              🗑
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          ))}
-
-          {/* Empty state */}
-          {clinicEmployees.length === 0 && (
-            <div style={{ padding: 40, textAlign: 'center', color: '#aaa' }}>
-              {selectedClinicId ? '該診所暫無員工' : '請選擇診所'}
-            </div>
-          )}
-        </div>
+            )
+          }}
+          height="auto"
+        />
       </div>
 
       {/* Legend */}

@@ -12,11 +12,16 @@
     "db:seed": "prisma generate && tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@fullcalendar/daygrid": "^6.1.21",
+    "@fullcalendar/interaction": "^6.1.21",
+    "@fullcalendar/react": "^6.1.21",
+    "@fullcalendar/timegrid": "^6.1.21",
     "@prisma/client": "^6.5.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.6",
     "bcryptjs": "^2.4.3",
     "csv-parser": "^3.2.1",
+    "html5-qrcode": "^2.3.8",
     "jsonwebtoken": "^9.0.2",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
