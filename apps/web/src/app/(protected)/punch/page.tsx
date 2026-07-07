@@ -1,24 +1,26 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import QrScanner from './components/qr-scanner'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
 export default function PunchPage() {
+  const router = useRouter()
   const [user, setUser] = useState<{ role: Role; clinics: string[] } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
   const [records, setRecords] = useState<any[]>([])
 
   const fetchUserData = useCallback(async () => {
     try {
       const res = await fetch('/api/me', { credentials: 'include' })
-      if (!res.ok) return
+      if (!res.ok) { router.push('/login'); return }
       const data = await res.json()
       setUser({ role: data.user.role, clinics: data.user.clinicIds || [] })
-    } catch {
-      // ignore
-    }
-  }, [])
+    } catch { router.push('/login') }
+  }, [router])
 
   const fetchRecords = useCallback(async () => {
     try {
@@ -27,9 +29,7 @@ export default function PunchPage() {
         const data = await res.json()
         setRecords(data.records || [])
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [])
 
   useEffect(() => {
@@ -43,6 +43,44 @@ export default function PunchPage() {
     }
   }, [user, fetchRecords])
 
+  // Punch handler — called by scanner after QR decode
+  const handleScan = useCallback(async (token: string) => {
+    setResult(null)
+
+    try {
+      const res = await fetch('/api/punch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          token,
+          deviceInfo: navigator.userAgent,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || '打卡失敗')
+
+      const type = data.punchType === 'CLOCK_IN' ? '上班' : '下班'
+      setResult({
+        success: true,
+        message: `✅ ${type}打卡成功 ${new Date(data.punchTime).toLocaleTimeString('zh-HK')}`,
+      })
+      fetchRecords()
+    } catch (e: any) {
+      setResult({ success: false, message: `❌ ${e.message}` })
+    }
+  }, [fetchRecords])
+
+  // Keep ref stable for scanner
+  const handleScanRef = useRef(handleScan)
+  useEffect(() => { handleScanRef.current = handleScan }, [handleScan])
+
+  // Wrap in a stable function for scanner prop
+  const stableOnScan = useCallback(async (token: string) => {
+    return handleScanRef.current(token)
+  }, [])
+
   if (loading) return <div className="flex justify-center items-center min-h-[200px]">載入中...</div>
   if (!user) return null
 
@@ -55,14 +93,24 @@ export default function PunchPage() {
         </div>
       </div>
 
+      {/* Instruction */}
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4 text-sm text-blue-700 dark:text-blue-300">
         💡 請用手機對著診所櫃檯螢幕的 QR 碼掃描打卡。
       </div>
 
-      <div className="card mb-4 text-center py-12">
-        <p className="text-gray-500">QR 掃描器開發中，預計下一版上線</p>
+      {/* QR Scanner */}
+      <div className="card mb-4">
+        <QrScanner onScan={stableOnScan} />
       </div>
 
+      {/* Result */}
+      {result && (
+        <div className={result.success ? 'success-box' : 'error-box'}>
+          {result.message}
+        </div>
+      )}
+
+      {/* Recent records */}
       <div className="card">
         <h2>最近記錄</h2>
         {records.length === 0 ? (
