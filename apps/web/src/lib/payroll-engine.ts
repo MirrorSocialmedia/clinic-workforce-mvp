@@ -824,8 +824,30 @@ export async function generatePayrollRun(
     const items: Array<any> = []
     for (const emp of employees) {
       try {
-        // Calculate using the standard function (reads from prisma which is extended)
-        const calcResult = await calculateEmployeePayroll(emp.id, monthDate, clinicId)
+        // Read employee pay rule to determine engine
+        const payRule = await tx.payRule.findFirst({
+          where: {
+            employeeId: emp.id,
+            isActive: true,
+          },
+          orderBy: { effectiveFrom: 'desc' },
+        })
+
+        let calcResult
+        if (payRule?.configJson) {
+          const config = JSON.parse(payRule.configJson)
+          if (config.base_type || config.modifiers) {
+            // New modular format → use new engine
+            calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config)
+          } else {
+            // Legacy format → use old engine (backward compat)
+            calcResult = await calculateEmployeePayroll(emp.id, monthDate, clinicId)
+          }
+        } else {
+          // No rule → use old engine
+          calcResult = await calculateEmployeePayroll(emp.id, monthDate, clinicId)
+        }
+
         items.push({
           runId: run.id,
           employeeId: emp.id,

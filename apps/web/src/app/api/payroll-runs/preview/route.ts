@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { calculateEmployeePayroll } from '@/lib/payroll-engine'
+import { calculateEmployeePayroll, calculatePayrollWithRules } from '@/lib/payroll-engine'
 
 // ============================================================
 // POST /api/payroll-runs/preview — Preview payroll calculation
@@ -42,11 +42,34 @@ export async function POST(req: NextRequest) {
     const items = []
     for (const emp of employees) {
       try {
-        const result = await calculateEmployeePayroll(emp.id, monthDate, clinicId || null)
+        // Read employee pay rule to determine engine
+        const payRule = await prisma.payRule.findFirst({
+          where: {
+            employeeId: emp.id,
+            isActive: true,
+          },
+          orderBy: { effectiveFrom: 'desc' },
+        })
+
+        let result
+        if (payRule?.configJson) {
+          const config = JSON.parse(payRule.configJson)
+          if (config.base_type || config.modifiers) {
+            // New modular format → use new engine
+            result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config)
+          } else {
+            // Legacy format → use old engine (backward compat)
+            result = await calculateEmployeePayroll(emp.id, monthDate, clinicId || null)
+          }
+        } else {
+          // No rule → use old engine
+          result = await calculateEmployeePayroll(emp.id, monthDate, clinicId || null)
+        }
+
         items.push({
           employeeId: emp.id,
           employeeName: emp.user.name,
-          payType: result.payType,
+          payType: (result as any).payType || 'MONTHLY',
           workedHours: result.workedHours,
           otHours: result.otHours,
           leaveDays: result.leaveDays,
