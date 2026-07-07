@@ -3,6 +3,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { Toaster } from 'sonner'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
 
@@ -14,6 +17,13 @@ interface UserData {
   phone: string
   role: Role
   clinics: any[]
+}
+
+const ROLE_BADGE_VARIANT: Record<Role, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
+  OWNER: { variant: 'default', label: 'Owner' },
+  MANAGER: { variant: 'secondary', label: 'Mgr' },
+  ACCOUNTANT: { variant: 'outline', label: 'Acct' },
+  EMPLOYEE: { variant: 'secondary', label: 'Emp' },
 }
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
@@ -125,13 +135,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     )
   }
 
-  const badgeClass = user.role === 'OWNER' ? 'badge-owner'
-    : user.role === 'MANAGER' ? 'badge-manager'
-    : user.role === 'ACCOUNTANT' ? 'badge-accountant'
-    : 'badge-employee'
+  const roleBadge = ROLE_BADGE_VARIANT[user.role]
 
   return (
-    <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="flex min-h-screen bg-background">
       {/* Sidebar */}
       <aside
         className={`fixed top-0 left-0 z-50 flex flex-col bg-gray-900 text-gray-100 h-screen transition-all duration-300 ease-in-out border-r border-gray-700
@@ -145,13 +152,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
               <div className="text-xs text-gray-400 mt-0.5">勞動力管理</div>
             </div>
           )}
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setCollapsed(!collapsed)}
-            className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+            className="h-8 w-8 text-gray-400 hover:text-white hover:bg-gray-700"
             title={collapsed ? '展開' : '收合'}
           >
             {collapsed ? '→' : '←'}
-          </button>
+          </Button>
         </div>
 
         {/* Navigation */}
@@ -180,9 +189,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                     {item.label}
                   </span>
                   {item.path === '/my/notifications' && unreadCount > 0 && (
-                    <span className="ml-auto bg-red-500 text-white rounded-full px-1.5 py-0.5 text-xs font-semibold min-w-[22px] text-center">
+                    <Badge variant="destructive" className="ml-auto text-xs px-1.5 min-w-[22px] justify-center">
                       {unreadCount}
-                    </span>
+                    </Badge>
                   )}
                 </Link>
               ))}
@@ -227,18 +236,19 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             {!collapsed && (
               <>
                 <div className="flex-1 text-sm text-gray-300 truncate">{user.name}</div>
-                <span className={`text-xs px-1.5 py-0.5 rounded ${badgeClass}`}>
-                  {user.role === 'OWNER' ? 'Owner' : user.role === 'MANAGER' ? 'Mgr' : user.role === 'ACCOUNTANT' ? 'Acct' : 'Emp'}
-                </span>
+                <Badge variant={roleBadge.variant}>
+                  {roleBadge.label}
+                </Badge>
               </>
             )}
           </div>
-          <button
+          <Button
+            variant="outline"
             onClick={handleLogout}
-            className="w-full py-1.5 px-3 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white hover:border-gray-500 transition-colors text-sm"
+            className="w-full py-1.5 text-sm border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white hover:border-gray-500"
           >
             {collapsed ? '🚪' : '登出'}
-          </button>
+          </Button>
         </div>
       </aside>
 
@@ -249,6 +259,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         {children}
         <PWAPrompt />
       </main>
+
+      {/* Toast notifications */}
+      <Toaster position="top-right" theme="light" />
     </div>
   )
 }

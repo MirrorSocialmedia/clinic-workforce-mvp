@@ -1,133 +1,220 @@
 /* ============================================
- 診所系統 — 全域樣式
+ 診所系統 — 全域樣式 (Shadcn/UI + Tremor)
  ============================================ */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── Shadcn CSS Variables ── */
+@layer base {
+  :root {
+    /* Core */
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    /* Card */
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    /* Popover */
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    /* Primary — brand teal */
+    --primary: 180 61% 27%;
+    --primary-foreground: 210 40% 98%;
+
+    /* Secondary */
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    /* Muted */
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    /* Accent */
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    /* Destructive */
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Borders & inputs */
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 180 61% 27%;
+
+    /* Radius */
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 180 61% 35%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 180 61% 35%;
+  }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang HK',
+      'Microsoft JhengHei', Roboto, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 {
+    color: hsl(var(--foreground));
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* ── Legacy custom styles (kept for backward compatibility) ── */
+
 :root {
- --ink: #0f2830;
- --primary: #0d7377;
- --primary-dark: #0a5a5d;
- --surface: #ffffff;
- --bg: #f4f6f7;
- --border: #e3e8ea;
- --muted: #6b7c85;
- --text: #26383f;
- --success: #2e7d5b;
- --success-bg: #e6f4ec;
- --danger: #c0392b;
- --danger-bg: #fdecea;
- --warning: #b8860b;
- --warning-bg: #fdf6e3;
- --radius: 10px;
- --radius-sm: 6px;
- --shadow: 0 1px 2px rgba(15,40,48,0.04), 0 2px 8px rgba(15,40,48,0.06);
- --shadow-lg: 0 8px 30px rgba(15,40,48,0.12);
- --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang HK',
- 'Microsoft JhengHei', Roboto, sans-serif;
- --font-mono: 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+  --ink: #0f2830;
+  --primary: #0d7377;
+  --primary-dark: #0a5a5d;
+  --surface: #ffffff;
+  --bg: #f4f6f7;
+  --border: #e3e8ea;
+  --muted: #6b7c85;
+  --text: #26383f;
+  --success: #2e7d5b;
+  --success-bg: #e6f4ec;
+  --danger: #c0392b;
+  --danger-bg: #fdecea;
+  --warning: #b8860b;
+  --warning-bg: #fdf6e3;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(15,40,48,0.04), 0 2px 8px rgba(15,40,48,0.06);
+  --shadow-lg: 0 8px 30px rgba(15,40,48,0.12);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang HK',
+    'Microsoft JhengHei', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
 }
-
-* { box-sizing: border-box; }
-
-body {
- font-family: var(--font);
- margin: 0;
- padding: 0;
- background: var(--bg);
- color: var(--text);
- font-size: 14px;
- line-height: 1.55;
- -webkit-font-smoothing: antialiased;
-}
-
-h1, h2, h3 { color: var(--ink); font-weight: 650; letter-spacing: -0.01em; }
 
 a { color: var(--primary); text-decoration: none; }
 a:hover { color: var(--primary-dark); }
 
 /* ============ Sidebar ============ */
 .sidebar {
- width: 248px;
- min-height: 100vh;
- background: var(--ink);
- color: #cdd8dc;
- padding: 0;
- position: fixed;
- top: 0; left: 0;
- display: flex;
- flex-direction: column;
- z-index: 20;
+  width: 248px;
+  min-height: 100vh;
+  background: var(--ink);
+  color: #cdd8dc;
+  padding: 0;
+  position: fixed;
+  top: 0; left: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
 }
 
 .sidebar-header {
- padding: 22px 22px 18px;
- border-bottom: 1px solid rgba(255,255,255,0.08);
+  padding: 22px 22px 18px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 .sidebar-header h1 {
- font-size: 16px;
- font-weight: 650;
- margin: 0;
- color: #ffffff;
- letter-spacing: 0.01em;
+  font-size: 16px;
+  font-weight: 650;
+  margin: 0;
+  color: #ffffff;
+  letter-spacing: 0.01em;
 }
 
 .sidebar-nav { padding: 12px 0; flex: 1; overflow-y: auto; }
 
 .sidebar-nav a {
- display: flex;
- align-items: center;
- gap: 11px;
- padding: 10px 22px;
- color: #9fb0b6;
- text-decoration: none;
- font-size: 13.5px;
- font-weight: 500;
- transition: background 0.15s, color 0.15s, border-color 0.15s;
- border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 22px;
+  color: #9fb0b6;
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  border-left: 3px solid transparent;
 }
 .sidebar-nav a:hover {
- background: rgba(255,255,255,0.05);
- color: #ffffff;
+  background: rgba(255,255,255,0.05);
+  color: #ffffff;
 }
 .sidebar-nav a.active {
- background: rgba(13,115,119,0.18);
- color: #ffffff;
- border-left-color: var(--primary);
+  background: rgba(13,115,119,0.18);
+  color: #ffffff;
+  border-left-color: var(--primary);
 }
 
 .sidebar-footer {
- padding: 16px 22px;
- border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 16px 22px;
+  border-top: 1px solid rgba(255,255,255,0.08);
 }
 
 /* ============ Main content ============ */
 .main-content {
- margin-left: 248px;
- padding: 28px 32px;
- min-height: 100vh;
- max-width: 1400px;
+  margin-left: 248px;
+  padding: 28px 32px;
+  min-height: 100vh;
+  max-width: 1400px;
 }
 
-/* ============ Cards ============ */
+/* ============ Cards (legacy) ============ */
 .card {
- background: var(--surface);
- border: 1px solid var(--border);
- border-radius: var(--radius);
- padding: 22px 24px;
- box-shadow: var(--shadow);
- margin-bottom: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  box-shadow: var(--shadow);
+  margin-bottom: 18px;
 }
 .card h2 {
- margin: 0 0 18px 0;
- font-size: 16px;
- font-weight: 650;
- color: var(--ink);
- display: flex;
- align-items: center;
- gap: 8px;
+  margin: 0 0 18px 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ============ Grids ============ */
@@ -137,73 +224,72 @@ a:hover { color: var(--primary-dark); }
 
 /* ============ Stat cards ============ */
 .stat-card {
- background: var(--surface);
- border: 1px solid var(--border);
- border-radius: var(--radius);
- padding: 20px 22px;
- box-shadow: var(--shadow);
- position: relative;
- overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
 }
 .stat-card::before {
- content: '';
- position: absolute;
- left: 0; top: 0; bottom: 0;
- width: 3px;
- background: var(--primary);
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--primary);
 }
 .stat-card .stat-value {
- font-size: 30px;
- font-weight: 700;
- color: var(--ink);
- font-variant-numeric: tabular-nums;
- letter-spacing: -0.02em;
- line-height: 1.1;
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 .stat-card .stat-label {
- font-size: 12.5px;
- color: var(--muted);
- margin-top: 6px;
- font-weight: 500;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 6px;
+  font-weight: 500;
 }
 
 /* ============ Tables ============ */
 table { width: 100%; border-collapse: collapse; }
 th, td {
- text-align: left;
- padding: 11px 14px;
- border-bottom: 1px solid var(--border);
- font-size: 13.5px;
+  text-align: left;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
 }
 th {
- background: #fafbfb;
- font-weight: 600;
- color: var(--muted);
- font-size: 11px;
- text-transform: uppercase;
- letter-spacing: 0.04em;
- white-space: nowrap;
+  background: #fafbfb;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 tbody tr { transition: background 0.12s; }
 tbody tr:hover { background: #fafbfc; }
 td { color: var(--text); }
-/* 數字欄用等寬對齊 */
 td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
 
 /* ============ Buttons ============ */
 .btn {
- display: inline-flex;
- align-items: center;
- gap: 6px;
- padding: 9px 16px;
- border-radius: var(--radius-sm);
- font-size: 13.5px;
- font-weight: 550;
- cursor: pointer;
- border: 1px solid transparent;
- transition: background 0.15s, box-shadow 0.15s, transform 0.05s;
- font-family: inherit;
- white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 550;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.05s;
+  font-family: inherit;
+  white-space: nowrap;
 }
 .btn:active { transform: translateY(0.5px); }
 .btn-primary { background: var(--primary); color: #fff; }
@@ -211,9 +297,9 @@ td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-m
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover { background: #a5311f; }
 .btn-secondary {
- background: var(--surface);
- color: var(--text);
- border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
 }
 .btn-secondary:hover { background: #f7f9f9; border-color: #ccd5d8; }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
@@ -222,63 +308,63 @@ td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-m
 /* ============ Forms ============ */
 .form-group { margin-bottom: 18px; }
 .form-group label {
- display: block;
- margin-bottom: 7px;
- font-size: 13px;
- font-weight: 600;
- color: var(--ink);
+  display: block;
+  margin-bottom: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
 }
 .form-group input,
 .form-group select,
 .form-group textarea {
- width: 100%;
- padding: 10px 13px;
- border: 1px solid var(--border);
- border-radius: var(--radius-sm);
- font-size: 14px;
- box-sizing: border-box;
- font-family: inherit;
- background: #fff;
- color: var(--text);
- transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  box-sizing: border-box;
+  font-family: inherit;
+  background: #fff;
+  color: var(--text);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .form-group input:focus,
 .form-group select:focus,
 .form-group textarea:focus {
- outline: none;
- border-color: var(--primary);
- box-shadow: 0 0 0 3px rgba(13,115,119,0.12);
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13,115,119,0.12);
 }
 
 /* ============ Login ============ */
 .login-container {
- display: flex;
- justify-content: center;
- align-items: center;
- min-height: 100vh;
- background: linear-gradient(140deg, var(--ink) 0%, #123842 55%, #0d5559 100%);
- padding: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(140deg, var(--ink) 0%, #123842 55%, #0d5559 100%);
+  padding: 20px;
 }
 .login-card {
- background: var(--surface);
- border-radius: 14px;
- padding: 40px;
- width: 100%;
- max-width: 400px;
- box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 40px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-lg);
 }
 .login-card h1 { text-align: center; margin-bottom: 8px; color: var(--ink); }
 .login-card p { text-align: center; color: var(--muted); margin-bottom: 26px; }
 
 /* ============ Badges ============ */
 .badge {
- display: inline-block;
- padding: 3px 9px;
- border-radius: 20px;
- font-size: 11px;
- font-weight: 650;
- text-transform: uppercase;
- letter-spacing: 0.03em;
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 .badge-owner { background: #e0f2f1; color: #00695c; }
 .badge-manager { background: #e8eaf6; color: #3949ab; }
@@ -291,7 +377,7 @@ td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-m
 .badge-warning { background: var(--warning-bg); color: var(--warning); }
 .badge-pending { background: #eef1f2; color: var(--muted); }
 
-/* ============ 補上缺失的 Tailwind utility（因未安裝 Tailwind）============ */
+/* ============ Tailwind utility fallbacks ============ */
 .flex { display: flex; }
 .inline-flex { display: inline-flex; }
 .grid { display: grid; }
@@ -319,56 +405,56 @@ td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-m
 
 /* ============ 通用小元件 ============ */
 .page-header {
- display: flex;
- justify-content: space-between;
- align-items: flex-start;
- margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
 }
 .page-header h1 { font-size: 22px; margin: 0 0 2px; }
 .page-header .subtitle { color: var(--muted); font-size: 13.5px; }
 
 /* 空狀態 / 錯誤 / 載入 */
 .state-box {
- padding: 40px 24px;
- text-align: center;
- color: var(--muted);
- background: var(--surface);
- border: 1px dashed var(--border);
- border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
 }
 .error-box {
- padding: 14px 18px;
- background: var(--danger-bg);
- color: var(--danger);
- border-radius: var(--radius-sm);
- border: 1px solid #f5c6cb;
- font-size: 13.5px;
- margin-bottom: 16px;
+  padding: 14px 18px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  border: 1px solid #f5c6cb;
+  font-size: 13.5px;
+  margin-bottom: 16px;
 }
 .success-box {
- padding: 14px 18px;
- background: var(--success-bg);
- color: var(--success);
- border-radius: var(--radius-sm);
- font-size: 13.5px;
- margin-bottom: 16px;
+  padding: 14px 18px;
+  background: var(--success-bg);
+  color: var(--success);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  margin-bottom: 16px;
 }
 
 /* ============ 響應式（手機）============ */
 @media (max-width: 768px) {
- .sidebar {
- width: 100%;
- height: auto;
- min-height: auto;
- position: relative;
- flex-direction: column;
- }
- .sidebar-nav { display: flex; flex-wrap: wrap; padding: 8px; }
- .sidebar-nav a { border-left: none; border-radius: 6px; padding: 8px 12px; }
- .sidebar-nav a.active { border-left: none; }
- .main-content { margin-left: 0; padding: 18px 16px; }
- .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
- table { display: block; overflow-x: auto; white-space: nowrap; }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    min-height: auto;
+    position: relative;
+    flex-direction: column;
+  }
+  .sidebar-nav { display: flex; flex-wrap: wrap; padding: 8px; }
+  .sidebar-nav a { border-left: none; border-radius: 6px; padding: 8px 12px; }
+  .sidebar-nav a.active { border-left: none; }
+  .main-content { margin-left: 0; padding: 18px 16px; }
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  table { display: block; overflow-x: auto; white-space: nowrap; }
 }
 
 /* 鍵盤焦點可見（無障礙）*/
@@ -376,5 +462,5 @@ td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-m
 
 /* 尊重減少動態偏好 */
 @media (prefers-reduced-motion: reduce) {
- * { transition: none !important; animation: none !important; }
+  * { transition: none !important; animation: none !important; }
 }
