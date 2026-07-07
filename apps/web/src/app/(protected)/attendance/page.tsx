@@ -34,6 +34,7 @@ export default function AttendancePage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize] = useState(20)
+  const [error, setError] = useState('')
 
   // Filters
   const [clinicFilter, setClinicFilter] = useState('')
@@ -75,6 +76,7 @@ export default function AttendancePage() {
 
   const fetchRecords = async () => {
     setLoading(true)
+    setError('')
     try {
       const params = new URLSearchParams({
         page: page.toString(),
@@ -86,11 +88,15 @@ export default function AttendancePage() {
       if (endDate) params.set('endDate', endDate)
 
       const res = await fetch(`/api/punches?${params}`, { credentials: 'include' })
-      if (res.ok) {
-        const data = await res.json()
-        setRecords(data.records || [])
-        setTotal(data.total || 0)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `伺服器錯誤 (${res.status})`)
       }
+      const data = await res.json()
+      setRecords(data.records || [])
+      setTotal(data.total || 0)
+    } catch (err: any) {
+      setError(err.message || '載入失敗')
     } finally {
       setLoading(false)
     }
@@ -112,6 +118,7 @@ export default function AttendancePage() {
   }, [user, page, clinicFilter, employeeFilter, startDate, endDate])
 
   if (!user) return <div style={{ padding: 20 }}>Loading...</div>
+  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
 
   const totalPages = Math.ceil(total / pageSize)
 

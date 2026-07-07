@@ -21,14 +21,20 @@ const TYPE_COLORS: Record<string, string> = {
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   const fetchData = useCallback(async () => {
+    setError('')
     try {
       const res = await fetch('/api/notifications', { credentials: 'include' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `伺服器錯誤 (${res.status})`)
+      }
       const data = await res.json()
       setNotifications(data.notifications || [])
-    } catch (err) {
-      console.error('Fetch notifications error:', err)
+    } catch (err: any) {
+      setError(err.message || '載入失敗')
     } finally {
       setLoading(false)
     }
@@ -73,6 +79,7 @@ export default function NotificationsPage() {
   const unreadCount = notifications.filter(n => !n.isRead).length
 
   if (loading) return <div style={{ padding: 24 }}>載入中...</div>
+  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
 
   return (
     <div style={{ padding: 24 }}>

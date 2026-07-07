@@ -18,21 +18,31 @@ export default function LeaveTypesPage() {
   const [userRole, setUserRole] = useState<Role | null>(null)
   const [leaveTypes, setLeaveTypes] = useState<LeaveTypeItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', isPaid: true, annualQuota: '', color: '#4CAF50' })
   const [editingId, setEditingId] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
+    setError('')
     try {
       const meRes = await fetch('/api/me', { credentials: 'include' })
+      if (!meRes.ok) {
+        const body = await meRes.json().catch(() => ({}))
+        throw new Error(body.error || `伺服器錯誤 (${meRes.status})`)
+      }
       const meData = await meRes.json()
       setUserRole(meData.user.role as Role)
 
       const res = await fetch('/api/leave-types', { credentials: 'include' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `伺服器錯誤 (${res.status})`)
+      }
       const data = await res.json()
       setLeaveTypes(data.leaveTypes || [])
-    } catch (err) {
-      console.error('Failed to fetch:', err)
+    } catch (err: any) {
+      setError(err.message || '載入失敗')
     } finally {
       setLoading(false)
     }

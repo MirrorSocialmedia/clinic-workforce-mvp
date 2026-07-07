@@ -1,8 +1,6 @@
-export const dynamic = 'force-dynamic'
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-// Skip static generation — this is a dynamic API
 export const dynamic = 'force-dynamic'
 
 // ============================================================

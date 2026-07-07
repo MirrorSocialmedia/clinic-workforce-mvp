@@ -14,6 +14,7 @@ export default function HashPage() {
   const [hashes, setHashes] = useState<any[]>([])
   const [hashLoading, setHashLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState('')
   const [verifyResult, setVerifyResult] = useState<any>(null)
   const [selectedDate, setSelectedDate] = useState('')
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
@@ -41,16 +42,21 @@ export default function HashPage() {
     if (!selectedClinic) return
 
     setHashLoading(true)
+    setError('')
     try {
       const params = new URLSearchParams({ clinicId: selectedClinic })
       if (dateRange.start) params.set('startDate', dateRange.start)
       if (dateRange.end) params.set('endDate', dateRange.end)
 
       const res = await fetch(`/api/daily-hash?${params}`, { credentials: 'include' })
-      if (res.ok) {
-        const data = await res.json()
-        setHashes(data.hashes || [])
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `伺服器錯誤 (${res.status})`)
       }
+      const data = await res.json()
+      setHashes(data.hashes || [])
+    } catch (err: any) {
+      setError(err.message || '載入失敗')
     } finally {
       setHashLoading(false)
     }
@@ -118,6 +124,7 @@ export default function HashPage() {
 
   if (loading) return <div style={{ padding: 20 }}>載入中...</div>
   if (!user) return null
+  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
 
   return (
     <div style={{ padding: 20 }}>
