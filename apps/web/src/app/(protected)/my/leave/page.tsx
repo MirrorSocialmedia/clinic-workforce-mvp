@@ -52,19 +52,25 @@ export default function MyLeavePage() {
   const [balances, setBalances] = useState<LeaveBalanceItem[]>([])
   const [leaveTypes, setLeaveTypes] = useState<LeaveTypeItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [filter, setFilter] = useState<LeaveStatus | ''>('')
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
 
   const fetchData = useCallback(async () => {
+    setError('')
     try {
       const res = await fetch('/api/my/leave', { credentials: 'include' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `伺服器錯誤 (${res.status})`)
+      }
       const data = await res.json()
       setRequests(data.leaveRequests || [])
       setBalances(data.leaveBalances || [])
       setLeaveTypes(data.leaveTypes || [])
-    } catch (err) {
-      console.error('Fetch leave data error:', err)
+    } catch (err: any) {
+      setError(err.message || '載入失敗')
     } finally {
       setLoading(false)
     }
@@ -110,6 +116,7 @@ export default function MyLeavePage() {
     : requests
 
   if (loading) return <div style={{ padding: 24 }}>載入中...</div>
+  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
 
   return (
     <div style={{ padding: 24 }}>

@@ -7,6 +7,7 @@ type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
 export default function MyDashboardPage() {
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [summary, setSummary] = useState<any>(null)
   const [schedule, setSchedule] = useState<any[]>([])
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
@@ -14,6 +15,7 @@ export default function MyDashboardPage() {
   const [notifications, setNotifications] = useState<any[]>([])
 
   const fetchData = useCallback(async () => {
+    setError('')
     try {
       const [summaryRes, scheduleRes, leaveRes, notifRes] = await Promise.all([
         fetch('/api/my/summary', { credentials: 'include' }),
@@ -21,6 +23,14 @@ export default function MyDashboardPage() {
         fetch('/api/my/leave', { credentials: 'include' }),
         fetch('/api/notifications', { credentials: 'include' }),
       ])
+
+      if (!summaryRes.ok || !scheduleRes.ok || !leaveRes.ok || !notifRes.ok) {
+        const failed = [summaryRes, scheduleRes, leaveRes, notifRes].find(r => !r.ok)
+        if (failed) {
+          const body = await failed.json().catch(() => ({}))
+          throw new Error(body.error || `伺服器錯誤 (${failed.status})`)
+        }
+      }
 
       const summaryData = await summaryRes.json()
       const scheduleData = await scheduleRes.json()
@@ -32,8 +42,8 @@ export default function MyDashboardPage() {
       setLeaveBalances(leaveData.leaveBalances || [])
       setNotifications(notifData.notifications || [])
       setUnreadCount(notifData.unreadCount || 0)
-    } catch (err) {
-      console.error('Dashboard fetch error:', err)
+    } catch (err: any) {
+      setError(err.message || '載入失敗')
     } finally {
       setLoading(false)
     }
@@ -44,6 +54,7 @@ export default function MyDashboardPage() {
   }, [fetchData])
 
   if (loading) return <div style={{ padding: 24 }}>載入中...</div>
+  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
 
   return (
     <div style={{ padding: 24 }}>

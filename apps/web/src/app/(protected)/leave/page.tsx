@@ -68,6 +68,18 @@ export default function LeavePage() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
 
+  // Auto-calculate days when start/end dates change
+  useEffect(() => {
+    if (form.startDate && form.endDate) {
+      const start = new Date(form.startDate)
+      const end = new Date(form.endDate)
+      const diffDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1
+      if (diffDays > 0) {
+        setForm(f => ({ ...f, days: String(diffDays) }))
+      }
+    }
+  }, [form.startDate, form.endDate])
+
   const isManager = userRole === 'OWNER' || userRole === 'MANAGER'
 
   const fetchData = useCallback(async () => {
@@ -208,13 +220,15 @@ export default function LeavePage() {
                 />
               </div>
               <div className="form-group">
-                <label>天數</label>
+                <label>天數（自動計算）</label>
                 <input
                   type="number"
                   step="0.5"
                   min="0.5"
                   value={form.days}
                   onChange={e => setForm({ ...form, days: e.target.value })}
+                  readOnly
+                  style={{ background: '#f5f5f5', cursor: 'default' }}
                   required
                 />
               </div>
