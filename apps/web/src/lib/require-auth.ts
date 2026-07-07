@@ -38,8 +38,11 @@ function normalizeRoute(url: URL, method: string): string {
   let path = url.pathname
   // Strip trailing slash
   if (path.endsWith('/') && path.length > 1) path = path.slice(0, -1)
-  // Replace dynamic segments (UUIDs or slugs) with :id
-  path = path.replace(/\/[a-zA-Z0-9_-]{8,}/g, '/:id')
+  // Replace dynamic segments with :id
+  // Only match actual IDs (cuid/uuid are 20+ chars, or pure numeric)
+  // Avoid replacing route names like 'dashboard', 'employees', 'scheduling'
+  path = path.replace(/\/[a-z0-9]{20,}/gi, '/:id')
+    .replace(/\/\d{3,}/g, '/:id')
   return `${method} ${path}`
 }
 

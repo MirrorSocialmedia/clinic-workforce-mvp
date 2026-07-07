@@ -35,16 +35,25 @@ export default function DashboardPage() {
     recentAuditLogs: AuditLogData[]
   } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     fetch('/api/dashboard', { credentials: 'include' })
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body.error || `伺服器錯誤 (${res.status})`)
+        }
+        return res.json()
+      })
       .then(setData)
+      .catch(err => setError(err.message || '載入失敗'))
       .finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <div>載入中...</div>
-  if (!data) return <div>載入失敗</div>
+  if (loading) return <div style={{ padding: 24 }}>載入中...</div>
+  if (error) return <div style={{ padding: 24, color: '#c00' }}>⚠️ {error}</div>
+  if (!data) return <div style={{ padding: 24 }}>沒有資料</div>
 
   const roleLabels: Record<Role, string> = {
     OWNER: '創辦人 / 總管理',
@@ -65,23 +74,23 @@ export default function DashboardPage() {
       {/* Stats overview */}
       <div className="grid-4 mb-4">
         <div className="stat-card">
-          <div className="stat-value">{data.clinics.length}</div>
+          <div className="stat-value">{data.clinics?.length ?? 0}</div>
           <div className="stat-label">可見診所</div>
         </div>
         <div className="stat-card">
           <div className="stat-value">
-            {data.clinics.reduce((sum, c) => sum + (c._count?.employees || 0), 0)}
+            {(data.clinics ?? []).reduce((sum, c) => sum + (c._count?.employees ?? 0), 0)}
           </div>
           <div className="stat-label">總員工數</div>
         </div>
         <div className="stat-card">
           <div className="stat-value">
-            {data.clinics.reduce((sum, c) => sum + (c._count?.shifts || 0), 0)}
+            {(data.clinics ?? []).reduce((sum, c) => sum + (c._count?.shifts ?? 0), 0)}
           </div>
           <div className="stat-label">總班數</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{data.recentAuditLogs.length}</div>
+          <div className="stat-value">{data.recentAuditLogs?.length ?? 0}</div>
           <div className="stat-label">最近審計記錄</div>
         </div>
       </div>
@@ -90,7 +99,7 @@ export default function DashboardPage() {
       <div className="card">
         <h2>診所概要</h2>
         <div className="grid-2">
-          {data.clinics.map(clinic => (
+          {(data.clinics ?? []).map(clinic => (
             <div key={clinic.id} style={{
               border: '1px solid #eee',
               borderRadius: 8,
@@ -110,7 +119,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Recent audit logs (OWNER/MANAGER/ACCOUNTANT only) */}
-      {data.recentAuditLogs.length > 0 && (
+      {(data.recentAuditLogs?.length ?? 0) > 0 && (
         <div className="card">
           <h2>最近審計日誌</h2>
           <table>
@@ -124,7 +133,7 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {data.recentAuditLogs.map(log => (
+              {(data.recentAuditLogs ?? []).map(log => (
                 <tr key={log.id}>
                   <td>{new Date(log.createdAt).toLocaleString('zh-HK')}</td>
                   <td>
