@@ -1,7 +1,10 @@
 /* ============================================
  診所系統 — 全域樣式
- 注意：Tailwind 未安裝，故手動補上常用 utility class
  ============================================ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
  --ink: #0f2830;
