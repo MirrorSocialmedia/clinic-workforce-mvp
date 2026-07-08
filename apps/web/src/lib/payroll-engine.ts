@@ -1647,7 +1647,7 @@ function applyAttendanceBonusModifier(
   next.attendanceBonusReason = bonus.reason
   const rawTotal = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + bonus.amount
   next.totalPayable = Math.max(0, rawTotal)
-  next.detail = { ...result.detail, attendanceBonus: bonus, rawTotal: Math.round(rawTotal * 100) / 100 }
+  next.detail = { ...result.detail, attendanceBonus: bonus.amount, attendanceBonusCancelled: bonus.cancelled, attendanceBonusReason: bonus.reason, rawTotal: Math.round(rawTotal * 100) / 100 }
   return next
 }
 
