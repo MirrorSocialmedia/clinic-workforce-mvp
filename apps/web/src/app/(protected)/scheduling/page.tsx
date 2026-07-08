@@ -461,18 +461,8 @@ export default function SchedulingPage() {
     const shift = shifts.find(s => s.id === info.event.id)
     if (!shift) return
 
-    const oldDate = new Date(shift.date)
+    // Only change the date; keep original start/end times (template times)
     const newDate = new Date(info.event.start)
-    const dayDiff = Math.round((newDate.getTime() - oldDate.getTime()) / (1000 * 60 * 60 * 24))
-
-    // Calculate new start/end times preserving the offset
-    const oldStart = new Date(shift.startTime)
-    const oldEnd = new Date(shift.endTime)
-    const duration = oldEnd.getTime() - oldStart.getTime()
-
-    const newStart = new Date(newDate)
-    newStart.setHours(oldStart.getHours(), oldStart.getMinutes())
-    const newEnd = new Date(newStart.getTime() + duration)
 
     try {
       const res = await fetch('/api/shifts/' + shift.id, {
@@ -481,8 +471,6 @@ export default function SchedulingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           date: toHKDateStr(newDate),
-          startTime: newStart.toISOString(),
-          endTime: newEnd.toISOString(),
         }),
       })
       if (!res.ok) {
@@ -766,6 +754,9 @@ export default function SchedulingPage() {
           eventClick={handleFcEventClick}
           eventDrop={handleFcEventDrop}
           dateClick={handleFcDateClick}
+          snapDuration="00:30:00"
+          eventConstraint={{ startTime: '08:00:00', endTime: '22:00:00' }}
+          eventDurationEditable={false}
           eventContent={(eventInfo) => {
             const shift = eventInfo.event.extendedProps.shift
             return (

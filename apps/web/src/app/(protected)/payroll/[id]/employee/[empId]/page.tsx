@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Card } from '@/components/ui/card'
 
 interface PayrollItemData {
   id: string
@@ -27,6 +28,26 @@ interface PayrollItemData {
     clinics: { clinicId: string; clinic: { name: string } }[]
     payRules: Array<{ payType: string; configJson: string | null }>
   }
+}
+
+// Simple collapsible section component (no radix dependency)
+function CollapsibleSection({ trigger, children }: { trigger: React.ReactNode; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 text-sm font-medium underline cursor-pointer hover:opacity-70 transition-opacity"
+        type="button"
+      >
+        <span className="transition-transform inline-block" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+          ▸
+        </span>
+        {trigger}
+      </button>
+      {open && <div className="mt-2 space-y-1">{children}</div>}
+    </div>
+  )
 }
 
 export default function EmployeePayrollDetailPage() {
@@ -59,11 +80,11 @@ export default function EmployeePayrollDetailPage() {
   }, [fetchData])
 
   if (loading) {
-    return <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>載入中...</div>
+    return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   }
 
   if (!data) {
-    return <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>找不到明細</div>
+    return <div className="flex justify-center items-center py-12 text-muted-foreground">找不到明細</div>
   }
 
   const item = data.item as PayrollItemData
@@ -72,148 +93,254 @@ export default function EmployeePayrollDetailPage() {
   const leaves = data.leaves || []
   const corrections = data.corrections || []
 
-  const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  const fmtTime = (d: Date | string) => new Date(d).toLocaleString('zh-HK')
+  const employeeName = item.employee.user.name
+  const periodMonth = data.periodMonth || '-'
   const payType = item.employee.payRules[0]?.payType || '-'
 
+  const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const fmtTime = (d: Date | string) => new Date(d).toLocaleString('zh-HK')
+
+  // Attendance summary from detail or fallback to item fields
+  const scheduledDays = detail.scheduledDays ?? '-'
+  const actualAttendanceDays = detail.actualAttendanceDays ?? item.workedHours
+  const absentDays = detail.absentDays ?? item.absentDays
+  const leaveDays = detail.approvedLeaveDays ?? item.leaveDays
+  const lateRecords = detail.lateRecords || []
+  const lateDays = lateRecords.length
+
+  // Daily punch/shift summary for collapsible detail
+  // Build daily details from punches
+  const dailyPunchMap: Record<string, { punches: typeof punches; shiftDate: string }> = {}
+  for (const p of punches) {
+    const dateKey = new Date(p.punchTime).toLocaleDateString('en-CA')
+    if (!dailyPunchMap[dateKey]) dailyPunchMap[dateKey] = { punches: [], shiftDate: dateKey }
+    dailyPunchMap[dateKey].punches.push(p)
+  }
+  const dailyDetails = Object.entries(dailyPunchMap).map(([date, info]) => {
+    const inPunch = info.punches.find((p: any) => p.punchType === 'CLOCK_IN')
+    const outPunch = info.punches.find((p: any) => p.punchType === 'CLOCK_OUT')
+    const isLate = lateRecords.some((lr: any) => lr.date === date)
+    return {
+      date,
+      punchIn: inPunch ? new Date(inPunch.punchTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
+      punchOut: outPunch ? new Date(outPunch.punchTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
+      status: isLate ? 'late' : 'present',
+    }
+  })
+
+  // Working days for absence deduction calculation
+  const workingDays = detail.workingDays ?? 26
+  const dailyRate = item.basePay / workingDays
+
   return (
-    <div>
+    <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <Link href={`/payroll/${runId}`} style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 14 }}>
-            ← 返回計糧
-          </Link>
-        </div>
-        <h1 style={{ margin: 0, fontSize: 22 }}>
-          {item.employee.user.name} 的薪資明細
+      <div>
+        <Link href={`/payroll/${runId}`} className="text-primary hover:underline text-sm mb-2 inline-block">
+          ← 返回計糧
+        </Link>
+        <h1 className="text-2xl font-bold tracking-tight mt-2">
+          {employeeName} — {periodMonth} 薪資明細
         </h1>
-        <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>
-          期間: {data.periodMonth} | 診所: {item.employee.clinics.map(c => c.clinic.name).join(', ')} | 薪酬: {payType} | 電話: {item.employee.user.phone}
+        <div className="text-sm text-muted-foreground mt-1">
+          診所: {item.employee.clinics.map(c => c.clinic.name).join(', ')} | 薪酬: {payType} | 電話: {item.employee.user.phone}
         </div>
       </div>
 
-      {/* Salary Breakdown */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 24 }}>
-        <div style={{ padding: 20, border: '1px solid #dee2e6', borderRadius: 8 }}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 16, color: '#495057' }}>📊 工時統計</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {[
-              ['工作時數', `${item.workedHours.toFixed(2)}h`],
-              ['加班時數', `${item.otHours.toFixed(2)}h`],
-              ['請假日數', `${item.leaveDays.toFixed(2)} 天`],
-              ['缺勤日數', `${item.absentDays.toFixed(2)} 天`],
-            ].map(([label, value]) => (
-              <div key={label as string} style={{ padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
-                <div style={{ fontSize: 12, color: '#888' }}>{label}</div>
-                <div style={{ fontSize: 16, fontWeight: 600 }}>{value}</div>
+      {/* Main Card */}
+      <Card className="p-6 space-y-6">
+        {/* 📅 出勤概況 */}
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">📅 出勤概況</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">排班日數</div>
+              <div className="text-lg font-bold mt-1">{scheduledDays}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">實際出勤</div>
+              <div className="text-lg font-bold mt-1">{actualAttendanceDays}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">缺勤</div>
+              <div className="text-lg font-bold mt-1 text-red-500">{absentDays}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">已批假期</div>
+              <div className="text-lg font-bold mt-1">{leaveDays}</div>
+            </div>
+          </div>
+          {lateDays > 0 && (
+            <div className="mt-2 text-sm text-amber-600">
+              ⚠️ 遲到 {lateDays} 天
+              {lateRecords.slice(0, 3).map((lr: any, i: number) => (
+                <span key={i} className="ml-1">({lr.date} +{lr.minutes}min)</span>
+              ))}
+              {lateRecords.length > 3 && <span>...+{lateRecords.length - 3}</span>}
+            </div>
+          )}
+        </div>
+
+        {/* 💰 薪資計算 */}
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">💰 薪資計算</h3>
+          <div className="mt-3 space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-sm">基本薪資</span>
+              <span className="font-mono font-medium">{fmtCurrency(item.basePay)}</span>
+            </div>
+
+            {absentDays > 0 && (
+              <div className="flex justify-between items-center text-red-500">
+                <span className="text-sm">
+                  缺勤扣款 {absentDays}天 × {fmtCurrency(dailyRate)}
+                </span>
+                <span className="font-mono font-medium">-{fmtCurrency(item.deduction)}</span>
               </div>
-            ))}
+            )}
+
+            {item.otPay > 0 && (
+              <div className="flex justify-between items-center text-green-600">
+                <span className="text-sm">加班 {item.otHours}h</span>
+                <span className="font-mono font-medium">+{fmtCurrency(item.otPay)}</span>
+              </div>
+            )}
+
+            {item.splitPay != null && item.splitPay > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm">拆帳分潤</span>
+                <span className="font-mono font-medium text-purple-500">+{fmtCurrency(item.splitPay)}</span>
+              </div>
+            )}
+
+            {/* Total */}
+            <div className="flex justify-between items-center border-t pt-3 mt-2 font-bold text-lg">
+              <span>應付合計</span>
+              <span className="font-mono">{fmtCurrency(item.totalPayable)}</span>
+            </div>
           </div>
         </div>
 
-        <div style={{ padding: 20, border: '1px solid #dee2e6', borderRadius: 8 }}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 16, color: '#495057' }}>💰 薪資拆解</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {[
-              ['基本薪資', fmtCurrency(item.basePay), '#0d6efd'],
-              ['加班費', fmtCurrency(item.otPay), '#198754'],
-              ['拆帳', item.splitPay ? fmtCurrency(item.splitPay) : '-', '#8B5CF6'],
-              ['扣款', fmtCurrency(item.deduction), '#dc3545'],
-              ['應付總額', fmtCurrency(item.totalPayable), '#0d6efd'],
-            ].map(([label, value, color]) => (
-              <div key={label as string} style={{ padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
-                <div style={{ fontSize: 12, color: '#888' }}>{label}</div>
-                <div style={{ fontSize: 16, fontWeight: label === '應付總額' ? 700 : 600, color: (color as string) }}>
-                  {value}
+        {/* 📊 工時統計 (secondary) */}
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">📊 工時統計</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">工作時數</div>
+              <div className="text-lg font-bold mt-1">{item.workedHours.toFixed(2)}h</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">加班時數</div>
+              <div className="text-lg font-bold mt-1">{item.otHours.toFixed(2)}h</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">請假日數</div>
+              <div className="text-lg font-bold mt-1">{item.leaveDays.toFixed(2)} 天</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">缺勤日數</div>
+              <div className="text-lg font-bold mt-1 text-red-500">{item.absentDays.toFixed(2)} 天</div>
+            </div>
+          </div>
+        </div>
+
+        {/* 🔍 每日明細（可摺疊） */}
+        {dailyDetails.length > 0 && (
+          <CollapsibleSection trigger="🔍 每日打卡明細">
+            <div className="rounded-lg border">
+              <div className="grid grid-cols-12 gap-2 px-4 py-2 bg-muted/50 text-xs font-semibold text-muted-foreground">
+                <div className="col-span-2">日期</div>
+                <div className="col-span-3">上班</div>
+                <div className="col-span-3">下班</div>
+                <div className="col-span-4 text-right">狀態</div>
+              </div>
+              {dailyDetails.map((day: any) => (
+                <div key={day.date} className="grid grid-cols-12 gap-2 px-4 py-2 text-sm border-t hover:bg-muted/30">
+                  <div className="col-span-2">{day.date}</div>
+                  <div className="col-span-3">{day.punchIn || '—'}</div>
+                  <div className="col-span-3">{day.punchOut || '—'}</div>
+                  <div className="col-span-4 text-right">
+                    {day.status === 'absent' ? '✗ 缺勤' : day.status === 'late' ? '⚠ 遲到' : '✓ 出勤'}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+              ))}
+            </div>
+          </CollapsibleSection>
+        )}
 
-      {/* Calculation Detail */}
-      {Object.keys(detail).length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <h3 style={{ fontSize: 16, color: '#495057', marginBottom: 8 }}>📐 計算參數</h3>
-          <div style={{
-            padding: 16,
-            background: '#f8f9fa',
-            borderRadius: 6,
-            fontSize: 13,
-            fontFamily: 'monospace',
-            overflowX: 'auto',
-          }}>
-            <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+        {/* 📐 計算參數（可摺疊） */}
+        {Object.keys(detail).length > 0 && (
+          <CollapsibleSection trigger="📐 計算參數">
+            <pre className="text-xs bg-muted p-4 rounded-lg overflow-x-auto whitespace-pre-wrap font-mono">
               {JSON.stringify(detail, null, 2)}
             </pre>
-          </div>
-        </div>
-      )}
+          </CollapsibleSection>
+        )}
+      </Card>
 
-      {/* Punch Records */}
+      {/* Punch Records Table */}
       {punches.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <h3 style={{ fontSize: 16, color: '#495057', marginBottom: 8 }}>📋 打卡記錄 ({punches.length} 筆)</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <Card className="p-6">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            📋 打卡記錄 ({punches.length} 筆)
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
               <thead>
-                <tr style={{ borderBottom: '2px solid #dee2e6' }}>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>日期</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>診所</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>時間</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>類型</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>來源</th>
+                <tr className="border-b-2">
+                  <th className="text-left py-2 px-2">日期</th>
+                  <th className="text-left py-2 px-2">診所</th>
+                  <th className="text-left py-2 px-2">時間</th>
+                  <th className="text-left py-2 px-2">類型</th>
+                  <th className="text-left py-2 px-2">來源</th>
                 </tr>
               </thead>
               <tbody>
                 {punches.map((p: any) => (
-                  <tr key={p.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                    <td style={{ padding: '6px 8px' }}>{new Date(p.punchTime).toLocaleDateString('zh-HK')}</td>
-                    <td style={{ padding: '6px 8px' }}>{p.clinicId}</td>
-                    <td style={{ padding: '6px 8px' }}>{fmtTime(p.punchTime)}</td>
-                    <td style={{ padding: '6px 8px' }}>
-                      <span style={{
-                        color: p.punchType === 'CLOCK_IN' ? '#198754' : '#dc3545',
-                        fontWeight: 600,
-                      }}>
+                  <tr key={p.id} className="border-b">
+                    <td className="py-2 px-2">{new Date(p.punchTime).toLocaleDateString('zh-HK')}</td>
+                    <td className="py-2 px-2">{p.clinicId}</td>
+                    <td className="py-2 px-2">{fmtTime(p.punchTime)}</td>
+                    <td className="py-2 px-2">
+                      <span className={p.punchType === 'CLOCK_IN' ? 'text-green-600 font-semibold' : 'text-red-500 font-semibold'}>
                         {p.punchType === 'CLOCK_IN' ? '上班' : '下班'}
                       </span>
                     </td>
-                    <td style={{ padding: '6px 8px', fontSize: 12 }}>{p.source}</td>
+                    <td className="py-2 px-2 text-xs text-muted-foreground">{p.source}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </Card>
       )}
 
-      {/* Leave Records */}
+      {/* Leave Records Table */}
       {leaves.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <h3 style={{ fontSize: 16, color: '#495057', marginBottom: 8 }}>🏖️ 已批假期 ({leaves.length} 筆)</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <Card className="p-6">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            🏖️ 已批假期 ({leaves.length} 筆)
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
               <thead>
-                <tr style={{ borderBottom: '2px solid #dee2e6' }}>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>假期類型</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>開始</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>結束</th>
-                  <th style={{ textAlign: 'right', padding: '6px 8px' }}>天數</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>有薪</th>
+                <tr className="border-b-2">
+                  <th className="text-left py-2 px-2">假期類型</th>
+                  <th className="text-left py-2 px-2">開始</th>
+                  <th className="text-left py-2 px-2">結束</th>
+                  <th className="text-right py-2 px-2">天數</th>
+                  <th className="text-left py-2 px-2">有薪</th>
                 </tr>
               </thead>
               <tbody>
                 {leaves.map((l: any) => (
-                  <tr key={l.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                    <td style={{ padding: '6px 8px' }}>{l.leaveType.name}</td>
-                    <td style={{ padding: '6px 8px' }}>{new Date(l.startDate).toLocaleDateString('zh-HK')}</td>
-                    <td style={{ padding: '6px 8px' }}>{new Date(l.endDate).toLocaleDateString('zh-HK')}</td>
-                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{l.days}</td>
-                    <td style={{ padding: '6px 8px' }}>
-                      <span style={{ color: l.leaveType.isPaid ? '#198754' : '#dc3545' }}>
+                  <tr key={l.id} className="border-b">
+                    <td className="py-2 px-2">{l.leaveType.name}</td>
+                    <td className="py-2 px-2">{new Date(l.startDate).toLocaleDateString('zh-HK')}</td>
+                    <td className="py-2 px-2">{new Date(l.endDate).toLocaleDateString('zh-HK')}</td>
+                    <td className="py-2 px-2 text-right">{l.days}</td>
+                    <td className="py-2 px-2">
+                      <span className={l.leaveType.isPaid ? 'text-green-600' : 'text-red-500'}>
                         {l.leaveType.isPaid ? '有薪' : '無薪'}
                       </span>
                     </td>
@@ -222,38 +349,40 @@ export default function EmployeePayrollDetailPage() {
               </tbody>
             </table>
           </div>
-        </div>
+        </Card>
       )}
 
-      {/* Corrections */}
+      {/* Corrections Table */}
       {corrections.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <h3 style={{ fontSize: 16, color: '#495057', marginBottom: 8 }}>✏️ 考勤補登 ({corrections.length} 筆)</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <Card className="p-6">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            ✏️ 考勤補登 ({corrections.length} 筆)
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
               <thead>
-                <tr style={{ borderBottom: '2px solid #dee2e6' }}>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>補登時間</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>診所</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>類型</th>
-                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>原因</th>
+                <tr className="border-b-2">
+                  <th className="text-left py-2 px-2">補登時間</th>
+                  <th className="text-left py-2 px-2">診所</th>
+                  <th className="text-left py-2 px-2">類型</th>
+                  <th className="text-left py-2 px-2">原因</th>
                 </tr>
               </thead>
               <tbody>
                 {corrections.map((c: any) => (
-                  <tr key={c.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                    <td style={{ padding: '6px 8px' }}>{fmtTime(c.correctedTime)}</td>
-                    <td style={{ padding: '6px 8px' }}>{c.clinicId}</td>
-                    <td style={{ padding: '6px 8px' }}>
+                  <tr key={c.id} className="border-b">
+                    <td className="py-2 px-2">{fmtTime(c.correctedTime)}</td>
+                    <td className="py-2 px-2">{c.clinicId}</td>
+                    <td className="py-2 px-2">
                       {c.punchType === 'CLOCK_IN' ? '上班' : '下班'}
                     </td>
-                    <td style={{ padding: '6px 8px', fontSize: 12, color: '#888' }}>{c.reason || '-'}</td>
+                    <td className="py-2 px-2 text-xs text-muted-foreground">{c.reason || '-'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </Card>
       )}
     </div>
   )

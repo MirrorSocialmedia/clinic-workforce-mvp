@@ -941,6 +941,9 @@ interface WorkData {
   leaveRecords: Array<{ isPlanned: boolean; days: number }>
   partialDays: string[]
   consultationFees: number
+  scheduledDays: number
+  absentDays: number
+  shifts: any[]
 }
 
 /**
@@ -1357,6 +1360,29 @@ async function collectWorkData(
   // Consultation fees (for split pay)
   const consultationFees = await getConsultationRevenue(employeeId, clinicId, monthDate)
 
+  // Compute scheduledDays and absentDays from shifts
+  const scheduledDays = shifts.length
+  const punchByDate: Record<string, boolean> = {}
+  for (const pd of allPunchDays) {
+    if (pd.hours > 0) punchByDate[pd.date] = true
+  }
+  const leaveDateSet = new Set<string>()
+  for (const lr of leaveRecords) {
+    const start = new Date(lr.startDate)
+    const end = new Date(lr.endDate)
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      leaveDateSet.add(formatDate(d))
+    }
+  }
+
+  let absentDays = 0
+  for (const shift of shifts) {
+    const shiftDateStr = formatDate(new Date(shift.date))
+    const hasPunch = punchByDate[shiftDateStr]
+    const hasLeave = leaveDateSet.has(shiftDateStr)
+    if (!hasPunch && !hasLeave) absentDays++
+  }
+
   return {
     dailyEntries,
     totalWorkedHours,
@@ -1369,6 +1395,9 @@ async function collectWorkData(
     leaveRecords: leaveRecordsForEngine,
     partialDays,
     consultationFees,
+    scheduledDays,
+    absentDays,
+    shifts,
   }
 }
 
@@ -1383,7 +1412,8 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
   const otThreshold = config.ot_threshold ?? 0
 
   const unpaidLeaveDays = workData.approvedLeaveDays - workData.paidLeaveDays
-  const absentDays = Math.max(
+  // Use shift-based absentDays from collectWorkData (scheduled shifts with no punch and no leave)
+  const absentDays = workData.absentDays ?? Math.max(
     0,
     workData.workingDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
   )
@@ -1411,12 +1441,14 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
       baseType: 'monthly',
       monthlySalary,
       workingDays: workData.workingDays,
+      scheduledDays: workData.scheduledDays,
       actualAttendanceDays: workData.actualAttendanceDays,
       approvedLeaveDays: workData.approvedLeaveDays,
       paidLeaveDays: workData.paidLeaveDays,
       unpaidLeaveDays,
       publicHolidayDays: workData.publicHolidayDays,
       absentDays,
+      lateRecords: workData.lateRecords,
       deductionRate,
       otThreshold,
       otHours,
@@ -1459,6 +1491,10 @@ function calcHourlyBase(config: PayRuleConfigModular, workData: WorkData): Payro
     detail: {
       baseType: 'hourly',
       hourlyRate,
+      scheduledDays: workData.scheduledDays,
+      actualAttendanceDays: workData.actualAttendanceDays,
+      absentDays: workData.absentDays,
+      lateRecords: workData.lateRecords,
       totalNormalHours,
       otHours: totalOtHours,
       otThresholdDaily,
@@ -1500,6 +1536,10 @@ function calcDailyBase(config: PayRuleConfigModular, workData: WorkData): Payrol
     detail: {
       baseType: 'daily',
       dailyRate,
+      scheduledDays: workData.scheduledDays,
+      actualAttendanceDays: workData.actualAttendanceDays,
+      absentDays: workData.absentDays,
+      lateRecords: workData.lateRecords,
       attendanceDays: workData.actualAttendanceDays,
       totalHours,
       otHours: totalOtHours,
@@ -1518,10 +1558,9 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): Payrol
 
   let deduction = 0
   if (basePay > 0) {
-    const unpaidLeaveDays = workData.approvedLeaveDays - workData.paidLeaveDays
-    const absentDays = Math.max(
+    const absentDays = workData.absentDays ?? Math.max(
       0,
-      workData.workingDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
+      workData.workingDays - workData.actualAttendanceDays - (workData.approvedLeaveDays - workData.paidLeaveDays) - workData.publicHolidayDays
     )
     deduction = absentDays * (basePay / 26) * deductionRate
   }
@@ -1534,7 +1573,7 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): Payrol
     attendanceBonusCancelled: false,
     deduction,
     totalPayable: basePay - deduction + splitPay,
-    absentDays: 0,
+    absentDays: workData.absentDays ?? 0,
     otHours: 0,
     workedHours: workData.totalWorkedHours,
     leaveDays: workData.approvedLeaveDays,
@@ -1543,6 +1582,9 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): Payrol
       splitRatio,
       consultationFees,
       splitPay,
+      scheduledDays: workData.scheduledDays,
+      absentDays: workData.absentDays,
+      lateRecords: workData.lateRecords,
     },
   }
 }
