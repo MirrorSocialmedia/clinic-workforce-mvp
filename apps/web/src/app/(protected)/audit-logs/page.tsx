@@ -41,8 +41,46 @@ export default function AuditLogsPage() {
     LeaveType: '假期類型', ShiftChangeRequest: '換班申請', ShiftTemplate: '班表模板',
     DailyHash: '完整性驗證', Notification: '通知',
   }
-  const ACTION_LABELS: Record<string, string> = {
-    CREATE: '新增', UPDATE: '修改', DELETE: '刪除', LOGIN: '登入', LOGOUT: '登出',
+
+  // Comprehensive audit action Chinese labels
+  const AUDIT_ACTION_LABELS: Record<string, string> = {
+    'EMPLOYEE_CREATED': '新增員工',
+    'EMPLOYEE_UPDATED': '更新員工',
+    'EMPLOYEE_DELETED': '刪除員工',
+    'SHIFT_CREATED': '新增班次',
+    'SHIFT_UPDATED': '更新班次',
+    'SHIFT_DELETED': '刪除班次',
+    'SHIFT_ASSIGNED': '指派班次',
+    'SHIFT_CHANGE_REQUEST': '換更申請',
+    'SHIFT_CHANGE_APPROVED': '換更批准',
+    'SHIFT_CHANGE_REJECTED': '換更拒絕',
+    'PUNCH_CORRECTION_CREATED': '申請補打卡',
+    'PUNCH_CORRECTION_APPROVED': '補打卡批准',
+    'PUNCH_CORRECTION_REJECTED': '補打卡拒絕',
+    'PUNCH_RECORDED': '打卡記錄',
+    'LEAVE_REQUEST_CREATED': '申請假期',
+    'LEAVE_REQUEST_APPROVED': '假期批准',
+    'LEAVE_REQUEST_REJECTED': '假期拒絕',
+    'LEAVE_TYPE_CREATED': '新增假期類型',
+    'LEAVE_TYPE_UPDATED': '更新假期類型',
+    'LEAVE_TYPE_DELETED': '刪除假期類型',
+    'PAYROLL_RUN_CREATED': '生成計糧',
+    'PAYROLL_RUN_UPDATED': '更新計糧',
+    'PAYROLL_RUN_APPROVED': '批准計糧',
+    'PAYROLL_RUN_EXPORTED': '匯出計糧',
+    'PAYROLL_RULE_CREATED': '新增薪酬規則',
+    'PAYROLL_RULE_UPDATED': '更新薪酬規則',
+    'USER_CREATED': '新增用戶',
+    'USER_UPDATED': '更新用戶',
+    'USER_ROLE_CHANGED': '角色變更',
+    'SETTING_UPDATED': '更新設定',
+    'USER_CREATED_NEW_ACCOUNT': '新增帳號',
+    'EMERGENCY_NUMBER_UPDATED': '更新緊急聯絡人',
+    // Keep existing simple labels
+    'CREATE': '新增', 'UPDATE': '修改', 'DELETE': '刪除', 'LOGIN': '登入', 'LOGOUT': '登出',
+  }
+  function getActionLabel(action: string): string {
+    return AUDIT_ACTION_LABELS[action] || action
   }
   const ROLE_LABELS: Record<string, string> = {
     OWNER: '院長', MANAGER: '管理', ACCOUNTANT: '會計', EMPLOYEE: '員工',
@@ -153,7 +191,7 @@ export default function AuditLogsPage() {
                       </span>
                     </div>
                   </td>
-                  <td><span className='text-sm font-medium'>{ACTION_LABELS[log.action] || log.action}</span></td>
+                  <td title={log.action}><span className='text-sm font-medium'>{getActionLabel(log.action)}</span>{getActionLabel(log.action) !== log.action && <span className="text-muted text-sm ml-1" style={{fontSize:10}}>({log.action})</span>}</td>
                   <td>
                     {ENTITY_LABELS[log.entity] || log.entity}
                     <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>

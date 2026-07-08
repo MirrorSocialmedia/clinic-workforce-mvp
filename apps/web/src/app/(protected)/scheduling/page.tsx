@@ -8,6 +8,7 @@ import interactionPlugin from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr } from '@/lib/hk-date'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 
 // ============================================================
 // Types
@@ -101,6 +102,19 @@ export default function SchedulingPage() {
 
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
+
+  
+// Fixed color palette for employee drag chips
+const EMPLOYEE_COLORS = [
+  '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
+  '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6',
+  '#a855f7', '#d946ef', '#e11d48', '#0ea5e9', '#10b981',
+];
+function colorFor(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  return EMPLOYEE_COLORS[Math.abs(hash) % EMPLOYEE_COLORS.length];
+}
 
   // ============================================================
   // Data Loading
@@ -734,6 +748,34 @@ export default function SchedulingPage() {
           </div>
         </div>
       )}
+      <div className="flex gap-4">
+      {/* Left: Employee Panel */}
+      <Card className="flex-shrink-0 w-[180px] p-4" style={{ alignSelf: 'flex-start' }}>
+        <h4 className="text-xs font-semibold uppercase mb-3" style={{ color: '#888' }}>員工 ({clinicEmployees.length})</h4>
+        {clinicEmployees.length === 0 ? (
+          <div className="text-xs text-center py-4" style={{ color: '#aaa' }}>
+            此診所未指派員工<br />
+            <span style={{ fontSize: 11 }}>請到帳號管理指派</span>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {clinicEmployees.map(emp => (
+              <div
+                key={emp.id}
+                draggable
+                onDragStart={e => handleDragStart(e, emp.id)}
+                className="cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
+                style={{ background: colorFor(emp.id) }}
+              >
+                {emp.user.name}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Right: Calendar Card */}
+      <div className="flex-1 min-w-0">
       <div className="card rounded-xl g border p-4 shadow-card">
 
 
@@ -747,6 +789,14 @@ export default function SchedulingPage() {
             right: 'timeGridWeek,dayGridMonth',
           }}
           events={fcEvents}
+          droppable={true}
+          drop={async (info) => {
+            const empId = dragData.current?.employeeId
+            if (empId && selectedTemplate) {
+              const date = toHKDateStr(info.date)
+              await createShift(empId, date, selectedTemplate)
+            }
+          }}
           editable={canManage}
           selectable={canManage && !!selectedTemplate}
           dayMaxEvents={true}
@@ -780,6 +830,8 @@ export default function SchedulingPage() {
           allDaySlot={false}
           slotDuration="00:30:00"
         />
+      </div>
+      </div>
       </div>
 
       {/* Legend */}

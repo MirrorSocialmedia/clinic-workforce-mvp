@@ -373,6 +373,7 @@ model LeaveType {
   isPaid       Boolean  @default(true)
   annualQuota  Float?   // 年度額度（天）
   color        String?  // UI 顏色標記
+  quantity     Int?     // 預設額度（nullable = 無限制）
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
 
