@@ -27,7 +27,7 @@ export default function EmployeeMobileLayout({
   return (
     <div className="min-h-screen bg-background pb-16">
       {/* Top bar */}
-      <header className="sticky top-0 z-40 bg-card border-b border-border px-4 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-card border-b g border px-4 py-3 flex items-center justify-between">
         <h1 className="text-base font-bold text-foreground">🏥 診所系統</h1>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{user.name}</span>
@@ -46,7 +46,7 @@ export default function EmployeeMobileLayout({
       <div className="px-4 py-3">{children}</div>
 
       {/* Bottom tab bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border h-16 safe-area-bottom">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t g border h-16 safe-area-bottom">
         <div className="flex items-center justify-around h-full">
           {TABS.map(tab => {
             const active = pathname === tab.path || pathname.startsWith(tab.path + '/')

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
 interface Clinic {
   id: string
@@ -142,44 +143,30 @@ export default function NewPayrollPage() {
   if (userRole && userRole !== 'OWNER') return null
 
   return (
-    <div>
-      <h1 style={{ margin: '0 0 24px', fontSize: 24 }}>+ 生成計糧</h1>
+    <div className="p-6" style={{ maxWidth: '800px' }}>
+      <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>+ 生成計糧</h1>
 
       <div style={{ maxWidth: 500 }}>
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>
+          <label className="block mb-1.5 font-semibold text-sm text-foreground">
             計糧月份
           </label>
           <input
             type="month"
             value={periodMonth}
             onChange={e => setPeriodMonth(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              borderRadius: 6,
-              border: '1px solid #ddd',
-              fontSize: 16,
-              boxSizing: 'border-box',
-            }}
+            className="w-full px-3 py-2.5 rounded-md g border text-base focus:outline-none focus:ring-2 focus:ring-brand/30"
           />
         </div>
 
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>
+          <label className="block mb-1.5 font-semibold text-sm text-foreground">
             診所（留空 = 全部診所）
           </label>
           <select
             value={selectedClinic}
             onChange={e => setSelectedClinic(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              borderRadius: 6,
-              border: '1px solid #ddd',
-              fontSize: 16,
-              boxSizing: 'border-box',
-            }}
+            className="w-full px-3 py-2.5 rounded-md g border text-base focus:outline-none focus:ring-2 focus:ring-brand/30"
           >
             <option value="">全部診所</option>
             {clinics.map(clinic => (
@@ -191,20 +178,13 @@ export default function NewPayrollPage() {
         </div>
 
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>
+          <label className="block mb-1.5 font-semibold text-sm text-foreground">
             員工（留空 = 全部員工）
           </label>
           <select
             value={selectedEmployee}
             onChange={e => setSelectedEmployee(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              borderRadius: 6,
-              border: '1px solid #ddd',
-              fontSize: 16,
-              boxSizing: 'border-box',
-            }}
+            className="w-full px-3 py-2.5 rounded-md g border text-base focus:outline-none focus:ring-2 focus:ring-brand/30"
           >
             <option value="">全部員工</option>
             {employees.map(emp => (
@@ -213,66 +193,32 @@ export default function NewPayrollPage() {
           </select>
         </div>
 
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div className="flex gap-3">
           <button
             onClick={handlePreview}
             disabled={previewing || !periodMonth}
-            style={{
-              flex: 1,
-              background: previewing || !periodMonth ? '#ccc' : '#198754',
-              color: '#fff',
-              padding: '12px 24px',
-              borderRadius: 6,
-              border: 'none',
-              fontSize: 16,
-              fontWeight: 600,
-              cursor: previewing || !periodMonth ? 'default' : 'pointer',
-            }}
+            className={`flex-1 py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${previewing || !periodMonth ? 'bg-gray-400 cursor-default' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'}`}
           >
             {previewing ? '試算中...' : '🔍 試算預覽'}
           </button>
           <button
             onClick={handleGenerate}
             disabled={generating || !periodMonth}
-            style={{
-              flex: 1,
-              background: generating || !periodMonth ? '#ccc' : '#0d6efd',
-              color: '#fff',
-              padding: '12px 24px',
-              borderRadius: 6,
-              border: 'none',
-              fontSize: 16,
-              fontWeight: 600,
-              cursor: generating || !periodMonth ? 'default' : 'pointer',
-            }}
+            className={`flex-1 py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${generating || !periodMonth ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}
           >
             {generating ? '計算中...' : '生成計糧'}
           </button>
         </div>
 
         {error && (
-          <div style={{
-            marginTop: 16,
-            padding: '12px 16px',
-            background: '#f8d7da',
-            color: '#842029',
-            borderRadius: 6,
-            fontSize: 14,
-          }}>
+          <div className="mt-4 p-4 rounded-lg bg-destructive/10 text-destructive text-sm">
             ⚠️ {error}
           </div>
         )}
 
         {result && (
-          <div style={{
-            marginTop: 16,
-            padding: '16px',
-            background: '#d1e7dd',
-            color: '#0f5132',
-            borderRadius: 6,
-            fontSize: 14,
-          }}>
-            <div style={{ marginBottom: 8, fontWeight: 600 }}>✅ 計糧生成成功！</div>
+          <div className="mt-4 p-4 rounded-lg bg-emerald-50 text-emerald-700 text-sm border border-emerald-200">
+            <div className="mb-2 font-semibold">✅ 計糧生成成功！</div>
             <div>員工數: {result.itemCount}</div>
             <div>應付總額: HK${result.totalPayable.toLocaleString()}</div>
             <div style={{ marginTop: 12 }}>
@@ -288,51 +234,45 @@ export default function NewPayrollPage() {
 
         {/* Preview Results */}
         {previewResult && (
-          <div style={{
-            marginTop: 16,
-            padding: '16px',
-            background: '#e7f1ff',
-            color: '#084298',
-            borderRadius: 6,
-            fontSize: 14,
-          }}>
-            <div style={{ marginBottom: 12, fontWeight: 600, fontSize: 15 }}>
-              🔍 試算結果（未儲存）
-            </div>
-            <div style={{ marginBottom: 8, fontSize: 13 }}>
+          <Card className="mt-4">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">🔍 試算結果（未儲存）</CardTitle>
+            </CardHeader>
+            <CardContent>
+            <div className="mb-2 text-sm g text-muted-foreground">
               員工數: {previewResult.itemCount} | 應付總額: HK${previewResult.totalPayable.toLocaleString()}
             </div>
-            <div style={{ overflowX: 'auto', marginTop: 12 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <div className="overflow-x-auto mt-3">
+              <table className="w-full border-collapse text-xs">
                 <thead>
-                  <tr style={{ borderBottom: '2px solid #084298', textAlign: 'left' }}>
-                    <th style={{ padding: '6px 8px' }}>員工</th>
-                    <th style={{ padding: '6px 8px' }}>薪資類型</th>
-                    <th style={{ padding: '6px 8px', textAlign: 'right' }}>工時</th>
-                    <th style={{ padding: '6px 8px', textAlign: 'right' }}>加班</th>
-                    <th style={{ padding: '6px 8px', textAlign: 'right' }}>底薪</th>
-                    <th style={{ padding: '6px 8px', textAlign: 'right' }}>加班費</th>
-                    <th style={{ padding: '6px 8px', textAlign: 'right' }}>扣款</th>
-                    <th style={{ padding: '6px 8px', textAlign: 'right' }}>總額</th>
+                  <tr className="border-b-2 border-blue-200">
+                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">員工</th>
+                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">薪資類型</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">工時</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">加班</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">底薪</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">加班費</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">扣款</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">總額</th>
                   </tr>
                 </thead>
                 <tbody>
                   {previewResult.items.map((item: any, i: number) => (
-                    <tr key={item.employeeId || i} style={{ borderBottom: '1px solid #cfe2ff' }}>
+                    <tr key={item.employeeId || i} className="border-b border-blue-100 hover:bg-blue-50/30 transition-colors">
                       {item.error ? (
-                        <td colSpan={8} style={{ padding: '6px 8px', color: '#dc3545' }}>
+                        <td colSpan={8} className="px-2 py-1.5 text-destructive">
                           {item.employeeName}: {item.error}
                         </td>
                       ) : (
                         <>
-                          <td style={{ padding: '6px 8px' }}>{item.employeeName}</td>
-                          <td style={{ padding: '6px 8px' }}>{item.payType}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>{item.workedHours}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>{item.otHours}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>HK${(item.basePay || 0).toLocaleString()}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>HK${(item.otPay || 0).toLocaleString()}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right' }}>-HK${(item.deduction || 0).toLocaleString()}</td>
-                          <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>
+                          <td className="px-2 py-1.5">{item.employeeName}</td>
+                          <td className="px-2 py-1.5">{item.payType}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{item.workedHours}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{item.otHours}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">HK${(item.basePay || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">HK${(item.otPay || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">-HK${(item.deduction || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-right font-semibold font-mono">
                             HK${(item.totalPayable || 0).toLocaleString()}
                           </td>
                         </>
@@ -342,7 +282,8 @@ export default function NewPayrollPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

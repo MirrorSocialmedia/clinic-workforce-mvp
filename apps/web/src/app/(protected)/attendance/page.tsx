@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Badge } from '@/components/ui/badge'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -127,20 +128,17 @@ export default function AttendancePage() {
   const totalPages = Math.ceil(total / pageSize)
 
   return (
-    <div style={{ padding: 20 }}>
-      <h1 style={{ marginBottom: 20 }}>📋 考勤記錄</h1>
+    <div className="p-6" style={{ maxWidth: '1200px' }}>
+      <h1 className="text-2xl font-bold text-foreground tracking-tight mb-6">📋 考勤記錄</h1>
 
       {/* Filters */}
-      <div style={{
-        display: 'flex', gap: 12, marginBottom: 20,
-        flexWrap: 'wrap', alignItems: 'flex-end',
-      }}>
+      <div className="flex gap-3 mb-5 flex-wrap items-end">
         <div>
-          <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>診所</label>
+          <label className="block text-xs g text-muted-foreground mb-1 font-medium">診所</label>
           <select
             value={clinicFilter}
             onChange={(e) => { setClinicFilter(e.target.value); setPage(1) }}
-            style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #ddd' }}
+            className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
           >
             <option value="">全部</option>
             {clinics.map((c) => (
@@ -150,11 +148,11 @@ export default function AttendancePage() {
         </div>
 
         <div>
-          <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>員工</label>
+          <label className="block text-xs g text-muted-foreground mb-1 font-medium">員工</label>
           <select
             value={employeeFilter}
             onChange={(e) => { setEmployeeFilter(e.target.value); setPage(1) }}
-            style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #ddd' }}
+            className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
           >
             <option value="">全部</option>
             {employees.map((e) => (
@@ -164,116 +162,105 @@ export default function AttendancePage() {
         </div>
 
         <div>
-          <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>起始日期</label>
+          <label className="block text-xs g text-muted-foreground mb-1 font-medium">起始日期</label>
           <input
             type="date"
             value={startDate}
             onChange={(e) => { setStartDate(e.target.value); setPage(1) }}
-            style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #ddd' }}
+            className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
           />
         </div>
 
         <div>
-          <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>結束日期</label>
+          <label className="block text-xs g text-muted-foreground mb-1 font-medium">結束日期</label>
           <input
             type="date"
             value={endDate}
             onChange={(e) => { setEndDate(e.target.value); setPage(1) }}
-            style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #ddd' }}
+            className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
           />
         </div>
 
         <button
           onClick={() => { setClinicFilter(''); setEmployeeFilter(''); setStartDate(''); setEndDate(''); setPage(1) }}
-          style={{
-            padding: '6px 12px', borderRadius: 4, border: '1px solid #ddd',
-            background: '#f5f5f5', cursor: 'pointer',
-          }}
+          className="px-3 py-2 rounded-md g border bg-slate-100 hover:bg-slate-200 text-sm transition-colors"
         >
           清除篩查
         </button>
       </div>
 
       {/* Records Table */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <div className="overflow-x-auto rounded-xl g border shadow-card">
+        <table className="data-table w-full">
           <thead>
-            <tr style={{ borderBottom: '2px solid #eee' }}>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>員工</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>診所</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>時間</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>類型</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>來源</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>Token</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>修正</th>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>操作</th>
+            <tr>
+              <th>員工</th>
+              <th>診所</th>
+              <th>時間</th>
+              <th>類型</th>
+              <th>來源</th>
+              <th>Token</th>
+              <th>修正</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: '#888' }}>載入中...</td></tr>
+              <tr><td colSpan={8} className="text-center py-5 g text-muted-foreground">載入中...</td></tr>
             ) : records.length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: '#888' }}>沒有考勤記錄</td></tr>
+              <tr><td colSpan={8} className="text-center py-5 g text-muted-foreground">沒有考勤記錄</td></tr>
             ) : (
               records.map((record) => (
-                <tr key={record.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                  <td style={{ padding: '8px 12px' }}>
+                <tr key={record.id}>
+                  <td>
                     {record.employee?.user?.name || record.employeeId}
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td>
                     {record.clinic?.name || record.clinicId}
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td>
                     {new Date(record.punchTime).toLocaleString('zh-HK')}
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    <span style={{
-                      padding: '2px 8px', borderRadius: 10, fontSize: 11,
-                      background: record.punchType === 'CLOCK_IN' ? '#e6f7e6' : '#fff3e6',
-                      color: record.punchType === 'CLOCK_IN' ? '#2d7a2d' : '#b35900',
-                    }}>
+                  <td>
+                    <Badge variant={record.punchType === 'CLOCK_IN' ? 'default' : 'secondary'} className="text-[11px]">
                       {record.punchType === 'CLOCK_IN' ? '上班' : '下班'}
-                    </span>
+                    </Badge>
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    <span style={{ fontSize: 11, color: '#666' }}>
+                  <td>
+                    <span className="text-xs g text-muted-foreground">
                       {record.source === 'QR_DYNAMIC' ? '📱 動態碼' :
                        record.source === 'QR_STATIC' ? '📱 固定碼' :
                        record.source === 'MANUAL_CORRECTION' ? '✏️ 補打卡' :
                        '⚙️ 系統'}
                     </span>
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td>
                     {record.tokenValid === true ? '✅' :
                      record.tokenValid === false ? '❌' :
                      record.tokenValid === null ? '—' : '?'}
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td>
                     {record.corrections?.length > 0 ? (
-                      <span style={{ color: '#e67e22', fontSize: 12 }}>
+                      <span className="text-amber-600 text-xs">
                         {record.corrections.length} 筆修正
                       </span>
                     ) : (
-                      <span style={{ color: '#27ae60', fontSize: 12 }}>✓ 無修正</span>
+                      <span className="text-emerald-600 text-xs">✓ 無修正</span>
                     )}
                   </td>
-                  <td style={{ padding: '8px 12px' }}>
+                  <td>
                     <button
                       onClick={() => {
                         setCorrectionRecord(record)
                         setCorrectionForm({ time: '', reason: '' })
                         setShowCorrectionModal(true)
                       }}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: '#e67e22', fontSize: 13, padding: '2px 6px',
-                        borderRadius: 4, marginRight: 8,
-                      }}
+                      className="bg-none border-none cursor-pointer text-amber-600 text-sm px-1 py-0.5 rounded mr-2 hover:underline"
                       title="修正此記錄"
                     >
                       ✏️ 修正
                     </button>
-                    <Link href={`/attendance/${record.id}`} style={{ color: '#3498db', fontSize: 12 }}>
+                    <Link href={`/attendance/${record.id}`} className="text-brand hover:underline text-xs">
                       詳情
                     </Link>
                   </td>
@@ -286,17 +273,12 @@ export default function AttendancePage() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 20 }}>
+        <div className="flex justify-center gap-2 mt-5">
           {Array.from({ length: Math.min(totalPages, 10) }, (_, i) => i + 1).map((p) => (
             <button
               key={p}
               onClick={() => setPage(p)}
-              style={{
-                padding: '4px 10px', borderRadius: 4, border: '1px solid #ddd',
-                background: p === page ? '#3498db' : '#fff',
-                color: p === page ? '#fff' : '#333',
-                cursor: 'pointer',
-              }}
+              className={`px-2.5 py-1 rounded-md border text-sm transition-colors ${p === page ? 'bg-brand text-white g border-brand' : 'g border hover:bg-slate-100'}`}
             >
               {p}
             </button>
@@ -304,59 +286,48 @@ export default function AttendancePage() {
         </div>
       )}
 
-      <div style={{ marginTop: 10, fontSize: 12, color: '#888' }}>
+      <div className="mt-2.5 text-xs g text-muted-foreground text-center">
         共 {total} 筆記錄
       </div>
 
       {/* Correction Modal */}
       {showCorrectionModal && correctionRecord && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.5)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }}
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]"
           onClick={() => setShowCorrectionModal(false)}
         >
           <div
-            className="card"
-            style={{ width: 440, maxWidth: '90vw', position: 'relative', padding: 24 }}
+            className="g bg-card g border rounded-xl shadow-lg w-full mx-4 p-6 relative"
+            style={{ maxWidth: '440px' }}
             onClick={e => e.stopPropagation()}
           >
             <button
               onClick={() => setShowCorrectionModal(false)}
-              style={{
-                position: 'absolute', top: 12, right: 12,
-                background: 'none', border: 'none', fontSize: 18,
-                cursor: 'pointer', color: '#888',
-              }}
+              className="absolute top-3 right-3 text-lg g text-muted-foreground hover:text-foreground bg-none border-none cursor-pointer"
             >
               ✕
             </button>
-            <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 16 }}>
+            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">
               ✏️ 修正考勤記錄
             </h2>
-            <div style={{ marginBottom: 12, fontSize: 13, color: '#666' }}>
+            <div className="mb-3 text-sm g text-muted-foreground">
               <div>員工: {correctionRecord.employee?.user?.name || correctionRecord.employeeId}</div>
               <div>診所: {correctionRecord.clinic?.name || correctionRecord.clinicId}</div>
               <div>原時間: {new Date(correctionRecord.punchTime).toLocaleString('zh-HK')}</div>
               <div>類型: {correctionRecord.punchType === 'CLOCK_IN' ? '上班' : '下班'}</div>
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>
+            <div className="mb-3">
+              <label className="block text-xs g text-muted-foreground mb-1 font-medium">
                 正確時間
               </label>
               <input
                 type="datetime-local"
                 value={correctionForm.time}
                 onChange={e => setCorrectionForm({ ...correctionForm, time: e.target.value })}
-                style={{
-                  width: '100%', padding: '8px 10px', borderRadius: 6,
-                  border: '1px solid #ddd', fontSize: 14, boxSizing: 'border-box',
-                }}
+                className="w-full px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
               />
             </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>
+            <div className="mb-4">
+              <label className="block text-xs g text-muted-foreground mb-1 font-medium">
                 修正原因
               </label>
               <textarea
@@ -364,20 +335,13 @@ export default function AttendancePage() {
                 onChange={e => setCorrectionForm({ ...correctionForm, reason: e.target.value })}
                 placeholder="請說明修正原因"
                 rows={3}
-                style={{
-                  width: '100%', padding: '8px 10px', borderRadius: 6,
-                  border: '1px solid #ddd', fontSize: 14, boxSizing: 'border-box',
-                  resize: 'vertical',
-                }}
+                className="w-full px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-vertical"
               />
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setShowCorrectionModal(false)}
-                style={{
-                  padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd',
-                  background: '#f5f5f5', cursor: 'pointer', fontSize: 13,
-                }}
+                className="px-4 py-2 rounded-md g border bg-slate-100 hover:bg-slate-200 text-sm transition-colors"
               >
                 取消
               </button>
@@ -417,12 +381,7 @@ export default function AttendancePage() {
                   }
                 }}
                 disabled={submittingCorrection}
-                style={{
-                  padding: '8px 16px', borderRadius: 6, border: 'none',
-                  background: submittingCorrection ? '#ccc' : '#0d6efd',
-                  color: '#fff', cursor: submittingCorrection ? 'default' : 'pointer',
-                  fontSize: 13, fontWeight: 600,
-                }}
+                className={`px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ${submittingCorrection ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}
               >
                 {submittingCorrection ? '提交中...' : '提交修正'}
               </button>

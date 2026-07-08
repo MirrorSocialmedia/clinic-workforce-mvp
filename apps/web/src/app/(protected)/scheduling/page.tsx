@@ -7,6 +7,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr } from '@/lib/hk-date'
+import { Badge } from '@/components/ui/badge'
 
 // ============================================================
 // Types
@@ -552,7 +553,7 @@ export default function SchedulingPage() {
   // Loading State
   // ============================================================
   if (loading) {
-    return <div style={{ padding: 24 }}>載入中...</div>
+    return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   }
 
   const dates = getDates()
@@ -564,7 +565,7 @@ export default function SchedulingPage() {
   // Render
   // ============================================================
   return (
-    <div>
+    <div style={{ maxWidth: '1200px' }}>
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -704,7 +705,7 @@ export default function SchedulingPage() {
 
       {/* Template Selector (for managers) */}
       {canManage && (
-        <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card rounded-xl g border p-4 shadow-card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14, fontWeight: 500 }}>更次模板：</span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -745,7 +746,7 @@ export default function SchedulingPage() {
           </div>
         </div>
       )}
-      <div className="card" style={{ padding: 16 }}>
+      <div className="card rounded-xl g border p-4 shadow-card">
 
 
         <FullCalendar
@@ -781,6 +782,9 @@ export default function SchedulingPage() {
           height={650}
           slotMinTime="07:00:00"
           slotMaxTime="23:00:00"
+          eventDidMount={(info) => {
+            info.el.style.borderRadius = '6px'
+          }}
           expandRows={true}
           allDaySlot={false}
           slotDuration="00:30:00"
@@ -799,7 +803,7 @@ export default function SchedulingPage() {
       {/* Shift Change Request Panel */}
       {/* ============================================================ */}
       {showChangePanel && (
-        <div className="card" style={{ marginTop: 16 }}>
+        <div className="card rounded-xl g border p-4 shadow-card" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>🔄 換更申請</h2>
             <button
@@ -909,16 +913,10 @@ export default function SchedulingPage() {
                     }}>
                       <div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <span style={{
-                            padding: '2px 8px',
-                            background: statusColors[req.status] || '#888',
-                            color: 'white',
-                            borderRadius: 4,
-                            fontSize: 11,
-                          }}>
+                          <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold text-white" style={{ background: statusColors[req.status] || '#888' }}>
                             {statusLabels[req.status] || req.status}
                           </span>
-                          <span style={{ fontSize: 13, fontWeight: 500 }}>
+                          <span className="text-sm font-medium">
                             {typeLabels[req.type] || req.type}
                           </span>
                           <span style={{ fontSize: 12, color: '#888' }}>
@@ -986,8 +984,8 @@ export default function SchedulingPage() {
           onClick={() => setEditingShift(null)}
         >
           <div
-            className="card"
-            style={{ width: 400, maxWidth: '90vw', position: 'relative' }}
+            className="g bg-card g border rounded-xl shadow-lg mx-4 p-6 relative"
+            style={{ width: '500px', maxWidth: '90vw' }}
             onClick={e => e.stopPropagation()}
           >
             <button
@@ -1123,8 +1121,8 @@ export default function SchedulingPage() {
           onClick={() => setShowNewShiftModal(false)}
         >
           <div
-            className="card"
-            style={{ width: 400, maxWidth: '90vw', position: 'relative', padding: 24 }}
+            className="g bg-card g border rounded-xl shadow-lg mx-4 p-6 relative"
+            style={{ width: '512px', maxWidth: '90vw' }}
             onClick={e => e.stopPropagation()}
           >
             <button

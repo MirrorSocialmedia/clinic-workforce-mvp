@@ -52,7 +52,7 @@ function StatCard({ value, title, color = 'blue' }: { value: number; title: stri
   }
 
   return (
-    <div className={`bg-card border rounded-xl p-4 border-l-4 ${colorMap[color]} shadow-sm`}>
+    <div className={`bg-card border rounded-xl p-6 border-l-4 ${colorMap[color]} shadow-card`}>
       <div className="text-3xl font-bold text-foreground tabular-nums tracking-tight">{value}</div>
       <div className="text-sm text-muted-foreground mt-1">{title}</div>
     </div>
@@ -97,7 +97,7 @@ export default function DashboardPage() {
   const totalShifts = (data.clinics ?? []).reduce((sum, c) => sum + (c._count?.shifts ?? 0), 0)
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" style={{ maxWidth: '1200px' }}>
       {/* Page Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -126,7 +126,7 @@ export default function DashboardPage() {
               return (
                 <div
                   key={clinic.id}
-                  className="border rounded-lg p-4 bg-muted/30"
+                  className="border rounded-xl p-5 bg-muted/30 shadow-card hover:shadow-soft transition-shadow"
                 >
                   <div className="font-semibold text-base mb-3">{clinic.name}</div>
 
@@ -169,7 +169,7 @@ export default function DashboardPage() {
             {(data.clinics ?? []).map(clinic => (
               <div
                 key={clinic.id}
-                className="border rounded-lg p-4 bg-muted/30 hover:shadow-md transition-shadow"
+                className="border rounded-xl p-5 bg-muted/30 shadow-card hover:shadow-soft transition-shadow"
               >
                 <div className="font-semibold text-base mb-2">{clinic.name}</div>
                 {clinic.address && <div className="text-muted-foreground text-sm mb-3">{clinic.address}</div>}

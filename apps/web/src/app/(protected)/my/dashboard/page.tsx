@@ -16,7 +16,7 @@ function StatCard({ value, title, color = 'blue' }: { value: number; title: stri
   }
 
   return (
-    <div className={`bg-card border rounded-xl p-4 border-l-4 ${colorMap[color]} shadow-sm`}>
+    <div className={`bg-card border rounded-xl p-5 border-l-4 ${colorMap[color]} shadow-card`}>
       <div className="text-3xl font-bold text-foreground tabular-nums tracking-tight">{value}</div>
       <div className="text-sm text-muted-foreground mt-1">{title}</div>
     </div>
@@ -73,7 +73,7 @@ export default function MyDashboardPage() {
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4" style={{ maxWidth: '640px' }}>
       <h1 className="text-xl font-bold text-foreground">
         👋 我的首頁
       </h1>

@@ -1,4 +1,7 @@
 import type { Metadata, Viewport } from 'next'
+import { Inter } from 'next/font/google'
+
+const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
 export const metadata: Metadata = {
   title: '診所勞動力管理系統',
@@ -30,7 +33,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-HK">
+    <html lang="zh-HK" className={inter.className}>
       <head>
         <script dangerouslySetInnerHTML={{
           __html: `

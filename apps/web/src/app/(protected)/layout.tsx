@@ -141,7 +141,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     <div className="flex min-h-screen bg-background">
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-50 flex flex-col bg-gray-900 text-gray-100 h-screen transition-all duration-300 ease-in-out border-r border-gray-700
+        className={`fixed top-0 left-0 z-50 flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 text-gray-100 h-screen transition-all duration-300 ease-in-out border-r border-gray-700
           ${collapsed ? 'w-20' : 'w-64'}`}
       >
         {/* Header */}
@@ -177,8 +177,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                   href={item.path}
                   className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors relative
                     ${isActive(item.path)
-                      ? 'bg-brand text-white font-medium'
-                      : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                      ? 'bg-brand/90 text-white font-medium shadow-sm'
+                      : 'text-gray-300 hover:bg-slate-800/50 hover:text-white'
                     }`}
                   title={item.label}
                 >
@@ -211,10 +211,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                 <Link
                   key={item.path}
                   href={item.path}
-                  className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors
+                  className={`flex items-center px-3.5 py-2.5 rounded-lg text-[13.5px] transition-colors
                     ${isActive(item.path)
-                      ? 'bg-brand text-white font-medium'
-                      : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                      ? 'bg-brand/90 text-white font-medium shadow-sm'
+                      : 'text-gray-300 hover:bg-slate-800/50 hover:text-white'
                     }`}
                   title={item.label}
                 >
@@ -254,10 +254,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
       {/* Main content */}
       <main
-        className={`flex-1 transition-all duration-300 ${collapsed ? 'ml-20' : 'ml-64'}`}
+        className="flex-1 transition-all duration-300"
+        style={{ marginLeft: collapsed ? '80px' : '256px' }}
       >
+        <div className="main-content">
         {children}
         <PWAPrompt />
+        </div>
       </main>
 
       {/* Toast notifications */}
