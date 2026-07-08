@@ -104,6 +104,7 @@ export default function SchedulingPage() {
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const empPanelRef = useRef<HTMLDivElement>(null)
   const calendarContainerRef = useRef<HTMLDivElement>(null)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
   const [isDraggingEvent, setIsDraggingEvent] = useState(false)
 
   
@@ -848,15 +849,15 @@ function colorFor(id: string): string {
           eventDragStart={() => setIsDraggingEvent(true)}
           eventDragStop={async (info: any) => {
             setIsDraggingEvent(false)
-            // Check if dropped outside calendar area
-            const calendarEl = calendarContainerRef.current
-            if (!calendarEl) return
-            const rect = calendarEl.getBoundingClientRect()
+            // ✅ Check if dropped on drop zone (not calendar-outside check)
+            const dz = dropZoneRef.current
+            if (!dz) return
+            const dzRect = dz.getBoundingClientRect()
             const clientX = (info as any).jsEvent?.clientX ?? 0
             const clientY = (info as any).jsEvent?.clientY ?? 0
 
-            if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
-              if (confirm('拖出日曆範圍將刪除此班次，確定嗎？')) {
+            if (clientX >= dzRect.left && clientX <= dzRect.right && clientY >= dzRect.top && clientY <= dzRect.bottom) {
+              if (confirm(`確定取消「${info.event.title}」的班次？`)) {
                 await deleteShift(info.event.id)
               } else {
                 info.revert()
@@ -899,6 +900,7 @@ function colorFor(id: string): string {
 
         {/* Drop Zone for cancelling shifts by dragging out */}
         <div
+          ref={dropZoneRef}
           style={{
             marginTop: 12,
             padding: 16,
@@ -912,13 +914,6 @@ function colorFor(id: string): string {
             userSelect: 'none',
           }}
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none' }}
-          onDrop={async (e) => {
-            e.preventDefault()
-            const data = e.dataTransfer.getData('text/plain')
-            if (!data) return
-            // data is an employeeId from our native drag; for FC drags this won't trigger
-            // FC drag-out cancellation is handled by eventDragStop above
-          }}
         >
           {isDraggingEvent ? '🗑 放開此處取消班次' : '🗑 拖到此處取消班次'}
         </div>

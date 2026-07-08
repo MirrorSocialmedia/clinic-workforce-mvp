@@ -984,6 +984,7 @@ export interface PayRuleConfigModular {
   split_ratio?: number
   base_guarantee?: number
   deduction_rate?: number
+  monthly_pay_multiplier?: number
   ot_multiplier?: number
   ot_threshold?: number
   ot_threshold_daily?: number
@@ -1422,6 +1423,8 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
   const deductionRate = config.deduction_rate ?? 1
   const otMultiplier = config.ot_multiplier ?? 1.5
   const otThreshold = config.ot_threshold ?? 0
+  // Monthly pay multiplier: scale base salary by clinic coverage (default 1.0)
+  const monthlyPayMultiplier = config.monthly_pay_multiplier ?? 1
 
   const unpaidLeaveDays = workData.approvedLeaveDays - workData.paidLeaveDays
   // Use shift-based absentDays from collectWorkData (scheduled shifts with no punch and no leave)
@@ -1430,12 +1433,12 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
     workData.workingDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
   )
 
-  // ✅ 修正：基本薪資根據實際出勤日數 / 工作天數比例計算
+  // ✅ 模型 A：底薪 = 全額月薪（不按出勤比例縮水），缺勤才扣
+  // 之前錯誤：basePay 按 (paidDays/workingDays) 縮水 + deduction 再扣一次 = 同一件事扣兩次
   const workingDays = workData.workingDays
-  const paidDays = workData.actualAttendanceDays + workData.paidLeaveDays + workData.publicHolidayDays
-  const basePay = workingDays > 0 ? (paidDays / workingDays) * monthlySalary : 0
+  const basePay = monthlySalary * monthlyPayMultiplier  // 全額底薪，不縮水
   const dailyRate = workingDays > 0 ? monthlySalary / workingDays : 0
-  const deduction = absentDays * dailyRate * deductionRate
+  const deduction = (absentDays + unpaidLeaveDays) * dailyRate * deductionRate
 
   const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
   const hourlyEquivalent = otThreshold > 0 ? monthlySalary / otThreshold : 0
@@ -1448,7 +1451,7 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
     attendanceBonus: 0,
     attendanceBonusCancelled: false,
     deduction,
-    totalPayable: Math.max(0, basePay - deduction + otPay), // 防止負數
+    totalPayable: Math.max(0, basePay - deduction + otPay), // 防止負數（最後防線，正常不該觸發）
     absentDays,
     otHours,
     workedHours: workData.totalWorkedHours,
@@ -1456,6 +1459,7 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
     detail: {
       baseType: 'monthly',
       monthlySalary,
+      monthlyPayMultiplier,
       workingDays: workData.workingDays,
       scheduledDays: workData.scheduledDays,
       actualAttendanceDays: workData.actualAttendanceDays,
