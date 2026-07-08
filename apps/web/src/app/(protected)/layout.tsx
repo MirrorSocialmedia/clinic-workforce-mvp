@@ -99,17 +99,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/punch', label: '📱 我要打卡', roles: allRoles },
     { path: '/clinic/qr', label: '🖥 診所打卡螢幕', roles: ['OWNER', 'MANAGER'] },
     { path: '/dashboard', label: '📊 儀表板', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/attendance', label: '📋 考勤記錄', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/attendance', label: '📋 考勤', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/scheduling', label: '📅 排班管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/leave', label: '🏖️ 假期管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/leave-types', label: '🏷️ 假期類型', roles: ['OWNER'] },
-    { path: '/employees', label: '👥 員工管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/accounts', label: '👥 帳號管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/clinics', label: '🏥 診所管理', roles: ['OWNER'] },
-    { path: '/users', label: '🔑 用戶管理', roles: ['OWNER'] },
-    { path: '/hash', label: '🔒 每日雜湊', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/audit-logs', label: '📝 審計日誌', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/payroll', label: '💰 計糧管理', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/payroll/reports/exceptions', label: '📋 考勤異常', roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
   ]
 
   const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))

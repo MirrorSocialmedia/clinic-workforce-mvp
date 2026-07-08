@@ -256,8 +256,11 @@ function colorFor(id: string): string {
     )
   }
 
-  const createShift = async (employeeId: string, date: string, template: ShiftTemplate) => {
-    if (!selectedClinicId) return
+  const createShift = async (employeeId: string, date: string, template: ShiftTemplate): Promise<boolean> => {
+    if (!selectedClinicId) {
+      setValidationIssues([{ type: 'error', rule: 'clinic', message: '⚠️ 請先選擇診所' }])
+      return false
+    }
 
     // Build start/end times from template
     const dateObj = new Date(date)
@@ -278,7 +281,7 @@ function colorFor(id: string): string {
         ...validationResult.errors.map((e: any) => ({ type: 'error' as const, rule: e.rule, message: e.message })),
         ...validationResult.warnings.map((w: any) => ({ type: 'warning' as const, rule: w.rule, message: w.message })),
       ])
-      if (validationResult.errors.length > 0) return // Block on errors
+      if (validationResult.errors.length > 0) return false // Block on errors
     }
 
     try {
@@ -299,12 +302,16 @@ function colorFor(id: string): string {
       if (res.ok) {
         setValidationIssues([])
         loadShifts()
+        return true
       } else {
         const err = await res.json()
-        setValidationIssues([{ type: 'error', rule: 'api', message: err.error || 'Create failed' }])
+        setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '建立班次失敗' }])
+        return false
       }
     } catch (error) {
       console.error('Create shift error:', error)
+      setValidationIssues([{ type: 'error', rule: 'network', message: '❌ 網路錯誤，建立失敗' }])
+      return false
     }
   }
 
@@ -523,11 +530,14 @@ function colorFor(id: string): string {
   const handleDrop = async (e: React.DragEvent, employeeId: string, dateStr: string) => {
     e.preventDefault()
     if (!selectedTemplate) {
-      alert('請先選擇更次模板')
+      setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板' }])
       return
     }
 
-    await createShift(employeeId, dateStr, selectedTemplate)
+    const result = await createShift(employeeId, dateStr, selectedTemplate)
+    if (!result) {
+      setValidationIssues([{ type: 'error', rule: 'create', message: '❌ 建立班次失敗' }])
+    }
   }
 
   // ============================================================
@@ -751,6 +761,9 @@ function colorFor(id: string): string {
       <div className="flex gap-4">
       {/* Left: Employee Panel */}
       <Card className="flex-shrink-0 w-[180px] p-4" style={{ alignSelf: 'flex-start' }}>
+        <h4 className="text-xs font-semibold uppercase mb-1" style={{ color: '#888' }}>
+          {clinics.find(c => c.id === selectedClinicId)?.name || '未選擇診所'}
+        </h4>
         <h4 className="text-xs font-semibold uppercase mb-3" style={{ color: '#888' }}>員工 ({clinicEmployees.length})</h4>
         {clinicEmployees.length === 0 ? (
           <div className="text-xs text-center py-4" style={{ color: '#aaa' }}>
@@ -792,9 +805,15 @@ function colorFor(id: string): string {
           droppable={true}
           drop={async (info) => {
             const empId = dragData.current?.employeeId
-            if (empId && selectedTemplate) {
-              const date = toHKDateStr(info.date)
-              await createShift(empId, date, selectedTemplate)
+            if (!empId) return
+            if (!selectedTemplate) {
+              setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板' }])
+              return
+            }
+            const date = toHKDateStr(info.date)
+            const result = await createShift(empId, date, selectedTemplate)
+            if (!result) {
+              setValidationIssues([{ type: 'error', rule: 'create', message: '❌ 建立班次失敗' }])
             }
           }}
           editable={canManage}

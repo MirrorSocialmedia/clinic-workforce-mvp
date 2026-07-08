@@ -1,0 +1,312 @@
+'use client'
+
+import React, { useEffect, useState, useCallback } from 'react'
+
+type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
+
+interface Clinic { id: string; name: string }
+interface Account {
+  id: string; name: string; phone: string; email?: string | null
+  role: Role; status: string; createdAt: string
+  employeeId: string | null
+  employeeStatus: string | null
+  joinDate: string | null
+  payType: string | null
+  baseAmount: number | null
+  clinics: Clinic[]
+}
+
+const STATUS_LABELS: Record<string, string> = { ACTIVE: '啟用', INACTIVE: '停用' }
+const ROLE_LABELS: Record<string, string> = { OWNER: 'Owner', MANAGER: 'Manager', ACCOUNTANT: 'Accountant', EMPLOYEE: 'Employee' }
+
+export default function AccountsPage() {
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [clinics, setClinics] = useState<Clinic[]>([])
+  const [userRole, setUserRole] = useState<Role | ''>('')
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [clinicFilter, setClinicFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [showForm, setShowForm] = useState(false)
+  const [expandedRow, setExpandedRow] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    name: '', phone: '', email: '', password: '', role: 'EMPLOYEE' as Role,
+    clinicIds: [] as string[], joinDate: '',
+    payType: 'HOURLY', baseAmount: '',
+    assignEmployee: true,
+  })
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [meRes, accRes, clinicRes] = await Promise.all([
+        fetch('/api/me', { credentials: 'include' }),
+        fetch('/api/accounts', { credentials: 'include' }),
+        fetch('/api/clinics', { credentials: 'include' }),
+      ])
+      if (meRes.ok) { const d = await meRes.json(); setUserRole(d.user.role) }
+      if (accRes.ok) { const d = await accRes.json(); setAccounts(d.accounts || []) }
+      if (clinicRes.ok) { const d = await clinicRes.json(); setClinics(d.clinics || []) }
+    } catch (err) { console.error('Failed to load accounts:', err) }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const filteredAccounts = accounts.filter(acc => {
+    if (search && !acc.name.toLowerCase().includes(search.toLowerCase()) && !acc.phone.includes(search)) return false
+    if (roleFilter !== 'all' && acc.role !== roleFilter) return false
+    if (clinicFilter !== 'all' && !acc.clinics?.some(c => c.id === clinicFilter)) return false
+    if (statusFilter !== 'all' && acc.status !== statusFilter.toUpperCase()) return false
+    return true
+  })
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    try {
+      const method = editingId ? 'PUT' : 'POST'
+      const url = editingId ? `/api/accounts/${editingId}` : '/api/accounts'
+      const body: any = {
+        name: form.name, phone: form.phone, email: form.email || undefined,
+        role: form.role, clinicIds: form.clinicIds,
+        joinDate: form.joinDate || undefined,
+        payType: form.payType,
+        baseAmount: form.baseAmount ? parseFloat(form.baseAmount) : null,
+        assignEmployee: form.assignEmployee,
+      }
+      if (!editingId && form.password) body.password = form.password
+      if (editingId && form.password) body.newPassword = form.password
+
+      const res = await fetch(url, { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (res.ok) { resetForm(); fetchData() }
+      else { const err = await res.json(); alert(err.error || '操作失敗') }
+    } catch (err) { console.error('Submit error:', err) }
+  }
+
+  const resetForm = () => {
+    setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
+      clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true })
+    setShowForm(false); setEditingId(null)
+  }
+
+  const handleEdit = (acc: Account) => {
+    setForm({ name: acc.name, phone: acc.phone, email: acc.email || '',
+      password: '', role: acc.role, clinicIds: acc.clinics?.map(c => c.id) || [],
+      joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
+      baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId })
+    setEditingId(acc.id); setShowForm(true)
+  }
+
+  const handleResetPassword = async (acc: Account) => {
+    const newPwd = prompt('輸入新密碼：')
+    if (!newPwd) return
+    try {
+      const res = await fetch(`/api/accounts/${acc.id}`, { method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newPassword: newPwd }) })
+      if (res.ok) { alert('密碼已重設'); fetchData() }
+      else { const err = await res.json(); alert(err.error || '重設失敗') }
+    } catch {}
+  }
+
+  const handleToggleStatus = async (acc: Account) => {
+    const newStatus = acc.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
+    try {
+      const res = await fetch(`/api/accounts/${acc.id}`, { method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus }) })
+      if (res.ok) fetchData()
+      else { const err = await res.json(); alert(err.error || '操作失敗') }
+    } catch {}
+  }
+
+  const isOwner = userRole === 'OWNER'
+
+  if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
+
+  return (
+    <div style={{ padding: 24, maxWidth: 1200 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>👥 帳號管理</h1>
+        {isOwner && (
+          <button className="btn btn-primary" onClick={() => { resetForm(); setForm(f => ({ ...f, assignEmployee: true })) }}>+ 新增帳號</button>
+        )}
+      </div>
+
+      {/* Form */}
+      {showForm && (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <h2>{editingId ? '編輯帳號' : '新增帳號'}</h2>
+          <form onSubmit={handleSubmit}>
+            <div className="grid-3" style={{ marginBottom: 0 }}>
+              <div className="form-group">
+                <label>姓名</label>
+                <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required placeholder="姓名" />
+              </div>
+              <div className="form-group">
+                <label>電話</label>
+                <input type="text" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} required placeholder="電話" />
+              </div>
+              <div className="form-group">
+                <label>電郵（可選）</label>
+                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="email@example.com" />
+              </div>
+              <div className="form-group">
+                <label>{editingId ? '新密碼（留空=不變）' : '初始密碼'}</label>
+                <input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required={!editingId} placeholder="密碼" />
+              </div>
+              <div className="form-group">
+                <label>角色</label>
+                <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value as Role })}>
+                  {isOwner && <option value="OWNER">Owner</option>}
+                  <option value="MANAGER">Manager</option>
+                  <option value="ACCOUNTANT">Accountant</option>
+                  <option value="EMPLOYEE">Employee</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>到職日（員工）</label>
+                <input type="date" value={form.joinDate} onChange={e => setForm({ ...form, joinDate: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>計薪方式</label>
+                <select value={form.payType} onChange={e => setForm({ ...form, payType: e.target.value })}>
+                  <option value="HOURLY">時薪</option>
+                  <option value="MONTHLY">月薪</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>{form.payType === 'HOURLY' ? '時薪' : '月薪'}</label>
+                <input type="number" step="0.01" value={form.baseAmount}
+                  onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
+              </div>
+              <div className="form-group" style={{ gridColumn: 'span 3' }}>
+                <label>診所指派</label>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {clinics.map(c => (
+                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <input type="checkbox" checked={form.clinicIds.includes(c.id)}
+                        onChange={e => {
+                          const ids = e.target.checked ? [...form.clinicIds, c.id] : form.clinicIds.filter(id => id !== c.id)
+                          setForm({ ...form, clinicIds: ids })
+                        }} />
+                      {c.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={resetForm}>取消</button>
+              <button type="submit" className="btn btn-primary">{editingId ? '保存' : '新增'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <input placeholder="搜尋姓名/電話" value={search} onChange={e => setSearch(e.target.value)}
+          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, width: 200 }} />
+        <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
+          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13 }}>
+          <option value="all">全部角色</option>
+          <option value="OWNER">Owner</option>
+          <option value="MANAGER">Manager</option>
+          <option value="ACCOUNTANT">Accountant</option>
+          <option value="EMPLOYEE">Employee</option>
+        </select>
+        <select value={clinicFilter} onChange={e => setClinicFilter(e.target.value)}
+          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13 }}>
+          <option value="all">全部診所</option>
+          {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13 }}>
+          <option value="all">全部狀態</option>
+          <option value="active">啟用</option>
+          <option value="inactive">停用</option>
+        </select>
+      </div>
+
+      {/* Table */}
+      <div className="card">
+        <table>
+          <thead>
+            <tr>
+              <th>姓名</th><th>電話</th><th>角色</th><th>到職日</th><th>診所</th><th>狀態</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredAccounts.map(acc => (
+              <React.Fragment key={acc.id}>
+                <tr onClick={() => setExpandedRow(expandedRow === acc.id ? null : acc.id)} style={{ cursor: 'pointer' }}>
+                  <td style={{ fontWeight: 500 }}>{acc.name}</td>
+                  <td>{acc.phone}</td>
+                  <td>
+                    <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
+                      background: acc.role === 'OWNER' ? '#1a1a2e20' : '#88820', color: acc.role === 'OWNER' ? '#1a1a2e' : '#888' }}>
+                      {ROLE_LABELS[acc.role] || acc.role}
+                    </span>
+                  </td>
+                  <td>{acc.joinDate || '-'}</td>
+                  <td>{(acc.clinics || []).map(c => c.name).join(', ') || '-'}</td>
+                  <td>
+                    <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
+                      background: acc.status === 'ACTIVE' ? '#4CAF5020' : '#dc354520',
+                      color: acc.status === 'ACTIVE' ? '#4CAF50' : '#dc3545' }}>
+                      {acc.status === 'ACTIVE' ? '✅' : '❌'} {STATUS_LABELS[acc.status] || acc.status}
+                    </span>
+                  </td>
+                  <td onClick={e => e.stopPropagation()}>
+                    <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
+                  </td>
+                </tr>
+                {expandedRow === acc.id && (
+                  <tr>
+                    <td colSpan={7} style={{ background: '#f9fafb', padding: 16 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+                        <div>
+                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>登入資訊</h4>
+                          <div style={{ fontSize: 12, color: '#888' }}>電郵: {acc.email || '未設定'}</div>
+                          <div style={{ fontSize: 12, color: '#888' }}>建立於: {new Date(acc.createdAt).toLocaleDateString('zh-HK')}</div>
+                          <div style={{ marginTop: 8 }}>
+                            <button className="btn btn-sm" style={{ background: '#f0f0f0', marginRight: 4 }} onClick={() => handleResetPassword(acc)}>重設密碼</button>
+                            <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleToggleStatus(acc)}>
+                              {acc.status === 'ACTIVE' ? '停用' : '啟用'}
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>診所指派</h4>
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {(acc.clinics || []).map(c => (
+                              <span key={c.id} style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: '#1a1a2e10', color: '#1a1a2e' }}>{c.name}</span>
+                            ))}
+                            {(!acc.clinics || acc.clinics.length === 0) && <span style={{ fontSize: 12, color: '#aaa' }}>未指派</span>}
+                          </div>
+                        </div>
+                        <div>
+                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>薪酬資訊</h4>
+                          <div style={{ fontSize: 12, color: '#888' }}>方式: {acc.payType === 'HOURLY' ? '時薪' : acc.payType === 'MONTHLY' ? '月薪' : '-'}</div>
+                          <div style={{ fontSize: 12, color: '#888' }}>{acc.payType ? `${acc.payType === 'HOURLY' ? '時薪' : '月薪'}: ${acc.baseAmount || 0}` : '-'}</div>
+                        </div>
+                        <div>
+                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>入職資料</h4>
+                          <div style={{ fontSize: 12, color: '#888' }}>到職日: {acc.joinDate || '未設定'}</div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+        {filteredAccounts.length === 0 && (
+          <div style={{ textAlign: 'center', color: '#888', padding: 40 }}>沒有帳號</div>
+        )}
+      </div>
+    </div>
+  )
+}
