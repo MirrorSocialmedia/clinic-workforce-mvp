@@ -431,7 +431,7 @@ function calculateMonthly(
   const unpaidLeaveDays = approvedLeaveDays - paidLeaveDays
   const absentDays = Math.max(
     0,
-    workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidayDays
+    workingDays - actualAttendanceDays - approvedLeaveDays - publicHolidayDays
   )
 
   // ✅ 修正：基本薪資根據實際出勤日數 / 工作天數比例計算
@@ -447,9 +447,9 @@ function calculateMonthly(
   const otPay = otHours * hourlyEquivalent * otMultiplier
 
   return {
-    basePay,
-    otPay,
-    deduction,
+    basePay: Math.round(basePay * 100) / 100,
+    otPay: Math.round(otPay * 100) / 100,
+    deduction: Math.round(deduction * 100) / 100,
     otHours,
     absentDays,
     detail: {
@@ -668,7 +668,7 @@ async function calculateEmployeePayroll(
       )
       result = {
         ...calc,
-        totalPayable: calc.basePay - calc.deduction + calc.otPay,
+        totalPayable: Math.max(0, calc.basePay - calc.deduction + calc.otPay),
         detail: { ...calc.detail, partialDays },
       }
       break
