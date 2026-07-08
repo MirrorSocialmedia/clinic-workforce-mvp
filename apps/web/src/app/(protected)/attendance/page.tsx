@@ -55,6 +55,13 @@ export default function AttendancePage() {
   const [correctionRecord, setCorrectionRecord] = useState<PunchRecord | null>(null)
   const [correctionForm, setCorrectionForm] = useState({ time: '', reason: '' })
   const [submittingCorrection, setSubmittingCorrection] = useState(false)
+
+  // Standalone 補登 state
+  const [showAddPunchModal, setShowAddPunchModal] = useState(false)
+  const [addPunchForm, setAddPunchForm] = useState({
+    employeeId: '', clinicId: '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '',
+  })
+  const [submittingAddPunch, setSubmittingAddPunch] = useState(false)
   const [clinicFilter, setClinicFilter] = useState('')
   const [employeeFilter, setEmployeeFilter] = useState('')
   const [startDate, setStartDate] = useState('')
@@ -213,7 +220,7 @@ export default function AttendancePage() {
       <h1 className="text-2xl font-bold text-foreground tracking-tight mb-6">📋 考勤管理</h1>
 
       {/* Tabs */}
-      <div className="flex gap-4 mb-6 border-b-2 border-gray-200">
+      <div className="flex gap-4 mb-6 border-b-2 border-gray-200" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
         {([
           { key: 'records' as TabKey, label: '全部記錄' },
           { key: 'exceptions' as TabKey, label: '異常（遲到/缺卡/補登）' },
@@ -224,6 +231,18 @@ export default function AttendancePage() {
             {tab.label}
           </button>
         ))}
+        {isManagerOrAbove && (
+          <button
+            onClick={() => {
+              setAddPunchForm({ employeeId: '', clinicId: clinics[0]?.id || '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '' })
+              setShowAddPunchModal(true)
+            }}
+            className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ml-auto"
+            style={{ background: '#0d6efd' }}
+          >
+            ➕ 補登打卡
+          </button>
+        )}
       </div>
 
       {/* Records Tab */}
@@ -601,6 +620,90 @@ export default function AttendancePage() {
               }} disabled={submittingCorrection}
                 className={`px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ${submittingCorrection ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}>
                 {submittingCorrection ? '提交中...' : '提交修正'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Standalone 補登 Modal (新增缺失記錄) */}
+      {showAddPunchModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]"
+          onClick={() => setShowAddPunchModal(false)}>
+          <div className="bg-white border rounded-xl shadow-lg w-full mx-4 p-6 relative" style={{ maxWidth: '480px' }}
+            onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowAddPunchModal(false)}
+              className="absolute top-3 right-3 text-lg text-muted-foreground hover:text-foreground bg-none border-none cursor-pointer">✕</button>
+            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">➕ 補登打卡（新增缺失記錄）</h2>
+            <div className="mb-3">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">員工 *</label>
+              <select value={addPunchForm.employeeId}
+                onChange={e => setAddPunchForm({ ...addPunchForm, employeeId: e.target.value })}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="">選擇員工</option>
+                {employees.map((emp) => (<option key={emp.id} value={emp.id}>{emp.name}</option>))}
+              </select>
+            </div>
+            <div className="mb-3">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">診所 *</label>
+              <select value={addPunchForm.clinicId}
+                onChange={e => setAddPunchForm({ ...addPunchForm, clinicId: e.target.value })}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="">選擇診所</option>
+                {clinics.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+              </select>
+            </div>
+            <div className="mb-3">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">日期 *</label>
+              <input type="date" value={addPunchForm.date}
+                onChange={e => setAddPunchForm({ ...addPunchForm, date: e.target.value })}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+            </div>
+            <div className="flex gap-3 mb-3">
+              <div style={{ flex: 1 }}>
+                <label className="block text-xs text-muted-foreground mb-1 font-medium">上班 / 下班 *</label>
+                <select value={addPunchForm.punchType}
+                  onChange={e => setAddPunchForm({ ...addPunchForm, punchType: e.target.value })}
+                  className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  <option value="CLOCK_IN">上班</option>
+                  <option value="CLOCK_OUT">下班</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="block text-xs text-muted-foreground mb-1 font-medium">正確時間 *</label>
+                <input type="time" value={addPunchForm.time}
+                  onChange={e => setAddPunchForm({ ...addPunchForm, time: e.target.value })}
+                  className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">原因 *</label>
+              <textarea value={addPunchForm.reason}
+                onChange={e => setAddPunchForm({ ...addPunchForm, reason: e.target.value })}
+                placeholder="請說明補登原因（必填）" rows={3}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-vertical" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowAddPunchModal(false)}
+                className="px-4 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">取消</button>
+              <button onClick={async () => {
+                const { employeeId, clinicId, date, time, punchType, reason } = addPunchForm
+                if (!employeeId || !clinicId || !date || !reason) { alert('請填寫所有必填欄位'); return }
+                setSubmittingAddPunch(true)
+                try {
+                  const datetime = `${date}T${time}:00`
+                  const res = await fetch('/api/punch-corrections', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ date: datetime, punchType, reason, clinicId, employeeId }),
+                  })
+                  if (res.ok) { alert('補登申請已提交'); setShowAddPunchModal(false); setAddPunchForm({ employeeId: '', clinicId: clinics[0]?.id || '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '' }); fetchRecords() }
+                  else { const err = await res.json(); alert(err.error || '提交失敗') }
+                } catch { alert('網路錯誤') }
+                finally { setSubmittingAddPunch(false) }
+              }} disabled={submittingAddPunch}
+                className={`px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ${submittingAddPunch ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}>
+                {submittingAddPunch ? '提交中...' : '提交補登'}
               </button>
             </div>
           </div>

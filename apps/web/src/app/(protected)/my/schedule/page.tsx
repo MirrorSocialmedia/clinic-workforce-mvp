@@ -4,7 +4,9 @@ import { useEffect, useState, useCallback } from 'react'
 
 export default function MySchedulePage() {
   const [shifts, setShifts] = useState<any[]>([])
+  const [coworkerShifts, setCoworkerShifts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [includeCoworkers, setIncludeCoworkers] = useState(false)
   const [month, setMonth] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -16,18 +18,24 @@ export default function MySchedulePage() {
       const monthStart = new Date(`${month}-01`)
       const monthEnd = new Date(monthStart)
       monthEnd.setMonth(monthEnd.getMonth() + 1)
-      const res = await fetch(
-        `/api/my/schedule?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}`,
-        { credentials: 'include' }
-      )
+      const url = includeCoworkers
+        ? `/api/my/schedule?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}&includeCoworkers=true`
+        : `/api/my/schedule?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}`
+      const res = await fetch(url, { credentials: 'include' })
       const data = await res.json()
-      setShifts(data.shifts || [])
+      if (includeCoworkers) {
+        setShifts(data.myShifts || [])
+        setCoworkerShifts(data.coworkerShifts || [])
+      } else {
+        setShifts(data.shifts || [])
+        setCoworkerShifts([])
+      }
     } catch (err) {
       console.error('Fetch schedule error:', err)
     } finally {
       setLoading(false)
     }
-  }, [month])
+  }, [month, includeCoworkers])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -50,9 +58,17 @@ export default function MySchedulePage() {
   // Group shifts by date for card display
   const shiftsByDate: Record<string, any[]> = {}
   shifts.forEach(s => {
-    const dateKey = new Date(s.startTime).toLocaleDateString('zh-HK')
+    const dateKey = s.date || new Date(s.startTime).toISOString().slice(0, 10)
     if (!shiftsByDate[dateKey]) shiftsByDate[dateKey] = []
     shiftsByDate[dateKey].push(s)
+  })
+
+  // Group coworker shifts by date
+  const coworkersByDate: Record<string, any[]> = {}
+  coworkerShifts.forEach(s => {
+    const dateKey = s.date
+    if (!coworkersByDate[dateKey]) coworkersByDate[dateKey] = []
+    coworkersByDate[dateKey].push(s)
   })
 
   // Also keep calendar data
@@ -60,9 +76,10 @@ export default function MySchedulePage() {
   const daysInMonth = new Date(y, m, 0).getDate()
   const dayShifts: Record<number, any[]> = {}
   shifts.forEach(s => {
-    const shiftDate = new Date(s.startTime)
-    if (shiftDate.getFullYear() === y && shiftDate.getMonth() === m - 1) {
-      const day = shiftDate.getDate()
+    const d = s.date || new Date(s.startTime).toISOString().slice(0, 10)
+    const [shiftY, shiftM] = d.split('-').map(Number)
+    if (shiftY === y && shiftM === m) {
+      const day = parseInt(shiftM === m ? d.split('-')[2] : '0')
       if (!dayShifts[day]) dayShifts[day] = []
       dayShifts[day].push(s)
     }
@@ -76,7 +93,7 @@ export default function MySchedulePage() {
       <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-4">📅 我的班表</h1>
 
       <div className="card mb-3">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
           <div className="flex items-center gap-3">
             <button
               className="btn btn-sm"
@@ -94,7 +111,27 @@ export default function MySchedulePage() {
               ▶
             </button>
           </div>
-          <span className="text-xs text-gray-400">{shifts.length} 個班次</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* Coworker toggle */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="text-xs text-gray-500" style={{ fontSize: 12 }}>{includeCoworkers ? '看全店' : '只看我的'}</span>
+              <button
+                onClick={() => setIncludeCoworkers(!includeCoworkers)}
+                style={{
+                  width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
+                  background: includeCoworkers ? '#0d6efd' : '#ccc', position: 'relative', transition: 'background 0.2s',
+                }}
+                title={includeCoworkers ? '切換為只看我的' : '切換為看全店同事'}
+              >
+                <span style={{
+                  position: 'absolute', top: 2, width: 18, height: 18, borderRadius: '50%',
+                  background: 'white', transition: 'left 0.2s',
+                  left: includeCoworkers ? 20 : 2,
+                }} />
+              </button>
+            </div>
+            <span className="text-xs text-gray-400">{shifts.length} 個班次</span>
+          </div>
         </div>
 
         {/* Calendar grid - scrollable on mobile */}
@@ -158,7 +195,9 @@ export default function MySchedulePage() {
           <div className="space-y-2">
             {Object.entries(shiftsByDate)
               .sort(([a], [b]) => b.localeCompare(a))
-              .map(([date, dayShiftsList]) => (
+              .map(([date, dayShiftsList]) => {
+                const coworkers = coworkersByDate[date] || []
+                return (
                 <div key={date} className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
                   <div className="font-semibold text-sm text-gray-900 dark:text-white mb-2">
                     {date}
@@ -170,12 +209,12 @@ export default function MySchedulePage() {
                     >
                       <div>
                         <div className="text-sm text-gray-800 dark:text-gray-200">
-                          {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
-                          {' - '}
-                          {new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                          🟦 {s.templateName || ''}
+                          {s.startTime ? ` ${s.startTime}-${s.endTime}` : ''}
+                          {s.startTime && !s.endTime ? `${new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}-` : ''}
                         </div>
                         <div className="text-xs text-gray-400 mt-0.5">
-                          {s.clinic?.name || '-'}
+                          {s.clinicName || s.clinic?.name || '-'}
                           {s.role ? ` · ${s.role}` : ''}
                         </div>
                       </div>
@@ -190,8 +229,19 @@ export default function MySchedulePage() {
                       </span>
                     </div>
                   ))}
+                  {/* Coworkers */}
+                  {includeCoworkers && coworkers.length > 0 && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #ddd' }}>
+                      <div className="text-xs font-medium text-gray-500 mb-1">同班同事：</div>
+                      {coworkers.map(c => (
+                        <div key={c.id} className="text-xs text-gray-600 dark:text-gray-300 py-0.5 pl-2" style={{ borderLeft: '2px solid #e5e7eb' }}>
+                          {c.employeeName} {c.templateName && `(${c.templateName})`} {c.startTime}-{c.endTime} @ {c.clinicName}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+              )})}
           </div>
         </div>
       )}

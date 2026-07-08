@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { date, punchType, reason, clinicId } = body
+      const { date, punchType, reason, clinicId, employeeId: requestBodyEmployeeId } = body
 
       // Validate
       if (!date || !punchType || !clinicId) {
@@ -39,13 +39,26 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Get employee
-      const employee = await prisma.employee.findUnique({
-        where: { userId: session.userId },
-        include: {
-          clinics: { select: { clinicId: true } },
-        },
-      })
+      // Get employee — use provided employeeId (manager) or own profile (employee)
+      let employee: any
+      if (requestBodyEmployeeId) {
+        // Manager creating for another employee
+        if (session.role !== 'OWNER' && session.role !== 'MANAGER') {
+          return NextResponse.json(
+            { error: 'Only managers can create corrections for other employees' },
+            { status: 403 }
+          )
+        }
+        employee = await prisma.employee.findUnique({
+          where: { id: requestBodyEmployeeId },
+          include: { clinics: { select: { clinicId: true } } },
+        })
+      } else {
+        employee = await prisma.employee.findUnique({
+          where: { userId: session.userId },
+          include: { clinics: { select: { clinicId: true } } },
+        })
+      }
 
       if (!employee) {
         return NextResponse.json(
@@ -58,7 +71,7 @@ export async function POST(req: NextRequest) {
       const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
       if (!empClinicIds.includes(clinicId)) {
         return NextResponse.json(
-          { error: 'You are not assigned to this clinic' },
+          { error: 'Employee is not assigned to this clinic' },
           { status: 403 }
         )
       }

@@ -103,6 +103,8 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const empPanelRef = useRef<HTMLDivElement>(null)
+  const calendarContainerRef = useRef<HTMLDivElement>(null)
+  const [isDraggingEvent, setIsDraggingEvent] = useState(false)
 
   
 // Fixed color palette for employee drag chips
@@ -809,7 +811,7 @@ function colorFor(id: string): string {
       {/* Right: Calendar Card */}
       <div className="flex-1 min-w-0">
       <div className="card rounded-xl g border p-4 shadow-card">
-
+      <div ref={calendarContainerRef}>
 
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
@@ -839,10 +841,28 @@ function colorFor(id: string): string {
           }}
           editable={canManage}
           selectable={canManage && !!selectedTemplate}
-          dayMaxEvents={true}
+          dayMaxEvents={viewMode === 'month' ? false : undefined}
           nowIndicator={true}
           eventClick={handleFcEventClick}
           eventDrop={handleFcEventDrop}
+          eventDragStart={() => setIsDraggingEvent(true)}
+          eventDragStop={async (info: any) => {
+            setIsDraggingEvent(false)
+            // Check if dropped outside calendar area
+            const calendarEl = calendarContainerRef.current
+            if (!calendarEl) return
+            const rect = calendarEl.getBoundingClientRect()
+            const clientX = (info as any).jsEvent?.clientX ?? 0
+            const clientY = (info as any).jsEvent?.clientY ?? 0
+
+            if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+              if (confirm('拖出日曆範圍將刪除此班次，確定嗎？')) {
+                await deleteShift(info.event.id)
+              } else {
+                info.revert()
+              }
+            }
+          }}
           dateClick={handleFcDateClick}
           snapDuration="00:30:00"
           eventConstraint={{ startTime: '08:00:00', endTime: '22:00:00' }}
@@ -850,9 +870,15 @@ function colorFor(id: string): string {
           eventContent={(eventInfo) => {
             const shift = eventInfo.event.extendedProps.shift
             return (
-              <div>
+              <div style={{
+                fontSize: viewMode === 'month' ? 11 : undefined,
+                padding: viewMode === 'month' ? '1px 4px' : undefined,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
                 <b>{eventInfo.event.title}</b>
-                {shift && (
+                {shift && viewMode !== 'month' && (
                   <div style={{ fontSize: 11 }}>
                     {formatTimeFromShift(shift.startTime)}-{formatTimeFromShift(shift.endTime)}
                   </div>
@@ -860,7 +886,7 @@ function colorFor(id: string): string {
               </div>
             )
           }}
-          height={650}
+          height={viewMode === 'month' ? 'auto' : 650}
           slotMinTime="07:00:00"
           slotMaxTime="23:00:00"
           eventDidMount={(info) => {
@@ -870,6 +896,33 @@ function colorFor(id: string): string {
           allDaySlot={false}
           slotDuration="00:30:00"
         />
+
+        {/* Drop Zone for cancelling shifts by dragging out */}
+        <div
+          style={{
+            marginTop: 12,
+            padding: 16,
+            borderRadius: 8,
+            border: isDraggingEvent ? '2px dashed #dc3545' : '2px dashed #e0e0e0',
+            background: isDraggingEvent ? '#fff5f5' : '#fafafa',
+            textAlign: 'center',
+            fontSize: 13,
+            color: isDraggingEvent ? '#dc3545' : '#aaa',
+            transition: 'all 0.2s',
+            userSelect: 'none',
+          }}
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none' }}
+          onDrop={async (e) => {
+            e.preventDefault()
+            const data = e.dataTransfer.getData('text/plain')
+            if (!data) return
+            // data is an employeeId from our native drag; for FC drags this won't trigger
+            // FC drag-out cancellation is handled by eventDragStop above
+          }}
+        >
+          {isDraggingEvent ? '🗑 放開此處取消班次' : '🗑 拖到此處取消班次'}
+        </div>
+      </div>
       </div>
       </div>
       </div>

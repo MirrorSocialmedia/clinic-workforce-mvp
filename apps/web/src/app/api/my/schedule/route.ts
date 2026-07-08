@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const from = searchParams.get('from')
   const to = searchParams.get('to')
+  const includeCoworkers = searchParams.get('includeCoworkers') === 'true'
 
   const employee = await prisma.employee.findUnique({
     where: { userId: session.userId },
@@ -39,10 +40,70 @@ export async function GET(req: NextRequest) {
     include: {
       clinic: { select: { id: true, name: true, address: true } },
       template: { select: { id: true, name: true } },
+      employee: {
+        include: {
+          user: { select: { id: true, name: true } },
+        },
+      },
     },
     orderBy: { startTime: 'asc' },
     take: 50,
   })
 
-  return NextResponse.json({ shifts })
+  // If includeCoworkers, fetch coworker shifts for same clinics & dates
+  let coworkerShifts: any[] = []
+  if (includeCoworkers && shifts.length > 0) {
+    const clinicIds = [...new Set(shifts.map(s => s.clinicId).filter(Boolean))]
+    const dates = shifts.map(s => s.startTime)
+    const minDate = new Date(Math.min(...dates.map(d => new Date(d).getTime())))
+    const maxDate = new Date(Math.max(...dates.map(d => new Date(d).getTime())))
+    maxDate.setDate(maxDate.getDate() + 1) // inclusive
+
+    if (clinicIds.length > 0) {
+      const allShifts = await prisma.shift.findMany({
+        where: {
+          clinicId: { in: clinicIds },
+          employeeId: { not: employee.id },
+          startTime: { gte: minDate, lte: maxDate },
+        },
+        include: {
+          clinic: { select: { id: true, name: true } },
+          template: { select: { id: true, name: true } },
+          employee: {
+            include: {
+              user: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { startTime: 'asc' },
+        take: 200,
+      })
+
+      coworkerShifts = allShifts.map(s => ({
+        id: s.id,
+        date: new Date(s.startTime).toISOString().slice(0, 10),
+        startTime: new Date(s.startTime).toISOString().slice(11, 16),
+        endTime: new Date(s.endTime).toISOString().slice(11, 16),
+        employeeName: s.employee?.user?.name || '未知',
+        templateName: s.template?.name || '',
+        clinicName: s.clinic?.name || '',
+      }))
+    }
+  }
+
+  const formattedShifts = shifts.map(s => ({
+    ...s,
+    date: new Date(s.startTime).toISOString().slice(0, 10),
+    startTime: new Date(s.startTime).toISOString().slice(11, 16),
+    endTime: new Date(s.endTime).toISOString().slice(11, 16),
+    employeeName: s.employee?.user?.name || '',
+    templateName: s.template?.name || '',
+    clinicName: s.clinic?.name || '',
+  }))
+
+  if (includeCoworkers) {
+    return NextResponse.json({ myShifts: formattedShifts, coworkerShifts })
+  }
+
+  return NextResponse.json({ shifts: formattedShifts })
 }

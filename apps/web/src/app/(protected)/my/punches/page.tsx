@@ -62,7 +62,23 @@ export default function MyPunchesPage() {
 
   return (
     <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', marginBottom: 24 }}>📋 我的考勤</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>📋 我的考勤</h1>
+        <button
+          onClick={() => {
+            setCorrectionReqForm({ date: '', time: '09:00', punchType: 'CLOCK_IN', clinicId: '', reason: '' })
+            setShowCorrectionForm(true)
+          }}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '10px 20px', borderRadius: 6, border: 'none',
+            background: '#0d6efd', color: '#fff', fontSize: 14,
+            fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          ➕ 申請補打卡
+        </button>
+      </div>
 
       {/* Punch Records */}
       <div className="card" style={{ marginBottom: 24 }}>
@@ -173,22 +189,6 @@ export default function MyPunchesPage() {
           </table>
         )}
       </div>
-
-      {/* Correction Request Button */}
-      <button
-        onClick={() => {
-          setCorrectionReqForm({ date: '', time: '09:00', punchType: 'CLOCK_IN', clinicId: '', reason: '' })
-          setShowCorrectionForm(true)
-        }}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '10px 20px', borderRadius: 6, border: 'none',
-          background: '#0d6efd', color: '#fff', fontSize: 14,
-          fontWeight: 600, cursor: 'pointer', marginBottom: 24,
-        }}
-      >
-        ➕ 申請補打卡
-      </button>
 
       {/* Correction Request Modal */}
       {showCorrectionForm && (
