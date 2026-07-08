@@ -434,8 +434,12 @@ function calculateMonthly(
     workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidayDays
   )
 
-  const basePay = monthlySalary
-  const deduction = absentDays * (monthlySalary / 26) * deductionRate
+  // ✅ 修正：基本薪資根據實際出勤日數 / 工作天數比例計算
+  // 有出勤的天數 = actualAttendanceDays + paidLeaveDays（有薪假期也算出勤）
+  const paidDays = actualAttendanceDays + paidLeaveDays + publicHolidayDays
+  const basePay = workingDays > 0 ? (paidDays / workingDays) * monthlySalary : 0
+  const dailyRate = workingDays > 0 ? monthlySalary / workingDays : 0
+  const deduction = absentDays * dailyRate * deductionRate
 
   // FIX #7: OT threshold from config, no default
   const otHours = Math.max(0, totalHours - otThreshold)
@@ -1418,8 +1422,12 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
     workData.workingDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
   )
 
-  const basePay = monthlySalary
-  const deduction = absentDays * (monthlySalary / 26) * deductionRate
+  // ✅ 修正：基本薪資根據實際出勤日數 / 工作天數比例計算
+  const workingDays = workData.workingDays
+  const paidDays = workData.actualAttendanceDays + workData.paidLeaveDays + workData.publicHolidayDays
+  const basePay = workingDays > 0 ? (paidDays / workingDays) * monthlySalary : 0
+  const dailyRate = workingDays > 0 ? monthlySalary / workingDays : 0
+  const deduction = absentDays * dailyRate * deductionRate
 
   const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
   const hourlyEquivalent = otThreshold > 0 ? monthlySalary / otThreshold : 0
@@ -1432,7 +1440,7 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
     attendanceBonus: 0,
     attendanceBonusCancelled: false,
     deduction,
-    totalPayable: basePay - deduction + otPay,
+    totalPayable: Math.max(0, basePay - deduction + otPay), // 防止負數
     absentDays,
     otHours,
     workedHours: workData.totalWorkedHours,

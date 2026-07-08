@@ -500,3 +500,13 @@ main.main-content {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* FullCalendar 外部拖曳視覺反饋 */
+.fc-highlight {
+  background: rgba(59, 130, 246, 0.15) !important;
+}
+.fc-day-grid-event.fc-hover,
+.fc-time-grid-event.fc-hover {
+  outline: 2px dashed #3b82f6 !important;
+  outline-offset: 2px;
+}

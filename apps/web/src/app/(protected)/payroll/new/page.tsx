@@ -144,6 +144,12 @@ export default function NewPayrollPage() {
 
   return (
     <div className="p-6" style={{ maxWidth: '800px' }}>
+      <button
+        onClick={() => router.push('/payroll')}
+        className="mb-4 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+      >
+        ← 返回計糧列表
+      </button>
       <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>+ 生成計糧</h1>
 
       <div style={{ maxWidth: 500 }}>

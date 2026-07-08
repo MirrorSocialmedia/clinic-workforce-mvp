@@ -457,6 +457,8 @@ function colorFor(id: string): string {
     dragData.current = { employeeId, templateId: selectedTemplate?.id || '' }
     e.dataTransfer.effectAllowed = 'copy'
     e.dataTransfer.setData('text/plain', employeeId)
+    // Visual feedback: fade the dragged element
+    setTimeout(() => { (e.target as HTMLElement).style.opacity = '0.5' }, 0)
   }
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -777,6 +779,7 @@ function colorFor(id: string): string {
                 key={emp.id}
                 draggable
                 onDragStart={e => handleDragStart(e, emp.id)}
+                onDragEnd={e => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
                 className="cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
                 style={{ background: colorFor(emp.id) }}
               >

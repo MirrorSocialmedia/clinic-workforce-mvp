@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const [users] = await Promise.all([
+  const [users, allEmployees] = await Promise.all([
     prisma.user.findMany({
       where: userWhere,
       include: {
@@ -47,12 +47,20 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { createdAt: 'asc' },
     }),
+    prisma.employee.findMany({
+      include: { clinics: { include: { clinic: true } } },
+    }),
   ])
+
+  // Build employeeId → clinics mapping from EmployeeClinic
+  const empClinicsMap = new Map(allEmployees.map(e => [e.userId, e.clinics.map(c => c.clinic)]))
 
   const safeUsers = users.map(({ password, ...user }) => user)
   const accounts = safeUsers.map(user => {
     const emp = user.employee || null
     const payRule = emp?.payRules?.[0] || null
+    // 優先使用 EmployeeClinic，其次 UserClinic
+    const clinics = empClinicsMap.get(user.id) || user.clinics.map((uc: any) => uc.clinic)
     return {
       id: user.id,
       name: user.name,
@@ -66,7 +74,7 @@ export async function GET(req: NextRequest) {
       joinDate: emp?.joinDate?.toISOString().slice(0, 10) || null,
       payType: payRule?.payType || null,
       baseAmount: payRule?.baseAmount || null,
-      clinics: user.clinics.map((uc: any) => uc.clinic),
+      clinics,
     }
   })
 
