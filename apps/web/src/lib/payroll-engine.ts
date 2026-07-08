@@ -996,6 +996,7 @@ export interface PayRuleConfigModular {
         late_minutes_exceed?: number
         late_is_cumulative?: boolean
         any_unplanned_leave?: boolean
+        any_absence?: boolean
       }
     }
     overtime?: {
@@ -1041,11 +1042,13 @@ export function evaluateAttendanceBonus(
       late_minutes_exceed?: number
       late_is_cumulative?: boolean
       any_unplanned_leave?: boolean
+      any_absence?: boolean
     }
   },
   workData: {
     lateRecords: Array<{ minutes: number }>
     leaveRecords: Array<{ isPlanned: boolean }>
+    absentDays?: number
   }
 ): { amount: number; cancelled: boolean; reason?: string } {
   const cancelIf = config.cancel_if || {}
@@ -1070,6 +1073,11 @@ export function evaluateAttendanceBonus(
     if (hasUnplanned) {
       return { amount: 0, cancelled: true, reason: '有臨時請假' }
     }
+  }
+
+  // Any absence check
+  if (cancelIf.any_absence && workData.absentDays !== undefined && workData.absentDays > 0) {
+    return { amount: 0, cancelled: true, reason: `缺勤 ${workData.absentDays} 天，取消勤工` }
   }
 
   return { amount: bonusAmount, cancelled: false }
@@ -1623,21 +1631,23 @@ export function runBaseModule(config: PayRuleConfigModular, workData: WorkData):
 // ------------------------------------------------------------------
 
 function applyAttendanceBonusModifier(
-  modConfig: { amount: number; cancel_if: { late_minutes_exceed?: number; late_is_cumulative?: boolean; any_unplanned_leave?: boolean } },
+  modConfig: { amount: number; cancel_if: { late_minutes_exceed?: number; late_is_cumulative?: boolean; any_unplanned_leave?: boolean; any_absence?: boolean } },
   result: PayrollResult,
   workData: WorkData
 ): PayrollResult {
   const bonus = evaluateAttendanceBonus(modConfig, {
     lateRecords: workData.lateRecords.map(r => ({ minutes: r.minutes })),
     leaveRecords: workData.leaveRecords,
+    absentDays: workData.absentDays,
   })
 
   const next = { ...result }
   next.attendanceBonus = bonus.amount
   next.attendanceBonusCancelled = bonus.cancelled
   next.attendanceBonusReason = bonus.reason
-  next.totalPayable = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + bonus.amount
-  next.detail = { ...result.detail, attendanceBonus: bonus }
+  const rawTotal = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + bonus.amount
+  next.totalPayable = Math.max(0, rawTotal)
+  next.detail = { ...result.detail, attendanceBonus: bonus, rawTotal: Math.round(rawTotal * 100) / 100 }
   return next
 }
 

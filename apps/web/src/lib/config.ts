@@ -132,6 +132,16 @@ export const CONFIG = {
     'GET /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/_exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
+    // Account management routes
+    'GET /api/accounts': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/accounts': ['OWNER'],
+    'GET /api/accounts/:id': ['OWNER', 'MANAGER'],
+    'PUT /api/accounts/:id': ['OWNER'],
+    'DELETE /api/accounts/:id': ['OWNER'],
+
+    // Time-bank routes
+    'GET /api/time-bank': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/consultation-revenue': ['OWNER'],

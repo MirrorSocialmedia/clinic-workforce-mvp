@@ -72,7 +72,10 @@ export function requireAuth(
   const allowed = CONFIG.RBAC_MATRIX[normalized]
 
   if (!allowed || !allowed.includes(session.role)) {
-    return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+    if (!allowed && process.env.NODE_ENV !== 'production') {
+      console.error(`⚠️ RBAC MISS: "${normalized}" not in matrix! New API forgot to register?`)
+    }
+    return { error: NextResponse.json({ error: `Forbidden (route not registered: ${normalized})` }, { status: 403 }) }
   }
 
   // Data scope

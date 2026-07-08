@@ -299,9 +299,15 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3">{record.tokenValid === true ? '✅' : record.tokenValid === false ? '❌' : '—'}</td>
                       <td className="p-3">
-                        {record.corrections?.length > 0 ? (
+                        {record.corrections && record.corrections.length > 0 ? (
                           <span className="text-amber-600 text-xs">{record.corrections.length} 筆修正</span>
                         ) : (<span className="text-emerald-600 text-xs">✓ 無修正</span>)}
+                        <button
+                          className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
+                          onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
+                        >
+                          ✏️ 補登/修正
+                        </button>
                       </td>
                       <td className="p-3">
                         <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}

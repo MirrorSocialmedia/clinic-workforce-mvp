@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
-import interactionPlugin from '@fullcalendar/interaction'
+import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr } from '@/lib/hk-date'
 import { Badge } from '@/components/ui/badge'
@@ -102,6 +102,7 @@ export default function SchedulingPage() {
 
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
+  const empPanelRef = useRef<HTMLDivElement>(null)
 
   
 // Fixed color palette for employee drag chips
@@ -167,6 +168,20 @@ function colorFor(id: string): string {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // Register FC Draggable on employee panel
+  useEffect(() => {
+    if (!empPanelRef.current) return
+    const draggable = new Draggable(empPanelRef.current, {
+      itemSelector: '.emp-card',
+      eventData: (el: HTMLElement) => ({
+        title: el.getAttribute('data-name') || '',
+        extendedProps: { employeeId: el.getAttribute('data-emp-id') },
+        duration: '08:00',
+      }),
+    })
+    return () => draggable.destroy()
+  }, [employees, selectedClinicId])
 
   // ============================================================
   // Load shifts for current view
@@ -767,27 +782,28 @@ function colorFor(id: string): string {
           {clinics.find(c => c.id === selectedClinicId)?.name || '未選擇診所'}
         </h4>
         <h4 className="text-xs font-semibold uppercase mb-3" style={{ color: '#888' }}>員工 ({clinicEmployees.length})</h4>
-        {clinicEmployees.length === 0 ? (
-          <div className="text-xs text-center py-4" style={{ color: '#aaa' }}>
-            此診所未指派員工<br />
-            <span style={{ fontSize: 11 }}>請到帳號管理指派</span>
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {clinicEmployees.map(emp => (
-              <div
-                key={emp.id}
-                draggable
-                onDragStart={e => handleDragStart(e, emp.id)}
-                onDragEnd={e => { (e.currentTarget as HTMLElement).style.opacity = '1' }}
-                className="cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
-                style={{ background: colorFor(emp.id) }}
-              >
-                {emp.user.name}
-              </div>
-            ))}
-          </div>
-        )}
+        <div ref={empPanelRef}>
+          {clinicEmployees.length === 0 ? (
+            <div className="text-xs text-center py-4" style={{ color: '#aaa' }}>
+              此診所未指派員工<br />
+              <span style={{ fontSize: 11 }}>請到帳號管理指派</span>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {clinicEmployees.map(emp => (
+                <div
+                  key={emp.id}
+                  className="emp-card cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
+                  data-emp-id={emp.id}
+                  data-name={emp.user.name}
+                  style={{ background: colorFor(emp.id) }}
+                >
+                  {emp.user.name}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* Right: Calendar Card */}
@@ -806,17 +822,19 @@ function colorFor(id: string): string {
           }}
           events={fcEvents}
           droppable={true}
-          drop={async (info) => {
-            const empId = dragData.current?.employeeId
+          eventReceive={async (info) => {
+            const empId = info.event.extendedProps.employeeId
+            info.event.remove() // 移除 FC 自動生成的臨時事件
             if (!empId) return
             if (!selectedTemplate) {
-              setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板' }])
+              setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板才能排班' }])
               return
             }
-            const date = toHKDateStr(info.date)
-            const result = await createShift(empId, date, selectedTemplate)
-            if (!result) {
-              setValidationIssues([{ type: 'error', rule: 'create', message: '❌ 建立班次失敗' }])
+            const date = toHKDateStr(info.event.start!)
+            setValidationIssues([])
+            const success = await createShift(empId, date, selectedTemplate)
+            if (success) {
+              loadShifts()
             }
           }}
           editable={canManage}

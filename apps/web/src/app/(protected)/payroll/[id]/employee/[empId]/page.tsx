@@ -213,6 +213,27 @@ export default function EmployeePayrollDetailPage() {
               </div>
             )}
 
+            {detail.attendanceBonus !== undefined && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm">勤工獎</span>
+                <span className="font-mono font-medium">
+                  {detail.attendanceBonusCancelled ? (
+                    <span className="text-red-500">
+                      $0（{detail.attendanceBonusReason || '已取消'}）
+                    </span>
+                  ) : (
+                    <span className="text-green-600">+{fmtCurrency(detail.attendanceBonus ?? 0)}</span>
+                  )}
+                </span>
+              </div>
+            )}
+
+            {detail.rawTotal !== undefined && detail.rawTotal < 0 && item.totalPayable === 0 && (
+              <div className="text-red-500 text-sm">
+                ⚠️ 原值 ${detail.rawTotal}（缺勤過多），已歸零
+              </div>
+            )}
+
             {/* Total */}
             <div className="flex justify-between items-center border-t pt-3 mt-2 font-bold text-lg">
               <span>應付合計</span>
