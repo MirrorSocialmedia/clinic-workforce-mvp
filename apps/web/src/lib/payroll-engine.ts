@@ -1706,6 +1706,14 @@ export async function calculatePayrollWithRules(
   let result: PayrollResult = baseResult
   const mods = config.modifiers || {}
 
+  // Defensive: merge root-level cancel_if into mods.attendance_bonus.cancel_if
+  // (legacy configs may have cancel_if at root instead of nested)
+  if (mods.attendance_bonus && (config as any).cancel_if) {
+    const rootCancelIf = (config as any).cancel_if
+    const nestedCancelIf = mods.attendance_bonus.cancel_if || {}
+    mods.attendance_bonus.cancel_if = { ...rootCancelIf, ...nestedCancelIf }
+  }
+
   if (mods.attendance_bonus) {
     result = applyAttendanceBonusModifier(mods.attendance_bonus, result, workData)
   }
