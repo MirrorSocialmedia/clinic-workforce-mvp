@@ -100,16 +100,38 @@ export default function EmployeePayrollDetailPage() {
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const fmtTime = (d: Date | string) => new Date(d).toLocaleString('zh-HK')
 
-  // Attendance summary from detail or fallback to item fields
-  const scheduledDays = detail.scheduledDays ?? '-'
-  const actualAttendanceDays = detail.actualAttendanceDays ?? item.workedHours
-  const absentDays = detail.absentDays ?? item.absentDays
+  // ---- Task 6: Extract comprehensive detail data ----
+  const attendanceDetail = detail.attendance || {}
+  const salaryDetail = detail.salary || {}
+  const leaveAndOtDetail = detail.leaveAndOt || {}
+
+  const scheduledDays = attendanceDetail.expectedWorkDays ?? detail.scheduledDays ?? '-'
+  const actualAttendanceDays = attendanceDetail.actualAttendanceDays ?? detail.actualAttendanceDays ?? item.workedHours
+  const absentDays = attendanceDetail.absentDays ?? detail.absentDays ?? item.absentDays
   const leaveDays = detail.approvedLeaveDays ?? item.leaveDays
-  const lateRecords = detail.lateRecords || []
+  const lateRecords = (attendanceDetail.lateRecords ?? detail.lateRecords) || []
   const lateDays = lateRecords.length
 
+  // Salary breakdown
+  const basePay = salaryDetail.basePay ?? item.basePay
+  const deduction = salaryDetail.deduction ?? item.deduction
+  const dailyWage = salaryDetail.dailyWage ?? (typeof basePay === 'number' && scheduledDays !== '-' ? basePay / Number(scheduledDays) : 0)
+  const attendanceBonus = salaryDetail.attendanceBonus ?? detail.attendanceBonus ?? 0
+  const otPay = salaryDetail.otPay ?? item.otPay
+  const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
+  const grossPay = salaryDetail.grossPay ?? (basePay - deduction + otPay + ((item.splitPay || 0)) + attendanceBonus + allowances)
+  const mpf = salaryDetail.mpf ?? 0
+  const netPay = salaryDetail.netPay ?? item.totalPayable
+
+  // Leave & OT
+  const monthlyLeaveDays = leaveAndOtDetail.monthlyLeaveDays ?? 0
+  const leaveTaken = leaveAndOtDetail.leaveTaken ?? item.leaveDays
+  const leaveBalance = leaveAndOtDetail.leaveBalance ?? 0
+  const otHours = leaveAndOtDetail.otHours ?? item.otHours
+  const otConvertedLeave = leaveAndOtDetail.otConvertedLeave ?? 0
+  const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
+
   // Daily punch/shift summary for collapsible detail
-  // Build daily details from punches
   const dailyPunchMap: Record<string, { punches: typeof punches; shiftDate: string }> = {}
   for (const p of punches) {
     const dateKey = new Date(p.punchTime).toLocaleDateString('en-CA')
@@ -127,10 +149,6 @@ export default function EmployeePayrollDetailPage() {
       status: isLate ? 'late' : 'present',
     }
   })
-
-  // Working days for absence deduction calculation
-  const workingDays = detail.workingDays ?? 26
-  const dailyRate = item.basePay / workingDays
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -154,7 +172,7 @@ export default function EmployeePayrollDetailPage() {
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">📅 出勤概況</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
             <div className="rounded-lg border p-3">
-              <div className="text-xs text-muted-foreground">排班日數</div>
+              <div className="text-xs text-muted-foreground">排班日數 (應出勤)</div>
               <div className="text-lg font-bold mt-1">{scheduledDays}</div>
             </div>
             <div className="rounded-lg border p-3">
@@ -187,22 +205,22 @@ export default function EmployeePayrollDetailPage() {
           <div className="mt-3 space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-sm">基本薪資</span>
-              <span className="font-mono font-medium">{fmtCurrency(item.basePay)}</span>
+              <span className="font-mono font-medium">{fmtCurrency(basePay)}</span>
             </div>
 
             {absentDays > 0 && (
               <div className="flex justify-between items-center text-red-500">
                 <span className="text-sm">
-                  缺勤扣款 {absentDays}天 × {fmtCurrency(dailyRate)}
+                  缺勤扣款 {absentDays}天 × {fmtCurrency(dailyWage)} (法定日薪)
                 </span>
-                <span className="font-mono font-medium">-{fmtCurrency(item.deduction)}</span>
+                <span className="font-mono font-medium">-{fmtCurrency(deduction)}</span>
               </div>
             )}
 
-            {item.otPay > 0 && (
+            {otPay > 0 && (
               <div className="flex justify-between items-center text-green-600">
                 <span className="text-sm">加班 {item.otHours}h</span>
-                <span className="font-mono font-medium">+{fmtCurrency(item.otPay)}</span>
+                <span className="font-mono font-medium">+{fmtCurrency(otPay)}</span>
               </div>
             )}
 
@@ -213,7 +231,7 @@ export default function EmployeePayrollDetailPage() {
               </div>
             )}
 
-            {detail.attendanceBonus !== undefined && (
+            {attendanceBonus !== undefined && (
               <div className="flex justify-between items-center">
                 <span className="text-sm">勤工獎</span>
                 <span className="font-mono font-medium">
@@ -222,25 +240,81 @@ export default function EmployeePayrollDetailPage() {
                       $0（{detail.attendanceBonusReason || '已取消'}）
                     </span>
                   ) : (
-                    <span className="text-green-600">+{fmtCurrency(detail.attendanceBonus ?? 0)}</span>
+                    <span className="text-green-600">+{fmtCurrency(attendanceBonus)}</span>
                   )}
                 </span>
               </div>
             )}
+
+            {allowances > 0 && (
+              <div className="flex justify-between items-center text-blue-600">
+                <span className="text-sm">津貼</span>
+                <span className="font-mono font-medium">+{fmtCurrency(allowances)}</span>
+              </div>
+            )}
+
+            {/* Gross Pay */}
+            <div className="flex justify-between items-center border-t pt-2 mt-2 font-semibold">
+              <span>應發 (Gross)</span>
+              <span className="font-mono">{fmtCurrency(grossPay)}</span>
+            </div>
+
+            {/* MPF */}
+            {mpf > 0 && (
+              <div className="flex justify-between items-center text-orange-600">
+                <span className="text-sm">強積金 (MPF) 扣除</span>
+                <span className="font-mono font-medium">-{fmtCurrency(mpf)}</span>
+              </div>
+            )}
+
+            {/* Net Pay */}
+            <div className="flex justify-between items-center border-t-2 border-primary pt-3 mt-2 font-bold text-lg">
+              <span>實發 (Net Pay)</span>
+              <span className="font-mono">{fmtCurrency(netPay)}</span>
+            </div>
 
             {detail.rawTotal !== undefined && detail.rawTotal < 0 && item.totalPayable === 0 && (
               <div className="text-red-500 text-sm">
                 ⚠️ 原值 ${detail.rawTotal}（缺勤過多），已歸零
               </div>
             )}
-
-            {/* Total */}
-            <div className="flex justify-between items-center border-t pt-3 mt-2 font-bold text-lg">
-              <span>應付合計</span>
-              <span className="font-mono">{fmtCurrency(item.totalPayable)}</span>
-            </div>
           </div>
         </div>
+
+        {/* 🏖️ 假期與 OT 換假 */}
+        {(monthlyLeaveDays > 0 || otConvertedLeave > 0 || leaveBalance > 0) && (
+          <div>
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🏖️ 假期與 OT 換假</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">本月應得假期</div>
+                <div className="text-lg font-bold mt-1">{monthlyLeaveDays} 天</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">本月已用假期</div>
+                <div className="text-lg font-bold mt-1">{leaveTaken} 天</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">假期餘額</div>
+                <div className="text-lg font-bold mt-1">{leaveBalance} 天</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">本月 OT 時數</div>
+                <div className="text-lg font-bold mt-1">{otHours.toFixed(2)}h</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">OT 換假</div>
+                <div className="text-lg font-bold mt-1">{otConvertedLeave} 天</div>
+              </div>
+              {otRemainderMinutes > 0 && (
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground">OT 餘數</div>
+                  <div className="text-lg font-bold mt-1">{otRemainderMinutes}min</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 📊 工時統計 (secondary) */}
         <div>

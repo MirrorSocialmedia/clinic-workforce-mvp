@@ -1,5 +1,5 @@
 // ============================================================
-// Payroll Engine — Phase 6 (Audit-Fixed)
+// Payroll Engine — Phase 6 (Audit-Fixed) + Full Payroll Rules
 // Parametric salary calculation from PayRule.configJson
 // Sources: PunchRecord (corrected), LeaveRequest, Shift, HKPublicHoliday
 // Fixes: paired hours, cross-clinic OT, clinicId corrections,
@@ -1037,6 +1037,7 @@ export interface PayRuleConfigModular {
       mode: 'pay' | 'time_off'
       multiplier?: number
       threshold?: number
+      hours_per_leave_day?: number  // 預設 8
     }
     late_policy?: {
       deduct_salary?: boolean
@@ -1055,6 +1056,20 @@ export interface PayRuleConfigModular {
       amount: number
       type: 'fixed' | 'conditional'
     }>
+  }
+
+  // Leave banking: 不放的假存起來
+  leave_banking?: {
+    enabled?: boolean       // 預設 true
+    max_days?: number | null  // 預設 null (無上限)
+  }
+
+  // MPF (強積金) configuration
+  mpf?: {
+    enabled?: boolean
+    rate?: number          // 預設 0.05
+    min?: number           // 預設 7100 (下限)
+    max?: number           // 預設 30000 (上限)
   }
 
   // Legacy fields (backwards compat)
@@ -1310,6 +1325,170 @@ function countRestDaysInMonth(year: number, month: number, restDays: number[] = 
 }
 
 // ------------------------------------------------------------------
+// NEW: Task 2 — Count Monthly Leave Days (休息日 + 公眾假期)
+// ------------------------------------------------------------------
+
+/**
+ * Count monthly leave entitlement = rest days + public holidays in a month.
+ * This is the "leave you get this month" — if not taken, it can be banked.
+ */
+export function countMonthlyLeaveDays(
+  year: number,
+  month: number, // 0-indexed
+  restDays: number[] = [0, 6],
+  publicHolidayDays?: Date[]
+): { restDayCount: number; publicHolidayCount: number; total: number } {
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  let restDayCount = 0
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    if (restDays.includes(new Date(year, month, d).getDay())) {
+      restDayCount++
+    }
+  }
+
+  // Count public holidays in this month
+  let publicHolidayCount = 0
+  if (publicHolidayDays) {
+    for (const hd of publicHolidayDays) {
+      if (hd.getFullYear() === year && hd.getMonth() === month) {
+        publicHolidayCount++
+      }
+    }
+  }
+
+  return { restDayCount, publicHolidayCount, total: restDayCount + publicHolidayCount }
+}
+
+// ------------------------------------------------------------------
+// NEW: Task 5 — MPF Calculation
+// ------------------------------------------------------------------
+
+/**
+ * MPF (強積金) employer contribution calculation.
+ */
+export function calcMPF(
+  relevantIncome: number,
+  config: { enabled?: boolean; rate?: number; min?: number; max?: number }
+): number {
+  const MIN = config.min ?? 7100
+  const MAX = config.max ?? 30000
+  const RATE = config.rate ?? 0.05
+  if (!config.enabled || relevantIncome < MIN) return 0
+  const capped = Math.min(relevantIncome, MAX)
+  return Math.round(capped * RATE * 100) / 100
+}
+
+// ------------------------------------------------------------------
+// NEW: Task 3 & 4 — Leave Banking & OT→Leave Helpers
+// ------------------------------------------------------------------
+
+/**
+ * Upsert leave balance for an employee for a given leave type and year.
+ * Adds to both entitled and remaining.
+ */
+async function addLeaveBalance(
+  employeeId: string,
+  leaveTypeId: string,
+  year: number,
+  days: number,
+  db: any
+): Promise<any> {
+  return db.leaveBalance.upsert({
+    where: {
+      employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year },
+    },
+    update: {
+      entitled: { increment: days },
+      remaining: { increment: days },
+    },
+    create: {
+      employeeId,
+      leaveTypeId,
+      year,
+      entitled: days,
+      remaining: days,
+    },
+  })
+}
+
+/**
+ * Get or create TimeBank record for an employee and month.
+ */
+async function getOrCreateTimeBank(
+  employeeId: string,
+  monthDate: Date,
+  db: any
+): Promise<any> {
+  const year = monthDate.getFullYear()
+  const month = monthDate.getMonth()
+  const periodMonth = new Date(year, month, 1)
+
+  let record = await db.timeBank.findUnique({
+    where: {
+      employeeId_periodMonth: { employeeId, periodMonth },
+    },
+  })
+
+  if (!record) {
+    record = await db.timeBank.create({
+      data: {
+        employeeId,
+        periodMonth,
+        otMinutes: 0,
+        lateMinutes: 0,
+        balance: 0,
+        carriedFrom: 0,
+      },
+    })
+  }
+
+  return record
+}
+
+/**
+ * Update TimeBank record.
+ */
+async function updateTimeBank(
+  employeeId: string,
+  monthDate: Date,
+  data: { otMinutes?: number; lateMinutes?: number; carriedFrom?: number; balance?: number; monthEndNote?: string },
+  db: any
+): Promise<any> {
+  const year = monthDate.getFullYear()
+  const month = monthDate.getMonth()
+  const periodMonth = new Date(year, month, 1)
+
+  return db.timeBank.update({
+    where: {
+      employeeId_periodMonth: { employeeId, periodMonth },
+    },
+    data,
+  })
+}
+
+/**
+ * Find or create a leave type by name (e.g., '休息日', 'OT換假').
+ */
+async function getOrCreateLeaveType(
+  name: string,
+  isPaid: boolean,
+  db: any
+): Promise<any> {
+  let type = await db.leaveType.findFirst({
+    where: { name, isActive: true },
+  })
+
+  if (!type) {
+    type = await db.leaveType.create({
+      data: { name, isPaid, isActive: true },
+    })
+  }
+
+  return type
+}
+
+// ------------------------------------------------------------------
 // 3. Modular Engine: Work Data Collection
 // ------------------------------------------------------------------
 
@@ -1489,8 +1668,8 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
   const monthlyPayMultiplier = config.monthly_pay_multiplier ?? 1
 
   const unpaidLeaveDays = workData.approvedLeaveDays - workData.paidLeaveDays
-  // absence_basis: 'monthly' = full month working days, 'scheduled' = only scheduled shift days
-  const absenceBasis = config.absence_basis || 'monthly'
+  // absence_basis: 'scheduled' (default) = only scheduled shift days, 'monthly' = full month working days
+  const absenceBasis = config.absence_basis ?? 'scheduled'
   const expectedWorkDays = absenceBasis === 'scheduled'
     ? workData.scheduledDays
     : (workData.monthlyWorkingDays ?? workData.workingDays)
@@ -1542,6 +1721,9 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
       otHours,
       hourlyEquivalent,
       otMultiplier,
+      absenceBasis,
+      expectedWorkDays,
+      dailyWage: Math.round(dailyRate * 100) / 100,
     },
   }
 }
@@ -1640,13 +1822,14 @@ function calcDailyBase(config: PayRuleConfigModular, workData: WorkData): Payrol
 function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
   const splitRatio = config.split_ratio ?? 0
   const basePay = config.monthly_salary ?? 0
+
   const consultationFees = workData.consultationFees
   const splitPay = consultationFees * splitRatio
   const deductionRate = config.deduction_rate ?? 1
 
   let deduction = 0
   if (basePay > 0) {
-    const absenceBasis = config.absence_basis || 'monthly'
+    const absenceBasis = config.absence_basis ?? 'scheduled'
     const expectedWorkDays = absenceBasis === 'scheduled'
       ? workData.scheduledDays
       : (workData.monthlyWorkingDays ?? workData.workingDays)
@@ -1728,7 +1911,7 @@ function applyAttendanceBonusModifier(
 }
 
 function applyOvertimeModifier(
-  modConfig: { mode: 'pay' | 'time_off'; multiplier?: number; threshold?: number },
+  modConfig: { mode: 'pay' | 'time_off'; multiplier?: number; threshold?: number; hours_per_leave_day?: number },
   result: PayrollResult,
   _workData: WorkData
 ): PayrollResult {
@@ -1737,7 +1920,7 @@ function applyOvertimeModifier(
     // OT converted to time off — no monetary OT pay
     next.otPay = 0
     next.totalPayable = result.basePay - result.deduction + (result.splitPay || 0) + result.attendanceBonus
-    next.detail = { ...result.detail, otMode: 'time_off', otHoursOff: result.otHours }
+    next.detail = { ...result.detail, otMode: 'time_off', otHoursOff: result.otHours, hoursPerLeaveDay: modConfig.hours_per_leave_day ?? 8 }
   }
   return next
 }
@@ -1772,6 +1955,10 @@ export async function calculatePayrollWithRules(
   clinicId: string | null,
   config: PayRuleConfigModular
 ): Promise<PayrollResult> {
+  const year = monthDate.getFullYear()
+  const month = monthDate.getMonth()
+  const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
+
   // 1. Collect work data
   const workData = await collectWorkData(employeeId, monthDate, clinicId)
 
@@ -1798,6 +1985,132 @@ export async function calculatePayrollWithRules(
   }
   if (mods.allowances && mods.allowances.length > 0) {
     result = applyAllowancesModifier(mods.allowances, result)
+  }
+
+  // 4. Task 5: Apply MPF deduction
+  const allowances = mods.allowances || []
+  const totalAllowances = allowances.reduce((sum, a) => sum + a.amount, 0)
+  const grossPay = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + result.attendanceBonus + totalAllowances
+
+  const mpfConfig = config.mpf || { enabled: false }
+  const mpf = calcMPF(grossPay, mpfConfig)
+  const netPay = Math.max(0, grossPay - mpf)
+
+  result.totalPayable = netPay
+  result.detail = { ...result.detail, grossPay: Math.round(grossPay * 100) / 100, mpf, netPay: Math.round(netPay * 100) / 100 }
+
+  // 5. Task 2: Count monthly leave days
+  const restDaysConfig = mods.working_days?.rest_days ?? [0, 6]
+  const publicHolidaysInMonth = await getPublicHolidayDays(monthStart, monthEnd)
+  const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig, publicHolidaysInMonth)
+
+  // 6. Task 3: Leave banking — grant monthly leave to LeaveBalance
+  const leaveBankingConfig = config.leave_banking || { enabled: true, max_days: null }
+  let leaveBalanceRemaining = 0
+  let monthlyLeaveGranted = 0
+
+  if (leaveBankingConfig.enabled) {
+    try {
+      // Get or create the "休息日" leave type
+      const restDayType = await getOrCreateLeaveType('休息日', true, prisma)
+      const grantedDays = monthlyLeaveDays.total
+      monthlyLeaveGranted = grantedDays
+
+      await addLeaveBalance(employeeId, restDayType.id, year, grantedDays, prisma)
+
+      // Check max days cap
+      if (leaveBankingConfig.max_days != null) {
+        const balance = await prisma.leaveBalance.findUnique({
+          where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: restDayType.id, year } },
+        })
+        if (balance && balance.remaining > leaveBankingConfig.max_days) {
+          await prisma.leaveBalance.update({
+            where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: restDayType.id, year } },
+            data: { remaining: leaveBankingConfig.max_days },
+          })
+        }
+      }
+
+      // Get current remaining balance
+      const currentBalance = await prisma.leaveBalance.findUnique({
+        where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: restDayType.id, year } },
+      })
+      leaveBalanceRemaining = currentBalance?.remaining ?? 0
+    } catch (err) {
+      console.warn(`Leave banking failed for ${employeeId}:`, err)
+    }
+  }
+
+  // 7. Task 4: OT → Leave conversion
+  let otConvertedLeave = 0
+  let otRemainderMinutes = 0
+  const hoursPerLeaveDay = mods.overtime?.hours_per_leave_day ?? 8
+
+  if (mods.overtime && mods.overtime.mode === 'time_off' && result.otHours > 0) {
+    try {
+      const otMinutesFromResult = Math.round(result.otHours * 60)
+      const timeBank = await getOrCreateTimeBank(employeeId, monthDate, prisma)
+      // Update OT minutes in TimeBank (set current month OT)
+      await updateTimeBank(employeeId, monthDate, {
+        otMinutes: otMinutesFromResult,
+      }, prisma)
+
+      // net = this month's OT - late + carry from prev month
+      const netOtMinutes = otMinutesFromResult - timeBank.lateMinutes + timeBank.carriedFrom
+      const minutesPerLeaveDay = hoursPerLeaveDay * 60
+      otConvertedLeave = Math.floor(netOtMinutes / minutesPerLeaveDay)
+      otRemainderMinutes = netOtMinutes % minutesPerLeaveDay
+
+      // Convert OT to leave days in LeaveBalance
+      if (otConvertedLeave > 0) {
+        const otLeaveType = await getOrCreateLeaveType('OT換假', true, prisma)
+        await addLeaveBalance(employeeId, otLeaveType.id, year, otConvertedLeave, prisma)
+
+        // Carry remainder to next month
+        await updateTimeBank(employeeId, monthDate, {
+          carriedFrom: otRemainderMinutes,
+          monthEndNote: `OT換假: ${otConvertedLeave}天, 餘數 ${otRemainderMinutes}分鐘`,
+        }, prisma)
+      }
+    } catch (err) {
+      console.warn(`OT→Leave conversion failed for ${employeeId}:`, err)
+    }
+  }
+
+  // 8. Task 6: Build comprehensive detail JSON
+  const leaveTaken = workData.approvedLeaveDays
+  result.detail = {
+    ...result.detail,
+    // 出勤
+    attendance: {
+      expectedWorkDays: workData.scheduledDays,
+      actualAttendanceDays: workData.actualAttendanceDays,
+      absentDays: workData.absentDays,
+      lateRecords: workData.lateRecords,
+      dailyEntries: workData.dailyEntries.map(d => ({ date: d.date, totalHours: d.totalHours })),
+    },
+    // 薪資
+    salary: {
+      basePay: Math.round(result.basePay * 100) / 100,
+      deduction: Math.round(result.deduction * 100) / 100,
+      dailyWage: (result.detail as any).dailyWage ?? 0,
+      deductionRate: config.deduction_rate ?? 1,
+      attendanceBonus: Math.round(result.attendanceBonus * 100) / 100,
+      otPay: Math.round(result.otPay * 100) / 100,
+      allowances: Math.round(totalAllowances * 100) / 100,
+      grossPay: Math.round(grossPay * 100) / 100,
+      mpf: Math.round(mpf * 100) / 100,
+      netPay: Math.round(netPay * 100) / 100,
+    },
+    // 假期與 OT
+    leaveAndOt: {
+      monthlyLeaveDays: monthlyLeaveDays.total,
+      leaveTaken,
+      leaveBalance: leaveBalanceRemaining,
+      otHours: Math.round(result.otHours * 100) / 100,
+      otConvertedLeave,
+      otRemainderMinutes,
+    },
   }
 
   // Round final values
