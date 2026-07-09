@@ -6,7 +6,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime } from '@/lib/hk-date'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 
@@ -184,7 +184,7 @@ function colorFor(id: string): string {
       }),
     })
     return () => draggable.destroy()
-  }, [employees, selectedClinicId])
+  }, [employees, selectedClinicId, viewMode])
 
   // ============================================================
   // Load shifts for current view
@@ -199,7 +199,8 @@ function colorFor(id: string): string {
       const res = await fetch(url, { credentials: 'include' })
       if (res.ok) {
         const data = await res.json()
-        setShifts(data.shifts || [])
+        // ✅ Protect empty results: only set if we got a valid array
+        if (Array.isArray(data.shifts)) setShifts(data.shifts)
       }
     } catch (error) {
       console.error('Failed to load shifts:', error)
@@ -319,7 +320,6 @@ function colorFor(id: string): string {
 
       if (res.ok) {
         setValidationIssues([])
-        loadShifts()
         return true
       } else {
         const err = await res.json()
@@ -357,15 +357,14 @@ function colorFor(id: string): string {
   }
 
   const deleteShift = async (shiftId: string) => {
-    if (!confirm('確定刪除此班次？')) return
-
     try {
       const res = await fetch(`/api/shifts/${shiftId}`, {
         method: 'DELETE',
         credentials: 'include',
       })
       if (res.ok) {
-        loadShifts()
+        // ✅ Optimistic update: only remove this one, don't clear all
+        setShifts(prev => prev.filter(s => s.id !== shiftId))
       }
     } catch (error) {
       console.error('Delete shift error:', error)
@@ -555,7 +554,9 @@ function colorFor(id: string): string {
     }
 
     const result = await createShift(employeeId, dateStr, selectedTemplate)
-    if (!result) {
+    if (result) {
+      await loadShifts()
+    } else {
       setValidationIssues([{ type: 'error', rule: 'create', message: '❌ 建立班次失敗' }])
     }
   }
@@ -836,9 +837,8 @@ function colorFor(id: string): string {
             const date = toHKDateStr(info.event.start!)
             setValidationIssues([])
             const success = await createShift(empId, date, selectedTemplate)
-            if (success) {
-              loadShifts()
-            }
+            // ✅ Always reload after drag-in (success or failure)
+            await loadShifts()
           }}
           editable={canManage}
           selectable={canManage && !!selectedTemplate}
@@ -1339,6 +1339,7 @@ function colorFor(id: string): string {
                   if (!template) return
 
                   await createShift(employeeId, date, template)
+                  await loadShifts()
                   setShowNewShiftModal(false)
                 }}
                 style={{

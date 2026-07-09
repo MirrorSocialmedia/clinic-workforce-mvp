@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { fmtTime } from '@/lib/hk-date'
 
 export default function MySchedulePage() {
   const [shifts, setShifts] = useState<any[]>([])
@@ -176,9 +177,9 @@ export default function MySchedulePage() {
                         background: `${getStatusColor(s.status)}20`,
                         color: getStatusColor(s.status),
                       }}
-                      title={`${s.clinic?.name} ${new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}-${new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}`}
+                      title={`${s.clinic?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`}
                     >
-                      {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                      {fmtTime(s.startTime)}
                     </div>
                   ))}
                 </div>
@@ -210,8 +211,7 @@ export default function MySchedulePage() {
                       <div>
                         <div className="text-sm text-gray-800 dark:text-gray-200">
                           🟦 {s.templateName || ''}
-                          {s.startTime ? ` ${s.startTime}-${s.endTime}` : ''}
-                          {s.startTime && !s.endTime ? `${new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}-` : ''}
+                          {s.startTime ? ` ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}` : ''}
                         </div>
                         <div className="text-xs text-gray-400 mt-0.5">
                           {s.clinicName || s.clinic?.name || '-'}
@@ -235,7 +235,7 @@ export default function MySchedulePage() {
                       <div className="text-xs font-medium text-gray-500 mb-1">同班同事：</div>
                       {coworkers.map(c => (
                         <div key={c.id} className="text-xs text-gray-600 dark:text-gray-300 py-0.5 pl-2" style={{ borderLeft: '2px solid #e5e7eb' }}>
-                          {c.employeeName} {c.templateName && `(${c.templateName})`} {c.startTime}-{c.endTime} @ {c.clinicName}
+                          {c.employeeName} {c.templateName && `(${c.templateName})`} {fmtTime(c.startTime)}-{fmtTime(c.endTime)} @ {c.clinicName}
                         </div>
                       ))}
                     </div>
