@@ -347,9 +347,6 @@ function colorFor(id: string): string {
   }
 
   // Note: navigateDate removed — FC headerToolbar handles prev/next
-  const goToday = () => {
-    setCurrentDate(new Date())
-  }
 
   // ============================================================
   // Shift Operations
@@ -757,25 +754,7 @@ function colorFor(id: string): string {
 
           {/* View mode toggle removed — FC headerToolbar handles week/month switching */}
 
-          {/* Date range display (read-only, FC handles navigation) */}
-          {viewRange && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontSize: 14, minWidth: 120, textAlign: 'center', color: '#888' }}>
-                {viewRange.start} ~ {viewRange.end}
-              </span>
-            </div>
-          )}
 
-          {/* Today button */}
-          <button
-            onClick={goToday}
-            style={{
-              padding: '6px 10px', border: '1px solid #ddd', borderRadius: 6,
-              background: 'white', cursor: 'pointer', fontSize: 12,
-            }}
-          >
-            今天
-          </button>
 
           {/* Shift rule settings button */}
           {canManage && (
