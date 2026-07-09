@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { leaveTypeId, startDate, endDate, days, reason, isPlanned } = body
+      const { leaveTypeId, startDate, endDate, days, reason, isPlanned, employeeId: requestBodyEmployeeId } = body
 
       if (!leaveTypeId || !startDate || !endDate || days === undefined || days <= 0) {
         return NextResponse.json(
@@ -80,9 +80,16 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      const employee = await prisma.employee.findUnique({
-        where: { userId: session.userId },
-      })
+      // Support manager creating leave for another employee
+      let employee: any
+      if (requestBodyEmployeeId) {
+        if (session.role !== 'OWNER' && session.role !== 'MANAGER') {
+          return NextResponse.json({ error: 'Only managers can create leave for other employees' }, { status: 403 })
+        }
+        employee = await prisma.employee.findUnique({ where: { id: requestBodyEmployeeId } })
+      } else {
+        employee = await prisma.employee.findUnique({ where: { userId: session.userId } })
+      }
 
       if (!employee) {
         return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })

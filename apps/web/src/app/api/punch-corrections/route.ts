@@ -93,8 +93,13 @@ export async function POST(req: NextRequest) {
       })
 
       if (existing) {
-        punchRecordId = existing.id
+        return NextResponse.json(
+          { error: '該日該類型已有打卡記錄' },
+          { status: 409 }
+        )
       }
+
+      punchRecordId = null
 
       // Transaction: create correction + punchRecord (if no original exists)
       const correction = await prisma.$transaction(async (tx) => {

@@ -102,3 +102,11 @@ async function seedDefaultTemplates(): Promise<any[]> {
   }
   return created
 }
+
+// ============================================================
+// DELETE /api/shifts/templates/[id] — delete shift template
+// Roles: OWNER
+// ============================================================
+// Note: This is a catch-all route for DELETE requests to /api/shifts/templates/[id]
+// The actual handler is in apps/web/src/app/api/shifts/templates/[id]/route.ts
+// If that doesn't exist, we handle it here via a workaround

@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
         name, phone, email, password, role, clinicIds,
         joinDate, payType, baseAmount, configJson, effectiveFrom,
         assignEmployee = false,
+        annualLeave, sickLeave,
       } = await req.json()
 
       if (!name || !phone || !password || !role) {
@@ -159,6 +160,49 @@ export async function POST(req: NextRequest) {
             clinics: { include: { clinic: true } },
           },
         })
+
+        // Create initial leave balances for the new employee
+        const currentYear = new Date().getFullYear()
+        if ((annualLeave || annualLeave === 0) || (sickLeave || sickLeave === 0)) {
+          // Get or create leave types using findFirst + create
+          let annualType = await prisma.leaveType.findFirst({ where: { name: '年假' } })
+          let sickType = await prisma.leaveType.findFirst({ where: { name: '病假' } })
+
+          if (!annualType) {
+            annualType = await prisma.leaveType.create({
+              data: { name: '年假', isPaid: true, annualQuota: annualLeave || 12, color: '#2196F3' },
+            })
+          }
+          if (!sickType) {
+            sickType = await prisma.leaveType.create({
+              data: { name: '病假', isPaid: true, annualQuota: sickLeave || 12, color: '#4CAF50' },
+            })
+          }
+
+          const leaveBalanceData = []
+          if (annualLeave != null) {
+            leaveBalanceData.push({
+              employeeId: employee.id,
+              leaveTypeId: annualType.id,
+              year: currentYear,
+              entitled: annualLeave,
+              remaining: annualLeave,
+            })
+          }
+          if (sickLeave != null) {
+            leaveBalanceData.push({
+              employeeId: employee.id,
+              leaveTypeId: sickType.id,
+              year: currentYear,
+              entitled: sickLeave,
+              remaining: sickLeave,
+            })
+          }
+
+          if (leaveBalanceData.length > 0) {
+            await prisma.leaveBalance.createMany({ data: leaveBalanceData })
+          }
+        }
       }
 
       const auditAction = assignEmployee ? 'CREATE_ACCOUNT_WITH_EMPLOYEE' : 'CREATE_ACCOUNT'

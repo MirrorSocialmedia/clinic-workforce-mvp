@@ -95,6 +95,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Auto-detect punch type: CLOCK_IN if no CLOCK_IN today, else CLOCK_OUT
+      // Hard limit: max 1 CLOCK_IN + 1 CLOCK_OUT per day
       const todayStart = getTodayStartHK()
       const todayPunches = await prisma.punchRecord.findMany({
         where: {
@@ -103,11 +104,23 @@ export async function POST(req: NextRequest) {
           punchTime: { gte: todayStart },
         },
         orderBy: { punchTime: 'desc' },
-        take: 5,
+        take: 10,
       })
 
       const hasClockInToday = todayPunches.some(p => p.punchType === 'CLOCK_IN')
-      const punchType = hasClockInToday ? 'CLOCK_OUT' : 'CLOCK_IN'
+      const hasClockOutToday = todayPunches.some(p => p.punchType === 'CLOCK_OUT')
+
+      let punchType: 'CLOCK_IN' | 'CLOCK_OUT'
+      if (!hasClockInToday) {
+        punchType = 'CLOCK_IN'
+      } else if (!hasClockOutToday) {
+        punchType = 'CLOCK_OUT'
+      } else {
+        return NextResponse.json(
+          { error: '今天已完成上下班打卡，如需修改請用補打卡' },
+          { status: 400 }
+        )
+      }
 
       // Transaction: punch record (audit auto-handled by Prisma extension)
       const result = await prisma.$transaction(async (tx) => {

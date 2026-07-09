@@ -83,6 +83,44 @@ export async function PUT(
   })
 }
 
+// DELETE /api/leave-requests/[id] — Delete a leave request
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = requireAuth(req, 'DELETE', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
+
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
+  }
+
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const requestId = params.id
+      const request = await prisma.leaveRequest.findUnique({ where: { id: requestId } })
+      if (!request) {
+        return NextResponse.json({ error: 'Leave request not found' }, { status: 404 })
+      }
+
+      // Only allow deleting PENDING or approved requests by manager/owner
+      if (request.status === 'APPROVED' && session.role !== 'OWNER' && session.role !== 'MANAGER') {
+        return NextResponse.json({ error: 'Only managers can delete approved leave requests' }, { status: 403 })
+      }
+
+      await prisma.leaveRequest.delete({ where: { id: requestId } })
+
+      return NextResponse.json({ success: true })
+    } catch (error) {
+      console.error('Delete leave request error:', error)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    }
+  })
+}
+
 // PATCH /api/leave-requests/[id] — Update isPlanned or approvedDays
 export async function PATCH(
   req: NextRequest,

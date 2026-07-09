@@ -34,11 +34,14 @@ export default function AccountsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [showPayRuleModal, setShowPayRuleModal] = useState(false)
   const [payRuleEmployeeId, setPayRuleEmployeeId] = useState<string | null>(null)
+  const [leaveBalances, setLeaveBalances] = useState<Record<string, any[]>>({})
   const [form, setForm] = useState({
     name: '', phone: '', email: '', password: '', role: 'EMPLOYEE' as Role,
     clinicIds: [] as string[], joinDate: '',
     payType: 'HOURLY', baseAmount: '',
     assignEmployee: true,
+    annualLeave: 12,  // 預設年假額度
+    sickLeave: 12,     // 預設病假額度
   })
 
   const fetchData = useCallback(async () => {
@@ -85,6 +88,8 @@ export default function AccountsPage() {
         payType: form.payType,
         baseAmount: form.baseAmount ? parseFloat(form.baseAmount) : null,
         assignEmployee: form.assignEmployee,
+        annualLeave: form.assignEmployee ? form.annualLeave : undefined,
+        sickLeave: form.assignEmployee ? form.sickLeave : undefined,
       }
       if (!editingId && form.password) body.password = form.password
       if (editingId && form.password) body.newPassword = form.password
@@ -97,7 +102,8 @@ export default function AccountsPage() {
 
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
-      clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true })
+      clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true,
+      annualLeave: 12, sickLeave: 12 })
     setShowForm(false); setEditingId(null)
   }
 
@@ -105,7 +111,8 @@ export default function AccountsPage() {
     setForm({ name: acc.name, phone: acc.phone, email: acc.email || '',
       password: '', role: acc.role, clinicIds: acc.clinics?.map(c => c.id) || [],
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
-      baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId })
+      baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
+      annualLeave: 12, sickLeave: 12 })
     setEditingId(acc.id); setShowForm(true)
   }
 
@@ -127,6 +134,44 @@ export default function AccountsPage() {
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus }) })
       if (res.ok) fetchData()
       else { const err = await res.json(); alert(err.error || '操作失敗') }
+    } catch {}
+  }
+
+  const loadLeaveBalances = async (employeeId: string) => {
+    if (leaveBalances[employeeId]) return // already loaded
+    try {
+      const res = await fetch(`/api/leave-balance?employeeId=${employeeId}`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setLeaveBalances(prev => ({ ...prev, [employeeId]: data.leaveBalances || [] }))
+      }
+    } catch (err) { console.error('Failed to load leave balances:', err) }
+  }
+
+  const updateLeaveBalance = async (balanceId: string, field: 'entitled' | 'remaining', value: number) => {
+    try {
+      const res = await fetch('/api/leave-balance', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ balanceId, [field]: value }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const updated = data.leaveBalance
+        setLeaveBalances(prev => {
+          const newBalances = { ...prev }
+          for (const empId of Object.keys(newBalances)) {
+            newBalances[empId] = newBalances[empId].map(b =>
+              b.id === balanceId ? updated : b
+            )
+          }
+          return newBalances
+        })
+      } else {
+        const err = await res.json()
+        alert(err.error || '更新失敗')
+      }
     } catch {}
   }
 
@@ -190,6 +235,20 @@ export default function AccountsPage() {
                 <input type="number" step="0.01" value={form.baseAmount}
                   onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
               </div>
+              {form.assignEmployee && (
+                <>
+                  <div className="form-group">
+                    <label>年假額度（天）</label>
+                    <input type="number" value={form.annualLeave} min="0" step="0.5"
+                      onChange={e => setForm({ ...form, annualLeave: parseFloat(e.target.value) || 0 })} />
+                  </div>
+                  <div className="form-group">
+                    <label>病假額度（天）</label>
+                    <input type="number" value={form.sickLeave} min="0" step="0.5"
+                      onChange={e => setForm({ ...form, sickLeave: parseFloat(e.target.value) || 0 })} />
+                  </div>
+                </>
+              )}
               <div className="form-group" style={{ gridColumn: 'span 3' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <input type="checkbox" checked={form.assignEmployee}
@@ -315,6 +374,37 @@ export default function AccountsPage() {
                           <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>入職資料</h4>
                           <div style={{ fontSize: 12, color: '#888' }}>到職日: {acc.joinDate || '未設定'}</div>
                         </div>
+                        {acc.employeeId && (
+                          <div>
+                            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                              假期額度
+                              <button
+                                className="btn btn-sm"
+                                style={{ float: 'right', background: '#f0f0f0', fontSize: 11, padding: '2px 8px' }}
+                                onClick={() => loadLeaveBalances(acc.employeeId!)}
+                              >載入</button>
+                            </h4>
+                            {leaveBalances[acc.employeeId!] && leaveBalances[acc.employeeId!].length > 0 ? (
+                              leaveBalances[acc.employeeId!].map(b => (
+                                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12 }}>
+                                  <span style={{ minWidth: 60, color: '#555' }}>{b.leaveType?.name}</span>
+                                  <input
+                                    type="number"
+                                    value={b.entitled}
+                                    min="0"
+                                    step="0.5"
+                                    style={{ width: 70, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
+                                    onChange={e => updateLeaveBalance(b.id, 'entitled', parseFloat(e.target.value) || 0)}
+                                  />
+                                  <span style={{ color: '#aaa' }}>已用: {b.used}</span>
+                                  <span style={{ color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>餘: {b.remaining}</span>
+                                </div>
+                              ))
+                            ) : (
+                              <span style={{ fontSize: 12, color: '#aaa' }}>點擊「載入」查看假期額度</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </td>
                   </tr>

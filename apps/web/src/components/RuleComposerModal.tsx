@@ -45,7 +45,7 @@ const DEFAULT_MODIFIERS: PayRuleConfigModular['modifiers'] = {
     negative_carry: 'next_month',
   },
   working_days: {
-    rest_days: [6, 7],
+    rest_days: [6, 0],
     count_public_holidays: true,
   },
 }

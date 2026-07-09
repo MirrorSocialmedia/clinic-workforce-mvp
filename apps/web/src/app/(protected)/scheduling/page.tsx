@@ -100,6 +100,7 @@ export default function SchedulingPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
+  const [selectedEmployeeForLeave, setSelectedEmployeeForLeave] = useState<string>('')
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
@@ -256,13 +257,14 @@ function colorFor(id: string): string {
         extendedProps: {
           dragType: 'leave',
           leaveTypeId: el.getAttribute('data-leave-id'),
+          selectedEmployeeId: selectedEmployeeForLeave,
         },
         backgroundColor: '#95a5a6',
         borderColor: '#7f8c8d',
       }),
     })
     return () => d.destroy()
-  }, [leaveTypes, viewMode])
+  }, [leaveTypes, viewMode, selectedEmployeeForLeave])
 
   // ============================================================
   // Load shifts for current view
@@ -594,7 +596,33 @@ function colorFor(id: string): string {
   // ============================================================
   // FullCalendar Event Handlers
   // ============================================================
-  const handleFcEventClick = (info: any) => {
+  const handleFcEventClick = async (info: any) => {
+    // Leave event: click to delete
+    if (info.event.extendedProps.isLeave) {
+      if (canManage) {
+        if (confirm(`取消 ${info.event.title} 的假期？`)) {
+          const lr = info.event.extendedProps.leaveRequest
+          const leaveId = lr?.id || info.event.id.replace('leave-', '')
+          try {
+            const res = await fetch(`/api/leave-requests/${leaveId}`, {
+              method: 'DELETE',
+              credentials: 'include',
+            })
+            if (res.ok) {
+              await refreshAll()
+            } else {
+              const err = await res.json()
+              alert(err.error || '刪除假期失敗')
+            }
+          } catch (e) {
+            console.error('Delete leave error:', e)
+          }
+        }
+      }
+      return
+    }
+
+    // Shift event
     const shift = shifts.find(s => s.id === info.event.id)
     if (shift) {
       setEditingShift(shift)
@@ -875,6 +903,61 @@ function colorFor(id: string): string {
               {savingRules ? '儲存中...' : '💾 儲存規則'}
             </button>
           </div>
+
+          {/* Shift Template Management */}
+          {userRole === 'OWNER' && (
+            <div style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: 15, fontWeight: 600 }}>📋 更次模版管理</h3>
+              {templates.map(t => (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, padding: '8px 12px', background: '#f9f9f9', borderRadius: 6 }}>
+                  <span style={{ minWidth: 60, fontWeight: 500, fontSize: 13 }}>{t.name}</span>
+                  <span style={{ fontSize: 12, color: '#888' }}>
+                    {String(t.startHour).padStart(2, '0')}:{String(t.startMinute).padStart(2, '0')}
+                    -{String(t.endHour).padStart(2, '0')}:{String(t.endMinute).padStart(2, '0')}
+                    {t.isNightShift ? ' (夜更)' : ''}
+                  </span>
+                  {t.isDefault && <span style={{ fontSize: 10, color: '#1976d2', background: '#e3f2fd', padding: '1px 6px', borderRadius: 4 }}>預設</span>}
+                  {!t.isDefault && (
+                    <button
+                      className="btn btn-sm"
+                      style={{ marginLeft: 'auto', background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb', fontSize: 11, padding: '2px 8px' }}
+                      onClick={async () => {
+                        if (!confirm(`確定刪除「${t.name}」模版？`)) return
+                        try {
+                          const res = await fetch(`/api/shifts/templates/${t.id}`, { method: 'DELETE', credentials: 'include' })
+                          if (res.ok) {
+                            await refreshAll()
+                          } else {
+                            const err = await res.json()
+                            alert(err.error || '刪除失敗')
+                          }
+                        } catch (e) { console.error('Delete template error:', e) }
+                      }}
+                    >刪除</button>
+                  )}
+                </div>
+              ))}
+              {/* Add new template */}
+              <NewShiftTemplateForm
+                onCreated={async (tpl) => {
+                  try {
+                    const res = await fetch('/api/shifts/templates', {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(tpl),
+                    })
+                    if (res.ok) {
+                      await refreshAll()
+                    } else {
+                      const err = await res.json()
+                      alert(err.error || '新增失敗')
+                    }
+                  } catch (e) { console.error('Create template error:', e) }
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -955,6 +1038,22 @@ function colorFor(id: string): string {
             {leaveTypes.length > 0 && (
               <div ref={leavePanelRef} style={{ marginTop: 16 }}>
                 <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>假期</h4>
+                {/* Employee selector for leave */}
+                {canManage && clinicEmployees.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ fontSize: 12, color: '#555', marginBottom: 4, display: 'block' }}>為此員工排假：</label>
+                    <select
+                      value={selectedEmployeeForLeave}
+                      onChange={e => setSelectedEmployeeForLeave(e.target.value)}
+                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
+                    >
+                      <option value="">選擇員工</option>
+                      {clinicEmployees.map(emp => (
+                        <option key={emp.id} value={emp.id}>{emp.user.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {leaveTypes.map(lt => (
                   <div
                     key={lt.id}
@@ -1029,7 +1128,15 @@ function colorFor(id: string): string {
                 return
               }
               const leaveTypeName = leaveTypes.find(lt => lt.id === leaveTypeId)?.name || '假期'
-              const confirmed = confirm(`為選中員工建立「${leaveTypeName}」請假（${date}）？`)
+
+              // Use selectedEmployeeForLeave if set, otherwise use props.selectedEmployeeId
+              const targetEmployeeId = props.selectedEmployeeId || ''
+              if (!targetEmployeeId) {
+                setValidationIssues([{ type: 'error', rule: 'leave', message: '⚠️ 請先在左側選擇員工再拖放假期' }])
+                return
+              }
+
+              const confirmed = confirm(`為「${clinicEmployees.find(e => e.id === targetEmployeeId)?.user?.name || targetEmployeeId}」建立「${leaveTypeName}」請假（${date}）？`)
               if (!confirmed) return
               try {
                 const res = await fetch('/api/leave-requests', {
@@ -1038,6 +1145,7 @@ function colorFor(id: string): string {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     leaveTypeId,
+                    employeeId: targetEmployeeId,
                     startDate: date,
                     endDate: date,
                     days: 1,
@@ -1087,12 +1195,30 @@ function colorFor(id: string): string {
               && clientY >= dzRect.top && clientY <= dzRect.bottom
             if (!onDropZone) return
 
-            // 假期事件：不允許拖走取消 → 直接 return（FC 會自動把它留在原位）
+            // Leave event: confirm and delete
             if (info.event.extendedProps.isLeave) {
+              if (confirm(`確定取消假期？`)) {
+                const lr = info.event.extendedProps.leaveRequest
+                const leaveId = lr?.id || info.event.id.replace('leave-', '')
+                try {
+                  const res = await fetch(`/api/leave-requests/${leaveId}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                  })
+                  if (res.ok) {
+                    await refreshAll()
+                  } else {
+                    const err = await res.json()
+                    alert(err.error || '刪除假期失敗')
+                  }
+                } catch (e) {
+                  console.error('Delete leave error:', e)
+                }
+              }
               return
             }
 
-            // 班次事件：確認後刪除
+            // Shift event: confirm and delete
             if (confirm(`確定取消「${info.event.title}」的班次？`)) {
               await deleteShift(info.event.id)
             }
@@ -1626,6 +1752,68 @@ function colorFor(id: string): string {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ============================================================
+// NewShiftTemplateForm — Inline form for creating new shift templates
+// ============================================================
+function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; startHour: number; startMinute: number; endHour: number; endMinute: number; isNightShift: boolean }) => void }) {
+  const [name, setName] = useState('')
+  const [startHour, setStartHour] = useState(9)
+  const [startMinute, setStartMinute] = useState(0)
+  const [endHour, setEndHour] = useState(18)
+  const [endMinute, setEndMinute] = useState(0)
+  const [isNightShift, setIsNightShift] = useState(false)
+
+  return (
+    <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+      <input
+        placeholder="名稱（如早更）"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        style={{ width: 100, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }}
+      />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+        起
+        <input
+          type="number" min={0} max={23} value={startHour}
+          onChange={e => setStartHour(parseInt(e.target.value) || 0)}
+          style={{ width: 45, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }}
+        />:
+        <input
+          type="number" min={0} max={59} value={startMinute}
+          onChange={e => setStartMinute(parseInt(e.target.value) || 0)}
+          style={{ width: 45, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }}
+        />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+        迄
+        <input
+          type="number" min={0} max={23} value={endHour}
+          onChange={e => setEndHour(parseInt(e.target.value) || 0)}
+          style={{ width: 45, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }}
+        />:
+        <input
+          type="number" min={0} max={59} value={endMinute}
+          onChange={e => setEndMinute(parseInt(e.target.value) || 0)}
+          style={{ width: 45, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }}
+        />
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+        <input type="checkbox" checked={isNightShift} onChange={e => setIsNightShift(e.target.checked)} />
+        夜更
+      </label>
+      <button
+        className="btn btn-sm"
+        style={{ background: '#e8f5e9', color: '#2e7d32', border: '1px solid #c8e6c9', fontSize: 11, padding: '4px 12px' }}
+        onClick={() => {
+          if (!name.trim()) { alert('請輸入名稱'); return }
+          onCreated({ name: name.trim(), startHour, startMinute, endHour, endMinute, isNightShift })
+          setName('')
+        }}
+      >新增</button>
     </div>
   )
 }
