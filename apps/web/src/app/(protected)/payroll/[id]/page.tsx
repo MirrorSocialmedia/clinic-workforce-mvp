@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { BackButton } from '@/components/BackButton'
+import { Wallet, Trash2 } from 'lucide-react'
 
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
 
@@ -247,13 +249,9 @@ export default function PayrollDetailPage() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-            <Link href="/payroll" style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 14 }}>
-              ← 返回列表
-            </Link>
-          </div>
+          <BackButton to="/payroll" label="返回計糧列表" />
           <h1 style={{ margin: 0, fontSize: 24 }}>
-            💰 計糧詳情 — {periodMonth}
+            <span className="flex items-center gap-2"><Wallet size={20} /> 計糧詳情 — {periodMonth}</span>
           </h1>
           <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>
             {run.clinic?.name || '全部診所'} | {statusBadge(run.status)}
@@ -284,7 +282,7 @@ export default function PayrollDetailPage() {
           {run.status === 'DRAFT' && isOwner && (
             <button onClick={handleDelete}
               style={{ padding: '8px 16px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
-              🗑️ 刪除
+              <span className="flex items-center gap-1"><Trash2 size={16} /> 刪除</span>
             </button>
           )}
         </div>

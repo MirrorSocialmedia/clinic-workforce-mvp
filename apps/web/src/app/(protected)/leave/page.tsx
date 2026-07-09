@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { toHKDateStr } from '@/lib/hk-date'
+import { Plus } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
@@ -220,10 +221,10 @@ export default function LeavePage() {
   return (
     <div style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>🏖️ 假期管理</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>假期管理</h1>
         {userRole !== 'EMPLOYEE' && activeTab === 'requests' && (
           <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
-            {showForm ? '取消' : '+ 申請假期'}
+            {showForm ? '取消' : '            <span className="flex items-center gap-1"><Plus size={16} /> 申請假期</span>'}
           </button>
         )}
       </div>
@@ -377,9 +378,9 @@ export default function LeavePage() {
       {activeTab === 'types' && isOwner && (
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>🏷️ 假期類型管理</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>假期類型管理</h2>
             <button className="btn btn-primary" onClick={() => { setLtShowForm(true); setLtEditingId(null); }}>
-              + 新增類型
+              <span className="flex items-center gap-1"><Plus size={16} /> 新增類型</span>
             </button>
           </div>
 

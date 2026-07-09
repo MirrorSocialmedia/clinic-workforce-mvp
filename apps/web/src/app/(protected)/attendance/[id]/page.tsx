@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import Link from 'next/link'
+import { BackButton } from '@/components/BackButton'
 
 export default function AttendanceDetailPage() {
   const router = useRouter()
@@ -49,7 +49,7 @@ export default function AttendanceDetailPage() {
     return (
       <div style={{ padding: 20 }}>
         <p>記錄不存在</p>
-        <Link href="/attendance" style={{ color: '#3498db' }}>← 返回列表</Link>
+        <BackButton to="/attendance" label="返回列表" />
       </div>
     )
   }
@@ -58,16 +58,14 @@ export default function AttendanceDetailPage() {
     return (
       <div style={{ padding: 20 }}>
         <p>{record.error}</p>
-        <Link href="/attendance" style={{ color: '#3498db' }}>← 返回列表</Link>
+        <BackButton to="/attendance" label="返回列表" />
       </div>
     )
   }
 
   return (
     <div style={{ padding: 20 }}>
-      <Link href="/attendance" style={{ color: '#3498db', fontSize: 13, textDecoration: 'none' }}>
-        ← 返回列表
-      </Link>
+      <BackButton to="/attendance" label="返回考勤" />
 
       <h1 style={{ marginTop: 16, marginBottom: 24 }}>📋 考勤詳情</h1>
 

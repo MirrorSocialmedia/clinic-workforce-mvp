@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { BackButton } from '@/components/BackButton'
 
 interface ExceptionRecord {
   employeeId: string
@@ -100,7 +101,8 @@ export default function ExceptionsReportPage() {
 
   return (
     <div>
-      <h1 style={{ margin: '0 0 24px', fontSize: 24 }}>📋 考勤異常報表</h1>
+      <BackButton to="/payroll" label="返回計糧" />
+      <h1 style={{ margin: '0 0 24px', fontSize: 24 }}>考勤異常報表</h1>
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>

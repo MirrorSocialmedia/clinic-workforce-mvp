@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { Search } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { BackButton } from '@/components/BackButton'
 
 interface Clinic {
   id: string
@@ -144,12 +146,7 @@ export default function NewPayrollPage() {
 
   return (
     <div className="p-6" style={{ maxWidth: '800px' }}>
-      <button
-        onClick={() => router.push('/payroll')}
-        className="mb-4 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-      >
-        ← 返回計糧列表
-      </button>
+      <BackButton to="/payroll" label="返回計糧" />
       <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>+ 生成計糧</h1>
 
       <div style={{ maxWidth: 500 }}>
@@ -205,7 +202,7 @@ export default function NewPayrollPage() {
             disabled={previewing || !periodMonth}
             className={`flex-1 py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${previewing || !periodMonth ? 'bg-gray-400 cursor-default' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'}`}
           >
-            {previewing ? '試算中...' : '🔍 試算預覽'}
+            {previewing ? '試算中...' : <span className="flex items-center gap-1"><Search size={16} /> 試算預覽</span>}
           </button>
           <button
             onClick={handleGenerate}
@@ -242,7 +239,7 @@ export default function NewPayrollPage() {
         {previewResult && (
           <Card className="mt-4">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">🔍 試算結果（未儲存）</CardTitle>
+              <CardTitle className="text-base">試算結果（未儲存）</CardTitle>
             </CardHeader>
             <CardContent>
             <div className="mb-2 text-sm g text-muted-foreground">

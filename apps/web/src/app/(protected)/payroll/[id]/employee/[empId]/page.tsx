@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { Card } from '@/components/ui/card'
+import { BackButton } from '@/components/BackButton'
 
 interface PayrollItemData {
   id: string
@@ -154,9 +154,7 @@ export default function EmployeePayrollDetailPage() {
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
       <div>
-        <Link href={`/payroll/${runId}`} className="text-primary hover:underline text-sm mb-2 inline-block">
-          ← 返回計糧
-        </Link>
+        <BackButton to={`/payroll/${runId}`} label="返回計糧" />
         <h1 className="text-2xl font-bold tracking-tight mt-2">
           {employeeName} — {periodMonth} 薪資明細
         </h1>

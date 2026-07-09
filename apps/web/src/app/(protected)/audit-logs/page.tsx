@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { EmptyState } from '@/components/EmptyState'
 
 interface AuditLog {
   id: string
@@ -27,6 +28,7 @@ export default function AuditLogsPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [filters, setFilters] = useState({
     action: '',
     entity: '',
@@ -88,26 +90,34 @@ export default function AuditLogsPage() {
 
   const fetchLogs = async () => {
     setLoading(true)
-    const params = new URLSearchParams({ page: String(page), limit: '50' })
-    if (filters.action) params.set('action', filters.action)
-    if (filters.entity) params.set('entity', filters.entity)
-    if (filters.fromDate) params.set('fromDate', filters.fromDate)
-    if (filters.toDate) params.set('toDate', filters.toDate)
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: '50' })
+      if (filters.action) params.set('action', filters.action)
+      if (filters.entity) params.set('entity', filters.entity)
+      if (filters.fromDate) params.set('fromDate', filters.fromDate)
+      if (filters.toDate) params.set('toDate', filters.toDate)
 
-    const res = await fetch(`/api/audit-logs?${params}`, { credentials: 'include' })
-    const data = await res.json()
-    setLogs(data.logs || [])
-    setTotal(data.total || 0)
-    setLoading(false)
+      const res = await fetch(`/api/audit-logs?${params}`, { credentials: 'include' })
+      const data = await res.json()
+      setLogs(data.logs || [])
+      setTotal(data.total || 0)
+      setLoading(false)
+    } catch (e: any) {
+      setError(e.message || '載入失敗')
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchLogs() }, [page, filters])
 
   const totalPages = Math.ceil(total / 50)
 
+  if (loading) return <div className="p-6">載画中...</div>
+  if (error) return <div className="p-6" style={{ color: '#dc2626' }}>載画审计日志失败：{error}</div>
+
   return (
     <div>
-      <h1 style={{ margin: '0 0 16px 0' }}>📝 審計日誌</h1>
+      <h1 style={{ margin: '0 0 16px 0' }}>審計日誌</h1>
 
       {/* Filters */}
       <div className="card mb-4">
@@ -166,7 +176,7 @@ export default function AuditLogsPage() {
         {loading ? (
           <div>載入中...</div>
         ) : logs.length === 0 ? (
-          <div className="text-muted">暫無審計記錄</div>
+          <EmptyState text="尚無審計記錄" />
         ) : (
           <table>
             <thead>

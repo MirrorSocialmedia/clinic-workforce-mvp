@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
+import { Wallet, Plus } from 'lucide-react'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
@@ -191,7 +192,7 @@ export default function AccountsPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1200 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>👥 帳號管理</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }} className="flex items-center gap-2"><Plus size={16} /> 帳號管理</h1>
         {isOwner && (
           <button className="btn btn-primary" onClick={() => { resetForm(); setForm(f => ({ ...f, assignEmployee: true })) }}>+ 新增帳號</button>
         )}
@@ -345,7 +346,9 @@ export default function AccountsPage() {
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
                       {acc.employeeId && (
-                        <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>💰 薪酬規則</button>
+                        <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
+                        <span className="flex items-center gap-1"><Wallet size={16} /> 薪酬規則</span>
+                      </button>
                       )}
                       {isOwner && userRole !== acc.role && (
                         <button className="btn btn-sm" style={{ background: '#fde8e8', color: '#dc3545' }} onClick={() => handleDelete(acc)}>刪除</button>

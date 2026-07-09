@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { Settings, X, Trash2 } from 'lucide-react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -795,7 +796,7 @@ function colorFor(id: string): string {
                 cursor: 'pointer', fontSize: 12,
               }}
             >
-              {'⚙️ 排班規則'}
+              <span className="flex items-center gap-1"><Settings size={16} /> 排班規則</span>
             </button>
           )}
         </div>
@@ -808,7 +809,7 @@ function colorFor(id: string): string {
             <h2 style={{ margin: 0, fontSize: 16 }}>
               {'⚙️ 排班校驗規則（' + (clinics.find(c => c.id === selectedClinicId)?.name || '') + '）'}
             </h2>
-            <button onClick={() => setShowRuleSettings(false)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}>✕</button>
+            <button onClick={() => setShowRuleSettings(false)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}><X size={18} /></button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             {[
@@ -1265,7 +1266,7 @@ function colorFor(id: string): string {
           }}
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none' }}
         >
-          {isDraggingEvent ? '🗑 放開此處取消班次' : '🗑 拖到此處取消班次'}
+          {isDraggingEvent ? <span className="flex items-center gap-1"><Trash2 size={16} /> 放開此處取消班次</span> : <span className="flex items-center gap-1"><Trash2 size={16} /> 拖到此處取消班次</span>}
         </div>
       </div>
       </div>
@@ -1329,7 +1330,7 @@ function colorFor(id: string): string {
               onClick={() => setShowChangePanel(false)}
               style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
             >
-              ✕
+              <X size={18} />
             </button>
           </div>
 
@@ -1515,7 +1516,7 @@ function colorFor(id: string): string {
                 cursor: 'pointer', color: '#888',
               }}
             >
-              ✕
+              <X size={18} />
             </button>
 
             <h2 style={{ fontSize: 16, marginTop: 0 }}>編輯班次</h2>
@@ -1652,7 +1653,7 @@ function colorFor(id: string): string {
                 cursor: 'pointer', color: '#888',
               }}
             >
-              ✕
+              <X size={18} />
             </button>
             <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 16 }}>
               ➕ 新增班次
@@ -1765,7 +1766,7 @@ function colorFor(id: string): string {
                 cursor: 'pointer', color: '#888',
               }}
             >
-              ✕
+              <X size={18} />
             </button>
             <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 8 }}>
               🏖 選擇員工

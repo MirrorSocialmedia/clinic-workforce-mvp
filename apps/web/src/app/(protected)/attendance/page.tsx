@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { Pencil, Plus } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type TabKey = 'records' | 'exceptions' | 'hash'
@@ -217,7 +218,7 @@ export default function AttendancePage() {
 
   return (
     <div className="p-6" style={{ maxWidth: '1200px' }}>
-      <h1 className="text-2xl font-bold text-foreground tracking-tight mb-6">📋 考勤管理</h1>
+      <h1 className="text-2xl font-bold text-foreground tracking-tight mb-6">考勤管理</h1>
 
       {/* Tabs */}
       <div className="flex gap-4 mb-6 border-b-2 border-gray-200" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
@@ -240,7 +241,7 @@ export default function AttendancePage() {
             className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ml-auto"
             style={{ background: '#0d6efd' }}
           >
-            ➕ 補登打卡
+            <span className="flex items-center gap-1"><Plus size={16} /> 補登打卡</span>
           </button>
         )}
       </div>
@@ -325,7 +326,7 @@ export default function AttendancePage() {
                           className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
                           onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
                         >
-                          ✏️ 補登/修正
+                          <span className="flex items-center gap-1"><Pencil size={16} /> 補登/修正</span>
                         </button>
                       </td>
                       <td className="p-3">
@@ -577,7 +578,7 @@ export default function AttendancePage() {
             onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowCorrectionModal(false)}
               className="absolute top-3 right-3 text-lg text-muted-foreground hover:text-foreground bg-none border-none cursor-pointer">✕</button>
-            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">✏️ 修正考勤記錄</h2>
+            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">修正考勤記錄</h2>
             <div className="mb-3 text-sm text-muted-foreground">
               <div>員工: {correctionRecord.employee?.user?.name || correctionRecord.employeeId}</div>
               <div>診所: {correctionRecord.clinic?.name || correctionRecord.clinicId}</div>
@@ -634,7 +635,7 @@ export default function AttendancePage() {
             onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowAddPunchModal(false)}
               className="absolute top-3 right-3 text-lg text-muted-foreground hover:text-foreground bg-none border-none cursor-pointer">✕</button>
-            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">➕ 補登打卡（新增缺失記錄）</h2>
+            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">補登打卡（新增缺失記錄）</h2>
             <div className="mb-3">
               <label className="block text-xs text-muted-foreground mb-1 font-medium">員工 *</label>
               <select value={addPunchForm.employeeId}
