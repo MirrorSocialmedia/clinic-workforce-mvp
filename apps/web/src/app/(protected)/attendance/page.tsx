@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
-import { Pencil, Plus } from 'lucide-react'
+import { Pencil, Plus, Smartphone, Wrench, Search } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type TabKey = 'records' | 'exceptions' | 'hash'
@@ -310,12 +310,18 @@ export default function AttendancePage() {
                       <td className="p-3">{record.clinic?.name || record.clinicId}</td>
                       <td className="p-3">{new Date(record.punchTime).toLocaleString('zh-HK')}</td>
                       <td className="p-3">
-                        <Badge variant={record.punchType === 'CLOCK_IN' ? 'default' : 'secondary'} className="text-[11px]">
-                          {record.punchType === 'CLOCK_IN' ? '上班' : '下班'}
-                        </Badge>
+                        {record.punchType === 'CLOCK_IN' ? (
+                          <span className="px-2 py-1 text-[11px] rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-medium">
+                            上工
+                          </span>
+                        ) : (
+                          <span className="px-2 py-1 text-[11px] rounded border border-orange-300 bg-orange-50 text-orange-700 font-medium">
+                            落班
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
-                        {record.source === 'QR_DYNAMIC' ? '📱 動態碼' : record.source === 'QR_STATIC' ? '📱 固定碼' : record.source === 'MANUAL_CORRECTION' ? '✏️ 補打卡' : '⚙️ 系統'}
+                        {record.source === 'QR_DYNAMIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 動態碼</> : record.source === 'QR_STATIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 固定碼</> : record.source === 'MANUAL_CORRECTION' ? <><Pencil size={14} style={{ marginRight: 4 }} /> 補打卡</> : <><Wrench size={14} style={{ marginRight: 4 }} /> 系統</>}
                       </td>
                       <td className="p-3">{record.tokenValid === true ? '✅' : record.tokenValid === false ? '❌' : '—'}</td>
                       <td className="p-3">
@@ -332,7 +338,7 @@ export default function AttendancePage() {
                       <td className="p-3">
                         <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
                           className="bg-none border-none cursor-pointer text-amber-600 text-sm px-1 py-0.5 rounded mr-2 hover:underline" title="修正此記錄">
-                          ✏️ 修正
+                          <Pencil size={16} /> 修正
                         </button>
                         <Link href={`/attendance/${record.id}`} className="text-brand hover:underline text-xs">詳情</Link>
                       </td>
@@ -464,7 +470,7 @@ export default function AttendancePage() {
           {/* Generate hash */}
           {isManagerOrAbove && (
             <div className="rounded-lg p-4 mb-5 border bg-gray-50">
-              <h3 className="text-sm font-semibold mb-3">🔧 生成完整性指紋</h3>
+              <h3 className="text-sm font-semibold mb-3 flex items-center gap-1"><Wrench size={16} /> 生成完整性指紋</h3>
               <div className="flex gap-3 items-end">
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">日期</label>
@@ -482,7 +488,7 @@ export default function AttendancePage() {
 
           {/* Verify hash */}
           <div className="rounded-lg p-4 mb-5 border" style={{ background: '#fef9e7', borderColor: '#f9e79f' }}>
-            <h3 className="text-sm font-semibold mb-3">🔍 驗證完整性指紋</h3>
+            <h3 className="text-sm font-semibold mb-3 flex items-center gap-1"><Search size={16} /> 驗證完整性指紋</h3>
             <div className="flex gap-3 items-end">
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">日期</label>
@@ -583,7 +589,7 @@ export default function AttendancePage() {
               <div>員工: {correctionRecord.employee?.user?.name || correctionRecord.employeeId}</div>
               <div>診所: {correctionRecord.clinic?.name || correctionRecord.clinicId}</div>
               <div>原時間: {new Date(correctionRecord.punchTime).toLocaleString('zh-HK')}</div>
-              <div>類型: {correctionRecord.punchType === 'CLOCK_IN' ? '上班' : '下班'}</div>
+              <div>類型: {correctionRecord.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
             </div>
             <div className="mb-3">
               <label className="block text-xs text-muted-foreground mb-1 font-medium">正確時間</label>
@@ -662,12 +668,12 @@ export default function AttendancePage() {
             </div>
             <div className="flex gap-3 mb-3">
               <div style={{ flex: 1 }}>
-                <label className="block text-xs text-muted-foreground mb-1 font-medium">上班 / 下班 *</label>
+                <label className="block text-xs text-muted-foreground mb-1 font-medium">上工 / 落班 *</label>
                 <select value={addPunchForm.punchType}
                   onChange={e => setAddPunchForm({ ...addPunchForm, punchType: e.target.value })}
                   className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
-                  <option value="CLOCK_IN">上班</option>
-                  <option value="CLOCK_OUT">下班</option>
+                  <option value="CLOCK_IN">上工</option>
+                  <option value="CLOCK_OUT">落班</option>
                 </select>
               </div>
               <div style={{ flex: 1 }}>

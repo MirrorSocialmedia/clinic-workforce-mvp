@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, XCircle, Smartphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
@@ -65,7 +65,7 @@ export default function PunchPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '打卡失敗')
 
-      const type = data.punchType === 'CLOCK_IN' ? '上班' : '下班'
+      const type = data.punchType === 'CLOCK_IN' ? '上工' : '落班'
       setResult({
         success: true,
         message: `${type}打卡成功 ${new Date(data.punchTime).toLocaleTimeString('zh-HK')}`,
@@ -92,7 +92,7 @@ export default function PunchPage() {
     <div className="p-4 space-y-4 max-w-lg mx-auto">
       {/* Page Header */}
       <div>
-        <h1 className="text-xl font-bold text-foreground">📱 掃碼打卡</h1>
+        <h1 className="text-xl font-bold text-foreground flex items-center gap-2"><Smartphone size={22} /> 掃碼打卡</h1>
         <p className="text-sm text-muted-foreground mt-1">對準診所螢幕 QR 碼，自動完成打卡</p>
       </div>
 
@@ -147,7 +147,7 @@ export default function PunchPage() {
                     <Badge
                       variant={r.punchType === 'CLOCK_IN' ? 'default' : 'secondary'}
                     >
-                      {r.punchType === 'CLOCK_IN' ? '上班' : '下班'}
+                      {r.punchType === 'CLOCK_IN' ? '上工' : '落班'}
                     </Badge>
                     <span className="text-foreground">{r.clinic?.name || '診所'}</span>
                   </div>

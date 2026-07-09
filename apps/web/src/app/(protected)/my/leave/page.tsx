@@ -37,7 +37,7 @@ interface LeaveTypeItem {
 
 const STATUS_LABELS: Record<LeaveStatus, string> = {
   PENDING: '待審批',
-  APPROVED: '已批准',
+  APPROVED: '已批準',
   REJECTED: '已拒絕',
 }
 
@@ -252,7 +252,7 @@ export default function MyLeavePage() {
             }}
             onClick={() => setFilter(s)}
           >
-            {s === 'PENDING' ? '待審批' : s === 'APPROVED' ? '已批准' : s === 'REJECTED' ? '已拒絕' : '全部'}
+            {s === 'PENDING' ? '待審批' : s === 'APPROVED' ? '已批準' : s === 'REJECTED' ? '已拒絕' : '全部'}
           </button>
         ))}
       </div>

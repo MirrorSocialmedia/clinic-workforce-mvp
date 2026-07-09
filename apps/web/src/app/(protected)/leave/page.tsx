@@ -51,7 +51,7 @@ interface LeaveBalanceItem {
 
 const STATUS_LABELS: Record<LeaveStatus, string> = {
   PENDING: '待審批',
-  APPROVED: '已批准',
+  APPROVED: '已批準',
   REJECTED: '已拒絕',
 }
 
@@ -293,7 +293,7 @@ export default function LeavePage() {
               <button key={s || 'all'} className="btn"
                 style={{ background: filter === s ? '#1a1a2e' : '#f0f0f0', color: filter === s ? 'white' : '#333', fontSize: 13, padding: '6px 12px' }}
                 onClick={() => setFilter(s)}>
-                {s === 'PENDING' ? '待審批' : s === 'APPROVED' ? '已批准' : s === 'REJECTED' ? '已拒絕' : '全部'}
+                {s === 'PENDING' ? '待審批' : s === 'APPROVED' ? '已批準' : s === 'REJECTED' ? '已拒絕' : '全部'}
               </button>
             ))}
           </div>

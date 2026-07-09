@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
+import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 import { todayHK } from '@/lib/hk-date'
 
@@ -288,7 +289,7 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
             marginBottom: 20,
           }}
         >
-          <h2 style={{ margin: 0 }}>💰 新增薪酬規則</h2>
+          <h2 style={{ margin: 0 }} className="flex items-center gap-2"><Wallet size={20} /> 新增薪酬規則</h2>
           <button
             type="button"
             onClick={onClose}
@@ -1156,7 +1157,7 @@ function ConfigPreview({ config }: { config: PayRuleConfigModular }) {
         }}
         onClick={() => setOpen(!open)}
       >
-        <span>📋 配置預覽</span>
+        <span className="flex items-center gap-1"><ClipboardList size={14} /> 配置預覽</span>
         <span>{open ? '▲' : '▼'}</span>
       </div>
       {open && (

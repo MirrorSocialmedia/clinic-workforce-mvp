@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
+import { ClipboardList, Smartphone, Pencil, Settings, Pin } from 'lucide-react'
 import { BackButton } from '@/components/BackButton'
 
 export default function AttendanceDetailPage() {
@@ -91,7 +92,7 @@ export default function AttendanceDetailPage() {
           </div>
           <div>
             <span style={{ color: '#888' }}>類型：</span>
-            {record.punchType === 'CLOCK_IN' ? '上班打卡' : '下班打卡'}
+            {record.punchType === 'CLOCK_IN' ? '上工打卡' : '落班打卡'}
           </div>
           <div>
             <span style={{ color: '#888' }}>來源：</span>
@@ -187,20 +188,20 @@ export default function AttendanceDetailPage() {
               }}>
                 <div style={{ fontWeight: 'bold', fontSize: 13, marginBottom: 6 }}>
                   {item.type === 'original' ? '📌 原始記錄' :
-                   `修正 #${index} — ${item.status === 'APPROVED' ? '✅ 已批准' :
+                   `修正 #${index} — ${item.status === 'APPROVED' ? '✅ 已批準' :
                     item.status === 'REJECTED' ? '❌ 已拒絕' : '⏳ 審批中'}`}
                 </div>
 
                 {item.type === 'original' ? (
                   <div style={{ fontSize: 13 }}>
                     <div>時間：{new Date(item.punchTime).toLocaleString('zh-HK')}</div>
-                    <div>類型：{item.punchType === 'CLOCK_IN' ? '上班' : '下班'}</div>
+                    <div>類型：{item.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
                     <div>來源：{item.source}</div>
                   </div>
                 ) : (
                   <div style={{ fontSize: 13 }}>
                     <div>修正時間：{new Date(item.correctedTime).toLocaleString('zh-HK')}</div>
-                    <div>類型：{item.punchType === 'CLOCK_IN' ? '上班' : '下班'}</div>
+                    <div>類型：{item.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
                     <div>原因：{item.reason || '—'}</div>
                     <div>申請人：{item.requestedBy}</div>
                     <div>審批人：{item.approvedBy || '—'}</div>

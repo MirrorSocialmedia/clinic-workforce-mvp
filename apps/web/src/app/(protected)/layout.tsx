@@ -92,21 +92,21 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const allRoles = ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] as const
 
   const navItems = [
-    { path: '/my/dashboard', label: '我的首页', icon: LayoutDashboard, roles: allRoles },
+    { path: '/my/dashboard', label: '我的首頁', icon: LayoutDashboard, roles: allRoles },
     { path: '/my/schedule', label: '我的班表', icon: Calendar, roles: allRoles },
     { path: '/my/punches', label: '我的考勤', icon: ClipboardList, roles: allRoles },
     { path: '/my/leave', label: '我的假期', icon: Palmtree, roles: allRoles },
     { path: '/my/notifications', label: '通知', icon: Bell, roles: allRoles },
     { path: '/punch', label: '我要打卡', icon: Smartphone, roles: allRoles },
-    { path: '/clinic/qr', label: '诊所打卡屏幕', icon: Monitor, roles: ['OWNER', 'MANAGER'] },
-    { path: '/dashboard', label: '仪表板', icon: BarChart3, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/clinic/qr', label: '診所打卡螢幕', icon: Monitor, roles: ['OWNER', 'MANAGER'] },
+    { path: '/dashboard', label: '儀表板', icon: BarChart3, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/attendance', label: '考勤', icon: ClipboardList, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/scheduling', label: '排班管理', icon: Calendar, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
     { path: '/leave', label: '假期管理', icon: Palmtree, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/accounts', label: '账号管理', icon: Users, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/clinics', label: '诊所管理', icon: Building2, roles: ['OWNER'] },
-    { path: '/audit-logs', label: '审计日志', icon: FileText, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/payroll', label: '计粮管理', icon: Wallet, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/accounts', label: '帳號管理', icon: Users, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/clinics', label: '診所管理', icon: Building2, roles: ['OWNER'] },
+    { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/payroll', label: '計糧管理', icon: Wallet, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
   ]
 
   const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))
@@ -145,7 +145,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           {!collapsed && (
             <div>
-              <h1 className="text-lg font-bold text-white">🏥 診所系統</h1>
+              <h1 className="text-lg font-bold text-white flex items-center gap-2"><Building2 size={22} /> 診所系統</h1>
               <div className="text-xs text-gray-400 mt-0.5">勞動力管理</div>
             </div>
           )}

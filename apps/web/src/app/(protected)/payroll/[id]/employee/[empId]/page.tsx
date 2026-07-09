@@ -343,8 +343,8 @@ export default function EmployeePayrollDetailPage() {
             <div className="rounded-lg border">
               <div className="grid grid-cols-12 gap-2 px-4 py-2 bg-muted/50 text-xs font-semibold text-muted-foreground">
                 <div className="col-span-2">日期</div>
-                <div className="col-span-3">上班</div>
-                <div className="col-span-3">下班</div>
+                <div className="col-span-3">上工</div>
+                <div className="col-span-3">落班</div>
                 <div className="col-span-4 text-right">狀態</div>
               </div>
               {dailyDetails.map((day: any) => (
@@ -396,7 +396,7 @@ export default function EmployeePayrollDetailPage() {
                     <td className="py-2 px-2">{fmtTime(p.punchTime)}</td>
                     <td className="py-2 px-2">
                       <span className={p.punchType === 'CLOCK_IN' ? 'text-green-600 font-semibold' : 'text-red-500 font-semibold'}>
-                        {p.punchType === 'CLOCK_IN' ? '上班' : '下班'}
+                        {p.punchType === 'CLOCK_IN' ? '上工' : '落班'}
                       </span>
                     </td>
                     <td className="py-2 px-2 text-xs text-muted-foreground">{p.source}</td>
@@ -467,7 +467,7 @@ export default function EmployeePayrollDetailPage() {
                     <td className="py-2 px-2">{fmtTime(c.correctedTime)}</td>
                     <td className="py-2 px-2">{c.clinicId}</td>
                     <td className="py-2 px-2">
-                      {c.punchType === 'CLOCK_IN' ? '上班' : '下班'}
+                      {c.punchType === 'CLOCK_IN' ? '上工' : '落班'}
                     </td>
                     <td className="py-2 px-2 text-xs text-muted-foreground">{c.reason || '-'}</td>
                   </tr>

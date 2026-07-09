@@ -115,7 +115,7 @@ export default function MyPunchesPage() {
                       background: p.punchType === 'CLOCK_IN' ? '#e8f5e9' : '#fff3e0',
                       color: p.punchType === 'CLOCK_IN' ? '#2e7d32' : '#e65100',
                     }}>
-                      {p.punchType === 'CLOCK_IN' ? '上班' : '下班'}
+                      {p.punchType === 'CLOCK_IN' ? '上工' : '落班'}
                     </span>
                   </td>
                   <td>{p.clinic?.name || '-'}</td>
@@ -148,7 +148,7 @@ export default function MyPunchesPage() {
               {corrections.map(c => {
                 const statusMap: Record<string, { label: string; color: string; bg: string }> = {
                   PENDING: { label: '待審批', color: '#e65100', bg: '#fff3e0' },
-                  APPROVED: { label: '已批准', color: '#2e7d32', bg: '#e8f5e9' },
+                  APPROVED: { label: '已批準', color: '#2e7d32', bg: '#e8f5e9' },
                   REJECTED: { label: '已拒絕', color: '#dc3545', bg: '#fdecea' },
                 }
                 const s = statusMap[c.status] || { label: c.status, color: '#888', bg: '#f0f0f0' }
@@ -164,7 +164,7 @@ export default function MyPunchesPage() {
                         background: c.punchType === 'CLOCK_IN' ? '#e8f5e9' : '#fff3e0',
                         color: c.punchType === 'CLOCK_IN' ? '#2e7d32' : '#e65100',
                       }}>
-                        {c.punchType === 'CLOCK_IN' ? '上班' : '下班'}
+                        {c.punchType === 'CLOCK_IN' ? '上工' : '落班'}
                       </span>
                     </td>
                     <td>{c.clinicId ? `Clinic: ${c.clinicId.substring(0, 8)}` : '-'}</td>
@@ -234,7 +234,7 @@ export default function MyPunchesPage() {
             <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>
-                  上班 / 下班 *
+                  上工 / 落班 *
                 </label>
                 <select
                   value={correctionReqForm.punchType}
@@ -244,8 +244,8 @@ export default function MyPunchesPage() {
                     border: '1px solid #ddd', fontSize: 14, boxSizing: 'border-box',
                   }}
                 >
-                  <option value="CLOCK_IN">上班</option>
-                  <option value="CLOCK_OUT">下班</option>
+                  <option value="CLOCK_IN">上工</option>
+                  <option value="CLOCK_OUT">落班</option>
                 </select>
               </div>
               <div style={{ flex: 1 }}>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
+import { Hand, Smartphone, Calendar, Palmtree, Bell } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
@@ -75,7 +76,7 @@ export default function MyDashboardPage() {
   return (
     <div className="p-4 space-y-4" style={{ maxWidth: '640px' }}>
       <h1 className="text-xl font-bold text-foreground">
-        👋 我的首頁
+        <Hand size={20} style={{ marginRight: 8 }} /> 我的首頁
       </h1>
 
       {/* Quick Actions — 2x2 grid on mobile */}
@@ -86,17 +87,21 @@ export default function MyDashboardPage() {
         <CardContent>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { href: '/punch', icon: '📱', label: '打卡' },
-              { href: '/my/schedule', icon: '📅', label: '班表' },
-              { href: '/my/leave', icon: '🏖️', label: '假期' },
-              { href: '/my/notifications', icon: '🔔', label: '通知', badge: unreadCount },
+              { href: '/punch', icon: <Smartphone size={22} />, label: '打卡' },
+              { href: '/my/schedule', icon: <Calendar size={22} />, label: '班表' },
+              { href: '/my/leave', icon: <Palmtree size={22} />, label: '假期' },
+              { href: '/my/notifications', icon: <Bell size={22} />, label: '通知', badge: unreadCount },
             ].map(item => (
               <Link
                 key={item.href}
                 href={item.href}
                 className="flex flex-col items-center justify-center p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors relative group"
               >
-                <span className="text-2xl mb-1">{item.icon}</span>
+                {typeof item.icon === 'string' ? (
+                  <span className="text-2xl mb-1">{item.icon}</span>
+                ) : (
+                  <span className="mb-1">{item.icon}</span>
+                )}
                 <span className="text-sm font-medium text-foreground">{item.label}</span>
                 {item.badge && item.badge > 0 && (
                   <Badge variant="destructive" className="absolute top-2 right-2 text-[10px] px-1.5 py-0 min-w-0">
@@ -112,7 +117,7 @@ export default function MyDashboardPage() {
       {/* Summary Stats — Tremor-style stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <StatCard value={summary?.shiftCount || 0} title="本月排班" color="blue" />
-        <StatCard value={summary?.clockInCount || 0} title="本月打卡（上班）" color="emerald" />
+        <StatCard value={summary?.clockInCount || 0} title="本月打卡（上工）" color="emerald" />
         <StatCard value={summary?.leaveDays || 0} title="本月請假（天）" color="amber" />
       </div>
 

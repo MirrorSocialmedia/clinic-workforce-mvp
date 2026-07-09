@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Settings, X, Trash2 } from 'lucide-react'
+import { Settings, X, Trash2, Calendar, ClipboardList, BarChart3, RefreshCw, PlusCircle, Palmtree, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -762,7 +762,7 @@ function colorFor(id: string): string {
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24 }}>📅 排班管理</h1>
+          <h1 style={{ margin: 0, fontSize: 24 }} className="flex items-center gap-2"><Calendar size={24} /> 排班管理</h1>
           <p className="text-muted text-sm" style={{ margin: '4px 0 0 0' }}>
             {canManage ? '拖放排班 · 規則校驗 · 頂更/轉更' : '查看班表'}
           </p>
@@ -908,7 +908,7 @@ function colorFor(id: string): string {
           {/* Shift Template Management */}
           {userRole === 'OWNER' && (
             <div style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: 15, fontWeight: 600 }}>📋 更次模版管理</h3>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: 15, fontWeight: 600 }} className="flex items-center gap-2"><ClipboardList size={16} /> 更次模版管理</h3>
               {templates.map(t => (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, padding: '8px 12px', background: '#f9f9f9', borderRadius: 6 }}>
                   <span style={{ minWidth: 60, fontWeight: 500, fontSize: 13 }}>{t.name}</span>
@@ -992,25 +992,61 @@ function colorFor(id: string): string {
 
       {/* Employee chips (top horizontal, draggable) */}
       {canManage && clinicEmployees.length > 0 && (
-        <div ref={empPanelRef} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, overflowX: 'auto' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, overflowX: 'auto' }}>
           {clinicEmployees.map(emp => (
-            <div
-              key={emp.id}
-              className="emp-card"
-              data-emp-id={emp.id}
-              data-name={emp.user.name}
-              onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
-              style={{
-                padding: '6px 14px', borderRadius: 16, fontSize: 13,
-                background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
-                color: selectedEmployeeId === emp.id ? colorFor(emp.id) : '#fff',
-                border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
-                cursor: 'grab', whiteSpace: 'nowrap', flexShrink: 0,
-                transition: 'all 0.15s',
-              }}
-            >
-              {emp.user.name}
-              <span style={{ marginLeft: 6, opacity: 0.8 }}>{empShiftDays(emp.id)}天</span>
+            <div key={emp.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div
+                ref={(el) => {
+                  if (el) {
+                    el.className = 'emp-card'
+                    el.setAttribute('data-emp-id', emp.id)
+                    el.setAttribute('data-name', emp.user.name)
+                  }
+                }}
+                onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                style={{
+                  padding: '6px 14px', borderRadius: 16, fontSize: 13,
+                  background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                  color: selectedEmployeeId === emp.id ? colorFor(emp.id) : '#fff',
+                  border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                  cursor: 'grab', whiteSpace: 'nowrap', flexShrink: 0,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {emp.user.name}
+                <span style={{ marginLeft: 6, opacity: 0.8 }}>{empShiftDays(emp.id)}天</span>
+              </div>
+              {selectedEmployeeId === emp.id && (
+                <button
+                  onClick={async () => {
+                    if (!confirm('確定清空該員工當週所有排班？')) return
+                    const { startDate, endDate } = getDateRange()
+                    const weekShifts = shifts.filter(s =>
+                      s.employeeId === emp.id &&
+                      s.date >= startDate &&
+                      s.date <= endDate
+                    )
+                    if (weekShifts.length === 0) {
+                      alert('該員工當週沒有排班')
+                      return
+                    }
+                    for (const shift of weekShifts) {
+                      await fetch('/api/shifts/' + shift.id, {
+                        method: 'DELETE',
+                        credentials: 'include',
+                      })
+                    }
+                    await refreshAll()
+                  }}
+                  style={{
+                    marginTop: 4, padding: '2px 8px', fontSize: 11,
+                    background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb',
+                    borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  清空當週排班
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -1059,7 +1095,7 @@ function colorFor(id: string): string {
                     }}
                     title="拖到日曆建立請假"
                   >
-                    🏖 {lt.name}
+                    <Palmtree size={14} style={{ marginRight: 4 }} /> {lt.name}
                   </div>
                 ))}
               </div>
@@ -1126,6 +1162,16 @@ function colorFor(id: string): string {
                 return
               }
 
+              // Task 4: Check if employee already has a shift on this date
+              const hasShiftOnDate = shifts.some(s =>
+                s.employeeId === selectedEmployeeId &&
+                toHKDateStr(new Date(s.date)) === date
+              )
+              if (hasShiftOnDate) {
+                setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
+                return
+              }
+
               const leaveTypeName = leaveTypes.find(lt => lt.id === leaveTypeId)?.name || '假期'
               const targetEmployeeId = selectedEmployeeId
 
@@ -1161,6 +1207,18 @@ function colorFor(id: string): string {
                 setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板才能排班' }])
                 return
               }
+
+              // Task 4: Check if employee already has a leave request on this date
+              const hasLeaveOnDate = leaveRequests.some(lr =>
+                lr.employeeId === empId &&
+                date >= lr.startDate &&
+                date <= (lr.endDate || lr.startDate)
+              )
+              if (hasLeaveOnDate) {
+                setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
+                return
+              }
+
               setValidationIssues([])
               await createShift(empId, date, selectedTemplate)
             }
@@ -1278,7 +1336,7 @@ function colorFor(id: string): string {
       {clinicEmployees.length > 0 && (
         <div className="card rounded-xl g border p-4 shadow-card" style={{ marginTop: 16 }}>
           <h3 style={{ margin: '0 0 12px 0', fontSize: 16 }}>
-            {'📊 本月排班統計（' + new Date().getFullYear() + '年' + (new Date().getMonth()+1) + '月）'}
+            <div className="flex items-center gap-2"><BarChart3 size={16} /> 本月排班統計（{new Date().getFullYear()}年{new Date().getMonth()+1}月）</div>
           </h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -1313,11 +1371,17 @@ function colorFor(id: string): string {
 
       {/* Legend */}
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>
-        <span>🔵 已確認</span>
-        <span>🟠 草稿</span>
-        <span>🟢 已完成</span>
-        <span>🔴 已取消</span>
+        <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#1976d2' }}></span> 已確認</span>
+        <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f57c00' }}></span> 草稿</span>
+        <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#388e3c' }}></span> 已完成</span>
+        <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc3545' }}></span> 已取消</span>
       </div>
+        <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>
+          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#1976d2' }}></span> 已確認</span>
+          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f57c00' }}></span> 草稿</span>
+          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#388e3c' }}></span> 已完成</span>
+          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc3545' }}></span> 已取消</span>
+        </div>
 
       {/* ============================================================ */}
       {/* Shift Change Request Panel */}
@@ -1325,7 +1389,7 @@ function colorFor(id: string): string {
       {showChangePanel && (
         <div className="card rounded-xl g border p-4 shadow-card" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>🔄 換更申請</h2>
+            <h2 style={{ margin: 0, fontSize: 18 }} className="flex items-center gap-2"><RefreshCw size={18} /> 換更申請</h2>
             <button
               onClick={() => setShowChangePanel(false)}
               style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
@@ -1410,7 +1474,7 @@ function colorFor(id: string): string {
                   }
                   const statusLabels: Record<string, string> = {
                     PENDING: '待審批',
-                    APPROVED: '已批准',
+                    APPROVED: '已批準',
                     REJECTED: '已拒絕',
                     COMPLETED: '已完成',
                   }
@@ -1463,13 +1527,13 @@ function colorFor(id: string): string {
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
                             onClick={() => {
-                              const reason = prompt('批准原因（可選）：')
+                              const reason = prompt('批準原因（可選）：')
                               approveChangeRequest(req.id, 'APPROVE', reason || undefined)
                             }}
                             className="btn btn-sm"
                             style={{ background: '#388e3c', color: 'white' }}
                           >
-                            ✅ 批准
+                            ✅ 批準
                           </button>
                           <button
                             onClick={() => {
@@ -1656,7 +1720,7 @@ function colorFor(id: string): string {
               <X size={18} />
             </button>
             <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 16 }}>
-              ➕ 新增班次
+              <PlusCircle size={16} style={{ marginRight: 6 }} /> 新增班次
             </h2>
             <div className="form-group" style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 4 }}>員工</label>
@@ -1769,7 +1833,7 @@ function colorFor(id: string): string {
               <X size={18} />
             </button>
             <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 8 }}>
-              🏖 選擇員工
+              <Palmtree size={16} style={{ marginRight: 6 }} /> 選擇員工
             </h2>
             <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px 0' }}>
               拖放「{leaveTypes.find(lt => lt.id === showLeaveEmployeeModal.leaveTypeId)?.name || '假期'}」到 {showLeaveEmployeeModal.date}，請選擇員工：

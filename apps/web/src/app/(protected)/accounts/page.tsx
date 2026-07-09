@@ -318,7 +318,7 @@ export default function AccountsPage() {
         <table>
           <thead>
             <tr>
-              <th>姓名</th><th>電話</th><th>角色</th><th>到職日</th><th>診所</th><th>狀態</th><th>操作</th>
+              <th>姓名</th><th>電話</th><th>角色</th><th>到職日</th><th>診所</th><th className="whitespace-nowrap">狀態</th><th className="whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -335,7 +335,7 @@ export default function AccountsPage() {
                   </td>
                   <td>{acc.joinDate || '-'}</td>
                   <td>{(acc.clinics || []).map(c => c.name).join(', ') || '-'}</td>
-                  <td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
                     <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
                       background: acc.status === 'ACTIVE' ? '#4CAF5020' : '#dc354520',
                       color: acc.status === 'ACTIVE' ? '#4CAF50' : '#dc3545' }}>

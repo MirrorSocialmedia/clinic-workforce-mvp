@@ -54,21 +54,21 @@ export default function AuditLogsPage() {
     'SHIFT_DELETED': '刪除班次',
     'SHIFT_ASSIGNED': '指派班次',
     'SHIFT_CHANGE_REQUEST': '換更申請',
-    'SHIFT_CHANGE_APPROVED': '換更批准',
+    'SHIFT_CHANGE_APPROVED': '換更批準',
     'SHIFT_CHANGE_REJECTED': '換更拒絕',
     'PUNCH_CORRECTION_CREATED': '申請補打卡',
-    'PUNCH_CORRECTION_APPROVED': '補打卡批准',
+    'PUNCH_CORRECTION_APPROVED': '補打卡批準',
     'PUNCH_CORRECTION_REJECTED': '補打卡拒絕',
     'PUNCH_RECORDED': '打卡記錄',
     'LEAVE_REQUEST_CREATED': '申請假期',
-    'LEAVE_REQUEST_APPROVED': '假期批准',
+    'LEAVE_REQUEST_APPROVED': '假期批準',
     'LEAVE_REQUEST_REJECTED': '假期拒絕',
     'LEAVE_TYPE_CREATED': '新增假期類型',
     'LEAVE_TYPE_UPDATED': '更新假期類型',
     'LEAVE_TYPE_DELETED': '刪除假期類型',
     'PAYROLL_RUN_CREATED': '生成計糧',
     'PAYROLL_RUN_UPDATED': '更新計糧',
-    'PAYROLL_RUN_APPROVED': '批准計糧',
+    'PAYROLL_RUN_APPROVED': '批準計糧',
     'PAYROLL_RUN_EXPORTED': '匯出計糧',
     'PAYROLL_RULE_CREATED': '新增薪酬規則',
     'PAYROLL_RULE_UPDATED': '更新薪酬規則',
@@ -113,7 +113,7 @@ export default function AuditLogsPage() {
   const totalPages = Math.ceil(total / 50)
 
   if (loading) return <div className="p-6">載画中...</div>
-  if (error) return <div className="p-6" style={{ color: '#dc2626' }}>載画审计日志失败：{error}</div>
+  if (error) return <div className="p-6" style={{ color: '#dc2626' }}>載画審計日志失败：{error}</div>
 
   return (
     <div>

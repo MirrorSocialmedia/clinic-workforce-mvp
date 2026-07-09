@@ -87,9 +87,11 @@ export async function GET(req: NextRequest) {
 
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
   for (const p of clockIns) {
-    const hour = p.punchTime.getHours()
-    const minute = p.punchTime.getMinutes()
-    const dow = p.punchTime.getDay()
+    // Convert to HK time for accurate late detection (UTC+8)
+    const hkPunchTime = new Date(p.punchTime.getTime() + 8 * 60 * 60 * 1000)
+    const hour = hkPunchTime.getHours()
+    const minute = hkPunchTime.getMinutes()
+    const dow = hkPunchTime.getDay()
     if (dow >= 1 && dow <= 5 && (hour > 9 || (hour === 9 && minute > 30))) {
       const clinic = p.employee.clinics.find(c => c.clinicId === p.clinicId)?.clinic
       exceptions.push({
@@ -97,7 +99,7 @@ export async function GET(req: NextRequest) {
         clinicName: clinic?.name || p.clinicId,
         date: toHKDateStr(p.punchTime),
         type: 'LATE',
-        detail: `上班打卡 ${p.punchTime.toLocaleTimeString('zh-HK')} (超過 09:30)`,
+        detail: `上工打卡 ${hkPunchTime.toLocaleTimeString('zh-HK')} (超過 09:30)`,
         punchTime: p.punchTime.toISOString(),
       })
     }
@@ -125,7 +127,7 @@ export async function GET(req: NextRequest) {
       employeeId: c.employeeId, employeeName: c.employee.user.name,
       clinicName: clinic?.name || c.clinicId,
       date: toHKDateStr(c.correctedTime), type: 'CORRECTION',
-      detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上班' : '下班'} 至 ${c.correctedTime.toLocaleTimeString('zh-HK')}${c.reason ? ` (${c.reason})` : ''}`,
+      detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上工' : '落班'} 至 ${c.correctedTime.toLocaleTimeString('zh-HK')}${c.reason ? ` (${c.reason})` : ''}`,
       correctionTime: c.correctedTime.toISOString(),
     })
   }
