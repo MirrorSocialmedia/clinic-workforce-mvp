@@ -8,6 +8,7 @@ import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr, fmtTime } from '@/lib/hk-date'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
+import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 
@@ -106,7 +107,7 @@ export default function SchedulingPage() {
   const [showRuleSettings, setShowRuleSettings] = useState(false)
 
   // Shift rule config state
-  const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig | null>(null)
+  const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
   const [savingRules, setSavingRules] = useState(false)
 
   // Drag and drop state
@@ -190,21 +191,30 @@ function colorFor(id: string): string {
     if (!selectedClinicId) return
     fetch(`/api/clinics/${selectedClinicId}/shift-rule-config`, { credentials: 'include' })
       .then(r => r.json())
-      .then(d => setShiftRuleConfig(d.shiftRules || null))
-      .catch(() => setShiftRuleConfig(null))
+      .then(d => setShiftRuleConfig(d.shiftRules || { ...DEFAULT_SHIFT_RULE_CONFIG }))
+      .catch(() => setShiftRuleConfig({ ...DEFAULT_SHIFT_RULE_CONFIG }))
   }, [selectedClinicId])
 
-  // Load month-level shifts for statistics (Task 3b)
-  useEffect(() => {
+  // Load month-level shifts for statistics
+  const loadMonthShifts = useCallback(async () => {
     if (!selectedClinicId) return
     const now = new Date()
     const monthStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
     const monthEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
-    fetch(`/api/shifts?clinicId=${selectedClinicId}&startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => setMonthShifts(d.shifts || []))
-      .catch(() => setMonthShifts([]))
-  }, [selectedClinicId, currentDate])
+    try {
+      const r = await fetch(`/api/shifts?clinicId=${selectedClinicId}&startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`, { credentials: 'include' })
+      if (r.ok) {
+        const d = await r.json()
+        setMonthShifts(d.shifts || [])
+      }
+    } catch {
+      setMonthShifts([])
+    }
+  }, [selectedClinicId])
+
+  useEffect(() => {
+    loadMonthShifts()
+  }, [loadMonthShifts])
 
   // Register FC Draggable on employee panel
   useEffect(() => {
@@ -283,6 +293,12 @@ function colorFor(id: string): string {
   useEffect(() => {
     if (viewRange) loadShifts()
   }, [viewRange, selectedClinicId])
+
+  // Refresh all data after shift changes (Task 2)
+  const refreshAll = useCallback(async () => {
+    await loadShifts()
+    await loadMonthShifts()
+  }, [loadShifts, loadMonthShifts])
 
   // ============================================================
   // Date Helpers
@@ -411,6 +427,7 @@ function colorFor(id: string): string {
 
       if (res.ok) {
         setValidationIssues([])
+        await refreshAll()
         return true
       } else {
         const err = await res.json()
@@ -454,8 +471,9 @@ function colorFor(id: string): string {
         credentials: 'include',
       })
       if (res.ok) {
-        // ✅ Optimistic update: only remove this one, don't clear all
+        // Optimistic update
         setShifts(prev => prev.filter(s => s.id !== shiftId))
+        await refreshAll()
       }
     } catch (error) {
       console.error('Delete shift error:', error)
@@ -498,7 +516,7 @@ function colorFor(id: string): string {
       })
 
       if (res.ok) {
-        loadShifts()
+        await refreshAll()
         alert('批量套用成功')
       }
     } catch (error) {
@@ -552,6 +570,7 @@ function colorFor(id: string): string {
           const data = await changesRes.json()
           setChangeRequests(data.requests || [])
         }
+        await refreshAll()
       }
     } catch (error) {
       console.error('Approve change request error:', error)
@@ -608,7 +627,7 @@ function colorFor(id: string): string {
         info.revert()
         alert('排班移動失敗')
       } else {
-        loadShifts()
+        await refreshAll()
       }
     } catch {
       info.revert()
@@ -657,7 +676,7 @@ function colorFor(id: string): string {
 
     const result = await createShift(employeeId, dateStr, selectedTemplate)
     if (result) {
-      await loadShifts()
+      await refreshAll()
     } else {
       setValidationIssues([{ type: 'error', rule: 'create', message: '❌ 建立班次失敗' }])
     }
@@ -729,37 +748,7 @@ function colorFor(id: string): string {
             ))}
           </select>
 
-          {/* View mode toggle */}
-          <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
-            <button
-              onClick={() => setViewMode('week')}
-              style={{
-                padding: '6px 14px',
-                border: 'none',
-                background: viewMode === 'week' ? '#1a1a2e' : 'white',
-                color: viewMode === 'week' ? 'white' : '#333',
-                cursor: 'pointer',
-                fontSize: 13,
-              }}
-            >
-              週
-            </button>
-            <button
-              onClick={() => setViewMode('month')}
-              style={{
-                padding: '6px 14px',
-                border: 'none',
-                borderTopLeftRadius: 0,
-                borderBottomLeftRadius: 0,
-                background: viewMode === 'month' ? '#1a1a2e' : 'white',
-                color: viewMode === 'month' ? 'white' : '#333',
-                cursor: 'pointer',
-                fontSize: 13,
-              }}
-            >
-              月
-            </button>
-          </div>
+          {/* View mode toggle removed — FC headerToolbar handles week/month switching */}
 
           {/* Date range display (read-only, FC handles navigation) */}
           {viewRange && (
@@ -781,30 +770,6 @@ function colorFor(id: string): string {
             今天
           </button>
 
-          {/* Change requests button */}
-          <button
-            onClick={() => setShowChangePanel(!showChangePanel)}
-            style={{
-              padding: '6px 10px', border: '1px solid #ddd', borderRadius: 6,
-              background: showChangePanel ? '#1a1a2e' : 'white',
-              color: showChangePanel ? 'white' : '#333',
-              cursor: 'pointer', fontSize: 12,
-              position: 'relative',
-            }}
-          >
-            🔄 換更申請
-            {changeRequests.filter(r => r.status === 'PENDING').length > 0 && (
-              <span style={{
-                position: 'absolute', top: -6, right: -6,
-                background: '#dc3545', color: 'white',
-                borderRadius: '50%', width: 18, height: 18,
-                fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {changeRequests.filter(r => r.status === 'PENDING').length}
-              </span>
-            )}
-          </button>
-          
           {/* Shift rule settings button */}
           {canManage && (
             <button
@@ -850,7 +815,7 @@ function colorFor(id: string): string {
                     <input
                       type="checkbox"
                       checked={(shiftRuleConfig as any)[rule.enabledKey] ?? true}
-                      onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, [rule.enabledKey as keyof ShiftRuleConfig]: e.target.checked } : null)}
+                      onChange={e => setShiftRuleConfig(prev => ({ ...prev, [rule.enabledKey as keyof ShiftRuleConfig]: e.target.checked }))}
                     />
                     啟用
                   </label>
@@ -859,7 +824,7 @@ function colorFor(id: string): string {
                     min={0}
                     step={0.5}
                     value={(shiftRuleConfig as any)[rule.key]}
-                    onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, [rule.key as keyof ShiftRuleConfig]: parseFloat(e.target.value) || 0 } : null)}
+                    onChange={e => setShiftRuleConfig(prev => ({ ...prev, [rule.key as keyof ShiftRuleConfig]: parseFloat(e.target.value) || 0 }))}
                     style={{ width: 70, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
                   />
                   <span style={{ fontSize: 12, color: '#888' }}>{rule.unit}</span>
@@ -877,7 +842,7 @@ function colorFor(id: string): string {
                   <input
                     type="checkbox"
                     checked={shiftRuleConfig.longShiftEnabled}
-                    onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, longShiftEnabled: e.target.checked } : null)}
+                    onChange={e => setShiftRuleConfig(prev => ({ ...prev, longShiftEnabled: e.target.checked }))}
                   />
                   啟用
                 </label>
@@ -886,7 +851,7 @@ function colorFor(id: string): string {
                   min={0}
                   step={5}
                   value={shiftRuleConfig.longShiftBreakMin}
-                  onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, longShiftBreakMin: parseInt(e.target.value) || 0 } : null)}
+                  onChange={e => setShiftRuleConfig(prev => ({ ...prev, longShiftBreakMin: parseInt(e.target.value) || 0 }))}
                   style={{ width: 70, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
                 />
                 <span style={{ fontSize: 12, color: '#888' }}>分鐘</span>
@@ -903,7 +868,7 @@ function colorFor(id: string): string {
                   <input
                     type="checkbox"
                     checked={shiftRuleConfig.overlapCheck}
-                    onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, overlapCheck: e.target.checked } : null)}
+                    onChange={e => setShiftRuleConfig(prev => ({ ...prev, overlapCheck: e.target.checked }))}
                   />
                   啟用
                 </label>
@@ -955,52 +920,31 @@ function colorFor(id: string): string {
         </div>
       )}
 
-      {/* Template Selector (for managers) */}
+      {/* Template Chips (top bar) */}
       {canManage && (
-        <div className="card rounded-xl g border p-4 shadow-card" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14, fontWeight: 500 }}>更次模板：</span>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {templates.map(tpl => (
-                <button
-                  key={tpl.id}
-                  onClick={() => setSelectedTemplate(tpl)}
-                  style={{
-                    padding: '6px 14px',
-                    border: selectedTemplate?.id === tpl.id ? '2px solid #1a1a2e' : '1px solid #ddd',
-                    borderRadius: 20,
-                    background: selectedTemplate?.id === tpl.id ? '#e8e8ff' : 'white',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  {tpl.name}
-                  <span style={{ fontSize: 11, color: '#888', marginLeft: 4 }}>
-                    {String(tpl.startHour).padStart(2, '0')}:{String(tpl.startMinute).padStart(2, '0')}
-                    -
-                    {String(tpl.endHour).padStart(2, '0')}:{String(tpl.endMinute).padStart(2, '0')}
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {selectedTemplate && (
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                <button
-                  onClick={bulkApplyTemplate}
-                  className="btn btn-primary btn-sm"
-                >
-                  📋 批量套用整個{viewMode === 'week' ? '週' : '月'}
-                </button>
-              </div>
-            )}
-          </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+          <span style={{ fontSize: 13, color: '#666' }}>更次模板：</span>
+          {templates.map(t => (
+            <button key={t.id} onClick={() => setSelectedTemplate(t)}
+              style={{ padding: '4px 12px', borderRadius: 16, fontSize: 13,
+                background: selectedTemplate?.id === t.id ? '#1a1a2e' : '#f0f0f0',
+                color: selectedTemplate?.id === t.id ? '#fff' : '#333',
+                border: 'none', cursor: 'pointer' }}>
+              {t.name} {String(t.startHour).padStart(2,'0')}:{String(t.startMinute).padStart(2,'0')}-{String(t.endHour).padStart(2,'0')}:{String(t.endMinute).padStart(2,'0')}
+            </button>
+          ))}
+          {selectedTemplate && (
+            <button onClick={bulkApplyTemplate}
+              style={{ padding: '4px 10px', borderRadius: 16, fontSize: 12,
+                background: '#3b82f6', color: '#fff', border: 'none', cursor: 'pointer', marginLeft: 'auto' }}>
+              📋 批量套用整個{viewMode === 'week' ? '週' : '月'}
+            </button>
+          )}
         </div>
       )}
-      <div className="flex gap-4">
+      <div style={{ display: 'flex', gap: 16 }}>
       {/* Left: Employee Panel */}
-      <Card className="flex-shrink-0 w-[180px] p-4" style={{ alignSelf: 'flex-start' }}>
+      <Card className="flex-shrink-0 w-[180px] p-4" style={{ alignSelf: 'flex-start', maxHeight: 600, overflowY: 'auto' }}>
         <h4 className="text-xs font-semibold uppercase mb-1" style={{ color: '#888' }}>
           {clinics.find(c => c.id === selectedClinicId)?.name || '未選擇診所'}
         </h4>
@@ -1073,6 +1017,13 @@ function colorFor(id: string): string {
             right: 'timeGridWeek,dayGridMonth',
           }}
           datesSet={(dateInfo) => {
+            // Sync viewMode from FC view type (since we removed the manual toggle)
+            const viewType = dateInfo.view.type
+            if (viewType === 'timeGridWeek') {
+              setViewMode('week')
+            } else if (viewType === 'dayGridMonth') {
+              setViewMode('month')
+            }
             // Sync currentDate to FC midpoint
             const mid = new Date((dateInfo.start.getTime() + dateInfo.end.getTime()) / 2)
             const hkMid = toHKDateStr(mid)
@@ -1140,8 +1091,8 @@ function colorFor(id: string): string {
               setValidationIssues([])
               await createShift(empId, date, selectedTemplate)
             }
-            // Reload shifts + leave requests
-            await loadShifts()
+            // Reload shifts + leave requests + month stats
+            await refreshAll()
           }}
           editable={canManage}
           selectable={canManage && !!selectedTemplate}

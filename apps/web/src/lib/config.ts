@@ -61,6 +61,10 @@ export const CONFIG = {
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
+    // Shift rule config routes
+    'GET /api/clinics/:id/shift-rule-config': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'PUT /api/clinics/:id/shift-rule-config': ['OWNER', 'MANAGER'],
+
     // Shift routes
     'GET /api/shifts': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/shifts': ['OWNER', 'MANAGER'],

@@ -1007,9 +1007,85 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
             )}
           </div>
 
-          {/* ═══ 3️⃣ Effective Date ═══ */}
+          {/* ═══ 3️⃣ MPF 強積金 ═══ */}
           <div style={sectionStyle}>
-            <div style={sectionTitleStyle}>3️⃣ 生效日期</div>
+            <div style={sectionTitleStyle}>3️⃣ 強積金 (MPF)</div>
+            <label style={checkboxLabelStyle}>
+              <input
+                type="checkbox"
+                checked={!!config.mpf?.enabled}
+                onChange={(e) => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    mpf: e.target.checked
+                      ? { enabled: true, rate: prev.mpf?.rate ?? 0.05, min: prev.mpf?.min ?? 7100, max: prev.mpf?.max ?? 30000 }
+                      : { enabled: false, rate: 0.05, min: 7100, max: 30000 },
+                  }))
+                }}
+              />
+              啟用強積金扣除
+            </label>
+            {config.mpf?.enabled && (
+              <div style={{ paddingLeft: 24, marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: 12 }}>扣除比例 (%)</label>
+                    <input
+                      type="number"
+                      value={config.mpf.rate ? (config.mpf.rate * 100) : 5}
+                      onChange={(e) => {
+                        setConfig((prev) => ({
+                          ...prev,
+                          mpf: { ...prev.mpf!, rate: Number(e.target.value) / 100 || 0.05 },
+                        }))
+                      }}
+                      style={{ width: 80 }}
+                      min="0"
+                      max="100"
+                      step="0.5"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: 12 }}>下限 (HK$)</label>
+                    <input
+                      type="number"
+                      value={config.mpf.min ?? 7100}
+                      onChange={(e) => {
+                        setConfig((prev) => ({
+                          ...prev,
+                          mpf: { ...prev.mpf!, min: Number(e.target.value) || 7100 },
+                        }))
+                      }}
+                      style={{ width: 100 }}
+                      min="0"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: 12 }}>上限 (HK$)</label>
+                    <input
+                      type="number"
+                      value={config.mpf.max ?? 30000}
+                      onChange={(e) => {
+                        setConfig((prev) => ({
+                          ...prev,
+                          mpf: { ...prev.mpf!, max: Number(e.target.value) || 30000 },
+                        }))
+                      }}
+                      style={{ width: 100 }}
+                      min="0"
+                    />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                  MPF 以應發薪資 (Gross) 為計算基礎，扣除後為實發 (Net Pay)
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ═══ 4️⃣ Effective Date ═══ */}
+          <div style={sectionStyle}>
+            <div style={sectionTitleStyle}>4️⃣ 生效日期</div>
             <div className="form-group">
               <input
                 type="date"
