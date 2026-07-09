@@ -118,6 +118,14 @@ function getOtThreshold(config: PayRuleConfig, payType: PayType): number {
   return config.ot_threshold_daily
 }
 
+/**
+ * HK Statutory Daily Wage = monthlySalary × 12 ÷ 365
+ * Per HK Employment Ordinance
+ */
+function statutoryDailyWage(monthlySalary: number): number {
+  return (monthlySalary * 12) / 365
+}
+
 // ------------------------------------------------------------------
 // Punch Record Processing — FIX: paired in-out + clinicId corrections
 // ------------------------------------------------------------------
@@ -132,7 +140,8 @@ async function calculateWorkedHours(
   employeeId: string,
   clinicIds: string[] | null,
   monthStart: Date,
-  monthEnd: Date
+  monthEnd: Date,
+  shifts?: Array<{ date: Date | string; clinicId?: string; startTime?: Date | string; endTime?: Date | string }>
 ): Promise<Array<{
   date: string
   clinicId: string
@@ -245,12 +254,28 @@ async function calculateWorkedHours(
       }
     }
 
-    const hours = Math.min(Math.max(0, totalMs / 3600000), 24)
-
-    // FIX #14: Single punch → PENDING, not absent
+    // FIX #14 + T1: Single punch + shift → use shift endTime to fill hours
     const hasIn = entry.punchIns.length > 0
     const hasOut = entry.punchOuts.length > 0
     const isPartial = (hasIn && !hasOut) || (!hasIn && hasOut)
+
+    // If single CLOCK_IN with no CLOCK_OUT and shift data available, use shift endTime
+    if (hasIn && !hasOut && lastIn && shifts && shifts.length > 0) {
+      const shiftForDay = shifts.find(s => {
+        const sDate = new Date(s.date)
+        const sFormatted = `${sDate.getFullYear()}-${String(sDate.getMonth() + 1).padStart(2, '0')}-${String(sDate.getDate()).padStart(2, '0')}`
+        return sFormatted === dayStr
+      })
+      if (shiftForDay && shiftForDay.endTime) {
+        const endTime = new Date(shiftForDay.endTime)
+        totalMs = endTime.getTime() - lastIn.getTime()
+        lastIn = null
+      }
+    }
+
+    const hours = Math.min(Math.max(0, totalMs / 3600000), 24)
+
+    // FIX #14: Single punch → PENDING, not absent
 
     let isAbsent = false
     if (!hasIn && !hasOut) {
@@ -429,6 +454,7 @@ function calculateMonthly(
   const otMultiplier = config.ot_multiplier ?? 1.5
 
   const unpaidLeaveDays = approvedLeaveDays - paidLeaveDays
+  // isPartial days already included in actualAttendanceDays (attendanceDaysSet.add on isPartial)
   const absentDays = Math.max(
     0,
     workingDays - actualAttendanceDays - approvedLeaveDays - publicHolidayDays
@@ -438,7 +464,8 @@ function calculateMonthly(
   // 有出勤的天數 = actualAttendanceDays + paidLeaveDays（有薪假期也算出勤）
   const paidDays = actualAttendanceDays + paidLeaveDays + publicHolidayDays
   const basePay = workingDays > 0 ? (paidDays / workingDays) * monthlySalary : 0
-  const dailyRate = workingDays > 0 ? monthlySalary / workingDays : 0
+  // HK Statutory: dailyRate = monthlySalary × 12 ÷ 365
+  const dailyRate = statutoryDailyWage(monthlySalary)
   const deduction = absentDays * dailyRate * deductionRate
 
   // FIX #7: OT threshold from config, no default
@@ -622,7 +649,7 @@ async function calculateEmployeePayroll(
 
   for (const pd of allPunchDays) {
     totalWorkedHours += pd.hours
-    if (pd.hours > 0) attendanceDaysSet.add(pd.date)
+    if (pd.hours > 0 || pd.isPartial) attendanceDaysSet.add(pd.date)
     if (pd.isPartial) partialDays.push(pd.date)
   }
 
@@ -710,7 +737,7 @@ async function calculateEmployeePayroll(
       if (basePay > 0) {
         const unpaidLeaveDays = approvedLeaveDays - paidLeaveDays
         const absentDays = Math.max(0, workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidayDays)
-        deduction = absentDays * (basePay / 26) * (config.deduction_rate ?? 1)
+        deduction = absentDays * statutoryDailyWage(basePay) * (config.deduction_rate ?? 1)
       }
 
       result = {
@@ -941,6 +968,9 @@ interface WorkData {
   paidLeaveDays: number
   publicHolidayDays: number
   workingDays: number
+  restDays: number
+  totalDaysInMonth: number
+  monthlyWorkingDays: number
   lateRecords: Array<{ date: string; minutes: number }>
   leaveRecords: Array<{ isPlanned: boolean; days: number }>
   partialDays: string[]
@@ -988,6 +1018,9 @@ export interface PayRuleConfigModular {
   ot_multiplier?: number
   ot_threshold?: number
   ot_threshold_daily?: number
+
+  // Absence calculation basis: 'monthly' = full month working days, 'scheduled' = only scheduled shift days
+  absence_basis?: 'monthly' | 'scheduled'
 
   // Modifier modules (composable, any combination)
   modifiers?: {
@@ -1260,6 +1293,22 @@ export function countWorkingDaysInMonth(
   return { totalDays: totalDaysInMonth, restDays, publicHolidays, workingDays }
 }
 
+/**
+ * Count rest days (weekends) in a month based on configured rest day weekdays.
+ * @param year - Calendar year
+ * @param month - 0-indexed month
+ * @param restDays - Array of weekday numbers that are rest days (0=Sun, 6=Sat). Default [6, 0].
+ */
+function countRestDaysInMonth(year: number, month: number, restDays: number[] = [6, 0]): number {
+  const totalDaysInMonth = new Date(year, month + 1, 0).getDate()
+  let count = 0
+  for (let d = 1; d <= totalDaysInMonth; d++) {
+    const dow = new Date(year, month, d).getDay()
+    if (restDays.includes(dow)) count++
+  }
+  return count
+}
+
 // ------------------------------------------------------------------
 // 3. Modular Engine: Work Data Collection
 // ------------------------------------------------------------------
@@ -1285,12 +1334,23 @@ async function collectWorkData(
     ? employee.clinics.map((ec: any) => ec.clinicId).filter((id: string) => !clinicId || id === clinicId)
     : []
 
-  // Punch days
+  // Load shifts first so calculateWorkedHours can use shift endTime for partial punches
+  const shifts = await prisma.shift.findMany({
+    where: {
+      employeeId,
+      date: { gte: monthStart, lte: monthEnd },
+      status: { not: 'CANCELLED' },
+    },
+    orderBy: { date: 'asc' },
+  })
+
+  // Punch days (pass shifts for single-punch fill)
   const allPunchDays = await calculateWorkedHours(
     employeeId,
     clinicId ? [clinicId] : (clinicIds.length > 0 ? clinicIds : null),
     monthStart,
-    monthEnd
+    monthEnd,
+    shifts
   )
 
   const dailyEntries = aggregateDailyHours(allPunchDays)
@@ -1301,7 +1361,7 @@ async function collectWorkData(
 
   for (const pd of allPunchDays) {
     totalWorkedHours += pd.hours
-    if (pd.hours > 0) attendanceDaysSet.add(pd.date)
+    if (pd.hours > 0 || pd.isPartial) attendanceDaysSet.add(pd.date)
     if (pd.isPartial) partialDays.push(pd.date)
   }
 
@@ -1325,6 +1385,12 @@ async function collectWorkData(
 
   const publicHolidays = await getPublicHolidayDays(monthStart, monthEnd)
   const publicHolidayDays = publicHolidays.length
+
+  // Dynamic rest days: default [6, 0] (Sat+Sun); will be overridden by config at calc time
+  const restDays = countRestDaysInMonth(year, month, [6, 0])
+  // Total calendar days in month minus rest days minus public holidays
+  const monthlyWorkingDays = new Date(year, month + 1, 0).getDate() - restDays - publicHolidayDays
+  // Fallback to old countWorkingDays for backward compat
   const workingDays = countWorkingDays(year, month)
 
   // Late records: compare clock-in times with shift start times
@@ -1337,14 +1403,7 @@ async function collectWorkData(
     orderBy: { punchTime: 'asc' },
   })
 
-  const shifts = await prisma.shift.findMany({
-    where: {
-      employeeId,
-      date: { gte: monthStart, lte: monthEnd },
-      status: { not: 'CANCELLED' },
-    },
-    orderBy: { date: 'asc' },
-  })
+  // shifts already loaded above for calculateWorkedHours
 
   const lateRecords: Array<{ date: string; minutes: number }> = []
   for (const shift of shifts) {
@@ -1377,7 +1436,7 @@ async function collectWorkData(
   const scheduledDays = shifts.length
   const punchByDate: Record<string, boolean> = {}
   for (const pd of allPunchDays) {
-    if (pd.hours > 0) punchByDate[pd.date] = true
+    if (pd.hours > 0 || pd.isPartial) punchByDate[pd.date] = true
   }
   const leaveDateSet = new Set<string>()
   for (const lr of leaveRecords) {
@@ -1404,6 +1463,9 @@ async function collectWorkData(
     paidLeaveDays,
     publicHolidayDays,
     workingDays,
+    restDays,
+    totalDaysInMonth: new Date(year, month + 1, 0).getDate(),
+    monthlyWorkingDays,
     lateRecords,
     leaveRecords: leaveRecordsForEngine,
     partialDays,
@@ -1427,17 +1489,23 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
   const monthlyPayMultiplier = config.monthly_pay_multiplier ?? 1
 
   const unpaidLeaveDays = workData.approvedLeaveDays - workData.paidLeaveDays
+  // absence_basis: 'monthly' = full month working days, 'scheduled' = only scheduled shift days
+  const absenceBasis = config.absence_basis || 'monthly'
+  const expectedWorkDays = absenceBasis === 'scheduled'
+    ? workData.scheduledDays
+    : (workData.monthlyWorkingDays ?? workData.workingDays)
   // Use shift-based absentDays from collectWorkData (scheduled shifts with no punch and no leave)
   const absentDays = workData.absentDays ?? Math.max(
     0,
-    workData.workingDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
+    expectedWorkDays - workData.actualAttendanceDays - unpaidLeaveDays - workData.publicHolidayDays
   )
 
   // ✅ 模型 A：底薪 = 全額月薪（不按出勤比例縮水），缺勤才扣
   // 之前錯誤：basePay 按 (paidDays/workingDays) 縮水 + deduction 再扣一次 = 同一件事扣兩次
   const workingDays = workData.workingDays
   const basePay = monthlySalary * monthlyPayMultiplier  // 全額底薪，不縮水
-  const dailyRate = workingDays > 0 ? monthlySalary / workingDays : 0
+  // HK Statutory: dailyRate = monthlySalary × 12 ÷ 365
+  const dailyRate = statutoryDailyWage(monthlySalary)
   const deduction = (absentDays + unpaidLeaveDays) * dailyRate * deductionRate
 
   const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
@@ -1578,11 +1646,15 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): Payrol
 
   let deduction = 0
   if (basePay > 0) {
+    const absenceBasis = config.absence_basis || 'monthly'
+    const expectedWorkDays = absenceBasis === 'scheduled'
+      ? workData.scheduledDays
+      : (workData.monthlyWorkingDays ?? workData.workingDays)
     const absentDays = workData.absentDays ?? Math.max(
       0,
-      workData.workingDays - workData.actualAttendanceDays - (workData.approvedLeaveDays - workData.paidLeaveDays) - workData.publicHolidayDays
+      expectedWorkDays - workData.actualAttendanceDays - (workData.approvedLeaveDays - workData.paidLeaveDays) - workData.publicHolidayDays
     )
-    deduction = absentDays * (basePay / 26) * deductionRate
+    deduction = absentDays * statutoryDailyWage(basePay) * deductionRate
   }
 
   return {
