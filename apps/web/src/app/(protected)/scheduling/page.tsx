@@ -692,14 +692,17 @@ function colorFor(id: string): string {
     )
   }
 
+  const canManage = userRole === 'OWNER' || userRole === 'MANAGER'
+  const isCanRead = userRole === 'OWNER' || userRole === 'MANAGER' || userRole === 'ACCOUNTANT' || userRole === 'EMPLOYEE'
+
   // ============================================================
   // Render Helpers
   // ============================================================
-  // Helper: calculate shift hours (Task 3b)
-  const shiftHours = (shift: any): number => {
-    const s = new Date(shift.startTime)
-    const e = new Date(shift.endTime)
-    return (e.getTime() - s.getTime()) / (1000 * 60 * 60)
+  // Helper: count shift days for an employee this month
+  const empShiftDays = (empId: string): number => {
+    return new Set(
+      monthShifts.filter(s => s.employeeId === empId).map(s => toHKDateStr(new Date(s.date)))
+    ).size
   }
 
   const formatTimeFromShift = (isoString: string): string => {
@@ -707,8 +710,12 @@ function colorFor(id: string): string {
     return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
   }
 
-  const canManage = userRole === 'OWNER' || userRole === 'MANAGER'
-  const isCanRead = userRole === 'OWNER' || userRole === 'MANAGER' || userRole === 'ACCOUNTANT' || userRole === 'EMPLOYEE'
+  // Helper: calculate shift hours (Task 3b)
+  const shiftHours = (shift: any): number => {
+    const s = new Date(shift.startTime)
+    const e = new Date(shift.endTime)
+    return (e.getTime() - s.getTime()) / (1000 * 60 * 60)
+  }
 
   // ============================================================
   // Loading State
@@ -920,87 +927,75 @@ function colorFor(id: string): string {
         </div>
       )}
 
-      {/* Template Chips (top bar) */}
-      {canManage && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: '#666' }}>更次模板：</span>
-          {templates.map(t => (
-            <button key={t.id} onClick={() => setSelectedTemplate(t)}
-              style={{ padding: '4px 12px', borderRadius: 16, fontSize: 13,
-                background: selectedTemplate?.id === t.id ? '#1a1a2e' : '#f0f0f0',
-                color: selectedTemplate?.id === t.id ? '#fff' : '#333',
-                border: 'none', cursor: 'pointer' }}>
-              {t.name} {String(t.startHour).padStart(2,'0')}:{String(t.startMinute).padStart(2,'0')}-{String(t.endHour).padStart(2,'0')}:{String(t.endMinute).padStart(2,'0')}
-            </button>
+      {/* Employee chips (top horizontal, draggable) */}
+      {canManage && clinicEmployees.length > 0 && (
+        <div ref={empPanelRef} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, overflowX: 'auto' }}>
+          {clinicEmployees.map(emp => (
+            <div
+              key={emp.id}
+              className="emp-card"
+              data-emp-id={emp.id}
+              data-name={emp.user.name}
+              style={{
+                padding: '6px 14px', borderRadius: 16, fontSize: 13,
+                background: colorFor(emp.id), color: '#fff',
+                cursor: 'grab', whiteSpace: 'nowrap', flexShrink: 0,
+              }}
+            >
+              {emp.user.name}
+              <span style={{ marginLeft: 6, opacity: 0.8 }}>{empShiftDays(emp.id)}天</span>
+            </div>
           ))}
-          {selectedTemplate && (
-            <button onClick={bulkApplyTemplate}
-              style={{ padding: '4px 10px', borderRadius: 16, fontSize: 12,
-                background: '#3b82f6', color: '#fff', border: 'none', cursor: 'pointer', marginLeft: 'auto' }}>
-              📋 批量套用整個{viewMode === 'week' ? '週' : '月'}
-            </button>
-          )}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 16 }}>
-      {/* Left: Employee Panel */}
-      <Card className="flex-shrink-0 w-[180px] p-4" style={{ alignSelf: 'flex-start', maxHeight: 600, overflowY: 'auto' }}>
-        <h4 className="text-xs font-semibold uppercase mb-1" style={{ color: '#888' }}>
-          {clinics.find(c => c.id === selectedClinicId)?.name || '未選擇診所'}
-        </h4>
-        <h4 className="text-xs font-semibold uppercase mb-3" style={{ color: '#888' }}>員工 ({clinicEmployees.length})</h4>
-        <div ref={empPanelRef}>
-          {clinicEmployees.length === 0 ? (
-            <div className="text-xs text-center py-4" style={{ color: '#aaa' }}>
-              此診所未指派員工<br />
-              <span style={{ fontSize: 11 }}>請到帳號管理指派</span>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {clinicEmployees.map(emp => {
-                const empShiftDays = new Set(
-                  monthShifts.filter(s => s.employeeId === emp.id).map(s => toHKDateStr(new Date(s.date)))
-                ).size
-                return (
-                  <div
-                    key={emp.id}
-                    className="emp-card cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
-                    data-emp-id={emp.id}
-                    data-name={emp.user.name}
-                    style={{ background: colorFor(emp.id), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                  >
-                    <span>{emp.user.name}</span>
-                    <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: 12, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
-                      {empShiftDays} {'天'}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
 
-        {/* Leave types panel (draggable) */}
-        {canManage && leaveTypes.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <h4 className="text-xs font-semibold uppercase mb-2" style={{ color: '#888' }}>假期</h4>
-            <div ref={leavePanelRef} className="space-y-1">
-              {leaveTypes.map(lt => (
-                <div
-                  key={lt.id}
-                  className="leave-card cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
-                  data-leave-id={lt.id}
-                  data-name={lt.name}
-                  style={{ background: lt.color || '#95a5a6' }}
-                  title="拖到日曆建立請假"
-                >
-                  {lt.name}
+      <div style={{ display: 'flex', gap: 16 }}>
+        {/* Left: Templates + Leave (scrollable) */}
+        {canManage && (
+          <div style={{ width: 180, flexShrink: 0, maxHeight: 600, overflowY: 'auto' }}>
+            <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>更次模版</h4>
+            {templates.map(t => (
+              <div
+                key={t.id}
+                onClick={() => setSelectedTemplate(t)}
+                style={{
+                  padding: '8px 12px', margin: '4px 0', borderRadius: 8,
+                  cursor: 'pointer',
+                  background: selectedTemplate?.id === t.id ? '#1a1a2e' : '#f0f0f0',
+                  color: selectedTemplate?.id === t.id ? '#fff' : '#333',
+                }}
+              >
+                {t.name}
+                <div style={{ fontSize: 11, opacity: 0.7 }}>
+                  {String(t.startHour).padStart(2,'0')}:{String(t.startMinute).padStart(2,'0')}-{String(t.endHour).padStart(2,'0')}:{String(t.endMinute).padStart(2,'0')}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
+
+            {/* Leave types panel */}
+            {leaveTypes.length > 0 && (
+              <div ref={leavePanelRef} style={{ marginTop: 16 }}>
+                <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>假期</h4>
+                {leaveTypes.map(lt => (
+                  <div
+                    key={lt.id}
+                    className="leave-card"
+                    data-leave-id={lt.id}
+                    data-name={lt.name}
+                    style={{
+                      padding: '8px 12px', margin: '4px 0',
+                      background: lt.color || '#95a5a6', color: '#fff',
+                      borderRadius: 8, cursor: 'grab', fontSize: 13,
+                    }}
+                    title="拖到日曆建立請假"
+                  >
+                    🏖 {lt.name}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
-      </Card>
 
       {/* Right: Calendar Card */}
       <div className="flex-1 min-w-0">
@@ -1012,8 +1007,8 @@ function colorFor(id: string): string {
           initialView={viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
           locale={zhcn}
           headerToolbar={{
-            left: 'prev,next today',
-            center: 'title',
+            left: 'prev,next',
+            center: '',
             right: 'timeGridWeek,dayGridMonth',
           }}
           datesSet={(dateInfo) => {
