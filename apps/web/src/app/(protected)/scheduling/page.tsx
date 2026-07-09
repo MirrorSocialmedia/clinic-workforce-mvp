@@ -215,11 +215,12 @@ function colorFor(id: string): string {
   // Date Helpers
   // ============================================================
   const getDateRange = (): { startDate: string; endDate: string } => {
-    const date = new Date(currentDate)
+    const base = new Date(currentDate)
     if (viewMode === 'week') {
-      const day = date.getDay()
-      const diff = date.getDate() - day + (day === 0 ? -6 : 1) // Monday
-      const start = new Date(date.setDate(diff))
+      const day = base.getDay()
+      const diff = (day === 0 ? -6 : 1) - day // offset to Monday
+      const start = new Date(base)
+      start.setDate(base.getDate() + diff)
       const end = new Date(start)
       end.setDate(start.getDate() + 6)
       return {
@@ -227,8 +228,8 @@ function colorFor(id: string): string {
         endDate: toHKDateStr(end),
       }
     } else {
-      const start = new Date(date.getFullYear(), date.getMonth(), 1)
-      const end = new Date(date.getFullYear(), date.getMonth() + 1, 0)
+      const start = new Date(base.getFullYear(), base.getMonth(), 1)
+      const end = new Date(base.getFullYear(), base.getMonth() + 1, 0)
       return {
         startDate: toHKDateStr(start),
         endDate: toHKDateStr(end),

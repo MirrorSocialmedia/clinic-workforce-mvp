@@ -96,8 +96,9 @@ export async function POST(req: NextRequest) {
         punchRecordId = existing.id
       }
 
-      // Transaction: create correction (audit handled by Prisma extension)
+      // Transaction: create correction + punchRecord (if no original exists)
       const correction = await prisma.$transaction(async (tx) => {
+        const isManager = session.role === 'OWNER' || session.role === 'MANAGER'
         const c = await tx.punchCorrection.create({
           data: {
             punchRecordId,
@@ -107,16 +108,34 @@ export async function POST(req: NextRequest) {
             punchType: punchType as any,
             reason: reason || null,
             requestedBy: session.userId,
-            status: session.role === 'OWNER' || session.role === 'MANAGER' ? 'APPROVED' : 'PENDING',
-            approvedBy: session.role === 'OWNER' || session.role === 'MANAGER' ? session.userId : null,
+            status: isManager ? 'APPROVED' : 'PENDING',
+            approvedBy: isManager ? session.userId : null,
           },
         })
+
+        // If APPROVED and no original punchRecord exists → create one (source=CORRECTION)
+        if (isManager && !punchRecordId) {
+          const pr = await tx.punchRecord.create({
+            data: {
+              employeeId: employee.id,
+              clinicId,
+              punchTime: new Date(date),
+              punchType: punchType as any,
+              source: 'MANUAL_CORRECTION' as const,
+            },
+          })
+          // Backfill correction's punchRecordId
+          await tx.punchCorrection.update({
+            where: { id: c.id },
+            data: { punchRecordId: pr.id },
+          })
+        }
 
         return c
       })
 
       return NextResponse.json(
-        { success: true, correction },
+        { success: true, correction, createdPunchRecord: !!(!existing && (session.role === 'OWNER' || session.role === 'MANAGER')) },
         { status: 201 }
       )
     } catch (error) {
