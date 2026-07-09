@@ -83,6 +83,7 @@ export default function SchedulingPage() {
   // State
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [currentDate, setCurrentDate] = useState(new Date())
+  const [viewRange, setViewRange] = useState<{start: string, end: string} | null>(null)
   const [clinics, setClinics] = useState<Clinic[]>([])
   const [selectedClinicId, setSelectedClinicId] = useState<string | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
@@ -95,6 +96,8 @@ export default function SchedulingPage() {
 
   // UI State
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
+  const [leaveTypes, setLeaveTypes] = useState<any[]>([])
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([])
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
@@ -103,6 +106,7 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const empPanelRef = useRef<HTMLDivElement>(null)
+  const leavePanelRef = useRef<HTMLDivElement>(null)
   const calendarContainerRef = useRef<HTMLDivElement>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
   const [isDraggingEvent, setIsDraggingEvent] = useState(false)
@@ -186,30 +190,69 @@ function colorFor(id: string): string {
     return () => draggable.destroy()
   }, [employees, selectedClinicId, viewMode])
 
+  // Load leave types
+  useEffect(() => {
+    const fetchLeaveTypes = async () => {
+      try {
+        const res = await fetch('/api/leave-types', { credentials: 'include' })
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.leaveTypes)) setLeaveTypes(data.leaveTypes)
+        }
+      } catch (err) {
+        console.error('Failed to load leave types:', err)
+      }
+    }
+    fetchLeaveTypes()
+  }, [])
+
+  // Register FC Draggable on leave panel
+  useEffect(() => {
+    if (!leavePanelRef.current) return
+    const d = new Draggable(leavePanelRef.current, {
+      itemSelector: '.leave-card',
+      eventData: (el: HTMLElement) => ({
+        title: el.getAttribute('data-name') || '假期',
+        extendedProps: {
+          dragType: 'leave',
+          leaveTypeId: el.getAttribute('data-leave-id'),
+        },
+        backgroundColor: '#95a5a6',
+        borderColor: '#7f8c8d',
+      }),
+    })
+    return () => d.destroy()
+  }, [leaveTypes, viewMode])
+
   // ============================================================
   // Load shifts for current view
   // ============================================================
   const loadShifts = useCallback(async () => {
-    if (!selectedClinicId) return
+    if (!selectedClinicId || !viewRange) return
 
-    const { startDate, endDate } = getDateRange()
-    const url = `/api/shifts?clinicId=${selectedClinicId}&startDate=${startDate}&endDate=${endDate}&pageSize=500`
+    const url = `/api/shifts?clinicId=${selectedClinicId}&startDate=${viewRange.start}&endDate=${viewRange.end}&pageSize=500`
 
     try {
-      const res = await fetch(url, { credentials: 'include' })
-      if (res.ok) {
-        const data = await res.json()
-        // ✅ Protect empty results: only set if we got a valid array
+      const [shiftsRes, leavesRes] = await Promise.all([
+        fetch(url, { credentials: 'include' }),
+        fetch(`/api/leave-requests?startDate=${viewRange.start}&endDate=${viewRange.end}&status=APPROVED`, { credentials: 'include' }),
+      ])
+      if (shiftsRes.ok) {
+        const data = await shiftsRes.json()
         if (Array.isArray(data.shifts)) setShifts(data.shifts)
+      }
+      if (leavesRes.ok) {
+        const leavesData = await leavesRes.json()
+        if (Array.isArray(leavesData.leaveRequests)) setLeaveRequests(leavesData.leaveRequests)
       }
     } catch (error) {
       console.error('Failed to load shifts:', error)
     }
-  }, [selectedClinicId, currentDate, viewMode])
+  }, [selectedClinicId, viewRange])
 
   useEffect(() => {
-    loadShifts()
-  }, [loadShifts])
+    if (viewRange) loadShifts()
+  }, [viewRange, selectedClinicId])
 
   // ============================================================
   // Date Helpers
@@ -257,14 +300,9 @@ function colorFor(id: string): string {
     return `${date.getMonth() + 1}/${date.getDate()} 周${dayNames[date.getDay()]}`
   }
 
-  const navigateDate = (direction: number) => {
-    const newDate = new Date(currentDate)
-    if (viewMode === 'week') {
-      newDate.setDate(newDate.getDate() + direction * 7)
-    } else {
-      newDate.setMonth(newDate.getMonth() + direction)
-    }
-    setCurrentDate(newDate)
+  // Note: navigateDate removed — FC headerToolbar handles prev/next
+  const goToday = () => {
+    setCurrentDate(new Date())
   }
 
   // ============================================================
@@ -295,7 +333,7 @@ function colorFor(id: string): string {
     }
 
     // Validate first
-    const validationResult = await validateBeforeCreate(employeeId, startTime.toISOString(), endTime.toISOString())
+    const validationResult = await validateBeforeCreate(employeeId, date, startTime.toISOString(), endTime.toISOString())
     if (!validationResult.valid) {
       setValidationIssues([
         ...validationResult.errors.map((e: any) => ({ type: 'error' as const, rule: e.rule, message: e.message })),
@@ -334,7 +372,7 @@ function colorFor(id: string): string {
     }
   }
 
-  const validateBeforeCreate = async (employeeId: string, startTime: string, endTime: string): Promise<any> => {
+  const validateBeforeCreate = async (employeeId: string, date: string, startTime: string, endTime: string): Promise<any> => {
     try {
       const res = await fetch('/api/shifts/validate', {
         method: 'POST',
@@ -344,7 +382,7 @@ function colorFor(id: string): string {
           shift: {
             employeeId,
             clinicId: selectedClinicId,
-            date: formatDate(currentDate),
+            date,
             startTime,
             endTime,
           },
@@ -533,19 +571,30 @@ function colorFor(id: string): string {
   }
 
   // Map shifts to FC events
-  const fcEvents = shifts.map(s => ({
-    id: s.id,
-    title: (s.employee?.user?.name || '') + ' ' + (s.template?.name || ''),
-    start: s.startTime,
-    end: s.endTime,
-    backgroundColor: s.status === 'CONFIRMED' ? '#1976d2' :
-                     s.status === 'DRAFT' ? '#f57c00' :
-                     s.status === 'CANCELLED' ? '#dc3545' : '#388e3c',
-    borderColor: s.status === 'CONFIRMED' ? '#1565c0' :
-                 s.status === 'DRAFT' ? '#e65100' :
-                 s.status === 'CANCELLED' ? '#c82333' : '#2e7d32',
-    extendedProps: { shift: s },
-  }))
+  const fcEvents = [
+    ...shifts.map(s => ({
+      id: s.id,
+      title: (s.employee?.user?.name || '') + ' ' + (s.template?.name || ''),
+      start: s.startTime,
+      end: s.endTime,
+      backgroundColor: s.status === 'CONFIRMED' ? '#1976d2' :
+                       s.status === 'DRAFT' ? '#f57c00' :
+                       s.status === 'CANCELLED' ? '#dc3545' : '#388e3c',
+      borderColor: s.status === 'CONFIRMED' ? '#1565c0' :
+                   s.status === 'DRAFT' ? '#e65100' :
+                   s.status === 'CANCELLED' ? '#c82333' : '#2e7d32',
+      extendedProps: { shift: s },
+    })),
+    ...leaveRequests.map((lr, idx) => ({
+      id: 'leave-' + lr.id,
+      title: lr.employee?.user?.name + ' ' + (lr.leaveType?.name || ''),
+      start: lr.startDate,
+      end: lr.endDate,
+      backgroundColor: '#95a5a6',
+      borderColor: '#7f8c8d',
+      extendedProps: { isLeave: true, leaveRequest: lr },
+    })),
+  ]
 
   const handleDrop = async (e: React.DragEvent, employeeId: string, dateStr: string) => {
     e.preventDefault()
@@ -590,7 +639,6 @@ function colorFor(id: string): string {
     return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   }
 
-  const dates = getDates()
   const clinicEmployees = getClinicEmployees()
   const excludeEmployeeId = editingShift?.employeeId || ''
   const availableEmployees = clinicEmployees.filter((e: Employee) => e.id !== excludeEmployeeId)
@@ -654,27 +702,18 @@ function colorFor(id: string): string {
             </button>
           </div>
 
-          {/* Date navigation */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <button onClick={() => navigateDate(-1)} style={{
-              padding: '6px 10px', border: '1px solid #ddd', borderRadius: 6,
-              background: 'white', cursor: 'pointer', fontSize: 14,
-            }}>◀</button>
-            <span style={{ fontSize: 14, minWidth: 120, textAlign: 'center' }}>
-              {viewMode === 'week'
-                ? `${formatDate(new Date(dates[0]?.toISOString()))} ~ ${formatDate(new Date(dates[dates.length - 1]?.toISOString()))}`
-                : `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`
-              }
-            </span>
-            <button onClick={() => navigateDate(1)} style={{
-              padding: '6px 10px', border: '1px solid #ddd', borderRadius: 6,
-              background: 'white', cursor: 'pointer', fontSize: 14,
-            }}>▶</button>
-          </div>
+          {/* Date range display (read-only, FC handles navigation) */}
+          {viewRange && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 14, minWidth: 120, textAlign: 'center', color: '#888' }}>
+                {viewRange.start} ~ {viewRange.end}
+              </span>
+            </div>
+          )}
 
           {/* Today button */}
           <button
-            onClick={() => setCurrentDate(new Date())}
+            onClick={goToday}
             style={{
               padding: '6px 10px', border: '1px solid #ddd', borderRadius: 6,
               background: 'white', cursor: 'pointer', fontSize: 12,
@@ -809,6 +848,27 @@ function colorFor(id: string): string {
             </div>
           )}
         </div>
+
+        {/* Leave types panel (draggable) */}
+        {canManage && leaveTypes.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <h4 className="text-xs font-semibold uppercase mb-2" style={{ color: '#888' }}>假期</h4>
+            <div ref={leavePanelRef} className="space-y-1">
+              {leaveTypes.map(lt => (
+                <div
+                  key={lt.id}
+                  className="leave-card cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
+                  data-leave-id={lt.id}
+                  data-name={lt.name}
+                  style={{ background: lt.color || '#95a5a6' }}
+                  title="拖到日曆建立請假"
+                >
+                  {lt.name}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Right: Calendar Card */}
@@ -825,20 +885,75 @@ function colorFor(id: string): string {
             center: 'title',
             right: 'timeGridWeek,dayGridMonth',
           }}
+          datesSet={(dateInfo) => {
+            // Sync currentDate to FC midpoint
+            const mid = new Date((dateInfo.start.getTime() + dateInfo.end.getTime()) / 2)
+            const hkMid = toHKDateStr(mid)
+            const hkCurrent = toHKDateStr(currentDate)
+            if (hkMid !== hkCurrent) {
+              setCurrentDate(mid)
+            }
+            // Set visible range for loadShifts
+            const range = {
+              start: toHKDateStr(dateInfo.start),
+              end: toHKDateStr(new Date(dateInfo.end.getTime() - 86400000)), // end is exclusive, subtract 1 day
+            }
+            if (range.start !== viewRange?.start || range.end !== viewRange?.end) {
+              setViewRange(range)
+            }
+          }}
           events={fcEvents}
           droppable={true}
           eventReceive={async (info) => {
-            const empId = info.event.extendedProps.employeeId
             info.event.remove() // 移除 FC 自動生成的臨時事件
-            if (!empId) return
-            if (!selectedTemplate) {
-              setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板才能排班' }])
-              return
-            }
+            const props = info.event.extendedProps
             const date = toHKDateStr(info.event.start!)
-            setValidationIssues([])
-            const success = await createShift(empId, date, selectedTemplate)
-            // ✅ Always reload after drag-in (success or failure)
+
+            if (props.dragType === 'leave') {
+              // 拖的是假期 → 建立請假（1天，APPROVED 模式 for manager/owner）
+              const leaveTypeId = props.leaveTypeId
+              if (!leaveTypeId) {
+                setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 假期類型無效' }])
+                return
+              }
+              const leaveTypeName = leaveTypes.find(lt => lt.id === leaveTypeId)?.name || '假期'
+              const confirmed = confirm(`為選中員工建立「${leaveTypeName}」請假（${date}）？`)
+              if (!confirmed) return
+              try {
+                const res = await fetch('/api/leave-requests', {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    leaveTypeId,
+                    startDate: date,
+                    endDate: date,
+                    days: 1,
+                    reason: `排班頁拖曳請假`,
+                    isPlanned: true,
+                  }),
+                })
+                if (res.ok) {
+                  setValidationIssues([])
+                } else {
+                  const err = await res.json()
+                  setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])
+                }
+              } catch {
+                setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
+              }
+            } else {
+              // 拖的是員工 → 建立班次
+              const empId = props.employeeId
+              if (!empId) return
+              if (!selectedTemplate) {
+                setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板才能排班' }])
+                return
+              }
+              setValidationIssues([])
+              await createShift(empId, date, selectedTemplate)
+            }
+            // Reload shifts + leave requests
             await loadShifts()
           }}
           editable={canManage}
@@ -858,6 +973,11 @@ function colorFor(id: string): string {
             const clientY = (info as any).jsEvent?.clientY ?? 0
 
             if (clientX >= dzRect.left && clientX <= dzRect.right && clientY >= dzRect.top && clientY <= dzRect.bottom) {
+              // Skip leave events — they can't be dragged out
+              if (info.event.extendedProps.isLeave) {
+                info.revert()
+                return
+              }
               if (confirm(`確定取消「${info.event.title}」的班次？`)) {
                 await deleteShift(info.event.id)
               } else {
