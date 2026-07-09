@@ -45,6 +45,7 @@ export const CONFIG = {
     'GET /api/users': ['OWNER'],
     'POST /api/users': ['OWNER'],
     'PUT /api/users/:id': ['OWNER'],
+    'DELETE /api/users/:id': ['OWNER'],
 
     // Audit log routes (read-only)
     'GET /api/audit-logs': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -56,6 +57,7 @@ export const CONFIG = {
     'GET /api/employees': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/employees': ['OWNER', 'MANAGER'],
     'PUT /api/employees/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/employees/:id': ['OWNER'],
     'GET /api/employees/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/employees/:id/pay-rules': ['OWNER'],
     'POST /api/employees/import': ['OWNER'],
@@ -107,6 +109,7 @@ export const CONFIG = {
     'POST /api/leave-requests': ['OWNER', 'MANAGER', 'EMPLOYEE'],
     'GET /api/leave-requests': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'PUT /api/leave-requests/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/leave-requests/:id': ['OWNER', 'MANAGER'],
 
     // Leave balance routes
     'GET /api/leave-balance': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],

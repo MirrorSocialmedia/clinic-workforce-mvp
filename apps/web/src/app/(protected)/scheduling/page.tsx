@@ -100,12 +100,13 @@ export default function SchedulingPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
-  const [selectedEmployeeForLeave, setSelectedEmployeeForLeave] = useState<string>('')
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
   const [showNewShiftModal, setShowNewShiftModal] = useState(false)
   const [showRuleSettings, setShowRuleSettings] = useState(false)
+  const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
 
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
@@ -257,14 +258,13 @@ function colorFor(id: string): string {
         extendedProps: {
           dragType: 'leave',
           leaveTypeId: el.getAttribute('data-leave-id'),
-          selectedEmployeeId: selectedEmployeeForLeave,
         },
         backgroundColor: '#95a5a6',
         borderColor: '#7f8c8d',
       }),
     })
     return () => d.destroy()
-  }, [leaveTypes, viewMode, selectedEmployeeForLeave])
+  }, [leaveTypes, viewMode])
 
   // ============================================================
   // Load shifts for current view
@@ -998,10 +998,14 @@ function colorFor(id: string): string {
               className="emp-card"
               data-emp-id={emp.id}
               data-name={emp.user.name}
+              onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
               style={{
                 padding: '6px 14px', borderRadius: 16, fontSize: 13,
-                background: colorFor(emp.id), color: '#fff',
+                background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                color: selectedEmployeeId === emp.id ? colorFor(emp.id) : '#fff',
+                border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
                 cursor: 'grab', whiteSpace: 'nowrap', flexShrink: 0,
+                transition: 'all 0.15s',
               }}
             >
               {emp.user.name}
@@ -1038,22 +1042,9 @@ function colorFor(id: string): string {
             {leaveTypes.length > 0 && (
               <div ref={leavePanelRef} style={{ marginTop: 16 }}>
                 <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>假期</h4>
-                {/* Employee selector for leave */}
-                {canManage && clinicEmployees.length > 0 && (
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={{ fontSize: 12, color: '#555', marginBottom: 4, display: 'block' }}>為此員工排假：</label>
-                    <select
-                      value={selectedEmployeeForLeave}
-                      onChange={e => setSelectedEmployeeForLeave(e.target.value)}
-                      style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
-                    >
-                      <option value="">選擇員工</option>
-                      {clinicEmployees.map(emp => (
-                        <option key={emp.id} value={emp.id}>{emp.user.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div style={{ fontSize: 11, color: '#aaa', marginBottom: 6 }}>
+                  {selectedEmployeeId ? `選中: ${clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name || ''}` : '點擊上方員工芯片選中'}
+                </div>
                 {leaveTypes.map(lt => (
                   <div
                     key={lt.id}
@@ -1127,17 +1118,16 @@ function colorFor(id: string): string {
                 setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 假期類型無效' }])
                 return
               }
-              const leaveTypeName = leaveTypes.find(lt => lt.id === leaveTypeId)?.name || '假期'
 
-              // Use selectedEmployeeForLeave if set, otherwise use props.selectedEmployeeId
-              const targetEmployeeId = props.selectedEmployeeId || ''
-              if (!targetEmployeeId) {
-                setValidationIssues([{ type: 'error', rule: 'leave', message: '⚠️ 請先在左側選擇員工再拖放假期' }])
+              // 複用已選中的員工（點擊員工 chip 選中的）
+              if (!selectedEmployeeId) {
+                setShowLeaveEmployeeModal({ date, leaveTypeId })
                 return
               }
 
-              const confirmed = confirm(`為「${clinicEmployees.find(e => e.id === targetEmployeeId)?.user?.name || targetEmployeeId}」建立「${leaveTypeName}」請假（${date}）？`)
-              if (!confirmed) return
+              const leaveTypeName = leaveTypes.find(lt => lt.id === leaveTypeId)?.name || '假期'
+              const targetEmployeeId = selectedEmployeeId
+
               try {
                 const res = await fetch('/api/leave-requests', {
                   method: 'POST',
@@ -1748,6 +1738,86 @@ function colorFor(id: string): string {
               >
                 建立班次
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Employee Selection Modal (shown when dragging leave without selected employee) */}
+      {showLeaveEmployeeModal && canManage && clinicEmployees.length > 0 && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}
+          onClick={() => setShowLeaveEmployeeModal(null)}
+        >
+          <div
+            className="g bg-card g border rounded-xl shadow-lg mx-4 p-6 relative"
+            style={{ width: '380px', maxWidth: '90vw' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowLeaveEmployeeModal(null)}
+              style={{
+                position: 'absolute', top: 12, right: 12,
+                background: 'none', border: 'none', fontSize: 18,
+                cursor: 'pointer', color: '#888',
+              }}
+            >
+              ✕
+            </button>
+            <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 8 }}>
+              🏖 選擇員工
+            </h2>
+            <p style={{ fontSize: 13, color: '#888', margin: '0 0 16px 0' }}>
+              拖放「{leaveTypes.find(lt => lt.id === showLeaveEmployeeModal.leaveTypeId)?.name || '假期'}」到 {showLeaveEmployeeModal.date}，請選擇員工：
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 300, overflowY: 'auto' }}>
+              {clinicEmployees.map(emp => (
+                <div
+                  key={emp.id}
+                  onClick={async () => {
+                    const { date, leaveTypeId } = showLeaveEmployeeModal
+                    try {
+                      const res = await fetch('/api/leave-requests', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          leaveTypeId,
+                          employeeId: emp.id,
+                          startDate: date,
+                          endDate: date,
+                          days: 1,
+                          reason: `排班頁拖曳請假`,
+                          isPlanned: true,
+                        }),
+                      })
+                      if (res.ok) {
+                        setShowLeaveEmployeeModal(null)
+                        setValidationIssues([])
+                        await refreshAll()
+                      } else {
+                        const err = await res.json()
+                        alert(err.error || '建立請假失敗')
+                      }
+                    } catch {
+                      alert('建立請假失敗')
+                    }
+                  }}
+                  style={{
+                    padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                    background: '#f5f5f5', border: '1px solid #e0e0e0',
+                    fontSize: 14, transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#e8e8e8' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#f5f5f5' }}
+                >
+                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', marginRight: 8, background: colorFor(emp.id) }}></span>
+                  {emp.user.name}
+                </div>
+              ))}
             </div>
           </div>
         </div>

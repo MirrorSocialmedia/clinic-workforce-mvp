@@ -137,6 +137,15 @@ export default function AccountsPage() {
     } catch {}
   }
 
+  const handleDelete = async (acc: Account) => {
+    if (!confirm(`確定刪除帳號「${acc.name}」？此操作不可復原。`)) return
+    try {
+      const res = await fetch(`/api/accounts/${acc.id}`, { method: 'DELETE', credentials: 'include' })
+      if (res.ok) { fetchData() }
+      else { const err = await res.json(); alert(err.error || '刪除失敗') }
+    } catch { alert('刪除失敗') }
+  }
+
   const loadLeaveBalances = async (employeeId: string) => {
     if (leaveBalances[employeeId]) return // already loaded
     try {
@@ -333,10 +342,13 @@ export default function AccountsPage() {
                     </span>
                   </td>
                   <td onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', gap: 4 }}>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
                       {acc.employeeId && (
                         <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>💰 薪酬規則</button>
+                      )}
+                      {isOwner && userRole !== acc.role && (
+                        <button className="btn btn-sm" style={{ background: '#fde8e8', color: '#dc3545' }} onClick={() => handleDelete(acc)}>刪除</button>
                       )}
                     </div>
                   </td>
