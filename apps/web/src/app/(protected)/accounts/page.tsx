@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
+import { RuleComposerModal } from '@/components/RuleComposerModal'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -31,6 +32,8 @@ export default function AccountsPage() {
   const [showForm, setShowForm] = useState(false)
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [showPayRuleModal, setShowPayRuleModal] = useState(false)
+  const [payRuleEmployeeId, setPayRuleEmployeeId] = useState<string | null>(null)
   const [form, setForm] = useState({
     name: '', phone: '', email: '', password: '', role: 'EMPLOYEE' as Role,
     clinicIds: [] as string[], joinDate: '',
@@ -65,6 +68,13 @@ export default function AccountsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Validate: at least one clinic required when creating employee
+    if (!editingId && form.assignEmployee && form.clinicIds.length === 0) {
+      alert('請至少選擇一個診所')
+      return
+    }
+
     try {
       const method = editingId ? 'PUT' : 'POST'
       const url = editingId ? `/api/accounts/${editingId}` : '/api/accounts'
@@ -181,6 +191,11 @@ export default function AccountsPage() {
                   onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
               </div>
               <div className="form-group" style={{ gridColumn: 'span 3' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <input type="checkbox" checked={form.assignEmployee}
+                    onChange={e => setForm({ ...form, assignEmployee: e.target.checked })} />
+                  同時創建員工記錄（用於排班和計薪）
+                </label>
                 <label>診所指派</label>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                   {clinics.map(c => (
@@ -259,7 +274,12 @@ export default function AccountsPage() {
                     </span>
                   </td>
                   <td onClick={e => e.stopPropagation()}>
-                    <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
+                      {acc.employeeId && (
+                        <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>💰 薪酬規則</button>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 {expandedRow === acc.id && (
@@ -307,6 +327,14 @@ export default function AccountsPage() {
           <div style={{ textAlign: 'center', color: '#888', padding: 40 }}>沒有帳號</div>
         )}
       </div>
+      {/* Pay Rule Modal */}
+      {showPayRuleModal && payRuleEmployeeId && (
+        <RuleComposerModal
+          employeeId={payRuleEmployeeId}
+          onClose={() => setShowPayRuleModal(false)}
+          onSuccess={() => { setShowPayRuleModal(false); fetchData() }}
+        />
+      )}
     </div>
   )
 }
