@@ -7,6 +7,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr, fmtTime } from '@/lib/hk-date'
+import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 
@@ -102,6 +103,11 @@ export default function SchedulingPage() {
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
   const [showNewShiftModal, setShowNewShiftModal] = useState(false)
+  const [showRuleSettings, setShowRuleSettings] = useState(false)
+
+  // Shift rule config state
+  const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig | null>(null)
+  const [savingRules, setSavingRules] = useState(false)
 
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
@@ -110,6 +116,9 @@ export default function SchedulingPage() {
   const calendarContainerRef = useRef<HTMLDivElement>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
   const [isDraggingEvent, setIsDraggingEvent] = useState(false)
+
+  // Month-level shifts for statistics (Task 3b)
+  const [monthShifts, setMonthShifts] = useState<any[]>([])
 
   
 // Fixed color palette for employee drag chips
@@ -175,6 +184,27 @@ function colorFor(id: string): string {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // Load shift rule config for selected clinic
+  useEffect(() => {
+    if (!selectedClinicId) return
+    fetch(`/api/clinics/${selectedClinicId}/shift-rule-config`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setShiftRuleConfig(d.shiftRules || null))
+      .catch(() => setShiftRuleConfig(null))
+  }, [selectedClinicId])
+
+  // Load month-level shifts for statistics (Task 3b)
+  useEffect(() => {
+    if (!selectedClinicId) return
+    const now = new Date()
+    const monthStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
+    const monthEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    fetch(`/api/shifts?clinicId=${selectedClinicId}&startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setMonthShifts(d.shifts || []))
+      .catch(() => setMonthShifts([]))
+  }, [selectedClinicId, currentDate])
 
   // Register FC Draggable on employee panel
   useEffect(() => {
@@ -312,6 +342,28 @@ function colorFor(id: string): string {
     return shifts.find(
       s => s.employeeId === employeeId && formatDate(new Date(s.date)) === dateStr
     )
+  }
+
+  const saveShiftRuleConfig = async (updatedRules: ShiftRuleConfig) => {
+    if (!selectedClinicId) return
+    setSavingRules(true)
+    try {
+      const res = await fetch(`/api/clinics/${selectedClinicId}/shift-rule-config`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedRules),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setShiftRuleConfig(data.shiftRules)
+        alert('排班規則已更新')
+      }
+    } catch (err) {
+      console.error('Save shift rule config error:', err)
+    } finally {
+      setSavingRules(false)
+    }
   }
 
   const createShift = async (employeeId: string, date: string, template: ShiftTemplate): Promise<boolean> => {
@@ -624,6 +676,13 @@ function colorFor(id: string): string {
   // ============================================================
   // Render Helpers
   // ============================================================
+  // Helper: calculate shift hours (Task 3b)
+  const shiftHours = (shift: any): number => {
+    const s = new Date(shift.startTime)
+    const e = new Date(shift.endTime)
+    return (e.getTime() - s.getTime()) / (1000 * 60 * 60)
+  }
+
   const formatTimeFromShift = (isoString: string): string => {
     const d = new Date(isoString)
     return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -745,8 +804,128 @@ function colorFor(id: string): string {
               </span>
             )}
           </button>
+          
+          {/* Shift rule settings button */}
+          {canManage && (
+            <button
+              onClick={() => setShowRuleSettings(!showRuleSettings)}
+              style={{
+                padding: '6px 10px', border: '1px solid #ddd', borderRadius: 6,
+                background: showRuleSettings ? '#1a1a2e' : 'white',
+                color: showRuleSettings ? 'white' : '#333',
+                cursor: 'pointer', fontSize: 12,
+              }}
+            >
+              {'⚙️ 排班規則'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Shift Rule Settings Panel */}
+      {canManage && showRuleSettings && shiftRuleConfig && (
+        <div className="card rounded-xl g border p-4 shadow-card" style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h2 style={{ margin: 0, fontSize: 16 }}>
+              {'⚙️ 排班校驗規則（' + (clinics.find(c => c.id === selectedClinicId)?.name || '') + '）'}
+            </h2>
+            <button onClick={() => setShowRuleSettings(false)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}>✕</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            {[
+              { key: 'maxDailyHours', label: '單日工時上限', unit: '小時', enabledKey: 'maxDailyHoursEnabled', type: 'warning' },
+              { key: 'maxConsecutiveHours', label: '連續工時上限', unit: '小時', enabledKey: 'maxConsecutiveEnabled', type: 'warning' },
+              { key: 'minRestHours', label: '班次間最少休息', unit: '小時', enabledKey: 'minRestEnabled', type: 'warning' },
+              { key: 'longShiftThreshold', label: '長班休息閾值', unit: '小時', enabledKey: 'longShiftEnabled', type: 'warning' },
+            ].map(rule => (
+              <div key={rule.key} style={{ padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>{rule.label}</span>
+                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: rule.type === 'error' ? '#fde8e8' : '#fff8e1', color: rule.type === 'error' ? '#dc3545' : '#856404' }}>
+                    {rule.type === 'error' ? '硬擋' : '警示'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={(shiftRuleConfig as any)[rule.enabledKey] ?? true}
+                      onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, [rule.enabledKey as keyof ShiftRuleConfig]: e.target.checked } : null)}
+                    />
+                    啟用
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={(shiftRuleConfig as any)[rule.key]}
+                    onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, [rule.key as keyof ShiftRuleConfig]: parseFloat(e.target.value) || 0 } : null)}
+                    style={{ width: 70, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
+                  />
+                  <span style={{ fontSize: 12, color: '#888' }}>{rule.unit}</span>
+                </div>
+              </div>
+            ))}
+            {/* Long shift break minutes */}
+            <div style={{ padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>長班最少休息</span>
+                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#fff8e1', color: '#856404' }}>警示</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={shiftRuleConfig.longShiftEnabled}
+                    onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, longShiftEnabled: e.target.checked } : null)}
+                  />
+                  啟用
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={5}
+                  value={shiftRuleConfig.longShiftBreakMin}
+                  onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, longShiftBreakMin: parseInt(e.target.value) || 0 } : null)}
+                  style={{ width: 70, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13 }}
+                />
+                <span style={{ fontSize: 12, color: '#888' }}>分鐘</span>
+              </div>
+            </div>
+            {/* Overlap check - always error */}
+            <div style={{ padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>撞更檢查</span>
+                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#fde8e8', color: '#dc3545' }}>硬擋</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={shiftRuleConfig.overlapCheck}
+                    onChange={e => setShiftRuleConfig(prev => prev ? { ...prev, overlapCheck: e.target.checked } : null)}
+                  />
+                  啟用
+                </label>
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 16, textAlign: 'right' }}>
+            <button
+              onClick={() => shiftRuleConfig && saveShiftRuleConfig(shiftRuleConfig)}
+              disabled={savingRules}
+              style={{
+                padding: '8px 20px', borderRadius: 6, border: 'none',
+                background: savingRules ? '#ccc' : '#1a1a2e',
+                color: 'white', cursor: savingRules ? 'not-allowed' : 'pointer',
+                fontSize: 13, fontWeight: 500,
+              }}
+            >
+              {savingRules ? '儲存中...' : '💾 儲存規則'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Validation Issues */}
       {validationIssues.length > 0 && (
@@ -834,17 +1013,25 @@ function colorFor(id: string): string {
             </div>
           ) : (
             <div className="space-y-1">
-              {clinicEmployees.map(emp => (
-                <div
-                  key={emp.id}
-                  className="emp-card cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
-                  data-emp-id={emp.id}
-                  data-name={emp.user.name}
-                  style={{ background: colorFor(emp.id) }}
-                >
-                  {emp.user.name}
-                </div>
-              ))}
+              {clinicEmployees.map(emp => {
+                const empShiftDays = new Set(
+                  monthShifts.filter(s => s.employeeId === emp.id).map(s => toHKDateStr(new Date(s.date)))
+                ).size
+                return (
+                  <div
+                    key={emp.id}
+                    className="emp-card cursor-grab active:cursor-grabbing px-3 py-2 rounded-lg text-sm text-white transition-opacity hover:opacity-90"
+                    data-emp-id={emp.id}
+                    data-name={emp.user.name}
+                    style={{ background: colorFor(emp.id), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  >
+                    <span>{emp.user.name}</span>
+                    <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: 12, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                      {empShiftDays} {'天'}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -965,25 +1152,26 @@ function colorFor(id: string): string {
           eventDragStart={() => setIsDraggingEvent(true)}
           eventDragStop={async (info: any) => {
             setIsDraggingEvent(false)
-            // ✅ Check if dropped on drop zone (not calendar-outside check)
             const dz = dropZoneRef.current
             if (!dz) return
             const dzRect = dz.getBoundingClientRect()
             const clientX = (info as any).jsEvent?.clientX ?? 0
             const clientY = (info as any).jsEvent?.clientY ?? 0
 
-            if (clientX >= dzRect.left && clientX <= dzRect.right && clientY >= dzRect.top && clientY <= dzRect.bottom) {
-              // Skip leave events — they can't be dragged out
-              if (info.event.extendedProps.isLeave) {
-                info.revert()
-                return
-              }
-              if (confirm(`確定取消「${info.event.title}」的班次？`)) {
-                await deleteShift(info.event.id)
-              } else {
-                info.revert()
-              }
+            const onDropZone = clientX >= dzRect.left && clientX <= dzRect.right
+              && clientY >= dzRect.top && clientY <= dzRect.bottom
+            if (!onDropZone) return
+
+            // 假期事件：不允許拖走取消 → 直接 return（FC 會自動把它留在原位）
+            if (info.event.extendedProps.isLeave) {
+              return
             }
+
+            // 班次事件：確認後刪除
+            if (confirm(`確定取消「${info.event.title}」的班次？`)) {
+              await deleteShift(info.event.id)
+            }
+            // else 什麼都不做 → 班次留在原位
           }}
           dateClick={handleFcDateClick}
           snapDuration="00:30:00"
@@ -1042,6 +1230,44 @@ function colorFor(id: string): string {
       </div>
       </div>
       </div>
+
+
+      {/* Month Shift Statistics Card (Task 3b) */}
+      {clinicEmployees.length > 0 && (
+        <div className="card rounded-xl g border p-4 shadow-card" style={{ marginTop: 16 }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: 16 }}>
+            {'📊 本月排班統計（' + new Date().getFullYear() + '年' + (new Date().getMonth()+1) + '月）'}
+          </h3>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #eee' }}>
+                  <th style={{ textAlign: 'left', padding: '8px 12px', color: '#888' }}>員工</th>
+                  <th style={{ textAlign: 'center', padding: '8px 12px', color: '#888' }}>已排天數</th>
+                  <th style={{ textAlign: 'center', padding: '8px 12px', color: '#888' }}>總工時</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clinicEmployees.map(emp => {
+                  const empShifts = monthShifts.filter(s => s.employeeId === emp.id)
+                  const days = new Set(empShifts.map(s => toHKDateStr(new Date(s.date)))).size
+                  const hours = empShifts.reduce((sum, s) => sum + shiftHours(s), 0)
+                  return (
+                    <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      <td style={{ padding: '8px 12px' }}>
+                        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', marginRight: 8, background: colorFor(emp.id) }}></span>
+                        {emp.user.name}
+                      </td>
+                      <td style={{ textAlign: 'center', padding: '8px 12px' }}>{days} 天</td>
+                      <td style={{ textAlign: 'center', padding: '8px 12px' }}>{hours.toFixed(1)} 小時</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Legend */}
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>

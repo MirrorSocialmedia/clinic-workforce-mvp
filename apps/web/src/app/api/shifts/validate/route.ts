@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { validateShift, validateShiftBatch, type ShiftInput } from '@/lib/shift-validator'
 import { toHKDateStr } from '@/lib/hk-date'
+import { parseShiftRuleConfig } from '@/lib/shift-rule-config'
 
 // ============================================================
 // POST /api/shifts/validate — validate shift against rules
@@ -16,6 +17,19 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { shift, shifts, mode = 'single' } = body
+
+    // Fetch clinic shift rule config
+    let clinicRules: Parameters<typeof validateShift>[2]
+    const clinicId = mode === 'batch' && shifts?.length ? shifts[0]?.clinicId : shift?.clinicId
+    if (clinicId) {
+      const clinic = await prisma.clinic.findUnique({
+        where: { id: clinicId },
+        select: { config: true },
+      })
+      if (clinic?.config) {
+        clinicRules = parseShiftRuleConfig(clinic.config)
+      }
+    }
 
     if (mode === 'batch' && shifts && Array.isArray(shifts)) {
       const existingShifts = await prisma.shift.findMany({
@@ -38,7 +52,7 @@ export async function POST(req: NextRequest) {
         role: s.role || undefined,
       }))
 
-      const result = await validateShiftBatch(newInputs, existingInputs)
+      const result = await validateShiftBatch(newInputs, existingInputs, clinicRules)
       return NextResponse.json(result)
     } else {
       if (!shift) {
@@ -66,7 +80,7 @@ export async function POST(req: NextRequest) {
         role: shift.role || undefined, status: shift.status,
       }
 
-      const result = await validateShift(shiftInput, existingInputs)
+      const result = await validateShift(shiftInput, existingInputs, clinicRules)
       return NextResponse.json(result)
     }
   } catch (error) {

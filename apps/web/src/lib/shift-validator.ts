@@ -6,6 +6,8 @@
 import shiftRules from './shift-rules.json'
 
 // Types
+import type { ShiftRuleConfig } from './shift-rule-config'
+
 interface ShiftInput {
   id?: string
   employeeId: string
@@ -102,14 +104,17 @@ function getEffectiveRule(key: string, clinicId: string, defaultVal: any): any {
  */
 function checkCollisions(
   newShift: ShiftInput,
-  existingShifts: ShiftInput[]
+  existingShifts: ShiftInput[],
+  rules?: ShiftRuleConfig
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
-  const rules = shiftRules.conflict_rules
+  const conflictRules = shiftRules.conflict_rules
 
-  if (!rules?.collision_check) return issues
+  // Overlap check respects enabled flag; if disabled, skip collision check entirely
+  if (!rules?.overlapCheck && rules?.overlapCheck !== undefined) return issues
+  if (!conflictRules?.collision_check) return issues
 
-  const allowOverlap = rules.allow_overlap_minutes || 0
+  const allowOverlap = conflictRules.allow_overlap_minutes || 0
 
   for (const existing of existingShifts) {
     if (existing.employeeId !== newShift.employeeId) continue
@@ -193,14 +198,18 @@ function checkMinStaff(
  */
 function checkConsecutiveHours(
   newShift: ShiftInput,
-  existingShifts: ShiftInput[]
+  existingShifts: ShiftInput[],
+  rules?: ShiftRuleConfig
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
+
+  // Respect enabled flag
+  if (!rules?.maxConsecutiveEnabled && rules?.maxConsecutiveEnabled !== undefined) return issues
 
   const maxConsecutive = getEffectiveRule(
     'max_consecutive_hours',
     newShift.clinicId,
-    shiftRules.working_hour_rules?.max_consecutive_hours || 12
+    rules?.maxConsecutiveHours ?? shiftRules.working_hour_rules?.max_consecutive_hours ?? 12
   )
 
   // Get all shifts for this employee in the same date range (±2 days)
@@ -261,14 +270,18 @@ function checkConsecutiveHours(
  */
 function checkRestBetweenShifts(
   newShift: ShiftInput,
-  existingShifts: ShiftInput[]
+  existingShifts: ShiftInput[],
+  rules?: ShiftRuleConfig
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
+
+  // Respect enabled flag
+  if (!rules?.minRestEnabled && rules?.minRestEnabled !== undefined) return issues
 
   const minRest = getEffectiveRule(
     'min_rest_between_shifts',
     newShift.clinicId,
-    shiftRules.working_hour_rules?.min_rest_between_shifts || 8
+    rules?.minRestHours ?? shiftRules.working_hour_rules?.min_rest_between_shifts ?? 8
   )
 
   // Get adjacent shifts for this employee
@@ -314,11 +327,19 @@ function checkRestBetweenShifts(
  */
 function checkMaxDailyHours(
   newShift: ShiftInput,
-  existingShifts: ShiftInput[]
+  existingShifts: ShiftInput[],
+  rules?: ShiftRuleConfig
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
 
-  const maxDaily = shiftRules.working_hour_rules?.max_daily_hours || 12
+  // Respect enabled flag: if disabled, skip; if enabled and exceeded → warning (not error)
+  if (!rules?.maxDailyHoursEnabled && rules?.maxDailyHoursEnabled !== undefined) return issues
+
+  const maxDaily = getEffectiveRule(
+    'max_daily_hours',
+    newShift.clinicId,
+    rules?.maxDailyHours ?? shiftRules.working_hour_rules?.max_daily_hours ?? 12
+  )
 
   // Get all shifts for this employee on this date
   const dailyShifts = existingShifts
@@ -332,7 +353,7 @@ function checkMaxDailyHours(
 
   if (totalHours > maxDaily) {
     issues.push({
-      type: 'error',
+      type: 'warning',
       rule: 'max_daily_hours',
       message: `單日工時超標: ${newShift.employeeId} 在 ${newShift.date} 總工時 ${totalHours.toFixed(1)} 小時，超過上限 ${maxDaily} 小時`,
       employeeId: newShift.employeeId,
@@ -345,20 +366,24 @@ function checkMaxDailyHours(
 /**
  * Check mandatory breaks
  */
-function checkMandatoryBreaks(newShift: ShiftInput): ValidationIssue[] {
+function checkMandatoryBreaks(newShift: ShiftInput, rules?: ShiftRuleConfig): ValidationIssue[] {
   const issues: ValidationIssue[] = []
+
+  // Respect enabled flag for long shift / mandatory break
+  if (!rules?.longShiftEnabled && rules?.longShiftEnabled !== undefined) return issues
 
   const breakRules = shiftRules.break_rules
   if (!breakRules) return issues
 
+  const threshold = rules?.longShiftThreshold ?? breakRules.mandatory_break_after_hours
   const shiftHours = getShiftHours(newShift.startTime, newShift.endTime)
 
-  if (shiftHours >= breakRules.mandatory_break_after_hours) {
+  if (shiftHours >= threshold) {
     // For MVP we just warn — actual break tracking requires punch records
     issues.push({
       type: 'warning',
       rule: 'mandatory_break',
-      message: `休息提醒: 班次工時 ${shiftHours.toFixed(1)} 小時，超過 ${breakRules.mandatory_break_after_hours} 小時需安排 ${breakRules.minimum_break_minutes} 分鐘休息`,
+      message: `休息提醒: 班次工時 ${shiftHours.toFixed(1)} 小時，超過 ${threshold} 小時需安排 ${rules?.longShiftBreakMin ?? breakRules.minimum_break_minutes} 分鐘休息`,
       shiftId: newShift.id,
     })
   }
@@ -375,17 +400,18 @@ function checkMandatoryBreaks(newShift: ShiftInput): ValidationIssue[] {
  */
 export async function validateShift(
   newShift: ShiftInput,
-  existingShifts: ShiftInput[]
+  existingShifts: ShiftInput[],
+  rules?: ShiftRuleConfig
 ): Promise<ValidationResult> {
   const errors: ValidationIssue[] = []
   const warnings: ValidationIssue[] = []
 
   // Run all checks
-  const collisionIssues = checkCollisions(newShift, existingShifts)
-  const dailyHoursIssues = checkMaxDailyHours(newShift, existingShifts)
-  const consecutiveIssues = checkConsecutiveHours(newShift, existingShifts)
-  const restIssues = checkRestBetweenShifts(newShift, existingShifts)
-  const breakIssues = checkMandatoryBreaks(newShift)
+  const collisionIssues = checkCollisions(newShift, existingShifts, rules)
+  const dailyHoursIssues = checkMaxDailyHours(newShift, existingShifts, rules)
+  const consecutiveIssues = checkConsecutiveHours(newShift, existingShifts, rules)
+  const restIssues = checkRestBetweenShifts(newShift, existingShifts, rules)
+  const breakIssues = checkMandatoryBreaks(newShift, rules)
 
   for (const issue of [
     ...collisionIssues,
@@ -430,7 +456,8 @@ export async function validateClinicStaff(
  */
 export async function validateShiftBatch(
   newShifts: ShiftInput[],
-  existingShifts: ShiftInput[]
+  existingShifts: ShiftInput[],
+  rules?: ShiftRuleConfig
 ): Promise<ValidationResult> {
   const errors: ValidationIssue[] = []
   const warnings: ValidationIssue[] = []
@@ -438,7 +465,7 @@ export async function validateShiftBatch(
   const allShifts = [...existingShifts, ...newShifts]
 
   for (const shift of newShifts) {
-    const result = await validateShift(shift, allShifts)
+    const result = await validateShift(shift, allShifts, rules)
     errors.push(...result.errors)
     warnings.push(...result.warnings)
   }
@@ -473,3 +500,4 @@ function formatTime(isoString: string): string {
 // Export rules for reference in UI
 export const getShiftRules = () => shiftRules
 export type { ValidationResult, ValidationIssue, ShiftInput }
+export { type ShiftRuleConfig } from './shift-rule-config'
