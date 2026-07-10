@@ -168,6 +168,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [ruleId, setRuleId] = useState<string | undefined>(initialRuleId)
+  const [loadWarning, setLoadWarning] = useState('')
 
   // ── Load existing active rule on mount ──────────────────────────
   const loadExistingRule = useCallback(async () => {
@@ -201,6 +202,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
         const bt = PAY_TYPE_TO_BASE_TYPE[activeRule.payType] || 'monthly'
         setBaseType(bt)
         setConfig(buildDefaultConfig(bt))
+        setLoadWarning('此規則為舊格式，已載入預設值，請重新設定並儲存')
       }
 
       // Set effectiveFrom from existing rule
@@ -378,6 +380,12 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
             ×
           </button>
         </div>
+
+        {loadWarning && (
+          <div style={{ marginTop: 8, padding: '8px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 6, fontSize: 13, color: '#9a3412' }}>
+            ⚠️ {loadWarning}
+          </div>
+        )}
 
         {error && (
           <div

@@ -64,7 +64,7 @@ export async function POST(
         where: {
           employeeId: employee.id,
           isActive: true,
-          effectiveFrom: { lte: effectiveDate },
+          // 移除 effectiveFrom 條件 — 所有 active 規則一律停用
         },
         data: {
           isActive: false,

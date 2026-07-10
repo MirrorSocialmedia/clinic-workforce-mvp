@@ -697,6 +697,7 @@ export async function generatePayrollRun(
 
     // TODO: strict types
     const items: Array<any> = []
+    const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
     for (const emp of employees) {
       try {
         // Read employee pay rule to determine engine
@@ -714,12 +715,14 @@ export async function generatePayrollRun(
           // Safety check: if still old format, error instead of silently using old engine
           if (!config.base_type && !config.modifiers) {
             console.error(`Employee ${emp.id} still has old-format payRule! Run migrate-payrules.`)
+            skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
             continue
           }
           calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config)
         } else {
           // No rule at all → skip with warning
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
+          skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })
           continue
         }
 
@@ -770,7 +773,7 @@ export async function generatePayrollRun(
 
     const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
 
-    return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100 }
+    return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped }
   })
 
   return result

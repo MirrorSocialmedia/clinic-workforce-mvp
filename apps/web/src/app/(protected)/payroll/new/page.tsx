@@ -101,8 +101,14 @@ export default function NewPayrollPage() {
       if (previewRes.ok) {
         const previewData = await previewRes.json()
         const warnings = (previewData.items || []).filter((item: any) => item.error)
-        if (warnings.length > 0) {
-          setPrecheckWarnings(warnings)
+        const skipped = previewData.skipped || []
+        const allWarnings = [...warnings, ...skipped.map((s: any) => ({
+          employeeId: s.employeeId,
+          employeeName: s.name,
+          error: s.reason,
+        }))]
+        if (allWarnings.length > 0) {
+          setPrecheckWarnings(allWarnings)
           setShowPrecheckModal(true)
           return
         }
@@ -136,6 +142,14 @@ export default function NewPayrollPage() {
       }
 
       const data = await res.json()
+      if (data.skipped && data.skipped.length > 0) {
+        setPrecheckWarnings(data.skipped.map((s: any) => ({
+          employeeId: s.employeeId,
+          employeeName: s.name,
+          error: s.reason,
+        })))
+        setShowPrecheckModal(true)
+      }
       setResult(data)
     } catch (err: any) {
       setError(err.message || '生成失敗')

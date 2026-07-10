@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
 
     // Calculate payroll for each employee WITHOUT writing to DB
     const items = []
+    const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
     for (const emp of employees) {
       try {
         // Read employee pay rule to determine engine
@@ -56,11 +57,13 @@ export async function POST(req: NextRequest) {
           const config = JSON.parse(payRule.configJson)
           if (!config.base_type && !config.modifiers) {
             console.error(`Employee ${emp.id} still has old-format payRule!`)
+            skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
             continue
           }
           result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config)
         } else {
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
+          skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })
           continue
         }
 
@@ -95,6 +98,7 @@ export async function POST(req: NextRequest) {
       items,
       itemCount: items.length,
       totalPayable: Math.round(totalPayable * 100) / 100,
+      skipped,
     })
   } catch (err: any) {
     console.error('Payroll preview error:', err)
