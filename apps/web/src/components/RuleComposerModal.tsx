@@ -170,33 +170,25 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
   const [ruleId, setRuleId] = useState<string | undefined>(initialRuleId)
 
   // ── Load existing active rule on mount ──────────────────────────
-  useEffect(() => {
-    loadExistingRule()
-  }, [employeeId])
-
-  async function loadExistingRule() {
+  const loadExistingRule = useCallback(async () => {
     try {
-      const res = await fetch(`/api/employees/${employeeId}/pay-rules`, { credentials: 'include' })
+      const res = await fetch(`/api/employees/${employeeId}/pay-rules?t=${Date.now()}`, { credentials: 'include', cache: 'no-store' })
       const rules = await res.json()
       if (!Array.isArray(rules)) return
 
-      // Use the passed ruleId if valid, otherwise find active rule
-      let targetRule = initialRuleId
-        ? rules.find((r: any) => r.id === initialRuleId)
-        : rules.find((r: any) => r.isActive)
+      // Find active rule
+      const activeRule = rules.find((r: any) => r.isActive)
+      if (!activeRule) return
 
-      if (!targetRule) return
-
-      const ruleIdToUse = targetRule.id
-      setRuleId(ruleIdToUse)
+      setRuleId(activeRule.id)
 
       // Parse modular config from configJson
       let modularConfig: PayRuleConfigModular | null = null
-      if (targetRule.configJson) {
+      if (activeRule.configJson) {
         try {
-          modularConfig = typeof targetRule.configJson === 'string'
-            ? JSON.parse(targetRule.configJson)
-            : targetRule.configJson
+          modularConfig = typeof activeRule.configJson === 'string'
+            ? JSON.parse(activeRule.configJson)
+            : activeRule.configJson
         } catch { /* use defaults */ }
       }
 
@@ -206,14 +198,14 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
         setConfig({ ...modularConfig })
       } else {
         // Fallback: derive baseType from payType
-        const bt = PAY_TYPE_TO_BASE_TYPE[targetRule.payType] || 'monthly'
+        const bt = PAY_TYPE_TO_BASE_TYPE[activeRule.payType] || 'monthly'
         setBaseType(bt)
         setConfig(buildDefaultConfig(bt))
       }
 
       // Set effectiveFrom from existing rule
-      if (targetRule.effectiveFrom) {
-        const d = new Date(targetRule.effectiveFrom)
+      if (activeRule.effectiveFrom) {
+        const d = new Date(activeRule.effectiveFrom)
         const yyyy = d.getFullYear()
         const mm = String(d.getMonth() + 1).padStart(2, '0')
         const dd = String(d.getDate()).padStart(2, '0')
@@ -222,7 +214,11 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
     } catch (err) {
       console.error('Failed to load existing rule:', err)
     }
-  }
+  }, [employeeId])
+
+  useEffect(() => {
+    loadExistingRule()
+  }, [loadExistingRule])
 
   // Toggle modifier enable/disable by setting the modifier to undefined or restoring defaults
   const toggleModifier = useCallback(
