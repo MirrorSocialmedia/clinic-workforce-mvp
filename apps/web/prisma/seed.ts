@@ -16,7 +16,7 @@ const DEMO_CLINICS = [
 async function main() {
   console.log('🌱 Seeding database...')
 
-  // Clean existing data
+  // Clean existing data (order matters due to FK constraints)
   await prisma.auditLog.deleteMany()
   await prisma.notification.deleteMany()
   await prisma.leaveRequest.deleteMany()
@@ -24,12 +24,21 @@ async function main() {
   await prisma.leaveType.deleteMany()
   await prisma.hKPublicHoliday.deleteMany()
   await prisma.punchRecord.deleteMany()
+  await prisma.punchCorrection.deleteMany()
+  await prisma.shiftChangeRequest.deleteMany()
+  await prisma.payrollItem.deleteMany()
+  await prisma.payrollRun.deleteMany()
+  await prisma.consultationRevenue.deleteMany()
+  await prisma.timeBank.deleteMany()
   await prisma.shift.deleteMany()
+  await prisma.qRToken.deleteMany()
+  await prisma.dailyHash.deleteMany()
   await prisma.payRule.deleteMany()
   await prisma.employeeClinic.deleteMany()
   await prisma.userClinic.deleteMany()
   await prisma.employee.deleteMany()
   await prisma.user.deleteMany()
+  await prisma.shiftTemplate.deleteMany()
   await prisma.clinic.deleteMany()
 
   // Create clinics
@@ -42,6 +51,24 @@ async function main() {
     )
   )
   console.log(`  ✅ Created ${clinics.length} clinics`)
+
+  // Create shift templates
+  console.log('🕐 Creating shift templates...')
+  const templates = await Promise.all([
+    prisma.shiftTemplate.create({
+      data: { name: '早更', startHour: 9, startMinute: 0, endHour: 14, endMinute: 0, isDefault: true, isNightShift: false },
+    }),
+    prisma.shiftTemplate.create({
+      data: { name: '午更', startHour: 14, startMinute: 0, endHour: 18, endMinute: 0, isDefault: true, isNightShift: false },
+    }),
+    prisma.shiftTemplate.create({
+      data: { name: '全日', startHour: 9, startMinute: 0, endHour: 18, endMinute: 0, isDefault: true, isNightShift: false },
+    }),
+    prisma.shiftTemplate.create({
+      data: { name: '夜更', startHour: 22, startMinute: 0, endHour: 6, endMinute: 0, isDefault: false, isNightShift: true },
+    }),
+  ])
+  console.log(`  ✅ Created ${templates.length} shift templates`)
 
   // Hash password
   const hashedPassword = await bcrypt.hash('demo1234', 12)
@@ -157,6 +184,130 @@ async function main() {
   console.log(`    ACCOUNTANT:  91000003 / demo1234 (全部)`)
   console.log(`    EMPLOYEE:    91000004 / demo1234 (旺角診所)`)
 
+  // Employee-Clinic bindings
+  console.log('🔗 Creating employee-clinic bindings...')
+  const allEmployees = await prisma.employee.findMany()
+  // All employees to all clinics (simplified for demo)
+  const bindings = []
+  for (const emp of allEmployees) {
+    for (const clinic of clinics) {
+      bindings.push(prisma.employeeClinic.create({
+        data: { employeeId: emp.id, clinicId: clinic.id, isPrimary: true },
+      }))
+    }
+  }
+  await Promise.all(bindings)
+  console.log(`  ✅ Created ${bindings.length} employee-clinic bindings`)
+
+  // Pay rules (新格式 configJson)
+  console.log('💰 Creating pay rules...')
+  const allEmps = await prisma.employee.findMany({ include: { user: true } })
+  const ownerUserId = allEmps.find(e => e.user.role === 'OWNER')?.id
+
+  const payRuleConfigs = {
+    // 陳醫生 — 醫生薪酬（含拆帳）
+    '陳醫生 (Owner)': {
+      payType: 'SPLIT',
+      baseAmount: 8000,
+      configJson: JSON.stringify({
+        base_type: 'split',
+        base_salary: 8000,
+        split_ratio: 0.3,
+        modifiers: {
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
+          mpf: { enabled: true, rate: 0.05, min: 7100, max: 50000 },
+        },
+      }),
+    },
+    // 李經理 — 月薪制
+    '李經理': {
+      payType: 'MONTHLY',
+      baseAmount: 20000,
+      configJson: JSON.stringify({
+        base_type: 'monthly',
+        monthly_salary: 20000,
+        modifiers: {
+          attendance_bonus: {
+            amount: 800,
+            cancel_if: {
+              late_minutes_exceed: 30,
+              late_is_cumulative: true,
+              any_unplanned_leave: true,
+              any_absence: true,
+            },
+          },
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
+          mpf: { enabled: true, rate: 0.05, min: 7100, max: 50000 },
+        },
+      }),
+    },
+    // 張會計 — 月薪制
+    '張會計': {
+      payType: 'MONTHLY',
+      baseAmount: 18000,
+      configJson: JSON.stringify({
+        base_type: 'monthly',
+        monthly_salary: 18000,
+        modifiers: {
+          attendance_bonus: {
+            amount: 600,
+            cancel_if: {
+              late_minutes_exceed: 30,
+              late_is_cumulative: true,
+              any_unplanned_leave: true,
+              any_absence: true,
+            },
+          },
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
+          mpf: { enabled: true, rate: 0.05, min: 7100, max: 50000 },
+        },
+      }),
+    },
+    // 王護士 — 完整规则（月薪制）
+    '王護士': {
+      payType: 'MONTHLY',
+      baseAmount: 15000,
+      configJson: JSON.stringify({
+        base_type: 'monthly',
+        monthly_salary: 15000,
+        modifiers: {
+          attendance_bonus: {
+            amount: 500,
+            cancel_if: {
+              late_minutes_exceed: 30,
+              late_is_cumulative: true,
+              any_unplanned_leave: true,
+              any_absence: true,
+            },
+          },
+          overtime: { mode: 'time_off', hours_per_leave_day: 8 },
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
+          deduction: { basis: 'statutory' },
+          mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
+        },
+      }),
+    },
+  }
+
+  for (const emp of allEmps) {
+    const configName = emp.user.name
+    const config = payRuleConfigs[configName]
+    if (!config) continue
+
+    await prisma.payRule.create({
+      data: {
+        employeeId: emp.id,
+        payType: config.payType,
+        baseAmount: config.baseAmount,
+        configJson: config.configJson,
+        effectiveFrom: new Date('2026-07-01'),
+        isActive: true,
+        createdBy: ownerUserId || allEmps[0].id,
+      },
+    })
+  }
+  console.log(`  ✅ Created pay rules for ${Object.keys(payRuleConfigs).length} employees`)
+
   // Create leave types
   console.log('🏖️ Creating leave types...')
   const leaveTypes = await Promise.all([
@@ -182,7 +333,6 @@ async function main() {
   console.log(`  ✅ Created ${leaveTypes.length} leave types`)
 
   // Create leave balances for test employees
-  const allEmployees = await prisma.employee.findMany()
   const currentYear = new Date().getFullYear()
   for (const emp of allEmployees) {
     // Annual leave balance
