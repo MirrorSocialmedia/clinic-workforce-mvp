@@ -951,22 +951,58 @@ function colorFor(id: string): string {
                   </span>
                   {t.isDefault && <span style={{ fontSize: 10, color: '#1976d2', background: '#e3f2fd', padding: '1px 6px', borderRadius: 4 }}>預設</span>}
                   {!t.isDefault && (
-                    <button
-                      className="btn btn-sm"
-                      style={{ marginLeft: 'auto', background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb', fontSize: 11, padding: '2px 8px' }}
-                      onClick={async () => {
-                        if (!confirm(`確定刪除「${t.name}」模版？`)) return
-                        try {
-                          const res = await fetch(`/api/shifts/templates/${t.id}`, { method: 'DELETE', credentials: 'include' })
-                          if (res.ok) {
-                            await refreshAll()
-                          } else {
-                            const err = await res.json()
-                            alert(err.error || '刪除失敗')
-                          }
-                        } catch (e) { console.error('Delete template error:', e) }
-                      }}
-                    >刪除</button>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                      <button
+                        className="btn btn-sm"
+                        style={{ background: '#e3f2fd', color: '#1976d2', border: '1px solid #bbdefb', fontSize: 11, padding: '2px 8px' }}
+                        onClick={async () => {
+                          const newName = prompt('修改更次名稱：', t.name)
+                          if (newName === null || newName === t.name) return
+                          const newStart = prompt(`修改開始時間 (HH:mm)：`, `${String(t.startHour).padStart(2, '0')}:${String(t.startMinute).padStart(2, '0')}`)
+                          if (newStart === null) return
+                          const newEnd = prompt(`修改結束時間 (HH:mm)：`, `${String(t.endHour).padStart(2, '0')}:${String(t.endMinute).padStart(2, '0')}`)
+                          if (newEnd === null) return
+                          const [sh, sm] = newStart.split(':').map(Number)
+                          const [eh, em] = newEnd.split(':').map(Number)
+                          try {
+                            const res = await fetch(`/api/shifts/templates/${t.id}`, {
+                              method: 'PUT',
+                              credentials: 'include',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                name: newName,
+                                startHour: sh,
+                                startMinute: sm,
+                                endHour: eh,
+                                endMinute: em,
+                              }),
+                            })
+                            if (res.ok) {
+                              await refreshAll()
+                            } else {
+                              const err = await res.json()
+                              alert(err.error || '修改失敗')
+                            }
+                          } catch (e) { console.error('Edit template error:', e) }
+                        }}
+                      >編輯</button>
+                      <button
+                        className="btn btn-sm"
+                        style={{ background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb', fontSize: 11, padding: '2px 8px' }}
+                        onClick={async () => {
+                          if (!confirm(`確定刪除「${t.name}」模版？`)) return
+                          try {
+                            const res = await fetch(`/api/shifts/templates/${t.id}`, { method: 'DELETE', credentials: 'include' })
+                            if (res.ok) {
+                              await refreshAll()
+                            } else {
+                              const err = await res.json()
+                              alert(err.error || '刪除失敗')
+                            }
+                          } catch (e) { console.error('Delete template error:', e) }
+                        }}
+                      >刪除</button>
+                    </div>
                   )}
                 </div>
               ))}
