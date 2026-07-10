@@ -142,11 +142,26 @@ export async function POST(req: NextRequest) {
         }
 
         if (payType) {
+          // 如果前端沒送 configJson，自動生成新格式 modularConfig
+          const defaultModularConfig = {
+            base_type: payType === 'MONTHLY' ? 'monthly' : 'hourly',
+            ...(payType === 'MONTHLY' ? { monthly_salary: baseAmount ?? 50000 } : { hourly_rate: baseAmount ?? 180 }),
+            modifiers: {
+              working_days: {
+                basis: 'scheduled',
+                rest_days: [6, 0],
+                count_public_holidays: true,
+              },
+              deduction: { basis: 'statutory' },
+              mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
+            },
+          }
+
           empData.payRules = {
             create: {
               payType,
               baseAmount: baseAmount ?? null,
-              configJson: configJson || null,
+              configJson: configJson || JSON.stringify(defaultModularConfig),
               effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
               createdBy: session.userId,
             },

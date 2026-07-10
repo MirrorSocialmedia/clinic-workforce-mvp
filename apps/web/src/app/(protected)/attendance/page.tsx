@@ -326,7 +326,26 @@ export default function AttendancePage() {
                       <td className="p-3">{record.employee?.user?.name || record.employeeId}</td>
                       <td className="p-3">{record.clinic?.name || record.clinicId}</td>
                       <td className="p-3">
-                        {(() => { const et = effectiveTime(record); return <span>{et.hasCorrection ? <><span style={{ color: '#d97706', fontWeight: 500 }}>{et.display.split('（原')[0]}</span><span style={{ color: '#888', fontSize: 11 }}> {et.display.split('（原')[1]}</span></> : et.display}</span> })()}
+                        {(() => {
+                          const et = effectiveTime(record);
+                          if (et.hasCorrection) {
+                            const [corrected, original] = et.display.split('（原');
+                            return (
+                              <span>
+                                <span style={{ color: '#d97706', fontWeight: 500 }}>{corrected}</span>
+                                <span style={{ marginLeft: 4, fontSize: 10, color: '#f59e0b', background: '#fef3c7', padding: '1px 5px', borderRadius: 4 }}>已修正</span>
+                                <details style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                                  <summary style={{ cursor: 'pointer' }}>原始記錄</summary>
+                                  <span>{original}</span>
+                                  {record.corrections?.[0]?.reason && (
+                                    <div style={{ marginTop: 2 }}>原因：{record.corrections[0].reason}</div>
+                                  )}
+                                </details>
+                              </span>
+                            );
+                          }
+                          return <span>{et.display}</span>;
+                        })()}
                       </td>
                       <td className="p-3">
                         {record.punchType === 'CLOCK_IN' ? (
@@ -345,7 +364,12 @@ export default function AttendancePage() {
                       <td className="p-3">{record.tokenValid === true ? '✅' : record.tokenValid === false ? '❌' : '—'}</td>
                       <td className="p-3">
                         {record.corrections && record.corrections.length > 0 ? (
-                          <span className="text-amber-600 text-xs">{record.corrections.length} 筆修正</span>
+                          <span className="text-amber-600 text-xs">
+                            {record.corrections.length} 筆修正
+                            {record.corrections.some((c: any) => c.status === 'APPROVED') && (
+                              <span style={{ marginLeft: 4, color: '#10b981' }}>✓ 已生效</span>
+                            )}
+                          </span>
                         ) : (<span className="text-emerald-600 text-xs">✓ 無修正</span>)}
                       </td>
                       <td className="p-3">
