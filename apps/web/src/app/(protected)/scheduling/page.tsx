@@ -1284,7 +1284,7 @@ function getShiftColor(shift: Shift): string {
           {selectedEmployeeId && canManage && (
             <button
               onClick={async () => {
-                if (!confirm('確定清空該員工當週所有排班及假期？')) return
+                if (!confirm('確定清空當週排班？')) return
                 const { startDate, endDate } = getDateRange()
                 // 清排班
                 const weekShifts = shifts.filter(s =>
@@ -1400,7 +1400,7 @@ function getShiftColor(shift: Shift): string {
 
         {/* RIGHT COLUMN: Calendar */}
         <div id="fc-section" style={{ minWidth: 0 }}>
-          {/* Clinic selector + stats summary above calendar */}
+          {/* Clinic selector */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
             <select
               value={selectedClinicId || ''}
@@ -1411,19 +1411,25 @@ function getShiftColor(shift: Shift): string {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
-            {/* Employee stats next to clinic selector */}
-            {selectedEmployeeId && selectedEmpStats ? (
-              <div style={{ display: 'flex', gap: 12, fontSize: 13, color: '#666' }}>
-                <span>{selectedEmpStats.name}: {selectedEmpStats.days} 天班</span>
-                <span>·</span>
-                <span>{selectedEmpStats.hours.toFixed(1)} 小時</span>
-              </div>
-            ) : (
-              <span style={{ fontSize: 13, color: '#999' }}>請先選取員工</span>
-            )}
             {canManage && (
               <span style={{ fontSize: 11, color: '#aaa' }}>拖更次/員工到日曆為此店排班</span>
             )}
+          </div>
+
+          {/* Employee stats as standalone card */}
+          <div style={{
+            marginBottom: 8,
+            padding: '8px 14px',
+            borderRadius: 8,
+            border: '1px solid #e5e7eb',
+            background: '#f0f4ff',
+            fontSize: 13,
+            color: selectedEmpStats ? '#374151' : '#9ca3af',
+          }}>
+            {selectedEmpStats
+              ? <span>{selectedEmpStats.name}: {selectedEmpStats.days} 天班 · {selectedEmpStats.hours.toFixed(1)} 小時</span>
+              : <span>請先選取員工</span>
+            }
           </div>
 
           <div className="card rounded-xl g border p-4 shadow-card">

@@ -43,6 +43,7 @@ export default function AccountsPage() {
     assignEmployee: true,
     annualLeave: 12,  // 預設年假額度
     sickLeave: 12,     // 預設病假額度
+    employeeId: null as string | null,
   })
 
   const fetchData = useCallback(async () => {
@@ -104,7 +105,7 @@ export default function AccountsPage() {
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
       clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true,
-      annualLeave: 12, sickLeave: 12 })
+      annualLeave: 12, sickLeave: 12, employeeId: null })
     setShowForm(false); setEditingId(null)
   }
 
@@ -113,7 +114,7 @@ export default function AccountsPage() {
       password: '', role: acc.role, clinicIds: acc.clinics?.map(c => c.id) || [],
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
       baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
-      annualLeave: 12, sickLeave: 12 })
+      annualLeave: 12, sickLeave: 12, employeeId: acc.employeeId })
     setEditingId(acc.id); setShowForm(true)
   }
 
@@ -280,9 +281,17 @@ export default function AccountsPage() {
                 </div>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-              <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={resetForm}>取消</button>
-              <button type="submit" className="btn btn-primary">{editingId ? '保存' : '新增'}</button>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, flexWrap: 'wrap' }}>
+              {editingId && form.employeeId && (
+                <button type="button" className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }}
+                  onClick={() => { setPayRuleEmployeeId(form.employeeId!); setShowPayRuleModal(true) }}>
+                  <span className="flex items-center gap-1"><Wallet size={14} /> 薪酬規則</span>
+                </button>
+              )}
+              <div style={{ marginLeft: 'auto' }}>
+                <button type="button" className="btn" style={{ background: '#eee', color: '#333', marginRight: 8 }} onClick={resetForm}>取消</button>
+                <button type="submit" className="btn btn-primary">{editingId ? '保存' : '新增'}</button>
+              </div>
             </div>
           </form>
         </div>
