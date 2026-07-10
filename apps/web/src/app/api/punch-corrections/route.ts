@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { date, punchType, reason, clinicId, employeeId: requestBodyEmployeeId } = body
+      const { date, punchType, reason, clinicId, employeeId: requestBodyEmployeeId, punchRecordId: requestBodyPunchRecordId } = body
 
       // Validate
       if (!date || !punchType || !clinicId) {
@@ -76,7 +76,8 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Check if there's already an existing punch record for this date+type at this clinic
+      // Check if there's already an existing punch record for this employee+clinic on this date
+      // If found, link correction to it; otherwise correction will reference null
       const correctedDate = new Date(date)
       correctedDate.setHours(0, 0, 0, 0)
       const endOfDay = new Date(date)
@@ -93,13 +94,9 @@ export async function POST(req: NextRequest) {
       })
 
       if (existing) {
-        return NextResponse.json(
-          { error: '該日該類型已有打卡記錄' },
-          { status: 409 }
-        )
+        // Existing record found — link correction to it (correction semantics: overlay, don't create duplicate)
+        punchRecordId = existing.id
       }
-
-      punchRecordId = null
 
       // Transaction: create correction + punchRecord (if no original exists)
       const correction = await prisma.$transaction(async (tx) => {

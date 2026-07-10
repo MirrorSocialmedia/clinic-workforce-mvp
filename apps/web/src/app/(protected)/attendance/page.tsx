@@ -90,6 +90,23 @@ export default function AttendancePage() {
   const [selectedDate, setSelectedDate] = useState('')
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
 
+  // Helper: get effective time (latest approved correction or original punch time)
+  function effectiveTime(record: PunchRecord): { display: string; hasCorrection: boolean } {
+    if (!record.corrections || record.corrections.length === 0) {
+      return { display: new Date(record.punchTime).toLocaleString('zh-HK'), hasCorrection: false }
+    }
+    const approved = record.corrections
+      .filter((c: any) => c.status === 'APPROVED')
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    if (approved.length === 0) {
+      return { display: new Date(record.punchTime).toLocaleString('zh-HK'), hasCorrection: false }
+    }
+    const latest = approved[0]
+    const correctedStr = new Date(latest.correctedTime).toLocaleString('zh-HK')
+    const originalStr = new Date(record.punchTime).toLocaleString('zh-HK')
+    return { display: `${correctedStr}（原 ${originalStr}）`, hasCorrection: true }
+  }
+
   // Shared data loading
   const fetchUserData = async () => {
     try {
@@ -308,7 +325,9 @@ export default function AttendancePage() {
                     <tr key={record.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">{record.employee?.user?.name || record.employeeId}</td>
                       <td className="p-3">{record.clinic?.name || record.clinicId}</td>
-                      <td className="p-3">{new Date(record.punchTime).toLocaleString('zh-HK')}</td>
+                      <td className="p-3">
+                        {(() => { const et = effectiveTime(record); return <span>{et.hasCorrection ? <><span style={{ color: '#d97706', fontWeight: 500 }}>{et.display.split('（原')[0]}</span><span style={{ color: '#888', fontSize: 11 }}> {et.display.split('（原')[1]}</span></> : et.display}</span> })()}
+                      </td>
                       <td className="p-3">
                         {record.punchType === 'CLOCK_IN' ? (
                           <span className="px-2 py-1 text-[11px] rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-medium">

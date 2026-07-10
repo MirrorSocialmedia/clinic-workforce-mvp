@@ -672,26 +672,24 @@ function getShiftColor(shift: Shift): string {
   // FullCalendar Event Handlers
   // ============================================================
   const handleFcEventClick = async (info: any) => {
-    // Leave event: click to delete
+    // Leave event: click to delete without confirm
     if (info.event.extendedProps.isLeave) {
       if (canManage) {
-        if (confirm(`取消 ${info.event.title} 的假期？`)) {
-          const lr = info.event.extendedProps.leaveRequest
-          const leaveId = lr?.id || info.event.id.replace('leave-', '')
-          try {
-            const res = await fetch(`/api/leave-requests/${leaveId}`, {
-              method: 'DELETE',
-              credentials: 'include',
-            })
-            if (res.ok) {
-              await refreshAll()
-            } else {
-              const err = await res.json()
-              alert(err.error || '刪除假期失敗')
-            }
-          } catch (e) {
-            console.error('Delete leave error:', e)
+        const lr = info.event.extendedProps.leaveRequest
+        const leaveId = lr?.id || info.event.id.replace('leave-', '')
+        try {
+          const res = await fetch(`/api/leave-requests/${leaveId}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          if (res.ok) {
+            await refreshAll()
+          } else {
+            const err = await res.json()
+            alert(err.error || '刪除假期失敗')
           }
+        } catch (e) {
+          console.error('Delete leave error:', e)
         }
       }
       return
@@ -1016,8 +1014,7 @@ function getShiftColor(shift: Shift): string {
                     {t.isNightShift ? ' (夜更)' : ''}
                   </span>
                   {t.isDefault && <span style={{ fontSize: 10, color: '#1976d2', background: '#e3f2fd', padding: '1px 6px', borderRadius: 4 }}>預設</span>}
-                  {!t.isDefault && (
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                       <button
                         className="btn btn-sm"
                         style={{ background: '#e3f2fd', color: '#1976d2', border: '1px solid #bbdefb', fontSize: 11, padding: '2px 8px' }}
@@ -1069,7 +1066,6 @@ function getShiftColor(shift: Shift): string {
                         }}
                       >刪除</button>
                     </div>
-                  )}
                 </div>
               ))}
               {/* Add new template */}
@@ -1190,14 +1186,14 @@ function getShiftColor(shift: Shift): string {
                       <td key={dayIdx} style={{
                         padding: '4px 6px', textAlign: 'center',
                         cursor: hasShift ? 'pointer' : 'default',
-                        background: hasShift ? '' : hasLeave ? '' : (dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'),
+                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
                         transition: 'background 0.15s',
                       }}
                       onMouseEnter={e => {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
                       }}
                       onMouseLeave={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
                       }}
                       onClick={() => {
                         if (hasShift) {
@@ -1218,9 +1214,9 @@ function getShiftColor(shift: Shift): string {
                             whiteSpace: 'nowrap',
                           }}>{getShiftCode(s)}</div>
                         )) : hasLeave ? (
-                          <span style={{ fontSize: 11, color: '#4a4a4a', fontWeight: 600 }}>休</span>
+                          <span style={{ fontSize: 11, color: '#4a4a4a', fontWeight: 600 }}>假</span>
                         ) : (
-                          <span style={{ color: '#d1d5db' }}>&middot;</span>
+                          <span style={{ fontSize: 11, color: '#999', fontWeight: 500 }}>R</span>
                         )}
                       </td>
                     )
@@ -1291,23 +1287,36 @@ function getShiftColor(shift: Shift): string {
               </div>
             ))}
           </div>
-          {/* Clear weekly shifts button */}
+          {/* Clear weekly shifts + leave button */}
           {selectedEmployeeId && canManage && (
             <button
               onClick={async () => {
-                if (!confirm('確定清空該員工當週所有排班？')) return
+                if (!confirm('確定清空該員工當週所有排班及假期？')) return
                 const { startDate, endDate } = getDateRange()
+                // 清排班
                 const weekShifts = shifts.filter(s =>
                   s.employeeId === selectedEmployeeId &&
                   s.date >= startDate &&
                   s.date <= endDate
                 )
-                if (weekShifts.length === 0) {
-                  alert('該員工當週沒有排班')
+                // 清假期
+                const weekLeaves = leaveRequests.filter(lr =>
+                  lr.employeeId === selectedEmployeeId &&
+                  lr.startDate >= startDate &&
+                  (lr.endDate || lr.startDate) <= endDate
+                )
+                if (weekShifts.length === 0 && weekLeaves.length === 0) {
+                  alert('該員工當週沒有排班及假期')
                   return
                 }
                 for (const shift of weekShifts) {
                   await fetch('/api/shifts/' + shift.id, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                  })
+                }
+                for (const l of weekLeaves) {
+                  await fetch('/api/leave-requests/' + l.id, {
                     method: 'DELETE',
                     credentials: 'include',
                   })
@@ -1320,7 +1329,7 @@ function getShiftColor(shift: Shift): string {
                 borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
               }}
             >
-              清空當週排班
+              清空當週排班及假期
             </button>
           )}
         </div>
@@ -1398,8 +1407,8 @@ function getShiftColor(shift: Shift): string {
 
         {/* RIGHT COLUMN: Calendar */}
         <div id="fc-section" style={{ minWidth: 0 }}>
-          {/* Clinic selector above calendar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+          {/* Clinic selector + stats summary above calendar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
             <select
               value={selectedClinicId || ''}
               onChange={e => setSelectedClinicId(e.target.value)}
@@ -1409,6 +1418,21 @@ function getShiftColor(shift: Shift): string {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
+            {selectedClinicId && (() => {
+              const clinicShifts = clinicFilteredShifts
+              const days = new Set(clinicShifts.map(s => s.date)).size
+              const hours = clinicShifts.reduce((sum, s) => sum + shiftHours(s), 0)
+              const people = new Set(clinicShifts.map(s => s.employeeId)).size
+              return (
+                <div style={{ display: 'flex', gap: 12, fontSize: 13, color: '#666' }}>
+                  <span>本店{viewMode === 'week' ? '本週' : '本月'}：{days} 天班</span>
+                  <span>·</span>
+                  <span>{Math.round(hours * 10) / 10} 小時</span>
+                  <span>·</span>
+                  <span>{people} 人</span>
+                </div>
+              )
+            })()}
             {canManage && (
               <span style={{ fontSize: 11, color: '#aaa' }}>拖更次/員工到日曆為此店排班</span>
             )}
@@ -1558,25 +1582,23 @@ function getShiftColor(shift: Shift): string {
                   && clientY >= dzRect.top && clientY <= dzRect.bottom
                 if (!onDropZone) return
 
-                // Leave event: confirm and delete
+                // Leave event: delete directly without confirm
                 if (info.event.extendedProps.isLeave) {
-                  if (confirm(`確定取消假期？`)) {
-                    const lr = info.event.extendedProps.leaveRequest
-                    const leaveId = lr?.id || info.event.id.replace('leave-', '')
-                    try {
-                      const res = await fetch(`/api/leave-requests/${leaveId}`, {
-                        method: 'DELETE',
-                        credentials: 'include',
-                      })
-                      if (res.ok) {
-                        await refreshAll()
-                      } else {
-                        const err = await res.json()
-                        alert(err.error || '刪除假期失敗')
-                      }
-                    } catch (e) {
-                      console.error('Delete leave error:', e)
+                  const lr = info.event.extendedProps.leaveRequest
+                  const leaveId = lr?.id || info.event.id.replace('leave-', '')
+                  try {
+                    const res = await fetch(`/api/leave-requests/${leaveId}`, {
+                      method: 'DELETE',
+                      credentials: 'include',
+                    })
+                    if (res.ok) {
+                      await refreshAll()
+                    } else {
+                      const err = await res.json()
+                      alert(err.error || '刪除假期失敗')
                     }
+                  } catch (e) {
+                    console.error('Delete leave error:', e)
                   }
                   return
                 }
@@ -1641,43 +1663,6 @@ function getShiftColor(shift: Shift): string {
           </div>
         </div>
       </div>
-
-      {/* Month Shift Statistics Card (Task 3b) */}
-      {clinicEmployees.length > 0 && (
-        <div className="card rounded-xl g border p-4 shadow-card" style={{ marginTop: 16 }}>
-          <h3 style={{ margin: '0 0 12px 0', fontSize: 16 }}>
-            <div className="flex items-center gap-2"><BarChart3 size={16} /> 本月排班統計（{new Date().getFullYear()}年{new Date().getMonth()+1}月）</div>
-          </h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: '2px solid #eee' }}>
-                  <th style={{ textAlign: 'left', padding: '8px 12px', color: '#888' }}>員工</th>
-                  <th style={{ textAlign: 'center', padding: '8px 12px', color: '#888' }}>已排天數</th>
-                  <th style={{ textAlign: 'center', padding: '8px 12px', color: '#888' }}>總工時</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clinicEmployees.map(emp => {
-                  const empShifts = monthShifts.filter(s => s.employeeId === emp.id)
-                  const days = new Set(empShifts.map(s => toHKDateStr(new Date(s.date)))).size
-                  const hours = empShifts.reduce((sum, s) => sum + shiftHours(s), 0)
-                  return (
-                    <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{ padding: '8px 12px' }}>
-                        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', marginRight: 8, background: colorFor(emp.id) }}></span>
-                        {emp.user.name}
-                      </td>
-                      <td style={{ textAlign: 'center', padding: '8px 12px' }}>{days} 天</td>
-                      <td style={{ textAlign: 'center', padding: '8px 12px' }}>{hours.toFixed(1)} 小時</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* Legend */}
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>
