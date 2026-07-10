@@ -618,162 +618,6 @@ function calculateSplit(
   }
 }
 
-// ------------------------------------------------------------------
-// Main Calculate Function
-// ------------------------------------------------------------------
-
-async function calculateEmployeePayroll(
-  employeeId: string,
-  periodMonth: Date,
-  clinicIdFilter: string | null
-): Promise<PayrollCalculationResult> {
-  const { start: monthStart, end: monthEnd } = getMonthRange(periodMonth)
-  const year = periodMonth.getFullYear()
-  const month = periodMonth.getMonth()
-
-  const payData = await getEmployeePayData(employeeId, clinicIdFilter)
-
-  const allPunchDays = await calculateWorkedHours(
-    employeeId,
-    clinicIdFilter ? [clinicIdFilter] : (payData.clinicIds.length > 0 ? payData.clinicIds : null),
-    monthStart,
-    monthEnd
-  )
-
-  // FIX #4: Aggregate daily hours across clinics
-  const dailyEntries = aggregateDailyHours(allPunchDays)
-
-  let totalWorkedHours = 0
-  const attendanceDaysSet = new Set<string>()
-  const partialDays: string[] = []
-
-  for (const pd of allPunchDays) {
-    totalWorkedHours += pd.hours
-    if (pd.hours > 0 || pd.isPartial) attendanceDaysSet.add(pd.date)
-    if (pd.isPartial) partialDays.push(pd.date)
-  }
-
-  const actualAttendanceDays = attendanceDaysSet.size
-
-  const { totalDays: approvedLeaveDays, byType: leaveByType } =
-    await getApprovedLeaveDays(employeeId, monthStart, monthEnd)
-
-  const paidLeaveDays = leaveByType.reduce((sum, lt) => sum + (lt.isPaid ? lt.days : 0), 0)
-
-  const publicHolidays = await getPublicHolidayDays(monthStart, monthEnd)
-  const publicHolidayDays = publicHolidays.length
-
-  const workingDays = countWorkingDays(year, month)
-
-  const primaryRule = payData.payRules[0]
-  if (!primaryRule) {
-    return {
-      employeeId,
-      employeeName: payData.employeeName,
-      payType: 'MONTHLY' as PayType,
-      workedHours: totalWorkedHours,
-      otHours: 0,
-      leaveDays: approvedLeaveDays,
-      absentDays: 0,
-      basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
-      detail: { payType: 'MONTHLY' as PayType, error: 'No active pay rule found', partialDays },
-    }
-  }
-
-  const config = primaryRule.config
-  const payType = primaryRule.payType
-
-  let result: Partial<PayrollCalculationResult>
-
-  switch (payType) {
-    case 'MONTHLY': {
-      const otThreshold = getOtThreshold(config, 'MONTHLY')
-      const calc = calculateMonthly(
-        config, workingDays, actualAttendanceDays,
-        approvedLeaveDays, paidLeaveDays, publicHolidayDays,
-        totalWorkedHours, otThreshold
-      )
-      result = {
-        ...calc,
-        totalPayable: Math.max(0, calc.basePay - calc.deduction + calc.otPay),
-        detail: { ...calc.detail, partialDays },
-      }
-      break
-    }
-
-    case 'HOURLY': {
-      const otThresholdDaily = getOtThreshold(config, 'HOURLY')
-      const calc = calculateHourly(config, dailyEntries, otThresholdDaily)
-      result = {
-        ...calc,
-        absentDays: 0,
-        totalPayable: calc.basePay + calc.otPay,
-        detail: { ...calc.detail, partialDays },
-      }
-      break
-    }
-
-    case 'DAILY': {
-      const otThresholdDaily = getOtThreshold(config, 'DAILY')
-      const calc = calculateDaily(config, actualAttendanceDays, dailyEntries, otThresholdDaily)
-      result = {
-        ...calc,
-        absentDays: 0,
-        totalPayable: calc.basePay + calc.otPay,
-        detail: { ...calc.detail, partialDays },
-      }
-      break
-    }
-
-    case 'SPLIT': {
-      // FIX #8: Use actual consultation revenue
-      const consultationFees = await getConsultationRevenue(
-        employeeId, clinicIdFilter, periodMonth
-      )
-      const basePay = config.monthly_salary ?? 0
-      const calc = calculateSplit(config, basePay, consultationFees)
-
-      let deduction = 0
-      if (basePay > 0) {
-        const unpaidLeaveDays = approvedLeaveDays - paidLeaveDays
-        const absentDays = Math.max(0, workingDays - actualAttendanceDays - unpaidLeaveDays - publicHolidayDays)
-        deduction = absentDays * statutoryDailyWage(basePay) * (config.deduction_rate ?? 1)
-      }
-
-      result = {
-        ...calc,
-        deduction,
-        absentDays: 0,
-        otHours: 0,
-        totalPayable: calc.basePay - deduction + calc.splitPay,
-        detail: { ...calc.detail, partialDays },
-      }
-      break
-    }
-
-    default:
-      result = {
-        basePay: 0, otPay: 0, splitPay: null, deduction: 0, absentDays: 0,
-        totalPayable: 0, detail: { payType, error: `Unknown pay type: ${payType}` } as PayrollCalcDetail,
-      }
-  }
-
-  return {
-    employeeId,
-    employeeName: payData.employeeName,
-    payType,
-    workedHours: Math.round(totalWorkedHours * 100) / 100,
-    otHours: Math.round((result.otHours ?? 0) * 100) / 100,
-    leaveDays: Math.round(approvedLeaveDays * 100) / 100,
-    absentDays: Math.round((result.absentDays ?? 0) * 100) / 100,
-    basePay: Math.round((result.basePay ?? 0) * 100) / 100,
-    otPay: Math.round((result.otPay ?? 0) * 100) / 100,
-    splitPay: result.splitPay != null ? Math.round(result.splitPay * 100) / 100 : null,
-    deduction: Math.round((result.deduction ?? 0) * 100) / 100,
-    totalPayable: Math.round((result.totalPayable ?? 0) * 100) / 100,
-    detail: result.detail || ({} as PayrollCalcDetail),
-  }
-}
 
 // ------------------------------------------------------------------
 // Full Payroll Run
@@ -867,16 +711,16 @@ export async function generatePayrollRun(
         let calcResult
         if (payRule?.configJson) {
           const config = JSON.parse(payRule.configJson)
-          if (config.base_type || config.modifiers) {
-            // New modular format → use new engine
-            calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config)
-          } else {
-            // Legacy format → use old engine (backward compat)
-            calcResult = await calculateEmployeePayroll(emp.id, monthDate, clinicId)
+          // Safety check: if still old format, error instead of silently using old engine
+          if (!config.base_type && !config.modifiers) {
+            console.error(`Employee ${emp.id} still has old-format payRule! Run migrate-payrules.`)
+            continue
           }
+          calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config)
         } else {
-          // No rule → use old engine
-          calcResult = await calculateEmployeePayroll(emp.id, monthDate, clinicId)
+          // No rule at all → skip with warning
+          console.warn(`Employee ${emp.id} has no payRule, skipping`)
+          continue
         }
 
         items.push({
@@ -934,7 +778,6 @@ export async function generatePayrollRun(
 
 // Export for testing
 export {
-  calculateEmployeePayroll,
   calculateWorkedHours,
   getApprovedLeaveDays,
   getPublicHolidayDays,
@@ -950,7 +793,6 @@ export {
 // ============================================================
 // Part B — Composable Rule Engine (modular base + modifier)
 // New entry: calculatePayrollWithRules()
-// Old calculateEmployeePayroll() preserved for backward compat
 // ============================================================
 
 // ------------------------------------------------------------------

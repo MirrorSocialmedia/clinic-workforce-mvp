@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { calculateEmployeePayroll, calculatePayrollWithRules } from '@/lib/payroll-engine'
+import { calculatePayrollWithRules } from '@/lib/payroll-engine'
 
 // ============================================================
 // POST /api/payroll-runs/preview — Preview payroll calculation
@@ -54,16 +54,14 @@ export async function POST(req: NextRequest) {
         let result
         if (payRule?.configJson) {
           const config = JSON.parse(payRule.configJson)
-          if (config.base_type || config.modifiers) {
-            // New modular format → use new engine
-            result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config)
-          } else {
-            // Legacy format → use old engine (backward compat)
-            result = await calculateEmployeePayroll(emp.id, monthDate, clinicId || null)
+          if (!config.base_type && !config.modifiers) {
+            console.error(`Employee ${emp.id} still has old-format payRule!`)
+            continue
           }
+          result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config)
         } else {
-          // No rule → use old engine
-          result = await calculateEmployeePayroll(emp.id, monthDate, clinicId || null)
+          console.warn(`Employee ${emp.id} has no payRule, skipping`)
+          continue
         }
 
         items.push({
