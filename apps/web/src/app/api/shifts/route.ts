@@ -66,8 +66,30 @@ export async function GET(req: NextRequest) {
     prisma.shift.count({ where }),
   ])
 
+  // Batch-check punch records for each shift (Task 4: absent detection)
+  const shiftsWithPunch = await Promise.all(shifts.map(async (s: any) => {
+    const shiftDateStart = new Date(s.date)
+    shiftDateStart.setHours(0, 0, 0, 0)
+    const shiftDateEnd = new Date(s.date)
+    shiftDateEnd.setHours(23, 59, 59, 999)
+
+    const punch = await prisma.punchRecord.findFirst({
+      where: {
+        employeeId: s.employeeId,
+        clinicId: s.clinicId,
+        punchType: 'CLOCK_IN',
+        punchTime: {
+          gte: shiftDateStart,
+          lte: shiftDateEnd,
+        },
+      },
+    })
+
+    return { ...s, hasPunch: !!punch }
+  }))
+
   return NextResponse.json({
-    shifts,
+    shifts: shiftsWithPunch,
     total,
     page,
     pageSize,

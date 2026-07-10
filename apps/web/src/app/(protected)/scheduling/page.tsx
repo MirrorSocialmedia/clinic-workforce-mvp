@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Settings, X, Trash2, Calendar, ClipboardList, BarChart3, RefreshCw, PlusCircle, Palmtree, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
@@ -52,6 +52,7 @@ interface Shift {
   role?: string
   status: string
   templateId?: string
+  hasPunch?: boolean
   employee?: { user: { name: string } }
   clinic?: { name: string }
   template?: { name: string }
@@ -115,8 +116,8 @@ export default function SchedulingPage() {
 
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
-  const empPanelRef = useRef<HTMLDivElement>(null)
   const leavePanelRef = useRef<HTMLDivElement>(null)
+  const templatePanelRef = useRef<HTMLDivElement>(null)
   const calendarContainerRef = useRef<HTMLDivElement>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
   const [isDraggingEvent, setIsDraggingEvent] = useState(false)
@@ -219,19 +220,21 @@ function colorFor(id: string): string {
     loadMonthShifts()
   }, [loadMonthShifts])
 
-  // Register FC Draggable on employee panel
+  // Register FC Draggable on template panel (drag templates, not employees)
   useEffect(() => {
-    if (!empPanelRef.current) return
-    const draggable = new Draggable(empPanelRef.current, {
-      itemSelector: '.emp-card',
+    if (!templatePanelRef.current) return
+    const d = new Draggable(templatePanelRef.current, {
+      itemSelector: '.template-card',
       eventData: (el: HTMLElement) => ({
         title: el.getAttribute('data-name') || '',
-        extendedProps: { employeeId: el.getAttribute('data-emp-id') },
-        duration: '08:00',
+        extendedProps: {
+          dragType: 'shift',
+          templateId: el.getAttribute('data-template-id'),
+        },
       }),
     })
-    return () => draggable.destroy()
-  }, [employees, selectedClinicId, viewMode])
+    return () => d.destroy()
+  }, [templates, viewMode])
 
   // Load leave types
   useEffect(() => {
@@ -593,6 +596,19 @@ function colorFor(id: string): string {
     e.dataTransfer.dropEffect = 'copy'
   }
 
+  // Task 3: Selected employee stats
+  const selectedEmpStats = useMemo(() => {
+    if (!selectedEmployeeId) return null
+    const empShifts = shifts.filter(s => s.employeeId === selectedEmployeeId)
+    const days = new Set(empShifts.map(s => s.date)).size
+    const hours = empShifts.reduce((sum, s) => {
+      const start = new Date(s.startTime)
+      const end = new Date(s.endTime)
+      return sum + (end.getTime() - start.getTime()) / 3600000
+    }, 0)
+    return { days, hours: Math.round(hours * 10) / 10 }
+  }, [selectedEmployeeId, shifts])
+
   
   // ============================================================
   // FullCalendar Event Handlers
@@ -669,19 +685,34 @@ function colorFor(id: string): string {
 
   // Map shifts to FC events
   const fcEvents = [
-    ...shifts.map(s => ({
-      id: s.id,
-      title: (s.employee?.user?.name || '') + ' ' + (s.template?.name || ''),
-      start: s.startTime,
-      end: s.endTime,
-      backgroundColor: s.status === 'CONFIRMED' ? '#1976d2' :
-                       s.status === 'DRAFT' ? '#f57c00' :
-                       s.status === 'CANCELLED' ? '#dc3545' : '#388e3c',
-      borderColor: s.status === 'CONFIRMED' ? '#1565c0' :
-                   s.status === 'DRAFT' ? '#e65100' :
-                   s.status === 'CANCELLED' ? '#c82333' : '#2e7d32',
-      extendedProps: { shift: s },
-    })),
+    ...shifts.map(s => {
+      const shiftDate = new Date(s.date)
+      const todayStart = new Date()
+      todayStart.setHours(0, 0, 0, 0)
+      const isPast = shiftDate < todayStart
+      const isAbsent = isPast && !s.hasPunch
+
+      let backgroundColor = s.status === 'CONFIRMED' ? '#1976d2' :
+                           s.status === 'DRAFT' ? '#f57c00' :
+                           s.status === 'CANCELLED' ? '#dc3545' : '#388e3c'
+      let borderColor = s.status === 'CONFIRMED' ? '#1565c0' :
+                        s.status === 'DRAFT' ? '#e65100' :
+                        s.status === 'CANCELLED' ? '#c82333' : '#2e7d32'
+      if (isAbsent) {
+        backgroundColor = '#e74c3c'
+        borderColor = '#c0392b'
+      }
+
+      return {
+        id: s.id,
+        title: `${s.employee?.user?.name || ''} ${s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`,
+        start: s.startTime,
+        end: s.endTime,
+        backgroundColor,
+        borderColor,
+        extendedProps: { shift: s, isAbsent },
+      }
+    }),
     ...leaveRequests.map((lr, idx) => ({
       id: 'leave-' + lr.id,
       title: lr.employee?.user?.name + ' ' + (lr.leaveType?.name || ''),
@@ -751,6 +782,7 @@ function colorFor(id: string): string {
   }
 
   const clinicEmployees = getClinicEmployees()
+  const selectedEmpName = selectedEmployeeId ? (clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name || '') : ''
   const excludeEmployeeId = editingShift?.employeeId || ''
   const availableEmployees = clinicEmployees.filter((e: Employee) => e.id !== excludeEmployeeId)
 
@@ -990,26 +1022,29 @@ function colorFor(id: string): string {
         </div>
       )}
 
-      {/* Employee chips (top horizontal, draggable) */}
+      {/* Selected Employee Stats (Task 3) */}
+      {selectedEmpStats && selectedEmpName && (
+        <div className="card p-3 mb-2 bg-blue-50 border border-blue-200 rounded-lg" style={{ marginTop: 12 }}>
+          <div className="font-semibold text-sm">{selectedEmpName}</div>
+          <div className="text-xs text-slate-600">
+            {viewMode === 'week' ? '本週' : '本月'}：排 {selectedEmpStats.days} 天 · {selectedEmpStats.hours} 小時
+          </div>
+        </div>
+      )}
+
+      {/* Employee chips (top horizontal) */}
       {canManage && clinicEmployees.length > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, overflowX: 'auto' }}>
           {clinicEmployees.map(emp => (
             <div key={emp.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               <div
-                ref={(el) => {
-                  if (el) {
-                    el.className = 'emp-card'
-                    el.setAttribute('data-emp-id', emp.id)
-                    el.setAttribute('data-name', emp.user.name)
-                  }
-                }}
                 onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
                 style={{
                   padding: '6px 14px', borderRadius: 16, fontSize: 13,
                   background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
                   color: selectedEmployeeId === emp.id ? colorFor(emp.id) : '#fff',
                   border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
-                  cursor: 'grab', whiteSpace: 'nowrap', flexShrink: 0,
+                  cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
                   transition: 'all 0.15s',
                 }}
               >
@@ -1053,27 +1088,32 @@ function colorFor(id: string): string {
       )}
 
       <div style={{ display: 'flex', gap: 16 }}>
-        {/* Left: Templates + Leave (scrollable) */}
+        {/* Left: Templates (draggable) + Leave (scrollable) */}
         {canManage && (
           <div style={{ width: 180, flexShrink: 0, maxHeight: 600, overflowY: 'auto' }}>
-            <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>更次模版</h4>
-            {templates.map(t => (
-              <div
-                key={t.id}
-                onClick={() => setSelectedTemplate(t)}
-                style={{
-                  padding: '8px 12px', margin: '4px 0', borderRadius: 8,
-                  cursor: 'pointer',
-                  background: selectedTemplate?.id === t.id ? '#1a1a2e' : '#f0f0f0',
-                  color: selectedTemplate?.id === t.id ? '#fff' : '#333',
-                }}
-              >
-                {t.name}
-                <div style={{ fontSize: 11, opacity: 0.7 }}>
-                  {String(t.startHour).padStart(2,'0')}:{String(t.startMinute).padStart(2,'0')}-{String(t.endHour).padStart(2,'0')}:{String(t.endMinute).padStart(2,'0')}
+            <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>更次模版（拖到日曆）</h4>
+            <div ref={templatePanelRef}>
+              {templates.map(t => (
+                <div
+                  key={t.id}
+                  className="template-card"
+                  data-template-id={t.id}
+                  data-name={t.name}
+                  onClick={() => setSelectedTemplate(t)}
+                  style={{
+                    padding: '8px 12px', margin: '4px 0', borderRadius: 8,
+                    cursor: 'grab',
+                    background: selectedTemplate?.id === t.id ? '#1a1a2e' : '#f0f0f0',
+                    color: selectedTemplate?.id === t.id ? '#fff' : '#333',
+                  }}
+                >
+                  {t.name}
+                  <div style={{ fontSize: 11, opacity: 0.7 }}>
+                    {String(t.startHour).padStart(2,'0')}:{String(t.startMinute).padStart(2,'0')}-{String(t.endHour).padStart(2,'0')}:{String(t.endMinute).padStart(2,'0')}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
 
             {/* Leave types panel */}
             {leaveTypes.length > 0 && (
@@ -1144,25 +1184,22 @@ function colorFor(id: string): string {
           events={fcEvents}
           droppable={true}
           eventReceive={async (info) => {
-            info.event.remove() // 移除 FC 自動生成的臨時事件
+            info.event.remove()
             const props = info.event.extendedProps
             const date = toHKDateStr(info.event.start!)
 
             if (props.dragType === 'leave') {
-              // 拖的是假期 → 建立請假（1天，APPROVED 模式 for manager/owner）
               const leaveTypeId = props.leaveTypeId
               if (!leaveTypeId) {
                 setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 假期類型無效' }])
                 return
               }
 
-              // 複用已選中的員工（點擊員工 chip 選中的）
               if (!selectedEmployeeId) {
                 setShowLeaveEmployeeModal({ date, leaveTypeId })
                 return
               }
 
-              // Task 4: Check if employee already has a shift on this date
               const hasShiftOnDate = shifts.some(s =>
                 s.employeeId === selectedEmployeeId &&
                 toHKDateStr(new Date(s.date)) === date
@@ -1172,9 +1209,6 @@ function colorFor(id: string): string {
                 return
               }
 
-              const leaveTypeName = leaveTypes.find(lt => lt.id === leaveTypeId)?.name || '假期'
-              const targetEmployeeId = selectedEmployeeId
-
               try {
                 const res = await fetch('/api/leave-requests', {
                   method: 'POST',
@@ -1182,7 +1216,7 @@ function colorFor(id: string): string {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     leaveTypeId,
-                    employeeId: targetEmployeeId,
+                    employeeId: selectedEmployeeId,
                     startDate: date,
                     endDate: date,
                     days: 1,
@@ -1199,16 +1233,23 @@ function colorFor(id: string): string {
               } catch {
                 setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
               }
+            } else if (props.dragType === 'shift') {
+              if (!selectedEmployeeId) {
+                setValidationIssues([{ type: 'error', rule: 'employee', message: '⚠️ 請先點擊選擇員工' }])
+                return
+              }
+              const tpl = templates.find(t => t.id === props.templateId)
+              if (!tpl) return
+              setValidationIssues([])
+              await createShift(selectedEmployeeId, date, tpl)
             } else {
-              // 拖的是員工 → 建立班次
+              // Legacy: dragged employee (backward compat)
               const empId = props.employeeId
               if (!empId) return
               if (!selectedTemplate) {
                 setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板才能排班' }])
                 return
               }
-
-              // Task 4: Check if employee already has a leave request on this date
               const hasLeaveOnDate = leaveRequests.some(lr =>
                 lr.employeeId === empId &&
                 date >= lr.startDate &&
@@ -1218,11 +1259,9 @@ function colorFor(id: string): string {
                 setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
                 return
               }
-
               setValidationIssues([])
               await createShift(empId, date, selectedTemplate)
             }
-            // Reload shifts + leave requests + month stats
             await refreshAll()
           }}
           editable={canManage}

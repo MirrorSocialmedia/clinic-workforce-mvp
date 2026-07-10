@@ -40,6 +40,10 @@ export default function NewPayrollPage() {
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<string>('')
 
+  // Pre-check modal state
+  const [showPrecheckModal, setShowPrecheckModal] = useState(false)
+  const [precheckWarnings, setPrecheckWarnings] = useState<Array<{ employeeId: string; employeeName: string; error: string }>>([])
+
   const fetchClinics = useCallback(async () => {
     try {
       const res = await fetch('/api/clinics')
@@ -82,6 +86,36 @@ export default function NewPayrollPage() {
       return
     }
 
+    // Pre-check: run preview first to detect issues
+    try {
+      const previewRes = await fetch('/api/payroll-runs/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          periodMonth,
+          clinicId: selectedClinic || null,
+        }),
+      })
+
+      if (previewRes.ok) {
+        const previewData = await previewRes.json()
+        const warnings = (previewData.items || []).filter((item: any) => item.error)
+        if (warnings.length > 0) {
+          setPrecheckWarnings(warnings)
+          setShowPrecheckModal(true)
+          return
+        }
+      }
+    } catch {
+      // Preview failed — proceed anyway (non-blocking)
+    }
+
+    // No warnings or preview unavailable: proceed directly
+    await doGenerate()
+  }
+
+  const doGenerate = async () => {
     setGenerating(true)
     setError(null)
 
@@ -108,6 +142,11 @@ export default function NewPayrollPage() {
     } finally {
       setGenerating(false)
     }
+  }
+
+  const confirmAndGenerate = async () => {
+    setShowPrecheckModal(false)
+    await doGenerate()
   }
 
   const handlePreview = async () => {
@@ -289,6 +328,66 @@ export default function NewPayrollPage() {
           </Card>
         )}
       </div>
+
+      {/* Pre-check Warning Modal */}
+      {showPrecheckModal && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+          onClick={() => setShowPrecheckModal(false)}
+        >
+          <div
+            className="g bg-card g border rounded-xl shadow-lg mx-4 p-6 relative"
+            style={{ width: '520px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{ fontSize: 16, marginTop: 0, marginBottom: 12, color: '#d97706' }}>
+              ⚠️ 計糧前檢查警告
+            </h2>
+            <p style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>
+              以下員工在計糧時發現問題，是否仍然繼續生成？
+            </p>
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {precheckWarnings.map((w, i) => (
+                <div
+                  key={w.employeeId || i}
+                  style={{
+                    padding: '8px 12px', marginBottom: 6,
+                    background: '#fef2f2', border: '1px solid #fecaca',
+                    borderRadius: 6, fontSize: 13,
+                  }}
+                >
+                  <strong>{w.employeeName}</strong>：{w.error}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button
+                onClick={() => setShowPrecheckModal(false)}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd',
+                  background: '#f5f5f5', cursor: 'pointer', fontSize: 13,
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmAndGenerate}
+                style={{
+                  padding: '8px 16px', borderRadius: 6, border: 'none',
+                  background: '#d97706', color: '#fff',
+                  cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                }}
+              >
+                仍要繼續生成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

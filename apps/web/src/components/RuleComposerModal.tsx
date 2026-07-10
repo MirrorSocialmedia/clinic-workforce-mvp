@@ -30,6 +30,7 @@ const DEFAULT_MODIFIERS: PayRuleConfigModular['modifiers'] = {
       late_minutes_exceed: 30,
       late_is_cumulative: true,
       any_unplanned_leave: true,
+      any_absence: true,
     },
   },
   overtime: {
@@ -579,6 +580,28 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
                     }}
                   />
                   有臨時請假
+                </label>
+                <label style={{ ...checkboxLabelStyle, marginTop: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={modifiers.attendance_bonus.cancel_if?.any_absence ?? false}
+                    onChange={(e) => {
+                      setConfig((prev) => ({
+                        ...prev,
+                        modifiers: {
+                          ...prev.modifiers!,
+                          attendance_bonus: {
+                            ...prev.modifiers!.attendance_bonus!,
+                            cancel_if: {
+                              ...prev.modifiers!.attendance_bonus!.cancel_if,
+                              any_absence: e.target.checked,
+                            },
+                          },
+                        },
+                      }))
+                    }}
+                  />
+                  缺勤即取消勤工獎（缺勤 1 天或以上 → 無勤工）
                 </label>
               </div>
             )}
