@@ -496,7 +496,11 @@ export default function AccountsPage() {
         <RuleComposerModal
           employeeId={payRuleEmployeeId}
           onClose={() => setShowPayRuleModal(false)}
-          onSuccess={() => { setShowPayRuleModal(false); fetchData() }}
+          onSuccess={() => {
+            setShowPayRuleModal(false);
+            setPayRules({}); // Clear all cache — next expand/load fetches fresh
+            fetchData();
+          }}
         />
       )}
     </div>
