@@ -67,10 +67,16 @@ export default function LeavePage() {
   const [requests, setRequests] = useState<LeaveRequestItem[]>([])
   const [balances, setBalances] = useState<LeaveBalanceItem[]>([])
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([])
+  const [employees, setEmployees] = useState<Array<{ id: string; user: { name: string } }>>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<LeaveStatus | ''>('')
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
+
+  // Leave init/clear state
+  const [initForm, setInitForm] = useState({ employeeId: 'all', leaveTypeId: '', days: 14, year: 2026 })
+  const [clearEmployeeId, setClearEmployeeId] = useState('all')
+  const [clearYear, setClearYear] = useState(2026)
 
   // Leave Types management state
   const [activeTab, setActiveTab] = useState<TabKey>('requests')
@@ -113,6 +119,15 @@ export default function LeavePage() {
       const typesRes = await fetch('/api/leave-types', { credentials: 'include' })
       const typesData = await typesRes.json()
       setLeaveTypes(typesData.leaveTypes || [])
+
+      // Fetch employees for init/clear dropdowns
+      if (isManager) {
+        const empRes = await fetch('/api/employees', { credentials: 'include' })
+        if (empRes.ok) {
+          const empData = await empRes.json()
+          setEmployees(empData.employees || [])
+        }
+      }
     } catch (err) {
       console.error('Failed to fetch leave data:', err)
     } finally {
@@ -208,6 +223,44 @@ export default function LeavePage() {
       })
       if (res.ok) fetchData()
     } catch (err) { console.error('Toggle error:', err) }
+  }
+
+  // Leave init/clear handlers
+  const fetchBalances = useCallback(async () => {
+    try {
+      const balRes = await fetch('/api/leave-balance', { credentials: 'include' })
+      const balData = await balRes.json()
+      setBalances(balData.leaveBalances || [])
+    } catch {}
+  }, [])
+
+  const handleInitLeave = async () => {
+    if (!confirm(`確定初始化 ${initForm.year} 年${initForm.employeeId === 'all' ? '全部員工' : ''}的假期額度？`)) return
+    try {
+      const res = await fetch('/api/leave-balance/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(initForm),
+      })
+      const data = await res.json()
+      if (res.ok) { alert(`成功初始化 ${data.count} 筆記錄`); fetchBalances() }
+      else alert(data.error || '初始化失敗')
+    } catch (err) { alert('初始化失敗') }
+  }
+
+  const handleClearLeave = async () => {
+    if (!confirm(`⚠️ 確定清除 ${clearYear} 年${clearEmployeeId === 'all' ? '全部員工' : ''}的假期資料？此操作無法復原！`)) return
+    if (!confirm('再次確認：真的要清除嗎？')) return
+    try {
+      const res = await fetch(`/api/leave-balance?employeeId=${clearEmployeeId}&year=${clearYear}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (res.ok) { alert(`成功清除 ${data.count} 筆記錄`); fetchBalances() }
+      else alert(data.error || '清除失敗')
+    } catch (err) { alert('清除失敗') }
   }
 
   if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
@@ -349,6 +402,73 @@ export default function LeavePage() {
       {/* Balance Tab */}
       {activeTab === 'balance' && (
         <>
+          {isManager && (
+            <>
+              {/* 初始化假期額度 */}
+              <div className="card p-4 border border-slate-200 rounded-lg mb-4">
+                <h3 className="font-semibold mb-2">初始化假期額度</h3>
+                <p className="text-sm text-muted-foreground mb-3">為員工設定本年度假期額度（若已存在則覆蓋）</p>
+                <div className="flex gap-3 items-end flex-wrap">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">員工</label>
+                    <select value={initForm.employeeId} onChange={e => setInitForm({ ...initForm, employeeId: e.target.value })}
+                      className="px-3 py-2 rounded-md border text-sm">
+                      <option value="all">全部員工</option>
+                      {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">假期類型</label>
+                    <select value={initForm.leaveTypeId} onChange={e => setInitForm({ ...initForm, leaveTypeId: e.target.value })}
+                      className="px-3 py-2 rounded-md border text-sm">
+                      <option value="">-- 選擇 --</option>
+                      {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">額度（天）</label>
+                    <input type="number" value={initForm.days} onChange={e => setInitForm({ ...initForm, days: parseInt(e.target.value) || 0 })}
+                      className="px-3 py-2 rounded-md border text-sm w-20" min="0" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">年份</label>
+                    <input type="number" value={initForm.year} onChange={e => setInitForm({ ...initForm, year: parseInt(e.target.value) || 2026 })}
+                      className="px-3 py-2 rounded-md border text-sm w-20" min="2020" max="2030" />
+                  </div>
+                  <button className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors" style={{ background: '#0d6efd' }}
+                    onClick={handleInitLeave} disabled={!initForm.leaveTypeId}>
+                    <span className="flex items-center gap-1"><Plus size={14} /> 初始化</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 清除假期資料 */}
+              <div className="card p-4 border border-red-200 rounded-lg mb-4">
+                <h3 className="text-red-600 font-semibold mb-2">清除假期資料</h3>
+                <p className="text-sm text-muted-foreground mb-3">⚠️ 此操作會刪除選定範圍的假期餘額，無法復原</p>
+                <div className="flex gap-3 items-end">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">範圍</label>
+                    <select value={clearEmployeeId} onChange={e => setClearEmployeeId(e.target.value)}
+                      className="px-3 py-2 rounded-md border text-sm">
+                      <option value="all">全部員工</option>
+                      {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">年份</label>
+                    <input type="number" value={clearYear} onChange={e => setClearYear(parseInt(e.target.value) || 2026)}
+                      className="px-3 py-2 rounded-md border text-sm w-20" />
+                  </div>
+                  <button className="px-3 py-2 rounded-md text-sm font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors"
+                    onClick={handleClearLeave}>
+                    清除
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
           {balances.length > 0 ? (
             <div className="card">
               <h2>假期餘額</h2>

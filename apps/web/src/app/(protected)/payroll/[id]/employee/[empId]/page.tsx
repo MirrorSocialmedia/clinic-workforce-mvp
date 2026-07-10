@@ -132,20 +132,41 @@ export default function EmployeePayrollDetailPage() {
   const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
 
   // Daily punch/shift summary for collapsible detail
-  const dailyPunchMap: Record<string, { punches: typeof punches; shiftDate: string }> = {}
+  const fmtTime24 = (t: string) => new Date(t).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const dailyPunchMap: Record<string, { punches: any[]; shiftDate: string }> = {}
+
+  // 1. 正常打卡
   for (const p of punches) {
     const dateKey = new Date(p.punchTime).toLocaleDateString('en-CA')
     if (!dailyPunchMap[dateKey]) dailyPunchMap[dateKey] = { punches: [], shiftDate: dateKey }
-    dailyPunchMap[dateKey].punches.push(p)
+    dailyPunchMap[dateKey].punches.push({ ...p, isCorrection: p.source === 'MANUAL_CORRECTION' })
   }
+
+  // 2. 補打卡（corrections）——去重後併入
+  for (const c of corrections) {
+    const dateKey = new Date(c.correctedTime).toLocaleDateString('en-CA')
+    if (!dailyPunchMap[dateKey]) dailyPunchMap[dateKey] = { punches: [], shiftDate: dateKey }
+    const exists = dailyPunchMap[dateKey].punches.some((p: any) => p.punchType === c.punchType)
+    if (!exists) {
+      dailyPunchMap[dateKey].punches.push({
+        punchType: c.punchType,
+        punchTime: c.correctedTime,
+        source: 'MANUAL_CORRECTION',
+        isCorrection: true,
+      })
+    }
+  }
+
   const dailyDetails = Object.entries(dailyPunchMap).map(([date, info]) => {
     const inPunch = info.punches.find((p: any) => p.punchType === 'CLOCK_IN')
     const outPunch = info.punches.find((p: any) => p.punchType === 'CLOCK_OUT')
     const isLate = lateRecords.some((lr: any) => lr.date === date)
     return {
       date,
-      punchIn: inPunch ? new Date(inPunch.punchTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
-      punchOut: outPunch ? new Date(outPunch.punchTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false }) : null,
+      punchIn: inPunch ? fmtTime24(inPunch.punchTime) : null,
+      punchOut: outPunch ? fmtTime24(outPunch.punchTime) : null,
+      inIsCorrection: inPunch?.isCorrection === true,
+      outIsCorrection: outPunch?.isCorrection === true,
       status: isLate ? 'late' : 'present',
     }
   })
@@ -260,7 +281,7 @@ export default function EmployeePayrollDetailPage() {
             {/* MPF */}
             {mpf > 0 && (
               <div className="flex justify-between items-center text-orange-600">
-                <span className="text-sm">強積金 (MPF) 扣除</span>
+                <span className="text-sm">強積金 (MPF {((salaryDetail.mpfRate ?? 0.05) * 100).toFixed(0)}%) 扣除</span>
                 <span className="font-mono font-medium">-{fmtCurrency(mpf)}</span>
               </div>
             )}
@@ -350,8 +371,14 @@ export default function EmployeePayrollDetailPage() {
               {dailyDetails.map((day: any) => (
                 <div key={day.date} className="grid grid-cols-12 gap-2 px-4 py-2 text-sm border-t hover:bg-muted/30">
                   <div className="col-span-2">{day.date}</div>
-                  <div className="col-span-3">{day.punchIn || '—'}</div>
-                  <div className="col-span-3">{day.punchOut || '—'}</div>
+                  <div className="col-span-3">
+                    {day.punchIn || '—'}
+                    {day.inIsCorrection && <span className="ml-1 text-xs text-blue-600">（補登）</span>}
+                  </div>
+                  <div className="col-span-3">
+                    {day.punchOut || '—'}
+                    {day.outIsCorrection && <span className="ml-1 text-xs text-blue-600">（補登）</span>}
+                  </div>
                   <div className="col-span-4 text-right">
                     {day.status === 'absent' ? '✗ 缺勤' : day.status === 'late' ? '⚠ 遲到' : '✓ 出勤'}
                   </div>

@@ -113,6 +113,8 @@ export const CONFIG = {
 
     // Leave balance routes
     'GET /api/leave-balance': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/leave-balance/init': ['OWNER', 'MANAGER'],
+    'DELETE /api/leave-balance': ['OWNER'],
 
     // HK public holiday routes
     'GET /api/hk-public-holidays': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],

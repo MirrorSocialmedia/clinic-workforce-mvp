@@ -328,17 +328,11 @@ export default function AttendancePage() {
                         {record.corrections && record.corrections.length > 0 ? (
                           <span className="text-amber-600 text-xs">{record.corrections.length} 筆修正</span>
                         ) : (<span className="text-emerald-600 text-xs">✓ 無修正</span>)}
-                        <button
-                          className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
-                          onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
-                        >
-                          <span className="flex items-center gap-1"><Pencil size={16} /> 補登/修正</span>
-                        </button>
                       </td>
                       <td className="p-3">
                         <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
-                          className="bg-none border-none cursor-pointer text-amber-600 text-sm px-1 py-0.5 rounded mr-2 hover:underline" title="修正此記錄">
-                          <Pencil size={16} /> 修正
+                          className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
+                          <Pencil size={14} /> 修正
                         </button>
                         <Link href={`/attendance/${record.id}`} className="text-brand hover:underline text-xs">詳情</Link>
                       </td>

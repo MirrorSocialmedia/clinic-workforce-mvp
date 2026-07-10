@@ -91,3 +91,43 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+// ============================================================
+// DELETE /api/leave-balance — Clear leave balances
+// Roles: OWNER
+// ============================================================
+export async function DELETE(req: NextRequest) {
+  const auth = requireAuth(req, 'DELETE', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
+
+  if (session.role !== 'OWNER') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { searchParams } = new URL(req.url)
+  const employeeId = searchParams.get('employeeId')
+  const year = parseInt(searchParams.get('year') || '0')
+
+  if (!year) return NextResponse.json({ error: '需要年份参数' }, { status: 400 })
+
+  const deleted = await prisma.leaveBalance.deleteMany({
+    where: {
+      ...(employeeId && employeeId !== 'all' ? { employeeId } : {}),
+      year,
+    },
+  })
+
+  // 審計記錄
+  await prisma.auditLog.create({
+    data: {
+      actorId: session.userId,
+      action: 'DELETE',
+      entity: 'LeaveBalance',
+      entityId: 'batch',
+      notes: `清除假期資料: ${employeeId === 'all' ? '全部員工' : employeeId}, 年份 ${year}, 共 ${deleted.count} 筆`,
+    },
+  })
+
+  return NextResponse.json({ count: deleted.count })
+}

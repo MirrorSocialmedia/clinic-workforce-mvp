@@ -1997,7 +1997,7 @@ export async function calculatePayrollWithRules(
   const netPay = Math.max(0, grossPay - mpf)
 
   result.totalPayable = netPay
-  result.detail = { ...result.detail, grossPay: Math.round(grossPay * 100) / 100, mpf, netPay: Math.round(netPay * 100) / 100 }
+  result.detail = { ...result.detail, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100 }
 
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [0, 6]
@@ -2100,6 +2100,7 @@ export async function calculatePayrollWithRules(
       allowances: Math.round(totalAllowances * 100) / 100,
       grossPay: Math.round(grossPay * 100) / 100,
       mpf: Math.round(mpf * 100) / 100,
+      mpfRate: (config.mpf || {}).rate ?? 0.05,
       netPay: Math.round(netPay * 100) / 100,
     },
     // 假期與 OT
