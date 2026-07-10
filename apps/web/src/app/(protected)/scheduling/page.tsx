@@ -119,6 +119,7 @@ export default function SchedulingPage() {
   const leavePanelRef = useRef<HTMLDivElement>(null)
   const templatePanelRef = useRef<HTMLDivElement>(null)
   const calendarContainerRef = useRef<HTMLDivElement>(null)
+  const calendarRef = useRef<any>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
   const [isDraggingEvent, setIsDraggingEvent] = useState(false)
 
@@ -136,6 +137,25 @@ function colorFor(id: string): string {
   let hash = 0;
   for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
   return EMPLOYEE_COLORS[Math.abs(hash) % EMPLOYEE_COLORS.length];
+}
+
+// Clinic abbreviation and color maps for overview grid
+const CLINIC_ABBR: Record<string, string> = {
+  '銅鑼灣診所': '銅', '旺角診所': '旺', '荃灣診所': '荃',
+  '仁愛診所': '仁', '沙田診所': '沙', '元朗診所': '元',
+}
+const CLINIC_COLOR: Record<string, string> = {
+  '銅鑼灣診所': '#e74c3c', '旺角診所': '#27ae60', '荃灣診所': '#8e44ad',
+  '仁愛診所': '#2980b9', '沙田診所': '#e67e22', '元朗診所': '#16a085',
+}
+function getShiftCode(shift: Shift): string {
+  const clinicName = shift.clinic?.name || ''
+  const abbr = CLINIC_ABBR[clinicName] || clinicName?.[0] || '?'
+  const tpl = shift.template?.name || '班'
+  return `${abbr}-${tpl}`
+}
+function getShiftColor(shift: Shift): string {
+  return CLINIC_COLOR[shift.clinic?.name || ''] || '#95a5a6'
 }
 
   // ============================================================
@@ -199,14 +219,13 @@ function colorFor(id: string): string {
       .catch(() => setShiftRuleConfig({ ...DEFAULT_SHIFT_RULE_CONFIG }))
   }, [selectedClinicId])
 
-  // Load month-level shifts for statistics
+  // Load month-level shifts for statistics (all clinics)
   const loadMonthShifts = useCallback(async () => {
-    if (!selectedClinicId) return
     const now = new Date()
     const monthStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
     const monthEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
     try {
-      const r = await fetch(`/api/shifts?clinicId=${selectedClinicId}&startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`, { credentials: 'include' })
+      const r = await fetch(`/api/shifts?startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`, { credentials: 'include' })
       if (r.ok) {
         const d = await r.json()
         setMonthShifts(d.shifts || [])
@@ -214,7 +233,7 @@ function colorFor(id: string): string {
     } catch {
       setMonthShifts([])
     }
-  }, [selectedClinicId])
+  }, [])
 
   useEffect(() => {
     loadMonthShifts()
@@ -271,12 +290,12 @@ function colorFor(id: string): string {
   }, [leaveTypes, viewMode])
 
   // ============================================================
-  // Load shifts for current view
+  // Load shifts for current view (all clinics, no clinicId filter)
   // ============================================================
   const loadShifts = useCallback(async () => {
-    if (!selectedClinicId || !viewRange) return
+    if (!viewRange) return
 
-    const url = `/api/shifts?clinicId=${selectedClinicId}&startDate=${viewRange.start}&endDate=${viewRange.end}&pageSize=500`
+    const url = `/api/shifts?startDate=${viewRange.start}&endDate=${viewRange.end}&pageSize=1000`
 
     try {
       const [shiftsRes, leavesRes] = await Promise.all([
@@ -294,11 +313,11 @@ function colorFor(id: string): string {
     } catch (error) {
       console.error('Failed to load shifts:', error)
     }
-  }, [selectedClinicId, viewRange])
+  }, [viewRange])
 
   useEffect(() => {
     if (viewRange) loadShifts()
-  }, [viewRange, selectedClinicId])
+  }, [viewRange])
 
   // Refresh all data after shift changes (Task 2)
   const refreshAll = useCallback(async () => {
@@ -430,6 +449,12 @@ function colorFor(id: string): string {
 
       if (res.ok) {
         setValidationIssues([])
+        const data = await res.json()
+        // Optimistic update: add new shift to state immediately
+        if (data.shifts?.[0]) {
+          const newShift = { ...data.shifts[0], hasPunch: false }
+          setShifts(prev => [...prev, newShift])
+        }
         await refreshAll()
         return true
       } else {
@@ -683,9 +708,15 @@ function colorFor(id: string): string {
     setCurrentDate(new Date(info.dateStr))
   }
 
-  // Map shifts to FC events
+  // Filter shifts by selected clinic for FC display
+  const clinicFilteredShifts = useMemo(() => {
+    if (!selectedClinicId) return []
+    return shifts.filter(s => s.clinicId === selectedClinicId)
+  }, [shifts, selectedClinicId])
+
+  // Map shifts to FC events (filtered by selected clinic)
   const fcEvents = [
-    ...shifts.map(s => {
+    ...clinicFilteredShifts.map(s => {
       const shiftDate = new Date(s.date)
       const todayStart = new Date()
       todayStart.setHours(0, 0, 0, 0)
@@ -801,18 +832,6 @@ function colorFor(id: string): string {
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Clinic selector */}
-          <select
-            value={selectedClinicId || ''}
-            onChange={e => setSelectedClinicId(e.target.value)}
-            className="form-group"
-            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, width: 'auto' }}
-          >
-            {clinics.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-
           {/* View mode toggle removed — FC headerToolbar handles week/month switching */}
 
 
@@ -1181,10 +1200,144 @@ function colorFor(id: string): string {
 
       {/* Right: Calendar Card */}
       <div className="flex-1 min-w-0">
-      <div className="card rounded-xl g border p-4 shadow-card">
+
+      {/* Clinic selector + hint above FC */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, color: '#888', whiteSpace: 'nowrap' }}>📋 下方日曆僅顯示：</span>
+        <select
+          value={selectedClinicId || ''}
+          onChange={e => setSelectedClinicId(e.target.value)}
+          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, width: 'auto' }}
+        >
+          {clinics.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <span style={{ fontSize: 11, color: '#aaa' }}>（切換只影響下方，上方總覽始終顯示全店）</span>
+      </div>
+
+      {/* Global Overview Grid: All employees × 7 days */}
+      {viewRange && employees.length > 0 && (
+        <div style={{
+          marginBottom: 16,
+          border: '1px solid #e5e7eb',
+          borderRadius: 8,
+          overflowX: 'auto',
+          background: '#fafbfc',
+        }}>
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151' }}>
+            📊 全局總覽（所有診所）
+          </div>
+          <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 700 }}>
+            <thead>
+              <tr>
+                <th style={{
+                  position: 'sticky', left: 0, background: '#f3f4f6',
+                  padding: '8px 12px', textAlign: 'left', zIndex: 10,
+                  borderBottom: '2px solid #e5e7eb', minWidth: 100,
+                }}>員工</th>
+                {(() => {
+                  const weekDays: { date: Date; label: string }[] = []
+                  const start = new Date(viewRange.start)
+                  const dayOfWeek = start.getDay()
+                  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+                  const monday = new Date(start)
+                  monday.setDate(start.getDate() + mondayOffset)
+                  const dayNames = ['一', '二', '三', '四', '五', '六', '日']
+                  for (let i = 0; i < 7; i++) {
+                    const d = new Date(monday)
+                    d.setDate(monday.getDate() + i)
+                    weekDays.push({ date: d, label: `${dayNames[i]}${d.getDate()}` })
+                  }
+                  return weekDays.map((wd, i) => (
+                    <th key={i} style={{
+                      padding: '8px 6px', textAlign: 'center',
+                      borderBottom: '2px solid #e5e7eb',
+                      minWidth: 80, whiteSpace: 'nowrap',
+                    }}>{wd.label}</th>
+                  ))
+                })()}
+              </tr>
+            </thead>
+            <tbody>
+              {employees.map(emp => (
+                <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                  <td style={{
+                    position: 'sticky', left: 0,
+                    background: emp.status === 'ACTIVE' ? '#fafbfc' : '#fee2e2',
+                    padding: '6px 12px', whiteSpace: 'nowrap', zIndex: 5,
+                    fontWeight: 500,
+                  }}>{emp.user.name}</td>
+                  {(() => {
+                    const weekDays: Date[] = []
+                    const start = new Date(viewRange.start)
+                    const dayOfWeek = start.getDay()
+                    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+                    const monday = new Date(start)
+                    monday.setDate(start.getDate() + mondayOffset)
+                    for (let i = 0; i < 7; i++) {
+                      const d = new Date(monday)
+                      d.setDate(monday.getDate() + i)
+                      weekDays.push(d)
+                    }
+                    return weekDays.map((wd, dayIdx) => {
+                      const dateStr = toHKDateStr(wd)
+                      const empShiftsOnDay = shifts.filter(s =>
+                        s.employeeId === emp.id &&
+                        toHKDateStr(new Date(s.date)) === dateStr
+                      )
+                      const hasShift = empShiftsOnDay.length > 0
+                      return (
+                        <td key={dayIdx} style={{
+                          padding: '4px 6px', textAlign: 'center',
+                          cursor: 'pointer',
+                          background: hasShift ? '' : (dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'),
+                          transition: 'background 0.15s',
+                        }}
+                        onMouseEnter={e => {
+                          if (!hasShift) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                        }}
+                        onMouseLeave={e => {
+                          if (!hasShift) (e.currentTarget as HTMLTableCellElement).style.background = dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'
+                        }}
+                        onClick={() => {
+                          if (hasShift) {
+                            const s = empShiftsOnDay[0]
+                            setSelectedClinicId(s.clinicId)
+                            calendarRef.current?.getApi().gotoDate(dateStr)
+                            document.querySelector('[data-calendar-section]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                          }
+                        }}
+                        >
+                          {hasShift ? empShiftsOnDay.map((s, si) => (
+                            <div key={si} style={{
+                              display: 'inline-block',
+                              padding: '1px 5px',
+                              borderRadius: 3,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: '#fff',
+                              background: getShiftColor(s),
+                              margin: '1px 2px',
+                              whiteSpace: 'nowrap',
+                            }}>{getShiftCode(s)}</div>
+                          )) : <span style={{ color: '#d1d5db' }}>&mdash;</span>}
+                        </td>
+                      )
+                    })
+                  })()}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="card rounded-xl g border p-4 shadow-card" data-calendar-section>
       <div ref={calendarContainerRef}>
 
         <FullCalendar
+          ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
           initialView={viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
           locale={zhcn}
@@ -1368,15 +1521,15 @@ function colorFor(id: string): string {
               </div>
             )
           }}
-          height={viewMode === 'month' ? 'auto' : 650}
-          slotMinTime="07:00:00"
-          slotMaxTime="23:00:00"
+          height={viewMode === 'month' ? 'auto' : 520}
+          slotMinTime="09:00:00"
+          slotMaxTime="21:00:00"
           eventDidMount={(info) => {
             info.el.style.borderRadius = '6px'
           }}
           expandRows={true}
           allDaySlot={false}
-          slotDuration="00:30:00"
+          slotDuration="01:00:00"
         />
 
         {/* Drop Zone for cancelling shifts by dragging out */}
