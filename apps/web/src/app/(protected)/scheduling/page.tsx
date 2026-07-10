@@ -117,6 +117,14 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const leavePanelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    // Set compact slot height after calendar mounts
+    const cal = calendarRef.current?.getApi()
+    if (cal) {
+      cal.option('slotHeight', 36)
+    }
+  }, [])
+
   const templatePanelRef = useRef<HTMLDivElement>(null)
   const calendarContainerRef = useRef<HTMLDivElement>(null)
   const calendarRef = useRef<any>(null)
@@ -1500,7 +1508,7 @@ function getShiftColor(shift: Shift): string {
           }}
           dateClick={handleFcDateClick}
           snapDuration="00:30:00"
-          eventConstraint={{ startTime: '08:00:00', endTime: '22:00:00' }}
+          eventConstraint={{ startTime: '06:00:00', endTime: '23:00:00' }}
           eventDurationEditable={false}
           eventContent={(eventInfo) => {
             const shift = eventInfo.event.extendedProps.shift
@@ -1521,9 +1529,9 @@ function getShiftColor(shift: Shift): string {
               </div>
             )
           }}
-          height={viewMode === 'month' ? 'auto' : 520}
-          slotMinTime="09:00:00"
-          slotMaxTime="21:00:00"
+          height="auto"
+          slotMinTime="06:00:00"
+          slotMaxTime="23:00:00"
           eventDidMount={(info) => {
             info.el.style.borderRadius = '6px'
           }}
