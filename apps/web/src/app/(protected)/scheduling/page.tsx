@@ -654,20 +654,6 @@ function getShiftColor(shift: Shift): string {
     e.dataTransfer.dropEffect = 'copy'
   }
 
-  // Task 3: Selected employee stats
-  const selectedEmpStats = useMemo(() => {
-    if (!selectedEmployeeId) return null
-    const empShifts = shifts.filter(s => s.employeeId === selectedEmployeeId)
-    const days = new Set(empShifts.map(s => s.date)).size
-    const hours = empShifts.reduce((sum, s) => {
-      const start = new Date(s.startTime)
-      const end = new Date(s.endTime)
-      return sum + (end.getTime() - start.getTime()) / 3600000
-    }, 0)
-    return { days, hours: Math.round(hours * 10) / 10 }
-  }, [selectedEmployeeId, shifts])
-
-  
   // ============================================================
   // FullCalendar Event Handlers
   // ============================================================
@@ -744,6 +730,21 @@ function getShiftColor(shift: Shift): string {
     if (!selectedClinicId) return []
     return shifts.filter(s => s.clinicId === selectedClinicId)
   }, [shifts, selectedClinicId])
+
+  // Task 3: Selected employee stats (after clinicFilteredShifts)
+  const selectedEmpStats = useMemo(() => {
+    if (!selectedEmployeeId) return null
+    const emp = clinicEmployees.find(e => e.id === selectedEmployeeId)
+    if (!emp) return null
+    const empShifts = clinicFilteredShifts.filter(s => s.employeeId === selectedEmployeeId)
+    const days = new Set(empShifts.map(s => s.date)).size
+    const hours = empShifts.reduce((sum, s) => {
+      const start = new Date(s.startTime)
+      const end = new Date(s.endTime)
+      return sum + (end.getTime() - start.getTime()) / 3600000
+    }, 0)
+    return { name: emp.user.name, days, hours: Math.round(hours * 10) / 10 }
+  }, [selectedEmployeeId, clinicFilteredShifts, clinicEmployees])
 
   // Map shifts to FC events — colors by employee, leave by gray
   const fcEvents = [
@@ -1120,15 +1121,7 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
 
-      {/* Selected Employee Stats (Task 3) */}
-      {selectedEmpStats && selectedEmpName && (
-        <div className="card p-3 mb-2 bg-blue-50 border border-blue-200 rounded-lg" style={{ marginTop: 12 }}>
-          <div className="font-semibold text-sm">{selectedEmpName}</div>
-          <div className="text-xs text-slate-600">
-            {viewMode === 'week' ? '本週' : '本月'}：排 {selectedEmpStats.days} 天 · {selectedEmpStats.hours} 小時
-          </div>
-        </div>
-      )}
+
 
       {/* ============================================================ */}
       {/* GLOBAL OVERVIEW GRID (top, full width) */}
@@ -1418,21 +1411,16 @@ function getShiftColor(shift: Shift): string {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
-            {selectedClinicId && (() => {
-              const clinicShifts = clinicFilteredShifts
-              const days = new Set(clinicShifts.map(s => s.date)).size
-              const hours = clinicShifts.reduce((sum, s) => sum + shiftHours(s), 0)
-              const people = new Set(clinicShifts.map(s => s.employeeId)).size
-              return (
-                <div style={{ display: 'flex', gap: 12, fontSize: 13, color: '#666' }}>
-                  <span>本店{viewMode === 'week' ? '本週' : '本月'}：{days} 天班</span>
-                  <span>·</span>
-                  <span>{Math.round(hours * 10) / 10} 小時</span>
-                  <span>·</span>
-                  <span>{people} 人</span>
-                </div>
-              )
-            })()}
+            {/* Employee stats next to clinic selector */}
+            {selectedEmployeeId && selectedEmpStats ? (
+              <div style={{ display: 'flex', gap: 12, fontSize: 13, color: '#666' }}>
+                <span>{selectedEmpStats.name}: {selectedEmpStats.days} 天班</span>
+                <span>·</span>
+                <span>{selectedEmpStats.hours.toFixed(1)} 小時</span>
+              </div>
+            ) : (
+              <span style={{ fontSize: 13, color: '#999' }}>請先選取員工</span>
+            )}
             {canManage && (
               <span style={{ fontSize: 11, color: '#aaa' }}>拖更次/員工到日曆為此店排班</span>
             )}
