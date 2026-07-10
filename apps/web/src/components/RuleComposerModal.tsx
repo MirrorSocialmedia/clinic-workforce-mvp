@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 import { todayHK } from '@/lib/hk-date'
@@ -19,6 +19,13 @@ const BASE_TYPE_TO_PAY_TYPE: Record<BaseType, 'MONTHLY' | 'DAILY' | 'HOURLY' | '
   hourly: 'HOURLY',
   daily: 'DAILY',
   split: 'SPLIT',
+}
+
+const PAY_TYPE_TO_BASE_TYPE: Record<string, BaseType> = {
+  MONTHLY: 'monthly',
+  HOURLY: 'hourly',
+  DAILY: 'daily',
+  SPLIT: 'split',
 }
 
 // ── Default modifier values ──────────────────────────────────────
@@ -149,16 +156,73 @@ const checkboxLabelStyle: React.CSSProperties = {
 
 interface RuleComposerModalProps {
   employeeId: string
+  ruleId?: string  // optional — if set, directly edit this rule
   onClose: () => void
   onSuccess: () => void
 }
 
-export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleComposerModalProps) {
+export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, onSuccess }: RuleComposerModalProps) {
   const [baseType, setBaseType] = useState<BaseType>('monthly')
   const [config, setConfig] = useState<PayRuleConfigModular>(buildDefaultConfig('monthly'))
   const [effectiveFrom, setEffectiveFrom] = useState(todayHK())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [ruleId, setRuleId] = useState<string | undefined>(initialRuleId)
+
+  // ── Load existing active rule on mount ──────────────────────────
+  useEffect(() => {
+    loadExistingRule()
+  }, [employeeId])
+
+  async function loadExistingRule() {
+    try {
+      const res = await fetch(`/api/employees/${employeeId}/pay-rules`, { credentials: 'include' })
+      const rules = await res.json()
+      if (!Array.isArray(rules)) return
+
+      // Use the passed ruleId if valid, otherwise find active rule
+      let targetRule = initialRuleId
+        ? rules.find((r: any) => r.id === initialRuleId)
+        : rules.find((r: any) => r.isActive)
+
+      if (!targetRule) return
+
+      const ruleIdToUse = targetRule.id
+      setRuleId(ruleIdToUse)
+
+      // Parse modular config from configJson
+      let modularConfig: PayRuleConfigModular | null = null
+      if (targetRule.configJson) {
+        try {
+          modularConfig = typeof targetRule.configJson === 'string'
+            ? JSON.parse(targetRule.configJson)
+            : targetRule.configJson
+        } catch { /* use defaults */ }
+      }
+
+      if (modularConfig && modularConfig.base_type) {
+        const bt = modularConfig.base_type as BaseType
+        setBaseType(bt)
+        setConfig({ ...modularConfig })
+      } else {
+        // Fallback: derive baseType from payType
+        const bt = PAY_TYPE_TO_BASE_TYPE[targetRule.payType] || 'monthly'
+        setBaseType(bt)
+        setConfig(buildDefaultConfig(bt))
+      }
+
+      // Set effectiveFrom from existing rule
+      if (targetRule.effectiveFrom) {
+        const d = new Date(targetRule.effectiveFrom)
+        const yyyy = d.getFullYear()
+        const mm = String(d.getMonth() + 1).padStart(2, '0')
+        const dd = String(d.getDate()).padStart(2, '0')
+        setEffectiveFrom(`${yyyy}-${mm}-${dd}`)
+      }
+    } catch (err) {
+      console.error('Failed to load existing rule:', err)
+    }
+  }
 
   // Toggle modifier enable/disable by setting the modifier to undefined or restoring defaults
   const toggleModifier = useCallback(
@@ -187,6 +251,12 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
     setBaseType(type)
     setConfig(buildDefaultConfig(type))
   }, [])
+
+  const isEdit = !!ruleId
+  const titleText = isEdit ? '編輯薪酬規則' : '新增薪酬規則'
+  const submitText = submitting
+    ? (isEdit ? '保存中...' : '新增中...')
+    : (isEdit ? '保存修改' : '新增薪酬規則')
 
   // ── Submit ──────────────────────────────────────────────────────
 
@@ -220,8 +290,14 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
     setSubmitting(true)
 
     try {
-      const res = await fetch(`/api/employees/${employeeId}/pay-rules`, {
-        method: 'POST',
+      const isEditing = !!ruleId
+      const url = isEditing
+        ? `/api/employees/${employeeId}/pay-rules/${ruleId}`
+        : `/api/employees/${employeeId}/pay-rules`
+      const method = isEditing ? 'PUT' : 'POST'
+
+      const res = await fetch(url, {
+        method,
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -235,19 +311,19 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
                   ? config.daily_rate
                   : config.split_ratio,
           modularConfig: config,
-          effectiveFrom,
+          ...(method === 'POST' ? { effectiveFrom } : {}),
         }),
       })
 
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error || '新增薪酬規則失敗')
+        setError(data.error || (isEditing ? '更新薪酬規則失敗' : '新增薪酬規則失敗'))
         return
       }
 
       onSuccess()
     } catch (err: any) {
-      setError(err.message || '新增薪酬規則失敗')
+      setError(err.message || (ruleId ? '更新薪酬規則失敗' : '新增薪酬規則失敗'))
     } finally {
       setSubmitting(false)
     }
@@ -290,7 +366,7 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
             marginBottom: 20,
           }}
         >
-          <h2 style={{ margin: 0 }} className="flex items-center gap-2"><Wallet size={20} /> 新增薪酬規則</h2>
+          <h2 style={{ margin: 0 }} className="flex items-center gap-2"><Wallet size={20} /> {titleText}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -1146,7 +1222,7 @@ export function RuleComposerModal({ employeeId, onClose, onSuccess }: RuleCompos
               className="btn btn-primary"
               disabled={submitting}
             >
-              {submitting ? '新增中...' : '新增薪酬規則'}
+              {submitText}
             </button>
           </div>
         </form>

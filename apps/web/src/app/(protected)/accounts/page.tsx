@@ -36,6 +36,7 @@ export default function AccountsPage() {
   const [showPayRuleModal, setShowPayRuleModal] = useState(false)
   const [payRuleEmployeeId, setPayRuleEmployeeId] = useState<string | null>(null)
   const [leaveBalances, setLeaveBalances] = useState<Record<string, any[]>>({})
+  const [payRules, setPayRules] = useState<Record<string, any>>({})
   const [form, setForm] = useState({
     name: '', phone: '', email: '', password: '', role: 'EMPLOYEE' as Role,
     clinicIds: [] as string[], joinDate: '',
@@ -186,6 +187,39 @@ export default function AccountsPage() {
     } catch {}
   }
 
+  const loadPayRules = async (employeeId: string) => {
+    if (payRules[employeeId] !== undefined) return // already loaded
+    try {
+      const res = await fetch(`/api/employees/${employeeId}/pay-rules`, { credentials: 'include' })
+      if (res.ok) {
+        const rules = await res.json()
+        const activeRule = (Array.isArray(rules) ? rules : []).find((r: any) => r.isActive)
+        setPayRules(prev => ({ ...prev, [employeeId]: activeRule || null }))
+      }
+    } catch (err) { console.error('Failed to load pay rules:', err) }
+  }
+
+  const getPayInfo = (acc: Account) => {
+    const rule = payRules[acc.employeeId!]
+    if (rule && rule.configJson) {
+      const config = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
+      const baseType = config.base_type || ''
+      const labels: Record<string, string> = { monthly: '月薪', hourly: '時薪', daily: '日薪', split: '拆帳' }
+      let amount = ''
+      switch (baseType) {
+        case 'monthly': amount = `HK$${config.monthly_salary ?? '-'}`; break
+        case 'hourly': amount = `HK$${config.hourly_rate ?? '-'}/時`; break
+        case 'daily': amount = `HK$${config.daily_rate ?? '-'}/日`; break
+        case 'split': amount = `${config.split_ratio ?? '-'}% (${config.base_guarantee ? `保底 HK$${config.base_guarantee}` : ''})`; break
+      }
+      return { label: labels[baseType] || (rule.payType || '-'), amount }
+    }
+    // Fallback to account-level data
+    const typeLabel = acc.payType === 'HOURLY' ? '時薪' : acc.payType === 'MONTHLY' ? '月薪' : '-'
+    const amount = acc.payType ? `${acc.payType === 'HOURLY' ? '時薪' : '月薪'}: ${acc.baseAmount || 0}` : '-'
+    return { label: typeLabel, amount }
+  }
+
   const isOwner = userRole === 'OWNER'
 
   if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
@@ -333,7 +367,16 @@ export default function AccountsPage() {
           <tbody>
             {filteredAccounts.map(acc => (
               <React.Fragment key={acc.id}>
-                <tr onClick={() => setExpandedRow(expandedRow === acc.id ? null : acc.id)} style={{ cursor: 'pointer' }}>
+                <tr onClick={() => {
+                  if (expandedRow === acc.id) {
+                    setExpandedRow(null)
+                  } else {
+                    setExpandedRow(acc.id)
+                    if (acc.employeeId) {
+                      loadPayRules(acc.employeeId)
+                    }
+                  }
+                }} style={{ cursor: 'pointer' }}>
                   <td style={{ fontWeight: 500 }}>{acc.name}</td>
                   <td>{acc.phone}</td>
                   <td>
@@ -391,8 +434,15 @@ export default function AccountsPage() {
                         </div>
                         <div>
                           <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>薪酬資訊</h4>
-                          <div style={{ fontSize: 12, color: '#888' }}>方式: {acc.payType === 'HOURLY' ? '時薪' : acc.payType === 'MONTHLY' ? '月薪' : '-'}</div>
-                          <div style={{ fontSize: 12, color: '#888' }}>{acc.payType ? `${acc.payType === 'HOURLY' ? '時薪' : '月薪'}: ${acc.baseAmount || 0}` : '-'}</div>
+                          {(() => {
+                            const payInfo = getPayInfo(acc)
+                            return (
+                              <>
+                                <div style={{ fontSize: 12, color: '#888' }}>方式: {payInfo.label}</div>
+                                <div style={{ fontSize: 12, color: '#888' }}>金額: {payInfo.amount}</div>
+                              </>
+                            )
+                          })()}
                         </div>
                         <div>
                           <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>入職資料</h4>

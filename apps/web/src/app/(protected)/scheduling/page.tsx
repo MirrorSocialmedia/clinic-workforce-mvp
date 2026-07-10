@@ -1322,7 +1322,7 @@ function getShiftColor(shift: Shift): string {
                 borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
               }}
             >
-              清空當週排班及假期
+              清空當週排班
             </button>
           )}
         </div>

@@ -4,6 +4,28 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 
+// GET /api/employees/:id/pay-rules — get all pay rules for employee
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = requireAuth(req, 'GET', req.url)
+  if (isAuthError(auth)) return auth.error
+
+  const payRules = await prisma.payRule.findMany({
+    where: { employeeId: params.id },
+    orderBy: { effectiveFrom: 'desc' },
+  })
+
+  // Parse configJson string → modularConfig object
+  const rulesWithConfig = payRules.map(r => ({
+    ...r,
+    configJson: r.configJson ? JSON.parse(r.configJson) : null,
+  }))
+
+  return NextResponse.json(rulesWithConfig)
+}
+
 // POST /api/employees/:id/pay-rules — add new pay rule
 export async function POST(
   req: NextRequest,
