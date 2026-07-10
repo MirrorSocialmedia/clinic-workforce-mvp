@@ -135,9 +135,19 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  // Count distinct employees across all clinics (not EmployeeClinic bindings)
+  const allEmployeeClinics = await prisma.employeeClinic.findMany({
+    where: {
+      clinicId: { in: clinics.map(c => c.id) },
+    },
+    select: { employeeId: true },
+  })
+  const distinctEmployeeCount = new Set(allEmployeeClinics.map(ec => ec.employeeId)).size
+
   return NextResponse.json({
     role: session.role,
     clinics: clinicsWithStats,
     recentAuditLogs,
+    distinctEmployeeCount,
   })
 }

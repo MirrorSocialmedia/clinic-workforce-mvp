@@ -27,6 +27,7 @@ interface ClinicData {
     shifts: number
     punches?: number
   }
+  employees?: { employeeId: string }[]
   todayStats: TodayStats | null
 }
 
@@ -65,6 +66,7 @@ export default function DashboardPage() {
     role: Role
     clinics: ClinicData[]
     recentAuditLogs: AuditLogData[]
+    distinctEmployeeCount?: number
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -94,7 +96,21 @@ export default function DashboardPage() {
     EMPLOYEE: '員工',
   }
 
-  const totalEmployees = (data.clinics ?? []).reduce((sum, c) => sum + (c._count?.employees ?? 0), 0)
+  // Count distinct employee IDs across clinics (not EmployeeClinic bindings)
+  let totalEmployees: number
+  if (typeof data.distinctEmployeeCount === 'number') {
+    totalEmployees = data.distinctEmployeeCount
+  } else {
+    const employeeIds = new Set<string>()
+    for (const clinic of data.clinics ?? []) {
+      if (clinic.employees) {
+        for (const ec of clinic.employees) {
+          employeeIds.add(ec.employeeId)
+        }
+      }
+    }
+    totalEmployees = employeeIds.size
+  }
   const totalShifts = (data.clinics ?? []).reduce((sum, c) => sum + (c._count?.shifts ?? 0), 0)
 
   return (
