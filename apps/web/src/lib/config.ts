@@ -75,6 +75,8 @@ export const CONFIG = {
     'POST /api/shifts/validate': ['OWNER', 'MANAGER'],
     'GET /api/shifts/templates': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/shifts/templates': ['OWNER'],
+    'PUT /api/shifts/templates/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/shifts/templates/:id': ['OWNER'],
     'GET /api/shifts/my-schedule': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Shift change request routes
