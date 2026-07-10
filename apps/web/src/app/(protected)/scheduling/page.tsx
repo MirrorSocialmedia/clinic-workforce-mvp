@@ -126,6 +126,7 @@ export default function SchedulingPage() {
   }, [])
 
   const templatePanelRef = useRef<HTMLDivElement>(null)
+  const employeePanelRef = useRef<HTMLDivElement>(null)
   const calendarContainerRef = useRef<HTMLDivElement>(null)
   const calendarRef = useRef<any>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
@@ -263,6 +264,30 @@ function getShiftColor(shift: Shift): string {
     return () => d.destroy()
   }, [templates, viewMode])
 
+  // Filter employees by selected clinic (needed by Draggable effect)
+  const clinicEmployees = useMemo(() => {
+    if (!selectedClinicId) return []
+    return employees.filter(emp =>
+      emp.clinics.some(ec => ec.clinic.id === selectedClinicId)
+    )
+  }, [employees, selectedClinicId])
+
+  // Register FC Draggable on employee panel (drag employees)
+  useEffect(() => {
+    if (!employeePanelRef.current) return
+    const d = new Draggable(employeePanelRef.current, {
+      itemSelector: '.employee-card',
+      eventData: (el: HTMLElement) => ({
+        title: el.getAttribute('data-name') || '',
+        extendedProps: {
+          dragType: 'employee',
+          employeeId: el.getAttribute('data-employee-id'),
+        },
+      }),
+    })
+    return () => d.destroy()
+  }, [clinicEmployees, viewMode])
+
   // Load leave types
   useEffect(() => {
     const fetchLeaveTypes = async () => {
@@ -290,8 +315,8 @@ function getShiftColor(shift: Shift): string {
           dragType: 'leave',
           leaveTypeId: el.getAttribute('data-leave-id'),
         },
-        backgroundColor: '#95a5a6',
-        borderColor: '#7f8c8d',
+        backgroundColor: '#4a4a4a',
+        borderColor: '#4a4a4a',
       }),
     })
     return () => d.destroy()
@@ -531,7 +556,7 @@ function getShiftColor(shift: Shift): string {
     }
 
     // Filter employees by selected clinic
-    const clinicEmployees = employees.filter(emp =>
+    const clinicEmps = employees.filter(emp =>
       emp.clinics.some(ec => ec.clinic.id === selectedClinicId)
     )
 
@@ -541,7 +566,7 @@ function getShiftColor(shift: Shift): string {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          employeeId: clinicEmployees[0]?.id, // bulk mode with dates
+          employeeId: clinicEmps[0]?.id, // bulk mode with dates
           clinicId: selectedClinicId,
           date: dates[0],
           startTime: buildTime(dates[0], selectedTemplate.startHour, selectedTemplate.startMinute),
@@ -722,7 +747,7 @@ function getShiftColor(shift: Shift): string {
     return shifts.filter(s => s.clinicId === selectedClinicId)
   }, [shifts, selectedClinicId])
 
-  // Map shifts to FC events (filtered by selected clinic)
+  // Map shifts to FC events — colors by employee, leave by gray
   const fcEvents = [
     ...clinicFilteredShifts.map(s => {
       const shiftDate = new Date(s.date)
@@ -731,12 +756,10 @@ function getShiftColor(shift: Shift): string {
       const isPast = shiftDate < todayStart
       const isAbsent = isPast && !s.hasPunch
 
-      let backgroundColor = s.status === 'CONFIRMED' ? '#1976d2' :
-                           s.status === 'DRAFT' ? '#f57c00' :
-                           s.status === 'CANCELLED' ? '#dc3545' : '#388e3c'
-      let borderColor = s.status === 'CONFIRMED' ? '#1565c0' :
-                        s.status === 'DRAFT' ? '#e65100' :
-                        s.status === 'CANCELLED' ? '#c82333' : '#2e7d32'
+      // Employee color for shifts, gray for absent indicator
+      const empColor = colorFor(s.employeeId)
+      let backgroundColor = empColor
+      let borderColor = empColor
       if (isAbsent) {
         backgroundColor = '#e74c3c'
         borderColor = '#c0392b'
@@ -752,16 +775,23 @@ function getShiftColor(shift: Shift): string {
         extendedProps: { shift: s, isAbsent },
       }
     }),
-    ...leaveRequests.map((lr, idx) => ({
+    ...leaveRequests.map((lr) => ({
       id: 'leave-' + lr.id,
       title: lr.employee?.user?.name + ' ' + (lr.leaveType?.name || ''),
       start: lr.startDate,
       end: lr.endDate,
-      backgroundColor: '#95a5a6',
-      borderColor: '#7f8c8d',
+      backgroundColor: '#4a4a4a',
+      borderColor: '#4a4a4a',
       extendedProps: { isLeave: true, leaveRequest: lr },
     })),
   ]
+
+  // Jump to edit: click overview grid → switch clinic + scroll to calendar
+  function jumpToEdit(shift: Shift | undefined, date: string) {
+    if (shift) setSelectedClinicId(shift.clinicId)
+    calendarRef.current?.getApi()?.gotoDate(date)
+    document.getElementById('fc-section')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 
   const handleDrop = async (e: React.DragEvent, employeeId: string, dateStr: string) => {
     e.preventDefault()
@@ -776,16 +806,6 @@ function getShiftColor(shift: Shift): string {
     } else {
       setValidationIssues([{ type: 'error', rule: 'create', message: '❌ 建立班次失敗' }])
     }
-  }
-
-  // ============================================================
-  // Get employees for selected clinic
-  // ============================================================
-  const getClinicEmployees = (): Employee[] => {
-    if (!selectedClinicId) return []
-    return employees.filter(emp =>
-      emp.clinics.some(ec => ec.clinic.id === selectedClinicId)
-    )
   }
 
   const canManage = userRole === 'OWNER' || userRole === 'MANAGER'
@@ -813,6 +833,28 @@ function getShiftColor(shift: Shift): string {
     return (e.getTime() - s.getTime()) / (1000 * 60 * 60)
   }
 
+  // Get week days for overview grid
+  const weekDays = useMemo(() => {
+    if (!viewRange) return []
+    const weekDaysList: { date: Date; label: string; dateStr: string }[] = []
+    const start = new Date(viewRange.start)
+    const dayOfWeek = start.getDay()
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+    const monday = new Date(start)
+    monday.setDate(start.getDate() + mondayOffset)
+    const dayNames = ['一', '二', '三', '四', '五', '六', '日']
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday)
+      d.setDate(monday.getDate() + i)
+      weekDaysList.push({ date: d, label: `${dayNames[i]}${d.getDate()}`, dateStr: toHKDateStr(d) })
+    }
+    return weekDaysList
+  }, [viewRange])
+
+  const allEmployees = useMemo(() => {
+    return employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
+  }, [employees])
+
   // ============================================================
   // Loading State
   // ============================================================
@@ -820,7 +862,6 @@ function getShiftColor(shift: Shift): string {
     return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   }
 
-  const clinicEmployees = getClinicEmployees()
   const selectedEmpName = selectedEmployeeId ? (clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name || '') : ''
   const excludeEmployeeId = editingShift?.employeeId || ''
   const availableEmployees = clinicEmployees.filter((e: Employee) => e.id !== excludeEmployeeId)
@@ -829,7 +870,7 @@ function getShiftColor(shift: Shift): string {
   // Render
   // ============================================================
   return (
-    <div style={{ maxWidth: '1200px' }}>
+    <div style={{ maxWidth: '100%', padding: '0 16px' }}>
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -841,8 +882,6 @@ function getShiftColor(shift: Shift): string {
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* View mode toggle removed — FC headerToolbar handles week/month switching */}
-
-
 
           {/* Shift rule settings button */}
           {canManage && (
@@ -1095,137 +1134,10 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
 
-      {/* Employee chips (top horizontal) */}
-      {canManage && clinicEmployees.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, overflowX: 'auto' }}>
-          {clinicEmployees.map(emp => (
-            <div key={emp.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div
-                onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
-                style={{
-                  padding: '6px 14px', borderRadius: 16, fontSize: 13,
-                  background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
-                  color: selectedEmployeeId === emp.id ? colorFor(emp.id) : '#fff',
-                  border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
-                  cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
-                  transition: 'all 0.15s',
-                }}
-              >
-                {emp.user.name}
-                <span style={{ marginLeft: 6, opacity: 0.8 }}>{empShiftDays(emp.id)}天</span>
-              </div>
-              {selectedEmployeeId === emp.id && (
-                <button
-                  onClick={async () => {
-                    if (!confirm('確定清空該員工當週所有排班？')) return
-                    const { startDate, endDate } = getDateRange()
-                    const weekShifts = shifts.filter(s =>
-                      s.employeeId === emp.id &&
-                      s.date >= startDate &&
-                      s.date <= endDate
-                    )
-                    if (weekShifts.length === 0) {
-                      alert('該員工當週沒有排班')
-                      return
-                    }
-                    for (const shift of weekShifts) {
-                      await fetch('/api/shifts/' + shift.id, {
-                        method: 'DELETE',
-                        credentials: 'include',
-                      })
-                    }
-                    await refreshAll()
-                  }}
-                  style={{
-                    marginTop: 4, padding: '2px 8px', fontSize: 11,
-                    background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb',
-                    borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
-                  }}
-                >
-                  清空當週排班
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 16 }}>
-        {/* Left: Templates (draggable) + Leave (scrollable) */}
-        {canManage && (
-          <div style={{ width: 180, flexShrink: 0, maxHeight: 600, overflowY: 'auto' }}>
-            <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>更次模版（拖到日曆）</h4>
-            <div ref={templatePanelRef}>
-              {templates.map(t => (
-                <div
-                  key={t.id}
-                  className="template-card"
-                  data-template-id={t.id}
-                  data-name={t.name}
-                  onClick={() => setSelectedTemplate(t)}
-                  style={{
-                    padding: '8px 12px', margin: '4px 0', borderRadius: 8,
-                    cursor: 'grab',
-                    background: selectedTemplate?.id === t.id ? '#1a1a2e' : '#f0f0f0',
-                    color: selectedTemplate?.id === t.id ? '#fff' : '#333',
-                  }}
-                >
-                  {t.name}
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>
-                    {String(t.startHour).padStart(2,'0')}:{String(t.startMinute).padStart(2,'0')}-{String(t.endHour).padStart(2,'0')}:{String(t.endMinute).padStart(2,'0')}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Leave types panel */}
-            {leaveTypes.length > 0 && (
-              <div ref={leavePanelRef} style={{ marginTop: 16 }}>
-                <h4 style={{ fontSize: 13, margin: '0 0 8px 0', color: '#888' }}>假期</h4>
-                <div style={{ fontSize: 11, color: '#aaa', marginBottom: 6 }}>
-                  {selectedEmployeeId ? `選中: ${clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name || ''}` : '點擊上方員工芯片選中'}
-                </div>
-                {leaveTypes.map(lt => (
-                  <div
-                    key={lt.id}
-                    className="leave-card"
-                    data-leave-id={lt.id}
-                    data-name={lt.name}
-                    style={{
-                      padding: '8px 12px', margin: '4px 0',
-                      background: lt.color || '#95a5a6', color: '#fff',
-                      borderRadius: 8, cursor: 'grab', fontSize: 13,
-                    }}
-                    title="拖到日曆建立請假"
-                  >
-                    <Palmtree size={14} style={{ marginRight: 4 }} /> {lt.name}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-      {/* Right: Calendar Card */}
-      <div className="flex-1 min-w-0">
-
-      {/* Clinic selector + hint above FC */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 13, color: '#888', whiteSpace: 'nowrap' }}>📋 下方日曆僅顯示：</span>
-        <select
-          value={selectedClinicId || ''}
-          onChange={e => setSelectedClinicId(e.target.value)}
-          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, width: 'auto' }}
-        >
-          {clinics.map(c => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <span style={{ fontSize: 11, color: '#aaa' }}>（切換只影響下方，上方總覽始終顯示全店）</span>
-      </div>
-
-      {/* Global Overview Grid: All employees × 7 days */}
-      {viewRange && employees.length > 0 && (
+      {/* ============================================================ */}
+      {/* GLOBAL OVERVIEW GRID (top, full width) */}
+      {/* ============================================================ */}
+      {viewRange && allEmployees.length > 0 && (
         <div style={{
           marginBottom: 16,
           border: '1px solid #e5e7eb',
@@ -1244,96 +1156,75 @@ function getShiftColor(shift: Shift): string {
                   padding: '8px 12px', textAlign: 'left', zIndex: 10,
                   borderBottom: '2px solid #e5e7eb', minWidth: 100,
                 }}>員工</th>
-                {(() => {
-                  const weekDays: { date: Date; label: string }[] = []
-                  const start = new Date(viewRange.start)
-                  const dayOfWeek = start.getDay()
-                  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-                  const monday = new Date(start)
-                  monday.setDate(start.getDate() + mondayOffset)
-                  const dayNames = ['一', '二', '三', '四', '五', '六', '日']
-                  for (let i = 0; i < 7; i++) {
-                    const d = new Date(monday)
-                    d.setDate(monday.getDate() + i)
-                    weekDays.push({ date: d, label: `${dayNames[i]}${d.getDate()}` })
-                  }
-                  return weekDays.map((wd, i) => (
-                    <th key={i} style={{
-                      padding: '8px 6px', textAlign: 'center',
-                      borderBottom: '2px solid #e5e7eb',
-                      minWidth: 80, whiteSpace: 'nowrap',
-                    }}>{wd.label}</th>
-                  ))
-                })()}
+                {weekDays.map((wd, i) => (
+                  <th key={i} style={{
+                    padding: '8px 6px', textAlign: 'center',
+                    borderBottom: '2px solid #e5e7eb',
+                    minWidth: 80, whiteSpace: 'nowrap',
+                  }}>{wd.label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {employees.map(emp => (
+              {allEmployees.map(emp => (
                 <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{
                     position: 'sticky', left: 0,
-                    background: emp.status === 'ACTIVE' ? '#fafbfc' : '#fee2e2',
+                    background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                     padding: '6px 12px', whiteSpace: 'nowrap', zIndex: 5,
                     fontWeight: 500,
                   }}>{emp.user.name}</td>
-                  {(() => {
-                    const weekDays: Date[] = []
-                    const start = new Date(viewRange.start)
-                    const dayOfWeek = start.getDay()
-                    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-                    const monday = new Date(start)
-                    monday.setDate(start.getDate() + mondayOffset)
-                    for (let i = 0; i < 7; i++) {
-                      const d = new Date(monday)
-                      d.setDate(monday.getDate() + i)
-                      weekDays.push(d)
-                    }
-                    return weekDays.map((wd, dayIdx) => {
-                      const dateStr = toHKDateStr(wd)
-                      const empShiftsOnDay = shifts.filter(s =>
-                        s.employeeId === emp.id &&
-                        toHKDateStr(new Date(s.date)) === dateStr
-                      )
-                      const hasShift = empShiftsOnDay.length > 0
-                      return (
-                        <td key={dayIdx} style={{
-                          padding: '4px 6px', textAlign: 'center',
-                          cursor: 'pointer',
-                          background: hasShift ? '' : (dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'),
-                          transition: 'background 0.15s',
-                        }}
-                        onMouseEnter={e => {
-                          if (!hasShift) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
-                        }}
-                        onMouseLeave={e => {
-                          if (!hasShift) (e.currentTarget as HTMLTableCellElement).style.background = dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'
-                        }}
-                        onClick={() => {
-                          if (hasShift) {
-                            const s = empShiftsOnDay[0]
-                            setSelectedClinicId(s.clinicId)
-                            calendarRef.current?.getApi().gotoDate(dateStr)
-                            document.querySelector('[data-calendar-section]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                          }
-                        }}
-                        >
-                          {hasShift ? empShiftsOnDay.map((s, si) => (
-                            <div key={si} style={{
-                              display: 'inline-block',
-                              padding: '1px 5px',
-                              borderRadius: 3,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              color: '#fff',
-                              background: getShiftColor(s),
-                              margin: '1px 2px',
-                              whiteSpace: 'nowrap',
-                            }}>{getShiftCode(s)}</div>
-                          )) : <span style={{ color: '#d1d5db' }}>&mdash;</span>}
-                        </td>
-                      )
-                    })
-                  })()}
+                  {weekDays.map((wd, dayIdx) => {
+                    const empShiftsOnDay = shifts.filter(s =>
+                      s.employeeId === emp.id &&
+                      toHKDateStr(new Date(s.date)) === wd.dateStr
+                    )
+                    const empLeavesOnDay = leaveRequests.filter(lr =>
+                      lr.employeeId === emp.id &&
+                      wd.dateStr >= lr.startDate &&
+                      wd.dateStr <= (lr.endDate || lr.startDate)
+                    )
+                    const hasShift = empShiftsOnDay.length > 0
+                    const hasLeave = empLeavesOnDay.length > 0
+                    return (
+                      <td key={dayIdx} style={{
+                        padding: '4px 6px', textAlign: 'center',
+                        cursor: hasShift ? 'pointer' : 'default',
+                        background: hasShift ? '' : hasLeave ? '' : (dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'),
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={e => {
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                      }}
+                      onMouseLeave={e => {
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = dayIdx % 2 === 0 ? '#fafbfc' : '#f5f6f7'
+                      }}
+                      onClick={() => {
+                        if (hasShift) {
+                          jumpToEdit(empShiftsOnDay[0], wd.dateStr)
+                        }
+                      }}
+                      >
+                        {hasShift ? empShiftsOnDay.map((s, si) => (
+                          <div key={si} style={{
+                            display: 'inline-block',
+                            padding: '1px 5px',
+                            borderRadius: 3,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: '#fff',
+                            background: getShiftColor(s),
+                            margin: '1px 2px',
+                            whiteSpace: 'nowrap',
+                          }}>{getShiftCode(s)}</div>
+                        )) : hasLeave ? (
+                          <span style={{ fontSize: 11, color: '#4a4a4a', fontWeight: 600 }}>休</span>
+                        ) : (
+                          <span style={{ color: '#d1d5db' }}>&middot;</span>
+                        )}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -1341,229 +1232,415 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
 
-      <div className="card rounded-xl g border p-4 shadow-card" data-calendar-section>
-      <div ref={calendarContainerRef}>
+      {/* ============================================================ */}
+      {/* THREE-COLUMN LAYOUT: Employees | Templates+Leave | Calendar */}
+      {/* ============================================================ */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '88px 108px 1fr',
+        gap: 12,
+        alignItems: 'start',
+      }}>
 
-        <FullCalendar
-          ref={calendarRef}
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView={viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
-          locale={zhcn}
-          headerToolbar={{
-            left: 'prev,next',
-            center: '',
-            right: 'timeGridWeek,dayGridMonth',
-          }}
-          datesSet={(dateInfo) => {
-            // Sync viewMode from FC view type (since we removed the manual toggle)
-            const viewType = dateInfo.view.type
-            if (viewType === 'timeGridWeek') {
-              setViewMode('week')
-            } else if (viewType === 'dayGridMonth') {
-              setViewMode('month')
-            }
-            // Sync currentDate to FC midpoint
-            const mid = new Date((dateInfo.start.getTime() + dateInfo.end.getTime()) / 2)
-            const hkMid = toHKDateStr(mid)
-            const hkCurrent = toHKDateStr(currentDate)
-            if (hkMid !== hkCurrent) {
-              setCurrentDate(mid)
-            }
-            // Set visible range for loadShifts
-            const range = {
-              start: toHKDateStr(dateInfo.start),
-              end: toHKDateStr(new Date(dateInfo.end.getTime() - 86400000)), // end is exclusive, subtract 1 day
-            }
-            if (range.start !== viewRange?.start || range.end !== viewRange?.end) {
-              setViewRange(range)
-            }
-          }}
-          events={fcEvents}
-          droppable={true}
-          eventReceive={async (info) => {
-            info.event.remove()
-            const props = info.event.extendedProps
-            const date = toHKDateStr(info.event.start!)
-
-            if (props.dragType === 'leave') {
-              const leaveTypeId = props.leaveTypeId
-              if (!leaveTypeId) {
-                setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 假期類型無效' }])
-                return
-              }
-
-              if (!selectedEmployeeId) {
-                setShowLeaveEmployeeModal({ date, leaveTypeId })
-                return
-              }
-
-              const hasShiftOnDate = shifts.some(s =>
-                s.employeeId === selectedEmployeeId &&
-                toHKDateStr(new Date(s.date)) === date
-              )
-              if (hasShiftOnDate) {
-                setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
-                return
-              }
-
-              try {
-                const res = await fetch('/api/leave-requests', {
-                  method: 'POST',
-                  credentials: 'include',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    leaveTypeId,
-                    employeeId: selectedEmployeeId,
-                    startDate: date,
-                    endDate: date,
-                    days: 1,
-                    reason: `排班頁拖曳請假`,
-                    isPlanned: true,
-                  }),
-                })
-                if (res.ok) {
-                  setValidationIssues([])
-                } else {
-                  const err = await res.json()
-                  setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])
+        {/* LEFT COLUMN: Employees (clickable + draggable) */}
+        <div style={{
+          background: '#fafbfc',
+          borderRadius: 8,
+          border: '1px solid #e5e7eb',
+          padding: 8,
+          maxHeight: 600,
+          overflowY: 'auto',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6, textAlign: 'center' }}>
+            員工
+          </div>
+          <div ref={employeePanelRef}>
+            {clinicEmployees.map(emp => (
+              <div
+                key={emp.id}
+                className="employee-card"
+                data-employee-id={emp.id}
+                data-name={emp.user.name}
+                onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                draggable={canManage}
+                onDragStart={(e) => {
+                  if (canManage) {
+                    e.dataTransfer.setData('text/plain', emp.id)
+                    setSelectedEmployeeId(emp.id)
+                  }
+                }}
+                style={{
+                  padding: '5px 4px',
+                  marginBottom: 4,
+                  borderRadius: 6,
+                  fontSize: 11,
+                  textAlign: 'center',
+                  cursor: canManage ? 'grab' : 'pointer',
+                  background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                  color: selectedEmployeeId === emp.id ? '#333' : '#fff',
+                  border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                  transition: 'all 0.15s',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  userSelect: 'none',
+                }}
+                title={emp.user.name}
+              >
+                {emp.user.name}
+              </div>
+            ))}
+          </div>
+          {/* Clear weekly shifts button */}
+          {selectedEmployeeId && canManage && (
+            <button
+              onClick={async () => {
+                if (!confirm('確定清空該員工當週所有排班？')) return
+                const { startDate, endDate } = getDateRange()
+                const weekShifts = shifts.filter(s =>
+                  s.employeeId === selectedEmployeeId &&
+                  s.date >= startDate &&
+                  s.date <= endDate
+                )
+                if (weekShifts.length === 0) {
+                  alert('該員工當週沒有排班')
+                  return
                 }
-              } catch {
-                setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
-              }
-            } else if (props.dragType === 'shift') {
-              if (!selectedEmployeeId) {
-                setValidationIssues([{ type: 'error', rule: 'employee', message: '⚠️ 請先點擊選擇員工' }])
-                return
-              }
-              const tpl = templates.find(t => t.id === props.templateId)
-              if (!tpl) return
-              setValidationIssues([])
-              await createShift(selectedEmployeeId, date, tpl)
-            } else {
-              // Legacy: dragged employee (backward compat)
-              const empId = props.employeeId
-              if (!empId) return
-              if (!selectedTemplate) {
-                setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板才能排班' }])
-                return
-              }
-              const hasLeaveOnDate = leaveRequests.some(lr =>
-                lr.employeeId === empId &&
-                date >= lr.startDate &&
-                date <= (lr.endDate || lr.startDate)
-              )
-              if (hasLeaveOnDate) {
-                setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
-                return
-              }
-              setValidationIssues([])
-              await createShift(empId, date, selectedTemplate)
-            }
-            await refreshAll()
-          }}
-          editable={canManage}
-          selectable={canManage && !!selectedTemplate}
-          dayMaxEvents={viewMode === 'month' ? false : undefined}
-          nowIndicator={true}
-          eventClick={handleFcEventClick}
-          eventDrop={handleFcEventDrop}
-          eventDragStart={() => setIsDraggingEvent(true)}
-          eventDragStop={async (info: any) => {
-            setIsDraggingEvent(false)
-            const dz = dropZoneRef.current
-            if (!dz) return
-            const dzRect = dz.getBoundingClientRect()
-            const clientX = (info as any).jsEvent?.clientX ?? 0
-            const clientY = (info as any).jsEvent?.clientY ?? 0
-
-            const onDropZone = clientX >= dzRect.left && clientX <= dzRect.right
-              && clientY >= dzRect.top && clientY <= dzRect.bottom
-            if (!onDropZone) return
-
-            // Leave event: confirm and delete
-            if (info.event.extendedProps.isLeave) {
-              if (confirm(`確定取消假期？`)) {
-                const lr = info.event.extendedProps.leaveRequest
-                const leaveId = lr?.id || info.event.id.replace('leave-', '')
-                try {
-                  const res = await fetch(`/api/leave-requests/${leaveId}`, {
+                for (const shift of weekShifts) {
+                  await fetch('/api/shifts/' + shift.id, {
                     method: 'DELETE',
                     credentials: 'include',
                   })
-                  if (res.ok) {
-                    await refreshAll()
-                  } else {
-                    const err = await res.json()
-                    alert(err.error || '刪除假期失敗')
-                  }
-                } catch (e) {
-                  console.error('Delete leave error:', e)
                 }
-              }
-              return
-            }
+                await refreshAll()
+              }}
+              style={{
+                marginTop: 6, width: '100%', padding: '4px 0', fontSize: 10,
+                background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb',
+                borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              清空當週排班
+            </button>
+          )}
+        </div>
 
-            // Shift event: delete directly without confirmation
-            await deleteShift(info.event.id)
-          }}
-          dateClick={handleFcDateClick}
-          snapDuration="00:30:00"
-          eventConstraint={{ startTime: '06:00:00', endTime: '23:00:00' }}
-          eventDurationEditable={false}
-          eventContent={(eventInfo) => {
-            const shift = eventInfo.event.extendedProps.shift
-            return (
-              <div style={{
-                fontSize: viewMode === 'month' ? 11 : undefined,
-                padding: viewMode === 'month' ? '1px 4px' : undefined,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}>
-                <b>{eventInfo.event.title}</b>
-                {shift && viewMode !== 'month' && (
-                  <div style={{ fontSize: 11 }}>
-                    {formatTimeFromShift(shift.startTime)}-{formatTimeFromShift(shift.endTime)}
-                  </div>
-                )}
+        {/* MIDDLE COLUMN: Templates + Leave */}
+        <div style={{
+          background: '#fafbfc',
+          borderRadius: 8,
+          border: '1px solid #e5e7eb',
+          padding: 8,
+          maxHeight: 600,
+          overflowY: 'auto',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
+            更次
+          </div>
+          <div ref={templatePanelRef}>
+            {templates.map(t => (
+              <div
+                key={t.id}
+                className="template-card"
+                data-template-id={t.id}
+                data-name={t.name}
+                onClick={() => setSelectedTemplate(t)}
+                style={{
+                  padding: '6px 4px', margin: '3px 0', borderRadius: 6,
+                  cursor: canManage ? 'grab' : 'pointer',
+                  background: selectedTemplate?.id === t.id ? '#1a1a2e' : '#378add',
+                  color: '#fff',
+                  fontSize: 11,
+                  textAlign: 'center',
+                  transition: 'all 0.15s',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  userSelect: 'none',
+                }}
+                title={`${t.name} ${String(t.startHour).padStart(2,'0')}:${String(t.startMinute).padStart(2,'0')}-${String(t.endHour).padStart(2,'0')}:${String(t.endMinute).padStart(2,'0')}`}
+              >
+                {t.name}
               </div>
-            )
-          }}
-          height="auto"
-          slotMinTime="06:00:00"
-          slotMaxTime="23:00:00"
-          eventDidMount={(info) => {
-            info.el.style.borderRadius = '6px'
-          }}
-          expandRows={true}
-          allDaySlot={false}
-          slotDuration="01:00:00"
-        />
+            ))}
+          </div>
 
-        {/* Drop Zone for cancelling shifts by dragging out */}
-        <div
-          ref={dropZoneRef}
-          style={{
-            marginTop: 12,
-            padding: 16,
-            borderRadius: 8,
-            border: isDraggingEvent ? '2px dashed #dc3545' : '2px dashed #e0e0e0',
-            background: isDraggingEvent ? '#fff5f5' : '#fafafa',
-            textAlign: 'center',
-            fontSize: 13,
-            color: isDraggingEvent ? '#dc3545' : '#aaa',
-            transition: 'all 0.2s',
-            userSelect: 'none',
-          }}
-          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none' }}
-        >
-          {isDraggingEvent ? <span className="flex items-center gap-1"><Trash2 size={16} /> 放開此處取消班次</span> : <span className="flex items-center gap-1"><Trash2 size={16} /> 拖到此處取消班次</span>}
+          {/* Leave types */}
+          {leaveTypes.length > 0 && (
+            <div ref={leavePanelRef} style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
+                假期
+              </div>
+              {leaveTypes.map(lt => (
+                <div
+                  key={lt.id}
+                  className="leave-card"
+                  data-leave-id={lt.id}
+                  data-name={lt.name}
+                  style={{
+                    padding: '6px 4px', margin: '3px 0',
+                    background: '#4a4a4a', color: '#fff',
+                    borderRadius: 6, cursor: canManage ? 'grab' : 'default',
+                    fontSize: 11, textAlign: 'center',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    userSelect: 'none',
+                  }}
+                  title={`拖到日曆建立請假 - ${lt.name}`}
+                >
+                  <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT COLUMN: Calendar */}
+        <div id="fc-section" style={{ minWidth: 0 }}>
+          {/* Clinic selector above calendar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+            <select
+              value={selectedClinicId || ''}
+              onChange={e => setSelectedClinicId(e.target.value)}
+              style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, width: 'auto' }}
+            >
+              {clinics.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            {canManage && (
+              <span style={{ fontSize: 11, color: '#aaa' }}>拖更次/員工到日曆為此店排班</span>
+            )}
+          </div>
+
+          <div className="card rounded-xl g border p-4 shadow-card">
+          <div ref={calendarContainerRef}>
+
+            <FullCalendar
+              ref={calendarRef}
+              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+              initialView={viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
+              locale={zhcn}
+              headerToolbar={{
+                left: 'prev,next',
+                center: '',
+                right: 'timeGridWeek,dayGridMonth',
+              }}
+              datesSet={(dateInfo) => {
+                // Sync viewMode from FC view type
+                const viewType = dateInfo.view.type
+                if (viewType === 'timeGridWeek') {
+                  setViewMode('week')
+                } else if (viewType === 'dayGridMonth') {
+                  setViewMode('month')
+                }
+                // Sync currentDate to FC midpoint
+                const mid = new Date((dateInfo.start.getTime() + dateInfo.end.getTime()) / 2)
+                const hkMid = toHKDateStr(mid)
+                const hkCurrent = toHKDateStr(currentDate)
+                if (hkMid !== hkCurrent) {
+                  setCurrentDate(mid)
+                }
+                // Set visible range for loadShifts
+                const range = {
+                  start: toHKDateStr(dateInfo.start),
+                  end: toHKDateStr(new Date(dateInfo.end.getTime() - 86400000)),
+                }
+                if (range.start !== viewRange?.start || range.end !== viewRange?.end) {
+                  setViewRange(range)
+                }
+              }}
+              events={fcEvents}
+              droppable={canManage}
+              eventReceive={async (info) => {
+                info.event.remove()
+                const props = info.event.extendedProps
+                const date = toHKDateStr(info.event.start!)
+
+                if (props.dragType === 'leave') {
+                  const leaveTypeId = props.leaveTypeId
+                  if (!leaveTypeId) {
+                    setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 假期類型無效' }])
+                    return
+                  }
+
+                  if (!selectedEmployeeId) {
+                    setShowLeaveEmployeeModal({ date, leaveTypeId })
+                    return
+                  }
+
+                  const hasShiftOnDate = shifts.some(s =>
+                    s.employeeId === selectedEmployeeId &&
+                    toHKDateStr(new Date(s.date)) === date
+                  )
+                  if (hasShiftOnDate) {
+                    setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
+                    return
+                  }
+
+                  try {
+                    const res = await fetch('/api/leave-requests', {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        leaveTypeId,
+                        employeeId: selectedEmployeeId,
+                        startDate: date,
+                        endDate: date,
+                        days: 1,
+                        reason: `排班頁拖曳請假`,
+                        isPlanned: true,
+                      }),
+                    })
+                    if (res.ok) {
+                      setValidationIssues([])
+                    } else {
+                      const err = await res.json()
+                      setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])
+                    }
+                  } catch {
+                    setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
+                  }
+                } else if (props.dragType === 'shift' || props.dragType === 'employee') {
+                  // Drag template or employee to calendar
+                  const empId = props.employeeId || selectedEmployeeId
+                  if (!empId) {
+                    setValidationIssues([{ type: 'error', rule: 'employee', message: '⚠️ 請先點擊選擇員工' }])
+                    return
+                  }
+                  const tpl = templates.find(t => t.id === props.templateId)
+                  if (!tpl) {
+                    setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇更次模板' }])
+                    return
+                  }
+                  setValidationIssues([])
+                  await createShift(empId, date, tpl)
+                } else {
+                  // Legacy: dragged employee (backward compat)
+                  const empId = props.employeeId
+                  if (!empId) return
+                  if (!selectedTemplate) {
+                    setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇班次模板才能排班' }])
+                    return
+                  }
+                  const hasLeaveOnDate = leaveRequests.some(lr =>
+                    lr.employeeId === empId &&
+                    date >= lr.startDate &&
+                    date <= (lr.endDate || lr.startDate)
+                  )
+                  if (hasLeaveOnDate) {
+                    setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
+                    return
+                  }
+                  setValidationIssues([])
+                  await createShift(empId, date, selectedTemplate)
+                }
+                await refreshAll()
+              }}
+              editable={canManage}
+              selectable={canManage && !!selectedTemplate}
+              dayMaxEvents={viewMode === 'month' ? false : undefined}
+              nowIndicator={true}
+              eventClick={handleFcEventClick}
+              eventDrop={handleFcEventDrop}
+              eventDragStart={() => setIsDraggingEvent(true)}
+              eventDragStop={async (info: any) => {
+                setIsDraggingEvent(false)
+                const dz = dropZoneRef.current
+                if (!dz) return
+                const dzRect = dz.getBoundingClientRect()
+                const clientX = (info as any).jsEvent?.clientX ?? 0
+                const clientY = (info as any).jsEvent?.clientY ?? 0
+
+                const onDropZone = clientX >= dzRect.left && clientX <= dzRect.right
+                  && clientY >= dzRect.top && clientY <= dzRect.bottom
+                if (!onDropZone) return
+
+                // Leave event: confirm and delete
+                if (info.event.extendedProps.isLeave) {
+                  if (confirm(`確定取消假期？`)) {
+                    const lr = info.event.extendedProps.leaveRequest
+                    const leaveId = lr?.id || info.event.id.replace('leave-', '')
+                    try {
+                      const res = await fetch(`/api/leave-requests/${leaveId}`, {
+                        method: 'DELETE',
+                        credentials: 'include',
+                      })
+                      if (res.ok) {
+                        await refreshAll()
+                      } else {
+                        const err = await res.json()
+                        alert(err.error || '刪除假期失敗')
+                      }
+                    } catch (e) {
+                      console.error('Delete leave error:', e)
+                    }
+                  }
+                  return
+                }
+
+                // Shift event: delete directly without confirmation
+                await deleteShift(info.event.id)
+              }}
+              dateClick={handleFcDateClick}
+              snapDuration="00:30:00"
+              eventConstraint={{ startTime: '06:00:00', endTime: '23:00:00' }}
+              eventDurationEditable={false}
+              eventContent={(eventInfo) => {
+                const shift = eventInfo.event.extendedProps.shift
+                return (
+                  <div style={{
+                    fontSize: viewMode === 'month' ? 11 : undefined,
+                    padding: viewMode === 'month' ? '1px 4px' : undefined,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    <b>{eventInfo.event.title}</b>
+                    {shift && viewMode !== 'month' && (
+                      <div style={{ fontSize: 11 }}>
+                        {formatTimeFromShift(shift.startTime)}-{formatTimeFromShift(shift.endTime)}
+                      </div>
+                    )}
+                  </div>
+                )
+              }}
+              height="auto"
+              slotMinTime="06:00:00"
+              slotMaxTime="23:00:00"
+              eventDidMount={(info) => {
+                info.el.style.borderRadius = '6px'
+              }}
+              expandRows={true}
+              allDaySlot={false}
+              slotDuration="01:00:00"
+            />
+
+            {/* Drop Zone for cancelling shifts by dragging out */}
+            <div
+              ref={dropZoneRef}
+              style={{
+                marginTop: 12,
+                padding: 16,
+                borderRadius: 8,
+                border: isDraggingEvent ? '2px dashed #dc3545' : '2px dashed #e0e0e0',
+                background: isDraggingEvent ? '#fff5f5' : '#fafafa',
+                textAlign: 'center',
+                fontSize: 13,
+                color: isDraggingEvent ? '#dc3545' : '#aaa',
+                transition: 'all 0.2s',
+                userSelect: 'none',
+              }}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none' }}
+            >
+              {isDraggingEvent ? <span className="flex items-center gap-1"><Trash2 size={16} /> 放開此處取消班次</span> : <span className="flex items-center gap-1"><Trash2 size={16} /> 拖到此處取消班次</span>}
+            </div>
+          </div>
+          </div>
         </div>
       </div>
-      </div>
-      </div>
-      </div>
-
 
       {/* Month Shift Statistics Card (Task 3b) */}
       {clinicEmployees.length > 0 && (
@@ -1609,12 +1686,6 @@ function getShiftColor(shift: Shift): string {
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#388e3c' }}></span> 已完成</span>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc3545' }}></span> 已取消</span>
       </div>
-        <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>
-          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#1976d2' }}></span> 已確認</span>
-          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f57c00' }}></span> 草稿</span>
-          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#388e3c' }}></span> 已完成</span>
-          <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc3545' }}></span> 已取消</span>
-        </div>
 
       {/* ============================================================ */}
       {/* Shift Change Request Panel */}
@@ -1707,7 +1778,7 @@ function getShiftColor(shift: Shift): string {
                   }
                   const statusLabels: Record<string, string> = {
                     PENDING: '待審批',
-                    APPROVED: '已批準',
+                    APPROVED: '已批准',
                     REJECTED: '已拒絕',
                     COMPLETED: '已完成',
                   }
