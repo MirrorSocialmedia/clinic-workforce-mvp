@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
+import { isInProbation } from '@/lib/leave-calculation'
 
 // ============================================================
 // GET /api/leave-requests — List leave requests
@@ -100,6 +101,16 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Leave type not found' }, { status: 404 })
       }
 
+      // 試用期門檻：年假在試用期內不可申請
+      if (isAnnualLeave(leaveType) && employee.joinDate) {
+        if (isInProbation(new Date(employee.joinDate))) {
+          return NextResponse.json(
+            { error: '試用期內不可申請年假' },
+            { status: 400 }
+          )
+        }
+      }
+
       // Validate remaining balance
       const currentYear = new Date().getFullYear()
       const balance = await prisma.leaveBalance.findFirst({
@@ -174,6 +185,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
   })
+}
+
+function isAnnualLeave(leaveType: { name: string }): boolean {
+  const lower = leaveType.name.toLowerCase()
+  return lower.includes('年假') || lower.includes('annual leave') || lower.includes('annual')
 }
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number): Promise<void> {
