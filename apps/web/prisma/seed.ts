@@ -1,5 +1,5 @@
 // Prisma Seed Script — 6 clinics + 4 test users
-import { PrismaClient, UserRole, UserStatus, EmployeeStatus } from '@prisma/client'
+import { PrismaClient, UserRole, UserStatus, EmployeeStatus, PayType } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
@@ -184,15 +184,23 @@ async function main() {
   console.log(`    ACCOUNTANT:  91000003 / demo1234 (全部)`)
   console.log(`    EMPLOYEE:    91000004 / demo1234 (旺角診所)`)
 
-  // Employee-Clinic bindings
+  // Fetch all employees (needed for bindings, pay rules, leave balances)
+  const allEmps = await prisma.employee.findMany({ include: { user: true } })
+
+  // Employee-Clinic bindings (each employee assigned to primary clinic only)
   console.log('🔗 Creating employee-clinic bindings...')
-  const allEmployees = await prisma.employee.findMany()
-  // All employees to all clinics (simplified for demo)
+  const employeeClinicMap = [
+    { name: '陳醫生 (Owner)', clinicIndex: 0 },   // 仁愛診所
+    { name: '李經理', clinicIndex: 0 },             // 仁愛診所
+    { name: '張會計', clinicIndex: 2 },             // 銅鑼灣診所
+    { name: '王護士', clinicIndex: 1 },             // 旺角診所
+  ]
   const bindings = []
-  for (const emp of allEmployees) {
-    for (const clinic of clinics) {
+  for (const mapping of employeeClinicMap) {
+    const emp = allEmps.find(e => e.user.name === mapping.name)
+    if (emp) {
       bindings.push(prisma.employeeClinic.create({
-        data: { employeeId: emp.id, clinicId: clinic.id, isPrimary: true },
+        data: { employeeId: emp.id, clinicId: clinics[mapping.clinicIndex].id, isPrimary: true },
       }))
     }
   }
@@ -201,7 +209,6 @@ async function main() {
 
   // Pay rules (新格式 configJson)
   console.log('💰 Creating pay rules...')
-  const allEmps = await prisma.employee.findMany({ include: { user: true } })
   const ownerUserId = allEmps.find(e => e.user.role === 'OWNER')?.id
 
   const payRuleConfigs = {
@@ -291,13 +298,13 @@ async function main() {
 
   for (const emp of allEmps) {
     const configName = emp.user.name
-    const config = payRuleConfigs[configName]
+    const config = payRuleConfigs[configName as keyof typeof payRuleConfigs]
     if (!config) continue
 
     await prisma.payRule.create({
       data: {
         employeeId: emp.id,
-        payType: config.payType,
+        payType: config.payType as PayType,
         baseAmount: config.baseAmount,
         configJson: config.configJson,
         effectiveFrom: new Date('2026-07-01'),
@@ -334,7 +341,7 @@ async function main() {
 
   // Create leave balances for test employees
   const currentYear = new Date().getFullYear()
-  for (const emp of allEmployees) {
+  for (const emp of allEmps) {
     // Annual leave balance
     await prisma.leaveBalance.create({
       data: {
@@ -358,7 +365,7 @@ async function main() {
       },
     })
   }
-  console.log(`  ✅ Created leave balances for ${allEmployees.length} employees`)
+  console.log(`  ✅ Created leave balances for ${allEmps.length} employees`)
 
   // Create HK public holidays (2026-2028)
   console.log('🇭🇰 Creating HK public holidays...')

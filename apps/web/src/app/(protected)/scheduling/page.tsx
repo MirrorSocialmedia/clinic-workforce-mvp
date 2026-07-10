@@ -1342,11 +1342,8 @@ function colorFor(id: string): string {
               return
             }
 
-            // Shift event: confirm and delete
-            if (confirm(`確定取消「${info.event.title}」的班次？`)) {
-              await deleteShift(info.event.id)
-            }
-            // else 什麼都不做 → 班次留在原位
+            // Shift event: delete directly without confirmation
+            await deleteShift(info.event.id)
           }}
           dateClick={handleFcDateClick}
           snapDuration="00:30:00"
