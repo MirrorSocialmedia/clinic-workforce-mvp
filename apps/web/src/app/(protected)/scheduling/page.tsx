@@ -109,6 +109,7 @@ export default function SchedulingPage() {
   const [showNewShiftModal, setShowNewShiftModal] = useState(false)
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
+  const [displayWarning, setDisplayWarning] = useState<string | null>(null)
 
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
@@ -850,6 +851,33 @@ function getShiftColor(shift: Shift): string {
     return weekDaysList
   }, [viewRange])
 
+  // Fix #1b: Orphan shift detection — shifts stored but not displayed in grid
+  useEffect(() => {
+    if (!shifts.length || !weekDays.length) return
+    const orphans = shifts.filter(s => {
+      const dateStr = formatDate(new Date(s.date))
+      return !weekDays.some(wd => wd.dateStr === dateStr)
+    })
+    if (orphans.length > 0) {
+      console.warn(`⚠️ ${orphans.length} 筆排班無法顯示（日期對不上）:`,
+        orphans.map(s => ({ id: s.id, date: s.date, hkDate: formatDate(new Date(s.date)) })))
+      setDisplayWarning(`有 ${orphans.length} 筆排班未顯示，可能是日期問題`)
+    } else {
+      setDisplayWarning(null)
+    }
+  }, [shifts, weekDays])
+
+  // Fix #1c: weekDays validation — must have 7 days, day 7 must be Sunday
+  useEffect(() => {
+    if (weekDays.length > 0) {
+      console.assert(weekDays.length === 7, `weekDays 應有7天，實際${weekDays.length}天`)
+      if (weekDays[6]) {
+        const dayOfWeek = new Date(weekDays[6].dateStr).getDay()
+        console.assert(dayOfWeek === 0, `第7天應是週日，實際是週${dayOfWeek}`)
+      }
+    }
+  }, [weekDays])
+
   const allEmployees = useMemo(() => {
     return employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
   }, [employees])
@@ -1118,6 +1146,16 @@ function getShiftColor(shift: Shift): string {
           >
             清除提示
           </button>
+        </div>
+      )}
+
+      {/* Orphan Shift Warning (Fix #1b) */}
+      {displayWarning && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 16, borderRadius: 6,
+          background: '#fff3cd', border: '1px solid #ffc107', fontSize: 13, color: '#856404'
+        }}>
+          ⚠️ {displayWarning}
         </div>
       )}
 

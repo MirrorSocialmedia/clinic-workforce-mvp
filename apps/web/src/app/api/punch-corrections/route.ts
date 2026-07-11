@@ -32,6 +32,16 @@ export async function POST(req: NextRequest) {
         )
       }
 
+      // Reject future punch times (Fix #2a: backend guard)
+      const correctedTime = new Date(date)
+      const now = new Date()
+      if (correctedTime > now) {
+        return NextResponse.json(
+          { error: '不能補未來時間的打卡' },
+          { status: 400 }
+        )
+      }
+
       if (!['CLOCK_IN', 'CLOCK_OUT'].includes(punchType)) {
         return NextResponse.json(
           { error: 'punchType must be CLOCK_IN or CLOCK_OUT' },

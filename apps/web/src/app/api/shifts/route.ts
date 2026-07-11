@@ -31,8 +31,9 @@ export async function GET(req: NextRequest) {
 
   if (startDate || endDate) {
     where.date = {}
-    if (startDate) where.date.gte = new Date(startDate)
-    if (endDate) where.date.lte = new Date(endDate)
+    // Parse date-only strings as Hong Kong time (+08:00) for correct filtering
+    if (startDate) where.date.gte = new Date(startDate + '+08:00')
+    if (endDate) where.date.lte = new Date((endDate + 'T23:59:59.999') + '+08:00')
   }
 
   // Scope filtering
@@ -166,17 +167,15 @@ export async function POST(req: NextRequest) {
       }
 
       if (bulkDates && Array.isArray(bulkDates) && bulkDates.length > 0) {
+        const start = new Date(startTime)
+        const end = new Date(endTime)
         for (const d of bulkDates) {
-          const dateBase = new Date(d)
-          const start = new Date(startTime)
-          const end = new Date(endTime)
-          const bulkStart = new Date(dateBase)
-          bulkStart.setHours(start.getHours(), start.getMinutes(), start.getSeconds(), start.getMilliseconds())
-          const bulkEnd = new Date(dateBase)
-          bulkEnd.setHours(end.getHours(), end.getMinutes(), end.getSeconds(), end.getMilliseconds())
+          // date column: midnight HK for correct calendar display
+          const bulkDate = new Date(d + '+08:00')
+          // startTime/endTime: use frontend ISO directly (correct UTC)
 
-          // Fix #4: check overlap before creating
-          const overlap = await checkShiftOverlap(employeeId, bulkStart, bulkStart, bulkEnd)
+          // Fix #4: check overlap before creating (use bulkDate for date column match)
+          const overlap = await checkShiftOverlap(employeeId, bulkDate, start, end)
           if (overlap) {
             return NextResponse.json(
               { error: '該員工在此時段已有排班', conflictShiftId: overlap.id, date: d },
@@ -188,9 +187,9 @@ export async function POST(req: NextRequest) {
             data: {
               employeeId,
               clinicId,
-              date: bulkStart,
-              startTime: bulkStart,
-              endTime: bulkEnd,
+              date: bulkDate,
+              startTime: start,
+              endTime: end,
               role: role || null,
               status: status as any,
               templateId: templateId || null,
@@ -208,9 +207,13 @@ export async function POST(req: NextRequest) {
       } else {
         const start = new Date(startTime)
         const end = new Date(endTime)
+        // Parse date as HK midnight to avoid UTC midnight issue
+        const hkDate = new Date(date + '+08:00')
+        // Use frontend ISO strings directly — they already have correct UTC time
+        // No need for toTimeString() which depends on server timezone
 
-        // Fix #4: check overlap before creating
-        const overlap = await checkShiftOverlap(employeeId, start, start, end)
+        // Fix #4: check overlap before creating (use hkDate for date field match)
+        const overlap = await checkShiftOverlap(employeeId, hkDate, start, end)
         if (overlap) {
           return NextResponse.json(
             { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
@@ -222,7 +225,7 @@ export async function POST(req: NextRequest) {
           data: {
             employeeId,
             clinicId,
-            date: start,
+            date: hkDate,
             startTime: start,
             endTime: end,
             role: role || null,

@@ -31,7 +31,11 @@ export async function PUT(
 
     if (body.employeeId !== undefined) updateData.employeeId = body.employeeId
     if (body.clinicId !== undefined) updateData.clinicId = body.clinicId
-    if (body.date !== undefined) updateData.date = new Date(body.date)
+    if (body.date !== undefined) {
+      // Parse date-only strings as Hong Kong midnight to avoid UTC midnight issue
+      const d = body.date
+      updateData.date = d.includes('T') || d.includes('Z') ? new Date(d) : new Date(d + '+08:00')
+    }
     if (body.startTime !== undefined) updateData.startTime = new Date(body.startTime)
     if (body.endTime !== undefined) updateData.endTime = new Date(body.endTime)
     if (body.role !== undefined) updateData.role = body.role

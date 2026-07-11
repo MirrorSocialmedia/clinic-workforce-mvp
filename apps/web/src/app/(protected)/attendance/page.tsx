@@ -700,6 +700,7 @@ export default function AttendancePage() {
             <div className="mb-3">
               <label className="block text-xs text-muted-foreground mb-1 font-medium">日期 *</label>
               <input type="date" value={addPunchForm.date}
+                max={new Date().toLocaleDateString('en-CA')}
                 onChange={e => setAddPunchForm({ ...addPunchForm, date: e.target.value })}
                 className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
             </div>
@@ -716,7 +717,11 @@ export default function AttendancePage() {
               <div style={{ flex: 1 }}>
                 <label className="block text-xs text-muted-foreground mb-1 font-medium">正確時間 *</label>
                 <input type="time" value={addPunchForm.time}
-                  onChange={e => setAddPunchForm({ ...addPunchForm, time: e.target.value })}
+                  onChange={e => {
+                    const dt = new Date(`${addPunchForm.date}T${e.target.value}:00+08:00`)
+                    if (dt > new Date()) { alert('不能補未來時間的打卡'); return }
+                    setAddPunchForm({ ...addPunchForm, time: e.target.value })
+                  }}
                   className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
               </div>
             </div>
@@ -733,6 +738,9 @@ export default function AttendancePage() {
               <button onClick={async () => {
                 const { employeeId, clinicId, date, time, punchType, reason } = addPunchForm
                 if (!employeeId || !clinicId || !date || !reason) { alert('請填寫所有必填欄位'); return }
+                // Double-check: reject future time at submit (Fix #2b)
+                const submitDtime = new Date(`${date}T${time}:00+08:00`)
+                if (submitDtime > new Date()) { alert('不能補未來時間的打卡'); return }
                 setSubmittingAddPunch(true)
                 try {
                   const datetime = `${date}T${time}:00`
