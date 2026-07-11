@@ -1325,17 +1325,20 @@ function getShiftColor(shift: Shift): string {
                 if (!confirm('確定清空當週排班？')) return
                 const { startDate, endDate } = getDateRange()
                 // 清排班
-                const weekShifts = shifts.filter(s =>
-                  s.employeeId === selectedEmployeeId &&
-                  s.date >= startDate &&
-                  s.date <= endDate
-                )
+                const weekShifts = shifts.filter(s => {
+                  const shiftDateStr = toHKDateStr(new Date(s.date))
+                  return s.employeeId === selectedEmployeeId &&
+                    shiftDateStr >= startDate &&
+                    shiftDateStr <= endDate
+                })
                 // 清假期
-                const weekLeaves = leaveRequests.filter(lr =>
-                  lr.employeeId === selectedEmployeeId &&
-                  lr.startDate >= startDate &&
-                  (lr.endDate || lr.startDate) <= endDate
-                )
+                const weekLeaves = leaveRequests.filter(lr => {
+                  const lrStart = toHKDateStr(new Date(lr.startDate))
+                  const lrEnd = lr.endDate ? toHKDateStr(new Date(lr.endDate)) : lrStart
+                  return lr.employeeId === selectedEmployeeId &&
+                    lrStart >= startDate &&
+                    lrEnd <= endDate
+                })
                 if (weekShifts.length === 0 && weekLeaves.length === 0) {
                   alert('該員工當週沒有排班及假期')
                   return

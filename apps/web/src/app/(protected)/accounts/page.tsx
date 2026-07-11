@@ -318,7 +318,11 @@ export default function AccountsPage() {
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, flexWrap: 'wrap' }}>
               {editingId && form.employeeId && (
                 <button type="button" className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }}
-                  onClick={() => { setPayRuleEmployeeId(form.employeeId!); setShowPayRuleModal(true) }}>
+                  onClick={() => {
+                    if (!form.employeeId) { alert('請先儲存帳號，再設定薪酬規則'); return }
+                    setPayRuleEmployeeId(form.employeeId)
+                    setShowPayRuleModal(true)
+                  }}>
                   <span className="flex items-center gap-1"><Wallet size={14} /> 薪酬規則</span>
                 </button>
               )}

@@ -172,9 +172,11 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
 
   // ── Load existing active rule on mount ──────────────────────────
   const loadExistingRule = useCallback(async () => {
+    console.log('[RuleModal] 載入規則 employeeId=', employeeId)
     try {
       const res = await fetch(`/api/employees/${employeeId}/pay-rules?t=${Date.now()}`, { credentials: 'include', cache: 'no-store' })
       const rules = await res.json()
+      console.log('[RuleModal] 回傳規則數=', rules.length, rules)
       if (!Array.isArray(rules)) return
 
       // Find active rule; fallback to most recent by effectiveFrom

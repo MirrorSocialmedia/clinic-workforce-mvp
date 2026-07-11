@@ -6,7 +6,7 @@ import { Plus } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
-type TabKey = 'requests' | 'balance' | 'types'
+type TabKey = 'balance' | 'types'
 
 interface LeaveType {
   id: string
@@ -91,7 +91,7 @@ export default function LeavePage() {
   const [convertResult, setConvertResult] = useState('')
 
   // Leave Types management state
-  const [activeTab, setActiveTab] = useState<TabKey>('requests')
+  const [activeTab, setActiveTab] = useState<TabKey>('balance')
   const [ltShowForm, setLtShowForm] = useState(false)
   const [ltForm, setLtForm] = useState({ name: '', isPaid: true, annualQuota: '', color: '#4CAF50' })
   const [ltEditingId, setLtEditingId] = useState<string | null>(null)
@@ -365,7 +365,6 @@ export default function LeavePage() {
   if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
 
   const tabs = [
-    { key: 'requests' as TabKey, label: '假期申請' },
     { key: 'balance' as TabKey, label: '假期餘額' },
     ...(isOwner ? [{ key: 'types' as TabKey, label: '假期類型設定' }] : []),
   ]
@@ -374,11 +373,6 @@ export default function LeavePage() {
     <div style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }}>假期管理</h1>
-        {userRole !== 'EMPLOYEE' && activeTab === 'requests' && (
-          <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
-            {showForm ? '取消' : '            <span className="flex items-center gap-1"><Plus size={16} /> 申請假期</span>'}
-          </button>
-        )}
       </div>
 
       {/* Tabs */}
@@ -394,109 +388,6 @@ export default function LeavePage() {
           </button>
         ))}
       </div>
-
-      {/* Requests Tab */}
-      {activeTab === 'requests' && (
-        <>
-          {/* Apply Form */}
-          {showForm && (
-            <div className="card" style={{ marginBottom: 24 }}>
-              <h2>申請假期</h2>
-              <form onSubmit={handleApply}>
-                <div className="grid-3" style={{ marginBottom: 0 }}>
-                  <div className="form-group">
-                    <label>假期類型</label>
-                    <select value={form.leaveTypeId} onChange={e => setForm({ ...form, leaveTypeId: e.target.value })} required>
-                      <option value="">請選擇</option>
-                      {leaveTypes.map(t => (
-                        <option key={t.id} value={t.id}>{t.name}{t.annualQuota ? ` (${t.annualQuota}天)` : ''}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>開始日期</label>
-                    <input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} required />
-                  </div>
-                  <div className="form-group">
-                    <label>結束日期</label>
-                    <input type="date" value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} required />
-                  </div>
-                  <div className="form-group">
-                    <label>天數（自動計算）</label>
-                    <input type="number" step="0.5" min="0.5" value={form.days} onChange={e => setForm({ ...form, days: e.target.value })}
-                      readOnly style={{ background: '#f5f5f5', cursor: 'default' }} required />
-                  </div>
-                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label>原因（可選）</label>
-                    <input type="text" value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} placeholder="請填寫請假原因" />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={() => setShowForm(false)}>取消</button>
-                  <button type="submit" className="btn btn-primary">提交申請</button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* Filters */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-            {(['', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(s => (
-              <button key={s || 'all'} className="btn"
-                style={{ background: filter === s ? '#1a1a2e' : '#f0f0f0', color: filter === s ? 'white' : '#333', fontSize: 13, padding: '6px 12px' }}
-                onClick={() => setFilter(s)}>
-                {s === 'PENDING' ? '待審批' : s === 'APPROVED' ? '已批準' : s === 'REJECTED' ? '已拒絕' : '全部'}
-              </button>
-            ))}
-          </div>
-
-          {/* Leave Requests Table */}
-          <div className="card">
-            <h2>假期申請記錄 ({requests.length})</h2>
-            {requests.length === 0 ? (
-              <div style={{ textAlign: 'center', color: '#888', padding: 40 }}>尚無假期申請</div>
-            ) : (
-              <table>
-                <thead>
-                  <tr><th>員工</th><th>類型</th><th>日期</th><th>天數</th><th>原因</th><th>狀態</th>{isManager && <th>操作</th>}</tr>
-                </thead>
-                <tbody>
-                  {requests.map(r => (
-                    <tr key={r.id}>
-                      <td>{r.employee?.user?.name || '-'}</td>
-                      <td>
-                        <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
-                          background: `${r.leaveType.color || '#1a1a2e'}20`, color: r.leaveType.color || '#1a1a2e' }}>
-                          {r.leaveType.name}
-                        </span>
-                      </td>
-                      <td>{toHKDateStr(new Date(r.startDate))} → {toHKDateStr(new Date(r.endDate))}</td>
-                      <td>{r.days}</td>
-                      <td style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason || '-'}</td>
-                      <td>
-                        <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
-                          background: `${STATUS_COLORS[r.status]}20`, color: STATUS_COLORS[r.status] }}>
-                          {STATUS_LABELS[r.status]}
-                        </span>
-                      </td>
-                      {isManager && r.status === 'PENDING' && (
-                        <td>
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-sm" style={{ background: '#4CAF50', color: 'white' }}
-                              onClick={() => handleApproveReject(r.id, 'APPROVE')}>✓</button>
-                            <button className="btn btn-sm" style={{ background: '#dc3545', color: 'white' }}
-                              onClick={() => handleApproveReject(r.id, 'REJECT')}>✗</button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </>
-      )}
 
       {/* Balance Tab */}
       {activeTab === 'balance' && (
