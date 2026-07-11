@@ -1986,14 +1986,20 @@ export async function calculatePayrollWithRules(
   await grantMonthlyRestDays(employeeId, year, month, monthlyLeaveDays.total, prisma)
   let leaveBalanceRemaining = 0 // Tracked via LeaveBalance, not inline
 
+  // 🔑 OT 唯一來源：時間銀行 otMinutes（排班外工時，分鐘制）
+  // 提前呼叫 calculateTimeBank，後續 OT→Leave / 明細都用同一結果
+  const timeBankConfig = mods.time_bank || { negative_carry: 'reset' }
+  const tb = await calculateTimeBank(employeeId, monthDate, timeBankConfig, prisma)
+  result.otHours = tb.otMinutes / 60 // 從分鐘換算，不自己算
+
   // 7. Task 4: OT → Leave conversion
   let otConvertedLeave = 0
   let otRemainderMinutes = 0
   const hoursPerLeaveDay = mods.overtime?.hours_per_leave_day ?? 8
 
-  if (mods.overtime && mods.overtime.mode === 'time_off' && result.otHours > 0) {
+  if (mods.overtime && mods.overtime.mode === 'time_off' && tb.otMinutes > 0) {
     try {
-      const otMinutesFromResult = Math.round(result.otHours * 60)
+      const otMinutesFromResult = tb.otMinutes // 分鐘，單一真相
       const timeBank = await getOrCreateTimeBank(employeeId, monthDate, prisma)
       // Update OT minutes in TimeBank (set current month OT)
       await updateTimeBank(employeeId, monthDate, {
@@ -2037,9 +2043,7 @@ export async function calculatePayrollWithRules(
   }
 
   // 8. Task 6 + TimeBank: Build comprehensive detail JSON with timebank data
-  // Call calculateTimeBank to get authoritative OT/late data for payroll detail
-  const timeBankConfig = mods.time_bank || { negative_carry: 'reset' }
-  const tb = await calculateTimeBank(employeeId, monthDate, timeBankConfig, prisma)
+  // tb already computed at line 1992 (OT唯一來源)
   const lateCount = workData.lateRecords.length
 
   const leaveTaken = workData.approvedLeaveDays
