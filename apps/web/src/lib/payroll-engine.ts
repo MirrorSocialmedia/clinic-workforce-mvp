@@ -1917,42 +1917,11 @@ export async function calculatePayrollWithRules(
   const publicHolidaysInMonth = await getPublicHolidayDays(monthStart, monthEnd)
   const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig, publicHolidaysInMonth)
 
-  // 6. Task 3: Leave banking — grant monthly leave to LeaveBalance
-  const leaveBankingConfig = config.leave_banking || { enabled: true, max_days: null }
-  let leaveBalanceRemaining = 0
-  let monthlyLeaveGranted = 0
-
-  if (leaveBankingConfig.enabled) {
-    try {
-      // Get or create the "休息日" leave type
-      const restDayType = await getOrCreateLeaveType('休息日', true, prisma)
-      const grantedDays = monthlyLeaveDays.total
-      monthlyLeaveGranted = grantedDays
-
-      await addLeaveBalance(employeeId, restDayType.id, year, grantedDays, prisma, 'set')
-
-      // Check max days cap
-      if (leaveBankingConfig.max_days != null) {
-        const balance = await prisma.leaveBalance.findUnique({
-          where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: restDayType.id, year } },
-        })
-        if (balance && balance.remaining > leaveBankingConfig.max_days) {
-          await prisma.leaveBalance.update({
-            where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: restDayType.id, year } },
-            data: { remaining: leaveBankingConfig.max_days },
-          })
-        }
-      }
-
-      // Get current remaining balance
-      const currentBalance = await prisma.leaveBalance.findUnique({
-        where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: restDayType.id, year } },
-      })
-      leaveBalanceRemaining = currentBalance?.remaining ?? 0
-    } catch (err) {
-      console.warn(`Leave banking failed for ${employeeId}:`, err)
-    }
-  }
+  // 6. Task 3: Leave banking — REMOVED: weekends are fixed rest_days, not accrual-able leave.
+  // The monthlyLeaveDays count is kept for display purposes only.
+  // Weekend rest is handled by rest_days config in workday calculation.
+  // Weekend rest should NOT be added to LeaveBalance as a "休息日" leave type.
+  let leaveBalanceRemaining = 0 // No longer banked — weekends are not leave
 
   // 7. Task 4: OT → Leave conversion
   let otConvertedLeave = 0

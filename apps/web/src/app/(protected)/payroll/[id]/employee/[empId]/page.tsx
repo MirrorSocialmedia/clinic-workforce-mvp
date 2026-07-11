@@ -144,7 +144,10 @@ export default function EmployeePayrollDetailPage() {
   const monthlyLeaveDays = leaveAndOtDetail.monthlyLeaveDays ?? 0
   const leaveTaken = leaveAndOtDetail.leaveTaken ?? item.leaveDays
   const leaveBalance = leaveAndOtDetail.leaveBalance ?? 0
-  const otHours = leaveAndOtDetail.otHours ?? item.otHours
+  // FIX: Prefer timebank OT (minutes→hours) as payroll engine OT is 0 for monthly-salary employees
+  const otHours = timebankSummary?.otMinutes != null
+    ? timebankSummary.otMinutes / 60
+    : (leaveAndOtDetail.otHours ?? item.otHours)
   const otConvertedLeave = leaveAndOtDetail.otConvertedLeave ?? 0
   const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
 
@@ -403,7 +406,7 @@ export default function EmployeePayrollDetailPage() {
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">加班時數</div>
-              <div className="text-lg font-bold mt-1">{item.otHours.toFixed(2)}h</div>
+              <div className="text-lg font-bold mt-1">{(timebankSummary?.otMinutes != null ? timebankSummary.otMinutes / 60 : item.otHours).toFixed(2)}h</div>
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">遲到時數</div>
