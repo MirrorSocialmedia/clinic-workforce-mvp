@@ -1217,25 +1217,14 @@ export function countMonthlyLeaveDays(
   year: number,
   month: number, // 0-indexed
   restDays: number[] = [],
-  publicHolidayDays?: Date[]
 ): { restDayCount: number; publicHolidayCount: number; total: number } {
   const daysInMonth = new Date(year, month + 1, 0).getDate()
-  let restDayCount = 0
+  let restDayCount = 0, publicHolidayCount = 0
 
   for (let d = 1; d <= daysInMonth; d++) {
-    if (restDays.includes(new Date(year, month, d).getDay())) {
-      restDayCount++
-    }
-  }
-
-  // Count public holidays in this month
-  let publicHolidayCount = 0
-  if (publicHolidayDays) {
-    for (const hd of publicHolidayDays) {
-      if (hd.getFullYear() === year && hd.getMonth() === month) {
-        publicHolidayCount++
-      }
-    }
+    const date = new Date(year, month, d)
+    if (restDays.includes(date.getDay())) restDayCount++
+    if (isPublicHoliday(date)) publicHolidayCount++ // ← 用硬編碼的 isPublicHoliday，含 7/1
   }
 
   return { restDayCount, publicHolidayCount, total: restDayCount + publicHolidayCount }
@@ -1989,8 +1978,7 @@ export async function calculatePayrollWithRules(
 
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
-  const publicHolidaysInMonth = await getPublicHolidayDays(monthStart, monthEnd)
-  const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig, publicHolidaysInMonth)
+  const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig)
 
   // 6. Task 3 + Rest Day System: Grant monthly rest day entitlement
   // monthlyLeaveDays.total = restDays (weekends) + publicHolidays
@@ -2015,18 +2003,32 @@ export async function calculatePayrollWithRules(
       // net = this month's OT - late + carry from prev month
       const netOtMinutes = otMinutesFromResult - timeBank.lateMinutes + timeBank.carriedFrom
       const minutesPerLeaveDay = hoursPerLeaveDay * 60
-      otConvertedLeave = Math.floor(netOtMinutes / minutesPerLeaveDay)
-      otRemainderMinutes = netOtMinutes % minutesPerLeaveDay
 
-      // Convert OT to leave days in LeaveBalance
-      if (otConvertedLeave > 0) {
-        const otLeaveType = await getLeaveTypeBySystemKey(prisma, 'OT_LEAVE')
-        await addLeaveBalance(employeeId, otLeaveType.id, year, otConvertedLeave, prisma, 'set')
+      if (netOtMinutes > 0) {
+        // 有多餘 OT → 換假（用 increment 累積）
+        otConvertedLeave = Math.floor(netOtMinutes / minutesPerLeaveDay)
+        otRemainderMinutes = netOtMinutes % minutesPerLeaveDay
+
+        if (otConvertedLeave > 0) {
+          const otLeaveType = await getLeaveTypeBySystemKey(prisma, 'OT_LEAVE')
+          if (otLeaveType) {
+            await addLeaveBalance(employeeId, otLeaveType.id, year, otConvertedLeave, prisma, 'increment')
+          }
+        }
 
         // Carry remainder to next month
         await updateTimeBank(employeeId, monthDate, {
           carriedFrom: otRemainderMinutes,
           monthEndNote: `OT換假: ${otConvertedLeave}天, 餘數 ${otRemainderMinutes}分鐘`,
+        }, prisma)
+      } else {
+        // net ≤ 0：遲到≥OT → 拖欠時數，完全不碰 OT 補假
+        otConvertedLeave = 0
+        otRemainderMinutes = 0
+        // 負數結轉下月（欠著），未來 OT 先還
+        await updateTimeBank(employeeId, monthDate, {
+          carriedFrom: netOtMinutes, // 負數結轉
+          monthEndNote: `本月拖欠 ${Math.abs(netOtMinutes)} 分鐘（遲到>OT）`,
         }, prisma)
       }
     } catch (err) {

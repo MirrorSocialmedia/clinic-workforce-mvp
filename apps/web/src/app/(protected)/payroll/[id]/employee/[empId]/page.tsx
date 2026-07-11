@@ -58,6 +58,7 @@ export default function EmployeePayrollDetailPage() {
 
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [leaveBalances, setLeaveBalances] = useState<any[]>([])
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -79,6 +80,15 @@ export default function EmployeePayrollDetailPage() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Fetch leave balances from API (authentic source — same as 假期管理)
+  useEffect(() => {
+    if (!empId) return
+    fetch(`/api/leave-balance?employeeId=${empId}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { leaveBalances: [] })
+      .then(d => setLeaveBalances(d.leaveBalances || []))
+      .catch(() => setLeaveBalances([]))
+  }, [empId])
 
   if (loading) {
     return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
@@ -127,7 +137,16 @@ export default function EmployeePayrollDetailPage() {
   // Leave & OT
   const monthlyLeaveDays = leaveAndOtDetail.monthlyLeaveDays ?? 0
   const leaveTaken = leaveAndOtDetail.leaveTaken ?? item.leaveDays
-  const leaveBalance = leaveAndOtDetail.leaveBalance ?? 0
+  // FIX: 從 leaveBalance 表讀取（與假期管理同源），不再用 detail 中硬編碼的 0
+  const restDayBalance = leaveBalances.find(b => b.leaveType?.systemKey === 'REST_DAY')
+  const restDayRemaining = restDayBalance?.remaining ?? 0
+  const restDayEntitled = restDayBalance?.entitled ?? 0
+  const annualBalance = leaveBalances.find(b => b.leaveType?.systemKey === 'ANNUAL_LEAVE')
+  const annualRemaining = annualBalance?.remaining ?? 0
+  const otBalance = leaveBalances.find(b => b.leaveType?.systemKey === 'OT_LEAVE')
+  const otRemaining = otBalance?.remaining ?? 0
+  // Total leave balance = sum of all types
+  const totalLeaveBalance = restDayRemaining + annualRemaining + otRemaining
   // FIX: 統一資料源 — OT/遲到全部從 detail.timebank 取（計糧引擎算好）
   const tb = detail.timebank || {}
   const otHours = tb.otMinutes != null
@@ -311,7 +330,7 @@ export default function EmployeePayrollDetailPage() {
         </div>
 
         {/* 🏖️ 假期與 OT 換假 */}
-        {(monthlyLeaveDays > 0 || otConvertedLeave > 0 || leaveBalance > 0) && (
+        {(monthlyLeaveDays > 0 || otConvertedLeave > 0 || totalLeaveBalance > 0) && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🏖️ 假期與 OT 換假</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
@@ -325,7 +344,12 @@ export default function EmployeePayrollDetailPage() {
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">假期餘額</div>
-                <div className="text-lg font-bold mt-1">{leaveBalance} 天</div>
+                <div className="text-lg font-bold mt-1">{totalLeaveBalance.toFixed(1)} 天</div>
+                <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                  {restDayRemaining > 0 && <div>休息日: {restDayRemaining.toFixed(1)} (應得 {restDayEntitled})</div>}
+                  {annualRemaining > 0 && <div>年假: {annualRemaining.toFixed(1)}</div>}
+                  {otRemaining > 0 && <div>OT 補假: {otRemaining.toFixed(1)}</div>}
+                </div>
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">本月 OT 時數</div>
