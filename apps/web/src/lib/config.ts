@@ -147,7 +147,7 @@ export const CONFIG = {
     'DELETE /api/payroll-runs/:id': ['OWNER'],
     'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/payroll-runs/preview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'GET /api/payroll-runs/:id/employee/:empId': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Account management routes
