@@ -257,6 +257,13 @@ export default function AttendancePage() {
   useEffect(() => { if (user) fetchHashClinics() }, [user, fetchHashClinics])
   useEffect(() => { if (selectedClinic) fetchHashes() }, [selectedClinic, fetchHashes])
 
+  // Exceptions tab — auto-fetch when switching to tab or filters change
+  useEffect(() => {
+    if (user && activeTab === 'exceptions') {
+      fetchExceptions()
+    }
+  }, [user, activeTab, exClinicId, exEmployeeId, periodMonth, fetchExceptions])
+
   if (!user) return <div style={{ padding: 20 }}>Loading...</div>
   const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER'
   const totalPages = Math.ceil(total / pageSize)
