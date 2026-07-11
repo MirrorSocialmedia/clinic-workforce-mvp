@@ -528,13 +528,13 @@ export default function LeavePage() {
                     {settlementLoading ? '計算中...' : '計算結算'}
                   </button>
                 </div>
-                {settlementResult && (
+                {settlementResult?.settlement && (
                   <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
                     <div className="grid grid-cols-4 gap-4" style={{ fontSize: 13 }}>
-                      <div><span className="text-muted-foreground">累計應得：</span><strong>{settlementResult.accrued.toFixed(2)} 天</strong></div>
-                      <div><span className="text-muted-foreground">已放：</span><strong>{settlementResult.used.toFixed(2)} 天</strong></div>
-                      <div><span className="text-muted-foreground">未放：</span><strong>{settlementResult.unused.toFixed(2)} 天</strong></div>
-                      <div><span className="text-muted-foreground">折算金額：</span><strong style={{ color: '#c53030' }}>${settlementResult.payout.toLocaleString()}</strong></div>
+                      <div><span className="text-muted-foreground">累計應得：</span><strong>{settlementResult.settlement.accrued?.toFixed(2) ?? '0.00'} 天</strong></div>
+                      <div><span className="text-muted-foreground">已放：</span><strong>{settlementResult.settlement.used?.toFixed(2) ?? '0.00'} 天</strong></div>
+                      <div><span className="text-muted-foreground">未放：</span><strong>{settlementResult.settlement.unused?.toFixed(2) ?? '0.00'} 天</strong></div>
+                      <div><span className="text-muted-foreground">折算金額：</span><strong style={{ color: '#c53030' }}>${settlementResult.settlement.payout?.toLocaleString() ?? '0'}</strong></div>
                     </div>
                   </div>
                 )}

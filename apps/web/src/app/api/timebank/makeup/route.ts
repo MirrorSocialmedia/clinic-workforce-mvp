@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', '/api/timebank/makeup')
+  const auth = requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   if (auth.session.role !== 'OWNER') {
     return NextResponse.json({ error: '只有老闆可補鐘' }, { status: 403 })

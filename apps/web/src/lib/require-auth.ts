@@ -67,7 +67,8 @@ export function requireAuth(
   }
 
   // RBAC check
-  const parsedUrl = new URL(url)
+  // Add base to support both relative and absolute URLs
+  const parsedUrl = new URL(url, 'http://localhost')
   const normalized = normalizeRoute(parsedUrl, method)
   const allowed = CONFIG.RBAC_MATRIX[normalized]
 
