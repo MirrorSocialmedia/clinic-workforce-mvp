@@ -67,27 +67,32 @@ export async function GET(req: NextRequest) {
     prisma.shift.count({ where }),
   ])
 
-  // Batch-check punch records for each shift (Task 4: absent detection)
-  const shiftsWithPunch = await Promise.all(shifts.map(async (s: any) => {
-    const shiftDateStart = new Date(s.date)
-    shiftDateStart.setHours(0, 0, 0, 0)
-    const shiftDateEnd = new Date(s.date)
-    shiftDateEnd.setHours(23, 59, 59, 999)
+  // Batch-check punch records (fix N+1: 1 query instead of N+1)
+  let shiftsWithPunch = shifts
+  if (shifts.length > 0) {
+    const batchStart = startDate ? new Date(startDate + '+08:00') : new Date(0)
+    const batchEnd = endDate ? new Date((endDate + 'T23:59:59.999') + '+08:00') : new Date(8640000000000000)
 
-    const punch = await prisma.punchRecord.findFirst({
+    const allPunches = await prisma.punchRecord.findMany({
       where: {
-        employeeId: s.employeeId,
-        clinicId: s.clinicId,
+        employeeId: { in: shifts.map((s: any) => s.employeeId) },
         punchType: 'CLOCK_IN',
-        punchTime: {
-          gte: shiftDateStart,
-          lte: shiftDateEnd,
-        },
+        punchTime: { gte: batchStart, lte: batchEnd },
       },
     })
 
-    return { ...s, hasPunch: !!punch }
-  }))
+    shiftsWithPunch = shifts.map((s: any) => {
+      const dayStart = new Date(s.date); dayStart.setHours(0, 0, 0, 0)
+      const dayEnd = new Date(s.date); dayEnd.setHours(23, 59, 59, 999)
+      const hasPunch = allPunches.some((p: any) =>
+        p.employeeId === s.employeeId &&
+        p.clinicId === s.clinicId &&
+        p.punchTime >= dayStart &&
+        p.punchTime <= dayEnd
+      )
+      return { ...s, hasPunch }
+    })
+  }
 
   return NextResponse.json({
     shifts: shiftsWithPunch,

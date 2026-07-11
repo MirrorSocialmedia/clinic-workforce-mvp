@@ -97,9 +97,9 @@ export async function GET(req: NextRequest) {
     const minute = hkPunchTime.getMinutes()
     const dow = hkPunchTime.getDay()
     if (dow >= 1 && dow <= 5 && (hour > 9 || (hour === 9 && minute > 30))) {
-      const clinic = p.employee.clinics.find(c => c.clinicId === p.clinicId)?.clinic
+      const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
       exceptions.push({
-        employeeId: p.employeeId, employeeName: p.employee.user.name,
+        employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
         clinicName: clinic?.name || p.clinicId,
         date: toHKDateStr(p.punchTime),
         type: 'LATE',
@@ -122,9 +122,9 @@ export async function GET(req: NextRequest) {
       if (p.punchTime.getTime() < shiftEnd.getTime()) {
         const earlyMins = Math.ceil((shiftEnd.getTime() - p.punchTime.getTime()) / 60000)
         if (earlyMins > 0) {
-          const clinic = p.employee.clinics.find(c => c.clinicId === p.clinicId)?.clinic
+          const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
           exceptions.push({
-            employeeId: p.employeeId, employeeName: p.employee.user.name,
+            employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
             clinicName: clinic?.name || p.clinicId,
             date: punchDateStr,
             type: 'EARLY_LEAVE',
@@ -146,17 +146,17 @@ export async function GET(req: NextRequest) {
     )
     if (!hasPunch) {
       exceptions.push({
-        employeeId: shift.employeeId, employeeName: shift.employee.user.name,
-        clinicName: shift.clinic.name, date: shiftDayStr, type: 'ABSENT',
+        employeeId: shift.employeeId, employeeName: shift.employee?.user?.name || 'Unknown',
+        clinicName: shift.clinic?.name || 'Unknown', date: shiftDayStr, type: 'ABSENT',
         detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)})`,
       })
     }
   }
 
   for (const c of corrections) {
-    const clinic = c.employee.clinics.find(cl => cl.clinicId === c.clinicId)?.clinic
+    const clinic = c.employee?.clinics?.find(cl => cl.clinicId === c.clinicId)?.clinic
     exceptions.push({
-      employeeId: c.employeeId, employeeName: c.employee.user.name,
+      employeeId: c.employeeId, employeeName: c.employee?.user?.name || 'Unknown',
       clinicName: clinic?.name || c.clinicId,
       date: toHKDateStr(c.correctedTime), type: 'CORRECTION',
       detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上工' : '落班'} 至 ${c.correctedTime.toLocaleTimeString('zh-HK')}${c.reason ? ` (${c.reason})` : ''}`,

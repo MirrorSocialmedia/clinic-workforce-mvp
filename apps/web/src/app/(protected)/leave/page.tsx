@@ -85,6 +85,11 @@ export default function LeavePage() {
   const [settlementLoading, setSettlementLoading] = useState(false)
   const [settlementResult, setSettlementResult] = useState<any>(null)
 
+  // OT 兌換 state
+  const [convertForm, setConvertForm] = useState({ employeeId: '', days: '', direction: 'to_leave' })
+  const [converting, setConverting] = useState(false)
+  const [convertResult, setConvertResult] = useState('')
+
   // Leave Types management state
   const [activeTab, setActiveTab] = useState<TabKey>('requests')
   const [ltShowForm, setLtShowForm] = useState(false)
@@ -323,6 +328,37 @@ export default function LeavePage() {
       alert('網絡錯誤')
     } finally {
       setSettlementLoading(false)
+    }
+  }
+
+  // OT 兌換 handler
+  const handleConvert = async () => {
+    if (!convertForm.employeeId || !convertForm.days) { alert('請填寫所有欄位'); return }
+    setConverting(true)
+    setConvertResult('')
+    try {
+      const res = await fetch('/api/timebank/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          employeeId: convertForm.employeeId,
+          direction: convertForm.direction,
+          days: parseFloat(convertForm.days),
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setConvertResult('✅ 兌換成功')
+        setConvertForm({ employeeId: '', days: '', direction: 'to_leave' })
+        fetchBalances()
+      } else {
+        setConvertResult(`❌ ${data.error || '兌換失敗'}`)
+      }
+    } catch (err) {
+      setConvertResult('❌ 網絡錯誤')
+    } finally {
+      setConverting(false)
     }
   }
 
@@ -608,6 +644,55 @@ export default function LeavePage() {
                 )}
               </div>
             </>
+          )}
+
+          {/* OT 假期兌換（OWNER only） */}
+          {isManager && (
+            <div className="card p-4 border border-purple-200 rounded-lg mb-4" style={{ background: '#faf5ff' }}>
+              <h3 className="font-semibold mb-2">🔄 OT 假期兌換</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                OT → 換假：9小時 OT 時間換 1 天假 | OT假 → 換回OT：把 OT 換的假換回 OT 時間
+              </p>
+              <div className="flex gap-3 items-end flex-wrap">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">員工</label>
+                  <select value={convertForm.employeeId} onChange={e => setConvertForm({ ...convertForm, employeeId: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="">-- 選擇 --</option>
+                    {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">天數</label>
+                  <input type="number" value={convertForm.days} onChange={e => setConvertForm({ ...convertForm, days: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm w-20" min="0.5" step="0.5" placeholder="天" />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">方向</label>
+                  <select value={convertForm.direction} onChange={e => setConvertForm({ ...convertForm, direction: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="to_leave">OT → 換假</option>
+                    <option value="to_ot">OT假 → 換回OT</option>
+                  </select>
+                </div>
+                <button
+                  className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors"
+                  style={{ background: '#7c3aed' }}
+                  onClick={handleConvert}
+                  disabled={converting}
+                >
+                  {converting ? '兌換中...' : '兌換'}
+                </button>
+              </div>
+              {convertResult && (
+                <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 13,
+                  background: convertResult.startsWith('✅') ? '#f0fff4' : '#fff5f5',
+                  color: convertResult.startsWith('✅') ? '#22543d' : '#c53030',
+                  border: `1px solid ${convertResult.startsWith('✅') ? '#c6f6d5' : '#fed7d7'}` }}>
+                  {convertResult}
+                </div>
+              )}
+            </div>
           )}
 
           {balances.length > 0 ? (

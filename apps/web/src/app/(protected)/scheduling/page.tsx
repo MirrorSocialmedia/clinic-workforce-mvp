@@ -744,7 +744,7 @@ function getShiftColor(shift: Shift): string {
       const end = new Date(s.endTime)
       return sum + (end.getTime() - start.getTime()) / 3600000
     }, 0)
-    return { name: emp.user.name, days, hours: Math.round(hours * 10) / 10 }
+    return { name: emp.user?.name ?? '?', days, hours: Math.round(hours * 10) / 10 }
   }, [selectedEmployeeId, clinicFilteredShifts, clinicEmployees])
 
   // Map shifts to FC events — colors by employee, leave by gray
@@ -1200,7 +1200,7 @@ function getShiftColor(shift: Shift): string {
                     background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                     padding: '6px 12px', whiteSpace: 'nowrap', zIndex: 5,
                     fontWeight: 500,
-                  }}>{emp.user.name}</td>
+                  }}>{emp.user?.name ?? '?'}</td>
                   {weekDays.map((wd, dayIdx) => {
                     const empShiftsOnDay = shifts.filter(s =>
                       s.employeeId === emp.id &&
@@ -1287,7 +1287,7 @@ function getShiftColor(shift: Shift): string {
                 key={emp.id}
                 className="employee-card"
                 data-employee-id={emp.id}
-                data-name={emp.user.name}
+                data-name={emp.user?.name ?? ''}
                 onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
                 draggable={canManage}
                 onDragStart={(e) => {
@@ -1312,9 +1312,9 @@ function getShiftColor(shift: Shift): string {
                   textOverflow: 'ellipsis',
                   userSelect: 'none',
                 }}
-                title={emp.user.name}
+                title={emp.user?.name ?? ''}
               >
-                {emp.user.name}
+                {emp.user?.name ?? '?'}
               </div>
             ))}
           </div>
@@ -1749,7 +1749,7 @@ function getShiftColor(shift: Shift): string {
                 >
                   <option value="">選擇對象（可選）</option>
                   {availableEmployees.map(e => (
-                    <option key={e.id} value={e.id}>{e.user.name}</option>
+                    <option key={e.id} value={e.id}>{e.user?.name ?? '?'}</option>
                   ))}
                 </select>
                 <button
@@ -1829,8 +1829,8 @@ function getShiftColor(shift: Shift): string {
                           </span>
                         </div>
                         <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
-                          {req.fromEmployee?.user.name}
-                          {req.toEmployee && ` → ${req.toEmployee.user.name}`}
+                          {req.fromEmployee?.user?.name ?? '?'}
+                          {req.toEmployee && ` → ${req.toEmployee?.user?.name ?? '?'}`}
                         </div>
                         {req.reason && (
                           <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
@@ -2054,7 +2054,7 @@ function getShiftColor(shift: Shift): string {
               >
                 <option value="">選擇員工</option>
                 {clinicEmployees.map(emp => (
-                  <option key={emp.id} value={emp.id}>{emp.user.name}</option>
+                  <option key={emp.id} value={emp.id}>{emp.user?.name ?? '?'}</option>
                 ))}
               </select>
             </div>
@@ -2201,7 +2201,7 @@ function getShiftColor(shift: Shift): string {
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#f5f5f5' }}
                 >
                   <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', marginRight: 8, background: colorFor(emp.id) }}></span>
-                  {emp.user.name}
+                  {emp.user?.name ?? '?'}
                 </div>
               ))}
             </div>
