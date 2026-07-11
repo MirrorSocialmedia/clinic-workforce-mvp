@@ -32,13 +32,14 @@ interface ExceptionRecord {
   employeeName: string
   clinicName: string
   date: string
-  type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION'
+  type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION' | 'OT'
   detail: string
   punchTime?: string
   correctionTime?: string
   lateMinutes?: number
   earlyMinutes?: number
   otMinutes?: number
+  madeUp?: boolean
 }
 
 export default function AttendancePage() {
@@ -113,14 +114,28 @@ export default function AttendancePage() {
     return { display: `${correctedStr}（原 ${originalStr}）`, hasCorrection: true }
   }
 
-  // Helper: find exception for a record by employeeId + date
-  function getRecordException(record: PunchRecord): ExceptionRecord | null {
+  // Helper: build exception map with employeeId_date_type key for multi-type support
+  const getRecordException = useCallback((record: PunchRecord): {
+    late: ExceptionRecord | null;
+    earlyLeave: ExceptionRecord | null;
+    ot: ExceptionRecord | null;
+  } => {
     const recordDate = new Date(record.punchTime).toISOString().slice(0, 10)
-    const match = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate
+    const late = recordsExceptions.find(
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'LATE'
     )
-    return match || null
-  }
+    const earlyLeave = recordsExceptions.find(
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_LEAVE'
+    )
+    const ot = recordsExceptions.find(
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'OT'
+    )
+    return {
+      late: late || null,
+      earlyLeave: earlyLeave || null,
+      ot: ot || null,
+    }
+  }, [recordsExceptions])
 
   // Shared data loading
   const fetchUserData = async () => {
@@ -224,15 +239,16 @@ export default function AttendancePage() {
   }
 
   const typeLabel = (type: string) => {
-    switch (type) { case 'LATE': return '遲到'; case 'EARLY_LEAVE': return '早退'; case 'ABSENT': return '缺勤'; case 'CORRECTION': return '補登'; default: return type }
+    switch (type) { case 'LATE': return '遲到'; case 'EARLY_LEAVE': return '早退'; case 'ABSENT': return '缺勤'; case 'CORRECTION': return '補登'; case 'OT': return 'OT'; default: return type }
   }
   const typeColor = (type: string) => {
-    switch (type) { case 'LATE': return '#ffc107'; case 'EARLY_LEAVE': return '#fd7e14'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; default: return '#888' }
+    switch (type) { case 'LATE': return '#ffc107'; case 'EARLY_LEAVE': return '#fd7e14'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; case 'OT': return '#059669'; default: return '#888' }
   }
+  const nonOtExceptions = exceptions.filter(e => e.type !== 'OT')
   const summary = {
-    total: exceptions.length, late: exceptions.filter(e => e.type === 'LATE').length,
-    absent: exceptions.filter(e => e.type === 'ABSENT').length, correction: exceptions.filter(e => e.type === 'CORRECTION').length,
-    earlyLeave: exceptions.filter(e => e.type === 'EARLY_LEAVE').length,
+    total: nonOtExceptions.length, late: nonOtExceptions.filter(e => e.type === 'LATE').length,
+    absent: nonOtExceptions.filter(e => e.type === 'ABSENT').length, correction: nonOtExceptions.filter(e => e.type === 'CORRECTION').length,
+    earlyLeave: nonOtExceptions.filter(e => e.type === 'EARLY_LEAVE').length,
   }
 
   // Hash
@@ -386,11 +402,8 @@ export default function AttendancePage() {
                   <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
                 ) : (
                   records.map((record) => {
-                    const exception = getRecordException(record)
-                    const isLate = exception?.type === 'LATE'
-                    const isEarlyLeave = exception?.type === 'EARLY_LEAVE'
-                    const isOt = exception?.otMinutes != null && exception.otMinutes > 0
-                    const rowBg = isLate ? '#fff7ed' : isEarlyLeave ? '#fef2f2' : isOt ? '#f0fdf4' : undefined
+                    const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record)
+                    const rowBg = lateEx ? '#fff7ed' : earlyEx ? '#fef2f2' : otEx ? '#f0fdf4' : undefined
 
                     return (
                     <tr key={record.id} className="border-b hover:bg-gray-50" style={rowBg ? { backgroundColor: rowBg } : {}}>
@@ -430,15 +443,10 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td className="p-3">
-                        {isLate ? (
-                          <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {exception?.lateMinutes || 0} 分</span>
-                        ) : isEarlyLeave ? (
-                          <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {exception?.earlyMinutes || 0} 分</span>
-                        ) : isOt ? (
-                          <span style={{ color: '#059669', fontWeight: 600 }}>OT {exception?.otMinutes || 0} 分</span>
-                        ) : (
-                          <span style={{ color: '#16a34a' }}>正常</span>
-                        )}
+                        {lateEx && <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {lateEx.lateMinutes || 0} 分</span>}
+                        {earlyEx && <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {earlyEx.earlyMinutes || 0} 分</span>}
+                        {otEx && <span style={{ color: '#059669', fontWeight: 600 }}>OT {otEx.otMinutes || 0} 分</span>}
+                        {!lateEx && !earlyEx && !otEx && <span style={{ color: '#16a34a' }}>正常</span>}
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {record.source === 'QR_DYNAMIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 動態碼</> : record.source === 'QR_STATIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 固定碼</> : record.source === 'MANUAL_CORRECTION' ? <><Pencil size={14} style={{ marginRight: 4 }} /> 補打卡</> : <><Wrench size={14} style={{ marginRight: 4 }} /> 系統</>}
@@ -455,15 +463,21 @@ export default function AttendancePage() {
                         ) : (<span className="text-emerald-600 text-xs">✓ 無修正</span>)}
                       </td>
                       <td className="p-3">
-                        {(isLate || isEarlyLeave) && user.role === 'OWNER' && exception && (
-                          <button
-                            onClick={() => handleMakeup(exception)}
-                            className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
-                            style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
-                            title="補鐘：用OT補這次遲到/早退，免扣勤工"
-                          >
-                            <Clock size={12} /> 補鐘
-                          </button>
+                        {((lateEx || earlyEx) && user.role === 'OWNER') && (
+                          (lateEx?.madeUp || earlyEx?.madeUp) ? (
+                            <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              ✓ 已補鐘
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => { const ex = lateEx || earlyEx!; handleMakeup(ex) }}
+                              className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
+                              style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
+                              title="補鐘：用OT補這次遲到/早退，免扣勤工"
+                            >
+                              <Clock size={12} /> 補鐘
+                            </button>
+                          )
                         )}
                       </td>
                       <td className="p-3">
@@ -547,7 +561,7 @@ export default function AttendancePage() {
           {/* Table */}
           {exLoading ? (
             <div className="text-center py-10 text-muted-foreground">查詢中...</div>
-          ) : exceptions.length === 0 ? (
+          ) : nonOtExceptions.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">沒有找到異常記錄 🎉</div>
           ) : (
             <div className="overflow-x-auto rounded-xl border shadow-card">
@@ -563,7 +577,7 @@ export default function AttendancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {exceptions.map((ex, i) => (
+                  {nonOtExceptions.map((ex, i) => (
                     <tr key={i} className="border-b hover:bg-gray-50">
                       <td className="p-3 font-medium">{ex.employeeName}</td>
                       <td className="p-3">{ex.clinicName}</td>
@@ -577,14 +591,20 @@ export default function AttendancePage() {
                       <td className="p-3 text-xs text-muted-foreground">{ex.detail}</td>
                       <td className="p-3">
                         {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && user.role === 'OWNER' && (
-                          <button
-                            onClick={() => handleMakeup(ex)}
-                            className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
-                            style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
-                            title="補鐘：用OT補這次遲到/早退，免扣勤工"
-                          >
-                            <Clock size={12} /> 補鐘
-                          </button>
+                          ex.madeUp ? (
+                            <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              ✓ 已補鐘
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleMakeup(ex)}
+                              className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
+                              style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
+                              title="補鐘：用OT補這次遲到/早退，免扣勤工"
+                            >
+                              <Clock size={12} /> 補鐘
+                            </button>
+                          )
                         )}
                       </td>
                     </tr>

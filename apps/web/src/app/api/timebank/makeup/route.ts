@@ -16,6 +16,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'employeeId, date, minutes 為必填' }, { status: 400 })
   }
 
+  // 查同日是否已補鐘
+  const dateStart = new Date(date + 'T00:00:00+08:00')
+  const dateEnd = new Date(date + 'T23:59:59+08:00')
+  const existing = await prisma.timeBankEntry.findFirst({
+    where: {
+      employeeId,
+      type: 'MAKEUP',
+      date: { gte: dateStart, lte: dateEnd },
+    },
+  })
+  if (existing) {
+    return NextResponse.json({ error: '該日已補鐘，不可重複補' }, { status: 400 })
+  }
+
   await prisma.timeBankEntry.create({
     data: {
       employeeId,

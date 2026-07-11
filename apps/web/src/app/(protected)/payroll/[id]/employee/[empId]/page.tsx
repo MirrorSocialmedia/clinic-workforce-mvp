@@ -393,8 +393,15 @@ export default function EmployeePayrollDetailPage() {
                 <div className="text-lg font-bold mt-1" style={tb.lateCount > 0 ? { color: '#d97706' } : {}}>
                   {tb.lateCount} 次
                 </div>
-                {tb.lateMinutes > 0 && (
-                  <div className="text-xs" style={{ color: '#d97706' }}>{tb.lateMinutes} 分鐘</div>
+                {(tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))) > 0 && (
+                  <div className="text-xs" style={{ color: '#d97706' }}>
+                    {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘
+                    {tb.makeupMinutes > 0 && (
+                      <div className="text-xs text-muted-foreground">
+                        （原遲到 {tb.lateMinutes} 分，已補鐘 {tb.makeupMinutes} 分）
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="rounded-lg border p-3" style={{ borderLeft: '3px solid #16a34a' }}>
@@ -432,9 +439,9 @@ export default function EmployeePayrollDetailPage() {
               <div className="text-lg font-bold mt-1">{(tb.otMinutes ?? 0)} 分鐘（{((tb.otMinutes ?? 0) / 60).toFixed(1)}h）</div>
             </div>
             <div className="rounded-lg border p-3">
-              <div className="text-xs text-muted-foreground">遲到時數</div>
-              <div className="text-lg font-bold mt-1" style={{ color: (tb.lateMinutes ?? 0) > 0 ? '#f59e0b' : 'inherit' }}>
-                {(tb.lateMinutes ?? 0)} 分鐘（{((tb.lateMinutes ?? 0) / 60).toFixed(1)}h）
+              <div className="text-xs text-muted-foreground">淨遲到時數</div>
+              <div className="text-lg font-bold mt-1" style={{ color: (tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))) > 0 ? '#f59e0b' : 'inherit' }}>
+                {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘（{(((tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))) / 60)).toFixed(1)}h）
               </div>
             </div>
             <div className="rounded-lg border p-3">

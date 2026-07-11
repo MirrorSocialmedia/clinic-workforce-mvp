@@ -92,9 +92,10 @@ export async function GET(req: NextRequest) {
 
   const exceptions: Array<{
     employeeId: string; employeeName: string; clinicName: string;
-    date: string; type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION';
+    date: string; type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION' | 'OT';
     detail: string; punchTime?: string; correctionTime?: string;
-    lateMinutes?: number; earlyMinutes?: number;
+    lateMinutes?: number; earlyMinutes?: number; otMinutes?: number;
+    madeUp?: boolean;
   }> = []
 
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
@@ -156,6 +157,35 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // OT 偵測：下班晚於排班結束
+  for (const p of clockOuts) {
+    const punchDateStr = toHKDateStr(p.punchTime)
+    const matchingShift = shifts.find(
+      s =>
+        s.employeeId === p.employeeId &&
+        toHKDateStr(new Date(s.date)) === punchDateStr &&
+        s.clinicId === p.clinicId
+    )
+    if (matchingShift) {
+      const shiftEnd = new Date(matchingShift.endTime)
+      if (p.punchTime.getTime() > shiftEnd.getTime()) {
+        const otMins = Math.floor((p.punchTime.getTime() - shiftEnd.getTime()) / 60000)
+        if (otMins > 0) {
+          const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
+          exceptions.push({
+            employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
+            clinicName: clinic?.name || p.clinicId,
+            date: punchDateStr,
+            type: 'OT',
+            otMinutes: otMins,
+            detail: `OT ${otMins} 分鐘`,
+            punchTime: p.punchTime.toISOString(),
+          })
+        }
+      }
+    }
+  }
+
   // Detect ABSENT from shifts with no punches
   for (const shift of shifts) {
     const shiftDayStr = toHKDateStr(new Date(shift.date))
@@ -183,6 +213,24 @@ export async function GET(req: NextRequest) {
       correctionTime: c.correctedTime.toISOString(),
     })
   }
+
+  // 抓補鐘記錄，標記 madeUp
+  try {
+    const empIds = [...new Set(exceptions.map(e => e.employeeId))]
+    const makeupEntries = await prisma.timeBankEntry.findMany({
+      where: {
+        type: 'MAKEUP',
+        date: { gte: monthStart, lte: monthEnd },
+        employeeId: { in: empIds },
+      },
+    })
+    const makeupSet = new Set(
+      (makeupEntries || []).map((e: any) => `${e.employeeId}_${toHKDateStr(new Date(e.date))}`)
+    )
+    exceptions.forEach(ex => {
+      ex.madeUp = makeupSet.has(`${ex.employeeId}_${ex.date}`)
+    })
+  } catch {}
 
   exceptions.sort((a, b) => b.date.localeCompare(a.date))
 

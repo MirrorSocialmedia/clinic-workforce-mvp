@@ -996,6 +996,7 @@ export async function calculateTimeBank(
 ): Promise<{
   otMinutes: number
   lateMinutes: number
+  netLateMinutes: number
   earlyLeaveMinutes: number
   makeupMinutes: number
   carriedFrom: number
@@ -1137,8 +1138,10 @@ export async function calculateTimeBank(
     }
   }
 
+  const netLateMinutes = Math.max(0, lateMinutes - makeupMinutes)
+
   return {
-    otMinutes, lateMinutes, earlyLeaveMinutes, makeupMinutes,
+    otMinutes, lateMinutes, netLateMinutes, earlyLeaveMinutes, makeupMinutes,
     carriedFrom, balance, owedMinutes, availableMinutes, convertibleLeaveDays, note,
   }
 }
@@ -2086,7 +2089,43 @@ export async function calculatePayrollWithRules(
         if (otConvertedLeave > 0) {
           const otLeaveType = await getLeaveTypeBySystemKey(prisma, 'OT_LEAVE')
           if (otLeaveType) {
-            await addLeaveBalance(employeeId, otLeaveType.id, year, otConvertedLeave, prisma, 'increment')
+            const grantKey = `otconvert_grant_${year}_${monthDate.getMonth() + 1}`
+
+            // 查上次這個月發了多少天
+            const prevGrant = await prisma.timeBankEntry.findFirst({
+              where: {
+                employeeId,
+                type: 'OT_CONVERT_GRANT',
+                note: { contains: grantKey },
+              },
+            })
+            const prevDays = prevGrant ? Math.round(prevGrant.minutes / (9 * 60)) : 0
+            const delta = otConvertedLeave - prevDays // 差額（首次=全額，重生成=修正）
+
+            if (delta !== 0) {
+              await addLeaveBalance(employeeId, otLeaveType.id, year, delta, prisma, 'increment')
+            }
+
+            // 更新/建立發放記錄
+            if (prevGrant) {
+              await prisma.timeBankEntry.update({
+                where: { id: prevGrant.id },
+                data: {
+                  minutes: otConvertedLeave * 9 * 60,
+                  note: `${grantKey}: 本月OT換假 ${otConvertedLeave} 天`,
+                },
+              })
+            } else {
+              await prisma.timeBankEntry.create({
+                data: {
+                  employeeId,
+                  type: 'OT_CONVERT_GRANT',
+                  date: monthDate,
+                  minutes: otConvertedLeave * 9 * 60,
+                  note: `${grantKey}: 本月OT換假 ${otConvertedLeave} 天`,
+                },
+              })
+            }
           }
         }
 
