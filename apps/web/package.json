@@ -10,7 +10,8 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:seed": "prisma generate && tsx prisma/seed.ts",
-    "migrate-payrules": "tsx prisma/migrate-payrules.ts"
+    "migrate-payrules": "tsx prisma/migrate-payrules.ts",
+    "check:rbac": "npx tsx scripts/check-rbac.ts"
   },
   "dependencies": {
     "@fullcalendar/daygrid": "^6.1.21",

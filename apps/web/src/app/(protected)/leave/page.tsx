@@ -137,7 +137,10 @@ export default function LeavePage() {
         const empRes = await fetch('/api/employees', { credentials: 'include' })
         if (empRes.ok) {
           const empData = await empRes.json()
-          setEmployees(empData.employees || [])
+          // 兼容兩種格式：直接陣列 或 { employees: [...] }
+          const empList = Array.isArray(empData) ? empData : (empData.employees || [])
+          console.log('[LeavePage] 載入員工數:', empList.length)
+          setEmployees(empList)
         }
       }
     } catch (err) {

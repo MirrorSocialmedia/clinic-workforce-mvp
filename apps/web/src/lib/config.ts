@@ -37,6 +37,7 @@ export const CONFIG = {
 
     // Clinic routes
     'GET /api/clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/clinics/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/clinics': ['OWNER'],
     'PUT /api/clinics/:id': ['OWNER'],
     'DELETE /api/clinics/:id': ['OWNER'],
@@ -61,6 +62,7 @@ export const CONFIG = {
     'GET /api/employees/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/employees/:id/pay-rules': ['OWNER'],
     'GET /api/employees/:id/pay-rules': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'PUT /api/employees/:id/pay-rules/:ruleId': ['OWNER'],
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
@@ -81,6 +83,7 @@ export const CONFIG = {
     'GET /api/shifts/my-schedule': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Shift change request routes
+    'GET /api/shift-changes': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/shift-changes': ['OWNER', 'MANAGER', 'EMPLOYEE'],
     'PUT /api/shift-changes/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/shift-changes/:id': ['OWNER', 'MANAGER', 'EMPLOYEE'],
@@ -101,6 +104,7 @@ export const CONFIG = {
 
     // Daily hash routes
     'POST /api/daily-hash': ['OWNER', 'MANAGER'],
+    'GET /api/daily-hash': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/daily-hash/:date': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Leave type routes
@@ -113,11 +117,13 @@ export const CONFIG = {
     'GET /api/leave-requests': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'PUT /api/leave-requests/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/leave-requests/:id': ['OWNER', 'MANAGER'],
+    'PATCH /api/leave-requests/:id': ['OWNER', 'MANAGER'],
 
     // Leave balance routes
     'GET /api/leave-balance': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/leave-balance/init': ['OWNER', 'MANAGER'],
     'DELETE /api/leave-balance': ['OWNER'],
+    'PATCH /api/leave-balance': ['OWNER', 'MANAGER'],
 
     // HK public holiday routes
     'GET /api/hk-public-holidays': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
@@ -141,7 +147,7 @@ export const CONFIG = {
     'DELETE /api/payroll-runs/:id': ['OWNER'],
     'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/payroll-runs/preview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'GET /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/payroll-runs/:id/employee/:empId': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/_exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Account management routes
@@ -153,11 +159,14 @@ export const CONFIG = {
 
     // Time-bank routes
     'GET /api/time-bank': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/time-bank': ['OWNER'],
 
     // Timebank entry routes
     'POST /api/timebank/makeup': ['OWNER'],
     'POST /api/timebank/convert': ['OWNER'],
     'GET /api/time-bank/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'PATCH /api/time-bank/:id': ['OWNER'],
+    'DELETE /api/time-bank/:id': ['OWNER'],
 
     // My timebank
     'GET /api/my/timebank': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
