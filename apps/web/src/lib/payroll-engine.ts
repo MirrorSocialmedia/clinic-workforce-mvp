@@ -818,6 +818,7 @@ interface WorkData {
   scheduledDays: number
   absentDays: number
   shifts: any[]
+  makeupEntries: Array<{ date: string; minutes: number; note: string }>
 }
 
 /**
@@ -1572,6 +1573,27 @@ async function collectWorkData(
 
   // shifts already loaded above for calculateWorkedHours
 
+  // 🔧 Fix #1: Fetch MAKEUP entries — days with makeup should NOT count as late
+  let makeupEntries: Array<{ date: string; minutes: number; note: string }> = []
+  const makeupDates = new Set<string>()
+  try {
+    const rawMakeupEntries = await prisma.timeBankEntry.findMany({
+      where: {
+        employeeId,
+        type: 'MAKEUP',
+        date: { gte: monthStart, lte: monthEnd },
+      },
+    })
+    makeupEntries = rawMakeupEntries.map((e: any) => ({
+      date: formatDate(e.date),
+      minutes: Math.abs(e.minutes),
+      note: e.note || '',
+    }))
+    makeupEntries.forEach((e) => makeupDates.add(e.date))
+  } catch {
+    // timeBankEntry may not exist yet
+  }
+
   const lateRecords: Array<{ date: string; minutes: number }> = []
   for (const shift of shifts) {
     const dayStart = new Date(shift.date)
@@ -1590,8 +1612,10 @@ async function collectWorkData(
         shiftStartTime = new Date(shift.startTime)
       }
       if (firstPunch.punchTime > shiftStartTime) {
+        const dateStr = formatDate(firstPunch.punchTime)
+        if (makeupDates.has(dateStr)) continue // ← 該天已補鐘，不算遲到
         const minutes = Math.ceil((firstPunch.punchTime.getTime() - shiftStartTime.getTime()) / 60000)
-        lateRecords.push({ date: formatDate(firstPunch.punchTime), minutes })
+        lateRecords.push({ date: dateStr, minutes })
       }
     }
   }
@@ -1640,6 +1664,7 @@ async function collectWorkData(
     scheduledDays,
     absentDays,
     shifts,
+    makeupEntries,
   }
 }
 
@@ -2089,6 +2114,8 @@ export async function calculatePayrollWithRules(
       lateRecords: workData.lateRecords,
       dailyEntries: workData.dailyEntries.map(d => ({ date: d.date, totalHours: d.totalHours })),
     },
+    // 🔧 Fix #2: 補鐘記錄
+    makeupRecords: workData.makeupEntries || [],
     // 薪資
     salary: {
       basePay: Math.round(result.basePay * 100) / 100,

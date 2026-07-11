@@ -111,6 +111,16 @@ export default function SchedulingPage() {
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
   const [displayWarning, setDisplayWarning] = useState<string | null>(null)
 
+  // 🔧 Fix #3a: 抓當前選中員工的假期餘額
+  const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
+  useEffect(() => {
+    if (!selectedEmployeeId) { setSelectedEmpBalances([]); return }
+    fetch(`/api/leave-balance?employeeId=${selectedEmployeeId}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { leaveBalances: [] })
+      .then(d => setSelectedEmpBalances(d.leaveBalances || []))
+      .catch(() => setSelectedEmpBalances([]))
+  }, [selectedEmployeeId])
+
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
   const [savingRules, setSavingRules] = useState(false)
@@ -1416,27 +1426,37 @@ function getShiftColor(shift: Shift): string {
               <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
                 假期
               </div>
-              {leaveTypes.map(lt => (
-                <div
-                  key={lt.id}
-                  className="leave-card"
-                  data-leave-id={lt.id}
-                  data-name={lt.name}
-                  style={{
-                    padding: '6px 4px', margin: '3px 0',
-                    background: '#4a4a4a', color: '#fff',
-                    borderRadius: 6, cursor: canManage ? 'grab' : 'default',
-                    fontSize: 11, textAlign: 'center',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    userSelect: 'none',
-                  }}
-                  title={`拖到日曆建立請假 - ${lt.name}`}
-                >
-                  <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
-                </div>
-              ))}
+              {leaveTypes.map(lt => {
+                const bal = selectedEmpBalances.find(b => b.leaveTypeId === lt.id)
+                const remaining = bal?.remaining ?? 0
+                const canDragLeave = canManage && remaining > 0
+                return (
+                  <div
+                    key={lt.id}
+                    className="leave-card"
+                    data-leave-id={lt.id}
+                    data-name={lt.name}
+                    style={{
+                      padding: '6px 4px', margin: '3px 0',
+                      background: canDragLeave ? '#4a4a4a' : '#3a3a3a',
+                      color: canDragLeave ? '#fff' : '#888',
+                      borderRadius: 6,
+                      cursor: canDragLeave ? 'grab' : 'not-allowed',
+                      opacity: canDragLeave ? 1 : 0.4,
+                      fontSize: 11, textAlign: 'center',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      userSelect: 'none',
+                    }}
+                    title={canDragLeave ? `拖到日曆建立請假 - ${lt.name}` : '無餘額，無法拖放'}
+                  >
+                    <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
+                    <span style={{ fontSize: 10, fontWeight: 600 }}>（剩 {remaining.toFixed(1)} 天）</span>
+                    {!canDragLeave && remaining <= 0 && <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -1528,6 +1548,13 @@ function getShiftColor(shift: Shift): string {
 
                   if (!selectedEmployeeId) {
                     setShowLeaveEmployeeModal({ date, leaveTypeId })
+                    return
+                  }
+
+                  // 🔧 Fix #3c: 拖放時再次檢查餘額
+                  const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveTypeId)
+                  if (!bal || bal.remaining <= 0) {
+                    setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
                     return
                   }
 

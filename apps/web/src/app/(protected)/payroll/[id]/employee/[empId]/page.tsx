@@ -245,6 +245,18 @@ export default function EmployeePayrollDetailPage() {
               {lateRecords.length > 3 && <span>...+{lateRecords.length - 3}</span>}
             </div>
           )}
+          {/* 🔧 Fix #2: 補鐘記錄 */}
+          {detail.makeupRecords && detail.makeupRecords.length > 0 && (
+            <div className="mt-2 text-sm">
+              <span className="font-semibold">🔧 補鐘記錄（{detail.makeupRecords.length} 筆）</span>
+              {detail.makeupRecords.map((m: any, i: number) => (
+                <div key={i} className="text-muted-foreground ml-4">
+                  {m.date}：補鐘 {m.minutes} 分鐘（用OT補遲到/早退）
+                  {m.note && <span className="ml-2">— {m.note}</span>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 💰 薪資計算 */}
