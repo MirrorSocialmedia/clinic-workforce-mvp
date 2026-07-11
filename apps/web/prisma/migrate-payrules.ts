@@ -13,7 +13,7 @@ function toModular(old: any, payType: string, baseAmount: number) {
       : payType === 'HOURLY' ? { hourly_rate: baseAmount }
       : { daily_rate: baseAmount }),
     modifiers: {
-      working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
+      working_days: { basis: 'scheduled', rest_days: [], count_public_holidays: true },
       deduction: { basis: 'statutory' },
       mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
     },

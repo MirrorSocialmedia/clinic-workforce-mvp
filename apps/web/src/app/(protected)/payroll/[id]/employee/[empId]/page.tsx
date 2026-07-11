@@ -344,7 +344,9 @@ export default function EmployeePayrollDetailPage() {
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">本月 OT 時數</div>
-                <div className="text-lg font-bold mt-1">{otHours.toFixed(2)}h</div>
+                <div className="text-lg font-bold mt-1">
+                  {((timebankSummary?.otMinutes ?? 0) / 60).toFixed(2)}h
+                </div>
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">OT 換假</div>

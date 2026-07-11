@@ -31,7 +31,7 @@ const SCENARIO = {
     cancelBonusIfAbsent: true,   // 缺勤是否取消勤工
     otMode: 'time_off',          // OT 模式：'time_off'(換假) 或 'pay'(補錢)
     otHoursPerLeaveDay: 8,       // OT 累計幾小時換1天假
-    restDays: [6, 0],            // 休息日（6=六, 0=日）
+    restDays: [],
     mpfEnabled: true,            // 是否扣 MPF
     mpfRate: 0.05,               // MPF 比率
   },

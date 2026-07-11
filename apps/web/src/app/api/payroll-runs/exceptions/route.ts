@@ -186,8 +186,13 @@ export async function GET(req: NextRequest) {
 
   exceptions.sort((a, b) => b.date.localeCompare(a.date))
 
-  // Compute per-employee timebank summaries
-  const uniqueEmployeeIds = [...new Set(exceptions.map(e => e.employeeId))]
+  // Compute per-employee timebank summaries — include ALL employees with punch/shift data (not just those with exceptions)
+  const punchEmpIds = punches.map(p => p.employeeId)
+  const shiftEmpIds = shifts.map(s => s.employeeId)
+  let uniqueEmployeeIds = [...new Set([...punchEmpIds, ...shiftEmpIds, ...exceptions.map(e => e.employeeId)])]
+  if (employeeId && !uniqueEmployeeIds.includes(employeeId)) {
+    uniqueEmployeeIds.push(employeeId)
+  }
   const employeeSummaries = await Promise.all(
     uniqueEmployeeIds.map(async (empId) => {
       const tb = await calculateTimeBank(empId, monthDate, {}, prisma)

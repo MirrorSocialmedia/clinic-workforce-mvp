@@ -77,11 +77,6 @@ function countWorkingDays(year: number, month: number): number {
   return count
 }
 
-function isWeekend(date: Date): boolean {
-  const dow = date.getDay()
-  return dow === 0 || dow === 6
-}
-
 function formatDate(d: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Hong_Kong',
@@ -330,7 +325,7 @@ async function getApprovedLeaveDays(
     let overlapDays = 0
     const current = new Date(effectiveStart)
     while (current <= effectiveEnd) {
-      if (!isWeekend(current)) overlapDays++
+      overlapDays++
       current.setDate(current.getDate() + 1)
     }
 
@@ -356,7 +351,7 @@ async function getPublicHolidayDays(
   const holidays = await prisma.hKPublicHoliday.findMany({
     where: { date: { gte: monthStart, lte: monthEnd } },
   })
-  return holidays.map(h => new Date(h.date)).filter(d => !isWeekend(d))
+  return holidays.map(h => new Date(h.date))
 }
 
 // ------------------------------------------------------------------
@@ -1173,7 +1168,7 @@ export function countWorkingDaysInMonth(
     count_public_holidays?: boolean
   }
 ): { totalDays: number; restDays: number; publicHolidays: number; workingDays: number } {
-  const { rest_days = [6, 0], count_public_holidays = false } = config
+  const { rest_days = [], count_public_holidays = false } = config
   const totalDaysInMonth = new Date(year, month + 1, 0).getDate()
 
   let restDays = 0
@@ -1198,9 +1193,9 @@ export function countWorkingDaysInMonth(
  * Count rest days (weekends) in a month based on configured rest day weekdays.
  * @param year - Calendar year
  * @param month - 0-indexed month
- * @param restDays - Array of weekday numbers that are rest days (0=Sun, 6=Sat). Default [6, 0].
+ * @param restDays - Array of weekday numbers that are rest days (0=Sun, 6=Sat). Default [].
  */
-function countRestDaysInMonth(year: number, month: number, restDays: number[] = [6, 0]): number {
+function countRestDaysInMonth(year: number, month: number, restDays: number[] = []): number {
   const totalDaysInMonth = new Date(year, month + 1, 0).getDate()
   let count = 0
   for (let d = 1; d <= totalDaysInMonth; d++) {
@@ -1221,7 +1216,7 @@ function countRestDaysInMonth(year: number, month: number, restDays: number[] = 
 export function countMonthlyLeaveDays(
   year: number,
   month: number, // 0-indexed
-  restDays: number[] = [0, 6],
+  restDays: number[] = [],
   publicHolidayDays?: Date[]
 ): { restDayCount: number; publicHolidayCount: number; total: number } {
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -1479,7 +1474,7 @@ async function collectWorkData(
   const publicHolidayDays = publicHolidays.length
 
   // Dynamic rest days: default [6, 0] (Sat+Sun); will be overridden by config at calc time
-  const restDays = countRestDaysInMonth(year, month, [6, 0])
+  const restDays = countRestDaysInMonth(year, month, [])
   // Total calendar days in month minus rest days minus public holidays
   const monthlyWorkingDays = new Date(year, month + 1, 0).getDate() - restDays - publicHolidayDays
   // Fallback to old countWorkingDays for backward compat
@@ -1913,7 +1908,7 @@ export async function calculatePayrollWithRules(
   result.detail = { ...result.detail, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100 }
 
   // 5. Task 2: Count monthly leave days
-  const restDaysConfig = mods.working_days?.rest_days ?? [0, 6]
+  const restDaysConfig = mods.working_days?.rest_days ?? []
   const publicHolidaysInMonth = await getPublicHolidayDays(monthStart, monthEnd)
   const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig, publicHolidaysInMonth)
 
