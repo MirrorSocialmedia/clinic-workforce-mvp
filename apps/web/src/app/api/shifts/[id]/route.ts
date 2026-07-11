@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { hkDateStart } from '@/lib/hk-date'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 
@@ -34,7 +35,7 @@ export async function PUT(
     if (body.date !== undefined) {
       // Parse date-only strings as Hong Kong midnight to avoid UTC midnight issue
       const d = body.date
-      updateData.date = d.includes('T') || d.includes('Z') ? new Date(d) : new Date(d + '+08:00')
+      updateData.date = d.includes('T') || d.includes('Z') ? new Date(d) : hkDateStart(d)
     }
     if (body.startTime !== undefined) updateData.startTime = new Date(body.startTime)
     if (body.endTime !== undefined) updateData.endTime = new Date(body.endTime)

@@ -177,9 +177,17 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
       const rules = await res.json()
       if (!Array.isArray(rules)) return
 
-      // Find active rule
-      const activeRule = rules.find((r: any) => r.isActive)
-      if (!activeRule) return
+      // Find active rule; fallback to most recent by effectiveFrom
+      let activeRule = rules.find((r: any) => r.isActive)
+      if (!activeRule && rules.length > 0) {
+        // No active rule — use the one with the latest effectiveFrom
+        activeRule = rules
+          .sort(
+            (a: any, b: any) =>
+              new Date(b.effectiveFrom).getTime() - new Date(a.effectiveFrom).getTime()
+          )[0]
+      }
+      if (!activeRule) return // No rules at all → this is a brand-new add
 
       setRuleId(activeRule.id)
 

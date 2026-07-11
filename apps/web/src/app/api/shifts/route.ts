@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
@@ -31,9 +32,9 @@ export async function GET(req: NextRequest) {
 
   if (startDate || endDate) {
     where.date = {}
-    // Parse date-only strings as Hong Kong time (+08:00) for correct filtering
-    if (startDate) where.date.gte = new Date(startDate + '+08:00')
-    if (endDate) where.date.lte = new Date((endDate + 'T23:59:59.999') + '+08:00')
+    // Parse date-only strings as Hong Kong time via hkDateStart/hkDateEnd
+    if (startDate) where.date.gte = hkDateStart(startDate)
+    if (endDate) where.date.lte = hkDateEnd(endDate)
   }
 
   // Scope filtering
@@ -70,8 +71,8 @@ export async function GET(req: NextRequest) {
   // Batch-check punch records (fix N+1: 1 query instead of N+1)
   let shiftsWithPunch = shifts
   if (shifts.length > 0) {
-    const batchStart = startDate ? new Date(startDate + '+08:00') : new Date(0)
-    const batchEnd = endDate ? new Date((endDate + 'T23:59:59.999') + '+08:00') : new Date(8640000000000000)
+    const batchStart = startDate ? hkDateStart(startDate) : new Date(0)
+    const batchEnd = endDate ? hkDateEnd(endDate) : new Date(8640000000000000)
 
     const allPunches = await prisma.punchRecord.findMany({
       where: {
@@ -176,7 +177,7 @@ export async function POST(req: NextRequest) {
         const end = new Date(endTime)
         for (const d of bulkDates) {
           // date column: midnight HK for correct calendar display
-          const bulkDate = new Date(d + '+08:00')
+          const bulkDate = hkDateStart(d)
           // startTime/endTime: use frontend ISO directly (correct UTC)
 
           // Fix #4: check overlap before creating (use bulkDate for date column match)
@@ -213,7 +214,7 @@ export async function POST(req: NextRequest) {
         const start = new Date(startTime)
         const end = new Date(endTime)
         // Parse date as HK midnight to avoid UTC midnight issue
-        const hkDate = new Date(date + '+08:00')
+        const hkDate = hkDateStart(date)
         // Use frontend ISO strings directly — they already have correct UTC time
         // No need for toTimeString() which depends on server timezone
 

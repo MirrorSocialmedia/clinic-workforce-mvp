@@ -13,6 +13,16 @@ export function todayHK(): string {
   return toHKDateStr(new Date())
 }
 
+/** YYYY-MM-DD → midnight HK (e.g. "2026-07-06" → new Date("2026-07-06T00:00:00+08:00")) */
+export function hkDateStart(dateStr: string): Date {
+  return new Date(`${dateStr}T00:00:00+08:00`)
+}
+
+/** YYYY-MM-DD → end of day HK (e.g. "2026-07-06" → new Date("2026-07-06T23:59:59.999+08:00")) */
+export function hkDateEnd(dateStr: string): Date {
+  return new Date(`${dateStr}T23:59:59.999+08:00`)
+}
+
 /** 格式化時間顯示 HH:MM，失敗返回 '--:--' */
 export function fmtTime(dt: string | Date | undefined | null): string {
   if (!dt) return '--:--'
