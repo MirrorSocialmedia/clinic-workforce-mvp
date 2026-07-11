@@ -298,7 +298,7 @@ export default function PayrollDetailPage() {
             { label: '總扣款', value: fmtCurrency(summary.totalDeduction), color: '#dc3545' },
             { label: '應付總額', value: fmtCurrency(summary.totalPayable), color: '#0d6efd', bold: true },
             { label: '總工時', value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
-            { label: '總加班時數', value: `${summary.totalOTHours.toFixed(1)}h`, color: '#6c757d' },
+            { label: '總加班時數', value: `${(summary.totalOTHours || 0).toFixed(1)}h`, color: '#6c757d' },
             { label: '總請假/缺勤', value: `${summary.totalLeaveDays.toFixed(1)} / ${summary.totalAbsentDays.toFixed(1)} 天`, color: '#6c757d' },
           ].map(card => (
             <div key={card.label} style={{
@@ -376,7 +376,9 @@ export default function PayrollDetailPage() {
                   {item.employee.payRules[0]?.payType || '-'}
                 </td>
                 <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.workedHours.toFixed(1)}</td>
-                <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.otHours.toFixed(1)}</td>
+                <td style={{ padding: '8px 6px', textAlign: 'right' }}>
+                  {(() => { try { const d = JSON.parse(item.detailJson || '{}'); return ((d?.timebank?.otMinutes ?? 0) / 60).toFixed(1) } catch { return item.otHours.toFixed(1) } })()}
+                </td>
                 <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.leaveDays.toFixed(1)}</td>
                 <td style={{ padding: '8px 6px', textAlign: 'right', color: item.absentDays > 0 ? '#dc3545' : 'inherit' }}>
                   {item.absentDays.toFixed(1)}

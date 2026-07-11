@@ -1091,8 +1091,19 @@ export async function calculateTimeBank(
     // timeBankEntry table may not exist yet
   }
 
+  // 抓換假消耗（LEAVE_CONVERT 是負消耗OT，LEAVE_SWAP_BACK 是正換回OT）
+  let convertedMinutes = 0
+  try {
+    const convertEntries = await db.timeBankEntry?.findMany?.({
+      where: { employeeId, type: { in: ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK'] }, date: { gte: monthStart, lte: monthEnd } },
+    })
+    convertedMinutes = convertEntries?.reduce((s: number, e: any) => s + e.minutes, 0) || 0
+  } catch {
+    // timeBankEntry table may not exist yet
+  }
+
   const netDeficit = Math.max(0, deficitMinutes - makeupMinutes)
-  const balance = carriedFrom + otMinutes - netDeficit - makeupMinutes
+  const balance = carriedFrom + otMinutes - netDeficit - makeupMinutes + convertedMinutes
   const owedMinutes = balance < 0 ? Math.abs(balance) : 0
   const availableMinutes = balance > 0 ? balance : 0
   const convertibleLeaveDays = Math.floor(availableMinutes / (9 * 60)) // 9 hours = 1 day

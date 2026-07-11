@@ -41,7 +41,12 @@ export async function GET(
     totalDeduction: run.items.reduce((s, i) => s + i.deduction, 0),
     totalPayable: run.items.reduce((s, i) => s + i.totalPayable, 0),
     totalWorkedHours: run.items.reduce((s, i) => s + i.workedHours, 0),
-    totalOTHours: run.items.reduce((s, i) => s + i.otHours, 0),
+    // Fix #4a: 用 detailJson.timebank.otMinutes 加總（門檻制 otHours 對月薪制=0）
+    totalOTHours: run.items.reduce((s, i) => {
+      let detail: any = null
+      try { detail = i.detailJson ? JSON.parse(i.detailJson) : null } catch {}
+      return s + (detail?.timebank?.otMinutes ?? i.otHours * 60) / 60
+    }, 0),
     totalLeaveDays: run.items.reduce((s, i) => s + i.leaveDays, 0),
     totalAbsentDays: run.items.reduce((s, i) => s + i.absentDays, 0),
   }

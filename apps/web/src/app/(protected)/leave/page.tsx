@@ -90,6 +90,7 @@ export default function LeavePage() {
   const [convertForm, setConvertForm] = useState({ employeeId: '', days: '', direction: 'to_leave' })
   const [converting, setConverting] = useState(false)
   const [convertResult, setConvertResult] = useState('')
+  const [convertEmpInfo, setConvertEmpInfo] = useState<any>(null)
 
   // Balance employee filter
   const [balanceEmployeeId, setBalanceEmployeeId] = useState('all')
@@ -111,6 +112,21 @@ export default function LeavePage() {
       }
     }
   }, [form.startDate, form.endDate])
+
+  // Fix #3: 選員工後抓 timebank summary
+  useEffect(() => {
+    if (!convertForm.employeeId) { setConvertEmpInfo(null); return }
+    const month = new Date().toISOString().slice(0, 7)
+    fetch(`/api/payroll-runs/exceptions?periodMonth=${month}&employeeId=${convertForm.employeeId}`, {
+      credentials: 'include',
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const s = d?.summaries?.find((x: any) => x.employeeId === convertForm.employeeId)
+        setConvertEmpInfo(s)
+      })
+      .catch(() => setConvertEmpInfo(null))
+  }, [convertForm.employeeId])
 
   const isManager = userRole === 'OWNER' || userRole === 'MANAGER'
   const isOwner = userRole === 'OWNER'
@@ -457,8 +473,11 @@ export default function LeavePage() {
                 </div>
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">天數</label>
-                  <input type="number" value={convertForm.days} onChange={e => setConvertForm({ ...convertForm, days: e.target.value })}
-                    className="px-3 py-2 rounded-md border text-sm w-20" min="0.5" step="0.5" placeholder="天" />
+                  <input type="number" value={convertForm.days} onChange={e => {
+                    const v = parseInt(e.target.value, 10)
+                    setConvertForm({ ...convertForm, days: v > 0 ? String(v) : '' })
+                  }}
+                    className="px-3 py-2 rounded-md border text-sm w-20" min="1" step="1" placeholder="天" />
                 </div>
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">方向</label>
@@ -477,6 +496,16 @@ export default function LeavePage() {
                   {converting ? '兌換中...' : '兌換'}
                 </button>
               </div>
+              {/* Fix #3: 選員工後顯示 OT 資訊 */}
+              {convertEmpInfo && (
+                <div className="p-3 bg-blue-50 rounded-lg text-sm mb-4" style={{ marginTop: 8 }}>
+                  <div>OT 時間：{(convertEmpInfo.otMinutes / 60).toFixed(1)} 小時（{convertEmpInfo.availableMinutes} 分鐘可用）</div>
+                  <div>可換假期：<strong>{convertEmpInfo.convertibleLeaveDays} 天</strong></div>
+                  {convertEmpInfo.owedMinutes > 0 && (
+                    <div className="text-red-600">拖欠：{(convertEmpInfo.owedMinutes / 60).toFixed(1)} 小時</div>
+                  )}
+                </div>
+              )}
               {convertResult && (
                 <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 13,
                   background: convertResult.startsWith('✅') ? '#f0fff4' : '#fff5f5',

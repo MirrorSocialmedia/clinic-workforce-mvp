@@ -42,9 +42,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'employeeId, direction, days 為必填' }, { status: 400 })
   }
 
+  // 強制正整數
+  const daysInt = parseInt(String(days), 10)
+  if (!Number.isInteger(daysInt) || daysInt < 1) {
+    return NextResponse.json({ error: '換假天數必須是正整數' }, { status: 400 })
+  }
+
   if (direction === 'to_leave') {
     const tb = await calculateTimeBank(employeeId, new Date(), {}, prisma)
-    if ((tb as any).availableMinutes < days * MINUTES_PER_DAY) {
+    if ((tb as any).availableMinutes < daysInt * MINUTES_PER_DAY) {
       return NextResponse.json({ error: 'OT 時間不足' }, { status: 400 })
     }
 
@@ -53,14 +59,14 @@ export async function POST(req: NextRequest) {
         employeeId,
         date: new Date(),
         type: 'LEAVE_CONVERT',
-        minutes: -(days * MINUTES_PER_DAY),
-        note: `換 ${days} 天假`,
+        minutes: -(daysInt * MINUTES_PER_DAY),
+        note: `換 ${daysInt} 天假`,
         createdBy: auth.session.userId,
       },
     })
 
     const otLeaveTypeId = await getOtLeaveTypeId()
-    if (otLeaveTypeId) await addLeaveBalance(employeeId, otLeaveTypeId, days)
+    if (otLeaveTypeId) await addLeaveBalance(employeeId, otLeaveTypeId, daysInt)
   } else {
     const otLeaveTypeId = await getOtLeaveTypeId()
     if (!otLeaveTypeId) {
@@ -70,7 +76,7 @@ export async function POST(req: NextRequest) {
     const otLeave = await prisma.leaveBalance.findFirst({
       where: { employeeId, leaveTypeId: otLeaveTypeId, year: new Date().getFullYear() },
     })
-    if (!otLeave || otLeave.remaining < days) {
+    if (!otLeave || otLeave.remaining < daysInt) {
       return NextResponse.json({ error: 'OT 假不足' }, { status: 400 })
     }
 
@@ -79,12 +85,12 @@ export async function POST(req: NextRequest) {
         employeeId,
         date: new Date(),
         type: 'LEAVE_SWAP_BACK',
-        minutes: days * MINUTES_PER_DAY,
-        note: `${days} 天 OT 假換回 OT`,
+        minutes: daysInt * MINUTES_PER_DAY,
+        note: `${daysInt} 天 OT 假換回 OT`,
         createdBy: auth.session.userId,
       },
     })
-    await deductLeaveBalance(employeeId, otLeaveTypeId, days)
+    await deductLeaveBalance(employeeId, otLeaveTypeId, daysInt)
   }
 
   await prisma.auditLog.create({
@@ -93,7 +99,7 @@ export async function POST(req: NextRequest) {
       action: 'CONVERT',
       entity: 'TimeBank',
       entityId: employeeId,
-      notes: `${direction} ${days} 天`,
+      notes: `${direction} ${daysInt} 天`,
     },
   })
 
