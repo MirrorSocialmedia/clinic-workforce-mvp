@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { CalendarDays } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 
@@ -31,45 +30,23 @@ interface ClinicData {
   todayStats: TodayStats | null
 }
 
-interface AuditLogData {
-  id: string
-  action: string
-  entity: string
-  notes: string | null
-  createdAt: string
-  actor: {
-    name: string
-    role: string
-  }
-}
-
-/** Tremor-style Metric Card */
-function StatCard({ value, title, color = 'blue' }: { value: number; title: string; color?: 'blue' | 'emerald' | 'amber' | 'violet' | 'cyan' }) {
-  const colorMap = {
-    blue: 'border-l-blue-500',
-    emerald: 'border-l-emerald-500',
-    amber: 'border-l-amber-500',
-    violet: 'border-l-violet-500',
-    cyan: 'border-l-cyan-500',
-  }
-
-  return (
-    <div className={`bg-card border rounded-xl p-6 border-l-4 ${colorMap[color]} shadow-card`}>
-      <div className="text-3xl font-bold text-foreground tabular-nums tracking-tight">{value}</div>
-      <div className="text-sm text-muted-foreground mt-1">{title}</div>
-    </div>
-  )
+/** Format Date to YYYY-MM-DD in HK timezone */
+function toHKDateStr(d: Date): string {
+  return new Date(d.getTime() + d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
 
 export default function DashboardPage() {
   const [data, setData] = useState<{
     role: Role
     clinics: ClinicData[]
-    recentAuditLogs: AuditLogData[]
-    distinctEmployeeCount?: number
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // Employee attendance summary
+  const [empSummary, setEmpSummary] = useState<any[]>([])
+  const [period, setPeriod] = useState<'day' | 'week' | 'month'>('month')
+  const [empLoading, setEmpLoading] = useState(false)
 
   useEffect(() => {
     fetch('/api/dashboard', { credentials: 'include' })
@@ -80,10 +57,38 @@ export default function DashboardPage() {
         }
         return res.json()
       })
-      .then(setData)
+      .then(d => setData({ role: d.role, clinics: d.clinics }))
       .catch(err => setError(err.message || '載入失敗'))
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    const now = new Date()
+    let startDate: string, endDate: string
+
+    if (period === 'day') {
+      startDate = endDate = toHKDateStr(now)
+    } else if (period === 'week') {
+      const d = new Date(now)
+      const day = d.getDay()
+      const monday = new Date(d)
+      monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      startDate = toHKDateStr(monday)
+      endDate = toHKDateStr(sunday)
+    } else {
+      startDate = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
+      endDate = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    }
+
+    setEmpLoading(true)
+    fetch(`/api/payroll-runs/exceptions?startDate=${startDate}&endDate=${endDate}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { summaries: [] })
+      .then(d => setEmpSummary(d.summaries || []))
+      .catch(() => setEmpSummary([]))
+      .finally(() => setEmpLoading(false))
+  }, [period])
 
   if (loading) return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
@@ -96,22 +101,7 @@ export default function DashboardPage() {
     EMPLOYEE: '員工',
   }
 
-  // Count distinct employee IDs across clinics (not EmployeeClinic bindings)
-  let totalEmployees: number
-  if (typeof data.distinctEmployeeCount === 'number') {
-    totalEmployees = data.distinctEmployeeCount
-  } else {
-    const employeeIds = new Set<string>()
-    for (const clinic of data.clinics ?? []) {
-      if (clinic.employees) {
-        for (const ec of clinic.employees) {
-          employeeIds.add(ec.employeeId)
-        }
-      }
-    }
-    totalEmployees = employeeIds.size
-  }
-  const totalShifts = (data.clinics ?? []).reduce((sum, c) => sum + (c._count?.shifts ?? 0), 0)
+  const periodLabel = { day: '今日', week: '本週', month: '本月' } as const
 
   return (
     <div className="p-6 space-y-6" style={{ maxWidth: '1200px' }}>
@@ -121,14 +111,6 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-foreground">儀表板</h1>
           <p className="text-sm text-muted-foreground mt-1">角色: {roleLabels[data.role]}</p>
         </div>
-      </div>
-
-      {/* Stats overview — Tremor-style cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard value={data.clinics?.length ?? 0} title="可見診所" color="blue" />
-        <StatCard value={totalEmployees} title="總員工數" color="emerald" />
-        <StatCard value={totalShifts} title="總班數" color="amber" />
-        <StatCard value={data.recentAuditLogs?.length ?? 0} title="最近審計記錄" color="violet" />
       </div>
 
       {/* ── Today's Daily Operations (multi-clinic) ── */}
@@ -176,76 +158,73 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Clinics overview */}
+      {/* ── Employee Attendance Summary ── */}
       <Card>
         <CardHeader>
-          <CardTitle>診所概要</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {(data.clinics ?? []).map(clinic => (
-              <div
-                key={clinic.id}
-                className="border rounded-xl p-5 bg-muted/30 shadow-card hover:shadow-soft transition-shadow"
-              >
-                <div className="font-semibold text-base mb-2">{clinic.name}</div>
-                {clinic.address && <div className="text-muted-foreground text-sm mb-3">{clinic.address}</div>}
-                <div className="flex gap-4 text-sm text-muted-foreground">
-                  <span>👥 {clinic._count?.users || 0} 用戶</span>
-                  <span>👤 {clinic._count?.employees || 0} 員工</span>
-                  <span>📋 {clinic._count?.shifts || 0} 班</span>
-                </div>
-              </div>
-            ))}
+          <div className="flex justify-between items-center">
+            <CardTitle className="flex items-center gap-2">
+              📊 {periodLabel[period]}員工考勤詳細
+            </CardTitle>
+            <div className="flex gap-1">
+              {(['day', 'week', 'month'] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPeriod(p)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    period === p
+                      ? 'bg-brand text-white'
+                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                  }`}
+                >
+                  {periodLabel[p]}
+                </button>
+              ))}
+            </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Recent audit logs */}
-      {(data.recentAuditLogs?.length ?? 0) > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>最近審計日誌</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
+        </CardHeader>
+        <CardContent className="p-0">
+          {empLoading ? (
+            <div className="flex justify-center py-8 text-muted-foreground">載入中...</div>
+          ) : empSummary.length === 0 ? (
+            <div className="flex justify-center py-8 text-muted-foreground">沒有考勤資料</div>
+          ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>時間</TableHead>
-                  <TableHead>操作者</TableHead>
-                  <TableHead>操作</TableHead>
-                  <TableHead>實體</TableHead>
-                  <TableHead>備註</TableHead>
+                  <TableHead>員工</TableHead>
+                  <TableHead>遲到次數</TableHead>
+                  <TableHead>遲到分鐘</TableHead>
+                  <TableHead>OT 時間</TableHead>
+                  <TableHead>拖欠</TableHead>
+                  <TableHead>可換假</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(data.recentAuditLogs ?? []).map(log => (
-                  <TableRow key={log.id}>
-                    <TableCell className="whitespace-nowrap text-sm">
-                      {new Date(log.createdAt).toLocaleString('zh-HK')}
+                {empSummary.map(emp => (
+                  <TableRow key={emp.employeeId}>
+                    <TableCell className="font-medium">{emp.employeeName}</TableCell>
+                    <TableCell style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
+                      {emp.lateCount || 0}
+                    </TableCell>
+                    <TableCell style={emp.lateMinutes > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
+                      {emp.lateMinutes || 0} 分
+                    </TableCell>
+                    <TableCell style={{ color: '#16a34a' }}>
+                      {((emp.otMinutes || 0) / 60).toFixed(1)}h
+                    </TableCell>
+                    <TableCell style={emp.owedMinutes > 0 ? { color: '#dc2626' } : {}}>
+                      {((emp.owedMinutes || 0) / 60).toFixed(1)}h
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span>{log.actor.name}</span>
-                        <Badge
-                          variant={log.actor.role === 'OWNER' ? 'default' : log.actor.role === 'MANAGER' ? 'secondary' : 'outline'}
-                        >
-                          {log.actor.role}
-                        </Badge>
-                      </div>
+                      {emp.convertibleLeaveDays?.toFixed(1) || '0.0'} 天
                     </TableCell>
-                    <TableCell>
-                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{log.action}</code>
-                    </TableCell>
-                    <TableCell>{log.entity}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{log.notes || '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

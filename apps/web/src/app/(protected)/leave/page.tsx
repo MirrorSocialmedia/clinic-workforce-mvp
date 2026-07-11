@@ -90,6 +90,9 @@ export default function LeavePage() {
   const [converting, setConverting] = useState(false)
   const [convertResult, setConvertResult] = useState('')
 
+  // Balance employee filter
+  const [balanceEmployeeId, setBalanceEmployeeId] = useState('all')
+
   // Leave Types management state
   const [activeTab, setActiveTab] = useState<TabKey>('balance')
   const [ltShowForm, setLtShowForm] = useState(false)
@@ -397,154 +400,47 @@ export default function LeavePage() {
       {/* Balance Tab */}
       {activeTab === 'balance' && (
         <>
-          {isManager && (
-            <>
-              {/* 初始化假期額度 */}
-              <div className="card p-4 border border-slate-200 rounded-lg mb-4">
-                <h3 className="font-semibold mb-2">初始化假期額度</h3>
-                <p className="text-sm text-muted-foreground mb-3">為員工設定本年度假期額度（若已存在則覆蓋）</p>
-                <div className="flex gap-3 items-end flex-wrap">
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">員工</label>
-                    <select value={initForm.employeeId} onChange={e => setInitForm({ ...initForm, employeeId: e.target.value })}
-                      className="px-3 py-2 rounded-md border text-sm">
-                      <option value="all">全部員工</option>
-                      {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">假期類型</label>
-                    <select value={initForm.leaveTypeId} onChange={e => setInitForm({ ...initForm, leaveTypeId: e.target.value })}
-                      className="px-3 py-2 rounded-md border text-sm">
-                      <option value="">-- 選擇 --</option>
-                      {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">額度（天）</label>
-                    <input type="number" value={initForm.days} onChange={e => setInitForm({ ...initForm, days: parseInt(e.target.value) || 0 })}
-                      className="px-3 py-2 rounded-md border text-sm w-20" min="0" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">年份</label>
-                    <input type="number" value={initForm.year} onChange={e => setInitForm({ ...initForm, year: parseInt(e.target.value) || 2026 })}
-                      className="px-3 py-2 rounded-md border text-sm w-20" min="2020" max="2030" />
-                  </div>
-                  <button className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors" style={{ background: '#0d6efd' }}
-                    onClick={handleInitLeave} disabled={!initForm.leaveTypeId}>
-                    <span className="flex items-center gap-1"><Plus size={14} /> 初始化</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 清除假期資料 */}
-              <div className="card p-4 border border-red-200 rounded-lg mb-4">
-                <h3 className="text-red-600 font-semibold mb-2">清除假期資料</h3>
-                <p className="text-sm text-muted-foreground mb-3">⚠️ 此操作會刪除選定範圍的假期餘額，無法復原</p>
-                <div className="flex gap-3 items-end">
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">範圍</label>
-                    <select value={clearEmployeeId} onChange={e => setClearEmployeeId(e.target.value)}
-                      className="px-3 py-2 rounded-md border text-sm">
-                      <option value="all">全部員工</option>
-                      {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">年份</label>
-                    <input type="number" value={clearYear} onChange={e => setClearYear(parseInt(e.target.value) || 2026)}
-                      className="px-3 py-2 rounded-md border text-sm w-20" />
-                  </div>
-                  <button className="px-3 py-2 rounded-md text-sm font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors"
-                    onClick={handleClearLeave}>
-                    清除
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-
-          {isManager && (
-            <>
-              {/* 自動計算年假額度 */}
-              <div className="card p-4 border border-blue-200 rounded-lg mb-4" style={{ background: '#f0f7ff' }}>
-                <h3 className="font-semibold mb-2">📊 自動計算年假額度</h3>
-                <p className="text-sm text-muted-foreground mb-3">
-                  按香港僱傭條例自動計算所有在職員工的年假額度（按年資 7→14 天、按比例天數版、跨年累積）。
-                  會保留已放的假期天數，只更新額度。
-                </p>
-                <div className="flex gap-3 items-center">
-                  <button
-                    className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors"
-                    style={{ background: '#0d6efd' }}
-                    onClick={handleRefreshEntitlements}
-                    disabled={refreshing}
-                  >
-                    {refreshing ? '計算中...' : '🔄 自動計算全部'}
-                  </button>
-                  <span className="text-xs text-muted-foreground" id="refreshResult"></span>
-                </div>
-                {refreshResult && (
-                  <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 13,
-                    background: refreshResult.startsWith('✅') ? '#f0fff4' : '#fff5f5',
-                    color: refreshResult.startsWith('✅') ? '#22543d' : '#c53030',
-                    border: `1px solid ${refreshResult.startsWith('✅') ? '#c6f6d5' : '#fed7d7'}` }}>
-                    {refreshResult}
-                  </div>
-                )}
-              </div>
-
-              {/* 離職結算 */}
-              <div className="card p-4 border border-orange-200 rounded-lg mb-4">
-                <h3 className="font-semibold mb-2">📋 離職結算（年假折算）</h3>
-                <p className="text-sm text-muted-foreground mb-3">
-                  計算離職員工未放年假的折算工資 = 月薪 × 12/365 × 未放天數
-                </p>
-                <div className="flex gap-3 items-end flex-wrap">
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">員工</label>
-                    <select value={settlementForm.employeeId} onChange={e => setSettlementForm({ ...settlementForm, employeeId: e.target.value })}
-                      className="px-3 py-2 rounded-md border text-sm">
-                      <option value="">-- 選擇 --</option>
-                      {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">離職日期</label>
-                    <input type="date" value={settlementForm.resignDate} onChange={e => setSettlementForm({ ...settlementForm, resignDate: e.target.value })}
-                      className="px-3 py-2 rounded-md border text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-muted-foreground mb-1">月薪</label>
-                    <input type="number" value={settlementForm.monthlySalary} onChange={e => setSettlementForm({ ...settlementForm, monthlySalary: e.target.value })}
-                      className="px-3 py-2 rounded-md border text-sm w-24" min="0" />
-                  </div>
-                  <button
-                    className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors"
-                    style={{ background: '#e67e22' }}
-                    onClick={handleSettlement}
-                    disabled={settlementLoading}
-                  >
-                    {settlementLoading ? '計算中...' : '計算結算'}
-                  </button>
-                </div>
-                {settlementResult?.settlement && (
-                  <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
-                    <div className="grid grid-cols-4 gap-4" style={{ fontSize: 13 }}>
-                      <div><span className="text-muted-foreground">累計應得：</span><strong>{settlementResult.settlement.accrued?.toFixed(2) ?? '0.00'} 天</strong></div>
-                      <div><span className="text-muted-foreground">已放：</span><strong>{settlementResult.settlement.used?.toFixed(2) ?? '0.00'} 天</strong></div>
-                      <div><span className="text-muted-foreground">未放：</span><strong>{settlementResult.settlement.unused?.toFixed(2) ?? '0.00'} 天</strong></div>
-                      <div><span className="text-muted-foreground">折算金額：</span><strong style={{ color: '#c53030' }}>${settlementResult.settlement.payout?.toLocaleString() ?? '0'}</strong></div>
+          {/* 1. 假期餘額（含員工篩選） */}
+          <section className="card p-4 border border-slate-200 rounded-lg mb-4">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-semibold">假期餘額</h3>
+              {isManager && (
+                <select value={balanceEmployeeId} onChange={e => setBalanceEmployeeId(e.target.value)}
+                  className="px-3 py-1.5 rounded-md border text-sm">
+                  <option value="all">全部員工</option>
+                  {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                </select>
+              )}
+            </div>
+            {balances.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {balances
+                  .filter(b => balanceEmployeeId === 'all' || b.employeeId === balanceEmployeeId)
+                  .map(b => (
+                    <div key={b.id} style={{
+                      padding: 16, borderRadius: 8,
+                      background: `${b.leaveType.color || '#1a1a2e'}10`,
+                      borderLeft: `4px solid ${b.leaveType.color || '#1a1a2e'}`,
+                    }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
+                        {b.employee?.user?.name || b.employeeId}
+                      </div>
+                      <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{b.leaveType.name} ({b.year})</div>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
+                      <div style={{ fontSize: 12, color: '#888' }}>
+                        剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ))}
               </div>
-            </>
-          )}
+            ) : (
+              <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>尚無假期餘額記錄</div>
+            )}
+          </section>
 
-          {/* OT 假期兌換（OWNER only） */}
+          {/* 2. OT 假期兌換（OWNER only） */}
           {isManager && (
-            <div className="card p-4 border border-purple-200 rounded-lg mb-4" style={{ background: '#faf5ff' }}>
+            <section className="card p-4 border border-purple-200 rounded-lg mb-4" style={{ background: '#faf5ff' }}>
               <h3 className="font-semibold mb-2">🔄 OT 假期兌換</h3>
               <p className="text-sm text-muted-foreground mb-3">
                 OT → 換假：9小時 OT 時間換 1 天假 | OT假 → 換回OT：把 OT 換的假換回 OT 時間
@@ -588,30 +484,151 @@ export default function LeavePage() {
                   {convertResult}
                 </div>
               )}
-            </div>
+            </section>
           )}
 
-          {balances.length > 0 ? (
-            <div className="card">
-              <h2>假期餘額</h2>
-              <div className="grid-4" style={{ marginBottom: 0 }}>
-                {balances.map(b => (
-                  <div key={b.id} style={{
-                    padding: 16, borderRadius: 8,
-                    background: `${b.leaveType.color || '#1a1a2e'}10`,
-                    borderLeft: `4px solid ${b.leaveType.color || '#1a1a2e'}`,
-                  }}>
-                    <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{b.leaveType.name} ({b.year})</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
-                    <div style={{ fontSize: 12, color: '#888' }}>
-                      剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
-                    </div>
-                  </div>
-                ))}
+          {/* 3. 初始化假期額度（OWNER only） */}
+          {isManager && (
+            <section className="card p-4 border border-slate-200 rounded-lg mb-4">
+              <h3 className="font-semibold mb-2">初始化假期額度</h3>
+              <p className="text-sm text-muted-foreground mb-3">為員工設定本年度假期額度（若已存在則覆蓋）</p>
+              <div className="flex gap-3 items-end flex-wrap">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">員工</label>
+                  <select value={initForm.employeeId} onChange={e => setInitForm({ ...initForm, employeeId: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="all">全部員工</option>
+                    {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">假期類型</label>
+                  <select value={initForm.leaveTypeId} onChange={e => setInitForm({ ...initForm, leaveTypeId: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="">-- 選擇 --</option>
+                    {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">額度（天）</label>
+                  <input type="number" value={initForm.days} onChange={e => setInitForm({ ...initForm, days: parseInt(e.target.value) || 0 })}
+                    className="px-3 py-2 rounded-md border text-sm w-20" min="0" />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">年份</label>
+                  <input type="number" value={initForm.year} onChange={e => setInitForm({ ...initForm, year: parseInt(e.target.value) || 2026 })}
+                    className="px-3 py-2 rounded-md border text-sm w-20" min="2020" max="2030" />
+                </div>
+                <button className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors" style={{ background: '#0d6efd' }}
+                  onClick={handleInitLeave} disabled={!initForm.leaveTypeId}>
+                  <span className="flex items-center gap-1"><Plus size={14} /> 初始化</span>
+                </button>
               </div>
-            </div>
-          ) : (
-            <div className="card" style={{ textAlign: 'center', padding: 40, color: '#888' }}>尚無假期餘額記錄</div>
+            </section>
+          )}
+
+          {/* 4. 自動計算年假額度（OWNER only） */}
+          {isManager && (
+            <section className="card p-4 border border-blue-200 rounded-lg mb-4" style={{ background: '#f0f7ff' }}>
+              <h3 className="font-semibold mb-2">📊 自動計算年假額度</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                按香港僱傭條例自動計算所有在職員工的年假額度（按年資 7→14 天、按比例天數版、跨年累積）。
+                會保留已放的假期天數，只更新額度。
+              </p>
+              <div className="flex gap-3 items-center">
+                <button
+                  className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors"
+                  style={{ background: '#0d6efd' }}
+                  onClick={handleRefreshEntitlements}
+                  disabled={refreshing}
+                >
+                  {refreshing ? '計算中...' : '🔄 自動計算全部'}
+                </button>
+              </div>
+              {refreshResult && (
+                <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 13,
+                  background: refreshResult.startsWith('✅') ? '#f0fff4' : '#fff5f5',
+                  color: refreshResult.startsWith('✅') ? '#22543d' : '#c53030',
+                  border: `1px solid ${refreshResult.startsWith('✅') ? '#c6f6d5' : '#fed7d7'}` }}>
+                  {refreshResult}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 5. 離職結算（OWNER only） */}
+          {isManager && (
+            <section className="card p-4 border border-orange-200 rounded-lg mb-4">
+              <h3 className="font-semibold mb-2">📋 離職結算（年假折算）</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                計算離職員工未放年假的折算工資 = 月薪 × 12/365 × 未放天數
+              </p>
+              <div className="flex gap-3 items-end flex-wrap">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">員工</label>
+                  <select value={settlementForm.employeeId} onChange={e => setSettlementForm({ ...settlementForm, employeeId: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="">-- 選擇 --</option>
+                    {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">離職日期</label>
+                  <input type="date" value={settlementForm.resignDate} onChange={e => setSettlementForm({ ...settlementForm, resignDate: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">月薪</label>
+                  <input type="number" value={settlementForm.monthlySalary} onChange={e => setSettlementForm({ ...settlementForm, monthlySalary: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm w-24" min="0" />
+                </div>
+                <button
+                  className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors"
+                  style={{ background: '#e67e22' }}
+                  onClick={handleSettlement}
+                  disabled={settlementLoading}
+                >
+                  {settlementLoading ? '計算中...' : '計算結算'}
+                </button>
+              </div>
+              {settlementResult?.settlement && (
+                <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
+                  <div className="grid grid-cols-4 gap-4" style={{ fontSize: 13 }}>
+                    <div><span className="text-muted-foreground">累計應得：</span><strong>{settlementResult.settlement.accrued?.toFixed(2) ?? '0.00'} 天</strong></div>
+                    <div><span className="text-muted-foreground">已放：</span><strong>{settlementResult.settlement.used?.toFixed(2) ?? '0.00'} 天</strong></div>
+                    <div><span className="text-muted-foreground">未放：</span><strong>{settlementResult.settlement.unused?.toFixed(2) ?? '0.00'} 天</strong></div>
+                    <div><span className="text-muted-foreground">折算金額：</span><strong style={{ color: '#c53030' }}>${settlementResult.settlement.payout?.toLocaleString() ?? '0'}</strong></div>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 6. 清除假期資料（OWNER only，紅色警示） */}
+          {isManager && (
+            <section className="card p-4 border border-red-200 rounded-lg mb-4">
+              <h3 className="text-red-600 font-semibold mb-2">清除假期資料</h3>
+              <p className="text-sm text-muted-foreground mb-3">⚠️ 此操作會刪除選定範圍的假期餘額，無法復原</p>
+              <div className="flex gap-3 items-end">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">範圍</label>
+                  <select value={clearEmployeeId} onChange={e => setClearEmployeeId(e.target.value)}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="all">全部員工</option>
+                    {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">年份</label>
+                  <input type="number" value={clearYear} onChange={e => setClearYear(parseInt(e.target.value) || 2026)}
+                    className="px-3 py-2 rounded-md border text-sm w-20" />
+                </div>
+                <button className="px-3 py-2 rounded-md text-sm font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors"
+                  onClick={handleClearLeave}>
+                  清除
+                </button>
+              </div>
+            </section>
           )}
         </>
       )}

@@ -70,6 +70,9 @@ export default function AttendancePage() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
 
+  // Records tab: exceptions lookup for color-coding
+  const [recordsExceptions, setRecordsExceptions] = useState<ExceptionRecord[]>([])
+
   // Exceptions tab state
   const [exClinicId, setExClinicId] = useState('')
   const [exEmployeeId, setExEmployeeId] = useState('')
@@ -107,6 +110,15 @@ export default function AttendancePage() {
     const correctedStr = new Date(latest.correctedTime).toLocaleString('zh-HK')
     const originalStr = new Date(record.punchTime).toLocaleString('zh-HK')
     return { display: `${correctedStr}（原 ${originalStr}）`, hasCorrection: true }
+  }
+
+  // Helper: find exception for a record by employeeId + date
+  function getRecordException(record: PunchRecord): ExceptionRecord | null {
+    const recordDate = new Date(record.punchTime).toISOString().slice(0, 10)
+    const match = recordsExceptions.find(
+      e => e.employeeId === record.employeeId && e.date === recordDate
+    )
+    return match || null
   }
 
   // Shared data loading
@@ -151,6 +163,20 @@ export default function AttendancePage() {
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `伺服器錯誤 (${res.status})`) }
       const data = await res.json()
       setRecords(data.records || []); setTotal(data.total || 0)
+
+      // Also fetch exceptions for color-coding
+      if (startDate && endDate) {
+        try {
+          const exRes = await fetch(
+            `/api/payroll-runs/exceptions?startDate=${startDate}&endDate=${endDate}`,
+            { credentials: 'include' }
+          )
+          if (exRes.ok) {
+            const exData = await exRes.json()
+            setRecordsExceptions(exData.exceptions || [])
+          }
+        } catch {}
+      }
     } catch (err: any) { setError(err.message || '載入失敗') }
     finally { setLoading(false) }
   }
@@ -344,20 +370,28 @@ export default function AttendancePage() {
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">診所</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">時間</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">類型</th>
+                  <th className="text-left p-3 text-sm font-medium text-muted-foreground">狀態</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">來源</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">Token</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">修正</th>
+                  <th className="text-left p-3 text-sm font-medium text-muted-foreground">補鐘</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={8} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
+                  <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
                 ) : records.length === 0 ? (
-                  <tr><td colSpan={8} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
+                  <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
                 ) : (
-                  records.map((record) => (
-                    <tr key={record.id} className="border-b hover:bg-gray-50">
+                  records.map((record) => {
+                    const exception = getRecordException(record)
+                    const isLate = exception?.type === 'LATE'
+                    const isEarlyLeave = exception?.type === 'EARLY_LEAVE'
+                    const rowBg = isLate ? '#fff7ed' : isEarlyLeave ? '#fef2f2' : undefined
+
+                    return (
+                    <tr key={record.id} className="border-b hover:bg-gray-50" style={rowBg ? { backgroundColor: rowBg } : {}}>
                       <td className="p-3">{record.employee?.user?.name || record.employeeId}</td>
                       <td className="p-3">{record.clinic?.name || record.clinicId}</td>
                       <td className="p-3">
@@ -393,6 +427,15 @@ export default function AttendancePage() {
                           </span>
                         )}
                       </td>
+                      <td className="p-3">
+                        {isLate ? (
+                          <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {exception?.lateMinutes || 0} 分</span>
+                        ) : isEarlyLeave ? (
+                          <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {exception?.earlyMinutes || 0} 分</span>
+                        ) : (
+                          <span style={{ color: '#16a34a' }}>正常</span>
+                        )}
+                      </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {record.source === 'QR_DYNAMIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 動態碼</> : record.source === 'QR_STATIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 固定碼</> : record.source === 'MANUAL_CORRECTION' ? <><Pencil size={14} style={{ marginRight: 4 }} /> 補打卡</> : <><Wrench size={14} style={{ marginRight: 4 }} /> 系統</>}
                       </td>
@@ -408,6 +451,18 @@ export default function AttendancePage() {
                         ) : (<span className="text-emerald-600 text-xs">✓ 無修正</span>)}
                       </td>
                       <td className="p-3">
+                        {(isLate || isEarlyLeave) && user.role === 'OWNER' && exception && (
+                          <button
+                            onClick={() => handleMakeup(exception)}
+                            className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
+                            style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
+                            title="補鐘：用OT補這次遲到/早退，免扣勤工"
+                          >
+                            <Clock size={12} /> 補鐘
+                          </button>
+                        )}
+                      </td>
+                      <td className="p-3">
                         <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
                           className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
                           <Pencil size={14} /> 修正
@@ -415,7 +470,8 @@ export default function AttendancePage() {
                         <Link href={`/attendance/${record.id}`} className="text-brand hover:underline text-xs">詳情</Link>
                       </td>
                     </tr>
-                  ))
+                    )
+                  })
                 )}
               </tbody>
             </table>

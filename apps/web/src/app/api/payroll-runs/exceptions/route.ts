@@ -15,15 +15,24 @@ export async function GET(req: NextRequest) {
   const clinicId = searchParams.get('clinicId')
   const employeeId = searchParams.get('employeeId')
   const periodMonth = searchParams.get('periodMonth')
+  const startDate = searchParams.get('startDate')
+  const endDate = searchParams.get('endDate')
 
-  if (!periodMonth) {
-    return NextResponse.json({ error: 'periodMonth (YYYY-MM) is required' }, { status: 400 })
+  let monthStart: Date
+  let monthEnd: Date
+
+  if (startDate && endDate) {
+    monthStart = new Date(startDate + 'T00:00:00+08:00')
+    monthEnd = new Date(endDate + 'T23:59:59+08:00')
+  } else if (periodMonth) {
+    const [yearStr, monthStr] = periodMonth.split('-')
+    monthStart = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
+    monthEnd = new Date(parseInt(yearStr), parseInt(monthStr), 0, 23, 59, 59)
+  } else {
+    return NextResponse.json({ error: 'periodMonth (YYYY-MM) or startDate/endDate is required' }, { status: 400 })
   }
 
-  const [yearStr, monthStr] = periodMonth.split('-')
-  const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
-  const monthStart = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
-  const monthEnd = new Date(parseInt(yearStr), parseInt(monthStr), 0, 23, 59, 59)
+  const monthDate = monthStart
 
   const punchWhere: any = { punchTime: { gte: monthStart, lte: monthEnd } }
   if (clinicId) punchWhere.clinicId = clinicId
@@ -191,12 +200,18 @@ export async function GET(req: NextRequest) {
         availableMinutes: tb.availableMinutes,
         convertibleLeaveDays: tb.convertibleLeaveDays,
         lateCount: exceptions.filter(e => e.employeeId === empId && e.type === 'LATE').length,
+        lateMinutes: exceptions
+          .filter(e => e.employeeId === empId && e.type === 'LATE')
+          .reduce((s, e) => s + (e.lateMinutes || 0), 0),
+        earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
       }
     })
   )
 
   return NextResponse.json({
     exceptions,
+    summaries: employeeSummaries,
+    employeeSummaries,
     summary: {
       total: exceptions.length,
       late: exceptions.filter(e => e.type === 'LATE').length,
@@ -204,7 +219,6 @@ export async function GET(req: NextRequest) {
       correction: exceptions.filter(e => e.type === 'CORRECTION').length,
       earlyLeave: exceptions.filter(e => e.type === 'EARLY_LEAVE').length,
     },
-    employeeSummaries,
-    periodMonth,
+    periodMonth: periodMonth || undefined,
   })
 }
