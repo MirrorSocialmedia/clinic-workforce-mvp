@@ -78,6 +78,13 @@ export default function LeavePage() {
   const [clearEmployeeId, setClearEmployeeId] = useState('all')
   const [clearYear, setClearYear] = useState(2026)
 
+  // Auto-calculate & Settlement state
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshResult, setRefreshResult] = useState('')
+  const [settlementForm, setSettlementForm] = useState({ employeeId: '', resignDate: '', monthlySalary: '' })
+  const [settlementLoading, setSettlementLoading] = useState(false)
+  const [settlementResult, setSettlementResult] = useState<any>(null)
+
   // Leave Types management state
   const [activeTab, setActiveTab] = useState<TabKey>('requests')
   const [ltShowForm, setLtShowForm] = useState(false)
@@ -261,6 +268,62 @@ export default function LeavePage() {
       if (res.ok) { alert(`成功清除 ${data.count} 筆記錄`); fetchBalances() }
       else alert(data.error || '清除失敗')
     } catch (err) { alert('清除失敗') }
+  }
+
+  // Auto-calculate entitlements handler
+  const handleRefreshEntitlements = async () => {
+    if (!confirm('確定自動計算所有在職員工的年假額度？')) return
+    setRefreshing(true)
+    setRefreshResult('')
+    try {
+      const res = await fetch('/api/leave-balance/refresh', {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setRefreshResult(`✅ 完成！更新 ${data.updatedCount || 0} 筆記錄`)
+        fetchBalances()
+      } else {
+        setRefreshResult(`❌ ${data.error || '計算失敗'}`)
+      }
+    } catch (err) {
+      setRefreshResult('❌ 網絡錯誤')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // Settlement handler
+  const handleSettlement = async () => {
+    if (!settlementForm.employeeId || !settlementForm.resignDate || !settlementForm.monthlySalary) {
+      alert('請填寫所有欄位')
+      return
+    }
+    setSettlementLoading(true)
+    setSettlementResult(null)
+    try {
+      const res = await fetch('/api/leave-settlement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          employeeId: settlementForm.employeeId,
+          resignDate: settlementForm.resignDate,
+          monthlySalary: parseFloat(settlementForm.monthlySalary),
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setSettlementResult(data)
+      } else {
+        alert(data.error || '結算失敗')
+      }
+    } catch (err) {
+      alert('網絡錯誤')
+    } finally {
+      setSettlementLoading(false)
+    }
   }
 
   if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
@@ -465,6 +528,84 @@ export default function LeavePage() {
                     清除
                   </button>
                 </div>
+              </div>
+            </>
+          )}
+
+          {isManager && (
+            <>
+              {/* 自動計算年假額度 */}
+              <div className="card p-4 border border-blue-200 rounded-lg mb-4" style={{ background: '#f0f7ff' }}>
+                <h3 className="font-semibold mb-2">📊 自動計算年假額度</h3>
+                <p className="text-sm text-muted-foreground mb-3">
+                  按香港僱傭條例自動計算所有在職員工的年假額度（按年資 7→14 天、按比例天數版、跨年累積）。
+                  會保留已放的假期天數，只更新額度。
+                </p>
+                <div className="flex gap-3 items-center">
+                  <button
+                    className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors"
+                    style={{ background: '#0d6efd' }}
+                    onClick={handleRefreshEntitlements}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? '計算中...' : '🔄 自動計算全部'}
+                  </button>
+                  <span className="text-xs text-muted-foreground" id="refreshResult"></span>
+                </div>
+                {refreshResult && (
+                  <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 13,
+                    background: refreshResult.startsWith('✅') ? '#f0fff4' : '#fff5f5',
+                    color: refreshResult.startsWith('✅') ? '#22543d' : '#c53030',
+                    border: `1px solid ${refreshResult.startsWith('✅') ? '#c6f6d5' : '#fed7d7'}` }}>
+                    {refreshResult}
+                  </div>
+                )}
+              </div>
+
+              {/* 離職結算 */}
+              <div className="card p-4 border border-orange-200 rounded-lg mb-4">
+                <h3 className="font-semibold mb-2">📋 離職結算（年假折算）</h3>
+                <p className="text-sm text-muted-foreground mb-3">
+                  計算離職員工未放年假的折算工資 = 月薪 × 12/365 × 未放天數
+                </p>
+                <div className="flex gap-3 items-end flex-wrap">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">員工</label>
+                    <select value={settlementForm.employeeId} onChange={e => setSettlementForm({ ...settlementForm, employeeId: e.target.value })}
+                      className="px-3 py-2 rounded-md border text-sm">
+                      <option value="">-- 選擇 --</option>
+                      {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">離職日期</label>
+                    <input type="date" value={settlementForm.resignDate} onChange={e => setSettlementForm({ ...settlementForm, resignDate: e.target.value })}
+                      className="px-3 py-2 rounded-md border text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">月薪</label>
+                    <input type="number" value={settlementForm.monthlySalary} onChange={e => setSettlementForm({ ...settlementForm, monthlySalary: e.target.value })}
+                      className="px-3 py-2 rounded-md border text-sm w-24" min="0" />
+                  </div>
+                  <button
+                    className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors"
+                    style={{ background: '#e67e22' }}
+                    onClick={handleSettlement}
+                    disabled={settlementLoading}
+                  >
+                    {settlementLoading ? '計算中...' : '計算結算'}
+                  </button>
+                </div>
+                {settlementResult && (
+                  <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
+                    <div className="grid grid-cols-4 gap-4" style={{ fontSize: 13 }}>
+                      <div><span className="text-muted-foreground">累計應得：</span><strong>{settlementResult.accrued.toFixed(2)} 天</strong></div>
+                      <div><span className="text-muted-foreground">已放：</span><strong>{settlementResult.used.toFixed(2)} 天</strong></div>
+                      <div><span className="text-muted-foreground">未放：</span><strong>{settlementResult.unused.toFixed(2)} 天</strong></div>
+                      <div><span className="text-muted-foreground">折算金額：</span><strong style={{ color: '#c53030' }}>${settlementResult.payout.toLocaleString()}</strong></div>
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           )}
