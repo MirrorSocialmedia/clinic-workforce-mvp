@@ -22,9 +22,15 @@ async function addLeaveBalance(employeeId: string, leaveTypeId: string, days: nu
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number) {
   const year = new Date().getFullYear()
-  await prisma.leaveBalance.updateMany({
-    where: { employeeId, leaveTypeId, year },
-    data: { entitled: { decrement: days }, remaining: { decrement: days } },
+  const bal = await prisma.leaveBalance.findUnique({
+    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
+  })
+  if (!bal || bal.remaining < days) {
+    throw new Error('假期餘額不足')
+  }
+  return prisma.leaveBalance.update({
+    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
+    data: { used: { increment: days }, remaining: { decrement: days } },
   })
 }
 

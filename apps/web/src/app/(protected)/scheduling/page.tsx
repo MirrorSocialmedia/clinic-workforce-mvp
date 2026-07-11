@@ -121,6 +121,16 @@ export default function SchedulingPage() {
       .catch(() => setSelectedEmpBalances([]))
   }, [selectedEmployeeId])
 
+  // 🔧 Fix #4a: Refresh leave balances after drag-drop or delete
+  const refreshLeaveBalances = useCallback(async () => {
+    if (!selectedEmployeeId) return
+    const res = await fetch(`/api/leave-balance?employeeId=${selectedEmployeeId}`, { credentials: 'include' })
+    if (res.ok) {
+      const d = await res.json()
+      setSelectedEmpBalances(d.leaveBalances || [])
+    }
+  }, [selectedEmployeeId])
+
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
   const [savingRules, setSavingRules] = useState(false)
@@ -681,6 +691,7 @@ function getShiftColor(shift: Shift): string {
           })
           if (res.ok) {
             await refreshAll()
+            await refreshLeaveBalances()
           } else {
             const err = await res.json()
             alert(err.error || '刪除假期失敗')
@@ -864,7 +875,12 @@ function getShiftColor(shift: Shift): string {
   }, [viewRange])
 
   // Fix #1b: Orphan shift detection — shifts stored but not displayed in grid
+  // Only check in week view; month view has different date range
   useEffect(() => {
+    if (viewMode !== 'week') {
+      setDisplayWarning(null)
+      return
+    }
     if (!shifts.length || !weekDays.length) return
     const orphans = shifts.filter(s => {
       const dateStr = formatDate(new Date(s.date))
@@ -877,7 +893,7 @@ function getShiftColor(shift: Shift): string {
     } else {
       setDisplayWarning(null)
     }
-  }, [shifts, weekDays])
+  }, [shifts, weekDays, viewMode])
 
   // Fix #1c: weekDays validation — must have 7 days, day 7 must be Sunday
   useEffect(() => {
@@ -1585,6 +1601,7 @@ function getShiftColor(shift: Shift): string {
                     })
                     if (res.ok) {
                       setValidationIssues([])
+                      await refreshLeaveBalances()
                     } else {
                       const err = await res.json()
                       setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])

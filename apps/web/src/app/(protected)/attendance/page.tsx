@@ -38,6 +38,7 @@ interface ExceptionRecord {
   correctionTime?: string
   lateMinutes?: number
   earlyMinutes?: number
+  otMinutes?: number
 }
 
 export default function AttendancePage() {
@@ -388,7 +389,8 @@ export default function AttendancePage() {
                     const exception = getRecordException(record)
                     const isLate = exception?.type === 'LATE'
                     const isEarlyLeave = exception?.type === 'EARLY_LEAVE'
-                    const rowBg = isLate ? '#fff7ed' : isEarlyLeave ? '#fef2f2' : undefined
+                    const isOt = exception?.otMinutes != null && exception.otMinutes > 0
+                    const rowBg = isLate ? '#fff7ed' : isEarlyLeave ? '#fef2f2' : isOt ? '#f0fdf4' : undefined
 
                     return (
                     <tr key={record.id} className="border-b hover:bg-gray-50" style={rowBg ? { backgroundColor: rowBg } : {}}>
@@ -432,6 +434,8 @@ export default function AttendancePage() {
                           <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {exception?.lateMinutes || 0} 分</span>
                         ) : isEarlyLeave ? (
                           <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {exception?.earlyMinutes || 0} 分</span>
+                        ) : isOt ? (
+                          <span style={{ color: '#059669', fontWeight: 600 }}>OT {exception?.otMinutes || 0} 分</span>
                         ) : (
                           <span style={{ color: '#16a34a' }}>正常</span>
                         )}

@@ -29,6 +29,7 @@ async function main() {
   await prisma.payrollItem.deleteMany()
   await prisma.payrollRun.deleteMany()
   await prisma.consultationRevenue.deleteMany()
+  await prisma.timeBankEntry.deleteMany()
   await prisma.timeBank.deleteMany()
   await prisma.shift.deleteMany()
   await prisma.qRToken.deleteMany()

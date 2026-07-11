@@ -2072,8 +2072,10 @@ export async function calculatePayrollWithRules(
         otMinutes: otMinutesFromResult,
       }, prisma)
 
-      // net = this month's OT - late + carry from prev month
-      const netOtMinutes = otMinutesFromResult - timeBank.lateMinutes + timeBank.carriedFrom
+      // 淨遲到 = 遲到 - 補鐘（補鐘抵掉的不算）
+      const netLateMinutes = Math.max(0, timeBank.lateMinutes - timeBank.makeupMinutes)
+      // net = this month's OT - netLate + carry from prev month
+      const netOtMinutes = otMinutesFromResult - netLateMinutes + timeBank.carriedFrom
       const minutesPerLeaveDay = hoursPerLeaveDay * 60
 
       if (netOtMinutes > 0) {

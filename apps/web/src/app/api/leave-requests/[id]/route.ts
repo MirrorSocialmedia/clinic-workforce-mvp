@@ -51,7 +51,7 @@ export async function PUT(
 
     if (status === 'APPROVED') {
       const currentYear = new Date().getFullYear()
-      await prisma.leaveBalance.upsert({
+      const bal = await prisma.leaveBalance.findUnique({
         where: {
           employeeId_leaveTypeId_year: {
             employeeId: request.employeeId,
@@ -59,11 +59,22 @@ export async function PUT(
             year: currentYear,
           },
         },
-        create: {
-          employeeId: request.employeeId, leaveTypeId: request.leaveTypeId,
-          year: currentYear, entitled: 0, used: request.days, remaining: -request.days,
+      })
+      if (!bal || bal.remaining < request.days) {
+        return NextResponse.json(
+          { error: `Insufficient leave balance. Remaining: ${bal?.remaining ?? 0} days` },
+          { status: 400 }
+        )
+      }
+      await prisma.leaveBalance.update({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: request.employeeId,
+            leaveTypeId: request.leaveTypeId,
+            year: currentYear,
+          },
         },
-        update: { used: { increment: request.days }, remaining: { decrement: request.days } },
+        data: { used: { increment: request.days }, remaining: { decrement: request.days } },
       })
     }
 
@@ -109,6 +120,24 @@ export async function DELETE(
       // Only allow deleting PENDING or approved requests by manager/owner
       if (request.status === 'APPROVED' && session.role !== 'OWNER' && session.role !== 'MANAGER') {
         return NextResponse.json({ error: 'Only managers can delete approved leave requests' }, { status: 403 })
+      }
+
+      // Restore leave balance if approved
+      if (request.status === 'APPROVED') {
+        const leaveYear = new Date(request.startDate).getFullYear()
+        await prisma.leaveBalance.update({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: request.employeeId,
+              leaveTypeId: request.leaveTypeId,
+              year: leaveYear,
+            },
+          },
+          data: { used: { decrement: request.days }, remaining: { increment: request.days } },
+        }).catch(() => {
+          // Balance record may not exist if it was created without one
+          console.warn(`Leave balance record not found for restoration: ${request.employeeId}/${request.leaveTypeId}/${leaveYear}`)
+        })
       }
 
       await prisma.leaveRequest.delete({ where: { id: requestId } })

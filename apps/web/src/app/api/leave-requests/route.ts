@@ -197,19 +197,19 @@ function isAnnualLeave(leaveType: { name: string }): boolean {
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number): Promise<void> {
   const currentYear = new Date().getFullYear()
-  await prisma.leaveBalance.upsert({
+  const bal = await prisma.leaveBalance.findUnique({
     where: {
       employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: currentYear },
     },
-    create: {
-      employeeId,
-      leaveTypeId,
-      year: currentYear,
-      entitled: 0,
-      used: days,
-      remaining: -days,
+  })
+  if (!bal || bal.remaining < days) {
+    throw new Error(`Insufficient leave balance. Requested: ${days}, Remaining: ${bal?.remaining ?? 0}`)
+  }
+  await prisma.leaveBalance.update({
+    where: {
+      employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: currentYear },
     },
-    update: {
+    data: {
       used: { increment: days },
       remaining: { decrement: days },
     },
