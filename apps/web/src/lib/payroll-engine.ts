@@ -633,7 +633,10 @@ export async function generatePayrollRun(
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
   const existing = await prisma.payrollRun.findFirst({
-    where: { clinicId, periodMonth: monthDate },
+    where: {
+      clinicId: clinicId ?? null,
+      periodMonth: { gte: monthStart, lte: monthEnd },
+    },
   })
 
   // FIX #2: Handle recalculation

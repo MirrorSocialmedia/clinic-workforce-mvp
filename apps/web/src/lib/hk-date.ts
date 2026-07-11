@@ -30,3 +30,12 @@ export function fmtTime(dt: string | Date | undefined | null): string {
   if (isNaN(d.getTime())) return '--:--'
   return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
+
+/** Get month range [first day 00:00, last day 23:59:59.999] for a given Date */
+export function getMonthRange(date: Date) {
+  const year = date.getFullYear()
+  const month = date.getMonth()
+  const start = new Date(year, month, 1, 0, 0, 0)
+  const end = new Date(year, month + 1, 0, 23, 59, 59, 999)
+  return { start, end }
+}

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Pencil, Plus, Smartphone, Wrench, Search, Clock } from 'lucide-react'
+import { toHKDateStr } from '@/lib/hk-date'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type TabKey = 'records' | 'exceptions' | 'hash'
@@ -114,13 +115,13 @@ export default function AttendancePage() {
     return { display: `${correctedStr}（原 ${originalStr}）`, hasCorrection: true }
   }
 
-  // Helper: build exception map with employeeId_date_type key for multi-type support
+  // Helper: build exception lookup using HK timezone dates
   const getRecordException = useCallback((record: PunchRecord): {
     late: ExceptionRecord | null;
     earlyLeave: ExceptionRecord | null;
     ot: ExceptionRecord | null;
   } => {
-    const recordDate = new Date(record.punchTime).toISOString().slice(0, 10)
+    const recordDate = toHKDateStr(new Date(record.punchTime))
     const late = recordsExceptions.find(
       e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'LATE'
     )
@@ -179,23 +180,35 @@ export default function AttendancePage() {
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `伺服器錯誤 (${res.status})`) }
       const data = await res.json()
       setRecords(data.records || []); setTotal(data.total || 0)
-
-      // Also fetch exceptions for color-coding
-      if (startDate && endDate) {
-        try {
-          const exRes = await fetch(
-            `/api/payroll-runs/exceptions?startDate=${startDate}&endDate=${endDate}`,
-            { credentials: 'include' }
-          )
-          if (exRes.ok) {
-            const exData = await exRes.json()
-            setRecordsExceptions(exData.exceptions || [])
-          }
-        } catch {}
-      }
     } catch (err: any) { setError(err.message || '載入失敗') }
     finally { setLoading(false) }
   }
+
+  // Records tab: fetch exceptions for color-coding & status display
+  const fetchRecordExceptions = useCallback(async () => {
+    try {
+      const months = new Set<string>()
+      if (startDate) months.add(startDate.slice(0, 7))
+      if (endDate) months.add(endDate.slice(0, 7))
+      if (months.size === 0) months.add(new Date().toISOString().slice(0, 7))
+
+      const all: ExceptionRecord[] = []
+      for (const m of months) {
+        const res = await fetch(`/api/payroll-runs/exceptions?periodMonth=${m}`, {
+          credentials: 'include',
+        })
+        if (res.ok) {
+          const d = await res.json()
+          all.push(...(d.exceptions || []))
+        }
+      }
+      setRecordsExceptions(all)
+    } catch {}
+  }, [startDate, endDate])
+
+  useEffect(() => {
+    if (user && activeTab === 'records') fetchRecordExceptions()
+  }, [user, activeTab, fetchRecordExceptions])
 
   useEffect(() => { if (user) fetchRecords() }, [user, page, clinicFilter, employeeFilter, startDate, endDate])
 
