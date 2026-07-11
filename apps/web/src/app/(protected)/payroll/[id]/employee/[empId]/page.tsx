@@ -222,6 +222,11 @@ export default function EmployeePayrollDetailPage() {
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">已批假期</div>
               <div className="text-lg font-bold mt-1">{leaveDays}</div>
+              {leaves.length > 0 && leaves.length !== leaveDays && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  排班 {leaves.length} 天，實際消耗 {leaveDays} 天（{leaves.length - leaveDays} 天為週末休息，不計假期）
+                </div>
+              )}
             </div>
           </div>
           {lateDays > 0 && (
@@ -401,8 +406,10 @@ export default function EmployeePayrollDetailPage() {
               <div className="text-lg font-bold mt-1">{item.otHours.toFixed(2)}h</div>
             </div>
             <div className="rounded-lg border p-3">
-              <div className="text-xs text-muted-foreground">請假日數</div>
-              <div className="text-lg font-bold mt-1">{item.leaveDays.toFixed(2)} 天</div>
+              <div className="text-xs text-muted-foreground">遲到時數</div>
+              <div className="text-lg font-bold mt-1" style={{ color: (timebankSummary?.lateMinutes ?? 0) > 0 ? '#f59e0b' : 'inherit' }}>
+                {((timebankSummary?.lateMinutes ?? 0) / 60).toFixed(1)} 小時
+              </div>
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">缺勤日數</div>

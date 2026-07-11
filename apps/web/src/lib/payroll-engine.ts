@@ -1278,24 +1278,51 @@ async function addLeaveBalance(
   leaveTypeId: string,
   year: number,
   days: number,
-  db: any
+  db: any,
+  mode: 'increment' | 'set' = 'increment'
 ): Promise<any> {
-  return db.leaveBalance.upsert({
-    where: {
-      employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year },
-    },
-    update: {
-      entitled: { increment: days },
-      remaining: { increment: days },
-    },
-    create: {
-      employeeId,
-      leaveTypeId,
-      year,
-      entitled: days,
-      remaining: days,
-    },
-  })
+  if (mode === 'set') {
+    // Set to specified value (for regeneration), preserve used
+    const existing = await db.leaveBalance.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year },
+      },
+    })
+    return db.leaveBalance.upsert({
+      where: {
+        employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year },
+      },
+      update: {
+        entitled: days,
+        remaining: days - (existing?.used ?? 0),
+      },
+      create: {
+        employeeId,
+        leaveTypeId,
+        year,
+        entitled: days,
+        remaining: days,
+      },
+    })
+  } else {
+    // Original increment logic (OT conversion etc.)
+    return db.leaveBalance.upsert({
+      where: {
+        employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year },
+      },
+      update: {
+        entitled: { increment: days },
+        remaining: { increment: days },
+      },
+      create: {
+        employeeId,
+        leaveTypeId,
+        year,
+        entitled: days,
+        remaining: days,
+      },
+    })
+  }
 }
 
 /**
@@ -1902,7 +1929,7 @@ export async function calculatePayrollWithRules(
       const grantedDays = monthlyLeaveDays.total
       monthlyLeaveGranted = grantedDays
 
-      await addLeaveBalance(employeeId, restDayType.id, year, grantedDays, prisma)
+      await addLeaveBalance(employeeId, restDayType.id, year, grantedDays, prisma, 'set')
 
       // Check max days cap
       if (leaveBankingConfig.max_days != null) {
@@ -1950,7 +1977,7 @@ export async function calculatePayrollWithRules(
       // Convert OT to leave days in LeaveBalance
       if (otConvertedLeave > 0) {
         const otLeaveType = await getOrCreateLeaveType('OT換假', true, prisma)
-        await addLeaveBalance(employeeId, otLeaveType.id, year, otConvertedLeave, prisma)
+        await addLeaveBalance(employeeId, otLeaveType.id, year, otConvertedLeave, prisma, 'set')
 
         // Carry remainder to next month
         await updateTimeBank(employeeId, monthDate, {
