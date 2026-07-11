@@ -103,7 +103,7 @@ export async function PUT(
             modifiers: {
               working_days: {
                 basis: 'scheduled',
-                rest_days: [],
+                rest_days: [6, 0], // 週六日為休息日
                 count_public_holidays: true,
               },
               deduction: { basis: 'statutory' },

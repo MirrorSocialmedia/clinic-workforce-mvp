@@ -1377,6 +1377,7 @@ async function updateTimeBank(
 
 /**
  * Find or create a leave type by name (e.g., '休息日', 'OT換假').
+ * LEGACY — use getLeaveTypeBySystemKey for new code.
  */
 async function getOrCreateLeaveType(
   name: string,
@@ -1394,6 +1395,85 @@ async function getOrCreateLeaveType(
   }
 
   return type
+}
+
+/**
+ * Get leave type by systemKey (REST_DAY, ANNUAL_LEAVE, OT_LEAVE).
+ * Throws if not found — system types must exist via seed.
+ */
+async function getLeaveTypeBySystemKey(db: any, systemKey: string): Promise<any> {
+  const type = await db.leaveType.findUnique({
+    where: { systemKey },
+  })
+  if (!type) {
+    throw new Error(`System leave type '${systemKey}' not found. Run seed.`)
+  }
+  return type
+}
+
+/**
+ * Grant monthly rest day entitlement to an employee's LeaveBalance.
+ * Idempotent — uses RESTDAY_GRANT marker to prevent duplicate grants.
+ */
+async function grantMonthlyRestDays(
+  employeeId: string,
+  year: number,
+  month: number, // 0-indexed
+  quota: number,
+  db: any
+): Promise<void> {
+  if (quota <= 0) return
+
+  const restDayType = await getLeaveTypeBySystemKey(db, 'REST_DAY')
+  if (!restDayType) return
+
+  const yearNum = year
+  const monthStart = new Date(year, month, 1)
+  const monthEnd = new Date(year, month + 1, 1)
+
+  // Check if already granted this month (idempotent)
+  const existingGrant = await db.timeBankEntry.findFirst({
+    where: {
+      employeeId,
+      type: 'RESTDAY_GRANT',
+      date: { gte: monthStart, lt: monthEnd },
+    },
+  })
+  if (existingGrant) return // Already granted this month
+
+  // Upsert leave balance
+  await db.leaveBalance.upsert({
+    where: {
+      employeeId_leaveTypeId_year: {
+        employeeId,
+        leaveTypeId: restDayType.id,
+        year: yearNum,
+      },
+    },
+    update: {
+      entitled: { increment: quota },
+      remaining: { increment: quota },
+    },
+    create: {
+      employeeId,
+      leaveTypeId: restDayType.id,
+      year: yearNum,
+      entitled: quota,
+      used: 0,
+      remaining: quota,
+    },
+  })
+
+  // Record grant marker (prevents duplicate)
+  await db.timeBankEntry.create({
+    data: {
+      employeeId,
+      type: 'RESTDAY_GRANT',
+      minutes: 0,
+      date: monthStart,
+      note: `發放${quota}天休息日 (${monthStart.toISOString().slice(0, 7)})`,
+    },
+  })
 }
 
 // ------------------------------------------------------------------
@@ -1474,7 +1554,7 @@ async function collectWorkData(
   const publicHolidayDays = publicHolidays.length
 
   // Dynamic rest days: default [6, 0] (Sat+Sun); will be overridden by config at calc time
-  const restDays = countRestDaysInMonth(year, month, [])
+  const restDays = countRestDaysInMonth(year, month, [6, 0])
   // Total calendar days in month minus rest days minus public holidays
   const monthlyWorkingDays = new Date(year, month + 1, 0).getDate() - restDays - publicHolidayDays
   // Fallback to old countWorkingDays for backward compat
@@ -1908,15 +1988,15 @@ export async function calculatePayrollWithRules(
   result.detail = { ...result.detail, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100 }
 
   // 5. Task 2: Count monthly leave days
-  const restDaysConfig = mods.working_days?.rest_days ?? []
+  const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
   const publicHolidaysInMonth = await getPublicHolidayDays(monthStart, monthEnd)
   const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig, publicHolidaysInMonth)
 
-  // 6. Task 3: Leave banking — REMOVED: weekends are fixed rest_days, not accrual-able leave.
-  // The monthlyLeaveDays count is kept for display purposes only.
-  // Weekend rest is handled by rest_days config in workday calculation.
-  // Weekend rest should NOT be added to LeaveBalance as a "休息日" leave type.
-  let leaveBalanceRemaining = 0 // No longer banked — weekends are not leave
+  // 6. Task 3 + Rest Day System: Grant monthly rest day entitlement
+  // monthlyLeaveDays.total = restDays (weekends) + publicHolidays
+  // This is now a proper LeaveBalance entry that can be used/accumulated
+  await grantMonthlyRestDays(employeeId, year, month, monthlyLeaveDays.total, prisma)
+  let leaveBalanceRemaining = 0 // Tracked via LeaveBalance, not inline
 
   // 7. Task 4: OT → Leave conversion
   let otConvertedLeave = 0
@@ -1940,7 +2020,7 @@ export async function calculatePayrollWithRules(
 
       // Convert OT to leave days in LeaveBalance
       if (otConvertedLeave > 0) {
-        const otLeaveType = await getOrCreateLeaveType('OT換假', true, prisma)
+        const otLeaveType = await getLeaveTypeBySystemKey(prisma, 'OT_LEAVE')
         await addLeaveBalance(employeeId, otLeaveType.id, year, otConvertedLeave, prisma, 'set')
 
         // Carry remainder to next month

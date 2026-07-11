@@ -15,6 +15,7 @@ interface LeaveType {
   annualQuota: number | null
   color: string | null
   isActive: boolean | null
+  systemKey: string | null
 }
 
 interface LeaveRequestItem {
@@ -688,23 +689,44 @@ export default function LeavePage() {
                 <tr><th>顏色</th><th>名稱</th><th>有薪</th><th>年度額度</th><th>狀態</th><th>操作</th></tr>
               </thead>
               <tbody>
-                {leaveTypes.map(t => (
-                  <tr key={t.id}>
-                    <td><div style={{ width: 20, height: 20, borderRadius: 4, background: t.color || '#ccc' }} /></td>
-                    <td style={{ fontWeight: 500 }}>{t.name}</td>
-                    <td>{t.isPaid ? '✅ 有薪' : '❌ 無薪'}</td>
-                    <td>{t.annualQuota ? `${t.annualQuota} 天` : '無限制'}</td>
-                    <td>
-                      <label style={{ fontSize: 13, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={!!t.isActive} onChange={() => handleLtToggleActive(t.id, !!t.isActive)} />
-                        {' '}{t.isActive ? '啟用' : '停用'}
-                      </label>
-                    </td>
-                    <td>
-                      <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleLtEdit(t)}>編輯</button>
-                    </td>
-                  </tr>
-                ))}
+                {leaveTypes.map(t => {
+                  const isSystem = t.systemKey != null
+                  return (
+                    <tr key={t.id}>
+                      <td><div style={{ width: 20, height: 20, borderRadius: 4, background: t.color || '#ccc' }} /></td>
+                      <td style={{ fontWeight: 500 }}>
+                        {t.name}
+                        {isSystem && <span style={{ marginLeft: 6, fontSize: 11, color: '#888' }}>🔒 系統類型</span>}
+                      </td>
+                      <td>{t.isPaid ? '✅ 有薪' : '❌ 無薪'}</td>
+                      <td>{t.annualQuota ? `${t.annualQuota} 天` : '無限制'}</td>
+                      <td>
+                        <label style={{ fontSize: 13, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!t.isActive} onChange={() => !isSystem && handleLtToggleActive(t.id, !!t.isActive)} disabled={isSystem} />
+                          {' '}{t.isActive ? '啟用' : '停用'}
+                        </label>
+                      </td>
+                      <td>
+                        {isSystem ? (
+                          <span style={{ fontSize: 11, color: '#888' }}>計算核心，不可刪除</span>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleLtEdit(t)}>編輯</button>
+                            <button
+                              className="btn btn-sm btn-danger"
+                              onClick={async () => {
+                                if (!confirm(`確定刪除「${t.name}」？`)) return
+                                const res = await fetch(`/api/leave-types/${t.id}`, { method: 'DELETE', credentials: 'include' })
+                                if (res.ok) fetchData()
+                                else { const err = await res.json(); alert(err.error || '刪除失敗') }
+                              }}
+                            >刪除</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

@@ -17,13 +17,13 @@ async function main() {
   console.log('🌱 Seeding database...')
 
   // Clean existing data (order matters due to FK constraints)
-  await prisma.auditLog.deleteMany()
+  // Note: AuditLog is append-only, skip delete
   await prisma.notification.deleteMany()
   await prisma.leaveRequest.deleteMany()
   await prisma.leaveBalance.deleteMany()
   await prisma.leaveType.deleteMany()
   await prisma.hKPublicHoliday.deleteMany()
-  await prisma.punchRecord.deleteMany()
+  // Note: PunchRecord is append-only, skip delete
   await prisma.punchCorrection.deleteMany()
   await prisma.shiftChangeRequest.deleteMany()
   await prisma.payrollItem.deleteMany()
@@ -221,7 +221,7 @@ async function main() {
         base_salary: 8000,
         split_ratio: 0.3,
         modifiers: {
-          working_days: { basis: 'scheduled', rest_days: [], count_public_holidays: true },
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
           mpf: { enabled: true, rate: 0.05, min: 7100, max: 50000 },
         },
       }),
@@ -243,7 +243,7 @@ async function main() {
               any_absence: true,
             },
           },
-          working_days: { basis: 'scheduled', rest_days: [], count_public_holidays: true },
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
           mpf: { enabled: true, rate: 0.05, min: 7100, max: 50000 },
         },
       }),
@@ -265,7 +265,7 @@ async function main() {
               any_absence: true,
             },
           },
-          working_days: { basis: 'scheduled', rest_days: [], count_public_holidays: true },
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
           mpf: { enabled: true, rate: 0.05, min: 7100, max: 50000 },
         },
       }),
@@ -288,7 +288,7 @@ async function main() {
             },
           },
           overtime: { mode: 'time_off', hours_per_leave_day: 8 },
-          working_days: { basis: 'scheduled', rest_days: [], count_public_holidays: true },
+          working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
           deduction: { basis: 'statutory' },
           mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
         },
@@ -317,10 +317,27 @@ async function main() {
 
   // Create leave types
   console.log('🏖️ Creating leave types...')
-  const leaveTypes = await Promise.all([
-    prisma.leaveType.create({
-      data: { name: '年假', isPaid: true, annualQuota: 12, color: '#4CAF50' },
+  // System leave types (REST_DAY, ANNUAL_LEAVE, OT_LEAVE) — locked, cannot be deleted
+  const systemLeaveTypes = await Promise.all([
+    prisma.leaveType.upsert({
+      where: { systemKey: 'REST_DAY' },
+      update: {},
+      create: { name: '休息日', systemKey: 'REST_DAY', isPaid: true, color: '#4a4a4a' },
     }),
+    prisma.leaveType.upsert({
+      where: { systemKey: 'ANNUAL_LEAVE' },
+      update: {},
+      create: { name: '年假', systemKey: 'ANNUAL_LEAVE', isPaid: true, annualQuota: 12, color: '#27ae60' },
+    }),
+    prisma.leaveType.upsert({
+      where: { systemKey: 'OT_LEAVE' },
+      update: {},
+      create: { name: 'OT補假', systemKey: 'OT_LEAVE', isPaid: true, color: '#8e44ad' },
+    }),
+  ])
+
+  const leaveTypes = await Promise.all([
+    // 病假 (user-managed)
     prisma.leaveType.create({
       data: { name: '病假', isPaid: true, annualQuota: 12, color: '#2196F3' },
     }),
@@ -337,27 +354,33 @@ async function main() {
       data: { name: '侍產假', isPaid: true, annualQuota: 5, color: '#9C27B0' },
     }),
   ])
+  console.log(`  ✅ Created ${systemLeaveTypes.length} system + ${leaveTypes.length} user leave types`)
+
+  // Map for balance creation: systemLeaveTypes[1] = ANNUAL_LEAVE, systemLeaveTypes[0] = REST_DAY
+  const restDayTypeId = systemLeaveTypes[0].id
+  const annualLeaveTypeId = systemLeaveTypes[1].id
+  const otLeaveTypeId = systemLeaveTypes[2].id
   console.log(`  ✅ Created ${leaveTypes.length} leave types`)
 
   // Create leave balances for test employees
   const currentYear = new Date().getFullYear()
   for (const emp of allEmps) {
-    // Annual leave balance
+    // Annual leave balance (using system ANNUAL_LEAVE type)
     await prisma.leaveBalance.create({
       data: {
         employeeId: emp.id,
-        leaveTypeId: leaveTypes[0].id,
+        leaveTypeId: annualLeaveTypeId,
         year: currentYear,
         entitled: 12,
         used: 0,
         remaining: 12,
       },
     })
-    // Sick leave balance
+    // Sick leave balance (using user-managed sick leave type)
     await prisma.leaveBalance.create({
       data: {
         employeeId: emp.id,
-        leaveTypeId: leaveTypes[1].id,
+        leaveTypeId: leaveTypes[0].id,
         year: currentYear,
         entitled: 12,
         used: 0,

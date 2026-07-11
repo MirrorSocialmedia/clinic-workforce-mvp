@@ -5,8 +5,8 @@ import prisma from '@/lib/prisma'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 
 async function getOtLeaveTypeId() {
-  const lt = await prisma.leaveType.findFirst({
-    where: { OR: [{ name: { contains: 'OT' } }, { name: { contains: '補假' } }] },
+  const lt = await prisma.leaveType.findUnique({
+    where: { systemKey: 'OT_LEAVE' },
   })
   return lt?.id
 }

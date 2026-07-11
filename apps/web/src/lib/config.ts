@@ -111,6 +111,7 @@ export const CONFIG = {
     'GET /api/leave-types': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/leave-types': ['OWNER'],
     'PUT /api/leave-types/:id': ['OWNER'],
+    'DELETE /api/leave-types/:id': ['OWNER'],
 
     // Leave request routes
     'POST /api/leave-requests': ['OWNER', 'MANAGER', 'EMPLOYEE'],

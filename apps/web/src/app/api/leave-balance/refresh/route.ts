@@ -24,22 +24,15 @@ export async function POST(req: NextRequest) {
     const { employeeId } = body
 
     // 找到所有年假類型的 LeaveType
-    const annualLeaveTypes = await prisma.leaveType.findMany({
-      where: {
-        isActive: true,
-        OR: [
-          { name: { contains: '年假' } },
-          { name: { contains: 'Annual', mode: 'insensitive' } },
-        ],
-      },
+    const annualLeaveType = await prisma.leaveType.findUnique({
+      where: { systemKey: 'ANNUAL_LEAVE' },
     })
 
-    if (annualLeaveTypes.length === 0) {
-      return NextResponse.json({ error: '未找到年假類型的 LeaveType' }, { status: 400 })
+    if (!annualLeaveType) {
+      return NextResponse.json({ error: '未找到年假類型的 LeaveType (ANNUAL_LEAVE)' }, { status: 400 })
     }
 
-    // 預設用第一個年假類型（通常只有一個）
-    const annualLeaveTypeId = annualLeaveTypes[0].id
+    const annualLeaveTypeId = annualLeaveType.id
 
     // 取得目標員工列表
     const targetEmployees = employeeId

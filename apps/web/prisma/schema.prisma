@@ -371,6 +371,7 @@ model LeaveType {
   id           String   @id @default(cuid())
   clinicId     String?  // null = global type
   name         String   // 年假/病假/無薪假
+  systemKey    String?  @unique // 'REST_DAY' | 'ANNUAL_LEAVE' | 'OT_LEAVE' | null
   isPaid       Boolean  @default(true)
   annualQuota  Float?   // 年度額度（天）
   color        String?  // UI 顏色標記

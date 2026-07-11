@@ -1,6 +1,10 @@
 /**
- * Clean up "休息日" leave balances that were incorrectly created by the old
- * leave-banking logic. Weekends are fixed rest_days, not accrual-able leave.
+ * Clean up stale "休息日" leave data BEFORE migrating to systemKey-based types.
+ * 
+ * This script:
+ * 1. Deletes old non-system "休息日" LeaveType (if systemKey is null)
+ * 2. Deletes associated LeaveBalance and LeaveRequest records
+ * 3. Deletes stale RESTDAY_GRANT TimeBankEntry records
  *
  * Run: npx ts-node -r tsconfig-paths/register scripts/clean-rest-day-leave.ts
  */
@@ -9,52 +13,44 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
-  console.log('🧹 Cleaning up "休息日" leave data...')
+  console.log('🧹 Cleaning up stale "休息日" leave data...')
 
-  // 1. Find the "休息日" leave type
-  const restDayType = await prisma.leaveType.findFirst({
-    where: { name: '休息日' },
+  // 1. Find old "休息日" LeaveType without systemKey (pre-migration pollution)
+  const oldRestDayTypes = await prisma.leaveType.findMany({
+    where: { name: '休息日', systemKey: null },
   })
 
-  if (!restDayType) {
-    console.log('  ✅ No "休息日" LeaveType found. Nothing to clean.')
+  if (oldRestDayTypes.length === 0) {
+    console.log('  ✅ No stale "休息日" LeaveType found. Nothing to clean.')
     await prisma.$disconnect()
     process.exit(0)
   }
 
-  console.log(`  Found LeaveType "休息日" (id: ${restDayType.id})`)
+  for (const restDayType of oldRestDayTypes) {
+    console.log(`  Found stale LeaveType "休息日" (id: ${restDayType.id})`)
 
-  // 2. Delete all LeaveBalance records for this type
-  const balances = await prisma.leaveBalance.findMany({
-    where: { leaveTypeId: restDayType.id },
-  })
-
-  if (balances.length > 0) {
-    await prisma.leaveBalance.deleteMany({
+    // 2. Delete all LeaveBalance records for this type
+    const balances = await prisma.leaveBalance.deleteMany({
       where: { leaveTypeId: restDayType.id },
     })
-    console.log(`  ✅ Deleted ${balances.length} LeaveBalance record(s) for "休息日"`)
-  } else {
-    console.log('  ✅ No LeaveBalance records for "休息日"')
-  }
+    console.log(`  ✅ Deleted ${balances.count} LeaveBalance record(s)`)
 
-  // 3. Delete any LeaveRequest records associated with "休息日" type
-  const leaves = await prisma.leaveRequest.findMany({
-    where: { leaveTypeId: restDayType.id },
-  })
-
-  if (leaves.length > 0) {
-    await prisma.leaveRequest.deleteMany({
+    // 3. Delete any LeaveRequest records
+    const leaves = await prisma.leaveRequest.deleteMany({
       where: { leaveTypeId: restDayType.id },
     })
-    console.log(`  ✅ Deleted ${leaves.length} LeaveRequest record(s) for "休息日"`)
+    console.log(`  ✅ Deleted ${leaves.count} LeaveRequest record(s)`)
+
+    // 4. Delete the stale LeaveType
+    await prisma.leaveType.delete({ where: { id: restDayType.id } })
+    console.log(`  ✅ Deleted stale LeaveType "休息日"`)
   }
 
-  // 4. Delete the "休息日" LeaveType itself
-  await prisma.leaveType.delete({
-    where: { id: restDayType.id },
+  // 5. Delete stale RESTDAY_GRANT TimeBankEntry records (pre-migration markers)
+  const grants = await prisma.timeBankEntry.deleteMany({
+    where: { type: 'RESTDAY_GRANT' },
   })
-  console.log(`  ✅ Deleted LeaveType "休息日"`)
+  console.log(`  ✅ Deleted ${grants.count} stale RESTDAY_GRANT record(s)`)
 
   console.log('✅ Cleanup complete!')
 }
