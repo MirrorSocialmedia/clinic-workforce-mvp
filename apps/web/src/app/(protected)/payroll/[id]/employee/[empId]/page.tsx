@@ -366,7 +366,7 @@ export default function EmployeePayrollDetailPage() {
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">本月 OT 時數</div>
                 <div className="text-lg font-bold mt-1">
-                  {((tb.otMinutes ?? 0) / 60).toFixed(2)}h
+                  {(tb.otMinutes ?? 0)} 分鐘（{((tb.otMinutes ?? 0) / 60).toFixed(1)}h）
                 </div>
               </div>
               <div className="rounded-lg border p-3">
@@ -400,13 +400,13 @@ export default function EmployeePayrollDetailPage() {
               <div className="rounded-lg border p-3" style={{ borderLeft: '3px solid #16a34a' }}>
                 <div className="text-xs text-muted-foreground">OT 時間</div>
                 <div className="text-lg font-bold mt-1" style={{ color: '#16a34a' }}>
-                  {((tb.otMinutes ?? 0) / 60).toFixed(1)}h
+                  {(tb.otMinutes ?? 0)} 分鐘（{((tb.otMinutes ?? 0) / 60).toFixed(1)}h）
                 </div>
               </div>
               <div className="rounded-lg border p-3" style={tb.owedMinutes > 0 ? { borderLeft: '3px solid #dc2626' } : {}}>
                 <div className="text-xs text-muted-foreground">拖欠時間</div>
                 <div className="text-lg font-bold mt-1" style={tb.owedMinutes > 0 ? { color: '#dc2626' } : {}}>
-                  {((tb.owedMinutes ?? 0) / 60).toFixed(1)}h
+                  {(tb.owedMinutes ?? 0)} 分鐘（{((tb.owedMinutes ?? 0) / 60).toFixed(1)}h）
                 </div>
               </div>
               <div className="rounded-lg border p-3">
@@ -429,12 +429,12 @@ export default function EmployeePayrollDetailPage() {
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">加班時數</div>
-              <div className="text-lg font-bold mt-1">{((tb.otMinutes ?? 0) / 60).toFixed(2)}h</div>
+              <div className="text-lg font-bold mt-1">{(tb.otMinutes ?? 0)} 分鐘（{((tb.otMinutes ?? 0) / 60).toFixed(1)}h）</div>
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">遲到時數</div>
               <div className="text-lg font-bold mt-1" style={{ color: (tb.lateMinutes ?? 0) > 0 ? '#f59e0b' : 'inherit' }}>
-                {((tb.lateMinutes ?? 0) / 60).toFixed(1)} 小時
+                {(tb.lateMinutes ?? 0)} 分鐘（{((tb.lateMinutes ?? 0) / 60).toFixed(1)}h）
               </div>
             </div>
             <div className="rounded-lg border p-3">

@@ -1176,7 +1176,7 @@ function getShiftColor(shift: Shift): string {
       {/* ============================================================ */}
       {/* GLOBAL OVERVIEW GRID (top, full width) */}
       {/* ============================================================ */}
-      {viewRange && allEmployees.length > 0 && (
+      {viewMode === 'week' && viewRange && allEmployees.length > 0 && (
         <div style={{
           marginBottom: 16,
           border: '1px solid #e5e7eb',
