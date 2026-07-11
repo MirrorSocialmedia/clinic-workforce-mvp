@@ -2034,7 +2034,12 @@ export async function calculatePayrollWithRules(
     }
   }
 
-  // 8. Task 6: Build comprehensive detail JSON
+  // 8. Task 6 + TimeBank: Build comprehensive detail JSON with timebank data
+  // Call calculateTimeBank to get authoritative OT/late data for payroll detail
+  const timeBankConfig = mods.time_bank || { negative_carry: 'reset' }
+  const tb = await calculateTimeBank(employeeId, monthDate, timeBankConfig, prisma)
+  const lateCount = workData.lateRecords.length
+
   const leaveTaken = workData.approvedLeaveDays
   result.detail = {
     ...result.detail,
@@ -2068,6 +2073,18 @@ export async function calculatePayrollWithRules(
       otHours: Math.round(result.otHours * 100) / 100,
       otConvertedLeave,
       otRemainderMinutes,
+    },
+    // 🔴 Fix #1: 統一遲到/OT資料源 — timebank 從計糧引擎計算，薪資明細全部從此取
+    timebank: {
+      otMinutes: tb.otMinutes,
+      lateMinutes: tb.lateMinutes,
+      lateCount,
+      owedMinutes: tb.owedMinutes,
+      convertibleLeaveDays: tb.convertibleLeaveDays,
+      earlyLeaveMinutes: tb.earlyLeaveMinutes,
+      makeupMinutes: tb.makeupMinutes,
+      carriedFrom: tb.carriedFrom,
+      balance: tb.balance,
     },
   }
 

@@ -775,7 +775,9 @@ function getShiftColor(shift: Shift): string {
         extendedProps: { shift: s, isAbsent },
       }
     }),
-    ...leaveRequests.map((lr) => ({
+    ...leaveRequests
+      .filter(lr => !selectedClinicId || lr.clinicId === selectedClinicId)
+      .map((lr) => ({
       id: 'leave-' + lr.id,
       title: lr.employee?.user?.name + ' ' + (lr.leaveType?.name || ''),
       start: lr.startDate,
@@ -1551,6 +1553,7 @@ function getShiftColor(shift: Shift): string {
                         days: 1,
                         reason: `排班頁拖曳請假`,
                         isPlanned: true,
+                        clinicId: selectedClinicId,
                       }),
                     })
                     if (res.ok) {
@@ -2181,6 +2184,7 @@ function getShiftColor(shift: Shift): string {
                           days: 1,
                           reason: `排班頁拖曳請假`,
                           isPlanned: true,
+                          clinicId: selectedClinicId,
                         }),
                       })
                       if (res.ok) {

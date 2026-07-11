@@ -398,10 +398,12 @@ model LeaveRequest {
   approverId  String?
   approvedAt  DateTime?
   isPlanned   Boolean        @default(true) // false=臨時/當天假 → 影響勤工
+  clinicId    String?        // 新增：在哪個店排的假（排班跨店過濾）
   createdAt   DateTime       @default(now())
 
   @@index([employeeId, status])
   @@index([leaveTypeId])
+  @@index([clinicId])
 }
 
 // Leave balance — annual quota tracking per employee

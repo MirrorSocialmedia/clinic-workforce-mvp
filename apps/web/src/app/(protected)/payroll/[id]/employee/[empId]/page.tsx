@@ -58,7 +58,6 @@ export default function EmployeePayrollDetailPage() {
 
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [timebankSummary, setTimebankSummary] = useState<any | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -70,21 +69,6 @@ export default function EmployeePayrollDetailPage() {
       }
       const d = await res.json()
       setData(d)
-
-      // Fetch attendance exceptions for timebank summary
-      const periodMonth = d.periodMonth || new Date().toISOString().slice(0, 7)
-      try {
-        const exRes = await fetch(
-          `/api/payroll-runs/exceptions?periodMonth=${periodMonth}&employeeId=${empId}`, { credentials: 'include' }
-        )
-        if (exRes.ok) {
-          const exData = await exRes.json()
-          const empSummary = (exData.summaries || exData.employeeSummaries || []).find(
-            (s: any) => s.employeeId === empId
-          )
-          if (empSummary) setTimebankSummary(empSummary)
-        }
-      } catch {}
     } catch (err) {
       console.error('Failed to fetch:', err)
     } finally {
@@ -144,9 +128,10 @@ export default function EmployeePayrollDetailPage() {
   const monthlyLeaveDays = leaveAndOtDetail.monthlyLeaveDays ?? 0
   const leaveTaken = leaveAndOtDetail.leaveTaken ?? item.leaveDays
   const leaveBalance = leaveAndOtDetail.leaveBalance ?? 0
-  // FIX: Prefer timebank OT (minutes→hours) as payroll engine OT is 0 for monthly-salary employees
-  const otHours = timebankSummary?.otMinutes != null
-    ? timebankSummary.otMinutes / 60
+  // FIX: 統一資料源 — OT/遲到全部從 detail.timebank 取（計糧引擎算好）
+  const tb = detail.timebank || {}
+  const otHours = tb.otMinutes != null
+    ? tb.otMinutes / 60
     : (leaveAndOtDetail.otHours ?? item.otHours)
   const otConvertedLeave = leaveAndOtDetail.otConvertedLeave ?? 0
   const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
@@ -345,7 +330,7 @@ export default function EmployeePayrollDetailPage() {
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">本月 OT 時數</div>
                 <div className="text-lg font-bold mt-1">
-                  {((timebankSummary?.otMinutes ?? 0) / 60).toFixed(2)}h
+                  {((tb.otMinutes ?? 0) / 60).toFixed(2)}h
                 </div>
               </div>
               <div className="rounded-lg border p-3">
@@ -363,35 +348,35 @@ export default function EmployeePayrollDetailPage() {
         )}
 
         {/* 考勤與時間銀行 */}
-        {timebankSummary && (
+        {tb.otMinutes != null && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🕐 考勤與時間銀行</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
-              <div className="rounded-lg border p-3" style={timebankSummary.lateCount > 0 ? { borderLeft: '3px solid #f59e0b' } : {}}>
+              <div className="rounded-lg border p-3" style={tb.lateCount > 0 ? { borderLeft: '3px solid #f59e0b' } : {}}>
                 <div className="text-xs text-muted-foreground">本月遲到</div>
-                <div className="text-lg font-bold mt-1" style={timebankSummary.lateCount > 0 ? { color: '#d97706' } : {}}>
-                  {timebankSummary.lateCount} 次
+                <div className="text-lg font-bold mt-1" style={tb.lateCount > 0 ? { color: '#d97706' } : {}}>
+                  {tb.lateCount} 次
                 </div>
-                {timebankSummary.lateMinutes > 0 && (
-                  <div className="text-xs" style={{ color: '#d97706' }}>{timebankSummary.lateMinutes} 分鐘</div>
+                {tb.lateMinutes > 0 && (
+                  <div className="text-xs" style={{ color: '#d97706' }}>{tb.lateMinutes} 分鐘</div>
                 )}
               </div>
               <div className="rounded-lg border p-3" style={{ borderLeft: '3px solid #16a34a' }}>
                 <div className="text-xs text-muted-foreground">OT 時間</div>
                 <div className="text-lg font-bold mt-1" style={{ color: '#16a34a' }}>
-                  {(timebankSummary.otMinutes / 60).toFixed(1)}h
+                  {((tb.otMinutes ?? 0) / 60).toFixed(1)}h
                 </div>
               </div>
-              <div className="rounded-lg border p-3" style={timebankSummary.owedMinutes > 0 ? { borderLeft: '3px solid #dc2626' } : {}}>
+              <div className="rounded-lg border p-3" style={tb.owedMinutes > 0 ? { borderLeft: '3px solid #dc2626' } : {}}>
                 <div className="text-xs text-muted-foreground">拖欠時間</div>
-                <div className="text-lg font-bold mt-1" style={timebankSummary.owedMinutes > 0 ? { color: '#dc2626' } : {}}>
-                  {(timebankSummary.owedMinutes / 60).toFixed(1)}h
+                <div className="text-lg font-bold mt-1" style={tb.owedMinutes > 0 ? { color: '#dc2626' } : {}}>
+                  {((tb.owedMinutes ?? 0) / 60).toFixed(1)}h
                 </div>
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">可換假期</div>
                 <div className="text-lg font-bold mt-1">
-                  {timebankSummary.convertibleLeaveDays?.toFixed(1) || '0.0'} 天
+                  {tb.convertibleLeaveDays?.toFixed(1) || '0.0'} 天
                 </div>
               </div>
             </div>
@@ -408,12 +393,12 @@ export default function EmployeePayrollDetailPage() {
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">加班時數</div>
-              <div className="text-lg font-bold mt-1">{(timebankSummary?.otMinutes != null ? timebankSummary.otMinutes / 60 : item.otHours).toFixed(2)}h</div>
+              <div className="text-lg font-bold mt-1">{((tb.otMinutes ?? 0) / 60).toFixed(2)}h</div>
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">遲到時數</div>
-              <div className="text-lg font-bold mt-1" style={{ color: (timebankSummary?.lateMinutes ?? 0) > 0 ? '#f59e0b' : 'inherit' }}>
-                {((timebankSummary?.lateMinutes ?? 0) / 60).toFixed(1)} 小時
+              <div className="text-lg font-bold mt-1" style={{ color: (tb.lateMinutes ?? 0) > 0 ? '#f59e0b' : 'inherit' }}>
+                {((tb.lateMinutes ?? 0) / 60).toFixed(1)} 小時
               </div>
             </div>
             <div className="rounded-lg border p-3">

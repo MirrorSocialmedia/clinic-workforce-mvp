@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
   const employeeId = searchParams.get('employeeId')
   const status = searchParams.get('status')
   const leaveTypeId = searchParams.get('leaveTypeId')
+  const clinicId = searchParams.get('clinicId')
 
   const where: any = {}
 
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
   if (employeeId && scope !== 'self') where.employeeId = employeeId
   if (status) where.status = status
   if (leaveTypeId) where.leaveTypeId = leaveTypeId
+  if (clinicId) where.clinicId = clinicId
 
   const requests = await prisma.leaveRequest.findMany({
     where,
@@ -72,7 +74,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { leaveTypeId, startDate, endDate, days, reason, isPlanned, employeeId: requestBodyEmployeeId } = body
+      const { leaveTypeId, startDate, endDate, days, reason, isPlanned, employeeId: requestBodyEmployeeId, clinicId } = body
 
       if (!leaveTypeId || !startDate || !endDate || days === undefined || days <= 0) {
         return NextResponse.json(
@@ -158,6 +160,7 @@ export async function POST(req: NextRequest) {
             status: isApprover ? 'APPROVED' : 'PENDING',
             approverId: isApprover ? session.userId : null,
             approvedAt: isApprover ? new Date() : null,
+            clinicId: clinicId || null,
           },
           include: {
             leaveType: { select: { id: true, name: true, isPaid: true, color: true } },
