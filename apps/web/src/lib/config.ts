@@ -60,6 +60,7 @@ export const CONFIG = {
     'DELETE /api/employees/:id': ['OWNER'],
     'GET /api/employees/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/employees/:id/pay-rules': ['OWNER'],
+    'GET /api/employees/:id/pay-rules': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
@@ -156,9 +157,16 @@ export const CONFIG = {
     // Timebank entry routes
     'POST /api/timebank/makeup': ['OWNER'],
     'POST /api/timebank/convert': ['OWNER'],
+    'GET /api/time-bank/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // My timebank
     'GET /api/my/timebank': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Leave balance refresh
+    'POST /api/leave-balance/refresh': ['OWNER', 'MANAGER'],
+
+    // Leave settlement
+    'POST /api/leave-settlement': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],

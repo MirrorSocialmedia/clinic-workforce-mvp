@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
-import { Pencil, Plus, Smartphone, Wrench, Search } from 'lucide-react'
+import { Pencil, Plus, Smartphone, Wrench, Search, Clock } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type TabKey = 'records' | 'exceptions' | 'hash'
@@ -32,10 +32,12 @@ interface ExceptionRecord {
   employeeName: string
   clinicName: string
   date: string
-  type: 'LATE' | 'ABSENT' | 'CORRECTION'
+  type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION'
   detail: string
   punchTime?: string
   correctionTime?: string
+  lateMinutes?: number
+  earlyMinutes?: number
 }
 
 export default function AttendancePage() {
@@ -169,15 +171,41 @@ export default function AttendancePage() {
     finally { setExLoading(false) }
   }, [exClinicId, exEmployeeId, periodMonth])
 
+  const handleMakeup = async (record: ExceptionRecord) => {
+    const minutes = record.lateMinutes || record.earlyMinutes || 0
+    if (!minutes || minutes <= 0) { alert('無法確定補鐘分鐘數'); return }
+    if (!confirm(`確定為 ${record.employeeName} 補鐘 ${minutes} 分鐘？將扣其 OT 時間。`)) return
+    try {
+      const res = await fetch('/api/timebank/makeup', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeId: record.employeeId,
+          date: record.date,
+          minutes,
+          reason: `${record.type === 'LATE' ? '遲到' : '早退'}補鐘`,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { alert(data.error || '補鐘失敗'); return }
+      alert('✅ 補鐘成功')
+      fetchExceptions()
+    } catch {
+      alert('網絡錯誤')
+    }
+  }
+
   const typeLabel = (type: string) => {
-    switch (type) { case 'LATE': return '遲到'; case 'ABSENT': return '缺勤'; case 'CORRECTION': return '補登'; default: return type }
+    switch (type) { case 'LATE': return '遲到'; case 'EARLY_LEAVE': return '早退'; case 'ABSENT': return '缺勤'; case 'CORRECTION': return '補登'; default: return type }
   }
   const typeColor = (type: string) => {
-    switch (type) { case 'LATE': return '#ffc107'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; default: return '#888' }
+    switch (type) { case 'LATE': return '#ffc107'; case 'EARLY_LEAVE': return '#fd7e14'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; default: return '#888' }
   }
   const summary = {
     total: exceptions.length, late: exceptions.filter(e => e.type === 'LATE').length,
     absent: exceptions.filter(e => e.type === 'ABSENT').length, correction: exceptions.filter(e => e.type === 'CORRECTION').length,
+    earlyLeave: exceptions.filter(e => e.type === 'EARLY_LEAVE').length,
   }
 
   // Hash
@@ -434,10 +462,11 @@ export default function AttendancePage() {
           </div>
 
           {/* Summary */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
             {[
               { label: '異常總數', value: summary.total, color: '#495057' },
               { label: '遲到', value: summary.late, color: '#ffc107' },
+              { label: '早退', value: summary.earlyLeave, color: '#fd7e14' },
               { label: '缺勤', value: summary.absent, color: '#dc3545' },
               { label: '補登', value: summary.correction, color: '#0dcaf0' },
             ].map(card => (
@@ -463,6 +492,7 @@ export default function AttendancePage() {
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground">日期</th>
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground">類型</th>
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground">詳情</th>
+                    <th className="text-left p-3 text-sm font-medium text-muted-foreground">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -473,11 +503,23 @@ export default function AttendancePage() {
                       <td className="p-3">{ex.date}</td>
                       <td className="p-3">
                         <span className="rounded px-2 py-0.5 text-xs font-semibold"
-                          style={{ background: typeColor(ex.type), color: ex.type === 'LATE' ? '#333' : '#fff' }}>
+                          style={{ background: typeColor(ex.type), color: (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') ? '#333' : '#fff' }}>
                           {typeLabel(ex.type)}
                         </span>
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">{ex.detail}</td>
+                      <td className="p-3">
+                        {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && user.role === 'OWNER' && (
+                          <button
+                            onClick={() => handleMakeup(ex)}
+                            className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
+                            style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
+                            title="補鐘：用OT補這次遲到/早退，免扣勤工"
+                          >
+                            <Clock size={12} /> 補鐘
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

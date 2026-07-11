@@ -84,28 +84,38 @@ export async function GET(req: NextRequest) {
   const exceptions: Array<{
     employeeId: string; employeeName: string; clinicName: string;
     date: string; type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION';
-    detail: string; punchTime?: string; correctionTime?: string
+    detail: string; punchTime?: string; correctionTime?: string;
+    lateMinutes?: number; earlyMinutes?: number;
   }> = []
 
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
   const clockOuts = punches.filter(p => p.punchType === 'CLOCK_OUT')
 
-  // Detect LATE from clock-in punches
+  // Detect LATE from clock-in punches vs shift start
   for (const p of clockIns) {
-    const hkPunchTime = new Date(p.punchTime.getTime() + 8 * 60 * 60 * 1000)
-    const hour = hkPunchTime.getHours()
-    const minute = hkPunchTime.getMinutes()
-    const dow = hkPunchTime.getDay()
-    if (dow >= 1 && dow <= 5 && (hour > 9 || (hour === 9 && minute > 30))) {
-      const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
-      exceptions.push({
-        employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
-        clinicName: clinic?.name || p.clinicId,
-        date: toHKDateStr(p.punchTime),
-        type: 'LATE',
-        detail: `上工打卡 ${hkPunchTime.toLocaleTimeString('zh-HK')} (超過 09:30)`,
-        punchTime: p.punchTime.toISOString(),
-      })
+    const punchDateStr = toHKDateStr(p.punchTime)
+    const matchingShift = shifts.find(s =>
+      s.employeeId === p.employeeId &&
+      toHKDateStr(new Date(s.date)) === punchDateStr &&
+      s.clinicId === p.clinicId
+    )
+    if (matchingShift) {
+      const shiftStart = new Date(matchingShift.startTime)
+      if (p.punchTime.getTime() > shiftStart.getTime()) {
+        const lateMins = Math.ceil((p.punchTime.getTime() - shiftStart.getTime()) / 60000)
+        if (lateMins > 0) {
+          const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
+          exceptions.push({
+            employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
+            clinicName: clinic?.name || p.clinicId,
+            date: punchDateStr,
+            type: 'LATE',
+            lateMinutes: lateMins,
+            detail: `遲到 ${lateMins} 分鐘 (排班 ${shiftStart.toLocaleTimeString('zh-HK')})`,
+            punchTime: p.punchTime.toISOString(),
+          })
+        }
+      }
     }
   }
 
@@ -128,7 +138,8 @@ export async function GET(req: NextRequest) {
             clinicName: clinic?.name || p.clinicId,
             date: punchDateStr,
             type: 'EARLY_LEAVE',
-            detail: `早退 ${earlyMins} 分鐘 (${toHKDateStr(shiftEnd)})`,
+            earlyMinutes: earlyMins,
+            detail: `早退 ${earlyMins} 分鐘 (${shiftEnd.toLocaleTimeString('zh-HK')})`,
             punchTime: p.punchTime.toISOString(),
           })
         }
