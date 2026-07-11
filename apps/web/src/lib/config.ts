@@ -153,6 +153,13 @@ export const CONFIG = {
     // Time-bank routes
     'GET /api/time-bank': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
+    // Timebank entry routes
+    'POST /api/timebank/makeup': ['OWNER'],
+    'POST /api/timebank/convert': ['OWNER'],
+
+    // My timebank
+    'GET /api/my/timebank': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/consultation-revenue': ['OWNER'],

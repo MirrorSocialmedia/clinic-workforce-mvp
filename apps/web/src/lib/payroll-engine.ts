@@ -989,6 +989,8 @@ export function evaluateAttendanceBonus(
 
 /**
  * Calculate monthly time bank for an employee.
+ * Computes OT, late, early-leave from shift vs punch records.
+ * Makeup entries reduce deficit. Balance = carriedFrom + OT - netDeficit - makeup.
  */
 export async function calculateTimeBank(
   employeeId: string,
@@ -998,8 +1000,13 @@ export async function calculateTimeBank(
 ): Promise<{
   otMinutes: number
   lateMinutes: number
+  earlyLeaveMinutes: number
+  makeupMinutes: number
   carriedFrom: number
   balance: number
+  owedMinutes: number
+  availableMinutes: number
+  convertibleLeaveDays: number
   note: string
 }> {
   const year = monthDate.getFullYear()
@@ -1020,16 +1027,11 @@ export async function calculateTimeBank(
   })
   const carriedFrom = lastMonthRecord?.balance ?? 0
 
-  // OT minutes — placeholder, to be connected with OT calculation logic
-  // TODO: integrate with OT calculation
-  const otMinutes = 0
-
-  // Late minutes from punch records vs shift start times
+  // Grab ALL punches (CLOCK_IN + CLOCK_OUT), not just CLOCK_IN
   const punches = await db.punchRecord.findMany({
     where: {
       employeeId,
       punchTime: { gte: monthStart, lte: monthEnd },
-      punchType: 'CLOCK_IN',
     },
     orderBy: { punchTime: 'asc' },
   })
@@ -1043,32 +1045,62 @@ export async function calculateTimeBank(
     orderBy: { date: 'asc' },
   })
 
+  // Compare each shift day against actual punches
+  let otMinutes = 0
   let lateMinutes = 0
+  let earlyLeaveMinutes = 0
+
   for (const shift of shifts) {
     const dayStart = new Date(shift.date)
-    const dayEnd = new Date(dayStart)
-    dayEnd.setHours(23, 59, 59)
+    dayStart.setHours(0, 0, 0, 0)
+    const dayEnd = new Date(shift.date)
+    dayEnd.setHours(23, 59, 59, 999)
 
-    const dayPunches = punches.filter(
-      (p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd
-    )
-    if (dayPunches.length > 0) {
-      const firstPunch = dayPunches[0]
-      // shift.startTime is a DateTime — compare directly
-      let shiftStartTime: Date
-      if (shift.startTime instanceof Date) {
-        shiftStartTime = shift.startTime
-      } else {
-        // Fallback: parse as string
-        shiftStartTime = new Date(shift.startTime)
-      }
-      if (firstPunch.punchTime > shiftStartTime) {
-        lateMinutes += Math.ceil((firstPunch.punchTime.getTime() - shiftStartTime.getTime()) / 60000)
-      }
+    const dayPunches = punches.filter((p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd)
+
+    const clockIn = dayPunches
+      .filter((p: any) => p.punchType === 'CLOCK_IN')
+      .sort((a: any, b: any) => a.punchTime.getTime() - b.punchTime.getTime())[0]
+
+    const clockOut = dayPunches
+      .filter((p: any) => p.punchType === 'CLOCK_OUT')
+      .sort((a: any, b: any) => b.punchTime.getTime() - a.punchTime.getTime())[0]
+
+    const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
+    const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
+
+    // Late
+    if (clockIn && clockIn.punchTime.getTime() > shiftStart.getTime()) {
+      lateMinutes += Math.ceil((clockIn.punchTime.getTime() - shiftStart.getTime()) / 60000)
+    }
+    // Early leave
+    if (clockOut && clockOut.punchTime.getTime() < shiftEnd.getTime()) {
+      earlyLeaveMinutes += Math.ceil((shiftEnd.getTime() - clockOut.punchTime.getTime()) / 60000)
+    }
+    // OT
+    if (clockOut && clockOut.punchTime.getTime() > shiftEnd.getTime()) {
+      otMinutes += Math.floor((clockOut.punchTime.getTime() - shiftEnd.getTime()) / 60000)
     }
   }
 
-  const balance = carriedFrom + otMinutes - lateMinutes
+  const deficitMinutes = lateMinutes + earlyLeaveMinutes
+
+  // Grab makeup entries for this month
+  let makeupMinutes = 0
+  try {
+    const makeupEntries = await db.timeBankEntry?.findMany?.({
+      where: { employeeId, type: 'MAKEUP', date: { gte: monthStart, lte: monthEnd } },
+    })
+    makeupMinutes = makeupEntries?.reduce((s: number, e: any) => s + Math.abs(e.minutes), 0) || 0
+  } catch {
+    // timeBankEntry table may not exist yet
+  }
+
+  const netDeficit = Math.max(0, deficitMinutes - makeupMinutes)
+  const balance = carriedFrom + otMinutes - netDeficit - makeupMinutes
+  const owedMinutes = balance < 0 ? Math.abs(balance) : 0
+  const availableMinutes = balance > 0 ? balance : 0
+  const convertibleLeaveDays = Math.floor(availableMinutes / (9 * 60)) // 9 hours = 1 day
 
   // End-of-month strategy
   let note = ''
@@ -1089,7 +1121,10 @@ export async function calculateTimeBank(
     }
   }
 
-  return { otMinutes, lateMinutes, carriedFrom, balance, note }
+  return {
+    otMinutes, lateMinutes, earlyLeaveMinutes, makeupMinutes,
+    carriedFrom, balance, owedMinutes, availableMinutes, convertibleLeaveDays, note,
+  }
 }
 
 // ------------------------------------------------------------------

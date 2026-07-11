@@ -49,7 +49,7 @@ export default function EmployeeMobileLayout({
       <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t g border h-16 safe-area-bottom">
         <div className="flex items-center justify-around h-full">
           {TABS.map(tab => {
-            const active = pathname === tab.path || pathname.startsWith(tab.path + '/')
+            const active = pathname === tab.path || (pathname && pathname.startsWith(tab.path + '/'))
             return (
               <Link
                 key={tab.path}

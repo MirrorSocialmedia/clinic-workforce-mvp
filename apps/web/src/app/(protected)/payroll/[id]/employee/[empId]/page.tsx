@@ -53,8 +53,8 @@ function CollapsibleSection({ trigger, children }: { trigger: React.ReactNode; c
 export default function EmployeePayrollDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const runId = params.id as string
-  const empId = params.empId as string
+  const runId = (params?.id || '') as string
+  const empId = (params?.empId || '') as string
 
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)

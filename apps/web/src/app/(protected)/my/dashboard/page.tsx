@@ -30,17 +30,19 @@ export default function MyDashboardPage() {
   const [summary, setSummary] = useState<any>(null)
   const [schedule, setSchedule] = useState<any[]>([])
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
+  const [timebank, setTimebank] = useState<any>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState<any[]>([])
 
   const fetchData = useCallback(async () => {
     setError('')
     try {
-      const [summaryRes, scheduleRes, leaveRes, notifRes] = await Promise.all([
+      const [summaryRes, scheduleRes, leaveRes, notifRes, tbRes] = await Promise.all([
         fetch('/api/my/summary', { credentials: 'include' }),
         fetch('/api/my/schedule', { credentials: 'include' }),
         fetch('/api/my/leave', { credentials: 'include' }),
         fetch('/api/notifications', { credentials: 'include' }),
+        fetch('/api/my/timebank', { credentials: 'include' }).then(r => r).catch(() => ({ ok: false } as Response)),
       ])
 
       if (!summaryRes.ok || !scheduleRes.ok || !leaveRes.ok || !notifRes.ok) {
@@ -55,12 +57,14 @@ export default function MyDashboardPage() {
       const scheduleData = await scheduleRes.json()
       const leaveData = await leaveRes.json()
       const notifData = await notifRes.json()
+      const tbData = tbRes.ok ? await tbRes.json() : null
 
       setSummary(summaryData.summary)
       setSchedule(scheduleData.shifts || [])
       setLeaveBalances(leaveData.leaveBalances || [])
       setNotifications(notifData.notifications || [])
       setUnreadCount(notifData.unreadCount || 0)
+      setTimebank(tbData)
     } catch (err: any) {
       setError(err.message || '載入失敗')
     } finally {
@@ -135,6 +139,31 @@ export default function MyDashboardPage() {
         </div>
         <StatCard value={summary?.lateMinutes || 0} title="本月遲到（分鐘）" color="violet" />
       </div>
+
+      {/* Time Bank */}
+      {timebank && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">時間銀行</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="text-center p-3 rounded-lg" style={{ background: '#f0f9ff' }}>
+                <div className="text-2xl font-bold text-foreground">{(timebank.otMinutes / 60).toFixed(1)}</div>
+                <div className="text-xs text-muted-foreground mt-1">OT 時間 (小時)</div>
+              </div>
+              <div className="text-center p-3 rounded-lg" style={{ background: '#fff5f5' }}>
+                <div className="text-2xl font-bold text-foreground">{(timebank.owedMinutes / 60).toFixed(1)}</div>
+                <div className="text-xs text-muted-foreground mt-1">拖欠時間 (小時)</div>
+              </div>
+              <div className="text-center p-3 rounded-lg" style={{ background: '#f0fff4' }}>
+                <div className="text-2xl font-bold text-foreground">{timebank.convertibleLeaveDays || 0}</div>
+                <div className="text-xs text-muted-foreground mt-1">可換假期 (天)</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Leave Balances */}
       {leaveBalances.length > 0 && (

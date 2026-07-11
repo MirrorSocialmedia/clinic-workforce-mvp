@@ -112,6 +112,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))
 
   const isActive = (itemPath: string) => {
+    if (!pathname) return false
     if (pathname === itemPath) return true
     const parentPattern = itemPath + '/'
     if (!pathname.startsWith(parentPattern)) return false

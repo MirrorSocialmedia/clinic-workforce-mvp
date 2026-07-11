@@ -55,7 +55,7 @@ interface Summary {
 export default function PayrollDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const runId = params.id as string
+  const runId = (params?.id || '') as string
 
   const [run, setRun] = useState<PayrollRun | null>(null)
   const [summary, setSummary] = useState<Summary | null>(null)

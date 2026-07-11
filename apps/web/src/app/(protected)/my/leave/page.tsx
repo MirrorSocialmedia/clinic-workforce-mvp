@@ -56,19 +56,27 @@ export default function MyLeavePage() {
   const [showForm, setShowForm] = useState(false)
   const [filter, setFilter] = useState<LeaveStatus | ''>('')
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
+  const [userRole, setUserRole] = useState<string>('')
 
   const fetchData = useCallback(async () => {
     setError('')
     try {
-      const res = await fetch('/api/my/leave', { credentials: 'include' })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || `伺服器錯誤 (${res.status})`)
+      const [leaveRes, meRes] = await Promise.all([
+        fetch('/api/my/leave', { credentials: 'include' }),
+        fetch('/api/me', { credentials: 'include' }).then(r => r).catch(() => ({ ok: false } as Response)),
+      ])
+      if (!leaveRes.ok) {
+        const body = await leaveRes.json().catch(() => ({}))
+        throw new Error(body.error || `伺服器錯誤 (${leaveRes.status})`)
       }
-      const data = await res.json()
+      const data = await leaveRes.json()
       setRequests(data.leaveRequests || [])
       setBalances(data.leaveBalances || [])
       setLeaveTypes(data.leaveTypes || [])
+      if (meRes.ok) {
+        const meData = await meRes.json()
+        setUserRole(meData.user?.role || '')
+      }
     } catch (err: any) {
       setError(err.message || '載入失敗')
     } finally {
@@ -109,6 +117,8 @@ export default function MyLeavePage() {
     }
   }
 
+  const isEmployee = userRole === 'EMPLOYEE'
+
   const filteredRequests = filter ? requests.filter(r => r.status === filter) : requests
 
   if (loading) return <div className="flex justify-center items-center py-12 text-gray-400">載入中...</div>
@@ -118,12 +128,14 @@ export default function MyLeavePage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold text-gray-900 dark:text-white">🏖️ 我的假期</h1>
-        <button
-          className="btn btn-primary"
-          onClick={() => setShowForm(!showForm)}
-        >
-          {showForm ? '取消' : '+ 申請'}
-        </button>
+        {!isEmployee && (
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowForm(!showForm)}
+          >
+            {showForm ? '取消' : '+ 申請'}
+          </button>
+        )}
       </div>
 
       {/* Leave Balance */}
@@ -157,7 +169,7 @@ export default function MyLeavePage() {
       )}
 
       {/* Apply Form */}
-      {showForm && (
+      {showForm && !isEmployee && (
         <div className="card mb-3">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">申請假期</h2>
           <form onSubmit={handleApply}>
