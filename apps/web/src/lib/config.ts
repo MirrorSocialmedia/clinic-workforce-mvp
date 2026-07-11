@@ -62,7 +62,7 @@ export const CONFIG = {
     'GET /api/employees/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/employees/:id/pay-rules': ['OWNER'],
     'GET /api/employees/:id/pay-rules': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'PUT /api/employees/:id/pay-rules/:ruleId': ['OWNER'],
+    'PUT /api/employees/:id/pay-rules/:id': ['OWNER'],
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
