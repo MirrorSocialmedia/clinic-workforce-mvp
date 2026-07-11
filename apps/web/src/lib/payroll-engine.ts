@@ -2003,6 +2003,27 @@ export async function calculatePayrollWithRules(
   const tb = await calculateTimeBank(employeeId, monthDate, timeBankConfig, prisma)
   result.otHours = tb.otMinutes / 60 // 從分鐘換算，不自己算
 
+  // 🔑 重新計算 otPay — 之前用門檻制 otHours 算錯，現在用時間銀行 otMinutes 換算的小時數
+  {
+    const hourlyEquivalent = (result.detail as any).hourlyEquivalent ?? 0
+    const otMultiplier = (result.detail as any).otMultiplier ?? 1.5
+    const oldOtPay = result.otPay
+    result.otPay = Math.round(result.otHours * hourlyEquivalent * otMultiplier * 100) / 100
+    const grossPayDelta = result.otPay - oldOtPay
+    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + (result.splitPay || 0) + result.attendanceBonus)
+    const newGrossPay = oldGrossPay + grossPayDelta
+    const mpfConfig = mods.mpf || config.mpf || { enabled: false }
+    const newMpf = calcMPF(newGrossPay, mpfConfig)
+    const newNetPay = Math.max(0, newGrossPay - newMpf)
+    result.totalPayable = newNetPay
+    result.detail = {
+      ...result.detail,
+      grossPay: Math.round(newGrossPay * 100) / 100,
+      mpf: newMpf,
+      netPay: Math.round(newNetPay * 100) / 100,
+    }
+  }
+
   // 7. Task 4: OT → Leave conversion
   let otConvertedLeave = 0
   let otRemainderMinutes = 0
