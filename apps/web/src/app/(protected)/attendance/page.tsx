@@ -164,7 +164,7 @@ export default function AttendancePage() {
       const params = new URLSearchParams({ periodMonth })
       if (exClinicId) params.set('clinicId', exClinicId)
       if (exEmployeeId) params.set('employeeId', exEmployeeId)
-      const res = await fetch(`/api/payroll-runs/_exceptions?${params}`, { credentials: 'include' })
+      const res = await fetch(`/api/payroll-runs/exceptions?${params}`, { credentials: 'include' })
       if (res.ok) { const data = await res.json(); setExceptions(data.exceptions || []) }
       else { setExceptions([]) }
     } catch { setExceptions([]) }

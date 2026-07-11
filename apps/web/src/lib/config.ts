@@ -148,7 +148,7 @@ export const CONFIG = {
     'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/payroll-runs/preview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/:id/employee/:empId': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'GET /api/payroll-runs/_exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Account management routes
     'GET /api/accounts': ['OWNER', 'MANAGER', 'ACCOUNTANT'],

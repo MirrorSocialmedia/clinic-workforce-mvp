@@ -115,7 +115,8 @@ export default function LeavePage() {
     try {
       const meRes = await fetch('/api/me', { credentials: 'include' })
       const meData = await meRes.json()
-      setUserRole(meData.user.role as Role)
+      const role = meData.user.role as Role // ← local var, fresh value
+      setUserRole(role)
       setUserId(meData.user.id)
 
       const params = new URLSearchParams()
@@ -133,7 +134,8 @@ export default function LeavePage() {
       setLeaveTypes(typesData.leaveTypes || [])
 
       // Fetch employees for init/clear dropdowns
-      if (isManager) {
+      // ✅ Use local role instead of stale-closure isManager
+      if (role === 'OWNER' || role === 'MANAGER') {
         const empRes = await fetch('/api/employees', { credentials: 'include' })
         if (empRes.ok) {
           const empData = await empRes.json()

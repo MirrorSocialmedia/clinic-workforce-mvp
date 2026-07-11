@@ -86,7 +86,7 @@ export default function ExceptionsReportPage() {
       if (clinicId) params.set('clinicId', clinicId)
       if (employeeId) params.set('employeeId', employeeId)
 
-      const res = await fetch(`/api/payroll-runs/_exceptions?${params}`)
+      const res = await fetch(`/api/payroll-runs/exceptions?${params}`)
       if (res.ok) {
         const data = await res.json()
         setExceptions(data.exceptions || [])

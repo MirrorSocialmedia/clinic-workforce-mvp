@@ -5,7 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { toHKDateStr } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 
-// GET /api/payroll-runs/_exceptions — Attendance exceptions report + timebank summaries
+// GET /api/payroll-runs/exceptions — Attendance exceptions report + timebank summaries
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
