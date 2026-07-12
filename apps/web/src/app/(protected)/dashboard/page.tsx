@@ -235,10 +235,10 @@ export default function DashboardPage() {
                       {emp.lateMinutes || 0} 分
                     </TableCell>
                     <TableCell style={{ color: '#16a34a' }}>
-                      {((emp.otMinutes || 0) / 60).toFixed(1)}h
+                      {emp.otMinutes || 0} 分鐘
                     </TableCell>
                     <TableCell style={emp.owedMinutes > 0 ? { color: '#dc2626' } : {}}>
-                      {((emp.owedMinutes || 0) / 60).toFixed(1)}h
+                      {emp.owedMinutes || 0} 分鐘
                     </TableCell>
                     <TableCell>
                       {emp.convertibleLeaveDays?.toFixed(1) || '0.0'} 天

@@ -2074,107 +2074,41 @@ export async function calculatePayrollWithRules(
     }
   }
 
-  // 7. Task 4: OT → Leave conversion
-  let otConvertedLeave = 0
-  let otRemainderMinutes = 0
-  const hoursPerLeaveDay = mods.overtime?.hours_per_leave_day ?? 9
+  // 7. Task 4: OT Balance only (no auto-convert; boss handles via /api/timebank/convert)
+  {
+    const otMinutesFromResult = tb.otMinutes
+    const timeBank = await getOrCreateTimeBank(employeeId, monthDate, prisma)
 
-  if (mods.overtime && mods.overtime.mode === 'time_off' && tb.otMinutes > 0) {
-    try {
-      const otMinutesFromResult = tb.otMinutes // 分鐘，單一真相
-      const timeBank = await getOrCreateTimeBank(employeeId, monthDate, prisma)
-      // Update OT minutes in TimeBank (set current month OT)
-      await updateTimeBank(employeeId, monthDate, {
-        otMinutes: otMinutesFromResult,
-      }, prisma)
+    // 未補鐘的淨遲到 = 遲到 - 補鐘
+    const netLateMinutes = Math.max(0, timeBank.lateMinutes - timeBank.makeupMinutes)
 
-      // 淨遲到 = 遲到 - 補鐘（補鐘抵掉的不算）
-      const netLateMinutes = Math.max(0, timeBank.lateMinutes - timeBank.makeupMinutes)
-      // 🔴 Fix: carriedFrom 從上月 balance 讀（不是本月 timeBank.carriedFrom）
-      const lastMonthForOT = month === 0 ? new Date(year - 1, 11, 1) : new Date(year, month - 1, 1)
-      const lastMonthOTRecord = await prisma.timeBank.findFirst({
-        where: {
-          employeeId,
-          periodMonth: {
-            gte: lastMonthForOT,
-            lte: new Date(lastMonthForOT.getFullYear(), lastMonthForOT.getMonth() + 1, 0, 23, 59, 59),
-          },
+    // carriedFrom 從上月 balance 讀
+    const lastMonthForOT = month === 0 ? new Date(year - 1, 11, 1) : new Date(year, month - 1, 1)
+    const lastMonthOTRecord = await prisma.timeBank.findFirst({
+      where: {
+        employeeId,
+        periodMonth: {
+          gte: lastMonthForOT,
+          lte: new Date(lastMonthForOT.getFullYear(), lastMonthForOT.getMonth() + 1, 0, 23, 59, 59),
         },
-        select: { balance: true },
-      })
-      const carriedFrom = (lastMonthOTRecord?.balance as number) ?? 0
-      // net = this month's OT - netLate + carry from prev month
-      const netOtMinutes = otMinutesFromResult - netLateMinutes + carriedFrom
-      const minutesPerLeaveDay = hoursPerLeaveDay * 60
+      },
+      select: { balance: true },
+    })
+    const carriedFrom = (lastMonthOTRecord?.balance as number) ?? 0
 
-      if (netOtMinutes > 0) {
-        // 有多餘 OT → 換假（用 increment 累積）
-        otConvertedLeave = Math.floor(netOtMinutes / minutesPerLeaveDay)
-        otRemainderMinutes = netOtMinutes % minutesPerLeaveDay
+    // 可用OT = OT − 補鐘消耗 − 淨遲到 + 上月結轉
+    const netOtMinutes = otMinutesFromResult
+      - timeBank.makeupMinutes  // 補鐘消耗OT
+      - netLateMinutes           // 未補鐘遲到扣OT
+      + carriedFrom              // 上月結轉
 
-        if (otConvertedLeave > 0) {
-          const otLeaveType = await getLeaveTypeBySystemKey(prisma, 'OT_LEAVE')
-          if (otLeaveType) {
-            const grantKey = `otconvert_grant_${year}_${monthDate.getMonth() + 1}`
-
-            // 查上次這個月發了多少天
-            const prevGrant = await prisma.timeBankEntry.findFirst({
-              where: {
-                employeeId,
-                type: 'OT_CONVERT_GRANT',
-                note: { contains: grantKey },
-              },
-            })
-            const prevDays = prevGrant ? Math.round(prevGrant.minutes / (9 * 60)) : 0
-            const delta = otConvertedLeave - prevDays // 差額（首次=全額，重生成=修正）
-
-            if (delta !== 0) {
-              await addLeaveBalance(employeeId, otLeaveType.id, year, delta, prisma, 'increment')
-            }
-
-            // 更新/建立發放記錄
-            if (prevGrant) {
-              await prisma.timeBankEntry.update({
-                where: { id: prevGrant.id },
-                data: {
-                  minutes: otConvertedLeave * 9 * 60,
-                  note: `${grantKey}: 本月OT換假 ${otConvertedLeave} 天`,
-                },
-              })
-            } else {
-              await prisma.timeBankEntry.create({
-                data: {
-                  employeeId,
-                  type: 'OT_CONVERT_GRANT',
-                  date: monthDate,
-                  minutes: otConvertedLeave * 9 * 60,
-                  note: `${grantKey}: 本月OT換假 ${otConvertedLeave} 天`,
-                },
-              })
-            }
-          }
-        }
-
-        // 🔴 Fix: 餘數存 balance（本月結餘），carriedFrom 只記錄本月從上月帶了多少
-        await updateTimeBank(employeeId, monthDate, {
-          balance: otRemainderMinutes,
-          carriedFrom,
-          monthEndNote: `OT換假: ${otConvertedLeave}天, 餘數 ${otRemainderMinutes}分鐘`,
-        }, prisma)
-      } else {
-        // net ≤ 0：遲到≥OT → 拖欠時數，完全不碰 OT 補假
-        otConvertedLeave = 0
-        otRemainderMinutes = 0
-        // 負數結轉下月（欠著），未來 OT 先還
-        await updateTimeBank(employeeId, monthDate, {
-          balance: netOtMinutes, // 🔴 Fix: 存 balance 而非 carriedFrom
-          carriedFrom,
-          monthEndNote: `本月拖欠 ${Math.abs(netOtMinutes)} 分鐘（遲到>OT）`,
-        }, prisma)
-      }
-    } catch (err) {
-      console.warn(`OT→Leave conversion failed for ${employeeId}:`, err)
-    }
+    // 只存餘額，不換假
+    await updateTimeBank(employeeId, monthDate, {
+      otMinutes: otMinutesFromResult,
+      balance: Math.max(0, netOtMinutes),
+      carriedFrom,
+      monthEndNote: `本月OT結餘 ${Math.max(0, netOtMinutes)} 分鐘`,
+    }, prisma)
   }
 
   // 8. Task 6 + TimeBank: Build comprehensive detail JSON with timebank data
@@ -2214,8 +2148,7 @@ export async function calculatePayrollWithRules(
       leaveTaken,
       leaveBalance: leaveBalanceRemaining,
       otHours: Math.round(result.otHours * 100) / 100,
-      otConvertedLeave,
-      otRemainderMinutes,
+      otBalanceMinutes: tb.balance ?? 0,
     },
     // 🔴 Fix #1: 統一遲到/OT資料源 — timebank 從計糧引擎計算，薪資明細全部從此取
     timebank: {
