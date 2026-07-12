@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
+import { toHKDateStr } from '@/lib/hk-date'
 
 interface PayrollItemData {
   id: string
@@ -105,7 +106,7 @@ export default function EmployeePayrollDetailPage() {
   const corrections = data.corrections || []
 
   const employeeName = item.employee.user.name
-  const periodMonth = data.periodMonth || '-'
+  const periodMonth = data.periodMonth ? toHKDateStr(new Date(data.periodMonth)).slice(0, 7) : '-'
   const payType = item.employee.payRules[0]?.payType || '-'
 
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

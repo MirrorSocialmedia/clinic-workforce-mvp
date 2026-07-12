@@ -999,8 +999,62 @@ export function evaluateAttendanceBonus(
 }
 
 // ------------------------------------------------------------------
-// 2b. Time Bank Calculation
+// 2b. Time Bank Calculation — with recursive chain repair
 // ------------------------------------------------------------------
+
+/**
+ * Get carried-from balance, recursively backfilling missing months.
+ * If last month has no TimeBank record but has punch data, recalculates it on the fly.
+ * @param depth - recursion depth (max 24 months)
+ */
+async function getCarriedFrom(
+  employeeId: string,
+  monthDate: Date,
+  db: any,
+  depth = 0
+): Promise<number> {
+  if (depth > 24) return 0
+
+  const lastMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1)
+  const { start: lStart, end: lEnd } = getMonthRange(lastMonth)
+
+  // ① Check existing TimeBank record
+  const rec = await db.timeBank.findFirst({
+    where: { employeeId, periodMonth: { gte: lStart, lte: lEnd } },
+  })
+  if (rec) return rec.balance ?? 0
+
+  // ② No record: check if last month had any punch activity
+  const hasPunch = await db.punchRecord.findFirst({
+    where: {
+      employeeId,
+      punchTime: { gte: lStart, lte: lEnd },
+      void: { is: null },
+    },
+  })
+  if (!hasPunch) return 0 // No activity → chain starts here
+
+  // ③ Has punches but no TimeBank → recursively recalculate last month
+  const tb = await calculateTimeBank(employeeId, lastMonth, {}, db)
+
+  // ④ Persist the backfilled record so future lookups are fast
+  await db.timeBank.upsert({
+    where: {
+      employeeId_periodMonth: { employeeId, periodMonth: lStart },
+    },
+    update: { balance: tb.balance, carriedFrom: tb.carriedFrom },
+    create: {
+      employeeId,
+      periodMonth: lStart,
+      balance: tb.balance,
+      carriedFrom: tb.carriedFrom,
+      otMinutes: tb.otMinutes,
+      lateMinutes: tb.lateMinutes,
+      makeupMinutes: tb.makeupMinutes,
+    },
+  })
+  return tb.balance
+}
 
 /**
  * Calculate monthly time bank for an employee.
@@ -1031,18 +1085,8 @@ export async function calculateTimeBank(
   const monthStart = new Date(year, month, 1)
   const monthEnd = new Date(year, month + 1, 0, 23, 59, 59)
 
-  // Previous month carry
-  const lastMonth = month === 0 ? new Date(year - 1, 11, 1) : new Date(year, month - 1, 1)
-  const lastMonthRecord = await db.timeBank.findFirst({
-    where: {
-      employeeId,
-      periodMonth: {
-        gte: lastMonth,
-        lte: new Date(lastMonth.getFullYear(), lastMonth.getMonth() + 1, 0, 23, 59, 59),
-      },
-    },
-  })
-  const carriedFrom = lastMonthRecord?.balance ?? 0
+  // Previous month carry — recursive backfill
+  const carriedFrom = await getCarriedFrom(employeeId, monthDate, db)
 
   // Grab ALL punches (CLOCK_IN + CLOCK_OUT), not just CLOCK_IN
   // Fix #2c: Exclude voided punches
@@ -2214,19 +2258,8 @@ export async function calculatePayrollWithRules(
     // 未補鐘的淨遲到 = 遲到 - 補鐘
     const netLateMinutes = Math.max(0, timeBank.lateMinutes - timeBank.makeupMinutes)
 
-    // carriedFrom 從上月 balance 讀
-    const lastMonthForOT = month === 0 ? new Date(year - 1, 11, 1) : new Date(year, month - 1, 1)
-    const lastMonthOTRecord = await prisma.timeBank.findFirst({
-      where: {
-        employeeId,
-        periodMonth: {
-          gte: lastMonthForOT,
-          lte: new Date(lastMonthForOT.getFullYear(), lastMonthForOT.getMonth() + 1, 0, 23, 59, 59),
-        },
-      },
-      select: { balance: true },
-    })
-    const carriedFrom = (lastMonthOTRecord?.balance as number) ?? 0
+    // carriedFrom — recursive backfill
+    const carriedFrom = await getCarriedFrom(employeeId, monthDate, prisma)
 
     // 可用OT = OT − 補鐘消耗 − 淨遲到 + 上月結轉
     const netOtMinutes = otMinutesFromResult

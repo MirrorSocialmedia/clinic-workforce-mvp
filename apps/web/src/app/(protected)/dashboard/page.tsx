@@ -194,23 +194,29 @@ export default function DashboardPage() {
                   <TableRow key={emp.employeeId}>
                     <TableCell className="font-medium">{emp.employeeName}</TableCell>
                     <TableCell style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
-                      {emp.lateCount ?? 0} 次
+                      {emp.payType === 'HOURLY' ? '—' : `${emp.lateCount ?? 0} 次`}
                     </TableCell>
                     <TableCell style={{ color: (emp.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
-                      {emp.lateMinutes ?? 0} 分鐘
-                      {emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
+                      {emp.payType === 'HOURLY' ? '—' : (
+                        <span>
+                          {emp.lateMinutes ?? 0} 分鐘
+                          {emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
+                        </span>
+                      )}
                     </TableCell>
-                    <TableCell>{emp.otCount ?? 0} 次</TableCell>
-                    <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>
+                    <TableCell>{emp.payType === 'HOURLY' ? '—' : `${emp.otCount ?? 0} 次`}</TableCell>
+                    <TableCell className="text-emerald-600">{emp.payType === 'HOURLY' ? '—' : `${emp.otMinutes ?? 0} 分鐘`}</TableCell>
                     <TableCell>
-                      <span style={{
-                        fontWeight: 700,
-                        color: (emp.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
-                      }}>
-                        {(emp.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes ?? 0)} 分
-                      </span>
+                      {emp.payType === 'HOURLY' ? '—' : (
+                        <span style={{
+                          fontWeight: 700,
+                          color: (emp.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
+                        }}>
+                          {(emp.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes ?? 0)} 分
+                        </span>
+                      )}
                     </TableCell>
-                    <TableCell>{(emp.convertibleLeaveDays ?? 0).toFixed(1)} 天</TableCell>
+                    <TableCell>{emp.payType === 'HOURLY' ? '—' : `${(emp.convertibleLeaveDays ?? 0).toFixed(1)} 天`}</TableCell>
                     <TableCell>
                       {(() => {
                         const bal = balancesByEmp.get(emp.employeeId) || {}

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { toHKDateStr } from '@/lib/hk-date'
 
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
 
@@ -15,6 +16,10 @@ interface PayrollRun {
   notes: string | null
   clinic: { id: string; name: string } | null
   _count: { items: number }
+}
+
+function fmtPeriodMonth(pm: string | Date): string {
+  return toHKDateStr(new Date(pm)).slice(0, 7)
 }
 
 export default function PayrollListPage() {
@@ -162,7 +167,7 @@ export default function PayrollListPage() {
               {runs.map(run => (
                 <tr key={run.id}>
                   <td>
-                    {new Date(run.periodMonth).toISOString().slice(0, 7)}
+                    {fmtPeriodMonth(run.periodMonth)}
                   </td>
                   <td>
                     {run.clinic?.name || '全部診所'}

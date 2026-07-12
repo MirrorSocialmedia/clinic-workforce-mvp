@@ -34,6 +34,14 @@ export async function GET(req: NextRequest) {
 
   const monthDate = monthStart
 
+  // Fix #2a: Get all HOURLY employee IDs to skip them
+  const hourlyEmpIds = new Set(
+    (await prisma.payRule.findMany({
+      where: { isActive: true, payType: 'HOURLY' },
+      select: { employeeId: true },
+    })).map(r => r.employeeId)
+  )
+
   const punchWhere: any = { punchTime: { gte: monthStart, lte: monthEnd } }
   if (clinicId) punchWhere.clinicId = clinicId
   if (employeeId) punchWhere.employeeId = employeeId
@@ -108,6 +116,7 @@ export async function GET(req: NextRequest) {
 
   // Detect LATE from clock-in punches vs shift start
   for (const p of clockIns) {
+    if (hourlyEmpIds.has(p.employeeId)) continue // Fix #2a: skip HOURLY
     const punchDateStr = toHKDateStr(p.punchTime)
     const matchingShift = shifts.find(s =>
       s.employeeId === p.employeeId &&
@@ -136,6 +145,7 @@ export async function GET(req: NextRequest) {
 
   // Detect EARLY_LEAVE from clock-out punches vs shift end
   for (const p of clockOuts) {
+    if (hourlyEmpIds.has(p.employeeId)) continue // Fix #2a: skip HOURLY
     const punchDateStr = toHKDateStr(p.punchTime)
     const matchingShift = shifts.find(s =>
       s.employeeId === p.employeeId &&
@@ -164,6 +174,7 @@ export async function GET(req: NextRequest) {
 
   // OT 偵測：下班晚於排班結束
   for (const p of clockOuts) {
+    if (hourlyEmpIds.has(p.employeeId)) continue // Fix #2a: skip HOURLY
     const punchDateStr = toHKDateStr(p.punchTime)
     const matchingShift = shifts.find(
       s =>
@@ -193,6 +204,7 @@ export async function GET(req: NextRequest) {
 
   // Detect ABSENT from shifts with no punches
   for (const shift of shifts) {
+    if (hourlyEmpIds.has(shift.employeeId)) continue // Fix #2a: skip HOURLY
     const shiftDayStr = toHKDateStr(new Date(shift.date))
     const hasPunch = punches.some(p =>
       p.employeeId === shift.employeeId &&
@@ -246,6 +258,16 @@ export async function GET(req: NextRequest) {
   if (employeeId && !uniqueEmployeeIds.includes(employeeId)) {
     uniqueEmployeeIds.push(employeeId)
   }
+  // Fix #2a: excluded HOURLY from exception detection; keep them in summaries with payType
+  const empPayRules = await prisma.payRule.findMany({
+    where: {
+      isActive: true,
+      employeeId: { in: uniqueEmployeeIds },
+    },
+    select: { employeeId: true, payType: true },
+  })
+  const payTypeMap = new Map(empPayRules.map(r => [r.employeeId, r.payType]))
+
   const employeeSummaries = await Promise.all(
     uniqueEmployeeIds.map(async (empId) => {
       const tb = await calculateTimeBank(empId, monthDate, {}, prisma)
@@ -253,6 +275,7 @@ export async function GET(req: NextRequest) {
       return {
         employeeId: empId,
         employeeName: emp?.employeeName || 'Unknown',
+        payType: payTypeMap.get(empId) || 'MONTHLY',
         timeAccountMinutes: tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes),
         otMinutes: tb.otMinutes,
         owedMinutes: tb.owedMinutes,

@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
 import { Wallet, Trash2 } from 'lucide-react'
+import { toHKDateStr } from '@/lib/hk-date'
 
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
 
@@ -147,7 +148,7 @@ export default function PayrollDetailPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `payroll_${new Date(run?.periodMonth || '').toISOString().slice(0, 7)}.${format}`
+      a.download = `payroll_${toHKDateStr(new Date(run?.periodMonth || '')).slice(0, 7)}.${format}`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -200,6 +201,7 @@ export default function PayrollDetailPage() {
   }
 
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const fmtPM = () => toHKDateStr(new Date(run!.periodMonth)).slice(0, 7)
 
   const parseAttendanceBonus = (item: PayrollItem) => {
     if (!item.detailJson) return { amount: 0, cancelled: false, reason: '' }
@@ -242,7 +244,7 @@ export default function PayrollDetailPage() {
     return <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>找不到計糧記錄</div>
   }
 
-  const periodMonth = new Date(run.periodMonth).toISOString().slice(0, 7)
+  const periodMonth = fmtPM()
 
   return (
     <div>
