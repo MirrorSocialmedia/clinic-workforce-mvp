@@ -1662,22 +1662,8 @@ async function collectWorkData(
   // Fallback to old countWorkingDays for backward compat
   const workingDays = countWorkingDays(year, month)
 
-  // Late records: compare clock-in times with shift start times
-  // Fix #2c: Exclude voided punches
-  const punches = await prisma.punchRecord.findMany({
-    where: {
-      employeeId,
-      punchTime: { gte: monthStart, lte: monthEnd },
-      punchType: 'CLOCK_IN',
-      void: { is: null }, // Exclude voided punches
-    },
-    orderBy: { punchTime: 'asc' },
-  })
-
-  // shifts already loaded above for calculateWorkedHours
-
-  // 🔧 Fix #1: Fetch MAKEUP entries — days with makeup should NOT count as late/early
-  // 🔴 Fix #4: Use targetType-aware makeup sets (separate LATE and EARLY_LEAVE)
+  // Late/Early records: use getEffectivePunches (void排除 + 修正套用)
+  // 🔧 Fetch MAKEUP entries — days with makeup should NOT count as late/early
   let makeupEntries: Array<{ date: string; minutes: number; note: string }> = []
   const makeupLateDates = new Set<string>()
   const makeupEarlyDates = new Set<string>()
@@ -1690,13 +1676,13 @@ async function collectWorkData(
       },
     })
     makeupEntries = rawMakeupEntries.map((e: any) => ({
-      date: formatDate(e.date),
+      date: toHKDateStr(e.date),
       minutes: Math.abs(e.minutes),
       note: e.note || '',
     }))
     // Split by targetType
     for (const e of rawMakeupEntries) {
-      const dateStr = formatDate(e.date)
+      const dateStr = toHKDateStr(e.date)
       if (e.targetType === 'EARLY_LEAVE') {
         makeupEarlyDates.add(dateStr)
       } else {
@@ -1708,55 +1694,41 @@ async function collectWorkData(
     // timeBankEntry may not exist yet
   }
 
-  const lateRecords: Array<{ date: string; minutes: number }> = []
-  for (const shift of shifts) {
-    const dayStart = new Date(shift.date)
-    const dayEnd = new Date(dayStart)
-    dayEnd.setHours(23, 59, 59)
+  // 用 getEffectivePunches（作廢排除+修正套用）
+  const effPunches = await getEffectivePunches(monthStart, monthEnd, { employeeId, db: prisma })
 
-    const dayPunches = punches.filter(
-      (p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd
-    )
-    if (dayPunches.length > 0) {
-      const firstPunch = dayPunches[0]
-      let shiftStartTime: Date
-      if (shift.startTime instanceof Date) {
-        shiftStartTime = shift.startTime
-      } else {
-        shiftStartTime = new Date(shift.startTime)
-      }
-      if (firstPunch.punchTime > shiftStartTime) {
-        const dateStr = formatDate(firstPunch.punchTime)
-        if (makeupLateDates.has(dateStr)) continue // ← 該天已補鐘(遲到)，不算遲到
-        const minutes = Math.ceil((firstPunch.punchTime.getTime() - shiftStartTime.getTime()) / 60000)
-        lateRecords.push({ date: dateStr, minutes })
+  const lateRecords: Array<{ date: string; minutes: number }> = []
+  const earlyLeaveRecords: Array<{ date: string; minutes: number }> = []
+
+  for (const shift of shifts) {
+    const shiftDateStr = toHKDateStr(new Date(shift.date))
+    const dayPunches = effPunches.filter(p => toHKDateStr(p.effectiveTime) === shiftDateStr)
+
+    // 遲到：明確取「最早的上班卡」
+    const clockIn = dayPunches
+      .filter(p => p.punchType === 'CLOCK_IN')
+      .sort((a, b) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
+    const shiftStart = new Date(shift.startTime)
+    if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
+      if (!makeupLateDates.has(shiftDateStr)) {
+        lateRecords.push({
+          date: shiftDateStr,
+          minutes: Math.ceil((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000),
+        })
       }
     }
-  }
 
-  // Early leave records — exclude days made up with EARLY_LEAVE targetType
-  const earlyLeaveRecords: Array<{ date: string; minutes: number }> = []
-  for (const shift of shifts) {
-    const dayStart = new Date(shift.date)
-    const dayEnd = new Date(dayStart)
-    dayEnd.setHours(23, 59, 59)
-
-    const dayPunches = punches.filter(
-      (p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd
-    )
-    const lastPunch = dayPunches[dayPunches.length - 1]
-    if (lastPunch) {
-      let shiftEndTime: Date
-      if (shift.endTime instanceof Date) {
-        shiftEndTime = shift.endTime
-      } else {
-        shiftEndTime = new Date(shift.endTime)
-      }
-      if (lastPunch.punchTime < shiftEndTime) {
-        const dateStr = formatDate(lastPunch.punchTime)
-        if (makeupEarlyDates.has(dateStr)) continue // ← 該天已補鐘(早退)，不算早退
-        const minutes = Math.ceil((shiftEndTime.getTime() - lastPunch.punchTime.getTime()) / 60000)
-        if (minutes > 0) earlyLeaveRecords.push({ date: dateStr, minutes })
+    // 早退：明確取「最晚的落班卡」；沒有落班卡 = 缺卡，不是早退
+    const clockOut = dayPunches
+      .filter(p => p.punchType === 'CLOCK_OUT')
+      .sort((a, b) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
+    const shiftEnd = new Date(shift.endTime)
+    if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
+      if (!makeupEarlyDates.has(shiftDateStr)) {
+        const minutes = Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
+        if (minutes > 0) {
+          earlyLeaveRecords.push({ date: shiftDateStr, minutes })
+        }
       }
     }
   }
