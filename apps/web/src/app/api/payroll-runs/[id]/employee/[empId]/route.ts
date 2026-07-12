@@ -56,6 +56,6 @@ export async function GET(
 
   return NextResponse.json({
     item, detail, punches, leaves, corrections,
-    periodMonth: item.run.periodMonth.toISOString().slice(0, 7),
+    periodMonth: item.run.periodMonth.toISOString(),
   })
 }

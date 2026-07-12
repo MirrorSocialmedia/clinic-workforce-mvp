@@ -1071,6 +1071,7 @@ export async function calculateTimeBank(
   otMinutes: number
   lateMinutes: number
   netLateMinutes: number
+  netDeficitMinutes: number
   earlyLeaveMinutes: number
   makeupMinutes: number
   carriedFrom: number
@@ -1163,12 +1164,12 @@ export async function calculateTimeBank(
     // timeBankEntry table may not exist yet
   }
 
-  // 減補鐘（只減一次）
-  const netLateMinutes = Math.max(0, lateMinutes - makeupMinutes)
+  // deficit = 遲到 + 早退，補鐘統一抵扣
+  const deficitMinutes = lateMinutes + earlyLeaveMinutes
+  const netDeficitMinutes = Math.max(0, deficitMinutes - makeupMinutes)
 
-  // 本月淨OT = OT − 補鐘消耗 − 未補鐘的遲到早退
-  // 補鐘消耗的OT 跟未補鐘的遲到 都要扣，帳才能平
-  const netOtThisMonth = otMinutes - makeupMinutes - netLateMinutes
+  // 本月淨OT = OT − 補鐘消耗 − 未補鐘的 deficit（遲到+早退）
+  const netOtThisMonth = otMinutes - makeupMinutes - netDeficitMinutes
 
   // 拖欠 = 只看本月淨OT是否為負
   const owedMinutes = netOtThisMonth < 0 ? Math.abs(netOtThisMonth) : 0
@@ -1197,11 +1198,11 @@ export async function calculateTimeBank(
     }
   }
 
-  // netLateMinutes already computed above at line 1112
   return {
-    otMinutes, lateMinutes, netLateMinutes, earlyLeaveMinutes, makeupMinutes,
+    otMinutes, lateMinutes, netLateMinutes: netDeficitMinutes, earlyLeaveMinutes, makeupMinutes,
+    netDeficitMinutes,
     carriedFrom,
-    timeAccountMinutes: balance, // 有正負號的時間帳戶
+    timeAccountMinutes: balance,
     balance,
     owedMinutes,
     availableMinutes,
@@ -2245,17 +2246,18 @@ export async function calculatePayrollWithRules(
     const otMinutesFromResult = tb.otMinutes
     const timeBank = await getOrCreateTimeBank(employeeId, monthDate, prisma)
 
-    // 未補鐘的淨遲到 = 遲到 - 補鐘
-    const netLateMinutes = Math.max(0, timeBank.lateMinutes - timeBank.makeupMinutes)
+    // deficit = 遲到 + 早退，補鐘統一抵扣（用 tb 計算結果）
+    const deficitMinutes = tb.lateMinutes + tb.earlyLeaveMinutes
+    const netDeficitMinutes = Math.max(0, deficitMinutes - tb.makeupMinutes)
 
     // carriedFrom — recursive backfill
     const carriedFrom = await getCarriedFrom(employeeId, monthDate, prisma)
 
-    // 可用OT = OT − 補鐘消耗 − 淨遲到 + 上月結轉
+    // 可用OT = OT − 補鐘消耗 − 淨 deficit + 上月結轉
     const netOtMinutes = otMinutesFromResult
-      - timeBank.makeupMinutes  // 補鐘消耗OT
-      - netLateMinutes           // 未補鐘遲到扣OT
-      + carriedFrom              // 上月結轉
+      - tb.makeupMinutes       // 補鐘消耗OT
+      - netDeficitMinutes      // 未補鐘 deficit（遲到+早退）扣OT
+      + carriedFrom            // 上月結轉
 
     // 只存餘額，不換假
     await updateTimeBank(employeeId, monthDate, {

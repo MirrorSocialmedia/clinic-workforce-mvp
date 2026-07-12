@@ -379,6 +379,23 @@ function getShiftColor(shift: Shift): string {
     await loadMonthShifts()
   }, [loadShifts, loadMonthShifts])
 
+  // Unified deleteLeave helper — single entry point for all leave deletions
+  const deleteLeave = useCallback(async (leaveId: string) => {
+    const res = await fetch(`/api/leave-requests/${leaveId}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    if (res.ok) {
+      await refreshAll()
+      await refreshLeaveBalances()
+      return true
+    } else {
+      const err = await res.json().catch(() => ({}))
+      alert(err.error || '刪除假期失敗')
+      return false
+    }
+  }, [refreshAll, refreshLeaveBalances])
+
   // ============================================================
   // Date Helpers
   // ============================================================
@@ -684,21 +701,7 @@ function getShiftColor(shift: Shift): string {
       if (canManage) {
         const lr = info.event.extendedProps.leaveRequest
         const leaveId = lr?.id || info.event.id.replace('leave-', '')
-        try {
-          const res = await fetch(`/api/leave-requests/${leaveId}`, {
-            method: 'DELETE',
-            credentials: 'include',
-          })
-          if (res.ok) {
-            await refreshAll()
-            await refreshLeaveBalances()
-          } else {
-            const err = await res.json()
-            alert(err.error || '刪除假期失敗')
-          }
-        } catch (e) {
-          console.error('Delete leave error:', e)
-        }
+        await deleteLeave(leaveId)
       }
       return
     }
@@ -1384,9 +1387,9 @@ function getShiftColor(shift: Shift): string {
                   })
                 }
                 await refreshAll()
+                await refreshLeaveBalances()
               }}
               style={{
-                marginTop: 6, width: '100%', padding: '4px 0', fontSize: 10,
                 background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb',
                 borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
               }}
@@ -1668,20 +1671,7 @@ function getShiftColor(shift: Shift): string {
                 if (info.event.extendedProps.isLeave) {
                   const lr = info.event.extendedProps.leaveRequest
                   const leaveId = lr?.id || info.event.id.replace('leave-', '')
-                  try {
-                    const res = await fetch(`/api/leave-requests/${leaveId}`, {
-                      method: 'DELETE',
-                      credentials: 'include',
-                    })
-                    if (res.ok) {
-                      await refreshAll()
-                    } else {
-                      const err = await res.json()
-                      alert(err.error || '刪除假期失敗')
-                    }
-                  } catch (e) {
-                    console.error('Delete leave error:', e)
-                  }
+                  await deleteLeave(leaveId)
                   return
                 }
 
