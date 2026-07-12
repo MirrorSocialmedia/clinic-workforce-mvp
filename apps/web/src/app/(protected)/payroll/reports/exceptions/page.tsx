@@ -12,6 +12,7 @@ interface ExceptionRecord {
   detail: string
   punchTime?: string
   correctionTime?: string
+  payType?: 'HOURLY' | 'MONTHLY'
 }
 
 interface EmployeeSummary {
@@ -302,7 +303,7 @@ export default function ExceptionsReportPage() {
             <tbody>
               {exceptions.map((ex, i) => {
                 const tb = getEmployeeTimebank(ex.employeeId)
-                const showMakeupBtn = (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && isOwner
+                const showMakeupBtn = (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && isOwner && ex.payType !== 'HOURLY'
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                     <td style={{ padding: '8px 6px', fontWeight: 600 }}>{ex.employeeName}</td>

@@ -109,6 +109,7 @@ export async function GET(req: NextRequest) {
     detail: string; punchTime?: string; correctionTime?: string;
     lateMinutes?: number; earlyMinutes?: number; otMinutes?: number;
     madeUp?: boolean;
+    payType?: 'HOURLY' | 'MONTHLY';
   }> = []
 
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
@@ -116,7 +117,6 @@ export async function GET(req: NextRequest) {
 
   // Detect LATE from clock-in punches vs shift start
   for (const p of clockIns) {
-    if (hourlyEmpIds.has(p.employeeId)) continue // Fix #2a: skip HOURLY
     const punchDateStr = toHKDateStr(p.punchTime)
     const matchingShift = shifts.find(s =>
       s.employeeId === p.employeeId &&
@@ -145,7 +145,6 @@ export async function GET(req: NextRequest) {
 
   // Detect EARLY_LEAVE from clock-out punches vs shift end
   for (const p of clockOuts) {
-    if (hourlyEmpIds.has(p.employeeId)) continue // Fix #2a: skip HOURLY
     const punchDateStr = toHKDateStr(p.punchTime)
     const matchingShift = shifts.find(s =>
       s.employeeId === p.employeeId &&
@@ -174,7 +173,6 @@ export async function GET(req: NextRequest) {
 
   // OT 偵測：下班晚於排班結束
   for (const p of clockOuts) {
-    if (hourlyEmpIds.has(p.employeeId)) continue // Fix #2a: skip HOURLY
     const punchDateStr = toHKDateStr(p.punchTime)
     const matchingShift = shifts.find(
       s =>
@@ -204,7 +202,6 @@ export async function GET(req: NextRequest) {
 
   // Detect ABSENT from shifts with no punches
   for (const shift of shifts) {
-    if (hourlyEmpIds.has(shift.employeeId)) continue // Fix #2a: skip HOURLY
     const shiftDayStr = toHKDateStr(new Date(shift.date))
     const hasPunch = punches.some(p =>
       p.employeeId === shift.employeeId &&
@@ -249,6 +246,11 @@ export async function GET(req: NextRequest) {
     })
   } catch {}
 
+  // Set payType on all exceptions
+  exceptions.forEach(ex => {
+    ex.payType = hourlyEmpIds.has(ex.employeeId) ? 'HOURLY' : 'MONTHLY'
+  })
+
   exceptions.sort((a, b) => b.date.localeCompare(a.date))
 
   // Compute per-employee timebank summaries — include ALL employees with punch/shift data (not just those with exceptions)
@@ -270,23 +272,24 @@ export async function GET(req: NextRequest) {
 
   const employeeSummaries = await Promise.all(
     uniqueEmployeeIds.map(async (empId) => {
+      const isHourly = (payTypeMap.get(empId) || 'MONTHLY') === 'HOURLY'
       const tb = await calculateTimeBank(empId, monthDate, {}, prisma)
       const emp = exceptions.find(e => e.employeeId === empId)
       return {
         employeeId: empId,
         employeeName: emp?.employeeName || 'Unknown',
         payType: payTypeMap.get(empId) || 'MONTHLY',
-        timeAccountMinutes: tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes),
+        timeAccountMinutes: isHourly ? null : (tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes)),
         otMinutes: tb.otMinutes,
-        owedMinutes: tb.owedMinutes,
-        availableMinutes: tb.availableMinutes,
-        convertibleLeaveDays: tb.convertibleLeaveDays,
+        owedMinutes: isHourly ? null : tb.owedMinutes,
+        availableMinutes: isHourly ? null : tb.availableMinutes,
+        convertibleLeaveDays: isHourly ? null : tb.convertibleLeaveDays,
         lateCount: exceptions.filter(e => e.employeeId === empId && e.type === 'LATE').length,
         lateMinutes: exceptions
           .filter(e => e.employeeId === empId && e.type === 'LATE')
           .reduce((s, e) => s + (e.lateMinutes || 0), 0),
         otCount: exceptions.filter(e => e.employeeId === empId && e.type === 'OT').length,
-        makeupMinutes: tb.makeupMinutes,
+        makeupMinutes: isHourly ? null : tb.makeupMinutes,
         earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
       }
     })

@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
           employeeId: employee.id,
           clinicId,
           punchTime: { gte: todayStart },
+          void: { is: null }, // 已作廢的不算存在
         },
         orderBy: { punchTime: 'desc' },
         take: 10,

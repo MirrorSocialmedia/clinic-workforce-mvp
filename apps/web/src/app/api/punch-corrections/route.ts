@@ -100,6 +100,7 @@ export async function POST(req: NextRequest) {
           clinicId,
           punchType: punchType as any,
           punchTime: { gte: correctedDate, lte: endOfDay },
+          void: { is: null }, // 已作廢的不算存在
         },
       })
 

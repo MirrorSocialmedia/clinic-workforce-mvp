@@ -116,43 +116,32 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Today's Daily Operations (multi-clinic) ── */}
+      {/* ── Today's Daily Operations (multi-clinic) — compact grid ── */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><CalendarDays size={18} /> 今日各店營運</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {(data.clinics ?? []).map(clinic => {
               const stats = clinic.todayStats
+              const abnormal = stats ? (stats.late + stats.notArrived) : 0
               return (
-                <div
-                  key={clinic.id}
-                  className="border rounded-xl p-5 bg-muted/30 shadow-card hover:shadow-soft transition-shadow"
-                >
-                  <div className="font-semibold text-base mb-3">{clinic.name}</div>
-
+                <div key={clinic.id} className="border rounded-lg px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold truncate">{clinic.name}</span>
+                    <span className="text-xs" style={{ color: abnormal > 0 ? '#dc2626' : '#10b981' }}>
+                      {abnormal > 0 ? `${abnormal} 異常` : '正常'}
+                    </span>
+                  </div>
                   {stats ? (
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span>📋 排班</span>
-                        <span className="font-semibold">{stats.scheduled} 人</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>✅ 已到</span>
-                        <span className="font-semibold text-emerald-600">{stats.clockedIn} 人</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>⚠️ 遲到</span>
-                        <span className={`font-semibold ${stats.late > 0 ? 'text-red-600' : ''}`}>{stats.late} 人</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>⏳ 未到</span>
-                        <span className={`font-semibold ${stats.notArrived > 0 ? 'text-amber-600' : ''}`}>{stats.notArrived} 人</span>
-                      </div>
+                    <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
+                      <span>排班 {stats.scheduled}</span>
+                      <span>已到 {stats.clockedIn}</span>
+                      <span>未到 {stats.notArrived}</span>
                     </div>
                   ) : (
-                    <div className="text-muted-foreground text-sm">今日無排班資料</div>
+                    <div className="text-xs text-muted-foreground mt-1">今日無排班資料</div>
                   )}
                 </div>
               )
@@ -160,6 +149,32 @@ export default function DashboardPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Time Account Overview Card (cumulative) ── */}
+      {empSummary.some(e => e.timeAccountMinutes != null) && (
+        <div className="bg-card border rounded-xl p-6 shadow-card mb-6">
+          <h3 className="text-lg font-semibold mb-3">⏱ 時間帳戶總覽（累計）</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {empSummary
+              .filter(e => e.timeAccountMinutes != null) // 兼職不列
+              .sort((a, b) => (a.timeAccountMinutes ?? 0) - (b.timeAccountMinutes ?? 0)) // 拖欠排前面
+              .map(e => (
+                <div key={e.employeeId} className="flex items-center justify-between px-3 py-2 rounded-lg border"
+                  style={{
+                    borderColor: (e.timeAccountMinutes ?? 0) >= 0 ? '#d1fae5' : '#fecaca',
+                    background: (e.timeAccountMinutes ?? 0) >= 0 ? '#f0fdf4' : '#fef2f2',
+                  }}>
+                  <span className="text-sm font-medium">{e.employeeName}</span>
+                  <span className="font-bold" style={{
+                    color: (e.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
+                  }}>
+                    {(e.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(e.timeAccountMinutes ?? 0)} 分
+                  </span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Employee Attendance Summary ── */}
       <Card>
@@ -194,29 +209,27 @@ export default function DashboardPage() {
                   <TableRow key={emp.employeeId}>
                     <TableCell className="font-medium">{emp.employeeName}</TableCell>
                     <TableCell style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
-                      {emp.payType === 'HOURLY' ? '—' : `${emp.lateCount ?? 0} 次`}
+                      {emp.lateCount ?? 0} 次
                     </TableCell>
                     <TableCell style={{ color: (emp.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
-                      {emp.payType === 'HOURLY' ? '—' : (
-                        <span>
-                          {emp.lateMinutes ?? 0} 分鐘
-                          {emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
-                        </span>
-                      )}
+                      {emp.lateMinutes ?? 0} 分鐘
+                      {emp.makeupMinutes != null && emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
                     </TableCell>
-                    <TableCell>{emp.payType === 'HOURLY' ? '—' : `${emp.otCount ?? 0} 次`}</TableCell>
-                    <TableCell className="text-emerald-600">{emp.payType === 'HOURLY' ? '—' : `${emp.otMinutes ?? 0} 分鐘`}</TableCell>
+                    <TableCell>{emp.otCount ?? 0} 次</TableCell>
+                    <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>
                     <TableCell>
-                      {emp.payType === 'HOURLY' ? '—' : (
+                      {emp.timeAccountMinutes == null ? '—' : (
                         <span style={{
                           fontWeight: 700,
-                          color: (emp.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
+                          color: emp.timeAccountMinutes >= 0 ? '#059669' : '#dc2626',
                         }}>
-                          {(emp.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes ?? 0)} 分
+                          {emp.timeAccountMinutes >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes)} 分
                         </span>
                       )}
                     </TableCell>
-                    <TableCell>{emp.payType === 'HOURLY' ? '—' : `${(emp.convertibleLeaveDays ?? 0).toFixed(1)} 天`}</TableCell>
+                    <TableCell>
+                      {emp.convertibleLeaveDays == null ? '—' : `${(emp.convertibleLeaveDays).toFixed(1)} 天`}
+                    </TableCell>
                     <TableCell>
                       {(() => {
                         const bal = balancesByEmp.get(emp.employeeId) || {}

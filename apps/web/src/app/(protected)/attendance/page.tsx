@@ -48,6 +48,7 @@ interface ExceptionRecord {
   earlyMinutes?: number
   otMinutes?: number
   madeUp?: boolean
+  payType?: 'HOURLY' | 'MONTHLY'
 }
 
 export default function AttendancePage() {
@@ -523,7 +524,9 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3">
                         {/* Fix #1: Makeup only for relevant punch types */}
+                        {/* HOURLY employees don't have makeup (no time account) */}
                         {((isClockIn && showLate) || (!isClockIn && showEarly)) && user.role === 'OWNER' && (
+                          (isClockIn ? (showLate?.payType !== 'HOURLY') : (showEarly?.payType !== 'HOURLY')) && (
                           ((isClockIn && showLate?.madeUp) || (!isClockIn && showEarly?.madeUp)) ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                               ✓ 已補鐘
@@ -537,6 +540,7 @@ export default function AttendancePage() {
                             >
                               <Clock size={12} /> 補鐘
                             </button>
+                          )
                           )
                         )}
                       </td>
@@ -662,7 +666,7 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">{ex.detail}</td>
                       <td className="p-3">
-                        {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && user.role === 'OWNER' && (
+                        {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && user.role === 'OWNER' && ex.payType !== 'HOURLY' && (
                           ex.madeUp ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                               ✓ 已補鐘

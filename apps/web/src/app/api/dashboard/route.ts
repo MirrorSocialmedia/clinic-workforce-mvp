@@ -86,6 +86,7 @@ export async function GET(req: NextRequest) {
               employeeId: { in: employeeIds },
               punchType: 'CLOCK_IN',
               punchTime: { gte: todayStart, lt: todayEnd },
+              void: { is: null }, // 已作廢的不算
             },
             select: { employeeId: true, punchTime: true },
           })

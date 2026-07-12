@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   monthEnd.setMonth(monthEnd.getMonth() + 1)
 
   const punches = await prisma.punchRecord.findMany({
-    where: { employeeId: employee.id, punchTime: { gte: monthStart, lt: monthEnd } },
+    where: { employeeId: employee.id, punchTime: { gte: monthStart, lt: monthEnd }, void: { is: null } },
   })
 
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
