@@ -257,6 +257,8 @@ export async function GET(req: NextRequest) {
         lateMinutes: exceptions
           .filter(e => e.employeeId === empId && e.type === 'LATE')
           .reduce((s, e) => s + (e.lateMinutes || 0), 0),
+        otCount: exceptions.filter(e => e.employeeId === empId && e.type === 'OT').length,
+        makeupMinutes: tb.makeupMinutes,
         earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
       }
     })

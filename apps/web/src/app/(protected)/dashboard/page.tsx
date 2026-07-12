@@ -43,9 +43,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Employee attendance summary
+  // Employee attendance summary — fixed to current month
   const [empSummary, setEmpSummary] = useState<any[]>([])
-  const [period, setPeriod] = useState<'day' | 'week' | 'month'>('month')
   const [empLoading, setEmpLoading] = useState(false)
 
   // Leave balances (all employees)
@@ -76,33 +75,17 @@ export default function DashboardPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Fixed to current month, use periodMonth mode
   useEffect(() => {
-    const now = new Date()
-    let startDate: string, endDate: string
-
-    if (period === 'day') {
-      startDate = endDate = toHKDateStr(now)
-    } else if (period === 'week') {
-      const d = new Date(now)
-      const day = d.getDay()
-      const monday = new Date(d)
-      monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
-      const sunday = new Date(monday)
-      sunday.setDate(monday.getDate() + 6)
-      startDate = toHKDateStr(monday)
-      endDate = toHKDateStr(sunday)
-    } else {
-      startDate = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
-      endDate = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
-    }
+    const periodMonth = new Date().toISOString().slice(0, 7) // YYYY-MM
 
     setEmpLoading(true)
-    fetch(`/api/payroll-runs/exceptions?startDate=${startDate}&endDate=${endDate}`, { credentials: 'include' })
+    fetch(`/api/payroll-runs/exceptions?periodMonth=${periodMonth}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { summaries: [] })
       .then(d => setEmpSummary(d.summaries || []))
       .catch(() => setEmpSummary([]))
       .finally(() => setEmpLoading(false))
-  }, [period])
+  }, [])
 
   // Fetch leave balances
   useEffect(() => {
@@ -122,8 +105,6 @@ export default function DashboardPage() {
     ACCOUNTANT: '會計',
     EMPLOYEE: '員工',
   }
-
-  const periodLabel = { day: '今日', week: '本週', month: '本月' } as const
 
   return (
     <div className="p-6 space-y-6" style={{ maxWidth: '1200px' }}>
@@ -183,26 +164,9 @@ export default function DashboardPage() {
       {/* ── Employee Attendance Summary ── */}
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
-            <CardTitle className="flex items-center gap-2">
-              📊 {periodLabel[period]}員工考勤詳細
-            </CardTitle>
-            <div className="flex gap-1">
-              {(['day', 'week', 'month'] as const).map(p => (
-                <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    period === p
-                      ? 'bg-brand text-white'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
-                >
-                  {periodLabel[p]}
-                </button>
-              ))}
-            </div>
-          </div>
+          <CardTitle className="flex items-center gap-2">
+            📊 本月員工考勤詳細
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {empLoading ? (
@@ -215,7 +179,9 @@ export default function DashboardPage() {
                 <TableRow>
                   <TableHead>員工</TableHead>
                   <TableHead>遲到次數</TableHead>
-                  <TableHead>本月 OT</TableHead>
+                  <TableHead>遲到時間</TableHead>
+                  <TableHead>OT次數</TableHead>
+                  <TableHead>本月OT</TableHead>
                   <TableHead>時間帳戶</TableHead>
                   <TableHead>可換假</TableHead>
                   <TableHead>休息日餘</TableHead>
@@ -228,27 +194,23 @@ export default function DashboardPage() {
                   <TableRow key={emp.employeeId}>
                     <TableCell className="font-medium">{emp.employeeName}</TableCell>
                     <TableCell style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
-                      {emp.lateCount || 0}
+                      {emp.lateCount ?? 0} 次
                     </TableCell>
-                    <TableCell style={{ color: '#16a34a' }}>
-                      {emp.otMinutes || 0} 分鐘
+                    <TableCell style={{ color: (emp.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
+                      {emp.lateMinutes ?? 0} 分鐘
+                      {emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
                     </TableCell>
+                    <TableCell>{emp.otCount ?? 0} 次</TableCell>
+                    <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>
                     <TableCell>
-                      {(() => {
-                        const ta = emp.timeAccountMinutes ?? ((emp.availableMinutes ?? 0) - (emp.owedMinutes ?? 0))
-                        return (
-                          <span style={{
-                            fontWeight: 700,
-                            color: ta >= 0 ? '#059669' : '#dc2626',
-                          }}>
-                            {ta >= 0 ? '+' : '−'}{Math.abs(ta)} 分
-                          </span>
-                        )
-                      })()}
+                      <span style={{
+                        fontWeight: 700,
+                        color: (emp.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
+                      }}>
+                        {(emp.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes ?? 0)} 分
+                      </span>
                     </TableCell>
-                    <TableCell>
-                      {emp.convertibleLeaveDays?.toFixed(1) || '0.0'} 天
-                    </TableCell>
+                    <TableCell>{(emp.convertibleLeaveDays ?? 0).toFixed(1)} 天</TableCell>
                     <TableCell>
                       {(() => {
                         const bal = balancesByEmp.get(emp.employeeId) || {}

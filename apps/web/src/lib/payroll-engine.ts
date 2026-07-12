@@ -989,7 +989,7 @@ export function evaluateAttendanceBonus(
 /**
  * Calculate monthly time bank for an employee.
  * Computes OT, late, early-leave from shift vs punch records.
- * Makeup entries reduce deficit. Balance = carriedFrom + OT - netDeficit - makeup.
+ * Makeup entries reduce netLate. Balance = carriedFrom + OT - makeup - netLate + converted.
  */
 export async function calculateTimeBank(
   employeeId: string,
@@ -1084,8 +1084,6 @@ export async function calculateTimeBank(
     }
   }
 
-  const deficitMinutes = lateMinutes + earlyLeaveMinutes
-
   // Grab makeup entries for this month
   let makeupMinutes = 0
   try {
@@ -1109,13 +1107,13 @@ export async function calculateTimeBank(
   }
 
   // 減補鐘（只減一次）
-  const netDeficit = Math.max(0, deficitMinutes - makeupMinutes)
+  const netLateMinutes = Math.max(0, lateMinutes - makeupMinutes)
 
-  // 本月淨OT = OT − 未補鐘的遲到早退
-  const netOtThisMonth = otMinutes - netDeficit
+  // 本月淨OT = OT − 補鐘消耗 − 未補鐘的遲到早退
+  // 補鐘消耗的OT 跟未補鐘的遲到 都要扣，帳才能平
+  const netOtThisMonth = otMinutes - makeupMinutes - netLateMinutes
 
-  // 拖欠 = 只看本月淨OT是否為負（遲到早退 > OT+補鐘）
-  // 換假、carry 不進拖欠計算
+  // 拖欠 = 只看本月淨OT是否為負
   const owedMinutes = netOtThisMonth < 0 ? Math.abs(netOtThisMonth) : 0
 
   // 可用OT餘額 = 上月結轉 + 本月淨OT + 換假消耗（負）
@@ -1142,8 +1140,7 @@ export async function calculateTimeBank(
     }
   }
 
-  const netLateMinutes = Math.max(0, lateMinutes - makeupMinutes)
-
+  // netLateMinutes already computed above at line 1112
   return {
     otMinutes, lateMinutes, netLateMinutes, earlyLeaveMinutes, makeupMinutes,
     carriedFrom,
