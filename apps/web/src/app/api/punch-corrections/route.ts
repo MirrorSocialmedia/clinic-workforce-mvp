@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // ============================================================
@@ -89,10 +90,8 @@ export async function POST(req: NextRequest) {
 
       // Check if there's already an existing punch record for this employee+clinic on this date
       // If found, link correction to it; otherwise correction will reference null
-      const correctedDate = new Date(date)
-      correctedDate.setHours(0, 0, 0, 0)
-      const endOfDay = new Date(date)
-      endOfDay.setHours(23, 59, 59, 999)
+      const dayStart = hkDateStart(date)  // date is "YYYY-MM-DD" string
+      const dayEnd = hkDateEnd(date)
 
       let punchRecordId: string | null = null
       const existing = await prisma.punchRecord.findFirst({
@@ -100,7 +99,7 @@ export async function POST(req: NextRequest) {
           employeeId: employee.id,
           clinicId,
           punchType: punchType as any,
-          punchTime: { gte: correctedDate, lte: endOfDay },
+          punchTime: { gte: dayStart, lte: dayEnd },
           void: { is: null }, // 已作廢的不算存在
         },
       })

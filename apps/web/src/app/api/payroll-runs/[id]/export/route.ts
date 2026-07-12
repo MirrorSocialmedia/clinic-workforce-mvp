@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { toHKDateStr } from '@/lib/hk-date'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
 import 'jspdf-autotable'
@@ -38,7 +39,7 @@ export async function POST(
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const periodMonth = run.periodMonth.toISOString().slice(0, 7)
+  const periodMonth = toHKDateStr(run.periodMonth).slice(0, 7) // → 香港月份
   const clinicName = run.clinic?.name || '全部診所'
 
   if (format === 'xlsx') return exportToExcel(run, periodMonth, clinicName)

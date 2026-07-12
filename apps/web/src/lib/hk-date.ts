@@ -1,11 +1,12 @@
 /** 將 Date 轉為香港時區的 YYYY-MM-DD */
-export function toHKDateStr(d: Date): string {
+export function toHKDateStr(d: Date | string): string {
+  const dt = typeof d === 'string' ? new Date(d) : d
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Hong_Kong',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(d)
+  }).format(dt)
 }
 
 /** 今日香港日期 YYYY-MM-DD */
@@ -31,11 +32,16 @@ export function fmtTime(dt: string | Date | undefined | null): string {
   return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-/** Get month range [first day 00:00, last day 23:59:59.999] for a given Date */
+/** Get month range [first day 00:00 HK, last day 23:59:59.999 HK] — timezone-safe via +08:00 string */
 export function getMonthRange(date: Date) {
-  const year = date.getFullYear()
-  const month = date.getMonth()
-  const start = new Date(year, month, 1, 0, 0, 0)
-  const end = new Date(year, month + 1, 0, 23, 59, 59, 999)
+  const y = date.getFullYear()
+  const m = date.getMonth()
+  const ym = `${String(y).padStart(4, '0')}-${String(m + 1).padStart(2, '0')}`
+  const start = new Date(`${ym}-01T00:00:00+08:00`)
+  // End of month = 1ms before 1st of next month (HK)
+  const nextMonth = m + 1 >= 12
+    ? `${String(y + 1).padStart(4, '0')}-01`
+    : `${String(y).padStart(4, '0')}-${String(m + 2).padStart(2, '0')}`
+  const end = new Date(Date.parse(`${nextMonth}-01T00:00:00+08:00`) - 1)
   return { start, end }
 }

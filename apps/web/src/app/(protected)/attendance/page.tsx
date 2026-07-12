@@ -96,7 +96,8 @@ export default function AttendancePage() {
   const [exEmployeeId, setExEmployeeId] = useState('')
   const [periodMonth, setPeriodMonth] = useState(() => {
     const now = new Date()
-    return new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7)
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    return toHKDateStr(lastMonth).slice(0, 7)
   })
   const [exceptions, setExceptions] = useState<ExceptionRecord[]>([])
   const [exLoading, setExLoading] = useState(false)
@@ -206,7 +207,7 @@ export default function AttendancePage() {
       const months = new Set<string>()
       if (startDate) months.add(startDate.slice(0, 7))
       if (endDate) months.add(endDate.slice(0, 7))
-      if (months.size === 0) months.add(new Date().toISOString().slice(0, 7))
+      if (months.size === 0) months.add(toHKDateStr(new Date()).slice(0, 7))
 
       // Also add months from records that are visible
       for (const r of records) {

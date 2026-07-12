@@ -117,7 +117,7 @@ export default function LeavePage() {
   // Fix #3: 選員工後抓 timebank summary
   useEffect(() => {
     if (!convertForm.employeeId) { setConvertEmpInfo(null); return }
-    const month = new Date().toISOString().slice(0, 7)
+    const month = toHKDateStr(new Date()).slice(0, 7)
     fetch(`/api/payroll-runs/exceptions?periodMonth=${month}&employeeId=${convertForm.employeeId}`, {
       credentials: 'include',
     })

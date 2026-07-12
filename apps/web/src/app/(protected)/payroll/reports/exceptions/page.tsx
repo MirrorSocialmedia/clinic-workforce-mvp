@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { BackButton } from '@/components/BackButton'
+import { toHKDateStr } from '@/lib/hk-date'
 
 interface ExceptionRecord {
   employeeId: string
@@ -30,7 +31,8 @@ export default function ExceptionsReportPage() {
   const [employeeId, setEmployeeId] = useState('')
   const [periodMonth, setPeriodMonth] = useState(() => {
     const now = new Date()
-    return new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7)
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    return toHKDateStr(lastMonth).slice(0, 7)
   })
   const [exceptions, setExceptions] = useState<ExceptionRecord[]>([])
   const [loading, setLoading] = useState(false)

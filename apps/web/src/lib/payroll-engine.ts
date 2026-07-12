@@ -9,6 +9,7 @@
 
 import { prisma, basePrisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
+import { toHKDateStr, getMonthRange } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
 
 // ------------------------------------------------------------------
@@ -59,15 +60,6 @@ interface AuditCtx {
 // Helpers
 // ------------------------------------------------------------------
 
-function getMonthRange(monthDate: Date): { start: Date; end: Date } {
-  const year = monthDate.getFullYear()
-  const month = monthDate.getMonth()
-  return {
-    start: new Date(year, month, 1),
-    end: new Date(year, month + 1, 0, 23, 59, 59, 999),
-  }
-}
-
 function countWorkingDays(year: number, month: number): number {
   let count = 0
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -85,19 +77,6 @@ function formatDate(d: Date): string {
     month: '2-digit',
     day: '2-digit',
   }).format(d)
-}
-
-/**
- * Convert Date to YYYY-MM-DD in HK timezone. Reusable helper.
- */
-function toHKDateStr(d: Date | string): string {
-  const dt = typeof d === 'string' ? new Date(d) : d
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Hong_Kong',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(dt)
 }
 
 function parsePayRuleConfig(configJson: string | null | undefined): PayRuleConfig {
@@ -377,7 +356,8 @@ async function getPublicHolidayDays(
 
 async function getEmployeePayData(
   employeeId: string,
-  clinicIdFilter: string | null
+  clinicIdFilter: string | null,
+  monthDate?: Date  // optional: 計糧月份，用於選 payRules 時做月份對齊
 ): Promise<{
   employeeId: string
   employeeName: string
@@ -396,7 +376,15 @@ async function getEmployeePayData(
       payRules: {
         where: {
           isActive: true,
-          OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
+          ...(monthDate ? (() => {
+            const { start: ms, end: me } = getMonthRange(monthDate)
+            return {
+              effectiveFrom: { lte: me },
+              OR: [{ effectiveTo: null }, { effectiveTo: { gte: ms } }],
+            }
+          })() : {
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
+          }),
         },
       },
       clinics: { select: { clinicId: true } },
@@ -1128,13 +1116,9 @@ export async function calculateTimeBank(
   let earlyLeaveMinutes = 0
 
   for (const shift of shifts) {
-    const dayStart = new Date(shift.date)
-    dayStart.setHours(0, 0, 0, 0)
-    const dayEnd = new Date(shift.date)
-    dayEnd.setHours(23, 59, 59, 999)
-
+    const shiftDateStr = toHKDateStr(new Date(shift.date))
     const dayPunches = effectivePunches.filter(
-      (ep: any) => ep.effectiveTime >= dayStart && ep.effectiveTime <= dayEnd,
+      (ep: any) => toHKDateStr(ep.effectiveTime) === shiftDateStr,
     )
 
     const clockIn = dayPunches

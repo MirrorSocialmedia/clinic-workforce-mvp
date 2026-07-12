@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { CalendarDays } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+import { toHKDateStr } from '@/lib/hk-date'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -31,10 +32,6 @@ interface ClinicData {
 }
 
 /** Format Date to YYYY-MM-DD in HK timezone */
-function toHKDateStr(d: Date): string {
-  return new Date(d.getTime() + d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
-}
-
 export default function DashboardPage() {
   const [data, setData] = useState<{
     role: Role
@@ -77,7 +74,7 @@ export default function DashboardPage() {
 
   // Fixed to current month, use periodMonth mode
   useEffect(() => {
-    const periodMonth = new Date().toISOString().slice(0, 7) // YYYY-MM
+    const periodMonth = toHKDateStr(new Date()).slice(0, 7) // YYYY-MM 香港月份
 
     setEmpLoading(true)
     fetch(`/api/payroll-runs/exceptions?periodMonth=${periodMonth}`, { credentials: 'include' })
