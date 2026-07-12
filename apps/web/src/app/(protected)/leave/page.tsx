@@ -16,6 +16,7 @@ interface LeaveType {
   color: string | null
   isActive: boolean | null
   systemKey: string | null
+  cancelsBonus: boolean | null
 }
 
 interface LeaveRequestItem {
@@ -98,7 +99,7 @@ export default function LeavePage() {
   // Leave Types management state
   const [activeTab, setActiveTab] = useState<TabKey>('balance')
   const [ltShowForm, setLtShowForm] = useState(false)
-  const [ltForm, setLtForm] = useState({ name: '', isPaid: true, annualQuota: '', color: '#4CAF50' })
+  const [ltForm, setLtForm] = useState({ name: '', isPaid: true, annualQuota: '', color: '#4CAF50', cancelsBonus: false })
   const [ltEditingId, setLtEditingId] = useState<string | null>(null)
 
   // Auto-calculate days when start/end dates change
@@ -232,13 +233,13 @@ export default function LeavePage() {
     try {
       const method = ltEditingId ? 'PUT' : 'POST'
       const url = ltEditingId ? `/api/leave-types/${ltEditingId}` : '/api/leave-types'
-      const body: any = { name: ltForm.name, isPaid: ltForm.isPaid, color: ltForm.color }
+      const body: any = { name: ltForm.name, isPaid: ltForm.isPaid, color: ltForm.color, cancelsBonus: ltForm.cancelsBonus }
       if (ltForm.annualQuota) body.annualQuota = parseFloat(ltForm.annualQuota)
       else body.annualQuota = null
 
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) })
       if (res.ok) {
-        setLtForm({ name: '', isPaid: true, annualQuota: '', color: '#4CAF50' })
+        setLtForm({ name: '', isPaid: true, annualQuota: '', color: '#4CAF50', cancelsBonus: false })
         setLtShowForm(false); setLtEditingId(null); fetchData()
       } else {
         const err = await res.json()
@@ -248,7 +249,7 @@ export default function LeavePage() {
   }
 
   const handleLtEdit = (t: LeaveType) => {
-    setLtForm({ name: t.name, isPaid: t.isPaid, annualQuota: t.annualQuota?.toString() || '', color: t.color || '#4CAF50' })
+    setLtForm({ name: t.name, isPaid: t.isPaid, annualQuota: t.annualQuota?.toString() || '', color: t.color || '#4CAF50', cancelsBonus: !!t.cancelsBonus })
     setLtEditingId(t.id); setLtShowForm(true)
   }
 
@@ -702,6 +703,17 @@ export default function LeavePage() {
                       <option value="0">否</option>
                     </select>
                   </div>
+                  <div className="form-group">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={ltForm.cancelsBonus}
+                        disabled={!!(ltEditingId && leaveTypes.find(t => t.id === ltEditingId)?.systemKey)}
+                        onChange={e => setLtForm({ ...ltForm, cancelsBonus: e.target.checked })}
+                      />
+                      請此假當月取消勤工獎
+                    </label>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                   <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={() => { setLtShowForm(false); setLtEditingId(null); }}>取消</button>
@@ -715,7 +727,7 @@ export default function LeavePage() {
           <div className="card">
             <table>
               <thead>
-                <tr><th>顏色</th><th>名稱</th><th>有薪</th><th>年度額度</th><th>狀態</th><th>操作</th></tr>
+                <tr><th>顏色</th><th>名稱</th><th>有薪</th><th>取消勤工</th><th>年度額度</th><th>狀態</th><th>操作</th></tr>
               </thead>
               <tbody>
                 {leaveTypes.map(t => {
@@ -728,6 +740,7 @@ export default function LeavePage() {
                         {isSystem && <span style={{ marginLeft: 6, fontSize: 11, color: '#888' }}>🔒 系統類型</span>}
                       </td>
                       <td>{t.isPaid ? '✅ 有薪' : '❌ 無薪'}</td>
+                      <td>{t.cancelsBonus ? '⚠️ 是' : '—'}</td>
                       <td>{t.annualQuota ? `${t.annualQuota} 天` : '無限制'}</td>
                       <td>
                         <label style={{ fontSize: 13, cursor: 'pointer' }}>

@@ -832,7 +832,7 @@ interface WorkData {
   totalDaysInMonth: number
   monthlyWorkingDays: number
   lateRecords: Array<{ date: string; minutes: number }>
-  leaveRecords: Array<{ isPlanned: boolean; days: number }>
+  leaveRecords: Array<{ isPlanned: boolean; days: number; cancelsBonus: boolean; name: string }>
   partialDays: string[]
   consultationFees: number
   scheduledDays: number
@@ -959,11 +959,12 @@ export function evaluateAttendanceBonus(
       late_is_cumulative?: boolean
       any_unplanned_leave?: boolean
       any_absence?: boolean
+      any_cancels_bonus_leave?: boolean
     }
   },
   workData: {
     lateRecords: Array<{ minutes: number }>
-    leaveRecords: Array<{ isPlanned: boolean }>
+    leaveRecords: Array<{ isPlanned: boolean; cancelsBonus?: boolean; name?: string }>
     absentDays?: number
   }
 ): { amount: number; cancelled: boolean; reason?: string } {
@@ -989,6 +990,13 @@ export function evaluateAttendanceBonus(
     if (hasUnplanned) {
       return { amount: 0, cancelled: true, reason: '有臨時請假' }
     }
+  }
+
+  // cancelsBonus leave check — always active (no config flag needed)
+  const hasCancelsBonusLeave = workData.leaveRecords.some(r => (r.cancelsBonus ?? false) === true)
+  if (hasCancelsBonusLeave) {
+    const cancelType = workData.leaveRecords.find(r => r.cancelsBonus)
+    return { amount: 0, cancelled: true, reason: `本月有${cancelType?.name ?? '請假'}，取消勤工` }
   }
 
   // Any absence check
@@ -1632,10 +1640,15 @@ async function collectWorkData(
       startDate: { lte: monthEnd },
       endDate: { gte: monthStart },
     },
+    include: {
+      leaveType: { select: { cancelsBonus: true, name: true } },
+    },
   })
   const leaveRecordsForEngine = leaveRecords.map((lr: any) => ({
     isPlanned: lr.isPlanned !== false, // default true if null (legacy)
     days: lr.days,
+    cancelsBonus: lr.leaveType?.cancelsBonus ?? false,
+    name: lr.leaveType?.name ?? '',
   }))
 
   const publicHolidays = await getPublicHolidayDays(monthStart, monthEnd)

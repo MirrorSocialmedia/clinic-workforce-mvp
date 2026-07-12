@@ -21,7 +21,7 @@ export async function PUT(
 
   return runWithAudit(auditCtx, async () => {
     const body = await req.json()
-    const { name, isPaid, annualQuota, color, isActive } = body
+    const { name, isPaid, annualQuota, color, isActive, cancelsBonus } = body
     const id = params.id
 
     const existing = await prisma.leaveType.findUnique({ where: { id } })
@@ -52,6 +52,7 @@ export async function PUT(
         ...(annualQuota !== undefined && { annualQuota }),
         ...(color !== undefined && { color }),
         ...(isActive !== undefined && { isActive }),
+        ...(cancelsBonus !== undefined && { cancelsBonus }),
       },
     })
 

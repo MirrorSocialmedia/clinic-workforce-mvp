@@ -89,6 +89,16 @@ const extended = base.$extends({
                 parts.push(`${key} ${fromVal.slice(0, 30)} → ${toVal.slice(0, 30)}`)
               }
 
+              // FIX 1a: For LeaveRequest, prepend leave type name to notes
+              let notes = parts.join('; ')
+              if (model === 'LeaveRequest' && result) {
+                const lr = result as any
+                if (lr.leaveTypeId) {
+                  const lt = await base.leaveType.findUnique({ where: { id: lr.leaveTypeId } })
+                  notes = `${lt?.name ?? '假期'}：${notes}`
+                }
+              }
+
               // Write audit log with diff
               const ctx = getAuditContext()
               if (ctx) {
@@ -100,7 +110,7 @@ const extended = base.$extends({
                     entityId: String((result as any)?.id ?? (where as any)?.id ?? ''),
                     beforeJson: safeStringify(before),
                     afterJson: safeStringify(result),
-                    notes: parts.join('; '),
+                    notes,
                     ipAddress: ctx.ip ?? null,
                     userAgent: ctx.ua ?? null,
                   },
@@ -138,6 +148,29 @@ const extended = base.$extends({
               } catch {
                 // Fallback: keep entityId='batch'
               }
+            }
+          }
+
+          // FIX 1a: For LeaveRequest CREATE/DELETE, resolve leave type name + employee name
+          if (model === 'LeaveRequest' && ['create', 'delete'].includes(operation)) {
+            try {
+              let lr: any = null
+              if (operation === 'create') {
+                lr = result
+              } else {
+                // For delete, we need to fetch before deletion (but Prisma extension runs after)
+                // Use args to reconstruct — but delete already happened. Use the result if available.
+                // Actually for delete, result is the deleted record
+                lr = result
+              }
+              if (lr && lr.leaveTypeId) {
+                const lt = await base.leaveType.findUnique({ where: { id: lr.leaveTypeId } })
+                const emp = await base.employee.findUnique({ where: { id: lr.employeeId }, include: { user: { select: { name: true } } } })
+                const dateStr = lr.startDate ? new Date(lr.startDate).toLocaleDateString('zh-HK') : ''
+                notes = `${lt?.name ?? '假期'}：${emp?.user?.name ?? ''} ${dateStr}`.trim()
+              }
+            } catch {
+              // Fallback: leave notes as-is
             }
           }
 

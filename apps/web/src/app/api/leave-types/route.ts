@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, isPaid, annualQuota, color } = body
+      const { name, isPaid, annualQuota, color, cancelsBonus } = body
 
       if (!name) {
         return NextResponse.json({ error: 'name is required' }, { status: 400 })
@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
           isPaid: isPaid !== undefined ? isPaid : true,
           annualQuota: annualQuota ?? null,
           color: color ?? null,
+          cancelsBonus: cancelsBonus === true,
         },
       })
 

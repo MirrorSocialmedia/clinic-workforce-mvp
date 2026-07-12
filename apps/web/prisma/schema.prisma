@@ -388,6 +388,7 @@ model LeaveType {
   color        String?  // UI 顏色標記
   quantity     Int?     // 預設額度（nullable = 無限制）
   isActive     Boolean  @default(true)
+  cancelsBonus Boolean  @default(false) // 請此假當月取消勤工獎
   createdAt    DateTime @default(now())
 
   requests     LeaveRequest[]

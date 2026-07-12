@@ -203,9 +203,12 @@ export default function AuditLogsPage() {
                   </td>
                   <td title={log.action}><span className='text-sm font-medium'>{getActionLabel(log.action)}</span>{getActionLabel(log.action) !== log.action && <span className="text-muted text-sm ml-1" style={{fontSize:10}}>({log.action})</span>}</td>
                   <td>
-                    {ENTITY_LABELS[log.entity] || log.entity}
-                    <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>
-                    {log.notes && <span style={{ color: '#0d7377', marginLeft: 4, fontSize: 12 }}>（{log.notes}）</span>}
+                    {log.entity === 'LeaveRequest' && log.notes
+                      ? log.notes
+                      : (ENTITY_LABELS[log.entity] || log.entity)
+                    }
+                    {!(log.entity === 'LeaveRequest' && log.notes) && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
+                    {log.entity === 'LeaveRequest' && log.notes && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
                   </td>
                   <td className="text-sm">{log.ipAddress || '—'}</td>
                 </tr>
