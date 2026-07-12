@@ -103,6 +103,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Leave type not found' }, { status: 404 })
       }
 
+      // 🔧 無限額度：quantity=null 且非 systemKey 的類型不扣餘額
+      const isUnlimited = leaveType.quantity == null && !leaveType.systemKey
+
       // 試用期門檻：年假在試用期內不可申請
       if (isAnnualLeave(leaveType) && employee.joinDate) {
         if (isInProbation(new Date(employee.joinDate))) {
@@ -113,13 +116,13 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Validate remaining balance
+      // Validate remaining balance (skip for unlimited types)
       const currentYear = new Date().getFullYear()
       const balance = await prisma.leaveBalance.findFirst({
         where: { employeeId: employee.id, leaveTypeId, year: currentYear },
       })
 
-      if (balance && leaveType.annualQuota !== null && leaveType.annualQuota > 0) {
+      if (!isUnlimited && balance && leaveType.annualQuota !== null && leaveType.annualQuota > 0) {
         if (days > balance.remaining) {
           return NextResponse.json(
             { error: `Insufficient leave balance. Remaining: ${balance.remaining} days` },
@@ -170,8 +173,8 @@ export async function POST(req: NextRequest) {
         return req
       })
 
-      // If auto-approved, deduct from balance + notify
-      if (request.status === 'APPROVED') {
+      // If auto-approved, deduct from balance + notify (skip for unlimited types)
+      if (request.status === 'APPROVED' && !isUnlimited) {
         await deductLeaveBalance(employee.id, leaveTypeId, days)
         await createNotification({
           employeeId: employee.id,

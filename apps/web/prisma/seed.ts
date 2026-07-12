@@ -354,9 +354,9 @@ async function main() {
     prisma.leaveType.create({
       data: { name: '侍產假', isPaid: true, annualQuota: 5, color: '#9C27B0' },
     }),
-    // 請假類型：扣額度、不缺勤、取消勤工
+    // 請假類型：扣額度、不缺勤、取消勤工、無限額度
     prisma.leaveType.create({
-      data: { name: '請假', isPaid: true, annualQuota: null, color: '#f59e0b', cancelsBonus: true },
+      data: { name: '請假', isPaid: true, annualQuota: null, color: '#f59e0b', quantity: null, cancelsBonus: true },
     }),
   ])
   console.log(`  ✅ Created ${systemLeaveTypes.length} system + ${leaveTypes.length} user leave types`)

@@ -255,7 +255,7 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // 抓補鐘記錄，標記 madeUp
+  // 抓補鐘記錄，標記 madeUp（按日期+類型，避免連坐）
   try {
     const empIds = [...new Set(exceptions.map(e => e.employeeId))]
     const makeupEntries = await prisma.timeBankEntry.findMany({
@@ -266,10 +266,12 @@ export async function GET(req: NextRequest) {
       },
     })
     const makeupSet = new Set(
-      (makeupEntries || []).map((e: any) => `${e.employeeId}_${toHKDateStr(new Date(e.date))}`)
+      (makeupEntries || []).map((e: any) => `${e.employeeId}_${toHKDateStr(new Date(e.date))}_${e.targetType}`)
     )
     exceptions.forEach(ex => {
-      ex.madeUp = makeupSet.has(`${ex.employeeId}_${ex.date}`)
+      if (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') {
+        ex.madeUp = makeupSet.has(`${ex.employeeId}_${ex.date}_${ex.type}`)
+      }
     })
   } catch {}
 
@@ -318,6 +320,9 @@ export async function GET(req: NextRequest) {
         otCount: exceptions.filter(e => e.employeeId === empId && e.type === 'OT').length,
         makeupMinutes: isHourly ? null : tb.makeupMinutes,
         earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
+        earlyLeaveMinutes: exceptions
+          .filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE')
+          .reduce((s, e) => s + (e.earlyMinutes || 0), 0),
       }
     })
   )

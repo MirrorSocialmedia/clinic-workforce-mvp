@@ -557,6 +557,7 @@ model TimeBankEntry {
   minutes    Int      // 正=進帳(OT/換回)，負=出帳(補鐘/換假)
   note       String?
   createdBy  String?  // 補鐘/換假記誰做的
+  targetType String?  // 'LATE' | 'EARLY_LEAVE'（MAKEUP 類型用，按類型標記避免連坐）
   createdAt  DateTime @default(now())
 
   @@index([employeeId, date])

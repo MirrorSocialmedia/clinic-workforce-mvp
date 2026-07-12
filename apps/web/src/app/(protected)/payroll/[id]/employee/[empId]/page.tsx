@@ -122,6 +122,7 @@ export default function EmployeePayrollDetailPage() {
   const absentDays = attendanceDetail.absentDays ?? detail.absentDays ?? item.absentDays
   const leaveDays = detail.approvedLeaveDays ?? item.leaveDays
   const lateRecords = (attendanceDetail.lateRecords ?? detail.lateRecords) || []
+  const earlyRecords = (attendanceDetail.earlyLeaveRecords ?? detail.earlyLeaveRecords) || []
   const lateDays = lateRecords.length
 
   // Salary breakdown
@@ -318,6 +319,15 @@ export default function EmployeePayrollDetailPage() {
               {lateRecords.length > 3 && <span>...+{lateRecords.length - 3}</span>}
             </div>
           )}
+          {earlyRecords.length > 0 && (
+            <div className="mt-2 text-sm" style={{ color: '#dc2626' }}>
+              ⚠️ 早退 {earlyRecords.length} 天
+              {earlyRecords.slice(0, 3).map((er: any, i: number) => (
+                <span key={i} className="ml-1">（{er.date} −{er.minutes}min）</span>
+              ))}
+              {earlyRecords.length > 3 && <span>...+{earlyRecords.length - 3}</span>}
+            </div>
+          )}
           {/* 🔧 Fix #2: 補鐘記錄 */}
           {detail.makeupRecords && detail.makeupRecords.length > 0 && (
             <div className="mt-2 text-sm">
@@ -460,12 +470,19 @@ export default function EmployeePayrollDetailPage() {
         {tb.otMinutes != null && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🕐 考勤與時間銀行</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
               {/* 本月遲到 */}
               <div className="rounded-lg border p-3" style={tb.lateCount > 0 ? { borderLeft: '3px solid #f59e0b' } : {}}>
                 <div className="text-xs text-muted-foreground">本月遲到</div>
                 <div className="text-lg font-bold mt-1" style={{ color: tb.lateCount > 0 ? '#d97706' : 'inherit' }}>
                   {tb.lateCount} 次 / 淨 {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘
+                </div>
+              </div>
+              {/* 本月早退 */}
+              <div className="rounded-lg border p-3" style={(tb.earlyLeaveCount ?? 0) > 0 ? { borderLeft: '3px solid #dc2626' } : {}}>
+                <div className="text-xs text-muted-foreground">本月早退</div>
+                <div className="text-lg font-bold mt-1" style={{ color: (tb.earlyLeaveMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
+                  {tb.earlyLeaveCount ?? 0} 次 / {tb.earlyLeaveMinutes ?? 0} 分鐘
                 </div>
               </div>
               {/* 本月 OT */}

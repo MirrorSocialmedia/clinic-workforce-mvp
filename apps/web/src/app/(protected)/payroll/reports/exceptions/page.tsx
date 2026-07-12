@@ -38,7 +38,7 @@ export default function ExceptionsReportPage() {
   const [employees, setEmployees] = useState<Array<{ id: string; name: string }>>([])
   const [userRole, setUserRole] = useState<string>('')
   const [employeeSummaries, setEmployeeSummaries] = useState<EmployeeSummary[]>([])
-  const [makeupOpen, setMakeupOpen] = useState<string | null>(null)
+  const [makeupOpen, setMakeupOpen] = useState<{ employeeId: string; type: 'LATE' | 'EARLY_LEAVE' } | null>(null)
   const [makeupForm, setMakeupForm] = useState({ date: '', minutes: '', reason: '' })
   const [makeupSubmitting, setMakeupSubmitting] = useState(false)
 
@@ -114,9 +114,10 @@ export default function ExceptionsReportPage() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          employeeId: makeupOpen,
+          employeeId: makeupOpen.employeeId,
           date: makeupForm.date,
           minutes: parseInt(makeupForm.minutes),
+          targetType: makeupOpen.type,
           reason: makeupForm.reason || undefined,
         }),
       })
@@ -327,7 +328,7 @@ export default function ExceptionsReportPage() {
                         {showMakeupBtn && (
                           <button
                             onClick={() => {
-                              setMakeupOpen(ex.employeeId)
+                              setMakeupOpen({ employeeId: ex.employeeId, type: ex.type as 'LATE' | 'EARLY_LEAVE' })
                               setMakeupForm({ date: ex.date, minutes: '', reason: '' })
                             }}
                             style={{

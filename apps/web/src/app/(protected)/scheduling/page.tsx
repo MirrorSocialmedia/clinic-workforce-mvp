@@ -1392,6 +1392,7 @@ function getShiftColor(shift: Shift): string {
               style={{
                 background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb',
                 borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
+                fontSize: 12, padding: '2px 8px',
               }}
             >
               清空當週排班
@@ -1448,7 +1449,9 @@ function getShiftColor(shift: Shift): string {
               {leaveTypes.map(lt => {
                 const bal = selectedEmpBalances.find(b => b.leaveTypeId === lt.id)
                 const remaining = bal?.remaining ?? 0
-                const canDragLeave = canManage && remaining > 0
+                // 🔧 Fix #2a: 無限類型永遠可拖
+                const isUnlimited = lt.quantity == null && !lt.systemKey
+                const canDragLeave = canManage && (isUnlimited || remaining > 0)
                 return (
                   <div
                     key={lt.id}
@@ -1471,8 +1474,8 @@ function getShiftColor(shift: Shift): string {
                     title={canDragLeave ? `拖到日曆建立請假 - ${lt.name}` : '無餘額，無法拖放'}
                   >
                     <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
-                    <span style={{ fontSize: 10, fontWeight: 600 }}>（剩 {remaining.toFixed(1)} 天）</span>
-                    {!canDragLeave && remaining <= 0 && <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
+                    <span style={{ fontSize: 10, fontWeight: 600 }}>{isUnlimited ? '（無限）' : `（剩 ${remaining.toFixed(1)} 天）`}</span>
+                    {!canDragLeave && !isUnlimited && remaining <= 0 && <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
                   </div>
                 )
               })}
@@ -1570,9 +1573,11 @@ function getShiftColor(shift: Shift): string {
                     return
                   }
 
-                  // 🔧 Fix #3c: 拖放時再次檢查餘額
+                  // 🔧 Fix #3c: 拖放時再次檢查餘額（無限類型跳過）
+                  const lt = leaveTypes.find(l => l.id === leaveTypeId)
+                  const isUnlimited = lt && lt.quantity == null && !lt.systemKey
                   const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveTypeId)
-                  if (!bal || bal.remaining <= 0) {
+                  if (!isUnlimited && (!bal || bal.remaining <= 0)) {
                     setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
                     return
                   }

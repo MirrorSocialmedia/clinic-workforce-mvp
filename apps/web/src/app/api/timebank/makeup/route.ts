@@ -11,24 +11,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '只有老闆可補鐘' }, { status: 403 })
   }
 
-  const { employeeId, date, minutes, reason } = await req.json()
+  const { employeeId, date, minutes, reason, targetType } = await req.json()
 
   if (!employeeId || !date || !minutes) {
     return NextResponse.json({ error: 'employeeId, date, minutes 為必填' }, { status: 400 })
   }
 
-  // 查同日是否已補鐘
+  // 查同日同類型是否已補鐘（按日期+targetType，避免連坐）
   const dateStart = new Date(date + 'T00:00:00+08:00')
   const dateEnd = new Date(date + 'T23:59:59+08:00')
   const existing = await prisma.timeBankEntry.findFirst({
     where: {
       employeeId,
       type: 'MAKEUP',
+      targetType: targetType || undefined,
       date: { gte: dateStart, lte: dateEnd },
     },
   })
   if (existing) {
-    return NextResponse.json({ error: '該日已補鐘，不可重複補' }, { status: 400 })
+    return NextResponse.json({ error: '當天該類型已補鐘' }, { status: 400 })
   }
 
   const makeup = await prisma.timeBankEntry.create({
@@ -37,7 +38,8 @@ export async function POST(req: NextRequest) {
       date: new Date(date),
       type: 'MAKEUP',
       minutes: -Math.abs(parseInt(minutes)),
-      note: `補鐘：${reason || '遲到/早退'} ${minutes}分`,
+      targetType,
+      note: `補鐘：${targetType === 'EARLY_LEAVE' ? '早退' : '遲到'} ${Math.abs(parseInt(minutes))}分`,
       createdBy: auth.session.userId,
     },
   })

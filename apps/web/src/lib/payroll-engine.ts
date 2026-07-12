@@ -832,6 +832,7 @@ interface WorkData {
   totalDaysInMonth: number
   monthlyWorkingDays: number
   lateRecords: Array<{ date: string; minutes: number }>
+  earlyLeaveRecords: Array<{ date: string; minutes: number }>
   leaveRecords: Array<{ isPlanned: boolean; days: number; cancelsBonus: boolean; name: string }>
   partialDays: string[]
   consultationFees: number
@@ -1675,9 +1676,11 @@ async function collectWorkData(
 
   // shifts already loaded above for calculateWorkedHours
 
-  // 🔧 Fix #1: Fetch MAKEUP entries — days with makeup should NOT count as late
+  // 🔧 Fix #1: Fetch MAKEUP entries — days with makeup should NOT count as late/early
+  // 🔴 Fix #4: Use targetType-aware makeup sets (separate LATE and EARLY_LEAVE)
   let makeupEntries: Array<{ date: string; minutes: number; note: string }> = []
-  const makeupDates = new Set<string>()
+  const makeupLateDates = new Set<string>()
+  const makeupEarlyDates = new Set<string>()
   try {
     const rawMakeupEntries = await prisma.timeBankEntry.findMany({
       where: {
@@ -1691,7 +1694,16 @@ async function collectWorkData(
       minutes: Math.abs(e.minutes),
       note: e.note || '',
     }))
-    makeupEntries.forEach((e) => makeupDates.add(e.date))
+    // Split by targetType
+    for (const e of rawMakeupEntries) {
+      const dateStr = formatDate(e.date)
+      if (e.targetType === 'EARLY_LEAVE') {
+        makeupEarlyDates.add(dateStr)
+      } else {
+        // Default to LATE (backward compat for old entries without targetType)
+        makeupLateDates.add(dateStr)
+      }
+    }
   } catch {
     // timeBankEntry may not exist yet
   }
@@ -1715,9 +1727,36 @@ async function collectWorkData(
       }
       if (firstPunch.punchTime > shiftStartTime) {
         const dateStr = formatDate(firstPunch.punchTime)
-        if (makeupDates.has(dateStr)) continue // ← 該天已補鐘，不算遲到
+        if (makeupLateDates.has(dateStr)) continue // ← 該天已補鐘(遲到)，不算遲到
         const minutes = Math.ceil((firstPunch.punchTime.getTime() - shiftStartTime.getTime()) / 60000)
         lateRecords.push({ date: dateStr, minutes })
+      }
+    }
+  }
+
+  // Early leave records — exclude days made up with EARLY_LEAVE targetType
+  const earlyLeaveRecords: Array<{ date: string; minutes: number }> = []
+  for (const shift of shifts) {
+    const dayStart = new Date(shift.date)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setHours(23, 59, 59)
+
+    const dayPunches = punches.filter(
+      (p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd
+    )
+    const lastPunch = dayPunches[dayPunches.length - 1]
+    if (lastPunch) {
+      let shiftEndTime: Date
+      if (shift.endTime instanceof Date) {
+        shiftEndTime = shift.endTime
+      } else {
+        shiftEndTime = new Date(shift.endTime)
+      }
+      if (lastPunch.punchTime < shiftEndTime) {
+        const dateStr = formatDate(lastPunch.punchTime)
+        if (makeupEarlyDates.has(dateStr)) continue // ← 該天已補鐘(早退)，不算早退
+        const minutes = Math.ceil((shiftEndTime.getTime() - lastPunch.punchTime.getTime()) / 60000)
+        if (minutes > 0) earlyLeaveRecords.push({ date: dateStr, minutes })
       }
     }
   }
@@ -1760,6 +1799,7 @@ async function collectWorkData(
     totalDaysInMonth: new Date(year, month + 1, 0).getDate(),
     monthlyWorkingDays,
     lateRecords,
+    earlyLeaveRecords,
     leaveRecords: leaveRecordsForEngine,
     partialDays,
     consultationFees,
@@ -2284,6 +2324,7 @@ export async function calculatePayrollWithRules(
   // 8. Task 6 + TimeBank: Build comprehensive detail JSON with timebank data
   // tb already computed at line 1992 (OT唯一來源)
   const lateCount = workData.lateRecords.length
+  const earlyLeaveCount = workData.earlyLeaveRecords?.length ?? 0
 
   const leaveTaken = workData.approvedLeaveDays
   result.detail = {
@@ -2294,6 +2335,7 @@ export async function calculatePayrollWithRules(
       actualAttendanceDays: workData.actualAttendanceDays,
       absentDays: workData.absentDays,
       lateRecords: workData.lateRecords,
+      earlyLeaveRecords: workData.earlyLeaveRecords || [],
       dailyEntries: workData.dailyEntries.map(d => ({ date: d.date, totalHours: d.totalHours })),
     },
     // 🔧 Fix #2: 補鐘記錄
@@ -2325,12 +2367,15 @@ export async function calculatePayrollWithRules(
       otMinutes: tb.otMinutes,
       lateMinutes: tb.lateMinutes,
       lateCount,
+      earlyLeaveMinutes: tb.earlyLeaveMinutes,
+      earlyLeaveCount,
       owedMinutes: tb.owedMinutes,
       convertibleLeaveDays: tb.convertibleLeaveDays,
-      earlyLeaveMinutes: tb.earlyLeaveMinutes,
       makeupMinutes: tb.makeupMinutes,
       carriedFrom: tb.carriedFrom,
       balance: tb.balance,
+  timeAccountMinutes: tb.timeAccountMinutes,
+  netDeficitMinutes: tb.netDeficitMinutes,
     },
   }
 

@@ -195,6 +195,8 @@ export default function DashboardPage() {
                   <TableHead>員工</TableHead>
                   <TableHead>遲到次數</TableHead>
                   <TableHead>遲到時間</TableHead>
+                  <TableHead>早退次數</TableHead>
+                  <TableHead>早退時間</TableHead>
                   <TableHead>OT次數</TableHead>
                   <TableHead>本月OT</TableHead>
                   <TableHead>時間帳戶</TableHead>
@@ -214,6 +216,12 @@ export default function DashboardPage() {
                     <TableCell style={{ color: (emp.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
                       {emp.lateMinutes ?? 0} 分鐘
                       {emp.makeupMinutes != null && emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
+                    </TableCell>
+                    <TableCell style={emp.earlyLeaveCount > 0 ? { color: '#dc2626', fontWeight: 600 } : {}}>
+                      {emp.earlyLeaveCount ?? 0} 次
+                    </TableCell>
+                    <TableCell style={{ color: (emp.earlyLeaveMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
+                      {emp.earlyLeaveMinutes ?? 0} 分鐘
                     </TableCell>
                     <TableCell>{emp.otCount ?? 0} 次</TableCell>
                     <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>
