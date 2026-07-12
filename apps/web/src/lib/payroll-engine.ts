@@ -648,6 +648,8 @@ export async function generatePayrollRun(
   const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
 
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
+  const year = monthDate.getFullYear()
+  const month = monthDate.getMonth()
 
   const existing = await prisma.payrollRun.findFirst({
     where: {
@@ -716,10 +718,18 @@ export async function generatePayrollRun(
     for (const emp of employees) {
       try {
         // Read employee pay rule to determine engine
+        // 🔧 Fix: 按計糧月份選規則，不按 new Date()
+        const monthStartForRule = new Date(year, month, 1)
+        const monthEndForRule = new Date(year, month + 1, 0, 23, 59, 59)
         const payRule = await tx.payRule.findFirst({
           where: {
             employeeId: emp.id,
             isActive: true,
+            effectiveFrom: { lte: monthEndForRule },
+            OR: [
+              { effectiveTo: null },
+              { effectiveTo: { gte: monthStartForRule } },
+            ],
           },
           orderBy: { effectiveFrom: 'desc' },
         })

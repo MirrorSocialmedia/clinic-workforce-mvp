@@ -5,26 +5,23 @@ import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 import { todayHK } from '@/lib/hk-date'
 
-type BaseType = 'monthly' | 'hourly' | 'daily' | 'split'
+type BaseType = 'monthly' | 'hourly' | 'split'
 
 const BASE_TYPE_LABELS: Record<BaseType, string> = {
   monthly: '月薪',
   hourly: '時薪',
-  daily: '日薪',
   split: '拆帳',
 }
 
-const BASE_TYPE_TO_PAY_TYPE: Record<BaseType, 'MONTHLY' | 'DAILY' | 'HOURLY' | 'SPLIT'> = {
+const BASE_TYPE_TO_PAY_TYPE: Record<BaseType, 'MONTHLY' | 'HOURLY' | 'SPLIT'> = {
   monthly: 'MONTHLY',
   hourly: 'HOURLY',
-  daily: 'DAILY',
   split: 'SPLIT',
 }
 
 const PAY_TYPE_TO_BASE_TYPE: Record<string, BaseType> = {
   MONTHLY: 'monthly',
   HOURLY: 'hourly',
-  DAILY: 'daily',
   SPLIT: 'split',
 }
 
@@ -68,9 +65,6 @@ function buildDefaultConfig(baseType: BaseType): PayRuleConfigModular {
       break
     case 'hourly':
       config.hourly_rate = 180
-      break
-    case 'daily':
-      config.daily_rate = 1500
       break
     case 'split':
       config.split_ratio = 70
@@ -288,10 +282,6 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
       setError('請輸入時薪金額')
       return
     }
-    if (baseType === 'daily' && (!config.daily_rate || config.daily_rate <= 0)) {
-      setError('請輸入日薪金額')
-      return
-    }
     if (baseType === 'split' && (!config.split_ratio || config.split_ratio <= 0)) {
       setError('請輸入拆帳比例')
       return
@@ -317,9 +307,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
               ? config.monthly_salary
               : baseType === 'hourly'
                 ? config.hourly_rate
-                : baseType === 'daily'
-                  ? config.daily_rate
-                  : config.split_ratio,
+                : config.split_ratio,
           modularConfig: baseType === 'hourly'
             ? { base_type: 'hourly', hourly_rate: config.hourly_rate } // clean config, no modifiers
             : config,
@@ -421,7 +409,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
           <div style={sectionStyle}>
             <div style={sectionTitleStyle}>1️⃣ 基礎薪酬模式（選一）</div>
             <div style={radioGroupStyle}>
-              {(['monthly', 'hourly', 'daily', 'split'] as BaseType[]).map((type) => (
+              {(['monthly', 'hourly', 'split'] as BaseType[]).map((type) => (
                 <label key={type} style={checkboxLabelStyle}>
                   <input
                     type="radio"
@@ -470,22 +458,6 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 <p style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
                   兼職按分鐘計薪：金額 = 有效分鐘 × 時薪 ÷ 60。早打卡從排班時間起計。無勤工獎、無OT、無遲到扣款、無MPF。
                 </p>
-              </div>
-            )}
-
-            {baseType === 'daily' && (
-              <div className="form-group">
-                <label>日薪金額 (HK$)</label>
-                <input
-                  type="number"
-                  value={config.daily_rate ?? ''}
-                  onChange={(e) =>
-                    updateBaseParam('daily_rate', e.target.value ? Number(e.target.value) : undefined)
-                  }
-                  placeholder="如 1500"
-                  min={0}
-                  step="0.01"
-                />
               </div>
             )}
 

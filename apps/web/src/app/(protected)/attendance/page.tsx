@@ -261,6 +261,7 @@ export default function AttendancePage() {
           employeeId: record.employeeId,
           date: record.date,
           minutes,
+          targetType: record.type,
           reason: `${record.type === 'LATE' ? '遲到' : '早退'}補鐘`,
         }),
       })
