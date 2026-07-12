@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken, type SessionPayload } from './auth'
 import { CONFIG, type Role } from './config'
+import { cookies } from 'next/headers'
 
 // ----------------------------------------------------------
 // Unified auth gate — all API routes must call this
@@ -122,4 +123,27 @@ export function getEmployeeIdForUser(userId: string): string | null {
   // Caller should have the employee ID; this is a placeholder
   // In practice, pass the employee ID from the resolved employee record
   return userId
+}
+
+/**
+ * Role-based auth check for Next.js App Router routes (Server Components / Route Handlers using cookies).
+ * Usage: const session = await requireRole(['OWNER', 'MANAGER'])
+ * Throws NextResponse on failure.
+ */
+export async function requireRole(
+  allowedRoles: Role[]
+): Promise<SessionPayload> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get('session')?.value
+  const session = token ? verifyToken(token) : null
+
+  if (!session) {
+    throw NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  if (!allowedRoles.includes(session.role)) {
+    throw NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  return session
 }

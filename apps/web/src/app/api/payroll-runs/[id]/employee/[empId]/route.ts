@@ -33,7 +33,7 @@ export async function GET(
   const periodEnd = new Date(periodStart.getFullYear(), periodStart.getMonth() + 1, 0, 23, 59, 59)
 
   const punches = await prisma.punchRecord.findMany({
-    where: { employeeId: params.empId, punchTime: { gte: periodStart, lte: periodEnd } },
+    where: { employeeId: params.empId, punchTime: { gte: periodStart, lte: periodEnd }, void: { is: null } },
     orderBy: { punchTime: 'asc' },
     take: 100,
   })

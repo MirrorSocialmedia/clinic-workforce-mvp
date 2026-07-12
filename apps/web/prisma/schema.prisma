@@ -261,8 +261,19 @@ model PunchRecord {
   clinic      Clinic      @relation(fields: [clinicId], references: [id])
 
   corrections PunchCorrection[] // corrections referencing this record
+  void        PunchVoid?        // void record (null = active)
 
   @@index([employeeId, punchTime])
+}
+
+// Punch void — cancels a punch record without deleting it (append-only)
+model PunchVoid {
+  id            String      @id @default(cuid())
+  punchRecordId String      @unique
+  punchRecord   PunchRecord @relation(fields: [punchRecordId], references: [id])
+  voidedBy      String      // userId who voided
+  reason        String      // void reason (required)
+  createdAt     DateTime    @default(now())
 }
 
 // Punch correction — overlay on top of punch records (never modifies originals)

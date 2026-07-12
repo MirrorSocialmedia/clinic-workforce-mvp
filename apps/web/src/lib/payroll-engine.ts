@@ -156,7 +156,10 @@ async function calculateWorkedHours(
 
   const [punches, corrections] = await Promise.all([
     prisma.punchRecord.findMany({
-      where,
+      where: {
+        ...where,
+        void: { is: null }, // Exclude voided punches
+      },
       orderBy: { punchTime: 'asc' },
     }),
     prisma.punchCorrection.findMany({
@@ -1029,10 +1032,12 @@ export async function calculateTimeBank(
   const carriedFrom = lastMonthRecord?.balance ?? 0
 
   // Grab ALL punches (CLOCK_IN + CLOCK_OUT), not just CLOCK_IN
+  // Fix #2c: Exclude voided punches
   const punches = await db.punchRecord.findMany({
     where: {
       employeeId,
       punchTime: { gte: monthStart, lte: monthEnd },
+      void: { is: null }, // Exclude voided punches
     },
     orderBy: { punchTime: 'asc' },
   })
@@ -1591,11 +1596,13 @@ async function collectWorkData(
   const workingDays = countWorkingDays(year, month)
 
   // Late records: compare clock-in times with shift start times
+  // Fix #2c: Exclude voided punches
   const punches = await prisma.punchRecord.findMany({
     where: {
       employeeId,
       punchTime: { gte: monthStart, lte: monthEnd },
       punchType: 'CLOCK_IN',
+      void: { is: null }, // Exclude voided punches
     },
     orderBy: { punchTime: 'asc' },
   })

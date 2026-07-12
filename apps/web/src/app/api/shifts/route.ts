@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
         employeeId: { in: shifts.map((s: any) => s.employeeId) },
         punchType: 'CLOCK_IN',
         punchTime: { gte: batchStart, lte: batchEnd },
+        void: { is: null }, // Exclude voided punches
       },
     })
 

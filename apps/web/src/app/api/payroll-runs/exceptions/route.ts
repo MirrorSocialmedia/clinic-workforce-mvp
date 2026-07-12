@@ -38,8 +38,13 @@ export async function GET(req: NextRequest) {
   if (clinicId) punchWhere.clinicId = clinicId
   if (employeeId) punchWhere.employeeId = employeeId
 
+  // Fix #3b: Do NOT filter source/tokenValid — 補登 is valid punch
+  // Fix #2c: Exclude voided punches
   const punches = await prisma.punchRecord.findMany({
-    where: punchWhere,
+    where: {
+      ...punchWhere,
+      void: { is: null },
+    },
     include: {
       employee: {
         include: {

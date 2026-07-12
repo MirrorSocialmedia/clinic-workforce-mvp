@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   }
 
   const punches = await prisma.punchRecord.findMany({
-    where,
+    where: { ...where, void: { is: null } },
     include: { clinic: { select: { id: true, name: true } } },
     orderBy: { punchTime: 'desc' },
     take: 100,

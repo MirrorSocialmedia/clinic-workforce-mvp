@@ -26,6 +26,13 @@ interface PunchRecord {
   }
   clinic: { id: string; name: string }
   corrections: any[]
+  void: {
+    id: string
+    punchRecordId: string
+    voidedBy: string
+    reason: string
+    createdAt: string
+  } | null
 }
 
 interface ExceptionRecord {
@@ -75,6 +82,13 @@ export default function AttendancePage() {
 
   // Records tab: exceptions lookup for color-coding
   const [recordsExceptions, setRecordsExceptions] = useState<ExceptionRecord[]>([])
+  const [loadedMonths, setLoadedMonths] = useState<Set<string>>(new Set())
+
+  // Void modal state
+  const [showVoidModal, setShowVoidModal] = useState(false)
+  const [voidRecord, setVoidRecord] = useState<PunchRecord | null>(null)
+  const [voidReason, setVoidReason] = useState('')
+  const [submittingVoid, setSubmittingVoid] = useState(false)
 
   // Exceptions tab state
   const [exClinicId, setExClinicId] = useState('')
@@ -185,12 +199,18 @@ export default function AttendancePage() {
   }
 
   // Records tab: fetch exceptions for color-coding & status display
+  // Fix #3a: Cross-month — collect months from visible records
   const fetchRecordExceptions = useCallback(async () => {
     try {
       const months = new Set<string>()
       if (startDate) months.add(startDate.slice(0, 7))
       if (endDate) months.add(endDate.slice(0, 7))
       if (months.size === 0) months.add(new Date().toISOString().slice(0, 7))
+
+      // Also add months from records that are visible
+      for (const r of records) {
+        months.add(toHKDateStr(new Date(r.punchTime)).slice(0, 7))
+      }
 
       const all: ExceptionRecord[] = []
       for (const m of months) {
@@ -203,8 +223,9 @@ export default function AttendancePage() {
         }
       }
       setRecordsExceptions(all)
+      setLoadedMonths(months)
     } catch {}
-  }, [startDate, endDate])
+  }, [startDate, endDate, records])
 
   useEffect(() => {
     if (user && activeTab === 'records') fetchRecordExceptions()
@@ -415,11 +436,28 @@ export default function AttendancePage() {
                   <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
                 ) : (
                   records.map((record) => {
+                    // Get exception data for this record
                     const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record)
-                    const rowBg = lateEx ? '#fff7ed' : earlyEx ? '#fef2f2' : otEx ? '#f0fdf4' : undefined
+
+                    // Fix #1: Status by punchType — 上班列只顯示遲到，落班列只顯示OT/早退
+                    const isClockIn = record.punchType === 'CLOCK_IN'
+                    const showLate = isClockIn ? lateEx : undefined
+                    const showEarly = !isClockIn ? earlyEx : undefined
+                    const showOt = !isClockIn ? otEx : undefined
+
+                    // Fix #3a: Check if this month has exception data loaded
+                    const recordDateStr = toHKDateStr(new Date(record.punchTime))
+                    const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
+
+                    // Fix #2d: Void styling
+                    const isVoided = !!(record.void as any)
+                    const rowBg = isVoided
+                      ? '#f3f4f6'
+                      : showLate ? '#fff7ed' : showEarly ? '#fef2f2' : showOt ? '#f0fdf4' : undefined
 
                     return (
-                    <tr key={record.id} className="border-b hover:bg-gray-50" style={rowBg ? { backgroundColor: rowBg } : {}}>
+                    <tr key={record.id} className={`border-b hover:bg-gray-50 ${isVoided ? 'opacity-50' : ''}`}
+                      style={rowBg ? { backgroundColor: rowBg } : {}}>
                       <td className="p-3">{record.employee?.user?.name || record.employeeId}</td>
                       <td className="p-3">{record.clinic?.name || record.clinicId}</td>
                       <td className="p-3">
@@ -456,10 +494,18 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td className="p-3">
-                        {lateEx && <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {lateEx.lateMinutes || 0} 分</span>}
-                        {earlyEx && <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {earlyEx.earlyMinutes || 0} 分</span>}
-                        {otEx && <span style={{ color: '#059669', fontWeight: 600 }}>OT {otEx.otMinutes || 0} 分</span>}
-                        {!lateEx && !earlyEx && !otEx && <span style={{ color: '#16a34a' }}>正常</span>}
+                        {/* Fix #1: Status by punchType */}
+                        {/* Fix #3a: Show '—' if month not loaded */}
+                        {!monthLoaded ? (
+                          <span className="text-muted">—</span>
+                        ) : (
+                          <>
+                            {showLate && <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {showLate.lateMinutes || 0} 分</span>}
+                            {showEarly && <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {showEarly.earlyMinutes || 0} 分</span>}
+                            {showOt && <span style={{ color: '#059669', fontWeight: 600 }}>OT {showOt.otMinutes || 0} 分</span>}
+                            {!showLate && !showEarly && !showOt && <span style={{ color: '#16a34a' }}>正常</span>}
+                          </>
+                        )}
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {record.source === 'QR_DYNAMIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 動態碼</> : record.source === 'QR_STATIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 固定碼</> : record.source === 'MANUAL_CORRECTION' ? <><Pencil size={14} style={{ marginRight: 4 }} /> 補打卡</> : <><Wrench size={14} style={{ marginRight: 4 }} /> 系統</>}
@@ -476,14 +522,15 @@ export default function AttendancePage() {
                         ) : (<span className="text-emerald-600 text-xs">✓ 無修正</span>)}
                       </td>
                       <td className="p-3">
-                        {((lateEx || earlyEx) && user.role === 'OWNER') && (
-                          (lateEx?.madeUp || earlyEx?.madeUp) ? (
+                        {/* Fix #1: Makeup only for relevant punch types */}
+                        {((isClockIn && showLate) || (!isClockIn && showEarly)) && user.role === 'OWNER' && (
+                          ((isClockIn && showLate?.madeUp) || (!isClockIn && showEarly?.madeUp)) ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                               ✓ 已補鐘
                             </span>
                           ) : (
                             <button
-                              onClick={() => { const ex = lateEx || earlyEx!; handleMakeup(ex) }}
+                              onClick={() => { const ex = isClockIn ? (lateEx || undefined) : (earlyEx || undefined); if (ex) handleMakeup(ex) }}
                               className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
                               style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
                               title="補鐘：用OT補這次遲到/早退，免扣勤工"
@@ -494,10 +541,22 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td className="p-3">
+                        {/* Fix #2d: Void badge + button */}
+                        {isVoided ? (
+                          <span className="px-2 py-1 text-xs rounded bg-gray-200 text-gray-600 border border-gray-300"
+                            title={(record.void as any)?.reason || ''}>已作廢</span>
+                        ) : null}
                         <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
                           className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
                           <Pencil size={14} /> 修正
                         </button>
+                        {/* Fix #2d: Void button for MANUAL_CORRECTION records (OWNER only) */}
+                        {!isVoided && record.source === 'MANUAL_CORRECTION' && user?.role === 'OWNER' && (
+                          <button onClick={() => { setVoidRecord(record); setVoidReason(''); setShowVoidModal(true) }}
+                            className="text-red-600 text-sm mr-2 hover:underline" title="作廢此補登記錄">
+                            作廢
+                          </button>
+                        )}
                         <Link href={`/attendance/${record.id}`} className="text-brand hover:underline text-xs">詳情</Link>
                       </td>
                     </tr>
@@ -898,6 +957,59 @@ export default function AttendancePage() {
               }} disabled={submittingAddPunch}
                 className={`px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ${submittingAddPunch ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}>
                 {submittingAddPunch ? '提交中...' : '提交補登'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Void Modal — 作廢補登記錄 */}
+      {showVoidModal && voidRecord && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]"
+          onClick={() => setShowVoidModal(false)}>
+          <div className="bg-white border rounded-xl shadow-lg w-full mx-4 p-6 relative" style={{ maxWidth: '440px' }}
+            onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowVoidModal(false)}
+              className="absolute top-3 right-3 text-lg text-muted-foreground hover:text-foreground bg-none border-none cursor-pointer">✕</button>
+            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">作廢補登記錄</h2>
+            <div className="mb-3 text-sm text-muted-foreground">
+              <div>員工: {voidRecord.employee?.user?.name || voidRecord.employeeId}</div>
+              <div>診所: {voidRecord.clinic?.name || voidRecord.clinicId}</div>
+              <div>時間: {new Date(voidRecord.punchTime).toLocaleString('zh-HK')}</div>
+              <div>類型: {voidRecord.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
+              <div className="mt-1 text-xs text-red-500">⚠️ 作廢後此記錄將從所有計算中排除，無法復原。</div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">作廢原因 *</label>
+              <textarea value={voidReason}
+                onChange={e => setVoidReason(e.target.value)}
+                placeholder="請說明作廢原因（必填）" rows={3}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-vertical" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowVoidModal(false)}
+                className="px-4 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">取消</button>
+              <button onClick={async () => {
+                if (!voidReason.trim()) { alert('請填寫作廢原因'); return }
+                setSubmittingVoid(true)
+                try {
+                  const res = await fetch(`/api/punches/${voidRecord.id}/void`, {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: voidReason }),
+                  })
+                  const data = await res.json()
+                  if (!res.ok) { alert(data.error || '作廢失敗'); return }
+                  alert('✅ 已作廢')
+                  setShowVoidModal(false)
+                  setVoidReason('')
+                  setVoidRecord(null)
+                  fetchRecords()
+                  fetchRecordExceptions()
+                } catch { alert('網路錯誤') }
+                finally { setSubmittingVoid(false) }
+              }} disabled={submittingVoid}
+                className={`px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ${submittingVoid ? 'bg-gray-400 cursor-default' : 'bg-red-600 hover:bg-red-700 cursor-pointer'}`}>
+                {submittingVoid ? '作廢中...' : '確認作廢'}
               </button>
             </div>
           </div>

@@ -42,7 +42,10 @@ export async function GET(req: NextRequest) {
 
   const [records, total] = await Promise.all([
     prisma.punchRecord.findMany({
-      where,
+      where: {
+        ...where,
+        void: { is: null }, // Exclude voided punches
+      },
       include: {
         employee: {
           include: {
@@ -54,6 +57,7 @@ export async function GET(req: NextRequest) {
           where: { status: 'APPROVED' },
           orderBy: { createdAt: 'asc' },
         },
+        void: true, // Include void info for UI
       },
       orderBy: { punchTime: 'desc' },
       skip,

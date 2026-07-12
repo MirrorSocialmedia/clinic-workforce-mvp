@@ -23,6 +23,7 @@ export async function computeDailyHash(
         gte: startOfDay,
         lte: endOfDay,
       },
+      void: { is: null }, // Exclude voided punches from hash
     },
     orderBy: [
       { employeeId: 'asc' },
