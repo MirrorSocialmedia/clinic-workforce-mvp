@@ -220,8 +220,8 @@ export default function DashboardPage() {
                     <TableCell style={emp.earlyLeaveCount > 0 ? { color: '#dc2626', fontWeight: 600 } : {}}>
                       {emp.earlyLeaveCount ?? 0} 次
                     </TableCell>
-                    <TableCell style={{ color: (emp.earlyLeaveMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
-                      {emp.earlyLeaveMinutes ?? 0} 分鐘
+                    <TableCell style={{ color: (emp.netEarlyMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
+                      {emp.netEarlyMinutes ?? 0} 分鐘
                     </TableCell>
                     <TableCell>{emp.otCount ?? 0} 次</TableCell>
                     <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>

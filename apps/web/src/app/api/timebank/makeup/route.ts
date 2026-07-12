@@ -51,6 +51,50 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '當天該類型已補鐘' }, { status: 400 })
   }
 
+  // 🔒 防呆：補鐘分鐘不可超過該筆異常的實際分鐘
+  {
+    const shift = await prisma.shift.findFirst({
+      where: {
+        employeeId,
+        date: dateStart,
+        status: { not: 'CANCELLED' },
+      },
+    })
+    if (shift) {
+      const { getEffectivePunches } = await import('@/lib/punch-query')
+      const dayStart = new Date(date + 'T00:00:00+08:00')
+      const dayEnd = new Date(date + 'T23:59:59+08:00')
+      const dayPunches = await getEffectivePunches(dayStart, dayEnd, { employeeId, db: prisma })
+
+      let actualMinutes = 0
+      if (targetType === 'LATE') {
+        const clockIn = dayPunches
+          .filter((ep: any) => ep.punchType === 'CLOCK_IN')
+          .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
+        if (clockIn && clockIn.effectiveTime.getTime() > new Date(shift.startTime).getTime()) {
+          actualMinutes = Math.ceil((clockIn.effectiveTime.getTime() - new Date(shift.startTime).getTime()) / 60000)
+        }
+      } else {
+        const clockOut = dayPunches
+          .filter((ep: any) => ep.punchType === 'CLOCK_OUT')
+          .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
+        if (clockOut && clockOut.effectiveTime.getTime() < new Date(shift.endTime).getTime()) {
+          actualMinutes = Math.ceil((new Date(shift.endTime).getTime() - clockOut.effectiveTime.getTime()) / 60000)
+        }
+      }
+
+      if (actualMinutes > 0 && Math.abs(parseInt(minutes)) > actualMinutes) {
+        return NextResponse.json(
+          {
+            error: `補鐘分鐘(${Math.abs(parseInt(minutes))})超過實際${targetType === 'EARLY_LEAVE' ? '早退' : '遲到'}分鐘(${actualMinutes})`,
+            actualMinutes,
+          },
+          { status: 400 }
+        )
+      }
+    }
+  }
+
   const makeup = await prisma.timeBankEntry.create({
     data: {
       employeeId,

@@ -320,6 +320,7 @@ export async function GET(req: NextRequest) {
         otCount: exceptions.filter(e => e.employeeId === empId && e.type === 'OT').length,
         makeupMinutes: isHourly ? null : tb.makeupMinutes,
         earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
+        netEarlyMinutes: isHourly ? null : tb.netEarlyMinutes,
         earlyLeaveMinutes: exceptions
           .filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE')
           .reduce((s, e) => s + (e.earlyMinutes || 0), 0),

@@ -1090,6 +1090,7 @@ export async function calculateTimeBank(
   otMinutes: number
   lateMinutes: number
   netLateMinutes: number
+  netEarlyMinutes: number
   netDeficitMinutes: number
   earlyLeaveMinutes: number
   makeupMinutes: number
@@ -1161,13 +1162,20 @@ export async function calculateTimeBank(
     }
   }
 
-  // Grab makeup entries for this month
+  // Grab makeup entries for this month — split by targetType
   let makeupMinutes = 0
+  let makeupLateMinutes = 0
+  let makeupEarlyMinutes = 0
   try {
     const makeupEntries = await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: 'MAKEUP', date: { gte: monthStart, lte: monthEnd } },
     })
-    makeupMinutes = makeupEntries?.reduce((s: number, e: any) => s + Math.abs(e.minutes), 0) || 0
+    for (const e of (makeupEntries || [])) {
+      const m = Math.abs(e.minutes)
+      if (e.targetType === 'EARLY_LEAVE') makeupEarlyMinutes += m
+      else makeupLateMinutes += m // 'LATE' or null (legacy) → treat as late
+    }
+    makeupMinutes = makeupLateMinutes + makeupEarlyMinutes // 總消耗（帳戶用，不變）
   } catch {
     // timeBankEntry table may not exist yet
   }
@@ -1183,9 +1191,10 @@ export async function calculateTimeBank(
     // timeBankEntry table may not exist yet
   }
 
-  // deficit = 遲到 + 早退，補鐘統一抵扣
-  const deficitMinutes = lateMinutes + earlyLeaveMinutes
-  const netDeficitMinutes = Math.max(0, deficitMinutes - makeupMinutes)
+  // 各扣各的：netLate = late - makeupLate, netEarly = earlyLeave - makeupEarly
+  const netLateMinutes = Math.max(0, lateMinutes - makeupLateMinutes)
+  const netEarlyMinutes = Math.max(0, earlyLeaveMinutes - makeupEarlyMinutes)
+  const netDeficitMinutes = netLateMinutes + netEarlyMinutes
 
   // 本月淨OT = OT − 補鐘消耗 − 未補鐘的 deficit（遲到+早退）
   const netOtThisMonth = otMinutes - makeupMinutes - netDeficitMinutes
@@ -1218,7 +1227,7 @@ export async function calculateTimeBank(
   }
 
   return {
-    otMinutes, lateMinutes, netLateMinutes: netDeficitMinutes, earlyLeaveMinutes, makeupMinutes,
+    otMinutes, lateMinutes, netLateMinutes, netEarlyMinutes, earlyLeaveMinutes, makeupMinutes,
     netDeficitMinutes,
     carriedFrom,
     timeAccountMinutes: balance,
@@ -2349,15 +2358,17 @@ export async function calculatePayrollWithRules(
       otMinutes: tb.otMinutes,
       lateMinutes: tb.lateMinutes,
       lateCount,
+      netLateMinutes: tb.netLateMinutes,
       earlyLeaveMinutes: tb.earlyLeaveMinutes,
       earlyLeaveCount,
+      netEarlyMinutes: tb.netEarlyMinutes,
       owedMinutes: tb.owedMinutes,
       convertibleLeaveDays: tb.convertibleLeaveDays,
       makeupMinutes: tb.makeupMinutes,
       carriedFrom: tb.carriedFrom,
       balance: tb.balance,
-  timeAccountMinutes: tb.timeAccountMinutes,
-  netDeficitMinutes: tb.netDeficitMinutes,
+      timeAccountMinutes: tb.timeAccountMinutes,
+      netDeficitMinutes: tb.netDeficitMinutes,
     },
   }
 

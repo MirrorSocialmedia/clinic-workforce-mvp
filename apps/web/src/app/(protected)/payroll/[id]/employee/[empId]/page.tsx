@@ -481,8 +481,8 @@ export default function EmployeePayrollDetailPage() {
               {/* 本月早退 */}
               <div className="rounded-lg border p-3" style={(tb.earlyLeaveCount ?? 0) > 0 ? { borderLeft: '3px solid #dc2626' } : {}}>
                 <div className="text-xs text-muted-foreground">本月早退</div>
-                <div className="text-lg font-bold mt-1" style={{ color: (tb.earlyLeaveMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
-                  {tb.earlyLeaveCount ?? 0} 次 / {tb.earlyLeaveMinutes ?? 0} 分鐘
+                <div className="text-lg font-bold mt-1" style={{ color: (tb.netEarlyMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
+                  {tb.earlyLeaveCount ?? 0} 次 / 淨 {tb.netEarlyMinutes ?? 0} 分鐘
                 </div>
               </div>
               {/* 本月 OT */}
