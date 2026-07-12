@@ -8,6 +8,7 @@
 // ============================================================
 
 import { prisma, basePrisma } from './prisma'
+import { getEffectivePunches } from './punch-query'
 import type { PayType, RunStatus } from '@prisma/client'
 
 // ------------------------------------------------------------------
@@ -1088,16 +1089,8 @@ export async function calculateTimeBank(
   // Previous month carry — recursive backfill
   const carriedFrom = await getCarriedFrom(employeeId, monthDate, db)
 
-  // Grab ALL punches (CLOCK_IN + CLOCK_OUT), not just CLOCK_IN
-  // Fix #2c: Exclude voided punches
-  const punches = await db.punchRecord.findMany({
-    where: {
-      employeeId,
-      punchTime: { gte: monthStart, lte: monthEnd },
-      void: { is: null }, // Exclude voided punches
-    },
-    orderBy: { punchTime: 'asc' },
-  })
+  // Grab ALL effective punches (CLOCK_IN + CLOCK_OUT) with corrections applied
+  const effectivePunches = await getEffectivePunches(monthStart, monthEnd, { employeeId, db })
 
   const shifts = await db.shift.findMany({
     where: {
@@ -1108,7 +1101,7 @@ export async function calculateTimeBank(
     orderBy: { date: 'asc' },
   })
 
-  // Compare each shift day against actual punches
+  // Compare each shift day against effective punches
   let otMinutes = 0
   let lateMinutes = 0
   let earlyLeaveMinutes = 0
@@ -1119,30 +1112,32 @@ export async function calculateTimeBank(
     const dayEnd = new Date(shift.date)
     dayEnd.setHours(23, 59, 59, 999)
 
-    const dayPunches = punches.filter((p: any) => p.punchTime >= dayStart && p.punchTime <= dayEnd)
+    const dayPunches = effectivePunches.filter(
+      (ep: any) => ep.effectiveTime >= dayStart && ep.effectiveTime <= dayEnd,
+    )
 
     const clockIn = dayPunches
-      .filter((p: any) => p.punchType === 'CLOCK_IN')
-      .sort((a: any, b: any) => a.punchTime.getTime() - b.punchTime.getTime())[0]
+      .filter((ep: any) => ep.punchType === 'CLOCK_IN')
+      .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
 
     const clockOut = dayPunches
-      .filter((p: any) => p.punchType === 'CLOCK_OUT')
-      .sort((a: any, b: any) => b.punchTime.getTime() - a.punchTime.getTime())[0]
+      .filter((ep: any) => ep.punchType === 'CLOCK_OUT')
+      .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
 
     const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
     const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
 
-    // Late
-    if (clockIn && clockIn.punchTime.getTime() > shiftStart.getTime()) {
-      lateMinutes += Math.ceil((clockIn.punchTime.getTime() - shiftStart.getTime()) / 60000)
+    // Late — use effectiveTime
+    if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
+      lateMinutes += Math.ceil((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
     }
-    // Early leave
-    if (clockOut && clockOut.punchTime.getTime() < shiftEnd.getTime()) {
-      earlyLeaveMinutes += Math.ceil((shiftEnd.getTime() - clockOut.punchTime.getTime()) / 60000)
+    // Early leave — use effectiveTime
+    if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
+      earlyLeaveMinutes += Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
     }
-    // OT
-    if (clockOut && clockOut.punchTime.getTime() > shiftEnd.getTime()) {
-      otMinutes += Math.floor((clockOut.punchTime.getTime() - shiftEnd.getTime()) / 60000)
+    // OT — use effectiveTime
+    if (clockOut && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
+      otMinutes += Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
     }
   }
 
@@ -2068,31 +2063,26 @@ async function calculateSimpleHourlyPay(
       status: { not: 'CANCELLED' },
     },
   })
-  const punches = await prisma.punchRecord.findMany({
-    where: {
-      employeeId,
-      punchTime: { gte: monthStart, lte: monthEnd },
-      void: { is: null },
-    },
-    orderBy: { punchTime: 'asc' },
-  })
+
+  // Use effective punches (corrections applied, voided excluded)
+  const effectivePunches = await getEffectivePunches(monthStart, monthEnd, { employeeId })
 
   const days: any[] = []
   let totalMinutes = 0
   let totalPay = 0
 
-  // Group punches by HK date
+  // Group effective punches by HK date (effectiveTime)
   const byDate = new Map<string, any[]>()
-  for (const p of punches) {
-    const d = toHKDateStr(p.punchTime)
+  for (const ep of effectivePunches) {
+    const d = toHKDateStr(ep.effectiveTime)
     if (!byDate.has(d)) byDate.set(d, [])
-    byDate.get(d)!.push(p)
+    byDate.get(d)!.push(ep)
   }
 
   for (const [dateStr, dayPunches] of byDate) {
     const shift = shifts.find((s: any) => toHKDateStr(s.date) === dateStr)
-    const clockIn = dayPunches.filter((p: any) => p.punchType === 'CLOCK_IN')[0]
-    const clockOut = dayPunches.filter((p: any) => p.punchType === 'CLOCK_OUT').slice(-1)[0]
+    const clockIn = dayPunches.filter((ep: any) => ep.punchType === 'CLOCK_IN')[0]
+    const clockOut = dayPunches.filter((ep: any) => ep.punchType === 'CLOCK_OUT').slice(-1)[0]
 
     if (!clockIn || !clockOut) {
       days.push({ date: dateStr, note: '缺卡，不計薪', minutes: 0, amount: 0 })
@@ -2102,9 +2092,9 @@ async function calculateSimpleHourlyPay(
     // ★ Core: effective start = max(clockIn, shiftStart) — early punch not counted
     const shiftStart = shift ? new Date(shift.startTime).getTime() : null
     const effStart = shiftStart
-      ? Math.max(clockIn.punchTime.getTime(), shiftStart)
-      : clockIn.punchTime.getTime()
-    const minutes = Math.max(0, Math.floor((clockOut.punchTime.getTime() - effStart) / 60000))
+      ? Math.max(clockIn.effectiveTime.getTime(), shiftStart)
+      : clockIn.effectiveTime.getTime()
+    const minutes = Math.max(0, Math.floor((clockOut.effectiveTime.getTime() - effStart) / 60000))
     const amount = Math.round(minutes * rate / 60 * 100) / 100
 
     totalMinutes += minutes
@@ -2112,10 +2102,10 @@ async function calculateSimpleHourlyPay(
 
     days.push({
       date: dateStr,
-      in: clockIn.punchTime,
-      out: clockOut.punchTime,
+      in: clockIn.effectiveTime,
+      out: clockOut.effectiveTime,
       shiftStart: shift?.startTime ?? null,
-      clamped: shiftStart != null && clockIn.punchTime.getTime() < shiftStart,
+      clamped: shiftStart != null && clockIn.effectiveTime.getTime() < shiftStart,
       minutes,
       amount,
     })
@@ -2123,7 +2113,7 @@ async function calculateSimpleHourlyPay(
 
   totalPay = Math.round(totalPay * 100) / 100
 
-  // Count absentDays (scheduled shift with no punch)
+  // Count absentDays (scheduled shift with no effective punch)
   const absentDays = shifts.filter((s: any) => {
     const ds = toHKDateStr(s.date)
     return !byDate.has(ds) || byDate.get(ds)!.length === 0

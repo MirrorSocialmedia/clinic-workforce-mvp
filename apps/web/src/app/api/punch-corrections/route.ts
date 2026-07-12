@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // ============================================================
 // POST /api/punch-corrections — Create a punch correction request
@@ -146,6 +147,11 @@ export async function POST(req: NextRequest) {
 
         return c
       })
+
+      // Invalidate TimeBank from correction date so carry chain recalculates (only for APPROVED)
+      if (correction.status === 'APPROVED') {
+        await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
+      }
 
       return NextResponse.json(
         { success: true, correction, createdPunchRecord: !!(!existing && (session.role === 'OWNER' || session.role === 'MANAGER')) },

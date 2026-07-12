@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextResponse } from 'next/server'
 import { requireRole } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // POST /api/punches/[id]/void — Void a punch record (OWNER only)
 export async function POST(req: Request, ctx: { params: { id: string } }) {
@@ -40,6 +41,9 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
       notes: `作廢打卡：${reason}`,
     },
   })
+
+  // Invalidate TimeBank so carry chain recalculates from void date
+  await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, prisma)
 
   return NextResponse.json({ ok: true })
 }

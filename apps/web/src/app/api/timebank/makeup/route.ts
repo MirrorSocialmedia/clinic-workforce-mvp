@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req, 'POST', req.url)
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '該日已補鐘，不可重複補' }, { status: 400 })
   }
 
-  await prisma.timeBankEntry.create({
+  const makeup = await prisma.timeBankEntry.create({
     data: {
       employeeId,
       date: new Date(date),
@@ -40,6 +41,9 @@ export async function POST(req: NextRequest) {
       createdBy: auth.session.userId,
     },
   })
+
+  // Invalidate TimeBank so carry chain recalculates from makeup date
+  await invalidateTimeBankFrom(makeup.employeeId, makeup.date, prisma)
 
   await prisma.auditLog.create({
     data: {

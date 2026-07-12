@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { toHKDateStr } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
+import { getEffectivePunches } from '@/lib/punch-query'
 
 // GET /api/payroll-runs/exceptions — Attendance exceptions report + timebank summaries
 export async function GET(req: NextRequest) {
@@ -42,16 +43,18 @@ export async function GET(req: NextRequest) {
     })).map(r => r.employeeId)
   )
 
-  const punchWhere: any = { punchTime: { gte: monthStart, lte: monthEnd } }
-  if (clinicId) punchWhere.clinicId = clinicId
-  if (employeeId) punchWhere.employeeId = employeeId
+  const effectivePunches = await getEffectivePunches(monthStart, monthEnd, {
+    clinicId: clinicId || undefined,
+    employeeId: employeeId || undefined,
+  })
 
-  // Fix #3b: Do NOT filter source/tokenValid — 補登 is valid punch
-  // Fix #2c: Exclude voided punches
-  const punches = await prisma.punchRecord.findMany({
+  // Build employee lookup for raw punch employee data (needed for display)
+  const rawPunches = await prisma.punchRecord.findMany({
     where: {
-      ...punchWhere,
+      punchTime: { gte: monthStart, lte: monthEnd },
       void: { is: null },
+      ...(clinicId ? { clinicId } : {}),
+      ...(employeeId ? { employeeId } : {}),
     },
     include: {
       employee: {
@@ -63,6 +66,13 @@ export async function GET(req: NextRequest) {
     },
     orderBy: { punchTime: 'asc' },
   })
+
+  // Map raw punches by raw punch key for employee info lookup
+  const rawByTime = new Map<string, typeof rawPunches[0]>()
+  for (const rp of rawPunches) {
+    const k = `${toHKDateStr(rp.punchTime)}:${rp.clinicId}:${rp.employeeId}:${rp.punchType}`
+    rawByTime.set(k, rp)
+  }
 
   const correctionWhere: any = {
     status: 'APPROVED',
@@ -112,101 +122,118 @@ export async function GET(req: NextRequest) {
     payType?: 'HOURLY' | 'MONTHLY';
   }> = []
 
-  const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
-  const clockOuts = punches.filter(p => p.punchType === 'CLOCK_OUT')
+  // Build employee info map from raw punches for display names
+  const empInfo = new Map<string, { name: string; clinics: Array<{ clinicId: string; clinicName: string }> }>()
+  for (const rp of rawPunches) {
+    const existing = empInfo.get(rp.employeeId)
+    if (!existing) {
+      empInfo.set(rp.employeeId, {
+        name: rp.employee?.user?.name || 'Unknown',
+        clinics: rp.employee?.clinics?.map(c => ({ clinicId: c.clinicId, clinicName: c.clinic?.name || c.clinicId })) || [],
+      })
+    }
+  }
 
-  // Detect LATE from clock-in punches vs shift start
-  for (const p of clockIns) {
-    const punchDateStr = toHKDateStr(p.punchTime)
+  const clockIns = effectivePunches.filter(ep => ep.punchType === 'CLOCK_IN')
+  const clockOuts = effectivePunches.filter(ep => ep.punchType === 'CLOCK_OUT')
+
+  // Helper: get employee info for a given employeeId
+  function getEmpInfo(eid: string) {
+    return empInfo.get(eid) || { name: 'Unknown', clinics: [] }
+  }
+  function getClinicName(eid: string, cid: string) {
+    return getEmpInfo(eid).clinics.find(c => c.clinicId === cid)?.clinicName || cid
+  }
+
+  // Detect LATE from effective clock-in punches vs shift start
+  for (const ep of clockIns) {
+    const punchDateStr = toHKDateStr(ep.effectiveTime)
     const matchingShift = shifts.find(s =>
-      s.employeeId === p.employeeId &&
+      s.employeeId === ep.raw.employeeId &&
       toHKDateStr(new Date(s.date)) === punchDateStr &&
-      s.clinicId === p.clinicId
+      s.clinicId === ep.clinicId
     )
     if (matchingShift) {
       const shiftStart = new Date(matchingShift.startTime)
-      if (p.punchTime.getTime() > shiftStart.getTime()) {
-        const lateMins = Math.ceil((p.punchTime.getTime() - shiftStart.getTime()) / 60000)
+      if (ep.effectiveTime.getTime() > shiftStart.getTime()) {
+        const lateMins = Math.ceil((ep.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
         if (lateMins > 0) {
-          const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
           exceptions.push({
-            employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
-            clinicName: clinic?.name || p.clinicId,
+            employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
+            clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),
             date: punchDateStr,
             type: 'LATE',
             lateMinutes: lateMins,
             detail: `遲到 ${lateMins} 分鐘 (排班 ${shiftStart.toLocaleTimeString('zh-HK')})`,
-            punchTime: p.punchTime.toISOString(),
+            punchTime: ep.effectiveTime.toISOString(),
           })
         }
       }
     }
   }
 
-  // Detect EARLY_LEAVE from clock-out punches vs shift end
-  for (const p of clockOuts) {
-    const punchDateStr = toHKDateStr(p.punchTime)
+  // Detect EARLY_LEAVE from effective clock-out punches vs shift end
+  for (const ep of clockOuts) {
+    const punchDateStr = toHKDateStr(ep.effectiveTime)
     const matchingShift = shifts.find(s =>
-      s.employeeId === p.employeeId &&
+      s.employeeId === ep.raw.employeeId &&
       toHKDateStr(new Date(s.date)) === punchDateStr &&
-      s.clinicId === p.clinicId
+      s.clinicId === ep.clinicId
     )
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
-      if (p.punchTime.getTime() < shiftEnd.getTime()) {
-        const earlyMins = Math.ceil((shiftEnd.getTime() - p.punchTime.getTime()) / 60000)
+      if (ep.effectiveTime.getTime() < shiftEnd.getTime()) {
+        const earlyMins = Math.ceil((shiftEnd.getTime() - ep.effectiveTime.getTime()) / 60000)
         if (earlyMins > 0) {
-          const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
           exceptions.push({
-            employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
-            clinicName: clinic?.name || p.clinicId,
+            employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
+            clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),
             date: punchDateStr,
             type: 'EARLY_LEAVE',
             earlyMinutes: earlyMins,
             detail: `早退 ${earlyMins} 分鐘 (${shiftEnd.toLocaleTimeString('zh-HK')})`,
-            punchTime: p.punchTime.toISOString(),
+            punchTime: ep.effectiveTime.toISOString(),
           })
         }
       }
     }
   }
 
-  // OT 偵測：下班晚於排班結束
-  for (const p of clockOuts) {
-    const punchDateStr = toHKDateStr(p.punchTime)
+  // OT 偵測：下班晚於排班結束 (use effectiveTime)
+  for (const ep of clockOuts) {
+    const punchDateStr = toHKDateStr(ep.effectiveTime)
     const matchingShift = shifts.find(
       s =>
-        s.employeeId === p.employeeId &&
+        s.employeeId === ep.raw.employeeId &&
         toHKDateStr(new Date(s.date)) === punchDateStr &&
-        s.clinicId === p.clinicId
+        s.clinicId === ep.clinicId
     )
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
-      if (p.punchTime.getTime() > shiftEnd.getTime()) {
-        const otMins = Math.floor((p.punchTime.getTime() - shiftEnd.getTime()) / 60000)
+      if (ep.effectiveTime.getTime() > shiftEnd.getTime()) {
+        const otMins = Math.floor((ep.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
         if (otMins > 0) {
-          const clinic = p.employee?.clinics?.find(c => c.clinicId === p.clinicId)?.clinic
           exceptions.push({
-            employeeId: p.employeeId, employeeName: p.employee?.user?.name || 'Unknown',
-            clinicName: clinic?.name || p.clinicId,
+            employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
+            clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),
             date: punchDateStr,
             type: 'OT',
             otMinutes: otMins,
             detail: `OT ${otMins} 分鐘`,
-            punchTime: p.punchTime.toISOString(),
+            punchTime: ep.effectiveTime.toISOString(),
           })
         }
       }
     }
   }
 
-  // Detect ABSENT from shifts with no punches
+  // Detect ABSENT from shifts with no effective punches
   for (const shift of shifts) {
     const shiftDayStr = toHKDateStr(new Date(shift.date))
-    const hasPunch = punches.some(p =>
-      p.employeeId === shift.employeeId &&
-      toHKDateStr(p.punchTime) === shiftDayStr &&
-      p.clinicId === shift.clinicId
+    const hasPunch = effectivePunches.some(ep =>
+      ep.raw.employeeId === shift.employeeId &&
+      toHKDateStr(ep.effectiveTime) === shiftDayStr &&
+      ep.clinicId === shift.clinicId
     )
     if (!hasPunch) {
       exceptions.push({
@@ -254,7 +281,7 @@ export async function GET(req: NextRequest) {
   exceptions.sort((a, b) => b.date.localeCompare(a.date))
 
   // Compute per-employee timebank summaries — include ALL employees with punch/shift data (not just those with exceptions)
-  const punchEmpIds = punches.map(p => p.employeeId)
+  const punchEmpIds = rawPunches.map(p => p.employeeId)
   const shiftEmpIds = shifts.map(s => s.employeeId)
   let uniqueEmployeeIds = [...new Set([...punchEmpIds, ...shiftEmpIds, ...exceptions.map(e => e.employeeId)])]
   if (employeeId && !uniqueEmployeeIds.includes(employeeId)) {
