@@ -1429,7 +1429,7 @@ async function getLeaveTypeBySystemKey(db: any, systemKey: string): Promise<any>
 
 /**
  * Grant monthly rest day entitlement to an employee's LeaveBalance.
- * Idempotent — uses RESTDAY_GRANT marker to prevent duplicate grants.
+ * 🔴 Fix: 差額法 — delta = quota - prevDays，舊錯誤自動修正。
  */
 async function grantMonthlyRestDays(
   employeeId: string,
@@ -1443,53 +1443,63 @@ async function grantMonthlyRestDays(
   const restDayType = await getLeaveTypeBySystemKey(db, 'REST_DAY')
   if (!restDayType) return
 
-  const yearNum = year
-  const monthStart = new Date(year, month, 1)
-  const monthEnd = new Date(year, month + 1, 1)
+  const grantKey = `restday_grant_${year}_${month + 1}`
 
-  // Check if already granted this month (idempotent)
-  const existingGrant = await db.timeBankEntry.findFirst({
+  // 查上次這個月發了多少天（差額法）
+  const prevGrant = await db.timeBankEntry.findFirst({
     where: {
       employeeId,
       type: 'RESTDAY_GRANT',
-      date: { gte: monthStart, lt: monthEnd },
+      note: { contains: grantKey },
     },
   })
-  if (existingGrant) return // Already granted this month
+  const prevDays = prevGrant ? Math.round(prevGrant.minutes / (24 * 60)) : 0
+  const delta = quota - prevDays
 
-  // Upsert leave balance
-  await db.leaveBalance.upsert({
-    where: {
-      employeeId_leaveTypeId_year: {
+  if (delta !== 0) {
+    await db.leaveBalance.upsert({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId,
+          leaveTypeId: restDayType.id,
+          year,
+        },
+      },
+      update: {
+        entitled: { increment: delta },
+        remaining: { increment: delta },
+      },
+      create: {
         employeeId,
         leaveTypeId: restDayType.id,
-        year: yearNum,
+        year,
+        entitled: quota,
+        used: 0,
+        remaining: quota,
       },
-    },
-    update: {
-      entitled: { increment: quota },
-      remaining: { increment: quota },
-    },
-    create: {
-      employeeId,
-      leaveTypeId: restDayType.id,
-      year: yearNum,
-      entitled: quota,
-      used: 0,
-      remaining: quota,
-    },
-  })
+    })
+  }
 
-  // Record grant marker (prevents duplicate)
-  await db.timeBankEntry.create({
-    data: {
-      employeeId,
-      type: 'RESTDAY_GRANT',
-      minutes: 0,
-      date: monthStart,
-      note: `發放${quota}天休息日 (${monthStart.toISOString().slice(0, 7)})`,
-    },
-  })
+  // 更新/建立標記
+  if (prevGrant) {
+    await db.timeBankEntry.update({
+      where: { id: prevGrant.id },
+      data: {
+        minutes: quota * 24 * 60,
+        note: `${grantKey}: 發放${quota}天休息日`,
+      },
+    })
+  } else {
+    await db.timeBankEntry.create({
+      data: {
+        employeeId,
+        type: 'RESTDAY_GRANT',
+        date: new Date(year, month, 1),
+        minutes: quota * 24 * 60,
+        note: `${grantKey}: 發放${quota}天休息日`,
+      },
+    })
+  }
 }
 
 // ------------------------------------------------------------------
@@ -1948,7 +1958,7 @@ function applyOvertimeModifier(
     // OT converted to time off — no monetary OT pay
     next.otPay = 0
     next.totalPayable = result.basePay - result.deduction + (result.splitPay || 0) + result.attendanceBonus
-    next.detail = { ...result.detail, otMode: 'time_off', otHoursOff: result.otHours, hoursPerLeaveDay: modConfig.hours_per_leave_day ?? 8 }
+    next.detail = { ...result.detail, otMode: 'time_off', otHoursOff: result.otHours, hoursPerLeaveDay: modConfig.hours_per_leave_day ?? 9 }
   }
   return next
 }
@@ -2067,7 +2077,7 @@ export async function calculatePayrollWithRules(
   // 7. Task 4: OT → Leave conversion
   let otConvertedLeave = 0
   let otRemainderMinutes = 0
-  const hoursPerLeaveDay = mods.overtime?.hours_per_leave_day ?? 8
+  const hoursPerLeaveDay = mods.overtime?.hours_per_leave_day ?? 9
 
   if (mods.overtime && mods.overtime.mode === 'time_off' && tb.otMinutes > 0) {
     try {
@@ -2080,8 +2090,21 @@ export async function calculatePayrollWithRules(
 
       // 淨遲到 = 遲到 - 補鐘（補鐘抵掉的不算）
       const netLateMinutes = Math.max(0, timeBank.lateMinutes - timeBank.makeupMinutes)
+      // 🔴 Fix: carriedFrom 從上月 balance 讀（不是本月 timeBank.carriedFrom）
+      const lastMonthForOT = month === 0 ? new Date(year - 1, 11, 1) : new Date(year, month - 1, 1)
+      const lastMonthOTRecord = await prisma.timeBank.findFirst({
+        where: {
+          employeeId,
+          periodMonth: {
+            gte: lastMonthForOT,
+            lte: new Date(lastMonthForOT.getFullYear(), lastMonthForOT.getMonth() + 1, 0, 23, 59, 59),
+          },
+        },
+        select: { balance: true },
+      })
+      const carriedFrom = (lastMonthOTRecord?.balance as number) ?? 0
       // net = this month's OT - netLate + carry from prev month
-      const netOtMinutes = otMinutesFromResult - netLateMinutes + timeBank.carriedFrom
+      const netOtMinutes = otMinutesFromResult - netLateMinutes + carriedFrom
       const minutesPerLeaveDay = hoursPerLeaveDay * 60
 
       if (netOtMinutes > 0) {
@@ -2132,9 +2155,10 @@ export async function calculatePayrollWithRules(
           }
         }
 
-        // Carry remainder to next month
+        // 🔴 Fix: 餘數存 balance（本月結餘），carriedFrom 只記錄本月從上月帶了多少
         await updateTimeBank(employeeId, monthDate, {
-          carriedFrom: otRemainderMinutes,
+          balance: otRemainderMinutes,
+          carriedFrom,
           monthEndNote: `OT換假: ${otConvertedLeave}天, 餘數 ${otRemainderMinutes}分鐘`,
         }, prisma)
       } else {
@@ -2143,7 +2167,8 @@ export async function calculatePayrollWithRules(
         otRemainderMinutes = 0
         // 負數結轉下月（欠著），未來 OT 先還
         await updateTimeBank(employeeId, monthDate, {
-          carriedFrom: netOtMinutes, // 負數結轉
+          balance: netOtMinutes, // 🔴 Fix: 存 balance 而非 carriedFrom
+          carriedFrom,
           monthEndNote: `本月拖欠 ${Math.abs(netOtMinutes)} 分鐘（遲到>OT）`,
         }, prisma)
       }

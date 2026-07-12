@@ -48,6 +48,20 @@ export default function DashboardPage() {
   const [period, setPeriod] = useState<'day' | 'week' | 'month'>('month')
   const [empLoading, setEmpLoading] = useState(false)
 
+  // Leave balances (all employees)
+  const [leaveBalances, setLeaveBalances] = useState<any[]>([])
+
+  // Group balances by employeeId + systemKey
+  const balancesByEmp = (() => {
+    const m = new Map<string, Record<string, any>>()
+    for (const b of leaveBalances) {
+      if (!m.has(b.employeeId)) m.set(b.employeeId, {})
+      const key = b.leaveType?.systemKey || b.leaveType?.name
+      m.get(b.employeeId)![key] = b
+    }
+    return m
+  })()
+
   useEffect(() => {
     fetch('/api/dashboard', { credentials: 'include' })
       .then(async res => {
@@ -89,6 +103,14 @@ export default function DashboardPage() {
       .catch(() => setEmpSummary([]))
       .finally(() => setEmpLoading(false))
   }, [period])
+
+  // Fetch leave balances
+  useEffect(() => {
+    fetch('/api/leave-balance', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { leaveBalances: [] })
+      .then(d => setLeaveBalances(d.leaveBalances || []))
+      .catch(() => setLeaveBalances([]))
+  }, [])
 
   if (loading) return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
@@ -197,6 +219,9 @@ export default function DashboardPage() {
                   <TableHead>OT 時間</TableHead>
                   <TableHead>拖欠</TableHead>
                   <TableHead>可換假</TableHead>
+                  <TableHead>休息日餘</TableHead>
+                  <TableHead>年假餘</TableHead>
+                  <TableHead>OT補假餘</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -217,6 +242,31 @@ export default function DashboardPage() {
                     </TableCell>
                     <TableCell>
                       {emp.convertibleLeaveDays?.toFixed(1) || '0.0'} 天
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const bal = balancesByEmp.get(emp.employeeId) || {}
+                        const rd = bal.REST_DAY
+                        if (!rd) return '-'
+                        const val = rd.remaining ?? rd.entitled ?? 0
+                        return Number(val).toFixed(1)
+                      })()}
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const bal = balancesByEmp.get(emp.employeeId) || {}
+                        const al = bal.ANNUAL_LEAVE
+                        if (!al) return '-'
+                        return Number(al.remaining ?? 0).toFixed(1)
+                      })()}
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const bal = balancesByEmp.get(emp.employeeId) || {}
+                        const ol = bal.OT_LEAVE
+                        if (!ol) return '-'
+                        return Number(ol.remaining ?? 0).toFixed(1)
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}

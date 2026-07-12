@@ -30,7 +30,7 @@ const SCENARIO = {
     cancelBonusIfLateOver: 30,   // 遲到累計超過幾分鐘取消勤工
     cancelBonusIfAbsent: true,   // 缺勤是否取消勤工
     otMode: 'time_off',          // OT 模式：'time_off'(換假) 或 'pay'(補錢)
-    otHoursPerLeaveDay: 8,       // OT 累計幾小時換1天假
+    otHoursPerLeaveDay: 9,       // OT 累計幾小時換1天假
     restDays: [],
     mpfEnabled: true,            // 是否扣 MPF
     mpfRate: 0.05,               // MPF 比率
