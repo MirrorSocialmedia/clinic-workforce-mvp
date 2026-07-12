@@ -78,7 +78,9 @@ function buildDefaultConfig(baseType: BaseType): PayRuleConfigModular {
       break
   }
 
-  config.modifiers = structuredClone(DEFAULT_MODIFIERS)
+  if (baseType !== 'hourly') {
+    config.modifiers = structuredClone(DEFAULT_MODIFIERS)
+  }
   return config
 }
 
@@ -318,7 +320,9 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 : baseType === 'daily'
                   ? config.daily_rate
                   : config.split_ratio,
-          modularConfig: config,
+          modularConfig: baseType === 'hourly'
+            ? { base_type: 'hourly', hourly_rate: config.hourly_rate } // clean config, no modifiers
+            : config,
           ...(method === 'POST' ? { effectiveFrom } : {}),
         }),
       })
@@ -449,18 +453,23 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
             )}
 
             {baseType === 'hourly' && (
-              <div className="form-group">
-                <label>時薪金額 (HK$)</label>
-                <input
-                  type="number"
-                  value={config.hourly_rate ?? ''}
-                  onChange={(e) =>
-                    updateBaseParam('hourly_rate', e.target.value ? Number(e.target.value) : undefined)
-                  }
-                  placeholder="如 180"
-                  min={0}
-                  step="0.01"
-                />
+              <div>
+                <div className="form-group">
+                  <label>時薪金額 (HK$)</label>
+                  <input
+                    type="number"
+                    value={config.hourly_rate ?? ''}
+                    onChange={(e) =>
+                      updateBaseParam('hourly_rate', e.target.value ? Number(e.target.value) : undefined)
+                    }
+                    placeholder="如 180"
+                    min={0}
+                    step="0.01"
+                  />
+                </div>
+                <p style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
+                  兼職按分鐘計薪：金額 = 有效分鐘 × 時薪 ÷ 60。早打卡從排班時間起計。無勤工獎、無OT、無遲到扣款、無MPF。
+                </p>
               </div>
             )}
 
@@ -511,6 +520,9 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
             )}
           </div>
 
+          {/* ═══ 2️⃣ Modifiers (hidden for hourly) ═══ */}
+          {baseType !== 'hourly' && (
+          <>
           {/* ═══ 2️⃣ Modifiers ═══ */}
           <div style={sectionStyle}>
             <div style={sectionTitleStyle}>2️⃣ 薪酬修正模組（可選開關）</div>
@@ -1120,8 +1132,8 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
               </div>
             )}
           </div>
-
-          {/* ═══ 3️⃣ MPF 強積金 ═══ */}
+          
+          {/* ═══ 3️⃣ MPF 強積金 (hidden for hourly) ═══ */}
           <div style={sectionStyle}>
             <div style={sectionTitleStyle}>3️⃣ 強積金 (MPF)</div>
             <label style={checkboxLabelStyle}>
@@ -1196,6 +1208,8 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
               </div>
             )}
           </div>
+          </>
+          )}
 
           {/* ═══ 4️⃣ Effective Date ═══ */}
           <div style={sectionStyle}>

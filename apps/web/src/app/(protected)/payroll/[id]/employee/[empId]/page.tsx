@@ -156,7 +156,7 @@ export default function EmployeePayrollDetailPage() {
   const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
 
   // Daily punch/shift summary for collapsible detail
-  const fmtTime24 = (t: string) => new Date(t).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const fmtTime24 = (t: any) => { if (!t) return '-'; const d = new Date(t); return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false }) }
   const dailyPunchMap: Record<string, { punches: any[]; shiftDate: string }> = {}
 
   // 1. 正常打卡
@@ -210,7 +210,79 @@ export default function EmployeePayrollDetailPage() {
 
       {/* Main Card */}
       <Card className="p-6 space-y-6">
-        {/* 📅 出勤概況 */}
+        {detail.payType === 'HOURLY' ? (
+          /* ─── HOURLY simplified detail ─── */
+          <div>
+            <h3 className="text-lg font-bold">💰 兼職薪資（時薪 ${detail.hourlyRate})</h3>
+
+            {/* Basic attendance summary */}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4">
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">總有效分鐘</div>
+                <div className="text-lg font-bold mt-1">{detail.totalMinutes} 分</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">工作時數</div>
+                <div className="text-lg font-bold mt-1">{item.workedHours.toFixed(2)}h</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">缺勤日數</div>
+                <div className="text-lg font-bold mt-1 text-red-500">{item.absentDays}</div>
+              </div>
+            </div>
+
+            <table className="w-full text-sm mt-4">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left p-2">日期</th>
+                  <th className="text-left p-2">上班</th>
+                  <th className="text-left p-2">下班</th>
+                  <th className="text-right p-2">有效分鐘</th>
+                  <th className="text-right p-2">金額</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.days.map((d: any) => (
+                  <tr key={d.date} className="border-b">
+                    <td className="p-2">{d.date}</td>
+                    <td className="p-2">
+                      {d.note ? (
+                        <span className="text-muted-foreground">{d.note}</span>
+                      ) : (
+                        <>
+                          {fmtTime24(d.in)}
+                          {d.clamped && (
+                            <span className="text-xs text-muted-foreground ml-1">
+                              {` (早到, 從排班${fmtTime24(d.shiftStart)}起計)`}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </td>
+                    <td className="p-2">{d.note ? '' : fmtTime24(d.out)}</td>
+                    <td className="text-right p-2">{d.minutes} 分</td>
+                    <td className="text-right p-2 font-medium">${d.amount.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="flex justify-between items-center mt-4 p-3 bg-muted rounded-lg">
+              <span>總計 {detail.totalMinutes} 分鐘</span>
+              <strong className="text-lg">實發 ${item.totalPayable.toFixed(2)}</strong>
+            </div>
+
+            {Object.keys(detail).length > 0 && (
+              <CollapsibleSection trigger="📐 計算參數">
+                <pre className="text-xs bg-muted p-4 rounded-lg overflow-x-auto whitespace-pre-wrap font-mono">
+                  {JSON.stringify(detail, null, 2)}
+                </pre>
+              </CollapsibleSection>
+            )}
+          </div>
+        ) : (
+          /* ─── MONTHLY full detail ─── */
+          <>
         <div>
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">📅 出勤概況</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
@@ -488,6 +560,8 @@ export default function EmployeePayrollDetailPage() {
               {JSON.stringify(detail, null, 2)}
             </pre>
           </CollapsibleSection>
+        )}
+        </>
         )}
       </Card>
 

@@ -86,6 +86,19 @@ function formatDate(d: Date): string {
   }).format(d)
 }
 
+/**
+ * Convert Date to YYYY-MM-DD in HK timezone. Reusable helper.
+ */
+function toHKDateStr(d: Date | string): string {
+  const dt = typeof d === 'string' ? new Date(d) : d
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Hong_Kong',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(dt)
+}
+
 function parsePayRuleConfig(configJson: string | null | undefined): PayRuleConfig {
   if (!configJson) return {}
   try {
@@ -1991,6 +2004,109 @@ function applyAllowancesModifier(
 }
 
 // ------------------------------------------------------------------
+// Simple Hourly Pay — Part-time (no modifiers, no OT, no MPF)
+// Formula: 有效分鐘 × 時薪 ÷ 60, 早打卡從排班開始起計
+// ------------------------------------------------------------------
+
+async function calculateSimpleHourlyPay(
+  employeeId: string,
+  monthDate: Date,
+  clinicId: string | null,
+  config: PayRuleConfigModular
+): Promise<PayrollResult> {
+  const rate = config.hourly_rate || 0
+  const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
+
+  const shifts = await prisma.shift.findMany({
+    where: {
+      employeeId,
+      date: { gte: monthStart, lte: monthEnd },
+      status: { not: 'CANCELLED' },
+    },
+  })
+  const punches = await prisma.punchRecord.findMany({
+    where: {
+      employeeId,
+      punchTime: { gte: monthStart, lte: monthEnd },
+      void: { is: null },
+    },
+    orderBy: { punchTime: 'asc' },
+  })
+
+  const days: any[] = []
+  let totalMinutes = 0
+  let totalPay = 0
+
+  // Group punches by HK date
+  const byDate = new Map<string, any[]>()
+  for (const p of punches) {
+    const d = toHKDateStr(p.punchTime)
+    if (!byDate.has(d)) byDate.set(d, [])
+    byDate.get(d)!.push(p)
+  }
+
+  for (const [dateStr, dayPunches] of byDate) {
+    const shift = shifts.find((s: any) => toHKDateStr(s.date) === dateStr)
+    const clockIn = dayPunches.filter((p: any) => p.punchType === 'CLOCK_IN')[0]
+    const clockOut = dayPunches.filter((p: any) => p.punchType === 'CLOCK_OUT').slice(-1)[0]
+
+    if (!clockIn || !clockOut) {
+      days.push({ date: dateStr, note: '缺卡，不計薪', minutes: 0, amount: 0 })
+      continue
+    }
+
+    // ★ Core: effective start = max(clockIn, shiftStart) — early punch not counted
+    const shiftStart = shift ? new Date(shift.startTime).getTime() : null
+    const effStart = shiftStart
+      ? Math.max(clockIn.punchTime.getTime(), shiftStart)
+      : clockIn.punchTime.getTime()
+    const minutes = Math.max(0, Math.floor((clockOut.punchTime.getTime() - effStart) / 60000))
+    const amount = Math.round(minutes * rate / 60 * 100) / 100
+
+    totalMinutes += minutes
+    totalPay += amount
+
+    days.push({
+      date: dateStr,
+      in: clockIn.punchTime,
+      out: clockOut.punchTime,
+      shiftStart: shift?.startTime ?? null,
+      clamped: shiftStart != null && clockIn.punchTime.getTime() < shiftStart,
+      minutes,
+      amount,
+    })
+  }
+
+  totalPay = Math.round(totalPay * 100) / 100
+
+  // Count absentDays (scheduled shift with no punch)
+  const absentDays = shifts.filter((s: any) => {
+    const ds = toHKDateStr(s.date)
+    return !byDate.has(ds) || byDate.get(ds)!.length === 0
+  }).length
+
+  return {
+    basePay: totalPay,
+    otPay: 0,
+    splitPay: null,
+    attendanceBonus: 0,
+    attendanceBonusCancelled: false,
+    deduction: 0,
+    totalPayable: totalPay,
+    absentDays,
+    otHours: 0,
+    workedHours: Math.round(totalMinutes / 60 * 100) / 100,
+    leaveDays: 0,
+    detail: {
+      payType: 'HOURLY',
+      hourlyRate: rate,
+      totalMinutes,
+      days,
+    },
+  }
+}
+
+// ------------------------------------------------------------------
 // 3. Main Modular Entry: calculatePayrollWithRules
 // ------------------------------------------------------------------
 
@@ -2004,6 +2120,11 @@ export async function calculatePayrollWithRules(
   clinicId: string | null,
   config: PayRuleConfigModular
 ): Promise<PayrollResult> {
+  // ★ Part-time hourly: bypass all modifier logic entirely
+  if (config.base_type === 'hourly') {
+    return calculateSimpleHourlyPay(employeeId, monthDate, clinicId, config)
+  }
+
   const year = monthDate.getFullYear()
   const month = monthDate.getMonth()
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
