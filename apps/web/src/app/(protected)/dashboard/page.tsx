@@ -215,9 +215,8 @@ export default function DashboardPage() {
                 <TableRow>
                   <TableHead>員工</TableHead>
                   <TableHead>遲到次數</TableHead>
-                  <TableHead>遲到分鐘</TableHead>
-                  <TableHead>OT 時間</TableHead>
-                  <TableHead>拖欠</TableHead>
+                  <TableHead>本月 OT</TableHead>
+                  <TableHead>時間帳戶</TableHead>
                   <TableHead>可換假</TableHead>
                   <TableHead>休息日餘</TableHead>
                   <TableHead>年假餘</TableHead>
@@ -231,14 +230,21 @@ export default function DashboardPage() {
                     <TableCell style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
                       {emp.lateCount || 0}
                     </TableCell>
-                    <TableCell style={emp.lateMinutes > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
-                      {emp.lateMinutes || 0} 分
-                    </TableCell>
                     <TableCell style={{ color: '#16a34a' }}>
                       {emp.otMinutes || 0} 分鐘
                     </TableCell>
-                    <TableCell style={emp.owedMinutes > 0 ? { color: '#dc2626' } : {}}>
-                      {emp.owedMinutes || 0} 分鐘
+                    <TableCell>
+                      {(() => {
+                        const ta = emp.timeAccountMinutes ?? ((emp.availableMinutes ?? 0) - (emp.owedMinutes ?? 0))
+                        return (
+                          <span style={{
+                            fontWeight: 700,
+                            color: ta >= 0 ? '#059669' : '#dc2626',
+                          }}>
+                            {ta >= 0 ? '+' : '−'}{Math.abs(ta)} 分
+                          </span>
+                        )
+                      })()}
                     </TableCell>
                     <TableCell>
                       {emp.convertibleLeaveDays?.toFixed(1) || '0.0'} 天

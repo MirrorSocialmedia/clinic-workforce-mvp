@@ -1003,6 +1003,7 @@ export async function calculateTimeBank(
   earlyLeaveMinutes: number
   makeupMinutes: number
   carriedFrom: number
+  timeAccountMinutes: number
   balance: number
   owedMinutes: number
   availableMinutes: number
@@ -1145,7 +1146,13 @@ export async function calculateTimeBank(
 
   return {
     otMinutes, lateMinutes, netLateMinutes, earlyLeaveMinutes, makeupMinutes,
-    carriedFrom, balance, owedMinutes, availableMinutes, convertibleLeaveDays, note,
+    carriedFrom,
+    timeAccountMinutes: balance, // 有正負號的時間帳戶
+    balance,
+    owedMinutes,
+    availableMinutes,
+    convertibleLeaveDays,
+    note,
   }
 }
 

@@ -140,27 +140,46 @@ export default function MyDashboardPage() {
         <StatCard value={summary?.lateMinutes || 0} title="本月遲到（分鐘）" color="violet" />
       </div>
 
-      {/* Time Bank */}
+      {/* Time Bank — 單一時間帳戶 */}
       {timebank && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">時間銀行</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="text-center p-3 rounded-lg" style={{ background: '#f0f9ff' }}>
-                <div className="text-2xl font-bold text-foreground">{(timebank.otMinutes / 60).toFixed(1)}</div>
-                <div className="text-xs text-muted-foreground mt-1">OT 時間 (小時)</div>
-              </div>
-              <div className="text-center p-3 rounded-lg" style={{ background: '#fff5f5' }}>
-                <div className="text-2xl font-bold text-foreground">{(timebank.owedMinutes / 60).toFixed(1)}</div>
-                <div className="text-xs text-muted-foreground mt-1">拖欠時間 (小時)</div>
-              </div>
-              <div className="text-center p-3 rounded-lg" style={{ background: '#f0fff4' }}>
-                <div className="text-2xl font-bold text-foreground">{timebank.convertibleLeaveDays || 0}</div>
-                <div className="text-xs text-muted-foreground mt-1">可換假期 (天)</div>
-              </div>
-            </div>
+            {(() => {
+              const timeAccount = timebank.timeAccountMinutes ?? (timebank.balance ?? (timebank.availableMinutes ?? 0) - (timebank.owedMinutes ?? 0))
+              return (
+                <div className="rounded-xl p-5 text-center" style={{
+                  borderColor: timeAccount >= 0 ? '#10b981' : '#dc2626',
+                  borderWidth: 2,
+                  background: timeAccount >= 0 ? '#f0fdf4' : '#fef2f2',
+                }}>
+                  <div className="text-sm text-muted-foreground">我的時間帳戶</div>
+                  <div className="text-3xl font-bold mt-1" style={{ color: timeAccount >= 0 ? '#059669' : '#dc2626' }}>
+                    {timeAccount >= 0 ? '+' : '−'}{Math.abs(timeAccount)} 分鐘
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2">
+                    {timeAccount > 0 && `可換假 ${Math.floor(timeAccount / 540)} 天（餘 ${timeAccount % 540} 分）`}
+                    {timeAccount < 0 && '拖欠公司時間，之後 OT 自動償還'}
+                    {timeAccount === 0 && '兩清'}
+                  </div>
+                  {/* 參考明細 */}
+                  <div className="grid grid-cols-2 gap-3 mt-4 text-left">
+                    <div className="text-center p-2 rounded-lg bg-white/60">
+                      <div className="text-lg font-bold text-emerald-600">{timebank.otMinutes ?? 0}</div>
+                      <div className="text-xs text-muted-foreground">本月 OT</div>
+                    </div>
+                    <div className="text-center p-2 rounded-lg bg-white/60">
+                      <div className="text-lg font-bold" style={{ color: (timebank.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
+                        {timebank.lateMinutes ?? 0}
+                      </div>
+                      <div className="text-xs text-muted-foreground">本月遲到</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
           </CardContent>
         </Card>
       )}

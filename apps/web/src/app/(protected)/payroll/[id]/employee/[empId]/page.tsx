@@ -387,41 +387,41 @@ export default function EmployeePayrollDetailPage() {
         {tb.otMinutes != null && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🕐 考勤與時間銀行</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
+              {/* 本月遲到 */}
               <div className="rounded-lg border p-3" style={tb.lateCount > 0 ? { borderLeft: '3px solid #f59e0b' } : {}}>
                 <div className="text-xs text-muted-foreground">本月遲到</div>
-                <div className="text-lg font-bold mt-1" style={tb.lateCount > 0 ? { color: '#d97706' } : {}}>
-                  {tb.lateCount} 次
+                <div className="text-lg font-bold mt-1" style={{ color: tb.lateCount > 0 ? '#d97706' : 'inherit' }}>
+                  {tb.lateCount} 次 / 淨 {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘
                 </div>
-                {(tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))) > 0 && (
-                  <div className="text-xs" style={{ color: '#d97706' }}>
-                    {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘
-                    {tb.makeupMinutes > 0 && (
-                      <div className="text-xs text-muted-foreground">
-                        （原遲到 {tb.lateMinutes} 分，已補鐘 {tb.makeupMinutes} 分）
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
+              {/* 本月 OT */}
               <div className="rounded-lg border p-3" style={{ borderLeft: '3px solid #16a34a' }}>
-                <div className="text-xs text-muted-foreground">OT 時間</div>
+                <div className="text-xs text-muted-foreground">本月 OT</div>
                 <div className="text-lg font-bold mt-1" style={{ color: '#16a34a' }}>
-                  {(tb.otMinutes ?? 0)} 分鐘（{((tb.otMinutes ?? 0) / 60).toFixed(1)}h）
+                  {(tb.otMinutes ?? 0)} 分鐘
                 </div>
               </div>
-              <div className="rounded-lg border p-3" style={tb.owedMinutes > 0 ? { borderLeft: '3px solid #dc2626' } : {}}>
-                <div className="text-xs text-muted-foreground">拖欠時間</div>
-                <div className="text-lg font-bold mt-1" style={tb.owedMinutes > 0 ? { color: '#dc2626' } : {}}>
-                  {(tb.owedMinutes ?? 0)} 分鐘（{((tb.owedMinutes ?? 0) / 60).toFixed(1)}h）
-                </div>
-              </div>
-              <div className="rounded-lg border p-3">
-                <div className="text-xs text-muted-foreground">可換假期</div>
-                <div className="text-lg font-bold mt-1">
-                  {tb.convertibleLeaveDays?.toFixed(1) || '0.0'} 天
-                </div>
-              </div>
+              {/* 時間帳戶 — 取代 OT剩餘+拖欠 兩卡 */}
+              {(() => {
+                const timeAccount = tb.timeAccountMinutes ?? (tb.balance ?? (tb.availableMinutes ?? 0) - (tb.owedMinutes ?? 0))
+                return (
+                  <div className="rounded-lg border p-3" style={{
+                    borderColor: timeAccount >= 0 ? '#10b981' : '#dc2626',
+                    borderWidth: 2,
+                  }}>
+                    <div className="text-xs text-muted-foreground">時間帳戶</div>
+                    <div className="text-xl font-bold mt-1" style={{ color: timeAccount >= 0 ? '#059669' : '#dc2626' }}>
+                      {timeAccount >= 0 ? '+' : '−'}{Math.abs(timeAccount)} 分鐘
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {timeAccount > 0 && `可換假 ${Math.floor(timeAccount / 540)} 天（餘 ${timeAccount % 540} 分）`}
+                      {timeAccount < 0 && '拖欠公司，之後 OT 自動償還'}
+                      {timeAccount === 0 && '兩清'}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}

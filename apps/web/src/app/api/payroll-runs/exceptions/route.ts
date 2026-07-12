@@ -248,6 +248,7 @@ export async function GET(req: NextRequest) {
       return {
         employeeId: empId,
         employeeName: emp?.employeeName || 'Unknown',
+        timeAccountMinutes: tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes),
         otMinutes: tb.otMinutes,
         owedMinutes: tb.owedMinutes,
         availableMinutes: tb.availableMinutes,
