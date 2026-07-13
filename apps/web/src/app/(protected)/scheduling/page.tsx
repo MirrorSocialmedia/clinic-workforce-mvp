@@ -82,15 +82,15 @@ interface ValidationIssue {
 }
 
 // ============================================================
-// Hook: Drag-out delete via pointer capture (stable, no lost events)
+// Hook: Drag-out delete with undo (no confirm, instant delete + 5s toast)
 // ============================================================
-function useDragOutDelete(
+function useDragOutDeleteWithUndo(
   overviewRef: React.RefObject<HTMLDivElement | null>,
-  onDelete: (id: string, label: string) => Promise<void>,
+  onDeleteWithUndo: (id: string, label: string, restoreFn: () => Promise<void>) => void,
 ) {
   const [ghost, setGhost] = useState<{ x: number; y: number; label: string; outside: boolean } | null>(null)
 
-  const start = (e: React.PointerEvent, id: string, label: string) => {
+  const start = (e: React.PointerEvent, id: string, label: string, restoreFn: () => Promise<void>) => {
     const el = e.currentTarget as HTMLElement
     e.preventDefault()
     el.setPointerCapture(e.pointerId)
@@ -113,8 +113,7 @@ function useDragOutDelete(
       const r = overviewRef.current?.getBoundingClientRect()
       const outside = !!r && (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom)
       if (!outside) return
-      if (!confirm(`刪除？\n${label}`)) return
-      await onDelete(id, label)
+      onDeleteWithUndo(id, label, restoreFn)
     }
     el.addEventListener('pointermove', onMove)
     el.addEventListener('pointerup', onUp)
@@ -167,6 +166,10 @@ export default function SchedulingPage() {
 
   // 🗑 Drag-to-delete via pointer capture (stable, no lost events)
   const overviewRef = useRef<HTMLDivElement>(null)
+
+  // 🔧 Undo toast state
+  const [undoToast, setUndoToast] = useState<{ label: string; restore: () => Promise<void> } | null>(null)
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 🔧 Fix #3a: 抓當前選中員工的假期餘額
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
@@ -467,19 +470,65 @@ function getShiftColor(shift: Shift): string {
     }
   }, [refreshAll, refreshLeaveBalances])
 
-  // 🗑 Drag-out delete via pointer capture — hook calls
-  const { start: shiftDragOutStart, ghost: shiftGhost } = useDragOutDelete(
-    overviewRef, async (id, label) => {
+  // 🗑 Drag-out delete via pointer capture — with undo
+  const { start: shiftDragOutStart, ghost: shiftGhost } = useDragOutDeleteWithUndo(
+    overviewRef, async (id, label, _restoreFn) => {
+      const s = shifts.find(x => x.id === id)
+      if (!s) return
+      const raw = {
+        employeeId: s.employeeId,
+        clinicId: s.clinicId,
+        date: toHKDateStr(new Date(s.date)),
+        startTime: s.startTime,
+        endTime: s.endTime,
+        templateId: s.templateId,
+      }
       const res = await fetch(`/api/shifts/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
       await refreshAll()
+      const restore = async () => {
+        await fetch('/api/shifts', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(raw),
+        })
+        await refreshAll()
+      }
+      if (undoTimer.current) clearTimeout(undoTimer.current)
+      setUndoToast({ label: `已刪除 ${label}`, restore })
+      undoTimer.current = setTimeout(() => setUndoToast(null), 5000)
     },
   )
-  const { start: leaveDragOutStart, ghost: leaveGhost } = useDragOutDelete(
-    overviewRef, async (id, label) => {
+  const { start: leaveDragOutStart, ghost: leaveGhost } = useDragOutDeleteWithUndo(
+    overviewRef, async (id, label, _restoreFn) => {
+      const lr = leaveRequests.find(x => x.id === id)
+      if (!lr) return
+      const raw = {
+        leaveTypeId: lr.leaveTypeId,
+        employeeId: lr.employeeId,
+        startDate: lr.startDate,
+        endDate: lr.endDate || lr.startDate,
+        days: lr.days ?? 1,
+        reason: lr.reason ?? `排班頁拖曳請假`,
+        isPlanned: lr.isPlanned ?? true,
+        clinicId: lr.clinicId,
+      }
       const res = await fetch(`/api/leave-requests/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
       await refreshAll()
+      await refreshLeaveBalances()
+      const restore = async () => {
+        await fetch('/api/leave-requests', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(raw),
+        })
+        await refreshAll()
+        await refreshLeaveBalances()
+      }
+      if (undoTimer.current) clearTimeout(undoTimer.current)
+      setUndoToast({ label: `已刪除 ${label}`, restore })
+      undoTimer.current = setTimeout(() => setUndoToast(null), 5000)
     },
   )
 
@@ -1131,7 +1180,9 @@ function getShiftColor(shift: Shift): string {
           box-sizing: border-box;
           display: flex;
           align-items: center;
-          padding: 1px 5px;
+          justify-content: center;
+          text-align: center;
+          padding: 1px 3px;
           border-radius: 5px;
           font-size: 11px;
           font-weight: 600;
@@ -1140,11 +1191,12 @@ function getShiftColor(shift: Shift): string {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+          cursor: grab;
         }
         .ov-capsule[style*="borderLeft"] {
           color: inherit;
         }
-        /* Compact mode — 2-column grid, 16px capsules, 11px font */
+        /* Compact mode — auto-fill grid, 16px capsules, 11px font */
         .ov-compact .overview-cell {
           padding: 1px !important;
         }
@@ -1152,7 +1204,7 @@ function getShiftColor(shift: Shift): string {
           min-height: 0 !important;
           gap: 1px;
           display: grid !important;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
         }
         .ov-compact .ov-capsule {
           min-height: 16px;
@@ -1453,6 +1505,20 @@ function getShiftColor(shift: Shift): string {
             color: '#fff',
           }}>
           {leaveGhost.outside ? '🗑 放開刪除' : leaveGhost.label}
+        </div>
+      )}
+
+      {/* 🔧 Undo Toast */}
+      {undoToast && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm shadow-lg">
+          {undoToast.label}
+          <button className="underline font-semibold" onClick={async () => {
+            await undoToast.restore()
+            setUndoToast(null)
+            if (undoTimer.current) clearTimeout(undoTimer.current)
+          }}>
+            復原
+          </button>
         </div>
       )}
 
@@ -1786,33 +1852,36 @@ function getShiftColor(shift: Shift): string {
                             <div className="overview-cell-inner">
                               {empShiftsOnDay.map((s, si) => {
                                 const tpl = templates.find(t => t.id === s.templateId)
-                                const label = tpl?.shortName || tpl?.name || fmtTime(s.startTime)
+                                const shiftLabel = `${tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime)}·${s.employee?.user?.name?.slice(0, 2)}`
+                                const shiftTitle = `${s.employee?.user?.name} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
                                 return (
-                                  <div key={'s' + si} className="ov-capsule" style={{
+                                  <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
                                     background: getShiftColor(s),
                                     touchAction: 'none',
                                     userSelect: 'none',
                                   }}
-                                    onPointerDown={(e) => shiftDragOutStart(e, s.id, `${s.employee?.user?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`)}
+                                    onPointerDown={(e) => shiftDragOutStart(e, s.id, shiftLabel, () => Promise.resolve())}
                                   >
-                                    {label}·{s.employee?.user?.name?.slice(0, 2)}
+                                    {shiftLabel}
                                   </div>
                                 )
                               })}
                               {empLeavesOnDay.map((lr, li) => {
                                 const leaveColor = lr.leaveType?.color ?? '#9ca3af'
+                                const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
+                                const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
                                 return (
-                                  <div key={'l' + li} className="ov-capsule"
+                                  <div key={'l' + li} className="ov-capsule" title={leaveTitle}
                                     style={{
-                                      background: leaveColor + '33',
+                                      background: (leaveColor || '#9ca3af') + '26',
+                                      color: '#1f2937',
                                       borderLeft: `3px solid ${leaveColor}`,
-                                      color: leaveColor,
                                       touchAction: 'none',
                                       userSelect: 'none',
                                     }}
-                                    onPointerDown={(e) => leaveDragOutStart(e, lr.id, `${lr.employee?.user?.name} ${lr.leaveType?.name || '假'} ${lr.startDate}`)}
+                                    onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
                                   >
-                                    {lr.leaveType?.name || '假'}
+                                    {leaveLabel}
                                   </div>
                                 )
                               })}
