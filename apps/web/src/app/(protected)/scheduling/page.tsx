@@ -111,6 +111,24 @@ export default function SchedulingPage() {
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
   const [displayWarning, setDisplayWarning] = useState<string | null>(null)
 
+  // 📅 Calendar show/hide
+  const [showCalendar, setShowCalendar] = useState<boolean>(
+    () => { try { return localStorage.getItem('sched_show_cal') !== '0' } catch { return true } }
+  )
+  const toggleCalendar = () => {
+    setShowCalendar(v => {
+      const next = !v
+      try { localStorage.setItem('sched_show_cal', next ? '1' : '0') } catch {}
+      return next
+    })
+  }
+
+  // 🗑 Drag-to-delete refs & shared hint
+  const overviewRef = useRef<HTMLDivElement>(null)
+  const draggingOvShift = useRef<{ shiftId: string; label: string; startX: number; startY: number } | null>(null)
+  const draggingOvLeave = useRef<{ leaveRequestId: string; label: string; employeeId: string; date: string; startX: number; startY: number } | null>(null)
+  const [dragHint, setDragHint] = useState(false)
+
   // 🔧 Fix #3a: 抓當前選中員工的假期餘額
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
   useEffect(() => {
@@ -409,6 +427,66 @@ function getShiftColor(shift: Shift): string {
       return false
     }
   }, [refreshAll, refreshLeaveBalances])
+
+  // 🗑 Shift drag-out → delete
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const d = draggingOvShift.current
+      if (!d) return
+      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
+      const rect = overviewRef.current?.getBoundingClientRect()
+      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
+      setDragHint(!!(moved && outside))
+    }
+    const onUp = async (e: PointerEvent) => {
+      const d = draggingOvShift.current
+      draggingOvShift.current = null
+      setDragHint(false)
+      if (!d) return
+      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
+      if (!moved) return
+      const rect = overviewRef.current?.getBoundingClientRect()
+      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
+      if (!outside) return
+      if (!confirm(`刪除更次？\n${d.label}`)) return
+      const res = await fetch(`/api/shifts/${d.shiftId}`, { method: 'DELETE', credentials: 'include' })
+      if (!res.ok) { alert('刪除失敗'); return }
+      await refreshAll()
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
+  }, [refreshAll])
+
+  // 🗑 Leave drag-out → delete
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const d = draggingOvLeave.current
+      if (!d) return
+      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
+      const rect = overviewRef.current?.getBoundingClientRect()
+      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
+      setDragHint(!!(moved && outside))
+    }
+    const onUp = async (e: PointerEvent) => {
+      const d = draggingOvLeave.current
+      draggingOvLeave.current = null
+      setDragHint(false)
+      if (!d) return
+      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
+      if (!moved) return
+      const rect = overviewRef.current?.getBoundingClientRect()
+      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
+      if (!outside) return
+      if (!confirm(`刪除假期？\n${d.label}`)) return
+      const res = await fetch(`/api/leave-requests/${d.leaveRequestId}`, { method: 'DELETE', credentials: 'include' })
+      if (!res.ok) { alert('刪除失敗'); return }
+      await refreshAll()
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
+  }, [refreshAll])
 
   // ============================================================
   // Date Helpers
@@ -1007,6 +1085,16 @@ function getShiftColor(shift: Shift): string {
     return employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
   }, [employees])
 
+  // Clinic sidebar: count shifts per clinic this week
+  const weekShiftCountByClinic = useMemo(() => {
+    const counts: Record<string, number> = {}
+    shifts.forEach(s => {
+      const cid = s.clinicId
+      if (cid) counts[cid] = (counts[cid] ?? 0) + 1
+    })
+    return counts
+  }, [shifts])
+
   // ============================================================
   // Loading State
   // ============================================================
@@ -1056,6 +1144,9 @@ function getShiftColor(shift: Shift): string {
         .ov-capsule[style*="borderLeft"] {
           color: inherit;
         }
+        .overview-expanded .overview-cell-inner { min-height: 120px !important; }
+        .overview-expanded .ov-capsule { font-size: 13px !important; min-height: 28px !important; }
+        .overview-expanded td { padding: 8px 6px !important; }
       `}</style>
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
@@ -1324,7 +1415,7 @@ function getShiftColor(shift: Shift): string {
       {/* GLOBAL OVERVIEW GRID (top, full width) */}
       {/* ============================================================ */}
       {viewMode === 'week' && viewRange && allEmployees.length > 0 && (
-        <div style={{
+        <div ref={overviewRef} className={showCalendar ? '' : 'overview-expanded'} style={{
           marginBottom: 16,
           border: '1px solid #e5e7eb',
           borderRadius: 8,
@@ -1416,7 +1507,15 @@ function getShiftColor(shift: Shift): string {
                           {empShiftsOnDay.map((s, si) => (
                             <div key={'s' + si} className="ov-capsule" style={{
                               background: getShiftColor(s),
-                            }}>
+                            }}
+                              onPointerDown={(e) => {
+                                draggingOvShift.current = {
+                                  shiftId: s.id,
+                                  label: `${s.employee?.user?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`,
+                                  startX: e.clientX, startY: e.clientY
+                                }
+                              }}
+                            >
                               {getShiftCode(s)}
                             </div>
                           ))}
@@ -1428,6 +1527,15 @@ function getShiftColor(shift: Shift): string {
                                   background: leaveColor + '33',
                                   borderLeft: `3px solid ${leaveColor}`,
                                   color: leaveColor,
+                                }}
+                                onPointerDown={(e) => {
+                                  draggingOvLeave.current = {
+                                    leaveRequestId: lr.id,
+                                    label: `${lr.employee?.user?.name} ${lr.leaveType?.name || '假'} ${lr.startDate}`,
+                                    employeeId: lr.employeeId,
+                                    date: lr.startDate,
+                                    startX: e.clientX, startY: e.clientY
+                                  }
                                 }}
                               >
                                 {lr.leaveType?.name || '假'}
@@ -1448,17 +1556,61 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
 
+      {/* 🗑 Drag-to-delete hint */}
+      {dragHint && (
+        <div className="fixed top-4 right-4 z-50 px-3 py-2 rounded-lg bg-red-600 text-white text-sm shadow-lg animate-pulse">
+          🗑 放開以刪除
+        </div>
+      )}
+
       {/* ============================================================ */}
-      {/* THREE-COLUMN LAYOUT: Employees | Templates+Leave | Calendar */}
+      {/* MAIN LAYOUT: Clinic Sidebar | Employees | Templates+Leave | Content */}
       {/* ============================================================ */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: '88px 108px 1fr',
+        display: 'flex',
         gap: 12,
         alignItems: 'start',
       }}>
 
-        {/* LEFT COLUMN: Employees (clickable + draggable) */}
+        {/* LEFTMOST: Clinic Sidebar (replaces dropdown) */}
+        <div style={{
+          width: '130px',
+          flexShrink: 0,
+          borderRight: '1px solid #e5e7eb',
+          paddingRight: 8,
+          background: '#fafbfc',
+          borderRadius: 8,
+          border: '1px solid #e5e7eb',
+          padding: 8,
+          maxHeight: 600,
+          overflowY: 'auto',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6, textAlign: 'center' }}>
+            店舖
+          </div>
+          {clinics.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setSelectedClinicId(c.id)}
+              style={{
+                width: '100%', textAlign: 'left', padding: '6px 8px', marginBottom: 4,
+                borderRadius: 6, fontSize: 12, cursor: 'pointer',
+                border: selectedClinicId === c.id ? '2px solid #1a1a2e' : '1px solid transparent',
+                background: selectedClinicId === c.id ? '#1a1a2e' : '#f0f0f0',
+                color: selectedClinicId === c.id ? '#fff' : '#333',
+                fontWeight: selectedClinicId === c.id ? 600 : 400,
+                transition: 'all 0.15s',
+              }}
+            >
+              <div>{c.name}</div>
+              <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>
+                本週 {weekShiftCountByClinic[c.id] ?? 0} 更
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* COLUMN 2: Employees (clickable + draggable) */}
         <div style={{
           background: '#fafbfc',
           borderRadius: 8,
@@ -1649,40 +1801,45 @@ function getShiftColor(shift: Shift): string {
         </div>
 
         {/* RIGHT COLUMN: Calendar */}
-        <div id="fc-section" style={{ minWidth: 0 }}>
-          {/* Clinic selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, flexWrap: 'wrap' }}>
-            <select
-              value={selectedClinicId || ''}
-              onChange={e => setSelectedClinicId(e.target.value)}
-              style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, width: 'auto' }}
+        <div id="fc-section" style={{ minWidth: 0, flex: 1 }}>
+          {/* Calendar toggle + clinic info */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+            <button
+              onClick={toggleCalendar}
+              style={{
+                padding: '5px 12px', borderRadius: 6, border: '1px solid #ddd',
+                background: showCalendar ? '#1a1a2e' : '#f5f5f5',
+                color: showCalendar ? '#fff' : '#333', fontSize: 12, cursor: 'pointer',
+                fontWeight: 500, transition: 'all 0.15s',
+              }}
             >
-              {clinics.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-            {canManage && (
-              <span style={{ fontSize: 11, color: '#aaa' }}>拖更次/員工到日曆為此店排班</span>
+              {showCalendar ? '📅 隱藏日曆' : '📅 顯示日曆'}
+            </button>
+            {showCalendar && canManage && (
+              <span style={{ fontSize: 11, color: '#aaa' }}>拖更次/員工到日曆為 {clinics.find(c => c.id === selectedClinicId)?.name || '此店'} 排班</span>
             )}
           </div>
 
-          {/* Employee stats as standalone card */}
-          <div style={{
-            marginBottom: 8,
-            padding: '8px 14px',
-            borderRadius: 8,
-            border: '1px solid #e5e7eb',
-            background: '#f0f4ff',
-            fontSize: 13,
-            color: selectedEmpStats ? '#374151' : '#9ca3af',
-          }}>
-            {selectedEmpStats
-              ? <span>{selectedEmpStats.name}: {selectedEmpStats.days} 天班 · {selectedEmpStats.hours.toFixed(1)} 小時</span>
-              : <span>請先選取員工</span>
-            }
-          </div>
+          {/* Employee stats + Calendar (conditional) */}
+          {showCalendar && (
+            <>
+            {/* Employee stats as standalone card */}
+            <div style={{
+              marginBottom: 8,
+              padding: '8px 14px',
+              borderRadius: 8,
+              border: '1px solid #e5e7eb',
+              background: '#f0f4ff',
+              fontSize: 13,
+              color: selectedEmpStats ? '#374151' : '#9ca3af',
+            }}>
+              {selectedEmpStats
+                ? <span>{selectedEmpStats.name}: {selectedEmpStats.days} 天班 · {selectedEmpStats.hours.toFixed(1)} 小時</span>
+                : <span>請先選取員工</span>
+              }
+            </div>
 
-          <div className="card rounded-xl g border p-4 shadow-card">
+            <div className="card rounded-xl g border p-4 shadow-card">
           <div ref={calendarContainerRef}>
 
             <FullCalendar
@@ -1903,6 +2060,8 @@ function getShiftColor(shift: Shift): string {
             </div>
           </div>
           </div>
+            </>
+          )}
         </div>
       </div>
 
