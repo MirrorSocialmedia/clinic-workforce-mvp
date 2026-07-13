@@ -48,7 +48,7 @@ export async function PUT(
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword } = body
+      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate } = body
 
       const existing = await prisma.user.findUnique({
         where: { id: params.id },
@@ -85,13 +85,39 @@ export async function PUT(
         }
       }
 
-      // Update employee if exists
-      if (existing.employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined)) {
+      // ① Backfill employee record if assignEmployee is true but no employee exists
+      let employee = existing.employee
+      if (!employee && assignEmployee) {
+        employee = await prisma.employee.create({
+          data: {
+            userId: params.id,
+            joinDate: joinDate ? new Date(joinDate) : new Date(),
+            status: 'ACTIVE',
+          },
+        })
+      }
+
+      // ② Sync EmployeeClinic (scheduling reads from EmployeeClinic, not UserClinic)
+      if (clinicIds !== undefined && employee) {
+        await prisma.employeeClinic.deleteMany({ where: { employeeId: employee.id } })
+        if (clinicIds.length > 0) {
+          await prisma.employeeClinic.createMany({
+            data: clinicIds.map((cid: string, idx: number) => ({
+              employeeId: employee.id,
+              clinicId: cid,
+              isPrimary: idx === 0,
+            })),
+          })
+        }
+      }
+
+      // Update employee if exists (may have just been backfilled above)
+      if (employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined)) {
         const empUpdate: any = {}
         if (employeeStatus !== undefined) empUpdate.status = employeeStatus
 
         await prisma.employee.update({
-          where: { id: existing.employee.id },
+          where: { id: employee.id },
           data: empUpdate,
         })
 
@@ -113,7 +139,7 @@ export async function PUT(
 
           await prisma.payRule.create({
             data: {
-              employeeId: existing.employee.id,
+              employeeId: employee.id,
               payType,
               baseAmount: baseAmount ?? null,
               configJson: configJson || JSON.stringify(defaultModularConfig),

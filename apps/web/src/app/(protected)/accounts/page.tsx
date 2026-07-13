@@ -294,16 +294,25 @@ export default function AccountsPage() {
                   </div>
                 </>
               )}
-              <div className="form-group" style={{ gridColumn: 'span 3' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <input type="checkbox" checked={form.assignEmployee}
-                    onChange={e => setForm({ ...form, assignEmployee: e.target.checked })} />
-                  同時創建員工記錄（用於排班和計薪）
-                </label>
-                <label>診所指派</label>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {/* 同時創建員工記錄 — 整行、checkbox+文字一體 */}
+              <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.assignEmployee}
+                  onChange={e => setForm({ ...form, assignEmployee: e.target.checked })} />
+                同時創建員工記錄（用於排班和計薪）
+              </label>
+
+              {/* 診所指派 chip 流式排列 */}
+              <div style={{ gridColumn: '1 / -1' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>診所指派</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {clinics.map(c => (
-                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <label key={c.id} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
+                      border: form.clinicIds.includes(c.id) ? '1.5px solid #0f766e' : '1px solid #e5e7eb',
+                      background: form.clinicIds.includes(c.id) ? '#f0fdfa' : '#fff',
+                      fontSize: 13, whiteSpace: 'nowrap',
+                    }}>
                       <input type="checkbox" checked={form.clinicIds.includes(c.id)}
                         onChange={e => {
                           const ids = e.target.checked ? [...form.clinicIds, c.id] : form.clinicIds.filter(id => id !== c.id)
