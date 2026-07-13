@@ -49,6 +49,9 @@ interface ExceptionRecord {
   otMinutes?: number
   madeUp?: boolean
   payType?: 'HOURLY' | 'MONTHLY'
+  // ABSENT-specific
+  otDeducted?: boolean
+  shiftMinutes?: number
 }
 
 export default function AttendancePage() {
@@ -273,6 +276,41 @@ export default function AttendancePage() {
     } catch {
       alert('網絡錯誤')
     }
+  }
+
+  // 缺勤扣OT鐘
+  const handleAbsentDeduct = async (employeeId: string, date: string) => {
+    if (!confirm(`確定扣OT鐘買回 ${date} 的缺勤？將扣時間帳戶（排班時數）`)) return
+    try {
+      const res = await fetch('/api/timebank/absent-deduct', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId, date }),
+      })
+      const data = await res.json()
+      if (!res.ok) { alert(data.error || '扣OT鐘失敗'); return }
+      alert('✅ 扣OT鐘成功')
+      fetchExceptions()
+      fetchRecordExceptions()
+    } catch { alert('網絡錯誤') }
+  }
+
+  const handleCancelAbsentDeduct = async (employeeId: string, date: string) => {
+    if (!confirm(`確定取消 ${date} 的缺勤扣OT鐘？將恢復缺勤狀態。`)) return
+    try {
+      const res = await fetch('/api/timebank/absent-deduct/cancel', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId, date }),
+      })
+      const data = await res.json()
+      if (!res.ok) { alert(data.error || '取消失敗'); return }
+      alert('✅ 取消成功')
+      fetchExceptions()
+      fetchRecordExceptions()
+    } catch { alert('網絡錯誤') }
   }
 
   const typeLabel = (type: string) => {
@@ -681,6 +719,31 @@ export default function AttendancePage() {
                               title="補鐘：用OT補這次遲到/早退，免扣勤工"
                             >
                               <Clock size={12} /> 補鐘
+                            </button>
+                          )
+                        )}
+                        {/* ABSENT 三態：扣OT鐘 */}
+                        {ex.type === 'ABSENT' && user.role === 'OWNER' && ex.payType !== 'HOURLY' && (
+                          ex.otDeducted ? (
+                            <span className="flex items-center gap-1">
+                              <span className="text-blue-700 text-xs">
+                                ✓已扣OT鐘（−{ex.shiftMinutes}分）
+                              </span>
+                              <button
+                                onClick={() => handleCancelAbsentDeduct(ex.employeeId, ex.date)}
+                                className="text-xs text-red-500 hover:underline ml-1"
+                              >
+                                取消
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleAbsentDeduct(ex.employeeId, ex.date)}
+                              className="text-xs px-2 py-1 rounded-md font-medium"
+                              style={{ background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}
+                              title="扣OT鐘：用時間帳戶買回缺勤工資扣款，仍取消勤工獎"
+                            >
+                              扣OT鐘
                             </button>
                           )
                         )}

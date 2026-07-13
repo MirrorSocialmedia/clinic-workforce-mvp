@@ -166,6 +166,8 @@ export const CONFIG = {
     // Timebank entry routes
     'POST /api/timebank/makeup': ['OWNER'],
     'POST /api/timebank/convert': ['OWNER'],
+    'POST /api/timebank/absent-deduct': ['OWNER'],
+    'POST /api/timebank/absent-deduct/cancel': ['OWNER'],
     'GET /api/time-bank/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'PATCH /api/time-bank/:id': ['OWNER'],
     'DELETE /api/time-bank/:id': ['OWNER'],

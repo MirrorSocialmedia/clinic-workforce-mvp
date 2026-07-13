@@ -120,6 +120,9 @@ export async function GET(req: NextRequest) {
     lateMinutes?: number; earlyMinutes?: number; otMinutes?: number;
     madeUp?: boolean;
     payType?: 'HOURLY' | 'MONTHLY';
+    // ABSENT-specific fields
+    otDeducted?: boolean;
+    shiftMinutes?: number;
   }> = []
 
   // Build employee info map from raw punches for display names
@@ -236,12 +239,48 @@ export async function GET(req: NextRequest) {
       ep.clinicId === shift.clinicId
     )
     if (!hasPunch) {
+      const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
+      const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
+      const shiftMinutes = Math.round((shiftEnd.getTime() - shiftStart.getTime()) / 60000)
       exceptions.push({
         employeeId: shift.employeeId, employeeName: shift.employee?.user?.name || 'Unknown',
         clinicName: shift.clinic?.name || 'Unknown', date: shiftDayStr, type: 'ABSENT',
         detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)})`,
+        shiftMinutes,
       })
     }
+  }
+
+  // 查詢 ABSENT 類型的扣OT鐘記錄（標記 otDeducted）
+  try {
+    const absentEmpIds = [...new Set(exceptions.filter(e => e.type === 'ABSENT').map(e => e.employeeId))]
+    if (absentEmpIds.length > 0) {
+      const absentEntries = await prisma.timeBankEntry.findMany({
+        where: {
+          type: 'MAKEUP',
+          targetType: 'ABSENT',
+          date: { gte: monthStart, lte: monthEnd },
+          employeeId: { in: absentEmpIds },
+        },
+      })
+      const absentSet = new Map<string, number>()
+      for (const e of absentEntries) {
+        absentSet.set(`${e.employeeId}_${toHKDateStr(new Date(e.date))}`, Math.abs(e.minutes))
+      }
+      exceptions.forEach(ex => {
+        if (ex.type === 'ABSENT') {
+          const key = `${ex.employeeId}_${ex.date}`
+          if (absentSet.has(key)) {
+            ex.otDeducted = true
+            ex.shiftMinutes = absentSet.get(key)!
+          } else {
+            ex.otDeducted = false
+          }
+        }
+      })
+    }
+  } catch {
+    // timeBankEntry may not exist
   }
 
   for (const c of corrections) {

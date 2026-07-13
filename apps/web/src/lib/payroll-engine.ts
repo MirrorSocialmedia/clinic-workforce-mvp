@@ -836,6 +836,7 @@ interface WorkData {
   consultationFees: number
   scheduledDays: number
   absentDays: number
+  otDeductedAbsences: Array<{ date: string; minutes: number }>
   shifts: any[]
   makeupEntries: Array<{ date: string; minutes: number; note: string }>
 }
@@ -1082,6 +1083,7 @@ export async function calculateTimeBank(
   netDeficitMinutes: number
   earlyLeaveMinutes: number
   makeupMinutes: number
+  makeupAbsentMinutes: number
   carriedFrom: number
   timeAccountMinutes: number
   balance: number
@@ -1150,6 +1152,7 @@ export async function calculateTimeBank(
   let makeupMinutes = 0
   let makeupLateMinutes = 0
   let makeupEarlyMinutes = 0
+  let makeupAbsentMinutes = 0
   try {
     const makeupEntries = await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: 'MAKEUP', date: { gte: monthStart, lte: monthEnd } },
@@ -1157,9 +1160,10 @@ export async function calculateTimeBank(
     for (const e of (makeupEntries || [])) {
       const m = Math.abs(e.minutes)
       if (e.targetType === 'EARLY_LEAVE') makeupEarlyMinutes += m
+      else if (e.targetType === 'ABSENT') makeupAbsentMinutes += m // ← 缺勤扣OT鐘
       else makeupLateMinutes += m // 'LATE' or null (legacy) → treat as late
     }
-    makeupMinutes = makeupLateMinutes + makeupEarlyMinutes // 總消耗（帳戶用，不變）
+    makeupMinutes = makeupLateMinutes + makeupEarlyMinutes + makeupAbsentMinutes // 總消耗（帳戶用）
   } catch {
     // timeBankEntry table may not exist yet
   }
@@ -1181,6 +1185,7 @@ export async function calculateTimeBank(
   const netDeficitMinutes = netLateMinutes + netEarlyMinutes
 
   // 本月淨OT = OT − 補鐘消耗 − 未補鐘的 deficit（遲到+早退）
+  // makeupMinutes 已含 ABSENT，所以帳戶總消耗正確
   const netOtThisMonth = otMinutes - makeupMinutes - netDeficitMinutes
 
   // 拖欠 = 只看本月淨OT是否為負
@@ -1212,6 +1217,7 @@ export async function calculateTimeBank(
 
   return {
     otMinutes, lateMinutes, netLateMinutes, netEarlyMinutes, earlyLeaveMinutes, makeupMinutes,
+    makeupAbsentMinutes,
     netDeficitMinutes,
     carriedFrom,
     timeAccountMinutes: balance,
@@ -1670,6 +1676,7 @@ async function collectWorkData(
   let makeupEntries: Array<{ date: string; minutes: number; note: string }> = []
   const makeupLateDates = new Set<string>()
   const makeupEarlyDates = new Set<string>()
+  const makeupAbsentDates = new Map<string, number>()  // dateStr -> shiftMinutes (ABSENT)
   try {
     const rawMakeupEntries = await prisma.timeBankEntry.findMany({
       where: {
@@ -1688,6 +1695,9 @@ async function collectWorkData(
       const dateStr = toHKDateStr(e.date)
       if (e.targetType === 'EARLY_LEAVE') {
         makeupEarlyDates.add(dateStr)
+      } else if (e.targetType === 'ABSENT') {
+        // 缺勤扣OT鐘：記錄已扣的日子和分鐘數
+        makeupAbsentDates.set(dateStr, Math.abs(e.minutes))
       } else {
         // Default to LATE (backward compat for old entries without targetType)
         makeupLateDates.add(dateStr)
@@ -1755,11 +1765,19 @@ async function collectWorkData(
   }
 
   let absentDays = 0
+  const otDeductedAbsences: Array<{ date: string; minutes: number }> = []
   for (const shift of shifts) {
     const shiftDateStr = formatDate(new Date(shift.date))
     const hasPunch = punchByDate[shiftDateStr]
     const hasLeave = leaveDateSet.has(shiftDateStr)
-    if (!hasPunch && !hasLeave) absentDays++
+    if (!hasPunch && !hasLeave) {
+      if (makeupAbsentDates.has(shiftDateStr)) {
+        // 已扣OT鐘：不計入 absentDays（不扣工資），但記錄
+        otDeductedAbsences.push({ date: shiftDateStr, minutes: makeupAbsentDates.get(shiftDateStr)! })
+      } else {
+        absentDays++  // 正常缺勤，扣款
+      }
+    }
   }
 
   return {
@@ -1780,6 +1798,7 @@ async function collectWorkData(
     consultationFees,
     scheduledDays,
     absentDays,
+    otDeductedAbsences,
     shifts,
     makeupEntries,
   }
@@ -2024,6 +2043,18 @@ function applyAttendanceBonusModifier(
   result: PayrollResult,
   workData: WorkData
 ): PayrollResult {
+  // ★ 缺勤扣OT鐘也取消勤工（即使 absentDays 已排除 OT-deducted 的天數）
+  if (workData.otDeductedAbsences && workData.otDeductedAbsences.length > 0) {
+    const next = { ...result }
+    next.attendanceBonus = 0
+    next.attendanceBonusCancelled = true
+    next.attendanceBonusReason = '缺勤（已扣OT鐘），取消勤工'
+    const rawTotal = result.basePay - result.deduction + result.otPay + (result.splitPay || 0)
+    next.totalPayable = Math.max(0, rawTotal)
+    next.detail = { ...result.detail, attendanceBonus: 0, attendanceBonusCancelled: true, attendanceBonusReason: '缺勤（已扣OT鐘），取消勤工', rawTotal: Math.round(rawTotal * 100) / 100 }
+    return next
+  }
+
   const bonus = evaluateAttendanceBonus(modConfig, {
     lateRecords: workData.lateRecords.map(r => ({ minutes: r.minutes })),
     leaveRecords: workData.leaveRecords,
@@ -2309,6 +2340,7 @@ export async function calculatePayrollWithRules(
       expectedWorkDays: workData.scheduledDays,
       actualAttendanceDays: workData.actualAttendanceDays,
       absentDays: workData.absentDays,
+      otDeductedAbsences: workData.otDeductedAbsences || [],
       lateRecords: workData.lateRecords,
       earlyLeaveRecords: workData.earlyLeaveRecords || [],
       dailyEntries: workData.dailyEntries.map(d => ({ date: d.date, totalHours: d.totalHours })),

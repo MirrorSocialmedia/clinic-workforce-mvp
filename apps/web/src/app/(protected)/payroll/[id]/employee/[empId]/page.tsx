@@ -120,6 +120,7 @@ export default function EmployeePayrollDetailPage() {
   const scheduledDays = attendanceDetail.expectedWorkDays ?? detail.scheduledDays ?? '-'
   const actualAttendanceDays = attendanceDetail.actualAttendanceDays ?? detail.actualAttendanceDays ?? item.workedHours
   const absentDays = attendanceDetail.absentDays ?? detail.absentDays ?? item.absentDays
+  const otDeductedAbsences = (attendanceDetail.otDeductedAbsences as Array<{ date: string; minutes: number }>) || []
   const leaveDays = detail.approvedLeaveDays ?? item.leaveDays
   const lateRecords = (attendanceDetail.lateRecords ?? detail.lateRecords) || []
   const earlyRecords = (attendanceDetail.earlyLeaveRecords ?? detail.earlyLeaveRecords) || []
@@ -336,6 +337,17 @@ export default function EmployeePayrollDetailPage() {
                 <div key={i} className="text-muted-foreground ml-4">
                   {m.date}：補鐘 {m.minutes} 分鐘（用OT補遲到/早退）
                   {m.note && <span className="ml-2">— {m.note}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {/* ⏱ 缺勤扣OT鐘 */}
+          {otDeductedAbsences.length > 0 && (
+            <div className="mt-2 text-sm">
+              <span className="font-semibold text-blue-700">⏱ 缺勤扣OT鐘（{otDeductedAbsences.length} 天）</span>
+              {otDeductedAbsences.map((a: any, i: number) => (
+                <div key={i} className="text-muted-foreground ml-4">
+                  {a.date}：扣OT鐘 {a.minutes} 分鐘（不扣工資，仍取消勤工獎）
                 </div>
               ))}
             </div>
