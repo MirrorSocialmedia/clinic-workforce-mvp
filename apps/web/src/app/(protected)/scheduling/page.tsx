@@ -82,6 +82,47 @@ interface ValidationIssue {
 }
 
 // ============================================================
+// Hook: Drag-out delete via pointer capture (stable, no lost events)
+// ============================================================
+function useDragOutDelete(
+  overviewRef: React.RefObject<HTMLDivElement | null>,
+  onDelete: (id: string, label: string) => Promise<void>,
+) {
+  const [ghost, setGhost] = useState<{ x: number; y: number; label: string; outside: boolean } | null>(null)
+
+  const start = (e: React.PointerEvent, id: string, label: string) => {
+    const el = e.currentTarget as HTMLElement
+    e.preventDefault()
+    el.setPointerCapture(e.pointerId)
+    const sx = e.clientX, sy = e.clientY
+    let dragging = false
+
+    const onMove = (ev: PointerEvent) => {
+      if (!dragging && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 8) dragging = true
+      if (!dragging) return
+      const r = overviewRef.current?.getBoundingClientRect()
+      const outside = !!r && (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom)
+      setGhost({ x: ev.clientX, y: ev.clientY, label, outside })
+    }
+    const onUp = async (ev: PointerEvent) => {
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.releasePointerCapture(ev.pointerId)
+      setGhost(null)
+      if (!dragging) return
+      const r = overviewRef.current?.getBoundingClientRect()
+      const outside = !!r && (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom)
+      if (!outside) return
+      if (!confirm(`刪除？\n${label}`)) return
+      await onDelete(id, label)
+    }
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+  }
+  return { start, ghost }
+}
+
+// ============================================================
 // Main Component
 // ============================================================
 export default function SchedulingPage() {
@@ -124,11 +165,8 @@ export default function SchedulingPage() {
     })
   }
 
-  // 🗑 Drag-to-delete refs & shared hint
+  // 🗑 Drag-to-delete via pointer capture (stable, no lost events)
   const overviewRef = useRef<HTMLDivElement>(null)
-  const draggingOvShift = useRef<{ shiftId: string; label: string; startX: number; startY: number } | null>(null)
-  const draggingOvLeave = useRef<{ leaveRequestId: string; label: string; employeeId: string; date: string; startX: number; startY: number } | null>(null)
-  const [dragHint, setDragHint] = useState(false)
 
   // 🔧 Fix #3a: 抓當前選中員工的假期餘額
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
@@ -429,65 +467,21 @@ function getShiftColor(shift: Shift): string {
     }
   }, [refreshAll, refreshLeaveBalances])
 
-  // 🗑 Shift drag-out → delete
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      const d = draggingOvShift.current
-      if (!d) return
-      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
-      const rect = overviewRef.current?.getBoundingClientRect()
-      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
-      setDragHint(!!(moved && outside))
-    }
-    const onUp = async (e: PointerEvent) => {
-      const d = draggingOvShift.current
-      draggingOvShift.current = null
-      setDragHint(false)
-      if (!d) return
-      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
-      if (!moved) return
-      const rect = overviewRef.current?.getBoundingClientRect()
-      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
-      if (!outside) return
-      if (!confirm(`刪除更次？\n${d.label}`)) return
-      const res = await fetch(`/api/shifts/${d.shiftId}`, { method: 'DELETE', credentials: 'include' })
+  // 🗑 Drag-out delete via pointer capture — hook calls
+  const { start: shiftDragOutStart, ghost: shiftGhost } = useDragOutDelete(
+    overviewRef, async (id, label) => {
+      const res = await fetch(`/api/shifts/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
       await refreshAll()
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
-  }, [refreshAll])
-
-  // 🗑 Leave drag-out → delete
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      const d = draggingOvLeave.current
-      if (!d) return
-      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
-      const rect = overviewRef.current?.getBoundingClientRect()
-      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
-      setDragHint(!!(moved && outside))
-    }
-    const onUp = async (e: PointerEvent) => {
-      const d = draggingOvLeave.current
-      draggingOvLeave.current = null
-      setDragHint(false)
-      if (!d) return
-      const moved = Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 8
-      if (!moved) return
-      const rect = overviewRef.current?.getBoundingClientRect()
-      const outside = rect && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
-      if (!outside) return
-      if (!confirm(`刪除假期？\n${d.label}`)) return
-      const res = await fetch(`/api/leave-requests/${d.leaveRequestId}`, { method: 'DELETE', credentials: 'include' })
+    },
+  )
+  const { start: leaveDragOutStart, ghost: leaveGhost } = useDragOutDelete(
+    overviewRef, async (id, label) => {
+      const res = await fetch(`/api/leave-requests/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
       await refreshAll()
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
-  }, [refreshAll])
+    },
+  )
 
   // ============================================================
   // Date Helpers
@@ -1114,33 +1108,38 @@ function getShiftColor(shift: Shift): string {
     <div style={{ maxWidth: '100%', padding: '0 16px' }}>
       {/* Overview capsule styles */}
       <style>{`
+        .overview-table {
+          table-layout: fixed;
+          width: 100%;
+        }
         .overview-cell {
           padding: 2px !important;
           vertical-align: top;
-          height: 100%;
+          overflow: hidden;
         }
         .overview-cell-inner {
           display: flex;
           flex-direction: column;
           gap: 2px;
-          min-height: 64px;
-          height: 100%;
+          min-height: 0;
+          height: auto;
         }
         .ov-capsule {
-          flex: 1 1 0;
+          flex: none;
           width: 100%;
+          min-width: 0;
+          box-sizing: border-box;
           display: flex;
           align-items: center;
-          justify-content: center;
-          padding: 2px 6px;
-          border-radius: 6px;
+          padding: 1px 5px;
+          border-radius: 5px;
           font-size: 11px;
           font-weight: 600;
-          color: #fff;
+          min-height: 18px;
+          line-height: 16px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-          min-height: 22px;
         }
         .ov-capsule[style*="borderLeft"] {
           color: inherit;
@@ -1156,16 +1155,9 @@ function getShiftColor(shift: Shift): string {
           grid-template-columns: 1fr 1fr;
         }
         .ov-compact .ov-capsule {
-          flex: none !important;
-          font-size: 11px !important;
-          font-weight: 600;
           min-height: 16px;
-          line-height: 16px;
           padding: 0 4px;
-          border-radius: 4px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          font-size: 11px;
         }
       `}</style>
       {/* Header */}
@@ -1440,10 +1432,27 @@ function getShiftColor(shift: Shift): string {
       {/* (moved into the right column; removed standalone block) */}
       {/* ============================================================ */}
 
-      {/* 🗑 Drag-to-delete hint */}
-      {dragHint && (
-        <div className="fixed top-4 right-4 z-50 px-3 py-2 rounded-lg bg-red-600 text-white text-sm shadow-lg animate-pulse">
-          🗑 放開以刪除
+      {/* 🗑 Ghost capsule: follows cursor, turns red when outside */}
+      {shiftGhost && (
+        <div className="fixed z-50 pointer-events-none px-2 py-1 rounded text-xs font-semibold shadow-lg"
+          style={{
+            left: shiftGhost.x + 10,
+            top: shiftGhost.y + 10,
+            background: shiftGhost.outside ? '#dc2626' : '#334155',
+            color: '#fff',
+          }}>
+          {shiftGhost.outside ? '🗑 放開刪除' : shiftGhost.label}
+        </div>
+      )}
+      {leaveGhost && (
+        <div className="fixed z-50 pointer-events-none px-2 py-1 rounded text-xs font-semibold shadow-lg"
+          style={{
+            left: leaveGhost.x + 10,
+            top: leaveGhost.y + 10,
+            background: leaveGhost.outside ? '#dc2626' : '#334155',
+            color: '#fff',
+          }}>
+          {leaveGhost.outside ? '🗑 放開刪除' : leaveGhost.label}
         </div>
       )}
 
@@ -1698,7 +1707,7 @@ function getShiftColor(shift: Shift): string {
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151' }}>
                 📊 全局總覽（所有診所）
               </div>
-              <table style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: 700 }}>
+              <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: 700 }}>
                 <thead>
                   <tr>
                     <th style={{
@@ -1781,14 +1790,10 @@ function getShiftColor(shift: Shift): string {
                                 return (
                                   <div key={'s' + si} className="ov-capsule" style={{
                                     background: getShiftColor(s),
+                                    touchAction: 'none',
+                                    userSelect: 'none',
                                   }}
-                                    onPointerDown={(e) => {
-                                      draggingOvShift.current = {
-                                        shiftId: s.id,
-                                        label: `${s.employee?.user?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`,
-                                        startX: e.clientX, startY: e.clientY
-                                      }
-                                    }}
+                                    onPointerDown={(e) => shiftDragOutStart(e, s.id, `${s.employee?.user?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`)}
                                   >
                                     {label}·{s.employee?.user?.name?.slice(0, 2)}
                                   </div>
@@ -1802,16 +1807,10 @@ function getShiftColor(shift: Shift): string {
                                       background: leaveColor + '33',
                                       borderLeft: `3px solid ${leaveColor}`,
                                       color: leaveColor,
+                                      touchAction: 'none',
+                                      userSelect: 'none',
                                     }}
-                                    onPointerDown={(e) => {
-                                      draggingOvLeave.current = {
-                                        leaveRequestId: lr.id,
-                                        label: `${lr.employee?.user?.name} ${lr.leaveType?.name || '假'} ${lr.startDate}`,
-                                        employeeId: lr.employeeId,
-                                        date: lr.startDate,
-                                        startX: e.clientX, startY: e.clientY
-                                      }
-                                    }}
+                                    onPointerDown={(e) => leaveDragOutStart(e, lr.id, `${lr.employee?.user?.name} ${lr.leaveType?.name || '假'} ${lr.startDate}`)}
                                   >
                                     {lr.leaveType?.name || '假'}
                                   </div>

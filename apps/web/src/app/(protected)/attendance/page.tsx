@@ -478,11 +478,8 @@ export default function AttendancePage() {
     }
   }, [user, activeTab, exClinicId, exEmployeeId, periodMonth, fetchExceptions])
 
-  if (!user) return <div style={{ padding: 20 }}>Loading...</div>
-  const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER'
-  const totalPages = Math.ceil(total / pageSize)
-
   // Merge absent rows with punch records for "全部記錄" tab
+  // NOTE: useMemo MUST be before early return (Rules of Hooks)
   const allRows = useMemo<((AbsentRow | PunchRow) & { isAbsentRow: boolean })[]>(() => {
     const absentRows: AbsentRow[] = recordsExceptions
       .filter(ex => ex.type === 'ABSENT')
@@ -508,6 +505,11 @@ export default function AttendancePage() {
 
     return [...punchRows, ...absentRows].sort((a, b) => b.sortTime - a.sortTime) as (AbsentRow | PunchRow & { isAbsentRow: boolean })[]
   }, [records, recordsExceptions])
+
+  if (!user) return <div style={{ padding: 20 }}>Loading...</div>
+
+  const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER'
+  const totalPages = Math.ceil(total / pageSize)
 
   return (
     <div className="p-6" style={{ maxWidth: '1200px' }}>
