@@ -137,6 +137,16 @@ export default function SchedulingPage() {
 
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
+  const draggingTemplate = useRef<{ templateId: string; employeeId: string } | null>(null)
+  const justDroppedRef = useRef(false)
+
+  // Global pointerup cleanup for draggingTemplate (next tick, let cell's pointerup fire first)
+  useEffect(() => {
+    const clear = () => setTimeout(() => { draggingTemplate.current = null }, 50)
+    window.addEventListener('pointerup', clear)
+    return () => window.removeEventListener('pointerup', clear)
+  }, [])
+
   const leavePanelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     // Set compact slot height after calendar mounts
@@ -679,6 +689,24 @@ function getShiftColor(shift: Shift): string {
   // ============================================================
   // Drag and Drop Handlers
   // ============================================================
+  // Drop handler for overview grid — drag template to any (employee, day) cell
+  const handleOverviewDrop = async (employeeId: string, dateStr: string) => {
+    const drag = draggingTemplate.current
+    if (!drag) return // Not a template drag — let onClick handle navigation
+    draggingTemplate.current = null
+    justDroppedRef.current = true
+    setTimeout(() => { justDroppedRef.current = false }, 100)
+
+    const tpl = templates.find(t => t.id === drag.templateId)
+    if (!tpl) return
+
+    // Use selectedEmployeeId from drag state (set on pointerDown)
+    const empId = drag.employeeId || employeeId
+    if (!empId) return
+
+    await createShift(empId, dateStr, tpl)
+}
+
   const handleDragStart = (e: React.DragEvent, employeeId: string) => {
     dragData.current = { employeeId, templateId: selectedTemplate?.id || '' }
     e.dataTransfer.effectAllowed = 'copy'
@@ -1245,23 +1273,42 @@ function getShiftColor(shift: Shift): string {
                     const hasShift = empShiftsOnDay.length > 0
                     const hasLeave = empLeavesOnDay.length > 0
                     return (
-                      <td key={dayIdx} style={{
-                        padding: '4px 6px', textAlign: 'center',
-                        cursor: hasShift ? 'pointer' : 'default',
-                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
-                        transition: 'background 0.15s',
-                      }}
-                      onMouseEnter={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
-                      }}
-                      onMouseLeave={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
-                      }}
-                      onClick={() => {
-                        if (hasShift) {
-                          jumpToEdit(empShiftsOnDay[0], wd.dateStr)
-                        }
-                      }}
+                      <td key={dayIdx}
+                        onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
+                        onPointerEnter={e => {
+                          if (!draggingTemplate.current) return
+                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                          ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+                          ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                        }}
+                        onPointerLeave={e => {
+                          if (hasShift) return
+                          if (hasLeave) {
+                            ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                          } else {
+                            ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                          }
+                          ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+                          ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                        }}
+                        style={{
+                          padding: '4px 6px', textAlign: 'center',
+                          cursor: hasShift ? 'pointer' : 'default',
+                          background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
+                          transition: 'background 0.15s',
+                        }}
+                        onMouseEnter={e => {
+                          if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                        }}
+                        onMouseLeave={e => {
+                          if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                        }}
+                        onClick={() => {
+                          if (justDroppedRef.current) return // prevent jumpToEdit right after drop
+                          if (hasShift) {
+                            jumpToEdit(empShiftsOnDay[0], wd.dateStr)
+                          }
+                        }}
                       >
                         {hasShift ? empShiftsOnDay.map((s, si) => (
                           <div key={si} style={{
@@ -1419,6 +1466,9 @@ function getShiftColor(shift: Shift): string {
                 className="template-card"
                 data-template-id={t.id}
                 data-name={t.name}
+                onPointerDown={() => {
+                  draggingTemplate.current = { templateId: t.id, employeeId: selectedEmployeeId }
+                }}
                 onClick={() => setSelectedTemplate(t)}
                 style={{
                   padding: '6px 4px', margin: '3px 0', borderRadius: 6,
