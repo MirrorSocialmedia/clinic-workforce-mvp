@@ -138,11 +138,15 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const draggingTemplate = useRef<{ templateId: string; employeeId: string } | null>(null)
+  const draggingLeave = useRef<{ leaveTypeId: string; employeeId: string } | null>(null)
   const justDroppedRef = useRef(false)
 
-  // Global pointerup cleanup for draggingTemplate (next tick, let cell's pointerup fire first)
+  // Global pointerup cleanup for draggingTemplate & draggingLeave (next tick, let cell's pointerup fire first)
   useEffect(() => {
-    const clear = () => setTimeout(() => { draggingTemplate.current = null }, 50)
+    const clear = () => setTimeout(() => {
+      draggingTemplate.current = null
+      draggingLeave.current = null
+    }, 50)
     window.addEventListener('pointerup', clear)
     return () => window.removeEventListener('pointerup', clear)
   }, [])
@@ -689,23 +693,85 @@ function getShiftColor(shift: Shift): string {
   // ============================================================
   // Drag and Drop Handlers
   // ============================================================
-  // Drop handler for overview grid — drag template to any (employee, day) cell
+  // Drop handler for overview grid — drag template to any (employee, day) cell or drag leave to create leave request
   const handleOverviewDrop = async (employeeId: string, dateStr: string) => {
+    // ① Template drag → create shift (existing logic)
     const drag = draggingTemplate.current
-    if (!drag) return // Not a template drag — let onClick handle navigation
-    draggingTemplate.current = null
-    justDroppedRef.current = true
-    setTimeout(() => { justDroppedRef.current = false }, 100)
+    if (drag) {
+      draggingTemplate.current = null
+      justDroppedRef.current = true
+      setTimeout(() => { justDroppedRef.current = false }, 100)
 
-    const tpl = templates.find(t => t.id === drag.templateId)
-    if (!tpl) return
+      const tpl = templates.find(t => t.id === drag.templateId)
+      if (!tpl) return
 
-    // Use selectedEmployeeId from drag state (set on pointerDown)
-    const empId = drag.employeeId || employeeId
-    if (!empId) return
+      const empId = drag.employeeId || employeeId
+      if (!empId) return
 
-    await createShift(empId, dateStr, tpl)
-}
+      await createShift(empId, dateStr, tpl)
+      return
+    }
+
+    // ② Leave drag → create leave request
+    const dl = draggingLeave.current
+    if (dl) {
+      draggingLeave.current = null
+      justDroppedRef.current = true
+      setTimeout(() => { justDroppedRef.current = false }, 100)
+
+      const lt = leaveTypes.find(l => l.id === dl.leaveTypeId)
+      if (!lt || !dl.employeeId) return
+
+      // Unlimited types (quantity === null && no systemKey) skip balance check
+      const isUnlimited = lt.quantity == null && !lt.systemKey
+      if (!isUnlimited) {
+        const bal = selectedEmpBalances.find(b => b.leaveTypeId === dl.leaveTypeId)
+        if (!bal || bal.remaining <= 0) {
+          setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
+          return
+        }
+      }
+
+      // Check no existing shift on that day for that employee
+      const hasShiftOnDate = shifts.some(s =>
+        s.employeeId === dl.employeeId &&
+        toHKDateStr(new Date(s.date)) === dateStr
+      )
+      if (hasShiftOnDate) {
+        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
+        return
+      }
+
+      try {
+        const res = await fetch('/api/leave-requests', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leaveTypeId: dl.leaveTypeId,
+            employeeId: dl.employeeId,
+            startDate: dateStr,
+            endDate: dateStr,
+            days: 1,
+            reason: `排班總覽拖曳請假`,
+            isPlanned: true,
+            clinicId: selectedClinicId,
+          }),
+        })
+        if (res.ok) {
+          setValidationIssues([])
+          await refreshAll()
+          await refreshLeaveBalances()
+        } else {
+          const err = await res.json()
+          setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])
+        }
+      } catch {
+        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
+      }
+      return
+    }
+  }
 
   const handleDragStart = (e: React.DragEvent, employeeId: string) => {
     dragData.current = { employeeId, templateId: selectedTemplate?.id || '' }
@@ -957,6 +1023,40 @@ function getShiftColor(shift: Shift): string {
   // ============================================================
   return (
     <div style={{ maxWidth: '100%', padding: '0 16px' }}>
+      {/* Overview capsule styles */}
+      <style>{`
+        .overview-cell {
+          padding: 2px !important;
+          vertical-align: top;
+          height: 100%;
+        }
+        .overview-cell-inner {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          min-height: 64px;
+          height: 100%;
+        }
+        .ov-capsule {
+          flex: 1 1 0;
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 2px 6px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 600;
+          color: #fff;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          min-height: 22px;
+        }
+        .ov-capsule[style*="borderLeft"] {
+          color: inherit;
+        }
+      `}</style>
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -1274,9 +1374,10 @@ function getShiftColor(shift: Shift): string {
                     const hasLeave = empLeavesOnDay.length > 0
                     return (
                       <td key={dayIdx}
+                        className="overview-cell"
                         onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
                         onPointerEnter={e => {
-                          if (!draggingTemplate.current) return
+                          if (!draggingTemplate.current && !draggingLeave.current) return
                           ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
                           ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
                           ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
@@ -1296,6 +1397,7 @@ function getShiftColor(shift: Shift): string {
                           cursor: hasShift ? 'pointer' : 'default',
                           background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
                           transition: 'background 0.15s',
+                          verticalAlign: 'top',
                         }}
                         onMouseEnter={e => {
                           if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
@@ -1310,23 +1412,32 @@ function getShiftColor(shift: Shift): string {
                           }
                         }}
                       >
-                        {hasShift ? empShiftsOnDay.map((s, si) => (
-                          <div key={si} style={{
-                            display: 'inline-block',
-                            padding: '1px 5px',
-                            borderRadius: 3,
-                            fontSize: 11,
-                            fontWeight: 600,
-                            color: '#fff',
-                            background: getShiftColor(s),
-                            margin: '1px 2px',
-                            whiteSpace: 'nowrap',
-                          }}>{getShiftCode(s)}</div>
-                        )) : hasLeave ? (
-                          <span style={{ fontSize: 11, color: '#4a4a4a', fontWeight: 600 }}>假</span>
-                        ) : (
-                          <span style={{ fontSize: 11, color: '#999', fontWeight: 500 }}>R</span>
-                        )}
+                        <div className="overview-cell-inner">
+                          {empShiftsOnDay.map((s, si) => (
+                            <div key={'s' + si} className="ov-capsule" style={{
+                              background: getShiftColor(s),
+                            }}>
+                              {getShiftCode(s)}
+                            </div>
+                          ))}
+                          {empLeavesOnDay.map((lr, li) => {
+                            const leaveColor = lr.leaveType?.color ?? '#9ca3af'
+                            return (
+                              <div key={'l' + li} className="ov-capsule"
+                                style={{
+                                  background: leaveColor + '33',
+                                  borderLeft: `3px solid ${leaveColor}`,
+                                  color: leaveColor,
+                                }}
+                              >
+                                {lr.leaveType?.name || '假'}
+                              </div>
+                            )
+                          })}
+                          {(!hasShift && !hasLeave) && (
+                            <span style={{ fontSize: 11, color: '#999', fontWeight: 500 }}>R</span>
+                          )}
+                        </div>
                       </td>
                     )
                   })}
@@ -1508,6 +1619,10 @@ function getShiftColor(shift: Shift): string {
                     className="leave-card"
                     data-leave-id={lt.id}
                     data-name={lt.name}
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      draggingLeave.current = { leaveTypeId: lt.id, employeeId: selectedEmployeeId }
+                    }}
                     style={{
                       padding: '6px 4px', margin: '3px 0',
                       background: canDragLeave ? '#4a4a4a' : '#3a3a3a',
