@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, startHour, startMinute, endHour, endMinute, isNightShift } = body
+      const { name, shortName, startHour, startMinute, endHour, endMinute, isNightShift } = body
 
       if (!name || startHour === undefined || endHour === undefined) {
         return NextResponse.json(
@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
       const template = await prisma.shiftTemplate.create({
         data: {
           name,
+          shortName: shortName || null,
           startHour,
           startMinute: startMinute ?? 0,
           endHour,

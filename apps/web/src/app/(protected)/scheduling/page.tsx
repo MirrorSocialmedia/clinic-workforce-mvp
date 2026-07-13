@@ -40,6 +40,7 @@ interface ShiftTemplate {
   endMinute: number
   isNightShift: boolean
   isDefault: boolean
+  shortName?: string | null
 }
 
 interface Shift {
@@ -55,7 +56,7 @@ interface Shift {
   hasPunch?: boolean
   employee?: { user: { name: string } }
   clinic?: { name: string }
-  template?: { name: string }
+  template?: { name: string; shortName?: string | null }
 }
 
 interface ShiftChangeRequest {
@@ -213,8 +214,8 @@ const CLINIC_COLOR: Record<string, string> = {
 function getShiftCode(shift: Shift): string {
   const clinicName = shift.clinic?.name || ''
   const abbr = CLINIC_ABBR[clinicName] || clinicName?.[0] || '?'
-  const tpl = shift.template?.name || '班'
-  return `${abbr}-${tpl}`
+  const tplName = shift.template?.shortName || shift.template?.name || '班'
+  return `${abbr}-${tplName}`
 }
 function getShiftColor(shift: Shift): string {
   return CLINIC_COLOR[shift.clinic?.name || ''] || '#95a5a6'
@@ -1144,9 +1145,28 @@ function getShiftColor(shift: Shift): string {
         .ov-capsule[style*="borderLeft"] {
           color: inherit;
         }
-        .overview-expanded .overview-cell-inner { min-height: 120px !important; }
-        .overview-expanded .ov-capsule { font-size: 13px !important; min-height: 28px !important; }
-        .overview-expanded td { padding: 8px 6px !important; }
+        /* Compact mode — 2-column grid, 16px capsules, 11px font */
+        .ov-compact .overview-cell {
+          padding: 1px !important;
+        }
+        .ov-compact .overview-cell-inner {
+          min-height: 0 !important;
+          gap: 1px;
+          display: grid !important;
+          grid-template-columns: 1fr 1fr;
+        }
+        .ov-compact .ov-capsule {
+          flex: none !important;
+          font-size: 11px !important;
+          font-weight: 600;
+          min-height: 16px;
+          line-height: 16px;
+          padding: 0 4px;
+          border-radius: 4px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
       `}</style>
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
@@ -1287,6 +1307,7 @@ function getShiftColor(shift: Shift): string {
               {templates.map(t => (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, padding: '8px 12px', background: '#f9f9f9', borderRadius: 6 }}>
                   <span style={{ minWidth: 60, fontWeight: 500, fontSize: 13 }}>{t.name}</span>
+                  {t.shortName && <span style={{ fontSize: 10, color: '#6b7280', background: '#f3f4f6', padding: '1px 5px', borderRadius: 4 }}>簡稱: {t.shortName}</span>}
                   <span style={{ fontSize: 12, color: '#888' }}>
                     {String(t.startHour).padStart(2, '0')}:{String(t.startMinute).padStart(2, '0')}
                     -{String(t.endHour).padStart(2, '0')}:{String(t.endMinute).padStart(2, '0')}
@@ -1299,7 +1320,9 @@ function getShiftColor(shift: Shift): string {
                         style={{ background: '#e3f2fd', color: '#1976d2', border: '1px solid #bbdefb', fontSize: 11, padding: '2px 8px' }}
                         onClick={async () => {
                           const newName = prompt('修改更次名稱：', t.name)
-                          if (newName === null || newName === t.name) return
+                          if (newName === null) return
+                          const newShort = prompt('修改簡稱（1-4字，總覽顯示，留空用名稱）：', t.shortName || '')
+                          if (newShort === null) return
                           const newStart = prompt(`修改開始時間 (HH:mm)：`, `${String(t.startHour).padStart(2, '0')}:${String(t.startMinute).padStart(2, '0')}`)
                           if (newStart === null) return
                           const newEnd = prompt(`修改結束時間 (HH:mm)：`, `${String(t.endHour).padStart(2, '0')}:${String(t.endMinute).padStart(2, '0')}`)
@@ -1313,6 +1336,7 @@ function getShiftColor(shift: Shift): string {
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
                                 name: newName,
+                                shortName: (newShort as string)?.trim() || null,
                                 startHour: sh,
                                 startMinute: sm,
                                 endHour: eh,
@@ -1412,149 +1436,9 @@ function getShiftColor(shift: Shift): string {
 
 
       {/* ============================================================ */}
-      {/* GLOBAL OVERVIEW GRID (top, full width) */}
+      {/* GLOBAL OVERVIEW GRID — integrated into 4-column layout below */}
+      {/* (moved into the right column; removed standalone block) */}
       {/* ============================================================ */}
-      {viewMode === 'week' && viewRange && allEmployees.length > 0 && (
-        <div ref={overviewRef} className={showCalendar ? '' : 'overview-expanded'} style={{
-          marginBottom: 16,
-          border: '1px solid #e5e7eb',
-          borderRadius: 8,
-          overflowX: 'auto',
-          background: '#fafbfc',
-        }}>
-          <div style={{ padding: '8px 12px', borderBottom: '1px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151' }}>
-            📊 全局總覽（所有診所）
-          </div>
-          <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 700 }}>
-            <thead>
-              <tr>
-                <th style={{
-                  position: 'sticky', left: 0, background: '#f3f4f6',
-                  padding: '8px 12px', textAlign: 'left', zIndex: 10,
-                  borderBottom: '2px solid #e5e7eb', minWidth: 100,
-                }}>員工</th>
-                {weekDays.map((wd, i) => (
-                  <th key={i} style={{
-                    padding: '8px 6px', textAlign: 'center',
-                    borderBottom: '2px solid #e5e7eb',
-                    minWidth: 80, whiteSpace: 'nowrap',
-                  }}>{wd.label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {allEmployees.map(emp => (
-                <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                  <td style={{
-                    position: 'sticky', left: 0,
-                    background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                    padding: '6px 12px', whiteSpace: 'nowrap', zIndex: 5,
-                    fontWeight: 500,
-                  }}>{emp.user?.name ?? '?'}</td>
-                  {weekDays.map((wd, dayIdx) => {
-                    const empShiftsOnDay = shifts.filter(s =>
-                      s.employeeId === emp.id &&
-                      toHKDateStr(new Date(s.date)) === wd.dateStr
-                    )
-                    const empLeavesOnDay = leaveRequests.filter(lr =>
-                      lr.employeeId === emp.id &&
-                      wd.dateStr >= lr.startDate &&
-                      wd.dateStr <= (lr.endDate || lr.startDate)
-                    )
-                    const hasShift = empShiftsOnDay.length > 0
-                    const hasLeave = empLeavesOnDay.length > 0
-                    return (
-                      <td key={dayIdx}
-                        className="overview-cell"
-                        onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
-                        onPointerEnter={e => {
-                          if (!draggingTemplate.current && !draggingLeave.current) return
-                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
-                          ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-                          ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
-                        }}
-                        onPointerLeave={e => {
-                          if (hasShift) return
-                          if (hasLeave) {
-                            ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
-                          } else {
-                            ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
-                          }
-                          ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-                          ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
-                        }}
-                        style={{
-                          padding: '4px 6px', textAlign: 'center',
-                          cursor: hasShift ? 'pointer' : 'default',
-                          background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
-                          transition: 'background 0.15s',
-                          verticalAlign: 'top',
-                        }}
-                        onMouseEnter={e => {
-                          if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
-                        }}
-                        onMouseLeave={e => {
-                          if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
-                        }}
-                        onClick={() => {
-                          if (justDroppedRef.current) return // prevent jumpToEdit right after drop
-                          if (hasShift) {
-                            jumpToEdit(empShiftsOnDay[0], wd.dateStr)
-                          }
-                        }}
-                      >
-                        <div className="overview-cell-inner">
-                          {empShiftsOnDay.map((s, si) => (
-                            <div key={'s' + si} className="ov-capsule" style={{
-                              background: getShiftColor(s),
-                            }}
-                              onPointerDown={(e) => {
-                                draggingOvShift.current = {
-                                  shiftId: s.id,
-                                  label: `${s.employee?.user?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`,
-                                  startX: e.clientX, startY: e.clientY
-                                }
-                              }}
-                            >
-                              {getShiftCode(s)}
-                            </div>
-                          ))}
-                          {empLeavesOnDay.map((lr, li) => {
-                            const leaveColor = lr.leaveType?.color ?? '#9ca3af'
-                            return (
-                              <div key={'l' + li} className="ov-capsule"
-                                style={{
-                                  background: leaveColor + '33',
-                                  borderLeft: `3px solid ${leaveColor}`,
-                                  color: leaveColor,
-                                }}
-                                onPointerDown={(e) => {
-                                  draggingOvLeave.current = {
-                                    leaveRequestId: lr.id,
-                                    label: `${lr.employee?.user?.name} ${lr.leaveType?.name || '假'} ${lr.startDate}`,
-                                    employeeId: lr.employeeId,
-                                    date: lr.startDate,
-                                    startX: e.clientX, startY: e.clientY
-                                  }
-                                }}
-                              >
-                                {lr.leaveType?.name || '假'}
-                              </div>
-                            )
-                          })}
-                          {(!hasShift && !hasLeave) && (
-                            <span style={{ fontSize: 11, color: '#999', fontWeight: 500 }}>R</span>
-                          )}
-                        </div>
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {/* 🗑 Drag-to-delete hint */}
       {dragHint && (
@@ -1800,8 +1684,153 @@ function getShiftColor(shift: Shift): string {
           )}
         </div>
 
-        {/* RIGHT COLUMN: Calendar */}
+        {/* RIGHT COLUMN: Overview + Calendar */}
         <div id="fc-section" style={{ minWidth: 0, flex: 1 }}>
+          {/* Overview Grid — compact mode, always shown */}
+          {viewMode === 'week' && viewRange && allEmployees.length > 0 && (
+            <div ref={overviewRef} className="ov-compact" style={{
+              marginBottom: 12,
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+              overflowX: 'auto',
+              background: '#fafbfc',
+            }}>
+              <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151' }}>
+                📊 全局總覽（所有診所）
+              </div>
+              <table style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: 700 }}>
+                <thead>
+                  <tr>
+                    <th style={{
+                      position: 'sticky', left: 0, background: '#f3f4f6',
+                      padding: '4px 8px', textAlign: 'left', zIndex: 10,
+                      borderBottom: '2px solid #e5e7eb', minWidth: 80,
+                    }}>員工</th>
+                    {weekDays.map((wd, i) => (
+                      <th key={i} style={{
+                        padding: '4px 4px', textAlign: 'center',
+                        borderBottom: '2px solid #e5e7eb',
+                        minWidth: 70, whiteSpace: 'nowrap',
+                      }}>{wd.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allEmployees.map(emp => (
+                    <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      <td style={{
+                        position: 'sticky', left: 0,
+                        background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+                        padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
+                        fontWeight: 500, fontSize: 11,
+                      }}>{emp.user?.name ?? '?'}</td>
+                      {weekDays.map((wd, dayIdx) => {
+                        const empShiftsOnDay = shifts.filter(s =>
+                          s.employeeId === emp.id &&
+                          toHKDateStr(new Date(s.date)) === wd.dateStr
+                        )
+                        const empLeavesOnDay = leaveRequests.filter(lr =>
+                          lr.employeeId === emp.id &&
+                          wd.dateStr >= lr.startDate &&
+                          wd.dateStr <= (lr.endDate || lr.startDate)
+                        )
+                        const hasShift = empShiftsOnDay.length > 0
+                        const hasLeave = empLeavesOnDay.length > 0
+                        return (
+                          <td key={dayIdx}
+                            className="overview-cell"
+                            onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
+                            onPointerEnter={e => {
+                              if (!draggingTemplate.current && !draggingLeave.current) return
+                              ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                              ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+                              ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                            }}
+                            onPointerLeave={e => {
+                              if (hasShift) return
+                              if (hasLeave) {
+                                ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                              } else {
+                                ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                              }
+                              ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+                              ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                            }}
+                            style={{
+                              padding: '2px 3px', textAlign: 'center',
+                              cursor: hasShift ? 'pointer' : 'default',
+                              background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
+                              transition: 'background 0.15s',
+                              verticalAlign: 'top',
+                            }}
+                            onMouseEnter={e => {
+                              if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                            }}
+                            onMouseLeave={e => {
+                              if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                            }}
+                            onClick={() => {
+                              if (justDroppedRef.current) return
+                              if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
+                            }}
+                          >
+                            <div className="overview-cell-inner">
+                              {empShiftsOnDay.map((s, si) => {
+                                const tpl = templates.find(t => t.id === s.templateId)
+                                const label = tpl?.shortName || tpl?.name || fmtTime(s.startTime)
+                                return (
+                                  <div key={'s' + si} className="ov-capsule" style={{
+                                    background: getShiftColor(s),
+                                  }}
+                                    onPointerDown={(e) => {
+                                      draggingOvShift.current = {
+                                        shiftId: s.id,
+                                        label: `${s.employee?.user?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`,
+                                        startX: e.clientX, startY: e.clientY
+                                      }
+                                    }}
+                                  >
+                                    {label}·{s.employee?.user?.name?.slice(0, 2)}
+                                  </div>
+                                )
+                              })}
+                              {empLeavesOnDay.map((lr, li) => {
+                                const leaveColor = lr.leaveType?.color ?? '#9ca3af'
+                                return (
+                                  <div key={'l' + li} className="ov-capsule"
+                                    style={{
+                                      background: leaveColor + '33',
+                                      borderLeft: `3px solid ${leaveColor}`,
+                                      color: leaveColor,
+                                    }}
+                                    onPointerDown={(e) => {
+                                      draggingOvLeave.current = {
+                                        leaveRequestId: lr.id,
+                                        label: `${lr.employee?.user?.name} ${lr.leaveType?.name || '假'} ${lr.startDate}`,
+                                        employeeId: lr.employeeId,
+                                        date: lr.startDate,
+                                        startX: e.clientX, startY: e.clientY
+                                      }
+                                    }}
+                                  >
+                                    {lr.leaveType?.name || '假'}
+                                  </div>
+                                )
+                              })}
+                              {(!hasShift && !hasLeave) && (
+                                <span style={{ fontSize: 10, color: '#999', fontWeight: 500 }}>R</span>
+                              )}
+                            </div>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Calendar toggle + clinic info */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
             <button
@@ -2585,8 +2614,9 @@ function getShiftColor(shift: Shift): string {
 // ============================================================
 // NewShiftTemplateForm — Inline form for creating new shift templates
 // ============================================================
-function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; startHour: number; startMinute: number; endHour: number; endMinute: number; isNightShift: boolean }) => void }) {
+function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; shortName: string | null; startHour: number; startMinute: number; endHour: number; endMinute: number; isNightShift: boolean }) => void }) {
   const [name, setName] = useState('')
+  const [shortName, setShortName] = useState('')
   const [startHour, setStartHour] = useState(9)
   const [startMinute, setStartMinute] = useState(0)
   const [endHour, setEndHour] = useState(18)
@@ -2600,6 +2630,13 @@ function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; 
         value={name}
         onChange={e => setName(e.target.value)}
         style={{ width: 100, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }}
+      />
+      <input
+        placeholder="簡稱（1-4字）"
+        value={shortName}
+        maxLength={4}
+        onChange={e => setShortName(e.target.value)}
+        style={{ width: 80, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }}
       />
       <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
         起
@@ -2636,8 +2673,9 @@ function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; 
         style={{ background: '#e8f5e9', color: '#2e7d32', border: '1px solid #c8e6c9', fontSize: 11, padding: '4px 12px' }}
         onClick={() => {
           if (!name.trim()) { alert('請輸入名稱'); return }
-          onCreated({ name: name.trim(), startHour, startMinute, endHour, endMinute, isNightShift })
+          onCreated({ name: name.trim(), shortName: shortName.trim() || null, startHour, startMinute, endHour, endMinute, isNightShift })
           setName('')
+          setShortName('')
         }}
       >新增</button>
     </div>

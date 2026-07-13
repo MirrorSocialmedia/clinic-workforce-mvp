@@ -30,12 +30,13 @@ export async function PUT(
       }
 
       const body = await req.json()
-      const { name, startHour, startMinute, endHour, endMinute, isNightShift, isActive } = body
+      const { name, shortName, startHour, startMinute, endHour, endMinute, isNightShift, isActive } = body
 
       const updated = await prisma.shiftTemplate.update({
         where: { id: params.id },
         data: {
           ...(name !== undefined && { name }),
+          ...(shortName !== undefined && { shortName }),
           ...(startHour !== undefined && { startHour }),
           ...(startMinute !== undefined && { startMinute }),
           ...(endHour !== undefined && { endHour }),

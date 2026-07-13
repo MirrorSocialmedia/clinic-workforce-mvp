@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +35,39 @@ interface PunchRecord {
   } | null
 }
 
+interface AbsentRow {
+  id: string
+  isAbsentRow: true
+  employeeId: string
+  employeeName: string
+  clinicId: string
+  clinicName: string
+  date: string
+  shiftMinutes: number
+  otDeducted: boolean
+  payType?: 'HOURLY' | 'MONTHLY'
+  sortTime: number
+}
+
+interface PunchRow {
+  isAbsentRow: false
+  sortTime: number
+  id: string
+  employeeId: string
+  clinicId: string
+  punchTime: string
+  punchType: string
+  source: string
+  tokenValid: boolean | null
+  deviceInfo: string | null
+  notes: string | null
+  createdAt: string
+  employee: { user: { name: string; phone: string } }
+  clinic: { id: string; name: string }
+  corrections: any[]
+  void: { id: string; punchRecordId: string; voidedBy: string; reason: string; createdAt: string } | null
+}
+
 interface ExceptionRecord {
   employeeId: string
   employeeName: string
@@ -52,6 +85,57 @@ interface ExceptionRecord {
   // ABSENT-specific
   otDeducted?: boolean
   shiftMinutes?: number
+  clinicId?: string
+}
+
+// ============================================================
+// Shared component: OtDeductCell (扣OT鐘三態)
+// ============================================================
+function OtDeductCell({ row, userRole }: { row: { employeeId: string; date: string; shiftMinutes: number; otDeducted: boolean }, userRole: Role }) {
+  const handleOtDeduct = async () => {
+    if (!confirm(`用時間帳戶抵 ${row.date} 缺勤？\n扣 ${row.shiftMinutes} 分鐘（不足將拖欠）。\n該日不扣薪，但當月勤工獎仍取消。`)) return
+    const res = await fetch('/api/timebank/absent-deduct', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId: row.employeeId, date: row.date }),
+    })
+    if (!res.ok) { alert((await res.json().catch(() => ({}))).error || '操作失敗'); return }
+    window.dispatchEvent(new CustomEvent('attendance-refresh'))
+  }
+
+  const cancelOtDeduct = async () => {
+    if (!confirm(`取消 ${row.date} 的扣OT鐘？\n該日恢復為缺勤（扣薪+取消勤工），帳戶加回 ${row.shiftMinutes} 分。`)) return
+    const res = await fetch('/api/timebank/absent-deduct', {
+      method: 'DELETE', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId: row.employeeId, date: row.date }),
+    })
+    if (!res.ok) { alert((await res.json().catch(() => ({}))).error || '取消失敗'); return }
+    window.dispatchEvent(new CustomEvent('attendance-refresh'))
+  }
+
+  if (!row.shiftMinutes) return <td>—</td>
+
+  return (
+    <td>
+      {row.otDeducted ? (
+        <span className="inline-flex items-center gap-2">
+          <span className="px-2 py-1 text-xs rounded bg-violet-50 text-violet-700 border border-violet-200">
+            ✓ 已扣OT鐘 −{row.shiftMinutes}分
+          </span>
+          {userRole === 'OWNER' && (
+            <button onClick={cancelOtDeduct} className="text-xs text-red-600 underline">取消</button>
+          )}
+        </span>
+      ) : userRole === 'OWNER' ? (
+        <button onClick={handleOtDeduct} className="text-xs px-2 py-1 rounded-md font-medium" style={{ background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
+          扣OT鐘（−{row.shiftMinutes}分）
+        </button>
+      ) : (
+        <span>—</span>
+      )}
+    </td>
+  )
 }
 
 export default function AttendancePage() {
@@ -291,8 +375,7 @@ export default function AttendancePage() {
       const data = await res.json()
       if (!res.ok) { alert(data.error || '扣OT鐘失敗'); return }
       alert('✅ 扣OT鐘成功')
-      fetchExceptions()
-      fetchRecordExceptions()
+      window.dispatchEvent(new CustomEvent('attendance-refresh'))
     } catch { alert('網絡錯誤') }
   }
 
@@ -308,10 +391,23 @@ export default function AttendancePage() {
       const data = await res.json()
       if (!res.ok) { alert(data.error || '取消失敗'); return }
       alert('✅ 取消成功')
-      fetchExceptions()
-      fetchRecordExceptions()
+      window.dispatchEvent(new CustomEvent('attendance-refresh'))
     } catch { alert('網絡錯誤') }
   }
+
+  // Listen for attendance-refresh custom event (fired after 扣OT鐘 / 取消)
+  useEffect(() => {
+    const handler = () => {
+      if (activeTab === 'records') {
+        fetchRecords()
+        fetchRecordExceptions()
+      } else if (activeTab === 'exceptions') {
+        fetchExceptions()
+      }
+    }
+    window.addEventListener('attendance-refresh', handler)
+    return () => window.removeEventListener('attendance-refresh', handler)
+  }, [activeTab, fetchRecords, fetchRecordExceptions, fetchExceptions])
 
   const typeLabel = (type: string) => {
     switch (type) { case 'LATE': return '遲到'; case 'EARLY_LEAVE': return '早退'; case 'ABSENT': return '缺勤'; case 'CORRECTION': return '補登'; case 'OT': return 'OT'; default: return type }
@@ -385,6 +481,33 @@ export default function AttendancePage() {
   if (!user) return <div style={{ padding: 20 }}>Loading...</div>
   const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER'
   const totalPages = Math.ceil(total / pageSize)
+
+  // Merge absent rows with punch records for "全部記錄" tab
+  const allRows = useMemo<((AbsentRow | PunchRow) & { isAbsentRow: boolean })[]>(() => {
+    const absentRows: AbsentRow[] = recordsExceptions
+      .filter(ex => ex.type === 'ABSENT')
+      .map(ex => ({
+        id: `absent_${ex.employeeId}_${ex.date}`,
+        isAbsentRow: true,
+        employeeId: ex.employeeId,
+        employeeName: ex.employeeName,
+        clinicId: ex.clinicId || '',
+        clinicName: ex.clinicName,
+        date: ex.date,
+        shiftMinutes: ex.shiftMinutes || 0,
+        otDeducted: !!ex.otDeducted,
+        payType: ex.payType,
+        sortTime: new Date(ex.date + 'T12:00:00+08:00').getTime(),
+      }))
+
+    const punchRows: PunchRow[] = records.map(r => ({
+      ...r,
+      isAbsentRow: false,
+      sortTime: new Date(r.punchTime).getTime(),
+    }))
+
+    return [...punchRows, ...absentRows].sort((a, b) => b.sortTime - a.sortTime) as (AbsentRow | PunchRow & { isAbsentRow: boolean })[]
+  }, [records, recordsExceptions])
 
   return (
     <div className="p-6" style={{ maxWidth: '1200px' }}>
@@ -466,31 +589,42 @@ export default function AttendancePage() {
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">來源</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">Token</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">修正</th>
-                  <th className="text-left p-3 text-sm font-medium text-muted-foreground">補鐘</th>
+                  <th className="text-left p-3 text-sm font-medium text-muted-foreground">OT/補鐘</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
-                ) : records.length === 0 ? (
+                ) : allRows.length === 0 ? (
                   <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
                 ) : (
-                  records.map((record) => {
-                    // Get exception data for this record
-                    const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record)
+                  allRows.map((row) => {
+                    // ABSENT row
+                    if ((row as AbsentRow).isAbsentRow) {
+                      const ar = row as AbsentRow
+                      return (
+                        <tr key={ar.id} className="border-b" style={{ backgroundColor: '#fef2f2' }}>
+                          <td className="p-3">{ar.employeeName}</td>
+                          <td className="p-3">{ar.clinicName}</td>
+                          <td className="p-3">{ar.date}</td>
+                          <td className="p-3"><span style={{ color: '#dc3545', fontWeight: 700 }}>缺勤</span></td>
+                          <td className="p-3 text-sm text-muted-foreground" colSpan={4}>排班 {ar.shiftMinutes} 分鐘，無打卡</td>
+                          <OtDeductCell row={{ employeeId: ar.employeeId, date: ar.date, shiftMinutes: ar.shiftMinutes, otDeducted: ar.otDeducted }} userRole={user.role} />
+                          <td className="p-3">—</td>
+                        </tr>
+                      )
+                    }
 
-                    // Fix #1: Status by punchType — 上班列只顯示遲到，落班列只顯示OT/早退
+                    // Punch record row
+                    const record = row as PunchRecord & { isAbsentRow: false; sortTime: number }
+                    const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
                     const isClockIn = record.punchType === 'CLOCK_IN'
                     const showLate = isClockIn ? lateEx : undefined
                     const showEarly = !isClockIn ? earlyEx : undefined
                     const showOt = !isClockIn ? otEx : undefined
-
-                    // Fix #3a: Check if this month has exception data loaded
                     const recordDateStr = toHKDateStr(new Date(record.punchTime))
                     const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
-
-                    // Fix #2d: Void styling
                     const isVoided = !!(record.void as any)
                     const rowBg = isVoided
                       ? '#f3f4f6'
@@ -535,8 +669,6 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td className="p-3">
-                        {/* Fix #1: Status by punchType */}
-                        {/* Fix #3a: Show '—' if month not loaded */}
                         {!monthLoaded ? (
                           <span className="text-muted">—</span>
                         ) : (
@@ -563,8 +695,7 @@ export default function AttendancePage() {
                         ) : (<span className="text-emerald-600 text-xs">✓ 無修正</span>)}
                       </td>
                       <td className="p-3">
-                        {/* Fix #1: Makeup only for relevant punch types */}
-                        {/* HOURLY employees don't have makeup (no time account) */}
+                        {/* Makeup only for late/early; HOURLY employees skip */}
                         {((isClockIn && showLate) || (!isClockIn && showEarly)) && user.role === 'OWNER' && (
                           (isClockIn ? (showLate?.payType !== 'HOURLY') : (showEarly?.payType !== 'HOURLY')) && (
                           ((isClockIn && showLate?.madeUp) || (!isClockIn && showEarly?.madeUp)) ? (
@@ -585,7 +716,6 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td className="p-3">
-                        {/* Fix #2d: Void badge + button */}
                         {isVoided ? (
                           <span className="px-2 py-1 text-xs rounded bg-gray-200 text-gray-600 border border-gray-300"
                             title={(record.void as any)?.reason || ''}>已作廢</span>
@@ -594,7 +724,6 @@ export default function AttendancePage() {
                           className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
                           <Pencil size={14} /> 修正
                         </button>
-                        {/* Fix #2d: Void button for MANUAL_CORRECTION records (OWNER only) */}
                         {!isVoided && record.source === 'MANUAL_CORRECTION' && user?.role === 'OWNER' && (
                           <button onClick={() => { setVoidRecord(record); setVoidReason(''); setShowVoidModal(true) }}
                             className="text-red-600 text-sm mr-2 hover:underline" title="作廢此補登記錄">
@@ -722,30 +851,12 @@ export default function AttendancePage() {
                             </button>
                           )
                         )}
-                        {/* ABSENT 三態：扣OT鐘 */}
-                        {ex.type === 'ABSENT' && user.role === 'OWNER' && ex.payType !== 'HOURLY' && (
-                          ex.otDeducted ? (
-                            <span className="flex items-center gap-1">
-                              <span className="text-blue-700 text-xs">
-                                ✓已扣OT鐘（−{ex.shiftMinutes}分）
-                              </span>
-                              <button
-                                onClick={() => handleCancelAbsentDeduct(ex.employeeId, ex.date)}
-                                className="text-xs text-red-500 hover:underline ml-1"
-                              >
-                                取消
-                              </button>
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => handleAbsentDeduct(ex.employeeId, ex.date)}
-                              className="text-xs px-2 py-1 rounded-md font-medium"
-                              style={{ background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}
-                              title="扣OT鐘：用時間帳戶買回缺勤工資扣款，仍取消勤工獎"
-                            >
-                              扣OT鐘
-                            </button>
-                          )
+                        {/* ABSENT 三態：共用 OtDeductCell */}
+                        {ex.type === 'ABSENT' && ex.payType !== 'HOURLY' && (
+                          <OtDeductCell
+                            row={{ employeeId: ex.employeeId, date: ex.date, shiftMinutes: ex.shiftMinutes || 0, otDeducted: !!ex.otDeducted }}
+                            userRole={user.role}
+                          />
                         )}
                       </td>
                     </tr>
