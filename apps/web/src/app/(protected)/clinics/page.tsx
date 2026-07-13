@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 interface Clinic {
   id: string
   name: string
+  shortName: string | null
   address: string | null
   createdAt: string
 }
@@ -13,7 +14,7 @@ export default function ClinicsPage() {
   const [clinics, setClinics] = useState<Clinic[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', address: '' })
+  const [form, setForm] = useState({ name: '', address: '', shortName: '' })
   const [error, setError] = useState('')
 
   const fetchClinics = async () => {
@@ -39,7 +40,7 @@ export default function ClinicsPage() {
       setError(data.error || '建立失敗')
       return
     }
-    setForm({ name: '', address: '' })
+    setForm({ name: '', address: '', shortName: '' })
     setShowForm(false)
     fetchClinics()
   }
@@ -79,6 +80,15 @@ export default function ClinicsPage() {
               />
             </div>
             <div className="form-group">
+              <label>簡稱（1-2字，總覽膠囊顯示）</label>
+              <input
+                value={form.shortName}
+                onChange={e => setForm({ ...form, shortName: e.target.value })}
+                placeholder="例如: 銅"
+                maxLength={4}
+              />
+            </div>
+            <div className="form-group">
               <label>地址</label>
               <input
                 value={form.address}
@@ -100,6 +110,7 @@ export default function ClinicsPage() {
             <thead>
               <tr>
                 <th>名稱</th>
+                <th>簡稱</th>
                 <th>地址</th>
                 <th>建立時間</th>
                 <th>操作</th>
@@ -109,9 +120,24 @@ export default function ClinicsPage() {
               {clinics.map(clinic => (
                 <tr key={clinic.id}>
                   <td style={{ fontWeight: 500 }}>{clinic.name}</td>
+                  <td className="text-muted">{clinic.shortName || '—'}</td>
                   <td className="text-muted">{clinic.address || '—'}</td>
                   <td className="text-sm">{new Date(clinic.createdAt).toLocaleDateString('zh-HK')}</td>
                   <td>
+                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={async () => {
+                      const newShort = prompt('修改簡稱（1-2字）：', clinic.shortName || '')
+                      if (newShort === null) return
+                      try {
+                        const res = await fetch(`/api/clinics/${clinic.id}`, {
+                          method: 'PUT',
+                          credentials: 'include',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ shortName: newShort || null }),
+                        })
+                        if (res.ok) fetchClinics()
+                        else alert('修改失敗')
+                      } catch { alert('修改失敗') }
+                    }}>簡稱</button>
                     <button className="btn btn-danger btn-sm" onClick={() => handleDelete(clinic.id)}>
                       刪除
                     </button>

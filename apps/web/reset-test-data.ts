@@ -1,82 +1,93 @@
 /**
- * ═══════════════════════════════════════════════════════════
- *  清數據重測腳本 reset-test-data.ts（v3）
- *  清測試員工(phone=TEST0001)的所有業務資料，並確保系統假期類型存在。
+ * ═══════════════════════════════════════════════════════════════
+ *  彻底重置腳本 reset-test-data.ts（v4 — 全量版）
+ *
+ *  清除「所有業務資料 + 所有員工」，回到乾淨基線。
+ *  保留：診所、OWNER/MANAGER 帳號、更次模板、系統假期類型（自動補建）。
  *
  *  用法：
  *    DATABASE_URL="postgresql://clinic:devpass@localhost:5432/clinic_test" npx tsx reset-test-data.ts
  *
- *  v3 更新：
- *   - 新增 PunchVoid（作廢記錄）清理
- *   - 結尾自動補建系統假期類型（休息日/年假/OT補假，upsert 冪等）
- *   - TimeBankEntry 含所有新 type（MAKEUP/LEAVE_CONVERT/RESTDAY_GRANT/OT_CONVERT_GRANT...）
- * ═══════════════════════════════════════════════════════════
+ *  ⚠️ 這是全量清除（包含你在UI建的所有員工）。只在測試庫跑！
+ *  若要保留某些員工，把電話加進下面 KEEP_PHONES。
+ * ═══════════════════════════════════════════════════════════════
  */
 import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
+// ★ 想保留的員工電話（不刪）。空 = 全部員工都刪。
+const KEEP_PHONES: string[] = []
+// 是否連審計日誌一起清（true = 清）
+const CLEAR_AUDIT = true
+
+async function del(label: string, fn: () => Promise<{ count: number }>) {
+  try { const r = await fn(); console.log(`   ${label.padEnd(28)} ${r.count}`); return r.count }
+  catch (e: any) { console.log(`   ${label.padEnd(28)} skip(${e.code ?? 'err'})`); return 0 }
+}
+
 async function main() {
-  console.log('🧹 清除測試員工資料（v3）...\n')
-
-  const user = await prisma.user.findFirst({ where: { phone: 'TEST0001' } })
-  const emp = user ? await prisma.employee.findFirst({ where: { userId: user.id } }) : null
-
-  if (emp) {
-    const empId = emp.id
-    const c: Record<string, number> = {}
-
-    c.payrollItem = (await prisma.payrollItem.deleteMany({ where: { employeeId: empId } })).count
-    // 🆕 作廢記錄（先於 PunchRecord，外鍵）
-    try { c.punchVoid = (await prisma.punchVoid.deleteMany({
-      where: { punchRecord: { employeeId: empId } } })).count } catch { c.punchVoid = 0 }
-    try { c.timeBankEntry = (await prisma.timeBankEntry.deleteMany({ where: { employeeId: empId } })).count } catch { c.timeBankEntry = 0 }
-    try { c.timeBank = (await prisma.timeBank.deleteMany({ where: { employeeId: empId } })).count } catch { c.timeBank = 0 }
-    c.leaveBalance = (await prisma.leaveBalance.deleteMany({ where: { employeeId: empId } })).count
-    c.leaveRequest = (await prisma.leaveRequest.deleteMany({ where: { employeeId: empId } })).count
-    try { c.punchCorrection = (await prisma.punchCorrection.deleteMany({ where: { employeeId: empId } })).count } catch { c.punchCorrection = 0 }
-
-    await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" DISABLE TRIGGER USER').catch(() => {})
-    c.punchRecord = (await prisma.punchRecord.deleteMany({ where: { employeeId: empId } })).count
-    await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" ENABLE TRIGGER USER').catch(() => {})
-
-    c.shift = (await prisma.shift.deleteMany({ where: { employeeId: empId } })).count
-    try { c.shiftChangeRequest = (await prisma.shiftChangeRequest.deleteMany({ where: { fromEmployeeId: empId } })).count } catch { c.shiftChangeRequest = 0 }
-    c.payRule = (await prisma.payRule.deleteMany({ where: { employeeId: empId } })).count
-
-    console.log('✅ 已清除：')
-    console.log(`   計糧 PayrollItem:        ${c.payrollItem}`)
-    console.log(`   作廢 PunchVoid:          ${c.punchVoid}  🆕`)
-    console.log(`   時間銀行明細 Entry:       ${c.timeBankEntry}（補鐘/換假/發放標記）`)
-    console.log(`   時間銀行結餘 TimeBank:    ${c.timeBank}（carriedFrom 鏈）`)
-    console.log(`   假期餘額 LeaveBalance:    ${c.leaveBalance}`)
-    console.log(`   請假 LeaveRequest:        ${c.leaveRequest}`)
-    console.log(`   打卡修正 Correction:      ${c.punchCorrection}`)
-    console.log(`   打卡 PunchRecord:         ${c.punchRecord}`)
-    console.log(`   排班 Shift:              ${c.shift}`)
-    console.log(`   薪酬規則 PayRule:         ${c.payRule}`)
-  } else {
-    console.log('沒有測試員工，跳過清理')
+  const dbUrl = process.env.DATABASE_URL || ''
+  console.log(`\n🧹 全量重置（v4）\n   DB: ${dbUrl.split('/').pop()}\n`)
+  if (!dbUrl.includes('test') ) {
+    console.log('⚠️  DATABASE_URL 不含 "test"——確認你不是在清正式庫！5秒後繼續（Ctrl+C 取消）...')
+    await new Promise(r => setTimeout(r, 5000))
   }
 
-  // 🆕 確保系統假期類型存在（被誤刪時補回；upsert 冪等）
-  console.log('\n🔒 檢查系統假期類型...')
-  const SYSTEM_TYPES = [
-    { systemKey: 'REST_DAY',     name: '休息日',  isPaid: true, color: '#4a4a4a' },
-    { systemKey: 'ANNUAL_LEAVE', name: '年假',    isPaid: true, color: '#27ae60', annualQuota: 12 },
-    { systemKey: 'OT_LEAVE',     name: 'OT補假',  isPaid: true, color: '#8e44ad' },
-  ]
-  for (const t of SYSTEM_TYPES) {
-    const existing = await prisma.leaveType.findUnique({ where: { systemKey: t.systemKey } }).catch(() => null)
-    if (!existing) {
-      await prisma.leaveType.create({ data: t as any })
-      console.log(`   ➕ ${t.name} 已補建`)
-    } else {
-      console.log(`   ✓ ${t.name} 存在`)
-    }
+  // 要刪的員工（排除 KEEP_PHONES 和非員工帳號）
+  const keepUsers = await prisma.user.findMany({
+    where: { OR: [{ role: { in: ['OWNER', 'MANAGER', 'ACCOUNTANT'] as any } }, { phone: { in: KEEP_PHONES } }] },
+    select: { id: true, phone: true, role: true },
+  })
+  const keepUserIds = keepUsers.map(u => u.id)
+  const targetEmps = await prisma.employee.findMany({
+    where: { userId: { notIn: keepUserIds } }, select: { id: true, userId: true },
+  })
+  const empIds = targetEmps.map(e => e.id)
+  console.log(`保留帳號：${keepUsers.map(u => `${u.phone}(${u.role})`).join(', ') || '無'}`)
+  console.log(`將刪除員工：${empIds.length} 名 + 全部業務資料\n`)
+
+  console.log('── 業務資料（全量，含保留員工的舊資料也一併清）──')
+  // FK 順序：子先父後
+  await del('計糧項目 PayrollItem', () => prisma.payrollItem.deleteMany({}))
+  await del('計糧批次 PayrollRun', () => prisma.payrollRun.deleteMany({}))
+  await del('作廢記錄 PunchVoid', () => prisma.punchVoid.deleteMany({}))
+  await del('時間銀行明細 TimeBankEntry', () => prisma.timeBankEntry.deleteMany({}))
+  await del('時間銀行結餘 TimeBank', () => prisma.timeBank.deleteMany({}))
+  await del('假期餘額 LeaveBalance', () => prisma.leaveBalance.deleteMany({}))
+  await del('請假記錄 LeaveRequest', () => prisma.leaveRequest.deleteMany({}))
+  await del('打卡修正 PunchCorrection', () => prisma.punchCorrection.deleteMany({}))
+
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" DISABLE TRIGGER USER').catch(() => {})
+  await del('打卡記錄 PunchRecord', () => prisma.punchRecord.deleteMany({}))
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" ENABLE TRIGGER USER').catch(() => {})
+
+  await del('排班 Shift', () => prisma.shift.deleteMany({}))
+  await del('換更申請 ShiftChangeRequest', () => prisma.shiftChangeRequest.deleteMany({}))
+  await del('薪酬規則 PayRule', () => prisma.payRule.deleteMany({}))
+  if (CLEAR_AUDIT) await del('審計日誌 AuditLog', () => prisma.auditLog.deleteMany({}))
+
+  console.log('\n── 員工帳號（保留名單以外全刪）──')
+  await del('員工-診所關聯', () => prisma.employeeClinic.deleteMany({ where: { employeeId: { in: empIds } } }))
+  await del('員工 Employee', () => prisma.employee.deleteMany({ where: { id: { in: empIds } } }))
+  await del('員工用戶 User', () => prisma.user.deleteMany({
+    where: { id: { in: targetEmps.map(e => e.userId) } } }))
+
+  // 非系統假期類型也清（保留 systemKey 三個 + 重建）
+  console.log('\n── 假期類型 ──')
+  await del('一般假期類型（非系統）', () => prisma.leaveType.deleteMany({ where: { systemKey: null } }))
+  for (const t of [
+    { systemKey: 'REST_DAY', name: '休息日', isPaid: true, color: '#4a4a4a' },
+    { systemKey: 'ANNUAL_LEAVE', name: '年假', isPaid: true, color: '#27ae60', annualQuota: 12 },
+    { systemKey: 'OT_LEAVE', name: 'OT補假', isPaid: true, color: '#8e44ad' },
+  ]) {
+    const ex = await prisma.leaveType.findUnique({ where: { systemKey: t.systemKey } }).catch(() => null)
+    if (!ex) { await prisma.leaveType.create({ data: t as any }); console.log(`   ➕ 補建 ${t.name}`) }
+    else console.log(`   ✓ ${t.name} 保留`)
   }
 
-  console.log('\n   測試員工結構保留，可直接重跑 test-payroll.ts\n')
+  console.log('\n✅ 重置完成。保留：診所、OWNER帳號、更次模板、系統假期類型。')
+  console.log('   下一步：UI 建員工/或跑 test-full-suite.ts（自建自清）。\n')
   await prisma.$disconnect()
 }
 
-main().catch(e => { console.error(e); prisma.$disconnect() })
+main().catch(e => { console.error(e); prisma.$disconnect(); process.exit(1) })

@@ -43,12 +43,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   return runWithAudit(auditCtx, async () => {
     const id = params.id
-    const { name, address, config } = await req.json()
+    const { name, address, config, shortName } = await req.json()
 
     const clinic = await prisma.clinic.update({
       where: { id },
       data: {
         ...(name && { name }),
+        ...(shortName !== undefined && { shortName }),
         ...(address !== undefined && { address }),
         ...(config && { config: JSON.stringify(config) }),
       },

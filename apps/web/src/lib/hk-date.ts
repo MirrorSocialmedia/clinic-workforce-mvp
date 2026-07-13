@@ -32,6 +32,13 @@ export function fmtTime(dt: string | Date | undefined | null): string {
   return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+/** 假期是否涵蓋某天（HK日期 YYYY-MM-DD） */
+export function leaveCoversDate(lr: { startDate: string; endDate?: string | null }, dateStr: string): boolean {
+  const s = toHKDateStr(new Date(lr.startDate))
+  const e = toHKDateStr(new Date(lr.endDate || lr.startDate))
+  return dateStr >= s && dateStr <= e
+}
+
 /** Get month range [first day 00:00 HK, last day 23:59:59.999 HK] — timezone-safe via +08:00 string */
 export function getMonthRange(date: Date) {
   const y = date.getFullYear()

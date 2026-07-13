@@ -7,7 +7,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
-import { toHKDateStr, fmtTime } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime, leaveCoversDate } from '@/lib/hk-date'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
@@ -29,7 +29,10 @@ interface Employee {
 interface Clinic {
   id: string
   name: string
+  shortName?: string | null
 }
+
+type LabelPart = 'clinic' | 'shift' | 'name'
 
 interface ShiftTemplate {
   id: string
@@ -151,6 +154,18 @@ export default function SchedulingPage() {
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
   const [displayWarning, setDisplayWarning] = useState<string | null>(null)
+
+  // Capsule label parts (persisted in localStorage)
+  const [labelParts, setLabelParts] = useState<LabelPart[]>(() => {
+    try { return JSON.parse((typeof window !== 'undefined' ? localStorage.getItem('ov_label_parts') : null) || '["clinic","shift"]') }
+    catch { return ['clinic', 'shift'] }
+  })
+  const toggleLabelPart = (p: LabelPart) => setLabelParts(prev => {
+    const next = prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]
+    const ordered = (['clinic', 'shift', 'name'] as LabelPart[]).filter(x => next.includes(x))
+    if (typeof window !== 'undefined') localStorage.setItem('ov_label_parts', JSON.stringify(ordered))
+    return ordered.length ? ordered : ['shift']
+  })
 
   // 📅 Calendar show/hide
   const [showCalendar, setShowCalendar] = useState<boolean>(
@@ -1770,8 +1785,17 @@ function getShiftColor(shift: Shift): string {
               overflowX: 'auto',
               background: '#fafbfc',
             }}>
-              <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151' }}>
-                📊 全局總覽（所有診所）
+              <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>📊 全局總覽（所有診所）</span>
+                <div style={{ fontSize: 11, fontWeight: 400, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>膠囊顯示：</span>
+                  {([['clinic','店鋪'],['shift','更次'],['name','姓名']] as const).map(([k, label]) => (
+                    <label key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={labelParts.includes(k)} onChange={() => toggleLabelPart(k)} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
               </div>
               <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: 700 }}>
                 <thead>
@@ -1806,8 +1830,7 @@ function getShiftColor(shift: Shift): string {
                         )
                         const empLeavesOnDay = leaveRequests.filter(lr =>
                           lr.employeeId === emp.id &&
-                          wd.dateStr >= lr.startDate &&
-                          wd.dateStr <= (lr.endDate || lr.startDate)
+                          leaveCoversDate(lr, wd.dateStr)
                         )
                         const hasShift = empShiftsOnDay.length > 0
                         const hasLeave = empLeavesOnDay.length > 0
@@ -1852,8 +1875,13 @@ function getShiftColor(shift: Shift): string {
                             <div className="overview-cell-inner">
                               {empShiftsOnDay.map((s, si) => {
                                 const tpl = templates.find(t => t.id === s.templateId)
-                                const shiftLabel = `${tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime)}·${s.employee?.user?.name?.slice(0, 2)}`
-                                const shiftTitle = `${s.employee?.user?.name} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
+                                const clinic = clinics.find(c => c.id === s.clinicId)
+                                const parts: string[] = []
+                                if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+                                if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                                if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
+                                const shiftLabel = parts.filter(Boolean).join('·')
+                                const shiftTitle = `${s.employee?.user?.name} ${clinic?.name ?? ''} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
                                 return (
                                   <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
                                     background: getShiftColor(s),
@@ -2060,8 +2088,7 @@ function getShiftColor(shift: Shift): string {
                   }
                   const hasLeaveOnDate = leaveRequests.some(lr =>
                     lr.employeeId === empId &&
-                    date >= lr.startDate &&
-                    date <= (lr.endDate || lr.startDate)
+                    leaveCoversDate(lr, date)
                   )
                   if (hasLeaveOnDate) {
                     setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])

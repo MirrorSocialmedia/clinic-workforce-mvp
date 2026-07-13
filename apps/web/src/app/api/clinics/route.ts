@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   return runWithAudit(auditCtx, async () => {
     try {
-      const { name, address, config } = await req.json()
+      const { name, address, config, shortName } = await req.json()
 
       if (!name) {
         return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
       const clinic = await prisma.clinic.create({
         data: {
           name,
+          shortName: shortName || null,
           address: address || null,
           config: config ? JSON.stringify(config) : null,
         },

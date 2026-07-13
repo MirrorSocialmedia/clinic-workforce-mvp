@@ -90,6 +90,7 @@ enum LeaveStatus {
 model Clinic {
   id        String   @id @default(cuid())
   name      String
+  shortName String?  // 店鋪簡稱（1-2字：旺/仁/銅/荃/元/沙）
   address   String?
   config    String?  // JSON string for SQLite compat
   createdAt DateTime @default(now())
