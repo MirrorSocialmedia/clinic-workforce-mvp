@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // ============================================================
@@ -34,10 +34,17 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Reject future punch times (Fix #2a: backend guard)
+      // Reject future punch times (Fix #2a: backend guard + timezone safety)
       const correctedTime = new Date(date)
+      if (isNaN(correctedTime.getTime())) {
+        return NextResponse.json(
+          { error: '時間格式錯誤（需含時區，如 2026-07-14T15:00:00+08:00）' },
+          { status: 400 }
+        )
+      }
       const now = new Date()
-      if (correctedTime > now) {
+      // 60s tolerance for network/server clock drift
+      if (correctedTime.getTime() > now.getTime() + 60_000) {
         return NextResponse.json(
           { error: '不能補未來時間的打卡' },
           { status: 400 }
@@ -88,10 +95,10 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Check if there's already an existing punch record for this employee+clinic on this date
-      // If found, link correction to it; otherwise correction will reference null
-      const dayStart = hkDateStart(date)  // date is "YYYY-MM-DD" string
-      const dayEnd = hkDateEnd(date)
+      // Derive HK date string from parsed correctedTime for day boundary lookup
+      const dayStr = toHKDateStr(correctedTime)
+      const dayStart = hkDateStart(dayStr)
+      const dayEnd = hkDateEnd(dayStr)
 
       let punchRecordId: string | null = null
       const existing = await prisma.punchRecord.findFirst({

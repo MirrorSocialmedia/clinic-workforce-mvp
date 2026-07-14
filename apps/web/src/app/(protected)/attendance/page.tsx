@@ -1031,11 +1031,13 @@ export default function AttendancePage() {
                 if (!correctionForm.time) { alert('請填寫正確時間'); return }
                 setSubmittingCorrection(true)
                 try {
+                  // Fix: datetime-local produces 'YYYY-MM-DDTHH:mm' — append timezone
+                  const datetime = `${correctionForm.time}+08:00`
                   const res = await fetch('/api/punch-corrections', {
                     method: 'POST', credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      date: correctionForm.time, punchType: correctionRecord.punchType,
+                      date: datetime, punchType: correctionRecord.punchType,
                       reason: correctionForm.reason, clinicId: correctionRecord.clinicId,
                       employeeId: correctionRecord.employeeId,
                     }),
@@ -1126,7 +1128,7 @@ export default function AttendancePage() {
                 if (submitDtime > new Date()) { alert('不能補未來時間的打卡'); return }
                 setSubmittingAddPunch(true)
                 try {
-                  const datetime = `${date}T${time}:00`
+                  const datetime = `${date}T${time}:00+08:00`
                   const res = await fetch('/api/punch-corrections', {
                     method: 'POST', credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
