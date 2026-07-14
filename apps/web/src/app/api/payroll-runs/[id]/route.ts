@@ -23,8 +23,6 @@ export async function GET(
           employee: {
             select: {
               payConfidential: true,
-            },
-            include: {
               user: { select: { id: true, name: true, phone: true } },
               clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
               payRules: { where: { isActive: true }, take: 1 },
