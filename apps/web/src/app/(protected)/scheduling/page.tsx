@@ -7,7 +7,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
-import { toHKDateStr, fmtTime, leaveCoversDate } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime } from '@/lib/hk-date'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
@@ -675,16 +675,14 @@ function getShiftColor(shift: Shift): string {
       return false
     }
 
-    // Build start/end times from template
-    const dateObj = new Date(date)
-    const startTime = new Date(dateObj)
-    startTime.setHours(template.startHour, template.startMinute, 0, 0)
-    const endTime = new Date(dateObj)
-    endTime.setHours(template.endHour, template.endMinute, 0, 0)
+    // Build start/end times from template — timezone-safe
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const startTime = new Date(`${date}T${pad(template.startHour)}:${pad(template.startMinute)}:00+08:00`)
+    const endTime = new Date(`${date}T${pad(template.endHour)}:${pad(template.endMinute)}:00+08:00`)
 
     // For night shifts, end time is next day
     if (template.isNightShift) {
-      endTime.setDate(endTime.getDate() + 1)
+      endTime.setTime(endTime.getTime() + 86400000)
     }
 
     // Validate first
@@ -818,10 +816,10 @@ function getShiftColor(shift: Shift): string {
   }
 
   const buildTime = (date: string, hour: number, minute: number, isNight = false): string => {
-    const d = new Date(date)
-    d.setHours(hour, minute, 0, 0)
-    if (isNight) d.setDate(d.getDate() + 1)
-    return d.toISOString()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    let dt = new Date(`${date}T${pad(hour)}:${pad(minute)}:00+08:00`)
+    if (isNight) dt.setTime(dt.getTime() + 86400000)
+    return dt.toISOString()
   }
 
   // ============================================================
@@ -1049,8 +1047,7 @@ function getShiftColor(shift: Shift): string {
   const fcEvents = [
     ...clinicFilteredShifts.map(s => {
       const shiftDate = new Date(s.date)
-      const todayStart = new Date()
-      todayStart.setHours(0, 0, 0, 0)
+      const todayStart = hkDateStart(toHKDateStr(new Date()))
       const isPast = shiftDate < todayStart
       const isAbsent = isPast && !s.hasPunch
 
@@ -1121,10 +1118,7 @@ function getShiftColor(shift: Shift): string {
     ).size
   }
 
-  const formatTimeFromShift = (isoString: string): string => {
-    const d = new Date(isoString)
-    return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
-  }
+  const formatTimeFromShift = (isoString: string): string => fmtTime(isoString)
 
   // Helper: calculate shift hours (Task 3b)
   const shiftHours = (shift: any): number => {
@@ -2460,8 +2454,8 @@ function getShiftColor(shift: Shift): string {
                           </div>
                         )}
                         <div style={{ fontSize: 10, color: '#aaa', marginTop: 2 }}>
-                          創建於 {new Date(req.createdAt).toLocaleString('zh-HK')}
-                          {req.approvedAt && ` | 審批於 ${new Date(req.approvedAt).toLocaleString('zh-HK')}`}
+                          創建於 {fmtDateTime(req.createdAt)}
+                          {req.approvedAt && ` | 審批於 ${fmtDateTime(req.approvedAt)}`}
                         </div>
                       </div>
 
@@ -2597,12 +2591,11 @@ function getShiftColor(shift: Shift): string {
                     return
                   }
 
-                  const dateObj = new Date(date)
                   const [startH, startM] = startTime.split(':').map(Number)
                   const [endH, endM] = endTime.split(':').map(Number)
-                  dateObj.setHours(startH, startM, 0, 0)
-                  const endObj = new Date(date)
-                  endObj.setHours(endH, endM, 0, 0)
+                  const pad = (n: number) => String(n).padStart(2, '0')
+                  const startTimeISO = new Date(`${date}T${pad(startH)}:${pad(startM)}:00+08:00`).toISOString()
+                  const endTimeISO = new Date(`${date}T${pad(endH)}:${pad(endM)}:00+08:00`).toISOString()
 
                   try {
                     const res = await fetch(`/api/shifts/${editingShift.id}`, {
@@ -2610,9 +2603,9 @@ function getShiftColor(shift: Shift): string {
                       credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
-                        date: dateObj.toISOString(),
-                        startTime: dateObj.toISOString(),
-                        endTime: endObj.toISOString(),
+                        date,
+                        startTime: startTimeISO,
+                        endTime: endTimeISO,
                         role: role || null,
                         status,
                       }),

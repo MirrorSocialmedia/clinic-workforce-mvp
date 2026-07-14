@@ -84,8 +84,8 @@ export async function GET(req: NextRequest) {
     })
 
     shiftsWithPunch = shifts.map((s: any) => {
-      const dayStart = new Date(s.date); dayStart.setHours(0, 0, 0, 0)
-      const dayEnd = new Date(s.date); dayEnd.setHours(23, 59, 59, 999)
+      const dayStart = hkDateStart(s.date)
+      const dayEnd = hkDateEnd(s.date)
       const hasPunch = allPunches.some((p: any) =>
         p.employeeId === s.employeeId &&
         p.clinicId === s.clinicId &&

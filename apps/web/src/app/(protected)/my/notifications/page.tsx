@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { fmtDateTime } from '@/lib/hk-date'
 
 const TYPE_ICONS: Record<string, string> = {
   LEAVE_APPROVED: '✅',
@@ -141,7 +142,7 @@ export default function NotificationsPage() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, color: '#333' }}>{n.content}</div>
                   <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                    {new Date(n.createdAt).toLocaleString('zh-HK')}
+                    {fmtDateTime(n.createdAt)}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

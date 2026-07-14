@@ -2,16 +2,14 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { todayHK, hkDateStart } from '@/lib/hk-date'
 
 /** Get start/end of today in HK (UTC+8) */
 function hkTodayBounds() {
-  const now = new Date()
-  const utc = now.getTime() + now.getTimezoneOffset() * 60_000
-  const hkStart = new Date(utc + 8 * 3600_000)
-  hkStart.setHours(0, 0, 0, 0)
-  const hkEnd = new Date(hkStart)
-  hkEnd.setDate(hkEnd.getDate() + 1)
-  return { start: hkStart, end: hkEnd }
+  const start = hkDateStart(todayHK())
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  return { start, end }
 }
 
 // GET /api/dashboard — dashboard data based on role

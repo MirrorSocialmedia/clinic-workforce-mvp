@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, getMonthRange } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/my/summary — Monthly summary (hours/OT/leave)
@@ -30,9 +30,7 @@ export async function GET(req: NextRequest) {
     targetMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   }
 
-  const monthStart = new Date(`${targetMonth}-01T00:00:00`)
-  const monthEnd = new Date(monthStart)
-  monthEnd.setMonth(monthEnd.getMonth() + 1)
+  const { start: monthStart, end: monthEnd } = getMonthRange(new Date(`${targetMonth}-01T00:00:00+08:00`))
 
   const punches = await prisma.punchRecord.findMany({
     where: { employeeId: employee.id, punchTime: { gte: monthStart, lt: monthEnd }, void: { is: null } },

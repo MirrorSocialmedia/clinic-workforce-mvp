@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import { prisma } from './prisma'
+import { toHKDateStr, hkDateStart, hkDateEnd } from './hk-date'
 
 /**
  * Compute SHA-256 hash for all punch records of a clinic on a given date.
@@ -10,11 +11,10 @@ export async function computeDailyHash(
   clinicId: string,
   date: Date
 ): Promise<{ hash: string; recordCount: number } | null> {
-  // Get the date boundaries
-  const startOfDay = new Date(date)
-  startOfDay.setHours(0, 0, 0, 0)
-  const endOfDay = new Date(date)
-  endOfDay.setHours(23, 59, 59, 999)
+  // Get the date boundaries (timezone-safe)
+  const dateStr = toHKDateStr(date)
+  const startOfDay = hkDateStart(dateStr)
+  const endOfDay = hkDateEnd(dateStr)
 
   const records = await prisma.punchRecord.findMany({
     where: {
@@ -60,8 +60,8 @@ export async function generateDailyHash(
     return null
   }
 
-  const startOfDay = new Date(date)
-  startOfDay.setHours(0, 0, 0, 0)
+  const dateStr = toHKDateStr(date)
+  const startOfDay = hkDateStart(dateStr)
 
   await prisma.dailyHash.upsert({
     where: {
@@ -92,8 +92,8 @@ export async function verifyDailyHash(
   clinicId: string,
   date: Date
 ): Promise<{ valid: boolean; storedHash?: string; computedHash?: string; recordCount?: number }> {
-  const startOfDay = new Date(date)
-  startOfDay.setHours(0, 0, 0, 0)
+  const dateStr = toHKDateStr(date)
+  const startOfDay = hkDateStart(dateStr)
 
   const stored = await prisma.dailyHash.findUnique({
     where: {
@@ -129,8 +129,8 @@ export async function getDailyHash(
   clinicId: string,
   date: Date
 ): Promise<any | null> {
-  const startOfDay = new Date(date)
-  startOfDay.setHours(0, 0, 0, 0)
+  const dateStr = toHKDateStr(date)
+  const startOfDay = hkDateStart(dateStr)
 
   return prisma.dailyHash.findUnique({
     where: {

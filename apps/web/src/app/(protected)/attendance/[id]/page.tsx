@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { ClipboardList, Smartphone, Pencil, Settings, Pin } from 'lucide-react'
+import { fmtDateTime } from '@/lib/hk-date'
 import { BackButton } from '@/components/BackButton'
 
 export default function AttendanceDetailPage() {
@@ -88,7 +89,7 @@ export default function AttendanceDetailPage() {
           </div>
           <div>
             <span style={{ color: '#888' }}>打卡時間：</span>
-            {new Date(record.punchTime).toLocaleString('zh-HK')}
+            {fmtDateTime(record.punchTime)}
           </div>
           <div>
             <span style={{ color: '#888' }}>類型：</span>
@@ -113,7 +114,7 @@ export default function AttendanceDetailPage() {
           </div>
           <div>
             <span style={{ color: '#888' }}>建立時間：</span>
-            {new Date(record.createdAt).toLocaleString('zh-HK')}
+            {fmtDateTime(record.createdAt)}
           </div>
         </div>
 
@@ -194,19 +195,19 @@ export default function AttendanceDetailPage() {
 
                 {item.type === 'original' ? (
                   <div style={{ fontSize: 13 }}>
-                    <div>時間：{new Date(item.punchTime).toLocaleString('zh-HK')}</div>
+                    <div>時間：{fmtDateTime(item.punchTime)}</div>
                     <div>類型：{item.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
                     <div>來源：{item.source}</div>
                   </div>
                 ) : (
                   <div style={{ fontSize: 13 }}>
-                    <div>修正時間：{new Date(item.correctedTime).toLocaleString('zh-HK')}</div>
+                    <div>修正時間：{fmtDateTime(item.correctedTime)}</div>
                     <div>類型：{item.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
                     <div>原因：{item.reason || '—'}</div>
                     <div>申請人：{item.requestedBy}</div>
                     <div>審批人：{item.approvedBy || '—'}</div>
                     <div style={{ color: '#888', fontSize: 11, marginTop: 4 }}>
-                      建立：{new Date(item.createdAt).toLocaleString('zh-HK')}
+                      建立：{fmtDateTime(item.createdAt)}
                     </div>
                   </div>
                 )}

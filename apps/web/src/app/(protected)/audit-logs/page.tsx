@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { EmptyState } from '@/components/EmptyState'
+import { fmtDateTime } from '@/lib/hk-date'
 
 interface AuditLog {
   id: string
@@ -191,7 +192,7 @@ export default function AuditLogsPage() {
             <tbody>
               {logs.map(log => (
                 <tr key={log.id}>
-                  <td className="text-sm">{new Date(log.createdAt).toLocaleString('zh-HK')}</td>
+                  <td className="text-sm">{fmtDateTime(log.createdAt)}</td>
                   <td>
                     <div style={{ fontWeight: 500 }}>{log.actor.name}</div>
                     <div className="text-muted text-sm">

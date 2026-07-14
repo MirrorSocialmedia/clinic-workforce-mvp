@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { generateDailyHash, listDailyHashes, verifyDailyHash } from '@/lib/daily-hash'
+import { hkDateStart } from '@/lib/hk-date'
 
 // ============================================================
 // POST /api/daily-hash — Generate daily hash for a clinic
@@ -34,8 +35,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'No access to this clinic' }, { status: 403 })
       }
 
-      const targetDate = new Date(date)
-      targetDate.setHours(0, 0, 0, 0)
+      const targetDate = hkDateStart(date)
 
       const result = await generateDailyHash(clinicId, targetDate)
 
@@ -77,8 +77,7 @@ export async function GET(req: NextRequest) {
   const verify = searchParams.get('verify')
 
   if (clinicId && date) {
-    const targetDate = new Date(date)
-    targetDate.setHours(0, 0, 0, 0)
+    const targetDate = hkDateStart(date)
 
     if (verify === 'true') {
       const result = await verifyDailyHash(clinicId, targetDate)

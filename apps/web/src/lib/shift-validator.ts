@@ -2,6 +2,7 @@
 // Shift Validator Engine
 // Reads rules from docs/rules/shift-rules.json — nothing hardcoded
 // ============================================================
+import { fmtTime } from './hk-date'
 
 import shiftRules from './shift-rules.json'
 
@@ -493,8 +494,7 @@ export async function validateShiftBatch(
 // ============================================================
 
 function formatTime(isoString: string): string {
-  const d = new Date(isoString)
-  return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return fmtTime(isoString)
 }
 
 // Export rules for reference in UI

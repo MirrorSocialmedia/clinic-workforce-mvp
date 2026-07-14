@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { fmtDate, fmtDateTime } from '@/lib/hk-date'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -291,7 +292,7 @@ export default function HashPage() {
               {hashes.map((h) => (
                 <tr key={h.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '8px 12px' }}>
-                    {new Date(h.date).toLocaleDateString('zh-HK')}
+                    {fmtDate(h.date)}
                   </td>
                   <td style={{ padding: '8px 12px' }}>
                     {h.clinic?.name || h.clinicId}
@@ -303,7 +304,7 @@ export default function HashPage() {
                     {h.recordCount} 筆
                   </td>
                   <td style={{ padding: '8px 12px', color: '#888', fontSize: 12 }}>
-                    {new Date(h.createdAt).toLocaleString('zh-HK')}
+                    {fmtDateTime(h.createdAt)}
                   </td>
                 </tr>
               ))}

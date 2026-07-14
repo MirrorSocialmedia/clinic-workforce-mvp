@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import QrScanner from './components/qr-scanner'
+import { fmtTime, fmtDateTime } from '@/lib/hk-date'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -103,7 +104,7 @@ export default function PunchPage() {
 
       setPunchResult({
         type: data.punchType === 'CLOCK_IN' ? '上工' : '落班',
-        time: new Date(data.punchTime).toLocaleTimeString('zh-HK'),
+        time: fmtTime(data.punchTime),
       })
       setCountdown(3)
       fetchRecords()
@@ -191,7 +192,7 @@ export default function PunchPage() {
                       <span className="text-foreground">{r.clinic?.name || '診所'}</span>
                     </div>
                     <span className="text-muted-foreground text-xs">
-                      {new Date(r.punchTime).toLocaleString('zh-HK')}
+                      {fmtDateTime(r.punchTime)}
                     </span>
                   </div>
                 ))}

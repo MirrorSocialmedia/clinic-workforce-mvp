@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
+import { fmtDate, toHKDateStr } from '@/lib/hk-date'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
-import { toHKDateStr } from '@/lib/hk-date'
 
 type EmployeeStatus = 'ACTIVE' | 'ON_LEAVE' | 'RESIGNED' | 'PROBATION'
 type PayType = 'MONTHLY' | 'DAILY' | 'HOURLY' | 'SPLIT'
@@ -253,7 +253,7 @@ export default function EmployeeDetailPage({ params }: { params: { id: string } 
         </span>
         {employee.leaveDate && (
           <span className="text-muted text-sm" style={{ marginLeft: 12 }}>
-            離職日：{new Date(employee.leaveDate).toLocaleDateString('zh-TW')}
+            離職日：{fmtDate(employee.leaveDate)}
           </span>
         )}
       </div>
@@ -282,11 +282,11 @@ export default function EmployeeDetailPage({ params }: { params: { id: string } 
               </tr>
               <tr>
                 <td style={{ color: '#888' }}>到職日</td>
-                <td>{new Date(employee.joinDate).toLocaleDateString('zh-TW')}</td>
+                <td>{fmtDate(employee.joinDate)}</td>
               </tr>
               <tr>
                 <td style={{ color: '#888' }}>加入系統</td>
-                <td>{new Date(employee.user.createdAt).toLocaleDateString('zh-TW')}</td>
+                <td>{fmtDate(employee.user.createdAt)}</td>
               </tr>
             </tbody>
           </table>
@@ -336,7 +336,7 @@ export default function EmployeeDetailPage({ params }: { params: { id: string } 
                     )}
                   </div>
                   <span className="text-muted text-sm">
-                    加入：{new Date(ec.joinedAt).toLocaleDateString('zh-TW')}
+                    加入：{fmtDate(ec.joinedAt)}
                   </span>
                 </div>
               ))}
@@ -415,9 +415,9 @@ export default function EmployeeDetailPage({ params }: { params: { id: string } 
                     {renderModifierTags(config as PayRuleConfigModular)}
 
                     <div className="text-muted text-sm" style={{ marginTop: 4 }}>
-                      生效期間：{new Date(rule.effectiveFrom).toLocaleDateString('zh-TW')}
+                      生效期間：{fmtDate(rule.effectiveFrom)}
                       {rule.effectiveTo
-                        ? ` ~ ${new Date(rule.effectiveTo).toLocaleDateString('zh-TW')}`
+                        ? ` ~ ${fmtDate(rule.effectiveTo)}`
                         : rule.isActive
                           ? ' ~ 至今'
                           : ''}

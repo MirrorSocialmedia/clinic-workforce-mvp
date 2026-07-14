@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Pencil, Plus, Smartphone, Wrench, Search, Clock } from 'lucide-react'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, fmtDateTime, fmtDate, todayHK } from '@/lib/hk-date'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type TabKey = 'records' | 'exceptions' | 'hash'
@@ -204,17 +204,17 @@ export default function AttendancePage() {
   // Helper: get effective time (latest approved correction or original punch time)
   function effectiveTime(record: PunchRecord): { display: string; hasCorrection: boolean } {
     if (!record.corrections || record.corrections.length === 0) {
-      return { display: new Date(record.punchTime).toLocaleString('zh-HK'), hasCorrection: false }
+      return { display: fmtDateTime(record.punchTime), hasCorrection: false }
     }
     const approved = record.corrections
       .filter((c: any) => c.status === 'APPROVED')
       .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     if (approved.length === 0) {
-      return { display: new Date(record.punchTime).toLocaleString('zh-HK'), hasCorrection: false }
+      return { display: fmtDateTime(record.punchTime), hasCorrection: false }
     }
     const latest = approved[0]
-    const correctedStr = new Date(latest.correctedTime).toLocaleString('zh-HK')
-    const originalStr = new Date(record.punchTime).toLocaleString('zh-HK')
+    const correctedStr = fmtDateTime(latest.correctedTime)
+    const originalStr = fmtDateTime(record.punchTime)
     return { display: `${correctedStr}（原 ${originalStr}）`, hasCorrection: true }
   }
 
@@ -981,11 +981,11 @@ export default function AttendancePage() {
                   <tbody>
                     {hashes.map((h) => (
                       <tr key={h.id} className="border-b hover:bg-gray-50">
-                        <td className="p-3">{new Date(h.date).toLocaleDateString('zh-HK')}</td>
+                        <td className="p-3">{fmtDate(h.date)}</td>
                         <td className="p-3">{h.clinic?.name || h.clinicId}</td>
                         <td className="p-3 font-mono text-xs">{h.hash.slice(0, 24)}...</td>
                         <td className="p-3">{h.recordCount} 筆</td>
-                        <td className="p-3 text-xs text-muted-foreground">{new Date(h.createdAt).toLocaleString('zh-HK')}</td>
+                        <td className="p-3 text-xs text-muted-foreground">{fmtDateTime(h.createdAt)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1008,7 +1008,7 @@ export default function AttendancePage() {
             <div className="mb-3 text-sm text-muted-foreground">
               <div>員工: {correctionRecord.employee?.user?.name || correctionRecord.employeeId}</div>
               <div>診所: {correctionRecord.clinic?.name || correctionRecord.clinicId}</div>
-              <div>原時間: {new Date(correctionRecord.punchTime).toLocaleString('zh-HK')}</div>
+              <div>原時間: {fmtDateTime(correctionRecord.punchTime)}</div>
               <div>類型: {correctionRecord.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
             </div>
             <div className="mb-3">
@@ -1085,7 +1085,7 @@ export default function AttendancePage() {
             <div className="mb-3">
               <label className="block text-xs text-muted-foreground mb-1 font-medium">日期 *</label>
               <input type="date" value={addPunchForm.date}
-                max={new Date().toLocaleDateString('en-CA')}
+                max={todayHK()}
                 onChange={e => setAddPunchForm({ ...addPunchForm, date: e.target.value })}
                 className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
             </div>
@@ -1158,7 +1158,7 @@ export default function AttendancePage() {
             <div className="mb-3 text-sm text-muted-foreground">
               <div>員工: {voidRecord.employee?.user?.name || voidRecord.employeeId}</div>
               <div>診所: {voidRecord.clinic?.name || voidRecord.clinicId}</div>
-              <div>時間: {new Date(voidRecord.punchTime).toLocaleString('zh-HK')}</div>
+              <div>時間: {fmtDateTime(voidRecord.punchTime)}</div>
               <div>類型: {voidRecord.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
               <div className="mt-1 text-xs text-red-500">⚠️ 作廢後此記錄將從所有計算中排除，無法復原。</div>
             </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { fmtDate } from '@/lib/hk-date'
 
 interface Clinic {
   id: string
@@ -195,7 +196,7 @@ export default function ClinicsPage() {
                 <tr key={company.id}>
                   <td style={{ fontWeight: 500 }}>{company.name}</td>
                   <td className="num">{company._count?.clinics ?? 0}</td>
-                  <td className="text-sm">{new Date(company.createdAt).toLocaleDateString('zh-HK')}</td>
+                  <td className="text-sm">{fmtDate(company.createdAt)}</td>
                   <td>
                     <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleRenameCompany(company.id)}>改名</button>
                     <button className="btn btn-danger btn-sm" onClick={() => handleDeleteCompany(company.id)}>刪除</button>
@@ -285,7 +286,7 @@ export default function ClinicsPage() {
                   <td style={{ fontWeight: 500 }}>{clinic.name}</td>
                   <td className="text-muted">{clinic.shortName || '—'}</td>
                   <td className="text-muted">{clinic.address || '—'}</td>
-                  <td className="text-sm">{new Date(clinic.createdAt).toLocaleDateString('zh-HK')}</td>
+                  <td className="text-sm">{fmtDate(clinic.createdAt)}</td>
                   <td>
                     <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleEditClinic(clinic)}>編輯</button>
                     <button className="btn btn-danger btn-sm" onClick={() => handleDeleteClinic(clinic.id)}>

@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { toHKDateStr, fmtTime } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/my/company-overview — Company-wide schedule overview for a week
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'weekStart is required (YYYY-MM-DD)' }, { status: 400 })
   }
 
-  const weekStart = new Date(weekStartStr + 'T00:00:00')
+  const weekStart = new Date(weekStartStr + 'T00:00:00+08:00')
   const weekEnd = new Date(weekStart)
   weekEnd.setDate(weekEnd.getDate() + 7)
 
@@ -144,7 +145,7 @@ export async function GET(req: NextRequest) {
   // Group shifts by employeeId+date+clinicId
   const shiftsMap = new Map<string, any[]>()
   for (const s of shifts) {
-    const dateKey = new Date(s.startTime).toISOString().slice(0, 10)
+    const dateKey = toHKDateStr(new Date(s.startTime))
     const key = `${s.employeeId}::${dateKey}::${s.clinicId}`
     if (!shiftsMap.has(key)) shiftsMap.set(key, [])
     shiftsMap.get(key)!.push(s)
@@ -158,7 +159,7 @@ export async function GET(req: NextRequest) {
     for (const day of days) {
       const dayMidnight = new Date(day.getFullYear(), day.getMonth(), day.getDate())
       if (dayMidnight >= start && dayMidnight <= end) {
-        const dateKey = day.toISOString().slice(0, 10)
+        const dateKey = toHKDateStr(day)
         const key = `${lr.employeeId}::${dateKey}`
         if (!leaveMap.has(key)) leaveMap.set(key, [])
         leaveMap.get(key)!.push({ name: lr.leaveType.name })
@@ -171,7 +172,7 @@ export async function GET(req: NextRequest) {
 
   const result = {
     weekStart: weekStartStr,
-    days: days.map(d => d.toISOString().slice(0, 10)),
+    days: days.map(d => toHKDateStr(d)),
     currentUserId,
     employees: employeeList.map(emp => ({
       id: emp.id,
@@ -179,7 +180,7 @@ export async function GET(req: NextRequest) {
       name: emp.name,
       clinics: emp.clinics,
       shifts: days.map(day => {
-        const dateKey = day.toISOString().slice(0, 10)
+        const dateKey = toHKDateStr(day)
         const shiftsForDay = emp.clinics.flatMap(c => {
           const key = `${emp.id}::${dateKey}::${c.id}`
           return shiftsMap.get(key) || []
@@ -190,8 +191,8 @@ export async function GET(req: NextRequest) {
           date: dateKey,
           shifts: shiftsForDay.map(s => ({
             id: s.id,
-            startTime: new Date(s.startTime).toISOString().slice(11, 16),
-            endTime: new Date(s.endTime).toISOString().slice(11, 16),
+            startTime: fmtTime(s.startTime),
+            endTime: fmtTime(s.endTime),
             templateName: s.template?.name || '',
             clinicName: s.clinic?.name || '',
           })),

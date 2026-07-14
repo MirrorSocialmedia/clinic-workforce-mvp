@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
 
@@ -167,7 +167,7 @@ export async function GET(req: NextRequest) {
             date: punchDateStr,
             type: 'LATE',
             lateMinutes: lateMins,
-            detail: `遲到 ${lateMins} 分鐘 (排班 ${shiftStart.toLocaleTimeString('zh-HK')})`,
+            detail: `遲到 ${lateMins} 分鐘 (排班 ${fmtTime(shiftStart.toISOString())})`,
             punchTime: ep.effectiveTime.toISOString(),
           })
         }
@@ -194,7 +194,7 @@ export async function GET(req: NextRequest) {
             date: punchDateStr,
             type: 'EARLY_LEAVE',
             earlyMinutes: earlyMins,
-            detail: `早退 ${earlyMins} 分鐘 (${shiftEnd.toLocaleTimeString('zh-HK')})`,
+            detail: `早退 ${earlyMins} 分鐘 (${fmtTime(shiftEnd.toISOString())})`,
             punchTime: ep.effectiveTime.toISOString(),
           })
         }
@@ -312,7 +312,7 @@ export async function GET(req: NextRequest) {
       employeeId: c.employeeId, employeeName: c.employee?.user?.name || 'Unknown',
       clinicName: clinic?.name || c.clinicId,
       date: toHKDateStr(c.correctedTime), type: 'CORRECTION',
-      detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上工' : '落班'} 至 ${c.correctedTime.toLocaleTimeString('zh-HK')}${c.reason ? ` (${c.reason})` : ''}`,
+      detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上工' : '落班'} 至 ${fmtTime(c.correctedTime)}${c.reason ? ` (${c.reason})` : ''}`,
       correctionTime: c.correctedTime.toISOString(),
     })
   }

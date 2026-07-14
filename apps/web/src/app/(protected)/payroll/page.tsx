@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, fmtDateTime } from '@/lib/hk-date'
 
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
 
@@ -179,7 +179,7 @@ export default function PayrollListPage() {
                     {run._count.items}
                   </td>
                   <td className="text-xs g text-muted-foreground">
-                    {new Date(run.generatedAt).toLocaleString('zh-HK')}
+                    {fmtDateTime(run.generatedAt)}
                   </td>
                   <td className="text-xs g text-muted-foreground max-w-[150px] truncate">
                     {run.notes || '-'}

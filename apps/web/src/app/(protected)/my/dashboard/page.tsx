@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Hand, Smartphone, Calendar, Palmtree, Bell } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { toHKDateStr, fmtTime, fmtDate, fmtDateTime } from '@/lib/hk-date'
 
 /** Tremor-style Stat Card */
 function StatCard({ value, title, color = 'blue' }: { value: number; title: string; color?: 'blue' | 'emerald' | 'amber' | 'violet' | 'cyan' }) {
@@ -122,13 +123,13 @@ export default function MyDashboardPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         {(() => {
           const now = new Date()
-          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+          const todayStr = toHKDateStr(now)
           const tomorrow = new Date(now)
           tomorrow.setDate(tomorrow.getDate() + 1)
-          const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+          const tomorrowStr = toHKDateStr(tomorrow)
 
-          const todayShifts = schedule.filter(s => (s.date || new Date(s.startTime).toISOString().slice(0, 10)) === todayStr)
-          const tomorrowShifts = schedule.filter(s => (s.date || new Date(s.startTime).toISOString().slice(0, 10)) === tomorrowStr)
+          const todayShifts = schedule.filter(s => (s.date || toHKDateStr(new Date(s.startTime))) === todayStr)
+          const tomorrowShifts = schedule.filter(s => (s.date || toHKDateStr(new Date(s.startTime))) === tomorrowStr)
 
           const renderShiftCard = (title: string, shifts: any[], label: string) => (
             <div className="bg-card border rounded-xl p-4 shadow-sm">
@@ -140,10 +141,10 @@ export default function MyDashboardPage() {
                   {shifts.map(s => {
                     const startTime = s.startTime && typeof s.startTime === 'string' && s.startTime.length <= 5
                       ? s.startTime
-                      : new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })
+                      : fmtTime(s.startTime)
                     const endTime = s.endTime && typeof s.endTime === 'string' && s.endTime.length <= 5
                       ? s.endTime
-                      : new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })
+                      : fmtTime(s.endTime)
                     return (
                       <div key={s.id}>
                         <div className="text-sm font-semibold text-foreground">
@@ -280,7 +281,7 @@ export default function MyDashboardPage() {
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-semibold text-sm text-foreground">
-                      {new Date(s.startTime).toLocaleDateString('zh-HK')}
+                      {fmtDate(s.startTime)}
                     </span>
                     <Badge
                       variant={s.status === 'CONFIRMED' ? 'default' : 'secondary'}
@@ -289,9 +290,9 @@ export default function MyDashboardPage() {
                     </Badge>
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    {new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                    {fmtTime(s.startTime)}
                     {' - '}
-                    {new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })}
+                    {fmtTime(s.endTime)}
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">{s.clinic?.name || '-'}</div>
                 </div>
@@ -322,7 +323,7 @@ export default function MyDashboardPage() {
                   <div className="flex-1 min-w-0 mr-2">
                     <div className="text-sm text-foreground truncate">{n.content}</div>
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      {new Date(n.createdAt).toLocaleString('zh-HK')}
+                      {fmtDateTime(n.createdAt)}
                     </div>
                   </div>
                   {!n.isRead && (

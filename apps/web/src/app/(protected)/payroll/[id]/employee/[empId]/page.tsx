@@ -3,9 +3,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { fmtDateTime, fmtDate, fmtTime, toHKDateStr } from '@/lib/hk-date'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
-import { toHKDateStr } from '@/lib/hk-date'
 
 interface PayrollItemData {
   id: string
@@ -126,7 +126,7 @@ export default function EmployeePayrollDetailPage() {
   const payType = item.employee.payRules[0]?.payType || '-'
 
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  const fmtTime = (d: Date | string) => new Date(d).toLocaleString('zh-HK')
+  const fmtTimeLocal = fmtDateTime
 
   // ---- Task 6: Extract comprehensive detail data ----
   const attendanceDetail = detail.attendance || {}
@@ -175,19 +175,19 @@ export default function EmployeePayrollDetailPage() {
   const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
 
   // Daily punch/shift summary for collapsible detail
-  const fmtTime24 = (t: any) => { if (!t) return '-'; const d = new Date(t); return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false }) }
+  const fmtTime24 = fmtTime
   const dailyPunchMap: Record<string, { punches: any[]; shiftDate: string }> = {}
 
   // 1. 正常打卡
   for (const p of punches) {
-    const dateKey = new Date(p.punchTime).toLocaleDateString('en-CA')
+    const dateKey = toHKDateStr(new Date(p.punchTime))
     if (!dailyPunchMap[dateKey]) dailyPunchMap[dateKey] = { punches: [], shiftDate: dateKey }
     dailyPunchMap[dateKey].punches.push({ ...p, isCorrection: p.source === 'MANUAL_CORRECTION' })
   }
 
   // 2. 補打卡（corrections）——去重後併入
   for (const c of corrections) {
-    const dateKey = new Date(c.correctedTime).toLocaleDateString('en-CA')
+    const dateKey = toHKDateStr(new Date(c.correctedTime))
     if (!dailyPunchMap[dateKey]) dailyPunchMap[dateKey] = { punches: [], shiftDate: dateKey }
     const exists = dailyPunchMap[dateKey].punches.some((p: any) => p.punchType === c.punchType)
     if (!exists) {
@@ -631,9 +631,9 @@ export default function EmployeePayrollDetailPage() {
               <tbody>
                 {punches.map((p: any) => (
                   <tr key={p.id} className="border-b">
-                    <td className="py-2 px-2">{new Date(p.punchTime).toLocaleDateString('zh-HK')}</td>
+                    <td className="py-2 px-2">{fmtDate(p.punchTime)}</td>
                     <td className="py-2 px-2">{p.clinicId}</td>
-                    <td className="py-2 px-2">{fmtTime(p.punchTime)}</td>
+                    <td className="py-2 px-2">{fmtTimeLocal(p.punchTime)}</td>
                     <td className="py-2 px-2">
                       <span className={p.punchType === 'CLOCK_IN' ? 'text-green-600 font-semibold' : 'text-red-500 font-semibold'}>
                         {p.punchType === 'CLOCK_IN' ? '上工' : '落班'}
@@ -669,8 +669,8 @@ export default function EmployeePayrollDetailPage() {
                 {leaves.map((l: any) => (
                   <tr key={l.id} className="border-b">
                     <td className="py-2 px-2">{l.leaveType.name}</td>
-                    <td className="py-2 px-2">{new Date(l.startDate).toLocaleDateString('zh-HK')}</td>
-                    <td className="py-2 px-2">{new Date(l.endDate).toLocaleDateString('zh-HK')}</td>
+                    <td className="py-2 px-2">{fmtDate(l.startDate)}</td>
+                    <td className="py-2 px-2">{fmtDate(l.endDate)}</td>
                     <td className="py-2 px-2 text-right">{l.days}</td>
                     <td className="py-2 px-2">
                       <span className={l.leaveType.isPaid ? 'text-green-600' : 'text-red-500'}>
@@ -704,7 +704,7 @@ export default function EmployeePayrollDetailPage() {
               <tbody>
                 {corrections.map((c: any) => (
                   <tr key={c.id} className="border-b">
-                    <td className="py-2 px-2">{fmtTime(c.correctedTime)}</td>
+                    <td className="py-2 px-2">{fmtDateTime(c.correctedTime)}</td>
                     <td className="py-2 px-2">{c.clinicId}</td>
                     <td className="py-2 px-2">
                       {c.punchType === 'CLOCK_IN' ? '上工' : '落班'}

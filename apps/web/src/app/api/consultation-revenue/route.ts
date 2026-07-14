@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { getMonthRange } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/consultation-revenue — List consultation revenue records
@@ -21,8 +22,7 @@ export async function GET(req: NextRequest) {
   if (employeeId) where.employeeId = employeeId
   if (clinicId) where.clinicId = clinicId
   if (month) {
-    const monthStart = new Date(`${month}-01T00:00:00`)
-    const monthEnd = new Date(`${month}-01T23:59:59`)
+    const { start: monthStart, end: monthEnd } = getMonthRange(new Date(`${month}-01T00:00:00+08:00`))
     where.month = { gte: monthStart, lte: monthEnd }
   }
 
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      const monthDate = new Date(`${month}-01T00:00:00`)
+      const monthDate = new Date(`${month}-01T00:00:00+08:00`)
 
       // FIX #1: Use $transaction — business write + audit in same transaction
       const result = await basePrisma.$transaction(async (tx) => {

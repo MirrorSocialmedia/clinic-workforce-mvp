@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { fmtDate } from '@/lib/hk-date'
 
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 
@@ -304,16 +305,16 @@ export default function MyLeavePage() {
                   </span>
                 </div>
                 <div className="text-sm text-gray-800 dark:text-gray-200 mt-1.5">
-                  {new Date(r.startDate).toLocaleDateString('zh-HK')}
+                  {fmtDate(r.startDate)}
                   {' → '}
-                  {new Date(r.endDate).toLocaleDateString('zh-HK')}
+                  {fmtDate(r.endDate)}
                   {'  (' + r.days + '天)'}
                 </div>
                 {r.reason && (
                   <div className="text-xs text-gray-400 mt-1 truncate">{r.reason}</div>
                 )}
                 <div className="text-xs text-gray-400 mt-1">
-                  申請日期: {new Date(r.createdAt).toLocaleDateString('zh-HK')}
+                  申請日期: {fmtDate(r.createdAt)}
                 </div>
               </div>
             ))}

@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import { getAuditContext } from './audit-context'
+import { fmtDate } from './hk-date'
 
 // ----------------------------------------------------------
 // Singleton Prisma client — shared across all routes
@@ -166,7 +167,7 @@ const extended = base.$extends({
               if (lr && lr.leaveTypeId) {
                 const lt = await base.leaveType.findUnique({ where: { id: lr.leaveTypeId } })
                 const emp = await base.employee.findUnique({ where: { id: lr.employeeId }, include: { user: { select: { name: true } } } })
-                const dateStr = lr.startDate ? new Date(lr.startDate).toLocaleDateString('zh-HK') : ''
+                const dateStr = lr.startDate ? fmtDate(lr.startDate) : ''
                 notes = `${lt?.name ?? '假期'}：${emp?.user?.name ?? ''} ${dateStr}`.trim()
               }
             } catch {

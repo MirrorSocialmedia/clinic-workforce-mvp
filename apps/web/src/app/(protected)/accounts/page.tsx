@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { Wallet, Plus } from 'lucide-react'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
+import { fmtDate } from '@/lib/hk-date'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -439,7 +440,7 @@ export default function AccountsPage() {
                         <div>
                           <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>登入資訊</h4>
                           <div style={{ fontSize: 12, color: '#888' }}>電郵: {acc.email || '未設定'}</div>
-                          <div style={{ fontSize: 12, color: '#888' }}>建立於: {new Date(acc.createdAt).toLocaleDateString('zh-HK')}</div>
+                          <div style={{ fontSize: 12, color: '#888' }}>建立於: {fmtDate(acc.createdAt)}</div>
                           <div style={{ marginTop: 8 }}>
                             <button className="btn btn-sm" style={{ background: '#f0f0f0', marginRight: 4 }} onClick={() => handleResetPassword(acc)}>重設密碼</button>
                             <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleToggleStatus(acc)}>

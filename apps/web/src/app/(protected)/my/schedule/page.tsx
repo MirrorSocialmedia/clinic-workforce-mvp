@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { fmtTime } from '@/lib/hk-date'
+import { fmtTime, toHKDateStr } from '@/lib/hk-date'
 
 /* ─────────── Company Overview Table (read-only) ─────────── */
 function CompanyOverviewTable({
@@ -39,7 +39,7 @@ function CompanyOverviewTable({
               <th style={{ textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb', position: 'sticky', left: 0, background: '#f9fafb', zIndex: 1, minWidth: 80 }}>員工</th>
               {days.map((d: string, i: number) => {
                 const dayNames = ['日', '一', '二', '三', '四', '五', '六']
-                const dayOfWeek = new Date(d + 'T00:00:00').getDay()
+                const dayOfWeek = new Date(d + 'T00:00:00+08:00').getDay()
                 return (
                   <th key={i} style={{ textAlign: 'center', padding: '4px 4px', borderBottom: '1px solid #e5e7eb', minWidth: 64, whiteSpace: 'nowrap' }}>
                     <div style={{ fontWeight: 600 }}>{d.slice(5)}</div>
@@ -128,7 +128,7 @@ export default function MySchedulePage() {
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
     const monday = new Date(firstOfMonth)
     monday.setDate(monday.getDate() + mondayOffset)
-    return monday.toISOString().slice(0, 10)
+    return toHKDateStr(monday)
   }, [month])
 
   // Fetch current user
@@ -185,7 +185,7 @@ export default function MySchedulePage() {
   // Group shifts by date for card display
   const shiftsByDate: Record<string, any[]> = {}
   shifts.forEach(s => {
-    const dateKey = s.date || new Date(s.startTime).toISOString().slice(0, 10)
+    const dateKey = s.date || toHKDateStr(new Date(s.startTime))
     if (!shiftsByDate[dateKey]) shiftsByDate[dateKey] = []
     shiftsByDate[dateKey].push(s)
   })
@@ -203,7 +203,7 @@ export default function MySchedulePage() {
   const daysInMonth = new Date(y, m, 0).getDate()
   const dayShifts: Record<number, any[]> = {}
   shifts.forEach(s => {
-    const d = s.date || new Date(s.startTime).toISOString().slice(0, 10)
+    const d = s.date || toHKDateStr(new Date(s.startTime))
     const [shiftY, shiftM] = d.split('-').map(Number)
     if (shiftY === y && shiftM === m) {
       const day = parseInt(shiftM === m ? d.split('-')[2] : '0')

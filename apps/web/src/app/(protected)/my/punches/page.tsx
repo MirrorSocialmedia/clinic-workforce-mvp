@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { fmtDateTime } from '@/lib/hk-date'
 
 export default function MyPunchesPage() {
   const [punches, setPunches] = useState<any[]>([])
@@ -106,7 +107,7 @@ export default function MyPunchesPage() {
             <tbody>
               {punches.map(p => (
                 <tr key={p.id}>
-                  <td>{new Date(p.punchTime).toLocaleString('zh-HK')}</td>
+                  <td>{fmtDateTime(p.punchTime)}</td>
                   <td>
                     <span style={{
                       padding: '2px 8px',
@@ -154,8 +155,8 @@ export default function MyPunchesPage() {
                 const s = statusMap[c.status] || { label: c.status, color: '#888', bg: '#f0f0f0' }
                 return (
                   <tr key={c.id}>
-                    <td>{new Date(c.createdAt).toLocaleString('zh-HK')}</td>
-                    <td>{new Date(c.correctedTime).toLocaleString('zh-HK')}</td>
+                    <td>{fmtDateTime(c.createdAt)}</td>
+                    <td>{fmtDateTime(c.correctedTime)}</td>
                     <td>
                       <span style={{
                         padding: '2px 8px',
@@ -316,7 +317,7 @@ export default function MyPunchesPage() {
                   }
                   setSubmittingCorrection(true)
                   try {
-                    const datetime = `${date}T${time}:00`
+                    const datetime = `${date}T${time}:00+08:00`
                     const res = await fetch('/api/punch-corrections', {
                       method: 'POST',
                       credentials: 'include',

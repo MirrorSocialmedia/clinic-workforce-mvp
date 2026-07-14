@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
+import { toHKDateStr } from '@/lib/hk-date'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET /api/accounts — merged User + Employee list
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
       employeeId: emp?.id || null,
       employeeStatus: emp?.status || null,
       payConfidential: emp?.payConfidential || false,
-      joinDate: emp?.joinDate?.toISOString().slice(0, 10) || null,
+      joinDate: emp?.joinDate ? toHKDateStr(new Date(emp.joinDate)) : null,
       payType: payRule?.payType || null,
       baseAmount: payRule?.baseAmount || null,
       clinics,

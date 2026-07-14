@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { generatePayrollRun } from '@/lib/payroll-engine'
+import { getMonthRange } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/payroll-runs — List payroll runs
@@ -27,8 +28,7 @@ export async function GET(req: NextRequest) {
   if (clinicId) where.clinicId = clinicId
   if (status) where.status = status
   if (periodMonth) {
-    const monthStart = new Date(`${periodMonth}-01T00:00:00`)
-    const monthEnd = new Date(`${periodMonth}-01T23:59:59`)
+    const { start: monthStart, end: monthEnd } = getMonthRange(new Date(`${periodMonth}-01T00:00:00+08:00`))
     where.periodMonth = { gte: monthStart, lte: monthEnd }
   }
 

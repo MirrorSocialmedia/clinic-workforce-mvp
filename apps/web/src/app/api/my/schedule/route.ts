@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { toHKDateStr, fmtTime } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/my/schedule — My upcoming schedule
@@ -81,9 +82,9 @@ export async function GET(req: NextRequest) {
 
       coworkerShifts = allShifts.map(s => ({
         id: s.id,
-        date: new Date(s.startTime).toISOString().slice(0, 10),
-        startTime: new Date(s.startTime).toISOString().slice(11, 16),
-        endTime: new Date(s.endTime).toISOString().slice(11, 16),
+        date: toHKDateStr(new Date(s.startTime)),
+        startTime: fmtTime(s.startTime),
+        endTime: fmtTime(s.endTime),
         employeeName: s.employee?.user?.name || '未知',
         templateName: s.template?.name || '',
         clinicName: s.clinic?.name || '',
@@ -93,9 +94,9 @@ export async function GET(req: NextRequest) {
 
   const formattedShifts = shifts.map(s => ({
     ...s,
-    date: new Date(s.startTime).toISOString().slice(0, 10),
-    startTime: new Date(s.startTime).toISOString().slice(11, 16),
-    endTime: new Date(s.endTime).toISOString().slice(11, 16),
+    date: toHKDateStr(new Date(s.startTime)),
+    startTime: fmtTime(s.startTime),
+    endTime: fmtTime(s.endTime),
     employeeName: s.employee?.user?.name || '',
     templateName: s.template?.name || '',
     clinicName: s.clinic?.name || '',

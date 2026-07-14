@@ -24,12 +24,30 @@ export function hkDateEnd(dateStr: string): Date {
   return new Date(`${dateStr}T23:59:59.999+08:00`)
 }
 
+const HK = { timeZone: 'Asia/Hong_Kong' } as const
+
 /** 格式化時間顯示 HH:MM，失敗返回 '--:--' */
 export function fmtTime(dt: string | Date | undefined | null): string {
   if (!dt) return '--:--'
   const d = new Date(dt)
   if (isNaN(d.getTime())) return '--:--'
-  return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false, ...HK })
+}
+
+/** 格式化日期顯示，失敗返回 '--' */
+export function fmtDate(dt: string | Date | undefined | null): string {
+  if (!dt) return '--'
+  const d = new Date(dt)
+  if (isNaN(d.getTime())) return '--'
+  return d.toLocaleDateString('zh-HK', { ...HK })
+}
+
+/** 格式化日期+時間顯示，失敗返回 '--' */
+export function fmtDateTime(dt: string | Date | undefined | null): string {
+  if (!dt) return '--'
+  const d = new Date(dt)
+  if (isNaN(d.getTime())) return '--'
+  return d.toLocaleString('zh-HK', { ...HK, hour12: false })
 }
 
 /** 假期是否涵蓋某天（HK日期 YYYY-MM-DD） */
