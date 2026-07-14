@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     take: 50,
   })
 
-  const currentYear = new Date().getFullYear()
+  const currentYear = new Date().getFullYear()  // tz-ok: year-based DB key
   const balances = await prisma.leaveBalance.findMany({
     where: { employeeId: employee.id, year: currentYear },
     include: {

@@ -348,8 +348,8 @@ function getShiftColor(shift: Shift): string {
   // Load month-level shifts for statistics (all clinics)
   const loadMonthShifts = useCallback(async () => {
     const now = new Date()
-    const monthStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
-    const monthEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    const monthStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))  // tz-ok: client-side browser
+    const monthEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))  // tz-ok: client-side browser
     try {
       const r = await fetch(`/api/shifts?startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`, { credentials: 'include' })
       if (r.ok) {
@@ -596,19 +596,19 @@ function getShiftColor(shift: Shift): string {
   const getDateRange = (): { startDate: string; endDate: string } => {
     const base = new Date(currentDate)
     if (viewMode === 'week') {
-      const day = base.getDay()
+      const day = base.getDay()  // tz-ok: client-side browser
       const diff = (day === 0 ? -6 : 1) - day // offset to Monday
       const start = new Date(base)
-      start.setDate(base.getDate() + diff)
+      start.setDate(base.getDate() + diff)  // tz-ok: client-side browser
       const end = new Date(start)
-      end.setDate(start.getDate() + 6)
+      end.setDate(start.getDate() + 6)  // tz-ok: client-side browser
       return {
         startDate: toHKDateStr(start),
         endDate: toHKDateStr(end),
       }
     } else {
-      const start = new Date(base.getFullYear(), base.getMonth(), 1)
-      const end = new Date(base.getFullYear(), base.getMonth() + 1, 0)
+      const start = new Date(base.getFullYear(), base.getMonth(), 1)  // tz-ok: client-side browser
+      const end = new Date(base.getFullYear(), base.getMonth() + 1, 0)  // tz-ok: client-side browser
       return {
         startDate: toHKDateStr(start),
         endDate: toHKDateStr(end),
@@ -621,7 +621,7 @@ function getShiftColor(shift: Shift): string {
     const dates: Date[] = []
     const start = new Date(startDate)
     const end = new Date(endDate)
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {  // tz-ok: client-side browser
       dates.push(new Date(d))
     }
     return dates
@@ -633,7 +633,7 @@ function getShiftColor(shift: Shift): string {
 
   const formatDateLabel = (date: Date): string => {
     const dayNames = ['日', '一', '二', '三', '四', '五', '六']
-    return `${date.getMonth() + 1}/${date.getDate()} 周${dayNames[date.getDay()]}`
+    return `${date.getMonth() + 1}/${date.getDate()} 周${dayNames[date.getDay()]}`  // tz-ok: client-side browser
   }
 
   // Note: navigateDate removed — FC headerToolbar handles prev/next
@@ -781,7 +781,7 @@ function getShiftColor(shift: Shift): string {
     const dates: string[] = []
     const start = new Date(startDate)
     const end = new Date(endDate)
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {  // tz-ok: client-side browser
       dates.push(formatDate(d))
     }
 
@@ -1132,15 +1132,15 @@ function getShiftColor(shift: Shift): string {
     if (!viewRange) return []
     const weekDaysList: { date: Date; label: string; dateStr: string }[] = []
     const start = new Date(viewRange.start)
-    const dayOfWeek = start.getDay()
+    const dayOfWeek = start.getDay()  // tz-ok: client-side browser
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
     const monday = new Date(start)
-    monday.setDate(start.getDate() + mondayOffset)
+    monday.setDate(start.getDate() + mondayOffset)  // tz-ok: client-side browser
     const dayNames = ['一', '二', '三', '四', '五', '六', '日']
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday)
-      d.setDate(monday.getDate() + i)
-      weekDaysList.push({ date: d, label: `${dayNames[i]}${d.getDate()}`, dateStr: toHKDateStr(d) })
+      d.setDate(monday.getDate() + i)  // tz-ok: client-side browser
+      weekDaysList.push({ date: d, label: `${dayNames[i]}${d.getDate()}`, dateStr: toHKDateStr(d) })  // tz-ok: client-side browser
     }
     return weekDaysList
   }, [viewRange])
@@ -1171,7 +1171,7 @@ function getShiftColor(shift: Shift): string {
     if (weekDays.length > 0) {
       console.assert(weekDays.length === 7, `weekDays 應有7天，實際${weekDays.length}天`)
       if (weekDays[6]) {
-        const dayOfWeek = new Date(weekDays[6].dateStr).getDay()
+        const dayOfWeek = new Date(weekDays[6].dateStr).getDay()  // tz-ok: client-side browser
         console.assert(dayOfWeek === 0, `第7天應是週日，實際是週${dayOfWeek}`)
       }
     }

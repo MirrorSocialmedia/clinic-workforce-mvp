@@ -13,7 +13,7 @@ export async function PUT(
   const { session } = auth
 
   const body = await req.json()
-  const { modularConfig, payType, baseAmount } = body
+  const { modularConfig, payType, baseAmount, effectiveFrom } = body
 
   const rule = await prisma.payRule.update({
     where: { id: params.ruleId },
@@ -21,6 +21,7 @@ export async function PUT(
       ...(payType ? { payType } : {}),
       ...(baseAmount !== undefined ? { baseAmount } : {}),
       ...(modularConfig ? { configJson: JSON.stringify(modularConfig) } : {}),
+      ...(effectiveFrom ? { effectiveFrom: new Date(`${effectiveFrom}T00:00:00+08:00`) } : {}),
     },
   })
 

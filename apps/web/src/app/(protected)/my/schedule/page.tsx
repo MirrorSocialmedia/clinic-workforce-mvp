@@ -113,7 +113,7 @@ export default function MySchedulePage() {
   const [includeCoworkers, setIncludeCoworkers] = useState(false)
   const [month, setMonth] = useState(() => {
     const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`  // tz-ok: client-side browser
   })
 
   // Current user ID for highlighting own row in overview
@@ -122,12 +122,12 @@ export default function MySchedulePage() {
   // Week start for company overview (monday of the current week)
   const weekStart = useMemo(() => {
     const [y, m] = month.split('-').map(Number)
-    const firstOfMonth = new Date(y, m - 1, 1)
-    const dayOfWeek = firstOfMonth.getDay()
+    const firstOfMonth = new Date(y, m - 1, 1)  // tz-ok: client-side browser
+    const dayOfWeek = firstOfMonth.getDay()  // tz-ok: client-side browser
     // Find the Monday of the week containing the 1st of month
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
     const monday = new Date(firstOfMonth)
-    monday.setDate(monday.getDate() + mondayOffset)
+    monday.setDate(monday.getDate() + mondayOffset)  // tz-ok: client-side browser
     return toHKDateStr(monday)
   }, [month])
 
@@ -144,7 +144,7 @@ export default function MySchedulePage() {
     try {
       const monthStart = new Date(`${month}-01`)
       const monthEnd = new Date(monthStart)
-      monthEnd.setMonth(monthEnd.getMonth() + 1)
+      monthEnd.setMonth(monthEnd.getMonth() + 1)  // tz-ok: client-side browser
       const url = includeCoworkers
         ? `/api/my/schedule?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}&includeCoworkers=true`
         : `/api/my/schedule?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}`
@@ -169,7 +169,7 @@ export default function MySchedulePage() {
   const goToMonth = (delta: number) => {
     const parts = month.split('-').map(Number)
     const d = new Date(parts[0], parts[1] - 1 + delta, 1)
-    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)  // tz-ok: client-side browser
   }
 
   const getStatusLabel = (status: string) => {
@@ -200,7 +200,7 @@ export default function MySchedulePage() {
 
   // Also keep calendar data
   const [y, m] = month.split('-').map(Number)
-  const daysInMonth = new Date(y, m, 0).getDate()
+  const daysInMonth = new Date(y, m, 0).getDate()  // tz-ok: client-side browser
   const dayShifts: Record<number, any[]> = {}
   shifts.forEach(s => {
     const d = s.date || toHKDateStr(new Date(s.startTime))
@@ -211,7 +211,7 @@ export default function MySchedulePage() {
       dayShifts[day].push(s)
     }
   })
-  const firstDay = new Date(y, m - 1, 1).getDay()
+  const firstDay = new Date(y, m - 1, 1).getDay()  // tz-ok: client-side browser
 
   if (loading) return <div className="flex justify-center items-center py-12 text-gray-400">載入中...</div>
 
@@ -293,9 +293,9 @@ export default function MySchedulePage() {
               const day = i + 1
               const dayShiftsList = dayShifts[day] || []
               const isToday =
-                day === new Date().getDate() &&
-                m === new Date().getMonth() + 1 &&
-                y === new Date().getFullYear()
+                day === new Date().getDate() &&  // tz-ok: client-side browser
+                m === new Date().getMonth() + 1 &&  // tz-ok: client-side browser
+                y === new Date().getFullYear()  // tz-ok: client-side browser
               return (
                 <div
                   key={day}

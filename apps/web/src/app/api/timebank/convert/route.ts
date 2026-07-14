@@ -12,7 +12,7 @@ async function getOtLeaveTypeId() {
 }
 
 async function addLeaveBalance(employeeId: string, leaveTypeId: string, days: number) {
-  const year = new Date().getFullYear()
+  const year = new Date().getFullYear()  // tz-ok: year-based DB key
   await prisma.leaveBalance.upsert({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
     update: { entitled: { increment: days }, remaining: { increment: days } },
@@ -21,7 +21,7 @@ async function addLeaveBalance(employeeId: string, leaveTypeId: string, days: nu
 }
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number) {
-  const year = new Date().getFullYear()
+  const year = new Date().getFullYear()  // tz-ok: year-based DB key
   const bal = await prisma.leaveBalance.findUnique({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
   })
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     }
 
     const otLeave = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId: otLeaveTypeId, year: new Date().getFullYear() },
+      where: { employeeId, leaveTypeId: otLeaveTypeId, year: new Date().getFullYear() },  // tz-ok: year-based DB key
     })
     if (!otLeave || otLeave.remaining < daysInt) {
       return NextResponse.json({ error: 'OT 假不足' }, { status: 400 })

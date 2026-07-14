@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { validateAndMarkTokenUsed } from '@/lib/qr-token'
+import { todayHK, hkDateStart } from '@/lib/hk-date'
 
 // ============================================================
 // POST /api/punch — Clock in/out via QR token
@@ -15,17 +16,7 @@ import { validateAndMarkTokenUsed } from '@/lib/qr-token'
  * Returns a Date object at midnight HK time, converted to UTC for DB comparison.
  */
 function getTodayStartHK(): Date {
-  const now = new Date()
-  const hkStr = now.toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' })
-  const hkDate = new Date(hkStr)
-  const utc = new Date(Date.UTC(
-    hkDate.getFullYear(),
-    hkDate.getMonth(),
-    hkDate.getDate(),
-    0, 0, 0, 0
-  ))
-  utc.setUTCHours(utc.getUTCHours() - 8)
-  return utc
+  return hkDateStart(todayHK())
 }
 
 export async function POST(req: NextRequest) {

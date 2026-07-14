@@ -57,7 +57,7 @@ export async function POST(
     const employee = await prisma.employee.findUnique({ where: { id: params.id } })
     if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
 
-    const effectiveDate = new Date(effectiveFrom)
+    const effectiveDate = new Date(`${effectiveFrom}T00:00:00+08:00`)
 
     const payRule = await prisma.$transaction(async (tx) => {
       const deactivated = await tx.payRule.updateMany({

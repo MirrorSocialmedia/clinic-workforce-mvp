@@ -9,7 +9,7 @@ export default function MyPunchesPage() {
   const [loading, setLoading] = useState(true)
   const [month, setMonth] = useState(() => {
     const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`  // tz-ok: client-side browser
   })
 
   // Correction request form state
@@ -25,7 +25,7 @@ export default function MyPunchesPage() {
     try {
       const monthStart = new Date(`${month}-01`)
       const monthEnd = new Date(monthStart)
-      monthEnd.setMonth(monthEnd.getMonth() + 1)
+      monthEnd.setMonth(monthEnd.getMonth() + 1)  // tz-ok: client-side browser
       const res = await fetch(
         `/api/my/punches?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}`,
         { credentials: 'include' }
@@ -55,8 +55,8 @@ export default function MyPunchesPage() {
 
   const goToMonth = (delta: number) => {
     const [y, m] = month.split('-').map(Number)
-    const d = new Date(y, m - 1 + delta, 1)
-    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+    const d = new Date(y, m - 1 + delta, 1)  // tz-ok: client-side browser
+    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)  // tz-ok: client-side browser
   }
 
   if (loading) return <div style={{ padding: 24 }}>載入中...</div>

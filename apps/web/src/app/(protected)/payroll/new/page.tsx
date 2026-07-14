@@ -18,8 +18,8 @@ export default function NewPayrollPage() {
   const [periodMonth, setPeriodMonth] = useState(() => {
     const now = new Date()
     // Default to previous month
-    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-    return `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)  // tz-ok: client-side browser
+    return `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`  // tz-ok: client-side browser
   })
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)

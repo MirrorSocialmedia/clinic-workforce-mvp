@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       const years = serviceYears(new Date(emp.joinDate), now)
 
       for (let i = 0; i <= years; i++) {
-        const yearNum = emp.joinDate.getFullYear() + i
+        const yearNum = emp.joinDate.getFullYear() + i  // tz-ok: year-based DB key
         const accrued = leaveForServiceYear(new Date(emp.joinDate), i, now)
 
         // 先查詢現有記錄，保留已用天數

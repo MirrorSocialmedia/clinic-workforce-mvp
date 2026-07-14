@@ -26,5 +26,6 @@ check "組日界字串必帶 +08:00" 'T00:00:00\`'
 check "toLocale 必帶 timeZone" "toLocaleTimeString('zh-HK'\|toLocaleDateString('zh-HK'\|toLocaleString('zh-HK'"
 check "禁用 setHours" "setHours("
 check "禁用 toISOString slice 當日期鍵" "toISOString().slice(0, 10)\|toISOString().slice(0, 7)"
+check "禁用本機時區日曆運算" "\.getMonth()\|\.getFullYear()\|\.getDate()\|\.getDay()\|setFullYear(\|setDate(\|new Date([a-z_]\+, [a-z_]"
 
 exit $FAIL

@@ -9,7 +9,7 @@
 
 import { prisma, basePrisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
-import { toHKDateStr, getMonthRange } from './hk-date'
+import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
 
 // ------------------------------------------------------------------
@@ -62,9 +62,10 @@ interface AuditCtx {
 
 function countWorkingDays(year: number, month: number): number {
   let count = 0
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  // UTC-safe: build monthDate to get daysInMonth; use getUTCDay for weekday
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
   for (let d = 1; d <= daysInMonth; d++) {
-    const dayOfWeek = new Date(year, month, d).getDay()
+    const dayOfWeek = new Date(Date.UTC(year, month, d)).getUTCDay()
     if (dayOfWeek !== 0 && dayOfWeek !== 6) count++
   }
   return count
@@ -252,11 +253,7 @@ async function calculateWorkedHours(
 
     // If single CLOCK_IN with no CLOCK_OUT and shift data available, use shift endTime
     if (hasIn && !hasOut && lastIn && shifts && shifts.length > 0) {
-      const shiftForDay = shifts.find(s => {
-        const sDate = new Date(s.date)
-        const sFormatted = `${sDate.getFullYear()}-${String(sDate.getMonth() + 1).padStart(2, '0')}-${String(sDate.getDate()).padStart(2, '0')}`
-        return sFormatted === dayStr
-      })
+      const shiftForDay = shifts.find(s => toHKDateStr(new Date(s.date)) === dayStr)
       if (shiftForDay && shiftForDay.endTime) {
         const endTime = new Date(shiftForDay.endTime)
         totalMs = endTime.getTime() - lastIn.getTime()
@@ -318,11 +315,13 @@ async function getApprovedLeaveDays(
     const effectiveStart = new Date(Math.max(leave.startDate.getTime(), monthStart.getTime()))
     const effectiveEnd = new Date(Math.min(leave.endDate.getTime(), monthEnd.getTime()))
 
+    // TZ-safe date iteration via string arithmetic
+    let current = toHKDateStr(effectiveStart)
+    const endStr = toHKDateStr(effectiveEnd)
     let overlapDays = 0
-    const current = new Date(effectiveStart)
-    while (current <= effectiveEnd) {
+    while (current <= endStr) {
       overlapDays++
-      current.setDate(current.getDate() + 1)
+      current = addDays(current, 1)
     }
 
     totalDays += overlapDays
@@ -631,13 +630,12 @@ export async function generatePayrollRun(
   | { runId: string; itemCount: number; totalPayable: number }
   | { error: string; runId: string; status: string }
 > {
-  // Parse YYYY-MM → Date using local (HK) time, no UTC confusion
+  // Parse YYYY-MM → HK-tz-safe Date (use +08:00 suffix to avoid local TZ confusion)
   const [yearStr, monthStr] = periodMonth.split('-')
-  const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
+  const monthDate = new Date(`${periodMonth}-01T00:00:00+08:00`)
 
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
-  const year = monthDate.getFullYear()
-  const month = monthDate.getMonth()
+  const { y: year, m: month } = hkParts(monthDate)
 
   const existing = await prisma.payrollRun.findFirst({
     where: {
@@ -706,9 +704,8 @@ export async function generatePayrollRun(
     for (const emp of employees) {
       try {
         // Read employee pay rule to determine engine
-        // 🔧 Fix: 按計糧月份選規則，不按 new Date()
-        const monthStartForRule = new Date(year, month, 1)
-        const monthEndForRule = new Date(year, month + 1, 0, 23, 59, 59)
+        // 🔧 Fix: 按計糧月份選規則，時區安全
+        const { start: monthStartForRule, end: monthEndForRule } = getMonthRange(monthDate)
         const payRule = await tx.payRule.findFirst({
           where: {
             employeeId: emp.id,
@@ -1025,7 +1022,11 @@ async function getCarriedFrom(
 ): Promise<number> {
   if (depth > 24) return 0
 
-  const lastMonth = new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1)
+  // TZ-safe: subtract one month from monthDate using hkParts
+  const { y, m } = hkParts(monthDate)
+  const lastMonthM = m - 1 < 0 ? 11 : m - 1
+  const lastMonthY = m - 1 < 0 ? y - 1 : y
+  const lastMonth = new Date(`${String(lastMonthY).padStart(4, '0')}-${String(lastMonthM + 1).padStart(2, '0')}-01T00:00:00+08:00`)
   const { start: lStart, end: lEnd } = getMonthRange(lastMonth)
 
   // ① Check existing TimeBank record
@@ -1093,10 +1094,8 @@ export async function calculateTimeBank(
   convertibleLeaveDays: number
   note: string
 }> {
-  const year = monthDate.getFullYear()
-  const month = monthDate.getMonth()
-  const monthStart = new Date(year, month, 1)
-  const monthEnd = new Date(year, month + 1, 0, 23, 59, 59)
+  // TZ-safe month range
+  const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
   // Get OT minimum threshold from payRule
   let otMinMinutes = 0
@@ -1262,7 +1261,7 @@ export async function calculateTimeBank(
  * TODO: Replace with external data source (e.g., HKPublicHoliday table or API)
  */
 function isPublicHoliday(date: Date): boolean {
-  const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  const ymd = toHKDateStr(date)
 
   // 2026 HK statutory public holidays
   const HK_PUBLIC_HOLIDAYS_2026 = new Set([
@@ -1300,18 +1299,20 @@ export function countWorkingDaysInMonth(
   }
 ): { totalDays: number; restDays: number; publicHolidays: number; workingDays: number } {
   const { rest_days = [], count_public_holidays = false } = config
-  const totalDaysInMonth = new Date(year, month + 1, 0).getDate()
+  // UTC-safe days in month
+  const totalDaysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
 
   let restDays = 0
   let publicHolidays = 0
 
   for (let d = 1; d <= totalDaysInMonth; d++) {
-    const date = new Date(year, month, d)
-    const dow = date.getDay()
+    // UTC-safe day-of-week check
+    const dow = new Date(Date.UTC(year, month, d)).getUTCDay()
     if (rest_days.includes(dow)) {
       restDays++
     }
-    if (count_public_holidays && isPublicHoliday(date)) {
+    // isPublicHoliday now uses toHKDateStr internally — safe
+    if (count_public_holidays && isPublicHoliday(new Date(Date.UTC(year, month, d)))) {
       publicHolidays++
     }
   }
@@ -1327,10 +1328,10 @@ export function countWorkingDaysInMonth(
  * @param restDays - Array of weekday numbers that are rest days (0=Sun, 6=Sat). Default [].
  */
 function countRestDaysInMonth(year: number, month: number, restDays: number[] = []): number {
-  const totalDaysInMonth = new Date(year, month + 1, 0).getDate()
+  const totalDaysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
   let count = 0
   for (let d = 1; d <= totalDaysInMonth; d++) {
-    const dow = new Date(year, month, d).getDay()
+    const dow = new Date(Date.UTC(year, month, d)).getUTCDay()
     if (restDays.includes(dow)) count++
   }
   return count
@@ -1349,13 +1350,13 @@ export function countMonthlyLeaveDays(
   month: number, // 0-indexed
   restDays: number[] = [],
 ): { restDayCount: number; publicHolidayCount: number; total: number } {
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
   let restDayCount = 0, publicHolidayCount = 0
 
   for (let d = 1; d <= daysInMonth; d++) {
-    const date = new Date(year, month, d)
-    if (restDays.includes(date.getDay())) restDayCount++
-    if (isPublicHoliday(date)) publicHolidayCount++ // ← 用硬編碼的 isPublicHoliday，含 7/1
+    const dow = new Date(Date.UTC(year, month, d)).getUTCDay()
+    if (restDays.includes(dow)) restDayCount++
+    if (isPublicHoliday(new Date(Date.UTC(year, month, d)))) publicHolidayCount++ // ← 用硬編碼的 isPublicHoliday，含 7/1
   }
 
   return { restDayCount, publicHolidayCount, total: restDayCount + publicHolidayCount }
@@ -1448,9 +1449,7 @@ async function getOrCreateTimeBank(
   monthDate: Date,
   db: any
 ): Promise<any> {
-  const year = monthDate.getFullYear()
-  const month = monthDate.getMonth()
-  const periodMonth = new Date(year, month, 1)
+  const periodMonth = getMonthRange(monthDate).start
 
   let record = await db.timeBank.findUnique({
     where: {
@@ -1483,9 +1482,7 @@ async function updateTimeBank(
   data: { otMinutes?: number; lateMinutes?: number; carriedFrom?: number; balance?: number; monthEndNote?: string },
   db: any
 ): Promise<any> {
-  const year = monthDate.getFullYear()
-  const month = monthDate.getMonth()
-  const periodMonth = new Date(year, month, 1)
+  const periodMonth = getMonthRange(monthDate).start
 
   return db.timeBank.update({
     where: {
@@ -1598,7 +1595,7 @@ async function grantMonthlyRestDays(
       data: {
         employeeId,
         type: 'RESTDAY_GRANT',
-        date: new Date(year, month, 1),
+        date: new Date(`${String(year).padStart(4, '0')}-${String(month + 1).padStart(2, '0')}-01T00:00:00+08:00`),
         minutes: quota * 24 * 60,
         note: `${grantKey}: 發放${quota}天休息日`,
       },
@@ -1619,8 +1616,7 @@ async function collectWorkData(
   clinicId: string | null
 ): Promise<WorkData> {
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
-  const year = monthDate.getFullYear()
-  const month = monthDate.getMonth()
+  const { y: year, m: month } = hkParts(monthDate)
 
   // Get employee clinic IDs
   const employee = await prisma.employee.findUnique({
@@ -1690,8 +1686,8 @@ async function collectWorkData(
 
   // Dynamic rest days: default [6, 0] (Sat+Sun); will be overridden by config at calc time
   const restDays = countRestDaysInMonth(year, month, [6, 0])
-  // Total calendar days in month minus rest days minus public holidays
-  const monthlyWorkingDays = new Date(year, month + 1, 0).getDate() - restDays - publicHolidayDays
+  // Total calendar days in month minus rest days minus public holidays (UTC-safe)
+  const monthlyWorkingDays = hkDaysInMonth(monthDate) - restDays - publicHolidayDays
   // Fallback to old countWorkingDays for backward compat
   const workingDays = countWorkingDays(year, month)
 
@@ -1781,10 +1777,11 @@ async function collectWorkData(
   }
   const leaveDateSet = new Set<string>()
   for (const lr of leaveRecords) {
-    const start = new Date(lr.startDate)
-    const end = new Date(lr.endDate)
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      leaveDateSet.add(formatDate(d))
+    let current = toHKDateStr(lr.startDate)
+    const endStr = toHKDateStr(lr.endDate)
+    while (current <= endStr) {
+      leaveDateSet.add(current)
+      current = addDays(current, 1)
     }
   }
 
@@ -1813,7 +1810,7 @@ async function collectWorkData(
     publicHolidayDays,
     workingDays,
     restDays,
-    totalDaysInMonth: new Date(year, month + 1, 0).getDate(),
+    totalDaysInMonth: hkDaysInMonth(monthDate),
     monthlyWorkingDays,
     lateRecords,
     earlyLeaveRecords,
@@ -2243,8 +2240,7 @@ export async function calculatePayrollWithRules(
     return calculateSimpleHourlyPay(employeeId, monthDate, clinicId, config)
   }
 
-  const year = monthDate.getFullYear()
-  const month = monthDate.getMonth()
+  const { y: year, m: month } = hkParts(monthDate)
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
   // 1. Collect work data

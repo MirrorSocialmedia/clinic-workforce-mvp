@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { getMonthRange } from '@/lib/hk-date'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
 export async function GET(
@@ -40,7 +41,7 @@ export async function GET(
   const detail = item.detailJson ? JSON.parse(item.detailJson) : null
 
   const periodStart = new Date(item.run.periodMonth)
-  const periodEnd = new Date(periodStart.getFullYear(), periodStart.getMonth() + 1, 0, 23, 59, 59)
+  const { end: periodEnd } = getMonthRange(periodStart)
 
   const punches = await prisma.punchRecord.findMany({
     where: { employeeId: params.empId, punchTime: { gte: periodStart, lte: periodEnd }, void: { is: null } },

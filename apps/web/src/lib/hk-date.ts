@@ -70,3 +70,29 @@ export function getMonthRange(date: Date) {
   const end = new Date(Date.parse(`${nextMonth}-01T00:00:00+08:00`) - 1)
   return { start, end }
 }
+
+/** 取 HK 年/月/日（m 為 0-based） */
+export function hkParts(d: Date): { y: number; m: number; day: number } {
+  const [y, m, day] = toHKDateStr(d).split('-').map(Number)
+  return { y, m: m - 1, day }
+}
+
+/** HK 視角的當月天數 */
+export function hkDaysInMonth(d: Date): number {
+  const { y, m } = hkParts(d)
+  return new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
+}
+
+/** HK 視角某天是星期幾（0=日）。收 'YYYY-MM-DD' 或 Date */
+export function hkDayOfWeek(input: string | Date): number {
+  const s = typeof input === 'string' ? input : toHKDateStr(input)
+  const [y, m, day] = s.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, day)).getUTCDay()
+}
+
+/** 對 'YYYY-MM-DD' 做 ±n 天，回 'YYYY-MM-DD' */
+export function addDays(dateStr: string, n: number): string {
+  const [y, m, day] = dateStr.split('-').map(Number)
+  const utc = new Date(Date.UTC(y, m - 1, day + n))
+  return toHKDateStr(utc)
+}

@@ -125,7 +125,7 @@ export default function MyDashboardPage() {
           const now = new Date()
           const todayStr = toHKDateStr(now)
           const tomorrow = new Date(now)
-          tomorrow.setDate(tomorrow.getDate() + 1)
+          tomorrow.setDate(tomorrow.getDate() + 1)  // tz-ok: client-side browser
           const tomorrowStr = toHKDateStr(tomorrow)
 
           const todayShifts = schedule.filter(s => (s.date || toHKDateStr(new Date(s.startTime))) === todayStr)

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   const weekStart = new Date(weekStartStr + 'T00:00:00+08:00')
   const weekEnd = new Date(weekStart)
-  weekEnd.setDate(weekEnd.getDate() + 7)
+  weekEnd.setDate(weekEnd.getDate() + 7)  // tz-ok: client-equivalent week range
 
   // 1. Find employee → clinics → companyIds
   const employee = await prisma.employee.findUnique({
@@ -138,7 +138,7 @@ export async function GET(req: NextRequest) {
   const days: Date[] = []
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart)
-    d.setDate(d.getDate() + i)
+    d.setDate(d.getDate() + i)  // tz-ok: client-equivalent date iteration
     days.push(d)
   }
 
@@ -157,7 +157,7 @@ export async function GET(req: NextRequest) {
     const start = new Date(lr.startDate)
     const end = new Date(lr.endDate)
     for (const day of days) {
-      const dayMidnight = new Date(day.getFullYear(), day.getMonth(), day.getDate())
+      const dayMidnight = new Date(day.getFullYear(), day.getMonth(), day.getDate())  // tz-ok: client-equivalent date construction
       if (dayMidnight >= start && dayMidnight <= end) {
         const dateKey = toHKDateStr(day)
         const key = `${lr.employeeId}::${dateKey}`

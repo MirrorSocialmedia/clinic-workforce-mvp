@@ -2,6 +2,8 @@
 // 年假核心計算函數 — 香港僱傭條例 + 跨年累積
 // ============================================================
 
+import { hkParts } from './hk-date'
+
 // 年資額度對照表（可配置）
 // Index 0 = 第1年, 1 = 第2年, ..., 8 = 第9年+
 export const LEAVE_TABLE = [7, 7, 8, 9, 10, 11, 12, 13, 14] as const
@@ -29,37 +31,37 @@ export function serviceDays(joinDate: Date, asOf: Date): number {
 }
 
 /**
- * 計算滿幾年（整年）
+ * 計算滿幾年（整年）— 使用 HK 時區 safe 日期比較
  */
 export function serviceYears(joinDate: Date, asOf: Date): number {
-  let years = asOf.getFullYear() - joinDate.getFullYear()
-  const anniv = new Date(joinDate)
-  anniv.setFullYear(joinDate.getFullYear() + years)
-  if (anniv > asOf) years--
+  const a = hkParts(asOf), j = hkParts(joinDate)
+  let years = a.y - j.y
+  if (a.m < j.m || (a.m === j.m && a.day < j.day)) years--
   return years
 }
 
 /**
- * 計算滿幾個月
+ * 計算滿幾個月 — 使用 HK 時區 safe 日期比較
  */
 export function serviceMonths(joinDate: Date, asOf: Date): number {
-  let months = (asOf.getFullYear() - joinDate.getFullYear()) * 12
-    + (asOf.getMonth() - joinDate.getMonth())
-  if (asOf.getDate() < joinDate.getDate()) months--
+  const a = hkParts(asOf), j = hkParts(joinDate)
+  let months = (a.y - j.y) * 12 + (a.m - j.m)
+  if (a.day < j.day) months--
   return months
 }
 
 /**
- * 計算某個服務年度的按比例年假
+ * 計算某個服務年度的按比例年假 — 使用 HK 時區 safe 日期
  * @param joinDate 入職日期
  * @param serviceYearIndex 服務年度索引（0=第1年, 1=第2年...）
  * @param asOf 計算基準日
  */
 export function leaveForServiceYear(joinDate: Date, serviceYearIndex: number, asOf: Date): number {
-  const yearStart = new Date(joinDate)
-  yearStart.setFullYear(joinDate.getFullYear() + serviceYearIndex)
-  const yearEnd = new Date(joinDate)
-  yearEnd.setFullYear(joinDate.getFullYear() + serviceYearIndex + 1)
+  const j = hkParts(joinDate)
+  // HK-safe anniversary dates via ISO string with +08:00
+  const pad = (n: number) => String(n + 1).padStart(2, '0')
+  const yearStart = new Date(`${j.y + serviceYearIndex}-${pad(j.m)}-${String(j.day).padStart(2, '0')}T00:00:00+08:00`)
+  const yearEnd = new Date(`${j.y + serviceYearIndex + 1}-${pad(j.m)}-${String(j.day).padStart(2, '0')}T00:00:00+08:00`)
   const periodEnd = asOf < yearEnd ? asOf : yearEnd
   if (periodEnd <= yearStart) return 0
 

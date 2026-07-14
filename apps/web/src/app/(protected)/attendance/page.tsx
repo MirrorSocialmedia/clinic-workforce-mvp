@@ -183,7 +183,7 @@ export default function AttendancePage() {
   const [exEmployeeId, setExEmployeeId] = useState('')
   const [periodMonth, setPeriodMonth] = useState(() => {
     const now = new Date()
-    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)  // tz-ok: client-side browser
     return toHKDateStr(lastMonth).slice(0, 7)
   })
   const [exceptions, setExceptions] = useState<ExceptionRecord[]>([])

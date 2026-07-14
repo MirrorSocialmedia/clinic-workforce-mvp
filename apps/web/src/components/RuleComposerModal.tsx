@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
-import { todayHK } from '@/lib/hk-date'
+import { todayHK, toHKDateStr } from '@/lib/hk-date'
 
 type BaseType = 'monthly' | 'hourly' | 'split'
 
@@ -214,11 +214,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
 
       // Set effectiveFrom from existing rule
       if (activeRule.effectiveFrom) {
-        const d = new Date(activeRule.effectiveFrom)
-        const yyyy = d.getFullYear()
-        const mm = String(d.getMonth() + 1).padStart(2, '0')
-        const dd = String(d.getDate()).padStart(2, '0')
-        setEffectiveFrom(`${yyyy}-${mm}-${dd}`)
+        setEffectiveFrom(toHKDateStr(new Date(activeRule.effectiveFrom)))
       }
     } catch (err) {
       console.error('Failed to load existing rule:', err)
@@ -312,7 +308,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
           modularConfig: baseType === 'hourly'
             ? { base_type: 'hourly', hourly_rate: config.hourly_rate } // clean config, no modifiers
             : config,
-          ...(method === 'POST' ? { effectiveFrom } : {}),
+          effectiveFrom, // POST / PUT 都送生效日期
         }),
       })
 

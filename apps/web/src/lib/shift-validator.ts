@@ -2,7 +2,7 @@
 // Shift Validator Engine
 // Reads rules from docs/rules/shift-rules.json — nothing hardcoded
 // ============================================================
-import { fmtTime } from './hk-date'
+import { fmtTime, toHKDateStr, addDays, hkDateStart, hkDateEnd } from './hk-date'
 
 import shiftRules from './shift-rules.json'
 
@@ -214,11 +214,10 @@ function checkConsecutiveHours(
   )
 
   // Get all shifts for this employee in the same date range (±2 days)
-  const date = new Date(newShift.date)
-  const twoDaysBefore = new Date(date)
-  twoDaysBefore.setDate(date.getDate() - 2)
-  const twoDaysAfter = new Date(date)
-  twoDaysAfter.setDate(date.getDate() + 2)
+  // TZ-safe: use string-based date arithmetic
+  const baseDate = toHKDateStr(new Date(newShift.date))
+  const twoDaysBefore = hkDateStart(addDays(baseDate, -2))
+  const twoDaysAfter = hkDateEnd(addDays(baseDate, 2))
 
   const employeeShifts = existingShifts
     .filter(s => s.employeeId === newShift.employeeId)

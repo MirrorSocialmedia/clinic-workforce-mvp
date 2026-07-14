@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { toHKDateStr } from './hk-date'
+import { toHKDateStr, getMonthRange } from './hk-date'
 
 // ------------------------------------------------------------------
 // Void filter helpers
@@ -91,7 +91,7 @@ export async function invalidateTimeBankFrom(
   db = prisma,
 ) {
   const date = new Date(fromDate)
-  const monthStart = new Date(date.getFullYear(), date.getMonth(), 1)
+  const { start: monthStart } = getMonthRange(date)
   await db.timeBank.deleteMany({
     where: { employeeId, periodMonth: { gte: monthStart } },
   })
