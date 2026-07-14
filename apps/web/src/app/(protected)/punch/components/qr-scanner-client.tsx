@@ -20,45 +20,34 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
     onScanRef.current = onScan
   }, [onScan])
 
-  // ★ Inject component-level CSS for video cropping (no globals.css)
-  useEffect(() => {
-    const styleId = 'qr-scanner-styles'
-    if (!document.getElementById(styleId)) {
-      const style = document.createElement('style')
-      style.id = styleId
-      style.textContent = `
-        #qr-reader video {
-          width: 100% !important;
-          height: 240px !important;
-          object-fit: cover !important;
-        }
-        #qr-reader img { display: none !important; }
-      `
-      document.head.appendChild(style)
-    }
-    return () => {
-      const el = document.getElementById(styleId)
-      if (el) el.remove()
-    }
-  }, [])
-
   useEffect(() => {
     setStatus('開啟鏡頭中...')
     const scanner = new Html5Qrcode('qr-reader')
     scannerRef.current = scanner
     let started = false
 
+    // ★ Android Chrome 使用原生 BarcodeDetector（微信級秒掃）
+    // v2.3.8 runtime 支援 useBarCodeDetectorIfSupported，但 TS 類型未宣告
+    // → 用 spread 注入，保持 qrbox 等回調的正確類型
+    const scanConfig = {
+      fps: 10,
+      qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+        // 掃描框佔畫面 70%
+        const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7)
+        return { width: size, height: size }
+      },
+      aspectRatio: 1.0,
+      videoConstraints: {
+        facingMode: 'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+    }
+
     scanner
       .start(
         { facingMode: 'environment' },
-        {
-          fps: 10,
-          qrbox: (viewfinderWidth, viewfinderHeight) => {
-            // 掃描框佔畫面 70%（原本固定 250px，小屏比例失衡）
-            const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7)
-            return { width: size, height: size }
-          },
-        },
+        { ...scanConfig, useBarCodeDetectorIfSupported: true } as any,
         async (decodedText) => {
           // ★ 連發鎖：處理中忽略重複掃描
           if (processingRef.current) return
@@ -117,17 +106,18 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
 
   return (
     <>
-      {/* ★ Compact camera: max-height 240px, overflow hidden */}
-      <div
-        id="qr-reader"
-        style={{
-          width: '100%',
-          maxHeight: 240,
-          overflow: 'hidden',
-          borderRadius: 8,
-        }}
-      />
-      <p className="text-center text-sm text-muted-foreground mt-2">{status}</p>
+      {/* 緊湊相機：260px 方形，庫自己控制 video 尺寸 */}
+      <div className="bg-card border rounded-xl p-3 mx-auto" style={{ maxWidth: 260 }}>
+        <div
+          id="qr-reader"
+          style={{
+            width: '100%',
+            borderRadius: 8,
+            overflow: 'hidden',
+          }}
+        />
+        <p className="text-center text-sm text-muted-foreground mt-2">{status}</p>
+      </div>
 
       {/* ── Manual input fallback ── */}
       {manualMode ? (

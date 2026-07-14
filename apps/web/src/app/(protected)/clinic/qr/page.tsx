@@ -151,7 +151,7 @@ export default function ClinicQRPage() {
 
         {/* Clinic name */}
         <h1 className="text-3xl font-bold mb-8 text-center">
-          🏥 {selectedClinic?.name || '診所'}
+          {selectedClinic?.name || '診所'}
         </h1>
 
         {/* QR Code — 320px */}
