@@ -8,6 +8,7 @@ export default function ClinicQRPage() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [token, setToken] = useState('')
+  const [shortCode, setShortCode] = useState('')
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
   const [selectedClinic, setSelectedClinic] = useState<{ id: string; name: string } | null>(null)
@@ -52,6 +53,7 @@ export default function ClinicQRPage() {
       const data = await res.json()
       const newToken = data.token
       setToken(newToken)
+      setShortCode(data.shortCode || '')
       setCountdown(30)
       // Only reset kiosk if token actually changed
       if (prevTokenRef.current !== newToken && prevTokenRef.current) {
@@ -117,8 +119,10 @@ export default function ClinicQRPage() {
   )
   if (!user) return null
 
-  const qrImageUrl = token
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(token)}`
+  // Use shortCode for QR display (降密度), or fall back to full token if shortCode not available
+  const qrDisplayText = shortCode || token
+  const qrImageUrl = qrDisplayText
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrDisplayText)}`
     : null
 
   // ─── Kiosk mode (fullscreen QR) ───
@@ -146,6 +150,14 @@ export default function ClinicQRPage() {
             className="w-[320px] h-[320px] rounded-xl"
           />
         </div>
+
+        {/* Short code display — 手動輸入用 */}
+        {shortCode && (
+          <div className="mt-4 bg-gray-800/60 rounded-lg px-6 py-3">
+            <span className="text-gray-400 text-sm">手動輸入碼：</span>
+            <span className="text-2xl font-mono tracking-[0.5em] text-white ml-2 uppercase">{shortCode}</span>
+          </div>
+        )}
 
         {/* Countdown */}
         <div className="mt-8 text-xl text-gray-300 font-mono">
@@ -206,6 +218,11 @@ export default function ClinicQRPage() {
           <div className="text-green-400 font-semibold text-lg mb-1">
             ⏱️ {countdown} 秒後自動刷新
           </div>
+          {shortCode && (
+            <div className="text-gray-300 text-sm font-mono tracking-widest mb-1 uppercase">
+              短碼：{shortCode}
+            </div>
+          )}
           <div className="text-gray-500 text-xs font-mono break-all">
             Token: {token.slice(0, 16)}...
           </div>

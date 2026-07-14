@@ -306,6 +306,7 @@ model QRToken {
   id        String   @id @default(cuid())
   clinicId  String
   token     String   @unique
+  shortCode String?  // 8字元短碼，QR碼只顯示它（降密度）
   issuedAt  DateTime
   expiresAt DateTime
   used      Boolean  @default(false)
@@ -317,6 +318,7 @@ model QRToken {
 
   @@index([clinicId, expiresAt])
   @@index([token])
+  @@index([shortCode])
 }
 
 // Daily hash — SHA-256 fingerprint of all punch records for a clinic on a given date

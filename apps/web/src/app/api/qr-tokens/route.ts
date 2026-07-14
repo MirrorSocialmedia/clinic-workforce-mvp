@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     success: true,
     token: qrToken.token,
+    shortCode: qrToken.shortCode,
     expiresAt: qrToken.expiresAt.toISOString(),
     clinicId,
   })
