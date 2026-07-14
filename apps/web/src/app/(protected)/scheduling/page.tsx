@@ -153,6 +153,7 @@ export default function SchedulingPage() {
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
+  const [empScope, setEmpScope] = useState<'clinic' | 'all'>('clinic')
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
@@ -382,12 +383,12 @@ function getShiftColor(shift: Shift): string {
 
   // Filter employees by selected clinic (needed by Draggable effect)
   const clinicEmployees = useMemo(() => {
-    if (!selectedClinicId) return employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
-    return employees.filter(emp =>
-      (emp.status === 'ACTIVE' || emp.status === undefined) &&
+    const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
+    if (empScope === 'all' || !selectedClinicId) return activeEmployees
+    return activeEmployees.filter(emp =>
       emp.clinics.some(ec => ec.clinic.id === selectedClinicId)
     )
-  }, [employees, selectedClinicId])
+  }, [employees, selectedClinicId, empScope])
 
   // Step 5: Group clinics by company
   const companyGroups = useMemo(() => {
@@ -1650,6 +1651,24 @@ function getShiftColor(shift: Shift): string {
           maxHeight: 600,
           overflowY: 'auto',
         }}>
+          {/* Employee scope toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#374151' }}>員工</span>
+            <div style={{ display: 'flex', borderRadius: 4, border: '1px solid #d1d5db', overflow: 'hidden' }}>
+              {(['clinic', 'all'] as const).map(scope => (
+                <button key={scope} onClick={() => setEmpScope(scope)}
+                  style={{
+                    fontSize: 10, padding: '2px 8px', border: 'none', cursor: 'pointer',
+                    background: empScope === scope ? '#3b82f6' : '#fff',
+                    color: empScope === scope ? '#fff' : '#374151',
+                    fontWeight: empScope === scope ? 600 : 400,
+                    transition: 'all 0.15s',
+                  }}>
+                  {scope === 'clinic' ? '本店' : '全部'}
+                </button>
+              ))}
+            </div>
+          </div>
           {/* Full-time */}
           <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center' }}>
             全職
