@@ -314,11 +314,23 @@ model QRToken {
   usedAt    DateTime?
   createdAt DateTime @default(now())
 
-  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinic    Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  usages    QRTokenUsage[] // ★ 每人對每碼一次的 usage 記錄
 
   @@index([clinicId, expiresAt])
   @@index([token])
   @@index([shortCode])
+}
+
+// QR token usage — tracks which employee used which token (per-person-per-token)
+model QRTokenUsage {
+  id         String   @id @default(cuid())
+  tokenId    String
+  employeeId String
+  usedAt     DateTime @default(now())
+  token      QRToken  @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenId, employeeId]) // ★ 每人對每碼一次——資料庫層面原子保證
 }
 
 // Daily hash — SHA-256 fingerprint of all punch records for a clinic on a given date

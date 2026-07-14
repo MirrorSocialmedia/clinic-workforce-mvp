@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
 
 interface QrScannerClientProps {
-  onScan: (token: string) => Promise<void>
+  onScan: (token: string) => Promise<boolean> // ★ 回傳是否成功
 }
 
 export default function QrScannerClient({ onScan }: QrScannerClientProps) {
   const scannerRef = useRef<Html5Qrcode | null>(null)
   const onScanRef = useRef(onScan)
+  const processingRef = useRef(false)
   const [status, setStatus] = useState('開啟鏡頭中...')
   const [manualMode, setManualMode] = useState(false)
   const [manualCode, setManualCode] = useState('')
@@ -43,25 +44,24 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
           },
         },
         async (decodedText) => {
-          // Pause scanning, call parent, then resume
-          try {
-            scanner.pause()
-          } catch {
-            /* ignore */
-          }
+          // ★ 連發鎖：處理中忽略重複掃描
+          if (processingRef.current) return
+          processingRef.current = true
           setStatus('打卡中...')
-          try {
-            await onScanRef.current(decodedText)
-          } finally {
-            // Resume after 1.5s delay
+
+          const ok = await onScanRef.current(decodedText)
+
+          if (ok) {
+            // ★ 成功：整個停掉（父層顯示全螢幕結果頁）
+            try { await scanner.stop() } catch { /* ignore */ }
+          } else {
+            // 失敗：3秒後恢復掃描
+            try { scanner.pause() } catch { /* ignore */ }
             setTimeout(() => {
-              try {
-                scanner.resume()
-              } catch {
-                /* ignore */
-              }
+              try { scanner.resume() } catch { /* ignore */ }
+              processingRef.current = false
               setStatus('請對準診所 QR 碼')
-            }, 1500)
+            }, 3000)
           }
         },
         () => {
@@ -92,9 +92,8 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
     }
   }, [])
 
-  const handleManualSubmit = () => {
+  const handleManualSubmit = async () => {
     if (manualCode.length >= 4) {
-      onScan(manualCode.toUpperCase())
       setManualMode(false)
       setManualCode('')
     }

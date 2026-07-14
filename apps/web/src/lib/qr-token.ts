@@ -1,11 +1,11 @@
 import { createHash, randomBytes } from 'crypto'
 import { prisma } from './prisma'
 
-const TOKEN_TTL_SECONDS = 30
+const TOKEN_TTL_SECONDS = 60 // 顯示30秒換新，舊碼多活30秒——尾端掃描不再過期
 
 /**
  * Generate an 8-char base64url short code.
- * 6 bytes = 48 bits = 2^48 space. With 30s expiry window, brute force infeasible.
+ * 6 bytes = 48 bits = 2^48 space. With 60s expiry window, brute force infeasible.
  */
 function generateShortCode(): string {
   return randomBytes(6).toString('base64url').slice(0, 8)
@@ -49,10 +49,9 @@ export async function generateQRToken(clinicId: string): Promise<{
 
 /**
  * Validate + mark used in a single atomic operation.
- * Accepts either full token or shortCode. If shortCode, resolves to full token first.
- * Prevents TOCTOU race: two concurrent punches with the same token
- * cannot both succeed because updateMany checks used:false + expiresAt
- * and sets used:true atomically.
+ * ★ NEW: Uses QRTokenUsage table — each employee can use each token once.
+ * Multiple employees scanning the same token simultaneously = both succeed.
+ * Same employee scanning twice = P2002 unique violation → rejected.
  */
 export async function validateAndMarkTokenUsed(
   scanned: string,
@@ -73,7 +72,9 @@ export async function validateAndMarkTokenUsed(
     record = await prisma.qRToken.findFirst({
       where: {
         shortCode: scanned,
+        expiresAt: { gt: new Date() },
       },
+      orderBy: { issuedAt: 'desc' },
     })
   }
 
@@ -81,31 +82,23 @@ export async function validateAndMarkTokenUsed(
     return { valid: false, reason: 'Token not found' }
   }
 
-  if (record.used) {
-    return { valid: false, reason: 'Token already used' }
-  }
-
   if (new Date() > record.expiresAt) {
     return { valid: false, reason: 'Token expired' }
   }
 
-  // Atomic: mark as used — only if still unused and not expired
-  // Use the actual token (unique key) for the update
-  const updated = await prisma.qRToken.updateMany({
-    where: {
-      token: record.token,
-      used: false,
-      expiresAt: { gte: new Date() },
-    },
-    data: {
-      used: true,
-      usedBy: employeeId,
-      usedAt: new Date(),
-    },
-  })
-
-  if (updated.count !== 1) {
-    return { valid: false, reason: 'Token invalid or already used (race)' }
+  // ★ Atomic: create usage record — unique constraint prevents duplicate per employee
+  try {
+    await prisma.qRTokenUsage.create({
+      data: {
+        tokenId: record.id,
+        employeeId,
+      },
+    })
+  } catch (e: any) {
+    if (e.code === 'P2002') {
+      return { valid: false, reason: 'You already used this code' }
+    }
+    throw e
   }
 
   return {
@@ -118,10 +111,12 @@ export async function validateAndMarkTokenUsed(
 /**
  * Validate a QR token without marking as used.
  * Used for preview / check purposes only.
+ * Checks if this employee has already used the token.
  */
 export async function validateQRToken(
   scanned: string,
-  clinicId?: string
+  clinicId?: string,
+  employeeId?: string
 ): Promise<{
   valid: boolean
   reason?: string
@@ -144,12 +139,23 @@ export async function validateQRToken(
     return { valid: false, reason: 'Token not found' }
   }
 
-  if (record.used) {
-    return { valid: false, reason: 'Token already used' }
-  }
-
   if (new Date() > record.expiresAt) {
     return { valid: false, reason: 'Token expired' }
+  }
+
+  // Check if this employee already used this token
+  if (employeeId) {
+    const existingUsage = await prisma.qRTokenUsage.findUnique({
+      where: {
+        tokenId_employeeId: {
+          tokenId: record.id,
+          employeeId,
+        },
+      },
+    })
+    if (existingUsage) {
+      return { valid: false, reason: 'You already used this code' }
+    }
   }
 
   if (clinicId && record.clinicId !== clinicId) {

@@ -10,12 +10,41 @@ import QrScanner from './components/qr-scanner'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
+/** Play a short confirmation beep via Web Audio API */
+function playBeep() {
+  try {
+    const ctx = new AudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.frequency.value = 880
+    gain.gain.value = 0.3
+    osc.start()
+    osc.stop(ctx.currentTime + 0.18)
+  } catch {
+    /* 靜音環境忽略 */
+  }
+}
+
 export default function PunchPage() {
   const router = useRouter()
   const [user, setUser] = useState<{ role: Role; clinics: string[] } | null>(null)
   const [loading, setLoading] = useState(true)
-  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null)
   const [records, setRecords] = useState<any[]>([])
+
+  // ★ Full-screen punch result state
+  const [punchResult, setPunchResult] = useState<{
+    type: string
+    time: string
+    clinicName?: string
+  } | null>(null)
+
+  // Error banner (inline, not full-screen)
+  const [error, setError] = useState<string | null>(null)
+
+  // ★ Scanner restart key
+  const [scannerKey, setScannerKey] = useState(0)
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -47,9 +76,9 @@ export default function PunchPage() {
     }
   }, [user, fetchRecords])
 
-  // Punch handler — called by scanner after QR decode
-  const handleScan = useCallback(async (token: string) => {
-    setResult(null)
+  // ★ Punch handler — returns boolean for success/failure feedback
+  const handleScan = useCallback(async (token: string): Promise<boolean> => {
+    setError(null)
 
     try {
       const res = await fetch('/api/punch', {
@@ -62,17 +91,22 @@ export default function PunchPage() {
         }),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || '打卡失敗')
 
-      const type = data.punchType === 'CLOCK_IN' ? '上工' : '落班'
-      setResult({
-        success: true,
-        message: `${type}打卡成功 ${new Date(data.punchTime).toLocaleTimeString('zh-HK')}`,
+      // ★ 三重回饋：震動 + 嗶聲 + 全螢幕
+      navigator.vibrate?.([80, 40, 80])
+      playBeep()
+
+      setPunchResult({
+        type: data.punchType === 'CLOCK_IN' ? '上工' : '落班',
+        time: new Date(data.punchTime).toLocaleTimeString('zh-HK'),
       })
       fetchRecords()
+      return true
     } catch (e: any) {
-      setResult({ success: false, message: e.message })
+      setError(e.message)
+      return false
     }
   }, [fetchRecords])
 
@@ -81,7 +115,7 @@ export default function PunchPage() {
   useEffect(() => { handleScanRef.current = handleScan }, [handleScan])
 
   // Wrap in a stable function for scanner prop
-  const stableOnScan = useCallback(async (token: string) => {
+  const stableOnScan = useCallback(async (token: string): Promise<boolean> => {
     return handleScanRef.current(token)
   }, [])
 
@@ -105,61 +139,93 @@ export default function PunchPage() {
         </AlertDescription>
       </Alert>
 
-      {/* QR Scanner */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">掃描 QR 碼</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <QrScanner onScan={stableOnScan} />
-        </CardContent>
-      </Card>
+      {/* QR Scanner — hidden when showing full-screen result */}
+      {!punchResult && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">掃描 QR 碼</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <QrScanner key={scannerKey} onScan={stableOnScan} />
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Result */}
-      {result && (
-        <Alert variant={result.success ? 'default' : 'destructive'}>
-          {result.success ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          ) : (
-            <XCircle className="h-4 w-4" />
-          )}
-          <AlertTitle>{result.success ? '成功' : '失敗'}</AlertTitle>
-          <AlertDescription>{result.message}</AlertDescription>
+      {/* Error banner (inline, auto-clears on next scan) */}
+      {error && (
+        <Alert variant="destructive">
+          <XCircle className="h-4 w-4" />
+          <AlertTitle>失敗</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
       {/* Recent records */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">最近記錄</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {records.length === 0 ? (
-            <div className="text-muted-foreground text-center py-6">暫無記錄</div>
-          ) : (
-            <div className="divide-y divide-border">
-              {records.slice(0, 10).map((r) => (
-                <div
-                  key={r.id}
-                  className="flex justify-between items-center py-3 px-4 text-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={r.punchType === 'CLOCK_IN' ? 'default' : 'secondary'}
-                    >
-                      {r.punchType === 'CLOCK_IN' ? '上工' : '落班'}
-                    </Badge>
-                    <span className="text-foreground">{r.clinic?.name || '診所'}</span>
+      {!punchResult && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">最近記錄</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {records.length === 0 ? (
+              <div className="text-muted-foreground text-center py-6">暫無記錄</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {records.slice(0, 10).map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex justify-between items-center py-3 px-4 text-sm"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={r.punchType === 'CLOCK_IN' ? 'default' : 'secondary'}
+                      >
+                        {r.punchType === 'CLOCK_IN' ? '上工' : '落班'}
+                      </Badge>
+                      <span className="text-foreground">{r.clinic?.name || '診所'}</span>
+                    </div>
+                    <span className="text-muted-foreground text-xs">
+                      {new Date(r.punchTime).toLocaleString('zh-HK')}
+                    </span>
                   </div>
-                  <span className="text-muted-foreground text-xs">
-                    {new Date(r.punchTime).toLocaleString('zh-HK')}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Full-screen success overlay ── */}
+      {punchResult && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center"
+          style={{ background: '#059669' }}
+        >
+          <div style={{ fontSize: 96 }}>✓</div>
+          <div className="text-white text-3xl font-bold mt-4">
+            {punchResult.type}打卡成功
+          </div>
+          <div className="text-emerald-100 text-xl mt-2 font-mono">
+            {punchResult.time}
+          </div>
+
+          <button
+            onClick={() => {
+              setPunchResult(null)
+              setScannerKey(k => k + 1)
+            }}
+            className="mt-10 px-6 py-3 rounded-xl bg-white/20 text-white text-lg"
+          >
+            再掃一次
+          </button>
+          <button
+            onClick={() => setPunchResult(null)}
+            className="mt-3 text-emerald-200 underline"
+          >
+            完成
+          </button>
+        </div>
+      )}
     </div>
   )
 }
