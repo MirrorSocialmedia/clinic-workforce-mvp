@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import QRCode from 'qrcode'
 
 export default function ClinicQRPage() {
   const router = useRouter()
@@ -15,6 +16,7 @@ export default function ClinicQRPage() {
   const [countdown, setCountdown] = useState(30)
   const [error, setError] = useState('')
   const [isKiosk, setIsKiosk] = useState(false)
+  const [qrDataUrl, setQrDataUrl] = useState('')
   const prevTokenRef = useRef('')
 
   const fetchUserData = useCallback(async () => {
@@ -121,12 +123,22 @@ export default function ClinicQRPage() {
 
   // Use shortCode for QR display (降密度), or fall back to full token if shortCode not available
   const qrDisplayText = shortCode || token
-  const qrImageUrl = qrDisplayText
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrDisplayText)}`
-    : null
+
+  // Generate QR code locally — no external API calls
+  useEffect(() => {
+    if (!qrDisplayText) {
+      setQrDataUrl('')
+      return
+    }
+    QRCode.toDataURL(qrDisplayText, {
+      width: 400,
+      margin: 4,
+      errorCorrectionLevel: 'M',
+    }).then(setQrDataUrl).catch(console.error)
+  }, [qrDisplayText])
 
   // ─── Kiosk mode (fullscreen QR) ───
-  if (isKiosk && qrImageUrl) {
+  if (isKiosk && qrDataUrl) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white select-none">
         {/* Exit kiosk hint */}
@@ -145,7 +157,7 @@ export default function ClinicQRPage() {
         {/* QR Code — 320px */}
         <div className="bg-white rounded-2xl p-6 shadow-2xl">
           <img
-            src={qrImageUrl}
+            src={qrDataUrl}
             alt="QR Code"
             className="w-[320px] h-[320px] rounded-xl"
           />
@@ -208,10 +220,10 @@ export default function ClinicQRPage() {
         <div className="max-w-md w-full bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-400 text-center">
           {error}
         </div>
-      ) : qrImageUrl ? (
+      ) : qrDataUrl ? (
         <div className="max-w-md w-full bg-gray-900 border border-gray-700 rounded-xl p-6 text-center">
           <img
-            src={qrImageUrl}
+            src={qrDataUrl}
             alt="QR Code"
             className="w-[240px] h-[240px] mx-auto rounded-lg mb-4"
           />

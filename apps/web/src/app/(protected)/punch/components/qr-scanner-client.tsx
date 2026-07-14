@@ -58,12 +58,6 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
             const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7)
             return { width: size, height: size }
           },
-          // ★ 關鍵：要求高解析度 videoConstraints
-          videoConstraints: {
-            facingMode: 'environment',
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-          },
         },
         async (decodedText) => {
           // ★ 連發鎖：處理中忽略重複掃描
