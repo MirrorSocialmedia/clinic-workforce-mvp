@@ -20,6 +20,28 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
     onScanRef.current = onScan
   }, [onScan])
 
+  // ★ Inject component-level CSS for video cropping (no globals.css)
+  useEffect(() => {
+    const styleId = 'qr-scanner-styles'
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style')
+      style.id = styleId
+      style.textContent = `
+        #qr-reader video {
+          width: 100% !important;
+          height: 240px !important;
+          object-fit: cover !important;
+        }
+        #qr-reader img { display: none !important; }
+      `
+      document.head.appendChild(style)
+    }
+    return () => {
+      const el = document.getElementById(styleId)
+      if (el) el.remove()
+    }
+  }, [])
+
   useEffect(() => {
     setStatus('開啟鏡頭中...')
     const scanner = new Html5Qrcode('qr-reader')
@@ -101,8 +123,17 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
 
   return (
     <>
-      <div id="qr-reader" className="w-full rounded-lg overflow-hidden" />
-      <p className="text-center mt-3 text-sm text-gray-500">{status}</p>
+      {/* ★ Compact camera: max-height 240px, overflow hidden */}
+      <div
+        id="qr-reader"
+        style={{
+          width: '100%',
+          maxHeight: 240,
+          overflow: 'hidden',
+          borderRadius: 8,
+        }}
+      />
+      <p className="text-center text-sm text-muted-foreground mt-2">{status}</p>
 
       {/* ── Manual input fallback ── */}
       {manualMode ? (

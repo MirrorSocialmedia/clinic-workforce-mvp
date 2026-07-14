@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, CheckCircle2, XCircle, Smartphone } from 'lucide-react'
+import { XCircle, Smartphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
@@ -39,6 +39,9 @@ export default function PunchPage() {
     time: string
     clinicName?: string
   } | null>(null)
+
+  // ★ Countdown for auto-redirect
+  const [countdown, setCountdown] = useState(3)
 
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
@@ -102,6 +105,7 @@ export default function PunchPage() {
         type: data.punchType === 'CLOCK_IN' ? '上工' : '落班',
         time: new Date(data.punchTime).toLocaleTimeString('zh-HK'),
       })
+      setCountdown(3)
       fetchRecords()
       return true
     } catch (e: any) {
@@ -119,6 +123,22 @@ export default function PunchPage() {
     return handleScanRef.current(token)
   }, [])
 
+  // ★ Countdown: auto-redirect to dashboard after success
+  useEffect(() => {
+    if (!punchResult) return
+    const t = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          clearInterval(t)
+          router.push('/dashboard')
+          return 0
+        }
+        return c - 1
+      })
+    }, 1000)
+    return () => clearInterval(t)
+  }, [punchResult, router])
+
   if (loading) return <div className="flex justify-center items-center min-h-[200px] text-muted-foreground">載入中...</div>
   if (!user) return null
 
@@ -130,25 +150,11 @@ export default function PunchPage() {
         <p className="text-sm text-muted-foreground mt-1">對準診所螢幕 QR 碼，自動完成打卡</p>
       </div>
 
-      {/* Instruction */}
-      <Alert>
-        <AlertTriangle className="h-4 w-4" />
-        <AlertTitle>提示</AlertTitle>
-        <AlertDescription>
-          請用手機對著診所櫃檯螢幕的 QR 碼掃描打卡。
-        </AlertDescription>
-      </Alert>
-
-      {/* QR Scanner — hidden when showing full-screen result */}
+      {/* QR Scanner — compact card, hidden when showing full-screen result */}
       {!punchResult && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">掃描 QR 碼</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <QrScanner key={scannerKey} onScan={stableOnScan} />
-          </CardContent>
-        </Card>
+        <div className="bg-card border rounded-xl p-3 max-w-sm mx-auto">
+          <QrScanner key={scannerKey} onScan={stableOnScan} />
+        </div>
       )}
 
       {/* Error banner (inline, auto-clears on next scan) */}
@@ -201,7 +207,7 @@ export default function PunchPage() {
           className="fixed inset-0 z-50 flex flex-col items-center justify-center"
           style={{ background: '#059669' }}
         >
-          <div style={{ fontSize: 96 }}>✓</div>
+          <div style={{ fontSize: 96, color: '#fff' }}>✓</div>
           <div className="text-white text-3xl font-bold mt-4">
             {punchResult.type}打卡成功
           </div>
@@ -210,19 +216,10 @@ export default function PunchPage() {
           </div>
 
           <button
-            onClick={() => {
-              setPunchResult(null)
-              setScannerKey(k => k + 1)
-            }}
-            className="mt-10 px-6 py-3 rounded-xl bg-white/20 text-white text-lg"
+            onClick={() => router.push('/dashboard')}
+            className="mt-10 px-8 py-3 rounded-xl bg-white/20 text-white text-lg"
           >
-            再掃一次
-          </button>
-          <button
-            onClick={() => setPunchResult(null)}
-            className="mt-3 text-emerald-200 underline"
-          >
-            完成
+            返回首頁（{countdown}）
           </button>
         </div>
       )}
