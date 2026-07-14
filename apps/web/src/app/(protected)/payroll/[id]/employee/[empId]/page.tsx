@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
 import { toHKDateStr } from '@/lib/hk-date'
@@ -59,6 +60,7 @@ export default function EmployeePayrollDetailPage() {
 
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [forbidden, setForbidden] = useState(false)
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
 
   const fetchData = useCallback(async () => {
@@ -66,6 +68,7 @@ export default function EmployeePayrollDetailPage() {
     try {
       const res = await fetch(`/api/payroll-runs/${runId}/employee/${empId}`)
       if (!res.ok) {
+        if (res.status === 403) { setForbidden(true); return }
         if (res.status === 404) router.push(`/payroll/${runId}`)
         return
       }
@@ -93,6 +96,19 @@ export default function EmployeePayrollDetailPage() {
 
   if (loading) {
     return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
+  }
+
+  if (forbidden) {
+    return (
+      <div className="flex flex-col justify-center items-center py-12 gap-4">
+        <div className="text-4xl">🔒</div>
+        <div className="text-lg font-semibold text-muted-foreground">此員工薪資已設保密</div>
+        <div className="text-sm text-muted-foreground">僅老闆可查看此員工的薪資明細</div>
+        <Link href={`/payroll/${runId}`} className="text-sm text-blue-600 hover:underline">
+          返回計糧
+        </Link>
+      </div>
+    )
   }
 
   if (!data) {

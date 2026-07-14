@@ -71,6 +71,7 @@ export async function GET(req: NextRequest) {
       createdAt: user.createdAt,
       employeeId: emp?.id || null,
       employeeStatus: emp?.status || null,
+      payConfidential: emp?.payConfidential || false,
       joinDate: emp?.joinDate?.toISOString().slice(0, 10) || null,
       payType: payRule?.payType || null,
       baseAmount: payRule?.baseAmount || null,
@@ -100,6 +101,7 @@ export async function POST(req: NextRequest) {
         joinDate, payType, baseAmount, configJson, effectiveFrom,
         assignEmployee = false,
         annualLeave, sickLeave,
+        payConfidential = false,
       } = await req.json()
 
       if (!name || !phone || !password || !role) {
@@ -138,6 +140,7 @@ export async function POST(req: NextRequest) {
           userId: user.id,
           joinDate: joinDate ? new Date(joinDate) : new Date(),
           status: 'ACTIVE',
+          payConfidential,
           clinics: empClinicData,
         }
 

@@ -16,12 +16,13 @@ interface PayrollItem {
   otHours: number
   leaveDays: number
   absentDays: number
-  basePay: number
-  otPay: number
+  basePay: number | null
+  otPay: number | null
   splitPay: number | null
-  deduction: number
-  totalPayable: number
+  deduction: number | null
+  totalPayable: number | null
   detailJson: string | null
+  confidential?: boolean
   employee: {
     user: { name: string; phone: string }
     clinics: { clinicId: string; clinic: { name: string } }[]
@@ -42,15 +43,16 @@ interface PayrollRun {
 
 interface Summary {
   totalEmployees: number
-  totalBasePay: number
-  totalOTPay: number
-  totalSplitPay: number
-  totalDeduction: number
-  totalPayable: number
+  totalBasePay: number | null
+  totalOTPay: number | null
+  totalSplitPay: number | null
+  totalDeduction: number | null
+  totalPayable: number | null
   totalWorkedHours: number
   totalOTHours: number
   totalLeaveDays: number
   totalAbsentDays: number
+  confidential?: boolean
 }
 
 export default function PayrollDetailPage() {
@@ -200,7 +202,11 @@ export default function PayrollDetailPage() {
     )
   }
 
-  const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const fmtCurrency = (v: number | null) => {
+    if (v == null) return '🔒 保密'
+    return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+
   const fmtPM = () => toHKDateStr(new Date(run!.periodMonth)).slice(0, 7)
 
   const parseAttendanceBonus = (item: PayrollItem) => {
@@ -220,6 +226,13 @@ export default function PayrollDetailPage() {
   }
 
   const renderAttendanceBonus = (item: PayrollItem) => {
+    if (item.confidential) {
+      return (
+        <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#888', fontSize: 12 }}>
+          🔒 保密
+        </td>
+      )
+    }
     const { amount, cancelled, reason } = parseAttendanceBonus(item)
     if (cancelled) {
       return (
@@ -292,29 +305,40 @@ export default function PayrollDetailPage() {
 
       {/* Summary Cards */}
       {summary && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
-          {[
-            { label: '員工數', value: summary.totalEmployees, color: '#0d6efd' },
-            { label: '總基本薪資', value: fmtCurrency(summary.totalBasePay), color: '#6c757d' },
-            { label: '總加班費', value: fmtCurrency(summary.totalOTPay), color: '#198754' },
-            { label: '總扣款', value: fmtCurrency(summary.totalDeduction), color: '#dc3545' },
-            { label: '應付總額', value: fmtCurrency(summary.totalPayable), color: '#0d6efd', bold: true },
-            { label: '總工時', value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
-            { label: '總加班時數', value: `${(summary.totalOTHours || 0).toFixed(1)}h`, color: '#6c757d' },
-            { label: '總請假/缺勤', value: `${summary.totalLeaveDays.toFixed(1)} / ${summary.totalAbsentDays.toFixed(1)} 天`, color: '#6c757d' },
-          ].map(card => (
-            <div key={card.label} style={{
-              padding: '12px 16px',
-              background: card.color + '10',
-              borderLeft: `3px solid ${card.color}`,
-              borderRadius: 4,
+        <div>
+          {summary.confidential && (
+            <div style={{
+              padding: '10px 16px', marginBottom: 16,
+              background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6,
+              fontSize: 13, color: '#856404',
             }}>
-              <div style={{ fontSize: 12, color: '#888' }}>{card.label}</div>
-              <div style={{ fontSize: 20, fontWeight: card.bold ? 700 : 600, color: card.color }}>
-                {card.value}
-              </div>
+              ⚠️ 含保密員工，總額僅老闆可見
             </div>
-          ))}
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
+            {[
+              { label: '員工數', value: summary.totalEmployees, color: '#0d6efd' },
+              { label: '總基本薪資', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalBasePay), color: '#6c757d' },
+              { label: '總加班費', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalOTPay), color: '#198754' },
+              { label: '總扣款', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalDeduction), color: '#dc3545' },
+              { label: '應付總額', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalPayable), color: '#0d6efd', bold: true },
+              { label: '總工時', value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
+              { label: '總加班時數', value: `${(summary.totalOTHours || 0).toFixed(1)}h`, color: '#6c757d' },
+              { label: '總請假/缺勤', value: `${summary.totalLeaveDays.toFixed(1)} / ${summary.totalAbsentDays.toFixed(1)} 天`, color: '#6c757d' },
+            ].map(card => (
+              <div key={card.label} style={{
+                padding: '12px 16px',
+                background: card.color + '10',
+                borderLeft: `3px solid ${card.color}`,
+                borderRadius: 4,
+              }}>
+                <div style={{ fontSize: 12, color: '#888' }}>{card.label}</div>
+                <div style={{ fontSize: 20, fontWeight: card.bold ? 700 : 600, color: card.color }}>
+                  {card.value}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -365,50 +389,63 @@ export default function PayrollDetailPage() {
             </tr>
           </thead>
           <tbody>
-            {run.items.map(item => (
-              <tr key={item.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                <td style={{ padding: '8px 6px' }}>
-                  <div style={{ fontWeight: 600 }}>{item.employee.user.name}</div>
-                  <div style={{ fontSize: 11, color: '#888' }}>{item.employee.user.phone}</div>
-                </td>
-                <td style={{ padding: '8px 6px', fontSize: 12 }}>
-                  {item.employee.clinics.map(c => c.clinic.name).join(', ')}
-                </td>
-                <td style={{ padding: '8px 6px', fontSize: 12 }}>
-                  {item.employee.payRules[0]?.payType || '-'}
-                </td>
-                <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.workedHours.toFixed(1)}</td>
-                <td style={{ padding: '8px 6px', textAlign: 'right' }}>
-                  {(() => { try { const d = JSON.parse(item.detailJson || '{}'); return ((d?.timebank?.otMinutes ?? 0) / 60).toFixed(1) } catch { return item.otHours.toFixed(1) } })()}
-                </td>
-                <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.leaveDays.toFixed(1)}</td>
-                <td style={{ padding: '8px 6px', textAlign: 'right', color: item.absentDays > 0 ? '#dc3545' : 'inherit' }}>
-                  {item.absentDays.toFixed(1)}
-                </td>
-                <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                  {fmtCurrency(item.basePay)}
-                </td>
-                {renderAttendanceBonus(item)}
-                <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                  {fmtCurrency(item.otPay)}
-                </td>
-                <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                  {item.splitPay ? fmtCurrency(item.splitPay) : '-'}
-                </td>
-                <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: item.deduction > 0 ? '#dc3545' : 'inherit' }}>
-                  {fmtCurrency(item.deduction)}
-                </td>
-                <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
-                  {fmtCurrency(item.totalPayable)}
-                </td>
-                <td style={{ padding: '8px 6px', textAlign: 'center' }}>
-                  <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
-                    style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 12 }}>
-                    查看
-                  </Link>
-                </td>
-              </tr>
-            ))}
+            {run.items.map(item => {
+              const confidential = item.confidential
+              return (
+                <tr key={item.id} style={{
+                  borderBottom: '1px solid #f0f0f0',
+                  background: confidential ? '#fff9f0' : 'transparent',
+                }}>
+                  <td style={{ padding: '8px 6px' }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {confidential && <span title="薪資保密">🔒 </span>}
+                      {item.employee.user.name}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#888' }}>{item.employee.user.phone}</div>
+                  </td>
+                  <td style={{ padding: '8px 6px', fontSize: 12 }}>
+                    {item.employee.clinics.map(c => c.clinic.name).join(', ')}
+                  </td>
+                  <td style={{ padding: '8px 6px', fontSize: 12 }}>
+                    {item.employee.payRules[0]?.payType || '-'}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.workedHours.toFixed(1)}</td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>
+                    {confidential ? '🔒' : (() => { try { const d = JSON.parse(item.detailJson || '{}'); return ((d?.timebank?.otMinutes ?? 0) / 60).toFixed(1) } catch { return item.otHours.toFixed(1) } })()}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.leaveDays.toFixed(1)}</td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', color: item.absentDays > 0 ? '#dc3545' : 'inherit' }}>
+                    {item.absentDays.toFixed(1)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                    {fmtCurrency(item.basePay)}
+                  </td>
+                  {renderAttendanceBonus(item)}
+                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                    {fmtCurrency(item.otPay)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                    {fmtCurrency(item.splitPay)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.deduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
+                    {fmtCurrency(item.deduction)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
+                    {fmtCurrency(item.totalPayable)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                    {confidential ? (
+                      <span style={{ color: '#888', fontSize: 12, cursor: 'not-allowed' }} title="此員工薪資已設保密">🔒 保密</span>
+                    ) : (
+                      <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
+                        style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 12 }}>
+                        查看
+                      </Link>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

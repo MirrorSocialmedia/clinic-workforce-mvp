@@ -90,23 +90,31 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   if (!user) return null
 
   const allRoles = ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] as const
+  const myRoles = ['MANAGER', 'ACCOUNTANT', 'EMPLOYEE'] as const
+  const mgmtRoles = ['OWNER', 'MANAGER'] as const
+  const viewRoles = ['OWNER', 'MANAGER', 'ACCOUNTANT'] as const
 
   const navItems = [
-    { path: '/my/dashboard', label: '我的首頁', icon: LayoutDashboard, roles: allRoles },
-    { path: '/my/schedule', label: '我的班表', icon: Calendar, roles: allRoles },
-    { path: '/my/punches', label: '我的考勤', icon: ClipboardList, roles: allRoles },
-    { path: '/my/leave', label: '我的假期', icon: Palmtree, roles: allRoles },
-    { path: '/my/notifications', label: '通知', icon: Bell, roles: allRoles },
-    { path: '/punch', label: '我要打卡', icon: Smartphone, roles: allRoles },
-    { path: '/clinic/qr', label: '診所打卡螢幕', icon: Monitor, roles: ['OWNER', 'MANAGER'] },
-    { path: '/dashboard', label: '儀表板', icon: BarChart3, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/attendance', label: '考勤', icon: ClipboardList, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/scheduling', label: '排班管理', icon: Calendar, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/leave', label: '假期管理', icon: Palmtree, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/accounts', label: '帳號管理', icon: Users, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    // My section items (not for OWNER)
+    { path: '/my/dashboard', label: '我的首頁', icon: LayoutDashboard, roles: myRoles },
+    { path: '/my/schedule', label: '我的班表', icon: Calendar, roles: myRoles },
+    { path: '/my/punches', label: '我的考勤', icon: ClipboardList, roles: myRoles },
+    { path: '/my/leave', label: '我的假期', icon: Palmtree, roles: myRoles },
+    { path: '/my/notifications', label: '通知', icon: Bell, roles: myRoles },
+
+    // Punch (all non-owner)
+    { path: '/punch', label: '我要打卡', icon: Smartphone, roles: myRoles },
+
+    // System management
+    { path: '/clinic/qr', label: '診所打卡螢幕', icon: Monitor, roles: mgmtRoles },
+    { path: '/dashboard', label: '儀表板', icon: BarChart3, roles: viewRoles },
+    { path: '/attendance', label: '考勤', icon: ClipboardList, roles: viewRoles },
+    { path: '/scheduling', label: '排班管理', icon: Calendar, roles: mgmtRoles },
+    { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles },
+    { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles },
+    { path: '/accounts', label: '帳號管理', icon: Users, roles: ['OWNER'] },
     { path: '/clinics', label: '診所管理', icon: Building2, roles: ['OWNER'] },
-    { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-    { path: '/payroll', label: '計糧管理', icon: Wallet, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+    { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER'] },
   ]
 
   const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))
@@ -163,47 +171,70 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
-          {/* My section */}
-          <div>
-            {!collapsed && (
-              <div className="px-3 mb-2 text-xs uppercase text-gray-500 tracking-wider">我的</div>
-            )}
-            <div className="space-y-1">
-              {visibleNav.filter(item => item.path.startsWith('/my')).map(item => {
-                const Icon = item.icon
-                return (
-                  <Link
-                    key={item.path}
-                    href={item.path}
-                    className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors relative gap-2.5
-                      ${isActive(item.path)
-                        ? 'bg-brand/90 text-white font-medium shadow-sm'
-                        : 'text-gray-300 hover:bg-slate-800/50 hover:text-white'
-                      }`}
-                    title={item.label}
-                  >
-                    <Icon size={18} className="flex-shrink-0" />
-                    {!collapsed && (
-                      <>
-                        {isActive(item.path) && (
-                          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-white rounded-r" />
+          {/* My section — hidden for OWNER */}
+          {user.role !== 'OWNER' && (
+            <>
+              <div>
+                {!collapsed && (
+                  <div className="px-3 mb-2 text-xs uppercase text-gray-500 tracking-wider">我的</div>
+                )}
+                <div className="space-y-1">
+                  {visibleNav.filter(item => item.path.startsWith('/my')).map(item => {
+                    const Icon = item.icon
+                    return (
+                      <Link
+                        key={item.path}
+                        href={item.path}
+                        className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors relative gap-2.5
+                          ${isActive(item.path)
+                            ? 'bg-brand/90 text-white font-medium shadow-sm'
+                            : 'text-gray-300 hover:bg-slate-800/50 hover:text-white'
+                          }`}
+                        title={item.label}
+                      >
+                        <Icon size={18} className="flex-shrink-0" />
+                        {!collapsed && (
+                          <>
+                            {isActive(item.path) && (
+                              <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-white rounded-r" />
+                            )}
+                            {item.label}
+                          </>
                         )}
-                        {item.label}
-                      </>
-                    )}
-                    {item.path === '/my/notifications' && unreadCount > 0 && (
-                      <Badge variant="destructive" className="ml-auto text-xs px-1.5 min-w-[22px] justify-center">
-                        {unreadCount}
-                      </Badge>
-                    )}
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
+                        {item.path === '/my/notifications' && unreadCount > 0 && (
+                          <Badge variant="destructive" className="ml-auto text-xs px-1.5 min-w-[22px] justify-center">
+                            {unreadCount}
+                          </Badge>
+                        )}
+                      </Link>
+                    )
+                  })}
+                  {/* Punch button in My section */}
+                  {visibleNav.filter(item => item.path === '/punch').map(item => {
+                    const Icon = item.icon
+                    return (
+                      <Link
+                        key={item.path}
+                        href={item.path}
+                        className={`flex items-center px-3 py-2 rounded-lg text-sm transition-colors relative gap-2.5
+                          ${isActive(item.path)
+                            ? 'bg-brand/90 text-white font-medium shadow-sm'
+                            : 'text-gray-300 hover:bg-slate-800/50 hover:text-white'
+                          }`}
+                        title={item.label}
+                      >
+                        <Icon size={18} className="flex-shrink-0" />
+                        {!collapsed && item.label}
+                      </Link>
+                    )
+                  })}
+                </div>
+              </div>
 
-          {/* Divider */}
-          <div className="border-t border-gray-700" />
+              {/* Divider */}
+              <div className="border-t border-gray-700" />
+            </>
+          )}
 
           {/* System section */}
           <div>
@@ -211,7 +242,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
               <div className="px-3 mb-2 text-xs uppercase text-gray-500 tracking-wider">系統</div>
             )}
             <div className="space-y-1">
-              {visibleNav.filter(item => !item.path.startsWith('/my')).map(item => {
+              {visibleNav.filter(item => !item.path.startsWith('/my') && item.path !== '/punch').map(item => {
                 const Icon = item.icon
                 return (
                   <Link

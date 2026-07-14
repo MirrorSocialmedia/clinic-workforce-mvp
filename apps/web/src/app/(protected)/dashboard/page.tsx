@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { CalendarDays } from 'lucide-react'
+import Link from 'next/link'
+import { CalendarDays, ShieldAlert } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { toHKDateStr } from '@/lib/hk-date'
@@ -49,6 +50,10 @@ export default function DashboardPage() {
 
   // Leave balances (all employees)
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
+
+  // Sensitive operations (OWNER only)
+  const [sensitiveOps, setSensitiveOps] = useState<any[] | null>(null)
+  const [opsLoading, setOpsLoading] = useState(false)
 
   // Group balances by employeeId + systemKey
   const balancesByEmp = (() => {
@@ -102,6 +107,57 @@ export default function DashboardPage() {
       .catch(() => setLeaveBalances([]))
   }, [])
 
+  // Fetch sensitive operations (OWNER only)
+  useEffect(() => {
+    const role = data?.role
+    if (role !== 'OWNER') return
+
+    setOpsLoading(true)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const fromDate = toHKDateStr(sevenDaysAgo).slice(0, 10)
+    const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT']
+
+    let promises = sensitiveActions.map(action =>
+      fetch(`/api/audit-logs?action=${action}&fromDate=${fromDate}`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : { logs: [] })
+        .catch(() => ({ logs: [] }))
+    )
+    // Also fetch DELETE on LeaveRequest (Prisma extension logs as action=DELETE, entity=LeaveRequest)
+    promises.push(
+      fetch(`/api/audit-logs?action=DELETE&entity=LeaveRequest&fromDate=${fromDate}`, { credentials: 'include' })
+        .then(r => r.ok ? r.json() : { logs: [] })
+        .catch(() => ({ logs: [] }))
+    )
+
+    Promise.all(promises).then(results => {
+      const allLogs = results.flatMap(r => r.logs || [])
+      // Group by actor
+      const byActor = new Map<string, { name: string; role: string; count: number; byAction: Record<string, number> }>()
+      const actionLabels: Record<string, string> = {
+        VOID_PUNCH: '作廢打卡',
+        ABSENT_DEDUCT: '缺勤扣OT',
+        ABSENT_DEDUCT_CANCEL: '取消扣OT',
+        CONVERT: 'OT換假',
+        LEAVE_DELETE: '刪除請假',
+      }
+      for (const log of allLogs) {
+        const actorName = log.actor?.name || log.actorId
+        const actorRole = log.actor?.role || ''
+        // Normalize: DELETE on LeaveRequest → LEAVE_DELETE
+        const action = (log.action === 'DELETE' && log.entity === 'LeaveRequest') ? 'LEAVE_DELETE' : log.action
+        const existing = byActor.get(log.actorId)
+        if (!existing) {
+          byActor.set(log.actorId, { name: actorName, role: actorRole, count: 1, byAction: { [action]: 1 } })
+        } else {
+          existing.count++
+          existing.byAction[action] = (existing.byAction[action] || 0) + 1
+        }
+      }
+      const actors = Array.from(byActor.values()).sort((a, b) => b.count - a.count)
+      setSensitiveOps(actors.map(a => ({ ...a, actionLabels })))
+    }).catch(() => setSensitiveOps([])).finally(() => setOpsLoading(false))
+  }, [data?.role])
+
   if (isEmployee) return null
   if (loading) return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
@@ -123,6 +179,57 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground mt-1">角色: {roleLabels[data.role]}</p>
         </div>
       </div>
+
+      {/* ── Sensitive Operations Summary (OWNER only) ── */}
+      {data.role === 'OWNER' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldAlert size={18} /> 本週敏感操作摘要
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {opsLoading ? (
+              <div className="text-center py-6 text-muted-foreground">載入中...</div>
+            ) : sensitiveOps && sensitiveOps.length > 0 ? (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-semibold">
+                    總計 {sensitiveOps.reduce((s, a) => s + a.count, 0)} 筆操作
+                  </span>
+                  <Link href="/audit-logs" className="text-sm text-brand hover:underline">
+                    查看完整審計日誌 →
+                  </Link>
+                </div>
+                <div className="space-y-2">
+                  {sensitiveOps.map((actor) => (
+                    <div key={actor.name} className="flex items-center justify-between px-3 py-2 rounded-lg border">
+                      <div>
+                        <span className="text-sm font-medium">{actor.name}</span>
+                        {actor.role && <span className="ml-2 text-xs text-muted-foreground">({actor.role})</span>}
+                      </div>
+                      <div className="flex gap-2">
+                        {Object.entries(actor.byAction).map(([action, count]) => {
+                          const labels: Record<string, string> = (actor as any).actionLabels || {}
+                          return (
+                            <span key={action} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                              {labels[action] || action}: {String(count)}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground text-sm">
+                本週無敏感操作記錄
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Today's Daily Operations (multi-clinic) — compact grid ── */}
       <Card>

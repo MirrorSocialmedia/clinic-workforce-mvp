@@ -6,7 +6,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // POST /api/punches/[id]/void — Void a punch record (OWNER only)
 export async function POST(req: Request, ctx: { params: { id: string } }) {
-  const session = await requireRole(['OWNER'])
+  const session = await requireRole(['OWNER', 'MANAGER'])
   const { reason } = await req.json()
   const id = ctx.params.id
 

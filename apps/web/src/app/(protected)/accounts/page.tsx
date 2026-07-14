@@ -15,6 +15,7 @@ interface Account {
   joinDate: string | null
   payType: string | null
   baseAmount: number | null
+  payConfidential: boolean
   clinics: Clinic[]
 }
 
@@ -42,6 +43,7 @@ export default function AccountsPage() {
     clinicIds: [] as string[], joinDate: '',
     payType: 'HOURLY', baseAmount: '',
     assignEmployee: true,
+    payConfidential: false,
     annualLeave: 12,  // 預設年假額度
     sickLeave: 12,     // 預設病假額度
     employeeId: null as string | null,
@@ -91,6 +93,7 @@ export default function AccountsPage() {
         payType: form.payType,
         baseAmount: form.baseAmount ? parseFloat(form.baseAmount) : null,
         assignEmployee: form.assignEmployee,
+        payConfidential: form.payConfidential,
         annualLeave: form.assignEmployee ? form.annualLeave : undefined,
         sickLeave: form.assignEmployee ? form.sickLeave : undefined,
       }
@@ -106,7 +109,7 @@ export default function AccountsPage() {
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
       clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true,
-      annualLeave: 12, sickLeave: 12, employeeId: null })
+      payConfidential: false, annualLeave: 12, sickLeave: 12, employeeId: null })
     setShowForm(false); setEditingId(null)
   }
 
@@ -115,6 +118,7 @@ export default function AccountsPage() {
       password: '', role: acc.role, clinicIds: acc.clinics?.map(c => c.id) || [],
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
       baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
+      payConfidential: acc.payConfidential || false,
       annualLeave: 12, sickLeave: 12, employeeId: acc.employeeId })
     setEditingId(acc.id); setShowForm(true)
   }
@@ -299,6 +303,13 @@ export default function AccountsPage() {
                 <input type="checkbox" checked={form.assignEmployee}
                   onChange={e => setForm({ ...form, assignEmployee: e.target.checked })} />
                 同時創建員工記錄（用於排班和計薪）
+              </label>
+
+              {/* 薪資保密 checkbox */}
+              <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.payConfidential}
+                  onChange={e => setForm({ ...form, payConfidential: e.target.checked })} />
+                🔒 薪資保密（經理在計糧中看不到此員工的金額）
               </label>
 
               {/* 診所指派 chip 流式排列 */}

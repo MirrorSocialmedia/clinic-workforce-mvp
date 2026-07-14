@@ -176,6 +176,7 @@ model Employee {
   joinDate  DateTime
   leaveDate DateTime?
   status    EmployeeStatus   @default(ACTIVE)
+  payConfidential Boolean @default(false) // 薪資保密 — 非 OWNER 的計糧 API 遮蔽金額
   notes     String?
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt

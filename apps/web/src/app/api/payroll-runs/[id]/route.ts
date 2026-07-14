@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
+import { maskIfConfidential, hasConfidentialItems } from '@/lib/payroll-engine'
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
 export async function GET(
@@ -11,6 +12,7 @@ export async function GET(
 ) {
   const auth = requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
   const run = await prisma.payrollRun.findUnique({
     where: { id: params.id },
@@ -19,6 +21,9 @@ export async function GET(
       items: {
         include: {
           employee: {
+            select: {
+              payConfidential: true,
+            },
             include: {
               user: { select: { id: true, name: true, phone: true } },
               clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
@@ -33,25 +38,36 @@ export async function GET(
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  // Server-side masking for confidential employees
+  const items = run.items.map((item: any) =>
+    maskIfConfidential(item, session.role),
+  )
+
+  const hasConfidential = hasConfidentialItems(items, session.role)
+
   const summary = {
-    totalEmployees: run.items.length,
-    totalBasePay: run.items.reduce((s, i) => s + i.basePay, 0),
-    totalOTPay: run.items.reduce((s, i) => s + i.otPay, 0),
-    totalSplitPay: run.items.reduce((s, i) => s + (i.splitPay || 0), 0),
-    totalDeduction: run.items.reduce((s, i) => s + i.deduction, 0),
-    totalPayable: run.items.reduce((s, i) => s + i.totalPayable, 0),
-    totalWorkedHours: run.items.reduce((s, i) => s + i.workedHours, 0),
-    // Fix #4a: 用 detailJson.timebank.otMinutes 加總（門檻制 otHours 對月薪制=0）
-    totalOTHours: run.items.reduce((s, i) => {
+    totalEmployees: items.length,
+    // If any confidential items exist, mask all monetary totals (prevents reverse-engineering)
+    ...(hasConfidential
+      ? { totalBasePay: null, totalOTPay: null, totalSplitPay: null, totalDeduction: null, totalPayable: null, confidential: true }
+      : {
+          totalBasePay: items.reduce((s: number, i: any) => s + (i.basePay || 0), 0),
+          totalOTPay: items.reduce((s: number, i: any) => s + (i.otPay || 0), 0),
+          totalSplitPay: items.reduce((s: number, i: any) => s + (i.splitPay || 0), 0),
+          totalDeduction: items.reduce((s: number, i: any) => s + (i.deduction || 0), 0),
+          totalPayable: items.reduce((s: number, i: any) => s + (i.totalPayable || 0), 0),
+        }),
+    totalWorkedHours: items.reduce((s: number, i: any) => s + i.workedHours, 0),
+    totalOTHours: items.reduce((s: number, i: any) => {
       let detail: any = null
       try { detail = i.detailJson ? JSON.parse(i.detailJson) : null } catch {}
       return s + (detail?.timebank?.otMinutes ?? i.otHours * 60) / 60
     }, 0),
-    totalLeaveDays: run.items.reduce((s, i) => s + i.leaveDays, 0),
-    totalAbsentDays: run.items.reduce((s, i) => s + i.absentDays, 0),
+    totalLeaveDays: items.reduce((s: number, i: any) => s + i.leaveDays, 0),
+    totalAbsentDays: items.reduce((s: number, i: any) => s + i.absentDays, 0),
   }
 
-  return NextResponse.json({ run, summary })
+  return NextResponse.json({ run: { ...run, items }, summary })
 }
 
 // PUT /api/payroll-runs/[id] — Update payroll run status/notes

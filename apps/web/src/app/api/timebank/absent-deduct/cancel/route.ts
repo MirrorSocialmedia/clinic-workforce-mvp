@@ -12,8 +12,8 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  if (auth.session.role !== 'OWNER') {
-    return NextResponse.json({ error: '需要老闆權限' }, { status: 403 })
+  if (!['OWNER', 'MANAGER'].includes(auth.session.role)) {
+    return NextResponse.json({ error: '需要老闆或經理權限' }, { status: 403 })
   }
 
   try {

@@ -54,8 +54,8 @@ export const CONFIG = {
     'PUT /api/users/:id': ['OWNER'],
     'DELETE /api/users/:id': ['OWNER'],
 
-    // Audit log routes (read-only)
-    'GET /api/audit-logs': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    // Audit log routes (OWNER only)
+    'GET /api/audit-logs': ['OWNER'],
 
     // Dashboard
     'GET /api/dashboard': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
@@ -98,7 +98,7 @@ export const CONFIG = {
     'POST /api/punch': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/punches': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/punches/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'POST /api/punches/:id/void': ['OWNER'],
+    'POST /api/punches/:id/void': ['OWNER', 'MANAGER'],
     'GET /api/punch/my-records': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Punch correction routes
@@ -150,7 +150,7 @@ export const CONFIG = {
 
     // Payroll routes
     'GET /api/payroll-runs': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'POST /api/payroll-runs': ['OWNER'],
+    'POST /api/payroll-runs': ['OWNER', 'MANAGER'],
     'GET /api/payroll-runs/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'PUT /api/payroll-runs/:id': ['OWNER'],
     'DELETE /api/payroll-runs/:id': ['OWNER'],
@@ -160,9 +160,9 @@ export const CONFIG = {
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Account management routes
-    'GET /api/accounts': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/accounts': ['OWNER'],
     'POST /api/accounts': ['OWNER'],
-    'GET /api/accounts/:id': ['OWNER', 'MANAGER'],
+    'GET /api/accounts/:id': ['OWNER'],
     'PUT /api/accounts/:id': ['OWNER'],
     'DELETE /api/accounts/:id': ['OWNER'],
 
@@ -172,9 +172,9 @@ export const CONFIG = {
 
     // Timebank entry routes
     'POST /api/timebank/makeup': ['OWNER'],
-    'POST /api/timebank/convert': ['OWNER'],
-    'POST /api/timebank/absent-deduct': ['OWNER'],
-    'POST /api/timebank/absent-deduct/cancel': ['OWNER'],
+    'POST /api/timebank/convert': ['OWNER', 'MANAGER'],
+    'POST /api/timebank/absent-deduct': ['OWNER', 'MANAGER'],
+    'POST /api/timebank/absent-deduct/cancel': ['OWNER', 'MANAGER'],
     'GET /api/time-bank/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'PATCH /api/time-bank/:id': ['OWNER'],
     'DELETE /api/time-bank/:id': ['OWNER'],

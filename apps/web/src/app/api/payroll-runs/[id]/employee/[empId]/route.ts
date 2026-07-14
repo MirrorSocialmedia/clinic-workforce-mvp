@@ -10,12 +10,16 @@ export async function GET(
 ) {
   const auth = requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session } = auth
 
   const item = await prisma.payrollItem.findUnique({
     where: { runId_employeeId: { runId: params.id, employeeId: params.empId } },
     include: {
       run: { include: { clinic: { select: { id: true, name: true } } } },
       employee: {
+        select: {
+          payConfidential: true,
+        },
         include: {
           user: { select: { id: true, name: true, phone: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
@@ -26,6 +30,12 @@ export async function GET(
   })
 
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // Server-side confidentiality check
+  const isOwner = session.role === 'OWNER'
+  if (!isOwner && item.employee.payConfidential) {
+    return NextResponse.json({ error: '此員工薪資已設保密' }, { status: 403 })
+  }
 
   const detail = item.detailJson ? JSON.parse(item.detailJson) : null
 

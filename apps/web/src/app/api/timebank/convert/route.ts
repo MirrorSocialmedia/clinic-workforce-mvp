@@ -37,8 +37,8 @@ async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days:
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  if (auth.session.role !== 'OWNER') {
-    return NextResponse.json({ error: '只有老闆可兌換' }, { status: 403 })
+  if (!['OWNER', 'MANAGER'].includes(auth.session.role)) {
+    return NextResponse.json({ error: '只有老闆或經理可兌換' }, { status: 403 })
   }
 
   const { employeeId, direction, days } = await req.json()

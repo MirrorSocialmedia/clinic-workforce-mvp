@@ -2427,3 +2427,45 @@ export async function calculatePayrollWithRules(
     absentDays: Math.round(result.absentDays * 100) / 100,
   }
 }
+
+// ------------------------------------------------------------------
+// Confidentiality Masking (server-side enforcement)
+// ------------------------------------------------------------------
+
+/**
+ * Mask financial fields for a payroll item if the employee's salary is confidential
+ * and the requesting user is not OWNER. Attendance stats (workedHours, otHours,
+ * leaveDays, absentDays) are preserved so managers can still see performance.
+ *
+ * @returns the item with `confidential: true` flag if masked
+ */
+export function maskIfConfidential(item: any, role: string): any {
+  const isOwner = role === 'OWNER'
+  const isConfidential = item.employee?.payConfidential === true
+
+  if (isOwner || !isConfidential) {
+    return item
+  }
+
+  return {
+    ...item,
+    confidential: true,
+    // Mask all monetary fields — attendance stats remain visible
+    basePay: null,
+    otPay: null,
+    splitPay: null,
+    deduction: null,
+    totalPayable: null,
+    detailJson: null,
+  }
+}
+
+/**
+ * Check if any items in a run are confidential for a given role.
+ * If true, the summary totals must also be masked to prevent reverse-engineering.
+ */
+export function hasConfidentialItems(items: any[], role: string): boolean {
+  const isOwner = role === 'OWNER'
+  if (isOwner) return false
+  return items.some((item: any) => item.employee?.payConfidential === true)
+}
