@@ -118,15 +118,65 @@ export default function MyDashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Summary Stats — Tremor-style stat cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* Today/Tomorrow Shift Cards — 2-col grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {(() => {
+          const now = new Date()
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+          const tomorrow = new Date(now)
+          tomorrow.setDate(tomorrow.getDate() + 1)
+          const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+
+          const todayShifts = schedule.filter(s => (s.date || new Date(s.startTime).toISOString().slice(0, 10)) === todayStr)
+          const tomorrowShifts = schedule.filter(s => (s.date || new Date(s.startTime).toISOString().slice(0, 10)) === tomorrowStr)
+
+          const renderShiftCard = (title: string, shifts: any[], label: string) => (
+            <div className="bg-card border rounded-xl p-4 shadow-sm">
+              <div className="text-xs text-muted-foreground mb-2 font-medium">{label}</div>
+              {shifts.length === 0 ? (
+                <div className="text-sm text-muted-foreground">無排班</div>
+              ) : (
+                <div className="space-y-2">
+                  {shifts.map(s => {
+                    const startTime = s.startTime && typeof s.startTime === 'string' && s.startTime.length <= 5
+                      ? s.startTime
+                      : new Date(s.startTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })
+                    const endTime = s.endTime && typeof s.endTime === 'string' && s.endTime.length <= 5
+                      ? s.endTime
+                      : new Date(s.endTime).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })
+                    return (
+                      <div key={s.id}>
+                        <div className="text-sm font-semibold text-foreground">
+                          {startTime} - {endTime}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          📍 {s.clinic?.name || s.clinicName || '-'}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+
+          return (
+            <>
+              {renderShiftCard('', todayShifts, '今天')} {renderShiftCard('', tomorrowShifts, '明天')}
+            </>
+          )
+        })()}
+      </div>
+
+      {/* Summary Stats — 2-col grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <StatCard value={summary?.shiftCount || 0} title="本月排班" color="blue" />
         <StatCard value={summary?.clockInCount || 0} title="本月打卡（上工）" color="emerald" />
         <StatCard value={summary?.leaveDays || 0} title="本月請假（天）" color="amber" />
       </div>
 
-      {/* Late Attendance */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {/* Late Attendance — 2-col grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div className="bg-card border rounded-xl p-4 border-l-4 border-l-red-500 shadow-sm">
           <div className="text-3xl font-bold text-foreground tabular-nums tracking-tight">{summary?.lateCount || 0}</div>
           <div className="text-sm text-muted-foreground mt-1">本月遲到次數</div>

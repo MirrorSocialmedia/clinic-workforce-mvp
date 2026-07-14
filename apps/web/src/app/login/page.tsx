@@ -2,12 +2,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 
 export default function LoginPage() {
   const router = useRouter()
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -20,7 +20,7 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, password }),
+        body: JSON.stringify({ phone, password, rememberMe }),
         credentials: 'include',
       })
 
@@ -31,7 +31,8 @@ export default function LoginPage() {
         return
       }
 
-      router.push('/dashboard')
+      const redirectUrl = data.user?.role === 'EMPLOYEE' ? '/my/dashboard' : '/dashboard'
+      router.push(redirectUrl)
       router.refresh()
     } catch {
       setError('網絡錯誤')
@@ -80,20 +81,19 @@ export default function LoginPage() {
             {loading ? '登入中...' : '登入'}
           </button>
 
-          <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <Link href="/reset-password" style={{ fontSize: 13, color: '#1a1a2e', textDecoration: 'underline' }}>
-              忘記密碼？
-            </Link>
+          <div style={{ display: 'flex', alignItems: 'center', marginTop: 12, gap: 6 }}>
+            <input
+              type="checkbox"
+              id="rememberMe"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: 'pointer' }}
+            />
+            <label htmlFor="rememberMe" style={{ fontSize: 13, color: '#1a1a2e', cursor: 'pointer' }}>
+              記住我
+            </label>
           </div>
         </form>
-
-        <div style={{ marginTop: 20, padding: '12px', background: '#f9f9f9', borderRadius: 6, fontSize: 12, color: '#888' }}>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>測試帳號（密碼: demo1234）</div>
-          <div>👑 Owner: 91000001</div>
-          <div>📋 Manager: 91000002</div>
-          <div>💰 Accountant: 91000003</div>
-          <div>👤 Employee: 91000004</div>
-        </div>
       </div>
     </div>
   )

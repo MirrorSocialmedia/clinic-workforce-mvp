@@ -1,8 +1,111 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { fmtTime } from '@/lib/hk-date'
 
+/* ─────────── Company Overview Table (read-only) ─────────── */
+function CompanyOverviewTable({
+  weekStart,
+  currentUserId,
+}: {
+  weekStart: string
+  currentUserId: string
+}) {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!weekStart) return
+    setLoading(true)
+    fetch(`/api/my/company-overview?weekStart=${weekStart}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.resolve(null))
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [weekStart])
+
+  if (loading) return <div className="text-xs text-muted-foreground py-2">載入公司總覽...</div>
+  if (!data || !data.employees?.length) return <div className="text-xs text-muted-foreground py-2">無公司總覽資料</div>
+
+  const { days, employees } = data
+
+  return (
+    <div style={{ pointerEvents: 'none' }}>
+      <div className="overflow-x-auto -mx-2">
+        <table style={{
+          borderCollapse: 'collapse', fontSize: 11, minWidth: 600, width: '100%',
+        }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb', position: 'sticky', left: 0, background: '#f9fafb', zIndex: 1, minWidth: 80 }}>員工</th>
+              {days.map((d: string, i: number) => {
+                const dayNames = ['日', '一', '二', '三', '四', '五', '六']
+                const dayOfWeek = new Date(d + 'T00:00:00').getDay()
+                return (
+                  <th key={i} style={{ textAlign: 'center', padding: '4px 4px', borderBottom: '1px solid #e5e7eb', minWidth: 64, whiteSpace: 'nowrap' }}>
+                    <div style={{ fontWeight: 600 }}>{d.slice(5)}</div>
+                    <div style={{ color: '#888', fontSize: 10 }}>{dayNames[dayOfWeek]}</div>
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((emp: any) => {
+              const isMe = emp.userId === currentUserId
+              return (
+                <tr key={emp.id} style={{ background: isMe ? '#f0fdfa' : 'transparent' }}>
+                  <td style={{
+                    padding: '4px 6px', borderBottom: '1px solid #f3f4f6',
+                    fontWeight: isMe ? 700 : 400,
+                    position: 'sticky', left: 0,
+                    background: isMe ? '#f0fdfa' : '#fff',
+                    zIndex: 1, minWidth: 80,
+                  }}>
+                    {emp.name}
+                  </td>
+                  {emp.shifts.map((ds: any, di: number) => (
+                    <td key={di} style={{ padding: '3px 4px', borderBottom: '1px solid #f3f4f6', verticalAlign: 'top' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {ds.shifts.map((s: any) => (
+                          <div
+                            key={s.id}
+                            style={{
+                              background: '#e0f2fe', color: '#0369a1',
+                              borderRadius: 4, padding: '1px 4px', fontSize: 10,
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                              maxWidth: 80,
+                            }}
+                            title={`${s.clinicName} ${s.startTime}-${s.endTime}`}
+                          >
+                            {s.clinicName} {s.startTime}-{s.endTime}
+                          </div>
+                        ))}
+                        {ds.leaves.map((l: string, li: number) => (
+                          <div
+                            key={li}
+                            style={{
+                              background: '#fef3c7', color: '#92400e',
+                              borderRadius: 4, padding: '1px 4px', fontSize: 10,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            🏖 {l}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/* ─────────── Main Page ─────────── */
 export default function MySchedulePage() {
   const [shifts, setShifts] = useState<any[]>([])
   const [coworkerShifts, setCoworkerShifts] = useState<any[]>([])
@@ -12,6 +115,29 @@ export default function MySchedulePage() {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   })
+
+  // Current user ID for highlighting own row in overview
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+
+  // Week start for company overview (monday of the current week)
+  const weekStart = useMemo(() => {
+    const [y, m] = month.split('-').map(Number)
+    const firstOfMonth = new Date(y, m - 1, 1)
+    const dayOfWeek = firstOfMonth.getDay()
+    // Find the Monday of the week containing the 1st of month
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+    const monday = new Date(firstOfMonth)
+    monday.setDate(monday.getDate() + mondayOffset)
+    return monday.toISOString().slice(0, 10)
+  }, [month])
+
+  // Fetch current user
+  useEffect(() => {
+    fetch('/api/me', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.user?.id) setCurrentUserId(d.user.id) })
+      .catch(() => {})
+  }, [])
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -93,6 +219,18 @@ export default function MySchedulePage() {
     <div>
       <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-4">📅 我的班表</h1>
 
+      {/* ─── Company Overview (read-only) ─── */}
+      <div className="card mb-3" style={{ overflow: 'visible' }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-semibold text-gray-700">🏢 公司全局總覽</span>
+          <span className="text-xs text-muted-foreground">唯讀</span>
+        </div>
+        {currentUserId && (
+          <CompanyOverviewTable weekStart={weekStart} currentUserId={currentUserId} />
+        )}
+      </div>
+
+      {/* ─── Personal Calendar ─── */}
       <div className="card mb-3">
         <div className="flex items-center justify-between mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
           <div className="flex items-center gap-3">

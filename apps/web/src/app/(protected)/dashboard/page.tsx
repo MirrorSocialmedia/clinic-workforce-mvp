@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { CalendarDays } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
@@ -33,12 +34,14 @@ interface ClinicData {
 
 /** Format Date to YYYY-MM-DD in HK timezone */
 export default function DashboardPage() {
+  const router = useRouter()
   const [data, setData] = useState<{
     role: Role
     clinics: ClinicData[]
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [isEmployee, setIsEmployee] = useState(false)
 
   // Employee attendance summary — fixed to current month
   const [empSummary, setEmpSummary] = useState<any[]>([])
@@ -67,10 +70,17 @@ export default function DashboardPage() {
         }
         return res.json()
       })
-      .then(d => setData({ role: d.role, clinics: d.clinics }))
+      .then(d => {
+        if (d.role === 'EMPLOYEE') {
+          setIsEmployee(true)
+          router.replace('/my/dashboard')
+          return
+        }
+        setData({ role: d.role, clinics: d.clinics })
+      })
       .catch(err => setError(err.message || '載入失敗'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [router])
 
   // Fixed to current month, use periodMonth mode
   useEffect(() => {
@@ -92,6 +102,7 @@ export default function DashboardPage() {
       .catch(() => setLeaveBalances([]))
   }, [])
 
+  if (isEmployee) return null
   if (loading) return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
   if (!data) return <div className="p-4 text-muted-foreground">沒有資料</div>

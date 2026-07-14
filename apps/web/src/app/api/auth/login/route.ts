@@ -8,7 +8,7 @@ import { runWithAudit } from '@/lib/audit-context'
 
 export async function POST(req: NextRequest) {
   try {
-    const { phone, password } = await req.json()
+    const { phone, password, rememberMe } = await req.json()
 
     if (!phone || !password) {
       return NextResponse.json({ error: 'Phone and password required' }, { status: 400 })
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: CONFIG.SESSION_MAX_AGE_DAYS * 24 * 60 * 60,
+      maxAge: rememberMe ? 30 * 24 * 60 * 60 : 1 * 24 * 60 * 60,
       path: '/',
     })
 
