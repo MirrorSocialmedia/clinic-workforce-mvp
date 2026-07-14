@@ -14,3 +14,7 @@ CREATE UNIQUE INDEX "QRTokenUsage_tokenId_employeeId_key" ON "QRTokenUsage"("tok
 -- 外鍵：token 刪除時級聯刪除 usages
 ALTER TABLE "QRTokenUsage" ADD CONSTRAINT "QRTokenUsage_tokenId_fkey"
     FOREIGN KEY ("tokenId") REFERENCES "QRToken"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Type fixes (from original 114144, moved here because table created here)
+ALTER TABLE "QRTokenUsage" ALTER COLUMN "id" DROP DEFAULT,
+ALTER COLUMN "usedAt" SET DATA TYPE TIMESTAMPTZ(3);
