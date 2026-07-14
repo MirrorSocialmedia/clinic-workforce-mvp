@@ -181,9 +181,118 @@ async function main() {
   console.log(`預期時間帳戶 = ${expOt} − (${expLate}+${expEarly}) = ${expAccount >= 0 ? '+' : ''}${expAccount} 分`)
   console.log(`預期勤工: ${expLate > SCENARIO.rule.cancelBonusIfLateOver ? '取消(遲到超標)' : '看缺勤'}`)
   console.log(`對照引擎: 帳戶 ${tb.timeAccountMinutes}、OT ${tb.otMinutes} — ${tb.timeAccountMinutes === expAccount ? '✅ 一致' : '❌ 不一致，檢查公式'}`)
-
-  await prisma.$disconnect()
-  console.log('\n═══ 完成 ═══\n')
 }
 
-main().catch(e => { console.error(e); prisma.$disconnect() })
+// ─── S17: OT 最低門檻測試 ───
+async function runS17() {
+  console.log('\n═══ S17: OT 最低門檻測試 ═══\n')
+
+  const S = SCENARIO_S17
+  const clinic = await prisma.clinic.findFirst({ where: { name: S.clinicName } })
+  if (!clinic) { console.error(`❌ 找不到診所「${S.clinicName}」`); return }
+
+  let user = await prisma.user.findFirst({ where: { phone: 'TEST_S17' } })
+  if (!user) user = await prisma.user.create({
+    data: { name: 'S17測試員工', phone: 'TEST_S17', password: 'x', role: 'EMPLOYEE' } })
+  let emp = await prisma.employee.findFirst({ where: { userId: user.id } })
+  if (!emp) emp = await prisma.employee.create({ data: { userId: user.id, joinDate: new Date('2025-01-01') } })
+  await prisma.employeeClinic.upsert({
+    where: { employeeId_clinicId: { employeeId: emp.id, clinicId: clinic.id } },
+    update: {}, create: { employeeId: emp.id, clinicId: clinic.id } }).catch(() => {})
+
+  // Clean old data
+  const monthStart = new Date(`${S.month}-01T00:00:00+08:00`)
+  const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+  await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
+  await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id, punchTime: { gte: monthStart, lt: monthEnd } } })
+  await prisma.shift.deleteMany({ where: { employeeId: emp.id, date: { gte: monthStart, lt: monthEnd } } })
+  await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id, date: { gte: monthStart, lt: monthEnd } } }).catch(() => {})
+  await prisma.timeBank.deleteMany({ where: { employeeId: emp.id, periodMonth: { gte: monthStart, lt: monthEnd } } }).catch(() => {})
+  await prisma.payRule.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+
+  // Create PayRule in DB — engine queries DB for ot_min_minutes
+  await prisma.payRule.create({
+    data: {
+      employeeId: emp.id,
+      payType: 'MONTHLY',
+      isActive: true,
+      effectiveFrom: new Date('2026-01-01'),
+      configJson: JSON.stringify({
+        base_type: 'monthly',
+        monthly_salary: S.monthlySalary,
+        modifiers: {
+          overtime: {
+            mode: 'time_off',
+            hours_per_leave_day: S.rule.otHoursPerLeaveDay,
+            ot_min_minutes: S.otMinMinutes,
+          },
+          working_days: {
+            basis: 'scheduled',
+            rest_days: S.rule.restDays,
+            count_public_holidays: true,
+          },
+          deduction: { basis: 'statutory' },
+        },
+      }),
+    },
+  } as any)
+  console.log(`✅ PayRule created (ot_min_minutes=${S.otMinMinutes})`)
+
+  // Create shifts + punches
+  for (const d of S.days) {
+    await prisma.shift.create({ data: {
+      employeeId: emp.id, clinicId: clinic.id,
+      date: dt(d.date, '00:00'),
+      startTime: dt(d.date, d.shift[0]), endTime: dt(d.date, d.shift[1]),
+      status: 'CONFIRMED', createdBy: user.id } })
+    if (d.in) await prisma.punchRecord.create({ data: {
+      employeeId: emp.id, clinicId: clinic.id, punchTime: dt(d.date, d.in),
+      punchType: 'CLOCK_IN', source: 'QR_DYNAMIC', tokenValid: true } })
+    if (d.out) await prisma.punchRecord.create({ data: {
+      employeeId: emp.id, clinicId: clinic.id, punchTime: dt(d.date, d.out),
+      punchType: 'CLOCK_OUT', source: 'QR_DYNAMIC', tokenValid: true } })
+  }
+
+  // Run engine
+  const config = {
+    base_type: 'monthly',
+    monthly_salary: S.monthlySalary,
+    modifiers: {
+      overtime: {
+        mode: 'time_off',
+        hours_per_leave_day: S.rule.otHoursPerLeaveDay,
+        ot_min_minutes: S.otMinMinutes,
+      },
+      working_days: {
+        basis: 'scheduled',
+        rest_days: S.rule.restDays,
+        count_public_holidays: true,
+      },
+      deduction: { basis: 'statutory' },
+    },
+  }
+  const result = await calculatePayrollWithRules(emp.id, monthStart, clinic.id, config as any)
+
+  // Results
+  const tb = (result.detail as any)?.timebank || {}
+  console.log(`\n─── S17 結果 ───`)
+  console.log(`OT: ${tb.otMinutes ?? '?'} 分 (預期: 50 分 — 20+30, 10和14被門檻過濾)`)
+  console.log(`時間帳戶: ${tb.timeAccountMinutes >= 0 ? '+' : ''}${tb.timeAccountMinutes ?? '?'} 分 (預期: +50)`)
+
+  // Verify
+  const otOk = tb.otMinutes === 50
+  const accountOk = tb.timeAccountMinutes === 50
+  console.log(`${otOk && accountOk ? '✅ S17 PASS' : '❌ S17 FAIL — 檢查 ot_min_minutes 門檻邏輯'}`)
+
+  // Cleanup payRule
+  await prisma.payRule.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+}
+
+async function runAll() {
+  await main()
+  await runS17()
+  console.log('\n═══ 所有測試完成 ═══\n')
+  await prisma.$disconnect()
+}
+
+runAll().catch(e => { console.error(e); prisma.$disconnect() })

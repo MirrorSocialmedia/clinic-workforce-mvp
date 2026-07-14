@@ -192,7 +192,6 @@ a:hover { color: var(--primary-dark); }
 
 /* ============ Main content ============ */
 .main-content {
-  margin-left: 248px;
   padding: 28px 32px;
   min-height: 100vh;
   max-width: none;
@@ -452,7 +451,7 @@ td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-m
   .sidebar-nav { display: flex; flex-wrap: wrap; padding: 8px; }
   .sidebar-nav a { border-left: none; border-radius: 6px; padding: 8px 12px; }
   .sidebar-nav a.active { border-left: none; }
-  .main-content { margin-left: 0; padding: 18px 16px; }
+  .main-content { padding: 18px 16px; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   table { display: block; overflow-x: auto; white-space: nowrap; }
 }
