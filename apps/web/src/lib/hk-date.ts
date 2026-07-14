@@ -57,17 +57,15 @@ export function leaveCoversDate(lr: { startDate: string; endDate?: string | null
   return dateStr >= s && dateStr <= e
 }
 
-/** Get month range [first day 00:00 HK, last day 23:59:59.999 HK] — timezone-safe via +08:00 string */
+/** Get month range [1日 00:00 HK, 月末 23:59:59.999 HK] — 年月取自 HK 視角（Intl），全程無本機時區 */
 export function getMonthRange(date: Date) {
-  const y = date.getFullYear()
-  const m = date.getMonth()
-  const ym = `${String(y).padStart(4, '0')}-${String(m + 1).padStart(2, '0')}`
+  const ym = toHKDateStr(date).slice(0, 7) // ★ HK 視角的年月（Intl 保證）
+  const [y, m] = ym.split('-').map(Number)
   const start = new Date(`${ym}-01T00:00:00+08:00`)
-  // End of month = 1ms before 1st of next month (HK)
-  const nextMonth = m + 1 >= 12
-    ? `${String(y + 1).padStart(4, '0')}-01`
-    : `${String(y).padStart(4, '0')}-${String(m + 2).padStart(2, '0')}`
-  const end = new Date(Date.parse(`${nextMonth}-01T00:00:00+08:00`) - 1)
+  const nextYm = m >= 12
+    ? `${y + 1}-01`
+    : `${y}-${String(m + 1).padStart(2, '0')}`
+  const end = new Date(Date.parse(`${nextYm}-01T00:00:00+08:00`) - 1)
   return { start, end }
 }
 
