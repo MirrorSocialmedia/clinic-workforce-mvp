@@ -105,6 +105,20 @@ export default function ClinicQRPage() {
     }
   }, [clinicId, clinics])
 
+  // ★ All hooks must be before any early return (#310 fix)
+  const qrDisplayText = shortCode || token
+  useEffect(() => {
+    if (!qrDisplayText) {
+      setQrDataUrl('')
+      return
+    }
+    QRCode.toDataURL(qrDisplayText, {
+      width: 400,
+      margin: 4,
+      errorCorrectionLevel: 'M',
+    }).then(setQrDataUrl).catch(console.error)
+  }, [qrDisplayText])
+
   // Enter fullscreen
   const handleFullscreen = async () => {
     try {
@@ -120,22 +134,6 @@ export default function ClinicQRPage() {
     </div>
   )
   if (!user) return null
-
-  // Use shortCode for QR display (降密度), or fall back to full token if shortCode not available
-  const qrDisplayText = shortCode || token
-
-  // Generate QR code locally — no external API calls
-  useEffect(() => {
-    if (!qrDisplayText) {
-      setQrDataUrl('')
-      return
-    }
-    QRCode.toDataURL(qrDisplayText, {
-      width: 400,
-      margin: 4,
-      errorCorrectionLevel: 'M',
-    }).then(setQrDataUrl).catch(console.error)
-  }, [qrDisplayText])
 
   // ─── Kiosk mode (fullscreen QR) ───
   if (isKiosk && qrDataUrl) {

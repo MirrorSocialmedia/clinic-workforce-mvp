@@ -1,165 +1,111 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Html5Qrcode } from 'html5-qrcode'
+import QrScanner from 'qr-scanner'
 
 interface QrScannerClientProps {
-  onScan: (token: string) => Promise<boolean> // ★ 回傳是否成功
+  onScan: (token: string) => Promise<boolean> // 回傳是否成功（成功即停）
 }
 
 export default function QrScannerClient({ onScan }: QrScannerClientProps) {
-  const scannerRef = useRef<Html5Qrcode | null>(null)
-  const onScanRef = useRef(onScan)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const scannerRef = useRef<QrScanner | null>(null)
   const processingRef = useRef(false)
+  const onScanRef = useRef(onScan)
   const [status, setStatus] = useState('開啟鏡頭中...')
   const [manualMode, setManualMode] = useState(false)
   const [manualCode, setManualCode] = useState('')
 
-  // Keep onScan ref always in sync
-  useEffect(() => {
-    onScanRef.current = onScan
-  }, [onScan])
+  useEffect(() => { onScanRef.current = onScan }, [onScan])
 
   useEffect(() => {
-    setStatus('開啟鏡頭中...')
-    const scanner = new Html5Qrcode('qr-reader')
-    scannerRef.current = scanner
-    let started = false
+    const video = videoRef.current
+    if (!video) return
 
-    // ★ Android Chrome 使用原生 BarcodeDetector（微信級秒掃）
-    // v2.3.8 runtime 支援 useBarCodeDetectorIfSupported，但 TS 類型未宣告
-    // → 用 spread 注入，保持 qrbox 等回調的正確類型
-    const scanConfig = {
-      fps: 10,
-      qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-        // 掃描框佔畫面 70%
-        const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.7)
-        return { width: size, height: size }
-      },
-      aspectRatio: 1.0,
-      videoConstraints: {
-        facingMode: 'environment',
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-    }
-
-    scanner
-      .start(
-        { facingMode: 'environment' },
-        { ...scanConfig, useBarCodeDetectorIfSupported: true } as any,
-        async (decodedText) => {
-          // ★ 連發鎖：處理中忽略重複掃描
-          if (processingRef.current) return
-          processingRef.current = true
-          setStatus('打卡中...')
-
-          const ok = await onScanRef.current(decodedText)
-
-          if (ok) {
-            // ★ 成功：整個停掉（父層顯示全螢幕結果頁）
-            try { await scanner.stop() } catch { /* ignore */ }
-          } else {
-            // 失敗：3秒後恢復掃描
-            try { scanner.pause() } catch { /* ignore */ }
-            setTimeout(() => {
-              try { scanner.resume() } catch { /* ignore */ }
-              processingRef.current = false
-              setStatus('請對準診所 QR 碼')
-            }, 3000)
-          }
-        },
-        () => {
-          /* ignore scan errors */
+    const scanner = new QrScanner(
+      video,
+      async (result) => {
+        if (processingRef.current) return
+        processingRef.current = true
+        setStatus('打卡中...')
+        const ok = await onScanRef.current(result.data)
+        if (ok) {
+          try { scanner.stop(); scanner.destroy() } catch { /* ignore */ }
+          scannerRef.current = null
+        } else {
+          setTimeout(() => {
+            processingRef.current = false
+            setStatus('請對準診所 QR 碼')
+          }, 3000)
         }
-      )
-      .then(() => {
-        started = true
-        setStatus('請對準診所 QR 碼')
-      })
-      .catch((err) => {
-        setStatus(`鏡頭啟動失敗：${err?.message ?? err}`)
-      })
+      },
+      {
+        preferredCamera: 'environment',
+        maxScansPerSecond: 10,
+        highlightScanRegion: true, // 自帶掃描框高亮
+        returnDetailedScanResult: true,
+      }
+    )
+    scannerRef.current = scanner
+    scanner.start()
+      .then(() => setStatus('請對準診所 QR 碼'))
+      .catch((e: any) => setStatus(`鏡頭啟動失敗：${e?.message ?? e}`))
 
     return () => {
-      if (started) {
-        try {
-          scanner.stop()
-        } catch {
-          /* ignore */
-        }
-      }
-      try {
-        scanner.clear()
-      } catch {
-        /* ignore */
-      }
+      try { scanner.stop(); scanner.destroy() } catch { /* ignore */ }
     }
   }, [])
 
-  const handleManualSubmit = async () => {
-    if (manualCode.length >= 4) {
-      setManualMode(false)
-      setManualCode('')
-    }
+  const submitManual = async () => {
+    if (manualCode.length < 6 || processingRef.current) return
+    processingRef.current = true
+    setStatus('打卡中...')
+    const ok = await onScanRef.current(manualCode.trim().toUpperCase())
+    if (!ok) setTimeout(() => { processingRef.current = false }, 1500)
   }
 
   return (
-    <>
-      {/* 緊湊相機：260px 方形，庫自己控制 video 尺寸 */}
-      <div className="bg-card border rounded-xl p-3 mx-auto" style={{ maxWidth: 260 }}>
-        <div
-          id="qr-reader"
-          style={{
-            width: '100%',
-            borderRadius: 8,
-            overflow: 'hidden',
-          }}
-        />
-        <p className="text-center text-sm text-muted-foreground mt-2">{status}</p>
-      </div>
-
-      {/* ── Manual input fallback ── */}
+    <div className="bg-card border rounded-xl p-3 mx-auto" style={{ maxWidth: 260 }}>
       {manualMode ? (
-        <div className="mt-3 flex flex-col items-center gap-2">
-          <div className="flex items-center gap-2">
-            <input
-              maxLength={12}
-              placeholder="輸入螢幕上的短碼"
-              value={manualCode}
-              onChange={(e) => setManualCode(e.target.value.toUpperCase())}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleManualSubmit()
-              }}
-              className="border border-gray-300 rounded-md px-3 py-2 text-center text-lg tracking-widest font-mono uppercase focus:outline-none focus:ring-2 focus:ring-brand"
-              autoFocus
-            />
-            <button
-              onClick={handleManualSubmit}
-              disabled={manualCode.length < 4}
-              className="bg-brand text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              確認
-            </button>
-          </div>
+        <div className="space-y-2">
+          <input
+            value={manualCode}
+            maxLength={8}
+            placeholder="輸入螢幕上的短碼"
+            onChange={e => setManualCode(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-center font-mono tracking-widest uppercase"
+          />
           <button
-            onClick={() => {
-              setManualMode(false)
-              setManualCode('')
-            }}
-            className="text-xs text-gray-400 underline mt-1"
+            onClick={submitManual}
+            className="w-full py-2 rounded-lg bg-primary text-primary-foreground"
           >
-            返回掃描
+            打卡
+          </button>
+          <button
+            onClick={() => setManualMode(false)}
+            className="w-full text-sm underline text-muted-foreground"
+          >
+            改用掃描
           </button>
         </div>
       ) : (
-        <button
-          onClick={() => setManualMode(true)}
-          className="text-sm underline mt-2 text-gray-500 hover:text-gray-700"
-        >
-          掃不到？手動輸入螢幕上的短碼
-        </button>
+        <>
+          {/* ★ playsInline muted 是 iOS 內嵌播放的必要屬性（缺了黑屏） */}
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            style={{ width: '100%', borderRadius: 8, background: '#000' }}
+          />
+          <div className="text-center text-sm text-muted-foreground mt-2">{status}</div>
+          <button
+            onClick={() => setManualMode(true)}
+            className="w-full text-sm underline text-muted-foreground mt-2"
+          >
+            掃不到？手動輸入短碼
+          </button>
+        </>
       )}
-    </>
+    </div>
   )
 }
