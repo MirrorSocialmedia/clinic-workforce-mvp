@@ -62,6 +62,7 @@ export async function GET(req: NextRequest) {
           where: { isActive: true },
           orderBy: { effectiveFrom: 'desc' },
           take: 1,
+          select: { payType: true },
         },
       },
       orderBy: { createdAt: 'desc' },

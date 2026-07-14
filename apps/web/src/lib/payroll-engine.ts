@@ -899,6 +899,7 @@ export interface PayRuleConfigModular {
       multiplier?: number
       threshold?: number
       hours_per_leave_day?: number  // 預設 8
+      ot_min_minutes?: number       // 每日OT最低分鐘（0=不限）
     }
     late_policy?: {
       deduct_salary?: boolean
@@ -1097,6 +1098,26 @@ export async function calculateTimeBank(
   const monthStart = new Date(year, month, 1)
   const monthEnd = new Date(year, month + 1, 0, 23, 59, 59)
 
+  // Get OT minimum threshold from payRule
+  let otMinMinutes = 0
+  try {
+    const rule = await db.payRule.findFirst({
+      where: {
+        employeeId,
+        isActive: true,
+        effectiveFrom: { lte: monthEnd },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
+      },
+      orderBy: { effectiveFrom: 'desc' },
+    })
+    if (rule?.configJson) {
+      const cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
+      otMinMinutes = cfg?.modifiers?.overtime?.ot_min_minutes ?? 0
+    }
+  } catch {
+    otMinMinutes = 0
+  }
+
   // Previous month carry — recursive backfill
   const carriedFrom = await getCarriedFrom(employeeId, monthDate, db)
 
@@ -1142,9 +1163,12 @@ export async function calculateTimeBank(
     if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
       earlyLeaveMinutes += Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
     }
-    // OT — use effectiveTime
+    // OT — use effectiveTime with per-day threshold
     if (clockOut && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
-      otMinutes += Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
+      const dayOt = Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
+      if (dayOt > 0 && dayOt >= otMinMinutes) {
+        otMinutes += dayOt  // ≥門檻全數計；逐日判定
+      }
     }
   }
 

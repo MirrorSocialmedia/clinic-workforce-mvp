@@ -18,11 +18,13 @@ import { Card } from '@/components/ui/card'
 // ============================================================
 type ViewMode = 'week' | 'month'
 type ChangeType = 'SWAP' | 'COVER' | 'REPORT'
+type OvScope = { type: 'all' } | { type: 'company'; id: string; name: string } | { type: 'clinic'; id: string; name: string }
 
 interface Employee {
   id: string
   user: { id: string; name: string; phone?: string }
   clinics: { clinic: { id: string; name: string } }[]
+  payRules?: { payType: string }[]
   status: string
 }
 
@@ -30,6 +32,7 @@ interface Clinic {
   id: string
   name: string
   shortName?: string | null
+  company?: { id: string; name: string } | null
 }
 
 type LabelPart = 'clinic' | 'shift' | 'name'
@@ -141,6 +144,9 @@ export default function SchedulingPage() {
   const [userRole, setUserRole] = useState<string>('')
   const [userId, setUserId] = useState<string>('')
   const [loading, setLoading] = useState(true)
+
+  // Step 7: Overview scope
+  const [ovScope, setOvScope] = useState<OvScope>({ type: 'all' })
 
   // UI State
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
@@ -376,11 +382,47 @@ function getShiftColor(shift: Shift): string {
 
   // Filter employees by selected clinic (needed by Draggable effect)
   const clinicEmployees = useMemo(() => {
-    if (!selectedClinicId) return []
+    if (!selectedClinicId) return employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
     return employees.filter(emp =>
+      (emp.status === 'ACTIVE' || emp.status === undefined) &&
       emp.clinics.some(ec => ec.clinic.id === selectedClinicId)
     )
   }, [employees, selectedClinicId])
+
+  // Step 5: Group clinics by company
+  const companyGroups = useMemo(() => {
+    const map = new Map<string, { name: string; companyId: string; clinics: Clinic[] }>()
+    for (const c of clinics) {
+      const key = c.company?.id ?? '_none'
+      if (!map.has(key)) map.set(key, { name: c.company?.name ?? '未分組', companyId: key, clinics: [] })
+      map.get(key)!.clinics.push(c)
+    }
+    return [...map.values()]
+  }, [clinics])
+
+  // Step 7: Scope clinic IDs
+  const scopeClinicIds = useMemo(() => {
+    if (ovScope.type === 'all') return null
+    if (ovScope.type === 'company') return new Set(clinics.filter(c => c.company?.id === ovScope.id).map(c => c.id))
+    return new Set([ovScope.id])
+  }, [ovScope, clinics])
+
+  // Step 7: Overview employees (filtered by scope)
+  const ovEmployees = useMemo(() => {
+    const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
+    if (!scopeClinicIds) return activeEmployees
+    return activeEmployees.filter(e => e.clinics?.some((ec: any) => scopeClinicIds.has(ec.clinic?.id)))
+  }, [employees, scopeClinicIds])
+
+  // Step 7: Overview shifts (filtered by scope)
+  const ovShifts = useMemo(() => {
+    if (!scopeClinicIds) return shifts
+    return shifts.filter(s => scopeClinicIds.has(s.clinicId))
+  }, [shifts, scopeClinicIds])
+
+  // Step 6: Split by pay type
+  const fullTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType !== 'HOURLY')
+  const partTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType === 'HOURLY')
 
   // Register FC Draggable on employee panel (drag employees)
   useEffect(() => {
@@ -1546,7 +1588,7 @@ function getShiftColor(shift: Shift): string {
         alignItems: 'start',
       }}>
 
-        {/* LEFTMOST: Clinic Sidebar (replaces dropdown) */}
+        {/* LEFTMOST: Clinic Sidebar grouped by Company */}
         <div style={{
           width: '130px',
           flexShrink: 0,
@@ -1562,29 +1604,44 @@ function getShiftColor(shift: Shift): string {
           <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6, textAlign: 'center' }}>
             店舖
           </div>
-          {clinics.map(c => (
-            <button
-              key={c.id}
-              onClick={() => setSelectedClinicId(c.id)}
-              style={{
-                width: '100%', textAlign: 'left', padding: '6px 8px', marginBottom: 4,
-                borderRadius: 6, fontSize: 12, cursor: 'pointer',
-                border: selectedClinicId === c.id ? '2px solid #1a1a2e' : '1px solid transparent',
-                background: selectedClinicId === c.id ? '#1a1a2e' : '#f0f0f0',
-                color: selectedClinicId === c.id ? '#fff' : '#333',
-                fontWeight: selectedClinicId === c.id ? 600 : 400,
-                transition: 'all 0.15s',
-              }}
-            >
-              <div>{c.name}</div>
-              <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>
-                本週 {weekShiftCountByClinic[c.id] ?? 0} 更
+          {companyGroups.map(g => (
+            <div key={g.companyId} style={{ marginBottom: 8 }}>
+              <div
+                style={{
+                  fontSize: 11, fontWeight: 700, textAlign: 'center', padding: '3px 4px',
+                  borderBottom: '1px solid #ddd', marginBottom: 4, cursor: 'pointer',
+                  borderRadius: 4,
+                }}
+                onClick={() => setOvScope({ type: 'company', id: g.companyId, name: g.name })}
+                title="點擊切總覽範圍到這家公司"
+              >
+                {g.name}
               </div>
-            </button>
+              {g.clinics.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => { setSelectedClinicId(c.id); setOvScope({ type: 'clinic', id: c.id, name: c.name }) }}
+                  style={{
+                    width: '100%', textAlign: 'left', padding: '5px 6px', marginBottom: 2,
+                    borderRadius: 4, fontSize: 11, cursor: 'pointer',
+                    border: selectedClinicId === c.id ? '2px solid #1a1a2e' : '1px solid transparent',
+                    background: selectedClinicId === c.id ? '#1a1a2e' : '#f0f0f0',
+                    color: selectedClinicId === c.id ? '#fff' : '#333',
+                    fontWeight: selectedClinicId === c.id ? 600 : 400,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <div style={{ fontSize: 11 }}>{c.name}</div>
+                  <div style={{ fontSize: 10, opacity: 0.7, marginTop: 1 }}>
+                    本週 {weekShiftCountByClinic[c.id] ?? 0} 更
+                  </div>
+                </button>
+              ))}
+            </div>
           ))}
         </div>
 
-        {/* COLUMN 2: Employees (clickable + draggable) */}
+        {/* COLUMN 2: Employees split by pay type */}
         <div style={{
           background: '#fafbfc',
           borderRadius: 8,
@@ -1593,11 +1650,12 @@ function getShiftColor(shift: Shift): string {
           maxHeight: 600,
           overflowY: 'auto',
         }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6, textAlign: 'center' }}>
-            員工
+          {/* Full-time */}
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center' }}>
+            全職
           </div>
           <div ref={employeePanelRef}>
-            {clinicEmployees.map(emp => (
+            {fullTimeEmps.map(emp => (
               <div
                 key={emp.id}
                 className="employee-card"
@@ -1633,6 +1691,50 @@ function getShiftColor(shift: Shift): string {
               </div>
             ))}
           </div>
+
+          {/* Part-time */}
+          {partTimeEmps.length > 0 && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center', marginTop: 8 }}>
+                兼職
+              </div>
+              {partTimeEmps.map(emp => (
+                <div
+                  key={emp.id}
+                  className="employee-card"
+                  data-employee-id={emp.id}
+                  data-name={emp.user?.name ?? ''}
+                  onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                  draggable={canManage}
+                  onDragStart={(e) => {
+                    if (canManage) {
+                      e.dataTransfer.setData('text/plain', emp.id)
+                      setSelectedEmployeeId(emp.id)
+                    }
+                  }}
+                  style={{
+                    padding: '5px 4px',
+                    marginBottom: 4,
+                    borderRadius: 6,
+                    fontSize: 11,
+                    textAlign: 'center',
+                    cursor: canManage ? 'grab' : 'pointer',
+                    background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                    color: selectedEmployeeId === emp.id ? '#333' : '#fff',
+                    border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                    transition: 'all 0.15s',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    userSelect: 'none',
+                  }}
+                  title={emp.user?.name ?? ''}
+                >
+                  {emp.user?.name ?? '?'}
+                </div>
+              ))}
+            </>
+          )}
           {/* Clear weekly shifts + leave button */}
           {selectedEmployeeId && canManage && (
             <button
@@ -1777,7 +1879,7 @@ function getShiftColor(shift: Shift): string {
         {/* RIGHT COLUMN: Overview + Calendar */}
         <div id="fc-section" style={{ minWidth: 0, flex: 1 }}>
           {/* Overview Grid — compact mode, always shown */}
-          {viewMode === 'week' && viewRange && allEmployees.length > 0 && (
+          {viewMode === 'week' && viewRange && ovEmployees.length > 0 && (
             <div ref={overviewRef} className="ov-compact" style={{
               marginBottom: 12,
               border: '1px solid #e5e7eb',
@@ -1786,7 +1888,15 @@ function getShiftColor(shift: Shift): string {
               background: '#fafbfc',
             }}>
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span>📊 全局總覽（所有診所）</span>
+                <div className="flex items-center gap-3">
+                  <span>📊 全局總覽（{ovScope.type === 'all' ? '所有診所' : ovScope.name}）</span>
+                  {ovScope.type !== 'all' && (
+                    <button onClick={() => setOvScope({ type: 'all' })}
+                      style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>
+                      全部
+                    </button>
+                  )}
+                </div>
                 <div style={{ fontSize: 11, fontWeight: 400, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span>膠囊顯示：</span>
                   {([['clinic','店鋪'],['shift','更次'],['name','姓名']] as const).map(([k, label]) => (
@@ -1815,7 +1925,7 @@ function getShiftColor(shift: Shift): string {
                   </tr>
                 </thead>
                 <tbody>
-                  {allEmployees.map(emp => (
+                  {ovEmployees.map(emp => (
                     <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{
                         position: 'sticky', left: 0,
@@ -1824,7 +1934,7 @@ function getShiftColor(shift: Shift): string {
                         fontWeight: 500, fontSize: 11,
                       }}>{emp.user?.name ?? '?'}</td>
                       {weekDays.map((wd, dayIdx) => {
-                        const empShiftsOnDay = shifts.filter(s =>
+                        const empShiftsOnDay = ovShifts.filter(s =>
                           s.employeeId === emp.id &&
                           toHKDateStr(new Date(s.date)) === wd.dateStr
                         )

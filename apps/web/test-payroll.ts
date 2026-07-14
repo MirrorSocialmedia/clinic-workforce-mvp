@@ -44,6 +44,35 @@ const SCENARIO = {
 }
 // ╚═══════════════ ★★★ 改到這裡 ★★★ ═══════════════╝
 
+// ╔═══════════════ ★★★ S17: OT 最低門檻測試 ★★★ ════════════════╗
+const SCENARIO_S17 = {
+  month: '2026-07',
+  monthlySalary: 15000,
+  clinicName: '銅鑼灣診所',
+  otMinMinutes: 15,  // 低於15分鐘的OT不計
+
+  rule: {
+    attendanceBonus: 0,
+    cancelBonusIfLateOver: 30,
+    cancelBonusIfAbsent: false,
+    otHoursPerLeaveDay: 9,
+    restDays: [6, 0],
+    mpfEnabled: false,
+    mpfRate: 0.05,
+  },
+
+  // 每天：shift 排班、in/out 打卡（null=沒打）
+  days: [
+    { date: '2026-07-01', shift: ['09:00','18:00'], in: '09:00', out: '18:10' }, // OT 10 → 不計(<15)
+    { date: '2026-07-02', shift: ['09:00','18:00'], in: '09:00', out: '18:20' }, // OT 20 → 全數計(≥15)
+    { date: '2026-07-03', shift: ['09:00','18:00'], in: '09:00', out: '18:14' }, // OT 14 → 不計(<15)
+    { date: '2026-07-06', shift: ['09:00','18:00'], in: '09:00', out: '18:30' }, // OT 30 → 全數計(≥15)
+  ],
+  // 預期：OT=50(20+30)、遲到=0、早退=0
+  // 時間帳戶 = 50
+}
+// ╚═══════════════ ★★★ S17 改到這裡 ★★★ ═══════════════╝
+
 function dt(date: string, time: string): Date {
   return new Date(`${date}T${time}:00+08:00`)
 }

@@ -202,7 +202,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // OT 偵測：下班晚於排班結束 (use effectiveTime)
+  // Batch query OT thresholds from payRules (avoids N+1)
+  const uniquePunchEmpIds = [...new Set(effectivePunches.map(ep => ep.raw.employeeId))]
+  const rules = await prisma.payRule.findMany({
+    where: {
+      employeeId: { in: uniquePunchEmpIds },
+      isActive: true,
+      effectiveFrom: { lte: monthEnd },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
+    },
+    orderBy: { effectiveFrom: 'desc' },
+  })
+  const otMinByEmp = new Map<string, number>()
+  for (const r of rules) {
+    if (otMinByEmp.has(r.employeeId)) continue
+    try {
+      const cfg = JSON.parse(r.configJson as any)
+      otMinByEmp.set(r.employeeId, cfg?.modifiers?.overtime?.ot_min_minutes ?? 0)
+    } catch {
+      otMinByEmp.set(r.employeeId, 0)
+    }
+  }
+
+  // OT 偵測：下班晚於排班結束 (use effectiveTime) — with per-day threshold
   for (const ep of clockOuts) {
     const punchDateStr = toHKDateStr(ep.effectiveTime)
     const matchingShift = shifts.find(
@@ -215,7 +237,8 @@ export async function GET(req: NextRequest) {
       const shiftEnd = new Date(matchingShift.endTime)
       if (ep.effectiveTime.getTime() > shiftEnd.getTime()) {
         const otMins = Math.floor((ep.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
-        if (otMins > 0) {
+        const minReq = otMinByEmp.get(ep.raw.employeeId) ?? 0
+        if (otMins > 0 && otMins >= minReq) {
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
             clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),

@@ -41,6 +41,7 @@ const DEFAULT_MODIFIERS: PayRuleConfigModular['modifiers'] = {
     mode: 'time_off',
     multiplier: 1.5,
     threshold: 8,
+    ot_min_minutes: 0,
   },
   late_policy: {
     deduct_salary: false,
@@ -790,6 +791,30 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                     min="0"
                     style={{ width: 80 }}
                   />
+                </div>
+                <div className="form-group" style={{ marginTop: 8 }}>
+                  <label>OT 最低分鐘（每日未滿不計，0 = 不限）</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={modifiers.overtime.ot_min_minutes ?? 0}
+                    onChange={(e) => {
+                      setConfig((prev) => ({
+                        ...prev,
+                        modifiers: {
+                          ...prev.modifiers!,
+                          overtime: {
+                            ...prev.modifiers!.overtime!,
+                            ot_min_minutes: parseInt(e.target.value) || 0,
+                          },
+                        },
+                      }))
+                    }}
+                    style={{ width: 80 }}
+                  />
+                  <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
+                    例：設 15 → 當日 OT 14 分鐘不計、20 分鐘全數計 20 分
+                  </p>
                 </div>
               </div>
             )}

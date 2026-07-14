@@ -86,6 +86,15 @@ enum LeaveStatus {
   REJECTED
 }
 
+// Company entity — parent of clinics
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  clinics   Clinic[]
+}
+
 // Clinic entity
 model Clinic {
   id        String   @id @default(cuid())
@@ -95,6 +104,9 @@ model Clinic {
   config    String?  // JSON string for SQLite compat
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
 
   users     UserClinic[]
   employees EmployeeClinic[]

@@ -35,6 +35,12 @@ export const CONFIG = {
     // Self routes
     'GET /api/me': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
+    // Company routes
+    'GET /api/companies': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/companies': ['OWNER'],
+    'PUT /api/companies/:id': ['OWNER'],
+    'DELETE /api/companies/:id': ['OWNER'],
+
     // Clinic routes
     'GET /api/clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/clinics/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],

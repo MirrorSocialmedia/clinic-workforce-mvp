@@ -10,7 +10,10 @@ export async function GET(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
-  const clinics = await prisma.clinic.findMany({ orderBy: { createdAt: 'asc' } })
+  const clinics = await prisma.clinic.findMany({ 
+    orderBy: { createdAt: 'asc' },
+    include: { company: { select: { id: true, name: true } } },
+  })
 
   if (scope !== 'all') {
     const filtered = clinics.filter((c: any) => session.clinics.includes(c.id))
@@ -34,10 +37,13 @@ export async function POST(req: NextRequest) {
 
   return runWithAudit(auditCtx, async () => {
     try {
-      const { name, address, config, shortName } = await req.json()
+      const { name, address, config, shortName, companyId } = await req.json()
 
       if (!name) {
         return NextResponse.json({ error: 'Name is required' }, { status: 400 })
+      }
+      if (!companyId) {
+        return NextResponse.json({ error: 'companyId is required' }, { status: 400 })
       }
 
       const clinic = await prisma.clinic.create({
@@ -46,6 +52,7 @@ export async function POST(req: NextRequest) {
           shortName: shortName || null,
           address: address || null,
           config: config ? JSON.stringify(config) : null,
+          companyId,
         },
       })
 
