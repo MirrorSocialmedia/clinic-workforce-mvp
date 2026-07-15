@@ -459,7 +459,17 @@ function getShiftColor(shift: Shift): string {
 
   // Register FC Draggable on leave panel
   useEffect(() => {
+    console.log('🔬A: Draggable effect 執行, leaveTypes.length=', leaveTypes?.length, 'viewMode=', viewMode)
     if (!leavePanelRef.current) return
+
+    // 🔬B: pointerdown probe on leave panel container
+    const probe = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null
+      const hit = target ? target.closest('.leave-card') : null
+      console.log('🔬B: 容器 pointerdown, hit.leave-card =', !!hit, target?.tagName)
+    }
+    leavePanelRef.current?.addEventListener('pointerdown', probe)
+
     const d = new Draggable(leavePanelRef.current, {
       itemSelector: '.leave-card',
       eventData: (el: HTMLElement) => ({
@@ -472,8 +482,11 @@ function getShiftColor(shift: Shift): string {
         borderColor: '#4a4a4a',
       }),
     })
-    return () => d.destroy()
-  }, [leaveTypes, viewMode])
+    return () => {
+      leavePanelRef.current?.removeEventListener('pointerdown', probe)
+      d.destroy()
+    }
+  }, [leaveTypes.length, viewMode])
 
   // ============================================================
   // Load shifts for current view (all clinics, no clinicId filter)
@@ -2128,6 +2141,7 @@ function getShiftColor(shift: Shift): string {
               events={fcEvents}
               droppable={canManage}
               eventReceive={async (info) => {
+                console.log('🔬E: eventReceive fired', info.event.extendedProps)
                 info.event.remove()
                 const props = info.event.extendedProps
                 const date = toHKDateStr(info.event.start!)

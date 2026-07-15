@@ -319,7 +319,7 @@ export default function NewPayrollPage() {
             )}
 
             <div className="overflow-x-auto mt-3">
-              <table className="w-full border-collapse text-xs" style={{ minWidth: 960 }}>
+              <table className="w-full border-collapse text-xs">
                 <thead>
                   <tr className="border-b-2 border-blue-200">
                     <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">員工</th>
@@ -345,7 +345,7 @@ export default function NewPayrollPage() {
                       ) : (
                         <>
                           <td className="px-2 py-1.5">{item.employeeName}</td>
-                          <td className="px-2 py-1.5">{item.payType}</td>
+                          <td className="px-2 py-1.5">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</td>
                           <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{item.workedHours}</td>
                           <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{item.otHours}</td>
                           <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">HK${(item.basePay || 0).toLocaleString()}</td>
@@ -359,7 +359,7 @@ export default function NewPayrollPage() {
                                   min={0}
                                   value={storeBonuses[item.employeeId] ?? ''}
                                   onChange={e => setStoreBonuses(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
-                                  className="w-24 text-right px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                                  className="w-20 text-right px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                                 />
                               ) : (
                                 <span className="text-muted-foreground">—</span>
