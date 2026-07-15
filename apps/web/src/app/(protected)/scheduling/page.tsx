@@ -459,8 +459,8 @@ function getShiftColor(shift: Shift): string {
 
   // Register FC Draggable on leave panel
   useEffect(() => {
-    console.log('🔬A: Draggable effect 執行, leaveTypes.length=', leaveTypes?.length, 'viewMode=', viewMode)
-    if (!leavePanelRef.current) return
+    if (!leavePanelRef.current) { console.log('🔬A: ref=null 未註冊, len=', leaveTypes.length); return }
+    console.log('🔬A: 已註冊 ✓ 於', leavePanelRef.current)
 
     // 🔬B: pointerdown probe on leave panel container
     const probe = (e: PointerEvent) => {
@@ -1855,9 +1855,10 @@ function getShiftColor(shift: Shift): string {
             ))}
           </div>
 
-          {/* Leave types */}
-          {leaveTypes.length > 0 && (
-            <div ref={leavePanelRef} style={{ marginTop: 10 }}>
+          {/* Leave types — container always exists so ref is never null */}
+          <div ref={leavePanelRef} style={{ marginTop: 10 }}>
+            {leaveTypes.length > 0 && (
+              <>
               <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
                 假期
               </div>
@@ -1899,8 +1900,9 @@ function getShiftColor(shift: Shift): string {
                   </div>
                 )
               })}
-            </div>
-          )}
+              </>
+            )}
+          </div>
         </div>
 
         {/* RIGHT COLUMN: Overview + Calendar */}
