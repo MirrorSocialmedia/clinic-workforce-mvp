@@ -379,7 +379,7 @@ function getShiftColor(shift: Shift): string {
       }),
     })
     return () => d.destroy()
-  }, [templates, viewMode])
+  }, [templates.length, viewMode])
 
   // Filter employees by selected clinic (needed by Draggable effect)
   const clinicEmployees = useMemo(() => {
