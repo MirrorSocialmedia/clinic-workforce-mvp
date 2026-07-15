@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
+import { toHKDateStr } from '@/lib/hk-date'
 
 interface Clinic {
   id: string
@@ -16,9 +17,9 @@ export default function NewPayrollPage() {
   const [clinics, setClinics] = useState<Clinic[]>([])
   const [selectedClinic, setSelectedClinic] = useState<string>('')
   const [periodMonth, setPeriodMonth] = useState(() => {
-    const now = new Date()
-    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-    return `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`
+    const ym = toHKDateStr(new Date()).slice(0, 7)
+    const [y, m] = ym.split('-').map(Number)
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
   })
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -194,7 +195,7 @@ export default function NewPayrollPage() {
   if (userRole && userRole !== 'OWNER') return null
 
   return (
-    <div className="p-6" style={{ maxWidth: '800px' }}>
+    <div className="p-6" style={{ maxWidth: '1400px' }}>
       <BackButton to="/payroll" label="返回計糧" />
       <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>+ 生成計糧</h1>
 
@@ -318,7 +319,7 @@ export default function NewPayrollPage() {
             )}
 
             <div className="overflow-x-auto mt-3">
-              <table className="w-full border-collapse text-xs">
+              <table className="w-full border-collapse text-xs" style={{ minWidth: 960 }}>
                 <thead>
                   <tr className="border-b-2 border-blue-200">
                     <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">員工</th>
@@ -345,11 +346,11 @@ export default function NewPayrollPage() {
                         <>
                           <td className="px-2 py-1.5">{item.employeeName}</td>
                           <td className="px-2 py-1.5">{item.payType}</td>
-                          <td className="px-2 py-1.5 text-right font-mono">{item.workedHours}</td>
-                          <td className="px-2 py-1.5 text-right font-mono">{item.otHours}</td>
-                          <td className="px-2 py-1.5 text-right font-mono">HK${(item.basePay || 0).toLocaleString()}</td>
-                          <td className="px-2 py-1.5 text-right font-mono">HK${(item.otPay || 0).toLocaleString()}</td>
-                          <td className="px-2 py-1.5 text-right font-mono">-HK${(item.deduction || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{item.workedHours}</td>
+                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{item.otHours}</td>
+                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">HK${(item.basePay || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">HK${(item.otPay || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">-HK${(item.deduction || 0).toLocaleString()}</td>
                           {selectedClinic && (
                             <td className="px-2 py-1.5 text-right">
                               {item.payType === 'MONTHLY' ? (
@@ -365,7 +366,7 @@ export default function NewPayrollPage() {
                               )}
                             </td>
                           )}
-                          <td className="px-2 py-1.5 text-right font-semibold font-mono">
+                          <td className="px-2 py-1.5 text-right font-semibold font-mono whitespace-nowrap">
                             HK${(item.totalPayable || 0).toLocaleString()}
                           </td>
                         </>
