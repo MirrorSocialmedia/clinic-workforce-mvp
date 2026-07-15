@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
-import { fmtTime, toHKDateStr } from '@/lib/hk-date'
+import { useEffect, useState, useCallback } from 'react'
+import { fmtTime, toHKDateStr, addDays, hkDayOfWeek } from '@/lib/hk-date'
 
 /* ─────────── Company Overview Table (read-only) ─────────── */
 function CompanyOverviewTable({
@@ -32,7 +32,7 @@ function CompanyOverviewTable({
     <div style={{ pointerEvents: 'none' }}>
       <div className="overflow-x-auto -mx-2">
         <table style={{
-          borderCollapse: 'collapse', fontSize: 11, minWidth: 600, width: '100%',
+          borderCollapse: 'collapse', fontSize: 11, minWidth: 720, width: '100%',
         }}>
           <thead>
             <tr>
@@ -119,17 +119,14 @@ export default function MySchedulePage() {
   // Current user ID for highlighting own row in overview
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
-  // Week start for company overview (monday of the current week)
-  const weekStart = useMemo(() => {
-    const [y, m] = month.split('-').map(Number)
-    const firstOfMonth = new Date(y, m - 1, 1)  // tz-ok: client-side browser
-    const dayOfWeek = firstOfMonth.getDay()  // tz-ok: client-side browser
-    // Find the Monday of the week containing the 1st of month
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-    const monday = new Date(firstOfMonth)
-    monday.setDate(monday.getDate() + mondayOffset)  // tz-ok: client-side browser
-    return toHKDateStr(monday)
-  }, [month])
+  // Week start for company overview: defaults to "this week" Monday (HK perspective)
+  const mondayOf = (d: Date) => {
+    const dow = hkDayOfWeek(d)
+    const offset = dow === 0 ? -6 : 1 - dow
+    const base = toHKDateStr(d)
+    return addDays(base, offset)
+  }
+  const [ovWeekStart, setOvWeekStart] = useState(() => mondayOf(new Date()))
 
   // Fetch current user
   useEffect(() => {
@@ -221,12 +218,18 @@ export default function MySchedulePage() {
 
       {/* ─── Company Overview (read-only) ─── */}
       <div className="card mb-3" style={{ overflow: 'visible' }}>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-semibold text-gray-700">🏢 公司全局總覽</span>
+        <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-700">🏢 公司全局總覽</span>
+            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, -7))} title="上一週">‹</button>
+            <span className="text-xs text-muted-foreground">{ovWeekStart} 起</span>
+            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, 7))} title="下一週">›</button>
+            <button className="text-xs underline text-muted-foreground hover:text-gray-700" onClick={() => setOvWeekStart(mondayOf(new Date()))}>本週</button>
+          </div>
           <span className="text-xs text-muted-foreground">唯讀</span>
         </div>
         {currentUserId && (
-          <CompanyOverviewTable weekStart={weekStart} currentUserId={currentUserId} />
+          <CompanyOverviewTable weekStart={ovWeekStart} currentUserId={currentUserId} />
         )}
       </div>
 
