@@ -233,17 +233,66 @@ export default function SchedulingPage() {
     return () => window.removeEventListener('pointerup', clear)
   }, [])
 
-  const leavePanelRef = useRef<HTMLDivElement>(null)
+  // Set compact slot height after calendar mounts
   useEffect(() => {
-    // Set compact slot height after calendar mounts
     const cal = calendarRef.current?.getApi()
     if (cal) {
       cal.option('slotHeight', 36)
     }
   }, [])
 
-  const templatePanelRef = useRef<HTMLDivElement>(null)
-  const employeePanelRef = useRef<HTMLDivElement>(null)
+  // === Callback refs for Draggable registration (no useEffect deps) ===
+  const leaveDraggableRef = useRef<Draggable | null>(null)
+  const attachLeavePanel = useCallback((node: HTMLDivElement | null) => {
+    if (leaveDraggableRef.current) {
+      leaveDraggableRef.current.destroy()
+      leaveDraggableRef.current = null
+    }
+    if (node) {
+      leaveDraggableRef.current = new Draggable(node, {
+        itemSelector: '.leave-card',
+        eventData: (el: HTMLElement) => ({
+          title: el.getAttribute('data-name') || '假期',
+          extendedProps: {
+            dragType: 'leave',
+            leaveTypeId: el.getAttribute('data-leave-id'),
+          },
+          backgroundColor: '#4a4a4a',
+          borderColor: '#4a4a4a',
+        }),
+      })
+    }
+  }, [])
+
+  const templateDraggableRef = useRef<Draggable | null>(null)
+  const attachTemplatePanel = useCallback((node: HTMLDivElement | null) => {
+    templateDraggableRef.current?.destroy()
+    templateDraggableRef.current = null
+    if (node) {
+      templateDraggableRef.current = new Draggable(node, {
+        itemSelector: '.template-card',
+        eventData: (el: HTMLElement) => ({
+          title: el.getAttribute('data-name') || '',
+          extendedProps: { dragType: 'shift', templateId: el.getAttribute('data-template-id') },
+        }),
+      })
+    }
+  }, [])
+
+  const employeeDraggableRef = useRef<Draggable | null>(null)
+  const attachEmployeePanel = useCallback((node: HTMLDivElement | null) => {
+    employeeDraggableRef.current?.destroy()
+    employeeDraggableRef.current = null
+    if (node) {
+      employeeDraggableRef.current = new Draggable(node, {
+        itemSelector: '.employee-card',
+        eventData: (el: HTMLElement) => ({
+          title: el.getAttribute('data-name') || '',
+          extendedProps: { dragType: 'employee', employeeId: el.getAttribute('data-employee-id') },
+        }),
+      })
+    }
+  }, [])
   const calendarContainerRef = useRef<HTMLDivElement>(null)
   const calendarRef = useRef<any>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
@@ -365,23 +414,7 @@ function getShiftColor(shift: Shift): string {
     loadMonthShifts()
   }, [loadMonthShifts])
 
-  // Register FC Draggable on template panel (drag templates, not employees)
-  useEffect(() => {
-    if (!templatePanelRef.current) return
-    const d = new Draggable(templatePanelRef.current, {
-      itemSelector: '.template-card',
-      eventData: (el: HTMLElement) => ({
-        title: el.getAttribute('data-name') || '',
-        extendedProps: {
-          dragType: 'shift',
-          templateId: el.getAttribute('data-template-id'),
-        },
-      }),
-    })
-    return () => d.destroy()
-  }, [templates.length, viewMode])
-
-  // Filter employees by selected clinic (needed by Draggable effect)
+  // Filter employees by selected clinic
   const clinicEmployees = useMemo(() => {
     const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
     if (empScope === 'all' || !selectedClinicId) return activeEmployees
@@ -425,22 +458,6 @@ function getShiftColor(shift: Shift): string {
   const fullTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType !== 'HOURLY')
   const partTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType === 'HOURLY')
 
-  // Register FC Draggable on employee panel (drag employees)
-  useEffect(() => {
-    if (!employeePanelRef.current) return
-    const d = new Draggable(employeePanelRef.current, {
-      itemSelector: '.employee-card',
-      eventData: (el: HTMLElement) => ({
-        title: el.getAttribute('data-name') || '',
-        extendedProps: {
-          dragType: 'employee',
-          employeeId: el.getAttribute('data-employee-id'),
-        },
-      }),
-    })
-    return () => d.destroy()
-  }, [clinicEmployees, viewMode])
-
   // Load leave types
   useEffect(() => {
     const fetchLeaveTypes = async () => {
@@ -456,37 +473,6 @@ function getShiftColor(shift: Shift): string {
     }
     fetchLeaveTypes()
   }, [])
-
-  // Register FC Draggable on leave panel
-  useEffect(() => {
-    if (!leavePanelRef.current) { console.log('🔬A: ref=null 未註冊, len=', leaveTypes.length); return }
-    console.log('🔬A: 已註冊 ✓ 於', leavePanelRef.current)
-
-    // 🔬B: pointerdown probe on leave panel container
-    const probe = (e: PointerEvent) => {
-      const target = e.target as HTMLElement | null
-      const hit = target ? target.closest('.leave-card') : null
-      console.log('🔬B: 容器 pointerdown, hit.leave-card =', !!hit, target?.tagName)
-    }
-    leavePanelRef.current?.addEventListener('pointerdown', probe)
-
-    const d = new Draggable(leavePanelRef.current, {
-      itemSelector: '.leave-card',
-      eventData: (el: HTMLElement) => ({
-        title: el.getAttribute('data-name') || '假期',
-        extendedProps: {
-          dragType: 'leave',
-          leaveTypeId: el.getAttribute('data-leave-id'),
-        },
-        backgroundColor: '#4a4a4a',
-        borderColor: '#4a4a4a',
-      }),
-    })
-    return () => {
-      leavePanelRef.current?.removeEventListener('pointerdown', probe)
-      d.destroy()
-    }
-  }, [leaveTypes.length, viewMode])
 
   // ============================================================
   // Load shifts for current view (all clinics, no clinicId filter)
@@ -1676,11 +1662,11 @@ function getShiftColor(shift: Shift): string {
               ))}
             </div>
           </div>
-          {/* Full-time */}
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center' }}>
-            全職
-          </div>
-          <div ref={employeePanelRef}>
+          {/* Full-time + Part-time — single container for Draggable callback ref */}
+          <div ref={attachEmployeePanel}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center' }}>
+              全職
+            </div>
             {fullTimeEmps.map(emp => (
               <div
                 key={emp.id}
@@ -1716,51 +1702,51 @@ function getShiftColor(shift: Shift): string {
                 {emp.user?.name ?? '?'}
               </div>
             ))}
-          </div>
 
-          {/* Part-time */}
-          {partTimeEmps.length > 0 && (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center', marginTop: 8 }}>
-                兼職
-              </div>
-              {partTimeEmps.map(emp => (
-                <div
-                  key={emp.id}
-                  className="employee-card"
-                  data-employee-id={emp.id}
-                  data-name={emp.user?.name ?? ''}
-                  onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
-                  draggable={canManage}
-                  onDragStart={(e) => {
-                    if (canManage) {
-                      e.dataTransfer.setData('text/plain', emp.id)
-                      setSelectedEmployeeId(emp.id)
-                    }
-                  }}
-                  style={{
-                    padding: '5px 4px',
-                    marginBottom: 4,
-                    borderRadius: 6,
-                    fontSize: 11,
-                    textAlign: 'center',
-                    cursor: canManage ? 'grab' : 'pointer',
-                    background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
-                    color: selectedEmployeeId === emp.id ? '#333' : '#fff',
-                    border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
-                    transition: 'all 0.15s',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    userSelect: 'none',
-                  }}
-                  title={emp.user?.name ?? ''}
-                >
-                  {emp.user?.name ?? '?'}
+            {/* Part-time */}
+            {partTimeEmps.length > 0 && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center', marginTop: 8 }}>
+                  兼職
                 </div>
-              ))}
-            </>
-          )}
+                {partTimeEmps.map(emp => (
+                  <div
+                    key={emp.id}
+                    className="employee-card"
+                    data-employee-id={emp.id}
+                    data-name={emp.user?.name ?? ''}
+                    onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                    draggable={canManage}
+                    onDragStart={(e) => {
+                      if (canManage) {
+                        e.dataTransfer.setData('text/plain', emp.id)
+                        setSelectedEmployeeId(emp.id)
+                      }
+                    }}
+                    style={{
+                      padding: '5px 4px',
+                      marginBottom: 4,
+                      borderRadius: 6,
+                      fontSize: 11,
+                      textAlign: 'center',
+                      cursor: canManage ? 'grab' : 'pointer',
+                      background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                      color: selectedEmployeeId === emp.id ? '#333' : '#fff',
+                      border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                      transition: 'all 0.15s',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      userSelect: 'none',
+                    }}
+                    title={emp.user?.name ?? ''}
+                  >
+                    {emp.user?.name ?? '?'}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
           {/* Clear weekly shifts + leave button */}
           {selectedEmployeeId && canManage && (
             <button
@@ -1824,7 +1810,7 @@ function getShiftColor(shift: Shift): string {
           <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
             更次
           </div>
-          <div ref={templatePanelRef}>
+          <div ref={attachTemplatePanel}>
             {templates.map(t => (
               <div
                 key={t.id}
@@ -1856,7 +1842,7 @@ function getShiftColor(shift: Shift): string {
           </div>
 
           {/* Leave types — container always exists so ref is never null */}
-          <div ref={leavePanelRef} style={{ marginTop: 10 }}>
+          <div ref={attachLeavePanel} style={{ marginTop: 10 }}>
             {leaveTypes.length > 0 && (
               <>
               <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
