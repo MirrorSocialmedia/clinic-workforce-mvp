@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
@@ -174,15 +175,13 @@ export async function POST(req: NextRequest) {
       }
 
       if (bulkDates && Array.isArray(bulkDates) && bulkDates.length > 0) {
-        const start = new Date(startTime)
-        const end = new Date(endTime)
+        // Extract original HK time-of-day from the provided startTime/endTime
+        const { startTime: origStart, endTime: origEnd } = buildShiftFromInput(date, startTime, endTime)
         for (const d of bulkDates) {
-          // date column: midnight HK for correct calendar display
-          const bulkDate = hkDateStart(d)
-          // startTime/endTime: use frontend ISO directly (correct UTC)
+          const times = buildShiftTimes(d, hkTimeOf(origStart), hkTimeOf(origEnd))
 
-          // Fix #4: check overlap before creating (use bulkDate for date column match)
-          const overlap = await checkShiftOverlap(employeeId, bulkDate, start, end)
+          // Fix #4: check overlap before creating
+          const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
           if (overlap) {
             return NextResponse.json(
               { error: '該員工在此時段已有排班', conflictShiftId: overlap.id, date: d },
@@ -194,9 +193,9 @@ export async function POST(req: NextRequest) {
             data: {
               employeeId,
               clinicId,
-              date: bulkDate,
-              startTime: start,
-              endTime: end,
+              date: times.date,
+              startTime: times.startTime,
+              endTime: times.endTime,
               role: role || null,
               status: status as any,
               templateId: templateId || null,
@@ -212,15 +211,11 @@ export async function POST(req: NextRequest) {
           shifts.push(shift)
         }
       } else {
-        const start = new Date(startTime)
-        const end = new Date(endTime)
         // Parse date as HK midnight to avoid UTC midnight issue
-        const hkDate = hkDateStart(date)
-        // Use frontend ISO strings directly — they already have correct UTC time
-        // No need for toTimeString() which depends on server timezone
+        const times = buildShiftFromInput(date, startTime, endTime)
 
-        // Fix #4: check overlap before creating (use hkDate for date field match)
-        const overlap = await checkShiftOverlap(employeeId, hkDate, start, end)
+        // Fix #4: check overlap before creating
+        const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
         if (overlap) {
           return NextResponse.json(
             { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
@@ -232,9 +227,9 @@ export async function POST(req: NextRequest) {
           data: {
             employeeId,
             clinicId,
-            date: hkDate,
-            startTime: start,
-            endTime: end,
+            date: times.date,
+            startTime: times.startTime,
+            endTime: times.endTime,
             role: role || null,
             status: status as any,
             templateId: templateId || null,

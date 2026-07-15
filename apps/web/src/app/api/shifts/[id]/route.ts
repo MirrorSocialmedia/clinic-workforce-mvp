@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart } from '@/lib/hk-date'
+import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
+import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 
@@ -32,29 +33,23 @@ export async function PUT(
 
     if (body.employeeId !== undefined) updateData.employeeId = body.employeeId
     if (body.clinicId !== undefined) updateData.clinicId = body.clinicId
-    if (body.date !== undefined) {
-      // Parse date-only strings as Hong Kong midnight to avoid UTC midnight issue
-      const d = body.date
-      updateData.date = d.includes('T') || d.includes('Z') ? new Date(d) : hkDateStart(d)
-    }
-    if (body.startTime !== undefined) updateData.startTime = new Date(body.startTime)
-    if (body.endTime !== undefined) updateData.endTime = new Date(body.endTime)
 
-    // FIX: When date changes, rebuild startTime/endTime to preserve time-of-day
-    // so calendar and overview stay in sync (date, startTime, endTime all same day)
-    if (body.date !== undefined && body.date !== existing.date.toISOString().slice(0, 10)) {
-      const fmtTime = (d: Date) => {
-        const h = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', hour12: false }).format(d)
-        const m = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Hong_Kong', minute: '2-digit' }).format(d)
-        return `${h}:${m}`
+    if (body.date !== undefined) {
+      // Date changed — rebuild all three columns via helper
+      // If startTime/endTime also provided (edit modal), use those; otherwise preserve original HK times
+      if (body.startTime !== undefined || body.endTime !== undefined) {
+        const newStart = body.startTime ?? existing.startTime.toISOString()
+        const newEnd = body.endTime ?? existing.endTime.toISOString()
+        Object.assign(updateData, buildShiftFromInput(body.date, newStart, newEnd))
+      } else {
+        Object.assign(updateData, rebuildShiftDate(existing, body.date))
       }
-      const baseDate = updateData.date instanceof Date ? updateData.date.toISOString().slice(0, 10) : updateData.date.slice(0, 10)
-      const newStart = new Date(`${baseDate}T${fmtTime(existing.startTime)}:00+08:00`)
-      const newEnd0 = new Date(`${baseDate}T${fmtTime(existing.endTime)}:00+08:00`)
-      // Overnight shift (end time <= start time) → end day +1
-      const newEnd = newEnd0 <= newStart ? new Date(newEnd0.getTime() + 86400000) : newEnd0
-      updateData.startTime = newStart
-      updateData.endTime = newEnd
+    } else if (body.startTime !== undefined || body.endTime !== undefined) {
+      // Only times changed (no date change) — rebuild via helper
+      const dateStr = toHKDateStr(existing.date)
+      const newStart = body.startTime ?? existing.startTime.toISOString()
+      const newEnd = body.endTime ?? existing.endTime.toISOString()
+      Object.assign(updateData, buildShiftFromInput(dateStr, newStart, newEnd))
     }
 
     if (body.role !== undefined) updateData.role = body.role

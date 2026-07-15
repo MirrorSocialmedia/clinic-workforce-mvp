@@ -29,4 +29,19 @@ check "禁用 setHours" "setHours("
 check "禁用 toISOString slice 當日期鍵" "toISOString().slice(0, 10)\|toISOString().slice(0, 7)"
 check "禁用本機時區日曆運算" "\.getMonth()\|\.getFullYear()\|\.getDate()\|\.getDay()\|setFullYear(\|setDate(\|new Date([a-z_]\+, [a-z_]"
 
+# Positive assertion: shift-write helper must exist and contain required patterns
+assert() {
+  local desc="$1"; shift
+  local hits
+  hits=$(grep -rn "$@" src 2>/dev/null | grep -v '^$' || true)
+  if [ -n "$hits" ]; then
+    echo "✅ $desc"
+  else
+    echo "❌ $desc (pattern not found)"
+    FAIL=1
+  fi
+}
+
+assert "Shift 三欄只准經 shift-write helper 組裝" "startTime: new Date\|date: hkDateStart" "lib/shift-write.ts"
+
 exit $FAIL

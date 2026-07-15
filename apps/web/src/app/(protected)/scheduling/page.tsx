@@ -1857,12 +1857,12 @@ function getShiftColor(shift: Shift): string {
                 return (
                   <div
                     key={lt.id}
-                    className="leave-card"
+                    className={canDragLeave ? 'leave-card' : 'leave-card-disabled'}
                     data-leave-id={lt.id}
                     data-name={lt.name}
-                    onPointerDown={(e) => {
-                      e.stopPropagation()
+                    onPointerDown={() => {
                       draggingLeave.current = { leaveTypeId: lt.id, employeeId: selectedEmployeeId }
+                      // 不加 e.stopPropagation() ——FC Draggable 委託需要事件冒泡
                     }}
                     style={{
                       padding: '6px 4px', margin: '3px 0',
