@@ -489,8 +489,10 @@ async function runS20() {
   // Clean old data
   const monthStart = new Date('2026-07-01T00:00:00+08:00')
   const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" DISABLE TRIGGER USER').catch(() => {})
   await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
   await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" ENABLE TRIGGER USER').catch(() => {})
   await prisma.shift.deleteMany({ where: { employeeId: emp.id } })
   await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
   await prisma.timeBank.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
@@ -559,11 +561,14 @@ async function runS21() {
   // Clean old data
   const monthStart = new Date('2026-07-01T00:00:00+08:00')
   const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" DISABLE TRIGGER USER').catch(() => {})
   await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
   await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" ENABLE TRIGGER USER').catch(() => {})
   await prisma.shift.deleteMany({ where: { employeeId: emp.id } })
   await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
   await prisma.timeBank.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+  await prisma.leaveBalance.deleteMany({ where: { employeeId: emp.id, year: 2026 } }).catch(() => {})
 
   // 初始化 −2 日（−1080 分鐘）
   await prisma.timeBankEntry.create({ data: {
@@ -577,7 +582,7 @@ async function runS21() {
   if (!restType) { console.error('❌ 找不到 REST_DAY 類型'); return }
   await prisma.leaveBalance.create({ data: {
     employeeId: emp.id, leaveTypeId: restType.id, year: 2026,
-    total: 1, used: 0, remaining: 1,
+    entitled: 1, used: 0, remaining: 1,
   } as any})
 
   // 假還鐘 1 天：扣休息日 + 帳戶進 540 分鐘
