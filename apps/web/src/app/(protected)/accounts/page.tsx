@@ -69,6 +69,13 @@ export default function AccountsPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Auto-select homeClinicId = first assigned clinic when none set yet
+  useEffect(() => {
+    if (form.assignEmployee && form.clinicIds.length > 0 && !form.homeClinicId) {
+      setForm(f => ({ ...f, homeClinicId: f.clinicIds[0] }))
+    }
+  }, [form.clinicIds, form.assignEmployee])
+
   const filteredAccounts = accounts.filter(acc => {
     if (search && !acc.name.toLowerCase().includes(search.toLowerCase()) && !acc.phone.includes(search)) return false
     if (roleFilter !== 'all' && acc.role !== roleFilter) return false
