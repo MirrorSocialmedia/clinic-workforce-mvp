@@ -525,6 +525,7 @@ model PayrollItem {
   otPay        Float       @default(0)
   splitPay     Float?      // 拆帳（醫生）
   deduction    Float       @default(0)
+  storeBonus   Float       @default(0) // 店舖營業額獎金（手動輸入，月薪限定）
   totalPayable Float       @default(0)
   detailJson   String?     // JSON string for SQLite compat
   createdAt    DateTime    @default(now())

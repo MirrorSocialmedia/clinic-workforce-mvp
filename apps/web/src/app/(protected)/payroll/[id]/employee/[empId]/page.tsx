@@ -19,6 +19,7 @@ interface PayrollItemData {
   otPay: number
   splitPay: number | null
   deduction: number
+  storeBonus: number
   totalPayable: number
   detailJson: string | null
   run: {
@@ -147,9 +148,10 @@ export default function EmployeePayrollDetailPage() {
   const deduction = salaryDetail.deduction ?? item.deduction
   const dailyWage = salaryDetail.dailyWage ?? (typeof basePay === 'number' && scheduledDays !== '-' ? basePay / Number(scheduledDays) : 0)
   const attendanceBonus = salaryDetail.attendanceBonus ?? detail.attendanceBonus ?? 0
+  const storeBonus = salaryDetail.storeBonus ?? item.storeBonus ?? 0
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
-  const grossPay = salaryDetail.grossPay ?? (basePay - deduction + otPay + ((item.splitPay || 0)) + attendanceBonus + allowances)
+  const grossPay = salaryDetail.grossPay ?? (basePay - deduction + otPay + ((item.splitPay || 0)) + attendanceBonus + storeBonus + allowances)
   const mpf = salaryDetail.mpf ?? 0
   const netPay = salaryDetail.netPay ?? item.totalPayable
 
@@ -414,6 +416,13 @@ export default function EmployeePayrollDetailPage() {
                     <span className="text-green-600">+{fmtCurrency(attendanceBonus)}</span>
                   )}
                 </span>
+              </div>
+            )}
+
+            {storeBonus > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm">店舖獎金</span>
+                <span className="font-mono font-medium text-emerald-600">+{fmtCurrency(storeBonus)}</span>
               </div>
             )}
 

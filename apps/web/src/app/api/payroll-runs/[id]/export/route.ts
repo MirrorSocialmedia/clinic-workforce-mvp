@@ -82,6 +82,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
       '加班費': fmtConf(item.otPay),
       '拆帳': item.splitPay != null ? fmtConf(item.splitPay) : '0.00',
       '扣款': fmtConf(item.deduction),
+      '店舖獎金': fmtConf(item.storeBonus),
       '應付總額': fmtConf(item.totalPayable),
     }
   })
@@ -91,7 +92,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
   ws['!cols'] = [
     { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 },
     { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
+    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 },
   ]
   XLSX.utils.book_append_sheet(wb, ws, '糧單')
 
@@ -104,6 +105,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
     { '項目': '總基本薪資', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.basePay ?? 0), 0).toFixed(2) },
     { '項目': '總加班費', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.otPay ?? 0), 0).toFixed(2) },
     { '項目': '總拆帳', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.splitPay ?? 0), 0).toFixed(2) },
+    { '項目': '總店舖獎金', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.storeBonus ?? 0), 0).toFixed(2) },
     { '項目': '總扣款', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.deduction ?? 0), 0).toFixed(2) },
     { '項目': '應付總額', '值': hasConf ? '含保密員工，僅老闆可見' : visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
   ]
@@ -135,14 +137,15 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner:
       item.leaveDays.toFixed(1), item.absentDays.toFixed(1),
       `$${fmtConfInt(item.basePay)}`, `$${fmtConfInt(item.otPay)}`,
       item.splitPay != null ? `$${fmtConfInt(item.splitPay)}` : '-',
-      `$${fmtConfInt(item.deduction)}`, `$${fmtConfInt(item.totalPayable)}`,
+      `$${fmtConfInt(item.deduction)}`, `$${fmtConfInt(item.storeBonus)}`,
+      `$${fmtConfInt(item.totalPayable)}`,
     ]
   })
 
   // @ts-ignore — jspdf-autotable extends jsPDF
   doc.autoTable({
     startY: 34,
-    head: [['姓名', '診所', '工時', '加班', '請假', '缺勤', '基本', '加班費', '拆帳', '扣款', '應付']],
+    head: [['姓名', '診所', '工時', '加班', '請假', '缺勤', '基本', '加班費', '拆帳', '扣款', '店舖獎金', '應付']],
     body: tableData,
     styles: { fontSize: 8 },
     headStyles: { fillColor: [41, 128, 185] },

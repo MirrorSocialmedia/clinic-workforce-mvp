@@ -383,10 +383,86 @@ async function runS18() {
   console.log(`${bonusCancelled && bonusZero && accountOk && reasonOk ? '✅ S18 PASS' : '❌ S18 FAIL'}`)
 }
 
+// ─── S19: 店舖營業額獎金測試 ───
+async function runS19() {
+  console.log('\n═══ S19: 店舖營業額獎金測試 ═══\n')
+
+  const S = SCENARIO_S18
+  const clinic = await prisma.clinic.findFirst({ where: { name: S.clinicName } })
+  if (!clinic) { console.error(`❌ 找不到診所「${S.clinicName}」`); return }
+
+  let user = await prisma.user.findFirst({ where: { phone: 'TEST_S19' } })
+  if (!user) user = await prisma.user.create({
+    data: { name: 'S19測試員工', phone: 'TEST_S19', password: 'x', role: 'EMPLOYEE' } })
+  let emp = await prisma.employee.findFirst({ where: { userId: user.id } })
+  if (!emp) emp = await prisma.employee.create({ data: { userId: user.id, joinDate: new Date('2025-01-01') } })
+  await prisma.employeeClinic.upsert({
+    where: { employeeId_clinicId: { employeeId: emp.id, clinicId: clinic.id } },
+    update: {}, create: { employeeId: emp.id, clinicId: clinic.id } }).catch(() => {})
+
+  // Clean old data
+  const monthStart = new Date(`${S.month}-01T00:00:00+08:00`)
+  const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" DISABLE TRIGGER USER').catch(() => {})
+  await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
+  await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id, punchTime: { gte: monthStart, lt: monthEnd } } })
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" ENABLE TRIGGER USER').catch(() => {})
+  await prisma.shift.deleteMany({ where: { employeeId: emp.id, date: { gte: monthStart, lt: monthEnd } } })
+  await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id, date: { gte: monthStart, lt: monthEnd } } }).catch(() => {})
+  await prisma.timeBank.deleteMany({ where: { employeeId: emp.id, periodMonth: { gte: monthStart, lt: monthEnd } } }).catch(() => {})
+
+  // Create shifts + punches (normal attendance day)
+  await prisma.shift.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id,
+    date: dt('2026-07-06', '00:00'),
+    startTime: dt('2026-07-06', '09:00'), endTime: dt('2026-07-06', '18:00'),
+    status: 'CONFIRMED', createdBy: user.id } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '09:00'),
+    punchType: 'CLOCK_IN', source: 'QR_DYNAMIC', tokenValid: true } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '18:00'),
+    punchType: 'CLOCK_OUT', source: 'QR_DYNAMIC', tokenValid: true } })
+
+  // Run engine with storeBonus = 1000
+  const config = {
+    base_type: 'monthly',
+    monthly_salary: S.monthlySalary,
+    modifiers: {
+      attendance_bonus: { amount: S.rule.attendanceBonus, cancel_if: {
+        late_minutes_exceed: S.rule.cancelBonusIfLateOver,
+        late_is_cumulative: true, any_unplanned_leave: true,
+        any_absence: S.rule.cancelBonusIfAbsent } },
+      overtime: { mode: 'time_off', hours_per_leave_day: S.rule.otHoursPerLeaveDay },
+      working_days: { basis: 'scheduled', rest_days: S.rule.restDays, count_public_holidays: true },
+      deduction: { basis: 'statutory' },
+      mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
+    },
+  }
+  const result = await calculatePayrollWithRules(emp.id, monthStart, clinic.id, config as any, { storeBonus: 1000 })
+
+  // Results
+  const storeBonus = (result.detail as any)?.storeBonus ?? 0
+  const grossPay = (result.detail as any)?.grossPay ?? 0
+  const mpf = (result.detail as any)?.mpf ?? 0
+  const expectedMpf = Math.round(grossPay * 0.05)
+
+  console.log(`\n─── S19 結果 ───`)
+  console.log(`店舖獎金: $${storeBonus} (預期: $1000)`)
+  console.log(`GrossPay: $${grossPay}`)
+  console.log(`MPF: $${mpf} (預期: $${expectedMpf} = GrossPay × 5%)`)
+
+  // Verify
+  const bonusOk = storeBonus === 1000
+  const mpfOk = mpf === expectedMpf
+  console.log(`${bonusOk && mpfOk ? '✅ S19 PASS' : '❌ S19 FAIL'}`)
+}
+
 async function runAll() {
   try { await main() } catch (e) { console.error('main failed:', e) }
   try { await runS17() } catch (e) { console.error('S17 failed:', e) }
   try { await runS18() } catch (e) { console.error('S18 failed:', e) }
+  try { await runS19() } catch (e) { console.error('S19 failed:', e) }
   console.log('\n═══ 所有測試完成 ═══\n')
   await prisma.$disconnect()
 }

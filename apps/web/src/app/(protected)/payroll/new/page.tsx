@@ -44,6 +44,10 @@ export default function NewPayrollPage() {
   const [showPrecheckModal, setShowPrecheckModal] = useState(false)
   const [precheckWarnings, setPrecheckWarnings] = useState<Array<{ employeeId: string; employeeName: string; error: string }>>([])
 
+  // Store bonus states
+  const [storeBonuses, setStoreBonuses] = useState<Record<string, number>>({})
+  const [fillAll, setFillAll] = useState('')
+
   const fetchClinics = useCallback(async () => {
     try {
       const res = await fetch('/api/clinics')
@@ -133,6 +137,7 @@ export default function NewPayrollPage() {
         body: JSON.stringify({
           periodMonth,
           clinicId: selectedClinic || null,
+          storeBonuses: Object.keys(storeBonuses).length > 0 ? storeBonuses : undefined,
         }),
       })
 
@@ -298,6 +303,36 @@ export default function NewPayrollPage() {
             <div className="mb-2 text-sm g text-muted-foreground">
               員工數: {previewResult.itemCount} | 應付總額: HK${previewResult.totalPayable.toLocaleString()}
             </div>
+
+            {/* Store bonus fill-all control — only for specific clinic */}
+            {selectedClinic && (
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-sm font-semibold text-foreground">店舖獎金：</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={fillAll}
+                  onChange={e => setFillAll(e.target.value)}
+                  placeholder="金額"
+                  className="w-24 px-2 py-1 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const v = parseFloat(fillAll)
+                    if (!isFinite(v) || v < 0) return
+                    setStoreBonuses(Object.fromEntries(
+                      previewResult?.items.filter(i => i.payType === 'MONTHLY').map(i => [i.employeeId, v]) || []
+                    ))
+                  }}
+                  className="px-3 py-1 text-xs rounded-md bg-brand text-white hover:bg-brand-dark transition-colors"
+                >
+                  全部填入同額
+                </button>
+                <span className="text-xs text-muted-foreground">（重新生成需重新輸入店舖獎金）</span>
+              </div>
+            )}
+
             <div className="overflow-x-auto mt-3">
               <table className="w-full border-collapse text-xs">
                 <thead>
@@ -309,6 +344,9 @@ export default function NewPayrollPage() {
                     <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">底薪</th>
                     <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">加班費</th>
                     <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">扣款</th>
+                    {selectedClinic && (
+                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">店舖獎金</th>
+                    )}
                     <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">總額</th>
                   </tr>
                 </thead>
@@ -316,7 +354,7 @@ export default function NewPayrollPage() {
                   {previewResult.items.map((item: any, i: number) => (
                     <tr key={item.employeeId || i} className="border-b border-blue-100 hover:bg-blue-50/30 transition-colors">
                       {item.error ? (
-                        <td colSpan={8} className="px-2 py-1.5 text-destructive">
+                        <td colSpan={selectedClinic ? 9 : 8} className="px-2 py-1.5 text-destructive">
                           {item.employeeName}: {item.error}
                         </td>
                       ) : (
@@ -328,6 +366,21 @@ export default function NewPayrollPage() {
                           <td className="px-2 py-1.5 text-right font-mono">HK${(item.basePay || 0).toLocaleString()}</td>
                           <td className="px-2 py-1.5 text-right font-mono">HK${(item.otPay || 0).toLocaleString()}</td>
                           <td className="px-2 py-1.5 text-right font-mono">-HK${(item.deduction || 0).toLocaleString()}</td>
+                          {selectedClinic && (
+                            <td className="px-2 py-1.5 text-right">
+                              {item.payType === 'MONTHLY' ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={storeBonuses[item.employeeId] ?? ''}
+                                  onChange={e => setStoreBonuses(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
+                                  className="w-24 text-right px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                                />
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+                          )}
                           <td className="px-2 py-1.5 text-right font-semibold font-mono">
                             HK${(item.totalPayable || 0).toLocaleString()}
                           </td>

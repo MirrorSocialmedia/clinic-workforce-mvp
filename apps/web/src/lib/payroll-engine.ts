@@ -625,7 +625,8 @@ function calculateSplit(
 export async function generatePayrollRun(
   clinicId: string | null,
   periodMonth: string,
-  auditCtx?: AuditCtx
+  auditCtx?: AuditCtx,
+  storeBonuses?: Record<string, number> // { employeeId: amount }
 ): Promise<
   | { runId: string; itemCount: number; totalPayable: number }
   | { error: string; runId: string; status: string }
@@ -728,7 +729,9 @@ export async function generatePayrollRun(
             skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
             continue
           }
-          calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config)
+          calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
+            ...(config.base_type !== 'hourly' && storeBonuses?.[emp.id] ? { storeBonus: storeBonuses[emp.id] } : {}),
+          })
         } else {
           // No rule at all → skip with warning
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
@@ -747,6 +750,7 @@ export async function generatePayrollRun(
           otPay: calcResult.otPay,
           splitPay: calcResult.splitPay,
           deduction: calcResult.deduction,
+          storeBonus: (calcResult.detail as any)?.storeBonus ?? 0,
           totalPayable: calcResult.totalPayable,
           detailJson: JSON.stringify(calcResult.detail),
         })
@@ -756,7 +760,7 @@ export async function generatePayrollRun(
           runId: run.id,
           employeeId: emp.id,
           workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
-          basePay: 0, otPay: 0, splitPay: null, deduction: 0, totalPayable: 0,
+          basePay: 0, otPay: 0, splitPay: null, deduction: 0, storeBonus: 0, totalPayable: 0,
           detailJson: JSON.stringify({ error: String(err) }),
         })
       }
@@ -2238,7 +2242,8 @@ export async function calculatePayrollWithRules(
   employeeId: string,
   monthDate: Date,
   clinicId: string | null,
-  config: PayRuleConfigModular
+  config: PayRuleConfigModular,
+  options?: { storeBonus?: number } // 店舖獎金，預設 0；只有月薪路徑會收到
 ): Promise<PayrollResult> {
   // ★ Part-time hourly: bypass all modifier logic entirely
   if (config.base_type === 'hourly') {
@@ -2279,14 +2284,15 @@ export async function calculatePayrollWithRules(
   // 4. Task 5: Apply MPF deduction
   const allowances = mods.allowances || []
   const totalAllowances = allowances.reduce((sum, a) => sum + a.amount, 0)
-  const grossPay = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + result.attendanceBonus + totalAllowances
+  const storeBonus = options?.storeBonus ?? 0
+  const grossPay = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + result.attendanceBonus + storeBonus + totalAllowances
 
   const mpfConfig = mods.mpf || config.mpf || { enabled: false }
   const mpf = calcMPF(grossPay, mpfConfig)
   const netPay = Math.max(0, grossPay - mpf)
 
   result.totalPayable = netPay
-  result.detail = { ...result.detail, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100 }
+  result.detail = { ...result.detail, storeBonus, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100 }
 
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
@@ -2456,6 +2462,7 @@ export function maskIfConfidential(item: any, role: string): any {
     otPay: null,
     splitPay: null,
     deduction: null,
+    storeBonus: null,
     totalPayable: null,
     detailJson: null,
   }
