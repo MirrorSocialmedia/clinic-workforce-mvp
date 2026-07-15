@@ -17,9 +17,8 @@ export default function NewPayrollPage() {
   const [selectedClinic, setSelectedClinic] = useState<string>('')
   const [periodMonth, setPeriodMonth] = useState(() => {
     const now = new Date()
-    // Default to previous month
-    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)  // tz-ok: client-side browser
-    return `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`  // tz-ok: client-side browser
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    return `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`
   })
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,6 +59,35 @@ export default function NewPayrollPage() {
     }
   }, [])
 
+  const runPreview = useCallback(async () => {
+    if (!selectedClinic || !periodMonth) return
+    setPreviewing(true)
+    setError(null)
+    setPreviewResult(null)
+    try {
+      const res = await fetch('/api/payroll-runs/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          periodMonth,
+          clinicId: selectedClinic || null,
+          employeeId: selectedEmployee || null,
+        }),
+      })
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || '試算失敗')
+      }
+      const data = await res.json()
+      setPreviewResult(data)
+    } catch (err: any) {
+      setError(err.message || '試算失敗')
+    } finally {
+      setPreviewing(false)
+    }
+  }, [selectedClinic, periodMonth, selectedEmployee])
+
   useEffect(() => {
     fetchClinics()
     fetch('/api/me').then(async r => {
@@ -84,48 +112,43 @@ export default function NewPayrollPage() {
     }
   }, [userRole, router])
 
+  // Auto-run preview when clinic + month are both selected
+  useEffect(() => {
+    if (selectedClinic && periodMonth) runPreview()
+  }, [selectedClinic, periodMonth, runPreview])
+
   const handleGenerate = async () => {
     if (!periodMonth) {
       setError('請選擇計糧月份')
       return
     }
-
-    // Pre-check: run preview first to detect issues
-    try {
-      const previewRes = await fetch('/api/payroll-runs/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          periodMonth,
-          clinicId: selectedClinic || null,
-        }),
-      })
-
-      if (previewRes.ok) {
-        const previewData = await previewRes.json()
-        const warnings = (previewData.items || []).filter((item: any) => item.error)
-        const skipped = previewData.skipped || []
-        const allWarnings = [...warnings, ...skipped.map((s: any) => ({
-          employeeId: s.employeeId,
-          employeeName: s.name,
-          error: s.reason,
-        }))]
-        if (allWarnings.length > 0) {
-          setPrecheckWarnings(allWarnings)
-          setShowPrecheckModal(true)
-          return
-        }
-      }
-    } catch {
-      // Preview failed — proceed anyway (non-blocking)
+    if (!selectedClinic) {
+      setError('請指定店鋪')
+      return
     }
 
-    // No warnings or preview unavailable: proceed directly
+    // Pre-check: use existing preview to detect issues
+    if (previewResult) {
+      const warnings = (previewResult.items || []).filter((item: any) => item.error)
+      if (warnings.length > 0) {
+        setPrecheckWarnings(warnings.map(w => ({
+          employeeId: w.employeeId,
+          employeeName: w.employeeName,
+          error: w.error || '計算錯誤',
+        })))
+        setShowPrecheckModal(true)
+        return
+      }
+    }
+
     await doGenerate()
   }
 
   const doGenerate = async () => {
+    if (!selectedClinic) {
+      setError('請指定店鋪')
+      return
+    }
     setGenerating(true)
     setError(null)
 
@@ -136,7 +159,7 @@ export default function NewPayrollPage() {
         credentials: 'include',
         body: JSON.stringify({
           periodMonth,
-          clinicId: selectedClinic || null,
+          clinicId: selectedClinic,
           storeBonuses: Object.keys(storeBonuses).length > 0 ? storeBonuses : undefined,
         }),
       })
@@ -168,38 +191,6 @@ export default function NewPayrollPage() {
     await doGenerate()
   }
 
-  const handlePreview = async () => {
-    if (!periodMonth) {
-      setError('請選擇計糧月份')
-      return
-    }
-    setPreviewing(true)
-    setError(null)
-    setPreviewResult(null)
-    try {
-      const res = await fetch('/api/payroll-runs/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          periodMonth,
-          clinicId: selectedClinic || null,
-          employeeId: selectedEmployee || null,
-        }),
-      })
-      if (!res.ok) {
-        const errData = await res.json()
-        throw new Error(errData.error || '試算失敗')
-      }
-      const data = await res.json()
-      setPreviewResult(data)
-    } catch (err: any) {
-      setError(err.message || '試算失敗')
-    } finally {
-      setPreviewing(false)
-    }
-  }
-
   if (userRole && userRole !== 'OWNER') return null
 
   return (
@@ -222,14 +213,14 @@ export default function NewPayrollPage() {
 
         <div style={{ marginBottom: 20 }}>
           <label className="block mb-1.5 font-semibold text-sm text-foreground">
-            診所（留空 = 全部診所）
+            店鋪（必選）
           </label>
           <select
             value={selectedClinic}
             onChange={e => setSelectedClinic(e.target.value)}
             className="w-full px-3 py-2.5 rounded-md g border text-base focus:outline-none focus:ring-2 focus:ring-brand/30"
           >
-            <option value="">全部診所</option>
+            <option value="">選擇店鋪...</option>
             {clinics.map(clinic => (
               <option key={clinic.id} value={clinic.id}>
                 {clinic.name}
@@ -254,22 +245,13 @@ export default function NewPayrollPage() {
           </select>
         </div>
 
-        <div className="flex gap-3">
-          <button
-            onClick={handlePreview}
-            disabled={previewing || !periodMonth}
-            className={`flex-1 py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${previewing || !periodMonth ? 'bg-gray-400 cursor-default' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'}`}
-          >
-            {previewing ? '試算中...' : <span className="flex items-center gap-1"><Search size={16} /> 試算預覽</span>}
-          </button>
-          <button
-            onClick={handleGenerate}
-            disabled={generating || !periodMonth}
-            className={`flex-1 py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${generating || !periodMonth ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}
-          >
-            {generating ? '計算中...' : '生成計糧'}
-          </button>
-        </div>
+        <button
+          onClick={handleGenerate}
+          disabled={generating || !periodMonth || !selectedClinic}
+          className={`w-full py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${generating || !periodMonth || !selectedClinic ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}
+        >
+          {generating ? '計算中...' : '生成計糧'}
+        </button>
 
         {error && (
           <div className="mt-4 p-4 rounded-lg bg-destructive/10 text-destructive text-sm">
@@ -293,11 +275,13 @@ export default function NewPayrollPage() {
           </div>
         )}
 
-        {/* Preview Results */}
+        {/* Preview Results — auto-shown when clinic + month selected */}
         {previewResult && (
           <Card className="mt-4">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">試算結果（未儲存）</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2">
+                {previewing ? '⏳ 試算中...' : '試算結果'}（未儲存）
+              </CardTitle>
             </CardHeader>
             <CardContent>
             <div className="mb-2 text-sm g text-muted-foreground">

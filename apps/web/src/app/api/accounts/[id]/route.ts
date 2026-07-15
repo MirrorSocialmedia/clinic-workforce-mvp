@@ -48,7 +48,7 @@ export async function PUT(
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential } = body
+      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId } = body
 
       const existing = await prisma.user.findUnique({
         where: { id: params.id },
@@ -112,10 +112,18 @@ export async function PUT(
       }
 
       // Update employee if exists (may have just been backfilled above)
-      if (employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined || payConfidential !== undefined)) {
+      if (employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined || payConfidential !== undefined || homeClinicId !== undefined)) {
         const empUpdate: any = {}
         if (employeeStatus !== undefined) empUpdate.status = employeeStatus
         if (payConfidential !== undefined) empUpdate.payConfidential = payConfidential
+        if (homeClinicId !== undefined) {
+          // Validate: homeClinicId must be in assigned clinics or empty string to clear
+          if (homeClinicId === '' || homeClinicId === null) {
+            empUpdate.homeClinicId = null
+          } else if (clinicIds && clinicIds.includes(homeClinicId)) {
+            empUpdate.homeClinicId = homeClinicId
+          }
+        }
 
         await prisma.employee.update({
           where: { id: employee.id },

@@ -17,6 +17,7 @@ interface Account {
   payType: string | null
   baseAmount: number | null
   payConfidential: boolean
+  homeClinicId: string | null
   clinics: Clinic[]
 }
 
@@ -48,6 +49,7 @@ export default function AccountsPage() {
     annualLeave: 12,  // 預設年假額度
     sickLeave: 12,     // 預設病假額度
     employeeId: null as string | null,
+    homeClinicId: '',
   })
 
   const fetchData = useCallback(async () => {
@@ -97,6 +99,7 @@ export default function AccountsPage() {
         payConfidential: form.payConfidential,
         annualLeave: form.assignEmployee ? form.annualLeave : undefined,
         sickLeave: form.assignEmployee ? form.sickLeave : undefined,
+        homeClinicId: form.assignEmployee ? form.homeClinicId || null : undefined,
       }
       if (!editingId && form.password) body.password = form.password
       if (editingId && form.password) body.newPassword = form.password
@@ -110,7 +113,7 @@ export default function AccountsPage() {
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
       clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true,
-      payConfidential: false, annualLeave: 12, sickLeave: 12, employeeId: null })
+      payConfidential: false, annualLeave: 12, sickLeave: 12, employeeId: null, homeClinicId: '' })
     setShowForm(false); setEditingId(null)
   }
 
@@ -120,7 +123,8 @@ export default function AccountsPage() {
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
       baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
       payConfidential: acc.payConfidential || false,
-      annualLeave: 12, sickLeave: 12, employeeId: acc.employeeId })
+      annualLeave: 12, sickLeave: 12, employeeId: acc.employeeId,
+      homeClinicId: acc.homeClinicId || '' })
     setEditingId(acc.id); setShowForm(true)
   }
 
@@ -328,13 +332,36 @@ export default function AccountsPage() {
                       <input type="checkbox" checked={form.clinicIds.includes(c.id)}
                         onChange={e => {
                           const ids = e.target.checked ? [...form.clinicIds, c.id] : form.clinicIds.filter(id => id !== c.id)
-                          setForm({ ...form, clinicIds: ids })
+                          // If unchecking current homeClinic, clear it
+                          const newIds = ids
+                          setForm({ ...form, clinicIds: ids, homeClinicId: (!ids.includes(form.homeClinicId) && form.homeClinicId) ? '' : form.homeClinicId })
                         }} />
                       {c.name}
                     </label>
                   ))}
                 </div>
               </div>
+
+              {/* 長駐店鋪 — only show when employee has assigned clinics */}
+              {form.assignEmployee && form.clinicIds.length > 0 && (
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label>長駐店鋪（計糧歸屬店）</label>
+                  <select
+                    value={form.homeClinicId}
+                    onChange={e => setForm({ ...form, homeClinicId: e.target.value })}
+                    className="w-64 px-3 py-2 rounded-md border text-sm"
+                  >
+                    <option value="">選擇長駐店鋪...</option>
+                    {form.clinicIds.map(cid => {
+                      const clinic = clinics.find(c => c.id === cid)
+                      return <option key={cid} value={cid}>{clinic?.name || cid}</option>
+                    })}
+                  </select>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                    員工只會出現在長駐店鋪的計糧中；借調到其他店打卡，糧單永遠在家店。
+                  </div>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, flexWrap: 'wrap' }}>
               {editingId && form.employeeId && (

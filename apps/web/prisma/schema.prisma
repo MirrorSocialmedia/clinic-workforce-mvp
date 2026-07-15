@@ -115,6 +115,7 @@ model Clinic {
   qrTokens  QRToken[]
   dailyHashes DailyHash[]
   payrollRuns PayrollRun[]
+  homeEmployees Employee[] @relation("HomeClinic")
 }
 
 // User entity — system login account
@@ -161,6 +162,8 @@ model Employee {
   userId    String           @unique
   user      User             @relation(fields: [userId], references: [id])
   clinics   EmployeeClinic[]
+  homeClinicId String?
+  homeClinic Clinic? @relation("HomeClinic", fields: [homeClinicId], references: [id])
   payRules  PayRule[]
   shifts           Shift[]
   punches          PunchRecord[]

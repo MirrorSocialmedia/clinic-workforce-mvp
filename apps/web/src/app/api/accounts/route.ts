@@ -55,6 +55,8 @@ export async function GET(req: NextRequest) {
 
   // Build employeeId → clinics mapping from EmployeeClinic
   const empClinicsMap = new Map(allEmployees.map(e => [e.userId, e.clinics.map(c => c.clinic)]))
+  // Build employeeId → homeClinicId mapping
+  const empHomeClinicMap = new Map(allEmployees.map(e => [e.userId, e.homeClinicId || null]))
 
   const safeUsers = users.map(({ password, ...user }) => user)
   const accounts = safeUsers.map(user => {
@@ -62,7 +64,7 @@ export async function GET(req: NextRequest) {
     const payRule = emp?.payRules?.[0] || null
     // 優先使用 EmployeeClinic，其次 UserClinic
     const clinics = empClinicsMap.get(user.id) || user.clinics.map((uc: any) => uc.clinic)
-    return {
+      return {
       id: user.id,
       name: user.name,
       phone: user.phone,
@@ -76,6 +78,7 @@ export async function GET(req: NextRequest) {
       joinDate: emp?.joinDate ? toHKDateStr(new Date(emp.joinDate)) : null,
       payType: payRule?.payType || null,
       baseAmount: payRule?.baseAmount || null,
+      homeClinicId: empHomeClinicMap.get(user.id) || null,
       clinics,
     }
   })
@@ -103,6 +106,7 @@ export async function POST(req: NextRequest) {
         assignEmployee = false,
         annualLeave, sickLeave,
         payConfidential = false,
+        homeClinicId,
       } = await req.json()
 
       if (!name || !phone || !password || !role) {
@@ -143,6 +147,7 @@ export async function POST(req: NextRequest) {
           status: 'ACTIVE',
           payConfidential,
           clinics: empClinicData,
+          homeClinicId: homeClinicId && clinicIds?.includes(homeClinicId) ? homeClinicId : (clinicIds && clinicIds.length > 0 ? clinicIds[0] : null),
         }
 
         if (payType) {

@@ -14,13 +14,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '只有老闆可初始化時間帳戶' }, { status: 403 })
   }
 
-  const { employeeId, days, effectiveMonth, reason } = await req.json()
-  const d = parseFloat(days)
-  if (!employeeId || !isFinite(d) || d === 0 || !reason?.trim()) {
-    return NextResponse.json({ error: '需要員工、非零天數與原因' }, { status: 400 })
+  const { employeeId, minutes, days, effectiveMonth, reason } = await req.json()
+  // Accept either minutes (direct) or days (backward compat)
+  let totalMinutes: number
+  if (minutes !== undefined && minutes !== null) {
+    totalMinutes = Math.round(minutes)
+  } else if (days !== undefined && days !== null) {
+    const d = parseFloat(days)
+    if (!isFinite(d) || d === 0) {
+      return NextResponse.json({ error: '需要非零天數或非零分鐘數' }, { status: 400 })
+    }
+    totalMinutes = Math.round(d * MINUTES_PER_DAY)
+  } else {
+    return NextResponse.json({ error: '需要員工、非零分鐘數與原因' }, { status: 400 })
   }
 
-  const minutes = Math.round(d * MINUTES_PER_DAY)
+  if (!employeeId || !totalMinutes || !reason?.trim()) {
+    return NextResponse.json({ error: '需要員工、非零分鐘數與原因' }, { status: 400 })
+  }
   const date = new Date(`${effectiveMonth || new Date().toISOString().slice(0, 7)}-01T00:00:00+08:00`)
 
   await prisma.timeBankEntry.create({
@@ -28,8 +39,8 @@ export async function POST(req: NextRequest) {
       employeeId,
       date,
       type: 'INIT_ADJUST',
-      minutes,
-      note: `初始化調整 ${d > 0 ? '+' : ''}${d} 日：${reason.trim()}`,
+      minutes: totalMinutes,
+      note: `初始化調整 ${totalMinutes >= 0 ? '+' : ''}${totalMinutes} 分鐘：${reason.trim()}`,
       createdBy: auth.session.userId,
     },
   })
@@ -40,11 +51,11 @@ export async function POST(req: NextRequest) {
       action: 'TIMEBANK_INIT_ADJUST',
       entity: 'TimeBank',
       entityId: employeeId,
-      notes: JSON.stringify({ days: d, minutes, effectiveMonth, reason: reason.trim() }),
+      notes: JSON.stringify({ minutes: totalMinutes, effectiveMonth, reason: reason.trim() }),
     },
   } as any)
 
   await invalidateTimeBankFrom(employeeId, date, prisma)
 
-  return NextResponse.json({ ok: true, minutes })
+  return NextResponse.json({ ok: true, minutes: totalMinutes })
 }

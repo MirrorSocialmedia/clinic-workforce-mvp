@@ -661,8 +661,8 @@ export async function generatePayrollRun(
     await prisma.payrollItem.deleteMany({ where: { runId: existing.id } })
   }
 
-  // FIX #5: Include resigned employees who have activity in the month
-  // Include: ACTIVE + those with PunchRecord or Shift in the period
+  // FIX: Use homeClinicId instead of EmployeeClinic to avoid multi-clinic duplicates
+  // Employees with assigned clinic but no homeClinicId get a transition warning
   const where: any = {
     OR: [
       { status: 'ACTIVE' },
@@ -682,13 +682,31 @@ export async function generatePayrollRun(
       },
     ],
   }
-  if (clinicId) where.clinics = { some: { clinicId } }
+  if (clinicId) where.homeClinicId = clinicId
 
   const employees = await prisma.employee.findMany({
     where,
     include: { user: { select: { name: true } } },
     orderBy: { id: 'asc' },
   })
+
+  // 3d: Transition warning — detect employees assigned to this clinic but homeClinicId=null
+  let transitionWarning: string | null = null
+  if (clinicId) {
+    const unassignedEmps = await prisma.employee.findMany({
+      where: {
+        status: 'ACTIVE',
+        homeClinicId: null,
+        clinics: { some: { clinicId } },
+      },
+      include: { user: { select: { name: true } } },
+      take: 10,
+    })
+    if (unassignedEmps.length > 0) {
+      const names = unassignedEmps.map(e => e.user.name).join('、')
+      transitionWarning = `以下員工已指派本店但未設定長駐店鋪，將不出現在計糧中：${names}${unassignedEmps.length > 10 ? ' …等' : ''}`
+    }
+  }
 
   // FIX #1: Use $transaction — run creation/update + items + audit in same transaction
   const result = await basePrisma.$transaction(async (tx) => {
@@ -787,7 +805,7 @@ export async function generatePayrollRun(
 
     const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
 
-    return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped }
+    return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped, transitionWarning }
   })
 
   return result

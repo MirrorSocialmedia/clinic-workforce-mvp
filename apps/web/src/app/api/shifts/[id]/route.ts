@@ -39,6 +39,24 @@ export async function PUT(
     }
     if (body.startTime !== undefined) updateData.startTime = new Date(body.startTime)
     if (body.endTime !== undefined) updateData.endTime = new Date(body.endTime)
+
+    // FIX: When date changes, rebuild startTime/endTime to preserve time-of-day
+    // so calendar and overview stay in sync (date, startTime, endTime all same day)
+    if (body.date !== undefined && body.date !== existing.date.toISOString().slice(0, 10)) {
+      const fmtTime = (d: Date) => {
+        const h = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', hour12: false }).format(d)
+        const m = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Hong_Kong', minute: '2-digit' }).format(d)
+        return `${h}:${m}`
+      }
+      const baseDate = updateData.date instanceof Date ? updateData.date.toISOString().slice(0, 10) : updateData.date.slice(0, 10)
+      const newStart = new Date(`${baseDate}T${fmtTime(existing.startTime)}:00+08:00`)
+      const newEnd0 = new Date(`${baseDate}T${fmtTime(existing.endTime)}:00+08:00`)
+      // Overnight shift (end time <= start time) → end day +1
+      const newEnd = newEnd0 <= newStart ? new Date(newEnd0.getTime() + 86400000) : newEnd0
+      updateData.startTime = newStart
+      updateData.endTime = newEnd
+    }
+
     if (body.role !== undefined) updateData.role = body.role
     if (body.status !== undefined) updateData.status = body.status
     if (body.templateId !== undefined) updateData.templateId = body.templateId

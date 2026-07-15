@@ -83,6 +83,9 @@ export async function POST(req: NextRequest) {
       if (!periodMonth) {
         return NextResponse.json({ error: 'periodMonth (YYYY-MM) is required' }, { status: 400 })
       }
+      if (!clinicId) {
+        return NextResponse.json({ error: '請指定店鋪（每店營業獎金不同，不支援全店合併生成）' }, { status: 400 })
+      }
 
       // Validate storeBonuses if provided
       if (storeBonuses) {

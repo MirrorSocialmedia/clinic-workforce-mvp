@@ -25,11 +25,11 @@ export async function POST(req: NextRequest) {
     const [yearStr, monthStr] = periodMonth.split('-')
     const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
 
-    // Get employees
+    // Get employees — use homeClinicId instead of EmployeeClinic to avoid multi-clinic duplicates
     const where: any = {
       status: 'ACTIVE',
     }
-    if (clinicId) where.clinics = { some: { clinicId } }
+    if (clinicId) where.homeClinicId = clinicId
     if (employeeId) where.id = employeeId
 
     const employees = await prisma.employee.findMany({

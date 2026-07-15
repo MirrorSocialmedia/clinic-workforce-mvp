@@ -95,7 +95,7 @@ export default function LeavePage() {
   const [restDayBalance, setRestDayBalance] = useState<number | null>(null)
 
   // 初始化時間帳戶 state (OWNER only)
-  const [initAccountForm, setInitAccountForm] = useState({ employeeId: '', days: '', effectiveMonth: new Date().toISOString().slice(0, 7), reason: '' })
+  const [initAccountForm, setInitAccountForm] = useState({ employeeId: '', days: '', minutes: '', direction: 'debt', effectiveMonth: toHKDateStr(new Date()).slice(0, 7), reason: '' })
   const [initAccountLoading, setInitAccountLoading] = useState(false)
   const [initAccountResult, setInitAccountResult] = useState('')
 
@@ -415,12 +415,17 @@ export default function LeavePage() {
 
   // 初始化時間帳戶 handler
   const handleInitAccount = async () => {
-    if (!initAccountForm.employeeId || !initAccountForm.days || !initAccountForm.reason?.trim()) {
-      alert('請填寫所有欄位')
+    if (!initAccountForm.employeeId || !initAccountForm.reason?.trim()) {
+      alert('請填寫員工和原因')
       return
     }
-    const d = parseFloat(initAccountForm.days)
-    if (!isFinite(d) || d === 0) { alert('天數需為非零數字'); return }
+    // Calculate total minutes from days + minutes + direction
+    const daysVal = parseFloat(initAccountForm.days) || 0
+    const minutesVal = parseInt(initAccountForm.minutes) || 0
+    const totalMin = daysVal * 540 + minutesVal
+    if (totalMin === 0) { alert('天數和分鐘數合計需非零'); return }
+    const signed = initAccountForm.direction === 'debt' ? -Math.round(totalMin) : Math.round(totalMin)
+
     setInitAccountLoading(true)
     setInitAccountResult('')
     try {
@@ -430,16 +435,15 @@ export default function LeavePage() {
         credentials: 'include',
         body: JSON.stringify({
           employeeId: initAccountForm.employeeId,
-          days: d,
+          minutes: signed,
           effectiveMonth: initAccountForm.effectiveMonth,
           reason: initAccountForm.reason,
         }),
       })
       const data = await res.json()
       if (res.ok) {
-        const minutes = Math.round(d * 540)
-        setInitAccountResult(`✅ 初始化成功：${d > 0 ? '+' : ''}${d} 日 = ${minutes >= 0 ? '+' : ''}${minutes} 分鐘`)
-        setInitAccountForm({ employeeId: '', days: '', effectiveMonth: new Date().toISOString().slice(0, 7), reason: '' })
+        setInitAccountResult(`✅ 初始化成功：帳戶 ${signed >= 0 ? '+' : ''}${signed} 分鐘`)
+        setInitAccountForm({ employeeId: '', days: '', minutes: '', direction: 'debt', effectiveMonth: toHKDateStr(new Date()).slice(0, 7), reason: '' })
       } else {
         setInitAccountResult(`❌ ${data.error || '初始化失敗'}`)
       }
@@ -596,11 +600,16 @@ export default function LeavePage() {
           )}
 
           {/* 2b. 初始化時間帳戶（OWNER only） */}
-          {isOwner && (
+          {isOwner && (() => {
+            const previewDays = parseFloat(initAccountForm.days) || 0
+            const previewMins = parseInt(initAccountForm.minutes) || 0
+            const previewTotal = previewDays * 540 + previewMins
+            const previewSigned = initAccountForm.direction === 'debt' ? -Math.round(previewTotal) : Math.round(previewTotal)
+            return (
             <section className="card p-4 border border-amber-200 rounded-lg mb-4" style={{ background: '#fffbeb' }}>
               <h3 className="font-semibold mb-2">⚙️ 初始化時間帳戶</h3>
               <p className="text-sm text-muted-foreground mb-3">
-                入職/遷移用：直接設定員工時間帳戶（可負，1日=540分鐘）。生效月起全鏈重算。
+                入職/遷移用：直接設定員工時間帳戶（1日=540分鐘）。生效月起全鏈重算。
               </p>
               <div className="flex gap-3 items-end flex-wrap">
                 <div>
@@ -612,9 +621,22 @@ export default function LeavePage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-muted-foreground mb-1">天數（可負）</label>
+                  <label className="block text-xs text-muted-foreground mb-1">天數</label>
                   <input type="number" value={initAccountForm.days} onChange={e => setInitAccountForm({ ...initAccountForm, days: e.target.value })}
-                    className="px-3 py-2 rounded-md border text-sm w-24" step="0.5" placeholder="如 -10" />
+                    className="px-3 py-2 rounded-md border text-sm w-20" step="0.5" placeholder="0" />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">額外分鐘</label>
+                  <input type="number" value={initAccountForm.minutes} onChange={e => setInitAccountForm({ ...initAccountForm, minutes: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm w-20" placeholder="0" />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">方向</label>
+                  <select value={initAccountForm.direction} onChange={e => setInitAccountForm({ ...initAccountForm, direction: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="debt">拖欠（負）</option>
+                    <option value="credit">進帳（正）</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">生效月份</label>
@@ -635,12 +657,13 @@ export default function LeavePage() {
                   {initAccountLoading ? '處理中...' : '初始化'}
                 </button>
               </div>
-              {/* 預覽 */}
-              {initAccountForm.employeeId && isFinite(parseFloat(initAccountForm.days)) && parseFloat(initAccountForm.days) !== 0 && (
+              {/* 即時預覽 */}
+              {initAccountForm.employeeId && previewSigned !== 0 && (
                 <div className="p-3 bg-amber-100 rounded-lg text-sm" style={{ marginTop: 8 }}>
                   預覽：{employees.find(e => e.id === initAccountForm.employeeId)?.user?.name || '未知'}：
-                  {parseFloat(initAccountForm.days) >= 0 ? '+' : ''}{parseFloat(initAccountForm.days)} 日 = {Math.round(parseFloat(initAccountForm.days) * 540) >= 0 ? '+' : ''}{Math.round(parseFloat(initAccountForm.days) * 540)} 分鐘，
-                  自 {initAccountForm.effectiveMonth} 起生效
+                  合計：{initAccountForm.direction === 'debt' ? '拖欠' : '進帳'} {Math.abs(previewSigned).toLocaleString()} 分鐘
+                  {' '}（{previewDays || 0} 天 × 540 {previewMins ? `+ ${previewMins} 分` : ''}）
+                  ，自 {initAccountForm.effectiveMonth} 起生效 → 帳戶 {previewSigned >= 0 ? '+' : ''}{previewSigned}
                 </div>
               )}
               {initAccountResult && (
@@ -652,7 +675,9 @@ export default function LeavePage() {
                 </div>
               )}
             </section>
-          )}
+            )
+          })()}
+          
 
           {/* 3. 初始化假期額度（OWNER only） */}
           {isManager && (
