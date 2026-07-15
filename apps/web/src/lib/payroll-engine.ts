@@ -962,6 +962,7 @@ export function evaluateAttendanceBonus(
   },
   workData: {
     lateRecords: Array<{ minutes: number }>
+    earlyRecords: Array<{ minutes: number }>
     leaveRecords: Array<{ isPlanned: boolean; cancelsBonus?: boolean; name?: string }>
     absentDays?: number
   }
@@ -969,16 +970,19 @@ export function evaluateAttendanceBonus(
   const cancelIf = config.cancel_if || {}
   const bonusAmount = config.amount || 0
 
-  // Late check
+  // Late + Early check
   if (cancelIf.late_minutes_exceed !== undefined) {
-    let lateTotal = 0
+    let lateTotal = 0, earlyTotal = 0
     if (cancelIf.late_is_cumulative === true) {
-      lateTotal = workData.lateRecords.reduce((sum, r) => sum + r.minutes, 0)
+      lateTotal = workData.lateRecords.reduce((s, r) => s + r.minutes, 0)
+      earlyTotal = workData.earlyRecords.reduce((s, r) => s + r.minutes, 0)
     } else {
-      lateTotal = workData.lateRecords.reduce((max, r) => Math.max(max, r.minutes), 0)
+      lateTotal = workData.lateRecords.reduce((m, r) => Math.max(m, r.minutes), 0)
+      earlyTotal = workData.earlyRecords.reduce((m, r) => Math.max(m, r.minutes), 0)
     }
-    if (lateTotal > cancelIf.late_minutes_exceed) {
-      return { amount: 0, cancelled: true, reason: `遲到${lateTotal}分鐘超過${cancelIf.late_minutes_exceed}分鐘門檻` }
+    const total = cancelIf.late_is_cumulative === true ? lateTotal + earlyTotal : Math.max(lateTotal, earlyTotal)
+    if (total > cancelIf.late_minutes_exceed) {
+      return { amount: 0, cancelled: true, reason: `遲到${lateTotal}+早退${earlyTotal}=${total}分鐘，超過${cancelIf.late_minutes_exceed}分鐘門檻` }
     }
   }
 
@@ -2078,6 +2082,7 @@ function applyAttendanceBonusModifier(
 
   const bonus = evaluateAttendanceBonus(modConfig, {
     lateRecords: workData.lateRecords.map(r => ({ minutes: r.minutes })),
+    earlyRecords: workData.earlyLeaveRecords.map(r => ({ minutes: r.minutes })),
     leaveRecords: workData.leaveRecords,
     absentDays: workData.absentDays,
   })

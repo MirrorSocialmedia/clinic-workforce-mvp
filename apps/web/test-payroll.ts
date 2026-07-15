@@ -73,6 +73,29 @@ const SCENARIO_S17 = {
 }
 // ╚═══════════════ ★★★ S17 改到這裡 ★★★ ═══════════════╝
 
+// ╔═══════════════ ★★★ S18: 早退超標取消勤工 ★★★ ════════════════╗
+const SCENARIO_S18 = {
+  month: '2026-07',
+  monthlySalary: 15000,
+  clinicName: '銅鑼灣診所',
+
+  rule: {
+    attendanceBonus: 500,
+    cancelBonusIfLateOver: 30,
+    cancelBonusIfAbsent: false,
+    otHoursPerLeaveDay: 9,
+    restDays: [6, 0],
+    mpfEnabled: false,
+    mpfRate: 0.05,
+  },
+
+  // 早退40分鐘（正常18:00下班，17:20打卡）→ 超標30 → 勤工取消
+  days: [
+    { date: '2026-07-06', shift: ['09:00','18:00'], in: '09:00', out: '17:20' },
+  ],
+}
+// ╚═══════════════ ★★★ S18 改到這裡 ★★★ ════════════════╝
+
 function dt(date: string, time: string): Date {
   return new Date(`${date}T${time}:00+08:00`)
 }
@@ -288,9 +311,82 @@ async function runS17() {
   await prisma.payRule.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
 }
 
+
+// ─── S18: 早退超標取消勤工 ───
+async function runS18() {
+  console.log('\n═══ S18: 早退超標取消勤工 ═══\n')
+
+  const S = SCENARIO_S18
+  const clinic = await prisma.clinic.findFirst({ where: { name: S.clinicName } })
+  if (!clinic) { console.error(`❌ 找不到診所「${S.clinicName}」`); return }
+
+  let user = await prisma.user.findFirst({ where: { phone: 'TEST_S18' } })
+  if (!user) user = await prisma.user.create({
+    data: { name: 'S18測試員工', phone: 'TEST_S18', password: 'x', role: 'EMPLOYEE' } })
+  let emp = await prisma.employee.findFirst({ where: { userId: user.id } })
+  if (!emp) emp = await prisma.employee.create({ data: { userId: user.id, joinDate: new Date('2025-01-01') } })
+  await prisma.employeeClinic.upsert({
+    where: { employeeId_clinicId: { employeeId: emp.id, clinicId: clinic.id } },
+    update: {}, create: { employeeId: emp.id, clinicId: clinic.id } }).catch(() => {})
+
+  // Clean old data
+  const monthStart = new Date(`${S.month}-01T00:00:00+08:00`)
+  const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+  await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
+  await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id, punchTime: { gte: monthStart, lt: monthEnd } } })
+  await prisma.shift.deleteMany({ where: { employeeId: emp.id, date: { gte: monthStart, lt: monthEnd } } })
+  await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id, date: { gte: monthStart, lt: monthEnd } } }).catch(() => {})
+  await prisma.timeBank.deleteMany({ where: { employeeId: emp.id, periodMonth: { gte: monthStart, lt: monthEnd } } }).catch(() => {})
+
+  // Create shifts + punches
+  for (const d of S.days) {
+    await prisma.shift.create({ data: {
+      employeeId: emp.id, clinicId: clinic.id,
+      date: dt(d.date, '00:00'),
+      startTime: dt(d.date, d.shift[0]), endTime: dt(d.date, d.shift[1]),
+      status: 'CONFIRMED', createdBy: user.id } })
+    if (d.in) await prisma.punchRecord.create({ data: {
+      employeeId: emp.id, clinicId: clinic.id, punchTime: dt(d.date, d.in),
+      punchType: 'CLOCK_IN', source: 'QR_DYNAMIC', tokenValid: true } })
+    if (d.out) await prisma.punchRecord.create({ data: {
+      employeeId: emp.id, clinicId: clinic.id, punchTime: dt(d.date, d.out),
+      punchType: 'CLOCK_OUT', source: 'QR_DYNAMIC', tokenValid: true } })
+  }
+
+  // Run engine
+  const config = {
+    base_type: 'monthly',
+    monthly_salary: S.monthlySalary,
+    modifiers: {
+      attendance_bonus: { amount: S.rule.attendanceBonus, cancel_if: {
+        late_minutes_exceed: S.rule.cancelBonusIfLateOver,
+        late_is_cumulative: true, any_unplanned_leave: true,
+        any_absence: S.rule.cancelBonusIfAbsent } },
+      overtime: { mode: 'time_off', hours_per_leave_day: S.rule.otHoursPerLeaveDay },
+      working_days: { basis: 'scheduled', rest_days: S.rule.restDays, count_public_holidays: true },
+      deduction: { basis: 'statutory' },
+    },
+  }
+  const result = await calculatePayrollWithRules(emp.id, monthStart, clinic.id, config as any)
+
+  // Results
+  const tb = (result.detail as any)?.timebank || {}
+  console.log(`\n─── S18 結果 ───`)
+  console.log(`勤工: $${result.attendanceBonus ?? '?'} ${result.attendanceBonusCancelled ? `（取消: ${result.attendanceBonusReason}）` : ''}`)
+  console.log(`時間帳戶: ${tb.timeAccountMinutes >= 0 ? '+' : ''}${tb.timeAccountMinutes ?? '?'} 分 (預期: -40)`)
+
+  // Verify
+  const bonusCancelled = result.attendanceBonusCancelled === true
+  const bonusZero = result.attendanceBonus === 0
+  const accountOk = tb.timeAccountMinutes === -40
+  const reasonOk = result.attendanceBonusReason?.includes('早退')
+  console.log(`${bonusCancelled && bonusZero && accountOk && reasonOk ? '✅ S18 PASS' : '❌ S18 FAIL'}`)
+}
+
 async function runAll() {
-  await main()
-  await runS17()
+  try { await main() } catch (e) { console.error('main failed:', e) }
+  try { await runS17() } catch (e) { console.error('S17 failed:', e) }
+  try { await runS18() } catch (e) { console.error('S18 failed:', e) }
   console.log('\n═══ 所有測試完成 ═══\n')
   await prisma.$disconnect()
 }
