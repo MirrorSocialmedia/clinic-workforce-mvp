@@ -99,6 +99,10 @@ export default function LeavePage() {
   const [initAccountLoading, setInitAccountLoading] = useState(false)
   const [initAccountResult, setInitAccountResult] = useState('')
 
+  // Time Account Overview state
+  const [tbOverview, setTbOverview] = useState<any[]>([])
+  const [tbLoading, setTbLoading] = useState(true)
+
   // Balance employee filter
   const [balanceEmployeeId, setBalanceEmployeeId] = useState('all')
 
@@ -199,6 +203,20 @@ export default function LeavePage() {
   }, [filter])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Time Account Overview — same source as dashboard
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const ym = toHKDateStr(new Date()).slice(0, 7) // YYYY-MM HK perspective
+        const res = await fetch(`/api/payroll-runs/exceptions?periodMonth=${ym}`, { credentials: 'include' })
+        if (!res.ok) return
+        const data = await res.json()
+        setTbOverview((data.summaries || []).filter((e: any) => e.timeAccountMinutes != null))
+      } finally { setTbLoading(false) }
+    }
+    load()
+  }, [])
 
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -403,6 +421,11 @@ export default function LeavePage() {
         setConvertResult('✅ 兌換成功')
         setConvertForm({ employeeId: '', days: '', direction: 'to_leave' })
         fetchBalances()
+        // Refresh time account overview
+        const ym = toHKDateStr(new Date()).slice(0, 7)
+        fetch(`/api/payroll-runs/exceptions?periodMonth=${ym}`, { credentials: 'include' })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => d && setTbOverview((d.summaries || []).filter((e: any) => e.timeAccountMinutes != null)))
       } else {
         setConvertResult(`❌ ${data.error || '兌換失敗'}`)
       }
@@ -444,6 +467,11 @@ export default function LeavePage() {
       if (res.ok) {
         setInitAccountResult(`✅ 初始化成功：帳戶 ${signed >= 0 ? '+' : ''}${signed} 分鐘`)
         setInitAccountForm({ employeeId: '', days: '', minutes: '', direction: 'debt', effectiveMonth: toHKDateStr(new Date()).slice(0, 7), reason: '' })
+        // Refresh time account overview
+        const ym = toHKDateStr(new Date()).slice(0, 7)
+        fetch(`/api/payroll-runs/exceptions?periodMonth=${ym}`, { credentials: 'include' })
+          .then(r => r.ok ? r.json() : null)
+          .then(d => d && setTbOverview((d.summaries || []).filter((e: any) => e.timeAccountMinutes != null)))
       } else {
         setInitAccountResult(`❌ ${data.error || '初始化失敗'}`)
       }
@@ -522,7 +550,67 @@ export default function LeavePage() {
             )}
           </section>
 
-          {/* 2. OT 假期兌換（OWNER+MANAGER） */}
+          {/* 2. 時間帳戶總覽（累計） */}
+          {isManager && (
+            <div className="border rounded-xl p-4 mb-4">
+              <h3 className="font-semibold mb-1">⏱ 時間帳戶總覽（累計）</h3>
+              <p className="text-xs text-muted-foreground mb-3">正數 = 公司欠員工（可換假）；負數 = 員工拖欠（可用休息日還鐘）</p>
+              {tbLoading ? (
+                <div className="text-sm text-muted-foreground">載入中...</div>
+              ) : tbOverview.length === 0 ? (
+                <div className="text-sm text-muted-foreground">暫無資料（兼職不計時間帳戶）</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground text-left">
+                      <th className="py-1">員工</th>
+                      <th className="py-1 text-right">時間帳戶</th>
+                      <th className="py-1 text-right">≈ 天數</th>
+                      <th className="py-1 text-right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...tbOverview]
+                      .sort((a, b) => (a.timeAccountMinutes ?? 0) - (b.timeAccountMinutes ?? 0))
+                      .map(e => {
+                        const m = e.timeAccountMinutes ?? 0
+                        return (
+                          <tr key={e.employeeId} className="border-t">
+                            <td className="py-1.5">{e.employeeName}</td>
+                            <td className={`py-1.5 text-right font-mono font-semibold ${m < 0 ? 'text-red-600' : m > 0 ? 'text-emerald-600' : ''}`}>
+                              {m > 0 ? '+' : ''}{m.toLocaleString()} 分鐘
+                            </td>
+                            <td className="py-1.5 text-right text-muted-foreground">{(m / 540).toFixed(1)} 天</td>
+                            <td className="py-1.5 text-right">
+                              {m > 0 && (
+                                <button className="text-xs underline text-primary mr-2"
+                                  onClick={() => setConvertForm(f => ({ ...f, employeeId: e.employeeId, direction: 'to_leave' }))}>
+                                  換假
+                                </button>
+                              )}
+                              {m < 0 && (
+                                <button className="text-xs underline text-primary mr-2"
+                                  onClick={() => setConvertForm(f => ({ ...f, employeeId: e.employeeId, direction: 'rest_to_account' }))}>
+                                  還鐘
+                                </button>
+                              )}
+                              {isOwner && (
+                                <button className="text-xs underline text-muted-foreground"
+                                  onClick={() => setInitAccountForm(f => ({ ...f, employeeId: e.employeeId }))}>
+                                  初始化
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {/* 3. OT 假期兌換（OWNER+MANAGER） */}
           {isManager && (
             <section className="card p-4 border border-purple-200 rounded-lg mb-4" style={{ background: '#faf5ff' }}>
               <h3 className="font-semibold mb-2">🔄 OT 假期兌換</h3>
