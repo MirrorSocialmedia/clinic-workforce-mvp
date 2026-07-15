@@ -885,6 +885,16 @@ function getShiftColor(shift: Shift): string {
       const empId = drag.employeeId || employeeId
       if (!empId) return
 
+      // Fix: check if employee has approved leave on that day
+      const hasLeaveOnDate = leaveRequests.some(lr =>
+        lr.employeeId === empId &&
+        leaveCoversDate(lr, dateStr)
+      )
+      if (hasLeaveOnDate) {
+        setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
+        return
+      }
+
       await createShift(empId, dateStr, tpl)
       return
     }

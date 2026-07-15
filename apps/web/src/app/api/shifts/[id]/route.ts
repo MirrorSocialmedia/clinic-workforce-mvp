@@ -5,6 +5,7 @@ import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
 import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
+import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 
 // PUT /api/shifts/[id] — edit shift
 export async function PUT(
@@ -55,6 +56,17 @@ export async function PUT(
     if (body.role !== undefined) updateData.role = body.role
     if (body.status !== undefined) updateData.status = body.status
     if (body.templateId !== undefined) updateData.templateId = body.templateId
+
+    // Fix: check leave conflict after rebuildShiftDate, before write
+    const targetEmpId = updateData.employeeId || existing.employeeId
+    const targetDate = updateData.date || existing.date
+    const leaveConflict = await checkShiftLeaveConflict(targetEmpId, targetDate)
+    if (leaveConflict.conflict) {
+      return NextResponse.json(
+        { error: `該員工該天已有假期（${leaveConflict.leaveName}），無法排班` },
+        { status: 409 }
+      )
+    }
 
     const shift = await prisma.shift.update({
       where: { id },

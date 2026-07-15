@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { toHKDateStr } from '@/lib/hk-date'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
@@ -147,6 +148,26 @@ export async function POST(req: NextRequest) {
           { error: '該日期範圍已有請假申請' },
           { status: 409 }
         )
+      }
+
+      // Fix: check shift conflict before auto-approving
+      if (isApprover) {
+        const conflictShift = await prisma.shift.findFirst({
+          where: {
+            employeeId: employee.id,
+            status: { not: 'CANCELLED' },
+            date: {
+              gte: new Date(`${toHKDateStr(new Date(startDate))}T00:00:00+08:00`),
+              lte: new Date(`${toHKDateStr(new Date(endDate))}T23:59:59+08:00`),
+            },
+          },
+        })
+        if (conflictShift) {
+          return NextResponse.json(
+            { error: `該員工在假期範圍內已有排班（${toHKDateStr(conflictShift.date)}），請先移除排班或改假期日期` },
+            { status: 400 }
+          )
+        }
       }
 
       // Transaction: create request (audit handled by Prisma extension)

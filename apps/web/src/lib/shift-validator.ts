@@ -3,6 +3,7 @@
 // Reads rules from docs/rules/shift-rules.json — nothing hardcoded
 // ============================================================
 import { fmtTime, toHKDateStr, addDays, hkDateStart, hkDateEnd } from './hk-date'
+import { prisma } from './prisma'
 
 import shiftRules from './shift-rules.json'
 
@@ -486,6 +487,35 @@ export async function validateShiftBatch(
     errors,
     warnings,
   }
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+/**
+ * Check if an employee has an approved leave on a given shift date.
+ * Returns { conflict: true, leaveName: string } or { conflict: false }.
+ * Intended to be called from API routes (POST/PUT shifts).
+ */
+export async function checkShiftLeaveConflict(
+  employeeId: string,
+  shiftDate: Date
+): Promise<{ conflict: boolean; leaveName?: string }> {
+  const dateStr = toHKDateStr(shiftDate)
+  const conflictLeave = await prisma.leaveRequest.findFirst({
+    where: {
+      employeeId,
+      status: 'APPROVED',
+      startDate: { lte: new Date(`${dateStr}T23:59:59.999+08:00`) },
+      endDate: { gte: new Date(`${dateStr}T00:00:00+08:00`) },
+    },
+    include: { leaveType: { select: { name: true } } },
+  })
+  if (conflictLeave) {
+    return { conflict: true, leaveName: conflictLeave.leaveType?.name || '未命名假期' }
+  }
+  return { conflict: false }
 }
 
 // ============================================================

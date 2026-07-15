@@ -1,10 +1,11 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 
 // ============================================================
 // GET /api/shifts — list shifts with filters
@@ -189,6 +190,15 @@ export async function POST(req: NextRequest) {
             )
           }
 
+          // Fix: check leave conflict before creating
+          const leaveConflict = await checkShiftLeaveConflict(employeeId, times.date)
+          if (leaveConflict.conflict) {
+            return NextResponse.json(
+              { error: `該員工該天已有假期（${leaveConflict.leaveName}），無法排班`, date: d },
+              { status: 409 }
+            )
+          }
+
           const shift = await prisma.shift.create({
             data: {
               employeeId,
@@ -219,6 +229,15 @@ export async function POST(req: NextRequest) {
         if (overlap) {
           return NextResponse.json(
             { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
+            { status: 409 }
+          )
+        }
+
+        // Fix: check leave conflict before creating
+        const leaveConflict = await checkShiftLeaveConflict(employeeId, times.date)
+        if (leaveConflict.conflict) {
+          return NextResponse.json(
+            { error: `該員工該天已有假期（${leaveConflict.leaveName}），無法排班` },
             { status: 409 }
           )
         }

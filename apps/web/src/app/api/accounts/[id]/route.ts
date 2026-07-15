@@ -31,6 +31,86 @@ export async function GET(
   return NextResponse.json({ account: safeUser })
 }
 
+// ============================================================
+// DELETE /api/accounts/[id] — Hard delete account (OWNER only)
+// Clean accounts: cascade delete in transaction
+// Accounts with business records: rejected (use deactivation instead)
+// ============================================================
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = requireAuth(req, 'DELETE', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
+
+  if (session.role !== 'OWNER') {
+    return NextResponse.json({ error: '只有 OWNER 可以刪除帳號' }, { status: 403 })
+  }
+
+  if (session.userId === params.id) {
+    return NextResponse.json({ error: '不能刪除自己的帳號' }, { status: 400 })
+  }
+
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
+  }
+
+  return runWithAudit(auditCtx, async () => {
+    const user = await prisma.user.findUnique({
+      where: { id: params.id },
+      include: { employee: true },
+    })
+
+    if (!user) return NextResponse.json({ error: '帳號不存在' }, { status: 404 })
+
+    if (user.employee) {
+      const empId = user.employee.id
+
+      // Check business records
+      const [punches, shifts, items, leaves] = await Promise.all([
+        prisma.punchRecord.count({ where: { employeeId: empId } }),
+        prisma.shift.count({ where: { employeeId: empId } }),
+        prisma.payrollItem.count({ where: { employeeId: empId } }),
+        prisma.leaveRequest.count({ where: { employeeId: empId } }),
+      ])
+      const total = punches + shifts + items + leaves
+
+      if (total > 0) {
+        return NextResponse.json({
+          error: `此員工已有 ${total} 筆業務記錄（打卡${punches}/排班${shifts}/計糧${items}/假期${leaves}），不可刪除。請改為「停用」（保留歷史與審計）。`,
+        }, { status: 400 })
+      }
+
+      // Clean account: cascade delete in transaction
+      await prisma.$transaction([
+        prisma.timeBankEntry.deleteMany({ where: { employeeId: empId } }),
+        prisma.leaveBalance.deleteMany({ where: { employeeId: empId } }),
+        prisma.employeeClinic.deleteMany({ where: { employeeId: empId } }),
+        prisma.payRule.deleteMany({ where: { employeeId: empId } }),
+        prisma.employee.delete({ where: { id: empId } }),
+        prisma.user.delete({ where: { id: params.id } }),
+      ])
+    } else {
+      await prisma.user.delete({ where: { id: params.id } })
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'ACCOUNT_DELETE',
+        entity: 'ACCOUNT',
+        entityId: params.id,
+        actorId: session.userId,
+        notes: JSON.stringify({ name: user.name, email: user.email }),
+      },
+    })
+
+    return NextResponse.json({ ok: true })
+  })
+}
+
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
