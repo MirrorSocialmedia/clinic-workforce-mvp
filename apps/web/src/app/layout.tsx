@@ -34,17 +34,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-HK" className={inter.className}>
-      <head>
-        <script dangerouslySetInnerHTML={{
-          __html: `
-            if ('serviceWorker' in navigator) {
-              window.addEventListener('load', function() {
-                navigator.serviceWorker.register('/sw.js').catch(function() {});
-              });
-            }
-          `
-        }} />
-      </head>
+      <head />
       <body>{children}</body>
     </html>
   )
