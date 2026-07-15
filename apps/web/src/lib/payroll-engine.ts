@@ -1061,7 +1061,8 @@ async function getCarriedFrom(
   })
   if (rec) return rec.balance ?? 0
 
-  // ② No record: check if last month had any punch activity
+  // ② No record: check if last month had any activity (punches OR TimeBankEntry)
+  // ★ TimeBankEntry (INIT_ADJUST/REST_TO_ACCOUNT etc.) also counts as activity!
   const hasPunch = await db.punchRecord.findFirst({
     where: {
       employeeId,
@@ -1069,10 +1070,14 @@ async function getCarriedFrom(
       void: { is: null },
     },
   })
-  if (!hasPunch) return 0 // No activity → chain starts here
+  const hasTimeBankEntry = hasPunch ? false : await db.timeBankEntry?.findFirst?.({
+    where: { employeeId, date: { gte: lStart, lte: lEnd } },
+  }).catch(() => null)
+  const hasActivity = hasPunch || hasTimeBankEntry
+  if (!hasActivity) return 0 // No activity → chain starts here
 
-  // ③ Has punches but no TimeBank → recursively recalculate last month
-  const tb = await calculateTimeBank(employeeId, lastMonth, {}, db)
+  // ③ Has activity but no TimeBank → recursively recalculate last month (single source of truth)
+  const tb = await calculateTimeBank(employeeId, lastMonth, {}, db, depth + 1)
 
   // ④ Persist the backfilled record so future lookups are fast
   await db.timeBank.upsert({
@@ -1102,7 +1107,8 @@ export async function calculateTimeBank(
   employeeId: string,
   monthDate: Date,
   config: { negative_carry?: string },
-  db: any
+  db: any,
+  depth = 0
 ): Promise<{
   otMinutes: number
   lateMinutes: number
@@ -1143,8 +1149,8 @@ export async function calculateTimeBank(
     otMinMinutes = 0
   }
 
-  // Previous month carry — recursive backfill
-  const carriedFrom = await getCarriedFrom(employeeId, monthDate, db)
+  // Previous month carry — recursive backfill (pass depth to prevent infinite recursion)
+  const carriedFrom = await getCarriedFrom(employeeId, monthDate, db, depth)
 
   // Grab ALL effective punches (CLOCK_IN + CLOCK_OUT) with corrections applied
   const effectivePunches = await getEffectivePunches(monthStart, monthEnd, { employeeId, db })

@@ -9,7 +9,8 @@
  * ═══════════════════════════════════════════════════════════
  */
 import { PrismaClient } from '@prisma/client'
-import { calculatePayrollWithRules } from './src/lib/payroll-engine'
+import { calculatePayrollWithRules, calculateTimeBank } from './src/lib/payroll-engine'
+import { invalidateTimeBankFrom } from './src/lib/punch-query'
 
 const prisma = new PrismaClient()
 
@@ -458,6 +459,107 @@ async function runS19() {
   console.log(`${bonusOk && mpfOk ? '✅ S19 PASS' : '❌ S19 FAIL'}`)
 }
 
+// ─── S22: 初始化後跨月查詢含結轉（cache invalidation + TimeBankEntry fallback） ───
+async function runS22() {
+  console.log('\n═══ S22: 初始化後跨月查詢含結轉 ═══\n')
+
+  const S = SCENARIO_S18
+  const clinic = await prisma.clinic.findFirst({ where: { name: S.clinicName } })
+  if (!clinic) { console.error(`❌ 找不到診所「${S.clinicName}」`); return }
+
+  let user = await prisma.user.findFirst({ where: { phone: 'TEST_S22' } })
+  if (!user) user = await prisma.user.create({
+    data: { name: 'S22測試員工', phone: 'TEST_S22', password: 'x', role: 'EMPLOYEE' } })
+  let emp = await prisma.employee.findFirst({ where: { userId: user.id } })
+  if (!emp) emp = await prisma.employee.create({ data: { userId: user.id, joinDate: new Date('2025-01-01') } })
+  await prisma.employeeClinic.upsert({
+    where: { employeeId_clinicId: { employeeId: emp.id, clinicId: clinic.id } },
+    update: {}, create: { employeeId: emp.id, clinicId: clinic.id } }).catch(() => {})
+
+  // Clean ALL old data (June + July + beyond)
+  const juneStart = new Date('2026-06-01T00:00:00+08:00')
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" DISABLE TRIGGER USER').catch(() => {})
+  await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
+  await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.$executeRawUnsafe('ALTER TABLE "PunchRecord" ENABLE TRIGGER USER').catch(() => {})
+  await prisma.shift.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+  await prisma.timeBank.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+
+  // Step 1: June — create shift + punch (OT 60 分鐘)
+  await prisma.shift.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id,
+    date: dt('2026-06-06', '00:00'),
+    startTime: dt('2026-06-06', '09:00'), endTime: dt('2026-06-06', '18:00'),
+    status: 'CONFIRMED', createdBy: user.id } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-06-06', '09:00'),
+    punchType: 'CLOCK_IN', source: 'QR_DYNAMIC', tokenValid: true } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-06-06', '19:00'),
+    punchType: 'CLOCK_OUT', source: 'QR_DYNAMIC', tokenValid: true } })
+
+  // Step 2: Run June payroll → calculates TimeBank, persists cache
+  const juneStart2 = new Date('2026-06-01T00:00:00+08:00')
+  const juneConfig = {
+    base_type: 'monthly',
+    monthly_salary: 15000,
+    modifiers: {
+      overtime: { mode: 'time_off', hours_per_leave_day: 9 },
+      working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
+      deduction: { basis: 'statutory' },
+    },
+  }
+  const juneResult = await calculatePayrollWithRules(emp.id, juneStart2, clinic.id, juneConfig as any)
+  const juneTb = (juneResult.detail as any)?.timebank || {}
+  console.log(`六月 OT: ${juneTb.otMinutes} 分 (預期: 60)`)
+  console.log(`六月帳戶: ${juneTb.timeAccountMinutes} 分 (預期: +60)`)
+
+  // Step 3: Post-init adjustment — add INIT_ADJUST -6500 (simulating init-adjust API)
+  const initAdjustMinutes = -6500
+  await prisma.timeBankEntry.create({ data: {
+    employeeId: emp.id, date: new Date('2026-06-01T00:00:00+08:00'),
+    type: 'INIT_ADJUST', minutes: initAdjustMinutes,
+    note: '測試初始化負帳', createdBy: 'test',
+  }})
+
+  // Step 4: Invalidate TimeBank cache from June onward (simulating API)
+  await invalidateTimeBankFrom(emp.id, '2026-06-01', prisma)
+
+  // Step 5: Calculate July — carriedFrom should include the init-adjust
+  const julyDate = new Date('2026-07-01T00:00:00+08:00')
+  // Create a July shift (no OT, just normal) so the month has activity
+  await prisma.shift.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id,
+    date: dt('2026-07-06', '00:00'),
+    startTime: dt('2026-07-06', '09:00'), endTime: dt('2026-07-06', '18:00'),
+    status: 'CONFIRMED', createdBy: user.id } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '09:00'),
+    punchType: 'CLOCK_IN', source: 'QR_DYNAMIC', tokenValid: true } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '18:00'),
+    punchType: 'CLOCK_OUT', source: 'QR_DYNAMIC', tokenValid: true } })
+
+  const tbJuly = await calculateTimeBank(emp.id, julyDate, {}, prisma)
+  console.log(`\n─── S22 結果 ───`)
+  console.log(`七月 carriedFrom: ${tbJuly.carriedFrom} 分 (預期: -6440 = 60 + (-6500))`)
+  console.log(`七月帳戶: ${tbJuly.timeAccountMinutes} 分 (預期: -6440 = carriedFrom + 0 OT)`)  
+  console.log(`七月餘額: ${tbJuly.balance} 分 (預期: -6440)`)  
+
+  // Verify
+  const expectedCarriedFrom = 60 + initAdjustMinutes // 60 + (-6500) = -6440
+  const carriedFromOk = tbJuly.carriedFrom === expectedCarriedFrom
+  const accountOk = tbJuly.timeAccountMinutes === expectedCarriedFrom
+  console.log(`${carriedFromOk && accountOk ? '✅ S22 PASS' : '❌ S22 FAIL'}`)
+  if (!carriedFromOk) {
+    console.log(`  carriedFrom got ${tbJuly.carriedFrom}, expected ${expectedCarriedFrom}`)
+  }
+  if (!accountOk) {
+    console.log(`  timeAccountMinutes got ${tbJuly.timeAccountMinutes}, expected ${expectedCarriedFrom}`)
+  }
+}
+
 async function runAll() {
   try { await main() } catch (e) { console.error('main failed:', e) }
   try { await runS17() } catch (e) { console.error('S17 failed:', e) }
@@ -465,6 +567,7 @@ async function runAll() {
   try { await runS19() } catch (e) { console.error('S19 failed:', e) }
   try { await runS20() } catch (e) { console.error('S20 failed:', e) }
   try { await runS21() } catch (e) { console.error('S21 failed:', e) }
+  try { await runS22() } catch (e) { console.error('S22 failed:', e) }
   console.log('\n═══ 所有測試完成 ═══\n')
   await prisma.$disconnect()
 }
