@@ -92,6 +92,12 @@ export default function LeavePage() {
   const [converting, setConverting] = useState(false)
   const [convertResult, setConvertResult] = useState('')
   const [convertEmpInfo, setConvertEmpInfo] = useState<any>(null)
+  const [restDayBalance, setRestDayBalance] = useState<number | null>(null)
+
+  // 初始化時間帳戶 state (OWNER only)
+  const [initAccountForm, setInitAccountForm] = useState({ employeeId: '', days: '', effectiveMonth: new Date().toISOString().slice(0, 7), reason: '' })
+  const [initAccountLoading, setInitAccountLoading] = useState(false)
+  const [initAccountResult, setInitAccountResult] = useState('')
 
   // Balance employee filter
   const [balanceEmployeeId, setBalanceEmployeeId] = useState('all')
@@ -128,6 +134,25 @@ export default function LeavePage() {
       })
       .catch(() => setConvertEmpInfo(null))
   }, [convertForm.employeeId])
+
+  // 抓休息日餘額（rest_to_account 方向時）
+  useEffect(() => {
+    if (!convertForm.employeeId || convertForm.direction !== 'rest_to_account') { setRestDayBalance(null); return }
+    const year = new Date().getFullYear()
+    fetch(`/api/leave-balance`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(async (d) => {
+        if (!d?.leaveBalances?.length) return setRestDayBalance(null)
+        // 找 REST_DAY 類型 id
+        const typesRes = await fetch('/api/leave-types', { credentials: 'include' })
+        const typesData = await typesRes.json()
+        const restType = typesData?.leaveTypes?.find((t: any) => t.systemKey === 'REST_DAY')
+        if (!restType) return setRestDayBalance(null)
+        const bal = d.leaveBalances.find((b: any) => b.employeeId === convertForm.employeeId && b.leaveTypeId === restType.id && b.year === year)
+        setRestDayBalance(bal?.remaining ?? null)
+      })
+      .catch(() => setRestDayBalance(null))
+  }, [convertForm.employeeId, convertForm.direction])
 
   const isManager = userRole === 'OWNER' || userRole === 'MANAGER'
   const isOwner = userRole === 'OWNER'
@@ -388,6 +413,43 @@ export default function LeavePage() {
     }
   }
 
+  // 初始化時間帳戶 handler
+  const handleInitAccount = async () => {
+    if (!initAccountForm.employeeId || !initAccountForm.days || !initAccountForm.reason?.trim()) {
+      alert('請填寫所有欄位')
+      return
+    }
+    const d = parseFloat(initAccountForm.days)
+    if (!isFinite(d) || d === 0) { alert('天數需為非零數字'); return }
+    setInitAccountLoading(true)
+    setInitAccountResult('')
+    try {
+      const res = await fetch('/api/timebank/init-adjust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          employeeId: initAccountForm.employeeId,
+          days: d,
+          effectiveMonth: initAccountForm.effectiveMonth,
+          reason: initAccountForm.reason,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        const minutes = Math.round(d * 540)
+        setInitAccountResult(`✅ 初始化成功：${d > 0 ? '+' : ''}${d} 日 = ${minutes >= 0 ? '+' : ''}${minutes} 分鐘`)
+        setInitAccountForm({ employeeId: '', days: '', effectiveMonth: new Date().toISOString().slice(0, 7), reason: '' })
+      } else {
+        setInitAccountResult(`❌ ${data.error || '初始化失敗'}`)
+      }
+    } catch (err) {
+      setInitAccountResult('❌ 網絡錯誤')
+    } finally {
+      setInitAccountLoading(false)
+    }
+  }
+
   if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
 
   const tabs = [
@@ -456,12 +518,12 @@ export default function LeavePage() {
             )}
           </section>
 
-          {/* 2. OT 假期兌換（OWNER only） */}
+          {/* 2. OT 假期兌換（OWNER+MANAGER） */}
           {isManager && (
             <section className="card p-4 border border-purple-200 rounded-lg mb-4" style={{ background: '#faf5ff' }}>
               <h3 className="font-semibold mb-2">🔄 OT 假期兌換</h3>
               <p className="text-sm text-muted-foreground mb-3">
-                OT → 換假：9小時 OT 時間換 1 天假 | OT假 → 換回OT：把 OT 換的假換回 OT 時間
+                OT → 換假：9小時 OT 時間換 1 天假 | OT假 → 換回OT：把 OT 換的假換回 OT 時間 | 休息日 → 還時間帳戶：用休息日餘額償還拖欠
               </p>
               <div className="flex gap-3 items-end flex-wrap">
                 <div>
@@ -475,10 +537,15 @@ export default function LeavePage() {
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">天數</label>
                   <input type="number" value={convertForm.days} onChange={e => {
-                    const v = parseInt(e.target.value, 10)
-                    setConvertForm({ ...convertForm, days: v > 0 ? String(v) : '' })
+                    if (convertForm.direction === 'rest_to_account') {
+                      const v = parseFloat(e.target.value)
+                      setConvertForm({ ...convertForm, days: isFinite(v) && v > 0 ? String(v) : '' })
+                    } else {
+                      const v = parseInt(e.target.value, 10)
+                      setConvertForm({ ...convertForm, days: v > 0 ? String(v) : '' })
+                    }
                   }}
-                    className="px-3 py-2 rounded-md border text-sm w-20" min="1" step="1" placeholder="天" />
+                    className="px-3 py-2 rounded-md border text-sm w-20" min="0.5" step={convertForm.direction === 'rest_to_account' ? '0.5' : '1'} placeholder="天" />
                 </div>
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">方向</label>
@@ -486,6 +553,7 @@ export default function LeavePage() {
                     className="px-3 py-2 rounded-md border text-sm">
                     <option value="to_leave">OT → 換假</option>
                     <option value="to_ot">OT假 → 換回OT</option>
+                    <option value="rest_to_account">休息日 → 還時間帳戶</option>
                   </select>
                 </div>
                 <button
@@ -497,13 +565,22 @@ export default function LeavePage() {
                   {converting ? '兌換中...' : '兌換'}
                 </button>
               </div>
-              {/* Fix #3: 選員工後顯示 OT 資訊 */}
-              {convertEmpInfo && (
+              {/* Fix #3: 選員工後顯示 OT 資訊（非 rest_to_account 方向時） */}
+              {convertEmpInfo && convertForm.direction !== 'rest_to_account' && (
                 <div className="p-3 bg-blue-50 rounded-lg text-sm mb-4" style={{ marginTop: 8 }}>
                   <div>OT 時間：{(convertEmpInfo.otMinutes / 60).toFixed(1)} 小時（{convertEmpInfo.availableMinutes} 分鐘可用）</div>
                   <div>可換假期：<strong>{convertEmpInfo.convertibleLeaveDays} 天</strong></div>
                   {convertEmpInfo.owedMinutes > 0 && (
                     <div className="text-red-600">拖欠：{(convertEmpInfo.owedMinutes / 60).toFixed(1)} 小時</div>
+                  )}
+                </div>
+              )}
+              {/* rest_to_account 方向顯示休息日餘額 */}
+              {convertForm.direction === 'rest_to_account' && restDayBalance !== null && (
+                <div className="p-3 bg-green-50 rounded-lg text-sm mb-4" style={{ marginTop: 8 }}>
+                  <div>可用休息日餘額：<strong>{restDayBalance?.toFixed(1) ?? 0} 天</strong></div>
+                  {convertForm.days && isFinite(parseFloat(convertForm.days)) && parseFloat(convertForm.days) > 0 && (
+                    <div>換算：{parseFloat(convertForm.days)} 天 = +{Math.round(parseFloat(convertForm.days) * 540)} 分鐘</div>
                   )}
                 </div>
               )}
@@ -513,6 +590,65 @@ export default function LeavePage() {
                   color: convertResult.startsWith('✅') ? '#22543d' : '#c53030',
                   border: `1px solid ${convertResult.startsWith('✅') ? '#c6f6d5' : '#fed7d7'}` }}>
                   {convertResult}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* 2b. 初始化時間帳戶（OWNER only） */}
+          {isOwner && (
+            <section className="card p-4 border border-amber-200 rounded-lg mb-4" style={{ background: '#fffbeb' }}>
+              <h3 className="font-semibold mb-2">⚙️ 初始化時間帳戶</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                入職/遷移用：直接設定員工時間帳戶（可負，1日=540分鐘）。生效月起全鏈重算。
+              </p>
+              <div className="flex gap-3 items-end flex-wrap">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">員工</label>
+                  <select value={initAccountForm.employeeId} onChange={e => setInitAccountForm({ ...initAccountForm, employeeId: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="">-- 選擇 --</option>
+                    {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">天數（可負）</label>
+                  <input type="number" value={initAccountForm.days} onChange={e => setInitAccountForm({ ...initAccountForm, days: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm w-24" step="0.5" placeholder="如 -10" />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">生效月份</label>
+                  <input type="month" value={initAccountForm.effectiveMonth} onChange={e => setInitAccountForm({ ...initAccountForm, effectiveMonth: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm" />
+                </div>
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs text-muted-foreground mb-1">原因（必填）</label>
+                  <input type="text" value={initAccountForm.reason} onChange={e => setInitAccountForm({ ...initAccountForm, reason: e.target.value })}
+                    className="px-3 py-2 rounded-md border text-sm w-full" placeholder="如：入職初始設定" />
+                </div>
+                <button
+                  className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors"
+                  style={{ background: '#d97706' }}
+                  onClick={handleInitAccount}
+                  disabled={initAccountLoading}
+                >
+                  {initAccountLoading ? '處理中...' : '初始化'}
+                </button>
+              </div>
+              {/* 預覽 */}
+              {initAccountForm.employeeId && isFinite(parseFloat(initAccountForm.days)) && parseFloat(initAccountForm.days) !== 0 && (
+                <div className="p-3 bg-amber-100 rounded-lg text-sm" style={{ marginTop: 8 }}>
+                  預覽：{employees.find(e => e.id === initAccountForm.employeeId)?.user?.name || '未知'}：
+                  {parseFloat(initAccountForm.days) >= 0 ? '+' : ''}{parseFloat(initAccountForm.days)} 日 = {Math.round(parseFloat(initAccountForm.days) * 540) >= 0 ? '+' : ''}{Math.round(parseFloat(initAccountForm.days) * 540)} 分鐘，
+                  自 {initAccountForm.effectiveMonth} 起生效
+                </div>
+              )}
+              {initAccountResult && (
+                <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 13,
+                  background: initAccountResult.startsWith('✅') ? '#f0fff4' : '#fff5f5',
+                  color: initAccountResult.startsWith('✅') ? '#22543d' : '#c53030',
+                  border: `1px solid ${initAccountResult.startsWith('✅') ? '#c6f6d5' : '#fed7d7'}` }}>
+                  {initAccountResult}
                 </div>
               )}
             </section>

@@ -284,6 +284,7 @@ export default function DashboardPage() {
                     color: (e.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
                   }}>
                     {(e.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(e.timeAccountMinutes ?? 0)} 分
+                    {(e.timeAccountMinutes ?? 0) < 0 && <span className="text-xs text-red-600 ml-1">（約 {(Math.abs(e.timeAccountMinutes ?? 0) / 540).toFixed(1)} 日）</span>}
                   </span>
                 </div>
               ))}
@@ -347,6 +348,7 @@ export default function DashboardPage() {
                           color: emp.timeAccountMinutes >= 0 ? '#059669' : '#dc2626',
                         }}>
                           {emp.timeAccountMinutes >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes)} 分
+                          {emp.timeAccountMinutes < 0 && <span className="text-xs text-red-600 ml-1">（約 {(Math.abs(emp.timeAccountMinutes) / 540).toFixed(1)} 日）</span>}
                         </span>
                       )}
                     </TableCell>

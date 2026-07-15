@@ -463,8 +463,169 @@ async function runAll() {
   try { await runS17() } catch (e) { console.error('S17 failed:', e) }
   try { await runS18() } catch (e) { console.error('S18 failed:', e) }
   try { await runS19() } catch (e) { console.error('S19 failed:', e) }
+  try { await runS20() } catch (e) { console.error('S20 failed:', e) }
+  try { await runS21() } catch (e) { console.error('S21 failed:', e) }
   console.log('\n═══ 所有測試完成 ═══\n')
   await prisma.$disconnect()
+}
+
+// ─── S20: 初始化負帳 + 跨月結轉 ───
+async function runS20() {
+  console.log('\n═══ S20: 初始化負帳 + 跨月結轉 ═══\n')
+
+  const S = SCENARIO_S18
+  const clinic = await prisma.clinic.findFirst({ where: { name: S.clinicName } })
+  if (!clinic) { console.error(`❌ 找不到診所「${S.clinicName}」`); return }
+
+  let user = await prisma.user.findFirst({ where: { phone: 'TEST_S20' } })
+  if (!user) user = await prisma.user.create({
+    data: { name: 'S20測試員工', phone: 'TEST_S20', password: 'x', role: 'EMPLOYEE' } })
+  let emp = await prisma.employee.findFirst({ where: { userId: user.id } })
+  if (!emp) emp = await prisma.employee.create({ data: { userId: user.id, joinDate: new Date('2025-01-01') } })
+  await prisma.employeeClinic.upsert({
+    where: { employeeId_clinicId: { employeeId: emp.id, clinicId: clinic.id } },
+    update: {}, create: { employeeId: emp.id, clinicId: clinic.id } }).catch(() => {})
+
+  // Clean old data
+  const monthStart = new Date('2026-07-01T00:00:00+08:00')
+  const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+  await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
+  await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.shift.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+  await prisma.timeBank.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+
+  // 初始化 −2 日（−1080 分鐘）
+  await prisma.timeBankEntry.create({ data: {
+    employeeId: emp.id, date: new Date('2026-07-01T00:00:00+08:00'),
+    type: 'INIT_ADJUST', minutes: -1080,
+    note: '測試初始化負帳', createdBy: 'test',
+  }})
+
+  // Create shift + punch (OT 10 分鐘)
+  await prisma.shift.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id,
+    date: dt('2026-07-06', '00:00'),
+    startTime: dt('2026-07-06', '09:00'), endTime: dt('2026-07-06', '18:00'),
+    status: 'CONFIRMED', createdBy: user.id } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '09:00'),
+    punchType: 'CLOCK_IN', source: 'QR_DYNAMIC', tokenValid: true } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '18:10'),
+    punchType: 'CLOCK_OUT', source: 'QR_DYNAMIC', tokenValid: true } })
+
+  // Run engine
+  const config = {
+    base_type: 'monthly',
+    monthly_salary: S.monthlySalary,
+    modifiers: {
+      overtime: { mode: 'time_off', hours_per_leave_day: S.rule.otHoursPerLeaveDay },
+      working_days: { basis: 'scheduled', rest_days: S.rule.restDays, count_public_holidays: true },
+      deduction: { basis: 'statutory' },
+    },
+  }
+  const result = await calculatePayrollWithRules(emp.id, monthStart, clinic.id, config as any)
+
+  // Results
+  const tb = (result.detail as any)?.timebank || {}
+  console.log(`\n─── S20 結果 ───`)
+  console.log(`OT: ${tb.otMinutes ?? '?'} 分 (預期: 10 分)`)
+  console.log(`時間帳戶: ${tb.timeAccountMinutes >= 0 ? '+' : ''}${tb.timeAccountMinutes ?? '?'} 分 (預期: -1070 = -1080 + 10 OT)`)
+
+  // Verify
+  const otOk = tb.otMinutes === 10
+  const accountOk = tb.timeAccountMinutes === -1070
+  console.log(`${otOk && accountOk ? '✅ S20 PASS' : '❌ S20 FAIL'}`)
+}
+
+// ─── S21: 假還鐘 ───
+async function runS21() {
+  console.log('\n═══ S21: 假還鐘 ═══\n')
+
+  const S = SCENARIO_S18
+  const clinic = await prisma.clinic.findFirst({ where: { name: S.clinicName } })
+  if (!clinic) { console.error(`❌ 找不到診所「${S.clinicName}」`); return }
+
+  let user = await prisma.user.findFirst({ where: { phone: 'TEST_S21' } })
+  if (!user) user = await prisma.user.create({
+    data: { name: 'S21測試員工', phone: 'TEST_S21', password: 'x', role: 'EMPLOYEE' } })
+  let emp = await prisma.employee.findFirst({ where: { userId: user.id } })
+  if (!emp) emp = await prisma.employee.create({ data: { userId: user.id, joinDate: new Date('2025-01-01') } })
+  await prisma.employeeClinic.upsert({
+    where: { employeeId_clinicId: { employeeId: emp.id, clinicId: clinic.id } },
+    update: {}, create: { employeeId: emp.id, clinicId: clinic.id } }).catch(() => {})
+
+  // Clean old data
+  const monthStart = new Date('2026-07-01T00:00:00+08:00')
+  const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+  await prisma.punchVoid.deleteMany({ where: { punchRecord: { employeeId: emp.id } } }).catch(() => {})
+  await prisma.punchRecord.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.shift.deleteMany({ where: { employeeId: emp.id } })
+  await prisma.timeBankEntry.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+  await prisma.timeBank.deleteMany({ where: { employeeId: emp.id } }).catch(() => {})
+
+  // 初始化 −2 日（−1080 分鐘）
+  await prisma.timeBankEntry.create({ data: {
+    employeeId: emp.id, date: new Date('2026-07-01T00:00:00+08:00'),
+    type: 'INIT_ADJUST', minutes: -1080,
+    note: '測試初始化負帳', createdBy: 'test',
+  }})
+
+  // 休息日餘額 1 天
+  const restType = await prisma.leaveType.findFirst({ where: { systemKey: 'REST_DAY' } })
+  if (!restType) { console.error('❌ 找不到 REST_DAY 類型'); return }
+  await prisma.leaveBalance.create({ data: {
+    employeeId: emp.id, leaveTypeId: restType.id, year: 2026,
+    total: 1, used: 0, remaining: 1,
+  } as any})
+
+  // 假還鐘 1 天：扣休息日 + 帳戶進 540 分鐘
+  await prisma.leaveBalance.update({
+    where: { employeeId_leaveTypeId_year: { employeeId: emp.id, leaveTypeId: restType.id, year: 2026 } },
+    data: { used: 1, remaining: 0 },
+  })
+  await prisma.timeBankEntry.create({ data: {
+    employeeId: emp.id, date: new Date(),
+    type: 'REST_TO_ACCOUNT', minutes: 540,
+    note: '假還鐘 1 天', createdBy: 'test',
+  }})
+
+  // Create a normal shift (no OT)
+  await prisma.shift.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id,
+    date: dt('2026-07-06', '00:00'),
+    startTime: dt('2026-07-06', '09:00'), endTime: dt('2026-07-06', '18:00'),
+    status: 'CONFIRMED', createdBy: user.id } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '09:00'),
+    punchType: 'CLOCK_IN', source: 'QR_DYNAMIC', tokenValid: true } })
+  await prisma.punchRecord.create({ data: {
+    employeeId: emp.id, clinicId: clinic.id, punchTime: dt('2026-07-06', '18:00'),
+    punchType: 'CLOCK_OUT', source: 'QR_DYNAMIC', tokenValid: true } })
+
+  // Run engine
+  const config = {
+    base_type: 'monthly',
+    monthly_salary: S.monthlySalary,
+    modifiers: {
+      overtime: { mode: 'time_off', hours_per_leave_day: S.rule.otHoursPerLeaveDay },
+      working_days: { basis: 'scheduled', rest_days: S.rule.restDays, count_public_holidays: true },
+      deduction: { basis: 'statutory' },
+    },
+  }
+  const result = await calculatePayrollWithRules(emp.id, monthStart, clinic.id, config as any)
+
+  // Results
+  const tb = (result.detail as any)?.timebank || {}
+  console.log(`\n─── S21 結果 ───`)
+  console.log(`OT: ${tb.otMinutes ?? '?'} 分 (預期: 0 分)`)
+  console.log(`時間帳戶: ${tb.timeAccountMinutes >= 0 ? '+' : ''}${tb.timeAccountMinutes ?? '?'} 分 (預期: -540 = -1080 + 540 假還鐘)`)
+
+  // Verify
+  const otOk = tb.otMinutes === 0
+  const accountOk = tb.timeAccountMinutes === -540
+  console.log(`${otOk && accountOk ? '✅ S21 PASS' : '❌ S21 FAIL'}`)
 }
 
 runAll().catch(e => { console.error(e); prisma.$disconnect() })

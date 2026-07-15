@@ -212,7 +212,11 @@ export default function MyDashboardPage() {
                   </div>
                   <div className="text-xs text-muted-foreground mt-2">
                     {timeAccount > 0 && `可換假 ${Math.floor(timeAccount / 540)} 天（餘 ${timeAccount % 540} 分）`}
-                    {timeAccount < 0 && '拖欠公司時間，之後 OT 自動償還'}
+                    {timeAccount < 0 && <>
+                      拖欠公司時間，之後 OT 自動償還
+                      <br />
+                      <span className="text-red-600" style={{ fontSize: 12 }}>拖欠 {Math.abs(timeAccount)} 分鐘（約 {(Math.abs(timeAccount) / 540).toFixed(1)} 日）</span>
+                    </>}
                     {timeAccount === 0 && '兩清'}
                   </div>
                   {/* 參考明細 */}

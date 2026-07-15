@@ -1199,11 +1199,12 @@ export async function calculateTimeBank(
     // timeBankEntry table may not exist yet
   }
 
-  // 抓換假消耗（LEAVE_CONVERT 是負消耗OT，LEAVE_SWAP_BACK 是正換回OT）
+  // 抓換假消耗（LEAVE_CONVERT 負消耗OT，LEAVE_SWAP_BACK 正換回OT，INIT_ADJUST/REST_TO_ACCOUNT 為帳戶調整）
   let convertedMinutes = 0
   try {
+    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT']
     const convertEntries = await db.timeBankEntry?.findMany?.({
-      where: { employeeId, type: { in: ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK'] }, date: { gte: monthStart, lte: monthEnd } },
+      where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
     })
     convertedMinutes = convertEntries?.reduce((s: number, e: any) => s + e.minutes, 0) || 0
   } catch {
