@@ -137,6 +137,11 @@ export async function POST(req: NextRequest) {
 
       let employee = null
       if (assignEmployee) {
+        // Validate homeClinicId: must be within assigned clinics
+        if (homeClinicId && !clinicIds?.includes(homeClinicId)) {
+          return NextResponse.json({ error: '長駐店不在已指派診所中，請確認診所指派後重試' }, { status: 400 })
+        }
+
         const empClinicData = clinicIds && clinicIds.length > 0
           ? { create: clinicIds.map((cid: string, idx: number) => ({ clinic: { connect: { id: cid } }, isPrimary: idx === 0 })) }
           : undefined
@@ -147,7 +152,7 @@ export async function POST(req: NextRequest) {
           status: 'ACTIVE',
           payConfidential,
           clinics: empClinicData,
-          homeClinicId: homeClinicId && clinicIds?.includes(homeClinicId) ? homeClinicId : (clinicIds && clinicIds.length > 0 ? clinicIds[0] : null),
+          homeClinicId: homeClinicId || null,
         }
 
         if (payType) {

@@ -112,17 +112,23 @@ export async function PUT(
       }
 
       // Update employee if exists (may have just been backfilled above)
+      let homeClinicCleared = false
       if (employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined || payConfidential !== undefined || homeClinicId !== undefined)) {
         const empUpdate: any = {}
         if (employeeStatus !== undefined) empUpdate.status = employeeStatus
         if (payConfidential !== undefined) empUpdate.payConfidential = payConfidential
         if (homeClinicId !== undefined) {
-          // Validate: homeClinicId must be in assigned clinics or empty string to clear
           if (homeClinicId === '' || homeClinicId === null) {
             empUpdate.homeClinicId = null
           } else if (clinicIds && clinicIds.includes(homeClinicId)) {
             empUpdate.homeClinicId = homeClinicId
+          } else {
+            return NextResponse.json({ error: '長駐店不在已指派診所中，請確認診所指派後重試' }, { status: 400 })
           }
+        } else if (clinicIds && employee?.homeClinicId && !clinicIds.includes(employee.homeClinicId)) {
+          // homeClinicId 沒被提交但舊值不在新 clinicIds 中 → 自動清空
+          empUpdate.homeClinicId = null
+          homeClinicCleared = true
         }
 
         await prisma.employee.update({
@@ -176,7 +182,10 @@ export async function PUT(
       if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
       const { password, ...safeUser } = updated
-      return NextResponse.json({ account: safeUser })
+      return NextResponse.json({
+        account: safeUser,
+        ...(homeClinicCleared ? { note: '長駐店已自動清空（已取消該診所指派）' } : {}),
+      })
     } catch (err: any) {
       return NextResponse.json({ error: err.message || 'Failed to update' }, { status: 500 })
     }
