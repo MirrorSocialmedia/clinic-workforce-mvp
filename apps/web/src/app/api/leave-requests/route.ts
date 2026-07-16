@@ -6,6 +6,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
+import { ensureRestDayGranted } from '@/lib/payroll-engine'
 
 // ============================================================
 // GET /api/leave-requests — List leave requests
@@ -117,6 +118,14 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // 🔧 Ensure REST_DAY monthly quota exists before balance check (cross-month lazy grant)
+      if (leaveType.systemKey === 'REST_DAY') {
+        await ensureRestDayGranted(employee.id, new Date(startDate), prisma)
+        if (toHKDateStr(new Date(endDate)).slice(0, 7) !== toHKDateStr(new Date(startDate)).slice(0, 7)) {
+          await ensureRestDayGranted(employee.id, new Date(endDate), prisma)
+        }
+      }
+
       // Validate remaining balance (skip for unlimited types)
       const currentYear = new Date().getUTCFullYear()
       const balance = await prisma.leaveBalance.findFirst({
@@ -220,6 +229,12 @@ function isAnnualLeave(leaveType: { name: string }): boolean {
 }
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number): Promise<void> {
+  // 🔧 Ensure REST_DAY monthly quota before deduction
+  const lt = await prisma.leaveType.findUnique({ where: { id: leaveTypeId }, select: { systemKey: true } })
+  if (lt?.systemKey === 'REST_DAY') {
+    await ensureRestDayGranted(employeeId, new Date(), prisma)
+  }
+
   const currentYear = new Date().getUTCFullYear()
   const bal = await prisma.leaveBalance.findUnique({
     where: {

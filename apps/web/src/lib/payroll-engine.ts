@@ -1565,7 +1565,7 @@ async function getLeaveTypeBySystemKey(db: any, systemKey: string): Promise<any>
  * Grant monthly rest day entitlement to an employee's LeaveBalance.
  * 🔴 Fix: 差額法 — delta = quota - prevDays，舊錯誤自動修正。
  */
-async function grantMonthlyRestDays(
+export async function grantMonthlyRestDays(
   employeeId: string,
   year: number,
   month: number, // 0-indexed
@@ -1634,6 +1634,25 @@ async function grantMonthlyRestDays(
       },
     })
   }
+}
+
+/**
+ * Ensure monthly rest day entitlement exists for the month of `targetDate`.
+ * Idempotent — safe to call repeatedly. Uses delta method internally.
+ */
+export async function ensureRestDayGranted(employeeId: string, targetDate: Date, db: any): Promise<void> {
+  const rule = await db.payRule.findFirst({
+    where: { employeeId, isActive: true },
+    orderBy: { effectiveFrom: 'desc' },
+  })
+  const config = rule?.configJson
+    ? (typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson)
+    : {}
+  const restDays = config.working_days?.rest_days ?? [6, 0] // default Sat+Sun
+
+  const { y, m } = hkParts(targetDate) // m is 0-indexed
+  const quota = countMonthlyLeaveDays(y, m, restDays)
+  await grantMonthlyRestDays(employeeId, y, m, quota.total, db)
 }
 
 // ------------------------------------------------------------------

@@ -1400,6 +1400,15 @@ function getShiftColor(shift: Shift): string {
   // ============================================================
   // Render
   // ============================================================
+  // Sticky panel style —钉住三卡，內部自動捲動
+  const stickyPanel: React.CSSProperties = {
+    position: 'sticky',
+    top: 12,
+    alignSelf: 'flex-start',
+    maxHeight: 'calc(100vh - 24px)',
+    overflowY: 'auto',
+  }
+
   return (
     <div style={{ maxWidth: '100%', padding: '0 16px' }}>
       {/* Overview capsule styles */}
@@ -1780,6 +1789,7 @@ function getShiftColor(shift: Shift): string {
 
         {/* LEFTMOST: Clinic Sidebar grouped by Company */}
         <div style={{
+          ...stickyPanel,
           width: '130px',
           flexShrink: 0,
           borderRight: '1px solid #e5e7eb',
@@ -1788,8 +1798,6 @@ function getShiftColor(shift: Shift): string {
           borderRadius: 8,
           border: '1px solid #e5e7eb',
           padding: 8,
-          maxHeight: 600,
-          overflowY: 'auto',
         }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6, textAlign: 'center' }}>
             店舖
@@ -1833,12 +1841,11 @@ function getShiftColor(shift: Shift): string {
 
         {/* COLUMN 2: Employees split by pay type */}
         <div style={{
+          ...stickyPanel,
           background: '#fafbfc',
           borderRadius: 8,
           border: '1px solid #e5e7eb',
           padding: 8,
-          maxHeight: 600,
-          overflowY: 'auto',
         }}>
           {/* Employee scope toggle */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -1996,12 +2003,11 @@ function getShiftColor(shift: Shift): string {
 
         {/* MIDDLE COLUMN: Templates + Leave */}
         <div style={{
+          ...stickyPanel,
           background: '#fafbfc',
           borderRadius: 8,
           border: '1px solid #e5e7eb',
           padding: 8,
-          maxHeight: 600,
-          overflowY: 'auto',
         }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
             更次
