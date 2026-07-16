@@ -15,7 +15,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!body.name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
     }
-    const company = await prisma.company.update({ where: { id }, data: { name: body.name } })
+    const data: Record<string, any> = { name: body.name }
+    if (body.logoData !== undefined) data.logoData = body.logoData
+    const company = await prisma.company.update({ where: { id }, data })
     return NextResponse.json(company)
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

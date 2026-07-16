@@ -90,6 +90,7 @@ enum LeaveStatus {
 model Company {
   id        String   @id @default(cuid())
   name      String
+  logoData  String?  // data URL (image/png;base64,...)
   createdAt DateTime @default(now())
 
   clinics   Clinic[]

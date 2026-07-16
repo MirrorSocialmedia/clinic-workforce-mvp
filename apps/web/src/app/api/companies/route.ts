@@ -27,7 +27,9 @@ export async function POST(req: NextRequest) {
     if (!body.name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
     }
-    const company = await prisma.company.create({ data: { name: body.name } })
+    const company = await prisma.company.create({
+      data: { name: body.name, logoData: body.logoData || null },
+    })
     return NextResponse.json(company, { status: 201 })
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

@@ -32,16 +32,22 @@ function CompanyOverviewTable({
     <div>
       <div className="overflow-x-auto -mx-2" style={{ WebkitOverflowScrolling: 'touch' }}>
         <table style={{
-          borderCollapse: 'collapse', fontSize: 11, minWidth: 720, width: '100%',
+          borderCollapse: 'separate', borderSpacing: 0,
+          tableLayout: 'fixed',
+          fontSize: 11, minWidth: 724, width: '100%',
         }}>
+          <colgroup>
+            <col style={{ width: 80 }} />
+            {days.map((d: string) => <col key={d} style={{ width: 92 }} />)}
+          </colgroup>
           <thead>
             <tr>
-              <th style={{ textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb', position: 'sticky', left: 0, background: '#f9fafb', zIndex: 1, minWidth: 80 }}>員工</th>
+              <th style={{ textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb', position: 'sticky', left: 0, background: '#f9fafb', zIndex: 2, fontWeight: 600 }}>員工</th>
               {days.map((d: string, i: number) => {
                 const dayNames = ['日', '一', '二', '三', '四', '五', '六']
                 const dayOfWeek = new Date(d + 'T00:00:00+08:00').getDay()
                 return (
-                  <th key={i} style={{ textAlign: 'center', padding: '4px 4px', borderBottom: '1px solid #e5e7eb', minWidth: 64, whiteSpace: 'nowrap' }}>
+                  <th key={i} style={{ textAlign: 'center', padding: '4px 4px', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>
                     <div style={{ fontWeight: 600 }}>{d.slice(5)}</div>
                     <div style={{ color: '#888', fontSize: 10 }}>{dayNames[dayOfWeek]}</div>
                   </th>
@@ -52,50 +58,54 @@ function CompanyOverviewTable({
           <tbody>
             {employees.map((emp: any) => {
               const isMe = emp.userId === currentUserId
+              const shiftsByDay = emp.shifts?.reduce((acc: Record<string, any>, s: any) => { acc[s.date] = s; return acc }, {}) || {}
               return (
                 <tr key={emp.id} style={{ background: isMe ? '#f0fdfa' : 'transparent' }}>
                   <td style={{
-                    padding: '4px 6px', borderBottom: '1px solid #f3f4f6',
-                    fontWeight: isMe ? 700 : 400,
-                    position: 'sticky', left: 0,
+                    position: 'sticky', left: 0, zIndex: 1,
                     background: isMe ? '#f0fdfa' : '#fff',
-                    zIndex: 1, minWidth: 80,
-                  }}>
-                    {emp.name}
-                  </td>
-                  {emp.shifts.map((ds: any, di: number) => (
-                    <td key={di} style={{ padding: '4px 4px', borderBottom: '1px solid #f3f4f6', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
-                        {ds.shifts.map((s: any) => (
-                          <span
-                            key={s.id}
-                            style={{
-                              display: 'inline-block', maxWidth: 104, overflow: 'hidden',
-                              textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'top',
-                              background: '#e0f2fe', color: '#0369a1',
-                              borderRadius: 4, padding: '1px 4px', fontSize: 10,
-                            }}
-                            title={`${s.clinicName} ${s.startTime}-${s.endTime}`}
-                          >
-                            {s.clinicName} {s.startTime}-{s.endTime}
-                          </span>
-                        ))}
-                        {ds.leaves.map((l: string, li: number) => (
-                          <span
-                            key={li}
-                            style={{
-                              display: 'inline-block',
-                              background: '#fef3c7', color: '#92400e',
-                              borderRadius: 4, padding: '1px 4px', fontSize: 10,
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            🏖 {l}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                  ))}
+                    padding: '4px 6px', fontWeight: isMe ? 700 : 500,
+                    borderBottom: '1px solid #f3f4f6',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{emp.name}</td>
+                  {days.map((d: string) => {
+                    const ds = shiftsByDay[d]
+                    return (
+                      <td key={d} style={{ padding: '3px 3px', verticalAlign: 'top', borderBottom: '1px solid #f3f4f6' }}>
+                        {ds && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {ds.shifts?.map((s: any) => (
+                              <span
+                                key={s.id}
+                                style={{
+                                  display: 'inline-block', maxWidth: 84, overflow: 'hidden',
+                                  textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'top',
+                                  background: '#e0f2fe', color: '#0369a1',
+                                  borderRadius: 4, padding: '1px 4px', fontSize: 10,
+                                }}
+                                title={`${s.clinicName} ${s.startTime}-${s.endTime}`}
+                              >
+                                {s.clinicName} {s.startTime}-{s.endTime}
+                              </span>
+                            ))}
+                            {ds.leaves?.map((l: string, li: number) => (
+                              <span
+                                key={li}
+                                style={{
+                                  display: 'inline-block',
+                                  background: '#fef3c7', color: '#92400e',
+                                  borderRadius: 4, padding: '1px 4px', fontSize: 10,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                🏖 {l}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    )
+                  })}
                 </tr>
               )
             })}

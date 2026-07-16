@@ -6,7 +6,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { maskIfConfidential, hasConfidentialItems } from '@/lib/payroll-engine'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
-import 'jspdf-autotable'
+import autoTable from 'jspdf-autotable'
 
 // POST /api/payroll-runs/[id]/export — Export to Excel or PDF
 export async function POST(
@@ -24,7 +24,13 @@ export async function POST(
   const run = await prisma.payrollRun.findUnique({
     where: { id: params.id },
     include: {
-      clinic: { select: { id: true, name: true } },
+      clinic: {
+        select: {
+          id: true,
+          name: true,
+          company: { select: { name: true, logoData: true } },
+        },
+      },
       items: {
         include: {
           employee: {
@@ -122,12 +128,52 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
   })
 }
 
+function loadChineseFont(doc: jsPDF): boolean {
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    const fontPath = path.join(process.cwd(), 'src/assets/fonts/NotoSansTC-Regular.ttf')
+    if (!fs.existsSync(fontPath)) return false
+    const fontB64 = fs.readFileSync(fontPath).toString('base64')
+    doc.addFileToVFS('NotoSansTC.ttf', fontB64)
+    doc.addFont('NotoSansTC.ttf', 'NotoSansTC', 'normal')
+    doc.setFont('NotoSansTC')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner: boolean): NextResponse {
   const doc = new jsPDF('p', 'mm', 'a4')
-  doc.setFontSize(16)
-  doc.text('診所員工糧單', 14, 20)
+  const hasChineseFont = loadChineseFont(doc)
+
+  const company = run.clinic?.company
+
+  // ── Header with optional logo ──
+  let y = 14
+  if (company?.logoData) {
+    try {
+      doc.addImage(company.logoData, 'PNG', 14, 10, 24, 0)
+      y = 26
+    } catch {
+      // logo render failed, ignore
+    }
+  }
+
+  if (hasChineseFont) {
+    doc.setFontSize(14)
+    doc.text(`${company?.name || ''} — ${clinicName} 計糧表（${periodMonth}）`, 14, y)
+    y += 6
+  } else {
+    doc.setFontSize(14)
+    doc.text(`${company?.name || ''} - ${clinicName} Payroll (${periodMonth})`, 14, y)
+    y += 6
+  }
+
   doc.setFontSize(10)
-  doc.text(`期間: ${periodMonth}  |  診所: ${clinicName}  |  狀態: ${run.status}`, 14, 28)
+  doc.text(`Period: ${periodMonth}  |  Clinic: ${clinicName}  |  Status: ${run.status}`, 14, y)
+  y += 4
 
   const tableData = run.items.map((item: any) => {
     const clinics = item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
@@ -142,25 +188,33 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner:
     ]
   })
 
-  // @ts-ignore — jspdf-autotable extends jsPDF
-  doc.autoTable({
-    startY: 34,
-    head: [['姓名', '診所', '工時', '加班', '請假', '缺勤', '基本', '加班費', '拆帳', '扣款', '店舖獎金', '應付']],
+  const headerLabels = hasChineseFont
+    ? ['姓名', '診所', '工時', '加班', '請假', '缺勤', '基本', '加班費', '拆帳', '扣款', '店舖獎金', '應付']
+    : ['Name', 'Clinic', 'Hours', 'OT', 'Leave', 'Absent', 'Base', 'OT Pay', 'Split', 'Deduct', 'Bonus', 'Total']
+
+  autoTable(doc, {
+    startY: y,
+    head: [headerLabels],
     body: tableData,
-    styles: { fontSize: 8 },
+    styles: { fontSize: hasChineseFont ? 9 : 8 },
     headStyles: { fillColor: [41, 128, 185] },
   })
 
   const finalY = (doc as any).lastAutoTable.finalY + 10
   const hasConf = hasConfidentialItems(run.items, isOwner ? 'OWNER' : 'MANAGER')
   doc.setFontSize(10)
+
   if (hasConf && !isOwner) {
-    doc.text('應付總額: 含保密員工，僅老闆可見', 14, finalY)
+    const label = hasChineseFont ? '應付總額: 含保密員工，僅老闆可見' : 'Total: Includes confidential employees, owner only'
+    doc.text(label, 14, finalY)
   } else {
     const totalPayable = run.items.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0)
-    doc.text(`應付總額: HK$${totalPayable.toFixed(2)}`, 14, finalY)
+    const prefix = hasChineseFont ? '應付總額: HK$' : 'Total: HK$'
+    doc.text(`${prefix}${totalPayable.toFixed(2)}`, 14, finalY)
   }
-  doc.text(`員工數: ${run.items.length}`, 14, finalY + 6)
+
+  const empLabel = hasChineseFont ? `員工數: ${run.items.length}` : `Employees: ${run.items.length}`
+  doc.text(empLabel, 14, finalY + 6)
 
   const buf = Buffer.from(doc.output('arraybuffer') as ArrayBuffer)
   return new NextResponse(buf, {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { fmtDate } from '@/lib/hk-date'
+import { compressToDataUrl } from '@/lib/image'
 
 interface Clinic {
   id: string
@@ -16,6 +17,7 @@ interface Clinic {
 interface Company {
   id: string
   name: string
+  logoData: string | null
   _count: { clinics: number }
   createdAt: string
 }
@@ -30,6 +32,7 @@ export default function ClinicsPage() {
   const [editingClinicId, setEditingClinicId] = useState<string | null>(null)
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null)
   const [newCompanyName, setNewCompanyName] = useState('')
+  const [newCompanyLogo, setNewCompanyLogo] = useState<string | null>(null)
 
   const fetchAll = async () => {
     const [clinicsRes, companiesRes] = await Promise.all([
@@ -52,11 +55,12 @@ export default function ClinicsPage() {
     const res = await fetch('/api/companies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newCompanyName.trim() }),
+      body: JSON.stringify({ name: newCompanyName.trim(), logoData: newCompanyLogo }),
       credentials: 'include',
     })
     if (res.ok) {
       setNewCompanyName('')
+      setNewCompanyLogo(null)
       fetchAll()
     } else {
       const err = await res.json()
@@ -64,13 +68,13 @@ export default function ClinicsPage() {
     }
   }
 
-  const handleRenameCompany = async (id: string) => {
+  const handleRenameCompany = async (id: string, currentLogo?: string | null) => {
     const newName = prompt('修改公司名稱：', companies.find(c => c.id === id)?.name)
     if (!newName || newName.trim() === '') return
     const res = await fetch(`/api/companies/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName.trim() }),
+      body: JSON.stringify({ name: newName.trim(), logoData: currentLogo }),
       credentials: 'include',
     })
     if (res.ok) fetchAll()
@@ -169,14 +173,47 @@ export default function ClinicsPage() {
       {/* ── Company Management Card ── */}
       <div className="card mb-4">
         <h2>🏢 公司管理</h2>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <input
-            value={newCompanyName}
-            onChange={e => setNewCompanyName(e.target.value)}
-            placeholder="新公司名稱"
-            style={{ flex: 1, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14 }}
-            onKeyDown={e => e.key === 'Enter' && handleAddCompany()}
-          />
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <input
+              value={newCompanyName}
+              onChange={e => setNewCompanyName(e.target.value)}
+              placeholder="新公司名稱"
+              style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14 }}
+              onKeyDown={e => e.key === 'Enter' && handleAddCompany()}
+            />
+            <div>
+              <label style={{ fontSize: 12, color: '#666', cursor: 'pointer', display: 'block', marginBottom: 2 }}>
+                🏷 公司 Logo（選填，PDF 匯出用）
+              </label>
+              <input
+                type="file"
+                accept="image/png,image/jpeg"
+                style={{ fontSize: 12 }}
+                onChange={async e => {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  try {
+                    const logoData = await compressToDataUrl(f, 400, 400)
+                    if (logoData.length > 150_000) {
+                      alert('Logo 壓縮後仍過大，請換小圖')
+                      return
+                    }
+                    setNewCompanyLogo(logoData)
+                  } catch {
+                    alert('圖片載入失敗')
+                  }
+                }}
+              />
+              {newCompanyLogo && (
+                <img
+                  src={newCompanyLogo}
+                  alt="Logo preview"
+                  style={{ height: 40, marginTop: 4, borderRadius: 4 }}
+                />
+              )}
+            </div>
+          </div>
           <button className="btn btn-primary" onClick={handleAddCompany}>+ 新增公司</button>
         </div>
         {companies.length === 0 ? (
@@ -186,6 +223,7 @@ export default function ClinicsPage() {
             <thead>
               <tr>
                 <th>公司名稱</th>
+                <th>Logo</th>
                 <th>診所數</th>
                 <th>建立時間</th>
                 <th>操作</th>
@@ -195,10 +233,38 @@ export default function ClinicsPage() {
               {companies.map(company => (
                 <tr key={company.id}>
                   <td style={{ fontWeight: 500 }}>{company.name}</td>
+                  <td>
+                    {company.logoData ? (
+                      <img src={company.logoData} alt="Logo" style={{ height: 28, borderRadius: 4 }} />
+                    ) : (
+                      <span className="text-muted" style={{ fontSize: 12 }}>—</span>
+                    )}
+                  </td>
                   <td className="num">{company._count?.clinics ?? 0}</td>
                   <td className="text-sm">{fmtDate(company.createdAt)}</td>
                   <td>
-                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleRenameCompany(company.id)}>改名</button>
+                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleRenameCompany(company.id, company.logoData)}>改名</button>
+                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={async () => {
+                      const input = document.createElement('input')
+                      input.type = 'file'
+                      input.accept = 'image/png,image/jpeg'
+                      input.onchange = async (e: any) => {
+                        const f = e.target.files?.[0]
+                        if (!f) return
+                        try {
+                          const logoData = await compressToDataUrl(f, 400, 400)
+                          if (logoData.length > 150_000) { alert('Logo 壓縮後仍過大'); return }
+                          await fetch(`/api/companies/${company.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: company.name, logoData }),
+                            credentials: 'include',
+                          })
+                          fetchAll()
+                        } catch { alert('圖片載入失敗') }
+                      }
+                      input.click()
+                    }}>換Logo</button>
                     <button className="btn btn-danger btn-sm" onClick={() => handleDeleteCompany(company.id)}>刪除</button>
                   </td>
                 </tr>
