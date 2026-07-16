@@ -480,12 +480,17 @@ function getShiftColor(shift: Shift): string {
   const loadShifts = useCallback(async () => {
     if (!viewRange) return
 
-    const url = `/api/shifts?startDate=${viewRange.start}&endDate=${viewRange.end}&pageSize=1000`
+    // Extend endDate by 7 days to cover both this week and next week in overview
+    const endDate = new Date(viewRange.end)
+    endDate.setDate(endDate.getDate() + 7)
+    const endDateStr = toHKDateStr(endDate)
+
+    const url = `/api/shifts?startDate=${viewRange.start}&endDate=${endDateStr}&pageSize=1000`
 
     try {
       const [shiftsRes, leavesRes] = await Promise.all([
         fetch(url, { credentials: 'include' }),
-        fetch(`/api/leave-requests?startDate=${viewRange.start}&endDate=${viewRange.end}&status=APPROVED`, { credentials: 'include' }),
+        fetch(`/api/leave-requests?startDate=${viewRange.start}&endDate=${endDateStr}&status=APPROVED`, { credentials: 'include' }),
       ])
       if (shiftsRes.ok) {
         const data = await shiftsRes.json()
@@ -1037,20 +1042,38 @@ function getShiftColor(shift: Shift): string {
     return shifts.filter(s => s.clinicId === selectedClinicId)
   }, [shifts, selectedClinicId])
 
-  // Task 3: Selected employee stats (after clinicFilteredShifts)
-  const selectedEmpStats = useMemo(() => {
-    if (!selectedEmployeeId) return null
+  // Task 3: Per-week stats helper (statsForDays + renderWeekStats)
+  const statsForDays = useCallback((days: { date: Date; label: string; dateStr: string }[]) => {
+    if (!selectedEmployeeId || days.length === 0) return null
     const emp = clinicEmployees.find(e => e.id === selectedEmployeeId)
     if (!emp) return null
-    const empShifts = clinicFilteredShifts.filter(s => s.employeeId === selectedEmployeeId)
-    const days = new Set(empShifts.map(s => s.date)).size
-    const hours = empShifts.reduce((sum, s) => {
-      const start = new Date(s.startTime)
-      const end = new Date(s.endTime)
-      return sum + (end.getTime() - start.getTime()) / 3600000
-    }, 0)
-    return { name: emp.user?.name ?? '?', days, hours: Math.round(hours * 10) / 10 }
+    const daySet = new Set(days.map(d => d.dateStr))
+    const empShifts = clinicFilteredShifts.filter(
+      s => s.employeeId === selectedEmployeeId && daySet.has(toHKDateStr(new Date(s.date)))
+    )
+    const dayCount = new Set(empShifts.map(s => s.date)).size
+    const hours = empShifts.reduce((sum, s) =>
+      sum + (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000, 0)
+    return { name: emp.user?.name ?? '?', days: dayCount, hours: Math.round(hours * 10) / 10 }
   }, [selectedEmployeeId, clinicFilteredShifts, clinicEmployees])
+
+  const renderWeekStats = useCallback((days: { date: Date; label: string; dateStr: string }[]) => {
+    const st = statsForDays(days)
+    return (
+      <div style={{
+        padding: '6px 10px', borderRadius: '0 0 8px 8px',
+        border: '1px solid #e5e7eb', borderTop: 'none',
+        background: '#f0f4ff',
+        fontSize: 13,
+        color: st ? '#374151' : '#9ca3af',
+      }}>
+        {st
+          ? <span>{st.name}: {st.days} 天班 · {st.hours.toFixed(1)} 小時</span>
+          : <span>請先選取員工</span>
+        }
+      </div>
+    )
+  }, [statsForDays])
 
   // Map shifts to FC events — colors by employee, leave by gray
   const fcEvents = [
@@ -1136,25 +1159,179 @@ function getShiftColor(shift: Shift): string {
     return (e.getTime() - s.getTime()) / (1000 * 60 * 60)
   }
 
+  // ============================================================
+  // Render Overview Week — takes a days array, renders title + table + stats
+  // ============================================================
+  const renderOverviewWeek = (days: typeof weekDays, title: string) => (
+    <div style={{ marginBottom: 0 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', margin: '8px 0 4px 10px' }}>
+        {title}（{days[0]?.dateStr.slice(5)} – {days[6]?.dateStr.slice(5)}）
+      </div>
+      <div className="overflow-x-auto">
+        <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: 700 }}>
+          <thead>
+            <tr>
+              <th style={{
+                position: 'sticky', left: 0, background: '#f3f4f6',
+                padding: '4px 8px', textAlign: 'left', zIndex: 10,
+                borderBottom: '2px solid #e5e7eb', minWidth: 80,
+              }}>員工</th>
+              {days.map((wd, i) => (
+                <th key={i} style={{
+                  padding: '4px 4px', textAlign: 'center',
+                  borderBottom: '2px solid #e5e7eb',
+                  minWidth: 70, whiteSpace: 'nowrap',
+                }}>{wd.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ovEmployees.map(emp => (
+              <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                <td style={{
+                  position: 'sticky', left: 0,
+                  background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+                  padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
+                  fontWeight: 500, fontSize: 11,
+                }}>{emp.user?.name ?? '?'}</td>
+                {days.map((wd, dayIdx) => {
+                  const empShiftsOnDay = ovShifts.filter(s =>
+                    s.employeeId === emp.id &&
+                    toHKDateStr(new Date(s.date)) === wd.dateStr
+                  )
+                  const empLeavesOnDay = leaveRequests.filter(lr =>
+                    lr.employeeId === emp.id &&
+                    leaveCoversDate(lr, wd.dateStr)
+                  )
+                  const hasShift = empShiftsOnDay.length > 0
+                  const hasLeave = empLeavesOnDay.length > 0
+                  return (
+                    <td key={dayIdx}
+                      className="overview-cell"
+                      onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
+                      onPointerEnter={e => {
+                        if (!draggingTemplate.current && !draggingLeave.current) return
+                        ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                        ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                      }}
+                      onPointerLeave={e => {
+                        if (hasShift) return
+                        if (hasLeave) {
+                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                        } else {
+                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                        }
+                        ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                      }}
+                      style={{
+                        padding: '2px 3px', textAlign: 'center',
+                        cursor: hasShift ? 'pointer' : 'default',
+                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
+                        transition: 'background 0.15s',
+                        verticalAlign: 'top',
+                      }}
+                      onMouseEnter={e => {
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                      }}
+                      onMouseLeave={e => {
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                      }}
+                      onClick={() => {
+                        if (justDroppedRef.current) return
+                        if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
+                      }}
+                    >
+                      <div className="overview-cell-inner">
+                        {empShiftsOnDay.map((s, si) => {
+                          const tpl = templates.find(t => t.id === s.templateId)
+                          const clinic = clinics.find(c => c.id === s.clinicId)
+                          const parts: string[] = []
+                          if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+                          if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                          if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
+                          const shiftLabel = parts.filter(Boolean).join('·')
+                          const shiftTitle = `${s.employee?.user?.name} ${clinic?.name ?? ''} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
+                          return (
+                            <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
+                              background: getShiftColor(s),
+                              touchAction: 'none',
+                              userSelect: 'none',
+                            }}
+                              onPointerDown={(e) => shiftDragOutStart(e, s.id, shiftLabel, () => Promise.resolve())}
+                            >
+                              {shiftLabel}
+                            </div>
+                          )
+                        })}
+                        {empLeavesOnDay.map((lr, li) => {
+                          const leaveColor = lr.leaveType?.color ?? '#9ca3af'
+                          const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
+                          const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
+                          return (
+                            <div key={'l' + li} className="ov-capsule" title={leaveTitle}
+                              style={{
+                                background: (leaveColor || '#9ca3af') + '26',
+                                color: '#1f2937',
+                                borderLeft: `3px solid ${leaveColor}`,
+                                touchAction: 'none',
+                                userSelect: 'none',
+                              }}
+                              onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
+                            >
+                              {leaveLabel}
+                            </div>
+                          )
+                        })}
+                        {(!hasShift && !hasLeave) && (
+                          <span style={{ fontSize: 10, color: '#999', fontWeight: 500 }}>R</span>
+                        )}
+                      </div>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {renderWeekStats(days)}
+    </div>
+  )
+
+  // Factory: derive 7 days starting from a given Monday
+  const makeWeekDays = useCallback((monday: Date) => {
+    const dayNames = ['一', '二', '三', '四', '五', '六', '日']
+    const list: { date: Date; label: string; dateStr: string }[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday)
+      d.setDate(monday.getDate() + i) // tz-ok: client-side browser
+      list.push({ date: d, label: `${dayNames[i]}${d.getDate()}`, dateStr: toHKDateStr(d) }) // tz-ok: client-side browser
+    }
+    return list
+  }, [])
+
   // Get week days for overview grid
   const weekDays = useMemo(() => {
     if (!viewRange) return []
-    const weekDaysList: { date: Date; label: string; dateStr: string }[] = []
     const start = new Date(viewRange.start)
     const dayOfWeek = start.getDay()  // tz-ok: client-side browser
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
     const monday = new Date(start)
     monday.setDate(start.getDate() + mondayOffset)  // tz-ok: client-side browser
-    const dayNames = ['一', '二', '三', '四', '五', '六', '日']
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(monday)
-      d.setDate(monday.getDate() + i)  // tz-ok: client-side browser
-      weekDaysList.push({ date: d, label: `${dayNames[i]}${d.getDate()}`, dateStr: toHKDateStr(d) })  // tz-ok: client-side browser
-    }
-    return weekDaysList
-  }, [viewRange])
+    return makeWeekDays(monday)
+  }, [viewRange, makeWeekDays])
 
-  // Fix #1b: Orphan shift detection — shifts stored but not displayed in grid
+  // Next week days (for dual-week overview)
+  const weekDays2 = useMemo(() => {
+    if (weekDays.length === 0) return []
+    const nextMonday = new Date(weekDays[0].date)
+    nextMonday.setDate(nextMonday.getDate() + 7) // tz-ok: client-side browser
+    return makeWeekDays(nextMonday)
+  }, [weekDays, makeWeekDays])
+
+  // Fix #1b: Orphan shift detection — shifts stored but not displayed in dual-week grid
   // Only check in week view; month view has different date range
   useEffect(() => {
     if (viewMode !== 'week') {
@@ -1162,9 +1339,11 @@ function getShiftColor(shift: Shift): string {
       return
     }
     if (!shifts.length || !weekDays.length) return
+    // Check against both weeks
+    const allDateStrs = [...weekDays.map(wd => wd.dateStr), ...weekDays2.map(wd => wd.dateStr)]
     const orphans = shifts.filter(s => {
       const dateStr = formatDate(new Date(s.date))
-      return !weekDays.some(wd => wd.dateStr === dateStr)
+      return !allDateStrs.includes(dateStr)
     })
     if (orphans.length > 0) {
       console.warn(`⚠️ ${orphans.length} 筆排班無法顯示（日期對不上）:`,
@@ -1173,7 +1352,7 @@ function getShiftColor(shift: Shift): string {
     } else {
       setDisplayWarning(null)
     }
-  }, [shifts, weekDays, viewMode])
+  }, [shifts, weekDays, weekDays2, viewMode])
 
   // Fix #1c: weekDays validation — must have 7 days, day 7 must be Sunday
   useEffect(() => {
@@ -1184,7 +1363,14 @@ function getShiftColor(shift: Shift): string {
         console.assert(dayOfWeek === 0, `第7天應是週日，實際是週${dayOfWeek}`)
       }
     }
-  }, [weekDays])
+    if (weekDays2.length > 0) {
+      console.assert(weekDays2.length === 7, `weekDays2 應有7天，實際${weekDays2.length}天`)
+      if (weekDays2[6]) {
+        const dayOfWeek = new Date(weekDays2[6].dateStr).getDay()  // tz-ok: client-side browser
+        console.assert(dayOfWeek === 0, `第7天應是週日，實際是週${dayOfWeek}`)
+      }
+    }
+  }, [weekDays, weekDays2])
 
   const allEmployees = useMemo(() => {
     return employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
@@ -1912,6 +2098,7 @@ function getShiftColor(shift: Shift): string {
               overflowX: 'auto',
               background: '#fafbfc',
             }}>
+              {/* Shared header: scope + capsule settings */}
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div className="flex items-center gap-3">
                   <span>📊 全局總覽（{ovScope.type === 'all' ? '所有診所' : ovScope.name}）</span>
@@ -1932,133 +2119,9 @@ function getShiftColor(shift: Shift): string {
                   ))}
                 </div>
               </div>
-              <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: 700 }}>
-                <thead>
-                  <tr>
-                    <th style={{
-                      position: 'sticky', left: 0, background: '#f3f4f6',
-                      padding: '4px 8px', textAlign: 'left', zIndex: 10,
-                      borderBottom: '2px solid #e5e7eb', minWidth: 80,
-                    }}>員工</th>
-                    {weekDays.map((wd, i) => (
-                      <th key={i} style={{
-                        padding: '4px 4px', textAlign: 'center',
-                        borderBottom: '2px solid #e5e7eb',
-                        minWidth: 70, whiteSpace: 'nowrap',
-                      }}>{wd.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ovEmployees.map(emp => (
-                    <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{
-                        position: 'sticky', left: 0,
-                        background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                        padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
-                        fontWeight: 500, fontSize: 11,
-                      }}>{emp.user?.name ?? '?'}</td>
-                      {weekDays.map((wd, dayIdx) => {
-                        const empShiftsOnDay = ovShifts.filter(s =>
-                          s.employeeId === emp.id &&
-                          toHKDateStr(new Date(s.date)) === wd.dateStr
-                        )
-                        const empLeavesOnDay = leaveRequests.filter(lr =>
-                          lr.employeeId === emp.id &&
-                          leaveCoversDate(lr, wd.dateStr)
-                        )
-                        const hasShift = empShiftsOnDay.length > 0
-                        const hasLeave = empLeavesOnDay.length > 0
-                        return (
-                          <td key={dayIdx}
-                            className="overview-cell"
-                            onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
-                            onPointerEnter={e => {
-                              if (!draggingTemplate.current && !draggingLeave.current) return
-                              ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
-                              ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-                              ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
-                            }}
-                            onPointerLeave={e => {
-                              if (hasShift) return
-                              if (hasLeave) {
-                                ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
-                              } else {
-                                ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
-                              }
-                              ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-                              ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
-                            }}
-                            style={{
-                              padding: '2px 3px', textAlign: 'center',
-                              cursor: hasShift ? 'pointer' : 'default',
-                              background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
-                              transition: 'background 0.15s',
-                              verticalAlign: 'top',
-                            }}
-                            onMouseEnter={e => {
-                              if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
-                            }}
-                            onMouseLeave={e => {
-                              if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
-                            }}
-                            onClick={() => {
-                              if (justDroppedRef.current) return
-                              if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
-                            }}
-                          >
-                            <div className="overview-cell-inner">
-                              {empShiftsOnDay.map((s, si) => {
-                                const tpl = templates.find(t => t.id === s.templateId)
-                                const clinic = clinics.find(c => c.id === s.clinicId)
-                                const parts: string[] = []
-                                if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
-                                if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
-                                if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
-                                const shiftLabel = parts.filter(Boolean).join('·')
-                                const shiftTitle = `${s.employee?.user?.name} ${clinic?.name ?? ''} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
-                                return (
-                                  <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
-                                    background: getShiftColor(s),
-                                    touchAction: 'none',
-                                    userSelect: 'none',
-                                  }}
-                                    onPointerDown={(e) => shiftDragOutStart(e, s.id, shiftLabel, () => Promise.resolve())}
-                                  >
-                                    {shiftLabel}
-                                  </div>
-                                )
-                              })}
-                              {empLeavesOnDay.map((lr, li) => {
-                                const leaveColor = lr.leaveType?.color ?? '#9ca3af'
-                                const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
-                                const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
-                                return (
-                                  <div key={'l' + li} className="ov-capsule" title={leaveTitle}
-                                    style={{
-                                      background: (leaveColor || '#9ca3af') + '26',
-                                      color: '#1f2937',
-                                      borderLeft: `3px solid ${leaveColor}`,
-                                      touchAction: 'none',
-                                      userSelect: 'none',
-                                    }}
-                                    onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
-                                  >
-                                    {leaveLabel}
-                                  </div>
-                                )
-                              })}
-                              {(!hasShift && !hasLeave) && (
-                                <span style={{ fontSize: 10, color: '#999', fontWeight: 500 }}>R</span>
-                              )}
-                            </div>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {/* Two weeks rendered via renderOverviewWeek */}
+              {renderOverviewWeek(weekDays, '本週')}
+              {renderOverviewWeek(weekDays2, '下週')}
             </div>
           )}
 
@@ -2083,22 +2146,6 @@ function getShiftColor(shift: Shift): string {
           {/* Employee stats + Calendar (conditional) */}
           {showCalendar && (
             <>
-            {/* Employee stats as standalone card */}
-            <div style={{
-              marginBottom: 8,
-              padding: '8px 14px',
-              borderRadius: 8,
-              border: '1px solid #e5e7eb',
-              background: '#f0f4ff',
-              fontSize: 13,
-              color: selectedEmpStats ? '#374151' : '#9ca3af',
-            }}>
-              {selectedEmpStats
-                ? <span>{selectedEmpStats.name}: {selectedEmpStats.days} 天班 · {selectedEmpStats.hours.toFixed(1)} 小時</span>
-                : <span>請先選取員工</span>
-              }
-            </div>
-
             <div className="card rounded-xl g border p-4 shadow-card">
           <div ref={calendarContainerRef}>
 
