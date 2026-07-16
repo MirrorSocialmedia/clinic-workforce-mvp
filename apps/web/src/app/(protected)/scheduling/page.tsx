@@ -2055,8 +2055,10 @@ function getShiftColor(shift: Shift): string {
                 const remaining = bal?.remaining ?? 0
                 // 🔧 Fix #2a: 無限類型永遠可拖
                 const isUnlimited = lt.quantity == null && !lt.systemKey
+                // 🔧 REST_DAY 豁免：剩 0 仍可拖（server ensure 補血）
+                const isRestDay = lt.systemKey === 'REST_DAY'
                 // ★ 未選員工時可拖（drop 時彈選人 modal + 驗餘額）
-                const canDragLeave = canManage && (!selectedEmployeeId || isUnlimited || remaining > 0)
+                const canDragLeave = canManage && (!selectedEmployeeId || isUnlimited || isRestDay || remaining > 0)
                 return (
                   <div
                     key={lt.id}
@@ -2084,7 +2086,7 @@ function getShiftColor(shift: Shift): string {
                   >
                     <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
                     <span style={{ fontSize: 10, fontWeight: 600 }}>{isUnlimited ? '（無限）' : selectedEmployeeId ? `（剩 ${remaining.toFixed(1)} 天）` : ''}</span>
-                    {!canDragLeave && !isUnlimited && remaining <= 0 && <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
+                    {!canDragLeave && !isUnlimited && !isRestDay && remaining <= 0 && <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
                   </div>
                 )
               })}
