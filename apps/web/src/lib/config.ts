@@ -192,6 +192,14 @@ export const CONFIG = {
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/consultation-revenue': ['OWNER'],
+
+    // Face verification routes (shadow mode)
+    'POST /api/face/enroll-code': ['OWNER', 'MANAGER'],
+    'POST /api/face/enroll': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/face/verify-punch': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/face/review': ['OWNER', 'MANAGER'],
+    'GET /api/face/review/:punchId': ['OWNER', 'MANAGER'],
+    'POST /api/face/review/:punchId': ['OWNER', 'MANAGER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
