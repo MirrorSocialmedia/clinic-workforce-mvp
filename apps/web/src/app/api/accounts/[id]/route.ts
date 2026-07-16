@@ -128,7 +128,7 @@ export async function PUT(
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId } = body
+      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId, permissionsJson } = body
 
       const existing = await prisma.user.findUnique({
         where: { id: params.id },
@@ -144,6 +144,9 @@ export async function PUT(
       if (status !== undefined) userUpdate.status = status
       if (newPassword) {
         userUpdate.password = await bcrypt.hash(newPassword, 12)
+      }
+      if (permissionsJson !== undefined) {
+        userUpdate.permissionsJson = permissionsJson ? JSON.stringify(permissionsJson) : null
       }
 
       await prisma.user.update({

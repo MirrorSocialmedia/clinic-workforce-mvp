@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { Wallet, Plus } from 'lucide-react'
+import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
+import { PERMISSIONS, ROLE_DEFAULTS } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -37,6 +38,7 @@ export default function AccountsPage() {
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [showPayRuleModal, setShowPayRuleModal] = useState(false)
+  const [showPwd, setShowPwd] = useState(false)
   const [payRuleEmployeeId, setPayRuleEmployeeId] = useState<string | null>(null)
   const [leaveBalances, setLeaveBalances] = useState<Record<string, any[]>>({})
   const [payRules, setPayRules] = useState<Record<string, any>>({})
@@ -46,10 +48,12 @@ export default function AccountsPage() {
     payType: 'HOURLY', baseAmount: '',
     assignEmployee: true,
     payConfidential: false,
-    annualLeave: 12,  // 預設年假額度
-    sickLeave: 12,     // 預設病假額度
+    annualLeave: '12',  // string — parse on submit
+    sickLeave: '12',     // string — parse on submit
     employeeId: null as string | null,
     homeClinicId: '',
+    permGrant: [] as string[], // permissions granted beyond role default
+    permDeny: [] as string[],  // permissions denied despite role default
   })
 
   const fetchData = useCallback(async () => {
@@ -104,9 +108,14 @@ export default function AccountsPage() {
         baseAmount: form.baseAmount ? parseFloat(form.baseAmount) : null,
         assignEmployee: form.assignEmployee,
         payConfidential: form.payConfidential,
-        annualLeave: form.assignEmployee ? form.annualLeave : undefined,
-        sickLeave: form.assignEmployee ? form.sickLeave : undefined,
+        annualLeave: form.assignEmployee ? (parseFloat(form.annualLeave) || 0) : undefined,
+        sickLeave: form.assignEmployee ? (parseFloat(form.sickLeave) || 0) : undefined,
         homeClinicId: form.assignEmployee ? form.homeClinicId || null : undefined,
+      }
+      // Permissions: compute grant/deny diff from ROLE_DEFAULTS
+      if (form.role && form.role !== 'OWNER') {
+        const defaults = ROLE_DEFAULTS[form.role] || []
+        body.permissionsJson = { grant: form.permGrant, deny: form.permDeny }
       }
       if (!editingId && form.password) body.password = form.password
       if (editingId && form.password) body.newPassword = form.password
@@ -120,8 +129,9 @@ export default function AccountsPage() {
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
       clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true,
-      payConfidential: false, annualLeave: 12, sickLeave: 12, employeeId: null, homeClinicId: '' })
-    setShowForm(false); setEditingId(null)
+      payConfidential: false, annualLeave: '12', sickLeave: '12', employeeId: null, homeClinicId: '',
+      permGrant: [], permDeny: [] })
+    setShowForm(false); setEditingId(null); setShowPwd(false)
   }
 
   const handleEdit = (acc: Account) => {
@@ -130,8 +140,8 @@ export default function AccountsPage() {
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
       baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
       payConfidential: acc.payConfidential || false,
-      annualLeave: 12, sickLeave: 12, employeeId: acc.employeeId,
-      homeClinicId: acc.homeClinicId || '' })
+      annualLeave: '12', sickLeave: '12', employeeId: acc.employeeId,
+      homeClinicId: acc.homeClinicId || '', permGrant: [], permDeny: [] })
     setEditingId(acc.id); setShowForm(true)
   }
 
@@ -269,17 +279,88 @@ export default function AccountsPage() {
               </div>
               <div className="form-group">
                 <label>{editingId ? '新密碼（留空=不變）' : '初始密碼'}</label>
-                <input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required={!editingId} placeholder="密碼" />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showPwd ? 'text' : 'password'}
+                    value={form.password}
+                    onChange={e => setForm({ ...form, password: e.target.value })}
+                    required={!editingId} placeholder="密碼"
+                    style={{ paddingRight: 36, width: '100%' }}
+                  />
+                  <button type="button" onClick={() => setShowPwd(v => !v)}
+                    aria-label={showPwd ? '隱藏密碼' : '顯示密碼'}
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center' }}>
+                    {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
               <div className="form-group">
                 <label>角色</label>
-                <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value as Role })}>
+                <select value={form.role} onChange={e => {
+                  const newRole = e.target.value as Role
+                  // Reset permissions to role defaults when role changes
+                  setForm({ ...form, role: newRole, permGrant: [], permDeny: [] })
+                }}>
                   {isOwner && <option value="OWNER">Owner</option>}
                   <option value="MANAGER">Manager</option>
                   <option value="ACCOUNTANT">Accountant</option>
                   <option value="EMPLOYEE">Employee</option>
                 </select>
               </div>
+
+              {/* Permissions checkboxes (expand after role selection) */}
+              {form.role && form.role !== 'OWNER' && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#555' }}>🔑 角色權限（預設勾選 = 角色默認權限，可手動調整）</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {Object.entries(PERMISSIONS).map(([key, label]) => {
+                      const defaults = ROLE_DEFAULTS[form.role] || []
+                      const isChecked = defaults.includes(key as any) || form.permGrant.includes(key)
+                      const isDenied = form.permDeny.includes(key)
+                      const effective = isChecked && !isDenied
+                      return (
+                        <label key={key} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                          border: effective ? '1.5px solid #0f766e' : '1px solid #e5e7eb',
+                          background: effective ? '#f0fdfa' : '#f9fafb',
+                          fontSize: 12, whiteSpace: 'nowrap', color: effective ? '#0f766e' : '#aaa',
+                        }}>
+                          <input type="checkbox" checked={effective}
+                            onChange={e => {
+                              const checked = e.target.checked
+                              const defaults = ROLE_DEFAULTS[form.role] || []
+                              const inDefault = defaults.includes(key as any)
+                              if (checked) {
+                                // Enable: remove from deny, add to grant if not in default
+                                setForm(f => ({
+                                  ...f,
+                                  permDeny: f.permDeny.filter(p => p !== key),
+                                  permGrant: inDefault ? f.permGrant : [...f.permGrant, key],
+                                }))
+                              } else {
+                                // Disable: remove from grant, add to deny if in default
+                                setForm(f => ({
+                                  ...f,
+                                  permGrant: f.permGrant.filter(p => p !== key),
+                                  permDeny: inDefault ? [...f.permDeny, key] : f.permDeny,
+                                }))
+                              }
+                            }} />
+                          {label}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {form.role === 'OWNER' && (
+                <div style={{ gridColumn: '1 / -1', fontSize: 12, color: '#888', padding: '4px 0' }}>
+                  🔒 Owner 擁有所有權限，不可調整
+                </div>
+              )}
               <div className="form-group">
                 <label>到職日（員工）</label>
                 <input type="date" value={form.joinDate} onChange={e => setForm({ ...form, joinDate: e.target.value })} />
@@ -300,13 +381,13 @@ export default function AccountsPage() {
                 <>
                   <div className="form-group">
                     <label>年假額度（天）</label>
-                    <input type="number" value={form.annualLeave} min="0" step="0.5"
-                      onChange={e => setForm({ ...form, annualLeave: parseFloat(e.target.value) || 0 })} />
+                    <input type="number" value={form.annualLeave} min="0" step="0.5" inputMode="decimal"
+                      onChange={e => setForm({ ...form, annualLeave: e.target.value })} />
                   </div>
                   <div className="form-group">
                     <label>病假額度（天）</label>
-                    <input type="number" value={form.sickLeave} min="0" step="0.5"
-                      onChange={e => setForm({ ...form, sickLeave: parseFloat(e.target.value) || 0 })} />
+                    <input type="number" value={form.sickLeave} min="0" step="0.5" inputMode="decimal"
+                      onChange={e => setForm({ ...form, sickLeave: e.target.value })} />
                   </div>
                 </>
               )}
@@ -523,11 +604,15 @@ export default function AccountsPage() {
                                   <span style={{ minWidth: 60, color: '#555' }}>{b.leaveType?.name}</span>
                                   <input
                                     type="number"
-                                    value={b.entitled}
+                                    defaultValue={b.entitled}
                                     min="0"
                                     step="0.5"
                                     style={{ width: 70, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
-                                    onChange={e => updateLeaveBalance(b.id, 'entitled', parseFloat(e.target.value) || 0)}
+                                    onBlur={e => {
+                                      const v = parseFloat(e.target.value)
+                                      if (isFinite(v) && v !== b.entitled) updateLeaveBalance(b.id, 'entitled', v)
+                                      else e.target.value = String(b.entitled)
+                                    }}
                                   />
                                   <span style={{ color: '#aaa' }}>已用: {b.used}</span>
                                   <span style={{ color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>餘: {b.remaining}</span>

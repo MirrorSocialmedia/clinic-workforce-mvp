@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
         annualLeave, sickLeave,
         payConfidential = false,
         homeClinicId,
+        permissionsJson,
       } = await req.json()
 
       if (!name || !phone || !password || !role) {
@@ -131,6 +132,7 @@ export async function POST(req: NextRequest) {
           role: role as any,
           status: 'ACTIVE',
           clinics: clinicData,
+          permissionsJson: permissionsJson ? JSON.stringify(permissionsJson) : null,
         },
         include: { clinics: { include: { clinic: true } } },
       })

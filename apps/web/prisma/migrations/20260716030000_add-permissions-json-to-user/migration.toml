@@ -1,0 +1,4 @@
+[migration]
+version = "20260716030000"
+sequenced = true
+state = { migration_name = "add-permissions-json-to-user" }

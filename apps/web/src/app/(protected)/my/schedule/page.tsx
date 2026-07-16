@@ -29,8 +29,8 @@ function CompanyOverviewTable({
   const { days, employees } = data
 
   return (
-    <div style={{ pointerEvents: 'none' }}>
-      <div className="overflow-x-auto -mx-2">
+    <div>
+      <div className="overflow-x-auto -mx-2" style={{ WebkitOverflowScrolling: 'touch' }}>
         <table style={{
           borderCollapse: 'collapse', fontSize: 11, minWidth: 720, width: '100%',
         }}>
@@ -64,33 +64,34 @@ function CompanyOverviewTable({
                     {emp.name}
                   </td>
                   {emp.shifts.map((ds: any, di: number) => (
-                    <td key={di} style={{ padding: '3px 4px', borderBottom: '1px solid #f3f4f6', verticalAlign: 'top' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <td key={di} style={{ padding: '4px 4px', borderBottom: '1px solid #f3f4f6', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
                         {ds.shifts.map((s: any) => (
-                          <div
+                          <span
                             key={s.id}
                             style={{
+                              display: 'inline-block', maxWidth: 104, overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'top',
                               background: '#e0f2fe', color: '#0369a1',
                               borderRadius: 4, padding: '1px 4px', fontSize: 10,
-                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                              maxWidth: 80,
                             }}
                             title={`${s.clinicName} ${s.startTime}-${s.endTime}`}
                           >
                             {s.clinicName} {s.startTime}-{s.endTime}
-                          </div>
+                          </span>
                         ))}
                         {ds.leaves.map((l: string, li: number) => (
-                          <div
+                          <span
                             key={li}
                             style={{
+                              display: 'inline-block',
                               background: '#fef3c7', color: '#92400e',
                               borderRadius: 4, padding: '1px 4px', fontSize: 10,
                               whiteSpace: 'nowrap',
                             }}
                           >
                             🏖 {l}
-                          </div>
+                          </span>
                         ))}
                       </div>
                     </td>

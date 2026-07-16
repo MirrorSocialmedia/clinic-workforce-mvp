@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken, type SessionPayload } from './auth'
 import { CONFIG, type Role } from './config'
 import { cookies } from 'next/headers'
+import { type PermKey, ROLE_DEFAULTS } from './permissions'
 
 // ----------------------------------------------------------
 // Unified auth gate — all API routes must call this
@@ -123,6 +124,60 @@ export function getEmployeeIdForUser(userId: string): string | null {
   // Caller should have the employee ID; this is a placeholder
   // In practice, pass the employee ID from the resolved employee record
   return userId
+}
+
+/**
+ * Permission-based auth check.
+ * Checks ROLE_DEFAULTS[role] ± grant/deny overrides stored in user.permissionsJson.
+ *
+ * Usage in API routes (Route Handler):
+ *   const auth = requirePerm(req, permKey)
+ *   if (auth.error) return auth.error
+ */
+export async function requirePerm(
+  req: NextRequest,
+  perm: PermKey
+): Promise<AuthResult> {
+  const token = req.cookies.get('session')?.value
+  const session = token ? verifyToken(token) : null
+
+  if (!session) {
+    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+
+  // OWNER always has all permissions
+  if (session.role === 'OWNER') {
+    return { session, scope: 'all' }
+  }
+
+  // Fetch user for permissionsJson (via Prisma)
+  let grant: string[] = []
+  let deny: string[] = []
+  try {
+    const { PrismaClient } = await import('@prisma/client')
+    const prisma = new PrismaClient()
+    const user = await prisma.user.findUnique({ where: { id: session.userId } })
+    if (user?.permissionsJson) {
+      const parsed = typeof user.permissionsJson === 'string' ? JSON.parse(user.permissionsJson) : user.permissionsJson
+      grant = (parsed as any).grant || []
+      deny = (parsed as any).deny || []
+    }
+    await prisma.$disconnect()
+  } catch {}
+
+  // Check: base role defaults + grant − deny
+  const base = ROLE_DEFAULTS[session.role] || []
+  const has = base.includes(perm) || grant.includes(perm)
+  const denied = deny.includes(perm)
+
+  if (!has || denied) {
+    return { error: NextResponse.json({ error: `Forbidden (missing permission: ${perm})` }, { status: 403 }) }
+  }
+
+  let scope: DataScope = 'all'
+  if (session.role === 'MANAGER') scope = 'my-clinics'
+
+  return { session, scope }
 }
 
 /**

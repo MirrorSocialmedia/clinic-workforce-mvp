@@ -135,6 +135,7 @@ model User {
   auditLogs       AuditLog[]   @relation("ActorLogs")
   resetToken      String?
   resetTokenExpiry DateTime?
+  permissionsJson String? // JSON: { "grant": [...], "deny": [...] }
 
   @@index([role])
   @@index([status])
