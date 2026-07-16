@@ -184,6 +184,8 @@ export default function EmployeePayrollDetailPage() {
   const deduction = salaryDetail.deduction ?? item.deduction
   const dailyWage = salaryDetail.dailyWage ?? (typeof basePay === 'number' && scheduledDays !== '-' ? basePay / Number(scheduledDays) : 0)
   const attendanceBonus = salaryDetail.attendanceBonus ?? detail.attendanceBonus ?? 0
+  const sickDeduction = salaryDetail.sickDeduction ?? detail.sickDeduction ?? 0
+  const sickEpisodes = salaryDetail.sickEpisodes ?? detail.sickEpisodes ?? []
   const storeBonus = salaryDetail.storeBonus ?? item.storeBonus ?? 0
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
@@ -466,6 +468,20 @@ export default function EmployeePayrollDetailPage() {
                   ) : (
                     <span className="text-green-600">+{fmtCurrency(attendanceBonus)}</span>
                   )}
+                </span>
+              </div>
+            )}
+
+            {sickDeduction > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm">病假扣減</span>
+                <span className="font-mono font-medium text-red-600">
+                  -{fmtCurrency(sickDeduction)}
+                  <span className="block text-xs text-red-500 font-normal mt-1" style={{ fontFamily: 'sans-serif' }}>
+                    {(sickEpisodes || []).map((e: any) =>
+                      `${e.range} 共${e.totalDays}天${e.totalDays >= 4 ? '(連續≥4,付4/5)' : '(<4,全扣)'} × 本月${e.daysInMonth}天`
+                    ).join('; ')}
+                  </span>
                 </span>
               </div>
             )}

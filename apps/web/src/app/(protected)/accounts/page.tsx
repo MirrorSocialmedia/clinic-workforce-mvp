@@ -49,7 +49,6 @@ export default function AccountsPage() {
     assignEmployee: true,
     payConfidential: false,
     annualLeave: '12',  // string — parse on submit
-    sickLeave: '12',     // string — parse on submit
     employeeId: null as string | null,
     homeClinicId: '',
     permGrant: [] as string[], // permissions granted beyond role default
@@ -109,7 +108,6 @@ export default function AccountsPage() {
         assignEmployee: form.assignEmployee,
         payConfidential: form.payConfidential,
         annualLeave: form.assignEmployee ? (parseFloat(form.annualLeave) || 0) : undefined,
-        sickLeave: form.assignEmployee ? (parseFloat(form.sickLeave) || 0) : undefined,
         homeClinicId: form.assignEmployee ? form.homeClinicId || null : undefined,
       }
       // Permissions: compute grant/deny diff from ROLE_DEFAULTS
@@ -129,7 +127,7 @@ export default function AccountsPage() {
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
       clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true,
-      payConfidential: false, annualLeave: '12', sickLeave: '12', employeeId: null, homeClinicId: '',
+      payConfidential: false, annualLeave: '12', employeeId: null, homeClinicId: '',
       permGrant: [], permDeny: [] })
     setShowForm(false); setEditingId(null); setShowPwd(false)
   }
@@ -140,7 +138,7 @@ export default function AccountsPage() {
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
       baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
       payConfidential: acc.payConfidential || false,
-      annualLeave: '12', sickLeave: '12', employeeId: acc.employeeId,
+      annualLeave: '12', employeeId: acc.employeeId,
       homeClinicId: acc.homeClinicId || '', permGrant: [], permDeny: [] })
     setEditingId(acc.id); setShowForm(true)
   }
@@ -385,11 +383,6 @@ export default function AccountsPage() {
                     <label>年假額度（天）</label>
                     <input type="number" value={form.annualLeave} min="0" step="0.5" inputMode="decimal"
                       onChange={e => setForm({ ...form, annualLeave: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label>病假額度（天）</label>
-                    <input type="number" value={form.sickLeave} min="0" step="0.5" inputMode="decimal"
-                      onChange={e => setForm({ ...form, sickLeave: e.target.value })} />
                   </div>
                 </>
               )}

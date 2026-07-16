@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
         name, phone, email, password, role, clinicIds,
         joinDate, payType, baseAmount, configJson, effectiveFrom,
         assignEmployee = false,
-        annualLeave, sickLeave,
+        annualLeave,
         payConfidential = false,
         homeClinicId,
         permissionsJson,
@@ -194,19 +194,13 @@ export async function POST(req: NextRequest) {
 
         // Create initial leave balances for the new employee
         const currentYear = new Date().getUTCFullYear()
-        if ((annualLeave || annualLeave === 0) || (sickLeave || sickLeave === 0)) {
+        if (annualLeave || annualLeave === 0) {
           // Get or create leave types using findFirst + create
           let annualType = await prisma.leaveType.findFirst({ where: { name: '年假' } })
-          let sickType = await prisma.leaveType.findFirst({ where: { name: '病假' } })
 
           if (!annualType) {
             annualType = await prisma.leaveType.create({
               data: { name: '年假', isPaid: true, annualQuota: annualLeave || 12, color: '#2196F3' },
-            })
-          }
-          if (!sickType) {
-            sickType = await prisma.leaveType.create({
-              data: { name: '病假', isPaid: true, annualQuota: sickLeave || 12, color: '#4CAF50' },
             })
           }
 
@@ -218,15 +212,6 @@ export async function POST(req: NextRequest) {
               year: currentYear,
               entitled: annualLeave,
               remaining: annualLeave,
-            })
-          }
-          if (sickLeave != null) {
-            leaveBalanceData.push({
-              employeeId: employee.id,
-              leaveTypeId: sickType.id,
-              year: currentYear,
-              entitled: sickLeave,
-              remaining: sickLeave,
             })
           }
 

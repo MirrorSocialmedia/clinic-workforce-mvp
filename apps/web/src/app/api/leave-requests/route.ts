@@ -133,13 +133,14 @@ export async function POST(req: NextRequest) {
       })
 
       if (!isUnlimited && balance && leaveType.annualQuota !== null && leaveType.annualQuota > 0) {
-        if (days > balance.remaining) {
+        if (leaveType.systemKey !== 'SICK' && days > balance.remaining) {
           return NextResponse.json(
             { error: `Insufficient leave balance. Remaining: ${balance.remaining} days` },
             { status: 400 }
           )
         }
       }
+      // SICK: 不驗餘額、不扣 balance——成本在計糧端結算
 
       const isApprover = session.role === 'OWNER' || session.role === 'MANAGER'
 
@@ -203,9 +204,11 @@ export async function POST(req: NextRequest) {
         return req
       })
 
-      // If auto-approved, deduct from balance + notify (skip for unlimited types)
+      // If auto-approved, deduct from balance + notify (skip for unlimited types and SICK)
       if (request.status === 'APPROVED' && !isUnlimited) {
-        await deductLeaveBalance(employee.id, leaveTypeId, days)
+        if (leaveType.systemKey !== 'SICK') {
+          await deductLeaveBalance(employee.id, leaveTypeId, days)
+        }
         await createNotification({
           employeeId: employee.id,
           type: 'LEAVE_APPROVED',
@@ -234,6 +237,9 @@ async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days:
   if (lt?.systemKey === 'REST_DAY') {
     await ensureRestDayGranted(employeeId, new Date(), prisma)
   }
+
+  // SICK: skip balance deduction — cost settled at payroll end
+  if (lt?.systemKey === 'SICK') return
 
   const currentYear = new Date().getUTCFullYear()
   const bal = await prisma.leaveBalance.findUnique({

@@ -338,9 +338,9 @@ async function main() {
   ])
 
   const leaveTypes = await Promise.all([
-    // 病假 (user-managed)
+    // 病假 (user-managed; systemKey for payroll; no quota)
     prisma.leaveType.create({
-      data: { name: '病假', isPaid: true, annualQuota: 12, color: '#2196F3' },
+      data: { name: '病假', isPaid: true, systemKey: 'SICK', color: '#2196F3' },
     }),
     prisma.leaveType.create({
       data: { name: '事假', isPaid: false, annualQuota: null, color: '#FF9800' },
@@ -375,17 +375,6 @@ async function main() {
       data: {
         employeeId: emp.id,
         leaveTypeId: annualLeaveTypeId,
-        year: currentYear,
-        entitled: 12,
-        used: 0,
-        remaining: 12,
-      },
-    })
-    // Sick leave balance (using user-managed sick leave type)
-    await prisma.leaveBalance.create({
-      data: {
-        employeeId: emp.id,
-        leaveTypeId: leaveTypes[0].id,
         year: currentYear,
         entitled: 12,
         used: 0,

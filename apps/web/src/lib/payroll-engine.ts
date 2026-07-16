@@ -336,6 +336,75 @@ async function getApprovedLeaveDays(
 }
 
 // ------------------------------------------------------------------
+// Sick Deduction — Tiered (continuous 4-day threshold, EO 4/5 pay)
+// ------------------------------------------------------------------
+
+/**
+ * 病假分層扣減（連續 4 天門檻，EO 4/5 工資）
+ * episode = 已批病假覆蓋的相鄰公曆日合併（跨假單）；≥4 天 → 1/5×日薪，<4 天 → 1×日薪
+ * 回傳本月扣減額 + 明細（跨月：只扣落在本月的日子，檔位看整段）
+ */
+export async function computeSickDeduction(
+  employeeId: string,
+  monthStart: Date,
+  monthEnd: Date,
+  monthlySalary: number,
+  deductionRate: number,
+  db: any,
+): Promise<{
+  amount: number;
+  episodes: Array<{ range: string; totalDays: number; daysInMonth: number; rate: number }>;
+}> {
+  // 窗口跨出本月 ±40 天：跨月連續段兩頭都要看得到
+  const winStart = new Date(monthStart.getTime() - 40 * 86400000)
+  const winEnd = new Date(monthEnd.getTime() + 40 * 86400000)
+
+  const sickLeaves = await db.leaveRequest.findMany({
+    where: {
+      employeeId,
+      status: 'APPROVED',
+      leaveType: { systemKey: 'SICK' },
+      startDate: { lte: winEnd },
+      endDate: { gte: winStart },
+    },
+    orderBy: { startDate: 'asc' },
+  })
+  if (sickLeaves.length === 0) return { amount: 0, episodes: [] }
+
+  // 展開成 HK 日字串集合（鐵律：跨表/跨界比對先轉 HK 日）
+  const dayset = new Set<string>()
+  for (const lr of sickLeaves) {
+    let d = toHKDateStr(lr.startDate)
+    const end = toHKDateStr(lr.endDate)
+    while (d <= end) { dayset.add(d); d = addDays(d, 1) }
+  }
+
+  // 合併連續段
+  const sorted = [...dayset].sort()
+  const episodes: string[][] = []
+  let cur: string[] = []
+  for (const d of sorted) {
+    if (cur.length === 0 || d === addDays(cur[cur.length - 1], 1)) cur.push(d)
+    else { episodes.push(cur); cur = [d] }
+  }
+  if (cur.length) episodes.push(cur)
+
+  // 逐段結算（只扣落在本月的日子；檔位看整段）
+  const dailyRate = statutoryDailyWage(monthlySalary)
+  const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
+  let amount = 0
+  const detail: Array<{ range: string; totalDays: number; daysInMonth: number; rate: number }> = []
+  for (const ep of episodes) {
+    const daysInMonth = ep.filter(d => d >= mStart && d <= mEnd).length
+    if (daysInMonth === 0) continue
+    const rate = ep.length >= 4 ? 0.2 : 1  // ≥4 連續：扣 1/5（支付 4/5）；<4：全扣
+    amount += daysInMonth * dailyRate * rate * deductionRate
+    detail.push({ range: `${ep[0]}~${ep[ep.length - 1]}`, totalDays: ep.length, daysInMonth, rate })
+  }
+  return { amount: Math.round(amount * 100) / 100, episodes: detail }
+}
+
+// ------------------------------------------------------------------
 // Public Holidays
 // ------------------------------------------------------------------
 
@@ -1723,15 +1792,18 @@ async function collectWorkData(
       endDate: { gte: monthStart },
     },
     include: {
-      leaveType: { select: { cancelsBonus: true, name: true } },
+      leaveType: { select: { cancelsBonus: true, name: true, systemKey: true } },
     },
   })
-  const leaveRecordsForEngine = leaveRecords.map((lr: any) => ({
-    isPlanned: lr.isPlanned !== false, // default true if null (legacy)
-    days: lr.days,
-    cancelsBonus: lr.leaveType?.cancelsBonus ?? false,
-    name: lr.leaveType?.name ?? '',
-  }))
+  // ★ 病假不參與勤工獎條件（只看遲到+早退分鐘）
+  const leaveRecordsForEngine = leaveRecords
+    .filter((lr: any) => lr.leaveType?.systemKey !== 'SICK')
+    .map((lr: any) => ({
+      isPlanned: lr.isPlanned !== false, // default true if null (legacy)
+      days: lr.days,
+      cancelsBonus: lr.leaveType?.cancelsBonus ?? false,
+      name: lr.leaveType?.name ?? '',
+    }))
 
   const publicHolidays = await getPublicHolidayDays(monthStart, monthEnd)
   const publicHolidayDays = publicHolidays.length
@@ -2329,14 +2401,20 @@ export async function calculatePayrollWithRules(
   const allowances = mods.allowances || []
   const totalAllowances = allowances.reduce((sum, a) => sum + a.amount, 0)
   const storeBonus = options?.storeBonus ?? 0
-  const grossPay = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + result.attendanceBonus + storeBonus + totalAllowances
+
+  // ★ 病假扣減：只在 MONTHLY 分支接線（時薪員工天然零成本）
+  const sickDeduction = (result.detail as any)?.monthlySalary != null
+    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma)
+    : { amount: 0, episodes: [] }
+
+  const grossPay = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount
 
   const mpfConfig = mods.mpf || config.mpf || { enabled: false }
   const mpf = calcMPF(grossPay, mpfConfig)
   const netPay = Math.max(0, grossPay - mpf)
 
   result.totalPayable = netPay
-  result.detail = { ...result.detail, storeBonus, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100 }
+  result.detail = { ...result.detail, storeBonus, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100, sickDeduction: sickDeduction.amount, sickEpisodes: sickDeduction.episodes }
 
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
@@ -2431,6 +2509,8 @@ export async function calculatePayrollWithRules(
       attendanceBonus: Math.round(result.attendanceBonus * 100) / 100,
       otPay: Math.round(result.otPay * 100) / 100,
       allowances: Math.round(totalAllowances * 100) / 100,
+      sickDeduction: sickDeduction.amount,
+      sickEpisodes: sickDeduction.episodes,
       grossPay: Math.round(grossPay * 100) / 100,
       mpf: Math.round(mpf * 100) / 100,
       mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05,
