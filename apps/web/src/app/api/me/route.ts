@@ -29,5 +29,6 @@ export async function GET(req: NextRequest) {
       ...safeUser,
       clinicIds,
     },
+    faceMode: process.env.FACE_MODE || 'shadow',
   })
 }

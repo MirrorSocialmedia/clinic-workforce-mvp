@@ -32,8 +32,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      face:
-        condition: service_started
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${DB_USER:-clinic}:${DB_PASSWORD:-change-me-in-production}@db:5432/clinic_mvp
@@ -52,7 +50,6 @@ services:
       FACE_SERVICE_URL: http://face:8000
       FACE_THRESHOLD: 0.45
       FACE_MODE: shadow
-      NEXT_PUBLIC_FACE_MODE: shadow
     ports:
       - "127.0.0.1:3000:3000"  # Only localhost
     volumes:
