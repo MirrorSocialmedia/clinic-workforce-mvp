@@ -2,7 +2,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { serviceMonths, serviceYears, leaveForServiceYear, PROBATION_MONTHS } from '@/lib/leave-calculation'
+import { serviceMonths, serviceYears, annualLeaveEntitlement, PROBATION_MONTHS } from '@/lib/leave-calculation'
+import { toHKDateStr } from '@/lib/hk-date'
 
 /**
  * POST /api/leave-balance/refresh
@@ -44,63 +45,68 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date()
-    let refreshedCount = 0
+    const currentYear = parseInt(toHKDateStr(now).slice(0, 4))
+    let updated = 0
+    const skipped: string[] = []
 
     for (const emp of targetEmployees as any[]) {
-      if (!emp.joinDate) continue
+      if (!emp.joinDate) { skipped.push(emp.id); continue }
 
+      // 試用期檢查：不足 3 個月 → 0
       const months = serviceMonths(new Date(emp.joinDate), now)
-      if (months < PROBATION_MONTHS) continue
+      if (months < PROBATION_MONTHS) {
+        skipped.push(emp.id)
+        continue
+      }
 
-      const years = serviceYears(new Date(emp.joinDate), now)
+      // 週年發放制：已滿整年數
+      const completedYears = serviceYears(new Date(emp.joinDate), now)
+      // 滿 1 年=7、滿 2 年=7、滿 3 年=8 … 滿 9 年+=14；未滿 1 年=0
+      const entitledNow = completedYears >= 1
+        ? annualLeaveEntitlement(completedYears)
+        : 0
 
-      for (let i = 0; i <= years; i++) {
-        const yearNum = new Date(emp.joinDate).getUTCFullYear() + i
-        const accrued = leaveForServiceYear(new Date(emp.joinDate), i, now)
-
-        // 先查詢現有記錄，保留已用天數
-        const existing = await prisma.leaveBalance.findUnique({
-          where: {
-            employeeId_leaveTypeId_year: {
-              employeeId: emp.id,
-              leaveTypeId: annualLeaveTypeId,
-              year: yearNum,
-            },
-          },
-        })
-
-        const used = existing?.used ?? 0
-
-        await prisma.leaveBalance.upsert({
-          where: {
-            employeeId_leaveTypeId_year: {
-              employeeId: emp.id,
-              leaveTypeId: annualLeaveTypeId,
-              year: yearNum,
-            },
-          },
-          update: {
-            entitled: accrued,
-            remaining: Math.max(0, accrued - used),
-          },
-          create: {
+      const existing = await prisma.leaveBalance.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
             employeeId: emp.id,
             leaveTypeId: annualLeaveTypeId,
-            year: yearNum,
-            entitled: accrued,
+            year: currentYear,
+          },
+        },
+      })
+
+      if (existing) {
+        const delta = entitledNow - existing.entitled
+        if (delta !== 0) {
+          // 冪等：額沒變就不動；有變化則差額進 remaining，已用不受影響
+          await prisma.leaveBalance.update({
+            where: { id: existing.id },
+            data: { entitled: entitledNow, remaining: { increment: delta } },
+          })
+          updated++
+        }
+      } else {
+        await prisma.leaveBalance.create({
+          data: {
+            employeeId: emp.id,
+            leaveTypeId: annualLeaveTypeId,
+            year: currentYear,
+            entitled: entitledNow,
             used: 0,
-            remaining: accrued,
+            remaining: entitledNow,
           },
         })
-
-        refreshedCount++
+        updated++
       }
     }
 
     return NextResponse.json({
       success: true,
-      refreshedCount,
+      refreshedCount: updated,
+      updatedCount: updated,
       employeeCount: targetEmployees.length,
+      skipped: skipped.length,
     })
   } catch (error) {
     console.error('Refresh leave balance error:', error)

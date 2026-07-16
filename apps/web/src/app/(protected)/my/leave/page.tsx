@@ -21,7 +21,7 @@ interface LeaveRequestItem {
 interface LeaveBalanceItem {
   id: string
   leaveTypeId: string
-  leaveType: { id: string; name: string; isPaid: boolean; annualQuota: number | null; color: string | null }
+  leaveType: { id: string; name: string; isPaid: boolean; annualQuota: number | null; color: string | null; systemKey: string | null }
   year: number
   entitled: number
   used: number

@@ -247,6 +247,8 @@ export default function AccountsPage() {
   }
 
   const isOwner = userRole === 'OWNER'
+  // 週年發放制：年假只顯示當年
+  const currentYear = new Date().getFullYear()
 
   if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
 
@@ -599,7 +601,13 @@ export default function AccountsPage() {
                               >載入</button>
                             </h4>
                             {leaveBalances[acc.employeeId!] && leaveBalances[acc.employeeId!].length > 0 ? (
-                              leaveBalances[acc.employeeId!].map(b => (
+                              leaveBalances[acc.employeeId!]
+                                // 週年發放制：年假只顯示當年
+                                .filter(b => {
+                                  if (b.leaveType?.systemKey === 'ANNUAL_LEAVE' && b.year !== currentYear) return false
+                                  return true
+                                })
+                                .map(b => (
                                 <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12 }}>
                                   <span style={{ minWidth: 60, color: '#555' }}>{b.leaveType?.name}</span>
                                   <input

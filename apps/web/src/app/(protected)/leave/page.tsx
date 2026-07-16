@@ -41,7 +41,7 @@ interface LeaveBalanceItem {
   id: string
   employeeId: string
   leaveTypeId: string
-  leaveType: { id: string; name: string; isPaid: boolean; annualQuota: number | null; color: string | null }
+  leaveType: { id: string; name: string; isPaid: boolean; annualQuota: number | null; color: string | null; systemKey: string | null }
   year: number
   entitled: number
   used: number
@@ -160,6 +160,10 @@ export default function LeavePage() {
 
   const isManager = userRole === 'OWNER' || userRole === 'MANAGER'
   const isOwner = userRole === 'OWNER'
+
+  // 週年發放制：找 ANNUAL_LEAVE 類型 id 與當前公曆年，用於 UI 過濾
+  const annualLeaveTypeId = leaveTypes.find(t => t.systemKey === 'ANNUAL_LEAVE')?.id
+  const currentYear = new Date().getFullYear()
 
   const fetchData = useCallback(async () => {
     try {
@@ -530,6 +534,11 @@ export default function LeavePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {balances
                   .filter(b => balanceEmployeeId === 'all' || b.employeeId === balanceEmployeeId)
+                  // 週年發放制：年假只顯示當年
+                  .filter(b => {
+                    if (b.leaveTypeId === annualLeaveTypeId && b.year !== currentYear) return false
+                    return true
+                  })
                   .map(b => (
                     <div key={b.id} style={{
                       padding: 16, borderRadius: 8,
