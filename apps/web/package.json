@@ -20,6 +20,7 @@
     "@fullcalendar/interaction": "^6.1.21",
     "@fullcalendar/react": "^6.1.21",
     "@fullcalendar/timegrid": "^6.1.21",
+    "@mediapipe/tasks-vision": "^0.10.35",
     "@prisma/client": "^6.5.0",
     "@radix-ui/react-avatar": "^1.2.2",
     "@radix-ui/react-dialog": "^1.1.19",

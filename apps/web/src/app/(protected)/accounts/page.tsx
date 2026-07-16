@@ -42,6 +42,7 @@ export default function AccountsPage() {
   const [payRuleEmployeeId, setPayRuleEmployeeId] = useState<string | null>(null)
   const [leaveBalances, setLeaveBalances] = useState<Record<string, any[]>>({})
   const [payRules, setPayRules] = useState<Record<string, any>>({})
+  const [enrollCode, setEnrollCode] = useState<{ code: string; name: string } | null>(null)
   const [form, setForm] = useState({
     name: '', phone: '', email: '', password: '', role: 'EMPLOYEE' as Role,
     clinicIds: [] as string[], joinDate: '',
@@ -537,6 +538,15 @@ export default function AccountsPage() {
                         <span className="flex items-center gap-1"><Wallet size={16} /> 薪酬規則</span>
                       </button>
                       )}
+                      <button className="text-xs underline" onClick={async () => {
+                        const res = await fetch('/api/face/enroll-code', {
+                          method: 'POST', credentials: 'include',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ employeeId: acc.employeeId })
+                        })
+                        const d = await res.json()
+                        if (res.ok) setEnrollCode({ code: d.code, name: acc.name })
+                      }}>登記臉部</button>
                       {isOwner && userRole !== acc.role && (
                         <button className="btn btn-sm" style={{ background: '#fde8e8', color: '#dc3545' }} onClick={() => handleDelete(acc)}>刪除</button>
                       )}
@@ -647,6 +657,25 @@ export default function AccountsPage() {
             fetchData();
           }}
         />
+      )}
+
+      {/* Enroll Code Modal */}
+      {enrollCode && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setEnrollCode(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 max-w-sm w-full mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-2">{enrollCode.name} 的登記碼</h3>
+            <p className="text-sm text-gray-500 mb-4">10 分鐘內有效</p>
+            <div className="text-center mb-4">
+              <span style={{ fontSize: 48, letterSpacing: 12, fontFamily: 'monospace', fontWeight: 'bold' }}>
+                {enrollCode.code}
+              </span>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">請員工在自己手機開「臉部登記」頁輸入此碼</p>
+            <button className="w-full py-2 bg-blue-600 text-white rounded-lg" onClick={() => setEnrollCode(null)}>
+              關閉
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

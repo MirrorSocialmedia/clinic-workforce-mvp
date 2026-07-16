@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import QrScanner from './components/qr-scanner'
 import { fmtTime, fmtDateTime } from '@/lib/hk-date'
+import { useFaceCapture } from '@/lib/use-face-capture'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -43,6 +44,11 @@ export default function PunchPage() {
 
   // ★ Countdown for auto-redirect
   const [countdown, setCountdown] = useState(3)
+
+  // Face verification state
+  const [faceHint, setFaceHint] = useState<string | null>(null)
+  const faceVideoRef = useRef<HTMLVideoElement>(null)
+  const { captureQualified } = useFaceCapture()
 
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
@@ -108,6 +114,8 @@ export default function PunchPage() {
       })
       setCountdown(3)
       fetchRecords()
+      // Fire-and-forget face verification
+      if (data.recordId) runFaceVerify(data.recordId)
       return true
     } catch (e: any) {
       setError(e.message)
@@ -123,6 +131,30 @@ export default function PunchPage() {
   const stableOnScan = useCallback(async (token: string): Promise<boolean> => {
     return handleScanRef.current(token)
   }, [])
+
+  // Fire-and-forget face verification after punch
+  const runFaceVerify = async (punchId: string) => {
+    try {
+      setFaceHint('請看鏡頭')
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+      if (faceVideoRef.current) {
+        faceVideoRef.current.srcObject = stream
+        await faceVideoRef.current.play()
+      }
+      const blob = await captureQualified(faceVideoRef.current!, 3000)
+      stream.getTracks().forEach(t => t.stop())
+      const fd = new FormData()
+      fd.append('punchId', punchId)
+      if (blob) fd.append('frame', blob, 'punch.jpg')
+      fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+    } catch {
+      const fd = new FormData()
+      fd.append('punchId', punchId)
+      fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+    } finally {
+      setFaceHint(null)
+    }
+  }
 
   // ★ Countdown: auto-redirect to dashboard after success
   useEffect(() => {
@@ -222,6 +254,14 @@ export default function PunchPage() {
           >
             返回首頁（{countdown}）
           </button>
+
+          {/* Face verification overlay */}
+          {faceHint && (
+            <div style={{ position: 'absolute', top: 12, right: 12, width: 120, borderRadius: 12, overflow: 'hidden', background: '#000' }}>
+              <video ref={faceVideoRef} muted playsInline style={{ width: '100%' }} />
+              <div style={{ fontSize: 11, textAlign: 'center', color: '#fff', padding: 2 }}>{faceHint}</div>
+            </div>
+          )}
         </div>
       )}
     </div>
