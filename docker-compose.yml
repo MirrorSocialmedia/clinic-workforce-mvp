@@ -86,6 +86,7 @@ services:
     volumes:
       - face_models:/root/.insightface
       - face_frames:/data/frames
+      - ./face-service/models:/srv/models
 
 volumes:
   pgdata:
