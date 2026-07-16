@@ -353,10 +353,12 @@ export default function LeavePage() {
       const res = await fetch('/api/leave-balance/refresh', {
         method: 'POST',
         credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}), // 全員；將來單人重算送 { employeeId }
       })
       const data = await res.json()
       if (res.ok) {
-        setRefreshResult(`✅ 完成！更新 ${data.updatedCount || 0} 筆記錄`)
+        setRefreshResult(`✅ 完成！更新 ${data.refreshedCount || data.updatedCount || 0} 筆記錄`)
         fetchBalances()
       } else {
         setRefreshResult(`❌ ${data.error || '計算失敗'}`)

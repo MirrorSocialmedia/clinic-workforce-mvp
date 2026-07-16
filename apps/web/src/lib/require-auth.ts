@@ -3,6 +3,7 @@ import { verifyToken, type SessionPayload } from './auth'
 import { CONFIG, type Role } from './config'
 import { cookies } from 'next/headers'
 import { type PermKey, ROLE_DEFAULTS } from './permissions'
+import { prisma } from '@/lib/prisma'
 
 // ----------------------------------------------------------
 // Unified auth gate — all API routes must call this
@@ -150,19 +151,20 @@ export async function requirePerm(
     return { session, scope: 'all' }
   }
 
-  // Fetch user for permissionsJson (via Prisma)
+  // Fetch user for permissionsJson (via shared Prisma singleton)
   let grant: string[] = []
   let deny: string[] = []
   try {
-    const { PrismaClient } = await import('@prisma/client')
-    const prisma = new PrismaClient()
-    const user = await prisma.user.findUnique({ where: { id: session.userId } })
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { permissionsJson: true },
+    })
     if (user?.permissionsJson) {
-      const parsed = typeof user.permissionsJson === 'string' ? JSON.parse(user.permissionsJson) : user.permissionsJson
+      const parsed = typeof user.permissionsJson === 'string'
+        ? JSON.parse(user.permissionsJson) : user.permissionsJson
       grant = (parsed as any).grant || []
       deny = (parsed as any).deny || []
     }
-    await prisma.$disconnect()
   } catch {}
 
   // Check: base role defaults + grant − deny

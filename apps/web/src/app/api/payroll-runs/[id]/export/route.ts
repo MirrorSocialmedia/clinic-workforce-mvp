@@ -33,7 +33,7 @@ export async function POST(
   const { session } = auth
   const isOwner = session.role === 'OWNER'
 
-  const body = await req.json()
+  const body = await req.json().catch(() => ({})) // empty body = default xlsx
   const format = body.format || 'xlsx'
 
   const run = await prisma.payrollRun.findUnique({

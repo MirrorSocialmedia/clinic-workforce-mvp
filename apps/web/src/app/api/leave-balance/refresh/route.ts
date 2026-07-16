@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = await req.json()
+    const body = await req.json().catch(() => ({}))
     const { employeeId } = body
 
     // 找到所有年假類型的 LeaveType
