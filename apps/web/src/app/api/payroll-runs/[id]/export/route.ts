@@ -135,10 +135,11 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
   XLSX.utils.book_append_sheet(wb, ws2, '摘要')
 
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+  const excelFilename = `payroll_${periodMonth}_${clinicName}.xlsx`
   return new NextResponse(buf, {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="payroll_${periodMonth}_${clinicName}.xlsx"`,
+      'Content-Disposition': `attachment; filename="payroll.xlsx"; filename*=UTF-8''${encodeURIComponent(excelFilename)}`,
     },
   })
 }
@@ -232,10 +233,11 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner:
   doc.text(empLabel, 14, finalY + 6)
 
   const buf = Buffer.from(doc.output('arraybuffer') as ArrayBuffer)
+  const pdfFilename = `計糧_${periodMonth}_${clinicName}.pdf`
   return new NextResponse(buf, {
     headers: {
       'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="payroll_${periodMonth}_${clinicName}.pdf"`,
+      'Content-Disposition': `attachment; filename="payroll.pdf"; filename*=UTF-8''${encodeURIComponent(pdfFilename)}`,
     },
   })
 }
