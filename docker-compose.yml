@@ -32,6 +32,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      face:
+        condition: service_started
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${DB_USER:-clinic}:${DB_PASSWORD:-change-me-in-production}@db:5432/clinic_mvp
@@ -46,6 +48,11 @@ services:
       SMTP_FROM: ${SMTP_FROM:-noreply@your-domain.com}
       # Data retention (days)
       DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-365}
+      # Face verification
+      FACE_SERVICE_URL: http://face:8000
+      FACE_THRESHOLD: 0.45
+      FACE_MODE: shadow
+      NEXT_PUBLIC_FACE_MODE: shadow
     ports:
       - "127.0.0.1:3000:3000"  # Only localhost
     volumes:
@@ -71,8 +78,19 @@ services:
       timeout: 5s
       retries: 3
 
+  # Face Recognition Service
+  face:
+    build: ./face-service
+    restart: unless-stopped
+    # No ports exposed — internal network only (http://face:8000)
+    volumes:
+      - face_models:/root/.insightface
+      - face_frames:/data/frames
+
 volumes:
   pgdata:
     driver: local
   nginx_cache:
     driver: local
+  face_models:
+  face_frames:
