@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
         })
 
         // Create initial leave balances for the new employee
-        const currentYear = new Date().getFullYear()  // tz-ok: year-based DB key
+        const currentYear = new Date().getUTCFullYear()
         if ((annualLeave || annualLeave === 0) || (sickLeave || sickLeave === 0)) {
           // Get or create leave types using findFirst + create
           let annualType = await prisma.leaveType.findFirst({ where: { name: '年假' } })

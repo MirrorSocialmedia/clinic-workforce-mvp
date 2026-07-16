@@ -8,7 +8,7 @@ import { todayHK, hkDateStart } from '@/lib/hk-date'
 function hkTodayBounds() {
   const start = hkDateStart(todayHK())
   const end = new Date(start)
-  end.setDate(end.getDate() + 1)  // tz-ok: client-equivalent week range
+  end.setUTCDate(end.getUTCDate() + 1)
   return { start, end }
 }
 

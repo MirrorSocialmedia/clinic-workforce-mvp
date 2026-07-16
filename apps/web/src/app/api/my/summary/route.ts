@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     targetMonth = month
   } else {
     const now = new Date()
-    targetMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`  // tz-ok: client-equivalent month label
+    targetMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
   }
 
   const { start: monthStart, end: monthEnd } = getMonthRange(new Date(`${targetMonth}-01T00:00:00+08:00`))

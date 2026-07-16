@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
     const dates = shifts.map(s => s.startTime)
     const minDate = new Date(Math.min(...dates.map(d => new Date(d).getTime())))
     const maxDate = new Date(Math.max(...dates.map(d => new Date(d).getTime())))
-    maxDate.setDate(maxDate.getDate() + 1) // inclusive  // tz-ok: inclusive date range
+    maxDate.setUTCDate(maxDate.getUTCDate() + 1) // inclusive
 
     if (clinicIds.length > 0) {
       const allShifts = await prisma.shift.findMany({

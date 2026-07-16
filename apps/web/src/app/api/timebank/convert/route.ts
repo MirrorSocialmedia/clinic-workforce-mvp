@@ -13,7 +13,7 @@ async function getOtLeaveTypeId() {
 }
 
 async function addLeaveBalance(employeeId: string, leaveTypeId: string, days: number) {
-  const year = new Date().getFullYear()  // tz-ok: year-based DB key
+  const year = new Date().getUTCFullYear()
   await prisma.leaveBalance.upsert({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
     update: { entitled: { increment: days }, remaining: { increment: days } },
@@ -22,7 +22,7 @@ async function addLeaveBalance(employeeId: string, leaveTypeId: string, days: nu
 }
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number) {
-  const year = new Date().getFullYear()  // tz-ok: year-based DB key
+  const year = new Date().getUTCFullYear()
   const bal = await prisma.leaveBalance.findUnique({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
   })
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '找不到 REST_DAY 類型' }, { status: 400 })
     }
     // 找員工該類型的 leaveBalance（按年）
-    const year = new Date().getFullYear()
+    const year = new Date().getUTCFullYear()
     let bal = await prisma.leaveBalance.findFirst({
       where: { employeeId, leaveTypeId: restType.id, year },
     })
@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
     }
 
     const otLeave = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId: otLeaveTypeId, year: new Date().getFullYear() },  // tz-ok: year-based DB key
+      where: { employeeId, leaveTypeId: otLeaveTypeId, year: new Date().getUTCFullYear() },
     })
     if (!otLeave || otLeave.remaining < daysInt) {
       return NextResponse.json({ error: 'OT 假不足' }, { status: 400 })

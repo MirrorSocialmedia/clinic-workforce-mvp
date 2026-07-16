@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Validate remaining balance (skip for unlimited types)
-      const currentYear = new Date().getFullYear()  // tz-ok: year-based DB key
+      const currentYear = new Date().getUTCFullYear()
       const balance = await prisma.leaveBalance.findFirst({
         where: { employeeId: employee.id, leaveTypeId, year: currentYear },
       })
@@ -220,7 +220,7 @@ function isAnnualLeave(leaveType: { name: string }): boolean {
 }
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number): Promise<void> {
-  const currentYear = new Date().getFullYear()  // tz-ok: year-based DB key
+  const currentYear = new Date().getUTCFullYear()
   const bal = await prisma.leaveBalance.findUnique({
     where: {
       employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: currentYear },

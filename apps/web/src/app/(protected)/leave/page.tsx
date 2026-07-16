@@ -142,7 +142,7 @@ export default function LeavePage() {
   // 抓休息日餘額（rest_to_account 方向時）
   useEffect(() => {
     if (!convertForm.employeeId || convertForm.direction !== 'rest_to_account') { setRestDayBalance(null); return }
-    const year = new Date().getFullYear()
+    const year = new Date().getFullYear()  // tz-ok: frontend browser
     fetch(`/api/leave-balance`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(async (d) => {

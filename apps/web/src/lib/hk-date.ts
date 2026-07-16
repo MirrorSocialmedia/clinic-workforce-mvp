@@ -51,7 +51,7 @@ export function fmtDateTime(dt: string | Date | undefined | null): string {
 }
 
 /** 假期是否涵蓋某天（HK日期 YYYY-MM-DD） */
-export function leaveCoversDate(lr: { startDate: string; endDate?: string | null }, dateStr: string): boolean {
+export function leaveCoversDate(lr: { startDate: string | Date; endDate?: string | Date | null }, dateStr: string): boolean {
   const s = toHKDateStr(new Date(lr.startDate))
   const e = toHKDateStr(new Date(lr.endDate || lr.startDate))
   return dateStr >= s && dateStr <= e

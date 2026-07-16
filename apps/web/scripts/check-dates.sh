@@ -44,4 +44,8 @@ assert() {
 
 assert "Shift 三欄只准經 shift-write helper 組裝" "startTime: new Date\|date: hkDateStart" "lib/shift-write.ts"
 
+# Server-side code must NOT have tz-ok exemptions (server always UTC)
+SERVER_TZOK=$(grep -rn "tz-ok" src/app/api src/lib --include="*.ts" 2>/dev/null | grep -v "^$" || true)
+[ -n "$SERVER_TZOK" ] && { echo "❌ 伺服器代碼禁用 tz-ok 豁免"; echo "$SERVER_TZOK"; FAIL=1; }
+
 exit $FAIL

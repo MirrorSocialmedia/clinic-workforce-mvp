@@ -71,7 +71,7 @@ export async function PUT(
     })
 
     if (status === 'APPROVED') {
-      const currentYear = new Date().getFullYear()  // tz-ok: year-based DB key
+      const currentYear = new Date().getUTCFullYear()
       const bal = await prisma.leaveBalance.findUnique({
         where: {
           employeeId_leaveTypeId_year: {
@@ -145,7 +145,7 @@ export async function DELETE(
 
       // Restore leave balance if approved
       if (request.status === 'APPROVED') {
-        const leaveYear = new Date(request.startDate).getFullYear()  // tz-ok: year-based DB key
+        const leaveYear = new Date(request.startDate).getUTCFullYear()
         await prisma.leaveBalance.update({
           where: {
             employeeId_leaveTypeId_year: {

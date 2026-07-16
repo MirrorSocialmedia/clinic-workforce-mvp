@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { toHKDateStr, fmtTime } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime, leaveCoversDate } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/my/company-overview — Company-wide schedule overview for a week
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   const weekStart = new Date(weekStartStr + 'T00:00:00+08:00')
   const weekEnd = new Date(weekStart)
-  weekEnd.setDate(weekEnd.getDate() + 7)  // tz-ok: client-equivalent week range
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7)
 
   // 1. Find employee → clinics → companyIds
   const employee = await prisma.employee.findUnique({
@@ -138,7 +138,7 @@ export async function GET(req: NextRequest) {
   const days: Date[] = []
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart)
-    d.setDate(d.getDate() + i)  // tz-ok: client-equivalent date iteration
+    d.setUTCDate(d.getUTCDate() + i)
     days.push(d)
   }
 
@@ -154,12 +154,9 @@ export async function GET(req: NextRequest) {
   // Group leave by employeeId+date
   const leaveMap = new Map<string, { name: string }[]>()
   for (const lr of leaveRequests) {
-    const start = new Date(lr.startDate)
-    const end = new Date(lr.endDate)
     for (const day of days) {
-      const dayMidnight = new Date(day.getFullYear(), day.getMonth(), day.getDate())  // tz-ok: client-equivalent date construction
-      if (dayMidnight >= start && dayMidnight <= end) {
-        const dateKey = toHKDateStr(day)
+      const dateKey = toHKDateStr(day)
+      if (leaveCoversDate(lr, dateKey)) {
         const key = `${lr.employeeId}::${dateKey}`
         if (!leaveMap.has(key)) leaveMap.set(key, [])
         leaveMap.get(key)!.push({ name: lr.leaveType.name })
