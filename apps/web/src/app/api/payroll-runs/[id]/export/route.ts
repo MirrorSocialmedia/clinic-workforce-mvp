@@ -7,6 +7,21 @@ import { maskIfConfidential, hasConfidentialItems } from '@/lib/payroll-engine'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import fs from 'fs'
+import path from 'path'
+
+// Module-level cache: 12MB font should only be read once per process
+let fontB64Cache: string | null = null
+function getFontB64(): string | null {
+  if (fontB64Cache) return fontB64Cache
+  try {
+    const fontPath = path.join(process.cwd(), 'public/fonts/NotoSansTC-Regular.ttf')
+    fontB64Cache = fs.readFileSync(fontPath).toString('base64')
+  } catch {
+    return null
+  }
+  return fontB64Cache
+}
 
 // POST /api/payroll-runs/[id]/export — Export to Excel or PDF
 export async function POST(
@@ -129,19 +144,12 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
 }
 
 function loadChineseFont(doc: jsPDF): boolean {
-  try {
-    const fs = require('fs')
-    const path = require('path')
-    const fontPath = path.join(process.cwd(), 'src/assets/fonts/NotoSansTC-Regular.ttf')
-    if (!fs.existsSync(fontPath)) return false
-    const fontB64 = fs.readFileSync(fontPath).toString('base64')
-    doc.addFileToVFS('NotoSansTC.ttf', fontB64)
-    doc.addFont('NotoSansTC.ttf', 'NotoSansTC', 'normal')
-    doc.setFont('NotoSansTC')
-    return true
-  } catch {
-    return false
-  }
+  const fontB64 = getFontB64()
+  if (!fontB64) return false
+  doc.addFileToVFS('NotoSansTC.ttf', fontB64)
+  doc.addFont('NotoSansTC.ttf', 'NotoSansTC', 'normal')
+  doc.setFont('NotoSansTC')
+  return true
 }
 
 function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner: boolean): NextResponse {
@@ -196,8 +204,15 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner:
     startY: y,
     head: [headerLabels],
     body: tableData,
-    styles: { fontSize: hasChineseFont ? 9 : 8 },
-    headStyles: { fillColor: [41, 128, 185] },
+    styles: {
+      font: hasChineseFont ? 'NotoSansTC' : 'helvetica',
+      fontSize: hasChineseFont ? 9 : 8,
+    },
+    headStyles: {
+      fillColor: [41, 128, 185],
+      font: hasChineseFont ? 'NotoSansTC' : 'helvetica',
+      fontStyle: 'normal',
+    },
   })
 
   const finalY = (doc as any).lastAutoTable.finalY + 10

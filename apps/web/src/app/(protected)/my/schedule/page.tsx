@@ -30,7 +30,7 @@ function CompanyOverviewTable({
 
   return (
     <div>
-      <div className="overflow-x-auto -mx-2" style={{ WebkitOverflowScrolling: 'touch' }}>
+      <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
         <table style={{
           borderCollapse: 'separate', borderSpacing: 0,
           tableLayout: 'fixed',
@@ -71,14 +71,14 @@ function CompanyOverviewTable({
                   {days.map((d: string) => {
                     const ds = shiftsByDay[d]
                     return (
-                      <td key={d} style={{ padding: '3px 3px', verticalAlign: 'top', borderBottom: '1px solid #f3f4f6' }}>
+                      <td key={d} style={{ padding: '3px 3px', verticalAlign: 'top', borderBottom: '1px solid #f3f4f6', overflow: 'hidden', borderLeft: '1px solid #f3f4f6' }}>
                         {ds && (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                             {ds.shifts?.map((s: any) => (
                               <span
                                 key={s.id}
                                 style={{
-                                  display: 'inline-block', maxWidth: 84, overflow: 'hidden',
+                                  display: 'block', maxWidth: '100%', overflow: 'hidden',
                                   textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'top',
                                   background: '#e0f2fe', color: '#0369a1',
                                   borderRadius: 4, padding: '1px 4px', fontSize: 10,
@@ -92,10 +92,10 @@ function CompanyOverviewTable({
                               <span
                                 key={li}
                                 style={{
-                                  display: 'inline-block',
+                                  display: 'block', maxWidth: '100%', overflow: 'hidden',
+                                  textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                                   background: '#fef3c7', color: '#92400e',
                                   borderRadius: 4, padding: '1px 4px', fontSize: 10,
-                                  whiteSpace: 'nowrap',
                                 }}
                               >
                                 🏖 {l}
