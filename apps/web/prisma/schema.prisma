@@ -178,6 +178,7 @@ model Employee {
   timeBankRecords TimeBank[]
   timeBankEntries TimeBankEntry[]
   payrollItems  PayrollItem[]
+  faceTemplates FaceTemplate[]
   joinDate  DateTime
   leaveDate DateTime?
   status    EmployeeStatus   @default(ACTIVE)
@@ -275,6 +276,12 @@ model PunchRecord {
   tokenValid  Boolean?
   deviceInfo  String?
   notes       String?
+  faceStatus    String? // PASS | FAIL | NOT_ENROLLED | SKIPPED
+  faceScore     Float?
+  faceLiveness  Float?
+  faceFramePath String? // 只有 FAIL 有值；30 天清
+  faceReviewedAt DateTime?
+  faceReviewedBy String?
   createdAt   DateTime    @default(now())
 
   employee    Employee    @relation(fields: [employeeId], references: [id])
@@ -596,4 +603,30 @@ model TimeBankEntry {
   createdAt  DateTime @default(now())
 
   @@index([employeeId, date])
+}
+
+// ============================================================
+// Face Verification — shadow mode, never blocks punch
+// ============================================================
+
+model FaceTemplate {
+  id              String   @id @default(cuid())
+  employeeId      String
+  employee        Employee @relation(fields: [employeeId], references: [id])
+  embedding       String   // Float32[512] 的 JSON 字串
+  active          Boolean  @default(true)
+  enrolledAt      DateTime @default(now())
+  enrolledBy      String
+  consentAt       DateTime
+  consentVersion  String
+  @@index([employeeId, active])
+}
+
+model FaceEnrollCode {
+  id          String   @id @default(cuid())
+  employeeId  String
+  code        String   @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdBy   String
 }
