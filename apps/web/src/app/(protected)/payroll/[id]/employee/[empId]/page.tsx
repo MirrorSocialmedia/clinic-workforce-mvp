@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmtDateTime, fmtDate, fmtTime, toHKDateStr } from '@/lib/hk-date'
@@ -63,6 +63,9 @@ export default function EmployeePayrollDetailPage() {
   const [loading, setLoading] = useState(true)
   const [forbidden, setForbidden] = useState(false)
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
+
+  const printRef = useRef<HTMLDivElement>(null)
+  const [exporting, setExporting] = useState(false)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -128,6 +131,39 @@ export default function EmployeePayrollDetailPage() {
 
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const fmtTimeLocal = fmtDateTime
+
+  // Company logo from API
+  const companyLogo = data?.item?.run?.clinic?.company?.logoData || null
+
+  // PDF export via html2canvas
+  const exportPdf = async () => {
+    if (!printRef.current) return
+    setExporting(true)
+    try {
+      const { default: html2canvas } = await import('html2canvas')
+      const { jsPDF } = await import('jspdf')
+
+      const canvas = await html2canvas(printRef.current, {
+        scale: 2, backgroundColor: '#ffffff',
+        onclone: (doc) => {
+          doc.querySelectorAll('.no-print').forEach(el => (el as HTMLElement).style.display = 'none')
+        },
+      })
+
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      const pageW = 210, pageH = 297
+      const imgH = (canvas.height * pageW) / canvas.width
+      let offset = 0
+      while (offset < imgH) {
+        if (offset > 0) pdf.addPage()
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, -offset, pageW, imgH)
+        offset += pageH
+      }
+      pdf.save(`薪資明細_${employeeName}_${periodMonth}.pdf`)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // ---- Task 6: Extract comprehensive detail data ----
   const attendanceDetail = detail.attendance || {}
@@ -217,17 +253,32 @@ export default function EmployeePayrollDetailPage() {
   })
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div>
-        <BackButton to={`/payroll/${runId}`} label="返回計糧" />
-        <h1 className="text-2xl font-bold tracking-tight mt-2">
-          {employeeName} — {periodMonth} 薪資明細
-        </h1>
-        <div className="text-sm text-muted-foreground mt-1">
-          診所: {item.employee.clinics.map(c => c.clinic.name).join(', ')} | 薪酬: {payType} | 電話: {item.employee.user.phone}
+    <div className="max-w-4xl mx-auto" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <BackButton to={`/payroll/${runId}`} label="返回計糧" />
+
+      {/* Printable area: logo + title + cards */}
+      <div ref={printRef} style={{ position: 'relative' }} className="space-y-6">
+        {companyLogo && (
+          <img src={companyLogo} alt="logo"
+            style={{ position: 'absolute', top: 24, right: 32, width: 96, height: 'auto' }} />
+        )}
+
+        {/* Title + Export button */}
+        <div>
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">
+                {employeeName} — {periodMonth} 薪資明細
+              </h1>
+              <div className="text-sm text-muted-foreground mt-1">
+                診所: {item.employee.clinics.map(c => c.clinic.name).join(', ')} | 薪酬: {payType} | 電話: {item.employee.user.phone}
+              </div>
+            </div>
+            <button className="btn btn-primary no-print" onClick={exportPdf} disabled={exporting} type="button">
+              {exporting ? '匯出中...' : '📄 匯出 PDF'}
+            </button>
+          </div>
         </div>
-      </div>
 
       {/* Main Card */}
       <Card className="p-6 space-y-6">
@@ -730,6 +781,8 @@ export default function EmployeePayrollDetailPage() {
           </div>
         </Card>
       )}
+
+      </div>
     </div>
   )
 }

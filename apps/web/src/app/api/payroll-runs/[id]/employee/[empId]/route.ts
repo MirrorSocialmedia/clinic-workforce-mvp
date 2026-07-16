@@ -16,7 +16,17 @@ export async function GET(
   const item = await prisma.payrollItem.findUnique({
     where: { runId_employeeId: { runId: params.id, employeeId: params.empId } },
     include: {
-      run: { include: { clinic: { select: { id: true, name: true } } } },
+      run: {
+        include: {
+          clinic: {
+            select: {
+              id: true,
+              name: true,
+              company: { select: { logoData: true } },
+            },
+          },
+        },
+      },
       employee: {
         select: {
           payConfidential: true,

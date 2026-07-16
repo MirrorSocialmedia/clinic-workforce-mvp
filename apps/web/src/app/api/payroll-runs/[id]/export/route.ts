@@ -159,11 +159,13 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner:
 
   const company = run.clinic?.company
 
-  // ── Header with optional logo ──
+  // ── Header with optional logo (top-right) ──
   let y = 14
   if (company?.logoData) {
     try {
-      doc.addImage(company.logoData, 'PNG', 14, 10, 24, 0)
+      const pageW = doc.internal.pageSize.getWidth()
+      const logoW = 24
+      doc.addImage(company.logoData, 'PNG', pageW - 14 - logoW, 10, logoW, 0)
       y = 26
     } catch {
       // logo render failed, ignore
