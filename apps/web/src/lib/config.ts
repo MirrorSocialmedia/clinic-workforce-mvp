@@ -98,6 +98,7 @@ export const CONFIG = {
     'POST /api/punch': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/punches': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/punches/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'PUT /api/punches/:id': ['OWNER', 'MANAGER'],
     'POST /api/punches/:id/void': ['OWNER', 'MANAGER'],
     'GET /api/punch/my-records': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 

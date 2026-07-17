@@ -63,9 +63,12 @@ export default function PunchPage() {
 
   // ★ Face enrollment status
   const [faceEnrollStatus, setFaceEnrollStatus] = useState<string | null>(null)
+  const faceStatusRef = useRef<string | null>(null)
   useEffect(() => {
     fetch('/api/face/my-status', { credentials: 'include' })
-      .then(r => r.json()).then(d => setFaceEnrollStatus(d.status)).catch(() => {})
+      .then(r => r.json())
+      .then(d => { setFaceEnrollStatus(d.status); faceStatusRef.current = d.status })
+      .catch(() => {})
   }, [])
 
   const handleScannerReady = useCallback((stop: () => void) => {
@@ -134,7 +137,16 @@ export default function PunchPage() {
       scannerStopRef.current?.()
 
       // ★ 判斷是否要驗證臉部(只ACTIVE才開鏡頭)
-      const willVerify = !!data.recordId && faceEnrollStatus === 'ACTIVE'
+      // 用 ref 讀當下值 + 現場兜底，防狀態競速
+      let fs = faceStatusRef.current
+      if (!fs) {
+        try {
+          const r = await fetch('/api/face/my-status', { credentials: 'include' })
+          fs = (await r.json()).status
+          faceStatusRef.current = fs
+        } catch {}
+      }
+      const willVerify = !!data.recordId && fs === 'ACTIVE'
       setFaceDone(!willVerify) // 要驗證 → 扣住倒數
       if (data.recordId) {
         if (willVerify) {

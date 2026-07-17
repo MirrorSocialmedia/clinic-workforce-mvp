@@ -54,3 +54,50 @@ export async function GET(
     chain,
   })
 }
+
+// PUT /api/punches/[id] — 真正更新那筆打卡（非建新筆）
+// Roles: OWNER, MANAGER
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = requireAuth(req, 'PUT', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
+
+  const body = await req.json().catch(() => ({}))
+  const { punchTime, punchType, notes, reason } = body
+
+  const record = await prisma.punchRecord.findUnique({ where: { id: params.id } })
+  if (!record) return NextResponse.json({ error: '記錄不存在' }, { status: 404 })
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.punchRecord.update({
+      where: { id: params.id },
+      data: {
+        ...(punchTime ? { punchTime: new Date(punchTime) } : {}),
+        ...(punchType ? { punchType } : {}),
+        ...(notes !== undefined ? { notes } : {}),
+      },
+    })
+    // 修改審計（防篡改）
+    await tx.auditLog.create({
+      data: {
+        actorId: session.userId,
+        action: 'PUNCH_EDIT',
+        entity: 'PunchRecord',
+        entityId: params.id,
+        afterJson: JSON.stringify({
+          oldValue: { punchTime: record.punchTime.toISOString(), punchType: record.punchType },
+          newValue: { punchTime, punchType },
+          reason: reason || '管理端編輯',
+        }),
+        ipAddress: req.headers.get('x-forwarded-for') || null,
+        userAgent: req.headers.get('user-agent') || null,
+      },
+    })
+    return u
+  })
+
+  return NextResponse.json({ ok: true, record: { id: updated.id } })
+}
