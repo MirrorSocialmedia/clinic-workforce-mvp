@@ -18,3 +18,6 @@ ALTER TABLE "QRTokenUsage" ADD CONSTRAINT "QRTokenUsage_tokenId_fkey"
 -- Type fixes (from original 114144, moved here because table created here)
 ALTER TABLE "QRTokenUsage" ALTER COLUMN "id" DROP DEFAULT,
 ALTER COLUMN "usedAt" SET DATA TYPE TIMESTAMPTZ(3);
+
+-- moved from 20260714142826 (was ordered before this table existed)
+ALTER TABLE "QRTokenUsage" ALTER COLUMN "usedAt" SET DATA TYPE TIMESTAMP(3);
