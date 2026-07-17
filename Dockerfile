@@ -4,7 +4,7 @@ WORKDIR /app
 RUN apk add --no-cache openssl
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 COPY . .
-RUN rm -f pnpm-workspace.yaml
+RUN rm -f pnpm-workspace.yaml apps/web/pnpm-workspace.yaml
 WORKDIR /app/apps/web
 RUN pnpm install --frozen-lockfile
 RUN npx prisma generate
