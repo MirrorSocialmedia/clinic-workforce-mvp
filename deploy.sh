@@ -18,7 +18,7 @@ $DC up -d --build app
 
 echo "── Face service（warn-only，永不擋主站）──"
 if $DC build face && $DC up -d face; then
- sleep 20 && docker compose -p clinic -f /opt/clinic/docker-compose.yml logs --tail 15 face
+ sleep 15
  if $DC exec -T app node -e "fetch('http://face:8000/health').then(r=>r.json()).then(d=>{if(!d.ok)process.exit(1)}).catch(()=>process.exit(1))" 2>/dev/null; then
   echo "✅ face service 健康"
  else

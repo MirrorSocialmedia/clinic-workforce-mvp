@@ -21,12 +21,12 @@ RUN apk add --no-cache openssl
 RUN npm i -g prisma@6.19.3
 RUN addgroup --system --gid 1001 nodejs && \
  adduser --system --uid 1001 nextjs
-COPY --from=builder /app/apps/web/public ./apps/web/public
+COPY --from=builder /app/apps/web/public ./public
 COPY --from=builder /app/apps/web/.next/standalone ./
-COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/.next/static ./.next/static
 COPY --from=builder /app/apps/web/prisma ./apps/web/prisma
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-CMD ["node", "apps/server.js"]
+CMD ["node", "server.js"]
