@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
       data: {
         employeeId: employee.id,
         embedding: JSON.stringify(data.embedding),
+        active: false,
         enrolledBy: ec.createdBy,
         consentAt: new Date(),
         consentVersion: 'v1',

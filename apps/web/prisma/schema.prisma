@@ -619,6 +619,9 @@ model FaceTemplate {
   enrolledBy      String
   consentAt       DateTime
   consentVersion  String
+  approvedAt      DateTime?
+  approvedBy      String?      // userId of approver
+  refFrameId      String?      // face-service 上參考照的檔名 key
   @@index([employeeId, active])
 }
 

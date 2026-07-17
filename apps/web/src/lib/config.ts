@@ -201,6 +201,11 @@ export const CONFIG = {
     'GET /api/face/review': ['OWNER', 'MANAGER'],
     'GET /api/face/review/:punchId': ['OWNER', 'MANAGER'],
     'POST /api/face/review/:punchId': ['OWNER', 'MANAGER'],
+
+    // Face enrollment approval routes
+    'GET /api/face/enroll-pending': ['OWNER', 'MANAGER'],
+    'GET /api/face/enroll-ref': ['OWNER', 'MANAGER'],
+    'POST /api/face/enroll-approve': ['OWNER', 'MANAGER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)

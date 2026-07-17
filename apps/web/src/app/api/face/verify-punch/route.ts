@@ -22,8 +22,14 @@ export async function POST(req: NextRequest) {
 
   const tmpl = await prisma.faceTemplate.findFirst({ where: { employeeId: employee.id, active: true } })
   if (!tmpl) {
-    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'NOT_ENROLLED' } })
-    return NextResponse.json({ status: 'NOT_ENROLLED' })
+   // Check for pending enrollment
+   const pending = await prisma.faceTemplate.findFirst({ where: { employeeId: employee.id, active: false, approvedAt: null } })
+   if (pending) {
+    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'PENDING_ENROLL' } })
+    return NextResponse.json({ status: 'PENDING_ENROLL' })
+   }
+   await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'NOT_ENROLLED' } })
+   return NextResponse.json({ status: 'NOT_ENROLLED' })
   }
   if (!frame) {
     await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED' } })
