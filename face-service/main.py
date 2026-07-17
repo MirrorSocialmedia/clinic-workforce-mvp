@@ -43,16 +43,22 @@ def health():
     return {'ok': True, 'liveness_loaded': LIVENESS is not None}
 
 @app.post('/embed')
-async def embed(files: list[UploadFile] = File(...)):
+async def embed(files: list[UploadFile] = File(...), store_ref: str = Form(None)):
     embs = []
-    for f in files:
-        img = decode(await f.read())
+    first_bytes = None
+    for i, f in enumerate(files):
+        raw = await f.read()
+        if i == 0:
+            first_bytes = raw
+        img = decode(raw)
         faces = fa.get(img)
         if len(faces) != 1:
             return JSONResponse({'ok': False, 'error': f'偵測到 {len(faces)} 張臉(需恰好1張)'}, status_code=422)
         embs.append(faces[0].normed_embedding)
     mean = np.mean(embs, axis=0)
     mean = mean / np.linalg.norm(mean)
+    if store_ref and first_bytes:
+        _save(f'ref_{store_ref}', first_bytes)
     return {'ok': True, 'embedding': mean.tolist()}
 
 @app.post('/verify')

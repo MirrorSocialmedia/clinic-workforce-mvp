@@ -4,3 +4,7 @@
 node_modules
 backups
 face-service
+
+# Nested .env files (e.g. apps/web/.env) — bare filenames only match root
+**/.env
+**/.env.*

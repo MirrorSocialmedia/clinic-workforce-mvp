@@ -8,7 +8,8 @@ export async function GET(req: NextRequest, { params }: { params: { templateId: 
  if (isAuthError(auth)) return auth.error
 
  const template = await prisma.faceTemplate.findUnique({ where: { id: params.templateId } })
- if (!template || !template.refFrameId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+ if (!template || !template.refFrameId) return NextResponse.json(
+  { error: '此登記無參考照（舊版登記），請拒絕並讓員工重新登記' }, { status: 404 })
 
  // Audit log
  await prisma.auditLog.create({
