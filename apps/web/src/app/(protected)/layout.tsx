@@ -115,6 +115,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/accounts', label: '帳號管理', icon: Users, roles: ['OWNER'] },
     { path: '/clinics', label: '診所管理', icon: Building2, roles: ['OWNER'] },
     { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER'] },
+    { path: '/face-review', label: '臉部覆核', icon: FileText, roles: ['OWNER', 'MANAGER'] },
   ]
 
   const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))

@@ -1,5 +1,6 @@
 'use client'
 import { useState, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { useFaceLandmark, type Pose } from '@/lib/use-face-landmark'
 
 const steps: { hint: string; pose: Pose }[] = [
@@ -11,6 +12,7 @@ const steps: { hint: string; pose: Pose }[] = [
 ]
 
 export default function FaceEnrollPage() {
+ const router = useRouter()
  const [step, setStep] = useState<'code' | 'consent' | 'capture' | 'done'>('code')
  const [code, setCode] = useState('')
  const [checkingCode, setCheckingCode] = useState(false)
@@ -18,7 +20,9 @@ export default function FaceEnrollPage() {
  const [idx, setIdx] = useState(0)
  const [error, setError] = useState('')
  const [submitting, setSubmitting] = useState(false)
+ const [uploading, setUploading] = useState(false)
  const framesRef = useRef<Blob[]>([])
+ const streamRef = useRef<MediaStream | null>(null)
  const videoRef = useRef<HTMLVideoElement>(null)
  const { shoot } = useFaceLandmark()
 
@@ -38,6 +42,7 @@ export default function FaceEnrollPage() {
  const startCamera = async () => {
   try {
    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+   streamRef.current = stream
    if (videoRef.current) {
     videoRef.current.srcObject = stream
     await videoRef.current.play()
@@ -56,17 +61,26 @@ export default function FaceEnrollPage() {
  }
 
  const submitFrames = async (frames: Blob[]) => {
-  setSubmitting(true); setError('')
+  setUploading(true); setError('')
   try {
    const fd = new FormData()
    fd.append('code', code)
    frames.forEach((b, i) => fd.append('frames', b, `f${i}.jpg`))
    const res = await fetch('/api/face/enroll', { method: 'POST', credentials: 'include', body: fd })
-   const data = await res.json()
-   if (res.ok) setStep('done')
-   else setError(data.error || '登記失敗')
-  } catch { setError('網絡錯誤，請重試') }
-  setSubmitting(false)
+   if (res.ok) {
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    setStep('done')
+    setUploading(false)
+    setTimeout(() => router.push('/my/dashboard'), 2000)
+   } else {
+    const data = await res.json().catch(() => ({}))
+    setError(data.error || '登記失敗')
+    setUploading(false)
+   }
+  } catch {
+   setError('上傳失敗，請重試')
+   setUploading(false)
+  }
  }
 
  return (
@@ -114,7 +128,7 @@ export default function FaceEnrollPage() {
    {step === 'capture' && (
     <div className="text-center">
      <div className="relative mb-4">
-      <video ref={videoRef} muted playsInline className="w-full rounded-lg" />
+      <video ref={videoRef} muted playsInline className="w-full rounded-lg" style={{ width: '100%', transform: 'scaleX(-1)' }} />
      </div>
      <div style={{ textAlign: 'center', marginTop: 12 }}>
       <div style={{ fontSize: 22, fontWeight: 700, minHeight: 32 }}>{steps[idx].hint}</div>
@@ -138,6 +152,14 @@ export default function FaceEnrollPage() {
      <a href="/punch" className="py-3 px-8 bg-blue-600 text-white rounded-lg inline-block">
       前往打卡
      </a>
+    </div>
+   )}
+
+   {uploading && (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+     <div style={{ background: '#fff', borderRadius: 12, padding: '20px 28px', fontSize: 15, fontWeight: 600 }}>
+      ⏳ 正在上傳中…
+     </div>
     </div>
    )}
   </div>

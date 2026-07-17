@@ -26,8 +26,8 @@ export function useFaceLandmark() {
   const ratio = (nose.x - right.x) / Math.max(1e-6, left.x - right.x)
 
   if (pose === 'frontal' && (ratio < 0.40 || ratio > 0.60)) return { error: '請正對鏡頭', ratio }
-  if (pose === 'left' && ratio > 0.36) return { error: '請再向左轉一些', ratio }
-  if (pose === 'right' && ratio < 0.64) return { error: '請再向右轉一些', ratio }
+  if (pose === 'left' && ratio < 0.64) return { error: '請再向左轉一些', ratio }
+  if (pose === 'right' && ratio > 0.36) return { error: '請再向右轉一些', ratio }
 
   const canvas = document.createElement('canvas')
   canvas.width = video.videoWidth; canvas.height = video.videoHeight
