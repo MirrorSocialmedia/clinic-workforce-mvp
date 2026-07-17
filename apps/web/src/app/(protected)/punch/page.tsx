@@ -56,6 +56,13 @@ export default function PunchPage() {
   // ★ Scanner restart key
   const [scannerKey, setScannerKey] = useState(0)
 
+  // ★ Scanner stop ref — release rear camera before starting front camera
+  const scannerStopRef = useRef<(() => void) | null>(null)
+
+  const handleScannerReady = useCallback((stop: () => void) => {
+    scannerStopRef.current = stop
+  }, [])
+
   const fetchUserData = useCallback(async () => {
     try {
       const res = await fetch('/api/me', { credentials: 'include' })
@@ -114,6 +121,8 @@ export default function PunchPage() {
       })
       setCountdown(3)
       fetchRecords()
+      // 停止 QR 掃描器，釋放相機（iOS 同頁只能一條串流）
+      scannerStopRef.current?.()
       // Fire-and-forget face verification
       if (data.recordId) runFaceVerify(data.recordId)
       return true
@@ -148,6 +157,8 @@ export default function PunchPage() {
       if (blob) fd.append('frame', blob, 'punch.jpg')
       fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
     } catch {
+      setFaceHint('臉部驗證略過')
+      setTimeout(() => setFaceHint(null), 1500)
       const fd = new FormData()
       fd.append('punchId', punchId)
       fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
@@ -186,7 +197,7 @@ export default function PunchPage() {
       {/* QR Scanner — compact card, hidden when showing full-screen result */}
       {!punchResult && (
         <div className="bg-card border rounded-xl p-3 max-w-sm mx-auto">
-          <QrScanner key={scannerKey} onScan={stableOnScan} />
+          <QrScanner key={scannerKey} onScan={stableOnScan} onScannerReady={handleScannerReady} />
         </div>
       )}
 

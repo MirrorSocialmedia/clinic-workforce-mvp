@@ -5,9 +5,10 @@ import QrScanner from 'qr-scanner'
 
 interface QrScannerClientProps {
   onScan: (token: string) => Promise<boolean> // 回傳是否成功（成功即停）
+  onScannerReady?: (stop: () => void) => void
 }
 
-export default function QrScannerClient({ onScan }: QrScannerClientProps) {
+export default function QrScannerClient({ onScan, onScannerReady }: QrScannerClientProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const scannerRef = useRef<QrScanner | null>(null)
   const processingRef = useRef(false)
@@ -47,6 +48,12 @@ export default function QrScannerClient({ onScan }: QrScannerClientProps) {
       }
     )
     scannerRef.current = scanner
+    // 暴露 stop 方法
+    if (onScannerReady) {
+      onScannerReady(() => {
+        try { scanner.stop() } catch {}
+      })
+    }
     scanner.start()
       .then(() => setStatus('請對準診所 QR 碼'))
       .catch((e: any) => setStatus(`鏡頭啟動失敗：${e?.message ?? e}`))

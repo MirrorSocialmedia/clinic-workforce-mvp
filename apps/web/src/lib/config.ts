@@ -195,6 +195,7 @@ export const CONFIG = {
 
     // Face verification routes (shadow mode)
     'POST /api/face/enroll-code': ['OWNER', 'MANAGER'],
+    'POST /api/face/enroll-code/check': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/face/enroll': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/face/verify-punch': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/face/review': ['OWNER', 'MANAGER'],
