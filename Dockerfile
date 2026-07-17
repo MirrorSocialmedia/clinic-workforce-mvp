@@ -1,43 +1,32 @@
-# Stage 1: Dependencies
-FROM node:22-alpine AS deps
-WORKDIR /app
-COPY package.json pnpm-lock.yaml* ./
-RUN corepack enable && pnpm install --frozen-lockfile 2>/dev/null || pnpm install
-
-# Stage 2: Builder
+# Stage 1: Builder
 FROM node:22-alpine AS builder
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+RUN apk add --no-cache openssl
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 COPY . .
-RUN corepack enable && \
-    cd apps/web && pnpm install --frozen-lockfile 2>/dev/null || pnpm install && \
-    npx prisma generate && \
-    pnpm build
+RUN rm -f pnpm-workspace.yaml
+WORKDIR /app/apps/web
+RUN pnpm install --frozen-lockfile
+RUN npx prisma generate
+ENV DATABASE_URL="postgresql://build:build@build:5432/build" \
+ JWT_SECRET="build-time-placeholder-0123456789abcdefghij" \
+ NODE_OPTIONS="--max-old-space-size=1024"
+RUN pnpm build
 
-# Stage 3: Runner
+# Stage 2: Runner
 FROM node:22-alpine AS runner
 WORKDIR /app
-
 ENV NODE_ENV=production
-
-# Create non-root user
+RUN apk add --no-cache openssl
+RUN npm i -g prisma@6.19.3
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
-
+ adduser --system --uid 1001 nextjs
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
-
-# Copy prisma schema and generated client for migrations
 COPY --from=builder /app/apps/web/prisma ./apps/web/prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/apps/web/node_modules/@prisma ./apps/web/node_modules/@prisma
-
 USER nextjs
-
 EXPOSE 3000
-
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-
 CMD ["node", "apps/web/server.js"]
