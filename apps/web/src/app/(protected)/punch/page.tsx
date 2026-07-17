@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { XCircle, Smartphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -58,6 +59,13 @@ export default function PunchPage() {
 
   // ★ Scanner stop ref — release rear camera before starting front camera
   const scannerStopRef = useRef<(() => void) | null>(null)
+
+  // ★ Face enrollment status
+  const [faceEnrollStatus, setFaceEnrollStatus] = useState<string | null>(null)
+  useEffect(() => {
+    fetch('/api/face/my-status', { credentials: 'include' })
+      .then(r => r.json()).then(d => setFaceEnrollStatus(d.status)).catch(() => {})
+  }, [])
 
   const handleScannerReady = useCallback((stop: () => void) => {
     scannerStopRef.current = stop
@@ -243,6 +251,23 @@ export default function PunchPage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* ── Face enrollment status ── */}
+      {!punchResult && (
+        <div style={{ marginTop: 24, textAlign: 'center', fontSize: 13, paddingBottom: 16 }}>
+          {faceEnrollStatus === 'NOT_ENROLLED' && (
+            <Link href="/my/face-enroll" className="underline text-primary">🪪 登記臉部識別</Link>
+          )}
+          {faceEnrollStatus === 'PENDING' && (
+            <span className="text-muted-foreground">🕐 臉部登記審核中，核准後自動生效</span>
+          )}
+          {faceEnrollStatus === 'ACTIVE' && (
+            <span className="text-muted-foreground">
+              ✅ 臉部識別已啟用 · <Link href="/my/face-enroll" className="underline">重新登記</Link>
+            </span>
+          )}
+        </div>
       )}
 
       {/* ── Full-screen success overlay ── */}

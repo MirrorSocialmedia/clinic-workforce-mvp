@@ -204,8 +204,11 @@ export const CONFIG = {
 
     // Face enrollment approval routes
     'GET /api/face/enroll-pending': ['OWNER', 'MANAGER'],
-    'GET /api/face/enroll-ref': ['OWNER', 'MANAGER'],
-    'POST /api/face/enroll-approve': ['OWNER', 'MANAGER'],
+    'GET /api/face/enroll-ref/:id': ['OWNER', 'MANAGER'],
+    'POST /api/face/enroll-approve/:id': ['OWNER', 'MANAGER'],
+
+    // Face enrollment status (self)
+    'GET /api/face/my-status': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)

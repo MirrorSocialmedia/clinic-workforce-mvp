@@ -30,7 +30,6 @@ export async function POST(req: NextRequest) {
   if (!res.ok || !data.ok) return NextResponse.json({ error: data.error || '特徵提取失敗' }, { status: 422 })
 
   await prisma.$transaction([
-    prisma.faceTemplate.updateMany({ where: { employeeId: employee.id, active: true }, data: { active: false } }),
     prisma.faceTemplate.create({
       data: {
         employeeId: employee.id,
@@ -38,7 +37,7 @@ export async function POST(req: NextRequest) {
         active: false,
         enrolledBy: ec.createdBy,
         consentAt: new Date(),
-        consentVersion: 'v1',
+        consentVersion: 'v2',
       },
     }),
     prisma.faceEnrollCode.update({ where: { id: ec.id }, data: { usedAt: new Date() } }),

@@ -29,17 +29,24 @@ export async function POST(req: NextRequest, { params }: { params: { templateId:
  }
 
  if (action === 'approve') {
-  await prisma.faceTemplate.update({
-   where: { id: params.templateId },
-   data: { active: true, approvedAt: new Date(), approvedBy: auth.session.userId, refFrameId: null },
-  })
+  // Atomic switch: deactivate old active template, activate new one
+  await prisma.$transaction([
+    prisma.faceTemplate.updateMany({
+      where: { employeeId: template.employeeId, active: true },
+      data: { active: false },
+    }),
+    prisma.faceTemplate.update({
+      where: { id: params.templateId },
+      data: { active: true, approvedAt: new Date(), approvedBy: auth.session.userId, refFrameId: null },
+    }),
+  ])
   await prisma.auditLog.create({
    data: {
     actorId: auth.session.userId,
     action: 'FACE_ENROLL_APPROVE',
     entity: 'FaceTemplate',
     entityId: template.id,
-    notes: `核准員工 ${template.employeeId} 臉部登記`,
+    notes: `核准員工 ${template.employeeId} 臉部登記（原子切換，舊模板停用保留）`,
    },
   })
  } else {
