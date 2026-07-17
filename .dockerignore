@@ -8,3 +8,7 @@ face-service
 # Nested .env files (e.g. apps/web/.env) — bare filenames only match root
 **/.env
 **/.env.*
+
+# Nested .env files (e.g. apps/web/.env) — bare filenames only match root
+**/.env
+**/.env.*

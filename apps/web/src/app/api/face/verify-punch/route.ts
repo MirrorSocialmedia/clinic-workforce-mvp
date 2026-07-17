@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
   const form = await req.formData()
   const punchId = String(form.get('punchId') || '')
   const frame = form.get('frame') as File | null
+  const result = String(form.get('result') || '')
 
   const employee = await prisma.employee.findUnique({ where: { userId: session.userId } })
   const punch = await prisma.punchRecord.findUnique({ where: { id: punchId } })
@@ -32,8 +33,9 @@ export async function POST(req: NextRequest) {
    return NextResponse.json({ status: 'NOT_ENROLLED' })
   }
   if (!frame) {
-    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED' } })
-    return NextResponse.json({ status: 'SKIPPED' })
+    const status = result === 'NO_FACE' ? 'NO_FACE' : 'SKIPPED'
+    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: status } })
+    return NextResponse.json({ status })
   }
 
   try {

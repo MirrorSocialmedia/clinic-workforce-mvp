@@ -48,6 +48,7 @@ export default function PunchPage() {
 
   // Face verification state
   const [faceHint, setFaceHint] = useState<string | null>(null)
+  const [faceDone, setFaceDone] = useState(true) // 驗證是否已了結(扣倒數用;預設true)
   const faceVideoRef = useRef<HTMLVideoElement>(null)
   const { captureQualified } = useFaceCapture()
 
@@ -131,14 +132,25 @@ export default function PunchPage() {
       fetchRecords()
       // 停止 QR 掃描器，釋放相機（iOS 同頁只能一條串流）
       scannerStopRef.current?.()
-      // Fire-and-forget face verification
-      if (data.recordId) runFaceVerify(data.recordId)
+
+      // ★ 判斷是否要驗證臉部(只ACTIVE才開鏡頭)
+      const willVerify = !!data.recordId && faceEnrollStatus === 'ACTIVE'
+      setFaceDone(!willVerify) // 要驗證 → 扣住倒數
+      if (data.recordId) {
+        if (willVerify) {
+          runFaceVerify(data.recordId)
+        } else {
+          // 未登記/審核中:不開鏡頭、零等待,送無幀請求讓 server 標 NOT_ENROLLED/PENDING_ENROLL
+          const fd = new FormData(); fd.append('punchId', data.recordId)
+          fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+        }
+      }
       return true
     } catch (e: any) {
       setError(e.message)
       return false
     }
-  }, [fetchRecords])
+  }, [fetchRecords, faceEnrollStatus])
 
   // Keep ref stable for scanner
   const handleScanRef = useRef(handleScan)
@@ -149,35 +161,50 @@ export default function PunchPage() {
     return handleScanRef.current(token)
   }, [])
 
-  // Fire-and-forget face verification after punch
+  // ★ runFaceVerify 全身替換: 8秒死線 + 三種了結(sent / no_face / skipped)
   const runFaceVerify = async (punchId: string) => {
+    let outcome: 'sent' | 'no_face' | 'skipped' = 'skipped'
     try {
+      if (!faceVideoRef.current) throw new Error('face video not mounted')
       setFaceHint('請看鏡頭')
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-      if (faceVideoRef.current) {
+      try {
         faceVideoRef.current.srcObject = stream
         await faceVideoRef.current.play()
+        const blob = await captureQualified(faceVideoRef.current, 8000) // ★ 8 秒死線
+        if (blob) {
+          const fd = new FormData()
+          fd.append('punchId', punchId)
+          fd.append('frame', blob, 'punch.jpg')
+          fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+          outcome = 'sent'
+        } else {
+          outcome = 'no_face' // ★ 相機正常、8秒無合格人臉 = 迴避嫌疑
+        }
+      } finally {
+        stream.getTracks().forEach(t => t.stop())
       }
-      const blob = await captureQualified(faceVideoRef.current!, 3000)
-      stream.getTracks().forEach(t => t.stop())
-      const fd = new FormData()
-      fd.append('punchId', punchId)
-      if (blob) fd.append('frame', blob, 'punch.jpg')
-      fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
     } catch {
-      setFaceHint('臉部驗證略過')
-      setTimeout(() => setFaceHint(null), 1500)
+      outcome = 'skipped' // 相機開不起來/權限拒絕 = 設備問題
+    }
+
+    if (outcome === 'sent') {
+      setFaceHint(null)
+    } else {
       const fd = new FormData()
       fd.append('punchId', punchId)
+      fd.append('result', outcome === 'no_face' ? 'NO_FACE' : 'SKIPPED')
       fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
-    } finally {
-      setFaceHint(null)
+      setFaceHint(outcome === 'no_face' ? '未拍攝到人臉' : '臉部驗證略過')
+      setTimeout(() => setFaceHint(null), 1500)
     }
+    setFaceDone(true) // ★ 任何了結都放行倒數
   }
 
   // ★ Countdown: auto-redirect to dashboard after success
+  // 扣住條件: 有 punchResult AND faceDone(驗證已了結)
   useEffect(() => {
-    if (!punchResult) return
+    if (!punchResult || !faceDone) return
     const t = setInterval(() => {
       setCountdown(c => {
         if (c <= 1) {
@@ -189,7 +216,7 @@ export default function PunchPage() {
       })
     }, 1000)
     return () => clearInterval(t)
-  }, [punchResult, router])
+  }, [punchResult, faceDone, router])
 
   if (loading) return <div className="flex justify-center items-center min-h-[200px] text-muted-foreground">載入中...</div>
   if (!user) return null
@@ -270,6 +297,18 @@ export default function PunchPage() {
         </div>
       )}
 
+      {/* ── Face verification window: always-mounted, display toggled ── */}
+      <div style={{
+        position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+        width: 'min(78vw, 320px)', zIndex: 60,
+        borderRadius: 16, overflow: 'hidden', background: '#000',
+        boxShadow: '0 8px 30px rgba(0,0,0,.45)',
+        display: faceHint ? 'block' : 'none',
+      }}>
+        <video ref={faceVideoRef} muted playsInline style={{ width: '100%', transform: 'scaleX(-1)' }} />
+        <div style={{ fontSize: 14, textAlign: 'center', color: '#fff', padding: '8px 0' }}>{faceHint}</div>
+      </div>
+
       {/* ── Full-screen success overlay ── */}
       {punchResult && (
         <div
@@ -290,14 +329,6 @@ export default function PunchPage() {
           >
             返回首頁（{countdown}）
           </button>
-
-          {/* Face verification overlay */}
-          {faceHint && (
-            <div style={{ position: 'absolute', top: 12, right: 12, width: 120, borderRadius: 12, overflow: 'hidden', background: '#000' }}>
-              <video ref={faceVideoRef} muted playsInline style={{ width: '100%' }} />
-              <div style={{ fontSize: 11, textAlign: 'center', color: '#fff', padding: 2 }}>{faceHint}</div>
-            </div>
-          )}
         </div>
       )}
     </div>

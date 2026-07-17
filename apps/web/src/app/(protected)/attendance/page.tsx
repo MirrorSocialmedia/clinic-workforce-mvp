@@ -579,6 +579,20 @@ export default function AttendancePage() {
           </div>
 
           {/* Records Table */}
+          {(() => {
+            const fails = records.filter((r: any) => r.faceStatus === 'FAIL').length
+            const noFace = records.filter((r: any) => r.faceStatus === 'NO_FACE').length
+            if (fails > 0 || noFace > 0) {
+              return (
+                <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
+                  {fails > 0 && <span style={{ color: '#dc2626' }}>⚠️ {fails} 筆驗證未通過 </span>}
+                  {noFace > 0 && <span style={{ color: '#ea580c' }}>🟠 {noFace} 筆未拍攝到人臉 </span>}
+                  <Link href="/face-review" className="underline font-semibold" style={{ color: '#dc2626' }}>前往臉部覆核 →</Link>
+                </div>
+              )
+            }
+            return null
+          })()}
           <div className="overflow-x-auto rounded-xl border shadow-card">
             <table className="w-full">
               <thead>
@@ -588,6 +602,7 @@ export default function AttendancePage() {
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">時間</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">類型</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">狀態</th>
+                  <th className="text-left p-3 text-sm font-medium text-muted-foreground">人臉</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">來源</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">Token</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">修正</th>
@@ -597,9 +612,9 @@ export default function AttendancePage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
+                  <tr><td colSpan={11} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
                 ) : allRows.length === 0 ? (
-                  <tr><td colSpan={10} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
+                  <tr><td colSpan={11} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
                 ) : (
                   allRows.map((row) => {
                     // ABSENT row
@@ -611,7 +626,7 @@ export default function AttendancePage() {
                           <td className="p-3">{ar.clinicName}</td>
                           <td className="p-3">{ar.date}</td>
                           <td className="p-3"><span style={{ color: '#dc3545', fontWeight: 700 }}>缺勤</span></td>
-                          <td className="p-3 text-sm text-muted-foreground" colSpan={4}>排班 {ar.shiftMinutes} 分鐘，無打卡</td>
+                          <td className="p-3 text-sm text-muted-foreground" colSpan={5}>排班 {ar.shiftMinutes} 分鐘，無打卡</td>
                           <OtDeductCell row={{ employeeId: ar.employeeId, date: ar.date, shiftMinutes: ar.shiftMinutes, otDeducted: ar.otDeducted }} userRole={user.role} />
                           <td className="p-3">—</td>
                         </tr>
@@ -620,6 +635,23 @@ export default function AttendancePage() {
 
                     // Punch record row
                     const record = row as PunchRecord & { isAbsentRow: false; sortTime: number }
+                    const faceBadge = (r: any) => {
+                      switch (r.faceStatus) {
+                        case 'PASS':
+                          return <span style={{ color: '#059669' }} title={`比對分數 ${r.faceScore?.toFixed(2) ?? '—'}`}>✅ 通過</span>
+                        case 'FAIL':
+                          return <Link href="/face-review" style={{ color: '#dc2626', fontWeight: 600, textDecoration: 'underline' }}
+                            title="臉部驗證未通過——點擊前往覆核">⚠️ 未通過</Link>
+                        case 'NO_FACE':
+                          return <span style={{ color: '#ea580c', fontWeight: 600 }}
+                            title="相機正常但 8 秒內未拍到人臉（可能迴避驗證）">🟠 未拍攝</span>
+                        case 'SKIPPED':
+                          return <span style={{ color: '#9ca3af' }} title="相機不可用，已略過（設備問題）">略過</span>
+                        case 'NOT_ENROLLED': return <span style={{ color: '#9ca3af' }}>未登記</span>
+                        case 'PENDING_ENROLL': return <span style={{ color: '#9ca3af' }} title="臉部登記待管理員核准">審核中</span>
+                        default: return <span style={{ color: '#d1d5db' }}>—</span>
+                      }
+                    }
                     const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
                     const isClockIn = record.punchType === 'CLOCK_IN'
                     const showLate = isClockIn ? lateEx : undefined
@@ -682,6 +714,7 @@ export default function AttendancePage() {
                           </>
                         )}
                       </td>
+                      <td className="p-3 text-sm">{faceBadge(record)}</td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {record.source === 'QR_DYNAMIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 動態碼</> : record.source === 'QR_STATIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 固定碼</> : record.source === 'MANUAL_CORRECTION' ? <><Pencil size={14} style={{ marginRight: 4 }} /> 補打卡</> : <><Wrench size={14} style={{ marginRight: 4 }} /> 系統</>}
                       </td>
