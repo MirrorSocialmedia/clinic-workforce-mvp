@@ -200,8 +200,8 @@ export const CONFIG = {
     'POST /api/face/enroll': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/face/verify-punch': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/face/review': ['OWNER', 'MANAGER'],
-    'GET /api/face/review/:punchId': ['OWNER', 'MANAGER'],
-    'POST /api/face/review/:punchId': ['OWNER', 'MANAGER'],
+    'GET /api/face/review/:id': ['OWNER', 'MANAGER'],
+    'POST /api/face/review/:id': ['OWNER', 'MANAGER'],
 
     // Face enrollment approval routes
     'GET /api/face/enroll-pending': ['OWNER', 'MANAGER'],

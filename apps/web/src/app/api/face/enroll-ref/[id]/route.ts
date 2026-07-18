@@ -3,11 +3,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
-export async function GET(req: NextRequest, { params }: { params: { templateId: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
  const auth = requireAuth(req, 'GET', req.url)
  if (isAuthError(auth)) return auth.error
 
- const template = await prisma.faceTemplate.findUnique({ where: { id: params.templateId } })
+ const template = await prisma.faceTemplate.findUnique({ where: { id: params.id } })
  if (!template || !template.refFrameId) return NextResponse.json(
   { error: '此登記無參考照（舊版登記），請拒絕並讓員工重新登記' }, { status: 404 })
 

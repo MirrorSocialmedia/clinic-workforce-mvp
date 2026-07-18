@@ -8,12 +8,12 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 // Roles: OWNER, MANAGER
 
 // GET: 返回 frame 圖片（每次載入即 audit）
-export async function GET(req: NextRequest, { params }: { params: { punchId: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
-  const punchId = params.punchId
+  const punchId = params.id
   const punch = await prisma.punchRecord.findUnique({ where: { id: punchId } })
   if (!punch || !punch.faceFramePath) {
     return NextResponse.json({ error: 'frame not found' }, { status: 404 })
@@ -42,12 +42,12 @@ export async function GET(req: NextRequest, { params }: { params: { punchId: str
 }
 
 // POST: 處置
-export async function POST(req: NextRequest, { params }: { params: { punchId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
-  const punchId = params.punchId
+  const punchId = params.id
   const body = await req.json().catch(() => ({}))
   const { action } = body // 'confirm' | 'flag'
 

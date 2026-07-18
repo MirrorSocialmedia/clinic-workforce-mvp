@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
-export async function POST(req: NextRequest, { params }: { params: { templateId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
  const auth = requireAuth(req, 'POST', req.url)
  if (isAuthError(auth)) return auth.error
 
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: { templateId:
  if (!['approve', 'reject'].includes(action)) return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
 
  const template = await prisma.faceTemplate.findUnique({
-  where: { id: params.templateId },
+  where: { id: params.id },
   include: { employee: { select: { userId: true } } },
  })
  if (!template) return NextResponse.json({ error: '登記不存在' }, { status: 404 })
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: { templateId:
       data: { active: false },
     }),
     prisma.faceTemplate.update({
-      where: { id: params.templateId },
+      where: { id: params.id },
       data: { active: true, approvedAt: new Date(), approvedBy: auth.session.userId, refFrameId: null },
     }),
   ])
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, { params }: { params: { templateId:
    },
   })
  } else {
-  await prisma.faceTemplate.delete({ where: { id: params.templateId } })
+  await prisma.faceTemplate.delete({ where: { id: params.id } })
   await prisma.auditLog.create({
    data: {
     actorId: auth.session.userId,
