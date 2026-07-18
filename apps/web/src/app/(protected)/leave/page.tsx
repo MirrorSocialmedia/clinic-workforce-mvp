@@ -109,6 +109,11 @@ export default function LeavePage() {
   const [ltForm, setLtForm] = useState({ name: '', isPaid: true, annualQuota: '', color: '#4CAF50', cancelsBonus: false })
   const [ltEditingId, setLtEditingId] = useState<string | null>(null)
 
+  // 發放休息日 state (OWNER only)
+  const [grantWhich, setGrantWhich] = useState<'this' | 'next'>('next')
+  const [grantScope, setGrantScope] = useState('all')
+  const [granting, setGranting] = useState(false)
+
   // Auto-calculate days when start/end dates change
   useEffect(() => {
     if (form.startDate && form.endDate) {
@@ -372,6 +377,30 @@ export default function LeavePage() {
   }
 
   // OT 兌換 handler
+
+  // 發放休息日 handler
+  const doGrant = async () => {
+    setGranting(true)
+    try {
+      const res = await fetch('/api/leave/grant-restdays', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ which: grantWhich, employeeScope: grantScope }),
+      })
+      const d = await res.json()
+      if (res.ok) {
+        alert(`✅ 已發放 ${d.granted} 名員工的 ${d.month} 休息日`)
+      } else {
+        alert(d.error || '發放失敗')
+      }
+    } catch (err) {
+      alert('發放失敗: ' + (err as Error).message)
+    } finally {
+      setGranting(false)
+    }
+  }
+
   const handleConvert = async () => {
     if (!convertForm.employeeId || !convertForm.days) { alert('請填寫所有欄位'); return }
     setConverting(true)
@@ -779,7 +808,50 @@ export default function LeavePage() {
             </section>
           )}
 
-          {/* 4. 自動計算年假額度（OWNER only） */}
+          {/* 4. 發放休息日（OWNER only） */}
+          {isOwner && (
+            <section className="card p-4 border border-green-200 rounded-lg mb-4" style={{ background: '#f0fdf4' }}>
+              <h3 className="font-semibold mb-2">📅 發放休息日</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                手動為員工發放本月或下月休息日配額。按當前薪規的休息日設定計算配額；重複發放安全（不會翻�。
+              </p>
+              <div className="flex gap-3 items-end flex-wrap">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">員工</label>
+                  <select value={grantScope} onChange={e => setGrantScope(e.target.value)}
+                    className="px-3 py-2 rounded-md border text-sm">
+                    <option value="all">全部員工</option>
+                    {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">月份</label>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1 text-sm">
+                      <input type="radio" name="grantWhich" value="this" checked={grantWhich === 'this'}
+                        onChange={() => setGrantWhich('this')} />
+                      本月
+                    </label>
+                    <label className="flex items-center gap-1 text-sm">
+                      <input type="radio" name="grantWhich" value="next" checked={grantWhich === 'next'}
+                        onChange={() => setGrantWhich('next')} />
+                      下月
+                    </label>
+                  </div>
+                </div>
+                <button
+                  className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors"
+                  style={{ background: '#16a34a' }}
+                  onClick={doGrant}
+                  disabled={granting}
+                >
+                  {granting ? '發放中...' : '✅ 發放'}
+                </button>
+              </div>
+            </section>
+          )}
+
+          {/* 5. 自動計算年假額度（OWNER only） */}
           {isManager && (
             <section className="card p-4 border border-blue-200 rounded-lg mb-4" style={{ background: '#f0f7ff' }}>
               <h3 className="font-semibold mb-2">📊 自動計算年假額度</h3>

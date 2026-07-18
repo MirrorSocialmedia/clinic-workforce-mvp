@@ -819,10 +819,6 @@ export async function generatePayrollRun(
           calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
             ...(config.base_type !== 'hourly' && storeBonuses?.[emp.id] ? { storeBonus: storeBonuses[emp.id] } : {}),
           })
-
-          // 🆕 Grant next month rest day pool (idempotent — safe on recalc)
-          const nextMonth = new Date(year, month + 1, 1) // year/month from hkParts → 0-indexed month+1
-          await grantRestDaysForMonth(emp.id, nextMonth, tx)
         } else {
           // No rule at all → skip with warning
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
@@ -1728,13 +1724,6 @@ export async function ensureRestDayGranted(employeeId: string, targetDate: Date,
   await grantMonthlyRestDays(employeeId, y, m, quota.total, db)
 }
 
-/**
- * Wrapper for ensureRestDayGranted — grants rest day pool for the month of `monthDate`.
- * Idempotent (delta upsert + grantKey dedup). Safe to call repeatedly.
- */
-export async function grantRestDaysForMonth(employeeId: string, monthDate: Date, db: any): Promise<void> {
-  return ensureRestDayGranted(employeeId, monthDate, db)
-}
 
 // ------------------------------------------------------------------
 // 3. Modular Engine: Work Data Collection
@@ -2431,11 +2420,6 @@ export async function calculatePayrollWithRules(
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
   const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig)
-
-  // 6. Task 3 + Rest Day System: Grant monthly rest day entitlement
-  // monthlyLeaveDays.total = restDays (weekends) + publicHolidays
-  // This is now a proper LeaveBalance entry that can be used/accumulated
-  await grantMonthlyRestDays(employeeId, year, month, monthlyLeaveDays.total, prisma)
   let leaveBalanceRemaining = 0 // Tracked via LeaveBalance, not inline
 
   // 🔑 OT 唯一來源：時間銀行 otMinutes（排班外工時，分鐘制）
