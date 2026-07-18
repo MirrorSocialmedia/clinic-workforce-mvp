@@ -10,7 +10,10 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
-  const form = await req.formData()
+  let form: FormData
+  try { form = await req.formData() } catch {
+    return NextResponse.json({ error: 'body aborted' }, { status: 400 })
+  }
   const punchId = String(form.get('punchId') || '')
   const frame = form.get('frame') as File | null
   const result = String(form.get('result') || '')
@@ -71,7 +74,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ status: v.status })
   } catch {
-    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED' } })
+    try {
+      await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED' } })
+    } catch {}
     return NextResponse.json({ status: 'SKIPPED' })
   }
 }

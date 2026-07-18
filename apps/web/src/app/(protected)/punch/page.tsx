@@ -188,7 +188,11 @@ export default function PunchPage() {
           const fd = new FormData()
           fd.append('punchId', punchId)
           fd.append('frame', blob, 'punch.jpg')
-          fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+          const r = await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
+          if (r.ok) {
+            const j = await r.json()
+            setFaceHint(j.status === 'PASS' ? '✅ 驗證通過' : null)
+          }
           outcome = 'sent'
         } else {
           outcome = 'no_face' // ★ 相機正常、8秒無合格人臉 = 迴避嫌疑
@@ -206,7 +210,7 @@ export default function PunchPage() {
       const fd = new FormData()
       fd.append('punchId', punchId)
       fd.append('result', outcome === 'no_face' ? 'NO_FACE' : 'SKIPPED')
-      fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+      await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
       setFaceHint(outcome === 'no_face' ? '未拍攝到人臉' : '臉部驗證略過')
       setTimeout(() => setFaceHint(null), 1500)
     }

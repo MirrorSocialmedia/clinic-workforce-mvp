@@ -22,10 +22,12 @@ export function useFaceCapture() {
       const det = detectorRef.current.detectForVideo(video, performance.now())
       const d = det?.detections?.[0]
       if (det?.detections?.length === 1 && d.boundingBox && d.boundingBox.width > video.videoWidth * 0.22) {
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
+        // ★ 降採樣: 最大 640 寬（ArcFace 內部 112×112，保持體積 <64KB 以支援 keepalive）
+        const scale = Math.min(1, 640 / video.videoWidth)
+        canvas.width = Math.round(video.videoWidth * scale)
+        canvas.height = Math.round(video.videoHeight * scale)
         const ctx = canvas.getContext('2d')!
-        ctx.drawImage(video, 0, 0)
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         const sample = ctx.getImageData(0, 0, canvas.width, canvas.height).data
         let luma = 0
         for (let i = 0; i < sample.length; i += 4 * 50)
