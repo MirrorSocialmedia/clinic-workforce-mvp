@@ -7,8 +7,11 @@ interface FailItem {
   punchTime: string
   employeeName: string
   clinicName: string
+  faceStatus: string
   faceScore: number | null
   faceLiveness: number | null
+  faceFramePath: string | null
+  faceReason: string | null
 }
 
 interface PendingItem {
@@ -121,14 +124,25 @@ export default function FaceReviewPage() {
           {failItems.length === 0 && <p className="text-gray-500">沒有待覆核的紀錄</p>}
           <div className="space-y-3">
             {failItems.map(item => (
-              <div key={item.id} className="border rounded-lg p-3 flex items-center gap-4">
-                <img src={`/api/face/review/${item.id}`} alt="frame" className="w-16 h-16 object-cover rounded" />
+              <div key={item.id} className="border rounded-lg p-3 flex items-center gap-4"
+                style={{ borderColor: item.faceStatus === 'NO_FACE' ? '#ea580c' : '#dc2626' }}>
+                {item.faceFramePath ? (
+                  <img src={`/api/face/review/${item.id}`} alt="frame" className="w-16 h-16 object-cover rounded" />
+                ) : (
+                  <div className="w-16 h-16 rounded bg-gray-100 flex items-center justify-center text-2xl">📷</div>
+                )}
                 <div className="flex-1">
-                  <div className="font-bold">{item.employeeName}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold">{item.employeeName}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${item.faceStatus === 'NO_FACE' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                      {item.faceStatus === 'NO_FACE' ? 'NO_FACE' : 'FAIL'}
+                    </span>
+                  </div>
                   <div className="text-sm text-gray-500">{item.clinicName} · {new Date(item.punchTime).toLocaleString('zh-HK')}</div>
                   <div className="text-sm">
-                    分數: {item.faceScore != null ? item.faceScore.toFixed(4) : 'N/A'}
+                    {item.faceScore != null && `分數: ${item.faceScore.toFixed(4)}`}
                     {item.faceLiveness != null && ` | 活體: ${item.faceLiveness.toFixed(4)}`}
+                    {item.faceReason && <span className="text-xs text-gray-400 ml-2">· {item.faceReason}</span>}
                   </div>
                 </div>
                 <div className="flex gap-2">

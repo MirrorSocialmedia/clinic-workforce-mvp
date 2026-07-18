@@ -14,15 +14,38 @@ export function useFaceCapture() {
     })
   }, [])
 
-  const captureQualified = useCallback(async (video: HTMLVideoElement, timeoutMs = 3000): Promise<Blob | null> => {
+  const captureQualified = useCallback(async (video: HTMLVideoElement, timeoutMs = 3000, onHint?: (h: string) => void): Promise<Blob | null> => {
     await init()
     const canvas = document.createElement('canvas')
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
       const det = detectorRef.current.detectForVideo(video, performance.now())
       const d = det?.detections?.[0]
-      if (det?.detections?.length === 1 && d.boundingBox && d.boundingBox.width > video.videoWidth * 0.15) {
-        // ★ 降採樣: 最大 640 寬（ArcFace 內部 112×112，保持體積 <64KB 以支援 keepalive）
+      if (det?.detections?.length === 1 && d.boundingBox) {
+        const bb = d.boundingBox
+        const cx = (bb.originX + bb.width / 2) / video.videoWidth
+        const cy = (bb.originY + bb.height / 2) / video.videoHeight
+        const wRatio = bb.width / video.videoWidth
+
+        // 太遠 (<0.15) 不收
+        if (wRatio < 0.15 || wRatio > 0.70) {
+          onHint?.(wRatio < 0.15 ? '請再靠近一點' : '請退遠一點')
+          await new Promise(r => setTimeout(r, 120))
+          continue
+        }
+
+        // 框內判定 (橢圓中心 50%/48%, 寬 62%, 高 78%)
+        const inFrame =
+          Math.abs(cx - 0.5) < 0.20 &&
+          Math.abs(cy - 0.48) < 0.26
+
+        if (!inFrame) {
+          onHint?.('請將臉移入框內')
+          await new Promise(r => setTimeout(r, 120))
+          continue
+        }
+
+        // 降採樣
         const scale = Math.min(1, 640 / video.videoWidth)
         canvas.width = Math.round(video.videoWidth * scale)
         canvas.height = Math.round(video.videoHeight * scale)
@@ -36,11 +59,23 @@ export function useFaceCapture() {
         if (luma > 55 && luma < 215) {
           return await new Promise(r => canvas.toBlob(b => r(b), 'image/jpeg', 0.85))
         }
+        if (luma <= 55) onHint?.('光線不足')
       }
       await new Promise(r => setTimeout(r, 120))
     }
     return null
   }, [init])
 
-  return { captureQualified, warmup: init }
+  // ★ 裸快照: 無門檻,拍到什麼是什麼 (NO_FACE 證據)
+  const captureRaw = useCallback(async (video: HTMLVideoElement): Promise<Blob | null> => {
+    const canvas = document.createElement('canvas')
+    const scale = Math.min(1, 640 / video.videoWidth)
+    canvas.width = Math.round(video.videoWidth * scale)
+    canvas.height = Math.round(video.videoHeight * scale)
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    return new Promise(r => canvas.toBlob(b => r(b), 'image/jpeg', 0.8))
+  }, [])
+
+  return { captureQualified, captureRaw, warmup: init }
 }

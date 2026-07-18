@@ -87,6 +87,12 @@ def _save(punch_id: str, raw: bytes) -> str:
         f.write(raw)
     return p
 
+@app.post('/store/{punch_id}')
+async def store(punch_id: str, file: UploadFile = File(...)):
+    raw = await file.read()
+    path = _save(punch_id, raw)
+    return {'ok': True, 'framePath': path}
+
 @app.get('/frame/{punch_id}')
 def frame(punch_id: str):
     p = os.path.join(FRAMES_DIR, f'{punch_id}.jpg')

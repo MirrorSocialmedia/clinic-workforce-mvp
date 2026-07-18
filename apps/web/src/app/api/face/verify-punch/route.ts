@@ -35,10 +35,25 @@ export async function POST(req: NextRequest) {
    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'NOT_ENROLLED' } })
    return NextResponse.json({ status: 'NOT_ENROLLED' })
   }
+  // result 優先分流 (NO_FACE 可能帶證據幀,不走此分支)
+  if (result === 'NO_FACE') {
+    const reason = String(form.get('reason') || '') || null
+    let framePath: string | null = null
+    if (frame) {
+      try {
+        const fd2 = new FormData(); fd2.append('file', frame)
+        const r2 = await fetch(`${process.env.FACE_SERVICE_URL}/store/${punchId}`, { method: 'POST', body: fd2 })
+        if (r2.ok) { const j = await r2.json(); framePath = j.framePath ?? null }
+      } catch { /* 存證失敗不阻擋 */ }
+    }
+    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'NO_FACE', faceReason: reason, faceFramePath: framePath } })
+    return NextResponse.json({ status: 'NO_FACE' })
+  }
+
   if (!frame) {
-    const status = result === 'NO_FACE' ? 'NO_FACE' : 'SKIPPED'
-    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: status } })
-    return NextResponse.json({ status })
+    const reason = String(form.get('reason') || '') || null
+    await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED', faceReason: reason } })
+    return NextResponse.json({ status: 'SKIPPED' })
   }
 
   try {
@@ -56,6 +71,7 @@ export async function POST(req: NextRequest) {
         faceScore: v.score,
         faceLiveness: v.liveness,
         faceFramePath: v.framePath,
+        faceReason: v.reason ?? null,
       },
     })
 
@@ -75,7 +91,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: v.status })
   } catch {
     try {
-      await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED' } })
+      await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED', faceReason: 'service_error' } })
     } catch {}
     return NextResponse.json({ status: 'SKIPPED' })
   }

@@ -282,6 +282,7 @@ model PunchRecord {
   faceFramePath String? // 只有 FAIL 有值；30 天清
   faceReviewedAt DateTime?
   faceReviewedBy String?
+  faceReason     String? // 異常原因代碼
   createdAt   DateTime    @default(now())
 
   employee    Employee    @relation(fields: [employeeId], references: [id])

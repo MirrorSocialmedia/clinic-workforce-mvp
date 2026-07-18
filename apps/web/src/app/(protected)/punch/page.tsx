@@ -50,7 +50,7 @@ export default function PunchPage() {
   const [faceHint, setFaceHint] = useState<string | null>(null)
   const [faceDone, setFaceDone] = useState(true) // 驗證是否已了結(扣倒數用;預設true)
   const faceVideoRef = useRef<HTMLVideoElement>(null)
-  const { captureQualified, warmup } = useFaceCapture()
+  const { captureQualified, captureRaw, warmup } = useFaceCapture()
 
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
@@ -194,6 +194,8 @@ export default function PunchPage() {
   // ★ runFaceVerify 全身替換: 8秒死線 + 三種了結(sent / no_face / skipped)
   const runFaceVerify = async (punchId: string) => {
     let outcome: 'sent' | 'no_face' | 'skipped' = 'skipped'
+    let fd_reason: string = ''
+    let noFaceEvidence: Blob | null = null
     try {
       if (!faceVideoRef.current) throw new Error('face video not mounted')
       setFaceHint('請看鏡頭')
@@ -201,7 +203,7 @@ export default function PunchPage() {
       try {
         faceVideoRef.current.srcObject = stream
         await faceVideoRef.current.play()
-        const blob = await captureQualified(faceVideoRef.current, 8000) // ★ 8 秒死線
+        const blob = await captureQualified(faceVideoRef.current, 8000, setFaceHint) // ★ 8 秒死線 + frame guide
         if (blob) {
           setFaceHint('分析中…')
           const fd = new FormData()
@@ -215,21 +217,40 @@ export default function PunchPage() {
           outcome = 'sent'
         } else {
           outcome = 'no_face' // ★ 相機正常、8秒無合格人臉 = 迴避嫌疑
+          fd_reason = 'no_face_8s'
+        }
+        // ★ 關鏡頭前拍證據幀
+        if (outcome === 'no_face' && faceVideoRef.current?.readyState) {
+          try { noFaceEvidence = await captureRaw(faceVideoRef.current) } catch {}
         }
       } finally {
         stream.getTracks().forEach(t => t.stop())
       }
-    } catch {
-      outcome = 'skipped' // 相機開不起來/權限拒絕 = 設備問題
+    } catch (e: any) {
+      outcome = 'skipped'
+      if (e?.name === 'NotAllowedError') fd_reason = 'camera_denied'
+      else if (e?.name === 'NotReadableError' || e?.name === 'AbortError') fd_reason = 'camera_busy'
+      else if (e?.message?.includes('not mounted')) fd_reason = 'ui_not_mounted'
+      else fd_reason = 'camera_error'
     }
 
     if (outcome === 'sent') {
       setFaceHint(null)
     } else {
-      const fd = new FormData()
-      fd.append('punchId', punchId)
-      fd.append('result', outcome === 'no_face' ? 'NO_FACE' : 'SKIPPED')
-      await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
+      if (outcome === 'no_face') {
+        const fd = new FormData()
+        fd.append('punchId', punchId)
+        if (noFaceEvidence) fd.append('frame', noFaceEvidence, 'noface.jpg')
+        fd.append('reason', fd_reason || 'no_face_8s')
+        fd.append('result', 'NO_FACE')
+        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
+      } else {
+        const fd = new FormData()
+        fd.append('punchId', punchId)
+        fd.append('result', 'SKIPPED')
+        if (fd_reason) fd.append('reason', fd_reason)
+        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
+      }
       setFaceHint(outcome === 'no_face' ? '未拍攝到人臉' : '臉部驗證略過')
       setTimeout(() => setFaceHint(null), 1500)
     }

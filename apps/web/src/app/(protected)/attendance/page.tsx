@@ -635,18 +635,27 @@ export default function AttendancePage() {
 
                     // Punch record row
                     const record = row as PunchRecord & { isAbsentRow: false; sortTime: number }
+                    const REASON_TEXT: Record<string, string> = {
+                      camera_denied: '相機權限被拒', camera_busy: '相機被佔用', camera_error: '相機錯誤',
+                      no_face_8s: '8秒內未拍到人臉', no_single_face: '畫面中非單一人臉',
+                      service_error: '驗證服務異常', ui_not_mounted: '介面異常',
+                    }
+                    const reasonTitle = (r: any) => {
+                      if (!r.faceReason) return ''
+                      return '｜' + (REASON_TEXT[r.faceReason] || r.faceReason)
+                    }
                     const faceBadge = (r: any) => {
                       switch (r.faceStatus) {
                         case 'PASS':
                           return <span style={{ color: '#059669' }} title={`比對分數 ${r.faceScore?.toFixed(2) ?? '—'}`}>✅ 通過</span>
                         case 'FAIL':
                           return <Link href="/face-review" style={{ color: '#dc2626', fontWeight: 600, textDecoration: 'underline' }}
-                            title="臉部驗證未通過——點擊前往覆核">⚠️ 未通過</Link>
+                            title={`臉部驗證未通過${reasonTitle(r)}`}>⚠️ 未通過</Link>
                         case 'NO_FACE':
-                          return <span style={{ color: '#ea580c', fontWeight: 600 }}
-                            title="相機正常但 8 秒內未拍到人臉（可能迴避驗證）">🟠 未拍攝</span>
+                          return <Link href="/face-review" style={{ color: '#ea580c', fontWeight: 600 }}
+                            title={`8秒內未拍到人臉${reasonTitle(r)}`}>🟠 未拍攝</Link>
                         case 'SKIPPED':
-                          return <span style={{ color: '#9ca3af' }} title="相機不可用，已略過（設備問題）">略過</span>
+                          return <span style={{ color: '#9ca3af' }} title={`相機不可用，已略過${reasonTitle(r)}`}>略過</span>
                         case 'NOT_ENROLLED': return <span style={{ color: '#9ca3af' }}>未登記</span>
                         case 'PENDING_ENROLL': return <span style={{ color: '#9ca3af' }} title="臉部登記待管理員核准">審核中</span>
                         default: return <span style={{ color: '#d1d5db' }}>—</span>
