@@ -214,6 +214,9 @@ export const CONFIG = {
 
     // Face enrollment status (self)
     'GET /api/face/my-status': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+
+    // Admin migration routes
+    'POST /api/admin/migrate-shift-templates': ['OWNER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)

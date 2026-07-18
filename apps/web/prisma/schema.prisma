@@ -96,6 +96,7 @@ model Company {
   createdAt DateTime @default(now())
 
   clinics   Clinic[]
+  shiftTemplates ShiftTemplate[]
 }
 
 // Clinic entity
@@ -224,7 +225,7 @@ model PayRule {
   updatedAt     DateTime @updatedAt
 }
 
-// Shift template — reusable shift definitions
+// Shift template — reusable shift definitions (scoped to company)
 model ShiftTemplate {
   id          String   @id @default(cuid())
   name        String
@@ -237,12 +238,15 @@ model ShiftTemplate {
   isDefault   Boolean  @default(false) // system default template
   isActive    Boolean  @default(true)
   createdBy   String?
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   shifts      Shift[]
 
   @@index([isDefault])
+  @@index([companyId])
 }
 
 // Shift — links employee to a date/time at a clinic

@@ -186,6 +186,12 @@ export default function SchedulingPage() {
     })
   }
 
+  // 🏢 Derive current company from selected clinic
+  const currentCompanyId = clinics.find(c => c.id === selectedClinicId)?.company?.id ?? null
+  const currentCompanyName = currentCompanyId
+    ? clinics.find(c => c.id === selectedClinicId)?.company?.name ?? '未知'
+    : ''
+
   // 🗑 Drag-to-delete via pointer capture (stable, no lost events)
   const overviewRef = useRef<HTMLDivElement>(null)
 
@@ -338,11 +344,10 @@ function getShiftColor(shift: Shift): string {
   // ============================================================
   const loadData = useCallback(async () => {
     try {
-      const [meRes, clinicsRes, employeesRes, templatesRes, changesRes] = await Promise.all([
+      const [meRes, clinicsRes, employeesRes, changesRes] = await Promise.all([
         fetch('/api/me', { credentials: 'include' }),
         fetch('/api/clinics', { credentials: 'include' }),
         fetch('/api/employees?pageSize=200', { credentials: 'include' }),
-        fetch('/api/shifts/templates', { credentials: 'include' }),
         fetch('/api/shift-changes', { credentials: 'include' }),
       ])
 
@@ -363,11 +368,6 @@ function getShiftColor(shift: Shift): string {
       if (employeesRes.ok) {
         const empData = await employeesRes.json()
         setEmployees(empData.employees || [])
-      }
-
-      if (templatesRes.ok) {
-        const tplData = await templatesRes.json()
-        setTemplates(tplData.templates || [])
       }
 
       if (changesRes.ok) {
@@ -393,6 +393,15 @@ function getShiftColor(shift: Shift): string {
       .then(d => setShiftRuleConfig(d.shiftRules || { ...DEFAULT_SHIFT_RULE_CONFIG }))
       .catch(() => setShiftRuleConfig({ ...DEFAULT_SHIFT_RULE_CONFIG }))
   }, [selectedClinicId])
+
+  // Load templates scoped to current company (reloads when clinic/company changes)
+  useEffect(() => {
+    if (!currentCompanyId) return
+    fetch(`/api/shifts/templates?companyId=${currentCompanyId}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setTemplates(d.templates || []))
+      .catch(() => setTemplates([]))
+  }, [currentCompanyId])
 
   // Load month-level shifts for statistics (all clinics)
   const loadMonthShifts = useCallback(async () => {
@@ -1603,7 +1612,7 @@ function getShiftColor(shift: Shift): string {
           {/* Shift Template Management */}
           {userRole === 'OWNER' && (
             <div style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: 15, fontWeight: 600 }} className="flex items-center gap-2"><ClipboardList size={16} /> 更次模版管理</h3>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: 15, fontWeight: 600 }} className="flex items-center gap-2"><ClipboardList size={16} /> 更次模版管理{currentCompanyName ? ` — ${currentCompanyName}` : ''}</h3>
               {templates.map(t => (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, padding: '8px 12px', background: '#f9f9f9', borderRadius: 6 }}>
                   <span style={{ minWidth: 60, fontWeight: 500, fontSize: 13 }}>{t.name}</span>
@@ -1679,7 +1688,7 @@ function getShiftColor(shift: Shift): string {
                       method: 'POST',
                       credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(tpl),
+                      body: JSON.stringify({ ...tpl, companyId: currentCompanyId }),
                     })
                     if (res.ok) {
                       await refreshAll()

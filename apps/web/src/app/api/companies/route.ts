@@ -30,6 +30,19 @@ export async function POST(req: NextRequest) {
     const company = await prisma.company.create({
       data: { name: body.name, logoData: body.logoData || null },
     })
+
+    // Seed default "全日" shift template for the new company
+    await prisma.shiftTemplate.create({
+      data: {
+        name: '全日',
+        startHour: 9, startMinute: 0,
+        endHour: 18, endMinute: 0,
+        isNightShift: false,
+        isDefault: true,
+        companyId: company.id,
+      },
+    })
+
     return NextResponse.json(company, { status: 201 })
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
