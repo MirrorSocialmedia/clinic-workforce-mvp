@@ -55,7 +55,7 @@ export async function GET(
   })
 }
 
-// PUT /api/punches/[id] — 真正更新那筆打卡（非建新筆）
+// PUT /api/punches/[id] — 編輯打卡（void 舊筆 + 建新筆）
 // Roles: OWNER, MANAGER
 export async function PUT(
   req: NextRequest,
@@ -68,19 +68,37 @@ export async function PUT(
   const body = await req.json().catch(() => ({}))
   const { punchTime, punchType, notes, reason } = body
 
-  const record = await prisma.punchRecord.findUnique({ where: { id: params.id } })
-  if (!record) return NextResponse.json({ error: '記錄不存在' }, { status: 404 })
+  const oldRecord = await prisma.punchRecord.findUnique({ where: { id: params.id } })
+  if (!oldRecord) return NextResponse.json({ error: '記錄不存在' }, { status: 404 })
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const u = await tx.punchRecord.update({
-      where: { id: params.id },
+  // 檢查是否已被 void
+  const existingVoid = await prisma.punchVoid.findUnique({ where: { punchRecordId: params.id } })
+  if (existingVoid) return NextResponse.json({ error: '此記錄已被作廢' }, { status: 400 })
+
+  // 在 transaction 內執行三步
+  const newRecord = await prisma.$transaction(async (tx) => {
+    // ① 作廢舊筆
+    await tx.punchVoid.create({
       data: {
-        ...(punchTime ? { punchTime: new Date(punchTime) } : {}),
-        ...(punchType ? { punchType } : {}),
-        ...(notes !== undefined ? { notes } : {}),
+        punchRecordId: params.id,
+        voidedBy: session.userId,
+        reason: reason || '管理端更正',
       },
     })
-    // 修改審計（防篡改）
+    // ② 建新筆
+    const nr = await tx.punchRecord.create({
+      data: {
+        employeeId: oldRecord.employeeId,
+        clinicId: oldRecord.clinicId,
+        punchTime: punchTime ? new Date(punchTime) : oldRecord.punchTime,
+        punchType: punchType || oldRecord.punchType,
+        source: oldRecord.source,
+        tokenValid: oldRecord.tokenValid,
+        deviceInfo: oldRecord.deviceInfo,
+        notes: notes !== undefined ? notes : oldRecord.notes,
+      },
+    })
+    // ③ 審計
     await tx.auditLog.create({
       data: {
         actorId: session.userId,
@@ -88,7 +106,9 @@ export async function PUT(
         entity: 'PunchRecord',
         entityId: params.id,
         afterJson: JSON.stringify({
-          oldValue: { punchTime: record.punchTime.toISOString(), punchType: record.punchType },
+          oldRecordId: params.id,
+          newRecordId: nr.id,
+          oldValue: { punchTime: oldRecord.punchTime.toISOString(), punchType: oldRecord.punchType },
           newValue: { punchTime, punchType },
           reason: reason || '管理端編輯',
         }),
@@ -96,8 +116,8 @@ export async function PUT(
         userAgent: req.headers.get('user-agent') || null,
       },
     })
-    return u
+    return nr
   })
 
-  return NextResponse.json({ ok: true, record: { id: updated.id } })
+  return NextResponse.json({ ok: true, record: { id: newRecord.id } })
 }

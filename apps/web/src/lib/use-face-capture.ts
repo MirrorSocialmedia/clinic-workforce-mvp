@@ -21,7 +21,7 @@ export function useFaceCapture() {
     while (Date.now() < deadline) {
       const det = detectorRef.current.detectForVideo(video, performance.now())
       const d = det?.detections?.[0]
-      if (det?.detections?.length === 1 && d.boundingBox && d.boundingBox.width > video.videoWidth * 0.22) {
+      if (det?.detections?.length === 1 && d.boundingBox && d.boundingBox.width > video.videoWidth * 0.15) {
         // ★ 降採樣: 最大 640 寬（ArcFace 內部 112×112，保持體積 <64KB 以支援 keepalive）
         const scale = Math.min(1, 640 / video.videoWidth)
         canvas.width = Math.round(video.videoWidth * scale)
