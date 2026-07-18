@@ -988,6 +988,7 @@ export interface PayRuleConfigModular {
       threshold?: number
       hours_per_leave_day?: number  // 預設 8
       ot_min_minutes?: number       // 每日OT最低分鐘（0=不限）
+      ot_round_minutes?: number     // OT向下取整級距（0=不取整）
     }
     late_policy?: {
       deduct_salary?: boolean
@@ -1200,6 +1201,7 @@ export async function calculateTimeBank(
 
   // Get OT minimum threshold from payRule
   let otMinMinutes = 0
+  let otRoundMinutes = 0
   try {
     const rule = await db.payRule.findFirst({
       where: {
@@ -1213,9 +1215,11 @@ export async function calculateTimeBank(
     if (rule?.configJson) {
       const cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
       otMinMinutes = cfg?.modifiers?.overtime?.ot_min_minutes ?? 0
+      otRoundMinutes = cfg?.modifiers?.overtime?.ot_round_minutes ?? 0
     }
   } catch {
     otMinMinutes = 0
+    otRoundMinutes = 0
   }
 
   // Previous month carry — recursive backfill (pass depth to prevent infinite recursion)
@@ -1267,7 +1271,10 @@ export async function calculateTimeBank(
     if (clockOut && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
       const dayOt = Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
       if (dayOt > 0 && dayOt >= otMinMinutes) {
-        otMinutes += dayOt  // ≥門檻全數計；逐日判定
+        const counted = otRoundMinutes > 0
+          ? Math.floor(dayOt / otRoundMinutes) * otRoundMinutes // 16→10, 29→20 (每10)
+          : dayOt // 0=不取整，原樣
+        otMinutes += counted  // ≥門檻全數計；逐日判定
       }
     }
   }

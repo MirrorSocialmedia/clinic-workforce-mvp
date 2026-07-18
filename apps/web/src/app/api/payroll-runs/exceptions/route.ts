@@ -214,13 +214,16 @@ export async function GET(req: NextRequest) {
     orderBy: { effectiveFrom: 'desc' },
   })
   const otMinByEmp = new Map<string, number>()
+  const otRoundByEmp = new Map<string, number>()
   for (const r of rules) {
     if (otMinByEmp.has(r.employeeId)) continue
     try {
       const cfg = JSON.parse(r.configJson as any)
       otMinByEmp.set(r.employeeId, cfg?.modifiers?.overtime?.ot_min_minutes ?? 0)
+      otRoundByEmp.set(r.employeeId, cfg?.modifiers?.overtime?.ot_round_minutes ?? 0)
     } catch {
       otMinByEmp.set(r.employeeId, 0)
+      otRoundByEmp.set(r.employeeId, 0)
     }
   }
 
@@ -238,14 +241,16 @@ export async function GET(req: NextRequest) {
       if (ep.effectiveTime.getTime() > shiftEnd.getTime()) {
         const otMins = Math.floor((ep.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
         const minReq = otMinByEmp.get(ep.raw.employeeId) ?? 0
+        const roundReq = otRoundByEmp.get(ep.raw.employeeId) ?? 0
         if (otMins > 0 && otMins >= minReq) {
+          const displayOt = roundReq > 0 ? Math.floor(otMins / roundReq) * roundReq : otMins
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
             clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),
             date: punchDateStr,
             type: 'OT',
-            otMinutes: otMins,
-            detail: `OT ${otMins} 分鐘`,
+            otMinutes: displayOt,
+            detail: `OT ${displayOt} 分鐘`,
             punchTime: ep.effectiveTime.toISOString(),
           })
         }
