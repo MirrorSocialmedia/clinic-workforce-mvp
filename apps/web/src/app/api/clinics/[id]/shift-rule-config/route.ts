@@ -6,7 +6,7 @@ import { parseShiftRuleConfig } from '@/lib/shift-rule-config'
 
 // GET /api/clinics/:id/shift-rule-config
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { scope } = auth
 
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 // PUT /api/clinics/:id/shift-rule-config
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'PUT', req.url)
+  const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

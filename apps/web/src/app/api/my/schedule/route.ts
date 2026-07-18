@@ -9,7 +9,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 // All roles — returns the current employee's shifts
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

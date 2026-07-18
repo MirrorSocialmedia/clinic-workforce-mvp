@@ -8,7 +8,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET /api/accounts — merged User + Employee list
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/accounts — create user + optionally employee
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -108,6 +108,7 @@ export async function POST(req: NextRequest) {
         payConfidential = false,
         homeClinicId,
         permissionsJson,
+        ipAllowlist,
       } = await req.json()
 
       if (!name || !phone || !password || !role) {
@@ -133,6 +134,7 @@ export async function POST(req: NextRequest) {
           status: 'ACTIVE',
           clinics: clinicData,
           permissionsJson: permissionsJson ? JSON.stringify(permissionsJson) : null,
+          ipAllowlist: ipAllowlist || null,
         },
         include: { clinics: { include: { clinic: true } } },
       })

@@ -10,7 +10,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = requireAuth(req, 'PUT', req.url)
+  const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 

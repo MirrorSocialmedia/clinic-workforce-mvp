@@ -5,7 +5,7 @@ import prisma from '@/lib/prisma'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', '/api/my/timebank')
+  const auth = await requireAuth(req, 'GET', '/api/my/timebank')
   if (isAuthError(auth)) return auth.error
 
   const employee = await prisma.employee.findUnique({

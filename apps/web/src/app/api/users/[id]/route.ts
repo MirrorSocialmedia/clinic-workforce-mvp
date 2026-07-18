@@ -7,7 +7,7 @@ import { runWithAudit } from '@/lib/audit-context'
 
 // PUT /api/users/:id — update user (OWNER only)
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'PUT', req.url)
+  const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

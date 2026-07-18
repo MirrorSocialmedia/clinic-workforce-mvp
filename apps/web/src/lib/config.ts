@@ -4,7 +4,7 @@ export const CONFIG = {
   DEMO_CLINIC_COUNT: 6,
 
   // Session
-  SESSION_MAX_AGE_DAYS: 30,
+  SESSION_MAX_AGE_DAYS: 365,
   JWT_SECRET: (() => {
     const s = process.env.JWT_SECRET
     if (!s || s.length < 32) {
@@ -25,6 +25,7 @@ export const CONFIG = {
     MANAGER: 'MANAGER',
     ACCOUNTANT: 'ACCOUNTANT',
     EMPLOYEE: 'EMPLOYEE',
+    KIOSK: 'KIOSK',
   } as const,
 
   // RBAC Matrix: role → allowed routes per method
@@ -33,7 +34,7 @@ export const CONFIG = {
     'POST /api/auth/logout': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Self routes
-    'GET /api/me': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/me': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE', 'KIOSK'],
 
     // Company routes
     'GET /api/companies': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
@@ -42,7 +43,7 @@ export const CONFIG = {
     'DELETE /api/companies/:id': ['OWNER'],
 
     // Clinic routes
-    'GET /api/clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE', 'KIOSK'],
     'GET /api/clinics/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/clinics': ['OWNER'],
     'PUT /api/clinics/:id': ['OWNER'],
@@ -108,7 +109,7 @@ export const CONFIG = {
     'PUT /api/punch-corrections/:id': ['OWNER', 'MANAGER'],
 
     // QR token routes
-    'GET /api/qr-tokens': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/qr-tokens': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE', 'KIOSK'],
 
     // Daily hash routes
     'POST /api/daily-hash': ['OWNER', 'MANAGER'],
@@ -187,8 +188,6 @@ export const CONFIG = {
     // Leave balance refresh
     'POST /api/leave-balance/refresh': ['OWNER', 'MANAGER'],
 
-    // Leave settlement
-    'POST /api/leave-settlement': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],

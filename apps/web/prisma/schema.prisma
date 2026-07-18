@@ -16,6 +16,7 @@ enum UserRole {
   MANAGER
   ACCOUNTANT
   EMPLOYEE
+  KIOSK
 }
 
 enum UserStatus {
@@ -137,6 +138,8 @@ model User {
   resetToken      String?
   resetTokenExpiry DateTime?
   permissionsJson String? // JSON: { "grant": [...], "deny": [...] }
+  tokenVersion   Int      @default(0)
+  ipAllowlist    String?  // comma-separated IPs or prefixes (KIOSK only)
 
   @@index([role])
   @@index([status])

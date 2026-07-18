@@ -10,7 +10,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
  * 取消缺勤扣OT鐘：刪除 ABSENT 類型的 TimeBankEntry
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   if (!['OWNER', 'MANAGER'].includes(auth.session.role)) {
     return NextResponse.json({ error: '需要老闆或經理權限' }, { status: 403 })

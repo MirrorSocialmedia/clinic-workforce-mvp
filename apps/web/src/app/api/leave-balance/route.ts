@@ -9,7 +9,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 // Employee sees own; managers see all (optionally filtered by employeeId)
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
 // Roles: OWNER, MANAGER
 // ============================================================
 export async function PATCH(req: NextRequest) {
-  const auth = requireAuth(req, 'PATCH', req.url)
+  const auth = await requireAuth(req, 'PATCH', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -97,7 +97,7 @@ export async function PATCH(req: NextRequest) {
 // Roles: OWNER
 // ============================================================
 export async function DELETE(req: NextRequest) {
-  const auth = requireAuth(req, 'DELETE', req.url)
+  const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

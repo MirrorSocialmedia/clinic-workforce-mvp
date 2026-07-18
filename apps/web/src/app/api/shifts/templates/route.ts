@@ -9,7 +9,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
 
   try {
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
 // Roles: OWNER
 // ============================================================
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

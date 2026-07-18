@@ -6,7 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 // PUT /api/companies/[id] — rename company
 // RBAC: OWNER only
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = requireAuth(req, 'PUT', req.url)
+  const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
 
   try {
@@ -27,7 +27,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 // DELETE /api/companies/[id] — delete company (sets clinic.companyId = NULL)
 // RBAC: OWNER only
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = requireAuth(req, 'DELETE', req.url)
+  const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
 
   try {

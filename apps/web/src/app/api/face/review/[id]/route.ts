@@ -9,7 +9,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET: 返回 frame 圖片（每次載入即 audit）
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 // POST: 處置
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

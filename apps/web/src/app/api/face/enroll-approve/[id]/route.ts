@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
- const auth = requireAuth(req, 'POST', req.url)
+ const auth = await requireAuth(req, 'POST', req.url)
  if (isAuthError(auth)) return auth.error
 
  const body = await req.json().catch(() => ({}))

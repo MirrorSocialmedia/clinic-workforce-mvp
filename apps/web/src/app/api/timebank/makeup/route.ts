@@ -5,7 +5,7 @@ import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   if (auth.session.role !== 'OWNER') {
     return NextResponse.json({ error: '只有老闆可補鐘' }, { status: 403 })

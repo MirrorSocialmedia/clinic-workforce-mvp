@@ -31,7 +31,7 @@ export default function LoginPage() {
         return
       }
 
-      const redirectUrl = data.user?.role === 'EMPLOYEE' ? '/my/dashboard' : '/dashboard'
+      const redirectUrl = data.user?.role === 'EMPLOYEE' ? '/my/dashboard' : data.user?.role === 'KIOSK' ? '/clinic/qr' : '/dashboard'
       router.push(redirectUrl)
       router.refresh()
     } catch {
@@ -58,6 +58,9 @@ export default function LoginPage() {
             <label>手機號碼</label>
             <input
               type="text"
+              name="phone"
+              autoComplete="username"
+              inputMode="tel"
               value={phone}
               onChange={e => setPhone(e.target.value)}
               placeholder="91000001"
@@ -70,6 +73,8 @@ export default function LoginPage() {
             <label>密碼</label>
             <input
               type="password"
+              name="password"
+              autoComplete="current-password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="輸入密碼"

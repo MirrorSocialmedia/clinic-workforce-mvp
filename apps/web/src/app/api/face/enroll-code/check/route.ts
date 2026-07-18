@@ -3,7 +3,7 @@ import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if ('error' in auth) return auth.error
   const body = await req.json().catch(() => ({}))
   const code = String(body.code || '')

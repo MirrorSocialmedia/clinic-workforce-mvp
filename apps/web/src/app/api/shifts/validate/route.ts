@@ -11,7 +11,7 @@ import { parseShiftRuleConfig } from '@/lib/shift-rule-config'
 // Roles: OWNER, MANAGER
 // ============================================================
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
 
   try {

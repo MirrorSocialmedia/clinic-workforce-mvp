@@ -6,7 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 // POST /api/face/verify-punch — Verify face against punch record (shadow mode)
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

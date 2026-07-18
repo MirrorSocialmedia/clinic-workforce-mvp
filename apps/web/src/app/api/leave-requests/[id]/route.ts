@@ -11,7 +11,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = requireAuth(req, 'PUT', req.url)
+  const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
@@ -120,7 +120,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = requireAuth(req, 'DELETE', req.url)
+  const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -176,7 +176,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = requireAuth(req, 'PATCH', req.url)
+  const auth = await requireAuth(req, 'PATCH', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

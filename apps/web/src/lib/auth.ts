@@ -6,6 +6,7 @@ export interface SessionPayload {
   role: Role
   clinics: string[] // clinic IDs this user has access to
   primaryClinicId?: string
+  tokenVersion?: number
   iat: number
   exp: number
 }

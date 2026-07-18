@@ -6,7 +6,7 @@ import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
 import { PERMISSIONS, ROLE_DEFAULTS } from '@/lib/permissions'
 
-type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
+type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
 interface Clinic { id: string; name: string }
 interface Account {
@@ -43,6 +43,18 @@ export default function AccountsPage() {
   const [leaveBalances, setLeaveBalances] = useState<Record<string, any[]>>({})
   const [payRules, setPayRules] = useState<Record<string, any>>({})
   const [enrollCode, setEnrollCode] = useState<{ code: string; name: string } | null>(null)
+
+  // KIOSK account creation state
+  const [showKioskForm, setShowKioskForm] = useState(false)
+  const [kioskForm, setKioskForm] = useState({
+    clinicId: '',
+    phone: '',
+    password: '',
+    ipAllowlist: '',
+  })
+  const [kioskLoading, setKioskLoading] = useState(false)
+  const [kioskCreatedPassword, setKioskCreatedPassword] = useState<string | null>(null)
+
   const [form, setForm] = useState({
     name: '', phone: '', email: '', password: '', role: 'EMPLOYEE' as Role,
     clinicIds: [] as string[], joinDate: '',
@@ -246,6 +258,67 @@ export default function AccountsPage() {
   }
 
   const isOwner = userRole === 'OWNER'
+
+  // KIOSK account creation
+  const generateRandomPassword = () => {
+    const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+    let result = ''
+    for (let i = 0; i < 10; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return result
+  }
+
+  const openKioskForm = () => {
+    const pw = generateRandomPassword()
+    setKioskForm({ clinicId: '', phone: '', password: pw, ipAllowlist: '' })
+    setShowKioskForm(true)
+  }
+
+  const onKioskClinicChange = (clinicId: string) => {
+    const clinic = clinics.find(c => c.id === clinicId)
+    setKioskForm(f => ({
+      ...f,
+      clinicId,
+      phone: clinic ? `${clinic.name}打卡機` : f.phone,
+    }))
+  }
+
+  const handleKioskSubmit = async () => {
+    if (!kioskForm.clinicId || !kioskForm.phone) {
+      alert('請填寫診所和登入號碼')
+      return
+    }
+    setKioskLoading(true)
+    try {
+      const res = await fetch('/api/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: kioskForm.phone,
+          phone: kioskForm.phone,
+          password: kioskForm.password,
+          role: 'KIOSK',
+          clinicIds: [kioskForm.clinicId],
+          ipAllowlist: kioskForm.ipAllowlist.trim() || undefined,
+        }),
+      })
+      if (res.ok) {
+        setKioskCreatedPassword(kioskForm.password)
+        setKioskForm({ clinicId: '', phone: '', password: '', ipAllowlist: '' })
+        fetchData()
+      } else {
+        const err = await res.json()
+        alert(err.error || '建立失敗')
+      }
+    } catch (err) {
+      alert('網絡錯誤')
+    } finally {
+      setKioskLoading(false)
+    }
+  }
+
   // 週年發放制：年假只顯示當年
   const currentYear = new Date().getFullYear()
 
@@ -256,7 +329,10 @@ export default function AccountsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 600, color: '#1a1a2e', margin: 0 }} className="flex items-center gap-2"><Plus size={16} /> 帳號管理</h1>
         {isOwner && (
-          <button className="btn btn-primary" onClick={() => { resetForm(); setForm(f => ({ ...f, assignEmployee: true })); setShowForm(true) }}>+ 新增帳號</button>
+          <div className="flex gap-2">
+            <button className="btn btn-primary" onClick={() => { resetForm(); setForm(f => ({ ...f, assignEmployee: true })); setShowForm(true) }}>+ 新增帳號</button>
+            <button className="btn" style={{ background: '#6366f1', color: 'white' }} onClick={openKioskForm}>📱 建立打卡螢幕帳號</button>
+          </div>
         )}
       </div>
 
@@ -657,6 +733,76 @@ export default function AccountsPage() {
             fetchData();
           }}
         />
+      )}
+
+      {/* KIOSK Creation Form */}
+      {showKioskForm && (
+        <div className="card" style={{ marginBottom: 24, background: '#f0f4ff', border: '1px solid #c7d2fe' }}>
+          <h2 style={{ marginBottom: 16 }}>📱 建立打卡螢幕帳號（KIOSK）</h2>
+          <div className="grid-3" style={{ marginBottom: 0 }}>
+            <div className="form-group">
+              <label>診所（必選）</label>
+              <select value={kioskForm.clinicId} onChange={e => onKioskClinicChange(e.target.value)}
+                className="px-3 py-2 rounded-md border text-sm w-full" required>
+                <option value="">-- 選擇診所 --</option>
+                {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>登入號碼（預填，可修改）</label>
+              <input type="text" value={kioskForm.phone}
+                onChange={e => setKioskForm(f => ({ ...f, phone: e.target.value }))}
+                className="px-3 py-2 rounded-md border text-sm w-full" placeholder="診所名稱 + 打卡機" />
+            </div>
+            <div className="form-group">
+              <label>密碼（自動產生，提交後僅顯示一次）</label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="text" value={kioskForm.password}
+                  onChange={e => setKioskForm(f => ({ ...f, password: e.target.value }))}
+                  className="px-3 py-2 rounded-md border text-sm font-mono" readOnly />
+                <button type="button" className="btn btn-sm" style={{ background: '#eee' }}
+                  onClick={() => setKioskForm(f => ({ ...f, password: generateRandomPassword() }))}
+                  title="重新產生">🔄</button>
+              </div>
+            </div>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label>IP 白名單（選填，一行一個 IP 或前綴，用逗號分隔）</label>
+              <textarea value={kioskForm.ipAllowlist}
+                onChange={e => setKioskForm(f => ({ ...f, ipAllowlist: e.target.value }))}
+                className="px-3 py-2 rounded-md border text-sm w-full" rows={2}
+                placeholder="如：192.168.1.100, 10.0.0." />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+            <button type="button" className="btn" style={{ background: '#eee', color: '#333' }}
+              onClick={() => setShowKioskForm(false)}>取消</button>
+            <button type="button" className="btn" style={{ background: '#6366f1', color: 'white' }}
+              onClick={handleKioskSubmit} disabled={kioskLoading}>
+              {kioskLoading ? '建立中...' : '建立 KIOSK 帳號'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* KIOSK Password Reveal Modal */}
+      {kioskCreatedPassword && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setKioskCreatedPassword(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-8 max-w-md w-full mx-4 text-center"
+            onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold mb-2">⚠️ 請抄錄密碼</h3>
+            <p className="text-sm text-gray-500 mb-4">此密碼僅顯示一次，請妥善保存</p>
+            <div className="text-center mb-4">
+              <span style={{ fontSize: 36, letterSpacing: 6, fontFamily: 'monospace', fontWeight: 'bold', color: '#1a1a2e' }}>
+                {kioskCreatedPassword}
+              </span>
+            </div>
+            <button className="w-full py-3 bg-blue-600 text-white rounded-lg text-lg font-semibold"
+              onClick={() => setKioskCreatedPassword(null)}>
+              我記下了
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Enroll Code Modal */}

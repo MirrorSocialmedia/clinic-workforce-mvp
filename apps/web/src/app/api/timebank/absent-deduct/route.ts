@@ -11,7 +11,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
  * 規則：不扣工資（全薪），仍取消勤工獎，扣當天排班時數
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   if (!['OWNER', 'MANAGER'].includes(auth.session.role)) {
     return NextResponse.json({ error: '需要老闆或經理權限' }, { status: 403 })

@@ -50,18 +50,36 @@ function normalizeRoute(url: URL, method: string): string {
 }
 
 /**
- * Verify token + RBAC check + data scope.
+ * Check IP against allowlist (used by KIOSK enforcement).
+ */
+function checkIpAllowlist(clientIp: string, allowlist: string): boolean {
+  const allowedIps = allowlist.split(',').map(s => s.trim()).filter(Boolean)
+  return allowedIps.some(rule => clientIp === rule || clientIp.startsWith(rule))
+}
+
+/**
+ * Get client IP from request headers (Cloudflare priority).
+ */
+function getClientIp(req: NextRequest): string {
+  return (req.headers.get('cf-connecting-ip')
+    || (req.headers.get('x-forwarded-for') || '').split(',')[0].trim())
+    || 'unknown'
+}
+
+/**
+ * Verify token + RBAC check + tokenVersion + data scope.
+ * Now async — performs DB lookup for tokenVersion + KIOSK IP enforcement.
  *
  * Usage in API routes:
- *   const auth = requireAuth(req, req.method, req.url)
+ *   const auth = await requireAuth(req, req.method, req.url)
  *   if (auth.error) return auth.error
  *   const { session, scope } = auth
  */
-export function requireAuth(
+export async function requireAuth(
   req: NextRequest,
   method: string,
   url: string
-): AuthResult {
+): Promise<AuthResult> {
   const token = req.cookies.get('session')?.value
   const session = token ? verifyToken(token) : null
 
@@ -70,7 +88,6 @@ export function requireAuth(
   }
 
   // RBAC check
-  // Add base to support both relative and absolute URLs
   const parsedUrl = new URL(url, 'http://localhost')
   const normalized = normalizeRoute(parsedUrl, method)
   const allowed = CONFIG.RBAC_MATRIX[normalized]
@@ -82,10 +99,32 @@ export function requireAuth(
     return { error: NextResponse.json({ error: `Forbidden (route not registered: ${normalized})` }, { status: 403 }) }
   }
 
+  // tokenVersion + KIOSK IP + status check (single DB query)
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { tokenVersion: true, status: true, ipAllowlist: true },
+  })
+
+  if (!user || user.status !== 'ACTIVE') {
+    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+
+  if (session.tokenVersion !== undefined && user.tokenVersion !== session.tokenVersion) {
+    return { error: NextResponse.json({ error: 'Session invalidated' }, { status: 401 }) }
+  }
+
+  // KIOSK IP enforcement on every request
+  if (session.role === 'KIOSK' && user.ipAllowlist) {
+    const clientIp = getClientIp(req)
+    if (!checkIpAllowlist(clientIp, user.ipAllowlist)) {
+      return { error: NextResponse.json({ error: '此帳號僅限店舖網絡登入' }, { status: 403 }) }
+    }
+  }
+
   // Data scope
   let scope: DataScope = 'all'
   if (session.role === 'MANAGER') scope = 'my-clinics'
-  if (session.role === 'EMPLOYEE') scope = 'self'
+  if (session.role === 'EMPLOYEE' || session.role === 'KIOSK') scope = 'self'
 
   return { session, scope }
 }

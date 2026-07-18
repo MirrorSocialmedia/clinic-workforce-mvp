@@ -9,7 +9,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
 
   const user = await prisma.user.findUnique({
@@ -40,7 +40,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = requireAuth(req, 'DELETE', req.url)
+  const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -115,7 +115,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = requireAuth(req, 'PUT', req.url)
+  const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -128,7 +128,7 @@ export async function PUT(
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId, permissionsJson } = body
+      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId, permissionsJson, ipAllowlist } = body
 
       const existing = await prisma.user.findUnique({
         where: { id: params.id },
@@ -144,9 +144,18 @@ export async function PUT(
       if (status !== undefined) userUpdate.status = status
       if (newPassword) {
         userUpdate.password = await bcrypt.hash(newPassword, 12)
+        // Invalidate all existing sessions on password change
+        userUpdate.tokenVersion = { increment: 1 }
+      }
+      if (status === 'INACTIVE' && existing.status !== 'INACTIVE') {
+        // Invalidate all existing sessions on deactivation
+        userUpdate.tokenVersion = { increment: 1 }
       }
       if (permissionsJson !== undefined) {
         userUpdate.permissionsJson = permissionsJson ? JSON.stringify(permissionsJson) : null
+      }
+      if (ipAllowlist !== undefined) {
+        userUpdate.ipAllowlist = ipAllowlist || null
       }
 
       await prisma.user.update({

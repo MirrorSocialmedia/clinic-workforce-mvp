@@ -12,7 +12,7 @@ import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, M
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { useIsDesktop } from '@/lib/use-is-desktop'
 
-type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
+type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
 interface UserData {
   id: string
@@ -27,6 +27,7 @@ const ROLE_BADGE_VARIANT: Record<Role, { variant: 'default' | 'secondary' | 'des
   MANAGER: { variant: 'secondary', label: 'Mgr' },
   ACCOUNTANT: { variant: 'outline', label: 'Acct' },
   EMPLOYEE: { variant: 'secondary', label: 'Emp' },
+  KIOSK: { variant: 'outline', label: 'Kiosk' },
 }
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
@@ -134,6 +135,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       return other.path.length > itemPath.length
     })
     return !longerMatch
+  }
+
+  // KIOSK: world is only one page — QR, no navigation
+  if (user.role === 'KIOSK') {
+    return (
+      <div className="min-h-screen bg-background">
+        {children}
+      </div>
+    )
   }
 
   // 員工用手機版佈局

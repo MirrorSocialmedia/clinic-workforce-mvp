@@ -10,7 +10,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { date: string } }
 ) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
 
   const { searchParams } = new URL(req.url)

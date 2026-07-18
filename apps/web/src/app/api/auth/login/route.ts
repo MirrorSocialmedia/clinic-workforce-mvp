@@ -29,11 +29,22 @@ export async function POST(req: NextRequest) {
     const clinicIds = user.clinics.map((uc: any) => uc.clinic.id)
     const primaryClinicId = user.clinics.find((uc: any) => uc.isPrimary)?.clinicId
 
+    // KIOSK IP enforcement at login
+    if (user.role === 'KIOSK' && user.ipAllowlist) {
+      const clientIp = (req.headers.get('cf-connecting-ip')
+        || (req.headers.get('x-forwarded-for') || '').split(',')[0].trim())
+        || 'unknown'
+      const allowedIps = user.ipAllowlist.split(',').map(s => s.trim()).filter(Boolean)
+      const ok = allowedIps.some(rule => clientIp === rule || clientIp.startsWith(rule))
+      if (!ok) return NextResponse.json({ error: '此帳號僅限店舖網絡登入' }, { status: 403 })
+    }
+
     const token = createToken({
       userId: user.id,
       role: user.role,
       clinics: clinicIds,
       primaryClinicId: primaryClinicId || undefined,
+      tokenVersion: user.tokenVersion,
     })
 
     const ip = req.headers.get('x-forwarded-for') || undefined
@@ -68,7 +79,7 @@ export async function POST(req: NextRequest) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: rememberMe ? 30 * 24 * 60 * 60 : 1 * 24 * 60 * 60,
+      maxAge: 365 * 24 * 60 * 60,
       path: '/',
     })
 

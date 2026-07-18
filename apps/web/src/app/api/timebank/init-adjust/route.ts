@@ -7,7 +7,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 const MINUTES_PER_DAY = 540
 
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   // ★ OWNER only
   if (auth.session.role !== 'OWNER') {

@@ -8,7 +8,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 // All roles — employees see only own; managers see all
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

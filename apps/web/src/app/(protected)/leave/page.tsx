@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { toHKDateStr } from '@/lib/hk-date'
 import { Plus } from 'lucide-react'
 
-type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
+type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 type TabKey = 'balance' | 'types'
 
@@ -80,12 +80,9 @@ export default function LeavePage() {
   const [clearEmployeeId, setClearEmployeeId] = useState('all')
   const [clearYear, setClearYear] = useState(2026)
 
-  // Auto-calculate & Settlement state
+  // Auto-calculate state
   const [refreshing, setRefreshing] = useState(false)
   const [refreshResult, setRefreshResult] = useState('')
-  const [settlementForm, setSettlementForm] = useState({ employeeId: '', resignDate: '', monthlySalary: '' })
-  const [settlementLoading, setSettlementLoading] = useState(false)
-  const [settlementResult, setSettlementResult] = useState<any>(null)
 
   // OT 兌換 state
   const [convertForm, setConvertForm] = useState({ employeeId: '', days: '', direction: 'to_leave' })
@@ -374,38 +371,6 @@ export default function LeavePage() {
     }
   }
 
-  // Settlement handler
-  const handleSettlement = async () => {
-    if (!settlementForm.employeeId || !settlementForm.resignDate || !settlementForm.monthlySalary) {
-      alert('請填寫所有欄位')
-      return
-    }
-    setSettlementLoading(true)
-    setSettlementResult(null)
-    try {
-      const res = await fetch('/api/leave-settlement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          employeeId: settlementForm.employeeId,
-          resignDate: settlementForm.resignDate,
-          monthlySalary: parseFloat(settlementForm.monthlySalary),
-        }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setSettlementResult(data)
-      } else {
-        alert(data.error || '結算失敗')
-      }
-    } catch (err) {
-      alert('網絡錯誤')
-    } finally {
-      setSettlementLoading(false)
-    }
-  }
-
   // OT 兌換 handler
   const handleConvert = async () => {
     if (!convertForm.employeeId || !convertForm.days) { alert('請填寫所有欄位'); return }
@@ -419,7 +384,7 @@ export default function LeavePage() {
         body: JSON.stringify({
           employeeId: convertForm.employeeId,
           direction: convertForm.direction,
-          days: parseFloat(convertForm.days),
+          days: parseInt(convertForm.days, 10),
         }),
       })
       const data = await res.json()
@@ -641,16 +606,10 @@ export default function LeavePage() {
                 </div>
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">天數</label>
-                  <input type="number" value={convertForm.days} onChange={e => {
-                    if (convertForm.direction === 'rest_to_account') {
-                      const v = parseFloat(e.target.value)
-                      setConvertForm({ ...convertForm, days: isFinite(v) && v > 0 ? String(v) : '' })
-                    } else {
-                      const v = parseInt(e.target.value, 10)
-                      setConvertForm({ ...convertForm, days: v > 0 ? String(v) : '' })
-                    }
-                  }}
-                    className="px-3 py-2 rounded-md border text-sm w-20" min="0.5" step={convertForm.direction === 'rest_to_account' ? '0.5' : '1'} placeholder="天" />
+                  <input type="number" step="1" min="1" inputMode="numeric"
+                    value={convertForm.days}
+                    onChange={e => setConvertForm(f => ({ ...f, days: e.target.value.replace(/[^0-9]/g, '') }))}
+                    className="px-3 py-2 rounded-md border text-sm w-20" placeholder="天" />
                 </div>
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">方向</label>
@@ -684,8 +643,8 @@ export default function LeavePage() {
               {convertForm.direction === 'rest_to_account' && restDayBalance !== null && (
                 <div className="p-3 bg-green-50 rounded-lg text-sm mb-4" style={{ marginTop: 8 }}>
                   <div>可用休息日餘額：<strong>{restDayBalance?.toFixed(1) ?? 0} 天</strong></div>
-                  {convertForm.days && isFinite(parseFloat(convertForm.days)) && parseFloat(convertForm.days) > 0 && (
-                    <div>換算：{parseFloat(convertForm.days)} 天 = +{Math.round(parseFloat(convertForm.days) * 540)} 分鐘</div>
+                  {convertForm.days && parseInt(convertForm.days, 10) > 0 && (
+                    <div>換算：{parseInt(convertForm.days, 10)} 天 = +{Math.round(parseInt(convertForm.days, 10) * 540)} 分鐘</div>
                   )}
                 </div>
               )}
@@ -849,55 +808,7 @@ export default function LeavePage() {
             </section>
           )}
 
-          {/* 5. 離職結算（OWNER only） */}
-          {isManager && (
-            <section className="card p-4 border border-orange-200 rounded-lg mb-4">
-              <h3 className="font-semibold mb-2">📋 離職結算（年假折算）</h3>
-              <p className="text-sm text-muted-foreground mb-3">
-                計算離職員工未放年假的折算工資 = 月薪 × 12/365 × 未放天數
-              </p>
-              <div className="flex gap-3 items-end flex-wrap">
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">員工</label>
-                  <select value={settlementForm.employeeId} onChange={e => setSettlementForm({ ...settlementForm, employeeId: e.target.value })}
-                    className="px-3 py-2 rounded-md border text-sm">
-                    <option value="">-- 選擇 --</option>
-                    {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">離職日期</label>
-                  <input type="date" value={settlementForm.resignDate} onChange={e => setSettlementForm({ ...settlementForm, resignDate: e.target.value })}
-                    className="px-3 py-2 rounded-md border text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">月薪</label>
-                  <input type="number" value={settlementForm.monthlySalary} onChange={e => setSettlementForm({ ...settlementForm, monthlySalary: e.target.value })}
-                    className="px-3 py-2 rounded-md border text-sm w-24" min="0" />
-                </div>
-                <button
-                  className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors"
-                  style={{ background: '#e67e22' }}
-                  onClick={handleSettlement}
-                  disabled={settlementLoading}
-                >
-                  {settlementLoading ? '計算中...' : '計算結算'}
-                </button>
-              </div>
-              {settlementResult?.settlement && (
-                <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
-                  <div className="grid grid-cols-4 gap-4" style={{ fontSize: 13 }}>
-                    <div><span className="text-muted-foreground">累計應得：</span><strong>{settlementResult.settlement.accrued?.toFixed(2) ?? '0.00'} 天</strong></div>
-                    <div><span className="text-muted-foreground">已放：</span><strong>{settlementResult.settlement.used?.toFixed(2) ?? '0.00'} 天</strong></div>
-                    <div><span className="text-muted-foreground">未放：</span><strong>{settlementResult.settlement.unused?.toFixed(2) ?? '0.00'} 天</strong></div>
-                    <div><span className="text-muted-foreground">折算金額：</span><strong style={{ color: '#c53030' }}>${settlementResult.settlement.payout?.toLocaleString() ?? '0'}</strong></div>
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* 6. 清除假期資料（OWNER only，紅色警示） */}
+          {/* 5. 清除假期資料（OWNER only，紅色警示） */}
           {isManager && (
             <section className="card p-4 border border-red-200 rounded-lg mb-4">
               <h3 className="text-red-600 font-semibold mb-2">清除假期資料</h3>

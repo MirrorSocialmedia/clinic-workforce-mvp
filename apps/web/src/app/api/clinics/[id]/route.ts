@@ -6,7 +6,7 @@ import { runWithAudit } from '@/lib/audit-context'
 
 // GET /api/clinics/:id — get single clinic
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 // PUT /api/clinics/:id — update clinic (OWNER only)
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'PUT', req.url)
+  const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -62,7 +62,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
 // DELETE /api/clinics/:id — delete clinic (OWNER only)
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireAuth(req, 'DELETE', req.url)
+  const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

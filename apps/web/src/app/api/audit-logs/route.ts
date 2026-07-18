@@ -5,7 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // GET /api/audit-logs — list audit logs (OWNER/MANAGER/ACCOUNTANT only)
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 

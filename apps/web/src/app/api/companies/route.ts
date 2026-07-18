@@ -6,7 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 // GET /api/companies — list companies (with clinic count)
 // RBAC: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
 
   const companies = await prisma.company.findMany({
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 // POST /api/companies — create company { name }
 // RBAC: OWNER only
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
 
   try {

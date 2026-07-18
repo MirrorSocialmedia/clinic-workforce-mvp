@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
- const auth = requireAuth(req, 'GET', req.url)
+ const auth = await requireAuth(req, 'GET', req.url)
  if (isAuthError(auth)) return auth.error
 
  const template = await prisma.faceTemplate.findUnique({ where: { id: params.id } })

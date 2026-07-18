@@ -36,7 +36,7 @@ async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days:
 }
 
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   if (!['OWNER', 'MANAGER'].includes(auth.session.role)) {
     return NextResponse.json({ error: '只有老闆或經理可兌換' }, { status: 403 })
@@ -49,13 +49,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'employeeId, direction, days 為必填' }, { status: 400 })
   }
 
-  // rest_to_account 方向接受小數天數
-  const isRestToAccount = direction === 'rest_to_account'
-  if (isRestToAccount) {
-    const d = parseFloat(days)
-    if (!isFinite(d) || d <= 0) {
-      return NextResponse.json({ error: '天數需大於0' }, { status: 400 })
-    }
+  // 統一強制正整數
+  const daysInt = parseInt(String(days), 10)
+  if (!Number.isInteger(daysInt) || daysInt < 1) {
+    return NextResponse.json({ error: '天數必須為正整數' }, { status: 400 })
+  }
+
+  if (direction === 'rest_to_account') {
     // ① 找休息日餘額（REST_DAY 系統類型）
     const restType = await prisma.leaveType.findFirst({ where: { systemKey: 'REST_DAY' } })
     if (!restType) {
@@ -66,23 +66,23 @@ export async function POST(req: NextRequest) {
     let bal = await prisma.leaveBalance.findFirst({
       where: { employeeId, leaveTypeId: restType.id, year },
     })
-    if (!bal || bal.remaining < d) {
+    if (!bal || bal.remaining < daysInt) {
       return NextResponse.json({ error: `休息日餘額不足（剩 ${bal?.remaining ?? 0} 天）` }, { status: 400 })
     }
     // 扣減休息日餘額
     await prisma.leaveBalance.update({
       where: { id: bal.id },
-      data: { used: bal.used + d, remaining: bal.remaining - d },
+      data: { used: bal.used + daysInt, remaining: bal.remaining - daysInt },
     })
     // ② 帳戶進分鐘
-    const minutes = Math.round(d * 540)
+    const minutes = Math.round(daysInt * 540)
     await prisma.timeBankEntry.create({
       data: {
         employeeId,
         date: new Date(),
         type: 'REST_TO_ACCOUNT',
         minutes,
-        note: note?.trim() || `假還鐘：休息日 ${d} 天 → +${minutes} 分鐘（償還拖欠）`,
+        note: note?.trim() || `假還鐘：休息日 ${daysInt} 天 → +${minutes} 分鐘（償還拖欠）`,
         createdBy: auth.session.userId,
       },
     })
@@ -92,17 +92,11 @@ export async function POST(req: NextRequest) {
         action: 'TIMEBANK_REST_TO_ACCOUNT',
         entity: 'TimeBank',
         entityId: employeeId,
-        notes: JSON.stringify({ days: d, minutes, note: note?.trim() }),
+        notes: JSON.stringify({ days: daysInt, minutes, note: note?.trim() }),
       },
     } as any)
     await invalidateTimeBankFrom(employeeId, new Date(), prisma)
     return NextResponse.json({ ok: true })
-  }
-
-  // 強制正整數（to_leave / to_ot 方向）
-  const daysInt = parseInt(String(days), 10)
-  if (!Number.isInteger(daysInt) || daysInt < 1) {
-    return NextResponse.json({ error: '換假天數必須是正整數' }, { status: 400 })
   }
 
   if (direction === 'to_leave') {

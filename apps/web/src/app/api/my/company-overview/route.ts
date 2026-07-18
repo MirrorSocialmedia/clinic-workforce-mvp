@@ -10,7 +10,7 @@ import { toHKDateStr, fmtTime, leaveCoversDate } from '@/lib/hk-date'
 // Query: ?weekStart=2026-07-13
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

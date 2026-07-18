@@ -9,7 +9,7 @@ import { calculatePayrollWithRules } from '@/lib/payroll-engine'
 // Roles: OWNER (does not write to database)
 // ============================================================
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req, 'POST', req.url)
+  const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

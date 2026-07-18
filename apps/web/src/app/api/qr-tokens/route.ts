@@ -9,7 +9,7 @@ import { generateQRToken, cleanupExpiredTokens } from '@/lib/qr-token'
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req, 'GET', req.url)
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
