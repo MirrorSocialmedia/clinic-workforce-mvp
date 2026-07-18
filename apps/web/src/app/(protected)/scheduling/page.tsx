@@ -7,7 +7,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
-import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK } from '@/lib/hk-date'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
@@ -154,6 +154,19 @@ export default function SchedulingPage() {
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const [empScope, setEmpScope] = useState<'clinic' | 'all'>('clinic')
+
+  // Mobile day view state
+  const [mobileSelectedDate, setMobileSelectedDate] = useState<string>(toHKDateStr(todayHK()))
+  const mobileWeekDays = useMemo(() => {
+    const days = []
+    const start = new Date(mobileSelectedDate)
+    start.setHours(0, 0, 0, 0)
+    for (let i = -3; i <= 3; i++) {
+      const d = new Date(start.getTime() + i * 86400000)
+      days.push(toHKDateStr(d))
+    }
+    return days
+  }, [mobileSelectedDate])
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
@@ -1787,10 +1800,99 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
 
+
+      {/* Mobile: Read-only day view */}
+      <div className="md:hidden px-4" style={{ marginTop: 12 }}>
+        <p className="text-xs text-muted-foreground mb-3 text-center bg-amber-50 rounded-lg p-2 border border-amber-200">
+          📱 手機為唯讀檢視，排班請用電腦
+        </p>
+
+        {/* Date bar */}
+        <div className="flex gap-1 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth: 'none' }}>
+          {mobileWeekDays.map((d) => {
+            const isToday = d === toHKDateStr(todayHK())
+            const isSelected = d === mobileSelectedDate
+            const parts = d.split('-')
+            const dayOfWeek = ['日','一','二','三','四','五','六'][new Date(d).getDay()]
+            return (
+              <button key={d} onClick={() => setMobileSelectedDate(d)}
+                className="flex-shrink-0 flex flex-col items-center justify-center rounded-lg border px-3 py-2 text-xs transition-all"
+                style={{
+                  minWidth: 48,
+                  background: isSelected ? '#3b82f6' : isToday ? '#eff6ff' : '#fff',
+                  color: isSelected ? '#fff' : isToday ? '#3b82f6' : '#333',
+                  borderColor: isSelected ? '#3b82f6' : isToday ? '#93c5fd' : '#e5e7eb',
+                  fontWeight: isSelected || isToday ? 600 : 400,
+                }}>
+                <span>{dayOfWeek}</span>
+                <span className="text-base font-bold">{parseInt(parts[2])}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Shift cards for selected date */}
+        {(() => {
+          const dayShifts = clinicFilteredShifts.filter(s => s.date === mobileSelectedDate)
+          const dayLeaves = leaveRequests.filter(lr => {
+            const lrStart = toHKDateStr(new Date(lr.startDate))
+            const lrEnd = toHKDateStr(new Date(lr.endDate))
+            return mobileSelectedDate >= lrStart && mobileSelectedDate <= lrEnd
+          })
+          const hasClinic = !!selectedClinicId
+          return (
+            <div className="space-y-2">
+              {!hasClinic ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">請選擇診所</div>
+              ) : dayShifts.length === 0 && dayLeaves.length === 0 ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">該日無排班</div>
+              ) : (
+                <>
+                  {dayShifts.map(s => (
+                    <div key={s.id} className="rounded-xl border shadow-card p-3">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-semibold text-sm">{s.employee?.user?.name || s.employeeId}</span>
+                        <span className="text-xs text-muted-foreground">{fmtTime(s.startTime)} - {fmtTime(s.endTime)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-muted-foreground">{s.template?.shortName || s.template?.name || s.role || '一般'}</span>
+                        <span className="text-xs px-2 py-0.5 rounded" style={{
+                          background: s.hasPunch ? '#d1fae5' : '#f3f4f6',
+                          color: s.hasPunch ? '#065f46' : '#6b7280'
+                        }}>
+                          {s.hasPunch ? '已打卡' : '待打卡'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {dayLeaves.map(lr => {
+                    const leaveTypeMap = { ANNUAL: '年假', SICK: '病假', HALF_SICK: '半日病假', UNPAID: '無薪假', SPECIAL: '特假' }
+                    const empName = clinicEmployees.find(e => e.id === lr.employeeId)?.user?.name || '未知'
+                    return (
+                      <div key={lr.id} className="rounded-xl border shadow-card p-3" style={{ background: '#fefce8' }}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-semibold text-sm">{empName}</span>
+                          <span className="text-xs text-muted-foreground">{lr.startDate} ~ {lr.endDate}</span>
+                        </div>
+                        <div className="text-xs" style={{ color: '#92400e' }}>
+                          🏖 {leaveTypeMap[lr.leaveType as keyof typeof leaveTypeMap] || lr.leaveType}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+          )
+        })()}
+      </div>
+
       {/* ============================================================ */}
       {/* MAIN LAYOUT: Clinic Sidebar | Employees | Templates+Leave | Content */}
       {/* ============================================================ */}
-      <div style={{
+
+      {/* Desktop: Full scheduling interface */}
+      <div className="hidden md:block" style={{
         display: 'flex',
         gap: 12,
         alignItems: 'start',

@@ -303,7 +303,10 @@ export default function AttendancePage() {
 
       const all: ExceptionRecord[] = []
       for (const m of months) {
-        const res = await fetch(`/api/payroll-runs/exceptions?periodMonth=${m}`, {
+        const params = new URLSearchParams({ periodMonth: m })
+        if (clinicFilter) params.set('clinicId', clinicFilter)
+        if (employeeFilter) params.set('employeeId', employeeFilter)
+        const res = await fetch(`/api/payroll-runs/exceptions?${params}`, {
           credentials: 'include',
         })
         if (res.ok) {
@@ -314,7 +317,7 @@ export default function AttendancePage() {
       setRecordsExceptions(all)
       setLoadedMonths(months)
     } catch {}
-  }, [startDate, endDate, records])
+  }, [startDate, endDate, records, clinicFilter, employeeFilter])
 
   useEffect(() => {
     if (user && activeTab === 'records') fetchRecordExceptions()
@@ -545,7 +548,7 @@ export default function AttendancePage() {
       {activeTab === 'records' && (
         <>
           {/* Filters */}
-          <div className="flex gap-3 mb-5 flex-wrap items-end">
+          <div className="flex flex-col md:flex-row gap-3 mb-5 flex-wrap items-end">
             <div>
               <label className="block text-xs text-muted-foreground mb-1 font-medium">診所</label>
               <select value={clinicFilter} onChange={(e) => { setClinicFilter(e.target.value); setPage(1) }}
@@ -592,8 +595,106 @@ export default function AttendancePage() {
               )
             }
             return null
-          })()}
-          <div className="overflow-x-auto rounded-xl border shadow-card">
+          })()})
+
+          {/* Mobile card view */}
+          <div className="md:hidden space-y-2">
+            {loading ? (
+              <div className="text-center py-5 text-muted-foreground">載入中...</div>
+            ) : allRows.length === 0 ? (
+              <div className="text-center py-5 text-muted-foreground">沒有考勤記錄</div>
+            ) : allRows.map((row) => {
+              if ((row as AbsentRow).isAbsentRow) {
+                const ar = row as AbsentRow
+                return (
+                  <div key={ar.id} className="rounded-xl border shadow-card p-3" style={{ backgroundColor: '#fef2f2' }}>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-semibold">{ar.employeeName}</span>
+                      <span className="text-xs text-muted-foreground">{ar.date}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm">{ar.clinicName}</span>
+                      <span style={{ color: '#dc3545', fontWeight: 700, fontSize: 13 }}>缺勤</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">排班 {ar.shiftMinutes} 分鐘，無打卡</div>
+                  </div>
+                )
+              }
+              const record = row as PunchRecord & { isAbsentRow: false; sortTime: number }
+              const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
+              const isClockIn = record.punchType === 'CLOCK_IN'
+              const showLate = isClockIn ? lateEx : undefined
+              const showEarly = !isClockIn ? earlyEx : undefined
+              const showOt = !isClockIn ? otEx : undefined
+              const recordDateStr = toHKDateStr(new Date(record.punchTime))
+              const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
+              const isVoided = !!(record.void as any)
+              const rowBg = isVoided
+                ? '#f3f4f6'
+                : showLate ? '#fff7ed' : showEarly ? '#fef2f2' : showOt ? '#f0fdf4' : undefined
+
+              const mobileFaceBadge = () => {
+                const r = record as any
+                switch (r.faceStatus) {
+                  case 'PASS': return <span style={{ color: '#059669', fontSize: 12 }}>✅ 通過</span>
+                  case 'FAIL': return <Link href="/face-review" style={{ color: '#dc2626', fontWeight: 600, fontSize: 12 }}>⚠️ 未通過</Link>
+                  case 'NO_FACE': return <Link href="/face-review" style={{ color: '#ea580c', fontWeight: 600, fontSize: 12 }}>🟠 未拍攝</Link>
+                  case 'SKIPPED': return <span style={{ color: '#9ca3af', fontSize: 12 }}>略過</span>
+                  case 'NOT_ENROLLED': return <span style={{ color: '#9ca3af', fontSize: 12 }}>未登記</span>
+                  default: return <span style={{ color: '#d1d5db', fontSize: 12 }}>—</span>
+                }
+              }
+
+              const et = effectiveTime(record)
+              const displayTime = et.hasCorrection ? et.display.split('（原')[0] : et.display
+
+              let exceptionLabel = null
+              if (monthLoaded) {
+                if (showLate) exceptionLabel = `遲到 ${showLate.lateMinutes || 0} 分`
+                else if (showEarly) exceptionLabel = `早退 ${showEarly.earlyMinutes || 0} 分`
+                else if (showOt) exceptionLabel = `OT ${showOt.otMinutes || 0} 分`
+              }
+
+              const punchLabel = record.punchType === 'CLOCK_IN' ? '上工' : '落班'
+              const sourceLabel = record.source === 'QR_DYNAMIC' ? '動態碼' : record.source === 'QR_STATIC' ? '固定碼' : record.source === 'MANUAL_CORRECTION' ? '補打卡' : '系統'
+
+              return (
+                <div key={record.id} className={`rounded-xl border shadow-card p-3 ${isVoided ? 'opacity-50' : ''}`}
+                  style={rowBg ? { backgroundColor: rowBg } : {}}>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-semibold">{record.employee?.user?.name || record.employeeId}</span>
+                    <span className="text-xs text-muted-foreground">{fmtDate(recordDateStr)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 text-[10px] rounded border
+                        {isClockIn ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-orange-300 bg-orange-50 text-orange-700'} font-medium">
+                        {punchLabel}
+                      </span>
+                      <span>{displayTime}</span>
+                    </div>
+                    <div>{mobileFaceBadge()}</div>
+                  </div>
+                  <div className="flex justify-between items-center mt-1">
+                    <span className="text-xs text-muted-foreground">{record.clinic?.name || record.clinicId} · {sourceLabel}</span>
+                    {exceptionLabel && <span className="text-xs font-semibold" style={{
+                      color: showLate ? '#d97706' : showEarly ? '#dc2626' : '#059669'
+                    }}>{exceptionLabel}</span>}
+                  </div>
+                  {isVoided && <div className="text-xs text-gray-500 mt-1">已作廢</div>}
+                  <div className="flex justify-end gap-2 mt-2">
+                    {record.corrections && record.corrections.length > 0 && (
+                      <span className="text-amber-600 text-[10px]">{record.corrections.length} 筆修正</span>
+                    )}
+                    <Link href={`/attendance/${record.id}`} className="text-brand hover:underline text-xs">詳情</Link>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border shadow-card">
             <table className="w-full">
               <thead>
                 <tr className="border-b">
@@ -803,7 +904,7 @@ export default function AttendancePage() {
       {activeTab === 'exceptions' && (
         <>
           {/* Filters */}
-          <div className="flex gap-3 mb-5 flex-wrap items-end">
+          <div className="flex flex-col md:flex-row gap-3 mb-5 flex-wrap items-end">
             <div>
               <label className="block text-xs text-muted-foreground mb-1 font-medium">月份</label>
               <input type="month" value={periodMonth} onChange={e => setPeriodMonth(e.target.value)}
@@ -853,8 +954,51 @@ export default function AttendancePage() {
           ) : nonOtExceptions.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">沒有找到異常記錄 🎉</div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border shadow-card">
-              <table className="w-full">
+            <>
+              {/* Mobile card view */}
+              <div className="md:hidden space-y-2">
+                {nonOtExceptions.map((ex, i) => (
+                  <div key={i} className="rounded-xl border shadow-card p-3">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-semibold">{ex.employeeName}</span>
+                      <span className="text-xs text-muted-foreground">{ex.date}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm mb-1">
+                      <span>{ex.clinicName}</span>
+                      <span className="rounded px-2 py-0.5 text-xs font-semibold"
+                        style={{ background: typeColor(ex.type), color: (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') ? '#333' : '#fff' }}>
+                        {typeLabel(ex.type)}
+                      </span>
+                    </div>
+                    {ex.detail && <div className="text-xs text-muted-foreground mb-1">{ex.detail}</div>}
+                    <div className="flex justify-end gap-2">
+                      {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && user.role === 'OWNER' && ex.payType !== 'HOURLY' && (
+                        ex.madeUp ? (
+                          <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            ✓ 已補鐘
+                          </span>
+                        ) : (
+                          <button onClick={() => handleMakeup(ex)}
+                            className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
+                            style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}>
+                            <Clock size={12} /> 補鐘
+                          </button>
+                        )
+                      )}
+                      {ex.type === 'ABSENT' && ex.payType !== 'HOURLY' && (
+                        <OtDeductCell
+                          row={{ employeeId: ex.employeeId, date: ex.date, shiftMinutes: ex.shiftMinutes || 0, otDeducted: !!ex.otDeducted }}
+                          userRole={user.role}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden md:block overflow-x-auto rounded-xl border shadow-card">
+                <table className="w-full">
                 <thead>
                   <tr className="border-b">
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground">員工</th>
@@ -906,8 +1050,9 @@ export default function AttendancePage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
+                </table>
+              </div>
+            </>
           )}
         </>
       )}
@@ -1009,8 +1154,27 @@ export default function AttendancePage() {
             ) : hashes.length === 0 ? (
               <div className="text-muted-foreground py-4 text-sm">沒有完整性指紋記錄。需要先生成。</div>
             ) : (
-              <div className="overflow-x-auto rounded-xl border shadow-card">
-                <table className="w-full text-sm">
+              <>
+                {/* Mobile card view */}
+                <div className="md:hidden space-y-2">
+                  {hashes.map((h) => (
+                    <div key={h.id} className="rounded-xl border shadow-card p-3">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-semibold">{fmtDate(h.date)}</span>
+                        <span className="text-xs text-muted-foreground">{h.clinic?.name || h.clinicId}</span>
+                      </div>
+                      <div className="text-xs font-mono text-muted-foreground mb-1 break-all">{h.hash.slice(0, 32)}...</div>
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>{h.recordCount} 筆記錄</span>
+                        <span>{fmtDateTime(h.createdAt)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop table */}
+                <div className="hidden md:block overflow-x-auto rounded-xl border shadow-card">
+                  <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-gray-50">
                       <th className="text-left p-3 font-medium text-muted-foreground">日期</th>
@@ -1031,8 +1195,9 @@ export default function AttendancePage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         </>
