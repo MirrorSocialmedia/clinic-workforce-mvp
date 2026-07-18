@@ -571,6 +571,7 @@ export default function LeavePage() {
               ) : tbOverview.length === 0 ? (
                 <div className="text-sm text-muted-foreground">暫無資料（兼職不計時間帳戶）</div>
               ) : (
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-muted-foreground text-left">
@@ -617,6 +618,7 @@ export default function LeavePage() {
                       })}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
           )}
@@ -984,7 +986,7 @@ export default function LeavePage() {
           )}
 
           {/* Leave Types Table */}
-          <div className="card">
+          <div className="card overflow-x-auto">
             <table>
               <thead>
                 <tr><th>顏色</th><th>名稱</th><th>有薪</th><th>取消勤工</th><th>年度額度</th><th>狀態</th><th>操作</th></tr>

@@ -179,6 +179,7 @@ export default function AuditLogsPage() {
         ) : logs.length === 0 ? (
           <EmptyState text="尚無審計記錄" />
         ) : (
+          <div className="overflow-x-auto">
           <table>
             <thead>
               <tr>
@@ -216,6 +217,7 @@ export default function AuditLogsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         {/* Pagination */}

@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
 import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users } from 'lucide-react'
+import AdminMobileNav from '@/components/AdminMobileNav'
+import { useIsDesktop } from '@/lib/use-is-desktop'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -34,6 +36,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
+  const isDesktop = useIsDesktop()
 
   const checkAuth = useCallback(async () => {
     try {
@@ -146,9 +149,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen bg-background">
-      {/* Sidebar */}
+      {/* Sidebar — hidden on mobile, visible on md+ */}
       <aside
-        className={`fixed top-0 left-0 z-50 flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 text-gray-100 h-screen transition-all duration-300 ease-in-out border-r border-gray-700
+        className={`fixed top-0 left-0 z-50 hidden md:flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 text-gray-100 h-screen transition-all duration-300 ease-in-out border-r border-gray-700
           ${collapsed ? 'w-20' : 'w-64'}`}
       >
         {/* Header */}
@@ -297,12 +300,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       {/* Main content */}
       <main
         className="flex-1 transition-all duration-300"
-        style={{ marginLeft: collapsed ? '80px' : '256px' }}
+        style={{ marginLeft: isDesktop ? (collapsed ? '80px' : '256px') : '0px' }}
       >
-        <div className="main-content">
+        <div className="main-content pb-16 md:pb-0">
         {children}
         <PWAPrompt />
         </div>
+        {['OWNER', 'MANAGER'].includes(user?.role) && <AdminMobileNav />}
       </main>
 
       {/* Toast notifications */}

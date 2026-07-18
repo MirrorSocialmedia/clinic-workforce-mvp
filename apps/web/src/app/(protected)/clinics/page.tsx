@@ -219,6 +219,7 @@ export default function ClinicsPage() {
         {companies.length === 0 ? (
           <div className="text-muted" style={{ fontSize: 13 }}>暫無公司</div>
         ) : (
+          <div className="overflow-x-auto">
           <table>
             <thead>
               <tr>
@@ -271,6 +272,7 @@ export default function ClinicsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -334,6 +336,7 @@ export default function ClinicsPage() {
         {clinics.length === 0 ? (
           <div className="text-muted">暫無診所</div>
         ) : (
+          <div className="overflow-x-auto">
           <table>
             <thead>
               <tr>
@@ -363,6 +366,7 @@ export default function ClinicsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

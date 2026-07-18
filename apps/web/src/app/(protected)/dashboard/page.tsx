@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { CalendarDays, ShieldAlert } from 'lucide-react'
+import { CalendarDays, ShieldAlert, AlertTriangle, CheckSquare } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { toHKDateStr } from '@/lib/hk-date'
+import { useTodoCount } from '@/lib/use-todo-count'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -36,6 +37,7 @@ interface ClinicData {
 /** Format Date to YYYY-MM-DD in HK timezone */
 export default function DashboardPage() {
   const router = useRouter()
+  const todoCounts = useTodoCount()
   const [data, setData] = useState<{
     role: Role
     clinics: ClinicData[]
@@ -180,6 +182,56 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── Mobile-first cards: Face anomaly + Todo ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Face anomaly card */}
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => router.push('/todo')}
+        >
+          <CardContent className="p-4 flex items-center gap-3">
+            <AlertTriangle
+              size={24}
+              className={todoCounts.failN + todoCounts.noFaceN > 0 ? 'text-red-500' : 'text-green-500'}
+            />
+            <div>
+              {todoCounts.failN + todoCounts.noFaceN > 0 ? (
+                <div>
+                  <span className="font-semibold">⚠️ {todoCounts.failN} 未通過</span>
+                  <span className="text-muted-foreground mx-1">·</span>
+                  <span className="font-semibold text-orange-500">🟠 {todoCounts.noFaceN} 未拍攝</span>
+                  <span className="text-sm text-muted-foreground ml-1">→ 點擊處理</span>
+                </div>
+              ) : (
+                <div className="text-green-600 font-medium">✅ 今日臉部驗證無異常</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Todo summary card */}
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => router.push('/todo')}
+        >
+          <CardContent className="p-4 flex items-center gap-3">
+            <CheckSquare size={24} className={todoCounts.total > 0 ? 'text-amber-500' : 'text-green-500'} />
+            <div>
+              {todoCounts.total > 0 ? (
+                <div>
+                  <span className="font-semibold">{todoCounts.total} 項待處理</span>
+                  <span className="text-sm text-muted-foreground ml-1">
+                    （假期 {todoCounts.leaveN} · 登記 {todoCounts.enrollN} · 覆核 {todoCounts.reviewN}）
+                  </span>
+                </div>
+              ) : (
+                <div className="text-green-600 font-medium">🎉 全部待辦已完成</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* ── Sensitive Operations Summary (OWNER only) ── */}
       {data.role === 'OWNER' && (
         <Card>
@@ -305,6 +357,7 @@ export default function DashboardPage() {
           ) : empSummary.length === 0 ? (
             <div className="flex justify-center py-8 text-muted-foreground">沒有考勤資料</div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -384,6 +437,7 @@ export default function DashboardPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -493,7 +493,7 @@ export default function AccountsPage() {
       </div>
 
       {/* Table */}
-      <div className="card">
+      <div className="card overflow-x-auto">
         <table>
           <thead>
             <tr>

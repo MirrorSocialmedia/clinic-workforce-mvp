@@ -278,6 +278,7 @@ export default function HashPage() {
         ) : hashes.length === 0 ? (
           <p style={{ color: '#888' }}>沒有完整性指紋記錄。需要先生成。</p>
         ) : (
+          <div className="overflow-x-auto">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #eee' }}>
@@ -310,6 +311,7 @@ export default function HashPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
