@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { grantRestDaysForMonth } from '@/lib/payroll-engine'
 
 // ============================================================
 // GET /api/employees — list employees with filters
@@ -209,6 +210,9 @@ export async function POST(req: NextRequest) {
 
         return employee
       })
+
+      // 🆕 Grant current month rest day pool immediately after creation
+      await grantRestDaysForMonth(result.id, new Date(), prisma)
 
       return NextResponse.json({ success: true, employee: result }, { status: 201 })
     } catch (error) {

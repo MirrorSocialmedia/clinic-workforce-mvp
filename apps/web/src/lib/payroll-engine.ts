@@ -819,6 +819,10 @@ export async function generatePayrollRun(
           calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
             ...(config.base_type !== 'hourly' && storeBonuses?.[emp.id] ? { storeBonus: storeBonuses[emp.id] } : {}),
           })
+
+          // 🆕 Grant next month rest day pool (idempotent — safe on recalc)
+          const nextMonth = new Date(year, month + 1, 1) // year/month from hkParts → 0-indexed month+1
+          await grantRestDaysForMonth(emp.id, nextMonth, tx)
         } else {
           // No rule at all → skip with warning
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
@@ -1722,6 +1726,14 @@ export async function ensureRestDayGranted(employeeId: string, targetDate: Date,
   const { y, m } = hkParts(targetDate) // m is 0-indexed
   const quota = countMonthlyLeaveDays(y, m, restDays)
   await grantMonthlyRestDays(employeeId, y, m, quota.total, db)
+}
+
+/**
+ * Wrapper for ensureRestDayGranted — grants rest day pool for the month of `monthDate`.
+ * Idempotent (delta upsert + grantKey dedup). Safe to call repeatedly.
+ */
+export async function grantRestDaysForMonth(employeeId: string, monthDate: Date, db: any): Promise<void> {
+  return ensureRestDayGranted(employeeId, monthDate, db)
 }
 
 // ------------------------------------------------------------------

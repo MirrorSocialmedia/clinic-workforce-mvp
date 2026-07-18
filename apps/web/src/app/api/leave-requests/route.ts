@@ -127,7 +127,8 @@ export async function POST(req: NextRequest) {
       }
 
       // Validate remaining balance (skip for unlimited types)
-      const currentYear = new Date().getUTCFullYear()
+      // 🆕 Use startDate year instead of current date year to avoid cross-year misalignment
+      const currentYear = Number(toHKDateStr(new Date(startDate)).slice(0, 4))
       const balance = await prisma.leaveBalance.findFirst({
         where: { employeeId: employee.id, leaveTypeId, year: currentYear },
       })
