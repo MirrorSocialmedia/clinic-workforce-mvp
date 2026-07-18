@@ -129,6 +129,14 @@ export default function FaceEnrollPage() {
     <div className="text-center">
      <div className="relative mb-4">
       <video ref={videoRef} muted playsInline className="w-full rounded-lg" style={{ width: '100%', transform: 'scaleX(-1)' }} />
+      {/* 人形框: 橢圓透明窗 + 四周壓暗 */}
+      <div style={{
+       position: 'absolute', left: '50%', top: '48%', transform: 'translate(-50%, -50%)',
+       width: '62%', height: '78%', borderRadius: '50%',
+       border: '2.5px dashed rgba(255,255,255,.85)',
+       boxShadow: '0 0 0 999px rgba(0,0,0,.45)',
+       pointerEvents: 'none',
+      }} />
      </div>
      <div style={{ textAlign: 'center', marginTop: 12 }}>
       <div style={{ fontSize: 22, fontWeight: 700, minHeight: 32 }}>{steps[idx].hint}</div>
