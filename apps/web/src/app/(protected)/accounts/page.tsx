@@ -19,10 +19,11 @@ interface Account {
   baseAmount: number | null
   payConfidential: boolean
   homeClinicId: string | null
+  resignedAt: string | null
   clinics: Clinic[]
 }
 
-const STATUS_LABELS: Record<string, string> = { ACTIVE: '啟用', INACTIVE: '停用' }
+const STATUS_LABELS: Record<string, string> = { ACTIVE: '啟用', INACTIVE: '停用', RESIGNED: '已離職' }
 const ROLE_LABELS: Record<string, string> = { OWNER: 'Owner', MANAGER: 'Manager', ACCOUNTANT: 'Accountant', EMPLOYEE: 'Employee' }
 
 export default function AccountsPage() {
@@ -43,6 +44,14 @@ export default function AccountsPage() {
   const [leaveBalances, setLeaveBalances] = useState<Record<string, any[]>>({})
   const [payRules, setPayRules] = useState<Record<string, any>>({})
   const [enrollCode, setEnrollCode] = useState<{ code: string; name: string } | null>(null)
+
+  // Resign / Rehire state
+  const [showResigned, setShowResigned] = useState(false)
+  const [showResignModal, setShowResignModal] = useState(false)
+  const [resignEmployee, setResignEmployee] = useState<Account | null>(null)
+  const [lastDay, setLastDay] = useState(new Date().toISOString().split('T')[0])
+  const [resignPreview, setResignPreview] = useState<{ futureShifts: number; futureApprovedLeaves: number } | null>(null)
+  const [resignLoading, setResignLoading] = useState(false)
 
   // KIOSK account creation state
   const [showKioskForm, setShowKioskForm] = useState(false)
@@ -85,6 +94,24 @@ export default function AccountsPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Fetch resign preview when modal is open and lastDay changes
+  useEffect(() => {
+    if (!showResignModal || !resignEmployee?.employeeId) return
+    const fetchPreview = async () => {
+      try {
+        const res = await fetch(
+          `/api/employees/${resignEmployee.employeeId}/resign-preview?lastDay=${lastDay}`,
+          { credentials: 'include' }
+        )
+        if (res.ok) {
+          const data = await res.json()
+          setResignPreview({ futureShifts: data.futureShifts, futureApprovedLeaves: data.futureApprovedLeaves })
+        }
+      } catch {}
+    }
+    fetchPreview()
+  }, [showResignModal, resignEmployee, lastDay])
+
   // Auto-select homeClinicId = first assigned clinic when none set yet
   useEffect(() => {
     if (form.assignEmployee && form.clinicIds.length > 0 && !form.homeClinicId) {
@@ -93,6 +120,8 @@ export default function AccountsPage() {
   }, [form.clinicIds, form.assignEmployee])
 
   const filteredAccounts = accounts.filter(acc => {
+    // Hide resigned employees by default
+    if (!showResigned && acc.employeeStatus === 'RESIGNED') return false
     if (search && !acc.name.toLowerCase().includes(search.toLowerCase()) && !acc.phone.includes(search)) return false
     if (roleFilter !== 'all' && acc.role !== roleFilter) return false
     if (clinicFilter !== 'all' && !acc.clinics?.some(c => c.id === clinicFilter)) return false
@@ -184,6 +213,49 @@ export default function AccountsPage() {
       if (res.ok) { fetchData() }
       else { const err = await res.json(); alert(err.error || '刪除失敗') }
     } catch { alert('刪除失敗') }
+  }
+
+  // ─── Resign / Rehire ───
+  const openResign = (acc: Account) => {
+    setResignEmployee(acc)
+    setLastDay(new Date().toISOString().split('T')[0])
+    setResignPreview(null)
+    setShowResignModal(true)
+  }
+
+  const handleResign = async () => {
+    if (!resignEmployee?.employeeId || !lastDay) return
+    if (!confirm(`確定為「${resignEmployee.name}」辦理離職？最後工作日：${lastDay}`)) return
+    setResignLoading(true)
+    try {
+      const res = await fetch(`/api/employees/${resignEmployee.employeeId}/resign`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lastDay }),
+      })
+      if (res.ok) {
+        setShowResignModal(false)
+        setResignEmployee(null)
+        fetchData()
+      } else {
+        const err = await res.json()
+        alert(err.error || '離職操作失敗')
+      }
+    } catch { alert('網絡錯誤') }
+    finally { setResignLoading(false) }
+  }
+
+  const handleRehire = async (acc: Account) => {
+    if (!confirm(`確定為「${acc.name}」辦理復職？`)) return
+    try {
+      const res = await fetch(`/api/employees/${acc.employeeId}/rehire`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (res.ok) { fetchData() }
+      else { const err = await res.json(); alert(err.error || '復職失敗') }
+    } catch { alert('網絡錯誤') }
   }
 
   const loadLeaveBalances = async (employeeId: string) => {
@@ -566,6 +638,12 @@ export default function AccountsPage() {
           <option value="active">啟用</option>
           <option value="inactive">停用</option>
         </select>
+        {isOwner && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+            <input type="checkbox" checked={showResigned} onChange={e => setShowResigned(e.target.checked)} />
+            顯示已離職
+          </label>
+        )}
       </div>
 
       {/* Table */}
@@ -600,11 +678,17 @@ export default function AccountsPage() {
                   <td>{acc.joinDate || '-'}</td>
                   <td>{(acc.clinics || []).map(c => c.name).join(', ') || '-'}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
-                      background: acc.status === 'ACTIVE' ? '#4CAF5020' : '#dc354520',
-                      color: acc.status === 'ACTIVE' ? '#4CAF50' : '#dc3545' }}>
-                      {acc.status === 'ACTIVE' ? '✅' : '❌'} {STATUS_LABELS[acc.status] || acc.status}
-                    </span>
+                    {(() => {
+                      const displayStatus = acc.employeeStatus === 'RESIGNED' ? 'RESIGNED' : acc.status
+                      const statusColor = displayStatus === 'ACTIVE' ? '#4CAF50' : displayStatus === 'RESIGNED' ? '#9333ea' : '#dc3545'
+                      const statusBg = displayStatus === 'ACTIVE' ? '#4CAF5020' : displayStatus === 'RESIGNED' ? '#9333ea20' : '#dc354520'
+                      const statusIcon = displayStatus === 'ACTIVE' ? '✅' : displayStatus === 'RESIGNED' ? '👋' : '❌'
+                      return (
+                        <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: statusBg, color: statusColor }}>
+                          {statusIcon} {STATUS_LABELS[displayStatus] || displayStatus}
+                        </span>
+                      )
+                    })()}
                   </td>
                   <td onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -625,6 +709,12 @@ export default function AccountsPage() {
                       }}>登記臉部</button>
                       {isOwner && userRole !== acc.role && (
                         <button className="btn btn-sm" style={{ background: '#fde8e8', color: '#dc3545' }} onClick={() => handleDelete(acc)}>刪除</button>
+                      )}
+                      {isOwner && acc.employeeId && acc.employeeStatus !== 'RESIGNED' && (
+                        <button className="btn btn-sm" style={{ background: '#fef2f2', color: '#dc2626' }} onClick={() => openResign(acc)}>離職</button>
+                      )}
+                      {isOwner && acc.employeeStatus === 'RESIGNED' && (
+                        <button className="btn btn-sm" style={{ background: '#f0fdf4', color: '#16a34a' }} onClick={() => handleRehire(acc)}>復職</button>
                       )}
                     </div>
                   </td>
@@ -820,6 +910,50 @@ export default function AccountsPage() {
             <button className="w-full py-2 bg-blue-600 text-white rounded-lg" onClick={() => setEnrollCode(null)}>
               關閉
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Resign Modal */}
+      {showResignModal && resignEmployee && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setShowResignModal(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-8 max-w-md w-full mx-4"
+            onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold mb-4 text-red-700">👋 辦理離職</h3>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{resignEmployee.name}</div>
+              <div style={{ fontSize: 12, color: '#888' }}>{resignEmployee.phone} · {ROLE_LABELS[resignEmployee.role] || resignEmployee.role}</div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>最後工作日</label>
+              <input
+                type="date"
+                value={lastDay}
+                onChange={e => setLastDay(e.target.value)}
+                className="px-3 py-2 rounded-md border text-sm w-full"
+              />
+            </div>
+
+            {resignPreview && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#dc2626', marginBottom: 4 }}>⚠️ 離職後將自動取消：</div>
+                <div style={{ fontSize: 12, color: '#7f1d1d' }}>班次：{resignPreview.futureShifts} 個</div>
+                <div style={{ fontSize: 12, color: '#7f1d1d' }}>已批假期：{resignPreview.futureApprovedLeaves} 筆</div>
+                <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>（僅取消最後工作日之後的記錄）</div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" style={{ background: '#eee', color: '#333' }}
+                onClick={() => setShowResignModal(false)}>取消</button>
+              <button className="btn" style={{ background: '#dc2626', color: 'white' }}
+                onClick={handleResign} disabled={resignLoading || !lastDay}>
+                {resignLoading ? '處理中...' : '確認離職'}
+              </button>
+            </div>
           </div>
         </div>
       )}

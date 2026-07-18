@@ -19,18 +19,32 @@ export async function GET(req: NextRequest) {
   const role = searchParams.get('role')
   const status = searchParams.get('status')
   const search = searchParams.get('search')
+  const includeResigned = searchParams.get('includeResigned') === 'true'
   const page = parseInt(searchParams.get('page') || '1')
   const pageSize = parseInt(searchParams.get('pageSize') || '20')
   const skip = (page - 1) * pageSize
 
   const where: any = {}
 
+  // Default: exclude RESIGNED employees unless explicitly requested
+  if (!includeResigned) {
+    where.status = { not: 'RESIGNED' }
+  }
+
   if (clinicId) {
     where.clinics = { some: { clinicId } }
   }
 
+  // Merge status filter with resigned exclusion
   if (status) {
-    where.status = status
+    if (includeResigned) {
+      where.status = status
+    } else {
+      where.status = status === 'RESIGNED' ? 'RESIGNED' : { not: 'RESIGNED' }
+    }
+  } else if (!includeResigned) {
+    // Ensure not-RESIGNED is set (already set above, but be explicit)
+    where.status = { not: 'RESIGNED' }
   }
 
   if (search) {

@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
   const role = searchParams.get('role')
   const status = searchParams.get('status')
   const search = searchParams.get('search')
+  const includeResigned = searchParams.get('includeResigned') === 'true'
 
   const userWhere: any = {}
   if (role) userWhere.role = role
@@ -29,6 +30,11 @@ export async function GET(req: NextRequest) {
   }
 
   const empWhere: any = {}
+  // Default: exclude RESIGNED employees unless explicitly requested
+  if (!includeResigned) {
+    empWhere.status = { not: 'RESIGNED' }
+  }
+
   if (clinicId) empWhere.clinics = { some: { clinicId } }
   if (search) {
     empWhere.user = {
@@ -59,7 +65,13 @@ export async function GET(req: NextRequest) {
   const empHomeClinicMap = new Map(allEmployees.map(e => [e.userId, e.homeClinicId || null]))
 
   const safeUsers = users.map(({ password, ...user }) => user)
-  const accounts = safeUsers.map(user => {
+
+  // Filter out users with RESIGNED employee status unless includeResigned
+  const filteredUsers = includeResigned
+    ? safeUsers
+    : safeUsers.filter(u => !u.employee || u.employee.status !== 'RESIGNED')
+
+  const accounts = filteredUsers.map(user => {
     const emp = user.employee || null
     const payRule = emp?.payRules?.[0] || null
     // 優先使用 EmployeeClinic，其次 UserClinic
@@ -74,6 +86,7 @@ export async function GET(req: NextRequest) {
       createdAt: user.createdAt,
       employeeId: emp?.id || null,
       employeeStatus: emp?.status || null,
+      resignedAt: emp?.resignedAt ? emp.resignedAt.toISOString() : null,
       payConfidential: emp?.payConfidential || false,
       joinDate: emp?.joinDate ? toHKDateStr(new Date(emp.joinDate)) : null,
       payType: payRule?.payType || null,

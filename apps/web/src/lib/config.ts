@@ -73,6 +73,11 @@ export const CONFIG = {
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
+    // Resign / Rehire routes
+    'GET /api/employees/:id/resign-preview': ['OWNER'],
+    'POST /api/employees/:id/resign': ['OWNER'],
+    'POST /api/employees/:id/rehire': ['OWNER'],
+
     // Shift rule config routes
     'GET /api/clinics/:id/shift-rule-config': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'PUT /api/clinics/:id/shift-rule-config': ['OWNER', 'MANAGER'],
