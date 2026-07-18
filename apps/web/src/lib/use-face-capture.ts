@@ -42,5 +42,5 @@ export function useFaceCapture() {
     return null
   }, [init])
 
-  return { captureQualified }
+  return { captureQualified, warmup: init }
 }

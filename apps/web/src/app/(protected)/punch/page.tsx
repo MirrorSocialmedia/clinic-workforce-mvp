@@ -50,7 +50,7 @@ export default function PunchPage() {
   const [faceHint, setFaceHint] = useState<string | null>(null)
   const [faceDone, setFaceDone] = useState(true) // 驗證是否已了結(扣倒數用;預設true)
   const faceVideoRef = useRef<HTMLVideoElement>(null)
-  const { captureQualified } = useFaceCapture()
+  const { captureQualified, warmup } = useFaceCapture()
 
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
@@ -104,6 +104,9 @@ export default function PunchPage() {
       setLoading(false)
     }
   }, [user, fetchRecords])
+
+  // ★ 背景預熱偵測器(wasm+模型)，打卡時已是熱的
+  useEffect(() => { warmup().catch(() => {}) }, [warmup])
 
   // ★ Punch handler — returns boolean for success/failure feedback
   const handleScan = useCallback(async (token: string): Promise<boolean> => {
@@ -173,18 +176,34 @@ export default function PunchPage() {
     return handleScanRef.current(token)
   }, [])
 
+  // ★ Android 相機釋放延遲 — 重試開鏡 (NotReadableError)
+  async function openFrontCamera(tries = 4): Promise<MediaStream> {
+    let lastErr: any
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+      } catch (e: any) {
+        lastErr = e
+        if (e?.name !== 'NotReadableError' && e?.name !== 'AbortError') throw e // 權限拒絕等不重試
+        await new Promise(r => setTimeout(r, 350)) // 等釋放,最多 ~1 秒
+      }
+    }
+    throw lastErr
+  }
+
   // ★ runFaceVerify 全身替換: 8秒死線 + 三種了結(sent / no_face / skipped)
   const runFaceVerify = async (punchId: string) => {
     let outcome: 'sent' | 'no_face' | 'skipped' = 'skipped'
     try {
       if (!faceVideoRef.current) throw new Error('face video not mounted')
       setFaceHint('請看鏡頭')
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+      const stream = await openFrontCamera()
       try {
         faceVideoRef.current.srcObject = stream
         await faceVideoRef.current.play()
         const blob = await captureQualified(faceVideoRef.current, 8000) // ★ 8 秒死線
         if (blob) {
+          setFaceHint('分析中…')
           const fd = new FormData()
           fd.append('punchId', punchId)
           fd.append('frame', blob, 'punch.jpg')
@@ -321,7 +340,17 @@ export default function PunchPage() {
         boxShadow: '0 8px 30px rgba(0,0,0,.45)',
         display: faceHint ? 'block' : 'none',
       }}>
-        <video ref={faceVideoRef} muted playsInline style={{ width: '100%', transform: 'scaleX(-1)' }} />
+        <div style={{ position: 'relative' }}>
+          <video ref={faceVideoRef} muted playsInline style={{ width: '100%', transform: 'scaleX(-1)', display: 'block' }} />
+          {/* 人形框:橢圓透明窗 + 四周壓暗 */}
+          <div style={{
+            position: 'absolute', left: '50%', top: '48%', transform: 'translate(-50%, -50%)',
+            width: '62%', height: '78%', borderRadius: '50%',
+            border: '2.5px dashed rgba(255,255,255,.85)',
+            boxShadow: '0 0 0 999px rgba(0,0,0,.45)',
+            pointerEvents: 'none',
+          }} />
+        </div>
         <div style={{ fontSize: 14, textAlign: 'center', color: '#fff', padding: '8px 0' }}>{faceHint}</div>
       </div>
 
