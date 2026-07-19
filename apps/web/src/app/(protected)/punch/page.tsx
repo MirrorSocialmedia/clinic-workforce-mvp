@@ -27,8 +27,8 @@ async function getPunchLocationLive(): Promise<{ lat?: number; lng?: number; fla
   let r = await tryOnce(true, 6000)
   if (r.lat != null) return r
   if (r.flag === 'DENIED') return r // 權限拒絕不必重試
-  // 第二次: 低精度(WiFi/基站)5 秒——室內拿不到 GPS 時這步能成
-  r = await tryOnce(false, 5000)
+  // 第二次: 低精度(WiFi/基站)8 秒——室內拿不到 GPS 時這步能成
+  r = await tryOnce(false, 8000)
   return r
 }
 
@@ -76,6 +76,7 @@ export default function PunchPage() {
   const watchIdRef = useRef<number | null>(null)
   const [gpsReady, setGpsReady] = useState(false)
   const [gpsDenied, setGpsDenied] = useState(false)
+  const [gpsFailed, setGpsFailed] = useState(false)
 
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
@@ -151,9 +152,25 @@ export default function PunchPage() {
         // 但若 code=1 (DENIED)，設狀態供 UI 顯示橫幅
         if (err.code === 1) setGpsDenied(true)
       },
-      { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 },
+      { enableHighAccuracy: false, maximumAge: 30000, timeout: 27000 },
     )
+    // 3 秒喚醒：保溫遲遲不就緒 → 主動兩段式取一次
+    const kick = setTimeout(async () => {
+      if (!lastPosRef.current) {
+        const r = await getPunchLocationLive()
+        if (r.lat != null && r.lng != null) {
+          const acc: number = r.acc != null ? Math.round(r.acc) : 999
+          lastPosRef.current = { lat: r.lat, lng: r.lng, acc, t: Date.now() }
+          setGpsReady(true)
+        } else if (r.flag === 'DENIED') {
+          setGpsDenied(true)
+        } else {
+          setGpsFailed(true)
+        }
+      }
+    }, 3000)
     return () => {
+      clearTimeout(kick)
       if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current)
     }
   }, []) // 只跑一次，頁面在=保溫在
@@ -362,7 +379,7 @@ export default function PunchPage() {
 
       {/* GPS status indicator */}
       <div style={{ textAlign: 'center', fontSize: 13, color: '#9ca3af', marginBottom: 4 }}>
-        {gpsReady ? '📍 定位就緒' : gpsDenied ? '📍 定位已拒絕' : '📍 定位中…'}
+        {gpsReady ? '📍 定位就緒' : gpsDenied ? '📍 定位已拒絕' : gpsFailed ? '📍 定位不可用（不影響打卡）' : '📍 定位中…'}
       </div>
 
       {/* QR Scanner — compact card, hidden when showing full-screen result */}
