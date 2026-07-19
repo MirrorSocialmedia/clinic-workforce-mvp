@@ -36,9 +36,10 @@ export async function POST(req: NextRequest) {
       const body = await req.json()
       const { token: qrToken, deviceInfo, lat, lng, geoFlag, geoAcc } = body
 
-      // Accept optional explicit punchType (LUNCH_START/LUNCH_END); otherwise auto-detect CLOCK_IN/CLOCK_OUT
+      // Accept optional explicit punchType (CLOCK_IN/CLOCK_OUT/LUNCH_START/LUNCH_END)
       const explicitPunchType = body.punchType
-      const isLunchPunch = explicitPunchType === 'LUNCH_START' || explicitPunchType === 'LUNCH_END'
+      const VALID_TYPES = ['CLOCK_IN', 'CLOCK_OUT', 'LUNCH_START', 'LUNCH_END']
+      const hasExplicitType = VALID_TYPES.includes(explicitPunchType)
 
       // Get the employee for this user
       const employee = await prisma.employee.findUnique({
@@ -59,20 +60,8 @@ export async function POST(req: NextRequest) {
       let source: string = 'QR_DYNAMIC'
       let tokenValid: boolean | null = true
 
-      if (isLunchPunch) {
-        // Lunch punch: no QR token required, use employee's first assigned clinic
-        clinicId = employee.clinics[0]?.clinicId || null
-        if (!clinicId) {
-          return NextResponse.json({ error: 'No clinic assigned' }, { status: 400 })
-        }
-        source = 'MANUAL_CORRECTION'
-        tokenValid = null
-      } else {
-        // Auto-detect path (CLOCK_IN/CLOCK_OUT): requires QR token
-        if (!qrToken) {
-          return NextResponse.json({ error: 'token is required' }, { status: 400 })
-        }
-
+      // ★ Token + clinic resolution: token-first, explicit-fallback
+      if (qrToken) {
         // Atomic: validate + mark token used in one operation
         const validation = await validateAndMarkTokenUsed(qrToken, employee.id)
 
@@ -84,7 +73,6 @@ export async function POST(req: NextRequest) {
         }
 
         clinicId = validation.clinicId ?? null
-
         if (!clinicId) {
           return NextResponse.json(
             { error: 'Clinic ID missing from token validation' },
@@ -102,6 +90,17 @@ export async function POST(req: NextRequest) {
         }
 
         source = validation.source || 'QR_DYNAMIC'
+        // ★ Explicit type + valid token = normal punch, NOT MANUAL_CORRECTION
+      } else if (hasExplicitType) {
+        // Explicit type without QR token (e.g., legacy lunch punch): use employee's first clinic
+        clinicId = employee.clinics[0]?.clinicId || null
+        if (!clinicId) {
+          return NextResponse.json({ error: 'No clinic assigned' }, { status: 400 })
+        }
+        source = 'MANUAL'
+        tokenValid = null
+      } else {
+        return NextResponse.json({ error: 'token is required' }, { status: 400 })
       }
 
       // Determine punch type
@@ -118,17 +117,18 @@ export async function POST(req: NextRequest) {
       })
 
       let punchType: string
-      if (isLunchPunch) {
+      if (hasExplicitType) {
         punchType = explicitPunchType
-        // Validate per-type limit: max 1 LUNCH_START + 1 LUNCH_END per day
+        // Per-type daily limit: max 1 of each type per day
         if (todayPunches.some(p => p.punchType === punchType)) {
-          const label = punchType === 'LUNCH_START' ? '午休開始' : '午休結束'
+          const label = punchType === 'CLOCK_IN' ? '上班' : punchType === 'CLOCK_OUT' ? '下班' : punchType === 'LUNCH_START' ? '午休開始' : '午休結束'
           return NextResponse.json(
             { error: `今天已打${label}卡` },
             { status: 400 }
           )
         }
       } else {
+        // Fallback: old frontend compatibility — auto-detect CLOCK_IN/CLOCK_OUT
         const hasClockInToday = todayPunches.some(p => p.punchType === 'CLOCK_IN')
         const hasClockOutToday = todayPunches.some(p => p.punchType === 'CLOCK_OUT')
 

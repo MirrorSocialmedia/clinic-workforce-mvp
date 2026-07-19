@@ -1074,8 +1074,13 @@ function getShiftColor(shift: Shift): string {
       s => s.employeeId === selectedEmployeeId && daySet.has(toHKDateStr(new Date(s.date)))
     )
     const dayCount = new Set(empShifts.map(s => s.date)).size
-    const hours = empShifts.reduce((sum, s) =>
-      sum + (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000, 0)
+    const lunchDefaultMin = 60 // ★ 預設午休 1 小時（與 payroll engine 一致）
+    const hours = empShifts.reduce((sum, s) => {
+      const shiftMs = new Date(s.endTime).getTime() - new Date(s.startTime).getTime()
+      const shiftHours = shiftMs / 3600000
+      const withLunchDeduct = Math.max(0, shiftHours - lunchDefaultMin / 60)
+      return sum + withLunchDeduct
+    }, 0)
     return { name: emp.user?.name ?? '?', days: dayCount, hours: Math.round(hours * 10) / 10 }
   }, [selectedEmployeeId, clinicFilteredShifts, clinicEmployees])
 

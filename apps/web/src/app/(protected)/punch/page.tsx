@@ -82,6 +82,14 @@ export default function PunchPage() {
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
 
+  // ★ Type-first punch: employee selects type before scanner opens
+  const [pendingType, setPendingType] = useState<null | 'CLOCK_IN' | 'CLOCK_OUT' | 'LUNCH_START' | 'LUNCH_END'>(null)
+  const TYPE_LABEL: Record<string, string> = { CLOCK_IN: '上班', CLOCK_OUT: '下班', LUNCH_START: '午休開始', LUNCH_END: '午休結束' }
+
+  // ★ Anti-spam: 30s cooldown + in-flight lock
+  const punchingRef = useRef(false)
+  const lastPunchRef = useRef(0)
+
   // ★ Scanner restart key
   const [scannerKey, setScannerKey] = useState(0)
 
@@ -190,6 +198,13 @@ export default function PunchPage() {
 
   // ★ Punch handler — returns boolean for success/failure feedback
   const handleScan = useCallback(async (token: string): Promise<boolean> => {
+    // ★ Anti-spam: 30s cooldown + in-flight lock
+    if (punchingRef.current) return false
+    if (Date.now() - lastPunchRef.current < 30000) {
+      setError('剛打過卡，請稍候')
+      return false
+    }
+    punchingRef.current = true
     setError(null)
 
     try {
@@ -207,6 +222,7 @@ export default function PunchPage() {
           lng: loc.lng,
           geoFlag: loc.flag,
           geoAcc: loc.acc,
+          punchType: pendingType, // ★ 全員必帶
         }),
       })
 
@@ -223,8 +239,11 @@ export default function PunchPage() {
       })
       setCountdown(3)
       fetchRecords()
-      // 停止 QR 掃描器，釋放相機（iOS 同頁只能一條串流）
       scannerStopRef.current?.()
+
+      // ★ Reset type selection after successful punch
+      setPendingType(null)
+      lastPunchRef.current = Date.now()
 
       // ★ 判斷是否要驗證臉部(只ACTIVE才開鏡頭)
       // 用 ref 讀當下值 + 現場兜底，防狀態競速
@@ -251,8 +270,10 @@ export default function PunchPage() {
     } catch (e: any) {
       setError(e.message)
       return false
+    } finally {
+      punchingRef.current = false
     }
-  }, [fetchRecords, faceEnrollStatus])
+  }, [fetchRecords, faceEnrollStatus, pendingType])
 
   // Keep ref stable for scanner
   const handleScanRef = useRef(handleScan)
@@ -263,40 +284,7 @@ export default function PunchPage() {
     return handleScanRef.current(token)
   }, [])
 
-  // ★ Lunch punch handler — no QR token, direct API call with punchType
-  const handleLunchPunch = useCallback(async (punchType: 'LUNCH_START' | 'LUNCH_END') => {
-    setError(null)
-    try {
-      const loc = await getPunchLocation()
-      const res = await fetch('/api/punch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          punchType,
-          deviceInfo: navigator.userAgent,
-          lat: loc.lat,
-          lng: loc.lng,
-          geoFlag: loc.flag,
-          geoAcc: loc.acc,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || '打卡失敗')
-
-      navigator.vibrate?.([80, 40, 80])
-      playBeep()
-
-      const label = punchType === 'LUNCH_START' ? '午休開始' : '午休結束'
-      setPunchResult({ type: label, time: fmtTime(data.punchTime) })
-      setCountdown(3)
-      fetchRecords()
-      return true
-    } catch (e: any) {
-      setError(e.message)
-      return false
-    }
-  }, [fetchRecords])
+  // ★ Lunch punch unified into handleScan with pendingType — no separate handler needed
 
   // ★ Android 相機釋放延遲 — 重試開鏡 (NotReadableError)
   async function openFrontCamera(tries = 4): Promise<MediaStream> {
@@ -422,27 +410,55 @@ export default function PunchPage() {
       {/* QR Scanner — compact card, hidden when showing full-screen result */}
       {!punchResult && (
         <div className="bg-card border rounded-xl p-3 max-w-sm mx-auto">
-          <QrScanner key={scannerKey} onScan={stableOnScan} onScannerReady={handleScannerReady} />
-        </div>
-      )}
-
-      {/* ★ Lunch punch buttons — only when lunchBreak enabled */}
-      {!punchResult && lunchEnabled && (
-        <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto">
-          <button
-            onClick={() => handleLunchPunch('LUNCH_START')}
-            className="py-3 px-4 rounded-xl font-medium text-sm transition-colors"
-            style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
-          >
-            ☀️ 午休開始
-          </button>
-          <button
-            onClick={() => handleLunchPunch('LUNCH_END')}
-            className="py-3 px-4 rounded-xl font-medium text-sm transition-colors"
-            style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }}
-          >
-            🌙 午休結束
-          </button>
+          {!pendingType ? (
+            // Step 1: 全員先選類型（未選不開鏡頭）
+            <div>
+              <div className="text-center text-sm font-medium text-muted-foreground mb-3">請選擇打卡類型</div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setPendingType('CLOCK_IN')}
+                  className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
+                  style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }}
+                >
+                  🟢 上班打卡
+                </button>
+                <button
+                  onClick={() => setPendingType('CLOCK_OUT')}
+                  className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
+                  style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }}
+                >
+                  🔴 下班打卡
+                </button>
+                {lunchEnabled && (
+                  <button
+                    onClick={() => setPendingType('LUNCH_START')}
+                    className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
+                    style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
+                  >
+                    ☀️ 午休開始
+                  </button>
+                )}
+                {lunchEnabled && (
+                  <button
+                    onClick={() => setPendingType('LUNCH_END')}
+                    className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
+                    style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }}
+                  >
+                    🌙 午休結束
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            // Step 2: 選了類型才開鏡頭
+            <>
+              <div className="text-center mb-3">
+                <span className="text-sm font-medium">正在打卡：<b>{TYPE_LABEL[pendingType]}</b></span>
+                <button onClick={() => setPendingType(null)} className="ml-2 text-xs text-muted-foreground underline">重選</button>
+              </div>
+              <QrScanner key={scannerKey} onScan={stableOnScan} onScannerReady={handleScannerReady} />
+            </>
+          )}
         </div>
       )}
 

@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { date, punchType, reason, clinicId, employeeId: requestBodyEmployeeId, punchRecordId: requestBodyPunchRecordId } = body
+      const { date, punchType, reason, clinicId, employeeId: requestBodyEmployeeId, punchRecordId: requestBodyPunchRecordId, originalPunchType } = body
 
       // Validate
       if (!date || !punchType || !clinicId) {
@@ -51,9 +51,9 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      if (!['CLOCK_IN', 'CLOCK_OUT'].includes(punchType)) {
+      if (!['CLOCK_IN', 'CLOCK_OUT', 'LUNCH_START', 'LUNCH_END'].includes(punchType)) {
         return NextResponse.json(
-          { error: 'punchType must be CLOCK_IN or CLOCK_OUT' },
+          { error: 'punchType must be CLOCK_IN, CLOCK_OUT, LUNCH_START, or LUNCH_END' },
           { status: 400 }
         )
       }
@@ -119,14 +119,54 @@ export async function POST(req: NextRequest) {
       // Transaction: create correction + punchRecord (if no original exists)
       const correction = await prisma.$transaction(async (tx) => {
         const isManager = session.role === 'OWNER' || session.role === 'MANAGER'
+
+        // ★ Check if punchType changed (originalPunchType provided and different)
+        let voidedOriginalId: string | null = null
+        let newPunchRecordId: string | null = null
+        const isTypeChange = originalPunchType && originalPunchType !== punchType
+
+        if (isTypeChange && isManager) {
+          // Find the original punchRecord by original type
+          const original = await tx.punchRecord.findFirst({
+            where: {
+              employeeId: employee.id,
+              clinicId,
+              punchType: originalPunchType as any,
+              punchTime: { gte: dayStart, lte: dayEnd },
+              void: { is: null },
+            },
+          })
+
+          if (original) {
+            // 1. Void original punchRecord
+            await tx.punchRecord.update({
+              where: { id: original.id },
+              data: { void: { create: { reason: `類型變更: ${originalPunchType} → ${punchType}`, voidedBy: session.userId } } },
+            })
+            voidedOriginalId = original.id
+
+            // 2. Create new punchRecord with new type
+            const newRecord = await tx.punchRecord.create({
+              data: {
+                employeeId: employee.id,
+                clinicId,
+                punchTime: correctedTime,
+                punchType: punchType as any,
+                source: 'CORRECTION' as any,
+              },
+            })
+            newPunchRecordId = newRecord.id
+          }
+        }
+
         const c = await tx.punchCorrection.create({
           data: {
-            punchRecordId,
+            punchRecordId: newPunchRecordId || punchRecordId,
             employeeId: employee.id,
             clinicId,
             correctedTime: new Date(date),
             punchType: punchType as any,
-            reason: reason || null,
+            reason: isTypeChange ? `類型變更: ${originalPunchType} → ${punchType}${reason ? '; ' + reason : ''}` : (reason || null),
             requestedBy: session.userId,
             status: isManager ? 'APPROVED' : 'PENDING',
             approvedBy: isManager ? session.userId : null,
@@ -134,7 +174,7 @@ export async function POST(req: NextRequest) {
         })
 
         // If APPROVED and no original punchRecord exists → create one (source=CORRECTION)
-        if (isManager && !punchRecordId) {
+        if (isManager && !punchRecordId && !newPunchRecordId) {
           const pr = await tx.punchRecord.create({
             data: {
               employeeId: employee.id,

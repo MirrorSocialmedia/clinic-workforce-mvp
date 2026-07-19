@@ -154,7 +154,7 @@ export default function AttendancePage() {
   const [error, setError] = useState('')
   const [showCorrectionModal, setShowCorrectionModal] = useState(false)
   const [correctionRecord, setCorrectionRecord] = useState<PunchRecord | null>(null)
-  const [correctionForm, setCorrectionForm] = useState({ time: '', reason: '' })
+  const [correctionForm, setCorrectionForm] = useState({ time: '', reason: '', punchType: '' })
   const [submittingCorrection, setSubmittingCorrection] = useState(false)
 
   // Standalone 補登 state
@@ -914,7 +914,7 @@ export default function AttendancePage() {
                           <span className="px-2 py-1 text-xs rounded bg-gray-200 text-gray-600 border border-gray-300"
                             title={(record.void as any)?.reason || ''}>已作廢</span>
                         ) : null}
-                        <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '' }); setShowCorrectionModal(true) }}
+                        <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '', punchType: record.punchType }); setShowCorrectionModal(true) }}
                           className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
                           <Pencil size={14} /> 修正
                         </button>
@@ -1265,7 +1265,7 @@ export default function AttendancePage() {
               <div>員工: {correctionRecord.employee?.user?.name || correctionRecord.employeeId}</div>
               <div>診所: {correctionRecord.clinic?.name || correctionRecord.clinicId}</div>
               <div>原時間: {fmtDateTime(correctionRecord.punchTime)}</div>
-              <div>類型: {correctionRecord.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
+              <div>類型: {correctionRecord.punchType === 'CLOCK_IN' ? '上工' : correctionRecord.punchType === 'CLOCK_OUT' ? '落班' : correctionRecord.punchType === 'LUNCH_START' ? '午休開始' : '午休結束'}</div>
             </div>
             <div className="mb-3">
               <label className="block text-xs text-muted-foreground mb-1 font-medium">正確時間</label>
@@ -1280,6 +1280,17 @@ export default function AttendancePage() {
                 placeholder="請說明修正原因" rows={3}
                 className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 resize-vertical" />
             </div>
+            <div className="mb-4">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">打卡類型</label>
+              <select value={correctionForm.punchType}
+                onChange={e => setCorrectionForm({ ...correctionForm, punchType: e.target.value })}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="CLOCK_IN">上班</option>
+                <option value="CLOCK_OUT">下班</option>
+                <option value="LUNCH_START">午休開始</option>
+                <option value="LUNCH_END">午休結束</option>
+              </select>
+            </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowCorrectionModal(false)}
                 className="px-4 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">取消</button>
@@ -1293,12 +1304,13 @@ export default function AttendancePage() {
                     method: 'POST', credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      date: datetime, punchType: correctionRecord.punchType,
+                      date: datetime, punchType: correctionForm.punchType || correctionRecord.punchType,
                       reason: correctionForm.reason, clinicId: correctionRecord.clinicId,
                       employeeId: correctionRecord.employeeId,
+                      originalPunchType: correctionRecord.punchType,
                     }),
                   })
-                  if (res.ok) { alert('修正申請已提交'); setShowCorrectionModal(false); setCorrectionForm({ time: '', reason: '' }); fetchRecords() }
+                  if (res.ok) { alert('修正申請已提交'); setShowCorrectionModal(false); setCorrectionForm({ time: '', reason: '', punchType: '' }); fetchRecords() }
                   else { const err = await res.json(); alert(err.error || '提交失敗') }
                 } catch { alert('網路錯誤') }
                 finally { setSubmittingCorrection(false) }

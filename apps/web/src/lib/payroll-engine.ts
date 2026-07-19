@@ -1200,6 +1200,7 @@ export async function calculateTimeBank(
   availableMinutes: number
   convertibleLeaveDays: number
   note: string
+  totalLunchDeductMinutes: number
 }> {
   // TZ-safe month range
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
@@ -1253,6 +1254,7 @@ export async function calculateTimeBank(
   let otMinutes = 0
   let lateMinutes = 0
   let earlyLeaveMinutes = 0
+  let totalLunchDeductMinutes = 0 // ★ Accumulate lunch deduction across all shift days
 
   for (const shift of shifts) {
     const shiftDateStr = toHKDateStr(new Date(shift.date))
@@ -1317,6 +1319,7 @@ export async function calculateTimeBank(
       // 併入 OT（繞過門檻）和遲到
       otMinutes += lunchOtMinutes
       lateMinutes += lunchLateMinutes
+      totalLunchDeductMinutes += lunchDeduct // ★ Accumulate for worked hours deduction
     }
   }
 
@@ -1399,6 +1402,7 @@ export async function calculateTimeBank(
     availableMinutes,
     convertibleLeaveDays,
     note,
+    totalLunchDeductMinutes,
   }
 }
 
@@ -2475,6 +2479,11 @@ export async function calculatePayrollWithRules(
   const timeBankConfig = mods.time_bank || { negative_carry: 'reset' }
   const tb = await calculateTimeBank(employeeId, monthDate, timeBankConfig, prisma)
   result.otHours = tb.otMinutes / 60 // 從分鐘換算，不自己算
+
+  // ★ Bug 4 fix: Subtract lunch deduction from worked hours
+  if (tb.totalLunchDeductMinutes > 0) {
+    result.workedHours = Math.max(0, result.workedHours - tb.totalLunchDeductMinutes / 60)
+  }
 
   // 🔑 重新計算 otPay — 之前用門檻制 otHours 算錯，現在用時間銀行 otMinutes 換算的小時數
   {
