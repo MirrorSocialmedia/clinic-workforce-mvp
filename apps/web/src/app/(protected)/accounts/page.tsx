@@ -24,7 +24,7 @@ interface Account {
 }
 
 const STATUS_LABELS: Record<string, string> = { ACTIVE: '啟用', INACTIVE: '停用', RESIGNED: '已離職' }
-const ROLE_LABELS: Record<string, string> = { OWNER: 'Owner', MANAGER: 'Manager', ACCOUNTANT: 'Accountant', EMPLOYEE: 'Employee' }
+const ROLE_LABELS: Record<string, string> = { OWNER: 'Owner', MANAGER: 'Manager', ACCOUNTANT: 'Accountant', EMPLOYEE: 'Employee', KIOSK: '打卡屏' }
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -132,6 +132,12 @@ export default function AccountsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // Validate: KIOSK must bind exactly one clinic
+    if (!editingId && form.role === 'KIOSK' && form.clinicIds.length !== 1) {
+      alert('打卡屏必須綁定一間診所')
+      return
+    }
+
     // Validate: at least one clinic required when creating employee
     if (!editingId && form.assignEmployee && form.clinicIds.length === 0) {
       alert('請至少選擇一個診所')
@@ -144,19 +150,25 @@ export default function AccountsPage() {
       const body: any = {
         name: form.name, phone: form.phone, email: form.email || undefined,
         role: form.role, clinicIds: form.clinicIds,
-        joinDate: form.joinDate || undefined,
-        payType: form.payType,
-        baseAmount: form.baseAmount ? parseFloat(form.baseAmount) : null,
-        assignEmployee: form.assignEmployee,
-        payConfidential: form.payConfidential,
-        annualLeave: form.assignEmployee ? (parseFloat(form.annualLeave) || 0) : undefined,
-        homeClinicId: form.assignEmployee ? form.homeClinicId || null : undefined,
       }
-      // Permissions: compute grant/deny diff from ROLE_DEFAULTS
-      if (form.role && form.role !== 'OWNER') {
-        const defaults = ROLE_DEFAULTS[form.role] || []
-        body.permissionsJson = { grant: form.permGrant, deny: form.permDeny }
+
+      // KIOSK: no employee data, no permissions
+      if (form.role !== 'KIOSK') {
+        body.joinDate = form.joinDate || undefined
+        body.payType = form.payType
+        body.baseAmount = form.baseAmount ? parseFloat(form.baseAmount) : null
+        body.assignEmployee = form.assignEmployee
+        body.payConfidential = form.payConfidential
+        body.annualLeave = form.assignEmployee ? (parseFloat(form.annualLeave) || 0) : undefined
+        body.homeClinicId = form.assignEmployee ? form.homeClinicId || null : undefined
+
+        // Permissions: compute grant/deny diff from ROLE_DEFAULTS
+        if (form.role && form.role !== 'OWNER') {
+          const defaults = ROLE_DEFAULTS[form.role] || []
+          body.permissionsJson = { grant: form.permGrant, deny: form.permDeny }
+        }
       }
+
       if (!editingId && form.password) body.password = form.password
       if (editingId && form.password) body.newPassword = form.password
 
@@ -455,11 +467,12 @@ export default function AccountsPage() {
                   <option value="MANAGER">Manager</option>
                   <option value="ACCOUNTANT">Accountant</option>
                   <option value="EMPLOYEE">Employee</option>
+                  {isOwner && <option value="KIOSK">打卡屏（共享 iPad）</option>}
                 </select>
               </div>
 
               {/* Permissions checkboxes (expand after role selection) */}
-              {form.role && form.role !== 'OWNER' && (
+              {form.role && form.role !== 'OWNER' && form.role !== 'KIOSK' && (
                 <div style={{ gridColumn: '1 / -1' }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#555' }}>🔑 角色權限（預設勾選 = 角色默認權限，可手動調整）</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -510,68 +523,79 @@ export default function AccountsPage() {
                   🔒 Owner 擁有所有權限，不可調整
                 </div>
               )}
-              <div className="form-group">
-                <label>到職日（員工）</label>
-                <input type="date" value={form.joinDate} onChange={e => setForm({ ...form, joinDate: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>計薪方式</label>
-                <select value={form.payType} onChange={e => setForm({ ...form, payType: e.target.value })}>
-                  <option value="HOURLY">時薪</option>
-                  <option value="MONTHLY">月薪</option>
-                </select>
-              </div>
-              <div className="form-group">
-                <label>{form.payType === 'HOURLY' ? '時薪' : '月薪'}</label>
-                <input type="number" step="0.01" value={form.baseAmount}
-                  onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
-              </div>
-              {form.assignEmployee && (
+              {form.role !== 'KIOSK' && (
                 <>
                   <div className="form-group">
-                    <label>年假額度（天）</label>
-                    <input type="number" value={form.annualLeave} min="0" step="0.5" inputMode="decimal"
-                      onChange={e => setForm({ ...form, annualLeave: e.target.value })} />
+                    <label>到職日（員工）</label>
+                    <input type="date" value={form.joinDate} onChange={e => setForm({ ...form, joinDate: e.target.value })} />
                   </div>
+                  <div className="form-group">
+                    <label>計薪方式</label>
+                    <select value={form.payType} onChange={e => setForm({ ...form, payType: e.target.value })}>
+                      <option value="HOURLY">時薪</option>
+                      <option value="MONTHLY">月薪</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>{form.payType === 'HOURLY' ? '時薪' : '月薪'}</label>
+                    <input type="number" step="0.01" value={form.baseAmount}
+                      onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
+                  </div>
+                  {form.assignEmployee && (
+                    <>
+                      <div className="form-group">
+                        <label>年假額度（天）</label>
+                        <input type="number" value={form.annualLeave} min="0" step="0.5" inputMode="decimal"
+                          onChange={e => setForm({ ...form, annualLeave: e.target.value })} />
+                      </div>
+                    </>
+                  )}
+                  {/* 同時創建員工記錄 — 整行、checkbox+文字一體 */}
+                  <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={form.assignEmployee}
+                      onChange={e => setForm({ ...form, assignEmployee: e.target.checked })} />
+                    同時創建員工記錄（用於排班和計薪）
+                  </label>
+
+                  {/* 薪資保密 checkbox */}
+                  <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={form.payConfidential}
+                      onChange={e => setForm({ ...form, payConfidential: e.target.checked })} />
+                    🔒 薪資保密（經理在計糧中看不到此員工的金額）
+                  </label>
                 </>
               )}
-              {/* 同時創建員工記錄 — 整行、checkbox+文字一體 */}
-              <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
-                <input type="checkbox" checked={form.assignEmployee}
-                  onChange={e => setForm({ ...form, assignEmployee: e.target.checked })} />
-                同時創建員工記錄（用於排班和計薪）
-              </label>
 
-              {/* 薪資保密 checkbox */}
-              <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
-                <input type="checkbox" checked={form.payConfidential}
-                  onChange={e => setForm({ ...form, payConfidential: e.target.checked })} />
-                🔒 薪資保密（經理在計糧中看不到此員工的金額）
-              </label>
-
-              {/* 診所指派 chip 流式排列 */}
+              {/* 診所指派 — KIOSK 單選，其他角色多選 chip */}
               <div style={{ gridColumn: '1 / -1' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>診所指派</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {clinics.map(c => (
-                    <label key={c.id} style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                      padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
-                      border: form.clinicIds.includes(c.id) ? '1.5px solid #0f766e' : '1px solid #e5e7eb',
-                      background: form.clinicIds.includes(c.id) ? '#f0fdfa' : '#fff',
-                      fontSize: 13, whiteSpace: 'nowrap',
-                    }}>
-                      <input type="checkbox" checked={form.clinicIds.includes(c.id)}
-                        onChange={e => {
-                          const ids = e.target.checked ? [...form.clinicIds, c.id] : form.clinicIds.filter(id => id !== c.id)
-                          // If unchecking current homeClinic, clear it
-                          const newIds = ids
-                          setForm({ ...form, clinicIds: ids, homeClinicId: (!ids.includes(form.homeClinicId) && form.homeClinicId) ? '' : form.homeClinicId })
-                        }} />
-                      {c.name}
-                    </label>
-                  ))}
-                </div>
+                {form.role === 'KIOSK' ? (
+                  <select value={form.clinicIds[0] || ''} onChange={e => setForm({ ...form, clinicIds: e.target.value ? [e.target.value] : [] })}>
+                    <option value="">選擇打卡屏所屬診所</option>
+                    {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {clinics.map(c => (
+                      <label key={c.id} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
+                        border: form.clinicIds.includes(c.id) ? '1.5px solid #0f766e' : '1px solid #e5e7eb',
+                        background: form.clinicIds.includes(c.id) ? '#f0fdfa' : '#fff',
+                        fontSize: 13, whiteSpace: 'nowrap',
+                      }}>
+                        <input type="checkbox" checked={form.clinicIds.includes(c.id)}
+                          onChange={e => {
+                            const ids = e.target.checked ? [...form.clinicIds, c.id] : form.clinicIds.filter(id => id !== c.id)
+                            // If unchecking current homeClinic, clear it
+                            const newIds = ids
+                            setForm({ ...form, clinicIds: ids, homeClinicId: (!ids.includes(form.homeClinicId) && form.homeClinicId) ? '' : form.homeClinicId })
+                          }} />
+                        {c.name}
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* 長駐店鋪 — only show when employee has assigned clinics */}
@@ -626,6 +650,7 @@ export default function AccountsPage() {
           <option value="MANAGER">Manager</option>
           <option value="ACCOUNTANT">Accountant</option>
           <option value="EMPLOYEE">Employee</option>
+          <option value="KIOSK">打卡屏</option>
         </select>
         <select value={clinicFilter} onChange={e => setClinicFilter(e.target.value)}
           style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13 }}>

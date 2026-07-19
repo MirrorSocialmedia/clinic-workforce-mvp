@@ -153,7 +153,9 @@ export async function POST(req: NextRequest) {
       })
 
       let employee = null
-      if (assignEmployee) {
+      // KIOSK accounts never create employee records
+      const shouldCreateEmployee = assignEmployee && role !== 'KIOSK'
+      if (shouldCreateEmployee) {
         // Validate homeClinicId: must be within assigned clinics
         if (homeClinicId && !clinicIds?.includes(homeClinicId)) {
           return NextResponse.json({ error: '長駐店不在已指派診所中，請確認診所指派後重試' }, { status: 400 })

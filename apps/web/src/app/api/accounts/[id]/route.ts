@@ -178,8 +178,9 @@ export async function PUT(
       }
 
       // ① Backfill employee record if assignEmployee is true but no employee exists
+      // KIOSK accounts never get employee records
       let employee = existing.employee
-      if (!employee && assignEmployee) {
+      if (!employee && assignEmployee && role !== 'KIOSK') {
         employee = await prisma.employee.create({
           data: {
             userId: params.id,
