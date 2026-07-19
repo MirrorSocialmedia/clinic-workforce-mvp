@@ -159,7 +159,7 @@ export default function PunchPage() {
       if (!lastPosRef.current) {
         const r = await getPunchLocationLive()
         if (r.lat != null && r.lng != null) {
-          const acc: number = r.acc != null ? Math.round(r.acc) : 999
+          const acc: number = r.acc != null ? Math.round(Number(r.acc)) : 999
           lastPosRef.current = { lat: r.lat, lng: r.lng, acc, t: Date.now() }
           setGpsReady(true)
         } else if (r.flag === 'DENIED') {
