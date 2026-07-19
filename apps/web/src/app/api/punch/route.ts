@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { token: qrToken, deviceInfo, lat, lng, geoFlag } = body
+      const { token: qrToken, deviceInfo, lat, lng, geoFlag, geoAcc } = body
 
       if (!qrToken) {
         return NextResponse.json(
@@ -119,7 +119,8 @@ export async function POST(req: NextRequest) {
       let punchLat = null,
         punchLng = null,
         distanceM = null,
-        locationFlag: string | null = geoFlag || null
+        locationFlag: string | null = geoFlag || null,
+        geoAccuracy: number | null = geoAcc != null ? Math.round(geoAcc) : null
 
       if (!geoFlag && lat != null && lng != null) {
         punchLat = lat
@@ -150,6 +151,7 @@ export async function POST(req: NextRequest) {
             punchLng,
             distanceM,
             locationFlag,
+            geoAccuracy,
           },
         })
 

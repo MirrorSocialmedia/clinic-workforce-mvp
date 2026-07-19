@@ -13,16 +13,23 @@ import { useFaceCapture } from '@/lib/use-face-capture'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
-/** Get GPS coords for punch location verification (shadow mode — never blocks punch) */
-async function getPunchLocation(): Promise<{ lat?: number; lng?: number; flag?: string }> {
+/** Get GPS coords for punch location verification (two-stage: high-accuracy GPS → low-accuracy WiFi/cell fallback) */
+async function getPunchLocation(): Promise<{ lat?: number; lng?: number; flag?: string; acc?: number }> {
   if (!navigator.geolocation) return { flag: 'NO_GPS' }
-  return new Promise(resolve => {
+  const tryOnce = (highAcc: boolean, timeout: number) => new Promise<any>(resolve => {
     navigator.geolocation.getCurrentPosition(
-      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      err => resolve({ flag: err.code === 1 ? 'DENIED' : 'NO_GPS' }),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: Math.round(pos.coords.accuracy) }),
+      err => resolve({ flag: err.code === 1 ? 'DENIED' : err.code === 3 ? 'TIMEOUT' : 'NO_GPS' }),
+      { enableHighAccuracy: highAcc, timeout, maximumAge: 60000 },
     )
   })
+  // 第一次: 高精度 GPS 6 秒
+  let r = await tryOnce(true, 6000)
+  if (r.lat != null) return r
+  if (r.flag === 'DENIED') return r // 權限拒絕不必重試
+  // 第二次: 低精度(WiFi/基站)5 秒——室內拿不到 GPS 時這步能成
+  r = await tryOnce(false, 5000)
+  return r
 }
 
 /** Play a short confirmation beep via Web Audio API */
@@ -138,6 +145,7 @@ export default function PunchPage() {
           lat: loc.lat,
           lng: loc.lng,
           geoFlag: loc.flag,
+          geoAcc: loc.acc,
         }),
       })
 

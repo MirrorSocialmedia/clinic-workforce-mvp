@@ -301,6 +301,7 @@ model PunchRecord {
   punchLng      Float?   // 打卡當下經度
   distanceM     Int?     // 距店距離(米)
   locationFlag  String?  // null=正常 / 'OUT_OF_RANGE' / 'NO_GPS' / 'DENIED'
+  geoAccuracy   Int?     // 定位精度(米)
 
   createdAt   DateTime    @default(now())
 

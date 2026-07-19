@@ -50,6 +50,19 @@ export async function GET(
       deviceInfo: record.deviceInfo, notes: record.notes,
       createdAt: record.createdAt.toISOString(),
       employee: record.employee, clinic: record.clinic,
+      // Face verification fields
+      faceStatus: record.faceStatus,
+      faceScore: record.faceScore,
+      faceReason: record.faceReason,
+      faceFramePath: record.faceFramePath,
+      faceReviewedAt: record.faceReviewedAt?.toISOString() ?? null,
+      faceReviewedBy: record.faceReviewedBy,
+      // GPS location fields
+      punchLat: record.punchLat,
+      punchLng: record.punchLng,
+      distanceM: record.distanceM,
+      locationFlag: record.locationFlag,
+      geoAccuracy: record.geoAccuracy,
     },
     chain,
   })
