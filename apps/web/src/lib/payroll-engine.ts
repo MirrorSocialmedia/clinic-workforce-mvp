@@ -1013,6 +1013,11 @@ export interface PayRuleConfigModular {
       min?: number
       max?: number
     }
+    lunch_break?: {
+      enabled?: boolean
+      defaultMinutes?: number
+      minMinutes?: number
+    }
   }
 
   // Leave banking: 不放的假存起來
@@ -1199,9 +1204,12 @@ export async function calculateTimeBank(
   // TZ-safe month range
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
-  // Get OT minimum threshold from payRule
+  // Get OT minimum threshold + lunch config from payRule
   let otMinMinutes = 0
   let otRoundMinutes = 0
+  let lunchEnabled = false
+  let lunchDefault = 60
+  let lunchMin = 30
   try {
     const rule = await db.payRule.findFirst({
       where: {
@@ -1216,6 +1224,10 @@ export async function calculateTimeBank(
       const cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
       otMinMinutes = cfg?.modifiers?.overtime?.ot_min_minutes ?? 0
       otRoundMinutes = cfg?.modifiers?.overtime?.ot_round_minutes ?? 0
+      const lunch = cfg?.modifiers?.lunch_break ?? {}
+      lunchEnabled = !!lunch.enabled
+      lunchDefault = lunch.defaultMinutes ?? 60
+      lunchMin = lunch.minMinutes ?? 30
     }
   } catch {
     otMinMinutes = 0
@@ -1276,6 +1288,35 @@ export async function calculateTimeBank(
           : dayOt // 0=不取整，原樣
         otMinutes += counted  // ≥門檻全數計；逐日判定
       }
+    }
+
+    // ★ 午休扣減（地基：有上班的日子一律扣 lunchDefault）
+    if (clockIn) {
+      let lunchDeduct = lunchDefault // 無條件地基
+      let lunchOtMinutes = 0
+      let lunchLateMinutes = 0
+
+      if (lunchEnabled) {
+        const ls = dayPunches.filter((p: any) => p.punchType === 'LUNCH_START')
+          .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
+        const le = dayPunches.filter((p: any) => p.punchType === 'LUNCH_END')
+          .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
+
+        if (ls && le && le.effectiveTime.getTime() > ls.effectiveTime.getTime()) {
+          const actual = Math.round((le.effectiveTime.getTime() - ls.effectiveTime.getTime()) / 60000)
+          const effective = Math.max(actual, lunchMin)
+          lunchDeduct = effective
+          if (effective < lunchDefault) {
+            lunchOtMinutes = lunchDefault - effective
+          } else if (effective > lunchDefault) {
+            lunchLateMinutes = effective - lunchDefault
+          }
+        }
+      }
+
+      // 併入 OT（繞過門檻）和遲到
+      otMinutes += lunchOtMinutes
+      lateMinutes += lunchLateMinutes
     }
   }
 

@@ -52,6 +52,7 @@ function playBeep() {
 export default function PunchPage() {
   const router = useRouter()
   const [user, setUser] = useState<{ role: Role; clinics: string[] } | null>(null)
+  const [lunchEnabled, setLunchEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [records, setRecords] = useState<any[]>([])
 
@@ -107,6 +108,7 @@ export default function PunchPage() {
       if (!res.ok) { router.push('/login'); return }
       const data = await res.json()
       setUser({ role: data.user.role, clinics: data.user.clinicIds || [] })
+      setLunchEnabled(!!data.lunchEnabled)
     } catch { router.push('/login') }
   }, [router])
 
@@ -216,7 +218,7 @@ export default function PunchPage() {
       playBeep()
 
       setPunchResult({
-        type: data.punchType === 'CLOCK_IN' ? '上工' : '落班',
+        type: data.punchType === 'CLOCK_IN' ? '上工' : data.punchType === 'CLOCK_OUT' ? '落班' : data.punchType === 'LUNCH_START' ? '午休開始' : '午休結束',
         time: fmtTime(data.punchTime),
       })
       setCountdown(3)
@@ -260,6 +262,41 @@ export default function PunchPage() {
   const stableOnScan = useCallback(async (token: string): Promise<boolean> => {
     return handleScanRef.current(token)
   }, [])
+
+  // ★ Lunch punch handler — no QR token, direct API call with punchType
+  const handleLunchPunch = useCallback(async (punchType: 'LUNCH_START' | 'LUNCH_END') => {
+    setError(null)
+    try {
+      const loc = await getPunchLocation()
+      const res = await fetch('/api/punch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          punchType,
+          deviceInfo: navigator.userAgent,
+          lat: loc.lat,
+          lng: loc.lng,
+          geoFlag: loc.flag,
+          geoAcc: loc.acc,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || '打卡失敗')
+
+      navigator.vibrate?.([80, 40, 80])
+      playBeep()
+
+      const label = punchType === 'LUNCH_START' ? '午休開始' : '午休結束'
+      setPunchResult({ type: label, time: fmtTime(data.punchTime) })
+      setCountdown(3)
+      fetchRecords()
+      return true
+    } catch (e: any) {
+      setError(e.message)
+      return false
+    }
+  }, [fetchRecords])
 
   // ★ Android 相機釋放延遲 — 重試開鏡 (NotReadableError)
   async function openFrontCamera(tries = 4): Promise<MediaStream> {
@@ -389,6 +426,26 @@ export default function PunchPage() {
         </div>
       )}
 
+      {/* ★ Lunch punch buttons — only when lunchBreak enabled */}
+      {!punchResult && lunchEnabled && (
+        <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto">
+          <button
+            onClick={() => handleLunchPunch('LUNCH_START')}
+            className="py-3 px-4 rounded-xl font-medium text-sm transition-colors"
+            style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
+          >
+            ☀️ 午休開始
+          </button>
+          <button
+            onClick={() => handleLunchPunch('LUNCH_END')}
+            className="py-3 px-4 rounded-xl font-medium text-sm transition-colors"
+            style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }}
+          >
+            🌙 午休結束
+          </button>
+        </div>
+      )}
+
       {/* Error banner (inline, auto-clears on next scan) */}
       {error && (
         <Alert variant="destructive">
@@ -416,9 +473,9 @@ export default function PunchPage() {
                   >
                     <div className="flex items-center gap-2">
                       <Badge
-                        variant={r.punchType === 'CLOCK_IN' ? 'default' : 'secondary'}
+                        variant={r.punchType === 'CLOCK_IN' ? 'default' : r.punchType === 'CLOCK_OUT' ? 'secondary' : r.punchType === 'LUNCH_START' ? 'outline' : 'destructive'}
                       >
-                        {r.punchType === 'CLOCK_IN' ? '上工' : '落班'}
+                        {r.punchType === 'CLOCK_IN' ? '上工' : r.punchType === 'CLOCK_OUT' ? '落班' : r.punchType === 'LUNCH_START' ? '午休開始' : '午休結束'}
                       </Badge>
                       <span className="text-foreground">{r.clinic?.name || '診所'}</span>
                     </div>

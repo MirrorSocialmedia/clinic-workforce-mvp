@@ -56,6 +56,11 @@ const DEFAULT_MODIFIERS: PayRuleConfigModular['modifiers'] = {
     rest_days: [6, 0], // 週六日為休息日
     count_public_holidays: true,
   },
+  lunch_break: {
+    enabled: false,
+    defaultMinutes: 60,
+    minMinutes: 30,
+  },
 }
 
 function buildDefaultConfig(baseType: BaseType): PayRuleConfigModular {
@@ -838,6 +843,96 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                     例：設 10 → OT 16 分算 10、OT 29 分算 20。與「OT 最低分鐘」搭配: 先過最低門檻, 再按此級距向下取整。
                   </p>
                 </div>
+              </div>
+            )}
+
+            {/* ── Lunch Break ── */}
+            <div style={modifierToggleStyle} onClick={() => toggleModifier('lunch_break')}>
+              <input
+                type="checkbox"
+                checked={!!modifiers.lunch_break}
+                onChange={() => toggleModifier('lunch_break')}
+                onClick={(e) => e.stopPropagation()}
+              />
+              午休設定
+            </div>
+            {modifiers.lunch_break && (
+              <div style={modifierBodyStyle}>
+                {/* 地基：每天扣多少午休，永遠可設，不受開關影響 */}
+                <div className="form-group">
+                  <label>每天午休扣減（分鐘）</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={modifiers.lunch_break?.defaultMinutes ?? 60}
+                    onChange={(e) => {
+                      setConfig((prev) => ({
+                        ...prev,
+                        modifiers: {
+                          ...prev.modifiers!,
+                          lunch_break: {
+                            ...prev.modifiers!.lunch_break!,
+                            defaultMinutes: parseInt(e.target.value) || 0,
+                          },
+                        },
+                      }))
+                    }}
+                    style={{ width: 80 }}
+                  />
+                  <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
+                    有上班的日子一律扣此時間（即使不啟用下方午休打卡）。設 0 = 不扣午休。
+                  </p>
+                </div>
+
+                {/* 調整層：開關 + 下限 */}
+                <label style={{ ...checkboxLabelStyle, marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={modifiers.lunch_break?.enabled ?? false}
+                    onChange={(e) => {
+                      setConfig((prev) => ({
+                        ...prev,
+                        modifiers: {
+                          ...prev.modifiers!,
+                          lunch_break: {
+                            ...prev.modifiers!.lunch_break!,
+                            enabled: e.target.checked,
+                          },
+                        },
+                      }))
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  啟用午休打卡（員工可打卡調整實際午休時長）
+                </label>
+                {modifiers.lunch_break?.enabled && (
+                  <div style={{ marginLeft: 24, marginTop: 8 }}>
+                    <div className="form-group">
+                      <label>最少扣減（分鐘）</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={modifiers.lunch_break.minMinutes ?? 30}
+                        onChange={(e) => {
+                          setConfig((prev) => ({
+                            ...prev,
+                            modifiers: {
+                              ...prev.modifiers!,
+                              lunch_break: {
+                                ...prev.modifiers!.lunch_break!,
+                                minMinutes: parseInt(e.target.value) || 0,
+                              },
+                            },
+                          }))
+                        }}
+                        style={{ width: 80 }}
+                      />
+                      <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
+                        員工打午休卡則用實際時長替代上方預設：少休算 OT（不設門檻）、超休算遲到、最少扣此分鐘。
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -684,7 +684,7 @@ export default function AttendancePage() {
                 else if (showOt) exceptionLabel = `OT ${showOt.otMinutes || 0} 分`
               }
 
-              const punchLabel = record.punchType === 'CLOCK_IN' ? '上工' : '落班'
+              const punchLabel = record.punchType === 'CLOCK_IN' ? '上工' : record.punchType === 'CLOCK_OUT' ? '落班' : record.punchType === 'LUNCH_START' ? '午休開始' : record.punchType === 'LUNCH_END' ? '午休結束' : '未知'
               const sourceLabel = record.source === 'QR_DYNAMIC' ? '動態碼' : record.source === 'QR_STATIC' ? '固定碼' : record.source === 'MANUAL_CORRECTION' ? '補打卡' : '系統'
 
               return (
@@ -697,7 +697,7 @@ export default function AttendancePage() {
                   <div className="flex justify-between items-center text-sm">
                     <div className="flex items-center gap-2">
                       <span className="px-1.5 py-0.5 text-[10px] rounded border
-                        {isClockIn ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-orange-300 bg-orange-50 text-orange-700'} font-medium">
+                        {isClockIn ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : !isClockIn && record.punchType === 'CLOCK_OUT' ? 'border-orange-300 bg-orange-50 text-orange-700' : record.punchType === 'LUNCH_START' ? 'border-amber-300 bg-amber-50 text-amber-700' : record.punchType === 'LUNCH_END' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-300 bg-gray-50 text-gray-700'} font-medium">
                         {punchLabel}
                       </span>
                       <span>{displayTime}</span>

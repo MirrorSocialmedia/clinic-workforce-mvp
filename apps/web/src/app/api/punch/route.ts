@@ -8,7 +8,7 @@ import { todayHK, hkDateStart } from '@/lib/hk-date'
 import { distanceMeters } from '@/lib/geo'
 
 // ============================================================
-// POST /api/punch — Clock in/out via QR token
+// POST /api/punch — Clock in/out via QR token or manual lunch punch
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 
@@ -36,12 +36,9 @@ export async function POST(req: NextRequest) {
       const body = await req.json()
       const { token: qrToken, deviceInfo, lat, lng, geoFlag, geoAcc } = body
 
-      if (!qrToken) {
-        return NextResponse.json(
-          { error: 'token is required' },
-          { status: 400 }
-        )
-      }
+      // Accept optional explicit punchType (LUNCH_START/LUNCH_END); otherwise auto-detect CLOCK_IN/CLOCK_OUT
+      const explicitPunchType = body.punchType
+      const isLunchPunch = explicitPunchType === 'LUNCH_START' || explicitPunchType === 'LUNCH_END'
 
       // Get the employee for this user
       const employee = await prisma.employee.findUnique({
@@ -58,36 +55,56 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Atomic: validate + mark token used in one operation
-      const validation = await validateAndMarkTokenUsed(qrToken, employee.id)
+      let clinicId: string | null = null
+      let source: string = 'QR_DYNAMIC'
+      let tokenValid: boolean | null = true
 
-      if (!validation || !validation.valid) {
-        return NextResponse.json(
-          { error: `QR token invalid: ${validation?.reason || 'unknown'}` },
-          { status: 400 }
-        )
+      if (isLunchPunch) {
+        // Lunch punch: no QR token required, use employee's first assigned clinic
+        clinicId = employee.clinics[0]?.clinicId || null
+        if (!clinicId) {
+          return NextResponse.json({ error: 'No clinic assigned' }, { status: 400 })
+        }
+        source = 'MANUAL_CORRECTION'
+        tokenValid = null
+      } else {
+        // Auto-detect path (CLOCK_IN/CLOCK_OUT): requires QR token
+        if (!qrToken) {
+          return NextResponse.json({ error: 'token is required' }, { status: 400 })
+        }
+
+        // Atomic: validate + mark token used in one operation
+        const validation = await validateAndMarkTokenUsed(qrToken, employee.id)
+
+        if (!validation || !validation.valid) {
+          return NextResponse.json(
+            { error: `QR token invalid: ${validation?.reason || 'unknown'}` },
+            { status: 400 }
+          )
+        }
+
+        clinicId = validation.clinicId ?? null
+
+        if (!clinicId) {
+          return NextResponse.json(
+            { error: 'Clinic ID missing from token validation' },
+            { status: 400 }
+          )
+        }
+
+        // Verify employee belongs to this clinic
+        const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
+        if (!empClinicIds.includes(clinicId)) {
+          return NextResponse.json(
+            { error: 'You are not assigned to this clinic' },
+            { status: 403 }
+          )
+        }
+
+        source = validation.source || 'QR_DYNAMIC'
       }
 
-      const clinicId = validation.clinicId
-
-      if (!clinicId) {
-        return NextResponse.json(
-          { error: 'Clinic ID missing from token validation' },
-          { status: 400 }
-        )
-      }
-
-      // Verify employee belongs to this clinic
-      const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
-      if (!empClinicIds.includes(clinicId)) {
-        return NextResponse.json(
-          { error: 'You are not assigned to this clinic' },
-          { status: 403 }
-        )
-      }
-
-      // Auto-detect punch type: CLOCK_IN if no CLOCK_IN today, else CLOCK_OUT
-      // Hard limit: max 1 CLOCK_IN + 1 CLOCK_OUT per day
+      // Determine punch type
       const todayStart = getTodayStartHK()
       const todayPunches = await prisma.punchRecord.findMany({
         where: {
@@ -97,22 +114,34 @@ export async function POST(req: NextRequest) {
           void: { is: null }, // 已作廢的不算存在
         },
         orderBy: { punchTime: 'desc' },
-        take: 10,
+        take: 20,
       })
 
-      const hasClockInToday = todayPunches.some(p => p.punchType === 'CLOCK_IN')
-      const hasClockOutToday = todayPunches.some(p => p.punchType === 'CLOCK_OUT')
-
-      let punchType: 'CLOCK_IN' | 'CLOCK_OUT'
-      if (!hasClockInToday) {
-        punchType = 'CLOCK_IN'
-      } else if (!hasClockOutToday) {
-        punchType = 'CLOCK_OUT'
+      let punchType: string
+      if (isLunchPunch) {
+        punchType = explicitPunchType
+        // Validate per-type limit: max 1 LUNCH_START + 1 LUNCH_END per day
+        if (todayPunches.some(p => p.punchType === punchType)) {
+          const label = punchType === 'LUNCH_START' ? '午休開始' : '午休結束'
+          return NextResponse.json(
+            { error: `今天已打${label}卡` },
+            { status: 400 }
+          )
+        }
       } else {
-        return NextResponse.json(
-          { error: '今天已完成上下班打卡，如需修改請用補打卡' },
-          { status: 400 }
-        )
+        const hasClockInToday = todayPunches.some(p => p.punchType === 'CLOCK_IN')
+        const hasClockOutToday = todayPunches.some(p => p.punchType === 'CLOCK_OUT')
+
+        if (!hasClockInToday) {
+          punchType = 'CLOCK_IN'
+        } else if (!hasClockOutToday) {
+          punchType = 'CLOCK_OUT'
+        } else {
+          return NextResponse.json(
+            { error: '今天已完成上下班打卡，如需修改請用補打卡' },
+            { status: 400 }
+          )
+        }
       }
 
       // ★ GPS location verification (shadow mode — observation only, never blocks)
@@ -144,8 +173,8 @@ export async function POST(req: NextRequest) {
             clinicId,
             punchTime: new Date(),
             punchType: punchType as any,
-            source: (validation.source || 'QR_DYNAMIC') as any,
-            tokenValid: true,
+            source: source as any,
+            tokenValid,
             deviceInfo: deviceInfo || null,
             punchLat,
             punchLng,

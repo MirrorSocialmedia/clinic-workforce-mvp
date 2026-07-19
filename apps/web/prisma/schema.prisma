@@ -50,6 +50,8 @@ enum ShiftStatus {
 enum PunchType {
   CLOCK_IN
   CLOCK_OUT
+  LUNCH_START
+  LUNCH_END
 }
 
 enum PunchSource {

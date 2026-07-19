@@ -1,0 +1,3 @@
+-- Postgres enum append-only
+ALTER TYPE "PunchType" ADD VALUE IF NOT EXISTS 'LUNCH_START';
+ALTER TYPE "PunchType" ADD VALUE IF NOT EXISTS 'LUNCH_END';
