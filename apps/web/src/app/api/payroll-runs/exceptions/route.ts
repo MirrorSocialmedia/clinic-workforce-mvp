@@ -311,13 +311,18 @@ export async function GET(req: NextRequest) {
     // timeBankEntry may not exist
   }
 
+  const TYPE_LABEL: Record<string, string> = {
+    CLOCK_IN: '上班', CLOCK_OUT: '下班',
+    LUNCH_START: '午休開始', LUNCH_END: '午休結束'
+  }
+
   for (const c of corrections) {
     const clinic = c.employee?.clinics?.find(cl => cl.clinicId === c.clinicId)?.clinic
     exceptions.push({
       employeeId: c.employeeId, employeeName: c.employee?.user?.name || 'Unknown',
       clinicName: clinic?.name || c.clinicId,
       date: toHKDateStr(c.correctedTime), type: 'CORRECTION',
-      detail: `補登 ${c.punchType === 'CLOCK_IN' ? '上工' : '落班'} 至 ${fmtTime(c.correctedTime)}${c.reason ? ` (${c.reason})` : ''}`,
+      detail: `補登 ${TYPE_LABEL[c.punchType] || c.punchType} 至 ${fmtTime(c.correctedTime)}${c.reason ? ` (${c.reason})` : ''}`,
       correctionTime: c.correctedTime.toISOString(),
     })
   }

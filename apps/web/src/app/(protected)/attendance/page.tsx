@@ -636,9 +636,10 @@ export default function AttendancePage() {
               const record = row as PunchRecord & { isAbsentRow: false; sortTime: number }
               const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
               const isClockIn = record.punchType === 'CLOCK_IN'
+              const isClockOut = record.punchType === 'CLOCK_OUT'
               const showLate = isClockIn ? lateEx : undefined
-              const showEarly = !isClockIn ? earlyEx : undefined
-              const showOt = !isClockIn ? otEx : undefined
+              const showEarly = isClockOut ? earlyEx : undefined
+              const showOt = isClockOut ? otEx : undefined
               const recordDateStr = toHKDateStr(new Date(record.punchTime))
               const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
               const isVoided = !!(record.void as any)
@@ -812,9 +813,10 @@ export default function AttendancePage() {
                     }
                     const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
                     const isClockIn = record.punchType === 'CLOCK_IN'
+                    const isClockOut = record.punchType === 'CLOCK_OUT'
                     const showLate = isClockIn ? lateEx : undefined
-                    const showEarly = !isClockIn ? earlyEx : undefined
-                    const showOt = !isClockIn ? otEx : undefined
+                    const showEarly = isClockOut ? earlyEx : undefined
+                    const showOt = isClockOut ? otEx : undefined
                     const recordDateStr = toHKDateStr(new Date(record.punchTime))
                     const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
                     const isVoided = !!(record.void as any)
@@ -890,9 +892,9 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3">
                         {/* Makeup only for late/early; HOURLY employees skip */}
-                        {((isClockIn && showLate) || (!isClockIn && showEarly)) && user.role === 'OWNER' && (
+                        {((isClockIn && showLate) || (isClockOut && showEarly)) && user.role === 'OWNER' && (
                           (isClockIn ? (showLate?.payType !== 'HOURLY') : (showEarly?.payType !== 'HOURLY')) && (
-                          ((isClockIn && showLate?.madeUp) || (!isClockIn && showEarly?.madeUp)) ? (
+                          ((isClockIn && showLate?.madeUp) || (isClockOut && showEarly?.madeUp)) ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                               ✓ 已補鐘
                             </span>

@@ -169,6 +169,7 @@ export default function EmployeePayrollDetailPage() {
   const attendanceDetail = detail.attendance || {}
   const salaryDetail = detail.salary || {}
   const leaveAndOtDetail = detail.leaveAndOt || {}
+  const timeAccountDetail = leaveAndOtDetail.timeAccountDetail || []
 
   const scheduledDays = attendanceDetail.expectedWorkDays ?? detail.scheduledDays ?? '-'
   const actualAttendanceDays = attendanceDetail.actualAttendanceDays ?? detail.actualAttendanceDays ?? item.workedHours
@@ -243,11 +244,15 @@ export default function EmployeePayrollDetailPage() {
   const dailyDetails = Object.entries(dailyPunchMap).map(([date, info]) => {
     const inPunch = info.punches.find((p: any) => p.punchType === 'CLOCK_IN')
     const outPunch = info.punches.find((p: any) => p.punchType === 'CLOCK_OUT')
+    const lunchStart = info.punches.find((p: any) => p.punchType === 'LUNCH_START')
+    const lunchEnd = info.punches.find((p: any) => p.punchType === 'LUNCH_END')
     const isLate = lateRecords.some((lr: any) => lr.date === date)
     return {
       date,
       punchIn: inPunch ? fmtTime24(inPunch.punchTime) : null,
       punchOut: outPunch ? fmtTime24(outPunch.punchTime) : null,
+      lunchStart: lunchStart ? fmtTime24(lunchStart.punchTime) : null,
+      lunchEnd: lunchEnd ? fmtTime24(lunchEnd.punchTime) : null,
       inIsCorrection: inPunch?.isCorrection === true,
       outIsCorrection: outPunch?.isCorrection === true,
       status: isLate ? 'late' : 'present',
@@ -649,28 +654,90 @@ export default function EmployeePayrollDetailPage() {
           </div>
         </div>
 
+        {/* ⏱ 時間帳戶明細 */}
+        {timeAccountDetail.length > 0 && (
+          <div>
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">⏱ 時間帳戶明細</h3>
+            <div className="rounded-xl border shadow-card p-4 mt-3">
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-muted-foreground border-b">
+                      <th className="text-left py-2">日期</th>
+                      <th className="text-right">類型</th>
+                      <th className="text-right">分鐘</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {timeAccountDetail.flatMap((d: any) => {
+                      const rows = []
+                      if (d.lateMinutes) rows.push({ date: d.date, label: '上班遲到', min: -d.lateMinutes, color: '#dc2626' })
+                      if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
+                      if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
+                      if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
+                      if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
+                      return rows
+                    }).map((r: any, i: number) => (
+                      <tr key={i} className="border-b last:border-0">
+                        <td className="py-2">{r.date}</td>
+                        <td className="text-right">{r.label}</td>
+                        <td className="text-right font-medium" style={{ color: r.color }}>
+                          {r.min > 0 ? '+' : ''}{r.min} 分</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Mobile card view */}
+              <div className="md:hidden space-y-2">
+                {timeAccountDetail.flatMap((d: any) => {
+                  const rows = []
+                  if (d.lateMinutes) rows.push({ date: d.date, label: '上班遲到', min: -d.lateMinutes, color: '#dc2626' })
+                  if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
+                  if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
+                  if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
+                  if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
+                  return rows
+                }).map((r: any, i: number) => (
+                  <div key={i} className="flex justify-between text-sm p-2 bg-muted/50 rounded">
+                    <span>{r.date} {r.label}</span>
+                    <span className="font-medium" style={{ color: r.color }}>
+                      {r.min > 0 ? '+' : ''}{r.min} 分
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 🔍 每日明細（可摺疊） */}
         {dailyDetails.length > 0 && (
           <CollapsibleSection trigger="🔍 每日打卡明細">
             <div className="rounded-lg border">
-              <div className="grid grid-cols-12 gap-2 px-4 py-2 bg-muted/50 text-xs font-semibold text-muted-foreground">
+              <div className="grid grid-cols-16 gap-2 px-4 py-2 bg-muted/50 text-xs font-semibold text-muted-foreground">
                 <div className="col-span-2">日期</div>
-                <div className="col-span-3">上工</div>
-                <div className="col-span-3">落班</div>
-                <div className="col-span-4 text-right">狀態</div>
+                <div className="col-span-2">上工</div>
+                <div className="col-span-2">午休開始</div>
+                <div className="col-span-2">午休結束</div>
+                <div className="col-span-2">落班</div>
+                <div className="col-span-6 text-right">狀態</div>
               </div>
               {dailyDetails.map((day: any) => (
-                <div key={day.date} className="grid grid-cols-12 gap-2 px-4 py-2 text-sm border-t hover:bg-muted/30">
+                <div key={day.date} className="grid grid-cols-16 gap-2 px-4 py-2 text-sm border-t hover:bg-muted/30">
                   <div className="col-span-2">{day.date}</div>
-                  <div className="col-span-3">
+                  <div className="col-span-2">
                     {day.punchIn || '—'}
                     {day.inIsCorrection && <span className="ml-1 text-xs text-blue-600">（補登）</span>}
                   </div>
-                  <div className="col-span-3">
+                  <div className="col-span-2">{day.lunchStart || '—'}</div>
+                  <div className="col-span-2">{day.lunchEnd || '—'}</div>
+                  <div className="col-span-2">
                     {day.punchOut || '—'}
                     {day.outIsCorrection && <span className="ml-1 text-xs text-blue-600">（補登）</span>}
                   </div>
-                  <div className="col-span-4 text-right">
+                  <div className="col-span-6 text-right">
                     {day.status === 'absent' ? '✗ 缺勤' : day.status === 'late' ? '⚠ 遲到' : '✓ 出勤'}
                   </div>
                 </div>

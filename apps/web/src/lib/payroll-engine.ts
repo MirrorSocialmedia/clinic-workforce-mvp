@@ -1201,6 +1201,7 @@ export async function calculateTimeBank(
   convertibleLeaveDays: number
   note: string
   totalLunchDeductMinutes: number
+  timeAccountDetail: Array<any>
 }> {
   // TZ-safe month range
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
@@ -1256,6 +1257,9 @@ export async function calculateTimeBank(
   let earlyLeaveMinutes = 0
   let totalLunchDeductMinutes = 0 // ★ Accumulate lunch deduction across all shift days
 
+  // ★ Time account detail: per-day breakdown
+  const timeAccountDetail: Array<any> = []
+
   for (const shift of shifts) {
     const shiftDateStr = toHKDateStr(new Date(shift.date))
     const dayPunches = effectivePunches.filter(
@@ -1273,30 +1277,34 @@ export async function calculateTimeBank(
     const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
     const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
 
+    // ★ Per-day tracking
+    let dayLate = 0
+    let dayEarly = 0
+    let dayClockOutOt = 0
+    let dayLunchOt = 0
+    let dayLunchLate = 0
+
     // Late — use effectiveTime
     if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
-      lateMinutes += Math.ceil((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
+      dayLate = Math.ceil((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
     }
     // Early leave — use effectiveTime
     if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
-      earlyLeaveMinutes += Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
+      dayEarly = Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
     }
     // OT — use effectiveTime with per-day threshold
     if (clockOut && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
       const dayOt = Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
       if (dayOt > 0 && dayOt >= otMinMinutes) {
-        const counted = otRoundMinutes > 0
+        dayClockOutOt = otRoundMinutes > 0
           ? Math.floor(dayOt / otRoundMinutes) * otRoundMinutes // 16→10, 29→20 (每10)
           : dayOt // 0=不取整，原樣
-        otMinutes += counted  // ≥門檻全數計；逐日判定
       }
     }
 
     // ★ 午休扣減（地基：有上班的日子一律扣 lunchDefault）
     if (clockIn) {
       let lunchDeduct = lunchDefault // 無條件地基
-      let lunchOtMinutes = 0
-      let lunchLateMinutes = 0
 
       if (lunchEnabled) {
         const ls = dayPunches.filter((p: any) => p.punchType === 'LUNCH_START')
@@ -1309,18 +1317,30 @@ export async function calculateTimeBank(
           const effective = Math.max(actual, lunchMin)
           lunchDeduct = effective
           if (effective < lunchDefault) {
-            lunchOtMinutes = lunchDefault - effective
+            dayLunchOt = lunchDefault - effective
           } else if (effective > lunchDefault) {
-            lunchLateMinutes = effective - lunchDefault
+            dayLunchLate = effective - lunchDefault
           }
         }
       }
 
-      // 併入 OT（繞過門檻）和遲到
-      otMinutes += lunchOtMinutes
-      lateMinutes += lunchLateMinutes
       totalLunchDeductMinutes += lunchDeduct // ★ Accumulate for worked hours deduction
     }
+
+    // ★ Push daily detail
+    const dayEntry: any = { date: shiftDateStr }
+    if (dayLate > 0) dayEntry.lateMinutes = dayLate
+    if (dayEarly > 0) dayEntry.earlyMinutes = dayEarly
+    if (dayClockOutOt > 0) dayEntry.clockOutOt = dayClockOutOt
+    if (dayLunchOt > 0) dayEntry.lunchOt = dayLunchOt
+    if (dayLunchLate > 0) dayEntry.lunchLate = dayLunchLate
+    if (Object.keys(dayEntry).length > 1) timeAccountDetail.push(dayEntry)
+
+    // ★ Accumulate monthly totals
+    lateMinutes += dayLate
+    earlyLeaveMinutes += dayEarly
+    otMinutes += dayClockOutOt + dayLunchOt
+    lateMinutes += dayLunchLate
   }
 
   // Grab makeup entries for this month — split by targetType
@@ -1403,6 +1423,7 @@ export async function calculateTimeBank(
     convertibleLeaveDays,
     note,
     totalLunchDeductMinutes,
+    timeAccountDetail,
   }
 }
 
@@ -2576,6 +2597,7 @@ export async function calculatePayrollWithRules(
       leaveBalance: leaveBalanceRemaining,
       otHours: Math.round(result.otHours * 100) / 100,
       otBalanceMinutes: tb.balance ?? 0,
+      timeAccountDetail: tb.timeAccountDetail || [],
     },
     // 🔴 Fix #1: 統一遲到/OT資料源 — timebank 從計糧引擎計算，薪資明細全部從此取
     timebank: {
