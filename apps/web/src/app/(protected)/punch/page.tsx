@@ -13,8 +13,8 @@ import { useFaceCapture } from '@/lib/use-face-capture'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
-/** Get GPS coords for punch location verification (two-stage: high-accuracy GPS → low-accuracy WiFi/cell fallback) */
-async function getPunchLocation(): Promise<{ lat?: number; lng?: number; flag?: string; acc?: number }> {
+/** Live GPS fetch (two-stage: high-accuracy GPS → low-accuracy WiFi/cell fallback) */
+async function getPunchLocationLive(): Promise<{ lat?: number; lng?: number; flag?: string; acc?: number }> {
   if (!navigator.geolocation) return { flag: 'NO_GPS' }
   const tryOnce = (highAcc: boolean, timeout: number) => new Promise<any>(resolve => {
     navigator.geolocation.getCurrentPosition(
@@ -71,6 +71,12 @@ export default function PunchPage() {
   const faceVideoRef = useRef<HTMLVideoElement>(null)
   const { captureQualified, captureRaw, warmup } = useFaceCapture()
 
+  // GPS warmup state
+  const lastPosRef = useRef<{ lat: number; lng: number; acc: number; t: number } | null>(null)
+  const watchIdRef = useRef<number | null>(null)
+  const [gpsReady, setGpsReady] = useState(false)
+  const [gpsDenied, setGpsDenied] = useState(false)
+
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
 
@@ -126,6 +132,42 @@ export default function PunchPage() {
 
   // ★ 背景預熱偵測器(wasm+模型)，打卡時已是熱的
   useEffect(() => { warmup().catch(() => {}) }, [warmup])
+
+  // ★ GPS watchPosition 保溫 — 頁面在就追蹤，離頁立即停
+  useEffect(() => {
+    if (!navigator.geolocation) return
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      p => {
+        lastPosRef.current = {
+          lat: p.coords.latitude,
+          lng: p.coords.longitude,
+          acc: Math.round(p.coords.accuracy),
+          t: Date.now(),
+        }
+        setGpsReady(true)
+      },
+      err => {
+        // 保溫失敗靜默——打卡時兩段式兜底會再試
+        // 但若 code=1 (DENIED)，設狀態供 UI 顯示橫幅
+        if (err.code === 1) setGpsDenied(true)
+      },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 },
+    )
+    return () => {
+      if (watchIdRef.current != null) navigator.geolocation.clearWatch(watchIdRef.current)
+    }
+  }, []) // 只跑一次，頁面在=保溫在
+
+  // ★ Dispatcher: 保溫優先 → 兩段式現取兜底
+  async function getPunchLocation(): Promise<{ lat?: number; lng?: number; flag?: string; acc?: number }> {
+    // ① 先用保溫的新鮮坐標（30 秒內）——絕大多數打卡走這條，零等待
+    const c = lastPosRef.current
+    if (c && Date.now() - c.t < 30000) {
+      return { lat: c.lat, lng: c.lng, acc: c.acc }
+    }
+    // ② 保溫沒有/太舊 → 兩段式現取（兜底）
+    return await getPunchLocationLive()
+  }
 
   // ★ Punch handler — returns boolean for success/failure feedback
   const handleScan = useCallback(async (token: string): Promise<boolean> => {
@@ -309,6 +351,18 @@ export default function PunchPage() {
       <div>
         <h1 className="text-xl font-bold text-foreground flex items-center gap-2"><Smartphone size={22} /> 掃碼打卡</h1>
         <p className="text-sm text-muted-foreground mt-1">對準診所螢幕 QR 碼，自動完成打卡</p>
+      </div>
+
+      {/* GPS denied banner */}
+      {gpsDenied && (
+        <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}>
+          📍 打卡需要定位權限——請到 設定→Safari→位置→允許，或點網址列 🔒 開啟
+        </div>
+      )}
+
+      {/* GPS status indicator */}
+      <div style={{ textAlign: 'center', fontSize: 13, color: '#9ca3af', marginBottom: 4 }}>
+        {gpsReady ? '📍 定位就緒' : gpsDenied ? '📍 定位已拒絕' : '📍 定位中…'}
       </div>
 
       {/* QR Scanner — compact card, hidden when showing full-screen result */}
