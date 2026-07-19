@@ -13,6 +13,18 @@ import { useFaceCapture } from '@/lib/use-face-capture'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
+/** Get GPS coords for punch location verification (shadow mode — never blocks punch) */
+async function getPunchLocation(): Promise<{ lat?: number; lng?: number; flag?: string }> {
+  if (!navigator.geolocation) return { flag: 'NO_GPS' }
+  return new Promise(resolve => {
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      err => resolve({ flag: err.code === 1 ? 'DENIED' : 'NO_GPS' }),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+    )
+  })
+}
+
 /** Play a short confirmation beep via Web Audio API */
 function playBeep() {
   try {
@@ -113,6 +125,9 @@ export default function PunchPage() {
     setError(null)
 
     try {
+      // ★ GPS location (shadow mode — never blocks punch)
+      const loc = await getPunchLocation()
+
       const res = await fetch('/api/punch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -120,6 +135,9 @@ export default function PunchPage() {
         body: JSON.stringify({
           token,
           deviceInfo: navigator.userAgent,
+          lat: loc.lat,
+          lng: loc.lng,
+          geoFlag: loc.flag,
         }),
       })
 

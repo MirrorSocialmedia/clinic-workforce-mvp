@@ -43,7 +43,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   return runWithAudit(auditCtx, async () => {
     const id = params.id
-    const { name, address, config, shortName, companyId } = await req.json()
+    const { name, address, config, shortName, companyId, latitude, longitude, geoRadius } = await req.json()
 
     const clinic = await prisma.clinic.update({
       where: { id },
@@ -53,6 +53,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
         ...(address !== undefined && { address }),
         ...(config && { config: JSON.stringify(config) }),
         ...(companyId !== undefined && { companyId: companyId || null }),
+        ...(latitude !== undefined && { latitude: latitude != null ? Number(latitude) : null }),
+        ...(longitude !== undefined && { longitude: longitude != null ? Number(longitude) : null }),
+        ...(geoRadius !== undefined && { geoRadius: geoRadius != null ? Number(geoRadius) : null }),
       },
     })
 

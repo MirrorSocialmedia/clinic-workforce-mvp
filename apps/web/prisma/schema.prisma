@@ -105,6 +105,9 @@ model Clinic {
   name      String
   shortName String?  // 店鋪簡稱（1-2字：旺/仁/銅/荃/元/沙）
   address   String?
+  latitude  Float?   // 店舖緯度
+  longitude Float?   // 店舖經度
+  geoRadius Int?     // 允許半徑(米),null = 用全局預設 200
   config    String?  // JSON string for SQLite compat
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -292,6 +295,13 @@ model PunchRecord {
   faceReviewedAt DateTime?
   faceReviewedBy String?
   faceReason     String? // 異常原因代碼
+
+  // GPS location verification (shadow mode — observation only)
+  punchLat      Float?   // 打卡當下緯度
+  punchLng      Float?   // 打卡當下經度
+  distanceM     Int?     // 距店距離(米)
+  locationFlag  String?  // null=正常 / 'OUT_OF_RANGE' / 'NO_GPS' / 'DENIED'
+
   createdAt   DateTime    @default(now())
 
   employee    Employee    @relation(fields: [employeeId], references: [id])

@@ -11,6 +11,9 @@ interface Clinic {
   address: string | null
   companyId: string | null
   company: { id: string; name: string } | null
+  latitude: number | null
+  longitude: number | null
+  geoRadius: number | null
   createdAt: string
 }
 
@@ -33,6 +36,10 @@ export default function ClinicsPage() {
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null)
   const [newCompanyName, setNewCompanyName] = useState('')
   const [newCompanyLogo, setNewCompanyLogo] = useState<string | null>(null)
+
+  // GPS helper for clinic edit
+  const [autoLat, setAutoLat] = useState<number | null>(null)
+  const [autoLng, setAutoLng] = useState<number | null>(null)
 
   const fetchAll = async () => {
     const [clinicsRes, companiesRes] = await Promise.all([
@@ -146,11 +153,26 @@ export default function ClinicsPage() {
     const newAddress = prompt('修改地址（留空不修改）：', clinic.address || '')
     if (newAddress === null) return
 
+    // GPS location coordinates
+    const latDefault = autoLat != null ? String(autoLat) : (clinic.latitude != null ? String(clinic.latitude) : '')
+    const lngDefault = autoLng != null ? String(autoLng) : (clinic.longitude != null ? String(clinic.longitude) : '')
+    const newLat = prompt('診所緯度（留空不修改）：', latDefault)
+    if (newLat === null) return
+    const newLng = prompt('診所經度（留空不修改）：', lngDefault)
+    if (newLng === null) return
+    const newRadius = prompt('允許打卡半徑(米，留空用全域預設200)：', clinic.geoRadius != null ? String(clinic.geoRadius) : '200')
+    if (newRadius === null) return
+    setAutoLat(null) // reset auto location after use
+    setAutoLng(null)
+
     const body: Record<string, any> = { name: newName.trim() }
     if (newShort?.trim()) body.shortName = newShort.trim()
     else if (newShort === '') body.shortName = null
     if (newAddress?.trim()) body.address = newAddress.trim()
     if (companyId !== clinic.companyId) body.companyId = companyId || null
+    body.latitude = newLat?.trim() ? Number(newLat.trim()) : null
+    body.longitude = newLng?.trim() ? Number(newLng.trim()) : null
+    body.geoRadius = newRadius?.trim() ? Number(newRadius.trim()) : null
 
     const res = await fetch(`/api/clinics/${clinic.id}`, {
       method: 'PUT',
@@ -358,6 +380,13 @@ export default function ClinicsPage() {
                   <td className="text-sm">{fmtDate(clinic.createdAt)}</td>
                   <td>
                     <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleEditClinic(clinic)}>編輯</button>
+                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => {
+                      navigator.geolocation.getCurrentPosition(
+                        p => { setAutoLat(p.coords.latitude); setAutoLng(p.coords.longitude); handleEditClinic(clinic) },
+                        () => alert('無法取得位置，請手動填寫'),
+                        { enableHighAccuracy: true },
+                      )
+                    }}>📍 用我現在位置</button>
                     <button className="btn btn-danger btn-sm" onClick={() => handleDeleteClinic(clinic.id)}>
                       刪除
                     </button>

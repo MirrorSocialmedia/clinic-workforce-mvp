@@ -5,6 +5,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { validateAndMarkTokenUsed } from '@/lib/qr-token'
 import { todayHK, hkDateStart } from '@/lib/hk-date'
+import { distanceMeters } from '@/lib/geo'
 
 // ============================================================
 // POST /api/punch — Clock in/out via QR token
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { token: qrToken, deviceInfo } = body
+      const { token: qrToken, deviceInfo, lat, lng, geoFlag } = body
 
       if (!qrToken) {
         return NextResponse.json(
@@ -114,6 +115,26 @@ export async function POST(req: NextRequest) {
         )
       }
 
+      // ★ GPS location verification (shadow mode — observation only, never blocks)
+      let punchLat = null,
+        punchLng = null,
+        distanceM = null,
+        locationFlag: string | null = geoFlag || null
+
+      if (!geoFlag && lat != null && lng != null) {
+        punchLat = lat
+        punchLng = lng
+        const clinic = await prisma.clinic.findUnique({
+          where: { id: clinicId },
+          select: { latitude: true, longitude: true, geoRadius: true },
+        })
+        if (clinic?.latitude != null && clinic?.longitude != null) {
+          distanceM = distanceMeters(lat, lng, clinic.latitude, clinic.longitude)
+          const radius = clinic.geoRadius ?? Number(process.env.GEO_DEFAULT_RADIUS || 200)
+          if (distanceM > radius) locationFlag = 'OUT_OF_RANGE'
+        }
+      }
+
       // Transaction: punch record (audit auto-handled by Prisma extension)
       const result = await prisma.$transaction(async (tx) => {
         const record = await tx.punchRecord.create({
@@ -125,6 +146,10 @@ export async function POST(req: NextRequest) {
             source: (validation.source || 'QR_DYNAMIC') as any,
             tokenValid: true,
             deviceInfo: deviceInfo || null,
+            punchLat,
+            punchLng,
+            distanceM,
+            locationFlag,
           },
         })
 

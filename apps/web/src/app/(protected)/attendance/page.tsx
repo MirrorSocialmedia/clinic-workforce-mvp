@@ -597,6 +597,19 @@ export default function AttendancePage() {
             return null
           })()})
 
+          {/* Location verification summary */}
+          {(() => {
+            const outOfRange = records.filter((r: any) => r.locationFlag === 'OUT_OF_RANGE').length
+            if (outOfRange > 0) {
+              return (
+                <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
+                  <span style={{ color: '#dc2626' }}>📍 {outOfRange} 筆打卡位置超出範圍（觀察模式，未影響打卡）</span>
+                </div>
+              )
+            }
+            return null
+          })()})
+
           {/* Mobile card view */}
           <div className="md:hidden space-y-2">
             {loading ? (
@@ -645,6 +658,22 @@ export default function AttendancePage() {
                 }
               }
 
+              const mobileLocBadge = () => {
+                const r = record as any
+                switch (r.locationFlag) {
+                  case 'OUT_OF_RANGE':
+                    return <span style={{ color: '#dc2626', fontWeight: 600, fontSize: 12 }} title={`距店 ${r.distanceM}米(超出範圍)`}>📍 越界</span>
+                  case 'NO_GPS':
+                    return <span style={{ color: '#9ca3af', fontSize: 12 }} title="無法定位">無定位</span>
+                  case 'DENIED':
+                    return <span style={{ color: '#9ca3af', fontSize: 12 }} title="拒絕定位權限">拒定位</span>
+                  default:
+                    return r.distanceM != null
+                      ? <span style={{ color: '#059669', fontSize: 12 }} title={`距店 ${r.distanceM}米`}>✅ 店內</span>
+                      : <span style={{ color: '#d1d5db', fontSize: 12 }}>—</span>
+                }
+              }
+
               const et = effectiveTime(record)
               const displayTime = et.hasCorrection ? et.display.split('（原')[0] : et.display
 
@@ -673,7 +702,10 @@ export default function AttendancePage() {
                       </span>
                       <span>{displayTime}</span>
                     </div>
-                    <div>{mobileFaceBadge()}</div>
+                    <div className="flex items-center gap-2">
+                      {mobileFaceBadge()}
+                      {mobileLocBadge()}
+                    </div>
                   </div>
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-muted-foreground">{record.clinic?.name || record.clinicId} · {sourceLabel}</span>
@@ -704,6 +736,7 @@ export default function AttendancePage() {
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">類型</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">狀態</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">人臉</th>
+                  <th className="text-left p-3 text-sm font-medium text-muted-foreground">位置</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">來源</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">Token</th>
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground">修正</th>
@@ -713,9 +746,9 @@ export default function AttendancePage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={11} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
+                  <tr><td colSpan={12} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
                 ) : allRows.length === 0 ? (
-                  <tr><td colSpan={11} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
+                  <tr><td colSpan={12} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
                 ) : (
                   allRows.map((row) => {
                     // ABSENT row
@@ -728,6 +761,7 @@ export default function AttendancePage() {
                           <td className="p-3">{ar.date}</td>
                           <td className="p-3"><span style={{ color: '#dc3545', fontWeight: 700 }}>缺勤</span></td>
                           <td className="p-3 text-sm text-muted-foreground" colSpan={5}>排班 {ar.shiftMinutes} 分鐘，無打卡</td>
+                          <td className="p-3 text-sm">—</td>
                           <OtDeductCell row={{ employeeId: ar.employeeId, date: ar.date, shiftMinutes: ar.shiftMinutes, otDeducted: ar.otDeducted }} userRole={user.role} />
                           <td className="p-3">—</td>
                         </tr>
@@ -760,6 +794,20 @@ export default function AttendancePage() {
                         case 'NOT_ENROLLED': return <span style={{ color: '#9ca3af' }}>未登記</span>
                         case 'PENDING_ENROLL': return <span style={{ color: '#9ca3af' }} title="臉部登記待管理員核准">審核中</span>
                         default: return <span style={{ color: '#d1d5db' }}>—</span>
+                      }
+                    }
+                    const locBadge = (r: any) => {
+                      switch (r.locationFlag) {
+                        case 'OUT_OF_RANGE':
+                          return <span style={{ color: '#dc2626', fontWeight: 600 }} title={`距店 ${r.distanceM}米(超出範圍)`}>📍 越界</span>
+                        case 'NO_GPS':
+                          return <span style={{ color: '#9ca3af' }} title="無法定位">無定位</span>
+                        case 'DENIED':
+                          return <span style={{ color: '#9ca3af' }} title="拒絕定位權限">拒定位</span>
+                        default:
+                          return r.distanceM != null
+                            ? <span style={{ color: '#059669' }} title={`距店 ${r.distanceM}米`}>✅ 店內</span>
+                            : <span style={{ color: '#d1d5db' }}>—</span>
                       }
                     }
                     const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
@@ -825,6 +873,7 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td className="p-3 text-sm">{faceBadge(record)}</td>
+                      <td className="p-3 text-sm">{locBadge(record)}</td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {record.source === 'QR_DYNAMIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 動態碼</> : record.source === 'QR_STATIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 固定碼</> : record.source === 'MANUAL_CORRECTION' ? <><Pencil size={14} style={{ marginRight: 4 }} /> 補打卡</> : <><Wrench size={14} style={{ marginRight: 4 }} /> 系統</>}
                       </td>
