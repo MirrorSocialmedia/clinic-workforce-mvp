@@ -1359,12 +1359,14 @@ export default function AttendancePage() {
             </div>
             <div className="flex gap-3 mb-3">
               <div style={{ flex: 1 }}>
-                <label className="block text-xs text-muted-foreground mb-1 font-medium">上工 / 落班 *</label>
+                <label className="block text-xs text-muted-foreground mb-1 font-medium">打卡類型 *</label>
                 <select value={addPunchForm.punchType}
                   onChange={e => setAddPunchForm({ ...addPunchForm, punchType: e.target.value })}
                   className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
                   <option value="CLOCK_IN">上工</option>
                   <option value="CLOCK_OUT">落班</option>
+                  <option value="LUNCH_START">午休開始</option>
+                  <option value="LUNCH_END">午休結束</option>
                 </select>
               </div>
               <div style={{ flex: 1 }}>

@@ -196,6 +196,20 @@ export default function PunchPage() {
     return await getPunchLocationLive()
   }
 
+  // ★ Fast dispatcher for punch: 保溫優先 → 3 秒逾時兜底，定位失敗不擋打卡
+  async function getPunchLocationForPunch(): Promise<{ lat?: number; lng?: number; flag?: string; acc?: number }> {
+    // ① 保溫的新鮮坐標（30 秒內）——零等待
+    const c = lastPosRef.current
+    if (c && Date.now() - c.t < 30000) {
+      return { lat: c.lat, lng: c.lng, acc: c.acc }
+    }
+    // ② 沒保溫 → 給 3 秒機會，拿不到就放行（不擋打卡）
+    return await Promise.race([
+      getPunchLocationLive(),
+      new Promise<any>(resolve => setTimeout(() => resolve({ flag: 'TIMEOUT' }), 3000)),
+    ])
+  }
+
   // ★ Punch handler — returns boolean for success/failure feedback
   const handleScan = useCallback(async (token: string): Promise<boolean> => {
     // ★ Anti-spam: 30s cooldown + in-flight lock
@@ -208,8 +222,8 @@ export default function PunchPage() {
     setError(null)
 
     try {
-      // ★ GPS location (shadow mode — never blocks punch)
-      const loc = await getPunchLocation()
+      // ★ GPS location (shadow mode — never blocks punch; 3s max timeout)
+      const loc = await getPunchLocationForPunch()
 
       const res = await fetch('/api/punch', {
         method: 'POST',
@@ -520,6 +534,13 @@ export default function PunchPage() {
               ✅ 臉部識別已啟用 · <Link href="/my/face-enroll" className="underline">重新登記</Link>
             </span>
           )}
+        </div>
+      )}
+
+      {/* ── Version hint ── */}
+      {!punchResult && (
+        <div style={{ fontSize: 11, color: '#999', textAlign: 'center', marginTop: 8, paddingBottom: 8 }}>
+          v{new Date().toISOString().slice(0, 10)} — 若顯示異常請硬刷新
         </div>
       )}
 
