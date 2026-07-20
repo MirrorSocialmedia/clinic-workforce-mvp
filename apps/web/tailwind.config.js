@@ -10,9 +10,8 @@ module.exports = {
   ],
   safelist: [
     'md:hidden', 'md:block', 'md:flex', 'md:inline-flex',
-    'md:ml-20', 'md:ml-64', 'md:pb-0', 'md:flex-row',
+    'md:ml-20', 'md:ml-64', 'md:pb-0', 'md:flex-row', 'md:w-auto',
     'md:grid-cols-2', 'md:grid-cols-3', 'md:grid-cols-4', 'md:grid-cols-5',
-    { pattern: /^md:/ },
   ],
   theme: {
     extend: {
