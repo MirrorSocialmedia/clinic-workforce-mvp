@@ -7,27 +7,35 @@ set -euo pipefail
 
 BACKUP_DIR="${1:-/backups/clinic-mvp}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="${BACKUP_DIR}/clinic_mvp_${TIMESTAMP}.sql.gz"
+BACKUP_FILE="${BACKUP_DIR}/clinic_prod_${TIMESTAMP}.sql.gz"
 RETENTION_DAYS="${DATA_RETENTION_DAYS:-30}"
 OFFSITE_DIR="${BACKUP_DIR}/offsite"  # Mount to remote/external volume
 
-# Docker Compose project name (adjust if different)
-COMPOSE_PROJECT="clinic-workforce-mvp"
-DB_CONTAINER="${COMPOSE_PROJECT}-db-1"
+# Docker container name (must match running container)
+DB_CONTAINER="clinic-prod-db"
+DB_NAME="clinic_prod"
 
 # Ensure directories exist
 mkdir -p "${BACKUP_DIR}" "${OFFSITE_DIR}"
 
 echo "🔧 [$(date)] Starting backup..."
 
-# Run pg_dump inside the Docker container
-docker exec "${DB_CONTAINER}" pg_dump \
+# Run pg_dump inside the Docker container (improved: separate steps so errors are visible)
+TMP_SQL="${BACKUP_DIR}/.tmp_${TIMESTAMP}.sql"
+if ! docker exec "${DB_CONTAINER}" pg_dump \
   -U "${DB_USER:-clinic}" \
-  -d clinic_mvp \
+  -d "${DB_NAME}" \
   --format=plain \
   --no-owner \
   --no-acl \
-  --verbose 2>&1 | gzip > "${BACKUP_FILE}"
+  > "${TMP_SQL}" 2> "${BACKUP_DIR}/.last_error.log"; then
+  echo "❌ pg_dump 失敗，見 ${BACKUP_DIR}/.last_error.log"
+  rm -f "${TMP_SQL}"
+  exit 1
+fi
+
+gzip -c "${TMP_SQL}" > "${BACKUP_FILE}"
+rm -f "${TMP_SQL}"
 
 # Verify backup file exists and is non-empty
 if [ ! -s "${BACKUP_FILE}" ]; then
@@ -48,10 +56,10 @@ cp "${BACKUP_FILE}.sha256" "${OFFSITE_DIR}/"
 echo "✅ Checksum saved"
 
 # Clean up old backups beyond retention period
-find "${BACKUP_DIR}" -maxdepth 1 -name "clinic_mvp_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
-find "${OFFSITE_DIR}" -maxdepth 1 -name "clinic_mvp_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
-find "${BACKUP_DIR}" -maxdepth 1 -name "clinic_mvp_*.sha256" -mtime +"${RETENTION_DAYS}" -delete
-find "${OFFSITE_DIR}" -maxdepth 1 -name "clinic_mvp_*.sha256" -mtime +"${RETENTION_DAYS}" -delete
+find "${BACKUP_DIR}" -maxdepth 1 -name "clinic_prod_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
+find "${OFFSITE_DIR}" -maxdepth 1 -name "clinic_prod_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
+find "${BACKUP_DIR}" -maxdepth 1 -name "clinic_prod_*.sha256" -mtime +"${RETENTION_DAYS}" -delete
+find "${OFFSITE_DIR}" -maxdepth 1 -name "clinic_prod_*.sha256" -mtime +"${RETENTION_DAYS}" -delete
 echo "🧹 Old backups cleaned (retention: ${RETENTION_DAYS} days)"
 
 echo "🎉 [$(date)] Backup complete"

@@ -14,8 +14,8 @@ if [ $# -lt 1 ]; then
 fi
 
 BACKUP_FILE="$1"
-COMPOSE_PROJECT="clinic-workforce-mvp"
-DB_CONTAINER="${COMPOSE_PROJECT}-db-1"
+DB_CONTAINER="clinic-prod-db"
+DB_NAME="clinic_prod"
 
 # Verify backup exists
 if [ ! -f "${BACKUP_FILE}" ]; then
@@ -50,10 +50,16 @@ fi
 
 echo "🔧 [$(date)] Starting restore..."
 
+# Check that DB container is running
+if ! docker ps --format '{{.Names}}' | grep -q "^${DB_CONTAINER}$"; then
+  echo "❌ 容器 ${DB_CONTAINER} 未運行，無法恢復"
+  exit 1
+fi
+
 # Restore the dump
 gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql \
   -U "${DB_USER:-clinic}" \
-  -d clinic_mvp \
+  -d "${DB_NAME}" \
   --verbose 2>&1
 
 echo "🎉 [$(date)] Restore complete"
