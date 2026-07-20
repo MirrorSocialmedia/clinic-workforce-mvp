@@ -12,6 +12,7 @@ import {
   LogOut,
   Monitor,
   AlertTriangle,
+  Wallet,
 } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
@@ -41,6 +42,12 @@ export default function MobileMorePage() {
   }, [])
 
   const menuItems: MenuItem[] = [
+    {
+      label: '計糧管理',
+      href: '/payroll',
+      icon: Wallet,
+      roles: ['OWNER'],
+    },
     {
       label: '排班管理',
       href: '/scheduling',

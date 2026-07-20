@@ -311,6 +311,8 @@ export default function EmployeePayrollDetailPage() {
               </div>
             </div>
 
+            {/* HOURLY daily table — Desktop */}
+            <div className="hidden md:block">
             <table className="w-full text-sm mt-4">
               <thead>
                 <tr className="border-b">
@@ -346,6 +348,26 @@ export default function EmployeePayrollDetailPage() {
                 ))}
               </tbody>
             </table>
+            </div>
+            {/* HOURLY daily cards — Mobile */}
+            <div className="md:hidden space-y-2 mt-4">
+              {detail.days.map((d: any) => (
+                <div key={d.date} className="rounded-lg border p-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-semibold text-sm">{d.date}</span>
+                    <span className="font-medium">${d.amount.toFixed(2)}</span>
+                  </div>
+                  {d.note ? (
+                    <div className="text-xs text-muted-foreground">{d.note}</div>
+                  ) : (
+                    <div className="text-xs space-y-0.5">
+                      <div>上班: {fmtTime24(d.in)}{d.clamped && <span className="text-muted-foreground ml-1">(早到, 從排班{fmtTime24(d.shiftStart)}起計)</span>}</div>
+                      <div>下班: {fmtTime24(d.out)} · 有效: {d.minutes} 分</div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
 
             <div className="flex justify-between items-center mt-4 p-3 bg-muted rounded-lg">
               <span>總計 {detail.totalMinutes} 分鐘</span>
@@ -716,7 +738,8 @@ export default function EmployeePayrollDetailPage() {
         {/* 🔍 每日明細（可摺疊） */}
         {dailyDetails.length > 0 && (
           <CollapsibleSection trigger="🔍 每日打卡明細">
-            <div className="rounded-lg border">
+            {/* Desktop grid */}
+            <div className="rounded-lg border hidden md:block">
               <div className="grid grid-cols-16 gap-2 px-4 py-2 bg-muted/50 text-xs font-semibold text-muted-foreground">
                 <div className="col-span-2">日期</div>
                 <div className="col-span-2">上工</div>
@@ -740,6 +763,35 @@ export default function EmployeePayrollDetailPage() {
                   </div>
                   <div className="col-span-6 text-right">
                     {day.status === 'absent' ? '✗ 缺勤' : day.status === 'late' ? '⚠ 遲到' : '✓ 出勤'}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Mobile card view */}
+            <div className="md:hidden space-y-2">
+              {dailyDetails.map((day: any) => (
+                <div key={day.date} className="rounded-lg border p-3 space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-sm">{day.date}</span>
+                    <span>
+                      {day.status === 'absent' ? '✗ 缺勤' : day.status === 'late' ? '⚠ 遲到' : '✓ 出勤'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 text-xs mt-2">
+                    <div>
+                      <span className="text-muted-foreground">上工:</span>{' '}
+                      <span>{day.punchIn || '—'}</span>
+                      {day.inIsCorrection && <span className="ml-1 text-blue-600">（補登）</span>}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">落班:</span>{' '}
+                      <span>{day.punchOut || '—'}</span>
+                      {day.outIsCorrection && <span className="ml-1 text-blue-600">（補登）</span>}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">午休:</span>{' '}
+                      <span>{day.lunchStart || '—'} → {day.lunchEnd || '—'}</span>
+                    </div>
                   </div>
                 </div>
               ))}

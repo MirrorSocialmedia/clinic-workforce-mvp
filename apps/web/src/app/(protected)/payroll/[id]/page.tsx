@@ -367,8 +367,8 @@ export default function PayrollDetailPage() {
         </div>
       </div>
 
-      {/* Employee Table */}
-      <div style={{ overflowX: 'auto' }}>
+      {/* Employee Table — Desktop */}
+      <div className="hidden md:block" style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: '2px solid #dee2e6' }}>
@@ -448,6 +448,93 @@ export default function PayrollDetailPage() {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Employee Cards — Mobile */}
+      <div className="md:hidden space-y-3" style={{ marginTop: 16 }}>
+        {run.items.map(item => {
+          const confidential = item.confidential
+          return (
+            <div key={item.id} style={{
+              background: confidential ? '#fff9f0' : '#fff',
+              border: '1px solid #e5e7eb',
+              borderRadius: 12,
+              padding: '12px 14px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+            }}>
+              {/* Employee name + clinic */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>
+                    {confidential && <span title="薪資保密">🔒 </span>}
+                    {item.employee.user.name}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                    {item.employee.clinics.map(c => c.clinic.name).join(', ')} · {item.employee.payRules[0]?.payType || '-'}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: '#888' }}>{item.employee.user.phone}</div>
+              </div>
+
+              {/* Hours row */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>工時</div>
+                  <div style={{ fontSize: 14, fontFamily: 'monospace' }}>{item.workedHours.toFixed(1)}h</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>加班</div>
+                  <div style={{ fontSize: 14, fontFamily: 'monospace' }}>
+                    {confidential ? '🔒' : (() => { try { const d = JSON.parse(item.detailJson || '{}'); return ((d?.timebank?.otMinutes ?? 0) / 60).toFixed(1) + 'h' } catch { return item.otHours.toFixed(1) + 'h' } })()}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>請假</div>
+                  <div style={{ fontSize: 14, fontFamily: 'monospace' }}>{item.leaveDays.toFixed(1)}d</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: '#888' }}>缺勤</div>
+                  <div style={{ fontSize: 14, fontFamily: 'monospace', color: item.absentDays > 0 ? '#dc3545' : 'inherit' }}>{item.absentDays.toFixed(1)}d</div>
+                </div>
+              </div>
+
+              {/* Salary row */}
+              <div style={{ borderTop: '1px dashed #e5e7eb', paddingTop: 8, marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, color: '#888' }}>基本薪資</span>
+                  <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.basePay)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, color: '#888' }}>加班費</span>
+                  <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.otPay)}</span>
+                </div>
+                {item.deduction && item.deduction > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: '#dc3545' }}>扣款</span>
+                    <span style={{ fontSize: 13, fontFamily: 'monospace', color: '#dc3545' }}>-{fmtCurrency(item.deduction)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Net pay + action */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 18, fontWeight: 700, fontFamily: 'monospace' }}>
+                  {fmtCurrency(item.totalPayable)}
+                </span>
+                <div>
+                  {confidential ? (
+                    <span style={{ color: '#888', fontSize: 12, cursor: 'not-allowed' }} title="此員工薪資已設保密">🔒 保密</span>
+                  ) : (
+                    <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
+                      style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
+                      明細 →
+                    </Link>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

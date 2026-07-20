@@ -69,6 +69,18 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     checkAuth()
   }, [checkAuth])
 
+  // SW cleanup: unregister stale service workers + clear caches
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => r.unregister())
+      })
+    }
+    if (window.caches) {
+      caches.keys().then(keys => keys.forEach(k => caches.delete(k)))
+    }
+  }, [])
+
   useEffect(() => {
     if (!user) return
     fetchUnreadCount()
