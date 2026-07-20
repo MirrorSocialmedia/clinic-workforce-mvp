@@ -562,37 +562,40 @@ export default function AttendancePage() {
     <div className="p-6" style={{ maxWidth: '1200px' }}>
       <h1 className="text-2xl font-bold text-foreground tracking-tight mb-6">考勤管理</h1>
 
-      {/* Tabs */}
-      <div className="flex gap-4 mb-6 border-b-2 border-gray-200" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* Tabs: horizontal scroll on mobile, no wrap */}
+      <div className="flex gap-4 mb-3 border-b-2 border-gray-200 overflow-x-auto" style={{ scrollbarWidth: 'none', flexWrap: 'nowrap' }}>
         {([
           { key: 'records' as TabKey, label: '全部記錄' },
           { key: 'exceptions' as TabKey, label: '異常（遲到/缺卡/補登）' },
           { key: 'hash' as TabKey, label: '完整性驗證' },
         ]).map(tab => (
           <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-            className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px ${activeTab === tab.key ? 'border-brand text-brand' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+            className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px whitespace-nowrap ${activeTab === tab.key ? 'border-brand text-brand' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
             {tab.label}
           </button>
         ))}
-        {isManagerOrAbove && (
+      </div>
+      {/* 補登打卡 button: separate row, right-aligned */}
+      {isManagerOrAbove && (
+        <div className="flex justify-end mb-3">
           <button
             onClick={() => {
               setAddPunchForm({ employeeId: '', clinicId: clinics[0]?.id || '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '' })
               setShowAddPunchModal(true)
             }}
-            className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors ml-auto"
+            className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors"
             style={{ background: '#0d6efd' }}
           >
             <span className="flex items-center gap-1"><Plus size={16} /> 補登打卡</span>
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Records Tab */}
       {activeTab === 'records' && (
         <>
-          {/* Filters */}
-          <div className="flex flex-col md:flex-row gap-3 mb-5 flex-wrap items-end">
+          {/* Filters: Desktop — clinic + employee + date range */}
+          <div className="hidden md:flex flex-row gap-3 mb-5">
             <div>
               <label className="block text-xs text-muted-foreground mb-1 font-medium">診所</label>
               <select value={clinicFilter} onChange={(e) => { setClinicFilter(e.target.value); setPage(1) }}
@@ -619,10 +622,38 @@ export default function AttendancePage() {
               <input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setPage(1) }}
                 className="px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
             </div>
-            <button onClick={() => { setClinicFilter(''); setEmployeeFilter(''); setStartDate(''); setEndDate(''); setPage(1) }}
-              className="px-3 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">
-              清除篩查
-            </button>
+            <div className="flex items-end">
+              <button onClick={() => { setClinicFilter(''); setEmployeeFilter(''); setStartDate(''); setEndDate(''); setPage(1) }}
+                className="px-3 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">
+                清除篩查
+              </button>
+            </div>
+          </div>
+
+          {/* Filters: Mobile — clinic + employee only (dates via horizontal picker below) */}
+          <div className="md:hidden flex flex-col gap-3 mb-3">
+            <div className="w-full">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">診所</label>
+              <select value={clinicFilter} onChange={(e) => { setClinicFilter(e.target.value); setPage(1) }}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="">全部</option>
+                {clinics.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+              </select>
+            </div>
+            <div className="w-full">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">員工</label>
+              <select value={employeeFilter} onChange={(e) => { setEmployeeFilter(e.target.value); setPage(1) }}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="">全部</option>
+                {employees.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
+              </select>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => { setClinicFilter(''); setEmployeeFilter(''); setStartDate(''); setEndDate(''); setPage(1) }}
+                className="px-3 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">
+                清除篩查
+              </button>
+            </div>
           </div>
 
           {/* Records Table */}
@@ -1026,8 +1057,8 @@ export default function AttendancePage() {
       {/* Exceptions Tab */}
       {activeTab === 'exceptions' && (
         <>
-          {/* Filters */}
-          <div className="flex flex-col md:flex-row gap-3 mb-5 flex-wrap items-end">
+          {/* Filters: Desktop */}
+          <div className="hidden md:flex flex-row gap-3 mb-5">
             <div>
               <label className="block text-xs text-muted-foreground mb-1 font-medium">月份</label>
               <input type="month" value={periodMonth} onChange={e => setPeriodMonth(e.target.value)}
@@ -1049,8 +1080,39 @@ export default function AttendancePage() {
                 {exEmployees.map(e => (<option key={e.id} value={e.id}>{e.name}</option>))}
               </select>
             </div>
+            <div className="flex items-end">
+              <button onClick={fetchExceptions} disabled={exLoading}
+                className="px-4 py-2 rounded-md border-none bg-brand text-white text-sm font-semibold hover:bg-brand-dark disabled:bg-gray-400">
+                {exLoading ? '查詢中...' : '查詢'}
+              </button>
+            </div>
+          </div>
+
+          {/* Filters: Mobile — full width stacked */}
+          <div className="md:hidden flex flex-col gap-3 mb-5">
+            <div className="w-full">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">月份</label>
+              <input type="month" value={periodMonth} onChange={e => setPeriodMonth(e.target.value)}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+            </div>
+            <div className="w-full">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">診所</label>
+              <select value={exClinicId} onChange={e => setExClinicId(e.target.value)}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="">全部</option>
+                {exClinics.map(c => (<option key={c.id} value={c.id}>{c.name}</option>))}
+              </select>
+            </div>
+            <div className="w-full">
+              <label className="block text-xs text-muted-foreground mb-1 font-medium">員工</label>
+              <select value={exEmployeeId} onChange={e => setExEmployeeId(e.target.value)}
+                className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="">全部</option>
+                {exEmployees.map(e => (<option key={e.id} value={e.id}>{e.name}</option>))}
+              </select>
+            </div>
             <button onClick={fetchExceptions} disabled={exLoading}
-              className="px-4 py-2 rounded-md border-none bg-brand text-white text-sm font-semibold hover:bg-brand-dark disabled:bg-gray-400">
+              className="w-full px-4 py-2 rounded-md border-none bg-brand text-white text-sm font-semibold hover:bg-brand-dark disabled:bg-gray-400">
               {exLoading ? '查詢中...' : '查詢'}
             </button>
           </div>

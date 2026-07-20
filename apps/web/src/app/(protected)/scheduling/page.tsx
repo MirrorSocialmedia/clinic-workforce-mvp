@@ -538,6 +538,45 @@ function getShiftColor(shift: Shift): string {
     if (viewRange) loadShifts()
   }, [viewRange])
 
+  // Mobile: load shifts for the current mobile week independently
+  useEffect(() => {
+    if (!selectedClinicId) return
+    const weekStart = mobileWeekDays[0]
+    const weekEnd = mobileWeekDays[mobileWeekDays.length - 1]
+    if (!weekStart || !weekEnd) return
+    const url = `/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`
+    fetch(url, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { shifts: [] })
+      .then(d => { if (Array.isArray(d.shifts)) setShifts((prev: Shift[]) => {
+        // Merge: keep existing shifts, add new ones, avoid duplicates
+        const existingIds = new Set(prev.map((s: Shift) => s.id))
+        const newShifts = d.shifts.filter((s: Shift) => !existingIds.has(s.id))
+        return newShifts.length ? [...prev, ...newShifts] : prev
+      }) })
+      .catch(err => console.error('Failed to load mobile shifts:', err))
+    // Also load leave requests for the mobile week
+    fetch(`/api/leave-requests?startDate=${weekStart}&endDate=${weekEnd}&status=APPROVED`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { leaveRequests: [] })
+      .then(d => { if (Array.isArray(d.leaveRequests)) setLeaveRequests((prev: any[]) => {
+        const existingIds = new Set(prev.map((lr: any) => lr.id))
+        const newLeaves = d.leaveRequests.filter((lr: any) => !existingIds.has(lr.id))
+        return newLeaves.length ? [...prev, ...newLeaves] : prev
+      }) })
+      .catch(() => {})
+  }, [mobileSelectedDate, selectedClinicId])
+
+  // Mobile: load shifts for the current mobile week so mobileSelectedDate is covered
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.innerWidth >= 768) return
+    if (!selectedClinicId || mobileWeekDays.length === 0) return
+    const weekStart = mobileWeekDays[0]
+    const weekEnd = mobileWeekDays[mobileWeekDays.length - 1]
+    fetch(`/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (Array.isArray(d.shifts)) setShifts(d.shifts) })
+      .catch(() => {})
+  }, [mobileSelectedDate, selectedClinicId, mobileWeekDays])
+
   // Refresh all data after shift changes (Task 2)
   const refreshAll = useCallback(async () => {
     await loadShifts()
@@ -1818,6 +1857,16 @@ function getShiftColor(shift: Shift): string {
         <p className="text-xs text-muted-foreground mb-3 text-center bg-amber-50 rounded-lg p-2 border border-amber-200">
           📱 手機為唯讀檢視，排班請用電腦
         </p>
+
+        {/* Clinic selector */}
+        <div className="mb-3">
+          <select className="w-full rounded-lg border px-3 py-2 text-sm"
+            value={selectedClinicId || ''}
+            onChange={e => setSelectedClinicId(e.target.value || null)}>
+            <option value="">選擇診所</option>
+            {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
 
         {/* Week navigation */}
         <div className="flex items-center justify-between mb-2 px-1">
