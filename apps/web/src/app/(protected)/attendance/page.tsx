@@ -853,15 +853,15 @@ export default function AttendancePage() {
                         })()}
                       </td>
                       <td className="p-3">
-                        {record.punchType === 'CLOCK_IN' ? (
-                          <span className="px-2 py-1 text-[11px] rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-medium">
-                            上工
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 text-[11px] rounded border border-orange-300 bg-orange-50 text-orange-700 font-medium">
-                            落班
-                          </span>
-                        )}
+                        <span className={`px-2 py-1 text-[11px] rounded border font-medium ${
+                          record.punchType === 'CLOCK_IN' ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                          : record.punchType === 'CLOCK_OUT' ? 'border-orange-300 bg-orange-50 text-orange-700'
+                          : record.punchType === 'LUNCH_START' ? 'border-amber-300 bg-amber-50 text-amber-700'
+                          : record.punchType === 'LUNCH_END' ? 'border-blue-300 bg-blue-50 text-blue-700'
+                          : 'border-gray-300 bg-gray-50 text-gray-700'
+                        }`}>
+                          {punchLabel(record.punchType)}
+                        </span>
                       </td>
                       <td className="p-3">
                         {!monthLoaded ? (
