@@ -1101,6 +1101,32 @@ function getShiftColor(shift: Shift): string {
     return shifts.filter(s => s.clinicId === selectedClinicId)
   }, [shifts, selectedClinicId])
 
+  // Monthly work hours per employee (current month, current clinic)
+  const monthlyWorkHours = useMemo(() => {
+    if (!clinicFilteredShifts.length) return []
+    const now = new Date()
+    const mStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
+    const mEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    const byEmp = new Map<string, number>()
+    clinicFilteredShifts.forEach(s => {
+      const d = toHKDateStr(new Date(s.date))
+      if (d < mStart || d > mEnd) return
+      if (s.status === 'CANCELLED') return
+      const h = Math.max(0,
+        (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - 1
+      )
+      byEmp.set(s.employeeId, (byEmp.get(s.employeeId) || 0) + h)
+    })
+    return clinicEmployees
+      .map(e => ({
+        id: e.id,
+        name: e.user?.name ?? '?',
+        hours: Math.round((byEmp.get(e.id) || 0) * 10) / 10,
+      }))
+      .filter(x => x.hours > 0)
+      .sort((a, b) => b.hours - a.hours)
+  }, [clinicFilteredShifts, clinicEmployees])
+
   // Task 3: Per-week stats helper (statsForDays + renderWeekStats)
   const statsForDays = useCallback((days: { date: Date; label: string; dateStr: string }[]) => {
     if (!selectedEmployeeId || days.length === 0) return null
@@ -1849,6 +1875,25 @@ function getShiftColor(shift: Shift): string {
           📱 手機為唯讀檢視，排班請用電腦
         </p>
 
+        {/* Monthly work hours bar */}
+        {monthlyWorkHours.length > 0 && (
+          <div className="mb-3 rounded-lg border bg-card px-3 py-2">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-sm font-semibold">
+                📊 本月工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
+              </span>
+              <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              {monthlyWorkHours.map(e => (
+                <span key={e.id}>
+                  {e.name} <span className="font-medium">{e.hours}h</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Clinic selector */}
         <div className="mb-3">
           <select className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -1960,6 +2005,25 @@ function getShiftColor(shift: Shift): string {
       {/* ============================================================ */}
       {/* MAIN LAYOUT: Clinic Sidebar | Employees | Templates+Leave | Content */}
       {/* ============================================================ */}
+
+      {/* Desktop: Monthly work hours bar */}
+      {monthlyWorkHours.length > 0 && (
+        <div className="hidden md:block mb-3 rounded-lg border bg-card px-3 py-2">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm font-semibold">
+              📊 本月工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
+            </span>
+            <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            {monthlyWorkHours.map(e => (
+              <span key={e.id}>
+                {e.name} <span className="font-medium">{e.hours}h</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Desktop: Full scheduling interface */}
       <div className="hidden md:flex" style={{

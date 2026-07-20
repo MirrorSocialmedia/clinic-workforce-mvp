@@ -42,6 +42,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<{
     role: Role
     clinics: ClinicData[]
+    workHours?: Array<{ employeeId: string; name: string; weekHours: number; monthHours: number; weekOvertime: boolean }>
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -85,7 +86,7 @@ export default function DashboardPage() {
           router.replace('/my/dashboard')
           return
         }
-        setData({ role: d.role, clinics: d.clinics })
+        setData({ role: d.role, clinics: d.clinics, workHours: d.workHours })
       })
       .catch(err => setError(err.message || '載入失敗'))
       .finally(() => setLoading(false))
@@ -255,6 +256,48 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Work Hours Overview Card ── */}
+      {data.workHours && data.workHours.length > 0 && (
+        <Card className="md:col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center justify-between">
+              <span>⏱️ 員工工時概覽</span>
+              <span className="text-xs font-normal text-muted-foreground">本週 / 本月</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="divide-y">
+              {data.workHours.map((w: any) => (
+                <div key={w.employeeId} className="flex items-center justify-between px-4 py-2 text-sm">
+                  <span className="font-medium">{w.name}</span>
+                  <div className="flex items-center gap-4">
+                    <span className={w.weekOvertime ? 'text-red-600 font-semibold' : ''}>
+                      {w.weekOvertime && '🔴 '}本週 {w.weekHours}h
+                    </span>
+                    <span className="text-muted-foreground">本月 {w.monthHours}h</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {(() => {
+              const otCount = data.workHours.filter((w: any) => w.weekOvertime).length
+              return (
+                <div className="px-4 py-2 border-t text-sm flex items-center justify-between bg-muted/30">
+                  {otCount > 0 ? (
+                    <span className="text-red-600">⚠️ 本週 {otCount} 人超時(逾 45h)</span>
+                  ) : (
+                    <span className="text-green-600">✓ 本週無人超時</span>
+                  )}
+                  <span className="text-xs text-muted-foreground cursor-pointer" onClick={() => router.push('/scheduling')}>
+                    查看排班 →
+                  </span>
+                </div>
+              )
+            })()}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Sensitive Operations Summary (OWNER only) ── */}
       {data.role === 'OWNER' && (

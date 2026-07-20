@@ -143,10 +143,56 @@ export async function GET(req: NextRequest) {
   })
   const distinctEmployeeCount = new Set(allEmployeeClinics.map(ec => ec.employeeId)).size
 
+  // ── Work hours: current week (Mon–Sun) + current month ──
+  const now = new Date()
+  const hkNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' }))
+  const dow = hkNow.getDay()
+  const monOff = dow === 0 ? -6 : 1 - dow
+  const weekStart = new Date(hkNow)
+  weekStart.setDate(hkNow.getDate() + monOff)
+  weekStart.setHours(0, 0, 0, 0)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekStart.getDate() + 7)
+  const monthStart = new Date(hkNow.getFullYear(), hkNow.getMonth(), 1)
+  const monthEnd = new Date(hkNow.getFullYear(), hkNow.getMonth() + 1, 1)
+
+  const activeEmployees = await prisma.employee.findMany({
+    where: { status: 'ACTIVE' },
+    select: { id: true, user: { select: { name: true } } },
+  })
+
+  const monthShifts = await prisma.shift.findMany({
+    where: { status: { not: 'CANCELLED' }, date: { gte: monthStart, lt: monthEnd } },
+    select: { employeeId: true, startTime: true, endTime: true, date: true },
+  })
+
+  const LUNCH_H = 1
+  const hoursOf = (s: any) =>
+    Math.max(0,
+      (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - LUNCH_H
+    )
+
+  const workHours = activeEmployees.map(emp => {
+    const empShifts = monthShifts.filter(s => s.employeeId === emp.id)
+    const weekH = empShifts.filter(s => {
+      const d = new Date(s.date)
+      return d >= weekStart && d < weekEnd
+    }).reduce((a, s) => a + hoursOf(s), 0)
+    const monthH = empShifts.reduce((a, s) => a + hoursOf(s), 0)
+    return {
+      employeeId: emp.id,
+      name: emp.user?.name ?? '?',
+      weekHours: Math.round(weekH * 10) / 10,
+      monthHours: Math.round(monthH * 10) / 10,
+      weekOvertime: weekH > 45,
+    }
+  }).sort((a, b) => b.weekHours - a.weekHours)
+
   return NextResponse.json({
     role: session.role,
     clinics: clinicsWithStats,
     recentAuditLogs,
     distinctEmployeeCount,
+    workHours,
   })
 }
