@@ -565,18 +565,6 @@ function getShiftColor(shift: Shift): string {
       .catch(() => {})
   }, [mobileSelectedDate, selectedClinicId])
 
-  // Mobile: load shifts for the current mobile week so mobileSelectedDate is covered
-  useEffect(() => {
-    if (typeof window === 'undefined' || window.innerWidth >= 768) return
-    if (!selectedClinicId || mobileWeekDays.length === 0) return
-    const weekStart = mobileWeekDays[0]
-    const weekEnd = mobileWeekDays[mobileWeekDays.length - 1]
-    fetch(`/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d.shifts)) setShifts(d.shifts) })
-      .catch(() => {})
-  }, [mobileSelectedDate, selectedClinicId, mobileWeekDays])
-
   // Refresh all data after shift changes (Task 2)
   const refreshAll = useCallback(async () => {
     await loadShifts()
