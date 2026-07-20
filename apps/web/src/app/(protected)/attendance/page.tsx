@@ -175,6 +175,43 @@ export default function AttendancePage() {
     return toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
   })
 
+  // Mobile horizontal date picker state
+  const [attSelectedDay, setAttSelectedDay] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return toHKDateStr(new Date())
+    }
+    return ''
+  })
+
+  const attWeekDays = useMemo(() => {
+    if (!attSelectedDay) return []
+    const days: string[] = []
+    const start = new Date(attSelectedDay)
+    for (let i = -3; i <= 3; i++) {
+      const d = new Date(start.getTime() + i * 86400000)
+      days.push(toHKDateStr(d))
+    }
+    return days
+  }, [attSelectedDay])
+
+  const attMonthLabel = useMemo(() => {
+    if (!attSelectedDay) return ''
+    const d = new Date(attSelectedDay)
+    return `${d.getFullYear()}年${d.getMonth() + 1}月`
+  }, [attSelectedDay])
+
+  const shiftAttWeek = (delta: number) => {
+    const d = new Date(attSelectedDay)
+    d.setDate(d.getDate() + delta)
+    setAttSelectedDay(toHKDateStr(d))
+  }
+
+  const selectAttDay = (d: string) => {
+    setAttSelectedDay(d)
+    setStartDate(d)
+    setEndDate(d)
+  }
+
   // Records tab: exceptions lookup for color-coding
   const [recordsExceptions, setRecordsExceptions] = useState<ExceptionRecord[]>([])
   const [loadedMonths, setLoadedMonths] = useState<Set<string>>(new Set())
@@ -616,6 +653,34 @@ export default function AttendancePage() {
             }
             return null
           })()}
+
+          {/* Mobile horizontal date picker */}
+          <div className="md:hidden mb-3">
+            <div className="flex items-center justify-between mb-2 px-1">
+              <button onClick={() => shiftAttWeek(-7)} className="w-8 h-8 rounded-lg border text-lg">‹</button>
+              <span className="text-sm font-semibold">{attMonthLabel}</span>
+              <button onClick={() => shiftAttWeek(7)} className="w-8 h-8 rounded-lg border text-lg">›</button>
+            </div>
+            <div className="flex gap-1 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+              {attWeekDays.map(d => {
+                const isSel = d === attSelectedDay
+                const dow = ['日','一','二','三','四','五','六'][new Date(d + 'T12:00:00').getDay()]
+                return (
+                  <button key={d} onClick={() => selectAttDay(d)}
+                    className="flex-shrink-0 flex flex-col items-center rounded-lg border px-3 py-2 text-xs"
+                    style={{
+                      minWidth: 46,
+                      background: isSel ? '#3b82f6' : '#fff',
+                      color: isSel ? '#fff' : '#333',
+                      borderColor: isSel ? '#3b82f6' : '#e5e7eb'
+                    }}>
+                    <span>{dow}</span>
+                    <span className="text-base font-bold">{parseInt(d.split('-')[2])}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
 
           {/* Mobile card view */}
           <div className="md:hidden space-y-2">

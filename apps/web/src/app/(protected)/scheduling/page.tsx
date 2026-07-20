@@ -167,6 +167,13 @@ export default function SchedulingPage() {
     }
     return days
   }, [mobileSelectedDate])
+
+  const shiftMobileWeek = (deltaDays: number) => {
+    const d = new Date(mobileSelectedDate)
+    d.setDate(d.getDate() + deltaDays)
+    setMobileSelectedDate(toHKDateStr(d))
+  }
+
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
@@ -1811,6 +1818,24 @@ function getShiftColor(shift: Shift): string {
         <p className="text-xs text-muted-foreground mb-3 text-center bg-amber-50 rounded-lg p-2 border border-amber-200">
           📱 手機為唯讀檢視，排班請用電腦
         </p>
+
+        {/* Week navigation */}
+        <div className="flex items-center justify-between mb-2 px-1">
+          <button onClick={() => shiftMobileWeek(-7)}
+            className="w-9 h-9 flex items-center justify-center rounded-lg border text-lg active:bg-muted">
+            ‹
+          </button>
+          <span className="text-sm font-semibold">
+            {(() => {
+              const d = new Date(mobileSelectedDate)
+              return `${d.getFullYear()}年${d.getMonth() + 1}月`
+            })()}
+          </span>
+          <button onClick={() => shiftMobileWeek(7)}
+            className="w-9 h-9 flex items-center justify-center rounded-lg border text-lg active:bg-muted">
+            ›
+          </button>
+        </div>
 
         {/* Date bar */}
         <div className="flex gap-1 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth: 'none' }}>
