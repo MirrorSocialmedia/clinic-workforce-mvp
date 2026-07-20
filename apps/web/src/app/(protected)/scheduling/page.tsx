@@ -158,14 +158,18 @@ export default function SchedulingPage() {
   // Mobile day view state
   const [mobileSelectedDate, setMobileSelectedDate] = useState<string>(toHKDateStr(todayHK()))
   const mobileWeekDays = useMemo(() => {
-    const days = []
-    const start = new Date(mobileSelectedDate)
-    start.setHours(0, 0, 0, 0)
-    for (let i = -3; i <= 3; i++) {
-      const d = new Date(start.getTime() + i * 86400000)
-      days.push(toHKDateStr(d))
+    const d = new Date(mobileSelectedDate)
+    const dow = d.getDay() // 0=日
+    const mondayOffset = dow === 0 ? -6 : 1 - dow
+    const monday = new Date(d)
+    monday.setDate(d.getDate() + mondayOffset)
+    const days: string[] = []
+    for (let i = 0; i < 7; i++) {
+      const wd = new Date(monday)
+      wd.setDate(monday.getDate() + i)
+      days.push(toHKDateStr(wd))
     }
-    return days
+    return days // 週一→週日，固定一週
   }, [mobileSelectedDate])
 
   const shiftMobileWeek = (deltaDays: number) => {
@@ -540,15 +544,14 @@ function getShiftColor(shift: Shift): string {
 
   // Mobile: load shifts for the current mobile week independently
   useEffect(() => {
-    if (!selectedClinicId) return
+    if (!selectedClinicId || mobileWeekDays.length === 0) return
     const weekStart = mobileWeekDays[0]
-    const weekEnd = mobileWeekDays[mobileWeekDays.length - 1]
+    const weekEnd = mobileWeekDays[6]
     if (!weekStart || !weekEnd) return
     const url = `/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`
     fetch(url, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { shifts: [] })
       .then(d => { if (Array.isArray(d.shifts)) setShifts((prev: Shift[]) => {
-        // Merge: keep existing shifts, add new ones, avoid duplicates
         const existingIds = new Set(prev.map((s: Shift) => s.id))
         const newShifts = d.shifts.filter((s: Shift) => !existingIds.has(s.id))
         return newShifts.length ? [...prev, ...newShifts] : prev
@@ -1784,9 +1787,9 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
 
-      {/* Orphan Shift Warning (Fix #1b) */}
+      {/* Orphan Shift Warning (Fix #1b) — desktop only */}
       {displayWarning && (
-        <div style={{
+        <div className="hidden md:block" style={{
           padding: '8px 12px', marginBottom: 16, borderRadius: 6,
           background: '#fff3cd', border: '1px solid #ffc107', fontSize: 13, color: '#856404'
         }}>
@@ -1900,7 +1903,7 @@ function getShiftColor(shift: Shift): string {
 
         {/* Shift cards for selected date */}
         {(() => {
-          const dayShifts = clinicFilteredShifts.filter(s => s.date === mobileSelectedDate)
+          const dayShifts = clinicFilteredShifts.filter(s => toHKDateStr(new Date(s.date)) === mobileSelectedDate)
           const dayLeaves = leaveRequests.filter(lr => {
             const lrStart = toHKDateStr(new Date(lr.startDate))
             const lrEnd = toHKDateStr(new Date(lr.endDate))
