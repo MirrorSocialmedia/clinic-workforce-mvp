@@ -453,7 +453,6 @@ td.num, .tabular { font-variant-numeric: tabular-nums; font-family: var(--font-m
   .sidebar-nav a.active { border-left: none; }
   .main-content { padding: 18px 16px; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
-  table { display: block; overflow-x: auto; white-space: nowrap; }
 }
 
 /* ============================================

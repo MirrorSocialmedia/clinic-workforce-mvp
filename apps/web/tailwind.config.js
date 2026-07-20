@@ -3,6 +3,16 @@ module.exports = {
   darkMode: ['class'],
   content: [
     './src/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/components/**/*.{js,ts,jsx,tsx,mdx}',
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  safelist: [
+    'md:hidden', 'md:block', 'md:flex', 'md:inline-flex',
+    'md:ml-20', 'md:ml-64', 'md:pb-0', 'md:flex-row',
+    'md:grid-cols-2', 'md:grid-cols-3', 'md:grid-cols-4', 'md:grid-cols-5',
+    { pattern: /^md:/ },
   ],
   theme: {
     extend: {
