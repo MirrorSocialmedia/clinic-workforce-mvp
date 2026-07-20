@@ -565,54 +565,97 @@ export default function LeavePage() {
               ) : tbOverview.length === 0 ? (
                 <div className="text-sm text-muted-foreground">暫無資料（兼職不計時間帳戶）</div>
               ) : (
-                <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-xs text-muted-foreground text-left">
-                      <th className="py-1">員工</th>
-                      <th className="py-1 text-right">時間帳戶</th>
-                      <th className="py-1 text-right">≈ 天數</th>
-                      <th className="py-1 text-right">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <>
+                  {/* Desktop table */}
+                  <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted-foreground text-left">
+                        <th className="py-1">員工</th>
+                        <th className="py-1 text-right">時間帳戶</th>
+                        <th className="py-1 text-right">≈ 天數</th>
+                        <th className="py-1 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...tbOverview]
+                        .sort((a, b) => (a.timeAccountMinutes ?? 0) - (b.timeAccountMinutes ?? 0))
+                        .map(e => {
+                          const m = e.timeAccountMinutes ?? 0
+                          return (
+                            <tr key={e.employeeId} className="border-t">
+                              <td className="py-1.5">{e.employeeName}</td>
+                              <td className={`py-1.5 text-right font-mono font-semibold ${m < 0 ? 'text-red-600' : m > 0 ? 'text-emerald-600' : ''}`}>
+                                {m > 0 ? '+' : ''}{m.toLocaleString()} 分鐘
+                              </td>
+                              <td className="py-1.5 text-right text-muted-foreground">{(m / 540).toFixed(1)} 天</td>
+                              <td className="py-1.5 text-right">
+                                {m > 0 && (
+                                  <button className="text-xs underline text-primary mr-2"
+                                    onClick={() => setConvertForm(f => ({ ...f, employeeId: e.employeeId, direction: 'to_leave' }))}>
+                                    換假
+                                  </button>
+                                )}
+                                {m < 0 && (
+                                  <button className="text-xs underline text-primary mr-2"
+                                    onClick={() => setConvertForm(f => ({ ...f, employeeId: e.employeeId, direction: 'rest_to_account' }))}>
+                                    還鐘
+                                  </button>
+                                )}
+                                {isOwner && (
+                                  <button className="text-xs underline text-muted-foreground"
+                                    onClick={() => setInitAccountForm(f => ({ ...f, employeeId: e.employeeId }))}>
+                                    初始化
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                    </tbody>
+                  </table>
+                  </div>
+
+                  {/* Mobile cards */}
+                  <div className="md:hidden space-y-2">
                     {[...tbOverview]
                       .sort((a, b) => (a.timeAccountMinutes ?? 0) - (b.timeAccountMinutes ?? 0))
                       .map(e => {
                         const m = e.timeAccountMinutes ?? 0
                         return (
-                          <tr key={e.employeeId} className="border-t">
-                            <td className="py-1.5">{e.employeeName}</td>
-                            <td className={`py-1.5 text-right font-mono font-semibold ${m < 0 ? 'text-red-600' : m > 0 ? 'text-emerald-600' : ''}`}>
-                              {m > 0 ? '+' : ''}{m.toLocaleString()} 分鐘
-                            </td>
-                            <td className="py-1.5 text-right text-muted-foreground">{(m / 540).toFixed(1)} 天</td>
-                            <td className="py-1.5 text-right">
+                          <div key={e.employeeId} className="rounded-xl border shadow-card p-3">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="font-semibold">{e.employeeName}</span>
+                              <span className={`font-mono font-semibold text-sm ${m < 0 ? 'text-red-600' : m > 0 ? 'text-emerald-600' : ''}`}>
+                                {m > 0 ? '+' : ''}{m.toLocaleString()} 分
+                              </span>
+                            </div>
+                            <div className="text-xs text-muted-foreground mb-2">≈ {(m / 540).toFixed(1)} 天</div>
+                            <div className="flex gap-2">
                               {m > 0 && (
-                                <button className="text-xs underline text-primary mr-2"
+                                <button className="px-3 py-1.5 rounded-md text-xs border text-primary border-primary/20 bg-primary/5"
                                   onClick={() => setConvertForm(f => ({ ...f, employeeId: e.employeeId, direction: 'to_leave' }))}>
                                   換假
                                 </button>
                               )}
                               {m < 0 && (
-                                <button className="text-xs underline text-primary mr-2"
+                                <button className="px-3 py-1.5 rounded-md text-xs border text-primary border-primary/20 bg-primary/5"
                                   onClick={() => setConvertForm(f => ({ ...f, employeeId: e.employeeId, direction: 'rest_to_account' }))}>
                                   還鐘
                                 </button>
                               )}
                               {isOwner && (
-                                <button className="text-xs underline text-muted-foreground"
+                                <button className="px-3 py-1.5 rounded-md text-xs border text-muted-foreground border-gray-200 bg-gray-50"
                                   onClick={() => setInitAccountForm(f => ({ ...f, employeeId: e.employeeId }))}>
                                   初始化
                                 </button>
                               )}
-                            </td>
-                          </tr>
+                            </div>
+                          </div>
                         )
                       })}
-                  </tbody>
-                </table>
-                </div>
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -968,8 +1011,9 @@ export default function LeavePage() {
             </div>
           )}
 
-          {/* Leave Types Table */}
-          <div className="card overflow-x-auto">
+          {/* Leave Types Table / Cards */}
+          {/* Desktop table */}
+          <div className="hidden md:block card overflow-x-auto">
             <table>
               <thead>
                 <tr><th>顏色</th><th>名稱</th><th>有薪</th><th>取消勤工</th><th>年度額度</th><th>狀態</th><th>操作</th></tr>
@@ -1016,6 +1060,45 @@ export default function LeavePage() {
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {leaveTypes.map(t => {
+              const isSystem = t.systemKey != null
+              return (
+                <div key={t.id} className="rounded-xl border shadow-card p-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="flex items-center gap-2">
+                      <div style={{ width: 16, height: 16, borderRadius: 4, background: t.color || '#ccc' }} />
+                      <span className="font-semibold">{t.name}{isSystem ? ' 🔒' : ''}</span>
+                    </div>
+                    <label className="flex items-center gap-1 text-xs">
+                      <input type="checkbox" checked={!!t.isActive} onChange={() => !isSystem && handleLtToggleActive(t.id, !!t.isActive)} disabled={isSystem} />
+                      {t.isActive ? '啟用' : '停用'}
+                    </label>
+                  </div>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span>{t.isPaid ? '✅ 有薪' : '❌ 無薪'}</span>
+                    <span>{t.annualQuota ? `${t.annualQuota} 天/年` : '無限制'}</span>
+                  </div>
+                  {!isSystem && (
+                    <div className="flex gap-2">
+                      <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleLtEdit(t)}>編輯</button>
+                      <button className="px-3 py-1.5 rounded-md text-xs text-red-600 border border-red-200 bg-red-50"
+                        onClick={async () => {
+                          if (!confirm(`確定刪除「${t.name}」？`)) return
+                          const res = await fetch(`/api/leave-types/${t.id}`, { method: 'DELETE', credentials: 'include' })
+                          if (res.ok) fetchData()
+                          else { const err = await res.json(); alert(err.error || '刪除失敗') }
+                        }}
+                      >刪除</button>
+                    </div>
+                  )}
+                  {isSystem && <div className="text-xs text-muted-foreground">計算核心，不可刪除</div>}
+                </div>
+              )
+            })}
           </div>
         </>
       )}

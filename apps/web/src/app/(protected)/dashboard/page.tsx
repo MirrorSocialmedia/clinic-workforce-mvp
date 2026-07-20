@@ -357,87 +357,125 @@ export default function DashboardPage() {
           ) : empSummary.length === 0 ? (
             <div className="flex justify-center py-8 text-muted-foreground">沒有考勤資料</div>
           ) : (
-            <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>員工</TableHead>
-                  <TableHead>遲到次數</TableHead>
-                  <TableHead>遲到時間</TableHead>
-                  <TableHead>早退次數</TableHead>
-                  <TableHead>早退時間</TableHead>
-                  <TableHead>OT次數</TableHead>
-                  <TableHead>本月OT</TableHead>
-                  <TableHead>時間帳戶</TableHead>
-                  <TableHead>可換假</TableHead>
-                  <TableHead>休息日餘</TableHead>
-                  <TableHead>年假餘</TableHead>
-                  <TableHead>OT補假餘</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {empSummary.map(emp => (
-                  <TableRow key={emp.employeeId}>
-                    <TableCell className="font-medium">{emp.employeeName}</TableCell>
-                    <TableCell style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
-                      {emp.lateCount ?? 0} 次
-                    </TableCell>
-                    <TableCell style={{ color: (emp.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
-                      {emp.lateMinutes ?? 0} 分鐘
-                      {emp.makeupMinutes != null && emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
-                    </TableCell>
-                    <TableCell style={emp.earlyLeaveCount > 0 ? { color: '#dc2626', fontWeight: 600 } : {}}>
-                      {emp.earlyLeaveCount ?? 0} 次
-                    </TableCell>
-                    <TableCell style={{ color: (emp.netEarlyMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
-                      {emp.netEarlyMinutes ?? 0} 分鐘
-                    </TableCell>
-                    <TableCell>{emp.otCount ?? 0} 次</TableCell>
-                    <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>
-                    <TableCell>
-                      {emp.timeAccountMinutes == null ? '—' : (
-                        <span style={{
-                          fontWeight: 700,
-                          color: emp.timeAccountMinutes >= 0 ? '#059669' : '#dc2626',
-                        }}>
-                          {emp.timeAccountMinutes >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes)} 分
-                          {emp.timeAccountMinutes < 0 && <span className="text-xs text-red-600 ml-1">（約 {(Math.abs(emp.timeAccountMinutes) / 540).toFixed(1)} 日）</span>}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {emp.convertibleLeaveDays == null ? '—' : `${(emp.convertibleLeaveDays).toFixed(1)} 天`}
-                    </TableCell>
-                    <TableCell>
-                      {(() => {
-                        const bal = balancesByEmp.get(emp.employeeId) || {}
-                        const rd = bal.REST_DAY
-                        if (!rd) return '-'
-                        const val = rd.remaining ?? rd.entitled ?? 0
-                        return Number(val).toFixed(1)
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      {(() => {
-                        const bal = balancesByEmp.get(emp.employeeId) || {}
-                        const al = bal.ANNUAL_LEAVE
-                        if (!al) return '-'
-                        return Number(al.remaining ?? 0).toFixed(1)
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      {(() => {
-                        const bal = balancesByEmp.get(emp.employeeId) || {}
-                        const ol = bal.OT_LEAVE
-                        if (!ol) return '-'
-                        return Number(ol.remaining ?? 0).toFixed(1)
-                      })()}
-                    </TableCell>
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>員工</TableHead>
+                    <TableHead>遲到次數</TableHead>
+                    <TableHead>遲到時間</TableHead>
+                    <TableHead>早退次數</TableHead>
+                    <TableHead>早退時間</TableHead>
+                    <TableHead>OT次數</TableHead>
+                    <TableHead>本月OT</TableHead>
+                    <TableHead>時間帳戶</TableHead>
+                    <TableHead>可換假</TableHead>
+                    <TableHead>休息日餘</TableHead>
+                    <TableHead>年假餘</TableHead>
+                    <TableHead>OT補假餘</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            </div>
+                </TableHeader>
+                <TableBody>
+                  {empSummary.map(emp => (
+                    <TableRow key={emp.employeeId}>
+                      <TableCell className="font-medium">{emp.employeeName}</TableCell>
+                      <TableCell style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : {}}>
+                        {emp.lateCount ?? 0} 次
+                      </TableCell>
+                      <TableCell style={{ color: (emp.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
+                        {emp.lateMinutes ?? 0} 分鐘
+                        {emp.makeupMinutes != null && emp.makeupMinutes > 0 && <span className="text-xs text-muted-foreground ml-1">（已補{emp.makeupMinutes}）</span>}
+                      </TableCell>
+                      <TableCell style={emp.earlyLeaveCount > 0 ? { color: '#dc2626', fontWeight: 600 } : {}}>
+                        {emp.earlyLeaveCount ?? 0} 次
+                      </TableCell>
+                      <TableCell style={{ color: (emp.netEarlyMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
+                        {emp.netEarlyMinutes ?? 0} 分鐘
+                      </TableCell>
+                      <TableCell>{emp.otCount ?? 0} 次</TableCell>
+                      <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>
+                      <TableCell>
+                        {emp.timeAccountMinutes == null ? '—' : (
+                          <span style={{
+                            fontWeight: 700,
+                            color: emp.timeAccountMinutes >= 0 ? '#059669' : '#dc2626',
+                          }}>
+                            {emp.timeAccountMinutes >= 0 ? '+' : '−'}{Math.abs(emp.timeAccountMinutes)} 分
+                            {emp.timeAccountMinutes < 0 && <span className="text-xs text-red-600 ml-1">（約 {(Math.abs(emp.timeAccountMinutes) / 540).toFixed(1)} 日）</span>}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {emp.convertibleLeaveDays == null ? '—' : `${(emp.convertibleLeaveDays).toFixed(1)} 天`}
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          const bal = balancesByEmp.get(emp.employeeId) || {}
+                          const rd = bal.REST_DAY
+                          if (!rd) return '-'
+                          const val = rd.remaining ?? rd.entitled ?? 0
+                          return Number(val).toFixed(1)
+                        })()}
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          const bal = balancesByEmp.get(emp.employeeId) || {}
+                          const al = bal.ANNUAL_LEAVE
+                          if (!al) return '-'
+                          return Number(al.remaining ?? 0).toFixed(1)
+                        })()}
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          const bal = balancesByEmp.get(emp.employeeId) || {}
+                          const ol = bal.OT_LEAVE
+                          if (!ol) return '-'
+                          return Number(ol.remaining ?? 0).toFixed(1)
+                        })()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              </div>
+
+              {/* Mobile cards */}
+              <div className="md:hidden p-4 space-y-2">
+                {empSummary.map(emp => {
+                  const bal = balancesByEmp.get(emp.employeeId) || {}
+                  const rd = bal.REST_DAY
+                  const al = bal.ANNUAL_LEAVE
+                  const ol = bal.OT_LEAVE
+                  return (
+                    <div key={emp.employeeId} className="rounded-xl border shadow-card p-3">
+                      <div className="font-semibold mb-1">{emp.employeeName}</div>
+                      <div className="grid grid-cols-2 gap-1 text-xs">
+                        <div style={emp.lateCount > 0 ? { color: '#d97706', fontWeight: 600 } : { color: '#888' }}>
+                          遲到 {emp.lateCount ?? 0} 次 ({emp.lateMinutes ?? 0}分)
+                        </div>
+                        <div style={emp.earlyLeaveCount > 0 ? { color: '#dc2626', fontWeight: 600 } : { color: '#888' }}>
+                          早退 {emp.earlyLeaveCount ?? 0} 次 ({emp.netEarlyMinutes ?? 0}分)
+                        </div>
+                        <div className="text-emerald-600">OT {emp.otCount ?? 0} 次 ({emp.otMinutes ?? 0}分)</div>
+                        <div style={{
+                          fontWeight: 700,
+                          color: emp.timeAccountMinutes == null ? '#888' : emp.timeAccountMinutes >= 0 ? '#059669' : '#dc2626',
+                        }}>
+                          {emp.timeAccountMinutes == null ? '帳戶 —' : `${emp.timeAccountMinutes >= 0 ? '+' : '−'}${Math.abs(emp.timeAccountMinutes)} 分`}
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground mt-1 pt-1 border-t">
+                        <span>休息日 {(rd ? Number(rd.remaining ?? 0).toFixed(1) : '—')}天</span>
+                        <span>年假 {(al ? Number(al.remaining ?? 0).toFixed(1) : '—')}天</span>
+                        <span>OT假 {(ol ? Number(ol.remaining ?? 0).toFixed(1) : '—')}天</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

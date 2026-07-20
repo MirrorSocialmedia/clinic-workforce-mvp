@@ -278,40 +278,48 @@ export default function HashPage() {
         ) : hashes.length === 0 ? (
           <p style={{ color: '#888' }}>沒有完整性指紋記錄。需要先生成。</p>
         ) : (
-          <div className="overflow-x-auto">
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #eee' }}>
-                <th style={{ textAlign: 'left', padding: '8px 12px' }}>日期</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px' }}>診所</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px' }}>完整性指紋</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px' }}>記錄數</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px' }}>生成時間</th>
-              </tr>
-            </thead>
-            <tbody>
-              {hashes.map((h) => (
-                <tr key={h.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                  <td style={{ padding: '8px 12px' }}>
-                    {fmtDate(h.date)}
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    {h.clinic?.name || h.clinicId}
-                  </td>
-                  <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 11 }}>
-                    {h.hash.slice(0, 24)}...
-                  </td>
-                  <td style={{ padding: '8px 12px' }}>
-                    {h.recordCount} 筆
-                  </td>
-                  <td style={{ padding: '8px 12px', color: '#888', fontSize: 12 }}>
-                    {fmtDateTime(h.createdAt)}
-                  </td>
+          <>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #eee' }}>
+                  <th style={{ textAlign: 'left', padding: '8px 12px' }}>日期</th>
+                  <th style={{ textAlign: 'left', padding: '8px 12px' }}>診所</th>
+                  <th style={{ textAlign: 'left', padding: '8px 12px' }}>完整性指紋</th>
+                  <th style={{ textAlign: 'left', padding: '8px 12px' }}>記錄數</th>
+                  <th style={{ textAlign: 'left', padding: '8px 12px' }}>生成時間</th>
                 </tr>
+              </thead>
+              <tbody>
+                {hashes.map((h) => (
+                  <tr key={h.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                    <td style={{ padding: '8px 12px' }}>{fmtDate(h.date)}</td>
+                    <td style={{ padding: '8px 12px' }}>{h.clinic?.name || h.clinicId}</td>
+                    <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 11 }}>{h.hash.slice(0, 24)}...</td>
+                    <td style={{ padding: '8px 12px' }}>{h.recordCount} 筆</td>
+                    <td style={{ padding: '8px 12px', color: '#888', fontSize: 12 }}>{fmtDateTime(h.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="md:hidden space-y-2">
+              {hashes.map((h) => (
+                <div key={h.id} className="rounded-xl border shadow-card p-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-semibold">{fmtDate(h.date)}</span>
+                    <span className="text-sm">{h.recordCount} 筆</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-1">{h.clinic?.name || h.clinicId}</div>
+                  <div className="text-xs font-mono text-muted-foreground break-all">{h.hash.slice(0, 32)}...</div>
+                  <div className="text-xs text-muted-foreground mt-1">{fmtDateTime(h.createdAt)}</div>
+                </div>
               ))}
-            </tbody>
-          </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>

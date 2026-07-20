@@ -10,7 +10,6 @@ import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
 import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
-import { useIsDesktop } from '@/lib/use-is-desktop'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
@@ -37,7 +36,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
-  const isDesktop = useIsDesktop()
 
   const checkAuth = useCallback(async () => {
     try {
@@ -309,8 +307,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
       {/* Main content */}
       <main
-        className="flex-1 transition-all duration-300"
-        style={{ marginLeft: isDesktop ? (collapsed ? '80px' : '256px') : '0px' }}
+        className={`flex-1 transition-[margin] duration-300 ml-0 ${collapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         <div className="main-content pb-16 md:pb-0">
         {children}

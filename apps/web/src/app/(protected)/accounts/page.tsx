@@ -640,11 +640,11 @@ export default function AccountsPage() {
       )}
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div className="flex flex-col md:flex-row gap-3 mb-4">
         <input placeholder="搜尋姓名/電話" value={search} onChange={e => setSearch(e.target.value)}
-          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, width: 200 }} />
+          className="px-3 py-1.5 rounded-md border text-sm w-full md:w-auto" />
         <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
-          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13 }}>
+          className="px-3 py-1.5 rounded-md border text-sm w-full md:w-auto">
           <option value="all">全部角色</option>
           <option value="OWNER">Owner</option>
           <option value="MANAGER">Manager</option>
@@ -653,190 +653,250 @@ export default function AccountsPage() {
           <option value="KIOSK">打卡屏</option>
         </select>
         <select value={clinicFilter} onChange={e => setClinicFilter(e.target.value)}
-          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13 }}>
+          className="px-3 py-1.5 rounded-md border text-sm w-full md:w-auto">
           <option value="all">全部診所</option>
           {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13 }}>
+          className="px-3 py-1.5 rounded-md border text-sm w-full md:w-auto">
           <option value="all">全部狀態</option>
           <option value="active">啟用</option>
           <option value="inactive">停用</option>
         </select>
         {isOwner && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+          <label className="flex items-center gap-1.5 text-sm cursor-pointer">
             <input type="checkbox" checked={showResigned} onChange={e => setShowResigned(e.target.checked)} />
             顯示已離職
           </label>
         )}
       </div>
 
-      {/* Table */}
-      <div className="card overflow-x-auto">
-        <table>
-          <thead>
-            <tr>
-              <th>姓名</th><th>電話</th><th>角色</th><th>到職日</th><th>診所</th><th className="whitespace-nowrap">狀態</th><th className="whitespace-nowrap">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredAccounts.map(acc => (
-              <React.Fragment key={acc.id}>
-                <tr onClick={() => {
-                  if (expandedRow === acc.id) {
-                    setExpandedRow(null)
-                  } else {
-                    setExpandedRow(acc.id)
-                    if (acc.employeeId) {
-                      loadPayRules(acc.employeeId)
-                    }
-                  }
-                }} style={{ cursor: 'pointer' }}>
-                  <td style={{ fontWeight: 500 }}>{acc.name}</td>
-                  <td>{acc.phone}</td>
-                  <td>
+      {/* Table / Cards */}
+      {filteredAccounts.length === 0 ? (
+        <div className="text-center text-muted-foreground py-10">沒有帳號</div>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block card overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>姓名</th><th>電話</th><th>角色</th><th>到職日</th><th>診所</th><th className="whitespace-nowrap">狀態</th><th className="whitespace-nowrap">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAccounts.map(acc => (
+                  <React.Fragment key={acc.id}>
+                    <tr onClick={() => {
+                      if (expandedRow === acc.id) {
+                        setExpandedRow(null)
+                      } else {
+                        setExpandedRow(acc.id)
+                        if (acc.employeeId) {
+                          loadPayRules(acc.employeeId)
+                        }
+                      }
+                    }} style={{ cursor: 'pointer' }}>
+                      <td style={{ fontWeight: 500 }}>{acc.name}</td>
+                      <td>{acc.phone}</td>
+                      <td>
+                        <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
+                          background: acc.role === 'OWNER' ? '#1a1a2e20' : '#88820', color: acc.role === 'OWNER' ? '#1a1a2e' : '#888' }}>
+                          {ROLE_LABELS[acc.role] || acc.role}
+                        </span>
+                      </td>
+                      <td>{acc.joinDate || '-'}</td>
+                      <td>{(acc.clinics || []).map(c => c.name).join(', ') || '-'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const displayStatus = acc.employeeStatus === 'RESIGNED' ? 'RESIGNED' : acc.status
+                          const statusColor = displayStatus === 'ACTIVE' ? '#4CAF50' : displayStatus === 'RESIGNED' ? '#9333ea' : '#dc3545'
+                          const statusBg = displayStatus === 'ACTIVE' ? '#4CAF5020' : displayStatus === 'RESIGNED' ? '#9333ea20' : '#dc354520'
+                          const statusIcon = displayStatus === 'ACTIVE' ? '✅' : displayStatus === 'RESIGNED' ? '👋' : '❌'
+                          return (
+                            <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: statusBg, color: statusColor }}>
+                              {statusIcon} {STATUS_LABELS[displayStatus] || displayStatus}
+                            </span>
+                          )
+                        })()}
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
+                          {acc.employeeId && (
+                            <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
+                            <span className="flex items-center gap-1"><Wallet size={16} /> 薪酬規則</span>
+                          </button>
+                          )}
+                          <button className="text-xs underline" onClick={async () => {
+                            const res = await fetch('/api/face/enroll-code', {
+                              method: 'POST', credentials: 'include',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ employeeId: acc.employeeId })
+                            })
+                            const d = await res.json()
+                            if (res.ok) setEnrollCode({ code: d.code, name: acc.name })
+                          }}>登記臉部</button>
+                          {isOwner && userRole !== acc.role && (
+                            <button className="btn btn-sm" style={{ background: '#fde8e8', color: '#dc3545' }} onClick={() => handleDelete(acc)}>刪除</button>
+                          )}
+                          {isOwner && acc.employeeId && acc.employeeStatus !== 'RESIGNED' && (
+                            <button className="btn btn-sm" style={{ background: '#fef2f2', color: '#dc2626' }} onClick={() => openResign(acc)}>離職</button>
+                          )}
+                          {isOwner && acc.employeeStatus === 'RESIGNED' && (
+                            <button className="btn btn-sm" style={{ background: '#f0fdf4', color: '#16a34a' }} onClick={() => handleRehire(acc)}>復職</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {expandedRow === acc.id && (
+                      <tr>
+                        <td colSpan={7} style={{ background: '#f9fafb', padding: 16 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+                            <div>
+                              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>登入資訊</h4>
+                              <div style={{ fontSize: 12, color: '#888' }}>電郵: {acc.email || '未設定'}</div>
+                              <div style={{ fontSize: 12, color: '#888' }}>建立於: {fmtDate(acc.createdAt)}</div>
+                              <div style={{ marginTop: 8 }}>
+                                <button className="btn btn-sm" style={{ background: '#f0f0f0', marginRight: 4 }} onClick={() => handleResetPassword(acc)}>重設密碼</button>
+                                <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleToggleStatus(acc)}>
+                                  {acc.status === 'ACTIVE' ? '停用' : '啟用'}
+                                </button>
+                              </div>
+                            </div>
+                            <div>
+                              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>診所指派</h4>
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {(acc.clinics || []).map(c => (
+                                  <span key={c.id} style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: '#1a1a2e10', color: '#1a1a2e' }}>{c.name}</span>
+                                ))}
+                                {(!acc.clinics || acc.clinics.length === 0) && <span style={{ fontSize: 12, color: '#aaa' }}>未指派</span>}
+                              </div>
+                            </div>
+                            <div>
+                              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>薪酬資訊</h4>
+                              {(() => {
+                                const payInfo = getPayInfo(acc)
+                                return (
+                                  <>
+                                    <div style={{ fontSize: 12, color: '#888' }}>方式: {payInfo.label}</div>
+                                    <div style={{ fontSize: 12, color: '#888' }}>金額: {payInfo.amount}</div>
+                                  </>
+                                )
+                              })()}
+                            </div>
+                            <div>
+                              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>入職資料</h4>
+                              <div style={{ fontSize: 12, color: '#888' }}>到職日: {acc.joinDate || '未設定'}</div>
+                            </div>
+                            {acc.employeeId && (
+                              <div>
+                                <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                                  假期額度
+                                  <button
+                                    className="btn btn-sm"
+                                    style={{ float: 'right', background: '#f0f0f0', fontSize: 11, padding: '2px 8px' }}
+                                    onClick={() => loadLeaveBalances(acc.employeeId!)}
+                                  >載入</button>
+                                </h4>
+                                {leaveBalances[acc.employeeId!] && leaveBalances[acc.employeeId!].length > 0 ? (
+                                  leaveBalances[acc.employeeId!]
+                                    // 週年發放制：年假只顯示當年
+                                    .filter(b => {
+                                      if (b.leaveType?.systemKey === 'ANNUAL_LEAVE' && b.year !== currentYear) return false
+                                      return true
+                                    })
+                                    .map(b => (
+                                    <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12 }}>
+                                      <span style={{ minWidth: 60, color: '#555' }}>{b.leaveType?.name}</span>
+                                      <input
+                                        type="number"
+                                        defaultValue={b.entitled}
+                                        min="0"
+                                        step="0.5"
+                                        style={{ width: 70, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
+                                        onBlur={e => {
+                                          const v = parseFloat(e.target.value)
+                                          if (isFinite(v) && v !== b.entitled) updateLeaveBalance(b.id, 'entitled', v)
+                                          else e.target.value = String(b.entitled)
+                                        }}
+                                      />
+                                      <span style={{ color: '#aaa' }}>已用: {b.used}</span>
+                                      <span style={{ color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>餘: {b.remaining}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <span style={{ fontSize: 12, color: '#aaa' }}>點擊「載入」查看假期額度</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {filteredAccounts.map(acc => {
+              const displayStatus = acc.employeeStatus === 'RESIGNED' ? 'RESIGNED' : acc.status
+              const statusColor = displayStatus === 'ACTIVE' ? '#4CAF50' : displayStatus === 'RESIGNED' ? '#9333ea' : '#dc3545'
+              const statusBg = displayStatus === 'ACTIVE' ? '#4CAF5020' : displayStatus === 'RESIGNED' ? '#9333ea20' : '#dc354520'
+              const statusIcon = displayStatus === 'ACTIVE' ? '✅' : displayStatus === 'RESIGNED' ? '👋' : '❌'
+              return (
+                <div key={acc.id} className="rounded-xl border shadow-card p-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-semibold">{acc.name}</span>
+                    <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: statusBg, color: statusColor }}>
+                      {statusIcon} {STATUS_LABELS[displayStatus] || displayStatus}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm mb-1">
+                    <span>{acc.phone}</span>
                     <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
                       background: acc.role === 'OWNER' ? '#1a1a2e20' : '#88820', color: acc.role === 'OWNER' ? '#1a1a2e' : '#888' }}>
                       {ROLE_LABELS[acc.role] || acc.role}
                     </span>
-                  </td>
-                  <td>{acc.joinDate || '-'}</td>
-                  <td>{(acc.clinics || []).map(c => c.name).join(', ') || '-'}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    {(() => {
-                      const displayStatus = acc.employeeStatus === 'RESIGNED' ? 'RESIGNED' : acc.status
-                      const statusColor = displayStatus === 'ACTIVE' ? '#4CAF50' : displayStatus === 'RESIGNED' ? '#9333ea' : '#dc3545'
-                      const statusBg = displayStatus === 'ACTIVE' ? '#4CAF5020' : displayStatus === 'RESIGNED' ? '#9333ea20' : '#dc354520'
-                      const statusIcon = displayStatus === 'ACTIVE' ? '✅' : displayStatus === 'RESIGNED' ? '👋' : '❌'
-                      return (
-                        <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: statusBg, color: statusColor }}>
-                          {statusIcon} {STATUS_LABELS[displayStatus] || displayStatus}
-                        </span>
-                      )
-                    })()}
-                  </td>
-                  <td onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
-                      {acc.employeeId && (
-                        <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
-                        <span className="flex items-center gap-1"><Wallet size={16} /> 薪酬規則</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-2">
+                    {(acc.clinics || []).map(c => c.name).join(', ') || '未指派診所'}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleEdit(acc)}>編輯</button>
+                    {acc.employeeId && (
+                      <button className="px-3 py-1.5 rounded-md text-xs border text-emerald-700 border-emerald-200 bg-emerald-50" onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
+                        <Wallet size={12} className="inline mr-1" /> 薪酬規則
                       </button>
-                      )}
-                      <button className="text-xs underline" onClick={async () => {
-                        const res = await fetch('/api/face/enroll-code', {
-                          method: 'POST', credentials: 'include',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ employeeId: acc.employeeId })
-                        })
-                        const d = await res.json()
-                        if (res.ok) setEnrollCode({ code: d.code, name: acc.name })
-                      }}>登記臉部</button>
-                      {isOwner && userRole !== acc.role && (
-                        <button className="btn btn-sm" style={{ background: '#fde8e8', color: '#dc3545' }} onClick={() => handleDelete(acc)}>刪除</button>
-                      )}
-                      {isOwner && acc.employeeId && acc.employeeStatus !== 'RESIGNED' && (
-                        <button className="btn btn-sm" style={{ background: '#fef2f2', color: '#dc2626' }} onClick={() => openResign(acc)}>離職</button>
-                      )}
-                      {isOwner && acc.employeeStatus === 'RESIGNED' && (
-                        <button className="btn btn-sm" style={{ background: '#f0fdf4', color: '#16a34a' }} onClick={() => handleRehire(acc)}>復職</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-                {expandedRow === acc.id && (
-                  <tr>
-                    <td colSpan={7} style={{ background: '#f9fafb', padding: 16 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
-                        <div>
-                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>登入資訊</h4>
-                          <div style={{ fontSize: 12, color: '#888' }}>電郵: {acc.email || '未設定'}</div>
-                          <div style={{ fontSize: 12, color: '#888' }}>建立於: {fmtDate(acc.createdAt)}</div>
-                          <div style={{ marginTop: 8 }}>
-                            <button className="btn btn-sm" style={{ background: '#f0f0f0', marginRight: 4 }} onClick={() => handleResetPassword(acc)}>重設密碼</button>
-                            <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleToggleStatus(acc)}>
-                              {acc.status === 'ACTIVE' ? '停用' : '啟用'}
-                            </button>
-                          </div>
-                        </div>
-                        <div>
-                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>診所指派</h4>
-                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {(acc.clinics || []).map(c => (
-                              <span key={c.id} style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: '#1a1a2e10', color: '#1a1a2e' }}>{c.name}</span>
-                            ))}
-                            {(!acc.clinics || acc.clinics.length === 0) && <span style={{ fontSize: 12, color: '#aaa' }}>未指派</span>}
-                          </div>
-                        </div>
-                        <div>
-                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>薪酬資訊</h4>
-                          {(() => {
-                            const payInfo = getPayInfo(acc)
-                            return (
-                              <>
-                                <div style={{ fontSize: 12, color: '#888' }}>方式: {payInfo.label}</div>
-                                <div style={{ fontSize: 12, color: '#888' }}>金額: {payInfo.amount}</div>
-                              </>
-                            )
-                          })()}
-                        </div>
-                        <div>
-                          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>入職資料</h4>
-                          <div style={{ fontSize: 12, color: '#888' }}>到職日: {acc.joinDate || '未設定'}</div>
-                        </div>
-                        {acc.employeeId && (
-                          <div>
-                            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                              假期額度
-                              <button
-                                className="btn btn-sm"
-                                style={{ float: 'right', background: '#f0f0f0', fontSize: 11, padding: '2px 8px' }}
-                                onClick={() => loadLeaveBalances(acc.employeeId!)}
-                              >載入</button>
-                            </h4>
-                            {leaveBalances[acc.employeeId!] && leaveBalances[acc.employeeId!].length > 0 ? (
-                              leaveBalances[acc.employeeId!]
-                                // 週年發放制：年假只顯示當年
-                                .filter(b => {
-                                  if (b.leaveType?.systemKey === 'ANNUAL_LEAVE' && b.year !== currentYear) return false
-                                  return true
-                                })
-                                .map(b => (
-                                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12 }}>
-                                  <span style={{ minWidth: 60, color: '#555' }}>{b.leaveType?.name}</span>
-                                  <input
-                                    type="number"
-                                    defaultValue={b.entitled}
-                                    min="0"
-                                    step="0.5"
-                                    style={{ width: 70, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
-                                    onBlur={e => {
-                                      const v = parseFloat(e.target.value)
-                                      if (isFinite(v) && v !== b.entitled) updateLeaveBalance(b.id, 'entitled', v)
-                                      else e.target.value = String(b.entitled)
-                                    }}
-                                  />
-                                  <span style={{ color: '#aaa' }}>已用: {b.used}</span>
-                                  <span style={{ color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>餘: {b.remaining}</span>
-                                </div>
-                              ))
-                            ) : (
-                              <span style={{ fontSize: 12, color: '#aaa' }}>點擊「載入」查看假期額度</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
-        {filteredAccounts.length === 0 && (
-          <div style={{ textAlign: 'center', color: '#888', padding: 40 }}>沒有帳號</div>
-        )}
-      </div>
+                    )}
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={async () => {
+                      const res = await fetch('/api/face/enroll-code', {
+                        method: 'POST', credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ employeeId: acc.employeeId })
+                      })
+                      const d = await res.json()
+                      if (res.ok) setEnrollCode({ code: d.code, name: acc.name })
+                    }}>登記臉部</button>
+                    {isOwner && userRole !== acc.role && (
+                      <button className="px-3 py-1.5 rounded-md text-xs text-red-600 border border-red-200 bg-red-50" onClick={() => handleDelete(acc)}>刪除</button>
+                    )}
+                    {isOwner && acc.employeeId && acc.employeeStatus !== 'RESIGNED' && (
+                      <button className="px-3 py-1.5 rounded-md text-xs text-red-600 border border-red-200 bg-red-50" onClick={() => openResign(acc)}>離職</button>
+                    )}
+                    {isOwner && acc.employeeStatus === 'RESIGNED' && (
+                      <button className="px-3 py-1.5 rounded-md text-xs text-green-600 border border-green-200 bg-green-50" onClick={() => handleRehire(acc)}>復職</button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
       {/* Pay Rule Modal */}
       {showPayRuleModal && payRuleEmployeeId && (
         <RuleComposerModal

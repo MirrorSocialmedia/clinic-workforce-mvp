@@ -241,33 +241,78 @@ export default function ClinicsPage() {
         {companies.length === 0 ? (
           <div className="text-muted" style={{ fontSize: 13 }}>暫無公司</div>
         ) : (
-          <div className="overflow-x-auto">
-          <table>
-            <thead>
-              <tr>
-                <th>公司名稱</th>
-                <th>Logo</th>
-                <th>診所數</th>
-                <th>建立時間</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>公司名稱</th>
+                  <th>Logo</th>
+                  <th>診所數</th>
+                  <th>建立時間</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companies.map(company => (
+                  <tr key={company.id}>
+                    <td style={{ fontWeight: 500 }}>{company.name}</td>
+                    <td>
+                      {company.logoData ? (
+                        <img src={company.logoData} alt="Logo" style={{ height: 28, borderRadius: 4 }} />
+                      ) : (
+                        <span className="text-muted" style={{ fontSize: 12 }}>—</span>
+                      )}
+                    </td>
+                    <td className="num">{company._count?.clinics ?? 0}</td>
+                    <td className="text-sm">{fmtDate(company.createdAt)}</td>
+                    <td>
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleRenameCompany(company.id, company.logoData)}>改名</button>
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={async () => {
+                        const input = document.createElement('input')
+                        input.type = 'file'
+                        input.accept = 'image/png,image/jpeg'
+                        input.onchange = async (e: any) => {
+                          const f = e.target.files?.[0]
+                          if (!f) return
+                          try {
+                            const logoData = await compressToDataUrl(f, 400, 400)
+                            if (logoData.length > 150_000) { alert('Logo 壓縮後仍過大'); return }
+                            await fetch(`/api/companies/${company.id}`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ name: company.name, logoData }),
+                              credentials: 'include',
+                            })
+                            fetchAll()
+                          } catch { alert('圖片載入失敗') }
+                        }
+                        input.click()
+                      }}>換Logo</button>
+                      <button className="btn btn-danger btn-sm" onClick={() => handleDeleteCompany(company.id)}>刪除</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="md:hidden space-y-2">
               {companies.map(company => (
-                <tr key={company.id}>
-                  <td style={{ fontWeight: 500 }}>{company.name}</td>
-                  <td>
-                    {company.logoData ? (
-                      <img src={company.logoData} alt="Logo" style={{ height: 28, borderRadius: 4 }} />
-                    ) : (
-                      <span className="text-muted" style={{ fontSize: 12 }}>—</span>
-                    )}
-                  </td>
-                  <td className="num">{company._count?.clinics ?? 0}</td>
-                  <td className="text-sm">{fmtDate(company.createdAt)}</td>
-                  <td>
-                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleRenameCompany(company.id, company.logoData)}>改名</button>
-                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={async () => {
+                <div key={company.id} className="rounded-xl border shadow-card p-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="flex items-center gap-2">
+                      {company.logoData && <img src={company.logoData} alt="Logo" style={{ height: 24, borderRadius: 4 }} />}
+                      <span className="font-semibold">{company.name}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">{company._count?.clinics ?? 0} 間診所</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-2">建立於 {fmtDate(company.createdAt)}</div>
+                  <div className="flex gap-2">
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleRenameCompany(company.id, company.logoData)}>改名</button>
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={async () => {
                       const input = document.createElement('input')
                       input.type = 'file'
                       input.accept = 'image/png,image/jpeg'
@@ -288,13 +333,12 @@ export default function ClinicsPage() {
                       }
                       input.click()
                     }}>換Logo</button>
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDeleteCompany(company.id)}>刪除</button>
-                  </td>
-                </tr>
+                    <button className="px-3 py-1.5 rounded-md text-xs text-red-600 border border-red-200 bg-red-50" onClick={() => handleDeleteCompany(company.id)}>刪除</button>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
 

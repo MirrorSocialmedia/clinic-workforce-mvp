@@ -106,43 +106,45 @@ export default function PayrollListPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3 mb-5 flex-wrap">
-        <select
-          value={statusFilter}
-          onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
-        >
-          <option value="">全部狀態</option>
-          <option value="DRAFT">草稿</option>
-          <option value="FINALIZED">已確認</option>
-          <option value="EXPORTED">已匯出</option>
-        </select>
-
-        <input
-          type="month"
-          value={periodFilter}
-          onChange={e => { setPeriodFilter(e.target.value); setPage(1) }}
-          className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
-        />
-
-        <button
-          onClick={fetchRuns}
-          className="px-3 py-2 rounded-md g border bg-slate-100 hover:bg-slate-200 text-sm transition-colors"
-        >
-          查詢
-        </button>
-
-        {(statusFilter || periodFilter) && (
-          <button
-            onClick={() => { setStatusFilter(''); setPeriodFilter(''); setPage(1) }}
-            className="px-3 py-2 rounded-md g border bg-white hover:bg-slate-50 text-sm transition-colors"
+      <div className="flex flex-col md:flex-row gap-3 mb-5 flex-wrap">
+        <div className="flex flex-col md:flex-row gap-3 flex-wrap w-full md:w-auto">
+          <select
+            value={statusFilter}
+            onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
+            className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 w-full md:w-auto"
           >
-            清除篩選
+            <option value="">全部狀態</option>
+            <option value="DRAFT">草稿</option>
+            <option value="FINALIZED">已確認</option>
+            <option value="EXPORTED">已匯出</option>
+          </select>
+
+          <input
+            type="month"
+            value={periodFilter}
+            onChange={e => { setPeriodFilter(e.target.value); setPage(1) }}
+            className="px-3 py-2 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 w-full md:w-auto"
+          />
+
+          <button
+            onClick={fetchRuns}
+            className="px-3 py-2 rounded-md g border bg-slate-100 hover:bg-slate-200 text-sm transition-colors w-full md:w-auto"
+          >
+            查詢
           </button>
-        )}
+
+          {(statusFilter || periodFilter) && (
+            <button
+              onClick={() => { setStatusFilter(''); setPeriodFilter(''); setPage(1) }}
+              className="px-3 py-2 rounded-md g border bg-white hover:bg-slate-50 text-sm transition-colors w-full md:w-auto"
+            >
+              清除篩選
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Table */}
+      {/* Table / Cards */}
       {loading ? (
         <div className="text-center py-10 g text-muted-foreground">載入中...</div>
       ) : runs.length === 0 ? (
@@ -150,55 +152,67 @@ export default function PayrollListPage() {
           尚無計糧記錄{canGenerate ? '。点击上方「生成計糧」開始。' : ''}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl g border shadow-card">
-          <table className="data-table w-full">
-            <thead>
-              <tr>
-                <th>月份</th>
-                <th>診所</th>
-                <th className="text-center">狀態</th>
-                <th className="text-right">員工數</th>
-                <th>生成時間</th>
-                <th>備註</th>
-                <th className="text-center">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map(run => (
-                <tr key={run.id}>
-                  <td>
-                    {fmtPeriodMonth(run.periodMonth)}
-                  </td>
-                  <td>
-                    {run.clinic?.name || '全部診所'}
-                  </td>
-                  <td className="text-center">
-                    {statusBadge(run.status)}
-                  </td>
-                  <td className="text-right font-mono">
-                    {run._count.items}
-                  </td>
-                  <td className="text-xs g text-muted-foreground">
-                    {fmtDateTime(run.generatedAt)}
-                  </td>
-                  <td className="text-xs g text-muted-foreground max-w-[150px] truncate">
-                    {run.notes || '-'}
-                  </td>
-                  <td className="text-center">
-                    <Link href={`/payroll/${run.id}`} className="text-brand hover:underline text-sm">
-                      詳情
-                    </Link>
-                    {run.status === 'DRAFT' && canGenerate && (
-                      <button onClick={() => deleteRun(run.id)} className="ml-3 text-destructive hover:underline text-sm bg-none border-none cursor-pointer">
-                        刪除
-                      </button>
-                    )}
-                  </td>
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto rounded-xl g border shadow-card">
+            <table className="data-table w-full">
+              <thead>
+                <tr>
+                  <th>月份</th>
+                  <th>診所</th>
+                  <th className="text-center">狀態</th>
+                  <th className="text-right">員工數</th>
+                  <th>生成時間</th>
+                  <th>備註</th>
+                  <th className="text-center">操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {runs.map(run => (
+                  <tr key={run.id}>
+                    <td>{fmtPeriodMonth(run.periodMonth)}</td>
+                    <td>{run.clinic?.name || '全部診所'}</td>
+                    <td className="text-center">{statusBadge(run.status)}</td>
+                    <td className="text-right font-mono">{run._count.items}</td>
+                    <td className="text-xs g text-muted-foreground">{fmtDateTime(run.generatedAt)}</td>
+                    <td className="text-xs g text-muted-foreground max-w-[150px] truncate">{run.notes || '-'}</td>
+                    <td className="text-center">
+                      <Link href={`/payroll/${run.id}`} className="text-brand hover:underline text-sm">詳情</Link>
+                      {run.status === 'DRAFT' && canGenerate && (
+                        <button onClick={() => deleteRun(run.id)} className="ml-3 text-destructive hover:underline text-sm bg-none border-none cursor-pointer">刪除</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {runs.map(run => (
+              <div key={run.id} className="rounded-xl border shadow-card p-3">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-semibold">{fmtPeriodMonth(run.periodMonth)}</span>
+                  {statusBadge(run.status)}
+                </div>
+                <div className="flex justify-between items-center text-sm mb-1">
+                  <span className="text-muted-foreground">{run.clinic?.name || '全部診所'}</span>
+                  <span className="font-mono">{run._count.items} 人</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">{fmtDateTime(run.generatedAt)}</span>
+                  <div className="flex gap-2">
+                    <Link href={`/payroll/${run.id}`} className="text-brand hover:underline text-xs">詳情</Link>
+                    {run.status === 'DRAFT' && canGenerate && (
+                      <button onClick={() => deleteRun(run.id)} className="text-destructive hover:underline text-xs bg-none border-none cursor-pointer">刪除</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Pagination */}
