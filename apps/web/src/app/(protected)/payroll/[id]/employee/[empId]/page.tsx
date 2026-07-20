@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmtDateTime, fmtDate, fmtTime, toHKDateStr } from '@/lib/hk-date'
+import { punchLabel, punchColor } from '@/lib/punch-label'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
 
@@ -782,8 +783,8 @@ export default function EmployeePayrollDetailPage() {
                     <td className="py-2 px-2">{p.clinicId}</td>
                     <td className="py-2 px-2">{fmtTimeLocal(p.punchTime)}</td>
                     <td className="py-2 px-2">
-                      <span className={p.punchType === 'CLOCK_IN' ? 'text-green-600 font-semibold' : 'text-red-500 font-semibold'}>
-                        {p.punchType === 'CLOCK_IN' ? '上工' : '落班'}
+                      <span className={punchColor(p.punchType) + ' font-semibold'}>
+                        {punchLabel(p.punchType)}
                       </span>
                     </td>
                     <td className="py-2 px-2 text-xs text-muted-foreground">{p.source}</td>
@@ -854,7 +855,7 @@ export default function EmployeePayrollDetailPage() {
                     <td className="py-2 px-2">{fmtDateTime(c.correctedTime)}</td>
                     <td className="py-2 px-2">{c.clinicId}</td>
                     <td className="py-2 px-2">
-                      {c.punchType === 'CLOCK_IN' ? '上工' : '落班'}
+                      {punchLabel(c.punchType)}
                     </td>
                     <td className="py-2 px-2 text-xs text-muted-foreground">{c.reason || '-'}</td>
                   </tr>

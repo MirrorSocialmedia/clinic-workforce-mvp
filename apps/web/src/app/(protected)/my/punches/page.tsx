@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { fmtDateTime } from '@/lib/hk-date'
+import { punchLabel, punchBg, punchTextColor } from '@/lib/punch-label'
 
 export default function MyPunchesPage() {
   const [punches, setPunches] = useState<any[]>([])
@@ -113,10 +114,10 @@ export default function MyPunchesPage() {
                       padding: '2px 8px',
                       borderRadius: 4,
                       fontSize: 12,
-                      background: p.punchType === 'CLOCK_IN' ? '#e8f5e9' : '#fff3e0',
-                      color: p.punchType === 'CLOCK_IN' ? '#2e7d32' : '#e65100',
+                      background: punchBg(p.punchType),
+                      color: punchTextColor(p.punchType),
                     }}>
-                      {p.punchType === 'CLOCK_IN' ? '上工' : '落班'}
+                      {punchLabel(p.punchType)}
                     </span>
                   </td>
                   <td>{p.clinic?.name || '-'}</td>
@@ -162,10 +163,10 @@ export default function MyPunchesPage() {
                         padding: '2px 8px',
                         borderRadius: 4,
                         fontSize: 12,
-                        background: c.punchType === 'CLOCK_IN' ? '#e8f5e9' : '#fff3e0',
-                        color: c.punchType === 'CLOCK_IN' ? '#2e7d32' : '#e65100',
+                        background: punchBg(c.punchType),
+                        color: punchTextColor(c.punchType),
                       }}>
-                        {c.punchType === 'CLOCK_IN' ? '上工' : '落班'}
+                        {punchLabel(c.punchType)}
                       </span>
                     </td>
                     <td>{c.clinicId ? `Clinic: ${c.clinicId.substring(0, 8)}` : '-'}</td>

@@ -7,6 +7,7 @@ import { CalendarDays, ShieldAlert, AlertTriangle, CheckSquare } from 'lucide-re
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { toHKDateStr } from '@/lib/hk-date'
+import { punchLabel } from '@/lib/punch-label'
 import { useTodoCount } from '@/lib/use-todo-count'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
@@ -56,6 +57,7 @@ export default function DashboardPage() {
   // Sensitive operations (OWNER only)
   const [sensitiveOps, setSensitiveOps] = useState<any[] | null>(null)
   const [opsLoading, setOpsLoading] = useState(false)
+  const [expandedActor, setExpandedActor] = useState<string | null>(null)
 
   // Group balances by employeeId + systemKey
   const balancesByEmp = (() => {
@@ -117,7 +119,7 @@ export default function DashboardPage() {
     setOpsLoading(true)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const fromDate = toHKDateStr(sevenDaysAgo).slice(0, 10)
-    const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT']
+    const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT', 'CREATE_PUNCH']
 
     let promises = sensitiveActions.map(action =>
       fetch(`/api/audit-logs?action=${action}&fromDate=${fromDate}`, { credentials: 'include' })
@@ -134,13 +136,14 @@ export default function DashboardPage() {
     Promise.all(promises).then(results => {
       const allLogs = results.flatMap(r => r.logs || [])
       // Group by actor
-      const byActor = new Map<string, { name: string; role: string; count: number; byAction: Record<string, number> }>()
+      const byActor = new Map<string, { name: string; role: string; count: number; byAction: Record<string, number>; logs: any[] }>()
       const actionLabels: Record<string, string> = {
         VOID_PUNCH: '作廢打卡',
         ABSENT_DEDUCT: '缺勤扣OT',
         ABSENT_DEDUCT_CANCEL: '取消扣OT',
         CONVERT: 'OT換假',
         LEAVE_DELETE: '刪除請假',
+        CREATE_PUNCH: '補登打卡',
       }
       for (const log of allLogs) {
         const actorName = log.actor?.name || log.actorId
@@ -149,10 +152,11 @@ export default function DashboardPage() {
         const action = (log.action === 'DELETE' && log.entity === 'LeaveRequest') ? 'LEAVE_DELETE' : log.action
         const existing = byActor.get(log.actorId)
         if (!existing) {
-          byActor.set(log.actorId, { name: actorName, role: actorRole, count: 1, byAction: { [action]: 1 } })
+          byActor.set(log.actorId, { name: actorName, role: actorRole, count: 1, byAction: { [action]: 1 }, logs: [log] })
         } else {
           existing.count++
           existing.byAction[action] = (existing.byAction[action] || 0) + 1
+          existing.logs.push(log)
         }
       }
       const actors = Array.from(byActor.values()).sort((a, b) => b.count - a.count)
@@ -165,11 +169,31 @@ export default function DashboardPage() {
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
   if (!data) return <div className="p-4 text-muted-foreground">沒有資料</div>
 
+  /* ── Helpers ── */
   const roleLabels: Record<Role, string> = {
     OWNER: '創辦人 / 總管理',
     MANAGER: '診所經理',
     ACCOUNTANT: '會計',
     EMPLOYEE: '員工',
+  }
+
+  function fmtDateTime(ds: string | Date) {
+    const d = typeof ds === 'string' ? new Date(ds) : ds
+    return d.toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })
+  }
+
+  function renderDiff(before: any, after: any): string {
+    if (!before || !after) return ''
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+    const changes: string[] = []
+    const LABEL: Record<string, string> = { punchType: '類型', punchTime: '時間', reason: '原因' }
+    keys.forEach(k => {
+      if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) {
+        const val = (v: any) => k === 'punchType' ? punchLabel(v) : v
+        changes.push(`${LABEL[k] || k}: ${val(before[k]) ?? '—'} → ${val(after[k]) ?? '—'}`)
+      }
+    })
+    return changes.join('；') || ''
   }
 
   return (
@@ -255,21 +279,42 @@ export default function DashboardPage() {
                 </div>
                 <div className="space-y-2">
                   {sensitiveOps.map((actor) => (
-                    <div key={actor.name} className="flex items-center justify-between px-3 py-2 rounded-lg border">
-                      <div>
-                        <span className="text-sm font-medium">{actor.name}</span>
-                        {actor.role && <span className="ml-2 text-xs text-muted-foreground">({actor.role})</span>}
+                    <div key={actor.name}>
+                      <div onClick={() => setExpandedActor(expandedActor === actor.name ? null : actor.name)}
+                        className="flex items-center justify-between px-3 py-2 rounded-lg border cursor-pointer hover:bg-muted/50">
+                        <div>
+                          <span className="text-sm font-medium">{actor.name}</span>
+                          {actor.role && <span className="ml-2 text-xs text-muted-foreground">({actor.role})</span>}
+                        </div>
+                        <div className="flex gap-2">
+                          {Object.entries(actor.byAction).map(([action, count]) => {
+                            const labels: Record<string, string> = (actor as any).actionLabels || {}
+                            return (
+                              <span key={action} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                                {labels[action] || action}: {String(count)}
+                              </span>
+                            )
+                          })}
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        {Object.entries(actor.byAction).map(([action, count]) => {
-                          const labels: Record<string, string> = (actor as any).actionLabels || {}
-                          return (
-                            <span key={action} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-                              {labels[action] || action}: {String(count)}
-                            </span>
-                          )
-                        })}
-                      </div>
+                      {expandedActor === actor.name && (
+                        <div className="ml-3 mt-1 space-y-1 border-l-2 pl-3">
+                          {(actor.logs || []).map((log: any) => {
+                            const labels: Record<string, string> = (actor as any).actionLabels || {}
+                            const before = log.beforeJson ? (typeof log.beforeJson === 'string' ? JSON.parse(log.beforeJson) : log.beforeJson) : null
+                            const after = log.afterJson ? (typeof log.afterJson === 'string' ? JSON.parse(log.afterJson) : log.afterJson) : null
+                            const diff = before && after ? renderDiff(before, after) : ''
+                            return (
+                              <div key={log.id} className="text-xs py-1">
+                                <span className="text-muted-foreground">{fmtDateTime(log.createdAt)}</span>{' '}
+                                <span className="font-medium">{labels[log.action] || log.action}</span>
+                                {log.notes && <span className="text-muted-foreground"> — {log.notes}</span>}
+                                {diff && <div className="text-muted-foreground mt-0.5">{diff}</div>}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

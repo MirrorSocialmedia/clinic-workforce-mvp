@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { fmtDateTime } from '@/lib/hk-date'
+import { punchLabel } from '@/lib/punch-label'
 import { BackButton } from '@/components/BackButton'
 
 type FaceStatus = 'PASS' | 'FAIL' | 'NOT_ENROLLED' | 'SKIPPED' | 'NO_FACE' | 'PENDING' | string
@@ -194,7 +195,7 @@ export default function AttendanceDetailPage() {
             </tr>
             <tr style={{ borderBottom: '1px solid #f0f0f0' }}>
               <td style={{ padding: '8px 0', color: '#888' }}>打卡類型</td>
-              <td>{record.punchType === 'CLOCK_IN' ? '上班' : '下班'}</td>
+              <td>{punchLabel(record.punchType)}</td>
             </tr>
             <tr style={{ borderBottom: '1px solid #f0f0f0' }}>
               <td style={{ padding: '8px 0', color: '#888' }}>時間</td>
@@ -305,13 +306,13 @@ export default function AttendanceDetailPage() {
                 {item.type === 'original' ? (
                   <div style={{ fontSize: 13 }}>
                     <div>時間：{fmt(item.punchTime)}</div>
-                    <div>類型：{item.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
+                    <div>類型：{punchLabel(item.punchType)}</div>
                     <div>來源：{item.source}</div>
                   </div>
                 ) : (
                   <div style={{ fontSize: 13 }}>
                     <div>修正時間：{fmt(item.correctedTime)}</div>
-                    <div>類型：{item.punchType === 'CLOCK_IN' ? '上工' : '落班'}</div>
+                    <div>類型：{punchLabel(item.punchType)}</div>
                     <div>原因：{item.reason || '—'}</div>
                     <div>申請人：{item.requestedBy}</div>
                     <div>審批人：{item.approvedBy || '—'}</div>

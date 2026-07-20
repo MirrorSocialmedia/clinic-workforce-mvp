@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
+import { punchLabel } from '@/lib/punch-label'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // ============================================================
@@ -145,6 +146,22 @@ export async function POST(req: NextRequest) {
             })
             voidedOriginalId = original.id
 
+            // Audit: void original
+            await tx.auditLog.create({
+              data: {
+                actorId: session.userId,
+                action: 'VOID_PUNCH',
+                entity: 'PunchRecord',
+                entityId: original.id,
+                clinicId,
+                beforeJson: JSON.stringify({ punchType: original.punchType, punchTime: original.punchTime }),
+                afterJson: JSON.stringify({ voidReason: `類型變更: ${originalPunchType} → ${punchType}` }),
+                notes: `作廢原記錄（類型變更）: ${originalPunchType} → ${punchType}`,
+                ipAddress: req.headers.get('x-forwarded-for') || null,
+                userAgent: req.headers.get('user-agent') || null,
+              },
+            })
+
             // 2. Create new punchRecord with new type
             const newRecord = await tx.punchRecord.create({
               data: {
@@ -156,6 +173,22 @@ export async function POST(req: NextRequest) {
               },
             })
             newPunchRecordId = newRecord.id
+
+            // Audit: type change
+            await tx.auditLog.create({
+              data: {
+                actorId: session.userId,
+                action: 'CREATE_PUNCH',
+                entity: 'PunchRecord',
+                entityId: newRecord.id,
+                clinicId,
+                beforeJson: JSON.stringify({ punchType: originalPunchType, punchRecordId: original.id }),
+                afterJson: JSON.stringify({ punchType, punchRecordId: newRecord.id, reason: `類型變更: ${originalPunchType} → ${punchType}` }),
+                notes: `補登類型變更: ${originalPunchType} → ${punchType}`,
+                ipAddress: req.headers.get('x-forwarded-for') || null,
+                userAgent: req.headers.get('user-agent') || null,
+              },
+            })
           }
         }
 
@@ -188,6 +221,22 @@ export async function POST(req: NextRequest) {
           await tx.punchCorrection.update({
             where: { id: c.id },
             data: { punchRecordId: pr.id },
+          })
+
+          // Audit: new punch record via correction
+          await tx.auditLog.create({
+            data: {
+              actorId: session.userId,
+              action: 'CREATE_PUNCH',
+              entity: 'PunchRecord',
+              entityId: pr.id,
+              clinicId,
+              beforeJson: null,
+              afterJson: JSON.stringify({ punchType: pr.punchType, punchTime: pr.punchTime, employeeId: pr.employeeId, reason: body.reason }),
+              notes: `補登 ${punchLabel(pr.punchType)} ${body.reason || ''}`,
+              ipAddress: req.headers.get('x-forwarded-for') || null,
+              userAgent: req.headers.get('user-agent') || null,
+            },
           })
         }
 
