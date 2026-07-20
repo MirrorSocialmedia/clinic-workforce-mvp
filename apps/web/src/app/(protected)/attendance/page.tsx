@@ -559,7 +559,7 @@ export default function AttendancePage() {
   const totalPages = Math.ceil(total / pageSize)
 
   return (
-    <div className="p-6 overflow-x-hidden" style={{ maxWidth: '1200px' }}>
+    <div className="p-3 md:p-6 max-w-full md:max-w-[1200px] overflow-x-hidden mx-auto">
       <h1 className="text-2xl font-bold text-foreground tracking-tight mb-6">考勤管理</h1>
 
       {/* Tabs: horizontal scroll on mobile, no wrap */}

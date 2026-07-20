@@ -1107,24 +1107,30 @@ function getShiftColor(shift: Shift): string {
     const now = new Date()
     const mStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
     const mEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
-    const byEmp = new Map<string, number>()
+    // 本週（週一~週日）:
+    const hkNow = new Date(); const dow = hkNow.getDay(); const monOff = dow === 0 ? -6 : 1 - dow
+    const wStart = new Date(hkNow); wStart.setDate(hkNow.getDate() + monOff)
+    const wStartStr = toHKDateStr(wStart)
+    const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 6)
+    const wEndStr = toHKDateStr(wEnd)
+
+    const byEmp = new Map<string, { month: number; week: number }>()
     clinicFilteredShifts.forEach(s => {
-      const d = toHKDateStr(new Date(s.date))
-      if (d < mStart || d > mEnd) return
       if (s.status === 'CANCELLED') return
-      const h = Math.max(0,
-        (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - 1
-      )
-      byEmp.set(s.employeeId, (byEmp.get(s.employeeId) || 0) + h)
+      const d = toHKDateStr(new Date(s.date))
+      const h = Math.max(0, (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - 1)
+      const cur = byEmp.get(s.employeeId) || { month: 0, week: 0 }
+      if (d >= mStart && d <= mEnd) cur.month += h
+      if (d >= wStartStr && d <= wEndStr) cur.week += h
+      byEmp.set(s.employeeId, cur)
     })
     return clinicEmployees
-      .map(e => ({
-        id: e.id,
-        name: e.user?.name ?? '?',
-        hours: Math.round((byEmp.get(e.id) || 0) * 10) / 10,
-      }))
-      .filter(x => x.hours > 0)
-      .sort((a, b) => b.hours - a.hours)
+      .map(e => {
+        const v = byEmp.get(e.id) || { month: 0, week: 0 }
+        return { id: e.id, name: e.user?.name ?? '?', month: Math.round(v.month * 10) / 10, week: Math.round(v.week * 10) / 10 }
+      })
+      .filter(x => x.month > 0)
+      .sort((a, b) => b.month - a.month)
   }, [clinicFilteredShifts, clinicEmployees])
 
   // Task 3: Per-week stats helper (statsForDays + renderWeekStats)
@@ -1880,16 +1886,29 @@ function getShiftColor(shift: Shift): string {
           <div className="mb-3 rounded-lg border bg-card px-3 py-2">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-sm font-semibold">
-                📊 本月工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
+                📊 工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
               </span>
               <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
             </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-              {monthlyWorkHours.map(e => (
-                <span key={e.id}>
-                  {e.name} <span className="font-medium">{e.hours}h</span>
-                </span>
-              ))}
+            {/* 本月 */}
+            <div className="mb-1">
+              <span className="text-xs text-muted-foreground mr-2">本月</span>
+              <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
+                {monthlyWorkHours.map(e => (
+                  <span key={e.id}>{e.name} <span className="font-medium">{e.month}h</span></span>
+                ))}
+              </span>
+            </div>
+            {/* 本週 */}
+            <div className="pt-1 border-t">
+              <span className="text-xs text-muted-foreground mr-2">本週</span>
+              <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
+                {monthlyWorkHours.map(e => (
+                  <span key={e.id} className={e.week > 45 ? 'text-red-600 font-semibold' : ''}>
+                    {e.week > 45 && '🔴 '}{e.name} <span className="font-medium">{e.week}h</span>
+                  </span>
+                ))}
+              </span>
             </div>
           </div>
         )}
@@ -2011,16 +2030,29 @@ function getShiftColor(shift: Shift): string {
         <div className="hidden md:block mb-3 rounded-lg border bg-card px-3 py-2">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-sm font-semibold">
-              📊 本月工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
+              📊 工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
             </span>
             <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
           </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            {monthlyWorkHours.map(e => (
-              <span key={e.id}>
-                {e.name} <span className="font-medium">{e.hours}h</span>
-              </span>
-            ))}
+          {/* 本月 */}
+          <div className="mb-1">
+            <span className="text-xs text-muted-foreground mr-2">本月</span>
+            <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
+              {monthlyWorkHours.map(e => (
+                <span key={e.id}>{e.name} <span className="font-medium">{e.month}h</span></span>
+              ))}
+            </span>
+          </div>
+          {/* 本週 */}
+          <div className="pt-1 border-t">
+            <span className="text-xs text-muted-foreground mr-2">本週</span>
+            <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
+              {monthlyWorkHours.map(e => (
+                <span key={e.id} className={e.week > 45 ? 'text-red-600 font-semibold' : ''}>
+                  {e.week > 45 && '🔴 '}{e.name} <span className="font-medium">{e.week}h</span>
+                </span>
+              ))}
+            </span>
           </div>
         </div>
       )}
