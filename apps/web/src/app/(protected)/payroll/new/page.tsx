@@ -318,7 +318,9 @@ export default function NewPayrollPage() {
               </div>
             )}
 
-            <div className="overflow-x-auto mt-3">
+            <>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto mt-3">
               <table className="w-full border-collapse text-xs">
                 <thead>
                   <tr className="border-b-2 border-blue-200">
@@ -376,6 +378,46 @@ export default function NewPayrollPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile cards */}
+            <div className="md:hidden space-y-2 mt-3">
+              {previewResult.items.map((item: any, i: number) => (
+                <div key={item.employeeId || i} className="rounded-xl border shadow-card p-3">
+                  {item.error ? (
+                    <div className="text-destructive text-sm">{item.employeeName}: {item.error}</div>
+                  ) : (
+                    <>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-semibold">{item.employeeName}</span>
+                        <span className="text-xs text-muted-foreground">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 text-xs mb-2">
+                        <div>工時: {item.workedHours}</div>
+                        <div>加班: {item.otHours}</div>
+                        <div>底薪: HK${(item.basePay || 0).toLocaleString()}</div>
+                        <div>加班費: HK${(item.otPay || 0).toLocaleString()}</div>
+                      </div>
+                      {selectedClinic && item.payType === 'MONTHLY' && (
+                        <div className="flex items-center gap-2 mb-2">
+                          <label className="text-xs">店舖獎金:</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={storeBonuses[item.employeeId] ?? ''}
+                            onChange={e => setStoreBonuses(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
+                            className="w-24 text-right px-2 py-1 rounded border text-sm focus:outline-none focus:ring-1 focus:ring-brand/30"
+                          />
+                        </div>
+                      )}
+                      <div className="text-right font-semibold text-sm font-mono border-t pt-2">
+                        HK${(item.totalPayable || 0).toLocaleString()}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            </>
             </CardContent>
           </Card>
         )}

@@ -179,45 +179,71 @@ export default function AuditLogsPage() {
         ) : logs.length === 0 ? (
           <EmptyState text="尚無審計記錄" />
         ) : (
-          <div className="overflow-x-auto">
-          <table>
-            <thead>
-              <tr>
-                <th>時間</th>
-                <th>操作者</th>
-                <th>操作</th>
-                <th>實體</th>
-                <th>IP</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>時間</th>
+                  <th>操作者</th>
+                  <th>操作</th>
+                  <th>實體</th>
+                  <th>IP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map(log => (
+                  <tr key={log.id}>
+                    <td className="text-sm">{fmtDateTime(log.createdAt)}</td>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{log.actor.name}</div>
+                      <div className="text-muted text-sm">
+                        {log.actor.phone}
+                        <span className={`badge badge-${log.actor.role.toLowerCase()}`} style={{ marginLeft: 4 }}>
+                          {ROLE_LABELS[log.actor.role] || log.actor.role}
+                        </span>
+                      </div>
+                    </td>
+                    <td title={log.action}><span className='text-sm font-medium'>{getActionLabel(log.action)}</span>{getActionLabel(log.action) !== log.action && <span className="text-muted text-sm ml-1" style={{fontSize:10}}>({log.action})</span>}</td>
+                    <td>
+                      {log.entity === 'LeaveRequest' && log.notes
+                        ? log.notes
+                        : (ENTITY_LABELS[log.entity] || log.entity)
+                      }
+                      {!(log.entity === 'LeaveRequest' && log.notes) && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
+                      {log.entity === 'LeaveRequest' && log.notes && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
+                    </td>
+                    <td className="text-sm">{log.ipAddress || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="md:hidden space-y-2">
               {logs.map(log => (
-                <tr key={log.id}>
-                  <td className="text-sm">{fmtDateTime(log.createdAt)}</td>
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{log.actor.name}</div>
-                    <div className="text-muted text-sm">
-                      {log.actor.phone}
-                      <span className={`badge badge-${log.actor.role.toLowerCase()}`} style={{ marginLeft: 4 }}>
-                        {ROLE_LABELS[log.actor.role] || log.actor.role}
-                      </span>
+                <div key={log.id} className="rounded-xl border shadow-card p-3">
+                  <div className="flex justify-between items-start mb-1">
+                    <div>
+                      <div className="font-semibold text-sm">{log.actor.name}</div>
+                      <div className="text-xs text-muted-foreground">{fmtDateTime(log.createdAt)}</div>
                     </div>
-                  </td>
-                  <td title={log.action}><span className='text-sm font-medium'>{getActionLabel(log.action)}</span>{getActionLabel(log.action) !== log.action && <span className="text-muted text-sm ml-1" style={{fontSize:10}}>({log.action})</span>}</td>
-                  <td>
+                    <span className='text-sm font-medium'>{getActionLabel(log.action)}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-1">
                     {log.entity === 'LeaveRequest' && log.notes
                       ? log.notes
                       : (ENTITY_LABELS[log.entity] || log.entity)
                     }
-                    {!(log.entity === 'LeaveRequest' && log.notes) && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
-                    {log.entity === 'LeaveRequest' && log.notes && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
-                  </td>
-                  <td className="text-sm">{log.ipAddress || '—'}</td>
-                </tr>
+                    <span className="text-muted"> #{log.entityId.slice(0,8)}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">IP: {log.ipAddress || '—'}</div>
+                </div>
               ))}
-            </tbody>
-          </table>
-          </div>
+            </div>
+          </>
         )}
 
         {/* Pagination */}

@@ -402,44 +402,71 @@ export default function ClinicsPage() {
         {clinics.length === 0 ? (
           <div className="text-muted">暫無診所</div>
         ) : (
-          <div className="overflow-x-auto">
-          <table>
-            <thead>
-              <tr>
-                <th>公司</th>
-                <th>名稱</th>
-                <th>簡稱</th>
-                <th>地址</th>
-                <th>建立時間</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>公司</th>
+                  <th>名稱</th>
+                  <th>簡稱</th>
+                  <th>地址</th>
+                  <th>建立時間</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clinics.map(clinic => (
+                  <tr key={clinic.id}>
+                    <td className="text-sm">{clinic.company?.name || '—'}</td>
+                    <td style={{ fontWeight: 500 }}>{clinic.name}</td>
+                    <td className="text-muted">{clinic.shortName || '—'}</td>
+                    <td className="text-muted">{clinic.address || '—'}</td>
+                    <td className="text-sm">{fmtDate(clinic.createdAt)}</td>
+                    <td>
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleEditClinic(clinic)}>編輯</button>
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => {
+                        navigator.geolocation.getCurrentPosition(
+                          p => { setAutoLat(p.coords.latitude); setAutoLng(p.coords.longitude); handleEditClinic(clinic) },
+                          () => alert('無法取得位置，請手動填寫'),
+                          { enableHighAccuracy: true },
+                        )
+                      }}>📍 用我現在位置</button>
+                      <button className="btn btn-danger btn-sm" onClick={() => handleDeleteClinic(clinic.id)}>
+                        刪除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="md:hidden space-y-2">
               {clinics.map(clinic => (
-                <tr key={clinic.id}>
-                  <td className="text-sm">{clinic.company?.name || '—'}</td>
-                  <td style={{ fontWeight: 500 }}>{clinic.name}</td>
-                  <td className="text-muted">{clinic.shortName || '—'}</td>
-                  <td className="text-muted">{clinic.address || '—'}</td>
-                  <td className="text-sm">{fmtDate(clinic.createdAt)}</td>
-                  <td>
-                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleEditClinic(clinic)}>編輯</button>
-                    <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => {
+                <div key={clinic.id} className="rounded-xl border shadow-card p-3">
+                  <div className="font-semibold mb-1">{clinic.name}</div>
+                  <div className="text-xs text-muted-foreground mb-1">
+                    {clinic.company?.name || '—'} · {clinic.shortName || ''}
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-2">{clinic.address || '—'}</div>
+                  <div className="flex gap-2">
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleEditClinic(clinic)}>編輯</button>
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => {
                       navigator.geolocation.getCurrentPosition(
                         p => { setAutoLat(p.coords.latitude); setAutoLng(p.coords.longitude); handleEditClinic(clinic) },
                         () => alert('無法取得位置，請手動填寫'),
                         { enableHighAccuracy: true },
                       )
-                    }}>📍 用我現在位置</button>
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDeleteClinic(clinic.id)}>
-                      刪除
-                    </button>
-                  </td>
-                </tr>
+                    }}>📍 定位</button>
+                    <button className="px-3 py-1.5 rounded-md text-xs text-red-600 border border-red-200 bg-red-50" onClick={() => handleDeleteClinic(clinic.id)}>刪除</button>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>
