@@ -1437,7 +1437,7 @@ function getShiftColor(shift: Shift): string {
   }
 
   return (
-    <div style={{ maxWidth: '100%', padding: '0 16px' }}>
+    <div className="w-full overflow-x-hidden" style={{ maxWidth: '100%', padding: '0 16px' }}>
       {/* Overview capsule styles */}
       <style>{`
         .overview-table {
@@ -1897,8 +1897,7 @@ function getShiftColor(shift: Shift): string {
       {/* ============================================================ */}
 
       {/* Desktop: Full scheduling interface */}
-      <div className="hidden md:block" style={{
-        display: 'flex',
+      <div className="hidden md:flex" style={{
         gap: 12,
         alignItems: 'start',
       }}>

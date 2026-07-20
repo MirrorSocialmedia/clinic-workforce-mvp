@@ -166,8 +166,14 @@ export default function AttendancePage() {
   const [submittingAddPunch, setSubmittingAddPunch] = useState(false)
   const [clinicFilter, setClinicFilter] = useState('')
   const [employeeFilter, setEmployeeFilter] = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [startDate, setStartDate] = useState(() => {
+    const now = new Date()
+    return toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
+  })
+  const [endDate, setEndDate] = useState(() => {
+    const now = new Date()
+    return toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+  })
 
   // Records tab: exceptions lookup for color-coding
   const [recordsExceptions, setRecordsExceptions] = useState<ExceptionRecord[]>([])
@@ -596,7 +602,7 @@ export default function AttendancePage() {
               )
             }
             return null
-          })()})
+          })()}
 
           {/* Location verification summary */}
           {(() => {
@@ -609,7 +615,7 @@ export default function AttendancePage() {
               )
             }
             return null
-          })()})
+          })()}
 
           {/* Mobile card view */}
           <div className="md:hidden space-y-2">
