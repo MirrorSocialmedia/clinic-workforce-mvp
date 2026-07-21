@@ -1457,9 +1457,23 @@ function getShiftColor(shift: Shift): string {
             ))}
             {/* Full-time ↔ Part-time separator */}
             {ovEmployees.full.length > 0 && ovEmployees.part.length > 0 && (
-              <tr><td colSpan={days.length + 1} style={{ padding: 0 }}>
-                <div style={{ height: 2, background: '#e5e7eb', margin: '2px 0' }} />
-              </td></tr>
+              <tr>
+                <td colSpan={days.length + 1} style={{ padding: 0 }}>
+                  <div style={{
+                    height: 24,
+                    background: '#fef3c7',
+                    borderTop: '2px solid #f59e0b',
+                    display: 'flex',
+                    alignItems: 'center',
+                    paddingLeft: 12,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: '#92400e',
+                  }}>
+                    兼職
+                  </div>
+                </td>
+              </tr>
             )}
             {/* Part-time employees (sorted by role then name) */}
             {ovEmployees.part.map(emp => (
