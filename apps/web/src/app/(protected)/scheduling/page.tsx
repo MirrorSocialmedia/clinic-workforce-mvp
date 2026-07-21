@@ -201,6 +201,7 @@ export default function SchedulingPage() {
 
   // Mobile day view state
   const [mobileSelectedDate, setMobileSelectedDate] = useState<string>(toHKDateStr(todayHK()))
+  const [mobileView, setMobileView] = useState<'day' | 'week'>('day')
   const mobileWeekDays = useMemo(() => {
     const d = new Date(mobileSelectedDate)
     const dow = d.getDay() // 0=日
@@ -240,6 +241,7 @@ export default function SchedulingPage() {
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
   const [displayWarning, setDisplayWarning] = useState<string | null>(null)
+  const [fullscreenOverview, setFullscreenOverview] = useState(false)
 
   // Capsule label parts (persisted in localStorage)
   const [labelParts, setLabelParts] = useState<LabelPart[]>(() => {
@@ -417,6 +419,9 @@ function getShiftCode(shift: Shift): string {
 function getShiftColor(shift: Shift): string {
   return CLINIC_COLOR[shift.clinic?.name || ''] || '#95a5a6'
 }
+function getClinicColor(name: string): string {
+  return CLINIC_COLOR[name] || '#95a5a6'
+}
 
   // ============================================================
   // Data Loading
@@ -544,6 +549,47 @@ function getShiftColor(shift: Shift): string {
     if (!scopeClinicIds) return shifts
     return shifts.filter(s => scopeClinicIds.has(s.clinicId))
   }, [shifts, scopeClinicIds])
+
+  // Step 7: Companies derived from clinics (deduplicated)
+  const companies = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>()
+    clinics.forEach((c: any) => {
+      if (c.company?.id) m.set(c.company.id, c.company)
+    })
+    return [...m.values()]
+  }, [clinics])
+
+  // Helper: get mobile overview cell for an employee on a given date
+  const getMobileCell = useCallback((empId: string, dateStr: string) => {
+    const empShiftsOnDay = ovShifts.filter(s =>
+      s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr
+    )
+    const empLeavesOnDay = leaveRequests.filter(lr =>
+      lr.employeeId === empId && leaveCoversDate(lr, dateStr)
+    )
+    if (empShiftsOnDay.length > 0) {
+      const s = empShiftsOnDay[0]
+      const clinicName = (s.clinic as any)?.shortName || s.clinic?.name || ''
+      const shiftName = s.template?.shortName || s.template?.name || s.role || ''
+      const color = getClinicColor(s.clinic?.name || '')
+      const timeLabel = fmtTime(s.startTime).slice(0, 5)
+      return { label: shiftName || clinicName, bg: color, detail: `${shiftName} ${timeLabel}` }
+    }
+    if (empLeavesOnDay.length > 0) {
+      const lr = empLeavesOnDay[0]
+      const leaveTypeMap: Record<string, string> = { ANNUAL: '年', SICK: '病', HALF_SICK: '半病', UNPAID: '無薪', SPECIAL: '特' }
+      return { label: leaveTypeMap[lr.leaveType] || '假', bg: '#fef3c7', detail: leaveTypeMap[lr.leaveType] || '假' }
+    }
+    return { label: 'R', bg: '#f3f4f6', detail: 'R' }
+  }, [ovShifts, leaveRequests])
+
+  // Mobile week label: "M/D–M/D"
+  const mobileWeekLabel = useMemo(() => {
+    if (mobileWeekDays.length < 2) return ''
+    const start = mobileWeekDays[0].slice(5) // MM-DD
+    const end = mobileWeekDays[6].slice(5)
+    return `${start}–${end}`
+  }, [mobileWeekDays])
 
   // Step 6: Split by pay type
   const fullTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byName)
@@ -2069,12 +2115,27 @@ function getShiftColor(shift: Shift): string {
       )}
 
 
-      {/* Mobile: Read-only day view */}
+      {/* Mobile: Read-only day view + week overview */}
       <div className="md:hidden px-4" style={{ marginTop: 12 }}>
         <p className="text-xs text-muted-foreground mb-3 text-center bg-amber-50 rounded-lg p-2 border border-amber-200">
           📱 手機為唯讀檢視，排班請用電腦
         </p>
 
+        {/* Tab switch: Day / Week */}
+        <div className="flex gap-1 mb-2">
+          <button onClick={() => setMobileView('day')}
+            className={`flex-1 py-1.5 text-sm rounded ${mobileView === 'day' ? 'bg-brand text-white' : 'bg-muted'}`}>
+            單日
+          </button>
+          <button onClick={() => setMobileView('week')}
+            className={`flex-1 py-1.5 text-sm rounded ${mobileView === 'week' ? 'bg-brand text-white' : 'bg-muted'}`}>
+            一週總覽
+          </button>
+        </div>
+
+        {/* ── Day View (existing content) ── */}
+        {mobileView === 'day' && (
+          <>
         {/* Monthly work hours bar */}
         {monthlyWorkHours.length > 0 && (
           <div className="mb-3 rounded-lg border bg-card px-3 py-2">
@@ -2213,7 +2274,113 @@ function getShiftColor(shift: Shift): string {
             </div>
           )
         })()}
+          </>
+        )}
+
+        {/* ── Week Overview Grid (new) ── */}
+        {mobileView === 'week' && (
+          <div className="px-1">
+            {/* Scope selector: all / company / clinic */}
+            <div className="flex gap-2 mb-2">
+              <select value={ovScope.type === 'all' ? 'all' : `${ovScope.type}:${ovScope.id}`}
+                onChange={e => {
+                  const v = e.target.value
+                  if (v === 'all') setOvScope({ type: 'all' })
+                  else {
+                    const [t, id] = v.split(':')
+                    const found = t === 'company' ? companies.find(c => c.id === id) : clinics.find(c => c.id === id)
+                    setOvScope({ type: t as any, id, name: found?.name ?? '' })
+                  }
+                }}
+                className="flex-1 text-xs rounded border px-2 py-1.5">
+                <option value="all">所有診所</option>
+                {companies.length > 0 && (
+                  <optgroup label="公司">
+                    {companies.map(co => <option key={co.id} value={`company:${co.id}`}>{co.name}</option>)}
+                  </optgroup>
+                )}
+                <optgroup label="診所">
+                  {clinics.map(c => <option key={c.id} value={`clinic:${c.id}`}>{c.name}</option>)}
+                </optgroup>
+              </select>
+            </div>
+
+            {/* Week navigation */}
+            <div className="flex items-center justify-between mb-2">
+              <button onClick={() => shiftMobileWeek(-7)} className="w-8 h-8 rounded border">‹</button>
+              <span className="text-sm font-semibold">{mobileWeekLabel}</span>
+              <button onClick={() => shiftMobileWeek(7)} className="w-8 h-8 rounded border">›</button>
+            </div>
+
+            {/* Week grid (click to fullscreen) */}
+            <div onClick={() => setFullscreenOverview(true)} className="cursor-pointer">
+              <table className="w-full text-[10px]" style={{ tableLayout: 'fixed' }}>
+                <thead>
+                  <tr>
+                    <th className="text-left w-14 sticky left-0 bg-white">員工</th>
+                    {mobileWeekDays.map(d => (
+                      <th key={d} className="text-center px-0.5">
+                        {['一', '二', '三', '四', '五', '六', '日'][new Date(d).getDay() === 0 ? 6 : new Date(d).getDay() - 1]}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {ovEmployees.ordered.map((emp: any) => (
+                    <tr key={emp.id} className="border-t">
+                      <td className="text-left truncate sticky left-0 bg-white">{emp.user?.name ?? '?'}</td>
+                      {mobileWeekDays.map(d => {
+                        const cell = getMobileCell(emp.id, d)
+                        return <td key={d} className="text-center px-0" style={{ background: cell.bg, fontSize: 9 }}>{cell.label}</td>
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-center text-[10px] text-muted-foreground mt-1">點擊放大 · 手機為唯讀檢視</div>
+          </div>
+        )}
       </div>
+
+      {/* ── Fullscreen Week Overview Overlay ── */}
+      {fullscreenOverview && (
+        <div className="fixed inset-0 z-[100] bg-white overflow-auto md:hidden"
+          onClick={() => setFullscreenOverview(false)}>
+          <div className="sticky top-0 bg-white border-b px-3 py-2 flex justify-between items-center">
+            <span className="font-semibold text-sm">
+              {ovScope.type === 'all' ? '所有診所' : ovScope.name} · {mobileWeekLabel}
+            </span>
+            <button className="text-lg" onClick={() => setFullscreenOverview(false)}>✕</button>
+          </div>
+          <div className="overflow-x-auto p-2">
+            <table className="text-xs" style={{ minWidth: 640 }}>
+              <thead>
+                <tr>
+                  <th className="text-left w-20 sticky left-0 bg-white">員工</th>
+                  {mobileWeekDays.map(d => (
+                    <th key={d} className="text-center px-1 min-w-[80px]">
+                      {d.slice(5)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {ovEmployees.ordered.map((emp: any) => (
+                  <tr key={emp.id} className="border-t">
+                    <td className="text-left sticky left-0 bg-white">{emp.user?.name ?? '?'}</td>
+                    {mobileWeekDays.map(d => {
+                      const cell = getMobileCell(emp.id, d)
+                      return <td key={d} className="text-center px-1 py-1 min-w-[80px]"
+                        style={{ background: cell.bg, fontSize: 12 }}>{cell.detail ?? cell.label}</td>
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ============================================================ */}
       {/* MAIN LAYOUT: Clinic Sidebar | Employees | Templates+Leave | Content */}

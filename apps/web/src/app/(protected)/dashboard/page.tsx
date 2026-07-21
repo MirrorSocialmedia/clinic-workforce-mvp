@@ -42,11 +42,13 @@ export default function DashboardPage() {
   const [data, setData] = useState<{
     role: Role
     clinics: ClinicData[]
-    workHours?: Array<{ employeeId: string; name: string; weekHours: number; monthHours: number; weekOvertime: boolean }>
+    workHours?: Array<{ employeeId: string; name: string; clinicId: string | null; clinicName: string; weekHours: number; monthHours: number; weekOvertime: boolean }>
+    whClinics?: Array<{ clinicId: string; clinicName: string }>
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [isEmployee, setIsEmployee] = useState(false)
+  const [whClinic, setWhClinic] = useState<string>('all')
 
   // Employee attendance summary — fixed to current month
   const [empSummary, setEmpSummary] = useState<any[]>([])
@@ -86,7 +88,7 @@ export default function DashboardPage() {
           router.replace('/my/dashboard')
           return
         }
-        setData({ role: d.role, clinics: d.clinics, workHours: d.workHours })
+        setData({ role: d.role, clinics: d.clinics, workHours: d.workHours, whClinics: d.whClinics })
       })
       .catch(err => setError(err.message || '載入失敗'))
       .finally(() => setLoading(false))
@@ -258,19 +260,33 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Work Hours Overview Card ── */}
-      {data.workHours && data.workHours.length > 0 && (
+      {data.workHours && data.workHours.length > 0 && (() => {
+        const filteredWH = whClinic === 'all' ? data.workHours : data.workHours.filter((w: any) => w.clinicId === whClinic)
+        const otCount = filteredWH.filter((w: any) => w.weekOvertime).length
+        return (
         <Card className="md:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center justify-between">
               <span>⏱️ 員工工時概覽</span>
-              <span className="text-xs font-normal text-muted-foreground">本週 / 本月</span>
+              <div className="flex items-center gap-2">
+                {data.whClinics && data.whClinics.length > 0 && (
+                  <select value={whClinic} onChange={e => setWhClinic(e.target.value)}
+                    className="text-xs rounded border px-2 py-1">
+                    <option value="all">全部店鋪</option>
+                    {(data.whClinics ?? []).map((c: any) => (
+                      <option key={c.clinicId} value={c.clinicId}>{c.clinicName}</option>
+                    ))}
+                  </select>
+                )}
+                <span className="text-xs font-normal text-muted-foreground">本週 / 本月</span>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y">
-              {data.workHours.map((w: any) => (
+              {filteredWH.map((w: any) => (
                 <div key={w.employeeId} className="flex items-center justify-between px-4 py-2 text-sm">
-                  <span className="font-medium">{w.name}</span>
+                  <span className="font-medium">{w.name}{w.clinicName ? <span className="ml-1 text-xs text-muted-foreground">({w.clinicName})</span> : ''}</span>
                   <div className="flex items-center gap-4">
                     <span className={w.weekOvertime ? 'text-red-600 font-semibold' : ''}>
                       {w.weekOvertime && '🔴 '}本週 {w.weekHours}h
@@ -281,7 +297,6 @@ export default function DashboardPage() {
               ))}
             </div>
             {(() => {
-              const otCount = data.workHours.filter((w: any) => w.weekOvertime).length
               return (
                 <div className="px-4 py-2 border-t text-sm flex items-center justify-between bg-muted/30">
                   {otCount > 0 ? (
@@ -297,7 +312,8 @@ export default function DashboardPage() {
             })()}
           </CardContent>
         </Card>
-      )}
+        )
+      })()}
 
       {/* ── Sensitive Operations Summary (OWNER only) ── */}
       {data.role === 'OWNER' && (

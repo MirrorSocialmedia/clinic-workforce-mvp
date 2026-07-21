@@ -158,7 +158,12 @@ export async function GET(req: NextRequest) {
 
   const activeEmployees = await prisma.employee.findMany({
     where: { status: 'ACTIVE' },
-    select: { id: true, user: { select: { name: true } } },
+    select: {
+      id: true,
+      homeClinicId: true,
+      user: { select: { name: true } },
+      homeClinic: { select: { id: true, name: true } },
+    },
   })
 
   const monthShifts = await prisma.shift.findMany({
@@ -182,11 +187,22 @@ export async function GET(req: NextRequest) {
     return {
       employeeId: emp.id,
       name: emp.user?.name ?? '?',
+      clinicId: emp.homeClinicId ?? emp.homeClinic?.id ?? null,
+      clinicName: emp.homeClinic?.name ?? '',
       weekHours: Math.round(weekH * 10) / 10,
       monthHours: Math.round(monthH * 10) / 10,
       weekOvertime: weekH > 45,
     }
   }).sort((a, b) => b.weekHours - a.weekHours)
+
+  // Distinct clinic options from workHours
+  const clinicMap = new Map<string, { clinicId: string; clinicName: string }>()
+  for (const wh of workHours) {
+    if (wh.clinicId && !clinicMap.has(wh.clinicId)) {
+      clinicMap.set(wh.clinicId, { clinicId: wh.clinicId, clinicName: wh.clinicName })
+    }
+  }
+  const whClinics = [...clinicMap.values()]
 
   return NextResponse.json({
     role: session.role,
@@ -194,5 +210,6 @@ export async function GET(req: NextRequest) {
     recentAuditLogs,
     distinctEmployeeCount,
     workHours,
+    whClinics: whClinics,
   })
 }
