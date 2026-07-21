@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       action: 'FACE_ENROLL_CODE_ISSUED',
       entity: 'FaceEnrollCode',
       entityId: code,
+      targetEmployeeId: employeeId,
       afterJson: JSON.stringify({ employeeId, code }),
       ipAddress: req.headers.get('x-forwarded-for') || null,
       userAgent: req.headers.get('user-agent') || null,

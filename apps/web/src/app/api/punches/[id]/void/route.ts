@@ -38,6 +38,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
       action: 'VOID_PUNCH',
       entity: 'PunchRecord',
       entityId: id,
+      targetEmployeeId: punch.employeeId,
       notes: `作廢打卡：${reason}`,
     },
   })

@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
         action: 'ABSENT_DEDUCT_CANCEL',
         entity: 'TimeBank',
         entityId: employeeId,
+        targetEmployeeId: employeeId,
         notes: `取消缺勤扣OT鐘 @ ${date}`,
       },
     })

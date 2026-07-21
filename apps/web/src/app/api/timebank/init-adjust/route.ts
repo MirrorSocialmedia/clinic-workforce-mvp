@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
       action: 'TIMEBANK_INIT_ADJUST',
       entity: 'TimeBank',
       entityId: employeeId,
+      targetEmployeeId: employeeId,
       beforeJson: JSON.stringify({ initMinutes: oldTotal }),
       afterJson: JSON.stringify({ initMinutes: totalMinutes }),
       notes: JSON.stringify({ minutes: totalMinutes, effectiveMonth, reason: reason.trim() }),

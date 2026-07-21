@@ -124,6 +124,7 @@ export async function POST(req: NextRequest) {
       action: 'TIMEBANK_MAKEUP',
       entity: 'TimeBank',
       entityId: employeeId,
+      targetEmployeeId: employeeId,
       beforeJson: JSON.stringify({ balanceMinutes: beforeBalance }),
       afterJson: JSON.stringify({ balanceMinutes: afterBalance }),
       notes: JSON.stringify({ delta: -Math.abs(parseInt(minutes)), date, reason: reason?.trim(), targetType }),

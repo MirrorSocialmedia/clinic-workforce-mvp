@@ -42,7 +42,15 @@ export async function GET(req: NextRequest) {
   const [logs, total] = await Promise.all([
     prisma.auditLog.findMany({
       where,
-      include: { actor: { select: { name: true, phone: true, role: true } } },
+      include: {
+        actor: { select: { name: true, phone: true, role: true } },
+        targetEmployee: {
+          select: {
+            id: true,
+            user: { select: { name: true } },
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,

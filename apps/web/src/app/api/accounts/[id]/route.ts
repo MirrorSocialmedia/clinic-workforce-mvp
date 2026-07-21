@@ -66,6 +66,8 @@ export async function DELETE(
 
     if (!user) return NextResponse.json({ error: '帳號不存在' }, { status: 404 })
 
+    const targetEmpId = user.employee?.id ?? null
+
     if (user.employee) {
       const empId = user.employee.id
 
@@ -103,6 +105,7 @@ export async function DELETE(
         entity: 'ACCOUNT',
         entityId: params.id,
         actorId: session.userId,
+        ...(targetEmpId ? { targetEmployeeId: targetEmpId } : {}),
         notes: JSON.stringify({ name: user.name, email: user.email }),
       },
     })
@@ -264,6 +267,7 @@ export async function PUT(
           entity: 'ACCOUNT',
           entityId: params.id,
           actorId: session.userId,
+          ...(employee ? { targetEmployeeId: employee.id } : {}),
           notes: JSON.stringify({ updated: body }),
         },
       })

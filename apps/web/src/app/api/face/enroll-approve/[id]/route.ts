@@ -46,6 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     action: 'FACE_ENROLL_APPROVE',
     entity: 'FaceTemplate',
     entityId: template.id,
+    targetEmployeeId: template.employeeId,
     notes: `核准員工 ${template.employeeId} 臉部登記（原子切換，舊模板停用保留）`,
    },
   })
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     action: 'FACE_ENROLL_REJECT',
     entity: 'FaceTemplate',
     entityId: template.id,
+    targetEmployeeId: template.employeeId,
     notes: `拒絕員工 ${template.employeeId} 臉部登記`,
    },
   })

@@ -118,6 +118,7 @@ export async function PUT(
         action: 'PUNCH_EDIT',
         entity: 'PunchRecord',
         entityId: params.id,
+        targetEmployeeId: oldRecord.employeeId,
         afterJson: JSON.stringify({
           oldRecordId: params.id,
           newRecordId: nr.id,

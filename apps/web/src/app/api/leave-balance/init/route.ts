@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
           action: 'LEAVE_INIT',
           entity: 'LeaveBalance',
           entityId: empId,
+          targetEmployeeId: empId,
           beforeJson: JSON.stringify({ entitled: before?.entitled ?? null, remaining: before?.remaining ?? null }),
           afterJson: JSON.stringify({ entitled: days, remaining: days }),
           notes: JSON.stringify({ leaveTypeId, year, days }),

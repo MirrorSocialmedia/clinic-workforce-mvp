@@ -47,6 +47,7 @@ export async function POST(
         action: 'EMPLOYEE_REHIRE',
         entity: 'Employee',
         entityId: empId,
+        targetEmployeeId: empId,
         notes: '復職',
         ipAddress: null,
         userAgent: null,

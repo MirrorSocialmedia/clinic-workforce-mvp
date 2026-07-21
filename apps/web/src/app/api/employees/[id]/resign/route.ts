@@ -71,6 +71,7 @@ export async function POST(
         action: 'EMPLOYEE_RESIGN',
         entity: 'Employee',
         entityId: empId,
+        targetEmployeeId: empId,
         notes: `離職：最後工作日=${lastDay}, 取消班次=${shifts.count}, 取消假期=${leaves.count}`,
         ipAddress: null,
         userAgent: null,

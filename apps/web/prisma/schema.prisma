@@ -189,6 +189,7 @@ model Employee {
   timeBankEntries TimeBankEntry[]
   payrollItems  PayrollItem[]
   faceTemplates FaceTemplate[]
+  auditTargets AuditLog[] @relation("AuditTarget")
   joinDate  DateTime
   leaveDate DateTime?
   resignedAt DateTime?
@@ -403,6 +404,7 @@ model AuditLog {
   action      String   // CREATE, UPDATE, DELETE, CORRECT, APPROVE, REJECT
   entity      String
   entityId    String
+  targetEmployeeId String? // ★ 這條操作針對哪個員工
   clinicId    String?
   beforeJson  String?  // JSON string for SQLite compat
   afterJson   String?  // JSON string for SQLite compat
@@ -412,6 +414,7 @@ model AuditLog {
   createdAt   DateTime @default(now())
 
   actor       User     @relation("ActorLogs", fields: [actorId], references: [id])
+  targetEmployee Employee? @relation("AuditTarget", fields: [targetEmployeeId], references: [id])
 
   @@index([actorId, createdAt])
   @@index([entity, entityId])

@@ -119,12 +119,14 @@ export async function DELETE(req: NextRequest) {
   })
 
   // 審計記錄
+  const targetEmpId = employeeId && employeeId !== 'all' ? employeeId : null
   await prisma.auditLog.create({
     data: {
       actorId: session.userId,
       action: 'DELETE',
       entity: 'LeaveBalance',
       entityId: 'batch',
+      ...(targetEmpId ? { targetEmployeeId: targetEmpId } : {}),
       notes: `清除假期資料: ${employeeId === 'all' ? '全部員工' : employeeId}, 年份 ${year}, 共 ${deleted.count} 筆`,
     },
   })

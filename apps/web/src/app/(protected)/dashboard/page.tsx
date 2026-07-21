@@ -195,7 +195,20 @@ export default function DashboardPage() {
   function fmtAudit(v: any): string {
     try {
       const o = typeof v === 'string' ? JSON.parse(v) : v
-      return Object.entries(o).map(([k, val]) => `${k}: ${val}`).join(', ')
+      const parts: string[] = []
+      if (o.punchType) parts.push(`類型: ${o.punchType}`)
+      if (o.punchTime || o.correctedTime) parts.push(`時間: ${o.punchTime ?? o.correctedTime}`)
+      if (o.initMinutes != null) parts.push(`時間帳戶: ${(o.initMinutes / 60).toFixed(1)}h`)
+      if (o.otBalanceMinutes != null) parts.push(`OT餘額: ${(o.otBalanceMinutes / 60).toFixed(1)}h`)
+      if (o.balanceMinutes != null) parts.push(`餘額: ${(o.balanceMinutes / 60).toFixed(1)}h`)
+      if (o.entitled != null) parts.push(`額度: ${o.entitled}天`)
+      if (o.remaining != null) parts.push(`剩餘: ${o.remaining}天`)
+      if (o.voidReason) parts.push(o.voidReason)
+      if (o.reason) parts.push(`原因: ${o.reason}`)
+      if (o.delta != null) parts.push(`變量: ${o.delta > 0 ? '+' : ''}${o.delta}`)
+      if (o.days != null) parts.push(`天數: ${o.days}`)
+      if (o.minutes != null) parts.push(`分鐘: ${o.minutes}`)
+      return parts.join('、') || Object.entries(o).map(([k, val]) => `${k}: ${val}`).join(', ')
     } catch {
       return String(v)
     }
@@ -379,10 +392,12 @@ export default function DashboardPage() {
                             const before = log.beforeJson ? (typeof log.beforeJson === 'string' ? JSON.parse(log.beforeJson) : log.beforeJson) : null
                             const after = log.afterJson ? (typeof log.afterJson === 'string' ? JSON.parse(log.afterJson) : log.afterJson) : null
                             const diff = before && after ? renderDiff(before, after) : ''
+                            const targetEmpName = log.targetEmployee?.user?.name || null
                             return (
                               <div key={log.id} className="text-xs py-1">
                                 <div className="text-muted-foreground">
                                   {fmtDateTime(log.createdAt)} {labels[log.action] || log.action}
+                                  {targetEmpName && <span className="ml-1" style={{ color: '#2563eb' }}>員工：{targetEmpName}</span>}
                                   {log.notes && <span> — {log.notes}</span>}
                                 </div>
                                 {(before || after) && (

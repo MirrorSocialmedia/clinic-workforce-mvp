@@ -18,6 +18,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
    action: 'FACE_REF_VIEW',
    entity: 'FaceTemplate',
    entityId: template.id,
+   targetEmployeeId: template.employeeId,
    notes: `參考照查看: ${template.employeeId}`,
   },
  })

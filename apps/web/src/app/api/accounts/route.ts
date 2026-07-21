@@ -245,6 +245,7 @@ export async function POST(req: NextRequest) {
           entity: 'ACCOUNT',
           entityId: user.id,
           actorId: session.userId,
+          ...(assignEmployee && employee ? { targetEmployeeId: employee.id } : {}),
           notes: JSON.stringify({ name, phone, role, assignEmployee }),
         },
       })

@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
       action: 'FACE_ENROLL',
       entity: 'FaceTemplate',
       entityId: employee.id,
+      targetEmployeeId: employee.id,
       notes: `Face enrollment completed via code ${code}`,
       ipAddress: req.headers.get('x-forwarded-for') || null,
       userAgent: req.headers.get('user-agent') || null,

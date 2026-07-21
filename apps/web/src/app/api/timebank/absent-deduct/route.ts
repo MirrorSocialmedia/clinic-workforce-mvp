@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
         action: 'TIMEBANK_ABSENT_DEDUCT',
         entity: 'TimeBank',
         entityId: employeeId,
+        targetEmployeeId: employeeId,
         beforeJson: JSON.stringify({ balanceMinutes: beforeBalance }),
         afterJson: JSON.stringify({ balanceMinutes: afterBalance }),
         notes: JSON.stringify({ delta: -shiftMinutes, date, reason: '缺勤扣OT鐘' }),
