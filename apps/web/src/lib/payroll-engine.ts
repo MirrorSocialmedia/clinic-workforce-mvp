@@ -819,6 +819,7 @@ export async function generatePayrollRun(
           }
           calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
             ...(config.base_type !== 'hourly' && storeBonuses?.[emp.id] ? { storeBonus: storeBonuses[emp.id] } : {}),
+            ...(config.base_type !== 'hourly' && splitPays?.[emp.id] != null ? { splitPay: splitPays[emp.id] } : {}),
           })
         } else {
           // No rule at all → skip with warning
@@ -2434,7 +2435,7 @@ export async function calculatePayrollWithRules(
   monthDate: Date,
   clinicId: string | null,
   config: PayRuleConfigModular,
-  options?: { storeBonus?: number } // 店舖獎金，預設 0；只有月薪路徑會收到
+  options?: { storeBonus?: number; splitPay?: number } // 店舖獎金 + 手動拆帳；只有月薪路徑會收到
 ): Promise<PayrollResult> {
   // ★ Part-time hourly: bypass all modifier logic entirely
   if (config.base_type === 'hourly') {
@@ -2476,13 +2477,16 @@ export async function calculatePayrollWithRules(
   const allowances = mods.allowances || []
   const totalAllowances = allowances.reduce((sum, a) => sum + a.amount, 0)
   const storeBonus = options?.storeBonus ?? 0
+  const manualSplitPay = options?.splitPay
+  const effectiveSplitPay = manualSplitPay != null ? manualSplitPay : (result.splitPay || 0)
 
   // ★ 病假扣減：只在 MONTHLY 分支接線（時薪員工天然零成本）
   const sickDeduction = (result.detail as any)?.monthlySalary != null
     ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma)
     : { amount: 0, episodes: [] }
 
-  const grossPay = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount
+  result.splitPay = effectiveSplitPay // 顯示與計算統一
+  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount
 
   const mpfConfig = mods.mpf || config.mpf || { enabled: false }
   const mpf = calcMPF(grossPay, mpfConfig)
@@ -2514,7 +2518,7 @@ export async function calculatePayrollWithRules(
     const oldOtPay = result.otPay
     result.otPay = Math.round(result.otHours * hourlyEquivalent * otMultiplier * 100) / 100
     const grossPayDelta = result.otPay - oldOtPay
-    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + (result.splitPay || 0) + result.attendanceBonus)
+    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus)
     const newGrossPay = oldGrossPay + grossPayDelta
     const mpfConfig = mods.mpf || config.mpf || { enabled: false }
     const newMpf = calcMPF(newGrossPay, mpfConfig)

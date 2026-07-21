@@ -283,7 +283,7 @@ export default function NewPayrollPage() {
 
         {/* Preview Results — auto-shown when clinic + month selected */}
         {previewResult && (
-          <Card className="mt-4">
+          <Card className="mt-4" style={{ width: '100vw', marginLeft: 'calc(-50vw + 50%)', maxWidth: '100vw', paddingLeft: '24px', paddingRight: '24px', }}>
             <CardHeader className="pb-3">
               <CardTitle className="text-base text-center flex items-center justify-center gap-2">
                 {previewing ? '⏳ 試算中...' : '試算結果'}（未儲存）
