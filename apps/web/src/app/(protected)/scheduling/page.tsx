@@ -14,6 +14,32 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 
 // ============================================================
+// Sorting helpers
+// ============================================================
+const ROLE_ORDER: Record<string, number> = { OWNER: 0, MANAGER: 1, ACCOUNTANT: 2, EMPLOYEE: 3 }
+const roleOf = (e: any) => e.user?.role ?? e.role ?? null
+const roleRank = (e: any) => {
+  const r = roleOf(e)
+  return (r != null && r in ROLE_ORDER) ? ROLE_ORDER[r] : 99
+}
+
+const byRoleThenName = (a: any, b: any) => {
+  const rr = roleRank(a) - roleRank(b)
+  if (rr !== 0) return rr
+  const na = (a.name || a.user?.name || '').toLowerCase()
+  const nb = (b.name || b.user?.name || '').toLowerCase()
+  if (na !== nb) return na < nb ? -1 : 1
+  return (a.id || '').localeCompare(b.id || '')
+}
+
+const byName = (a: any, b: any) => {
+  const na = (a.name || a.user?.name || '').toLowerCase()
+  const nb = (b.name || b.user?.name || '').toLowerCase()
+  if (na !== nb) return na < nb ? -1 : 1
+  return (a.id || '').localeCompare(b.id || '')
+}
+
+// ============================================================
 // Types
 // ============================================================
 type ViewMode = 'week' | 'month'
@@ -503,11 +529,14 @@ function getShiftColor(shift: Shift): string {
     return new Set([ovScope.id])
   }, [ovScope, clinics])
 
-  // Step 7: Overview employees (filtered by scope)
+  // Step 7: Overview employees (filtered by scope + sorted by role then name, full/part split)
   const ovEmployees = useMemo(() => {
     const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
-    if (!scopeClinicIds) return activeEmployees
-    return activeEmployees.filter(e => e.clinics?.some((ec: any) => scopeClinicIds.has(ec.clinic?.id)))
+    const scoped = !scopeClinicIds ? activeEmployees
+      : activeEmployees.filter(e => e.clinics?.some((ec: any) => scopeClinicIds.has(ec.clinic?.id)))
+    const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byRoleThenName)
+    const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byRoleThenName)
+    return { full, part, ordered: [...full, ...part] }
   }, [employees, scopeClinicIds])
 
   // Step 7: Overview shifts (filtered by scope)
@@ -517,8 +546,8 @@ function getShiftColor(shift: Shift): string {
   }, [shifts, scopeClinicIds])
 
   // Step 6: Split by pay type
-  const fullTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType !== 'HOURLY')
-  const partTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType === 'HOURLY')
+  const fullTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byName)
+  const partTimeEmps = clinicEmployees.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byName)
 
   // Load leave types
   useEffect(() => {
@@ -1318,7 +1347,122 @@ function getShiftColor(shift: Shift): string {
             </tr>
           </thead>
           <tbody>
-            {ovEmployees.map(emp => (
+            {/* Full-time employees (sorted by role then name) */}
+            {ovEmployees.full.map(emp => (
+              <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                <td style={{
+                  position: 'sticky', left: 0,
+                  background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+                  padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
+                  fontWeight: 500, fontSize: 11,
+                }}>{emp.user?.name ?? '?'}</td>
+                {days.map((wd, dayIdx) => {
+                  const empShiftsOnDay = ovShifts.filter(s =>
+                    s.employeeId === emp.id &&
+                    toHKDateStr(new Date(s.date)) === wd.dateStr
+                  )
+                  const empLeavesOnDay = leaveRequests.filter(lr =>
+                    lr.employeeId === emp.id &&
+                    leaveCoversDate(lr, wd.dateStr)
+                  )
+                  const hasShift = empShiftsOnDay.length > 0
+                  const hasLeave = empLeavesOnDay.length > 0
+                  return (
+                    <td key={dayIdx}
+                      className="overview-cell"
+                      onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
+                      onPointerEnter={e => {
+                        if (!draggingTemplate.current && !draggingLeave.current) return
+                        ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                        ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                      }}
+                      onPointerLeave={e => {
+                        if (hasShift) return
+                        if (hasLeave) {
+                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                        } else {
+                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                        }
+                        ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                      }}
+                      style={{
+                        padding: '2px 3px', textAlign: 'center',
+                        cursor: hasShift ? 'pointer' : 'default',
+                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
+                        transition: 'background 0.15s',
+                        verticalAlign: 'top',
+                      }}
+                      onMouseEnter={e => {
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                      }}
+                      onMouseLeave={e => {
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                      }}
+                      onClick={() => {
+                        if (justDroppedRef.current) return
+                        if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
+                      }}
+                    >
+                      <div className="overview-cell-inner">
+                        {empShiftsOnDay.map((s, si) => {
+                          const tpl = templates.find(t => t.id === s.templateId)
+                          const clinic = clinics.find(c => c.id === s.clinicId)
+                          const parts: string[] = []
+                          if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+                          if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                          if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
+                          const shiftLabel = parts.filter(Boolean).join('·')
+                          const shiftTitle = `${s.employee?.user?.name} ${clinic?.name ?? ''} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
+                          return (
+                            <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
+                              background: getShiftColor(s),
+                              touchAction: 'none',
+                              userSelect: 'none',
+                            }}
+                              onPointerDown={(e) => shiftDragOutStart(e, s.id, shiftLabel, () => Promise.resolve())}
+                            >
+                              {shiftLabel}
+                            </div>
+                          )
+                        })}
+                        {empLeavesOnDay.map((lr, li) => {
+                          const leaveColor = lr.leaveType?.color ?? '#9ca3af'
+                          const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
+                          const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
+                          return (
+                            <div key={'l' + li} className="ov-capsule" title={leaveTitle}
+                              style={{
+                                background: (leaveColor || '#9ca3af') + '26',
+                                color: '#1f2937',
+                                borderLeft: `3px solid ${leaveColor}`,
+                                touchAction: 'none',
+                                userSelect: 'none',
+                              }}
+                              onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
+                            >
+                              {leaveLabel}
+                            </div>
+                          )
+                        })}
+                        {(!hasShift && !hasLeave) && (
+                          <span style={{ fontSize: 10, color: '#999', fontWeight: 500 }}>R</span>
+                        )}
+                      </div>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+            {/* Full-time ↔ Part-time separator */}
+            {ovEmployees.full.length > 0 && ovEmployees.part.length > 0 && (
+              <tr><td colSpan={days.length + 1} style={{ padding: 0 }}>
+                <div style={{ height: 2, background: '#e5e7eb', margin: '2px 0' }} />
+              </td></tr>
+            )}
+            {/* Part-time employees (sorted by role then name) */}
+            {ovEmployees.part.map(emp => (
               <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                 <td style={{
                   position: 'sticky', left: 0,
@@ -1542,7 +1686,7 @@ function getShiftColor(shift: Shift): string {
   }
 
   return (
-    <div className="w-full overflow-x-hidden" style={{ maxWidth: '100%', padding: '0 16px' }}>
+    <div className="w-full" style={{ maxWidth: '100%', padding: '0 16px' }}>
       {/* Overview capsule styles */}
       <style>{`
         .overview-table {
@@ -2421,7 +2565,7 @@ function getShiftColor(shift: Shift): string {
         </div>
         <div id="fc-section" style={{ minWidth: 0, flex: 1 }}>
           {/* Overview Grid — compact mode, always shown */}
-          {viewMode === 'week' && viewRange && ovEmployees.length > 0 && (
+          {viewMode === 'week' && viewRange && ovEmployees.ordered.length > 0 && (
             <div ref={overviewRef} className="ov-compact" style={{
               marginBottom: 12,
               border: '1px solid #e5e7eb',
