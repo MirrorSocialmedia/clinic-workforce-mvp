@@ -30,6 +30,13 @@ export async function POST(req: NextRequest) {
 
     const results = []
     for (const empId of targets) {
+      // Read original values before upsert
+      const before = await prisma.leaveBalance.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: { employeeId: empId, leaveTypeId, year },
+        },
+      })
+
       const result = await prisma.leaveBalance.upsert({
         where: {
           employeeId_leaveTypeId_year: { employeeId: empId, leaveTypeId, year },
@@ -37,6 +44,20 @@ export async function POST(req: NextRequest) {
         update: { entitled: days, remaining: days, used: 0 },
         create: { employeeId: empId, leaveTypeId, year, entitled: days, remaining: days, used: 0 },
       })
+
+      // ★ Write audit log: LEAVE_INIT
+      await prisma.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'LEAVE_INIT',
+          entity: 'LeaveBalance',
+          entityId: empId,
+          beforeJson: JSON.stringify({ entitled: before?.entitled ?? null, remaining: before?.remaining ?? null }),
+          afterJson: JSON.stringify({ entitled: days, remaining: days }),
+          notes: JSON.stringify({ leaveTypeId, year, days }),
+        },
+      })
+
       results.push(result)
     }
 

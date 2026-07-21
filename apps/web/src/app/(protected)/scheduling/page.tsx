@@ -316,6 +316,9 @@ export default function SchedulingPage() {
   const draggingLeave = useRef<{ leaveTypeId: string; employeeId: string } | null>(null)
   const justDroppedRef = useRef(false)
 
+  // Click timer for single/double-click debouncing in overview cells
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Global pointerup cleanup for draggingTemplate & draggingLeave (next tick, let cell's pointerup fire first)
   useEffect(() => {
     const clear = () => setTimeout(() => {
@@ -1401,6 +1404,43 @@ function getClinicColor(name: string): string {
   }
 
   // ============================================================
+  // Overview cell click / double-click handlers
+  // ============================================================
+  const handleOverviewCellClick = async (empId: string, dateStr: string) => {
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+    clickTimerRef.current = setTimeout(async () => {
+      if (!canManage) return
+      if (!selectedTemplate) {
+        setValidationIssues([{ type: 'warning', rule: 'template', message: '請先選更次模板' }])
+        return
+      }
+      const hasLeave = leaveRequests.some(lr =>
+        lr.employeeId === empId && leaveCoversDate(lr, dateStr)
+      )
+      if (hasLeave) {
+        setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
+        return
+      }
+      const ok = await createShift(empId, dateStr, selectedTemplate)
+      if (ok) { setValidationIssues([]); await refreshAll() }
+    }, 250)
+  }
+
+  const handleOverviewCellDblClick = async (empId: string, dateStr: string) => {
+    if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
+    if (!canManage) return
+    const existing = shifts.find(
+      s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr && s.status !== 'CANCELLED'
+    )
+    if (!existing) return
+    const name = employees.find(e => e.id === empId)?.user?.name || empId
+    if (confirm(`刪除 ${name} ${dateStr} 的更次？`)) {
+      await deleteShift(existing.id)
+      await refreshAll()
+    }
+  }
+
+  // ============================================================
   // Render Overview Week — takes a days array, renders title + table + stats
   // ============================================================
   const renderOverviewWeek = (days: typeof weekDays, title: string) => (
@@ -1472,10 +1512,10 @@ function getClinicColor(name: string): string {
                       }}
                       style={{
                         padding: '2px 3px', textAlign: 'center',
-                        cursor: hasShift ? 'pointer' : 'default',
+                        cursor: canManage ? 'pointer' : 'default',
                         background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
                         transition: 'background 0.15s',
-                        verticalAlign: 'top',
+                        verticalAlign: 'middle',
                       }}
                       onMouseEnter={e => {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
@@ -1483,21 +1523,10 @@ function getClinicColor(name: string): string {
                       onMouseLeave={e => {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
                       }}
-                      onClick={async () => {
-                        if (justDroppedRef.current) return
-                        // Touch mode: click cell to create shift with selected employee + template
-                        if (isTouch && canManage && selectedEmployeeId && selectedTemplate && !hasShift && !hasLeave) {
-                          const ok = await createShift(selectedEmployeeId, wd.dateStr, selectedTemplate)
-                          if (ok) {
-                            setValidationIssues([])
-                            await refreshAll()
-                          }
-                          return
-                        }
-                        if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
-                      }}
+                      onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
+                      onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
-                      <div className="overview-cell-inner">
+                      <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 2, flexWrap: 'wrap', minHeight: 18 }}>
                         {empShiftsOnDay.map((s, si) => {
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
@@ -1609,10 +1638,10 @@ function getClinicColor(name: string): string {
                       }}
                       style={{
                         padding: '2px 3px', textAlign: 'center',
-                        cursor: hasShift ? 'pointer' : 'default',
+                        cursor: canManage ? 'pointer' : 'default',
                         background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
                         transition: 'background 0.15s',
-                        verticalAlign: 'top',
+                        verticalAlign: 'middle',
                       }}
                       onMouseEnter={e => {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
@@ -1620,21 +1649,10 @@ function getClinicColor(name: string): string {
                       onMouseLeave={e => {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
                       }}
-                      onClick={async () => {
-                        if (justDroppedRef.current) return
-                        // Touch mode: click cell to create shift with selected employee + template
-                        if (isTouch && canManage && selectedEmployeeId && selectedTemplate && !hasShift && !hasLeave) {
-                          const ok = await createShift(selectedEmployeeId, wd.dateStr, selectedTemplate)
-                          if (ok) {
-                            setValidationIssues([])
-                            await refreshAll()
-                          }
-                          return
-                        }
-                        if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
-                      }}
+                      onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
+                      onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
-                      <div className="overview-cell-inner">
+                      <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 2, flexWrap: 'wrap', minHeight: 18 }}>
                         {empShiftsOnDay.map((s, si) => {
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
@@ -1815,7 +1833,10 @@ function getClinicColor(name: string): string {
         }
         .overview-cell-inner {
           display: flex;
-          flex-direction: column;
+          flex-direction: row;
+          flex-wrap: wrap;
+          justify-content: center;
+          align-items: center;
           gap: 2px;
           min-height: 0;
           height: auto;

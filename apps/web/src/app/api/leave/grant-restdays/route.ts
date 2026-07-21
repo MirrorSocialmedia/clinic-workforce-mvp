@@ -34,6 +34,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       where: { employeeId: e.id, isActive: true },
       orderBy: { effectiveFrom: 'desc' },
     })
+    // ★ 兼職（HOURLY）不發休息日
+    if (rule?.payType === 'HOURLY') continue
     const cfg = rule?.configJson
       ? (typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson)
       : {}

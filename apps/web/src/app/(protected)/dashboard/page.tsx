@@ -123,7 +123,7 @@ export default function DashboardPage() {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const fromDate = toHKDateStr(sevenDaysAgo).slice(0, 10)
     const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT', 'CREATE_PUNCH',
-      'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT']
+      'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT', 'LEAVE_INIT']
 
     let promises = sensitiveActions.map(action =>
       fetch(`/api/audit-logs?action=${action}&fromDate=${fromDate}`, { credentials: 'include' })
@@ -153,6 +153,7 @@ export default function DashboardPage() {
         TIMEBANK_CONVERT: '時間帳戶兌換',
         TIMEBANK_ABSENT_DEDUCT: '缺勤扣OT鐘',
         TIMEBANK_REST_TO_ACCOUNT: '休息日還鐘',
+        LEAVE_INIT: '初始化假期額度',
       }
       for (const log of allLogs) {
         const actorName = log.actor?.name || log.actorId
@@ -189,6 +190,15 @@ export default function DashboardPage() {
   function fmtDateTime(ds: string | Date) {
     const d = typeof ds === 'string' ? new Date(ds) : ds
     return d.toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })
+  }
+
+  function fmtAudit(v: any): string {
+    try {
+      const o = typeof v === 'string' ? JSON.parse(v) : v
+      return Object.entries(o).map(([k, val]) => `${k}: ${val}`).join(', ')
+    } catch {
+      return String(v)
+    }
   }
 
   function renderDiff(before: any, after: any): string {
@@ -371,10 +381,17 @@ export default function DashboardPage() {
                             const diff = before && after ? renderDiff(before, after) : ''
                             return (
                               <div key={log.id} className="text-xs py-1">
-                                <span className="text-muted-foreground">{fmtDateTime(log.createdAt)}</span>{' '}
-                                <span className="font-medium">{labels[log.action] || log.action}</span>
-                                {log.notes && <span className="text-muted-foreground"> — {log.notes}</span>}
-                                {diff && <div className="text-muted-foreground mt-0.5">{diff}</div>}
+                                <div className="text-muted-foreground">
+                                  {fmtDateTime(log.createdAt)} {labels[log.action] || log.action}
+                                  {log.notes && <span> — {log.notes}</span>}
+                                </div>
+                                {(before || after) && (
+                                  <div className="text-[11px] ml-4 mt-0.5">
+                                    {before && <span className="text-red-600">原: {fmtAudit(before)}</span>}
+                                    {after && <span className="text-green-600 ml-2">新: {fmtAudit(after)}</span>}
+                                  </div>
+                                )}
+                                {diff && !before && !after && <div className="text-muted-foreground mt-0.5">{diff}</div>}
                               </div>
                             )
                           })}
