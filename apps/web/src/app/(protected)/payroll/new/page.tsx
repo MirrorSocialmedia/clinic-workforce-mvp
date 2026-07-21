@@ -48,6 +48,10 @@ export default function NewPayrollPage() {
   const [storeBonuses, setStoreBonuses] = useState<Record<string, number>>({})
   const [fillAll, setFillAll] = useState('')
 
+  // Split pay states
+  const [splitPays, setSplitPays] = useState<Record<string, number>>({})
+  const [bulkSplit, setBulkSplit] = useState('')
+
   const fetchClinics = useCallback(async () => {
     try {
       const res = await fetch('/api/clinics')
@@ -162,6 +166,7 @@ export default function NewPayrollPage() {
           periodMonth,
           clinicId: selectedClinic,
           storeBonuses: Object.keys(storeBonuses).length > 0 ? storeBonuses : undefined,
+          splitPays: Object.keys(splitPays).length > 0 ? splitPays : undefined,
         }),
       })
 
@@ -195,7 +200,7 @@ export default function NewPayrollPage() {
   if (userRole && userRole !== 'OWNER') return null
 
   return (
-    <div className="p-6" style={{ maxWidth: '1400px' }}>
+    <div className="p-6" style={{ maxWidth: '1800px' }}>
       <BackButton to="/payroll" label="返回計糧" />
       <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>+ 生成計糧</h1>
 
@@ -280,12 +285,12 @@ export default function NewPayrollPage() {
         {previewResult && (
           <Card className="mt-4">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
+              <CardTitle className="text-base text-center flex items-center justify-center gap-2">
                 {previewing ? '⏳ 試算中...' : '試算結果'}（未儲存）
               </CardTitle>
             </CardHeader>
             <CardContent>
-            <div className="mb-2 text-sm g text-muted-foreground">
+            <div className="mb-2 text-sm g text-muted-foreground text-center">
               員工數: {previewResult.itemCount} | 應付總額: HK${previewResult.totalPayable.toLocaleString()}
             </div>
 
@@ -318,23 +323,53 @@ export default function NewPayrollPage() {
               </div>
             )}
 
+            {/* Split pay fill-all control */}
+            {selectedClinic && (
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-sm font-semibold text-foreground">拆帳：</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={bulkSplit}
+                  onChange={e => setBulkSplit(e.target.value)}
+                  placeholder="金額"
+                  className="w-24 px-2 py-1 rounded-md g border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const v = parseFloat(bulkSplit)
+                    if (!isFinite(v) || v < 0) return
+                    const next: Record<string, number> = {}
+                    previewResult?.items.forEach((it: any) => { if (!it.error) next[it.employeeId] = v })
+                    setSplitPays(next)
+                  }}
+                  className="px-3 py-1 text-xs rounded-md bg-brand text-white hover:bg-brand-dark transition-colors"
+                >
+                  全部填入同額
+                </button>
+                <span className="text-xs text-muted-foreground">（重新生成需重新輸入拆帳金額）</span>
+              </div>
+            )}
+
             <>
             {/* Desktop table */}
             <div className="hidden md:block overflow-x-auto mt-3">
               <table className="w-full border-collapse text-xs">
                 <thead>
                   <tr className="border-b-2 border-blue-200">
-                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">員工</th>
-                    <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">薪資類型</th>
-                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">工時</th>
-                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">加班</th>
-                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">底薪</th>
-                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">加班費</th>
-                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">扣款</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">員工</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">薪資類型</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">工時</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">底薪</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">MPF</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">勤工獎</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">扣款</th>
                     {selectedClinic && (
-                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">店舖獎金</th>
+                      <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">店舖獎金</th>
                     )}
-                    <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">總額</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">拆帳</th>
+                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">總額</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -346,29 +381,43 @@ export default function NewPayrollPage() {
                         </td>
                       ) : (
                         <>
-                          <td className="px-2 py-1.5">{item.employeeName}</td>
-                          <td className="px-2 py-1.5">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</td>
-                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{item.workedHours}</td>
-                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{item.otHours}</td>
-                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">HK${(item.basePay || 0).toLocaleString()}</td>
-                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">HK${(item.otPay || 0).toLocaleString()}</td>
-                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">-HK${(item.deduction || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-center">{item.employeeName}</td>
+                          <td className="px-2 py-1.5 text-center">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</td>
+                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">{item.workedHours}</td>
+                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">HK${(item.basePay || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap text-red-600">-HK${((item.detail as any)?.mpf || 0).toLocaleString()}</td>
+                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">
+                            {(item.detail as any)?.attendanceBonusCancelled ? (
+                              <span className="text-muted-foreground">$0（已取消）</span>
+                            ) : (
+                              <span className="text-green-600">+HK${((item.detail as any)?.attendanceBonus || 0).toLocaleString()}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">-HK${(item.deduction || 0).toLocaleString()}</td>
                           {selectedClinic && (
-                            <td className="px-2 py-1.5 text-right">
+                            <td className="px-2 py-1.5 text-center">
                               {item.payType === 'MONTHLY' ? (
                                 <input
                                   type="number"
                                   min={0}
                                   value={storeBonuses[item.employeeId] ?? ''}
                                   onChange={e => setStoreBonuses(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
-                                  className="w-20 text-right px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                                  className="w-20 text-center px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                                 />
                               ) : (
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </td>
                           )}
-                          <td className="px-2 py-1.5 text-right font-semibold font-mono whitespace-nowrap">
+                          <td className="px-2 py-1.5 text-center">
+                            <input
+                              type="number" min={0}
+                              value={splitPays[item.employeeId] ?? ''}
+                              onChange={e => setSplitPays(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
+                              className="w-20 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                              placeholder="金額" />
+                          </td>
+                          <td className="px-2 py-1.5 text-center font-semibold font-mono whitespace-nowrap">
                             HK${(item.totalPayable || 0).toLocaleString()}
                           </td>
                         </>
@@ -393,9 +442,7 @@ export default function NewPayrollPage() {
                       </div>
                       <div className="grid grid-cols-2 gap-1 text-xs mb-2">
                         <div>工時: {item.workedHours}</div>
-                        <div>加班: {item.otHours}</div>
                         <div>底薪: HK${(item.basePay || 0).toLocaleString()}</div>
-                        <div>加班費: HK${(item.otPay || 0).toLocaleString()}</div>
                       </div>
                       {selectedClinic && item.payType === 'MONTHLY' && (
                         <div className="flex items-center gap-2 mb-2">

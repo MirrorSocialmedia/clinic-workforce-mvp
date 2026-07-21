@@ -695,7 +695,8 @@ export async function generatePayrollRun(
   clinicId: string | null,
   periodMonth: string,
   auditCtx?: AuditCtx,
-  storeBonuses?: Record<string, number> // { employeeId: amount }
+  storeBonuses?: Record<string, number>, // { employeeId: amount }
+  splitPays?: Record<string, number> // { employeeId: amount }
 ): Promise<
   | { runId: string; itemCount: number; totalPayable: number }
   | { error: string; runId: string; status: string }
@@ -835,7 +836,7 @@ export async function generatePayrollRun(
           absentDays: calcResult.absentDays,
           basePay: calcResult.basePay,
           otPay: calcResult.otPay,
-          splitPay: calcResult.splitPay,
+          splitPay: splitPays?.[emp.id] != null ? splitPays[emp.id] : calcResult.splitPay,
           deduction: calcResult.deduction,
           storeBonus: (calcResult.detail as any)?.storeBonus ?? 0,
           totalPayable: calcResult.totalPayable,

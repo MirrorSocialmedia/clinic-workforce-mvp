@@ -471,12 +471,6 @@ export default function EmployeePayrollDetailPage() {
               </div>
             )}
 
-            {otPay > 0 && (
-              <div className="flex justify-between items-center text-green-600">
-                <span className="text-sm">加班 {otHours.toFixed(2)}h</span>
-                <span className="font-mono font-medium">+{fmtCurrency(otPay)}</span>
-              </div>
-            )}
 
             {item.splitPay != null && item.splitPay > 0 && (
               <div className="flex justify-between items-center">

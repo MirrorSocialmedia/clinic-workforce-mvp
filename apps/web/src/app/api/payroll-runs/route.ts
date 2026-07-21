@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { periodMonth, clinicId, storeBonuses } = body
+      const { periodMonth, clinicId, storeBonuses, splitPays } = body
 
       if (!periodMonth) {
         return NextResponse.json({ error: 'periodMonth (YYYY-MM) is required' }, { status: 400 })
@@ -96,7 +96,16 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, storeBonuses)
+      // Validate splitPays if provided
+      if (splitPays) {
+        for (const [k, v] of Object.entries(splitPays)) {
+          if (typeof v !== 'number' || !isFinite(v) || v < 0) {
+            return NextResponse.json({ error: `Invalid splitPay for ${k}: must be a finite non-negative number` }, { status: 400 })
+          }
+        }
+      }
+
+      const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, storeBonuses, splitPays)
 
       // FIX #2: If result has error field (e.g., CONFIRMED blocked), return 409
       if ((result as any).error) {
