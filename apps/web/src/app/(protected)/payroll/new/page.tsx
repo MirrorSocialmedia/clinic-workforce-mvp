@@ -355,70 +355,82 @@ export default function NewPayrollPage() {
             <>
             {/* Desktop table */}
             <div className="hidden md:block overflow-x-auto mt-3">
-              <table className="w-full border-collapse text-xs">
+              <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
+                <colgroup>
+                  <col style={{ width: selectedClinic ? '11%' : '13%' }} />
+                  <col style={{ width: selectedClinic ? '7%' : '8%' }} />
+                  <col style={{ width: selectedClinic ? '6%' : '7%' }} />
+                  <col style={{ width: selectedClinic ? '11%' : '13%' }} />
+                  <col style={{ width: selectedClinic ? '10%' : '12%' }} />
+                  <col style={{ width: selectedClinic ? '9%' : '10%' }} />
+                  <col style={{ width: selectedClinic ? '8%' : '10%' }} />
+                  {selectedClinic && <col style={{ width: '12%' }} />}
+                  <col style={{ width: selectedClinic ? '12%' : '14%' }} />
+                  <col style={{ width: selectedClinic ? '14%' : '13%' }} />
+                </colgroup>
                 <thead>
                   <tr className="border-b-2 border-blue-200">
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">員工</th>
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">薪資類型</th>
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">工時</th>
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">底薪</th>
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">MPF</th>
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">勤工獎</th>
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">扣款</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">員工</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50" style={{ width: 44 }}>薪資類型</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50" style={{ width: 36 }}>工時</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">底薪($)</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">MPF($)</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">勤工獎($)</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">扣款($)</th>
                     {selectedClinic && (
-                      <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">店舖獎金</th>
+                      <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">店舖獎金($)</th>
                     )}
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">拆帳</th>
-                    <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">總額</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">拆帳($)</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">總額($)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {previewResult.items.map((item: any, i: number) => (
                     <tr key={item.employeeId || i} className="border-b border-blue-100 hover:bg-blue-50/30 transition-colors">
                       {item.error ? (
-                        <td colSpan={selectedClinic ? 10 : 9} className="px-2 py-1.5 text-destructive">
+                        <td colSpan={selectedClinic ? 10 : 9} className="px-1 py-1.5 text-destructive">
                           {item.employeeName}: {item.error}
                         </td>
                       ) : (
                         <>
-                          <td className="px-2 py-1.5 text-center">{item.employeeName}</td>
-                          <td className="px-2 py-1.5 text-center">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</td>
-                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">{item.workedHours}</td>
-                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">HK${(item.basePay || 0).toLocaleString()}</td>
-                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap text-red-600">-HK${((item.detail as any)?.mpf || 0).toLocaleString()}</td>
-                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">
+                          <td className="px-1 py-1.5 text-center">{item.employeeName}</td>
+                          <td className="px-1 py-1.5 text-center">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</td>
+                          <td className="px-1 py-1.5 text-center font-mono">{item.workedHours}</td>
+                          <td className="px-1 py-1.5 text-center font-mono">{(item.basePay || 0).toLocaleString()}</td>
+                          <td className="px-1 py-1.5 text-center font-mono text-red-600">-{((item.detail as any)?.mpf || 0).toLocaleString()}</td>
+                          <td className="px-1 py-1.5 text-center font-mono">
                             {(item.detail as any)?.attendanceBonusCancelled ? (
                               <span className="text-muted-foreground">$0（已取消）</span>
                             ) : (
-                              <span className="text-green-600">+HK${((item.detail as any)?.attendanceBonus || 0).toLocaleString()}</span>
+                              <span className="text-green-600">+{((item.detail as any)?.attendanceBonus || 0).toLocaleString()}</span>
                             )}
                           </td>
-                          <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">-HK${(item.deduction || 0).toLocaleString()}</td>
+                          <td className="px-1 py-1.5 text-center font-mono">-{(item.deduction || 0).toLocaleString()}</td>
                           {selectedClinic && (
-                            <td className="px-2 py-1.5 text-center">
+                            <td className="px-1 py-1.5 text-center">
                               {item.payType === 'MONTHLY' ? (
                                 <input
                                   type="number"
                                   min={0}
                                   value={storeBonuses[item.employeeId] ?? ''}
                                   onChange={e => setStoreBonuses(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
-                                  className="w-20 text-center px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                                  className="w-16 text-center px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                                 />
                               ) : (
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </td>
                           )}
-                          <td className="px-2 py-1.5 text-center">
+                          <td className="px-1 py-1.5 text-center">
                             <input
                               type="number" min={0}
                               value={splitPays[item.employeeId] ?? ''}
                               onChange={e => setSplitPays(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
-                              className="w-20 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                              className="w-16 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                               placeholder="金額" />
                           </td>
-                          <td className="px-2 py-1.5 text-center font-semibold font-mono whitespace-nowrap">
-                            HK${(item.totalPayable || 0).toLocaleString()}
+                          <td className="px-1 py-1.5 text-center font-semibold font-mono">
+                            {(item.totalPayable || 0).toLocaleString()}
                           </td>
                         </>
                       )}
