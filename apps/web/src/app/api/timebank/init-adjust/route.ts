@@ -34,6 +34,13 @@ export async function POST(req: NextRequest) {
   }
   const date = new Date(`${effectiveMonth || new Date().toISOString().slice(0, 7)}-01T00:00:00+08:00`)
 
+  // ★ 覆蓋語義：刪除舊 INIT_ADJUST（初始化 = 設定基準，非累加）
+  const oldInits = await prisma.timeBankEntry.findMany({
+    where: { employeeId, type: 'INIT_ADJUST' },
+  })
+  const oldTotal = oldInits.reduce((s, e) => s + e.minutes, 0)
+  await prisma.timeBankEntry.deleteMany({ where: { employeeId, type: 'INIT_ADJUST' } })
+
   await prisma.timeBankEntry.create({
     data: {
       employeeId,
@@ -45,12 +52,15 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  // ★ 審計記原始值→修改後值
   await prisma.auditLog.create({
     data: {
       actorId: auth.session.userId,
       action: 'TIMEBANK_INIT_ADJUST',
       entity: 'TimeBank',
       entityId: employeeId,
+      beforeJson: JSON.stringify({ initMinutes: oldTotal }),
+      afterJson: JSON.stringify({ initMinutes: totalMinutes }),
       notes: JSON.stringify({ minutes: totalMinutes, effectiveMonth, reason: reason.trim() }),
     },
   } as any)

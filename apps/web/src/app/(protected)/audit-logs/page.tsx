@@ -81,6 +81,16 @@ export default function AuditLogsPage() {
     'EMERGENCY_NUMBER_UPDATED': '更新緊急聯絡人',
     // Keep existing simple labels
     'CREATE': '新增', 'UPDATE': '修改', 'DELETE': '刪除', 'LOGIN': '登入', 'LOGOUT': '登出',
+    // TimeBank / OT actions
+    'TIMEBANK_INIT_ADJUST': '初始化時間帳戶',
+    'TIMEBANK_MAKEUP': '補鐘',
+    'TIMEBANK_CONVERT': '時間帳戶兌換',
+    'TIMEBANK_ABSENT_DEDUCT': '缺勤扣OT鐘',
+    'TIMEBANK_REST_TO_ACCOUNT': '休息日還鐘',
+    // Legacy action names (kept for existing audit logs)
+    'CONVERT': 'OT換假',
+    'MAKEUP': '補鐘',
+    'ABSENT_DEDUCT': '缺勤扣OT',
   }
   function getActionLabel(action: string): string {
     return AUDIT_ACTION_LABELS[action] || action
@@ -213,6 +223,15 @@ export default function AuditLogsPage() {
                       }
                       {!(log.entity === 'LeaveRequest' && log.notes) && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
                       {log.entity === 'LeaveRequest' && log.notes && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
+                      {log.beforeJson && log.afterJson && (
+                        <div className="text-xs mt-1">
+                          <span className="text-muted-foreground">原始: </span>
+                          {typeof log.beforeJson === 'string' ? log.beforeJson : JSON.stringify(log.beforeJson)}
+                          <span className="mx-1">→</span>
+                          <span className="text-muted-foreground">修改後: </span>
+                          {typeof log.afterJson === 'string' ? log.afterJson : JSON.stringify(log.afterJson)}
+                        </div>
+                      )}
                     </td>
                     <td className="text-sm">{log.ipAddress || '—'}</td>
                   </tr>
@@ -239,6 +258,15 @@ export default function AuditLogsPage() {
                     }
                     <span className="text-muted"> #{log.entityId.slice(0,8)}</span>
                   </div>
+                  {log.beforeJson && log.afterJson && (
+                    <div className="text-xs mb-1">
+                      <span className="text-muted-foreground">原始: </span>
+                      {typeof log.beforeJson === 'string' ? log.beforeJson : JSON.stringify(log.beforeJson)}
+                      <span className="mx-1">→</span>
+                      <span className="text-muted-foreground">修改後: </span>
+                      {typeof log.afterJson === 'string' ? log.afterJson : JSON.stringify(log.afterJson)}
+                    </div>
+                  )}
                   <div className="text-xs text-muted-foreground">IP: {log.ipAddress || '—'}</div>
                 </div>
               ))}

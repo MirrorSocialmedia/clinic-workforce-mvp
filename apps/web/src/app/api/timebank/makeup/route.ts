@@ -4,6 +4,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
+async function tbBalance(employeeId: string) {
+  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
+  return r._sum.minutes ?? 0
+}
+
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
@@ -95,6 +100,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const beforeBalance = await tbBalance(employeeId)
   const makeup = await prisma.timeBankEntry.create({
     data: {
       employeeId,
@@ -110,15 +116,19 @@ export async function POST(req: NextRequest) {
   // Invalidate TimeBank so carry chain recalculates from makeup date
   await invalidateTimeBankFrom(makeup.employeeId, makeup.date, prisma)
 
+  const afterBalance = await tbBalance(employeeId)
+
   await prisma.auditLog.create({
     data: {
       actorId: auth.session.userId,
-      action: 'MAKEUP',
+      action: 'TIMEBANK_MAKEUP',
       entity: 'TimeBank',
       entityId: employeeId,
-      notes: `補鐘 ${minutes}分`,
+      beforeJson: JSON.stringify({ balanceMinutes: beforeBalance }),
+      afterJson: JSON.stringify({ balanceMinutes: afterBalance }),
+      notes: JSON.stringify({ delta: -Math.abs(parseInt(minutes)), date, reason: reason?.trim(), targetType }),
     },
-  })
+  } as any)
 
   return NextResponse.json({ success: true })
 }

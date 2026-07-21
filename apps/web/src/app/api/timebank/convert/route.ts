@@ -35,6 +35,11 @@ async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days:
   })
 }
 
+async function tbBalance(employeeId: string) {
+  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
+  return r._sum.minutes ?? 0
+}
+
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
@@ -76,6 +81,7 @@ export async function POST(req: NextRequest) {
     })
     // ② 帳戶進分鐘
     const minutes = Math.round(daysInt * 540)
+    const beforeBalance = await tbBalance(employeeId)
     await prisma.timeBankEntry.create({
       data: {
         employeeId,
@@ -86,12 +92,15 @@ export async function POST(req: NextRequest) {
         createdBy: auth.session.userId,
       },
     })
+    const afterBalance = await tbBalance(employeeId)
     await prisma.auditLog.create({
       data: {
         actorId: auth.session.userId,
         action: 'TIMEBANK_REST_TO_ACCOUNT',
         entity: 'TimeBank',
         entityId: employeeId,
+        beforeJson: JSON.stringify({ balanceMinutes: beforeBalance }),
+        afterJson: JSON.stringify({ balanceMinutes: afterBalance }),
         notes: JSON.stringify({ days: daysInt, minutes, note: note?.trim() }),
       },
     } as any)
@@ -105,6 +114,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'OT 時間不足' }, { status: 400 })
     }
 
+    const beforeBalance = await tbBalance(employeeId)
     await prisma.timeBankEntry.create({
       data: {
         employeeId,
@@ -118,6 +128,19 @@ export async function POST(req: NextRequest) {
 
     const otLeaveTypeId = await getOtLeaveTypeId()
     if (otLeaveTypeId) await addLeaveBalance(employeeId, otLeaveTypeId, daysInt)
+    const afterBalance = await tbBalance(employeeId)
+    await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    await prisma.auditLog.create({
+      data: {
+        actorId: auth.session.userId,
+        action: 'TIMEBANK_CONVERT',
+        entity: 'TimeBank',
+        entityId: employeeId,
+        beforeJson: JSON.stringify({ otBalanceMinutes: beforeBalance }),
+        afterJson: JSON.stringify({ otBalanceMinutes: afterBalance }),
+        notes: JSON.stringify({ delta: -(daysInt * MINUTES_PER_DAY), days: daysInt, direction, date: new Date().toISOString() }),
+      },
+    } as any)
   } else {
     const otLeaveTypeId = await getOtLeaveTypeId()
     if (!otLeaveTypeId) {
@@ -131,6 +154,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'OT 假不足' }, { status: 400 })
     }
 
+    const beforeBalance = await tbBalance(employeeId)
     await prisma.timeBankEntry.create({
       data: {
         employeeId,
@@ -142,17 +166,20 @@ export async function POST(req: NextRequest) {
       },
     })
     await deductLeaveBalance(employeeId, otLeaveTypeId, daysInt)
+    const afterBalance = await tbBalance(employeeId)
+    await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    await prisma.auditLog.create({
+      data: {
+        actorId: auth.session.userId,
+        action: 'TIMEBANK_CONVERT',
+        entity: 'TimeBank',
+        entityId: employeeId,
+        beforeJson: JSON.stringify({ otBalanceMinutes: beforeBalance }),
+        afterJson: JSON.stringify({ otBalanceMinutes: afterBalance }),
+        notes: JSON.stringify({ delta: daysInt * MINUTES_PER_DAY, days: daysInt, direction, date: new Date().toISOString() }),
+      },
+    } as any)
   }
-
-  await prisma.auditLog.create({
-    data: {
-      actorId: auth.session.userId,
-      action: 'CONVERT',
-      entity: 'TimeBank',
-      entityId: employeeId,
-      notes: `${direction} ${daysInt} 天`,
-    },
-  })
 
   return NextResponse.json({ success: true })
 }

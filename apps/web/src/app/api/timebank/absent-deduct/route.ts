@@ -5,6 +5,11 @@ import prisma from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
+async function tbBalance(employeeId: string) {
+  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
+  return r._sum.minutes ?? 0
+}
+
 /**
  * POST /api/timebank/absent-deduct
  * 缺勤扣OT鐘：用時間帳戶買回缺勤工資扣款
@@ -73,6 +78,7 @@ export async function POST(req: NextRequest) {
     const endTime = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
     const shiftMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000)
 
+    const beforeBalance = await tbBalance(employeeId)
     const entry = await prisma.timeBankEntry.create({
       data: {
         employeeId,
@@ -88,15 +94,19 @@ export async function POST(req: NextRequest) {
     // Invalidate TimeBank so carry chain recalculates
     await invalidateTimeBankFrom(employeeId, entry.date, prisma)
 
+    const afterBalance = await tbBalance(employeeId)
+
     await prisma.auditLog.create({
       data: {
         actorId: auth.session.userId,
-        action: 'ABSENT_DEDUCT',
+        action: 'TIMEBANK_ABSENT_DEDUCT',
         entity: 'TimeBank',
         entityId: employeeId,
-        notes: `缺勤扣OT鐘 ${shiftMinutes}分 @ ${date}`,
+        beforeJson: JSON.stringify({ balanceMinutes: beforeBalance }),
+        afterJson: JSON.stringify({ balanceMinutes: afterBalance }),
+        notes: JSON.stringify({ delta: -shiftMinutes, date, reason: '缺勤扣OT鐘' }),
       },
-    })
+    } as any)
 
     return NextResponse.json({ success: true, shiftMinutes })
   } catch (err: any) {

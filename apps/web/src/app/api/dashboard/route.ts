@@ -163,7 +163,28 @@ export async function GET(req: NextRequest) {
       homeClinicId: true,
       user: { select: { name: true } },
       homeClinic: { select: { id: true, name: true } },
+      payRules: { where: { isActive: true }, select: { payType: true }, take: 1 },
     },
+  })
+
+  // ── Time Bank balances per employee ──
+  const timeBankEntries = await prisma.timeBankEntry.groupBy({
+    by: ['employeeId'],
+    _sum: { minutes: true },
+  })
+  const tbMap = new Map(timeBankEntries.map(t => [t.employeeId, t._sum.minutes ?? 0]))
+
+  // empSummary: each employee with timeAccountMinutes (null for HOURLY/part-time)
+  const empSummary = activeEmployees.map(emp => {
+    const payType = emp.payRules?.[0]?.payType ?? 'HOURLY'
+    return {
+      employeeId: emp.id,
+      name: emp.user?.name ?? '?',
+      clinicId: emp.homeClinicId ?? emp.homeClinic?.id ?? null,
+      clinicName: emp.homeClinic?.name ?? '',
+      payType,
+      timeAccountMinutes: payType === 'HOURLY' ? null : (tbMap.get(emp.id) ?? 0),
+    }
   })
 
   const monthShifts = await prisma.shift.findMany({
@@ -211,5 +232,6 @@ export async function GET(req: NextRequest) {
     distinctEmployeeCount,
     workHours,
     whClinics: whClinics,
+    empSummary,
   })
 }
