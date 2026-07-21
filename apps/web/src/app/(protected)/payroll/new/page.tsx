@@ -376,7 +376,7 @@ export default function NewPayrollPage() {
                   {previewResult.items.map((item: any, i: number) => (
                     <tr key={item.employeeId || i} className="border-b border-blue-100 hover:bg-blue-50/30 transition-colors">
                       {item.error ? (
-                        <td colSpan={selectedClinic ? 9 : 8} className="px-2 py-1.5 text-destructive">
+                        <td colSpan={selectedClinic ? 10 : 9} className="px-2 py-1.5 text-destructive">
                           {item.employeeName}: {item.error}
                         </td>
                       ) : (
