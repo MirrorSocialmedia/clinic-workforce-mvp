@@ -140,18 +140,23 @@ export default function SchedulingPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
   const [cardShifts, setCardShifts] = useState<Shift[]>([])
+  const [cardRefreshTick, setCardRefreshTick] = useState(0)
 
-  // viewRange / clinic 變 → 拉「瀏覽錨點所在月」的全月 shifts
+  // viewRange / clinic 變 → 拉「瀏覽錨點所在月 ∪ 瀏覽週」的 shifts（跨月週不遺漏）
   useEffect(() => {
     if (!viewRange || !selectedClinicId) return
     const anchor = new Date(viewRange.start)
     const mStart = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth(), 1))
     const mEnd = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0))
-    fetch(`/api/shifts?startDate=${mStart}&endDate=${mEnd}&pageSize=1000`, { credentials: 'include' })
+    // ★ 瀏覽週末端(anchor+6)可能跨出月界 → 拉取範圍取兩者較大
+    const wEndD = new Date(anchor); wEndD.setDate(anchor.getDate() + 6)
+    const wEndStr = toHKDateStr(wEndD)
+    const fetchEnd = wEndStr > mEnd ? wEndStr : mEnd
+    fetch(`/api/shifts?startDate=${mStart}&endDate=${fetchEnd}&pageSize=1000`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (Array.isArray(d.shifts)) setCardShifts(d.shifts) })
       .catch(() => {})
-  }, [viewRange?.start, selectedClinicId])
+  }, [viewRange?.start, selectedClinicId, cardRefreshTick])
   const [templates, setTemplates] = useState<ShiftTemplate[]>([])
   const [changeRequests, setChangeRequests] = useState<ShiftChangeRequest[]>([])
   const [userRole, setUserRole] = useState<string>('')
@@ -596,6 +601,7 @@ function getShiftColor(shift: Shift): string {
   const refreshAll = useCallback(async () => {
     await loadShifts()
     await loadMonthShifts()
+    setCardRefreshTick(t => t + 1)
   }, [loadShifts, loadMonthShifts])
 
   // Unified deleteLeave helper — single entry point for all leave deletions
@@ -1127,7 +1133,7 @@ function getShiftColor(shift: Shift): string {
 
   // Monthly work hours per employee (browsed month/week, current clinic)
   const monthlyWorkHours = useMemo(() => {
-    if (!viewRange || !cardShifts.length) return []
+    if (!viewRange) return []
     const anchor = new Date(viewRange.start)
     const mStart = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth(), 1))
     const mEnd = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0))
@@ -1135,8 +1141,16 @@ function getShiftColor(shift: Shift): string {
     const wEndD = new Date(anchor); wEndD.setDate(anchor.getDate() + 6)
     const wEndStr = toHKDateStr(wEndD)
 
+    // ★ 雙保險：merge cardShifts + shifts 避免週級別漏算
+    const merged = (() => {
+      const m = new Map<string, any>()
+      cardShifts.forEach(s => m.set(s.id, s))
+      shifts.forEach(s => m.set(s.id, s))
+      return [...m.values()]
+    })()
+
     const byEmp = new Map<string, { month: number; week: number }>()
-    cardShifts.forEach(s => {
+    merged.forEach(s => {
       if (s.status === 'CANCELLED') return
       if (s.clinicId !== selectedClinicId) return
       const d = toHKDateStr(new Date(s.date))
@@ -1153,7 +1167,7 @@ function getShiftColor(shift: Shift): string {
       })
       .filter(x => x.month > 0 || x.week > 0)
       .sort((a, b) => b.month - a.month)
-  }, [cardShifts, viewRange, clinicEmployees, selectedClinicId])
+  }, [cardShifts, shifts, viewRange, clinicEmployees, selectedClinicId])
 
   // Task 3: Per-week stats helper (statsForDays + renderWeekStats)
   const statsForDays = useCallback((days: { date: Date; label: string; dateStr: string }[]) => {
@@ -2991,6 +3005,7 @@ function getShiftColor(shift: Shift): string {
                     if (res.ok) {
                       setEditingShift(null)
                       loadShifts()
+                      setCardRefreshTick(t => t + 1)
                     } else {
                       const err = await res.json()
                       alert(err.error || '更新失敗')
@@ -3106,6 +3121,7 @@ function getShiftColor(shift: Shift): string {
 
                   await createShift(employeeId, date, template)
                   await loadShifts()
+                  setCardRefreshTick(t => t + 1)
                   setShowNewShiftModal(false)
                 }}
                 style={{

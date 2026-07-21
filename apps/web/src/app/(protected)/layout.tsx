@@ -88,6 +88,30 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     return () => clearInterval(interval)
   }, [user, fetchUnreadCount])
 
+  // ★ 縮放偵測器：?debug=1 時顯示視口/撐破元素資訊
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!new URLSearchParams(window.location.search).has('debug')) return
+    const t = setTimeout(() => {
+      const bad: string[] = []
+      document.querySelectorAll('*').forEach(el => {
+        const e = el as HTMLElement
+        if (e.scrollWidth > window.innerWidth + 5) {
+          const cls = (typeof e.className === 'string' ? e.className : '').slice(0, 50)
+          bad.push(`${e.tagName}${e.id ? '#' + e.id : ''}.${cls} → ${e.scrollWidth}px`)
+        }
+      })
+      const div = document.createElement('div')
+      div.style.cssText = 'position:fixed;bottom:70px;left:8px;right:8px;z-index:99999;background:#fef2f2;border:2px solid #dc2626;font-size:11px;padding:8px;max-height:45vh;overflow:auto;white-space:pre-wrap;border-radius:8px'
+      div.textContent = `視口 ${window.innerWidth}px · body ${document.body.scrollWidth}px\n` +
+        (bad.length ? `撐破元素(${bad.length}):\n${bad.join('\n')}`
+          : '無元素撐破 → 是瀏覽器縮放記憶/設定,請查「電腦版網站」勾選')
+      div.onclick = () => div.remove()
+      document.body.appendChild(div)
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [])
+
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
     router.push('/login')
