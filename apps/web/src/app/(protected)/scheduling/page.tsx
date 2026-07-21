@@ -199,6 +199,12 @@ export default function SchedulingPage() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const [empScope, setEmpScope] = useState<'clinic' | 'all'>('clinic')
 
+  // Touch detection for iPad: coarse = touch (iPad/phone) → click mode; fine = mouse → drag
+  const [isTouch, setIsTouch] = useState(false)
+  useEffect(() => {
+    setIsTouch(window.matchMedia('(pointer: coarse)').matches)
+  }, [])
+
   // Mobile day view state
   const [mobileSelectedDate, setMobileSelectedDate] = useState<string>(toHKDateStr(todayHK()))
   const [mobileView, setMobileView] = useState<'day' | 'week'>('day')
@@ -1159,6 +1165,13 @@ function getClinicColor(name: string): string {
     // Shift event
     const shift = shifts.find(s => s.id === info.event.id)
     if (shift) {
+      // Touch mode: confirm delete instead of opening change panel
+      if (isTouch && canManage) {
+        if (confirm(`刪除 ${info.event.title}？`)) {
+          await deleteShift(info.event.id)
+        }
+        return
+      }
       setEditingShift(shift)
       if (canManage) {
         setShowChangePanel(true)
@@ -1193,9 +1206,30 @@ function getClinicColor(name: string): string {
     }
   }
 
-  const handleFcDateClick = (info: any) => {
-    if (!canManage || !selectedTemplate) return
-    // Open shift creation modal with selected date
+  const handleFcDateClick = async (info: any) => {
+    if (!canManage) return
+
+    // Touch mode: click grid → create shift directly with selected employee + template
+    if (isTouch) {
+      if (!selectedEmployeeId) {
+        setValidationIssues([{ type: 'warning', rule: 'employee', message: '📱 請先點選左側員工' }])
+        return
+      }
+      if (!selectedTemplate) {
+        setValidationIssues([{ type: 'warning', rule: 'template', message: '📱 請先點選更次模板' }])
+        return
+      }
+      const dateStr = info.dateStr
+      const ok = await createShift(selectedEmployeeId, dateStr, selectedTemplate)
+      if (ok) {
+        setValidationIssues([])
+        await refreshAll()
+      }
+      return
+    }
+
+    // Mouse mode: open shift creation modal
+    if (!selectedTemplate) return
     setShowNewShiftModal(true)
     setCurrentDate(new Date(info.dateStr))
   }
@@ -1374,20 +1408,23 @@ function getClinicColor(name: string): string {
       <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', margin: '8px 0 4px 10px' }}>
         {title}（{days[0]?.dateStr.slice(5)} – {days[6]?.dateStr.slice(5)}）
       </div>
-      <div className="overflow-x-auto">
-        <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: 700 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', overflowX: 'auto' }}>
+        <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%', tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '12%' }} />
+            {days.map((d, i) => <col key={i} style={{ width: `${88 / 7}%` }} />)}
+          </colgroup>
           <thead>
             <tr>
               <th style={{
                 position: 'sticky', left: 0, background: '#f3f4f6',
-                padding: '4px 8px', textAlign: 'left', zIndex: 10,
-                borderBottom: '2px solid #e5e7eb', minWidth: 80,
+                padding: '4px 6px', textAlign: 'left', zIndex: 10,
+                borderBottom: '2px solid #e5e7eb',
               }}>員工</th>
               {days.map((wd, i) => (
                 <th key={i} style={{
-                  padding: '4px 4px', textAlign: 'center',
+                  padding: '4px 2px', textAlign: 'center',
                   borderBottom: '2px solid #e5e7eb',
-                  minWidth: 70, whiteSpace: 'nowrap',
                 }}>{wd.label}</th>
               ))}
             </tr>
@@ -1446,8 +1483,17 @@ function getClinicColor(name: string): string {
                       onMouseLeave={e => {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
                       }}
-                      onClick={() => {
+                      onClick={async () => {
                         if (justDroppedRef.current) return
+                        // Touch mode: click cell to create shift with selected employee + template
+                        if (isTouch && canManage && selectedEmployeeId && selectedTemplate && !hasShift && !hasLeave) {
+                          const ok = await createShift(selectedEmployeeId, wd.dateStr, selectedTemplate)
+                          if (ok) {
+                            setValidationIssues([])
+                            await refreshAll()
+                          }
+                          return
+                        }
                         if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
                       }}
                     >
@@ -1574,8 +1620,17 @@ function getClinicColor(name: string): string {
                       onMouseLeave={e => {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
                       }}
-                      onClick={() => {
+                      onClick={async () => {
                         if (justDroppedRef.current) return
+                        // Touch mode: click cell to create shift with selected employee + template
+                        if (isTouch && canManage && selectedEmployeeId && selectedTemplate && !hasShift && !hasLeave) {
+                          const ok = await createShift(selectedEmployeeId, wd.dateStr, selectedTemplate)
+                          if (ok) {
+                            setValidationIssues([])
+                            await refreshAll()
+                          }
+                          return
+                        }
                         if (hasShift) jumpToEdit(empShiftsOnDay[0], wd.dateStr)
                       }}
                     >
@@ -1774,12 +1829,12 @@ function getClinicColor(name: string): string {
           align-items: center;
           justify-content: center;
           text-align: center;
-          padding: 1px 3px;
-          border-radius: 5px;
-          font-size: 11px;
+          padding: 1px 2px;
+          border-radius: 4px;
+          font-size: 10px;
           font-weight: 600;
-          min-height: 18px;
-          line-height: 16px;
+          min-height: 16px;
+          line-height: 14px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -1788,9 +1843,15 @@ function getClinicColor(name: string): string {
         .ov-capsule[style*="borderLeft"] {
           color: inherit;
         }
-        /* Compact mode — auto-fill grid, 16px capsules, 11px font */
+        /* Compact mode — auto-fill grid, 16px capsules, 9px font for narrow cells */
         .ov-compact .overview-cell {
           padding: 1px !important;
+        }
+        .ov-compact .ov-capsule {
+          font-size: 9px;
+          min-height: 14px;
+          line-height: 12px;
+          padding: 1px 1px;
         }
         .ov-compact .overview-cell-inner {
           min-height: 0 !important;
@@ -2353,13 +2414,17 @@ function getClinicColor(name: string): string {
             </span>
             <button className="text-lg" onClick={() => setFullscreenOverview(false)}>✕</button>
           </div>
-          <div className="overflow-x-auto p-2">
-            <table className="text-xs" style={{ minWidth: 640 }}>
+          <div className="overflow-x-auto p-2" style={{ display: 'flex', justifyContent: 'center' }}>
+            <table className="text-xs" style={{ width: '100%', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: '12%' }} />
+                {mobileWeekDays.map((d, i) => <col key={i} style={{ width: `${88 / mobileWeekDays.length}%` }} />)}
+              </colgroup>
               <thead>
                 <tr>
                   <th className="text-left w-20 sticky left-0 bg-white">員工</th>
                   {mobileWeekDays.map(d => (
-                    <th key={d} className="text-center px-1 min-w-[80px]">
+                    <th key={d} className="text-center px-1">
                       {d.slice(5)}
                     </th>
                   ))}
@@ -2515,9 +2580,9 @@ function getClinicColor(name: string): string {
                 data-employee-id={emp.id}
                 data-name={emp.user?.name ?? ''}
                 onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
-                draggable={canManage}
+                draggable={canManage && !isTouch}
                 onDragStart={(e) => {
-                  if (canManage) {
+                  if (canManage && !isTouch) {
                     e.dataTransfer.setData('text/plain', emp.id)
                     setSelectedEmployeeId(emp.id)
                   }
@@ -2532,6 +2597,8 @@ function getClinicColor(name: string): string {
                   background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
                   color: selectedEmployeeId === emp.id ? '#333' : '#fff',
                   border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                  outline: isTouch && selectedEmployeeId === emp.id ? '2px solid #fbbf24' : 'none',
+                  outlineOffset: isTouch && selectedEmployeeId === emp.id ? '2px' : undefined,
                   transition: 'all 0.15s',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
@@ -2557,9 +2624,9 @@ function getClinicColor(name: string): string {
                     data-employee-id={emp.id}
                     data-name={emp.user?.name ?? ''}
                     onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
-                    draggable={canManage}
+                    draggable={canManage && !isTouch}
                     onDragStart={(e) => {
-                      if (canManage) {
+                      if (canManage && !isTouch) {
                         e.dataTransfer.setData('text/plain', emp.id)
                         setSelectedEmployeeId(emp.id)
                       }
@@ -2574,6 +2641,8 @@ function getClinicColor(name: string): string {
                       background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
                       color: selectedEmployeeId === emp.id ? '#333' : '#fff',
                       border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                      outline: isTouch && selectedEmployeeId === emp.id ? '2px solid #fbbf24' : 'none',
+                      outlineOffset: isTouch && selectedEmployeeId === emp.id ? '2px' : undefined,
                       transition: 'all 0.15s',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
@@ -2658,7 +2727,7 @@ function getClinicColor(name: string): string {
                 data-template-id={t.id}
                 data-name={t.name}
                 onPointerDown={() => {
-                  draggingTemplate.current = { templateId: t.id, employeeId: selectedEmployeeId }
+                  if (!isTouch) draggingTemplate.current = { templateId: t.id, employeeId: selectedEmployeeId }
                 }}
                 onClick={() => setSelectedTemplate(t)}
                 style={{
@@ -2673,6 +2742,8 @@ function getClinicColor(name: string): string {
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   userSelect: 'none',
+                  outline: selectedTemplate?.id === t.id && isTouch ? '2px solid #fbbf24' : 'none',
+                  outlineOffset: selectedTemplate?.id === t.id && isTouch ? '2px' : undefined,
                 }}
                 title={`${t.name} ${String(t.startHour).padStart(2,'0')}:${String(t.startMinute).padStart(2,'0')}-${String(t.endHour).padStart(2,'0')}:${String(t.endMinute).padStart(2,'0')}`}
               >
@@ -2680,6 +2751,30 @@ function getClinicColor(name: string): string {
               </div>
             ))}
           </div>
+
+          {/* Touch mode hint */}
+          {isTouch && canManage && (
+            <div style={{
+              marginTop: 8, padding: '4px 8px', borderRadius: 6,
+              background: '#fef3c7', border: '1px solid #fde68a',
+              fontSize: 10, color: '#92400e', lineHeight: 1.4,
+            }}>
+              📱 點選模式：先點左側員工 → 點更次 → 點總覽或日曆格子排班
+              {(selectedEmployeeId || selectedTemplate) && (
+                <div style={{ marginTop: 3 }}>
+                  <span style={{ color: '#166534' }}>
+                    {selectedEmployeeId ? `✅ ${(clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name || '未知員工')}` : '⬜ 員工'}
+                    {' + '}
+                    {selectedTemplate ? `✅ ${selectedTemplate.name}` : '⬜ 更次'}
+                  </span>
+                  <button
+                    onClick={() => { setSelectedEmployeeId(''); setSelectedTemplate(null) }}
+                    style={{ marginLeft: 6, fontSize: 10, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                  >取消選取</button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Leave types — container always exists so ref is never null */}
           <div ref={attachLeavePanel} style={{ marginTop: 10 }}>
@@ -2840,7 +2935,7 @@ function getClinicColor(name: string): string {
                 }
               }}
               events={fcEvents}
-              droppable={canManage}
+              droppable={canManage && !isTouch}
               eventReceive={async (info) => {
                 console.log('🔬E: eventReceive fired', info.event.extendedProps)
                 info.event.remove()
@@ -2938,8 +3033,8 @@ function getClinicColor(name: string): string {
                 }
                 await refreshAll()
               }}
-              editable={canManage}
-              selectable={canManage && !!selectedTemplate}
+              editable={canManage && !isTouch}
+              selectable={canManage && !!selectedTemplate && !isTouch}
               dayMaxEvents={viewMode === 'month' ? false : undefined}
               nowIndicator={true}
               eventClick={handleFcEventClick}
