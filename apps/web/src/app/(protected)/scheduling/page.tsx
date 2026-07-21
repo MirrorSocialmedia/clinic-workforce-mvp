@@ -139,6 +139,19 @@ export default function SchedulingPage() {
   const [selectedClinicId, setSelectedClinicId] = useState<string | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
+  const [cardShifts, setCardShifts] = useState<Shift[]>([])
+
+  // viewRange / clinic 變 → 拉「瀏覽錨點所在月」的全月 shifts
+  useEffect(() => {
+    if (!viewRange || !selectedClinicId) return
+    const anchor = new Date(viewRange.start)
+    const mStart = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth(), 1))
+    const mEnd = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0))
+    fetch(`/api/shifts?startDate=${mStart}&endDate=${mEnd}&pageSize=1000`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (Array.isArray(d.shifts)) setCardShifts(d.shifts) })
+      .catch(() => {})
+  }, [viewRange?.start, selectedClinicId])
   const [templates, setTemplates] = useState<ShiftTemplate[]>([])
   const [changeRequests, setChangeRequests] = useState<ShiftChangeRequest[]>([])
   const [userRole, setUserRole] = useState<string>('')
@@ -176,6 +189,17 @@ export default function SchedulingPage() {
     const d = new Date(mobileSelectedDate)
     d.setDate(d.getDate() + deltaDays)
     setMobileSelectedDate(toHKDateStr(d))
+  }
+
+  // Desktop: week navigation linked with FullCalendar
+  const shiftViewWeek = (delta: number) => {
+    const api = calendarRef.current?.getApi()
+    if (api) { delta < 0 ? api.prev() : api.next(); return }
+    if (viewRange) {
+      const s = new Date(viewRange.start); s.setDate(s.getDate() + delta)
+      const e = new Date(viewRange.end); e.setDate(e.getDate() + delta)
+      setViewRange({ start: toHKDateStr(s), end: toHKDateStr(e) })
+    }
   }
 
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
@@ -1101,22 +1125,20 @@ function getShiftColor(shift: Shift): string {
     return shifts.filter(s => s.clinicId === selectedClinicId)
   }, [shifts, selectedClinicId])
 
-  // Monthly work hours per employee (current month, current clinic)
+  // Monthly work hours per employee (browsed month/week, current clinic)
   const monthlyWorkHours = useMemo(() => {
-    if (!clinicFilteredShifts.length) return []
-    const now = new Date()
-    const mStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
-    const mEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
-    // 本週（週一~週日）:
-    const hkNow = new Date(); const dow = hkNow.getDay(); const monOff = dow === 0 ? -6 : 1 - dow
-    const wStart = new Date(hkNow); wStart.setDate(hkNow.getDate() + monOff)
-    const wStartStr = toHKDateStr(wStart)
-    const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 6)
-    const wEndStr = toHKDateStr(wEnd)
+    if (!viewRange || !cardShifts.length) return []
+    const anchor = new Date(viewRange.start)
+    const mStart = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth(), 1))
+    const mEnd = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0))
+    const wStartStr = toHKDateStr(anchor)
+    const wEndD = new Date(anchor); wEndD.setDate(anchor.getDate() + 6)
+    const wEndStr = toHKDateStr(wEndD)
 
     const byEmp = new Map<string, { month: number; week: number }>()
-    clinicFilteredShifts.forEach(s => {
+    cardShifts.forEach(s => {
       if (s.status === 'CANCELLED') return
+      if (s.clinicId !== selectedClinicId) return
       const d = toHKDateStr(new Date(s.date))
       const h = Math.max(0, (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - 1)
       const cur = byEmp.get(s.employeeId) || { month: 0, week: 0 }
@@ -1129,9 +1151,9 @@ function getShiftColor(shift: Shift): string {
         const v = byEmp.get(e.id) || { month: 0, week: 0 }
         return { id: e.id, name: e.user?.name ?? '?', month: Math.round(v.month * 10) / 10, week: Math.round(v.week * 10) / 10 }
       })
-      .filter(x => x.month > 0)
+      .filter(x => x.month > 0 || x.week > 0)
       .sort((a, b) => b.month - a.month)
-  }, [clinicFilteredShifts, clinicEmployees])
+  }, [cardShifts, viewRange, clinicEmployees, selectedClinicId])
 
   // Task 3: Per-week stats helper (statsForDays + renderWeekStats)
   const statsForDays = useCallback((days: { date: Date; label: string; dateStr: string }[]) => {
@@ -1886,7 +1908,7 @@ function getShiftColor(shift: Shift): string {
           <div className="mb-3 rounded-lg border bg-card px-3 py-2">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-sm font-semibold">
-                📊 工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
+                📊 工時 {(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); return `${a.getFullYear()}年${a.getMonth() + 1}月` })()}
               </span>
               <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
             </div>
@@ -1899,9 +1921,9 @@ function getShiftColor(shift: Shift): string {
                 ))}
               </span>
             </div>
-            {/* 本週 */}
+            {/* 當週 */}
             <div className="pt-1 border-t">
-              <span className="text-xs text-muted-foreground mr-2">本週</span>
+              <span className="text-xs text-muted-foreground mr-2">{(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); const e = new Date(a); e.setDate(a.getDate() + 6); return `當週(${toHKDateStr(a).slice(5)}–${toHKDateStr(e).slice(5)})` })()}</span>
               <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
                 {monthlyWorkHours.map(e => (
                   <span key={e.id} className={e.week > 45 ? 'text-red-600 font-semibold' : ''}>
@@ -2025,12 +2047,13 @@ function getShiftColor(shift: Shift): string {
       {/* MAIN LAYOUT: Clinic Sidebar | Employees | Templates+Leave | Content */}
       {/* ============================================================ */}
 
-      {/* Desktop: Monthly work hours bar */}
-      {monthlyWorkHours.length > 0 && (
-        <div className="hidden md:block mb-3 rounded-lg border bg-card px-3 py-2">
+      {/* Desktop: Monthly work hours bar + Full scheduling interface */}
+      <div className="hidden md:block">
+        {monthlyWorkHours.length > 0 && (
+          <div className="mb-3 rounded-lg border bg-card px-3 py-2">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-sm font-semibold">
-              📊 工時 {new Date().getFullYear()}年{new Date().getMonth() + 1}月
+              📊 工時 {(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); return `${a.getFullYear()}年${a.getMonth() + 1}月` })()}
             </span>
             <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
           </div>
@@ -2043,9 +2066,9 @@ function getShiftColor(shift: Shift): string {
               ))}
             </span>
           </div>
-          {/* 本週 */}
+          {/* 當週 */}
           <div className="pt-1 border-t">
-            <span className="text-xs text-muted-foreground mr-2">本週</span>
+            <span className="text-xs text-muted-foreground mr-2">{(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); const e = new Date(a); e.setDate(a.getDate() + 6); return `當週(${toHKDateStr(a).slice(5)}–${toHKDateStr(e).slice(5)})` })()}</span>
             <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
               {monthlyWorkHours.map(e => (
                 <span key={e.id} className={e.week > 45 ? 'text-red-600 font-semibold' : ''}>
@@ -2057,8 +2080,8 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
 
-      {/* Desktop: Full scheduling interface */}
-      <div className="hidden md:flex" style={{
+        {/* Desktop: Full scheduling interface */}
+        <div className="flex" style={{
         gap: 12,
         alignItems: 'start',
       }}>
@@ -2369,9 +2392,19 @@ function getShiftColor(shift: Shift): string {
               </>
             )}
           </div>
-        </div>
 
-        {/* RIGHT COLUMN: Overview + Calendar */}
+          {/* Week navigation buttons */}
+          <div className="flex gap-2 mt-2">
+            <button onClick={() => shiftViewWeek(-7)}
+              className="flex-1 rounded-lg border py-1.5 text-sm hover:bg-muted">
+              ‹ 上週
+            </button>
+            <button onClick={() => shiftViewWeek(7)}
+              className="flex-1 rounded-lg border py-1.5 text-sm hover:bg-muted">
+              下週 ›
+            </button>
+          </div>
+        </div>
         <div id="fc-section" style={{ minWidth: 0, flex: 1 }}>
           {/* Overview Grid — compact mode, always shown */}
           {viewMode === 'week' && viewRange && ovEmployees.length > 0 && (
@@ -3169,6 +3202,7 @@ function getShiftColor(shift: Shift): string {
         </div>
       )}
     </div>
+      </div>
   )
 }
 
