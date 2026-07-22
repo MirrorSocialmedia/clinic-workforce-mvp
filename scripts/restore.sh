@@ -75,8 +75,7 @@ docker exec "${DB_CONTAINER}" psql \
 # Restore the dump (clean database, no conflicts)
 gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql \
   -U "${DB_USER:-clinic}" \
-  -d "${DB_NAME}" \
-  --verbose 2>&1
+  -d "${DB_NAME}"
 
 # Restart web container
 echo "▶️  重啟 web 容器..."
