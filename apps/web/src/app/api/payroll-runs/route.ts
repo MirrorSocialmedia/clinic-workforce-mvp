@@ -32,10 +32,16 @@ export async function GET(req: NextRequest) {
     where.periodMonth = { gte: monthStart, lte: monthEnd }
   }
 
-  // MANAGER only sees their clinics
+  // MANAGER only sees their clinics (own clinics + cross-store runs with null clinicId)
   const sessionClinics = session.clinics ?? []
   if (scope === 'my-clinics' && sessionClinics.length > 0) {
-    where.clinicId = { in: [...sessionClinics, null] }
+    const clinicScopeFilter = {
+      OR: [
+        { clinicId: { in: sessionClinics } }, // 自己的診所（純字串陣列）
+        { clinicId: null },                   // 跨店計糧（clinicId 為空）
+      ],
+    }
+    where.AND = [...(where.AND ?? []), clinicScopeFilter] // AND 追加，不覆蓋 periodMonth/status/clinicId 等
   }
 
   const [runs, total] = await Promise.all([
