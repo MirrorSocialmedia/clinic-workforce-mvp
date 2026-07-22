@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
   if (scope !== 'all') {
     where.user = {
       ...(where.user || {}),
-      clinics: { some: { clinicId: { in: session.clinics } } },
+      clinics: { some: { clinicId: { in: session.clinics ?? [] } } },
     }
   }
 

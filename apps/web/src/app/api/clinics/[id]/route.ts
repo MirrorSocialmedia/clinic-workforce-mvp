@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const id = params.id
 
   // Data isolation for managers
-  if (scope === 'my-clinics' && !session.clinics.includes(id)) {
+  if (scope === 'my-clinics' && !(session.clinics ?? []).includes(id)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

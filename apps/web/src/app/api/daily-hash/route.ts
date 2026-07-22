@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Clinic access check
-      if (scope !== 'all' && !session.clinics.includes(clinicId)) {
+      if (scope !== 'all' && !(session.clinics ?? []).includes(clinicId)) {
         return NextResponse.json({ error: 'No access to this clinic' }, { status: 403 })
       }
 
@@ -95,8 +95,9 @@ export async function GET(req: NextRequest) {
   let effectiveClinicId = clinicId
 
   if (!effectiveClinicId) {
-    if (scope === 'my-clinics' && session.clinics.length > 0) {
-      effectiveClinicId = session.clinics[0]
+    const sessionClinics = session.clinics ?? []
+    if (scope === 'my-clinics' && sessionClinics.length > 0) {
+      effectiveClinicId = sessionClinics[0]
     }
   }
 

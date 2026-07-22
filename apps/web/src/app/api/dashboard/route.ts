@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     })
   } else {
     clinics = await prisma.clinic.findMany({
-      where: { id: { in: session.clinics } },
+      where: { id: { in: session.clinics ?? [] } },
       include: {
         _count: {
           select: {
@@ -123,8 +123,9 @@ export async function GET(req: NextRequest) {
   let recentAuditLogs: any[] = []
   if (scope !== 'self') {
     const where: any = {}
-    if (scope === 'my-clinics' && session.clinics.length > 0) {
-      where.clinicId = { in: session.clinics }
+    const sessionClinics = session.clinics ?? []
+    if (scope === 'my-clinics' && sessionClinics.length > 0) {
+      where.clinicId = { in: sessionClinics }
     }
     recentAuditLogs = await prisma.auditLog.findMany({
       where,

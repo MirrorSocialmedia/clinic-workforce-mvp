@@ -150,9 +150,9 @@ export function applyScopeFilter(
     if (employeeField) {
       where[employeeField] = session.userId // pass employeeId from caller
     }
-  } else if (scope === 'my-clinics' && session.clinics.length > 0) {
+  } else if (scope === 'my-clinics' && (session.clinics ?? []).length > 0) {
     // Manager only sees assigned clinics
-    where[clinicField] = { in: session.clinics }
+    where[clinicField] = { in: session.clinics ?? [] }
   }
 }
 

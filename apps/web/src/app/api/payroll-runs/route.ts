@@ -33,8 +33,9 @@ export async function GET(req: NextRequest) {
   }
 
   // MANAGER only sees their clinics
-  if (scope === 'my-clinics' && session.clinics.length > 0) {
-    where.clinicId = { in: [...session.clinics, null] }
+  const sessionClinics = session.clinics ?? []
+  if (scope === 'my-clinics' && sessionClinics.length > 0) {
+    where.clinicId = { in: [...sessionClinics, null] }
   }
 
   const [runs, total] = await Promise.all([

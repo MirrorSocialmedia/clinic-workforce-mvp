@@ -16,7 +16,8 @@ export async function GET(req: NextRequest) {
   })
 
   if (scope !== 'all') {
-    const filtered = clinics.filter((c: any) => session.clinics.includes(c.id))
+    const sessionClinics = session.clinics ?? []
+    const filtered = clinics.filter((c: any) => sessionClinics.includes(c.id))
     return NextResponse.json({ clinics: filtered, total: filtered.length })
   }
 

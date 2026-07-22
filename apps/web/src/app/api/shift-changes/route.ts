@@ -108,8 +108,8 @@ export async function GET(req: NextRequest) {
         { toEmployeeId: emp.id },
       ]
     }
-  } else if (scope === 'my-clinics' && session.clinics.length > 0) {
-    where.OR = session.clinics.map((clinicId: string) => ({
+  } else if (scope === 'my-clinics' && (session.clinics ?? []).length > 0) {
+    where.OR = (session.clinics ?? []).map((clinicId: string) => ({
       shift: { clinicId },
     }))
   }

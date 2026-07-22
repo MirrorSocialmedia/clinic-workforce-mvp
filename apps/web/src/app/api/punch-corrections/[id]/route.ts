@@ -36,7 +36,7 @@ export async function PUT(
     }
 
     // Manager can only approve corrections for their clinics
-    if (scope === 'my-clinics' && !session.clinics.includes(correction.clinicId)) {
+    if (scope === 'my-clinics' && !(session.clinics ?? []).includes(correction.clinicId)) {
       return NextResponse.json({ error: 'You do not have access to this clinic' }, { status: 403 })
     }
 

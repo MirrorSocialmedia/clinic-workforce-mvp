@@ -37,8 +37,9 @@ export async function GET(
 
   // For managers, check clinic access
   if (scope === 'my-clinics') {
+    const sessionClinics = session.clinics ?? []
     const hasAccess = employee.clinics.some(
-      (ec: any) => session.clinics.includes(ec.clinic.id)
+      (ec: any) => sessionClinics.includes(ec.clinic.id)
     )
     if (!hasAccess) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }

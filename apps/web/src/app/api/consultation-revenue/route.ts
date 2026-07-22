@@ -27,8 +27,9 @@ export async function GET(req: NextRequest) {
   }
 
   // Scope filter
-  if (scope === 'my-clinics' && session.clinics.length > 0) {
-    where.clinicId = { in: session.clinics }
+  const sessionClinics = session.clinics ?? []
+  if (scope === 'my-clinics' && sessionClinics.length > 0) {
+    where.clinicId = { in: sessionClinics }
   }
 
   const records = await prisma.consultationRevenue.findMany({

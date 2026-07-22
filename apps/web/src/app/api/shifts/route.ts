@@ -47,8 +47,8 @@ export async function GET(req: NextRequest) {
     if (emp) {
       where.employeeId = emp.id
     }
-  } else if (scope === 'my-clinics' && session.clinics.length > 0) {
-    where.clinicId = { in: session.clinics }
+  } else if (scope === 'my-clinics' && (session.clinics ?? []).length > 0) {
+    where.clinicId = { in: session.clinics ?? [] }
   }
 
   const [shifts, total] = await Promise.all([

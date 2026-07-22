@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Verify clinic access
-  if (scope !== 'all' && !session.clinics.includes(clinicId)) {
+  if (scope !== 'all' && !(session.clinics ?? []).includes(clinicId)) {
     return NextResponse.json({ error: 'No access to this clinic' }, { status: 403 })
   }
 

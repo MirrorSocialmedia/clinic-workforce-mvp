@@ -19,7 +19,13 @@ export function createToken(payload: Omit<SessionPayload, 'iat' | 'exp'>): strin
 
 export function verifyToken(token: string): SessionPayload | null {
   try {
-    return jwt.verify(token, CONFIG.JWT_SECRET) as SessionPayload
+    const payload = jwt.verify(token, CONFIG.JWT_SECRET) as SessionPayload
+    // ★ Normalize: old tokens may lack `clinics` (added after initial rollout)
+    // Guarantees all downstream code gets a valid array, never undefined
+    return {
+      ...payload,
+      clinics: Array.isArray(payload.clinics) ? payload.clinics : [],
+    }
   } catch {
     return null
   }

@@ -27,8 +27,9 @@ export async function GET(req: NextRequest) {
   if (clinicId) where.clinicId = clinicId
 
   // MANAGER only sees their clinic's audit logs
-  if (scope === 'my-clinics' && session.clinics.length > 0) {
-    where.clinicId = { in: session.clinics }
+  const sessionClinics = session.clinics ?? []
+  if (scope === 'my-clinics' && sessionClinics.length > 0) {
+    where.clinicId = { in: sessionClinics }
   }
 
   if (fromDate || toDate) {
