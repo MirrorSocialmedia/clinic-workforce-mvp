@@ -32,6 +32,11 @@ export async function POST(req: NextRequest) {
     if (clinicId) where.homeClinicId = clinicId
     if (employeeId) where.id = employeeId
 
+    // ★ Non-OWNER: exclude payConfidential employees from preview entirely
+    if (session.role !== 'OWNER') {
+      where.payConfidential = false
+    }
+
     const employees = await prisma.employee.findMany({
       where,
       include: { user: { select: { name: true } } },

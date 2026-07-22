@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
-import { maskIfConfidential, hasConfidentialItems } from '@/lib/payroll-engine'
+
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
 export async function GET(
@@ -36,25 +36,21 @@ export async function GET(
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Server-side masking for confidential employees
-  const items = run.items.map((item: any) =>
-    maskIfConfidential(item, session.role),
-  )
+  // ★ Non-OWNER: filter out confidential employee rows entirely (not just mask amounts)
+  const isOwner = session.role === 'OWNER'
+  let items = run.items
+  if (!isOwner) {
+    items = items.filter((item: any) => !item.employee?.payConfidential)
+  }
 
-  const hasConfidential = hasConfidentialItems(items, session.role)
-
+  // ★ Totals recalculated from visible items only (prevents reverse-engineering)
   const summary = {
     totalEmployees: items.length,
-    // If any confidential items exist, mask all monetary totals (prevents reverse-engineering)
-    ...(hasConfidential
-      ? { totalBasePay: null, totalOTPay: null, totalSplitPay: null, totalDeduction: null, totalPayable: null, confidential: true }
-      : {
-          totalBasePay: items.reduce((s: number, i: any) => s + (i.basePay || 0), 0),
-          totalOTPay: items.reduce((s: number, i: any) => s + (i.otPay || 0), 0),
-          totalSplitPay: items.reduce((s: number, i: any) => s + (i.splitPay || 0), 0),
-          totalDeduction: items.reduce((s: number, i: any) => s + (i.deduction || 0), 0),
-          totalPayable: items.reduce((s: number, i: any) => s + (i.totalPayable || 0), 0),
-        }),
+    totalBasePay: items.reduce((s: number, i: any) => s + (i.basePay || 0), 0),
+    totalOTPay: items.reduce((s: number, i: any) => s + (i.otPay || 0), 0),
+    totalSplitPay: items.reduce((s: number, i: any) => s + (i.splitPay || 0), 0),
+    totalDeduction: items.reduce((s: number, i: any) => s + (i.deduction || 0), 0),
+    totalPayable: items.reduce((s: number, i: any) => s + (i.totalPayable || 0), 0),
     totalWorkedHours: items.reduce((s: number, i: any) => s + i.workedHours, 0),
     totalOTHours: items.reduce((s: number, i: any) => {
       let detail: any = null

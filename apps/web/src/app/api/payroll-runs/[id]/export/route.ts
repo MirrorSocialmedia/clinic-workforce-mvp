@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { toHKDateStr } from '@/lib/hk-date'
-import { maskIfConfidential, hasConfidentialItems } from '@/lib/payroll-engine'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -64,29 +63,21 @@ export async function POST(
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Apply confidential masking
-  const items = run.items.map(item =>
-    maskIfConfidential(item, session.role)
-  )
+  // ★ Non-OWNER: filter out confidential employee rows entirely (not just mask)
+  let items = run.items
+  if (!isOwner) {
+    items = items.filter((item: any) => !item.employee?.payConfidential)
+  }
 
   const runData = { ...run, items }
   const periodMonth = toHKDateStr(run.periodMonth).slice(0, 7)
   const clinicName = run.clinic?.name || '全部診所'
 
-  if (format === 'xlsx') return exportToExcel(runData, periodMonth, clinicName, isOwner)
-  return exportToPDF(runData, periodMonth, clinicName, isOwner)
+  if (format === 'xlsx') return exportToExcel(runData, periodMonth, clinicName)
+  return exportToPDF(runData, periodMonth, clinicName)
 }
 
-function fmtConf(val: number | null | undefined, fallback: string = '保密'): string {
-  return val != null ? val.toFixed(2) : fallback
-}
-
-function fmtConfInt(val: number | null | undefined, fallback: string = '-'): string {
-  return val != null ? val.toFixed(0) : fallback
-}
-
-function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwner: boolean): NextResponse {
-  const hasConf = hasConfidentialItems(run.items, isOwner ? 'OWNER' : 'MANAGER')
+function exportToExcel(run: any, periodMonth: string, clinicName: string): NextResponse {
   const rows = run.items.map((item: any) => {
     const clinics = item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
     const payType = item.employee.payRules[0]?.payType || 'N/A'
@@ -99,12 +90,12 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
       '加班時數': item.otHours.toFixed(2),
       '請假日數': item.leaveDays.toFixed(2),
       '缺勤日數': item.absentDays.toFixed(2),
-      '基本薪資': fmtConf(item.basePay),
-      '加班費': fmtConf(item.otPay),
-      '拆帳': item.splitPay != null ? fmtConf(item.splitPay) : '0.00',
-      '扣款': fmtConf(item.deduction),
-      '店舖獎金': fmtConf(item.storeBonus),
-      '應付總額': fmtConf(item.totalPayable),
+      '基本薪資': (item.basePay ?? 0).toFixed(2),
+      '加班費': (item.otPay ?? 0).toFixed(2),
+      '拆帳': (item.splitPay ?? 0).toFixed(2),
+      '扣款': (item.deduction ?? 0).toFixed(2),
+      '店舖獎金': (item.storeBonus ?? 0).toFixed(2),
+      '應付總額': (item.totalPayable ?? 0).toFixed(2),
     }
   })
 
@@ -117,18 +108,19 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string, isOwne
   ]
   XLSX.utils.book_append_sheet(wb, ws, '糧單')
 
-  const visibleItems = run.items.filter((i: any) => !i.confidential)
+  // ★ Totals from visible items only
+  const visibleItems = run.items
   const summary = [
     { '項目': '計糧期間', '值': periodMonth },
     { '項目': '診所', '值': clinicName },
     { '項目': '狀態', '值': run.status },
-    { '項目': '員工數', '值': run.items.length },
-    { '項目': '總基本薪資', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.basePay ?? 0), 0).toFixed(2) },
-    { '項目': '總加班費', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.otPay ?? 0), 0).toFixed(2) },
-    { '項目': '總拆帳', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.splitPay ?? 0), 0).toFixed(2) },
-    { '項目': '總店舖獎金', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.storeBonus ?? 0), 0).toFixed(2) },
-    { '項目': '總扣款', '值': hasConf ? '含保密員工' : visibleItems.reduce((s: number, i: any) => s + (i.deduction ?? 0), 0).toFixed(2) },
-    { '項目': '應付總額', '值': hasConf ? '含保密員工，僅老闆可見' : visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
+    { '項目': '員工數', '值': visibleItems.length },
+    { '項目': '總基本薪資', '值': visibleItems.reduce((s: number, i: any) => s + (i.basePay ?? 0), 0).toFixed(2) },
+    { '項目': '總加班費', '值': visibleItems.reduce((s: number, i: any) => s + (i.otPay ?? 0), 0).toFixed(2) },
+    { '項目': '總拆帳', '值': visibleItems.reduce((s: number, i: any) => s + (i.splitPay ?? 0), 0).toFixed(2) },
+    { '項目': '總店舖獎金', '值': visibleItems.reduce((s: number, i: any) => s + (i.storeBonus ?? 0), 0).toFixed(2) },
+    { '項目': '總扣款', '值': visibleItems.reduce((s: number, i: any) => s + (i.deduction ?? 0), 0).toFixed(2) },
+    { '項目': '應付總額', '值': visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
   ]
   const ws2 = XLSX.utils.json_to_sheet(summary)
   ws2['!cols'] = [{ wch: 15 }, { wch: 20 }]
@@ -153,7 +145,7 @@ function loadChineseFont(doc: jsPDF): boolean {
   return true
 }
 
-function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner: boolean): NextResponse {
+function exportToPDF(run: any, periodMonth: string, clinicName: string): NextResponse {
   const doc = new jsPDF('p', 'mm', 'a4')
   const hasChineseFont = loadChineseFont(doc)
 
@@ -192,10 +184,10 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner:
       item.employee.user.name, clinics,
       item.workedHours.toFixed(1), item.otHours.toFixed(1),
       item.leaveDays.toFixed(1), item.absentDays.toFixed(1),
-      `$${fmtConfInt(item.basePay)}`, `$${fmtConfInt(item.otPay)}`,
-      item.splitPay != null ? `$${fmtConfInt(item.splitPay)}` : '-',
-      `$${fmtConfInt(item.deduction)}`, `$${fmtConfInt(item.storeBonus)}`,
-      `$${fmtConfInt(item.totalPayable)}`,
+      `$${(item.basePay ?? 0).toFixed(0)}`, `$${(item.otPay ?? 0).toFixed(0)}`,
+      (item.splitPay != null ? `$${(item.splitPay ?? 0).toFixed(0)}` : '-'),
+      `$${(item.deduction ?? 0).toFixed(0)}`, `$${(item.storeBonus ?? 0).toFixed(0)}`,
+      `$${(item.totalPayable ?? 0).toFixed(0)}`,
     ]
   })
 
@@ -218,18 +210,13 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string, isOwner:
     },
   })
 
+  // ★ Totals from visible items only
   const finalY = (doc as any).lastAutoTable.finalY + 10
-  const hasConf = hasConfidentialItems(run.items, isOwner ? 'OWNER' : 'MANAGER')
   doc.setFontSize(10)
 
-  if (hasConf && !isOwner) {
-    const label = hasChineseFont ? '應付總額: 含保密員工，僅老闆可見' : 'Total: Includes confidential employees, owner only'
-    doc.text(label, 14, finalY)
-  } else {
-    const totalPayable = run.items.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0)
-    const prefix = hasChineseFont ? '應付總額: HK$' : 'Total: HK$'
-    doc.text(`${prefix}${totalPayable.toFixed(2)}`, 14, finalY)
-  }
+  const totalPayable = run.items.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0)
+  const prefix = hasChineseFont ? '應付總額: HK$' : 'Total: HK$'
+  doc.text(`${prefix}${totalPayable.toFixed(2)}`, 14, finalY)
 
   const empLabel = hasChineseFont ? `員工數: ${run.items.length}` : `Employees: ${run.items.length}`
   doc.text(empLabel, 14, finalY + 6)
