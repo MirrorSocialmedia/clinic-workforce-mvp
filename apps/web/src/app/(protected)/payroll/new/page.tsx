@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
+import { hasPermission } from '@/lib/permissions'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
 import { toHKDateStr } from '@/lib/hk-date'
@@ -25,6 +26,8 @@ export default function NewPayrollPage() {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ runId: string; itemCount: number; totalPayable: number } | null>(null)
   const [userRole, setUserRole] = useState<string>('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
 
   // Preview + employee states
   const [previewing, setPreviewing] = useState(false)
@@ -99,6 +102,8 @@ export default function NewPayrollPage() {
       if (!r.ok) return { user: { role: '' } }
       const d = await r.json()
       setUserRole(d.user?.role || '')
+      setGrant(Array.isArray(d.user?.grant) ? d.user.grant : [])
+      setDeny(Array.isArray(d.user?.deny) ? d.user.deny : [])
     })
     fetch('/api/employees?pageSize=200').then(async r => {
       if (!r.ok) return
@@ -110,12 +115,13 @@ export default function NewPayrollPage() {
     })
   }, [fetchClinics])
 
-  // Redirect if not OWNER
+  // Redirect if no payroll_generate permission
+  const canGenerate = userRole ? hasPermission(userRole, 'payroll_generate', grant, deny) : true
   useEffect(() => {
-    if (userRole && userRole !== 'OWNER') {
+    if (userRole && !canGenerate) {
       router.push('/payroll')
     }
-  }, [userRole, router])
+  }, [userRole, canGenerate, router])
 
   // Auto-run preview when clinic + month are both selected
   useEffect(() => {
@@ -197,7 +203,7 @@ export default function NewPayrollPage() {
     await doGenerate()
   }
 
-  if (userRole && userRole !== 'OWNER') return null
+  if (userRole && !canGenerate) return null
 
   return (
     <div className="p-6" style={{ maxWidth: '1800px' }}>
