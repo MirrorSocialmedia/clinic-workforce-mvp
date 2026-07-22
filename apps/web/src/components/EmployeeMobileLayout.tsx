@@ -10,7 +10,7 @@ const TABS = [
   { path: '/my/dashboard', label: '首頁', icon: '🏠' },
   { path: '/punch', label: '打卡', icon: '📱' },
   { path: '/my/schedule', label: '班表', icon: '📅' },
-  { path: '/my/leave', label: '假期', icon: '🏖' },
+  { path: '/my/more', label: '更多', icon: '☰' },
 ]
 
 export default function EmployeeMobileLayout({

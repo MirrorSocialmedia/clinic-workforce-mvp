@@ -28,6 +28,8 @@ if ! docker exec "${DB_CONTAINER}" pg_dump \
   --format=plain \
   --no-owner \
   --no-acl \
+  --clean \
+  --if-exists \
   > "${TMP_SQL}" 2> "${BACKUP_DIR}/.last_error.log"; then
   echo "❌ pg_dump 失敗，見 ${BACKUP_DIR}/.last_error.log"
   rm -f "${TMP_SQL}"

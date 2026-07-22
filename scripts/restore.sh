@@ -56,12 +56,30 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${DB_CONTAINER}$"; then
   exit 1
 fi
 
-# Restore the dump
+# Stop web container to release connections (needed for DROP DATABASE)
+echo "⏸️  停止 web 容器釋放連接..."
+docker compose stop web 2>/dev/null || true
+
+# Drop and recreate database for clean restore
+echo "🗑️  清空舊資料庫..."
+docker exec "${DB_CONTAINER}" psql \
+  -U "${DB_USER:-clinic}" \
+  -d postgres \
+  -c "DROP DATABASE IF EXISTS ${DB_NAME};"
+
+docker exec "${DB_CONTAINER}" psql \
+  -U "${DB_USER:-clinic}" \
+  -d postgres \
+  -c "CREATE DATABASE ${DB_NAME};"
+
+# Restore the dump (clean database, no conflicts)
 gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql \
   -U "${DB_USER:-clinic}" \
   -d "${DB_NAME}" \
   --verbose 2>&1
 
+# Restart web container
+echo "▶️  重啟 web 容器..."
+docker compose start web 2>/dev/null || true
+
 echo "🎉 [$(date)] Restore complete"
-echo "   Please restart the web container:"
-echo "   docker compose restart web"

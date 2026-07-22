@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, CheckSquare, ClipboardList, Menu } from 'lucide-react'
+import { LayoutDashboard, CheckSquare, ClipboardList, Menu, QrCode } from 'lucide-react'
 import { useTodoCount } from '@/lib/use-todo-count'
 
 export default function AdminMobileNav() {
@@ -11,6 +11,7 @@ export default function AdminMobileNav() {
 
   const items = [
     { href: '/dashboard', label: '今日', Icon: LayoutDashboard },
+    { href: '/punch', label: '打卡', Icon: QrCode },
     { href: '/todo', label: '待辦', Icon: CheckSquare, badge: todoCount.total },
     { href: '/attendance', label: '考勤', Icon: ClipboardList },
     { href: '/mobile-more', label: '更多', Icon: Menu },
@@ -25,14 +26,14 @@ export default function AdminMobileNav() {
         <Link
           key={href}
           href={href}
-          className={`flex-1 flex flex-col items-center py-2 text-xs ${
+          className={`flex-1 flex flex-col items-center py-2 text-[10px] ${
             pathname === href
               ? 'text-primary font-semibold'
               : 'text-muted-foreground'
           }`}
         >
           <span className="relative">
-            <Icon size={20} />
+            <Icon size={18} />
             {!!badge && badge > 0 && (
               <span className="absolute -top-1 -right-2 bg-red-500 text-white rounded-full text-[10px] px-1 min-w-[16px] text-center">
                 {badge > 99 ? '99+' : badge}
