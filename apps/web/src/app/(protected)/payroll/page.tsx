@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { hasPermission } from '@/lib/permissions'
 import { toHKDateStr, fmtDateTime } from '@/lib/hk-date'
 
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
@@ -30,6 +31,8 @@ export default function PayrollListPage() {
   const [totalPages, setTotalPages] = useState(1)
   const [page, setPage] = useState(1)
   const [userRole, setUserRole] = useState<string>('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
 
   const fetchRuns = useCallback(async () => {
     setLoading(true)
@@ -60,10 +63,14 @@ export default function PayrollListPage() {
       if (!r.ok) return { user: { role: '' } }
       const d = await r.json()
       setUserRole(d.user?.role || '')
+      setGrant(Array.isArray(d.user?.grant) ? d.user.grant : [])
+      setDeny(Array.isArray(d.user?.deny) ? d.user.deny : [])
     })
   }, [])
 
-  const canGenerate = userRole === 'OWNER'
+  const canGenerate = hasPermission(userRole, 'payroll_generate', grant, deny)
+  const canView = hasPermission(userRole, 'payroll_view', grant, deny)
+  const canDelete = userRole === 'OWNER' // DELETE /api/payroll-runs/:id is OWNER-only in RBAC
 
   const deleteRun = async (runId: string) => {
     if (!confirm('確定刪除這次計糧？此操作無法復原。')) return
@@ -178,7 +185,7 @@ export default function PayrollListPage() {
                     <td className="text-xs g text-muted-foreground max-w-[150px] truncate">{run.notes || '-'}</td>
                     <td className="text-center">
                       <Link href={`/payroll/${run.id}`} className="text-brand hover:underline text-sm">詳情</Link>
-                      {run.status === 'DRAFT' && canGenerate && (
+                      {run.status === 'DRAFT' && canDelete && (
                         <button onClick={() => deleteRun(run.id)} className="ml-3 text-destructive hover:underline text-sm bg-none border-none cursor-pointer">刪除</button>
                       )}
                     </td>
@@ -204,7 +211,7 @@ export default function PayrollListPage() {
                   <span className="text-xs text-muted-foreground">{fmtDateTime(run.generatedAt)}</span>
                   <div className="flex gap-2">
                     <Link href={`/payroll/${run.id}`} className="text-brand hover:underline text-xs">詳情</Link>
-                    {run.status === 'DRAFT' && canGenerate && (
+                    {run.status === 'DRAFT' && canDelete && (
                       <button onClick={() => deleteRun(run.id)} className="text-destructive hover:underline text-xs bg-none border-none cursor-pointer">刪除</button>
                     )}
                   </div>

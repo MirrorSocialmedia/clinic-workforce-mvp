@@ -21,8 +21,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
 
-  const { password, ...safeUser } = user
+  const { password, permissionsJson, ...safeUser } = user
   const clinicIds = user.clinics.map((uc: any) => uc.clinicId)
+
+  // Parse permissionsJson into grant/deny arrays
+  let grant: string[] = []
+  let deny: string[] = []
+  try {
+    if (permissionsJson) {
+      const parsed = typeof permissionsJson === 'string'
+        ? JSON.parse(permissionsJson)
+        : permissionsJson
+      grant = (parsed as any).grant || []
+      deny = (parsed as any).deny || []
+    }
+  } catch {
+    // ignore parse errors
+  }
 
   // Check lunch break enabled status from active pay rule
   let lunchEnabled = false
@@ -48,6 +63,8 @@ export async function GET(req: NextRequest) {
     user: {
       ...safeUser,
       clinicIds,
+      grant,
+      deny,
     },
     faceMode: process.env.FACE_MODE || 'shadow',
     lunchEnabled,

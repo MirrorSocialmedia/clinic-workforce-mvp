@@ -46,7 +46,7 @@ export default function MobileMorePage() {
       label: '計糧管理',
       href: '/payroll',
       icon: Wallet,
-      roles: ['OWNER'],
+      roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     },
     {
       label: '排班管理',

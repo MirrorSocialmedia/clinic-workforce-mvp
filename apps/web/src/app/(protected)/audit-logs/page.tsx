@@ -71,7 +71,7 @@ function fmtAudit(json: string): string {
 function tryParseEmployeeId(json: any): string | null {
   try {
     const o = typeof json === 'string' ? JSON.parse(json) : json
-    return o.employeeId ?? (o.initMinutes != null ? o.employeeId ?? null : null)
+    return o.employeeId || null
   } catch {
     return null
   }
@@ -89,6 +89,7 @@ export default function AuditLogsPage() {
     fromDate: '',
     toDate: '',
   })
+  const [employeeMap, setEmployeeMap] = useState<Map<string, string>>(new Map())
 
   const ENTITY_LABELS: Record<string, string> = {
     PayRule: '薪酬規則', Shift: '排班', PunchRecord: '打卡', PunchCorrection: '打卡補登',
@@ -191,27 +192,23 @@ export default function AuditLogsPage() {
     }
   }
 
+  // Load global employee map from API (not from logs)
+  useEffect(() => {
+    fetch('/api/employees?includeResigned=true', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then((d: any) => {
+        const m = new Map<string, string>()
+        ;(d.employees ?? d ?? []).forEach((e: any) => {
+          m.set(e.id, e.user?.name ?? e.name ?? e.id)
+        })
+        setEmployeeMap(m)
+      })
+      .catch(() => { /* fallback: empty map */ })
+  }, [])
+
   useEffect(() => { fetchLogs() }, [page, filters])
 
   const totalPages = Math.ceil(total / 50)
-
-  // Build employee map from logs for fallback (old records without targetEmployeeId)
-  const employeeMap = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const log of logs) {
-      if (log.targetEmployee?.user?.name) {
-        map.set(log.targetEmployee.id, log.targetEmployee.user.name)
-      }
-      // Also collect from beforeJson/afterJson employeeId
-      for (const json of [log.beforeJson, log.afterJson]) {
-        const empId = tryParseEmployeeId(json)
-        if (empId && !map.has(empId)) {
-          map.set(empId, empId.slice(0, 8))
-        }
-      }
-    }
-    return map
-  }, [logs])
 
   // Get target employee name (from targetEmployee join or fallback from beforeJson/afterJson)
   function getTargetEmployeeName(log: AuditLog): string | null {

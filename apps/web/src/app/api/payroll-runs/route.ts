@@ -2,16 +2,16 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { generatePayrollRun } from '@/lib/payroll-engine'
 import { getMonthRange } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/payroll-runs — List payroll runs
-// Roles: OWNER, MANAGER, ACCOUNTANT
+// Roles: OWNER, MANAGER, ACCOUNTANT (payroll_view permission)
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = await requireAuth(req, 'GET', req.url)
+  const auth = await requirePerm(req, 'payroll_view')
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
@@ -62,10 +62,10 @@ export async function GET(req: NextRequest) {
 
 // ============================================================
 // POST /api/payroll-runs — Generate payroll run
-// Roles: OWNER
+// Roles: OWNER, MANAGER (payroll_generate permission)
 // ============================================================
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth(req, 'POST', req.url)
+  const auth = await requirePerm(req, 'payroll_generate')
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
