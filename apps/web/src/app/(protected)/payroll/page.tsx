@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Fragment } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { hasPermission } from '@/lib/permissions'
 import { toHKDateStr, fmtDateTime } from '@/lib/hk-date'
 
@@ -35,8 +36,8 @@ export default function PayrollListPage() {
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
 
-  // Expense modal state
-  const [expenseModalOpen, setExpenseModalOpen] = useState(false)
+  // Expense card state (persistent card, not modal)
+  const [addingExpense, setAddingExpense] = useState(false)
   const [expMonth, setExpMonth] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -47,7 +48,6 @@ export default function PayrollListPage() {
   const [newDesc, setNewDesc] = useState('')
   const [monthHasRun, setMonthHasRun] = useState(false)
   const [expEmployees, setExpEmployees] = useState<any[]>([])
-  const [selectedClinicId, setSelectedClinicId] = useState<string>('')
   const [expLoading, setExpLoading] = useState(false)
 
   const fetchRuns = useCallback(async () => {
@@ -88,59 +88,44 @@ export default function PayrollListPage() {
   const canView = hasPermission(userRole, 'payroll_view', grant, deny)
   const canDelete = userRole === 'OWNER' // DELETE /api/payroll-runs/:id is OWNER-only in RBAC
 
-  /* ── Expense modal ── */
+  /* ── Expense card (persistent, not modal) ── */
 
   const loadExpenses = useCallback(async () => {
     setExpLoading(true)
     try {
-      const params = new URLSearchParams({ periodMonth: expMonth })
-      if (selectedClinicId) params.set('clinicId', selectedClinicId)
-      const r = await fetch(`/api/expense-entries?${params}`, { credentials: 'include', cache: 'no-store' })
+      const r = await fetch(`/api/expense-entries?periodMonth=${expMonth}`, { credentials: 'include', cache: 'no-store' })
       const data = await r.json()
       setExpenses(data.entries || [])
     } finally {
       setExpLoading(false)
     }
-  }, [expMonth, selectedClinicId])
+  }, [expMonth])
 
   const checkMonthHasRun = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ periodMonth: expMonth })
-      if (selectedClinicId) params.set('clinicId', selectedClinicId)
-      const r = await fetch(`/api/payroll-runs?${params}&pageSize=1`, { credentials: 'include', cache: 'no-store' })
+      const r = await fetch(`/api/payroll-runs?periodMonth=${expMonth}&pageSize=1`, { credentials: 'include', cache: 'no-store' })
       const data = await r.json()
       setMonthHasRun((data.runs || []).length > 0)
     } catch {
       setMonthHasRun(false)
     }
-  }, [expMonth, selectedClinicId])
+  }, [expMonth])
 
   useEffect(() => {
-    if (expenseModalOpen) {
-      loadExpenses()
-      checkMonthHasRun()
-    }
-  }, [expenseModalOpen, loadExpenses, checkMonthHasRun])
+    loadExpenses()
+    checkMonthHasRun()
+  }, [loadExpenses, checkMonthHasRun])
 
-  // Load employees + clinics for expense modal dropdown
+  // Load employees for expense card dropdown
   useEffect(() => {
-    if (!expenseModalOpen) return
     ;(async () => {
       try {
-        const [empsRes, clsRes] = await Promise.all([
-          fetch('/api/employees', { credentials: 'include', cache: 'no-store' }),
-          fetch('/api/clinics', { credentials: 'include', cache: 'no-store' }),
-        ])
+        const empsRes = await fetch('/api/employees', { credentials: 'include', cache: 'no-store' })
         const emps = await empsRes.json()
-        const cls = await clsRes.json()
         setExpEmployees(Array.isArray(emps) ? emps : (emps.employees || []))
-        const clinicList = cls.clinics || cls || []
-        if (clinicList.length > 0 && !selectedClinicId) {
-          setSelectedClinicId(clinicList[0].id)
-        }
       } catch {}
     })()
-  }, [expenseModalOpen])
+  }, [])
 
   const addExpense = async () => {
     if (!newEmpId || !newAmount || !newDesc) return
@@ -159,10 +144,11 @@ export default function PayrollListPage() {
     }
   }
 
-  const delExpense = async (id: string) => {
-    if (!confirm('刪除這筆記錄？')) return
+  const delExpense = async (id: string, empName?: string, amount?: number) => {
+    if (!confirm(`確定取消 ${empName || '該員工'} 的雜項 $${amount || '?'}？`)) return
     const r = await fetch(`/api/expense-entries/${id}`, { method: 'DELETE', credentials: 'include' })
     if (r.ok) await loadExpenses()
+    else alert('取消失敗')
   }
 
   const deleteRun = async (runId: string) => {
@@ -202,7 +188,7 @@ export default function PayrollListPage() {
         {canGenerate && (
           <div className="flex gap-2">
             <button
-              onClick={() => setExpenseModalOpen(true)}
+              onClick={() => setAddingExpense(!addingExpense)}
               className="px-4 py-2 rounded-md border bg-white hover:bg-slate-50 text-sm font-semibold transition-colors inline-block"
             >
               💰 雜項費用
@@ -213,6 +199,96 @@ export default function PayrollListPage() {
           </div>
         )}
       </div>
+
+      {/* 雜項費用卡片 - 常駐在計糧記錄上方 */}
+      <Card className="mb-5">
+        <CardHeader className="flex flex-row items-center justify-between py-3">
+          <CardTitle className="text-base">💰 雜項費用</CardTitle>
+          <div className="flex items-center gap-2">
+            <input type="month" value={expMonth} onChange={e => setExpMonth(e.target.value)}
+              className="rounded border px-2 py-1 text-sm" />
+            {canGenerate && (
+              <button onClick={() => setAddingExpense(!addingExpense)}
+                className="px-3 py-1 rounded bg-brand text-white text-sm">
+                {addingExpense ? '取消' : '+ 新增'}
+              </button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {/* 新增列（展開時） */}
+          {addingExpense && (
+            <div className="flex gap-2 items-end mb-3 pb-3 border-b flex-wrap">
+              <select value={newEmpId} onChange={e => setNewEmpId(e.target.value)}
+                className="flex-1 rounded border px-2 py-1.5 text-sm min-w-[150px]">
+                <option value="">選擇員工</option>
+                {expEmployees.map((emp: any) => <option key={emp.id} value={emp.id}>{emp.user?.name || emp.name || '未知'}</option>)}
+              </select>
+              <input type="number" placeholder="金額" value={newAmount}
+                onChange={e => setNewAmount(e.target.value)}
+                className="w-28 rounded border px-2 py-1.5 text-sm" />
+              <input placeholder="說明（例：車費）" value={newDesc}
+                onChange={e => setNewDesc(e.target.value)}
+                className="flex-1 rounded border px-2 py-1.5 text-sm min-w-[120px]" />
+              <button onClick={addExpense}
+                className="px-3 py-1.5 rounded bg-brand text-white text-sm">確認</button>
+            </div>
+          )}
+
+          {/* 該月已生成糧單提示 */}
+          {monthHasRun && expenses.length > 0 && (
+            <div className="text-xs rounded bg-amber-50 border border-amber-300 text-amber-800 px-3 py-2 mb-3">
+              ⚠️ 該月計糧已生成，新增/取消雜項後需【重新生成】才會反映
+            </div>
+          )}
+
+          {/* 記錄清單 */}
+          {expLoading ? (
+            <div className="text-sm text-muted-foreground text-center py-4">載入中...</div>
+          ) : expenses.length === 0 ? (
+            <div className="text-sm text-muted-foreground text-center py-4">該月尚無雜項記錄</div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b">
+                      <th className="text-left py-1.5">員工</th>
+                      <th className="text-right py-1.5">金額</th>
+                      <th className="text-left py-1.5 pl-3">說明</th>
+                      <th className="text-left py-1.5">記錄時間</th>
+                      <th className="py-1.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expenses.map((e: any) => (
+                      <tr key={e.id} className="border-b last:border-0">
+                        <td className="py-1.5">{e.employee?.user?.name || '未知'}</td>
+                        <td className="py-1.5 text-right text-emerald-600">+{e.amount.toLocaleString()}</td>
+                        <td className="py-1.5 pl-3">{e.description}</td>
+                        <td className="py-1.5 text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('zh-HK')}</td>
+                        <td className="py-1.5 text-right">
+                          {canGenerate && (
+                            <button onClick={() => delExpense(e.id, e.employee?.user?.name, e.amount)}
+                              className="text-destructive text-xs hover:underline">取消</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="font-medium">
+                      <td className="py-1.5">合計</td>
+                      <td className="py-1.5 text-right text-emerald-600">
+                        +{expenses.reduce((s: number, e: any) => s + e.amount, 0).toLocaleString()}
+                      </td>
+                      <td colSpan={3}></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Filters */}
       <div className="flex flex-col md:flex-row gap-3 mb-5 flex-wrap">
@@ -347,86 +423,6 @@ export default function PayrollListPage() {
         </div>
       )}
     </div>
-
-    {/* ── Expense Modal ── */}
-    {expenseModalOpen && (
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-        onClick={() => setExpenseModalOpen(false)}
-      >
-        <div
-          className="bg-card rounded-lg p-5 w-[560px] max-w-[92vw] max-h-[85vh] overflow-y-auto"
-          onClick={e => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">雜項費用</h2>
-            <button onClick={() => setExpenseModalOpen(false)} className="text-muted-foreground hover:text-foreground text-xl leading-none">✕</button>
-          </div>
-
-          <div className="flex gap-2 mb-3">
-            <input
-              type="month"
-              value={expMonth}
-              onChange={e => setExpMonth(e.target.value)}
-              className="rounded border px-3 py-2 flex-1"
-            />
-            <select
-              value={selectedClinicId}
-              onChange={e => setSelectedClinicId(e.target.value)}
-              className="rounded border px-3 py-2 w-32"
-            >
-              {(() => {
-                const clinicOptions = runs.reduce((acc: any[], r) => {
-                  if (r.clinic?.id && !acc.includes(r.clinic.id)) acc.push(r.clinic)
-                  return acc
-                }, [])
-                if (!clinicOptions.length) return <option value="">診所</option>
-                return clinicOptions.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)
-              })()}
-            </select>
-          </div>
-
-          {monthHasRun && (
-            <div className="text-xs rounded bg-amber-50 border border-amber-300 text-amber-800 px-3 py-2 mb-3">
-              ⚠️ 該月計糧已生成，新增後需【重新生成】才會計入
-            </div>
-          )}
-
-          <table className="w-full text-sm mb-4">
-            <thead><tr className="text-xs text-muted-foreground">
-              <th className="text-left">員工</th><th className="text-right">金額</th>
-              <th className="text-left">說明</th><th></th>
-            </tr></thead>
-            <tbody>
-              {expLoading ? (
-                <tr><td colSpan={4} className="text-center text-muted-foreground py-3">載入中...</td></tr>
-              ) : expenses.length === 0 ? (
-                <tr><td colSpan={4} className="text-center text-muted-foreground py-3">該月尚無雜項</td></tr>
-              ) : (
-                expenses.map((e: any) => (
-                  <tr key={e.id} className="border-t">
-                    <td>{e.employee?.user?.name || '未知'}</td>
-                    <td className="text-right">${e.amount.toLocaleString()}</td>
-                    <td>{e.description}</td>
-                    <td><button onClick={() => delExpense(e.id)} className="text-destructive text-xs">刪除</button></td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-
-          <div className="flex gap-2 items-end border-t pt-3">
-            <select value={newEmpId} onChange={e => setNewEmpId(e.target.value)} className="flex-1 rounded border px-2 py-1.5">
-              <option value="">選擇員工</option>
-              {expEmployees.map((emp: any) => <option key={emp.id} value={emp.id}>{emp.user?.name || emp.name || '未知'}</option>)}
-            </select>
-            <input type="number" placeholder="金額" value={newAmount} onChange={e => setNewAmount(e.target.value)} className="w-24 rounded border px-2 py-1.5" />
-            <input placeholder="說明（例：車費）" value={newDesc} onChange={e => setNewDesc(e.target.value)} className="flex-1 rounded border px-2 py-1.5" />
-            <button onClick={addExpense} className="px-3 py-1.5 rounded bg-brand text-white">新增</button>
-          </div>
-        </div>
-      </div>
-    )}
     </Fragment>
   )
 }

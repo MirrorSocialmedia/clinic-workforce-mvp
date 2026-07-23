@@ -2503,7 +2503,6 @@ export async function calculatePayrollWithRules(
     where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7) },
   })
   const miscTotal = miscEntries.reduce((sum: number, e: any) => sum + e.amount, 0)
-  result.totalPayable = Math.max(0, netPay + miscTotal)
   result.detail = { ...result.detail, storeBonus, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100, sickDeduction: sickDeduction.amount, sickEpisodes: sickDeduction.episodes, miscAmount: miscTotal, miscDetailJson: miscEntries.length > 0 ? JSON.stringify(miscEntries.map((e: any) => ({ amount: e.amount, description: e.description }))) : null }
 
   // 5. Task 2: Count monthly leave days
@@ -2633,6 +2632,9 @@ export async function calculatePayrollWithRules(
       netDeficitMinutes: tb.netDeficitMinutes,
     },
   }
+
+  // ★ 雜項統一在最後加（防 OT/假期重算覆蓋）
+  result.totalPayable = Math.max(0, result.totalPayable + miscTotal)
 
   // Round final values
   return {
