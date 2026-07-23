@@ -286,9 +286,10 @@ export default function NewPayrollPage() {
             </div>
           </div>
         )}
+      </div>
 
-        {/* Preview Results — auto-shown when clinic + month selected */}
-        {previewResult && (
+      {/* Preview Results — auto-shown when clinic + month selected */}
+      {previewResult && (
           <Card className="mt-4 mx-auto" style={{ width: '100%', maxWidth: '1200px', }}>
             <CardHeader className="pb-3">
               <CardTitle className="text-base text-center flex items-center justify-center gap-2">
@@ -486,7 +487,6 @@ export default function NewPayrollPage() {
             </CardContent>
           </Card>
         )}
-      </div>
 
       {/* Pre-check Warning Modal */}
       {showPrecheckModal && (

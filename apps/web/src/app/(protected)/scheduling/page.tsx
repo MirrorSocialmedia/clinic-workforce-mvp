@@ -537,6 +537,17 @@ function getClinicColor(name: string): string {
     )
   }, [employees, selectedClinicId, empScope])
 
+  // ★ 真正的本店員工 ID 集合 — 不受 empScope 影響，專供借調判斷
+  const trueLocalEmployeeIds = useMemo(() => {
+    if (!selectedClinicId) return new Set<string>()
+    return new Set(
+      employees
+        .filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
+        .filter(emp => emp.clinics?.some((ec: any) => ec.clinic?.id === selectedClinicId))
+        .map(emp => emp.id)
+    )
+  }, [employees, selectedClinicId])
+
   // Step 5: Group clinics by company
   const companyGroups = useMemo(() => {
     const map = new Map<string, { name: string; companyId: string; clinics: Clinic[] }>()
@@ -1291,15 +1302,14 @@ function getClinicColor(name: string): string {
   // ★ 借調員工：在當前店有班、但不是本店的人
   const borrowedEmployees = useMemo(() => {
     if (!selectedClinicId) return []
-    const clinicEmpSet = new Set(clinicEmployees.map(e => e.id))
-    // 找當前店有班次、但不在 clinicEmployees 的員工
+    // ★ 使用 trueLocalEmployeeIds（不受 empScope 影響）判斷是否為本店員工
     const borrowedIds = new Set(
-      shifts.filter(s => s.clinicId === selectedClinicId && !clinicEmpSet.has(s.employeeId))
+      shifts.filter(s => s.clinicId === selectedClinicId && !trueLocalEmployeeIds.has(s.employeeId))
         .map(s => s.employeeId)
     )
     if (borrowedIds.size === 0) return []
     return employees.filter(e => borrowedIds.has(e.id))
-  }, [shifts, selectedClinicId, clinicEmployees, employees])
+  }, [shifts, selectedClinicId, trueLocalEmployeeIds, employees])
 
   // Monthly work hours per employee (browsed month/week, current clinic)
   const monthlyWorkHours = useMemo(() => {
@@ -1592,7 +1602,7 @@ function getClinicColor(name: string): string {
                       onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
-                      <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 2, flexWrap: 'wrap', minHeight: 18 }}>
+                      <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
                         {empShiftsOnDay.map((s, si) => {
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
@@ -1718,7 +1728,7 @@ function getClinicColor(name: string): string {
                       onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
-                      <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 2, flexWrap: 'wrap', minHeight: 18 }}>
+                      <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
                         {empShiftsOnDay.map((s, si) => {
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
@@ -1849,7 +1859,7 @@ function getClinicColor(name: string): string {
                           onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                           onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                         >
-                          <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 2, flexWrap: 'wrap', minHeight: 18 }}>
+                          <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
                             {empShiftsOnDay.map((s, si) => {
                               const tpl = templates.find(t => t.id === s.templateId)
                               const clinic = clinics.find(c => c.id === s.clinicId)
@@ -2031,24 +2041,24 @@ function getClinicColor(name: string): string {
         }
         .overview-cell-inner {
           display: flex;
-          flex-direction: row;
-          flex-wrap: wrap;
-          justify-content: center;
+          flex-direction: column;
           align-items: center;
           gap: 2px;
+          width: 100%;
           min-height: 0;
           height: auto;
         }
         .ov-capsule {
           flex: none;
-          width: 100%;
+          width: auto;
+          max-width: 100%;
           min-width: 0;
           box-sizing: border-box;
-          display: flex;
+          display: inline-flex;
           align-items: center;
           justify-content: center;
           text-align: center;
-          padding: 1px 2px;
+          padding: 1px 6px;
           border-radius: 4px;
           font-size: 10px;
           font-weight: 600;
@@ -2071,6 +2081,8 @@ function getClinicColor(name: string): string {
           min-height: 14px;
           line-height: 12px;
           padding: 1px 1px;
+          width: auto;
+          max-width: 100%;
         }
         .ov-compact .overview-cell-inner {
           min-height: 0 !important;
@@ -2082,6 +2094,8 @@ function getClinicColor(name: string): string {
           min-height: 16px;
           padding: 0 4px;
           font-size: 11px;
+          width: auto;
+          max-width: 100%;
         }
         /* ★ Cross-clinic away shift visual */
         .shift-away {
