@@ -28,6 +28,10 @@ export async function POST(req: NextRequest) {
       ? (await prisma.employee.findMany()).map(e => e.id)
       : [employeeId]
 
+    // 取得假期類型名稱
+    const leaveType = await prisma.leaveType.findUnique({ where: { id: leaveTypeId }, select: { name: true } })
+    const leaveTypeName = leaveType?.name || '未知假期'
+
     const results = []
     for (const empId of targets) {
       // Read original values before upsert
@@ -45,6 +49,10 @@ export async function POST(req: NextRequest) {
         create: { employeeId: empId, leaveTypeId, year, entitled: days, remaining: days, used: 0 },
       })
 
+      // 取得員工名稱
+      const emp = await prisma.employee.findUnique({ where: { id: empId }, include: { user: { select: { name: true } } } })
+      const empName = emp?.user?.name || empId
+
       // ★ Write audit log: LEAVE_INIT
       await prisma.auditLog.create({
         data: {
@@ -55,7 +63,7 @@ export async function POST(req: NextRequest) {
           targetEmployeeId: empId,
           beforeJson: JSON.stringify({ entitled: before?.entitled ?? null, remaining: before?.remaining ?? null }),
           afterJson: JSON.stringify({ entitled: days, remaining: days }),
-          notes: JSON.stringify({ leaveTypeId, year, days }),
+          notes: `假期類型: ${leaveTypeName}｜對象: ${empName}｜年份: ${year}｜額度: ${days}天`,
         },
       })
 

@@ -120,6 +120,24 @@ export async function DELETE(req: NextRequest) {
 
   // 審計記錄
   const targetEmpId = employeeId && employeeId !== 'all' ? employeeId : null
+  // 取得受影響的假期類型名稱
+  const whereClause: any = { year }
+  if (employeeId && employeeId !== 'all') whereClause.employeeId = employeeId
+  const affectedTypes = await prisma.leaveBalance.findMany({
+    where: whereClause,
+    select: { leaveTypeId: true },
+  })
+  const typeIds = [...new Set(affectedTypes.map(r => r.leaveTypeId))]
+  const leaveTypeNames = typeIds.length > 0
+    ? (await prisma.leaveType.findMany({
+        where: { id: { in: typeIds } },
+        select: { name: true },
+      })).map(r => r.name).join('、')
+    : '全部'
+  const empName = targetEmpId
+    ? (await prisma.employee.findUnique({ where: { id: targetEmpId }, include: { user: { select: { name: true } } } }))?.user?.name || targetEmpId
+    : '全部員工'
+
   await prisma.auditLog.create({
     data: {
       actorId: session.userId,
@@ -127,7 +145,8 @@ export async function DELETE(req: NextRequest) {
       entity: 'LeaveBalance',
       entityId: 'batch',
       ...(targetEmpId ? { targetEmployeeId: targetEmpId } : {}),
-      notes: `清除假期資料: ${employeeId === 'all' ? '全部員工' : employeeId}, 年份 ${year}, 共 ${deleted.count} 筆`,
+      notes: `假期類型: ${leaveTypeNames}｜對象: ${empName}｜年份: ${year}｜共 ${deleted.count} 筆`,
+      afterJson: JSON.stringify({ leaveTypes: leaveTypeNames, year, count: deleted.count }),
     },
   })
 

@@ -4,6 +4,29 @@ import { useEffect, useState, useMemo } from 'react'
 import { EmptyState } from '@/components/EmptyState'
 import { fmtDateTime } from '@/lib/hk-date'
 
+/** 審計明細中不顯示的 ID 類欄位 */
+const HIDDEN_KEYS = new Set([
+  'id', 'employeeId', 'clinicId', 'userId', 'companyId', 'templateId', 'runId',
+  'punchRecordId', 'leaveTypeId', 'createdBy', 'approvedBy', 'requestedBy',
+  'createdAt', 'updatedAt', 'actorId', 'targetEmployeeId', 'entityId',
+  'permissionsJson', 'password', 'passwordHash', 'token',
+])
+
+/** 欄位中文名映射 */
+const FIELD_LABELS: Record<string, string> = {
+  amount: '金額', description: '說明', periodMonth: '月份',
+  punchType: '類型', punchTime: '時間', correctedTime: '時間',
+  initMinutes: '時間帳戶', balanceMinutes: '餘額', otBalanceMinutes: 'OT餘額',
+  minutes: '分鐘', delta: '變量', days: '天數',
+  entitled: '額度', remaining: '剩餘', used: '已用',
+  year: '年份', reason: '原因', voidReason: '作廢原因',
+  status: '狀態', name: '名稱', role: '角色', payType: '薪資類型',
+  date: '日期', startTime: '開始', endTime: '結束',
+  faceScore: '相似度', totalPayable: '應付總額', periodMonthLabel: '計糧月份',
+  leaveTypes: '假期類型', count: '筆數',
+  oldValue: '舊值', newValue: '新值',
+}
+
 interface AuditLog {
   id: string
   actorId: string
@@ -30,40 +53,61 @@ interface AuditLog {
   } | null
 }
 
-/**
- * 友好顯示 JSON：將常見欄位轉為中文標籤
- */
+/** 友好顯示 JSON 明細：欄位轉中文、ID 隱藏、時間格式化 */
 function fmtAudit(json: string): string {
   try {
     const o = JSON.parse(json)
     const parts: string[] = []
-    if (o.punchType) parts.push(`類型: ${o.punchType}`)
-    if (o.punchTime || o.correctedTime) parts.push(`時間: ${o.punchTime ?? o.correctedTime}`)
+    const handled = new Set(['initMinutes', 'balanceMinutes', 'otBalanceMinutes', 'minutes'])
+
+    // 時間帳戶類特殊處理
     if (o.initMinutes != null) parts.push(`時間帳戶: ${(o.initMinutes / 60).toFixed(1)}h`)
-    if (o.otBalanceMinutes != null) parts.push(`OT餘額: ${(o.otBalanceMinutes / 60).toFixed(1)}h`)
     if (o.balanceMinutes != null) parts.push(`餘額: ${(o.balanceMinutes / 60).toFixed(1)}h`)
-    if (o.entitled != null) parts.push(`額度: ${o.entitled}天`)
-    if (o.remaining != null) parts.push(`剩餘: ${o.remaining}天`)
-    if (o.voidReason) parts.push(o.voidReason)
-    if (o.reason) parts.push(`原因: ${o.reason}`)
-    if (o.oldValue) {
-      const oldV = o.oldValue
-      if (oldV.punchType) parts.push(`舊類型: ${oldV.punchType}`)
-      if (oldV.punchTime) parts.push(`舊時間: ${oldV.punchTime}`)
+    if (o.otBalanceMinutes != null) parts.push(`OT餘額: ${(o.otBalanceMinutes / 60).toFixed(1)}h`)
+    if (o.minutes != null) parts.push(`${o.minutes > 0 ? '+' : ''}${(o.minutes / 60).toFixed(1)}h`)
+
+    // 通用遍歷
+    for (const [k, v] of Object.entries(o)) {
+      if (HIDDEN_KEYS.has(k) || handled.has(k)) continue
+      if (v == null || v === '') continue
+      if (typeof v === 'object') continue
+      const label = FIELD_LABELS[k] || k
+      let val: any = v
+      if (k === 'amount' || k === 'totalPayable') val = `$${Number(v).toLocaleString()}`
+      if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) val = v.slice(0, 16).replace('T', ' ')
+      parts.push(`${label}: ${val}`)
     }
-    if (o.newValue) {
-      const newV = o.newValue
-      if (newV.punchType) parts.push(`新類型: ${newV.punchType}`)
-      if (newV.punchTime) parts.push(`新時間: ${newV.punchTime}`)
-    }
-    if (o.delta != null) parts.push(`變量: ${o.delta > 0 ? '+' : ''}${o.delta}`)
-    if (o.days != null) parts.push(`天數: ${o.days}`)
-    if (o.minutes != null) parts.push(`分鐘: ${o.minutes}`)
-    if (o.faceScore != null) parts.push(`Face Score: ${o.faceScore}`)
-    if (o.action === 'confirm' || o.action === 'flag') parts.push(`處置: ${o.action}`)
-    return parts.join('、') || json.slice(0, 60)
+
+    return parts.join('、') || '（無詳細）'
   } catch {
-    return String(json).slice(0, 60)
+    return '（格式錯誤）'
+  }
+}
+
+/** 差異值格式化 */
+function fmtVal(key: string, val: any): string {
+  if (key === 'amount' || key === 'totalPayable') return `$${Number(val).toLocaleString()}`
+  if (key === 'minutes' || key === 'delta') return `${Number(val) > 0 ? '+' : ''}${(Number(val) / 60).toFixed(1)}h`
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) return val.slice(0, 16).replace('T', ' ')
+  return String(val)
+}
+
+/** 比對 before/after 差異：只顯示變動的欄位 */
+function fmtDiff(beforeJson?: string, afterJson?: string): string {
+  try {
+    const b = beforeJson ? JSON.parse(beforeJson) : {}
+    const a = afterJson ? JSON.parse(afterJson) : {}
+    const keys = new Set([...Object.keys(b), ...Object.keys(a)])
+    const diffs: string[] = []
+    for (const k of keys) {
+      if (HIDDEN_KEYS.has(k)) continue
+      if (JSON.stringify(b[k]) === JSON.stringify(a[k])) continue
+      const label = FIELD_LABELS[k] || k
+      diffs.push(`${label}: ${fmtVal(k, b[k])} → ${fmtVal(k, a[k])}`)
+    }
+    return diffs.join('、') || '（無變更）'
+  } catch {
+    return '（格式錯誤）'
   }
 }
 
@@ -92,12 +136,15 @@ export default function AuditLogsPage() {
   const [employeeMap, setEmployeeMap] = useState<Map<string, string>>(new Map())
 
   const ENTITY_LABELS: Record<string, string> = {
-    PayRule: '薪酬規則', Shift: '排班', PunchRecord: '打卡', PunchCorrection: '打卡補登',
-    User: '用戶', Employee: '員工', Clinic: '診所', LeaveRequest: '請假',
-    LeaveType: '假期類型', ShiftChangeRequest: '換班申請', ShiftTemplate: '班表模板',
+    PayRule: '薪酬規則', Shift: '排班', PunchRecord: '打卡記錄', PunchCorrection: '補登申請',
+    User: '帳號', Employee: '員工', Clinic: '診所', Company: '公司',
+    LeaveRequest: '假期申請', LeaveType: '假期類型', LeaveBalance: '假期額度',
+    ShiftChangeRequest: '換班申請', ShiftTemplate: '更次模板',
     DailyHash: '完整性驗證', Notification: '通知',
-    TimeBank: '時間帳戶', LeaveBalance: '假期額度', FaceTemplate: '臉部登記',
-    FaceEnrollCode: '登記碼', ACCOUNT: '帳號',
+    TimeBank: '時間帳戶', TimeBankEntry: '時間帳戶明細',
+    FaceTemplate: '人臉模板', FaceEnrollCode: '登記碼', ACCOUNT: '帳號',
+    ExpenseEntry: '雜項費用', PayrollRun: '計糧單', PayrollItem: '計糧明細',
+    ConsultationRevenue: '營業額', PunchVoid: '作廢記錄',
   }
 
   // Comprehensive audit action Chinese labels
@@ -143,30 +190,47 @@ export default function AuditLogsPage() {
     'CREATE_ACCOUNT_WITH_EMPLOYEE': '新增帳號(含員工)',
     'ACCOUNT_DELETE': '刪除帳號',
     'UPDATE_ACCOUNT': '更新帳號',
+    'PASSWORD_RESET': '重設密碼',
     'EMERGENCY_NUMBER_UPDATED': '更新緊急聯絡人',
-    'FACE_ENROLL': '臉部登記',
-    'FACE_ENROLL_APPROVE': '核准臉部登記',
-    'FACE_ENROLL_REJECT': '拒絕臉部登記',
-    'FACE_ENROLL_CODE_ISSUED': '發行登記碼',
-    'FACE_REF_VIEW': '查看參考照',
-    'FACE_FRAME_VIEW': '查看覆核圖',
-    'FACE_REVIEW_ACTION': '臉部覆核處置',
-    // Keep existing simple labels
-    'CREATE': '新增', 'UPDATE': '修改', 'DELETE': '刪除', 'LOGIN': '登入', 'LOGOUT': '登出',
+    'FACE_ENROLL': '人臉登記',
+    'FACE_ENROLL_APPROVE': '人臉登記批准',
+    'FACE_ENROLL_REJECT': '人臉登記拒絕',
+    'FACE_ENROLL_CODE_ISSUED': '發出人臉登記碼',
+    'FACE_REF_VIEW': '查看人臉參考照',
+    'FACE_FRAME_VIEW': '查看人臉證據',
+    'FACE_REVIEW_ACTION': '人臉覆核處置',
+    'FACE_VERIFY': '人臉驗證',
     // TimeBank / OT actions
     'TIMEBANK_INIT_ADJUST': '初始化時間帳戶',
     'TIMEBANK_MAKEUP': '補鐘',
-    'TIMEBANK_CONVERT': '時間帳戶兌換',
-    'TIMEBANK_ABSENT_DEDUCT': '缺勤扣OT鐘',
-    'TIMEBANK_REST_TO_ACCOUNT': '休息日還鐘',
+    'TIMEBANK_CONVERT': 'OT換假',
+    'TIMEBANK_ABSENT_DEDUCT': '缺勤扣OT',
+    'TIMEBANK_REST_TO_ACCOUNT': '休息日轉時間帳戶',
+    // Expense
+    'EXPENSE_CREATE': '新增雜項費用',
+    'EXPENSE_DELETE': '取消雜項費用',
+    // Payroll
+    'CREATE_PAYROLL_RUN': '生成計糧',
     // Legacy action names
     'CONVERT': 'OT換假',
     'MAKEUP': '補鐘',
     'ABSENT_DEDUCT': '缺勤扣OT',
     'ABSENT_DEDUCT_CANCEL': '取消缺勤扣OT',
+    // Generic actions (will be combined with entity name)
+    'MUTATE': '系統變更', 'CREATE': '新增', 'UPDATE': '修改',
+    'DELETE': '刪除', 'UPSERT': '新增/更新', 'CREATEMANY': '批次新增',
+    'LOGIN': '登入', 'LOGOUT': '登出',
   }
-  function getActionLabel(action: string): string {
-    return AUDIT_ACTION_LABELS[action] || action
+
+  /** 動作標籤：通用動作會自動附加實體名稱 */
+  function actionLabel(log: AuditLog): string {
+    const GENERIC = new Set(['MUTATE', 'CREATE', 'UPDATE', 'DELETE', 'UPSERT', 'CREATEMANY'])
+    const base = AUDIT_ACTION_LABELS[log.action] || log.action
+    if (GENERIC.has(log.action)) {
+      const ent = ENTITY_LABELS[log.entity] || log.entity
+      return `${base}${ent}`
+    }
+    return base
   }
   const ROLE_LABELS: Record<string, string> = {
     OWNER: '院長', MANAGER: '管理', ACCOUNTANT: '會計', EMPLOYEE: '員工',
@@ -322,32 +386,28 @@ export default function AuditLogsPage() {
                       </div>
                     </td>
                     <td title={log.action}>
-                      <span className='text-sm font-medium'>{getActionLabel(log.action)}</span>
-                      {getActionLabel(log.action) !== log.action && <span className="text-muted text-sm ml-1" style={{fontSize:10}}>({log.action})</span>}
-                      {targetEmpName && (
+                      <span className='text-sm font-medium'>{actionLabel(log)}</span>
+                      {actionLabel(log) !== log.action && <span className="text-muted text-sm ml-1" style={{fontSize:10}}>({log.action})</span>}
+                      {targetEmpName ? (
                         <div className="text-xs mt-0.5" style={{ color: '#2563eb' }}>員工：{targetEmpName}</div>
-                      )}
+                      ) : log.entityId === 'batch' ? (
+                        <div className="text-xs mt-0.5 text-muted-foreground">批次操作</div>
+                      ) : null}
                     </td>
                     <td>
                       {log.entity === 'LeaveRequest' && log.notes
                         ? log.notes
                         : (ENTITY_LABELS[log.entity] || log.entity)
                       }
-                      {!(log.entity === 'LeaveRequest' && log.notes) && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
-                      {log.entity === 'LeaveRequest' && log.notes && <span className="text-muted text-sm"> #{log.entityId.slice(0,8)}</span>}
-                      {log.beforeJson && log.afterJson && (
+                      {log.beforeJson && log.afterJson ? (
                         <div className="text-xs mt-1">
-                          <span className="text-muted-foreground">原始: </span>
-                          <span title={typeof log.beforeJson === 'string' ? log.beforeJson : JSON.stringify(log.beforeJson)}>
-                            {fmtAudit(log.beforeJson)}
-                          </span>
-                          <span className="mx-1">→</span>
-                          <span className="text-muted-foreground">修改後: </span>
-                          <span title={typeof log.afterJson === 'string' ? log.afterJson : JSON.stringify(log.afterJson)}>
-                            {fmtAudit(log.afterJson)}
-                          </span>
+                          {fmtDiff(log.beforeJson, log.afterJson)}
                         </div>
-                      )}
+                      ) : (log.beforeJson || log.afterJson) ? (
+                        <div className="text-xs mt-1">
+                          {fmtAudit(log.afterJson ?? log.beforeJson ?? '')}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="text-sm">{log.ipAddress || '—'}</td>
                   </tr>
@@ -367,29 +427,24 @@ export default function AuditLogsPage() {
                       <div className="font-semibold text-sm">{log.actor.name}</div>
                       <div className="text-xs text-muted-foreground">{fmtDateTime(log.createdAt)}</div>
                     </div>
-                    <span className='text-sm font-medium'>{getActionLabel(log.action)}</span>
+                    <span className='text-sm font-medium'>{actionLabel(log)}</span>
                   </div>
                   <div className="text-xs text-muted-foreground mb-1">
                     {log.entity === 'LeaveRequest' && log.notes
                       ? log.notes
                       : (ENTITY_LABELS[log.entity] || log.entity)
                     }
-                    <span className="text-muted"> #{log.entityId.slice(0,8)}</span>
-                    {targetEmpName && <span className="ml-1" style={{ color: '#2563eb' }}>員工：{targetEmpName}</span>}
+                    {targetEmpName ? <span className="ml-1" style={{ color: '#2563eb' }}>員工：{targetEmpName}</span> : log.entityId === 'batch' ? <span className="ml-1 text-muted-foreground">批次操作</span> : null}
                   </div>
-                  {log.beforeJson && log.afterJson && (
+                  {log.beforeJson && log.afterJson ? (
                     <div className="text-xs mb-1">
-                      <span className="text-muted-foreground">原始: </span>
-                      <span title={typeof log.beforeJson === 'string' ? log.beforeJson : JSON.stringify(log.beforeJson)}>
-                        {fmtAudit(log.beforeJson)}
-                      </span>
-                      <span className="mx-1">→</span>
-                      <span className="text-muted-foreground">修改後: </span>
-                      <span title={typeof log.afterJson === 'string' ? log.afterJson : JSON.stringify(log.afterJson)}>
-                        {fmtAudit(log.afterJson)}
-                      </span>
+                      {fmtDiff(log.beforeJson, log.afterJson)}
                     </div>
-                  )}
+                  ) : (log.beforeJson || log.afterJson) ? (
+                    <div className="text-xs mb-1">
+                      {fmtAudit(log.afterJson ?? log.beforeJson ?? '')}
+                    </div>
+                  ) : null}
                   <div className="text-xs text-muted-foreground">IP: {log.ipAddress || '—'}</div>
                 </div>
                 )})}

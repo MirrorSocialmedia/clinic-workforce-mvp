@@ -91,6 +91,7 @@ export async function POST(req: NextRequest) {
       targetEmployeeId: employeeId,
       beforeJson: null,
       afterJson: JSON.stringify({ amount, description, periodMonth }),
+      notes: `${description} $${Number(amount).toLocaleString()}（${periodMonth}）`,
     },
   } as any)
 

@@ -35,6 +35,7 @@ export async function DELETE(
         periodMonth: entry.periodMonth,
       }),
       afterJson: null,
+      notes: `取消: ${entry.description} $${Number(entry.amount).toLocaleString()}（${entry.periodMonth}）`,
     },
   } as any)
 

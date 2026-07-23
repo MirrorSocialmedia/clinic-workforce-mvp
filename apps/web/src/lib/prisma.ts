@@ -48,6 +48,27 @@ function safeStringify(o: unknown): string | null {
   try { return JSON.stringify(o) } catch { return null }
 }
 
+/** 審計日誌只保留關鍵欄位，過濾 ID 雜訊 */
+const AUDIT_FIELD_WHITELIST = new Set([
+  'name', 'amount', 'description', 'periodMonth', 'status', 'role', 'payType',
+  'date', 'startTime', 'endTime', 'punchType', 'punchTime', 'minutes', 'days',
+  'entitled', 'remaining', 'used', 'year', 'reason', 'totalPayable',
+  'leaveTypes', 'count', 'target', 'balance', 'otMinutes', 'lateMinutes',
+  'earlyLeaveMinutes', 'makeupMinutes', 'carriedFrom', 'monthEndNote',
+  'initMinutes', 'balanceMinutes', 'otBalanceMinutes', 'delta',
+  'startDate', 'endDate', 'voidReason', 'voidNote', 'punchNote',
+  'shiftDate', 'shiftStart', 'shiftEnd', 'note',
+])
+
+function slimForAudit(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj
+  const out: any = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (AUDIT_FIELD_WHITELIST.has(k) && v != null) out[k] = v
+  }
+  return out
+}
+
 const extended = base.$extends({
   query: {
     $allModels: {
@@ -109,8 +130,8 @@ const extended = base.$extends({
                     action: operation.toUpperCase(),
                     entity: model,
                     entityId: String((result as any)?.id ?? (where as any)?.id ?? ''),
-                    beforeJson: safeStringify(before),
-                    afterJson: safeStringify(result),
+                    beforeJson: safeStringify(slimForAudit(before)),
+                    afterJson: safeStringify(slimForAudit(result)),
                     notes,
                     ipAddress: ctx.ip ?? null,
                     userAgent: ctx.ua ?? null,
@@ -182,7 +203,7 @@ const extended = base.$extends({
               action: operation.toUpperCase(),
               entity: model,
               entityId: String(entityId),
-              afterJson: safeStringify(result),
+              afterJson: safeStringify(slimForAudit(result)),
               notes,
               ipAddress: ctx.ip ?? null,
               userAgent: ctx.ua ?? null,
@@ -268,7 +289,7 @@ export async function withAudit<T>(
       action: 'MUTATE',
       entity,
       entityId,
-      afterJson: JSON.stringify(result),
+      afterJson: JSON.stringify(slimForAudit(result)),
     })
   } catch (err) {
     // Audit write failure = transaction rollback
