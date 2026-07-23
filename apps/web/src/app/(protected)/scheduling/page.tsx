@@ -554,10 +554,18 @@ function getClinicColor(name: string): string {
   }, [employees, scopeClinicIds])
 
   // Step 7: Overview shifts (filtered by scope)
+  // Step 7: Overview shifts — include shifts for scoped employees at ANY clinic
+  // (cross-clinic loan shifts should still be visible)
   const ovShifts = useMemo(() => {
     if (!scopeClinicIds) return shifts
-    return shifts.filter(s => scopeClinicIds.has(s.clinicId))
-  }, [shifts, scopeClinicIds])
+    // Get employee IDs that belong to the scoped clinics
+    const scopedEmployeeIds = new Set(
+      employees
+        .filter(e => e.clinics?.some((ec: any) => scopeClinicIds.has(ec.clinic?.id)))
+        .map(e => e.id)
+    )
+    return shifts.filter(s => scopeClinicIds.has(s.clinicId) || scopedEmployeeIds.has(s.employeeId))
+  }, [shifts, scopeClinicIds, employees])
 
   // Step 7: Companies derived from clinics (deduplicated)
   const companies = useMemo(() => {
@@ -1369,8 +1377,8 @@ function getClinicColor(name: string): string {
       return {
         id: s.id,
         title: isAway
-          ? `${empName}@${awayLabel} ${s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`
-          : `${empName} ${s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`,
+          ? `${empName}@${awayLabel} ${s.template?.shortName || s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`
+          : `${empName} ${s.template?.shortName || s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`,
         start: s.startTime,
         end: s.endTime,
         backgroundColor,
