@@ -277,7 +277,7 @@ export default function DashboardPage() {
                 <div>
                   <span className="font-semibold">{todoCounts.total} 項待處理</span>
                   <span className="text-sm text-muted-foreground ml-1">
-                    （假期 {todoCounts.leaveN} · 登記 {todoCounts.enrollN} · 覆核 {todoCounts.reviewN}）
+                    （假期 {todoCounts.leaveN} · 補登 {todoCounts.correctionN} · 登記 {todoCounts.enrollN} · 覆核 {todoCounts.reviewN}）
                   </span>
                 </div>
               ) : (

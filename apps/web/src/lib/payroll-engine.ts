@@ -1835,9 +1835,10 @@ async function collectWorkData(
   })
 
   // Punch days (pass shifts for single-punch fill)
+  // ★ null = do NOT filter by clinic; count ALL punches for this employee across all clinics
   const allPunchDays = await calculateWorkedHours(
     employeeId,
-    clinicId ? [clinicId] : (clinicIds.length > 0 ? clinicIds : null),
+    null, // ★ cross-clinic: punches follow the employee, not the payroll-run clinic
     monthStart,
     monthEnd,
     shifts

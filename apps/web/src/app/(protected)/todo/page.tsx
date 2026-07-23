@@ -70,6 +70,7 @@ export default function TodoPage() {
   const [leaves, setLeaves] = useState<LeaveRequestItem[]>([])
   const [enrolls, setEnrolls] = useState<EnrollPendingItem[]>([])
   const [reviews, setReviews] = useState<FaceReviewItem[]>([])
+  const [corrections, setCorrections] = useState<any[]>([])
   const [employees, setEmployees] = useState<EmployeeItem[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -82,14 +83,16 @@ export default function TodoPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [leavesRes, enrollsRes, reviewsRes, empsRes] = await Promise.all([
+      const [leavesRes, correctionsRes, enrollsRes, reviewsRes, empsRes] = await Promise.all([
         fetch('/api/leave-requests?status=PENDING', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
+        fetch('/api/punch-corrections?status=PENDING', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
         fetch('/api/face/enroll-pending', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
         fetch('/api/face/review', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
         fetch('/api/employees', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
       ])
 
       setLeaves(leavesRes.leaveRequests || leavesRes.items || [])
+      setCorrections(Array.isArray(correctionsRes) ? correctionsRes : (correctionsRes.punchCorrections || []))
       setEnrolls(Array.isArray(enrollsRes) ? enrollsRes : [])
       setReviews(Array.isArray(reviewsRes) ? reviewsRes : [])
       const empArr = Array.isArray(empsRes) ? empsRes : (empsRes.employees || [])
@@ -113,6 +116,27 @@ export default function TodoPage() {
       })
       if (res.ok) {
         setLeaves(prev => prev.filter(l => l.id !== id))
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || '操作失敗')
+      }
+    } catch {
+      alert('網絡錯誤')
+    }
+  }
+
+  /* ── Actions: Punch Corrections ── */
+
+  const handleCorrectionAction = async (id: string, action: 'APPROVE' | 'REJECT') => {
+    try {
+      const res = await fetch(`/api/punch-corrections/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action }),
+      })
+      if (res.ok) {
+        setCorrections(prev => prev.filter(c => c.id !== id))
       } else {
         const err = await res.json().catch(() => ({}))
         alert(err.error || '操作失敗')
@@ -200,7 +224,7 @@ export default function TodoPage() {
     )
   }
 
-  const hasItems = leaves.length > 0 || enrolls.length > 0 || reviews.length > 0
+  const hasItems = leaves.length > 0 || corrections.length > 0 || enrolls.length > 0 || reviews.length > 0
 
   /* ── Render ── */
 
@@ -214,7 +238,7 @@ export default function TodoPage() {
             共 {counts.total} 項待處理
             {counts.total > 0 && (
               <span className="ml-1">
-                （假期 {counts.leaveN} · 登記 {counts.enrollN} · 覆核 {counts.reviewN}）
+                （假期 {counts.leaveN} · 補登 {counts.correctionN} · 登記 {counts.enrollN} · 覆核 {counts.reviewN}）
               </span>
             )}
           </p>
@@ -286,7 +310,57 @@ export default function TodoPage() {
         </section>
       )}
 
-      {/* ── B: Enroll Pending ── */}
+      {/* ── B: Punch Corrections ── */}
+      {corrections.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            補登審批 ({corrections.length})
+          </h2>
+          <div className="space-y-3">
+            {corrections.map((c: any) => {
+              const empName = c.employee?.user?.name || c.employee?.name || '未知員工'
+              const punchTypeLabel = c.punchType === 'IN' ? '上班' : c.punchType === 'OUT' ? '下班' : c.punchType || '補登'
+              const clinicName = c.clinic?.shortName || c.clinic?.name || ''
+              return (
+                <Card key={c.id}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="font-semibold">{empName} · 補登 {punchTypeLabel}</div>
+                        <div className="text-sm text-muted-foreground mt-1">
+                          {new Date(c.correctedTime).toLocaleString('zh-HK')}
+                        </div>
+                        {clinicName && (
+                          <div className="text-xs text-muted-foreground">診所: {clinicName}</div>
+                        )}
+                        {c.reason && (
+                          <div className="text-xs text-muted-foreground mt-1">原因: {c.reason}</div>
+                        )}
+                      </div>
+                      <div className="flex gap-2 ml-4">
+                        <button
+                          className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                          onClick={() => handleCorrectionAction(c.id, 'APPROVE')}
+                        >
+                          核准
+                        </button>
+                        <button
+                          className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                          onClick={() => handleCorrectionAction(c.id, 'REJECT')}
+                        >
+                          拒絕
+                        </button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── C: Enroll Pending ── */}
       {enrolls.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
@@ -330,7 +404,7 @@ export default function TodoPage() {
         </section>
       )}
 
-      {/* ── C: Face Review ── */}
+      {/* ── D: Face Review ── */}
       {reviews.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">

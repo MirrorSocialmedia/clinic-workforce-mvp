@@ -578,11 +578,14 @@ function getClinicColor(name: string): string {
     )
     if (empShiftsOnDay.length > 0) {
       const s = empShiftsOnDay[0]
-      const clinicName = (s.clinic as any)?.shortName || s.clinic?.name || ''
-      const shiftName = s.template?.shortName || s.template?.name || s.role || ''
-      const color = getClinicColor(s.clinic?.name || '')
-      const timeLabel = fmtTime(s.startTime).slice(0, 5)
-      return { label: shiftName || clinicName, bg: color, detail: `${shiftName} ${timeLabel}` }
+      const clinic = s.clinic as any
+      const tpl = s.template
+      const parts: string[] = []
+      if (tpl?.shortName || tpl?.name) parts.push(tpl.shortName || tpl.name)
+      if (clinic) parts.push(clinic.shortName || clinic.name?.slice(0, 2) || '')
+      const shiftLabel = parts.join('·') || tpl?.name || clinic?.shortName || '班'
+      const color = getClinicColor(clinic?.name || '')
+      return { label: shiftLabel, bg: color, detail: shiftLabel }
     }
     if (empLeavesOnDay.length > 0) {
       const lr = empLeavesOnDay[0]
@@ -1155,6 +1158,12 @@ function getClinicColor(name: string): string {
   // FullCalendar Event Handlers
   // ============================================================
   const handleFcEventClick = async (info: any) => {
+    // ★ Cross-clinic guard: cannot edit/delete away shifts from this clinic view
+    if (info.event.extendedProps?.isAway) {
+      setValidationIssues([{ type: 'warning', rule: 'shift', message: '⚠️ 此更次屬於其他診所，請切換到該診所刪除' }])
+      return
+    }
+
     // Leave event: click to delete without confirm
     if (info.event.extendedProps.isLeave) {
       if (canManage) {
@@ -1183,6 +1192,13 @@ function getClinicColor(name: string): string {
   }
 
   const handleFcEventDrop = async (info: any) => {
+    // ★ Cross-clinic guard: cannot drag away shifts from this clinic view
+    if (info.event.extendedProps?.isAway) {
+      setValidationIssues([{ type: 'warning', rule: 'shift', message: '⚠️ 此更次屬於其他診所，請切換到該診所修改' }])
+      info.revert()
+      return
+    }
+
     const shift = shifts.find(s => s.id === info.event.id)
     if (!shift) return
 
@@ -1238,10 +1254,19 @@ function getClinicColor(name: string): string {
   }
 
   // Filter shifts by selected clinic for FC display
+  // ★ Include cross-clinic shifts: shifts belonging to this clinic's employees at other clinics
+  const clinicEmployeeIds = useMemo(
+    () => new Set(clinicEmployees.map(e => e.id)),
+    [clinicEmployees]
+  )
+
   const clinicFilteredShifts = useMemo(() => {
     if (!selectedClinicId) return []
-    return shifts.filter(s => s.clinicId === selectedClinicId)
-  }, [shifts, selectedClinicId])
+    return shifts.filter(s =>
+      s.clinicId === selectedClinicId ||          // 本店的更次
+      clinicEmployeeIds.has(s.employeeId)          // ★ 本店員工在別店的更次（跨店借調）
+    )
+  }, [shifts, selectedClinicId, clinicEmployeeIds])
 
   // Monthly work hours per employee (browsed month/week, current clinic)
   const monthlyWorkHours = useMemo(() => {
@@ -1264,7 +1289,7 @@ function getClinicColor(name: string): string {
     const byEmp = new Map<string, { month: number; week: number }>()
     merged.forEach(s => {
       if (s.status === 'CANCELLED') return
-      if (s.clinicId !== selectedClinicId) return
+      // ★ Removed clinic filter — cross-clinic shifts count toward employee hours
       const d = toHKDateStr(new Date(s.date))
       const h = Math.max(0, (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - 1)
       const cur = byEmp.get(s.employeeId) || { month: 0, week: 0 }
@@ -1287,7 +1312,7 @@ function getClinicColor(name: string): string {
     const emp = clinicEmployees.find(e => e.id === selectedEmployeeId)
     if (!emp) return null
     const daySet = new Set(days.map(d => d.dateStr))
-    const empShifts = clinicFilteredShifts.filter(
+    const empShifts = shifts.filter(
       s => s.employeeId === selectedEmployeeId && daySet.has(toHKDateStr(new Date(s.date)))
     )
     const dayCount = new Set(empShifts.map(s => s.date)).size
@@ -1299,7 +1324,7 @@ function getClinicColor(name: string): string {
       return sum + withLunchDeduct
     }, 0)
     return { name: emp.user?.name ?? '?', days: dayCount, hours: Math.round(hours * 10) / 10 }
-  }, [selectedEmployeeId, clinicFilteredShifts, clinicEmployees])
+  }, [selectedEmployeeId, shifts, clinicEmployees])
 
   const renderWeekStats = useCallback((days: { date: Date; label: string; dateStr: string }[]) => {
     const st = statsForDays(days)
@@ -1327,23 +1352,31 @@ function getClinicColor(name: string): string {
       const isPast = shiftDate < todayStart
       const isAbsent = isPast && !s.hasPunch
 
-      // Employee color for shifts, gray for absent indicator
+      // ★ Cross-clinic visual distinction
+      const isAway = s.clinicId !== selectedClinicId
       const empColor = colorFor(s.employeeId)
-      let backgroundColor = empColor
+      let backgroundColor = isAway ? 'transparent' : empColor
       let borderColor = empColor
       if (isAbsent) {
-        backgroundColor = '#e74c3c'
+        backgroundColor = isAway ? 'transparent' : '#e74c3c'
         borderColor = '#c0392b'
       }
 
+      const empName = s.employee?.user?.name || ''
+      const awayClinic = clinics.find(c => c.id === s.clinicId)
+      const awayLabel = awayClinic?.shortName || awayClinic?.name?.slice(0, 2) || '他店'
+
       return {
         id: s.id,
-        title: `${s.employee?.user?.name || ''} ${s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`,
+        title: isAway
+          ? `${empName}@${awayLabel} ${s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`
+          : `${empName} ${s.template?.name || ''}${isAbsent ? ' ⚠️' : ''}`,
         start: s.startTime,
         end: s.endTime,
         backgroundColor,
         borderColor,
-        extendedProps: { shift: s, isAbsent },
+        classNames: isAway ? ['shift-away'] : [],
+        extendedProps: { shift: s, isAbsent, isAway },
       }
     }),
     ...leaveRequests
@@ -1885,6 +1918,11 @@ function getClinicColor(name: string): string {
           padding: 0 4px;
           font-size: 11px;
         }
+        /* ★ Cross-clinic away shift visual */
+        .shift-away {
+          border-style: dashed !important;
+          opacity: .75;
+        }
       `}</style>
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
@@ -2304,7 +2342,7 @@ function getClinicColor(name: string): string {
 
         {/* Shift cards for selected date */}
         {(() => {
-          const dayShifts = clinicFilteredShifts.filter(s => toHKDateStr(new Date(s.date)) === mobileSelectedDate)
+          const dayShifts = shifts.filter(s => toHKDateStr(new Date(s.date)) === mobileSelectedDate)
           const dayLeaves = leaveRequests.filter(lr => {
             const lrStart = toHKDateStr(new Date(lr.startDate))
             const lrEnd = toHKDateStr(new Date(lr.endDate))
@@ -2410,7 +2448,7 @@ function getClinicColor(name: string): string {
                 <tbody>
                   {ovEmployees.ordered.map((emp: any) => (
                     <tr key={emp.id} className="border-t">
-                      <td className="text-left truncate sticky left-0 bg-white">{emp.user?.name ?? '?'}</td>
+                      <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}</td>
                       {mobileWeekDays.map(d => {
                         const cell = getMobileCell(emp.id, d)
                         return <td key={d} className="text-center px-0" style={{ background: cell.bg, fontSize: 9 }}>{cell.label}</td>
@@ -2454,7 +2492,7 @@ function getClinicColor(name: string): string {
               <tbody>
                 {ovEmployees.ordered.map((emp: any) => (
                   <tr key={emp.id} className="border-t">
-                    <td className="text-left sticky left-0 bg-white">{emp.user?.name ?? '?'}</td>
+                    <td className="text-left sticky left-0 bg-white pl-1.5">{emp.user?.name ?? '?'}</td>
                     {mobileWeekDays.map(d => {
                       const cell = getMobileCell(emp.id, d)
                       return <td key={d} className="text-center px-1 py-1 min-w-[80px]"
