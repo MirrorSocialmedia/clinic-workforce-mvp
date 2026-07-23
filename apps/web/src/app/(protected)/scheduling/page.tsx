@@ -192,6 +192,18 @@ export default function SchedulingPage() {
   // Step 7: Overview scope
   const [ovScope, setOvScope] = useState<OvScope>({ type: 'all' })
 
+  // Scope label helper — always uses shortName if available
+  const scopeLabel = useMemo(() => {
+    if (ovScope.type === 'all') return '所有診所'
+    if (ovScope.type === 'clinic') {
+      const c = clinics.find(x => x.id === ovScope.id)
+      return (c as any)?.shortName || c?.name || ovScope.name || ''
+    }
+    // company scope
+    const g = clinics.find(x => x.company?.id === ovScope.id)?.company
+    return (g as any)?.shortName || g?.name || ovScope.name || ''
+  }, [ovScope, clinics])
+
   // UI State
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
@@ -2477,7 +2489,7 @@ function getClinicColor(name: string): string {
           onClick={() => setFullscreenOverview(false)}>
           <div className="sticky top-0 bg-white border-b px-3 py-2 flex justify-between items-center">
             <span className="font-semibold text-sm">
-              {ovScope.type === 'all' ? '所有診所' : ovScope.name} · {mobileWeekLabel}
+              {scopeLabel} · {mobileWeekLabel}
             </span>
             <button className="text-lg" onClick={() => setFullscreenOverview(false)}>✕</button>
           </div>
@@ -2919,7 +2931,7 @@ function getClinicColor(name: string): string {
               {/* Shared header: scope + capsule settings */}
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div className="flex items-center gap-3">
-                  <span>📊 全局總覽（{ovScope.type === 'all' ? '所有診所' : ovScope.name}）</span>
+                  <span>📊 全局總覽（{scopeLabel}）</span>
                   {ovScope.type !== 'all' && (
                     <button onClick={() => setOvScope({ type: 'all' })}
                       style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>

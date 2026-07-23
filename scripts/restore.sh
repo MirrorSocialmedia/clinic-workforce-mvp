@@ -14,6 +14,7 @@ if [ $# -lt 1 ]; then
 fi
 
 BACKUP_FILE="$1"
+APP_CONTAINER="clinic-prod-app"
 DB_CONTAINER="clinic-prod-db"
 DB_NAME="clinic_prod"
 
@@ -56,9 +57,21 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${DB_CONTAINER}$"; then
   exit 1
 fi
 
-# Stop web container to release connections (needed for DROP DATABASE)
-echo "⏸️  停止 web 容器釋放連接..."
-docker compose stop web 2>/dev/null || true
+# ★ Trap to always restore restart policy, even on failure
+trap 'docker update --restart=unless-stopped "${APP_CONTAINER}" >/dev/null 2>&1 || true' EXIT
+
+# Stop app container and disable auto-restart to prevent reconnection
+echo "⏸️  停止 web 容器並關閉自動重啟..."
+docker update --restart=no "${APP_CONTAINER}" >/dev/null 2>&1 || true
+docker stop "${APP_CONTAINER}" >/dev/null 2>&1 || true
+sleep 2
+
+# ★ Force terminate lingering database connections
+echo "🔌 強制斷開殘留連接..."
+docker exec "${DB_CONTAINER}" psql \
+  -U "${DB_USER:-clinic}" \
+  -d postgres \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${DB_NAME}' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
 
 # Drop and recreate database for clean restore
 echo "🗑️  清空舊資料庫..."
@@ -77,8 +90,8 @@ gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql \
   -U "${DB_USER:-clinic}" \
   -d "${DB_NAME}"
 
-# Restart web container
+# Start web container (trap will restore restart policy)
 echo "▶️  重啟 web 容器..."
-docker compose start web 2>/dev/null || true
+docker start "${APP_CONTAINER}" >/dev/null 2>&1 || true
 
 echo "🎉 [$(date)] Restore complete"
