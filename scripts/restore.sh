@@ -90,8 +90,14 @@ gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql \
   -U "${DB_USER:-clinic}" \
   -d "${DB_NAME}"
 
-# Start web container (trap will restore restart policy)
-echo "▶️  重啟 web 容器..."
+# ★ 補跑 migration — 備份的 schema 可能落後於當前代碼
+echo "🔧 補跑 migration (備份的 schema 可能落後於當前代碼)..."
 docker start "${APP_CONTAINER}" >/dev/null 2>&1 || true
+sleep 5
+docker exec "${APP_CONTAINER}" sh -c "npx prisma migrate deploy --schema apps/web/prisma/schema.prisma"
+
+# Restart app to apply schema changes
+echo "🔄 重啟 web 容器..."
+docker restart "${APP_CONTAINER}" >/dev/null 2>&1 || true
 
 echo "🎉 [$(date)] Restore complete"
