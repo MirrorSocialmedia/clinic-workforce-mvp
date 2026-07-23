@@ -92,7 +92,7 @@ export default function TodoPage() {
       ])
 
       setLeaves(leavesRes.leaveRequests || leavesRes.items || [])
-      setCorrections(Array.isArray(correctionsRes) ? correctionsRes : (correctionsRes.punchCorrections || []))
+      setCorrections(Array.isArray(correctionsRes) ? correctionsRes : (correctionsRes.corrections || []))
       setEnrolls(Array.isArray(enrollsRes) ? enrollsRes : [])
       setReviews(Array.isArray(reviewsRes) ? reviewsRes : [])
       const empArr = Array.isArray(empsRes) ? empsRes : (empsRes.employees || [])
@@ -319,8 +319,8 @@ export default function TodoPage() {
           <div className="space-y-3">
             {corrections.map((c: any) => {
               const empName = c.employee?.user?.name || c.employee?.name || '未知員工'
-              const punchTypeLabel = c.punchType === 'IN' ? '上班' : c.punchType === 'OUT' ? '下班' : c.punchType || '補登'
-              const clinicName = c.clinic?.shortName || c.clinic?.name || ''
+              const punchTypeLabel = c.punchType === 'CLOCK_IN' ? '上班' : c.punchType === 'CLOCK_OUT' ? '落班' : c.punchType === 'LUNCH_START' ? '午餐開始' : c.punchType === 'LUNCH_END' ? '午餐結束' : c.punchType || '補登'
+              const clinicName = c.punchRecord?.clinic?.shortName || c.punchRecord?.clinic?.name || ''
               return (
                 <Card key={c.id}>
                   <CardContent className="p-4">

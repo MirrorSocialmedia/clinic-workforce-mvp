@@ -21,6 +21,8 @@ interface PayrollItem {
   splitPay: number | null
   deduction: number | null
   totalPayable: number | null
+  miscAmount: number | null
+  miscDetailJson: string | null
   detailJson: string | null
   confidential?: boolean
   employee: {
@@ -384,6 +386,7 @@ export default function PayrollDetailPage() {
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>加班費</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>拆帳</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>扣款</th>
+              <th style={{ textAlign: 'right', padding: '8px 6px' }}>雜項($)</th>
               <th style={{ textAlign: 'right', padding: '8px 6px' }}>應付總額</th>
               <th style={{ textAlign: 'center', padding: '8px 6px' }}>明細</th>
             </tr>
@@ -429,6 +432,10 @@ export default function PayrollDetailPage() {
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.deduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
                     {fmtCurrency(item.deduction)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#059669' }}
+                    title={item.miscDetailJson ? JSON.parse(item.miscDetailJson).map((d: any) => `${d.description} $${d.amount}`).join('\n') : undefined}>
+                    {item.miscAmount ? `+${item.miscAmount.toLocaleString()}` : '+0'}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
                     {fmtCurrency(item.totalPayable)}
@@ -512,6 +519,13 @@ export default function PayrollDetailPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontSize: 12, color: '#dc3545' }}>扣款</span>
                     <span style={{ fontSize: 13, fontFamily: 'monospace', color: '#dc3545' }}>-{fmtCurrency(item.deduction)}</span>
+                  </div>
+                )}
+                {item.miscAmount && item.miscAmount > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}
+                    title={item.miscDetailJson ? JSON.parse(item.miscDetailJson).map((d: any) => `${d.description} $${d.amount}`).join('\n') : undefined}>
+                    <span style={{ fontSize: 12, color: '#059669' }}>雜項報銷</span>
+                    <span style={{ fontSize: 13, fontFamily: 'monospace', color: '#059669' }}>+${item.miscAmount.toLocaleString()}</span>
                   </div>
                 )}
               </div>

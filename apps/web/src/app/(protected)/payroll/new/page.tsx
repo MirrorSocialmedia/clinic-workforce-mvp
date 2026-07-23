@@ -364,16 +364,17 @@ export default function NewPayrollPage() {
             <div className="hidden md:block overflow-x-auto mt-3">
               <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
                 <colgroup>
-                  <col style={{ width: selectedClinic ? '11%' : '13%' }} />
-                  <col style={{ width: selectedClinic ? '7%' : '8%' }} />
-                  <col style={{ width: selectedClinic ? '6%' : '7%' }} />
-                  <col style={{ width: selectedClinic ? '11%' : '13%' }} />
                   <col style={{ width: selectedClinic ? '10%' : '12%' }} />
-                  <col style={{ width: selectedClinic ? '9%' : '10%' }} />
+                  <col style={{ width: selectedClinic ? '6%' : '7%' }} />
+                  <col style={{ width: selectedClinic ? '5%' : '7%' }} />
+                  <col style={{ width: selectedClinic ? '10%' : '12%' }} />
                   <col style={{ width: selectedClinic ? '8%' : '10%' }} />
-                  {selectedClinic && <col style={{ width: '12%' }} />}
-                  <col style={{ width: selectedClinic ? '12%' : '14%' }} />
-                  <col style={{ width: selectedClinic ? '14%' : '13%' }} />
+                  <col style={{ width: selectedClinic ? '7%' : '9%' }} />
+                  <col style={{ width: selectedClinic ? '7%' : '9%' }} />
+                  <col style={{ width: selectedClinic ? '6%' : '8%' }} />
+                  {selectedClinic && <col style={{ width: '11%' }} />}
+                  <col style={{ width: selectedClinic ? '11%' : '13%' }} />
+                  <col style={{ width: selectedClinic ? '13%' : '12%' }} />
                 </colgroup>
                 <thead>
                   <tr className="border-b-2 border-blue-200">
@@ -382,6 +383,7 @@ export default function NewPayrollPage() {
                     <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50" style={{ width: 36 }}>工時</th>
                     <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">底薪($)</th>
                     <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">MPF($)</th>
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">雜項($)</th>
                     <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">勤工獎($)</th>
                     <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">扣款($)</th>
                     {selectedClinic && (
@@ -395,7 +397,7 @@ export default function NewPayrollPage() {
                   {previewResult.items.map((item: any, i: number) => (
                     <tr key={item.employeeId || i} className="border-b border-blue-100 hover:bg-blue-50/30 transition-colors">
                       {item.error ? (
-                        <td colSpan={selectedClinic ? 10 : 9} className="px-1 py-1.5 text-destructive">
+                        <td colSpan={selectedClinic ? 11 : 10} className="px-1 py-1.5 text-destructive">
                           {item.employeeName}: {item.error}
                         </td>
                       ) : (
@@ -405,6 +407,9 @@ export default function NewPayrollPage() {
                           <td className="px-1 py-1.5 text-center font-mono">{item.workedHours}</td>
                           <td className="px-1 py-1.5 text-center font-mono">{(item.basePay || 0).toLocaleString()}</td>
                           <td className="px-1 py-1.5 text-center font-mono text-red-600">-{((item.detail as any)?.mpf || 0).toLocaleString()}</td>
+                          <td className="px-1 py-1.5 text-center font-mono text-emerald-600" title={((item.detail as any)?.miscDetailJson) ? JSON.parse((item.detail as any).miscDetailJson).map((d: any) => `${d.description} ${d.amount}`).join('\n') : undefined}>
+                            +{((item.detail as any)?.miscAmount || 0).toLocaleString()}
+                          </td>
                           <td className="px-1 py-1.5 text-center font-mono">
                             {(item.detail as any)?.attendanceBonusCancelled ? (
                               <span className="text-muted-foreground">$0（已取消）</span>

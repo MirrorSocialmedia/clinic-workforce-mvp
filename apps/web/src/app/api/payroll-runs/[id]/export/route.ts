@@ -94,6 +94,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
       '加班費': (item.otPay ?? 0).toFixed(2),
       '拆帳': (item.splitPay ?? 0).toFixed(2),
       '扣款': (item.deduction ?? 0).toFixed(2),
+      '雜項': (item.miscAmount ?? 0).toFixed(2),
       '店舖獎金': (item.storeBonus ?? 0).toFixed(2),
       '應付總額': (item.totalPayable ?? 0).toFixed(2),
     }
@@ -104,7 +105,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
   ws['!cols'] = [
     { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 },
     { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 },
+    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 },
   ]
   XLSX.utils.book_append_sheet(wb, ws, '糧單')
 
@@ -120,6 +121,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     { '項目': '總拆帳', '值': visibleItems.reduce((s: number, i: any) => s + (i.splitPay ?? 0), 0).toFixed(2) },
     { '項目': '總店舖獎金', '值': visibleItems.reduce((s: number, i: any) => s + (i.storeBonus ?? 0), 0).toFixed(2) },
     { '項目': '總扣款', '值': visibleItems.reduce((s: number, i: any) => s + (i.deduction ?? 0), 0).toFixed(2) },
+    { '項目': '總雜項', '值': visibleItems.reduce((s: number, i: any) => s + (i.miscAmount ?? 0), 0).toFixed(2) },
     { '項目': '應付總額', '值': visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
   ]
   const ws2 = XLSX.utils.json_to_sheet(summary)
@@ -186,14 +188,15 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string): NextRes
       item.leaveDays.toFixed(1), item.absentDays.toFixed(1),
       `$${(item.basePay ?? 0).toFixed(0)}`, `$${(item.otPay ?? 0).toFixed(0)}`,
       (item.splitPay != null ? `$${(item.splitPay ?? 0).toFixed(0)}` : '-'),
-      `$${(item.deduction ?? 0).toFixed(0)}`, `$${(item.storeBonus ?? 0).toFixed(0)}`,
+      `$${(item.deduction ?? 0).toFixed(0)}`, `+${(item.miscAmount ?? 0).toFixed(0)}`,
+      `$${(item.storeBonus ?? 0).toFixed(0)}`,
       `$${(item.totalPayable ?? 0).toFixed(0)}`,
     ]
   })
 
   const headerLabels = hasChineseFont
-    ? ['姓名', '診所', '工時', '加班', '請假', '缺勤', '基本', '加班費', '拆帳', '扣款', '店舖獎金', '應付']
-    : ['Name', 'Clinic', 'Hours', 'OT', 'Leave', 'Absent', 'Base', 'OT Pay', 'Split', 'Deduct', 'Bonus', 'Total']
+    ? ['姓名', '診所', '工時', '加班', '請假', '缺勤', '基本', '加班費', '拆帳', '扣款', '雜項', '店舖獎金', '應付']
+    : ['Name', 'Clinic', 'Hours', 'OT', 'Leave', 'Absent', 'Base', 'OT Pay', 'Split', 'Deduct', 'Misc', 'Bonus', 'Total']
 
   autoTable(doc, {
     startY: y,

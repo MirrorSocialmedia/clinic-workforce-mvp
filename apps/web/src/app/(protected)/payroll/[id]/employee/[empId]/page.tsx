@@ -22,6 +22,8 @@ interface PayrollItemData {
   deduction: number
   storeBonus: number
   totalPayable: number
+  miscAmount: number
+  miscDetailJson: string | null
   detailJson: string | null
   run: {
     periodMonth: string
@@ -535,6 +537,29 @@ export default function EmployeePayrollDetailPage() {
                 <span className="font-mono font-medium">-{fmtCurrency(mpf)}</span>
               </div>
             )}
+
+            {/* Misc Expenses */}
+            {(() => {
+              const miscAmount = (item as any).miscAmount ?? 0
+              const miscDetailJson = (item as any).miscDetailJson ?? null
+              if (miscAmount <= 0) return null
+              const miscItems = miscDetailJson ? JSON.parse(miscDetailJson) : []
+              return (
+                <>
+                  <div className="flex justify-between items-center text-emerald-600">
+                    <span className="text-sm">雜項報銷</span>
+                    <span className="font-mono font-medium">+{fmtCurrency(miscAmount)}</span>
+                  </div>
+                  {miscItems.length > 0 && (
+                    <div className="text-xs text-muted-foreground pl-3 space-y-0.5">
+                      {miscItems.map((d: any, i: number) => (
+                        <div key={i}>・{d.description} {d.amount}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )
+            })()}
 
             {/* Net Pay */}
             <div className="flex justify-between items-center border-t-2 border-primary pt-3 mt-2 font-bold text-lg">

@@ -301,13 +301,14 @@ export async function GET(req: NextRequest) {
   const corrections = await prisma.punchCorrection.findMany({
     where,
     include: {
+      employee: {
+        include: {
+          user: { select: { id: true, name: true } },
+        },
+      },
       punchRecord: {
         include: {
-          employee: {
-            include: {
-              user: { select: { id: true, name: true } },
-            },
-          },
+          clinic: { select: { id: true, name: true, shortName: true } },
         },
       },
     },

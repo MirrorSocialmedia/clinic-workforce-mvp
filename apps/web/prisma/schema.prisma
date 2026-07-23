@@ -123,8 +123,9 @@ model Clinic {
   punches   PunchRecord[]
   qrTokens  QRToken[]
   dailyHashes DailyHash[]
-  payrollRuns PayrollRun[]
-  homeEmployees Employee[] @relation("HomeClinic")
+  payrollRuns     PayrollRun[]
+  expenseEntries  ExpenseEntry[]
+  homeEmployees   Employee[] @relation("HomeClinic")
 }
 
 // User entity — system login account
@@ -187,9 +188,10 @@ model Employee {
   leaveBalances LeaveBalance[]
   timeBankRecords TimeBank[]
   timeBankEntries TimeBankEntry[]
-  payrollItems  PayrollItem[]
-  faceTemplates FaceTemplate[]
-  auditTargets AuditLog[] @relation("AuditTarget")
+  payrollItems    PayrollItem[]
+  expenseEntries  ExpenseEntry[]
+  faceTemplates   FaceTemplate[]
+  auditTargets    AuditLog[] @relation("AuditTarget")
   joinDate  DateTime
   leaveDate DateTime?
   resignedAt DateTime?
@@ -565,11 +567,34 @@ model PayrollItem {
   deduction    Float       @default(0)
   storeBonus   Float       @default(0) // 店舖營業額獎金（手動輸入，月薪限定）
   totalPayable Float       @default(0)
+  miscAmount   Float       @default(0) // 雜項報銷（從 ExpenseEntry 匯總）
+  miscDetailJson String?    // JSON: [{ amount, description }]
   detailJson   String?     // JSON string for SQLite compat
   createdAt    DateTime    @default(now())
 
   @@unique([runId, employeeId])
   @@index([employeeId, createdAt])
+}
+
+// ============================================================
+// Expense Entry — misc reimbursement items per employee per month
+// ============================================================
+
+model ExpenseEntry {
+  id           String   @id @default(cuid())
+  employeeId   String
+  clinicId     String?
+  periodMonth  String   // "2026-07"
+  amount       Float
+  description  String   // 自由文字: 車費 / 買文具 / 跨店補貼
+  createdBy    String   // 記錄人 userId
+  createdAt    DateTime @default(now())
+
+  employee     Employee @relation(fields: [employeeId], references: [id])
+  clinic       Clinic?  @relation(fields: [clinicId], references: [id])
+
+  @@index([employeeId, periodMonth])
+  @@index([periodMonth, clinicId])
 }
 
 // ============================================================

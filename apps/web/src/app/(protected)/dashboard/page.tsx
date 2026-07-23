@@ -123,7 +123,7 @@ export default function DashboardPage() {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const fromDate = toHKDateStr(sevenDaysAgo).slice(0, 10)
     const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT', 'CREATE_PUNCH',
-      'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT', 'LEAVE_INIT']
+      'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT', 'LEAVE_INIT', 'EXPENSE_CREATE', 'EXPENSE_DELETE']
 
     let promises = sensitiveActions.map(action =>
       fetch(`/api/audit-logs?action=${action}&fromDate=${fromDate}`, { credentials: 'include' })
@@ -154,6 +154,8 @@ export default function DashboardPage() {
         TIMEBANK_ABSENT_DEDUCT: '缺勤扣OT鐘',
         TIMEBANK_REST_TO_ACCOUNT: '休息日還鐘',
         LEAVE_INIT: '初始化假期額度',
+        EXPENSE_CREATE: '新增雜項',
+        EXPENSE_DELETE: '刪除雜項',
       }
       for (const log of allLogs) {
         const actorName = log.actor?.name || log.actorId

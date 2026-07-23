@@ -841,6 +841,8 @@ export async function generatePayrollRun(
           deduction: calcResult.deduction,
           storeBonus: (calcResult.detail as any)?.storeBonus ?? 0,
           totalPayable: calcResult.totalPayable,
+          miscAmount: (calcResult.detail as any)?.miscAmount ?? 0,
+          miscDetailJson: (calcResult.detail as any)?.miscDetailJson ?? null,
           detailJson: JSON.stringify(calcResult.detail),
         })
       } catch (err) {
@@ -850,6 +852,7 @@ export async function generatePayrollRun(
           employeeId: emp.id,
           workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
           basePay: 0, otPay: 0, splitPay: null, deduction: 0, storeBonus: 0, totalPayable: 0,
+          miscAmount: 0,
           detailJson: JSON.stringify({ error: String(err) }),
         })
       }
@@ -2494,7 +2497,14 @@ export async function calculatePayrollWithRules(
   const netPay = Math.max(0, grossPay - mpf)
 
   result.totalPayable = netPay
-  result.detail = { ...result.detail, storeBonus, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100, sickDeduction: sickDeduction.amount, sickEpisodes: sickDeduction.episodes }
+
+  // ★ 雜項報銷 — MPF 扣除後加回
+  const miscEntries = await prisma.expenseEntry.findMany({
+    where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7) },
+  })
+  const miscTotal = miscEntries.reduce((sum: number, e: any) => sum + e.amount, 0)
+  result.totalPayable = Math.max(0, netPay + miscTotal)
+  result.detail = { ...result.detail, storeBonus, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100, sickDeduction: sickDeduction.amount, sickEpisodes: sickDeduction.episodes, miscAmount: miscTotal, miscDetailJson: miscEntries.length > 0 ? JSON.stringify(miscEntries.map((e: any) => ({ amount: e.amount, description: e.description }))) : null }
 
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
