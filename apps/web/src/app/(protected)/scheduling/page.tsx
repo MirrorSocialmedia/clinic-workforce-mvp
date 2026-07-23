@@ -612,7 +612,7 @@ function getClinicColor(name: string): string {
       const leaveTypeMap: Record<string, string> = { ANNUAL: '年', SICK: '病', HALF_SICK: '半病', UNPAID: '無薪', SPECIAL: '特' }
       return { label: leaveTypeMap[lr.leaveType] || '假', bg: '#fef3c7', detail: leaveTypeMap[lr.leaveType] || '假' }
     }
-    return { label: 'R', bg: '#f3f4f6', detail: 'R' }
+    return { label: '—', bg: 'transparent', detail: '' }
   }, [ovShifts, leaveRequests])
 
   // Mobile week label: "M/D–M/D"
@@ -1288,6 +1288,19 @@ function getClinicColor(name: string): string {
     )
   }, [shifts, selectedClinicId, clinicEmployeeIds])
 
+  // ★ 借調員工：在當前店有班、但不是本店的人
+  const borrowedEmployees = useMemo(() => {
+    if (!selectedClinicId) return []
+    const clinicEmpSet = new Set(clinicEmployees.map(e => e.id))
+    // 找當前店有班次、但不在 clinicEmployees 的員工
+    const borrowedIds = new Set(
+      shifts.filter(s => s.clinicId === selectedClinicId && !clinicEmpSet.has(s.employeeId))
+        .map(s => s.employeeId)
+    )
+    if (borrowedIds.size === 0) return []
+    return employees.filter(e => borrowedIds.has(e.id))
+  }, [shifts, selectedClinicId, clinicEmployees, employees])
+
   // Monthly work hours per employee (browsed month/week, current clinic)
   const monthlyWorkHours = useMemo(() => {
     if (!viewRange) return []
@@ -1483,7 +1496,7 @@ function getClinicColor(name: string): string {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
     if (!canManage) return
     const existing = shifts.find(
-      s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr && s.status !== 'CANCELLED'
+      s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr && s.status !== 'CANCELLED' && s.clinicId === selectedClinicId
     )
     if (!existing) return
     const name = employees.find(e => e.id === empId)?.user?.name || empId
@@ -1558,7 +1571,7 @@ function getClinicColor(name: string): string {
                         if (hasLeave) {
                           ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
                         } else {
-                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                          ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                         }
                         ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
                         ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
@@ -1566,7 +1579,7 @@ function getClinicColor(name: string): string {
                       style={{
                         padding: '2px 3px', textAlign: 'center',
                         cursor: canManage ? 'pointer' : 'default',
-                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
+                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
                         transition: 'background 0.15s',
                         verticalAlign: 'middle',
                       }}
@@ -1574,7 +1587,7 @@ function getClinicColor(name: string): string {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
                       }}
                       onMouseLeave={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                       }}
                       onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
@@ -1621,7 +1634,7 @@ function getClinicColor(name: string): string {
                           )
                         })}
                         {(!hasShift && !hasLeave) && (
-                          <span style={{ fontSize: 10, color: '#999', fontWeight: 500 }}>R</span>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
                         )}
                       </div>
                     </td>
@@ -1684,7 +1697,7 @@ function getClinicColor(name: string): string {
                         if (hasLeave) {
                           ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
                         } else {
-                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                          ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                         }
                         ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
                         ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
@@ -1692,7 +1705,7 @@ function getClinicColor(name: string): string {
                       style={{
                         padding: '2px 3px', textAlign: 'center',
                         cursor: canManage ? 'pointer' : 'default',
-                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : '#f0f0f0',
+                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
                         transition: 'background 0.15s',
                         verticalAlign: 'middle',
                       }}
@@ -1700,7 +1713,7 @@ function getClinicColor(name: string): string {
                         if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
                       }}
                       onMouseLeave={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#f0f0f0'
+                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                       }}
                       onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
@@ -1747,7 +1760,7 @@ function getClinicColor(name: string): string {
                           )
                         })}
                         {(!hasShift && !hasLeave) && (
-                          <span style={{ fontSize: 10, color: '#999', fontWeight: 500 }}>R</span>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
                         )}
                       </div>
                     </td>
@@ -1755,6 +1768,138 @@ function getClinicColor(name: string): string {
                 })}
               </tr>
             ))}
+            {/* ★ Borrowed employees — from other clinics but have shifts here */}
+            {borrowedEmployees.length > 0 && (
+              <>
+              <tr>
+                <td colSpan={days.length + 1} style={{ padding: 0 }}>
+                  <div style={{
+                    height: 20, background: '#e6f1fb',
+                    borderTop: '2px solid #378ADD',
+                    display: 'flex', alignItems: 'center',
+                    paddingLeft: 12, fontSize: 11, fontWeight: 600,
+                    color: '#185FA5',
+                  }}>
+                    ↗ 借調 ({borrowedEmployees.length})
+                  </div>
+                </td>
+              </tr>
+              {borrowedEmployees.map(emp => {
+                const homeClinic = clinics.find(c =>
+                  emp.clinics?.some((ec: any) => ec.clinic?.id === c.id)
+                )
+                return (
+                  <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0', background: '#e6f1fb20' }}>
+                    <td style={{
+                      position: 'sticky', left: 0,
+                      background: '#E6F1FB',
+                      padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
+                      fontWeight: 500, fontSize: 11,
+                      color: '#185FA5',
+                    }}>
+                      {emp.user?.name ?? '?'}
+                      <span style={{ fontSize: 10, color: '#378ADD', marginLeft: 4 }}>
+                        · {homeClinic?.shortName || homeClinic?.name?.slice(0, 2) || ''}
+                      </span>
+                    </td>
+                    {days.map((wd, dayIdx) => {
+                      const empShiftsOnDay = ovShifts.filter(s =>
+                        s.employeeId === emp.id &&
+                        toHKDateStr(new Date(s.date)) === wd.dateStr
+                      )
+                      const empLeavesOnDay = leaveRequests.filter(lr =>
+                        lr.employeeId === emp.id &&
+                        leaveCoversDate(lr, wd.dateStr)
+                      )
+                      const hasShift = empShiftsOnDay.length > 0
+                      const hasLeave = empLeavesOnDay.length > 0
+                      return (
+                        <td key={dayIdx}
+                          className="overview-cell"
+                          onPointerUp={() => canManage && handleOverviewDrop(emp.id, wd.dateStr)}
+                          onPointerEnter={e => {
+                            if (!draggingTemplate.current && !draggingLeave.current) return
+                            ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                            ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+                            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                          }}
+                          onPointerLeave={e => {
+                            if (hasShift) return
+                            if (hasLeave) {
+                              ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                            } else {
+                              ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                            }
+                            ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+                            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                          }}
+                          style={{
+                            padding: '2px 3px', textAlign: 'center',
+                            cursor: canManage ? 'pointer' : 'default',
+                            background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
+                            transition: 'background 0.15s',
+                            verticalAlign: 'middle',
+                          }}
+                          onMouseEnter={e => {
+                            if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                          }}
+                          onMouseLeave={e => {
+                            if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                          }}
+                          onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
+                          onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
+                        >
+                          <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 2, flexWrap: 'wrap', minHeight: 18 }}>
+                            {empShiftsOnDay.map((s, si) => {
+                              const tpl = templates.find(t => t.id === s.templateId)
+                              const clinic = clinics.find(c => c.id === s.clinicId)
+                              const parts: string[] = []
+                              if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+                              if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                              if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
+                              const shiftLabel = parts.filter(Boolean).join('·')
+                              const shiftTitle = `${s.employee?.user?.name} ${clinic?.name ?? ''} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
+                              return (
+                                <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
+                                  background: '#E6F1FB', color: '#0C447C', border: '1px dashed #378ADD',
+                                  touchAction: 'none', userSelect: 'none',
+                                }}
+                                  onPointerDown={(e) => shiftDragOutStart(e, s.id, shiftLabel, () => Promise.resolve())}
+                                >
+                                  {shiftLabel}
+                                </div>
+                              )
+                            })}
+                            {empLeavesOnDay.map((lr, li) => {
+                              const leaveColor = lr.leaveType?.color ?? '#9ca3af'
+                              const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
+                              const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
+                              return (
+                                <div key={'l' + li} className="ov-capsule" title={leaveTitle}
+                                  style={{
+                                    background: (leaveColor || '#9ca3af') + '26',
+                                    color: '#1f2937',
+                                    borderLeft: `3px solid ${leaveColor}`,
+                                    touchAction: 'none', userSelect: 'none',
+                                  }}
+                                  onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
+                                >
+                                  {leaveLabel}
+                                </div>
+                              )
+                            })}
+                            {(!hasShift && !hasLeave) && (
+                              <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
+                            )}
+                          </div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+              </>
+            )}
           </tbody>
         </table>
       </div>
