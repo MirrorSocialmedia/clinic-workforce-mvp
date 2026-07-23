@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
-import { PERMISSIONS, ROLE_DEFAULTS } from '@/lib/permissions'
+import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
@@ -478,9 +478,8 @@ export default function AccountsPage() {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {Object.entries(PERMISSIONS).map(([key, label]) => {
                       const defaults = ROLE_DEFAULTS[form.role] || []
-                      const isChecked = defaults.includes(key as any) || form.permGrant.includes(key)
-                      const isDenied = form.permDeny.includes(key)
-                      const effective = isChecked && !isDenied
+                      const inDefault = defaults.includes(key as any)
+                      const effective = hasPermission(form.role, key as any, form.permGrant, form.permDeny)
                       return (
                         <label key={key} style={{
                           display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -492,8 +491,6 @@ export default function AccountsPage() {
                           <input type="checkbox" checked={effective}
                             onChange={e => {
                               const checked = e.target.checked
-                              const defaults = ROLE_DEFAULTS[form.role] || []
-                              const inDefault = defaults.includes(key as any)
                               if (checked) {
                                 // Enable: remove from deny, add to grant if not in default
                                 setForm(f => ({

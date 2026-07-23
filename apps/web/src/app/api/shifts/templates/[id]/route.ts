@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // PUT /api/shifts/templates/[id] — update shift template
@@ -12,7 +12,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = await requireAuth(req, 'PUT', req.url)
+  const auth = await requirePerm(req, 'scheduling')
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
@@ -62,13 +62,9 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = await requireAuth(req, 'DELETE', req.url)
+  const auth = await requirePerm(req, 'scheduling')
   if (isAuthError(auth)) return auth.error
   const { session } = auth
-
-  if (session.role !== 'OWNER') {
-    return NextResponse.json({ error: 'Only owners can delete shift templates' }, { status: 403 })
-  }
 
   const auditCtx = {
     actorId: session.userId,

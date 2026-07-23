@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/shifts/templates — list shift templates (scoped by companyId)
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 // Roles: OWNER
 // ============================================================
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth(req, 'POST', req.url)
+  const auth = await requirePerm(req, 'scheduling')
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import { Settings, X, Trash2, Calendar, ClipboardList, BarChart3, RefreshCw, PlusCircle, Palmtree, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
@@ -12,6 +13,7 @@ import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { hasPermission } from '@/lib/permissions'
 
 // ============================================================
 // Sorting helpers
@@ -157,6 +159,24 @@ function useDragOutDeleteWithUndo(
 // Main Component
 // ============================================================
 export default function SchedulingPage() {
+  const router = useRouter()
+  // Permission guard state
+  const [userRole, setUserRole] = useState<string>('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
+  const [userId, setUserId] = useState<string>('')
+  const [loading, setLoading] = useState(true)
+
+  // Permission guard: redirect if no scheduling permission
+  const canSchedule = userRole
+    ? hasPermission(userRole, 'scheduling' as any, grant, deny)
+    : true
+  useEffect(() => {
+    if (userRole && !canSchedule) {
+      router.push('/my/dashboard')
+    }
+  }, [userRole, canSchedule, router])
+
   // State
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -185,9 +205,6 @@ export default function SchedulingPage() {
   }, [viewRange?.start, selectedClinicId, cardRefreshTick])
   const [templates, setTemplates] = useState<ShiftTemplate[]>([])
   const [changeRequests, setChangeRequests] = useState<ShiftChangeRequest[]>([])
-  const [userRole, setUserRole] = useState<string>('')
-  const [userId, setUserId] = useState<string>('')
-  const [loading, setLoading] = useState(true)
 
   // Step 7: Overview scope
   const [ovScope, setOvScope] = useState<OvScope>({ type: 'all' })
@@ -460,6 +477,8 @@ function getClinicColor(name: string): string {
         const meData = await meRes.json()
         setUserRole(meData.user.role)
         setUserId(meData.user.id)
+        setGrant(meData.user?.grant ?? [])
+        setDeny(meData.user?.deny ?? [])
       }
 
       if (clinicsRes.ok) {
@@ -1457,7 +1476,7 @@ function getClinicColor(name: string): string {
     }
   }
 
-  const canManage = userRole === 'OWNER' || userRole === 'MANAGER'
+  const canManage = userRole ? canSchedule : false
   const isCanRead = userRole === 'OWNER' || userRole === 'MANAGER' || userRole === 'ACCOUNTANT' || userRole === 'EMPLOYEE'
 
   // ============================================================

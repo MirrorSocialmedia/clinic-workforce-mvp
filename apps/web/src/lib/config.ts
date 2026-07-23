@@ -82,16 +82,16 @@ export const CONFIG = {
     'GET /api/clinics/:id/shift-rule-config': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'PUT /api/clinics/:id/shift-rule-config': ['OWNER', 'MANAGER'],
 
-    // Shift routes
+    // Shift routes (EMPLOYEE included — requirePerm enforces scheduling permission)
     'GET /api/shifts': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
-    'POST /api/shifts': ['OWNER', 'MANAGER'],
-    'PUT /api/shifts/:id': ['OWNER', 'MANAGER'],
-    'DELETE /api/shifts/:id': ['OWNER', 'MANAGER'],
-    'POST /api/shifts/validate': ['OWNER', 'MANAGER'],
+    'POST /api/shifts': ['OWNER', 'MANAGER', 'EMPLOYEE'],
+    'PUT /api/shifts/:id': ['OWNER', 'MANAGER', 'EMPLOYEE'],
+    'DELETE /api/shifts/:id': ['OWNER', 'MANAGER', 'EMPLOYEE'],
+    'POST /api/shifts/validate': ['OWNER', 'MANAGER', 'EMPLOYEE'],
     'GET /api/shifts/templates': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
-    'POST /api/shifts/templates': ['OWNER'],
+    'POST /api/shifts/templates': ['OWNER', 'MANAGER'],
     'PUT /api/shifts/templates/:id': ['OWNER', 'MANAGER'],
-    'DELETE /api/shifts/templates/:id': ['OWNER'],
+    'DELETE /api/shifts/templates/:id': ['OWNER', 'MANAGER'],
     'GET /api/shifts/my-schedule': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Shift change request routes

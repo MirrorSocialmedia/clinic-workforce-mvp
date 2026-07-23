@@ -10,6 +10,7 @@ import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
 import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
+import { hasPermission } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
@@ -19,6 +20,8 @@ interface UserData {
   phone: string
   role: Role
   clinics: any[]
+  grant?: string[]
+  deny?: string[]
 }
 
 const ROLE_BADGE_VARIANT: Record<Role, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
@@ -36,6 +39,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
 
   const checkAuth = useCallback(async () => {
     try {
@@ -46,6 +51,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       }
       const data = await res.json()
       setUser(data.user)
+      setGrant(data.user?.grant ?? [])
+      setDeny(data.user?.deny ?? [])
     } catch {
       router.push('/login')
     } finally {
@@ -147,7 +154,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/clinic/qr', label: '診所打卡螢幕', icon: Monitor, roles: mgmtRoles },
     { path: '/dashboard', label: '儀表板', icon: BarChart3, roles: viewRoles },
     { path: '/attendance', label: '考勤', icon: ClipboardList, roles: viewRoles },
-    { path: '/scheduling', label: '排班管理', icon: Calendar, roles: mgmtRoles },
+    { path: '/scheduling', label: '排班管理', icon: Calendar, roles: mgmtRoles, perm: 'scheduling' },
     { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles },
     { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles },
     { path: '/accounts', label: '帳號管理', icon: Users, roles: ['OWNER'] },
@@ -156,7 +163,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/face-review', label: '臉部覆核', icon: FileText, roles: ['OWNER', 'MANAGER'] },
   ]
 
-  const visibleNav = navItems.filter(item => item.roles.includes(user.role as any))
+  const visibleNav = navItems.filter(item => {
+    if (item.roles.includes(user.role as any)) return true
+    if (item.perm) return hasPermission(user.role, item.perm as any, grant, deny)
+    return false
+  })
 
   const isActive = (itemPath: string) => {
     if (!pathname) return false

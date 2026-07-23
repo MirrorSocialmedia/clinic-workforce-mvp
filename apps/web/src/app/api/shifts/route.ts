@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 
 // ============================================================
@@ -112,7 +112,7 @@ export async function GET(req: NextRequest) {
 // Roles: OWNER, MANAGER
 // ============================================================
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth(req, 'POST', req.url)
+  const auth = await requirePerm(req, 'scheduling')
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 

@@ -169,10 +169,12 @@ export function getEmployeeIdForUser(userId: string): string | null {
 /**
  * Permission-based auth check.
  * Checks ROLE_DEFAULTS[role] ± grant/deny overrides stored in user.permissionsJson.
+ * Also performs tokenVersion + status + KIOSK IP checks (same as requireAuth).
  *
  * Usage in API routes (Route Handler):
  *   const auth = requirePerm(req, permKey)
  *   if (auth.error) return auth.error
+ *   const { session, scope } = auth
  */
 export async function requirePerm(
   req: NextRequest,
@@ -187,24 +189,56 @@ export async function requirePerm(
 
   // OWNER always has all permissions
   if (session.role === 'OWNER') {
+    // Still verify tokenVersion + status
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { tokenVersion: true, status: true },
+    })
+    if (!user || user.status !== 'ACTIVE') {
+      return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+    }
+    if (session.tokenVersion !== undefined && user.tokenVersion !== session.tokenVersion) {
+      return { error: NextResponse.json({ error: 'Session invalidated' }, { status: 401 }) }
+    }
     return { session, scope: 'all' }
   }
 
-  // Fetch user for permissionsJson (via shared Prisma singleton)
+  // Fetch user for tokenVersion, status, and permissionsJson
   let grant: string[] = []
   let deny: string[] = []
   try {
     const user = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: { permissionsJson: true },
+      select: { tokenVersion: true, status: true, ipAllowlist: true, permissionsJson: true },
     })
+
+    if (!user || user.status !== 'ACTIVE') {
+      return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+    }
+    if (session.tokenVersion !== undefined && user.tokenVersion !== session.tokenVersion) {
+      return { error: NextResponse.json({ error: 'Session invalidated' }, { status: 401 }) }
+    }
+
+    // KIOSK IP enforcement
+    if (session.role === 'KIOSK' && user.ipAllowlist) {
+      const clientIp = (req.headers.get('cf-connecting-ip')
+        || (req.headers.get('x-forwarded-for') || '').split(',')[0].trim())
+        || 'unknown'
+      const allowedIps = user.ipAllowlist.split(',').map(s => s.trim()).filter(Boolean)
+      if (!allowedIps.some(rule => clientIp === rule || clientIp.startsWith(rule))) {
+        return { error: NextResponse.json({ error: '此帳號僅限店舖網絡登入' }, { status: 403 }) }
+      }
+    }
+
     if (user?.permissionsJson) {
       const parsed = typeof user.permissionsJson === 'string'
         ? JSON.parse(user.permissionsJson) : user.permissionsJson
       grant = (parsed as any).grant || []
       deny = (parsed as any).deny || []
     }
-  } catch {}
+  } catch {
+    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
 
   // Check: base role defaults + grant − deny
   const base = ROLE_DEFAULTS[session.role] || []
@@ -215,7 +249,8 @@ export async function requirePerm(
     return { error: NextResponse.json({ error: `Forbidden (missing permission: ${perm})` }, { status: 403 }) }
   }
 
-  let scope: DataScope = 'all'
+  // Scope: MANAGER → my-clinics; everyone else → self
+  let scope: DataScope = 'self'
   if (session.role === 'MANAGER') scope = 'my-clinics'
 
   return { session, scope }

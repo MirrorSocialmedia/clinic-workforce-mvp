@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
 import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 
@@ -12,7 +12,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = await requireAuth(req, 'PUT', req.url)
+  const auth = await requirePerm(req, 'scheduling')
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
@@ -89,7 +89,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const auth = await requireAuth(req, 'DELETE', req.url)
+  const auth = await requirePerm(req, 'scheduling')
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
