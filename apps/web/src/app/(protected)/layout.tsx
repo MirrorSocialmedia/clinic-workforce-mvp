@@ -191,8 +191,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     )
   }
 
-  // 員工用手機版佈局
-  if (user.role === 'EMPLOYEE') {
+  // 有管理權限的 EMPLOYEE → 走桌面側邊欄；普通 EMPLOYEE → 手機佈局
+  const MGMT_PERMS = ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops']
+  const hasAnyMgmtPerm = MGMT_PERMS.some(p => hasPermission(user.role, p as any, grant, deny))
+
+  if (user.role === 'EMPLOYEE' && !hasAnyMgmtPerm) {
     return (
       <EmployeeMobileLayout user={{ name: user.name, role: user.role }} onLogout={handleLogout}>
         {children}

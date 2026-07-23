@@ -38,10 +38,7 @@ export default function PayrollListPage() {
 
   // Expense card state (persistent card, not modal)
   const [addingExpense, setAddingExpense] = useState(false)
-  const [expMonth, setExpMonth] = useState(() => {
-    const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  })
+  const [expMonth, setExpMonth] = useState(() => toHKDateStr(new Date()).slice(0, 7))
   const [expenses, setExpenses] = useState<any[]>([])
   const [newEmpId, setNewEmpId] = useState('')
   const [newAmount, setNewAmount] = useState('')
@@ -263,7 +260,12 @@ export default function PayrollListPage() {
                   <tbody>
                     {expenses.map((e: any) => (
                       <tr key={e.id} className="border-b last:border-0">
-                        <td className="py-1.5">{e.employee?.user?.name || '未知'}</td>
+                        <td className="py-1.5">
+                          {e.employee?.user?.name || '未知'}
+                          <span className="text-xs text-muted-foreground ml-1">
+                            · {e.employee?.homeClinic?.shortName || e.clinic?.shortName || ''}
+                          </span>
+                        </td>
                         <td className="py-1.5 text-right text-emerald-600">+{e.amount.toLocaleString()}</td>
                         <td className="py-1.5 pl-3">{e.description}</td>
                         <td className="py-1.5 text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('zh-HK')}</td>

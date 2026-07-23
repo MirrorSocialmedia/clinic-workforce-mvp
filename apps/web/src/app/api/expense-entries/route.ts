@@ -18,19 +18,25 @@ export async function GET(req: NextRequest) {
 
   const where: any = {}
   if (periodMonth) where.periodMonth = periodMonth
-  if (clinicId) where.clinicId = clinicId
+  // ❌ 移除 clinicId 查詢參數過濾 — 費用跟人走
 
-  // MANAGER only sees their clinics
+  // MANAGER 範圍改成按員工（保留權限隔離，但不漏掉跨店記錄）
   if (scope === 'my-clinics' && session.clinics && session.clinics.length > 0) {
-    where.clinicId = { in: session.clinics }
+    where.employee = {
+      clinics: { some: { clinicId: { in: session.clinics } } },
+    }
   }
 
   const entries = await prisma.expenseEntry.findMany({
     where,
     include: {
       employee: {
-        include: { user: { select: { id: true, name: true } } },
+        include: {
+          user: { select: { id: true, name: true } },
+          homeClinic: { select: { shortName: true } },
+        },
       },
+      clinic: { select: { shortName: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
