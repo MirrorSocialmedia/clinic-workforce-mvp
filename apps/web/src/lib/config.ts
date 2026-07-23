@@ -62,7 +62,7 @@ export const CONFIG = {
     'GET /api/dashboard': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Employee routes
-    'GET /api/employees': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/employees': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'POST /api/employees': ['OWNER', 'MANAGER'],
     'PUT /api/employees/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/employees/:id': ['OWNER'],
@@ -218,6 +218,11 @@ export const CONFIG = {
 
     // Admin migration routes
     'POST /api/admin/migrate-shift-templates': ['OWNER'],
+
+    // Expense entries routes
+    'GET /api/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'DELETE /api/expense-entries/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)

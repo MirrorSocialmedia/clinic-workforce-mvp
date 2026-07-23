@@ -195,7 +195,7 @@ export default function EmployeePayrollDetailPage() {
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
   const grossPay = salaryDetail.grossPay ?? (basePay - deduction + otPay + ((item.splitPay || 0)) + attendanceBonus + storeBonus + allowances)
   const mpf = salaryDetail.mpf ?? 0
-  const netPay = salaryDetail.netPay ?? item.totalPayable
+  const netPay = item.totalPayable
 
   // Leave & OT
   const monthlyLeaveDays = leaveAndOtDetail.monthlyLeaveDays ?? 0
