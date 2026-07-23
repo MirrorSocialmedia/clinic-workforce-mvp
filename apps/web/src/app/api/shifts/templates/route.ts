@@ -9,8 +9,13 @@ import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = await requireAuth(req, 'GET', req.url)
+  // GET: try permission-based scope first; fall back to general auth (self scope)
+  const authPerm = await requirePerm(req, 'scheduling')
+  const auth = isAuthError(authPerm)
+    ? await requireAuth(req, 'GET', req.url) // no scheduling perm → general self scope
+    : authPerm // has scheduling perm → my-clinics scope
   if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   try {
     const { searchParams } = new URL(req.url)

@@ -250,8 +250,11 @@ export async function requirePerm(
   }
 
   // Scope: MANAGER → my-clinics; everyone else → self
+  // ★ Management-class permissions elevate scope to my-clinics
   let scope: DataScope = 'self'
   if (session.role === 'MANAGER') scope = 'my-clinics'
+  const SCOPE_ELEVATING = ['scheduling', 'attendance_manage', 'leave_approve', 'timebank_ops', 'payroll_view', 'payroll_generate']
+  if (SCOPE_ELEVATING.includes(perm)) scope = 'my-clinics'
 
   return { session, scope }
 }
