@@ -92,6 +92,7 @@ export async function GET(req: NextRequest) {
       payType: payRule?.payType || null,
       baseAmount: payRule?.baseAmount || null,
       homeClinicId: empHomeClinicMap.get(user.id) || null,
+      permissionsJson: user.permissionsJson,
       clinics,
     }
   })

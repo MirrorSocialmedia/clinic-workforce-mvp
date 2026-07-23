@@ -20,6 +20,7 @@ interface Account {
   payConfidential: boolean
   homeClinicId: string | null
   resignedAt: string | null
+  permissionsJson: string | null
   clinics: Clinic[]
 }
 
@@ -187,13 +188,24 @@ export default function AccountsPage() {
   }
 
   const handleEdit = (acc: Account) => {
+    // 解析既有 permissionsJson
+    let grant: string[] = []
+    let deny: string[] = []
+    try {
+      const pj = typeof acc.permissionsJson === 'string'
+        ? JSON.parse(acc.permissionsJson)
+        : acc.permissionsJson
+      grant = pj?.grant ?? []
+      deny = pj?.deny ?? []
+    } catch { /* 舊資料格式異常 → 視為空 */ }
+
     setForm({ name: acc.name, phone: acc.phone, email: acc.email || '',
       password: '', role: acc.role, clinicIds: acc.clinics?.map(c => c.id) || [],
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
       baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
       payConfidential: acc.payConfidential || false,
       annualLeave: '12', employeeId: acc.employeeId,
-      homeClinicId: acc.homeClinicId || '', permGrant: [], permDeny: [] })
+      homeClinicId: acc.homeClinicId || '', permGrant: grant, permDeny: deny })
     setEditingId(acc.id); setShowForm(true)
   }
 
