@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
       where: userWhere,
       include: {
         clinics: { include: { clinic: true } },
-        employee: { include: { payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1 } } },
+        employee: { include: { payRules: { where: { isActive: true }, orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }], take: 1 } } },
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -91,6 +91,7 @@ export async function GET(req: NextRequest) {
       joinDate: emp?.joinDate ? toHKDateStr(new Date(emp.joinDate)) : null,
       payType: payRule?.payType || null,
       baseAmount: payRule?.baseAmount || null,
+      configJson: payRule?.configJson || null,
       homeClinicId: empHomeClinicMap.get(user.id) || null,
       permissionsJson: user.permissionsJson,
       clinics,

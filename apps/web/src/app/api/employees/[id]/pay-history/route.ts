@@ -16,7 +16,7 @@ export async function GET(
 
   const payRules = await prisma.payRule.findMany({
     where: { employeeId: params.id },
-    orderBy: { effectiveFrom: 'desc' },
+    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
   })
 
   return NextResponse.json({ payRules })

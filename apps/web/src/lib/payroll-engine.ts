@@ -867,7 +867,7 @@ export async function generatePayrollRun(
               { effectiveTo: { gte: monthStartForRule } },
             ],
           },
-          orderBy: { effectiveFrom: 'desc' },
+          orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
         })
 
         let calcResult
@@ -1292,7 +1292,7 @@ export async function calculateTimeBank(
         effectiveFrom: { lte: monthEnd },
         OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
       },
-      orderBy: { effectiveFrom: 'desc' },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     })
     if (rule?.configJson) {
       const cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
@@ -1857,7 +1857,7 @@ export async function grantMonthlyRestDays(
 export async function ensureRestDayGranted(employeeId: string, targetDate: Date, db: any): Promise<void> {
   const rule = await db.payRule.findFirst({
     where: { employeeId, isActive: true },
-    orderBy: { effectiveFrom: 'desc' },
+    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
   })
   const config = rule?.configJson
     ? (typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson)

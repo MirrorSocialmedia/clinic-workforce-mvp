@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
         employeeId: user.employee?.id,
         isActive: true,
       },
-      orderBy: { effectiveFrom: 'desc' },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     })
     if (activeRule?.configJson) {
       const cfg = typeof activeRule.configJson === 'string'

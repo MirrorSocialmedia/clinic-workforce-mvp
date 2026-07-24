@@ -32,7 +32,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   for (const e of emps) {
     const rule = await prisma.payRule.findFirst({
       where: { employeeId: e.id, isActive: true },
-      orderBy: { effectiveFrom: 'desc' },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     })
     // ★ 兼職（HOURLY）不發休息日
     if (rule?.payType === 'HOURLY') continue

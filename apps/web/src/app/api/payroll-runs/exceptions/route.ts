@@ -211,7 +211,7 @@ export async function GET(req: NextRequest) {
       effectiveFrom: { lte: monthEnd },
       OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
     },
-    orderBy: { effectiveFrom: 'desc' },
+    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
   })
   const otMinByEmp = new Map<string, number>()
   const otRoundByEmp = new Map<string, number>()

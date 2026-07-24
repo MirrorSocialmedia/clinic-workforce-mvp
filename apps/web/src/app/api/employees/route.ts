@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
         },
         payRules: {
           where: { isActive: true },
-          orderBy: { effectiveFrom: 'desc' },
+          orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
           take: 1,
           select: { payType: true },
         },

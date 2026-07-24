@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
             employeeId: emp.id,
             isActive: true,
           },
-          orderBy: { effectiveFrom: 'desc' },
+          orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
         })
 
         let result

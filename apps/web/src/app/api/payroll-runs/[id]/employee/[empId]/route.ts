@@ -32,7 +32,7 @@ export async function GET(
           payConfidential: true,
           user: { select: { id: true, name: true, phone: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
-          payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1 },
+          payRules: { where: { isActive: true }, orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }], take: 1 },
         },
       },
     },

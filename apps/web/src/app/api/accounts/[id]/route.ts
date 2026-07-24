@@ -233,31 +233,58 @@ export async function PUT(
         })
 
         if (payType !== undefined) {
-          // 如果前端沒送 configJson，自動生成新格式 modularConfig
-          const defaultModularConfig = {
+          const effDate = effectiveFrom ? new Date(effectiveFrom) : new Date()
+
+          // ① 檢查是否真的有變更——無變更就不建新規則（防連按兩次）
+          const current = await prisma.payRule.findFirst({
+            where: { employeeId: employee.id, isActive: true },
+            orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+          })
+          const incomingConfig = configJson || (current?.configJson ?? JSON.stringify({
             base_type: payType === 'MONTHLY' ? 'monthly' : 'hourly',
             ...(payType === 'MONTHLY' ? { monthly_salary: baseAmount ?? 50000 } : { hourly_rate: baseAmount ?? 180 }),
             modifiers: {
-              working_days: {
-                basis: 'scheduled',
-                rest_days: [6, 0], // 週六日為休息日
-                count_public_holidays: true,
-              },
+              working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
               deduction: { basis: 'statutory' },
               mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
             },
-          }
+          }))
+          const unchanged = current
+            && current.payType === payType
+            && current.baseAmount === (baseAmount ?? null)
+            && current.configJson === incomingConfig
 
-          await prisma.payRule.create({
-            data: {
-              employeeId: employee.id,
-              payType,
-              baseAmount: baseAmount ?? null,
-              configJson: configJson || JSON.stringify(defaultModularConfig),
-              effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
-              createdBy: session.userId,
-            },
-          })
+          if (!unchanged) {
+            // ② 關閉所有舊 active 規則（防多筆 active）
+            await prisma.payRule.updateMany({
+              where: { employeeId: employee.id, isActive: true },
+              data: { isActive: false, effectiveTo: new Date(effDate.getTime() - 86400000) },
+            })
+
+            // ③ 創建新規則——configJson 缺失時繼承現有，不用殘缺預設覆蓋
+            const newRule = await prisma.payRule.create({
+              data: {
+                employeeId: employee.id,
+                payType,
+                baseAmount: baseAmount ?? null,
+                configJson: incomingConfig,
+                effectiveFrom: effDate,
+                createdBy: session.userId,
+              },
+            })
+
+            // 審計記錄 PayRule 變更
+            await prisma.auditLog.create({
+              data: {
+                actorId: session.userId,
+                action: 'PAY_RULE_UPDATE_VIA_ACCOUNTS',
+                entity: 'PayRule',
+                entityId: newRule.id,
+                targetEmployeeId: employee.id,
+                afterJson: JSON.stringify({ payType, baseAmount, configJson: incomingConfig, effectiveFrom: effDate }),
+              } as any,
+            })
+          }
         }
       }
 

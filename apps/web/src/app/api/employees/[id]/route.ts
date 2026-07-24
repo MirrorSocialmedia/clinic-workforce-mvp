@@ -24,7 +24,7 @@ export async function GET(
         include: { clinic: { select: { id: true, name: true } } },
         orderBy: [{ isPrimary: 'desc' }, { joinedAt: 'asc' }],
       },
-      payRules: { orderBy: { effectiveFrom: 'desc' } },
+      payRules: { orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }] },
       shifts: {
         orderBy: { date: 'desc' },
         take: 10,

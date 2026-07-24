@@ -17,6 +17,7 @@ interface Account {
   joinDate: string | null
   payType: string | null
   baseAmount: number | null
+  configJson: string | null
   payConfidential: boolean
   homeClinicId: string | null
   resignedAt: string | null
@@ -69,6 +70,7 @@ export default function AccountsPage() {
     name: '', phone: '', email: '', password: '', role: 'EMPLOYEE' as Role,
     clinicIds: [] as string[], joinDate: '',
     payType: 'HOURLY', baseAmount: '',
+    configJson: null as string | null,
     assignEmployee: true,
     payConfidential: false,
     annualLeave: '12',  // string — parse on submit
@@ -158,6 +160,7 @@ export default function AccountsPage() {
         body.joinDate = form.joinDate || undefined
         body.payType = form.payType
         body.baseAmount = form.baseAmount ? parseFloat(form.baseAmount) : null
+        body.configJson = form.configJson || undefined
         body.assignEmployee = form.assignEmployee
         body.payConfidential = form.payConfidential
         body.annualLeave = form.assignEmployee ? (parseFloat(form.annualLeave) || 0) : undefined
@@ -181,7 +184,7 @@ export default function AccountsPage() {
 
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
-      clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', assignEmployee: true,
+      clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', configJson: null, assignEmployee: true,
       payConfidential: false, annualLeave: '12', employeeId: null, homeClinicId: '',
       permGrant: [], permDeny: [] })
     setShowForm(false); setEditingId(null); setShowPwd(false)
@@ -202,7 +205,8 @@ export default function AccountsPage() {
     setForm({ name: acc.name, phone: acc.phone, email: acc.email || '',
       password: '', role: acc.role, clinicIds: acc.clinics?.map(c => c.id) || [],
       joinDate: acc.joinDate || '', payType: acc.payType || 'HOURLY',
-      baseAmount: acc.baseAmount?.toString() || '', assignEmployee: !!acc.employeeId,
+      baseAmount: acc.baseAmount?.toString() || '', configJson: acc.configJson || null,
+      assignEmployee: !!acc.employeeId,
       payConfidential: acc.payConfidential || false,
       annualLeave: '12', employeeId: acc.employeeId,
       homeClinicId: acc.homeClinicId || '', permGrant: grant, permDeny: deny })
