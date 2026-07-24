@@ -7,6 +7,7 @@ import { fmtDateTime, fmtDate, fmtTime, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
+import { ADWCard } from '@/components/ADWCard'
 
 interface PayrollItemData {
   id: string
@@ -25,6 +26,9 @@ interface PayrollItemData {
   miscAmount: number
   miscDetailJson: string | null
   detailJson: string | null
+  adwUsed: number | null
+  maternityPay: number
+  paternityPay: number
   run: {
     periodMonth: string
     clinic: { id: string; name: string } | null
@@ -572,6 +576,16 @@ export default function EmployeePayrollDetailPage() {
                 ⚠️ 原值 ${detail.rawTotal}（缺勤過多），已歸零
               </div>
             )}
+
+            {/* ADW computation basis (EO 713 evidence) */}
+            {item.adwUsed && (
+              <div className="text-xs text-muted-foreground border-t pt-2 mt-2">
+                本期假期薪酬按《僱傭條例》12個月平均工資計算：
+                ADW = ${item.adwUsed.toFixed(2)}/天
+                <br />
+                法定假日 / 年假 = ADW × 100% | 病假 / 產假 / 侍產假 = ADW × 80%
+              </div>
+            )}
           </div>
         </div>
 
@@ -829,6 +843,13 @@ export default function EmployeePayrollDetailPage() {
         </>
         )}
       </Card>
+
+      {/* ADW Card (payroll detail — compact mode) */}
+      <ADWCard
+        employeeId={item.employeeId}
+        asOfDate={`${periodMonth}-01`}
+        compact
+      />
 
       {/* Punch Records Table */}
       {punches.length > 0 && (

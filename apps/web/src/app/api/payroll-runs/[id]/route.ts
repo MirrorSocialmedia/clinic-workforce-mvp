@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
+import { snapshotWagesForADW } from '@/lib/adw'
 
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
@@ -104,6 +105,11 @@ export async function PUT(
         data: { ...(status && { status }), ...(notes !== undefined && { notes }) },
         include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
       })
+
+      // ★★ DRAFT → FINALIZED: auto-snapshot wage records for ADW
+      if (status === 'FINALIZED' && run.status === 'DRAFT') {
+        await snapshotWagesForADW(tx, params.id, auditCtx.actorId)
+      }
 
       // Manual audit inside same transaction
       await tx.auditLog.create({
