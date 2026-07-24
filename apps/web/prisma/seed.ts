@@ -339,8 +339,10 @@ async function main() {
 
   const leaveTypes = await Promise.all([
     // 病假 (user-managed; systemKey for payroll; no quota)
-    prisma.leaveType.create({
-      data: { name: '病假', isPaid: true, systemKey: 'SICK', color: '#2196F3' },
+    prisma.leaveType.upsert({
+      where: { systemKey: 'SICK' },
+      update: {},
+      create: { name: '病假', isPaid: true, systemKey: 'SICK', color: '#2196F3' },
     }),
     prisma.leaveType.create({
       data: { name: '事假', isPaid: false, annualQuota: null, color: '#FF9800' },
@@ -348,11 +350,20 @@ async function main() {
     prisma.leaveType.create({
       data: { name: '無薪假', isPaid: false, annualQuota: null, color: '#9E9E9E' },
     }),
-    prisma.leaveType.create({
-      data: { name: '產假', isPaid: true, annualQuota: 10, color: '#E91E63' },
+    prisma.leaveType.upsert({
+      where: { systemKey: 'MATERNITY' },
+      update: {},
+      create: { name: '產假', isPaid: true, systemKey: 'MATERNITY', annualQuota: 10, color: '#E91E63' },
     }),
-    prisma.leaveType.create({
-      data: { name: '侍產假', isPaid: true, annualQuota: 5, color: '#9C27B0' },
+    prisma.leaveType.upsert({
+      where: { systemKey: 'PATERNITY' },
+      update: {},
+      create: { name: '侍產假', isPaid: true, systemKey: 'PATERNITY', annualQuota: 5, color: '#9C27B0' },
+    }),
+    prisma.leaveType.upsert({
+      where: { systemKey: 'WORK_INJURY' },
+      update: {},
+      create: { name: '工傷假', isPaid: true, systemKey: 'WORK_INJURY', color: '#f44336' },
     }),
     // 請假類型：扣額度、不缺勤、取消勤工、無限額度
     prisma.leaveType.create({

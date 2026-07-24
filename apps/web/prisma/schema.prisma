@@ -200,6 +200,7 @@ model Employee {
   notes     String?
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
+  wageHistory   WageHistory[]
 }
 
 // Join table: Employee ↔ Clinic
@@ -451,7 +452,7 @@ model LeaveType {
   id           String   @id @default(cuid())
   clinicId     String?  // null = global type
   name         String   // 年假/病假/無薪假
-  systemKey    String?  @unique // 'REST_DAY' | 'ANNUAL_LEAVE' | 'OT_LEAVE' | null
+  systemKey    String?  @unique // 'REST_DAY' | 'ANNUAL_LEAVE' | 'OT_LEAVE' | 'SICK' | 'MATERNITY' | 'PATERNITY' | 'WORK_INJURY' | null
   isPaid       Boolean  @default(true)
   annualQuota  Float?   // 年度額度（天）
   color        String?  // UI 顏色標記
@@ -570,6 +571,18 @@ model PayrollItem {
   miscAmount   Float       @default(0) // 雜項報銷（從 ExpenseEntry 匯總）
   miscDetailJson String?    // JSON: [{ amount, description }]
   detailJson   String?     // JSON string for SQLite compat
+
+  /// ★ EO 定義的「工資」總額（供 ADW 用；不含雜項報銷、不含 MPF 僱主供款）
+  eoWage        Float       @default(0)
+  /// ★ 該月剔除天數與款額（713 條例要求）
+  excludedDays  Int         @default(0)
+  excludedWage  Float       @default(0)
+  /// ★ 計算時實際使用的 ADW（存檔備查）
+  adwUsed       Float?
+  /// ★ 產假 / 侍產假薪酬
+  maternityPay  Float       @default(0)
+  paternityPay  Float       @default(0)
+
   createdAt    DateTime    @default(now())
 
   @@unique([runId, employeeId])
@@ -683,4 +696,37 @@ model FaceEnrollCode {
   expiresAt   DateTime
   usedAt      DateTime?
   createdBy   String
+}
+
+// ============================================================
+// Wage History — pre-system historical wages for ADW calculation
+// ============================================================
+
+/// 系統啟用前的歷史工資記錄（供 ADW 計算用）
+/// 只在客戶上線時由 OWNER 初始化填入，之後由 PayrollItem 自動累積
+model WageHistory {
+  id          String   @id @default(cuid())
+  employeeId  String
+  periodMonth String   // "2025-08"
+
+  /// 該月「工資」總額（EO 定義：底薪+佣金+拆帳+獎金+津貼，不含 MPF 僱主供款）
+  totalWage    Float
+
+  /// 該月「不計算在內」的天數（休息日+法定假日+年假+病假+產假等）
+  excludedDays Int      @default(0)
+  /// 該月「不計算在內」的款額（上述期間已支付的款項）
+  excludedWage Float    @default(0)
+
+  /// 該月曆日數（28-31，用於分母）
+  calendarDays Int
+
+  note        String?   // 資料來源備註（如「由舊系統匯入」）
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, periodMonth])
+  @@index([employeeId, periodMonth])
 }

@@ -223,6 +223,15 @@ export const CONFIG = {
     'GET /api/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'DELETE /api/expense-entries/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
+    // Wage history routes (ADW compliance)
+    'GET /api/wage-history': ['OWNER', 'ACCOUNTANT'],
+    'POST /api/wage-history': ['OWNER'],
+    'PUT /api/wage-history/:id': ['OWNER'],
+    'DELETE /api/wage-history/:id': ['OWNER'],
+
+    // ADW preview
+    'GET /api/adw/preview': ['OWNER', 'ACCOUNTANT'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
