@@ -11,6 +11,8 @@ import { prisma, basePrisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
 import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
+import { calculateADW } from './adw'
+import type { ADWResult } from './adw'
 
 // ------------------------------------------------------------------
 // Types
@@ -110,6 +112,8 @@ function getOtThreshold(config: PayRuleConfig, payType: PayType): number {
 /**
  * HK Statutory Daily Wage = monthlySalary × 12 ÷ 365
  * Per HK Employment Ordinance
+ * @deprecated Use calculateADW from './adw' for EO-compliant ADW-based calculations.
+ * Kept as fallback when ADW data is insufficient.
  */
 function statutoryDailyWage(monthlySalary: number): number {
   return (monthlySalary * 12) / 365
@@ -390,16 +394,73 @@ export async function computeSickDeduction(
   if (cur.length) episodes.push(cur)
 
   // 逐段結算（只扣落在本月的日子；檔位看整段）
-  const dailyRate = statutoryDailyWage(monthlySalary)
+  // ★ Phase 3: ADW compliance — ≥4 days uses 4/5 ADW; <4 days uses statutoryDailyWage (no sick pay entitlement)
   const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
   let amount = 0
-  const detail: Array<{ range: string; totalDays: number; daysInMonth: number; rate: number }> = []
+  const detail: Array<{
+    range: string;
+    totalDays: number;
+    daysInMonth: number;
+    rate: number;
+    adw?: number;
+    adwSource?: 'calculated' | 'fallback';
+    warnings?: string[];
+  }> = []
   for (const ep of episodes) {
     const daysInMonth = ep.filter(d => d >= mStart && d <= mEnd).length
     if (daysInMonth === 0) continue
-    const rate = ep.length >= 4 ? 0.2 : 1  // ≥4 連續：扣 1/5（支付 4/5）；<4：全扣
-    amount += daysInMonth * dailyRate * rate * deductionRate
-    detail.push({ range: `${ep[0]}~${ep[ep.length - 1]}`, totalDays: ep.length, daysInMonth, rate })
+
+    if (ep.length >= 4) {
+      // ★ EO: ≥4 consecutive days = 疾病日 → 4/5 ADW
+      // Use 【該段首天】 as specified date
+      const episodeFirstDay = new Date(ep[0] + 'T00:00:00+08:00')
+      let adwValue: number
+      let adwSource: 'calculated' | 'fallback' = 'calculated'
+      let adwWarnings: string[] = []
+
+      try {
+        const adwResult = await calculateADW(db, employeeId, episodeFirstDay)
+        adwValue = adwResult.adw
+        adwWarnings = adwResult.warnings || []
+        if (adwValue <= 0) {
+          throw new Error('ADW calculated as 0 or negative')
+        }
+      } catch (err) {
+        // Fallback to statutoryDailyWage if ADW data is insufficient
+        adwValue = statutoryDailyWage(monthlySalary)
+        adwSource = 'fallback'
+        adwWarnings = [`ADW fallback: ${err instanceof Error ? err.message : String(err)}`]
+      }
+
+      // Base pay already includes these days proportionally
+      // If 4/5 ADW < what's already in base, no additional deduction needed
+      // If 4/5 ADW > what's in base, we pay the full base (no extra deduction)
+      const sicknessAllowance = adwValue * 0.8 * daysInMonth
+      const alreadyInBase = statutoryDailyWage(monthlySalary) * daysInMonth
+      const deductionAmount = Math.max(0, alreadyInBase - sicknessAllowance)
+      amount += deductionAmount * deductionRate
+
+      detail.push({
+        range: `${ep[0]}~${ep[ep.length - 1]}`,
+        totalDays: ep.length,
+        daysInMonth,
+        rate: 0.8,
+        adw: adwValue,
+        adwSource,
+        warnings: adwWarnings.length > 0 ? adwWarnings : undefined,
+      })
+    } else {
+      // <4 consecutive days: no sick pay entitlement → full deduction (statutoryDailyWage)
+      const dailyRate = statutoryDailyWage(monthlySalary)
+      amount += daysInMonth * dailyRate * deductionRate
+
+      detail.push({
+        range: `${ep[0]}~${ep[ep.length - 1]}`,
+        totalDays: ep.length,
+        daysInMonth,
+        rate: 1,
+      })
+    }
   }
   return { amount: Math.round(amount * 100) / 100, episodes: detail }
 }
@@ -844,6 +905,8 @@ export async function generatePayrollRun(
           miscAmount: (calcResult.detail as any)?.miscAmount ?? 0,
           miscDetailJson: (calcResult.detail as any)?.miscDetailJson ?? null,
           detailJson: JSON.stringify(calcResult.detail),
+          // ★ Phase 3: ADW used for this payroll calculation (audit trail)
+          adwUsed: (calcResult.detail as any)?.adwUsed ?? null,
         })
       } catch (err) {
         console.error(`Failed payroll for ${emp.id}:`, err)
@@ -2489,8 +2552,44 @@ export async function calculatePayrollWithRules(
     ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma)
     : { amount: 0, episodes: [] }
 
+  // ★ Phase 3: ADW calculation for holiday/leave adjustments
+  // Calculate ADW once for the month; use month start as specified date
+  let adwUsed: number | null = null
+  let adwWarnings: string[] = []
+  let adwSource: 'calculated' | 'fallback' | null = null
+  const monthlySalary = (result.detail as any)?.monthlySalary ?? 0
+  const workingDays = (result.detail as any)?.workingDays ?? 0
+  const currentDailyRate = workingDays > 0 ? monthlySalary / workingDays : 0
+
+  if (monthlySalary > 0) {
+    try {
+      const adwResult = await calculateADW(prisma, employeeId, monthStart)
+      adwUsed = adwResult.adw
+      adwWarnings = adwResult.warnings || []
+      adwSource = 'calculated'
+      if (adwUsed <= 0) throw new Error('ADW calculated as 0 or negative')
+    } catch (err) {
+      // Fallback: use statutory daily wage
+      adwUsed = statutoryDailyWage(monthlySalary)
+      adwSource = 'fallback'
+      adwWarnings = [`ADW fallback: ${err instanceof Error ? err.message : String(err)}`]
+    }
+  }
+
+  // ★ ADW adjustment for public holidays & paid leave (100% ADW per EO)
+  // Current basePay uses monthlySalary/workingDays as effective daily rate
+  // If ADW > currentDailyRate, we need to top up the difference for holiday/leave days
+  const adwAdjustment = (() => {
+    if (adwUsed == null || adwUsed <= currentDailyRate) return 0
+    const holidayDays = workData.publicHolidayDays
+    const paidLeaveDays = workData.paidLeaveDays // already excludes SICK (filtered in collectWorkData)
+    const adjustmentDays = holidayDays + paidLeaveDays
+    if (adjustmentDays <= 0) return 0
+    return (adwUsed - currentDailyRate) * adjustmentDays
+  })()
+
   result.splitPay = effectiveSplitPay // 顯示與計算統一
-  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount
+  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? adwAdjustment : 0)
 
   const mpfConfig = mods.mpf || config.mpf || { enabled: false }
   const mpf = calcMPF(grossPay, mpfConfig)
@@ -2503,7 +2602,23 @@ export async function calculatePayrollWithRules(
     where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7) },
   })
   const miscTotal = miscEntries.reduce((sum: number, e: any) => sum + e.amount, 0)
-  result.detail = { ...result.detail, storeBonus, grossPay: Math.round(grossPay * 100) / 100, mpf, mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05, netPay: Math.round(netPay * 100) / 100, sickDeduction: sickDeduction.amount, sickEpisodes: sickDeduction.episodes, miscAmount: miscTotal, miscDetailJson: miscEntries.length > 0 ? JSON.stringify(miscEntries.map((e: any) => ({ amount: e.amount, description: e.description }))) : null }
+  result.detail = {
+    ...result.detail,
+    storeBonus,
+    grossPay: Math.round(grossPay * 100) / 100,
+    mpf,
+    mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05,
+    netPay: Math.round(netPay * 100) / 100,
+    sickDeduction: sickDeduction.amount,
+    sickEpisodes: sickDeduction.episodes,
+    miscAmount: miscTotal,
+    miscDetailJson: miscEntries.length > 0 ? JSON.stringify(miscEntries.map((e: any) => ({ amount: e.amount, description: e.description }))) : null,
+    // ★ Phase 3: ADW info for audit/compliance
+    adwUsed,
+    adwSource,
+    adwWarnings: adwWarnings.length > 0 ? adwWarnings : undefined,
+    adwAdjustment: adwSource ? Math.round(adwAdjustment * 100) / 100 : 0,
+  }
 
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
