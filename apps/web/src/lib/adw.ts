@@ -271,9 +271,9 @@ export async function snapshotWagesForADW(
     // Sick days: sum daysInMonth from sickEpisodes
     const sickEpisodes: Array<{ daysInMonth?: number; rate?: number }> = salary.sickEpisodes || detail.sickEpisodes || []
     const sickDays = sickEpisodes.reduce((s: number, e: any) => s + (e.daysInMonth ?? 0), 0)
-    // Maternity / paternity days (not yet in engine; come from PayrollItem columns)
-    const maternityDays = (detail as any).maternityDays ?? 0
-    const paternityDays = (detail as any).paternityDays ?? 0
+    // Maternity / paternity days (Phase 4: engine writes to detail)
+    const maternityDays = (detail as any).maternityDaysInMonth ?? (detail as any).maternityDays ?? 0
+    const paternityDays = (detail as any).paternityDaysInMonth ?? (detail as any).paternityDays ?? 0
 
     const excludedDays = restAndHolidayDays + leaveTaken + sickDays + maternityDays + paternityDays
 

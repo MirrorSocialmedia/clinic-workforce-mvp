@@ -13,6 +13,7 @@ import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hk
 import type { PayType, RunStatus } from '@prisma/client'
 import { calculateADW } from './adw'
 import type { ADWResult } from './adw'
+import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 
 // ------------------------------------------------------------------
 // Types
@@ -907,6 +908,9 @@ export async function generatePayrollRun(
           detailJson: JSON.stringify(calcResult.detail),
           // ★ Phase 3: ADW used for this payroll calculation (audit trail)
           adwUsed: (calcResult.detail as any)?.adwUsed ?? null,
+          // ★ Phase 4: Maternity / Paternity pay
+          maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
+          paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
         })
       } catch (err) {
         console.error(`Failed payroll for ${emp.id}:`, err)
@@ -2552,6 +2556,107 @@ export async function calculatePayrollWithRules(
     ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma)
     : { amount: 0, episodes: [] }
 
+  // ★ Phase 4: Maternity / Paternity pay (EO Ch.6 / Ch.7)
+  const [maternityLeaves, paternityLeaves] = await Promise.all([
+    prisma.leaveRequest.findMany({
+      where: {
+        employeeId,
+        status: 'APPROVED',
+        leaveType: { systemKey: 'MATERNITY' },
+        startDate: { lte: monthEnd },
+        endDate: { gte: monthStart },
+      },
+    }),
+    prisma.leaveRequest.findMany({
+      where: {
+        employeeId,
+        status: 'APPROVED',
+        leaveType: { systemKey: 'PATERNITY' },
+        startDate: { lte: monthEnd },
+        endDate: { gte: monthStart },
+      },
+    }),
+  ])
+
+  // --- Maternity pay ---
+  let maternityPay = 0
+  let maternityPayDetail: any = null
+  let maternityDaysInMonth = 0
+  let maternityStart: Date | null = null
+  let maternityEnd: Date | null = null
+
+  if (maternityLeaves.length > 0) {
+    // Use the first maternity leave record's startDate as the official maternity start
+    const firstMaternity = maternityLeaves[0]
+    maternityStart = new Date(firstMaternity.startDate)
+    maternityEnd = new Date(firstMaternity.endDate)
+
+    // Collect all dates in this month that fall within maternity leave
+    const maternityDays: Date[] = []
+    for (const leave of maternityLeaves) {
+      const effStart = new Date(Math.max(new Date(leave.startDate).getTime(), monthStart.getTime()))
+      const effEnd = new Date(Math.min(new Date(leave.endDate).getTime(), monthEnd.getTime()))
+      let d = new Date(effStart)
+      d.setHours(0, 0, 0, 0)
+      const endOfDay = new Date(effEnd)
+      endOfDay.setHours(23, 59, 59, 999)
+      while (d <= endOfDay) {
+        maternityDays.push(new Date(d))
+        d.setDate(d.getDate() + 1)
+      }
+    }
+
+    if (maternityDays.length > 0) {
+      maternityDaysInMonth = maternityDays.length
+      const matResult = await calculateMaternityPay(prisma, employeeId, maternityStart, maternityDays)
+      maternityPay = matResult.amount
+      maternityPayDetail = {
+        adw: matResult.adw,
+        days: maternityDaysInMonth,
+        capped: matResult.capped,
+        governmentClaimable: matResult.governmentClaimable,
+        startDate: toHKDateStr(maternityStart),
+        endDate: toHKDateStr(maternityEnd),
+        warnings: matResult.warnings.length > 0 ? matResult.warnings : undefined,
+      }
+    }
+  }
+
+  // --- Paternity pay ---
+  let paternityPay = 0
+  let paternityPayDetail: any = null
+  let paternityDaysInMonth = 0
+
+  if (paternityLeaves.length > 0) {
+    const firstPaternity = paternityLeaves[0]
+    const firstPaternityDay = new Date(firstPaternity.startDate)
+
+    // Count paternity days in this month
+    for (const leave of paternityLeaves) {
+      const effStart = new Date(Math.max(new Date(leave.startDate).getTime(), monthStart.getTime()))
+      const effEnd = new Date(Math.min(new Date(leave.endDate).getTime(), monthEnd.getTime()))
+      let d = new Date(effStart)
+      d.setHours(0, 0, 0, 0)
+      const endOfDay = new Date(effEnd)
+      endOfDay.setHours(23, 59, 59, 999)
+      while (d <= endOfDay) {
+        paternityDaysInMonth++
+        d.setDate(d.getDate() + 1)
+      }
+    }
+
+    if (paternityDaysInMonth > 0) {
+      const patResult = await calculatePaternityPay(prisma, employeeId, firstPaternityDay, paternityDaysInMonth)
+      paternityPay = patResult.amount
+      paternityPayDetail = {
+        adw: patResult.adw,
+        days: paternityDaysInMonth,
+        startDate: toHKDateStr(firstPaternityDay),
+        warnings: patResult.warnings.length > 0 ? patResult.warnings : undefined,
+      }
+    }
+  }
+
   // ★ Phase 3: ADW calculation for holiday/leave adjustments
   // Calculate ADW once for the month; use month start as specified date
   let adwUsed: number | null = null
@@ -2579,17 +2684,32 @@ export async function calculatePayrollWithRules(
   // ★ ADW adjustment for public holidays & paid leave (100% ADW per EO)
   // Current basePay uses monthlySalary/workingDays as effective daily rate
   // If ADW > currentDailyRate, we need to top up the difference for holiday/leave days
-  const adwAdjustment = (() => {
+  // ★ Phase 4: Exclude public holidays falling within maternity leave (EO: only maternity pay applies)
+  const adwAdjustmentValue = (async (): Promise<number> => {
     if (adwUsed == null || adwUsed <= currentDailyRate) return 0
-    const holidayDays = workData.publicHolidayDays
-    const paidLeaveDays = workData.paidLeaveDays // already excludes SICK (filtered in collectWorkData)
-    const adjustmentDays = holidayDays + paidLeaveDays
+
+    let holidayDays = workData.publicHolidayDays
+
+    // Exclude public holidays falling within maternity leave (EO: only maternity pay, no separate holiday pay)
+    if (maternityStart && maternityEnd) {
+      const rawHolidays = await getPublicHolidayDays(monthStart, monthEnd)
+      const payableHolidays = filterHolidaysExcludingMaternity(
+        rawHolidays,
+        maternityStart,
+        maternityEnd,
+      ).length
+      holidayDays = payableHolidays
+    }
+
+    const adjustmentDays = holidayDays + workData.paidLeaveDays
     if (adjustmentDays <= 0) return 0
     return (adwUsed - currentDailyRate) * adjustmentDays
   })()
 
+  const resolvedAdwAdjustment = await adwAdjustmentValue
+
   result.splitPay = effectiveSplitPay // 顯示與計算統一
-  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? adwAdjustment : 0)
+  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay
 
   const mpfConfig = mods.mpf || config.mpf || { enabled: false }
   const mpf = calcMPF(grossPay, mpfConfig)
@@ -2617,7 +2737,14 @@ export async function calculatePayrollWithRules(
     adwUsed,
     adwSource,
     adwWarnings: adwWarnings.length > 0 ? adwWarnings : undefined,
-    adwAdjustment: adwSource ? Math.round(adwAdjustment * 100) / 100 : 0,
+    adwAdjustment: adwSource ? Math.round(resolvedAdwAdjustment * 100) / 100 : 0,
+    // ★ Phase 4: Maternity / Paternity pay
+    maternityPay,
+    maternityPayDetail: maternityPayDetail || null,
+    maternityDaysInMonth,
+    paternityPay,
+    paternityPayDetail: paternityPayDetail || null,
+    paternityDaysInMonth,
   }
 
   // 5. Task 2: Count monthly leave days

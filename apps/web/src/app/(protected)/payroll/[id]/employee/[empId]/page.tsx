@@ -194,10 +194,15 @@ export default function EmployeePayrollDetailPage() {
   const attendanceBonus = salaryDetail.attendanceBonus ?? detail.attendanceBonus ?? 0
   const sickDeduction = salaryDetail.sickDeduction ?? detail.sickDeduction ?? 0
   const sickEpisodes = salaryDetail.sickEpisodes ?? detail.sickEpisodes ?? []
+  // ★ Phase 4: Maternity / Paternity pay
+  const maternityPay = item.maternityPay ?? detail.maternityPay ?? 0
+  const maternityPayDetail = detail.maternityPayDetail ?? null
+  const paternityPay = item.paternityPay ?? detail.paternityPay ?? 0
+  const paternityPayDetail = detail.paternityPayDetail ?? null
   const storeBonus = salaryDetail.storeBonus ?? item.storeBonus ?? 0
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
-  const grossPay = salaryDetail.grossPay ?? (basePay - deduction + otPay + ((item.splitPay || 0)) + attendanceBonus + storeBonus + allowances)
+  const grossPay = salaryDetail.grossPay ?? (basePay - deduction + otPay + ((item.splitPay || 0)) + attendanceBonus + storeBonus + allowances + maternityPay + paternityPay)
   const mpf = salaryDetail.mpf ?? 0
   const netPay = item.totalPayable
 
@@ -511,6 +516,46 @@ export default function EmployeePayrollDetailPage() {
                     ).join('; ')}
                   </span>
                 </span>
+              </div>
+            )}
+
+            {/* ★ Phase 4: Maternity Pay */}
+            {maternityPay > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm">產假薪酬</span>
+                <span className="font-mono font-medium text-blue-600">
+                  +{fmtCurrency(maternityPay)}
+                  <span className="block text-xs text-blue-500 font-normal mt-1" style={{ fontFamily: 'sans-serif' }}>
+                    {maternityPayDetail ? (
+                      <>
+                        ADW ${maternityPayDetail.adw.toFixed(2)} × 80% × {maternityPayDetail.days}天
+                        {maternityPayDetail.capped && '（第11-14週已觸及$80,000上限）'}
+                      </>
+                    ) : ''}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* ★ Phase 4: Paternity Pay */}
+            {paternityPay > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm">侍產假薪酬</span>
+                <span className="font-mono font-medium text-blue-600">
+                  +{fmtCurrency(paternityPay)}
+                  <span className="block text-xs text-blue-500 font-normal mt-1" style={{ fontFamily: 'sans-serif' }}>
+                    {paternityPayDetail ? (
+                      `ADW $${paternityPayDetail.adw.toFixed(2)} × 80% × ${paternityPayDetail.days}天`
+                    ) : ''}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* ★ Phase 4.7: Government claim hint for weeks 11-14 */}
+            {maternityPay > 0 && maternityPayDetail?.governmentClaimable && maternityPayDetail.governmentClaimable > 0 && (
+              <div className="text-xs text-blue-700 bg-blue-50 rounded px-2 py-1">
+                ℹ️ 第11-14週產假薪酬 ${maternityPayDetail.governmentClaimable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 可向政府「發還易」申請發還
               </div>
             )}
 
