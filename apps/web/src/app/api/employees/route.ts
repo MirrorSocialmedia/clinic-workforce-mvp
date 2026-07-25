@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
 
 // ============================================================
 // GET /api/employees — list employees with filters
@@ -191,7 +192,7 @@ export async function POST(req: NextRequest) {
             create: {
               payType,
               baseAmount: baseAmount ?? null,
-              configJson: configJson || null,
+              configJson: configJson || JSON.stringify(buildDefaultPayConfig(payType, baseAmount)),
               effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
               createdBy: session.userId,
             },
@@ -211,7 +212,11 @@ export async function POST(req: NextRequest) {
       })
 
       return NextResponse.json({ success: true, employee: result }, { status: 201 })
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        return NextResponse.json(
+          { error: '薪資規則正在更新中，請重新整理後再試' }, { status: 409 })
+      }
       console.error('Create employee error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }

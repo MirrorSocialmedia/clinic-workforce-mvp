@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { toHKDateStr } from '@/lib/hk-date'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
 
 // GET /api/accounts — merged User + Employee list
 export async function GET(req: NextRequest) {
@@ -177,26 +178,13 @@ export async function POST(req: NextRequest) {
         }
 
         if (payType) {
-          // 如果前端沒送 configJson，自動生成新格式 modularConfig
-          const defaultModularConfig = {
-            base_type: payType === 'MONTHLY' ? 'monthly' : 'hourly',
-            ...(payType === 'MONTHLY' ? { monthly_salary: baseAmount ?? 50000 } : { hourly_rate: baseAmount ?? 180 }),
-            modifiers: {
-              working_days: {
-                basis: 'scheduled',
-                rest_days: [6, 0], // 週六日為休息日
-                count_public_holidays: true,
-              },
-              deduction: { basis: 'statutory' },
-              mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
-            },
-          }
-
+          const finalConfig = configJson
+            || JSON.stringify(buildDefaultPayConfig(payType, baseAmount))
           empData.payRules = {
             create: {
               payType,
               baseAmount: baseAmount ?? null,
-              configJson: configJson || JSON.stringify(defaultModularConfig),
+              configJson: finalConfig,
               effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
               createdBy: session.userId,
             },

@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
 
 export async function GET(
   req: NextRequest,
@@ -240,50 +241,58 @@ export async function PUT(
             where: { employeeId: employee.id, isActive: true },
             orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
           })
-          const incomingConfig = configJson || (current?.configJson ?? JSON.stringify({
-            base_type: payType === 'MONTHLY' ? 'monthly' : 'hourly',
-            ...(payType === 'MONTHLY' ? { monthly_salary: baseAmount ?? 50000 } : { hourly_rate: baseAmount ?? 180 }),
-            modifiers: {
-              working_days: { basis: 'scheduled', rest_days: [6, 0], count_public_holidays: true },
-              deduction: { basis: 'statutory' },
-              mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
-            },
-          }))
+          // 冇 active 就攞最近一筆（包括已停用），最後先落 default
+          const fallback = current ?? await prisma.payRule.findFirst({
+            where: { employeeId: employee.id, configJson: { not: null } },
+            orderBy: [{ createdAt: 'desc' }],
+          })
+          const incomingConfig = configJson
+            || fallback?.configJson
+            || JSON.stringify(buildDefaultPayConfig(payType, baseAmount))
           const unchanged = current
             && current.payType === payType
             && current.baseAmount === (baseAmount ?? null)
             && current.configJson === incomingConfig
 
           if (!unchanged) {
-            // ② 關閉所有舊 active 規則（防多筆 active）
-            await prisma.payRule.updateMany({
-              where: { employeeId: employee.id, isActive: true },
-              data: { isActive: false, effectiveTo: new Date(effDate.getTime() - 86400000) },
-            })
+            try {
+              // ② 包 $transaction 防止並發產生兩筆 active
+              const newRule = await prisma.$transaction(async (tx) => {
+                await tx.payRule.updateMany({
+                  where: { employeeId: employee.id, isActive: true },
+                  data: { isActive: false, effectiveTo: new Date(effDate.getTime() - 86400000) },
+                })
+                return tx.payRule.create({
+                  data: {
+                    employeeId: employee.id,
+                    payType,
+                    baseAmount: baseAmount ?? null,
+                    configJson: incomingConfig,
+                    effectiveFrom: effDate,
+                    isActive: true,
+                    createdBy: session.userId,
+                  },
+                })
+              })
 
-            // ③ 創建新規則——configJson 缺失時繼承現有，不用殘缺預設覆蓋
-            const newRule = await prisma.payRule.create({
-              data: {
-                employeeId: employee.id,
-                payType,
-                baseAmount: baseAmount ?? null,
-                configJson: incomingConfig,
-                effectiveFrom: effDate,
-                createdBy: session.userId,
-              },
-            })
-
-            // 審計記錄 PayRule 變更
-            await prisma.auditLog.create({
-              data: {
-                actorId: session.userId,
-                action: 'PAY_RULE_UPDATE_VIA_ACCOUNTS',
-                entity: 'PayRule',
-                entityId: newRule.id,
-                targetEmployeeId: employee.id,
-                afterJson: JSON.stringify({ payType, baseAmount, configJson: incomingConfig, effectiveFrom: effDate }),
-              } as any,
-            })
+              // 審計記錄 PayRule 變更（保持 transaction 外，用 newRule.id）
+              await prisma.auditLog.create({
+                data: {
+                  actorId: session.userId,
+                  action: 'PAY_RULE_UPDATE_VIA_ACCOUNTS',
+                  entity: 'PayRule',
+                  entityId: newRule.id,
+                  targetEmployeeId: employee.id,
+                  afterJson: JSON.stringify({ payType, baseAmount, configJson: incomingConfig, effectiveFrom: effDate }),
+                } as any,
+              })
+            } catch (e: any) {
+              if (e?.code === 'P2002') {
+                return NextResponse.json(
+                  { error: '薪資規則正在更新中，請重新整理後再試' }, { status: 409 })
+              }
+              throw e
+            }
           }
         }
       }

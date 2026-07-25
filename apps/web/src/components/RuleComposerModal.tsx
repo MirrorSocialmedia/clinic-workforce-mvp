@@ -25,43 +25,7 @@ const PAY_TYPE_TO_BASE_TYPE: Record<string, BaseType> = {
   SPLIT: 'split',
 }
 
-// ── Default modifier values ──────────────────────────────────────
-
-const DEFAULT_MODIFIERS: PayRuleConfigModular['modifiers'] = {
-  attendance_bonus: {
-    amount: 500,
-    cancel_if: {
-      late_minutes_exceed: 30,
-      late_is_cumulative: true,
-      any_unplanned_leave: true,
-      any_absence: true,
-    },
-  },
-  overtime: {
-    mode: 'time_off',
-    multiplier: 1.5,
-    threshold: 8,
-    ot_min_minutes: 0,
-    ot_round_minutes: 0,
-  },
-  late_policy: {
-    deduct_salary: false,
-    affects_bonus: true,
-    offset_from_time_bank: true,
-  },
-  time_bank: {
-    negative_carry: 'next_month',
-  },
-  working_days: {
-    rest_days: [6, 0], // 週六日為休息日
-    count_public_holidays: true,
-  },
-  lunch_break: {
-    enabled: false,
-    defaultMinutes: 60,
-    minMinutes: 30,
-  },
-}
+import { DEFAULT_MODIFIERS } from '@/lib/pay-rule-defaults'
 
 function buildDefaultConfig(baseType: BaseType): PayRuleConfigModular {
   const config: PayRuleConfigModular = { base_type: baseType }

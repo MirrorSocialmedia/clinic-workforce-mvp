@@ -59,34 +59,42 @@ export async function POST(
 
     const effectiveDate = new Date(`${effectiveFrom}T00:00:00+08:00`)
 
-    const payRule = await prisma.$transaction(async (tx) => {
-      const deactivated = await tx.payRule.updateMany({
-        where: {
-          employeeId: employee.id,
-          isActive: true,
-          // 移除 effectiveFrom 條件 — 所有 active 規則一律停用
-        },
-        data: {
-          isActive: false,
-          effectiveTo: new Date(effectiveDate.getTime() - 86400000),
-        },
+    try {
+      const payRule = await prisma.$transaction(async (tx) => {
+        const deactivated = await tx.payRule.updateMany({
+          where: {
+            employeeId: employee.id,
+            isActive: true,
+            // 移除 effectiveFrom 條件 — 所有 active 規則一律停用
+          },
+          data: {
+            isActive: false,
+            effectiveTo: new Date(effectiveDate.getTime() - 86400000),
+          },
+        })
+
+        const rule = await tx.payRule.create({
+          data: {
+            employeeId: employee.id,
+            payType,
+            baseAmount: baseAmount ?? null,
+            configJson: finalConfigJson,
+            effectiveFrom: effectiveDate,
+            createdBy: session.userId,
+            isActive: true,
+          },
+        })
+
+        return rule
       })
 
-      const rule = await tx.payRule.create({
-        data: {
-          employeeId: employee.id,
-          payType,
-          baseAmount: baseAmount ?? null,
-          configJson: finalConfigJson,
-          effectiveFrom: effectiveDate,
-          createdBy: session.userId,
-          isActive: true,
-        },
-      })
-
-      return rule
-    })
-
-    return NextResponse.json({ success: true, payRule }, { status: 201 })
+      return NextResponse.json({ success: true, payRule }, { status: 201 })
+    } catch (e: any) {
+      if (e?.code === 'P2002') {
+        return NextResponse.json(
+          { error: '薪資規則正在更新中，請重新整理後再試' }, { status: 409 })
+      }
+      throw e
+    }
   })
 }
