@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
 
   return runWithAudit(auditCtx, async () => {
     try {
-      const { name, address, config, shortName, companyId, latitude, longitude, geoRadius } = await req.json()
+      const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color } = await req.json()
 
       if (!name) {
         return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -46,11 +46,16 @@ export async function POST(req: NextRequest) {
       if (!companyId) {
         return NextResponse.json({ error: 'companyId is required' }, { status: 400 })
       }
+      const HEX = /^#[0-9a-fA-F]{6}$/
+      if (color !== undefined && color !== null && !HEX.test(String(color))) {
+        return NextResponse.json({ error: '顏色格式必須為 #RRGGBB' }, { status: 400 })
+      }
 
       const clinic = await prisma.clinic.create({
         data: {
           name,
           shortName: shortName || null,
+          color: color || null,
           address: address || null,
           latitude: latitude != null ? Number(latitude) : null,
           longitude: longitude != null ? Number(longitude) : null,

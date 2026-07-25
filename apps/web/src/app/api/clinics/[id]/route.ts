@@ -43,13 +43,19 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   return runWithAudit(auditCtx, async () => {
     const id = params.id
-    const { name, address, config, shortName, companyId, latitude, longitude, geoRadius } = await req.json()
+    const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color } = await req.json()
+
+    const HEX = /^#[0-9a-fA-F]{6}$/
+    if (color !== undefined && color !== null && !HEX.test(String(color))) {
+      return NextResponse.json({ error: '顏色格式必須為 #RRGGBB' }, { status: 400 })
+    }
 
     const clinic = await prisma.clinic.update({
       where: { id },
       data: {
         ...(name && { name }),
         ...(shortName !== undefined && { shortName }),
+        ...(color !== undefined && { color: color || null }),
         ...(address !== undefined && { address }),
         ...(config && { config: JSON.stringify(config) }),
         ...(companyId !== undefined && { companyId: companyId || null }),

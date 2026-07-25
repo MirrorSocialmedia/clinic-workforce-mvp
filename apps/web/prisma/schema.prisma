@@ -106,6 +106,7 @@ model Clinic {
   id        String   @id @default(cuid())
   name      String
   shortName String?  // 店鋪簡稱（1-2字：旺/仁/銅/荃/元/沙）
+  color     String?  // 更表膠囊顏色 #RRGGBB，null = 灰色預設
   address   String?
   latitude  Float?   // 店舖緯度
   longitude Float?   // 店舖經度

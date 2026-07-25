@@ -3,11 +3,13 @@
 import { useEffect, useState } from 'react'
 import { fmtDate } from '@/lib/hk-date'
 import { compressToDataUrl } from '@/lib/image'
+import { textOn } from '@/lib/color'
 
 interface Clinic {
   id: string
   name: string
   shortName: string | null
+  color: string | null
   address: string | null
   companyId: string | null
   company: { id: string; name: string } | null
@@ -30,7 +32,7 @@ export default function ClinicsPage() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', address: '', shortName: '', companyId: '' })
+  const [form, setForm] = useState({ name: '', address: '', shortName: '', companyId: '', color: '#95a5a6' })
   const [error, setError] = useState('')
   const [editingClinicId, setEditingClinicId] = useState<string | null>(null)
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null)
@@ -117,7 +119,7 @@ export default function ClinicsPage() {
       setError(data.error || '建立失敗')
       return
     }
-    setForm({ name: '', address: '', shortName: '', companyId: '' })
+    setForm({ name: '', address: '', shortName: '', companyId: '', color: '#95a5a6' })
     setShowForm(false)
     fetchAll()
   }
@@ -129,6 +131,19 @@ export default function ClinicsPage() {
       credentials: 'include',
     })
     if (res.ok) fetchAll()
+  }
+
+  const saveClinicColor = async (id: string, color: string) => {
+    const res = await fetch(`/api/clinics/${id}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color: color || null }),
+    })
+    if (!res.ok) {
+      alert('顏色儲存失敗')
+      fetchAll()
+    }
   }
 
   const handleEditClinic = async (clinic: Clinic) => {
@@ -378,6 +393,24 @@ export default function ClinicsPage() {
               />
             </div>
             <div className="form-group">
+              <label>更表膠囊顏色</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="color"
+                  value={form.color}
+                  onChange={e => setForm({ ...form, color: e.target.value })}
+                  style={{ width: 40, height: 32, padding: 0, border: '1px solid #ddd',
+                           borderRadius: 4, cursor: 'pointer', background: 'none' }}
+                />
+                <span style={{
+                  padding: '2px 8px', borderRadius: 4, fontSize: 12,
+                  background: form.color, color: textOn(form.color),
+                }}>
+                  {form.shortName || form.name.slice(0, 2) || '預覽'}·早
+                </span>
+              </div>
+            </div>
+            <div className="form-group">
               <label>地址</label>
               <input
                 value={form.address}
@@ -411,6 +444,7 @@ export default function ClinicsPage() {
                   <th>公司</th>
                   <th>名稱</th>
                   <th>簡稱</th>
+                  <th>顏色</th>
                   <th>地址</th>
                   <th>建立時間</th>
                   <th>操作</th>
@@ -422,6 +456,30 @@ export default function ClinicsPage() {
                     <td className="text-sm">{clinic.company?.name || '—'}</td>
                     <td style={{ fontWeight: 500 }}>{clinic.name}</td>
                     <td className="text-muted">{clinic.shortName || '—'}</td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input
+                          type="color"
+                          value={clinic.color || '#95a5a6'}
+                          onChange={e => setClinics(prev => prev.map(c =>
+                            c.id === clinic.id ? { ...c, color: e.target.value } : c))}
+                          onBlur={e => saveClinicColor(clinic.id, e.target.value)}
+                          style={{ width: 34, height: 26, padding: 0, border: '1px solid #ddd',
+                                   borderRadius: 4, cursor: 'pointer', background: 'none' }}
+                          title="更表膠囊顏色"
+                        />
+                        <span style={{
+                          padding: '1px 6px', borderRadius: 3, fontSize: 11,
+                          background: clinic.color || '#95a5a6',
+                          color: textOn(clinic.color),
+                        }}>
+                          {clinic.shortName || clinic.name.slice(0, 2)}·早
+                        </span>
+                        {clinic.color && (
+                          <button className="btn btn-sm" onClick={() => saveClinicColor(clinic.id, '')}>清除</button>
+                        )}
+                      </div>
+                    </td>
                     <td className="text-muted">{clinic.address || '—'}</td>
                     <td className="text-sm">{fmtDate(clinic.createdAt)}</td>
                     <td>
@@ -450,6 +508,12 @@ export default function ClinicsPage() {
                   <div className="font-semibold mb-1">{clinic.name}</div>
                   <div className="text-xs text-muted-foreground mb-1">
                     {clinic.company?.name || '—'} · {clinic.shortName || ''}
+                    <span style={{
+                      display: 'inline-block', marginLeft: 4, padding: '0 4px', borderRadius: 2, fontSize: 10,
+                      background: clinic.color || '#95a5a6', color: textOn(clinic.color),
+                    }}>
+                      {clinic.shortName || clinic.name.slice(0, 2)}
+                    </span>
                   </div>
                   <div className="text-xs text-muted-foreground mb-2">{clinic.address || '—'}</div>
                   <div className="flex gap-2">

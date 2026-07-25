@@ -9,6 +9,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK } from '@/lib/hk-date'
+import { textOn } from '@/lib/color'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
@@ -183,6 +184,16 @@ export default function SchedulingPage() {
   const [viewRange, setViewRange] = useState<{start: string, end: string} | null>(null)
   const [clinics, setClinics] = useState<Clinic[]>([])
   const [selectedClinicId, setSelectedClinicId] = useState<string | null>(null)
+
+  // Clinic color map from DB
+  const clinicColorMap = useMemo(
+    () => new Map(clinics.map((c: any) => [c.id, c.color || '#95a5a6'])),
+    [clinics]
+  )
+  const shiftColor = useCallback(
+    (s: any) => clinicColorMap.get(s.clinicId) || '#95a5a6',
+    [clinicColorMap]
+  )
   const [employees, setEmployees] = useState<Employee[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
   const [cardShifts, setCardShifts] = useState<Shift[]>([])
@@ -315,6 +326,12 @@ export default function SchedulingPage() {
   const [undoToast, setUndoToast] = useState<{ label: string; restore: () => Promise<void> } | null>(null)
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // 📷 Screenshot share state
+  const exportRef = useRef<HTMLDivElement>(null)
+  const [shareBlob, setShareBlob] = useState<Blob | null>(null)
+  const [shareUrl, setShareUrl] = useState<string | null>(null)
+  const [shareBusy, setShareBusy] = useState(false)
+
   // 🔧 Fix #3a: 抓當前選中員工的假期餘額
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
   useEffect(() => {
@@ -444,21 +461,11 @@ const CLINIC_ABBR: Record<string, string> = {
   '銅鑼灣診所': '銅', '旺角診所': '旺', '荃灣診所': '荃',
   '仁愛診所': '仁', '沙田診所': '沙', '元朗診所': '元',
 }
-const CLINIC_COLOR: Record<string, string> = {
-  '銅鑼灣診所': '#e74c3c', '旺角診所': '#27ae60', '荃灣診所': '#8e44ad',
-  '仁愛診所': '#2980b9', '沙田診所': '#e67e22', '元朗診所': '#16a085',
-}
 function getShiftCode(shift: Shift): string {
   const clinicName = shift.clinic?.name || ''
   const abbr = CLINIC_ABBR[clinicName] || clinicName?.[0] || '?'
   const tplName = shift.template?.shortName || shift.template?.name || '班'
   return `${abbr}-${tplName}`
-}
-function getShiftColor(shift: Shift): string {
-  return CLINIC_COLOR[shift.clinic?.name || ''] || '#95a5a6'
-}
-function getClinicColor(name: string): string {
-  return CLINIC_COLOR[name] || '#95a5a6'
 }
 
   // ============================================================
@@ -634,7 +641,7 @@ function getClinicColor(name: string): string {
       if (tpl?.shortName || tpl?.name) parts.push(tpl.shortName || tpl.name)
       if (clinic) parts.push(clinic.shortName || clinic.name?.slice(0, 2) || '')
       const shiftLabel = parts.join('·') || tpl?.name || clinic?.shortName || '班'
-      const color = getClinicColor(clinic?.name || '')
+      const color = shiftColor(s)
       return { label: shiftLabel, bg: color, detail: shiftLabel }
     }
     if (empLeavesOnDay.length > 0) {
@@ -643,7 +650,7 @@ function getClinicColor(name: string): string {
       return { label: leaveTypeMap[lr.leaveType] || '假', bg: '#fef3c7', detail: leaveTypeMap[lr.leaveType] || '假' }
     }
     return { label: '—', bg: 'transparent', detail: '' }
-  }, [ovShifts, leaveRequests])
+  }, [ovShifts, leaveRequests, shiftColor])
 
   // Mobile week label: "M/D–M/D"
   const mobileWeekLabel = useMemo(() => {
@@ -1536,6 +1543,122 @@ function getClinicColor(name: string): string {
   }
 
   // ============================================================
+  // 📷 Screenshot capture helpers
+  // ============================================================
+  const renderExportRows = (list: any[]) => list.map(emp => (
+    <tr key={emp.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+      <td style={{ padding: '8px 10px', fontWeight: 500, color: '#111827', whiteSpace: 'nowrap' }}>
+        {emp.user?.name ?? '?'}
+      </td>
+      {weekDays.map((wd, i) => {
+        const ss = ovShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === wd.dateStr)
+        const ls = leaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, wd.dateStr))
+        return (
+          <td key={i} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle' }}>
+            {ss.map((s, si) => {
+              const tpl = templates.find(t => t.id === s.templateId)
+              const clinic = clinics.find(c => c.id === s.clinicId)
+              const parts: string[] = []
+              if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+              if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+              if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
+              const bg = shiftColor(s)
+              return (
+                <div key={'s' + si} style={{
+                  display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
+                  fontSize: 14, background: bg, color: textOn(bg), whiteSpace: 'nowrap',
+                }}>
+                  {parts.filter(Boolean).join('·')}
+                </div>
+              )
+            })}
+            {ls.map((lr, li) => {
+              const lc = lr.leaveType?.color ?? '#9ca3af'
+              return (
+                <div key={'l' + li} style={{
+                  display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
+                  fontSize: 14, background: lc + '26', color: '#1f2937',
+                  borderLeft: `3px solid ${lc}`, whiteSpace: 'nowrap',
+                }}>
+                  {lr.leaveType?.name}
+                </div>
+              )
+            })}
+            {ss.length === 0 && ls.length === 0 && (
+              <span style={{ fontSize: 14, color: '#9ca3af' }}>—</span>
+            )}
+          </td>
+        )
+      })}
+    </tr>
+  ))
+
+  const handleCaptureWeek = async () => {
+    if (!exportRef.current || shareBusy) return
+    setShareBusy(true)
+    try {
+      const html2canvas = (await import('html2canvas')).default
+      const canvas = await html2canvas(exportRef.current, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        logging: false,
+        windowWidth: 1200,
+      })
+      const blob: Blob | null = await new Promise(r => canvas.toBlob(r, 'image/png'))
+      if (!blob) throw new Error('toBlob 失敗')
+      setShareBlob(blob)
+      setShareUrl(URL.createObjectURL(blob))
+    } catch (e) {
+      console.error('截圖失敗', e)
+      alert('截圖失敗，請重試')
+    } finally {
+      setShareBusy(false)
+    }
+  }
+
+  const closeShare = () => {
+    if (shareUrl) URL.revokeObjectURL(shareUrl)
+    setShareUrl(null)
+    setShareBlob(null)
+  }
+
+  const shareFileName = () =>
+    `更表_${weekDays[0]?.dateStr ?? ''}_${weekDays[6]?.dateStr ?? ''}.png`
+
+  const handleDownload = () => {
+    if (!shareUrl) return
+    const a = document.createElement('a')
+    a.href = shareUrl
+    a.download = shareFileName()
+    a.click()
+  }
+
+  const handleCopy = async () => {
+    if (!shareBlob) return
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': Promise.resolve(shareBlob) }),
+      ])
+      alert('已複製，可直接貼入 WhatsApp Web')
+    } catch (e) {
+      console.error(e)
+      alert('此瀏覽器不支援複製圖片，請改用下載')
+    }
+  }
+
+  const handleNativeShare = async () => {
+    if (!shareBlob) return
+    const file = new File([shareBlob], shareFileName(), { type: 'image/png' })
+    if (!navigator.canShare?.({ files: [file] })) {
+      alert('此裝置不支援直接分享，請改用下載')
+      return
+    }
+    try {
+      await navigator.share({ files: [file], title: '本週更表' })
+    } catch { /* 用戶取消 */ }
+  }
+
+  // ============================================================
   // Render Overview Week — takes a days array, renders title + table + stats
   // ============================================================
   const renderOverviewWeek = (days: typeof weekDays, title: string) => (
@@ -1633,7 +1756,7 @@ function getClinicColor(name: string): string {
                           const shiftTitle = `${s.employee?.user?.name} ${clinic?.name ?? ''} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
                           return (
                             <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
-                              background: getShiftColor(s),
+                              background: shiftColor(s), color: textOn(shiftColor(s)),
                               touchAction: 'none',
                               userSelect: 'none',
                             }}
@@ -1759,7 +1882,7 @@ function getClinicColor(name: string): string {
                           const shiftTitle = `${s.employee?.user?.name} ${clinic?.name ?? ''} ${tpl?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
                           return (
                             <div key={'s' + si} className="ov-capsule" title={shiftTitle} style={{
-                              background: getShiftColor(s),
+                              background: shiftColor(s), color: textOn(shiftColor(s)),
                               touchAction: 'none',
                               userSelect: 'none',
                             }}
@@ -3125,11 +3248,74 @@ function getClinicColor(name: string): string {
                       {label}
                     </label>
                   ))}
+                  <button
+                    onClick={handleCaptureWeek}
+                    disabled={shareBusy}
+                    style={{
+                      fontSize: 11, padding: '3px 8px', borderRadius: 4,
+                      border: '1px solid #2563eb', background: '#eff6ff', color: '#1d4ed8',
+                      cursor: shareBusy ? 'wait' : 'pointer', marginLeft: 4, whiteSpace: 'nowrap',
+                    }}
+                    title="把本週更表存成圖片分享"
+                  >
+                    {shareBusy ? '處理中…' : '📷 截圖本週'}
+                  </button>
                 </div>
               </div>
               {/* Two weeks rendered via renderOverviewWeek */}
               {renderOverviewWeek(weekDays, '本週')}
               {renderOverviewWeek(weekDays2, '下週')}
+            </div>
+          )}
+
+          {/* 截圖用離屏節點 —— 不可用 display:none，html2canvas 影唔到 */}
+          {viewMode === 'week' && weekDays.length === 7 && (
+            <div
+              ref={exportRef}
+              aria-hidden
+              style={{
+                position: 'absolute', left: -99999, top: 0,
+                width: 1100, background: '#ffffff', padding: 20,
+                fontFamily: 'system-ui, -apple-system, "PingFang HK", "Microsoft JhengHei", sans-serif',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={{ fontSize: 22, fontWeight: 600, color: '#111827' }}>
+                  本週更表 · {scopeLabel}
+                </span>
+                <span style={{ fontSize: 15, color: '#4b5563' }}>
+                  {weekDays[0].dateStr} – {weekDays[6].dateStr}
+                </span>
+              </div>
+
+              <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 15 }}>
+                <colgroup>
+                  <col style={{ width: '13%' }} />
+                  {weekDays.map((_, i) => <col key={i} style={{ width: `${87 / 7}%` }} />)}
+                </colgroup>
+                <thead>
+                  <tr style={{ background: '#f3f4f6' }}>
+                    <th style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600, color: '#111827', borderBottom: '2px solid #d1d5db' }}>員工</th>
+                    {weekDays.map((wd, i) => (
+                      <th key={i} style={{ padding: 8, textAlign: 'center', fontWeight: 500, color: '#111827', borderBottom: '2px solid #d1d5db' }}>
+                        {wd.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {renderExportRows(ovEmployees.full)}
+                  {ovEmployees.full.length > 0 && ovEmployees.part.length > 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: '4px 12px', background: '#fef3c7',
+                        borderTop: '2px solid #f59e0b', fontSize: 14, fontWeight: 600, color: '#92400e' }}>
+                        兼職
+                      </td>
+                    </tr>
+                  )}
+                  {renderExportRows(ovEmployees.part)}
+                </tbody>
+              </table>
             </div>
           )}
 
@@ -3895,6 +4081,41 @@ function getClinicColor(name: string): string {
         </div>
       )}
     </div>
+
+      {/* 📷 Screenshot preview modal */}
+      {shareUrl && (
+        <div
+          onClick={closeShare}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 10, padding: 14,
+              maxWidth: '92vw', maxHeight: '92vh', display: 'flex', flexDirection: 'column', gap: 10,
+            }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 600 }}>本週更表預覽</div>
+            <div style={{ overflow: 'auto', flex: 1 }}>
+              <img src={shareUrl} alt="本週更表" style={{ display: 'block', maxWidth: '100%', height: 'auto' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {typeof navigator !== 'undefined' && !!navigator.canShare && (
+                <button className="btn btn-sm" onClick={handleNativeShare}>分享</button>
+              )}
+              {typeof navigator !== 'undefined' && !!navigator.clipboard?.write && (
+                <button className="btn btn-sm" onClick={handleCopy}>複製到剪貼簿</button>
+              )}
+              <button className="btn btn-sm" onClick={handleDownload}>下載 PNG</button>
+              <button className="btn btn-sm" onClick={closeShare}>關閉</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       </div>
   )
 }
