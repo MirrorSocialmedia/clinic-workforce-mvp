@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 import { todayHK, toHKDateStr } from '@/lib/hk-date'
+import { DEFAULT_MODIFIERS } from '@/lib/pay-rule-defaults'
 
 type BaseType = 'monthly' | 'hourly' | 'split'
 
@@ -24,8 +25,6 @@ const PAY_TYPE_TO_BASE_TYPE: Record<string, BaseType> = {
   HOURLY: 'hourly',
   SPLIT: 'split',
 }
-
-import { DEFAULT_MODIFIERS } from '@/lib/pay-rule-defaults'
 
 function buildDefaultConfig(baseType: BaseType): PayRuleConfigModular {
   const config: PayRuleConfigModular = { base_type: baseType }

@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
+import { buildDefaultPayConfig, syncConfigToPayType } from '@/lib/pay-rule-defaults'
 
 export async function GET(
   req: NextRequest,
@@ -247,7 +247,8 @@ export async function PUT(
             orderBy: [{ createdAt: 'desc' }],
           })
           const incomingConfig = configJson
-            || fallback?.configJson
+            || (fallback?.configJson
+                && syncConfigToPayType(fallback.configJson, payType, baseAmount))
             || JSON.stringify(buildDefaultPayConfig(payType, baseAmount))
           const unchanged = current
             && current.payType === payType

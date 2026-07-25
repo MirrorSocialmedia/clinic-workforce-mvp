@@ -214,11 +214,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, employee: result }, { status: 201 })
     } catch (error: any) {
       if (error?.code === 'P2002') {
-        return NextResponse.json(
-          { error: '薪資規則正在更新中，請重新整理後再試' }, { status: 409 })
+        const target = String(error?.meta?.target ?? '')
+        if (target.includes('payrule')) {
+          return NextResponse.json(
+            { error: '薪資規則正在更新中，請重新整理後再試' }, { status: 409 })
+        }
+        if (target.includes('phone')) {
+          return NextResponse.json({ error: '此電話號碼已被使用' }, { status: 409 })
+        }
+        console.error('P2002 unexpected target:', error?.meta)
+        return NextResponse.json({ error: '資料重複，請檢查輸入' }, { status: 409 })
       }
       console.error('Create employee error:', error)
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+      return NextResponse.json({ error: '建立員工失敗', details: String(error?.message) }, { status: 500 })
     }
   })
 }

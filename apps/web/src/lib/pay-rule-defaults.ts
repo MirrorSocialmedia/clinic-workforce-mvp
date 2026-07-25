@@ -13,7 +13,7 @@ export const DEFAULT_MODIFIERS = {
   overtime: {
     mode: 'time_off',
     multiplier: 1.5,
-    threshold: 8,
+    threshold: 9,
     ot_min_minutes: 0,
     ot_round_minutes: 0,
   },
@@ -38,15 +38,44 @@ export const DEFAULT_MODIFIERS = {
 
 export function buildDefaultPayConfig(payType: string, baseAmount?: number | null): any {
   const isMonthly = payType === 'MONTHLY'
+  const modifiers: any = {
+    ...DEFAULT_MODIFIERS,
+    deduction: { basis: 'statutory' },
+    mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
+    working_days: { basis: 'scheduled', ...DEFAULT_MODIFIERS.working_days },
+  }
+  if (!isMonthly) {
+    delete modifiers.attendance_bonus // 時薪冇獎金冇 OT
+    delete modifiers.overtime
+  }
   return {
     base_type: isMonthly ? 'monthly' : 'hourly',
     ...(isMonthly ? { monthly_salary: baseAmount ?? 0 } : { hourly_rate: baseAmount ?? 0 }),
-    modifiers: {
-      ...DEFAULT_MODIFIERS,
-      ...(isMonthly ? {} : { attendance_bonus: undefined, overtime: undefined }),
-      deduction: { basis: 'statutory' },
-      mpf: { enabled: true, rate: 0.05, min: 7100, max: 30000 },
-      working_days: { basis: 'scheduled', ...DEFAULT_MODIFIERS.working_days },
-    },
+    modifiers,
+  }
+}
+
+/** 把繼承嚟嘅 config 對齊 payType / baseAmount，避免顯示同出糧脫節 */
+export function syncConfigToPayType(
+  cfgStr: string,
+  payType: string,
+  baseAmount?: number | null,
+): string | null {
+  try {
+    const cfg = JSON.parse(cfgStr)
+    const isMonthly = payType === 'MONTHLY'
+    cfg.base_type = isMonthly ? 'monthly' : 'hourly'
+    if (baseAmount != null) {
+      if (isMonthly) {
+        cfg.monthly_salary = baseAmount
+        delete cfg.hourly_rate
+      } else {
+        cfg.hourly_rate = baseAmount
+        delete cfg.monthly_salary
+      }
+    }
+    return JSON.stringify(cfg)
+  } catch {
+    return null // config 壞咗就唔好硬用，跌落 default
   }
 }
