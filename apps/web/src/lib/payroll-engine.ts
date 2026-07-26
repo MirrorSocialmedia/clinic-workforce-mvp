@@ -195,8 +195,11 @@ async function calculateWorkedHours(
       entry = { clinicId: p.clinicId, punchIns: [], punchOuts: [] }
       dayClinicMap.set(mapKey, entry)
     }
+    // ★ 只有 CLOCK_IN / CLOCK_OUT 參與工時配對。
+    // LUNCH_START / LUNCH_END 由 calculateTimeBank 獨立處理（午休扣減），
+    // 混入呢度會令第一個午休卡被當成落班，之後所有打卡全部丟棄。
     if (p.punchType === 'CLOCK_IN') entry.punchIns.push(p.punchTime)
-    else entry.punchOuts.push(p.punchTime)
+    else if (p.punchType === 'CLOCK_OUT') entry.punchOuts.push(p.punchTime)
   }
 
   // Apply corrections
@@ -213,6 +216,8 @@ async function calculateWorkedHours(
       dayClinicMap.set(mapKey, entry)
     }
 
+    // 午休補登唔入配對
+    if (punchType !== 'CLOCK_IN' && punchType !== 'CLOCK_OUT') continue
     const arr = punchType === 'CLOCK_IN' ? entry.punchIns : entry.punchOuts
     // Replace existing entries of same type with corrected time
     arr.length = 0
@@ -1332,10 +1337,33 @@ export async function calculateTimeBank(
   // ★ Time account detail: per-day breakdown
   const timeAccountDetail: Array<any> = []
 
+  // ★ 調鋪支援：同日可以有多張不同店嘅更。
+  // 預先按日期分組並按開工時間排序，用嚟判斷「當日有冇下一張更」。
+  const shiftsByDate = new Map<string, any[]>()
+  for (const s of shifts) {
+    const ds = toHKDateStr(new Date(s.date))
+    if (!shiftsByDate.has(ds)) shiftsByDate.set(ds, [])
+    shiftsByDate.get(ds)!.push(s)
+  }
+  for (const arr of shiftsByDate.values()) {
+    arr.sort((a: any, b: any) =>
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+  }
+  const lunchDeductedDates = new Set<string>() // ★ 一日只扣一次午飯，唔理當日有幾多張更
+
   for (const shift of shifts) {
     const shiftDateStr = toHKDateStr(new Date(shift.date))
     const dayPunches = effectivePunches.filter(
-      (ep: any) => toHKDateStr(ep.effectiveTime) === shiftDateStr,
+      (ep: any) =>
+        toHKDateStr(ep.effectiveTime) === shiftDateStr &&
+        ep.clinicId === shift.clinicId,
+    )
+    // ★ 決定 1：當日仲有下一張更 → 呢張更唔計 OT（交更緩衝時間）
+    const sameDayShifts = shiftsByDate.get(shiftDateStr) ?? []
+    const hasLaterShiftToday = sameDayShifts.some(
+      (s: any) =>
+        s.id !== shift.id &&
+        new Date(s.startTime).getTime() > new Date(shift.startTime).getTime(),
     )
 
     const clockIn = dayPunches
@@ -1358,14 +1386,16 @@ export async function calculateTimeBank(
 
     // Late — use effectiveTime
     if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
-      dayLate = Math.ceil((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
+      // ★ 決定 4：夠足 1 分鐘先計，59 秒唔算（同 OT 一致）
+      dayLate = Math.floor((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
     }
     // Early leave — use effectiveTime
     if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
-      dayEarly = Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
+      dayEarly = Math.floor((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
     }
-    // OT — use effectiveTime with per-day threshold
-    if (clockOut && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
+    // ★ 決定 1：當日仲有下一張更就唔計 OT（早退照計 —— 提早走咗就係提早走）
+    if (clockOut && !hasLaterShiftToday
+      && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
       const dayOt = Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
       if (dayOt > 0 && dayOt >= otMinMinutes) {
         dayClockOutOt = otRoundMinutes > 0
@@ -1374,18 +1404,27 @@ export async function calculateTimeBank(
       }
     }
 
-    // ★ 午休扣減（地基：有上班的日子一律扣 lunchDefault）
-    if (clockIn) {
+    // ★ 午休扣減（地基：有上班嘅日子一律扣 lunchDefault）
+    // 決定 1 相關：同日多張更只扣一次，唔可以每張更加一次
+    if (clockIn && !lunchDeductedDates.has(shiftDateStr)) {
       let lunchDeduct = lunchDefault // 無條件地基
 
       if (lunchEnabled) {
-        const ls = dayPunches.filter((p: any) => p.punchType === 'LUNCH_START')
+        // ★ 午休卡【唔按店 filter】—— 調鋪時可能喺 A 店碌午休開始、B 店碌午休結束
+        const dayAllPunches = effectivePunches.filter(
+          (ep: any) => toHKDateStr(ep.effectiveTime) === shiftDateStr,
+        )
+        const ls = dayAllPunches
+          .filter((p: any) => p.punchType === 'LUNCH_START')
           .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
-        const le = dayPunches.filter((p: any) => p.punchType === 'LUNCH_END')
+        const le = dayAllPunches
+          .filter((p: any) => p.punchType === 'LUNCH_END')
           .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
 
         if (ls && le && le.effectiveTime.getTime() > ls.effectiveTime.getTime()) {
-          const actual = Math.round((le.effectiveTime.getTime() - ls.effectiveTime.getTime()) / 60000)
+          // ★ 決定 4：夠足 1 分鐘先計（原本係 Math.round）
+          const actual = Math.floor(
+            (le.effectiveTime.getTime() - ls.effectiveTime.getTime()) / 60000)
           const effective = Math.max(actual, lunchMin)
           lunchDeduct = effective
           if (effective < lunchDefault) {
@@ -1396,7 +1435,8 @@ export async function calculateTimeBank(
         }
       }
 
-      totalLunchDeductMinutes += lunchDeduct // ★ Accumulate for worked hours deduction
+      totalLunchDeductMinutes += lunchDeduct
+      lunchDeductedDates.add(shiftDateStr)
     }
 
     // ★ Push daily detail
