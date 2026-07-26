@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAuth, requirePerm, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 
 // ============================================================
@@ -12,7 +12,7 @@ export async function DELETE(
 ) {
   const permCheck = await requirePerm(req, 'payroll_generate')
   if (isAuthError(permCheck)) return permCheck.error
-  const { session } = permCheck
+  const { session, scope } = permCheck
 
   const { id } = await params
   const entry = await prisma.expenseEntry.findUnique({ where: { id } })
@@ -20,6 +20,14 @@ export async function DELETE(
   if (!entry) {
     return NextResponse.json({ error: '不存在' }, { status: 404 })
   }
+
+  // ★ IDOR: 先查員工歸屬店
+  const emp = await prisma.employee.findUnique({
+    where: { id: entry.employeeId },
+    select: { homeClinicId: true },
+  })
+  const denied = assertClinicAccess(scope, session, emp?.homeClinicId)
+  if (denied) return denied
 
   // Audit log
   await prisma.auditLog.create({

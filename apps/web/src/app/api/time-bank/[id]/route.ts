@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 
 // ============================================================
 // GET /api/time-bank/[id] — Single time bank record
@@ -12,12 +12,14 @@ export async function GET(
 ) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const record = await prisma.timeBank.findUnique({
     where: { id: params.id },
     include: {
       employee: {
-        include: {
+        select: {
+          homeClinicId: true,
           user: { select: { id: true, name: true } },
         },
       },
@@ -27,6 +29,10 @@ export async function GET(
   if (!record) {
     return NextResponse.json({ error: 'Time bank record not found' }, { status: 404 })
   }
+
+  // ★ IDOR: MANAGER 只可以睇自己店員工嘅 timebank
+  const denied = assertClinicAccess(scope, session, record.employee?.homeClinicId)
+  if (denied) return denied
 
   return NextResponse.json({ timeBank: record })
 }
@@ -41,7 +47,7 @@ export async function PATCH(
 ) {
   const auth = await requireAuth(req, 'PATCH', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -53,10 +59,14 @@ export async function PATCH(
     try {
       const body = await req.json()
 
-      const existing = await prisma.timeBank.findUnique({ where: { id: params.id } })
+      const existing = await prisma.timeBank.findUnique({ where: { id: params.id }, include: { employee: true } })
       if (!existing) {
         return NextResponse.json({ error: 'Time bank record not found' }, { status: 404 })
       }
+
+      // ★ IDOR: MANAGER 只可以改自己店員工嘅 timebank
+      const denied = assertClinicAccess(scope, session, existing.employee?.homeClinicId)
+      if (denied) return denied
 
       const updateData: any = {}
       if (body.otMinutes !== undefined) updateData.otMinutes = body.otMinutes
@@ -88,7 +98,7 @@ export async function DELETE(
 ) {
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -98,10 +108,14 @@ export async function DELETE(
 
   return runWithAudit(auditCtx, async () => {
     try {
-      const existing = await prisma.timeBank.findUnique({ where: { id: params.id } })
+      const existing = await prisma.timeBank.findUnique({ where: { id: params.id }, include: { employee: true } })
       if (!existing) {
         return NextResponse.json({ error: 'Time bank record not found' }, { status: 404 })
       }
+
+      // ★ IDOR: MANAGER 只可以刪自己店員工嘅 timebank
+      const denied = assertClinicAccess(scope, session, existing.employee?.homeClinicId)
+      if (denied) return denied
 
       await prisma.timeBank.delete({ where: { id: params.id } })
 

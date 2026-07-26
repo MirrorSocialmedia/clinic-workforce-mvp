@@ -1,12 +1,15 @@
 export const dynamic = 'force-dynamic'
-import { NextResponse } from 'next/server'
-import { requireRole } from '@/lib/require-auth'
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
-// POST /api/punches/[id]/void — Void a punch record (OWNER only)
-export async function POST(req: Request, ctx: { params: { id: string } }) {
-  const session = await requireRole(['OWNER', 'MANAGER'])
+// POST /api/punches/[id]/void — Void a punch record (OWNER/MANAGER)
+export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
+  const auth = await requireAuth(req, 'POST', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
+
   const { reason } = await req.json()
   const id = ctx.params.id
 
@@ -19,6 +22,10 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
   if (!punch) {
     return NextResponse.json({ error: '打卡記錄不存在' }, { status: 404 })
   }
+
+  // ★ IDOR: MANAGER 只可以作廢自己店嘅打卡
+  const denied = assertClinicAccess(scope, session, punch.clinicId)
+  if (denied) return denied
 
   // Check not already voided
   const existingVoid = await prisma.punchVoid.findUnique({

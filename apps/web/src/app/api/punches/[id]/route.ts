@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 
 // GET /api/punches/[id] — Single punch record + full correction chain
 export async function GET(
@@ -10,6 +10,7 @@ export async function GET(
 ) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const record = await prisma.punchRecord.findUnique({
     where: { id: params.id },
@@ -21,6 +22,10 @@ export async function GET(
   })
 
   if (!record) return NextResponse.json({ error: 'Record not found' }, { status: 404 })
+
+  // ★ IDOR: MANAGER 只可以睇自己店嘅打卡
+  const denied = assertClinicAccess(scope, session, record.clinicId)
+  if (denied) return denied
 
   const chain: any[] = [{
     type: 'original', id: record.id,
@@ -76,13 +81,17 @@ export async function PUT(
 ) {
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const body = await req.json().catch(() => ({}))
   const { punchTime, punchType, notes, reason } = body
 
   const oldRecord = await prisma.punchRecord.findUnique({ where: { id: params.id } })
   if (!oldRecord) return NextResponse.json({ error: '記錄不存在' }, { status: 404 })
+
+  // ★ IDOR: MANAGER 只可以改自己店嘅打卡
+  const denied = assertClinicAccess(scope, session, oldRecord.clinicId)
+  if (denied) return denied
 
   // 檢查是否已被 void
   const existingVoid = await prisma.punchVoid.findUnique({ where: { punchRecordId: params.id } })

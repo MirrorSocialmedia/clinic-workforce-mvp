@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 
 // ============================================================
@@ -12,6 +12,7 @@ export async function PUT(
 ) {
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const body = await req.json()
   const { totalWage, excludedDays, excludedWage, note } = body
@@ -22,6 +23,14 @@ export async function PUT(
   if (!before) {
     return NextResponse.json({ error: 'WageHistory not found' }, { status: 404 })
   }
+
+  // ★ IDOR: check employee clinic
+  const emp = await prisma.employee.findUnique({
+    where: { id: before.employeeId },
+    select: { homeClinicId: true },
+  })
+  const denied = assertClinicAccess(scope, session, emp?.homeClinicId)
+  if (denied) return denied
 
   const updated = await prisma.wageHistory.update({
     where: { id: params.id },
@@ -68,6 +77,7 @@ export async function DELETE(
 ) {
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const before = await prisma.wageHistory.findUnique({
     where: { id: params.id },
@@ -75,6 +85,14 @@ export async function DELETE(
   if (!before) {
     return NextResponse.json({ error: 'WageHistory not found' }, { status: 404 })
   }
+
+  // ★ IDOR: check employee clinic
+  const emp = await prisma.employee.findUnique({
+    where: { id: before.employeeId },
+    select: { homeClinicId: true },
+  })
+  const denied = assertClinicAccess(scope, session, emp?.homeClinicId)
+  if (denied) return denied
 
   await prisma.wageHistory.delete({
     where: { id: params.id },

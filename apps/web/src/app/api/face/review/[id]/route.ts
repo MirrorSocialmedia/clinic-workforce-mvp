@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 
 // GET /api/face/review/[punchId] — Return frame image + audit
 // POST /api/face/review/[punchId] — Confirm or flag the punch
@@ -11,13 +11,17 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const punchId = params.id
   const punch = await prisma.punchRecord.findUnique({ where: { id: punchId } })
   if (!punch || !punch.faceFramePath) {
     return NextResponse.json({ error: 'frame not found' }, { status: 404 })
   }
+
+  // ★ IDOR: MANAGER 只可以覆核自己店嘅打卡
+  const denied = assertClinicAccess(scope, session, punch.clinicId)
+  if (denied) return denied
 
   // Audit: 記錄誰看了覆核圖
   await prisma.auditLog.create({
@@ -46,7 +50,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const punchId = params.id
   const body = await req.json().catch(() => ({}))
@@ -54,6 +58,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const punch = await prisma.punchRecord.findUnique({ where: { id: punchId } })
   if (!punch) return NextResponse.json({ error: 'not found' }, { status: 404 })
+
+  // ★ IDOR: MANAGER 只可以處置自己店嘅打卡
+  const denied = assertClinicAccess(scope, session, punch.clinicId)
+  if (denied) return denied
 
   if (action === 'confirm') {
     // 確認本人：刪除 frame，置 null

@@ -131,12 +131,19 @@ export async function DELETE(
 ) {
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   try {
     const id = params.id
-    const changeRequest = await prisma.shiftChangeRequest.findUnique({ where: { id } })
+    const changeRequest = await prisma.shiftChangeRequest.findUnique({
+      where: { id },
+      include: { shift: { select: { clinicId: true } } },
+    })
     if (!changeRequest) return NextResponse.json({ error: 'Change request not found' }, { status: 404 })
+
+    // ★ MANAGER 只可以管理自己店嘅換更
+    const denied = assertClinicAccess(scope, session, changeRequest.shift?.clinicId)
+    if (denied) return denied
 
     const emp = await prisma.employee.findUnique({ where: { userId: session.userId } })
     if (!emp || emp.id !== changeRequest.fromEmployeeId) {

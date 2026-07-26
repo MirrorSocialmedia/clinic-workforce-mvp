@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { getMonthRange } from '@/lib/hk-date'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
@@ -11,7 +11,7 @@ export async function GET(
 ) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const item = await prisma.payrollItem.findUnique({
     where: { runId_employeeId: { runId: params.id, employeeId: params.empId } },
@@ -39,6 +39,10 @@ export async function GET(
   })
 
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // ★ IDOR: MANAGER 只可以睇自己店嘅計糧單
+  const denied = assertClinicAccess(scope, session, item.run?.clinicId)
+  if (denied) return denied
 
   // Server-side confidentiality check
   const isOwner = session.role === 'OWNER'
