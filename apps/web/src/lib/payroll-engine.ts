@@ -253,15 +253,40 @@ async function calculateWorkedHours(
     // FIX #14 + T1: Single punch + shift → use shift endTime to fill hours
     const hasIn = entry.punchIns.length > 0
     const hasOut = entry.punchOuts.length > 0
-    const isPartial = (hasIn && !hasOut) || (!hasIn && hasOut)
+    let isPartial = (hasIn && !hasOut) || (!hasIn && hasOut)
 
-    // If single CLOCK_IN with no CLOCK_OUT and shift data available, use shift endTime
+    // ★ 決定 2：調鋪唔打離店卡係正常流程 ——
+    //   同日喺【另一間店】仲有更，就唔當 A 店缺卡，避免考勤異常報表日日出現調鋪日。
+    if (hasIn && !hasOut && shifts && shifts.length > 0) {
+      const hasOtherClinicShiftToday = shifts.some(s =>
+        toHKDateStr(new Date(s.date)) === dayStr &&
+        s.clinicId && s.clinicId !== clinicId
+      )
+      if (hasOtherClinicShiftToday) isPartial = false
+    }
+
+    // ★ 調鋪唔打離店卡：A 店只有 IN 冇 OUT，要用【A 店嗰張更】嘅收工時間補足。
+    //   舊版 shifts.find(只按日期) 可能攞到 B 店嗰張更嘅 endTime，
+    //   令 A 店由 4 小時變 9 小時（而且 row order 唔定 = 唔可重現）。
     if (hasIn && !hasOut && lastIn && shifts && shifts.length > 0) {
-      const shiftForDay = shifts.find(s => toHKDateStr(new Date(s.date)) === dayStr)
-      if (shiftForDay && shiftForDay.endTime) {
+      const inTime = lastIn.getTime()
+      const dayShifts = shifts.filter(s =>
+        toHKDateStr(new Date(s.date)) === dayStr &&
+        (!s.clinicId || s.clinicId === clinicId) &&
+        s.endTime
+      )
+      // 揀開工時間最接近呢個上班卡嗰張
+      const shiftForDay = dayShifts.sort((a, b) =>
+        Math.abs(new Date(a.startTime ?? a.date).getTime() - inTime) -
+        Math.abs(new Date(b.startTime ?? b.date).getTime() - inTime)
+      )[0]
+      if (shiftForDay?.endTime) {
         const endTime = new Date(shiftForDay.endTime)
-        totalMs = endTime.getTime() - lastIn.getTime()
-        lastIn = null
+        // 收工唔可以早過上班
+        if (endTime.getTime() > inTime) {
+          totalMs = endTime.getTime() - inTime
+          lastIn = null
+        }
       }
     }
 
@@ -357,6 +382,7 @@ export async function computeSickDeduction(
   db: any,
 ): Promise<{
   amount: number;
+  paidAmount: number;      // ★ 病假期間實收工資（供 ADW excludedWage）
   episodes: Array<{ range: string; totalDays: number; daysInMonth: number; rate: number }>;
 }> {
   // 窗口跨出本月 ±40 天：跨月連續段兩頭都要看得到
@@ -373,7 +399,7 @@ export async function computeSickDeduction(
     },
     orderBy: { startDate: 'asc' },
   })
-  if (sickLeaves.length === 0) return { amount: 0, episodes: [] }
+  if (sickLeaves.length === 0) return { amount: 0, paidAmount: 0, episodes: [] }
 
   // 展開成 HK 日字串集合（鐵律：跨表/跨界比對先轉 HK 日）
   const dayset = new Set<string>()
@@ -397,6 +423,7 @@ export async function computeSickDeduction(
   // ★ Phase 3: ADW compliance — ≥4 days uses 4/5 ADW; <4 days uses statutoryDailyWage (no sick pay entitlement)
   const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
   let amount = 0
+  let paidAmount = 0
   const detail: Array<{
     range: string;
     totalDays: number;
@@ -439,6 +466,7 @@ export async function computeSickDeduction(
       const alreadyInBase = statutoryDailyWage(monthlySalary) * daysInMonth
       const deductionAmount = Math.max(0, alreadyInBase - sicknessAllowance)
       amount += deductionAmount * deductionRate
+      paidAmount += alreadyInBase - deductionAmount * deductionRate    // ★ 實收
 
       detail.push({
         range: `${ep[0]}~${ep[ep.length - 1]}`,
@@ -453,6 +481,7 @@ export async function computeSickDeduction(
       // <4 consecutive days: no sick pay entitlement → full deduction (statutoryDailyWage)
       const dailyRate = statutoryDailyWage(monthlySalary)
       amount += daysInMonth * dailyRate * deductionRate
+      paidAmount += daysInMonth * dailyRate * (1 - deductionRate)      // ★ 實收
 
       detail.push({
         range: `${ep[0]}~${ep[ep.length - 1]}`,
@@ -462,7 +491,7 @@ export async function computeSickDeduction(
       })
     }
   }
-  return { amount: Math.round(amount * 100) / 100, episodes: detail }
+  return { amount: Math.round(amount * 100) / 100, paidAmount: Math.round(paidAmount * 100) / 100, episodes: detail }
 }
 
 // ------------------------------------------------------------------
@@ -1352,18 +1381,34 @@ export async function calculateTimeBank(
 
   for (const shift of shifts) {
     const shiftDateStr = toHKDateStr(new Date(shift.date))
-    const dayPunches = effectivePunches.filter(
-      (ep: any) =>
-        toHKDateStr(ep.effectiveTime) === shiftDateStr &&
-        ep.clinicId === shift.clinicId,
-    )
-    // ★ 決定 1：當日仲有下一張更 → 呢張更唔計 OT（交更緩衝時間）
     const sameDayShifts = shiftsByDate.get(shiftDateStr) ?? []
     const hasLaterShiftToday = sameDayShifts.some(
       (s: any) =>
         s.id !== shift.id &&
         new Date(s.startTime).getTime() > new Date(shift.startTime).getTime(),
     )
+
+    // ★ 同店分更（朝更 + 晚更）clinicId 分唔開，要按時間窗切。
+    //   窗口 = 上一張更收工↔本更開工嘅中點  到  本更收工↔下一張更開工嘅中點
+    const idx = sameDayShifts.findIndex((s: any) => s.id === shift.id)
+    const prevShift = idx > 0 ? sameDayShifts[idx - 1] : null
+    const nextShift = idx >= 0 && idx < sameDayShifts.length - 1 ? sameDayShifts[idx + 1] : null
+    const winStart = prevShift
+      ? (new Date(prevShift.endTime).getTime() + new Date(shift.startTime).getTime()) / 2
+      : -Infinity
+    const winEnd = nextShift
+      ? (new Date(shift.endTime).getTime() + new Date(nextShift.startTime).getTime()) / 2
+      : Infinity
+    const needTimeWindow =
+      sameDayShifts.filter((s: any) => s.clinicId === shift.clinicId).length > 1
+
+    const dayPunches = effectivePunches.filter((ep: any) => {
+      if (toHKDateStr(ep.effectiveTime) !== shiftDateStr) return false
+      if (ep.clinicId !== shift.clinicId) return false
+      if (!needTimeWindow) return true               // 調鋪：clinicId 已經分得開
+      const t = ep.effectiveTime.getTime()
+      return t >= winStart && t < winEnd
+    })
 
     const clockIn = dayPunches
       .filter((ep: any) => ep.punchType === 'CLOCK_IN')
@@ -1406,7 +1451,16 @@ export async function calculateTimeBank(
     // ★ 午休扣減（地基：有上班嘅日子一律扣 lunchDefault）
     // 決定 1 相關：同日多張更只扣一次，唔可以每張更加一次
     if (clockIn && !lunchDeductedDates.has(shiftDateStr)) {
-      let lunchDeduct = lunchDefault // 無條件地基
+      // ★ 決定 3：同日多張更之間嘅空檔本身已經係無薪休息
+      //   （工時按每張更分段計，空檔唔入數），唔應該再扣多次午飯。
+      //   規則：全日無薪空檔總和唔夠 lunchDefault 先補扣差額。
+      let gapMinutes = 0
+      for (let i = 0; i < sameDayShifts.length - 1; i++) {
+        const g = (new Date(sameDayShifts[i + 1].startTime).getTime()
+                 - new Date(sameDayShifts[i].endTime).getTime()) / 60000
+        if (g > 0) gapMinutes += g
+      }
+      let lunchDeduct = Math.max(0, lunchDefault - gapMinutes)
 
       if (lunchEnabled) {
         // ★ 午休卡【唔按店 filter】—— 調鋪時可能喺 A 店碌午休開始、B 店碌午休結束
@@ -1940,7 +1994,7 @@ async function collectWorkData(
       date: { gte: monthStart, lte: monthEnd },
       status: { not: 'CANCELLED' },
     },
-    orderBy: { date: 'asc' },
+    orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
   })
 
   // Punch days (pass shifts for single-punch fill)
@@ -2622,7 +2676,7 @@ export async function calculatePayrollWithRules(
   // ★ 病假扣減：只在 MONTHLY 分支接線（時薪員工天然零成本）
   const sickDeduction = (result.detail as any)?.monthlySalary != null
     ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma)
-    : { amount: 0, episodes: [] }
+    : { amount: 0, paidAmount: 0, episodes: [] }
 
   // ★ Phase 4: Maternity / Paternity pay (EO Ch.6 / Ch.7)
   const [maternityLeaves, paternityLeaves] = await Promise.all([
@@ -2973,7 +3027,7 @@ export async function calculatePayrollWithRules(
   const excludedDays = Math.round(sickDays + noPayLeaveDays + maternityDays + paternityDays)
   const excludedWage = Math.round((
       // 病假：實付部分 = 應付日薪 × 日數 − 已扣減
-      ((result.detail as any).sickPaidAmount ?? 0)
+      ((sickDeduction as any).paidAmount ?? 0)
     + 0                                              // 無薪假實收 0
     + ((result.detail as any).maternityPay ?? 0)
     + ((result.detail as any).paternityPay ?? 0)
