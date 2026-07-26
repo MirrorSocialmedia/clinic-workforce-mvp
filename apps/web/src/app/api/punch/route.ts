@@ -91,15 +91,10 @@ export async function POST(req: NextRequest) {
 
         source = validation.source || 'QR_DYNAMIC'
         // ★ Explicit type + valid token = normal punch, NOT MANUAL_CORRECTION
-      } else if (hasExplicitType) {
-        // Explicit type without QR token (e.g., legacy lunch punch): use employee's first clinic
-        clinicId = employee.clinics[0]?.clinicId || null
-        if (!clinicId) {
-          return NextResponse.json({ error: 'No clinic assigned' }, { status: 400 })
-        }
-        source = 'MANUAL'
-        tokenValid = null
       } else {
+        // ★ 決定 6：一律要 QR token（含午休卡）。
+        // 舊嘅免 token 分支已刪：任何人 POST {"punchType":"CLOCK_IN"} 就可以喺屋企打卡，
+        // 而且 clinics[0] 喺調鋪時會攞錯店。現行前端一定帶 token，冇相容性問題。
         return NextResponse.json({ error: 'token is required' }, { status: 400 })
       }
 
@@ -145,13 +140,16 @@ export async function POST(req: NextRequest) {
       }
 
       // ★ GPS location verification (shadow mode — observation only, never blocks)
-      let punchLat = null,
-        punchLng = null,
-        distanceM = null,
-        locationFlag: string | null = geoFlag || null,
-        geoAccuracy: number | null = geoAcc != null ? Math.round(geoAcc) : null
+      // ★ geoFlag 只接受白名單值，而且唔可以用嚟 skip 距離計算
+      const ALLOWED_GEO_FLAGS = ['NO_GPS', 'DENIED', 'TIMEOUT']
+      let punchLat: number | null = null
+      let punchLng: number | null = null
+      let distanceM: number | null = null
+      let locationFlag: string | null =
+        ALLOWED_GEO_FLAGS.includes(geoFlag) ? geoFlag : null
+      const geoAccuracy: number | null = geoAcc != null ? Math.round(geoAcc) : null
 
-      if (!geoFlag && lat != null && lng != null) {
+      if (lat != null && lng != null) {
         punchLat = lat
         punchLng = lng
         const clinic = await prisma.clinic.findUnique({
@@ -163,6 +161,8 @@ export async function POST(req: NextRequest) {
           const radius = clinic.geoRadius ?? Number(process.env.GEO_DEFAULT_RADIUS || 200)
           if (distanceM > radius) locationFlag = 'OUT_OF_RANGE'
         }
+      } else if (!locationFlag) {
+        locationFlag = 'NO_GPS'
       }
 
       // Transaction: punch record (audit auto-handled by Prisma extension)

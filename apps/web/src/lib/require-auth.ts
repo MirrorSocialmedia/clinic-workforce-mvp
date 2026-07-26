@@ -42,9 +42,13 @@ function normalizeRoute(url: URL, method: string): string {
   // Strip trailing slash
   if (path.endsWith('/') && path.length > 1) path = path.slice(0, -1)
   // Replace dynamic segments with :id
-  // Only match actual IDs (cuid/uuid are 20+ chars, or pure numeric)
-  // Avoid replacing route names like 'dashboard', 'employees', 'scheduling'
-  path = path.replace(/\/[a-z0-9]{20,}/gi, '/:id')
+  // ★ 順序重要：日期段一定要排喺純數字 regex 之前，
+  // 否則 /\d{3,}/ 會咬走 "2026" 令 /api/daily-hash/2026-07-25 變 /:id-07-25
+  path = path.replace(/\/\d{4}-\d{2}-\d{2}(?=\/|$)/g, '/:date')
+  // ★ UUID 有 dash，唔會被 {20,} 命中，要獨立處理（目前全部 model 用 cuid，此條為將來防呆）
+  path = path
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi, '/:id')
+    .replace(/\/[a-z0-9]{20,}/gi, '/:id')
     .replace(/\/\d{3,}/g, '/:id')
   return `${method} ${path}`
 }
