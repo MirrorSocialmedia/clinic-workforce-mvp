@@ -2,7 +2,7 @@
 // Shift Validator Engine
 // Reads rules from docs/rules/shift-rules.json — nothing hardcoded
 // ============================================================
-import { fmtTime, toHKDateStr, addDays, hkDateStart, hkDateEnd } from './hk-date'
+import { fmtTime, toHKDateStr, addDays, hkDateStart, hkDateEnd, leaveCoversDate } from './hk-date'
 import { prisma } from './prisma'
 
 import shiftRules from './shift-rules.json'
@@ -72,13 +72,16 @@ function getMinutesBetween(a: string, b: string): number {
 }
 
 // Helper: get rest hours between two shifts
-function getRestHoursBetween(
-  end1: string, start2: string
-): number {
+/**
+ * 兩班之間的休息時數。
+ * ★ 回傳 null = 「second 喺 first 之前或者重疊」，唔係「零休息」。
+ *   舊版一律 return 0，令所有歷史班次都被當成「休息 0 小時」→ 每次排更都彈假警告。
+ */
+function getRestHoursBetween(end1: string, start2: string): number | null {
   const e1 = new Date(end1).getTime()
   const s2 = new Date(start2).getTime()
   const diff = s2 - e1
-  if (diff < 0) return 0 // second shift starts before first ends
+  if (diff < 0) return null
   return diff / (1000 * 60 * 60)
 }
 
@@ -121,6 +124,7 @@ function checkCollisions(
   for (const existing of existingShifts) {
     if (existing.employeeId !== newShift.employeeId) continue
     if (existing.id === newShift.id) continue // skip self
+    if (existing.status === 'CANCELLED') continue
 
     if (timeRangesOverlap(
       newShift.startTime, newShift.endTime,
@@ -156,11 +160,11 @@ function checkMinStaff(
 
   // Get shifts for the given clinic and date
   const clinicDateShifts = shifts.filter(
-    s => s.clinicId === clinicId && s.date === date
+    s => s.clinicId === clinicId && s.date === date && s.status !== 'CANCELLED'
   )
 
   // Check each rule
-  for (const rule of minStaffRules.rules) {
+  for (const rule of minStaffRules.rules as any[]) {
     // Skip if rule is for a specific clinic that doesn't match
     if (rule.clinic_id !== '*' && rule.clinic_id !== clinicId) continue
 
@@ -176,7 +180,7 @@ function checkMinStaff(
     })
 
     // Count roles
-    for (const [role, required] of Object.entries(rule.required)) {
+    for (const [role, required] of Object.entries(rule.required) as [string, number][]) {
       const count = overlappingShifts.filter(
         s => s.role?.toLowerCase() === role.toLowerCase()
       ).length
@@ -222,6 +226,8 @@ function checkConsecutiveHours(
 
   const employeeShifts = existingShifts
     .filter(s => s.employeeId === newShift.employeeId)
+    .filter(s => s.id !== newShift.id)
+    .filter(s => s.status !== 'CANCELLED')
     .filter(s => {
       const d = new Date(s.date)
       return d >= twoDaysBefore && d <= twoDaysAfter
@@ -246,7 +252,7 @@ function checkConsecutiveHours(
       shiftRules.working_hour_rules?.min_rest_between_shifts || 8
     )
 
-    if (restHours < minRest && restHours >= 0) {
+    if (restHours !== null && restHours < minRest) {
       // These are consecutive — check total duration
       const totalHours = getShiftHours(current.startTime, current.endTime) +
         getShiftHours(next.startTime, next.endTime) + restHours
@@ -285,17 +291,17 @@ function checkRestBetweenShifts(
     rules?.minRestHours ?? shiftRules.working_hour_rules?.min_rest_between_shifts ?? 8
   )
 
-  // Get adjacent shifts for this employee
   const employeeShifts = existingShifts
     .filter(s => s.employeeId === newShift.employeeId)
+    .filter(s => s.id !== newShift.id)
+    .filter(s => s.status !== 'CANCELLED')
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
 
   for (const existing of employeeShifts) {
-    if (existing.id === newShift.id) continue
+    if (existing.date === newShift.date) continue
 
-    // Check rest after existing shift before new shift
     const restAfterExisting = getRestHoursBetween(existing.endTime, newShift.startTime)
-    if (restAfterExisting >= 0 && restAfterExisting < minRest) {
+    if (restAfterExisting !== null && restAfterExisting < minRest) {
       issues.push({
         type: 'warning',
         rule: 'min_rest_between_shifts',
@@ -303,12 +309,11 @@ function checkRestBetweenShifts(
         employeeId: newShift.employeeId,
         shiftId: newShift.id,
       })
-      break // Only report once
+      break
     }
 
-    // Check rest after new shift before existing shift
     const restAfterNew = getRestHoursBetween(newShift.endTime, existing.startTime)
-    if (restAfterNew >= 0 && restAfterNew < minRest) {
+    if (restAfterNew !== null && restAfterNew < minRest) {
       issues.push({
         type: 'warning',
         rule: 'min_rest_between_shifts',
@@ -342,9 +347,13 @@ function checkMaxDailyHours(
     rules?.maxDailyHours ?? shiftRules.working_hour_rules?.max_daily_hours ?? 12
   )
 
-  // Get all shifts for this employee on this date
   const dailyShifts = existingShifts
-    .filter(s => s.employeeId === newShift.employeeId && s.date === newShift.date)
+    .filter(s =>
+      s.employeeId === newShift.employeeId &&
+      s.date === newShift.date &&
+      s.id !== newShift.id &&
+      s.status !== 'CANCELLED'
+    )
 
   let totalHours = 0
   for (const s of dailyShifts) {
@@ -503,7 +512,7 @@ export async function checkShiftLeaveConflict(
   shiftDate: Date
 ): Promise<{ conflict: boolean; leaveName?: string }> {
   const dateStr = toHKDateStr(shiftDate)
-  const conflictLeave = await prisma.leaveRequest.findFirst({
+  const candidates = await prisma.leaveRequest.findMany({
     where: {
       employeeId,
       status: 'APPROVED',
@@ -512,9 +521,8 @@ export async function checkShiftLeaveConflict(
     },
     include: { leaveType: { select: { name: true } } },
   })
-  if (conflictLeave) {
-    return { conflict: true, leaveName: conflictLeave.leaveType?.name || '未命名假期' }
-  }
+  const hit = candidates.find(lr => leaveCoversDate(lr as any, dateStr))
+  if (hit) return { conflict: true, leaveName: hit.leaveType?.name || '未命名假期' }
   return { conflict: false }
 }
 

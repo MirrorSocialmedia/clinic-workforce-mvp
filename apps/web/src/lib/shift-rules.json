@@ -6,42 +6,11 @@
   },
 
   "min_staff_per_shift": {
-    "description": "每時段最少人員配置（按診所和時段分類）",
-    "rules": [
-      {
-        "clinic_id": "*",
-        "shift_label": "早更",
-        "shift_time": "09:00-14:00",
-        "required": {
-          "doctor": 1,
-          "nurse": 1,
-          "receptionist": 1
-        }
-      },
-      {
-        "clinic_id": "*",
-        "shift_label": "午更",
-        "shift_time": "12:30-18:00",
-        "required": {
-          "doctor": 1,
-          "nurse": 1,
-          "receptionist": 1
-        }
-      },
-      {
-        "clinic_id": "*",
-        "shift_label": "晚更",
-        "shift_time": "17:00-22:00",
-        "required": {
-          "doctor": 1,
-          "nurse": 1
-        }
-      }
-    ],
+    "description": "每時段最少人員配置 — 【已停用 2026-07-26】系統唔追蹤員工職位（Shift.role 永遠 null），開住只會產生假警告。日後如需啟用，先要喺 Employee 加職位欄並喺建立更次時帶入。",
+    "rules": [],
     "config": {
-      "allow_partial_coverage": false,
-      "partial_coverage_warning_threshold": 0.8,
-      "description": "allow_partial_coverage=false 時，不滿足最低人數禁止排班"
+      "allow_partial_coverage": true,
+      "description": "目前為警告模式；allow_partial_coverage 尚未接通 validateClinicStaff（該函數 valid 寫死 true）"
     }
   },
 

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { validateShift, validateShiftBatch, type ShiftInput } from '@/lib/shift-validator'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart, hkDateEnd, addDays } from '@/lib/hk-date'
 import { parseShiftRuleConfig } from '@/lib/shift-rule-config'
 
 // ============================================================
@@ -32,7 +32,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (mode === 'batch' && shifts && Array.isArray(shifts)) {
+      const empIds = [...new Set(shifts.map((s: any) => s.employeeId))]
+      const dateStrs = shifts.map((s: any) => s.date).sort()
+      const lo = hkDateStart(addDays(dateStrs[0], -3))
+      const hi = hkDateEnd(addDays(dateStrs[dateStrs.length - 1], 3))
+
       const existingShifts = await prisma.shift.findMany({
+        where: {
+          employeeId: { in: empIds },
+          status: { not: 'CANCELLED' },
+          date: { gte: lo, lte: hi },
+        },
         select: {
           id: true, employeeId: true, clinicId: true, date: true,
           startTime: true, endTime: true, role: true, status: true,
@@ -59,8 +69,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'shift object required' }, { status: 400 })
       }
 
+      const baseDate = toHKDateStr(new Date(shift.date))
       const existingShifts = await prisma.shift.findMany({
-        where: { employeeId: shift.employeeId, status: { not: 'CANCELLED' } },
+        where: {
+          employeeId: shift.employeeId,
+          status: { not: 'CANCELLED' },
+          date: { gte: hkDateStart(addDays(baseDate, -3)), lte: hkDateEnd(addDays(baseDate, 3)) },
+        },
         select: {
           id: true, employeeId: true, clinicId: true, date: true,
           startTime: true, endTime: true, role: true, status: true,
