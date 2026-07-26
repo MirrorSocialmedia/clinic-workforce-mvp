@@ -67,6 +67,29 @@ export async function PUT(
     if (body.status !== undefined) updateData.status = body.status
     if (body.templateId !== undefined) updateData.templateId = body.templateId
 
+    // ★ D1: check collision before writing
+    const targetStart = updateData.startTime ?? existing.startTime
+    const targetEnd = updateData.endTime ?? existing.endTime
+    const targetEmp = updateData.employeeId ?? existing.employeeId
+
+    const overlap = await prisma.shift.findFirst({
+      where: {
+        id: { not: id },
+        employeeId: targetEmp,
+        status: { not: 'CANCELLED' },
+        date: { gte: new Date(targetStart.getTime() - 86400000), lte: targetEnd },
+        startTime: { lt: targetEnd },
+        endTime: { gt: targetStart },
+      },
+      select: { id: true, clinicId: true, startTime: true, endTime: true },
+    })
+    if (overlap) {
+      return NextResponse.json(
+        { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
+        { status: 409 }
+      )
+    }
+
     // Fix: check leave conflict after rebuildShiftDate, before write
     const targetEmpId = updateData.employeeId || existing.employeeId
     const targetDate = updateData.date || existing.date

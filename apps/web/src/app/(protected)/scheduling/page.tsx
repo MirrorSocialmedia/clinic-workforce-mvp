@@ -1273,7 +1273,9 @@ function getShiftCode(shift: Shift): string {
       })
       if (!res.ok) {
         info.revert()
-        alert('排班移動失敗')
+        const err = await res.json().catch(() => ({}))
+        setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '排班移動失敗' }])
+        await refreshAll()
       } else {
         await refreshAll()
       }
@@ -3870,8 +3872,9 @@ function getShiftCode(shift: Shift): string {
                       loadShifts()
                       setCardRefreshTick(t => t + 1)
                     } else {
-                      const err = await res.json()
-                      alert(err.error || '更新失敗')
+                      const err = await res.json().catch(() => ({}))
+                      setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '更新失敗' }])
+                      await refreshAll()
                     }
                   } catch (error) {
                     console.error('Update shift error:', error)

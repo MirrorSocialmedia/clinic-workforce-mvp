@@ -26,8 +26,8 @@ export async function GET(req: NextRequest) {
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
   const status = searchParams.get('status')
-  const page = parseInt(searchParams.get('page') || '1')
-  const pageSize = parseInt(searchParams.get('pageSize') || '50')
+  const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1)
+  const pageSize = Math.min(2000, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10) || 50))
   const skip = (page - 1) * pageSize
 
   const where: any = {}
@@ -166,50 +166,53 @@ export async function POST(req: NextRequest) {
       /**
        * Check for overlapping shifts (Fix #4: shift overlap validation)
        */
-      async function checkShiftOverlap(empId: string, dateVal: Date, startVal: Date, endVal: Date) {
+      async function checkShiftOverlap(empId: string, _dateVal: Date, startVal: Date, endVal: Date) {
         return prisma.shift.findFirst({
           where: {
             employeeId: empId,
-            date: dateVal,
             status: { not: 'CANCELLED' },
-            OR: [
-              { startTime: { lt: endVal }, endTime: { gt: startVal } },
-            ],
+            date: { gte: new Date(startVal.getTime() - 86400000), lte: endVal },
+            startTime: { lt: endVal },
+            endTime: { gt: startVal },
           },
+          select: { id: true, clinicId: true, startTime: true, endTime: true },
         })
       }
 
       if (bulkDates && Array.isArray(bulkDates) && bulkDates.length > 0) {
-        // Extract original HK time-of-day from the provided startTime/endTime
         const { startTime: origStart, endTime: origEnd } = buildShiftFromInput(date, startTime, endTime)
+
+        const planned: Array<{ d: string; times: ReturnType<typeof buildShiftTimes> }> = []
         for (const d of bulkDates) {
           const times = buildShiftTimes(d, hkTimeOf(origStart), hkTimeOf(origEnd))
 
-          // Fix #4: check overlap before creating
           const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
           if (overlap) {
             return NextResponse.json(
-              { error: '該員工在此時段已有排班', conflictShiftId: overlap.id, date: d },
+              { error: `${d} 該員工在此時段已有排班`, conflictShiftId: overlap.id, date: d },
               { status: 409 }
             )
           }
 
-          // Fix: check leave conflict before creating
           const leaveConflict = await checkShiftLeaveConflict(employeeId, times.date)
           if (leaveConflict.conflict) {
             return NextResponse.json(
-              { error: `該員工該天已有假期（${leaveConflict.leaveName}），無法排班`, date: d },
+              { error: `${d} 該員工已有假期（${leaveConflict.leaveName}），無法排班`, date: d },
               { status: 409 }
             )
           }
 
-          const shift = await prisma.shift.create({
+          planned.push({ d, times })
+        }
+
+        const created = await prisma.$transaction(
+          planned.map(p => prisma.shift.create({
             data: {
               employeeId,
               clinicId,
-              date: times.date,
-              startTime: times.startTime,
-              endTime: times.endTime,
+              date: p.times.date,
+              startTime: p.times.startTime,
+              endTime: p.times.endTime,
               role: role || null,
               status: status as any,
               templateId: templateId || null,
@@ -220,10 +223,9 @@ export async function POST(req: NextRequest) {
               clinic: { select: { id: true, name: true } },
               template: { select: { id: true, name: true } },
             },
-          })
-
-          shifts.push(shift)
-        }
+          }))
+        )
+        shifts.push(...created)
       } else {
         // Parse date as HK midnight to avoid UTC midnight issue
         const times = buildShiftFromInput(date, startTime, endTime)
