@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
-import { toHKDateStr, fmtTime } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime, getMonthRange } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
 
@@ -26,9 +26,11 @@ export async function GET(req: NextRequest) {
     monthStart = new Date(startDate + 'T00:00:00+08:00')
     monthEnd = new Date(endDate + 'T23:59:59+08:00')
   } else if (periodMonth) {
-    const [yearStr, monthStr] = periodMonth.split('-')
-    monthStart = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
-    monthEnd = new Date(parseInt(yearStr), parseInt(monthStr), 0, 23, 59, 59)
+    // ★ 用 +08:00 建構，避免 server UTC 差 8 小時（P2-15）
+    const md = new Date(`${periodMonth}-01T00:00:00+08:00`)
+    const range = getMonthRange(md)
+    monthStart = range.start
+    monthEnd = range.end
   } else {
     return NextResponse.json({ error: 'periodMonth (YYYY-MM) or startDate/endDate is required' }, { status: 400 })
   }
@@ -51,13 +53,28 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Fix #2a: Get all HOURLY employee IDs to skip them
-  const hourlyEmpIds = new Set(
-    (await prisma.payRule.findMany({
-      where: { isActive: true, payType: 'HOURLY' },
-      select: { employeeId: true },
-    })).map(r => r.employeeId)
-  )
+  // ★ P2-16: 同引擎口徑一致：只認 configJson.base_type，唔睇 payType 欄；
+  // 而且要按計糧月份揀規則（同 generatePayrollRun:857 一樣）
+  const activeRules = await prisma.payRule.findMany({
+    where: {
+      isActive: true,
+      effectiveFrom: { lte: monthEnd },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
+    },
+    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+    select: { employeeId: true, configJson: true },
+  })
+  const seen = new Set<string>()
+  const hourlyEmpIds = new Set<string>()
+  for (const r of activeRules) {
+    if (seen.has(r.employeeId)) continue
+    seen.add(r.employeeId)
+    try {
+      if (JSON.parse(r.configJson || '{}')?.base_type === 'hourly') {
+        hourlyEmpIds.add(r.employeeId)
+      }
+    } catch { /* 壞 JSON 當非時薪 */ }
+  }
 
   const effectivePunches = await getEffectivePunches(monthStart, monthEnd, {
     clinicId: scopedClinicId,
