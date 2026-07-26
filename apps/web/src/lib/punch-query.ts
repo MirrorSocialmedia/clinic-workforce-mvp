@@ -41,7 +41,8 @@ export async function getEffectivePunches(
   }
   if (opts?.employeeId) punchWhere.employeeId = opts.employeeId
   if (opts?.clinicId) punchWhere.clinicId = opts.clinicId
-  else if (opts?.clinicIds?.length) punchWhere.clinicId = { in: opts.clinicIds }
+  // ★ 空陣列代表「一間店都冇權限」，要配對零筆；用 .length 會變成完全唔 filter（fail-open）
+  else if (opts?.clinicIds !== undefined) punchWhere.clinicId = { in: opts.clinicIds }
 
   const correctionWhere: any = {
     correctedTime: { gte: start, lte: end },
@@ -49,7 +50,7 @@ export async function getEffectivePunches(
   }
   if (opts?.employeeId) correctionWhere.employeeId = opts.employeeId
   if (opts?.clinicId) correctionWhere.clinicId = opts.clinicId
-  else if (opts?.clinicIds?.length) correctionWhere.clinicId = { in: opts.clinicIds }
+  else if (opts?.clinicIds !== undefined) correctionWhere.clinicId = { in: opts.clinicIds }
 
   const [punches, corrections] = await Promise.all([
     db.punchRecord.findMany({

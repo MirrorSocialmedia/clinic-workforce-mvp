@@ -634,15 +634,21 @@ function getShiftCode(shift: Shift): string {
       lr.employeeId === empId && leaveCoversDate(lr, dateStr)
     )
     if (empShiftsOnDay.length > 0) {
-      const s = empShiftsOnDay[0]
-      const clinic = s.clinic as any
-      const tpl = s.template
-      const parts: string[] = []
-      if (tpl?.shortName || tpl?.name) parts.push(tpl.shortName || tpl.name)
-      if (clinic) parts.push(clinic.shortName || clinic.name?.slice(0, 2) || '')
-      const shiftLabel = parts.join('·') || tpl?.name || clinic?.shortName || '班'
-      const color = shiftColor(s)
-      return { label: shiftLabel, bg: color, detail: shiftLabel }
+      // ★ 調鋪日可能有多張更，桌面版用 .map 全部顯示，手機版之前只取 [0] 睇唔到第二間店
+      const parts = empShiftsOnDay.map((s: any) => {
+        const clinic = s.clinic as any
+        const tpl = s.template
+        const p: string[] = []
+        if (tpl?.shortName || tpl?.name) p.push(tpl.shortName || tpl.name)
+        if (clinic) p.push(clinic.shortName || clinic.name?.slice(0, 2) || '')
+        return p.join('·') || '班'
+      })
+      const s0 = empShiftsOnDay[0]
+      return {
+        label: parts.length > 1 ? `${parts[0]}+${parts.length - 1}` : parts[0],
+        bg: shiftColor(s0),
+        detail: parts.join(' / '),
+      }
     }
     if (empLeavesOnDay.length > 0) {
       const lr = empLeavesOnDay[0]
@@ -782,11 +788,15 @@ function getShiftCode(shift: Shift): string {
       if (!res.ok) { alert('刪除失敗'); return }
       await refreshAll()
       const restore = async () => {
-        await fetch('/api/shifts', {
+        const r = await fetch('/api/shifts', {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(raw),
         })
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}))
+          setValidationIssues([{ type: 'error', rule: 'api', message: `還原失敗：${e.error || '該時段已有其他排班'}` }])
+        }
         await refreshAll()
       }
       if (undoTimer.current) clearTimeout(undoTimer.current)
@@ -813,11 +823,15 @@ function getShiftCode(shift: Shift): string {
       await refreshAll()
       await refreshLeaveBalances()
       const restore = async () => {
-        await fetch('/api/leave-requests', {
+        const r = await fetch('/api/leave-requests', {
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(raw),
         })
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}))
+          setValidationIssues([{ type: 'error', rule: 'api', message: `還原失敗：${e.error || '該時段已有其他排班'}` }])
+        }
         await refreshAll()
         await refreshLeaveBalances()
       }
@@ -1533,13 +1547,32 @@ function getShiftCode(shift: Shift): string {
   const handleOverviewCellDblClick = async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
     if (!canManage) return
-    const existing = shifts.find(
-      s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr && s.status !== 'CANCELLED' && s.clinicId === selectedClinicId
+    const dayShifts = shifts.filter(
+      s => s.employeeId === empId &&
+        toHKDateStr(new Date(s.date)) === dateStr &&
+        s.status !== 'CANCELLED'
     )
-    if (!existing) return
+    if (dayShifts.length === 0) return
+
+    let target = dayShifts.find(s => s.clinicId === selectedClinicId) ?? null
+    // ★ 調鋪日有多張更 → 要問清楚，唔可以靜靜刪其中一張
+    if (dayShifts.length > 1) {
+      const names = dayShifts.map((s, i) =>
+        `${i + 1}. ${clinics.find(c => c.id === s.clinicId)?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
+      ).join('\n')
+      const pick = prompt(`該日有 ${dayShifts.length} 張更，要刪邊張？輸入編號：\n${names}`)
+      const i = Number(pick) - 1
+      if (!Number.isInteger(i) || i < 0 || i >= dayShifts.length) return
+      target = dayShifts[i]
+    }
+    if (!target) {
+      // ★ 之前係 `if (!existing) return` —— 用家撳極冇反應唔知發生咩事
+      setValidationIssues([{ type: 'warning', rule: 'shift', message: '該格喺目前選中嘅診所冇更次' }])
+      return
+    }
     const name = employees.find(e => e.id === empId)?.user?.name || empId
     if (confirm(`刪除 ${name} ${dateStr} 的更次？`)) {
-      await deleteShift(existing.id)
+      await deleteShift(target.id)
       await refreshAll()
     }
   }

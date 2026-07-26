@@ -41,6 +41,12 @@ export async function GET(req: NextRequest) {
   const sessionClinics = session.clinics ?? []
   let scopedClinicId: string | undefined = clinicId || undefined
   let scopedClinicIds: string[] | undefined
+  // ★ fail-closed：未綁任何店嘅 MANAGER（或者舊 JWT 被 normalize 成 clinics: []）
+  //   唔應該見到全公司資料
+  if (scope === 'my-clinics' && sessionClinics.length === 0) {
+    return NextResponse.json({ exceptions: [], summary: {} })
+  }
+
   if (scope === 'my-clinics') {
     if (clinicId) {
       if (!sessionClinics.includes(clinicId)) {
@@ -113,7 +119,7 @@ export async function GET(req: NextRequest) {
     correctedTime: { gte: monthStart, lte: monthEnd },
   }
   if (scopedClinicId) correctionWhere.clinicId = scopedClinicId
-  else if (scopedClinicIds?.length) correctionWhere.clinicId = { in: scopedClinicIds }
+  else if (scopedClinicIds !== undefined) correctionWhere.clinicId = { in: scopedClinicIds }
   if (employeeId) correctionWhere.employeeId = employeeId
 
   const corrections = await prisma.punchCorrection.findMany({
@@ -133,7 +139,7 @@ export async function GET(req: NextRequest) {
     status: 'CONFIRMED',
   }
   if (scopedClinicId) shiftWhere.clinicId = scopedClinicId
-  else if (scopedClinicIds?.length) shiftWhere.clinicId = { in: scopedClinicIds }
+  else if (scopedClinicIds !== undefined) shiftWhere.clinicId = { in: scopedClinicIds }
   if (employeeId) shiftWhere.employeeId = employeeId
 
   const shifts = await prisma.shift.findMany({
