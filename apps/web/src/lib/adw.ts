@@ -115,7 +115,9 @@ export async function calculateADW(
     byMonth.set(pmStr, {
       periodMonth: pmStr,
       source: 'PayrollItem',
-      wage: (pi as any).eoWage ?? deriveEoWage(pi as any),
+      // ★ `??` 唔接 0 → 歷史資料（eoWage 全 0）會直接當 0 工資，令 ADW 被拉低。
+      //   改用 `||` 讓 deriveEoWage() 兜返歷史單，等 backfill 做完先可以改返 `??`
+      wage: (pi as any).eoWage || deriveEoWage(pi as any),
       excludedDays: (pi as any).excludedDays ?? 0,
       excludedWage: (pi as any).excludedWage ?? 0,
       calendarDays: daysInMonth(pmStr),

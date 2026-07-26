@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { toHKDateStr } from '@/lib/hk-date'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
 
@@ -42,6 +42,14 @@ export async function PUT(
     if (request.status !== 'PENDING') {
       return NextResponse.json({ error: `Request already ${request.status}` }, { status: 400 })
     }
+
+    // ★ MANAGER 只可以審自己店員工嘅假
+    const emp = await prisma.employee.findUnique({
+      where: { id: request.employeeId },
+      select: { homeClinicId: true },
+    })
+    const denied = assertClinicAccess(scope, session, emp?.homeClinicId)
+    if (denied) return denied
 
     const status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED'
 
@@ -122,7 +130,7 @@ export async function DELETE(
 ) {
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -137,6 +145,14 @@ export async function DELETE(
       if (!request) {
         return NextResponse.json({ error: 'Leave request not found' }, { status: 404 })
       }
+
+      // ★ MANAGER 只可以刪自己店員工嘅假
+      const emp = await prisma.employee.findUnique({
+        where: { id: request.employeeId },
+        select: { homeClinicId: true },
+      })
+      const denied = assertClinicAccess(scope, session, emp?.homeClinicId)
+      if (denied) return denied
 
       // Only allow deleting PENDING or approved requests by manager/owner
       if (request.status === 'APPROVED' && session.role !== 'OWNER' && session.role !== 'MANAGER') {

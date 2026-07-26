@@ -907,6 +907,10 @@ export async function generatePayrollRun(
           detailJson: JSON.stringify(calcResult.detail),
           // ★ Phase 3: ADW used for this payroll calculation (audit trail)
           adwUsed: (calcResult.detail as any)?.adwUsed ?? null,
+          // ★ EO 第 2 條定義嘅「工資」總額（供 ADW 用）
+          eoWage: (calcResult.detail as any)?.eoWage ?? 0,
+          excludedDays: (calcResult.detail as any)?.excludedDays ?? 0,
+          excludedWage: (calcResult.detail as any)?.excludedWage ?? 0,
           // ★ Phase 4: Maternity / Paternity pay
           maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
           paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
@@ -998,6 +1002,7 @@ interface WorkData {
   otDeductedAbsences: Array<{ date: string; minutes: number }>
   shifts: any[]
   makeupEntries: Array<{ date: string; minutes: number; note: string }>
+  leaveByType: Array<{ leaveTypeName: string; days: number; isPaid: boolean }>
 }
 
 /**
@@ -2127,6 +2132,7 @@ async function collectWorkData(
     otDeductedAbsences,
     shifts,
     makeupEntries,
+    leaveByType,
   }
 }
 
@@ -2939,6 +2945,43 @@ export async function calculatePayrollWithRules(
 
   // ★ 雜項統一在最後加（防 OT/假期重算覆蓋）
   result.totalPayable = Math.max(0, result.totalPayable + miscTotal)
+
+  // ★ EO 工資 / 剔除日數（供 ADW 用，決定 5 口徑）
+  //   storeBonus 係老闆酌情花紅 → EO 第 2 條唔當工資，剔出
+  //   miscAmount 係實報實銷 → EO 第 2 條明文剔除
+  //   僱員 MPF 唔減（工資係扣前嘅數）
+  const eoWage = Math.round((
+      result.basePay
+    + result.otPay
+    + effectiveSplitPay
+    + result.attendanceBonus
+    + totalAllowances
+    + ((result.detail as any).maternityPay ?? 0)
+    + ((result.detail as any).paternityPay ?? 0)
+    - (sickDeduction.amount ?? 0)
+  ) * 100) / 100
+
+  // 剔除日數 / 款額：病假 + 無薪假 + 產假 + 侍產假
+  const sickDays = (sickDeduction.episodes ?? [])
+    .reduce((s: number, e: any) => s + (e.daysInMonth ?? e.days ?? 0), 0)
+  const noPayLeaveDays = (workData.leaveByType ?? [])
+    .filter((lt: any) => lt.isPaid === false)
+    .reduce((s: number, lt: any) => s + lt.days, 0)
+  const maternityDays = (result.detail as any).maternityDaysInMonth ?? 0
+  const paternityDays = (result.detail as any).paternityDaysInMonth ?? 0
+
+  const excludedDays = Math.round(sickDays + noPayLeaveDays + maternityDays + paternityDays)
+  const excludedWage = Math.round((
+      // 病假：實付部分 = 應付日薪 × 日數 − 已扣減
+      ((result.detail as any).sickPaidAmount ?? 0)
+    + 0                                              // 無薪假實收 0
+    + ((result.detail as any).maternityPay ?? 0)
+    + ((result.detail as any).paternityPay ?? 0)
+  ) * 100) / 100
+
+  ;(result.detail as any).eoWage = eoWage
+  ;(result.detail as any).excludedDays = excludedDays
+  ;(result.detail as any).excludedWage = excludedWage
 
   // Round final values
   return {

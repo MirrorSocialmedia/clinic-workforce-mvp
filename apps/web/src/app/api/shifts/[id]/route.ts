@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
 import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requirePerm, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 
@@ -28,6 +28,16 @@ export async function PUT(
 
     const existing = await prisma.shift.findUnique({ where: { id } })
     if (!existing) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
+
+    // ★ MANAGER 只可以動自己店嘅更
+    const denied = assertClinicAccess(scope, session, existing.clinicId)
+    if (denied) return denied
+
+    // ★ 調鋪：改店時目標店都要喺權限內
+    if (body.clinicId !== undefined) {
+      const deniedTarget = assertClinicAccess(scope, session, body.clinicId)
+      if (deniedTarget) return deniedTarget
+    }
 
     const beforeJson = JSON.stringify(existing)
     const updateData: any = {}
@@ -91,7 +101,7 @@ export async function DELETE(
 ) {
   const auth = await requirePerm(req, 'scheduling')
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -103,6 +113,10 @@ export async function DELETE(
     const id = params.id
     const existing = await prisma.shift.findUnique({ where: { id } })
     if (!existing) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
+
+    // ★ MANAGER 只可以動自己店嘅更
+    const denied = assertClinicAccess(scope, session, existing.clinicId)
+    if (denied) return denied
 
     const beforeJson = JSON.stringify(existing)
     await prisma.shift.delete({ where: { id } })

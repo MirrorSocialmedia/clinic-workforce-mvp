@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
 
@@ -38,6 +38,10 @@ export async function PUT(
     if (changeRequest.status !== 'PENDING') {
       return NextResponse.json({ error: `Change request is already ${changeRequest.status}` }, { status: 409 })
     }
+
+    // ★ MANAGER 只可以審自己店嘅換更
+    const denied = assertClinicAccess(scope, session, changeRequest.shift?.clinicId)
+    if (denied) return denied
 
     const beforeJson = JSON.stringify(changeRequest)
 

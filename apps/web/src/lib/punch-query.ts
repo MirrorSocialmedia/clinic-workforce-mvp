@@ -29,6 +29,7 @@ export async function getEffectivePunches(
   opts?: {
     employeeId?: string
     clinicId?: string
+    clinicIds?: string[]    // ★ MANAGER 多店 scope
     db?: typeof prisma
   },
 ): Promise<Array<{ punchType: string; clinicId: string; effectiveTime: Date; raw: any }>> {
@@ -40,6 +41,7 @@ export async function getEffectivePunches(
   }
   if (opts?.employeeId) punchWhere.employeeId = opts.employeeId
   if (opts?.clinicId) punchWhere.clinicId = opts.clinicId
+  else if (opts?.clinicIds?.length) punchWhere.clinicId = { in: opts.clinicIds }
 
   const correctionWhere: any = {
     correctedTime: { gte: start, lte: end },
@@ -47,6 +49,7 @@ export async function getEffectivePunches(
   }
   if (opts?.employeeId) correctionWhere.employeeId = opts.employeeId
   if (opts?.clinicId) correctionWhere.clinicId = opts.clinicId
+  else if (opts?.clinicIds?.length) correctionWhere.clinicId = { in: opts.clinicIds }
 
   const [punches, corrections] = await Promise.all([
     db.punchRecord.findMany({

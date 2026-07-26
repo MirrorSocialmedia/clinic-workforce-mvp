@@ -285,3 +285,18 @@ export async function requireRole(
 
   return session
 }
+
+/**
+ * 檢查一筆記錄嘅 clinicId 係咪喺呼叫者權限範圍內。
+ * scope==='all' 一律通過；'my-clinics' 對 session.clinics；'self' 一律拒絕。
+ * 回傳 null = 通過；回傳 NextResponse = 直接 return 佢。
+ */
+export function assertClinicAccess(
+  scope: 'all' | 'my-clinics' | 'self',
+  session: SessionPayload,
+  clinicId: string | null | undefined,
+): NextResponse | null {
+  if (scope === 'all') return null
+  if (scope === 'my-clinics' && clinicId && (session.clinics ?? []).includes(clinicId)) return null
+  return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+}

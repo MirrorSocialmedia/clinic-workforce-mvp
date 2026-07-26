@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { toHKDateStr, fmtTime } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
@@ -35,6 +35,22 @@ export async function GET(req: NextRequest) {
 
   const monthDate = monthStart
 
+  // ★ MANAGER 只睇自己店
+  const sessionClinics = session.clinics ?? []
+  let scopedClinicId: string | undefined = clinicId || undefined
+  let scopedClinicIds: string[] | undefined
+  if (scope === 'my-clinics') {
+    if (clinicId) {
+      if (!sessionClinics.includes(clinicId)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+      scopedClinicId = clinicId
+    } else {
+      scopedClinicIds = sessionClinics
+      scopedClinicId = undefined
+    }
+  }
+
   // Fix #2a: Get all HOURLY employee IDs to skip them
   const hourlyEmpIds = new Set(
     (await prisma.payRule.findMany({
@@ -44,7 +60,8 @@ export async function GET(req: NextRequest) {
   )
 
   const effectivePunches = await getEffectivePunches(monthStart, monthEnd, {
-    clinicId: clinicId || undefined,
+    clinicId: scopedClinicId,
+    clinicIds: scopedClinicIds,
     employeeId: employeeId || undefined,
   })
 
@@ -53,7 +70,7 @@ export async function GET(req: NextRequest) {
     where: {
       punchTime: { gte: monthStart, lte: monthEnd },
       void: { is: null },
-      ...(clinicId ? { clinicId } : {}),
+      ...(scopedClinicId ? { clinicId: scopedClinicId } : scopedClinicIds ? { clinicId: { in: scopedClinicIds } } : {}),
       ...(employeeId ? { employeeId } : {}),
     },
     include: {
@@ -78,7 +95,8 @@ export async function GET(req: NextRequest) {
     status: 'APPROVED',
     correctedTime: { gte: monthStart, lte: monthEnd },
   }
-  if (clinicId) correctionWhere.clinicId = clinicId
+  if (scopedClinicId) correctionWhere.clinicId = scopedClinicId
+  else if (scopedClinicIds?.length) correctionWhere.clinicId = { in: scopedClinicIds }
   if (employeeId) correctionWhere.employeeId = employeeId
 
   const corrections = await prisma.punchCorrection.findMany({
@@ -97,7 +115,8 @@ export async function GET(req: NextRequest) {
     date: { gte: monthStart, lte: monthEnd },
     status: 'CONFIRMED',
   }
-  if (clinicId) shiftWhere.clinicId = clinicId
+  if (scopedClinicId) shiftWhere.clinicId = scopedClinicId
+  else if (scopedClinicIds?.length) shiftWhere.clinicId = { in: scopedClinicIds }
   if (employeeId) shiftWhere.employeeId = employeeId
 
   const shifts = await prisma.shift.findMany({
