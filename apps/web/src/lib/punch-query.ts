@@ -55,25 +55,37 @@ export async function getEffectivePunches(
     }),
     db.punchCorrection.findMany({
       where: correctionWhere,
+      orderBy: [{ createdAt: 'asc' }],
     }),
   ])
 
-  // correctionMap: date:clinicId:punchType → correctedTime
-  const correctionMap = new Map<string, Date>()
+  // Match corrections by punchRecordId (field already exists in schema)
+  const correctionByRecordId = new Map<string, Date>()
+  const orphanCorrections: any[] = []
   for (const c of corrections) {
-    const key = `${toHKDateStr(new Date(c.correctedTime))}:${c.clinicId}:${c.punchType}`
-    correctionMap.set(key, new Date(c.correctedTime))
+    if (c.punchRecordId) correctionByRecordId.set(c.punchRecordId, new Date(c.correctedTime))
+    else orphanCorrections.push(c)
   }
 
-  return punches.map((p: any) => {
-    const key = `${toHKDateStr(new Date(p.punchTime))}:${p.clinicId}:${p.punchType}`
-    return {
-      punchType: p.punchType,
-      clinicId: p.clinicId,
-      effectiveTime: correctionMap.get(key) ?? new Date(p.punchTime),
-      raw: p,
-    }
-  })
+  const mapped = punches.map((p: any) => ({
+    punchType: p.punchType,
+    clinicId: p.clinicId,
+    effectiveTime: correctionByRecordId.get(p.id) ?? new Date(p.punchTime),
+    raw: p,
+  }))
+
+  // Pure corrections (no original punch record) must also appear,
+  // otherwise calculateTimeBank won't see them → inconsistency
+  for (const c of orphanCorrections) {
+    mapped.push({
+      punchType: c.punchType,
+      clinicId: c.clinicId,
+      effectiveTime: new Date(c.correctedTime),
+      raw: { ...c, __synthetic: true },
+    })
+  }
+
+  return mapped.sort((a, b) => a.effectiveTime.getTime() - b.effectiveTime.getTime())
 }
 
 // ------------------------------------------------------------------

@@ -167,16 +167,18 @@ async function calculateWorkedHours(
         status: 'APPROVED',
         correctedTime: { gte: monthStart, lte: monthEnd },
       },
+      orderBy: [{ createdAt: 'asc' }],
     }),
   ])
 
-  // Build correction map keyed by day:clinicId:type (FIX #5: include clinicId)
-  const correctionMap = new Map<string, Date>()
+  // Build correction map keyed by punchRecordId (not date:clinicId:type).
+  // Old key would let one correction overwrite all same-type punches on the same day,
+  // and two corrections for the same slot give non-deterministic order → inconsistent payroll.
+  const correctionByRecordId = new Map<string, Date>()
+  const orphanCorrections: typeof corrections = [] // punchRecordId = null: pure correction with no original record
   for (const c of corrections) {
-    const dayStr = formatDate(c.correctedTime)
-    // FIX #5: key includes clinicId to distinguish cross-clinic corrections
-    const key = `${dayStr}:${c.clinicId}:${c.punchType}`
-    correctionMap.set(key, c.correctedTime)
+    if (c.punchRecordId) correctionByRecordId.set(c.punchRecordId, c.correctedTime)
+    else orphanCorrections.push(c)
   }
 
   // Group punches by date + clinic
@@ -188,40 +190,32 @@ async function calculateWorkedHours(
   const dayClinicMap = new Map<string, DayClinicEntry>()
 
   for (const p of punches) {
-    const dayKey = formatDate(p.punchTime)
+    // Use correction time if a correction maps to this punch record
+    const effectiveTime = correctionByRecordId.get(p.id) ?? p.punchTime
+    const dayKey = formatDate(effectiveTime)
     const mapKey = `${dayKey}:${p.clinicId}`
     let entry = dayClinicMap.get(mapKey)
     if (!entry) {
       entry = { clinicId: p.clinicId, punchIns: [], punchOuts: [] }
       dayClinicMap.set(mapKey, entry)
     }
-    // ★ 只有 CLOCK_IN / CLOCK_OUT 參與工時配對。
-    // LUNCH_START / LUNCH_END 由 calculateTimeBank 獨立處理（午休扣減），
-    // 混入呢度會令第一個午休卡被當成落班，之後所有打卡全部丟棄。
-    if (p.punchType === 'CLOCK_IN') entry.punchIns.push(p.punchTime)
-    else if (p.punchType === 'CLOCK_OUT') entry.punchOuts.push(p.punchTime)
+    // Only CLOCK_IN / CLOCK_OUT participate in pairing
+    if (p.punchType === 'CLOCK_IN') entry.punchIns.push(effectiveTime)
+    else if (p.punchType === 'CLOCK_OUT') entry.punchOuts.push(effectiveTime)
   }
 
-  // Apply corrections
-  for (const [key, correctedTime] of correctionMap) {
-    const parts = key.split(':')
-    const dayStr = parts[0]
-    const clinicId = parts[1]
-    const punchType = parts[2]
-
-    const mapKey = `${dayStr}:${clinicId}`
+  // Pure corrections (no original punch record) → inject a synthetic entry
+  for (const c of orphanCorrections) {
+    if (c.punchType !== 'CLOCK_IN' && c.punchType !== 'CLOCK_OUT') continue
+    const dayStr = formatDate(c.correctedTime)
+    const mapKey = `${dayStr}:${c.clinicId}`
     let entry = dayClinicMap.get(mapKey)
     if (!entry) {
-      entry = { clinicId, punchIns: [], punchOuts: [] }
+      entry = { clinicId: c.clinicId, punchIns: [], punchOuts: [] }
       dayClinicMap.set(mapKey, entry)
     }
-
-    // 午休補登唔入配對
-    if (punchType !== 'CLOCK_IN' && punchType !== 'CLOCK_OUT') continue
-    const arr = punchType === 'CLOCK_IN' ? entry.punchIns : entry.punchOuts
-    // Replace existing entries of same type with corrected time
-    arr.length = 0
-    arr.push(correctedTime)
+    if (c.punchType === 'CLOCK_IN') entry.punchIns.push(c.correctedTime)
+    else entry.punchOuts.push(c.correctedTime)
   }
 
   // FIX #6: Pair in-out segments per day+clinic, sum each segment
