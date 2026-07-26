@@ -2437,10 +2437,16 @@ function applyAllowancesModifier(
 async function calculateSimpleHourlyPay(
   employeeId: string,
   monthDate: Date,
-  clinicId: string | null,
+  clinicId: string | null, // ★ 刻意唔用：時薪跨店合計（打卡跟人唔跟店），分單靠 generatePayrollRun 嘅 homeClinicId
   config: PayRuleConfigModular
 ): Promise<PayrollResult> {
   const rate = config.hourly_rate || 0
+  // ★ 決定 2：時薪員工同月薪一致，每個有上班卡嘅日子扣午飯
+  // 唔想扣嘅規則喺 UI 把 defaultMinutes 設做 0
+  const lunch = (config as any)?.modifiers?.lunch_break ?? {}
+  const lunchEnabled = !!lunch.enabled
+  const lunchDefault = lunch.defaultMinutes ?? 60
+  const lunchMin = lunch.minMinutes ?? 30
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
   const shifts = await prisma.shift.findMany({
@@ -2468,6 +2474,8 @@ async function calculateSimpleHourlyPay(
 
   for (const [dateStr, dayPunches] of byDate) {
     const shift = shifts.find((s: any) => toHKDateStr(s.date) === dateStr)
+    // ★ 決定 3（2026-07-25）：調鋪途中嘅交通時間算工時，
+    // 所以刻意用「全日第一個 IN → 最後一個 OUT」嘅跨度，唔逐段配對。
     const clockIn = dayPunches.filter((ep: any) => ep.punchType === 'CLOCK_IN')[0]
     const clockOut = dayPunches.filter((ep: any) => ep.punchType === 'CLOCK_OUT').slice(-1)[0]
 
@@ -2481,7 +2489,25 @@ async function calculateSimpleHourlyPay(
     const effStart = shiftStart
       ? Math.max(clockIn.effectiveTime.getTime(), shiftStart)
       : clockIn.effectiveTime.getTime()
-    const minutes = Math.max(0, Math.floor((clockOut.effectiveTime.getTime() - effStart) / 60000))
+    const spanMinutes = Math.max(0, Math.floor((clockOut.effectiveTime.getTime() - effStart) / 60000))
+
+    // ★ 午飯扣減（決定 2）。決定 3：調鋪途中嘅交通時間照計錢，
+    // 所以維持「第一個 IN 到最後一個 OUT」嘅跨度，只扣午飯。
+    let lunchDeduct = lunchDefault
+    if (lunchEnabled) {
+      const ls = dayPunches
+        .filter((p: any) => p.punchType === 'LUNCH_START')
+        .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
+      const le = dayPunches
+        .filter((p: any) => p.punchType === 'LUNCH_END')
+        .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
+      if (ls && le && le.effectiveTime.getTime() > ls.effectiveTime.getTime()) {
+        const actual = Math.floor((le.effectiveTime.getTime() - ls.effectiveTime.getTime()) / 60000)
+        lunchDeduct = Math.max(actual, lunchMin)
+      }
+    }
+
+    const minutes = Math.max(0, spanMinutes - lunchDeduct)
     const amount = Math.round(minutes * rate / 60 * 100) / 100
 
     totalMinutes += minutes
@@ -2493,6 +2519,8 @@ async function calculateSimpleHourlyPay(
       out: clockOut.effectiveTime,
       shiftStart: shift?.startTime ?? null,
       clamped: shiftStart != null && clockIn.effectiveTime.getTime() < shiftStart,
+      spanMinutes,
+      lunchDeduct,
       minutes,
       amount,
     })
