@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { CONFIG } from '@/lib/config'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
  const auth = await requireAuth(req, 'POST', req.url)
@@ -23,8 +24,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
  // 刪除參考照
  if (template.refFrameId) {
   try {
-   const url = process.env.NEXT_PUBLIC_FACE_SERVICE_URL || 'http://face:8000'
-   await fetch(`${url}/frame/${template.refFrameId}`, { method: 'DELETE' })
+   await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${template.refFrameId}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
+    })
   } catch { /* ignore */ }
  }
 

@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { CONFIG } from '@/lib/config'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
  const auth = await requireAuth(req, 'GET', req.url)
@@ -34,8 +35,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
  // 從 face-service 拿參考照
  try {
-  const url = process.env.NEXT_PUBLIC_FACE_SERVICE_URL || 'http://face:8000'
-  const res = await fetch(`${url}/frame/${template.refFrameId}`)
+  const res = await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${template.refFrameId}`, {
+    signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
+  })
   if (!res.ok) return NextResponse.json({ error: 'Frame not found' }, { status: 404 })
   const buf = await res.arrayBuffer()
   return new NextResponse(buf, { headers: { 'Content-Type': 'image/jpeg' } })

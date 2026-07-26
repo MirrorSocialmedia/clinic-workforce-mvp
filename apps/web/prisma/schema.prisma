@@ -362,9 +362,9 @@ model QRToken {
   shortCode String?  // 8字元短碼，QR碼只顯示它（降密度）
   issuedAt  DateTime
   expiresAt DateTime
-  used      Boolean  @default(false)
-  usedBy    String?  // employeeId
-  usedAt    DateTime?
+  used      Boolean  @default(false) // ★ DEPRECATED: 新流程用 QRTokenUsage，此欄永遠 false
+  usedBy    String?  // ★ DEPRECATED
+  usedAt    DateTime? // ★ DEPRECATED
   createdAt DateTime @default(now())
 
   clinic    Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)

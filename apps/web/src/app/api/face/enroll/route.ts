@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { CONFIG } from '@/lib/config'
 
 // POST /api/face/enroll — Employee face enrollment via multipart form
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
@@ -14,6 +15,18 @@ export async function POST(req: NextRequest) {
   const code = String(form.get('code') || '')
   const frames = form.getAll('frames') as File[]
   if (frames.length < 3) return NextResponse.json({ error: '至少需要 3 幀' }, { status: 400 })
+
+  // ★ 決定 10：上傳限制
+  const MAX_FRAME_BYTES = 2 * 1024 * 1024
+  const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp']
+  for (const f of frames) {
+    if (f.size > MAX_FRAME_BYTES) {
+      return NextResponse.json({ error: 'frame too large' }, { status: 413 })
+    }
+    if (!ALLOWED_MIME.includes(f.type)) {
+      return NextResponse.json({ error: 'unsupported frame type' }, { status: 415 })
+    }
+  }
 
   const employee = await prisma.employee.findUnique({ where: { userId: session.userId } })
   if (!employee) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
@@ -39,7 +52,11 @@ export async function POST(req: NextRequest) {
   const fd = new FormData()
   frames.forEach(f => fd.append('files', f))
   fd.append('store_ref', template.id)
-  const res = await fetch(`${process.env.FACE_SERVICE_URL}/embed`, { method: 'POST', body: fd })
+  const res = await fetch(`${CONFIG.FACE_SERVICE_URL}/embed`, {
+    method: 'POST',
+    body: fd,
+    signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
+  })
   const data = await res.json()
   if (!res.ok || !data.ok) {
     await prisma.faceTemplate.delete({ where: { id: template.id } }) // 失敗清佔位

@@ -7,7 +7,7 @@ export default function LoginPage() {
   const router = useRouter()
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(false)
+  const [rememberMe, setRememberMe] = useState(true)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -95,7 +95,7 @@ export default function LoginPage() {
               style={{ width: 16, height: 16, cursor: 'pointer' }}
             />
             <label htmlFor="rememberMe" style={{ fontSize: 13, color: '#1a1a2e', cursor: 'pointer' }}>
-              記住我
+              記住我（喺公用裝置請取消勾選）
             </label>
           </div>
         </form>

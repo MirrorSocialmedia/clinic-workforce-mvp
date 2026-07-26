@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { CONFIG } from '@/lib/config'
 
 // GET /api/face/review/[punchId] — Return frame image + audit
 // POST /api/face/review/[punchId] — Confirm or flag the punch
@@ -37,7 +38,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     },
   })
 
-  const res = await fetch(`${process.env.FACE_SERVICE_URL}/frame/${punchId}`)
+  const res = await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${punchId}`, {
+    signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
+  })
   if (!res.ok) return NextResponse.json({ error: 'frame fetch failed' }, { status: 404 })
   const buffer = await res.arrayBuffer()
   return new Response(buffer, {
@@ -65,7 +68,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (action === 'confirm') {
     // 確認本人：刪除 frame，置 null
-    await fetch(`${process.env.FACE_SERVICE_URL}/frame/${punchId}`, { method: 'DELETE' })
+    await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${punchId}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
+    })
     await prisma.punchRecord.update({
       where: { id: punchId },
       data: { faceReviewedAt: new Date(), faceReviewedBy: session.userId, faceFramePath: null },

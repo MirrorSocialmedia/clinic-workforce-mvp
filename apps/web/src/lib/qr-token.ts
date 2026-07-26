@@ -109,87 +109,29 @@ export async function validateAndMarkTokenUsed(
 }
 
 /**
- * Validate a QR token without marking as used.
- * Used for preview / check purposes only.
- * Checks if this employee has already used the token.
- */
-export async function validateQRToken(
-  scanned: string,
-  clinicId?: string,
-  employeeId?: string
-): Promise<{
-  valid: boolean
-  reason?: string
-  tokenRecord?: any
-} | null> {
-  let record = await prisma.qRToken.findUnique({
-    where: { token: scanned },
-  })
-
-  // If not found as full token, try as shortCode
-  if (!record) {
-    record = await prisma.qRToken.findFirst({
-      where: {
-        shortCode: scanned,
-      },
-    })
-  }
-
-  if (!record) {
-    return { valid: false, reason: 'Token not found' }
-  }
-
-  if (new Date() > record.expiresAt) {
-    return { valid: false, reason: 'Token expired' }
-  }
-
-  // Check if this employee already used this token
-  if (employeeId) {
-    const existingUsage = await prisma.qRTokenUsage.findUnique({
-      where: {
-        tokenId_employeeId: {
-          tokenId: record.id,
-          employeeId,
-        },
-      },
-    })
-    if (existingUsage) {
-      return { valid: false, reason: 'You already used this code' }
-    }
-  }
-
-  if (clinicId && record.clinicId !== clinicId) {
-    return { valid: false, reason: 'Token clinic mismatch' }
-  }
-
-  return { valid: true, tokenRecord: record }
-}
-
-/**
- * Mark a token as used. (Legacy — prefer validateAndMarkTokenUsed)
- */
-export async function markTokenUsed(token: string, employeeId: string): Promise<void> {
-  await prisma.qRToken.updateMany({
-    where: { token, used: false },
-    data: {
-      used: true,
-      usedBy: employeeId,
-      usedAt: new Date(),
-    },
-  })
-}
-
-/**
- * Clean up expired QR tokens. Called by cron / scheduled task.
+ * 清理過期 QR token。
+ * ★ 只刪【冇人用過】嘅 —— 用過嘅要保留做證據（QRTokenUsage 有 onDelete: Cascade，
+ * 刪 token 會連「邊個幾時用咗邊個碼」一齊抹走）。
+ * 注意：`used` 欄位喺新流程從來冇被 set 過，唔可以用嚟做條件。
  */
 export async function cleanupExpiredTokens(): Promise<number> {
   const result = await prisma.qRToken.deleteMany({
     where: {
       expiresAt: { lt: new Date() },
-      used: false,
+      usages: { none: {} },
     },
   })
+  return result.count
+}
 
+/**
+ * 已用碼嘅長期 retention —— 由 crontab 每日跑一次，唔好放喺 request path。
+ */
+export async function purgeOldUsedTokens(days = 90): Promise<number> {
+  const cutoff = new Date(Date.now() - days * 86400_000)
+  const result = await prisma.qRToken.deleteMany({
+    where: { expiresAt: { lt: cutoff } },
+  })
   return result.count
 }
 

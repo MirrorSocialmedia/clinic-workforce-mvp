@@ -237,6 +237,10 @@ export const CONFIG = {
   // Roles that can view all clinics (no data isolation)
   UNRESTRICTED_ROLES: ['OWNER'],
 
+  // Face service
+  FACE_SERVICE_URL: process.env.FACE_SERVICE_URL || 'http://face:8000',
+  FACE_TIMEOUT_MS: parseInt(process.env.FACE_TIMEOUT_MS || '5000', 10),
+
   // Default demo password
   DEMO_PASSWORD: 'demo1234',
 }

@@ -11,9 +11,12 @@ export interface SessionPayload {
   exp: number
 }
 
-export function createToken(payload: Omit<SessionPayload, 'iat' | 'exp'>): string {
+export function createToken(
+  payload: Omit<SessionPayload, 'iat' | 'exp'>,
+  maxAgeDays: number = CONFIG.SESSION_MAX_AGE_DAYS,
+): string {
   return jwt.sign(payload, CONFIG.JWT_SECRET, {
-    expiresIn: `${CONFIG.SESSION_MAX_AGE_DAYS}d`,
+    expiresIn: `${maxAgeDays}d`,
   })
 }
 
