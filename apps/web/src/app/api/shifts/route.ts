@@ -156,6 +156,10 @@ export async function POST(req: NextRequest) {
         if (secondaryClinicId) {
           const deniedSecondary = assertClinicAccess(scope, session, secondaryClinicId)
           if (deniedSecondary) return deniedSecondary
+          // ★ 調鋪店不可與主店相同
+          if (secondaryClinicId === clinicId) {
+            return NextResponse.json({ error: '調鋪店不可與主店相同' }, { status: 400 })
+          }
         }
 
         const empClinic = await prisma.employeeClinic.findFirst({

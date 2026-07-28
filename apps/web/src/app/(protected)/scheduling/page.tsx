@@ -42,6 +42,19 @@ const byName = (a: any, b: any) => {
   return (a.id || '').localeCompare(b.id || '')
 }
 
+/**
+ * 呢個假期類型可唔可以唔理餘額直接安排。
+ * ★ 病假（SICK）冇額度 —— 成本喺計糧端按連續日數分級結算，同 LeaveBalance 完全無關。
+ * ★ REST_DAY 剩 0 仍可拖（server ensure 補血）。
+ * ★ quantity=null 且冇 systemKey = 自訂無限類型。
+ */
+const isBalanceExempt = (lt: any): boolean =>
+  !!lt && (
+    (lt.quantity == null && !lt.systemKey) ||
+    lt.systemKey === 'SICK' ||
+    lt.systemKey === 'REST_DAY'
+  )
+
 // ============================================================
 // Types
 // ============================================================
@@ -1025,6 +1038,8 @@ function getShiftCode(shift: Shift): string {
           const newShift = { ...data.shifts[0], hasPunch: false }
           setShifts(prev => [...prev, newShift])
         }
+        // ★ 調鋪係逐張更嘅屬性，用完即清 —— 唔清嘅話之後每張更都會被標成調鋪
+        setSecondaryClinicId(null)
         await refreshAll()
         return true
       } else {
@@ -1125,9 +1140,8 @@ function getShiftCode(shift: Shift): string {
   const createLeaveOnCell = async (employeeId: string, dateStr: string, leaveType: any) => {
     if (!canManage) return
 
-    // Unlimited types (quantity === null && no systemKey) skip balance check
-    const isUnlimited = leaveType.quantity == null && !leaveType.systemKey
-    if (!isUnlimited) {
+    // ★ 豁免類型（病假 / 休息日 / 自訂無限）跳過餘額檢查
+    if (!isBalanceExempt(leaveType)) {
       const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveType.id)
       if (!bal || bal.remaining <= 0) {
         setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
@@ -1266,11 +1280,7 @@ function getShiftCode(shift: Shift): string {
       setTimeout(() => { justDroppedRef.current = false }, 100)
 
       const lt = leaveTypes.find(l => l.id === dl.leaveTypeId)
-      if (!lt || !dl.employeeId) return
-
-      // Unlimited types (quantity === null && no systemKey) skip balance check
-      const isUnlimited = lt.quantity == null && !lt.systemKey
-      if (!isUnlimited) {
+      if (!isBalanceExempt(lt)) {
         const bal = selectedEmpBalances.find(b => b.leaveTypeId === dl.leaveTypeId)
         if (!bal || bal.remaining <= 0) {
           setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
@@ -2799,7 +2809,7 @@ function getShiftCode(shift: Shift): string {
         <div className="mb-3">
           <select className="w-full rounded-lg border px-3 py-2 text-sm"
             value={selectedClinicId || ''}
-            onChange={e => setSelectedClinicId(e.target.value || null)}>
+            onChange={e => { setSelectedClinicId(e.target.value || null); setSecondaryClinicId(null) }}>
             <option value="">選擇診所</option>
             {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -3318,6 +3328,35 @@ function getShiftCode(shift: Shift): string {
             ))}
           </div>
 
+          {/* ★ 調鋪：新增更次時嘅第二間店 */}
+          {canManage && selectedTemplate && (
+            <div style={{
+              marginTop: 10, padding: '8px 10px',
+              background: secondaryClinicId ? '#fff7ed' : '#f9fafb',
+              border: `1px solid ${secondaryClinicId ? '#fdba74' : '#e5e7eb'}`,
+              borderRadius: 6,
+            }}>
+              <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>
+                調鋪店（選填）
+              </label>
+              <select
+                value={secondaryClinicId ?? ''}
+                onChange={e => setSecondaryClinicId(e.target.value || null)}
+                style={{ width: '100%', fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}
+              >
+                <option value="">無調鋪</option>
+                {clinics
+                  .filter(c => c.id !== selectedClinicId)
+                  .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {secondaryClinicId && (
+                <div style={{ fontSize: 10, color: '#c2410c', marginTop: 4 }}>
+                  ⚠️ 下一張建立嘅更次會標記為調鋪（{clinics.find(c => c.id === selectedClinicId)?.name} → {clinics.find(c => c.id === secondaryClinicId)?.name}）
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Touch mode hint */}
           {isTouch && canManage && (
             <div style={{
@@ -3352,12 +3391,9 @@ function getShiftCode(shift: Shift): string {
               {leaveTypes.map(lt => {
                 const bal = selectedEmpBalances.find(b => b.leaveTypeId === lt.id)
                 const remaining = bal?.remaining ?? 0
-                // 🔧 Fix #2a: 無限類型永遠可拖
-                const isUnlimited = lt.quantity == null && !lt.systemKey
-                // 🔧 REST_DAY 豁免：剩 0 仍可拖（server ensure 補血）
-                const isRestDay = lt.systemKey === 'REST_DAY'
-                // ★ 未選員工時可拖（drop 時彈選人 modal + 驗餘額）
-                const canDragLeave = canManage && (!selectedEmployeeId || isUnlimited || isRestDay || remaining > 0)
+                const exempt = isBalanceExempt(lt)
+                const isNoQuota = lt.systemKey === 'SICK' || (lt.quantity == null && !lt.systemKey)
+                const canDragLeave = canManage && (!selectedEmployeeId || exempt || remaining > 0)
                 const isSelected = selectedLeaveType?.id === lt.id
                 return (
                   <div
@@ -3388,8 +3424,13 @@ function getShiftCode(shift: Shift): string {
                     title={canDragLeave ? `點擊選中或拖到日曆建立請假 - ${lt.name}` : '無餘額，無法拖放'}
                   >
                     <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
-                    <span style={{ fontSize: 10, fontWeight: 600 }}>{isUnlimited ? '（無限）' : selectedEmployeeId ? `（剩 ${remaining.toFixed(1)} 天）` : ''}</span>
-                    {!canDragLeave && !isUnlimited && !isRestDay && remaining <= 0 && <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
+                    <span style={{ fontSize: 10, fontWeight: 600 }}>
+                      {isNoQuota
+                        ? '（無上限）'
+                        : selectedEmployeeId ? `（剩 ${remaining.toFixed(1)} 天）` : ''}
+                    </span>
+                    {!canDragLeave && !exempt && remaining <= 0 &&
+                      <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
                   </div>
                 )
               })}
@@ -3610,13 +3651,14 @@ function getShiftCode(shift: Shift): string {
                     return
                   }
 
-                  // 🔧 Fix #3c: 拖放時再次檢查餘額（無限類型跳過）
+                  // 🔧 Fix #3c: 拖放時再次檢查餘額（豁免類型跳過）
                   const lt = leaveTypes.find(l => l.id === leaveTypeId)
-                  const isUnlimited = lt && lt.quantity == null && !lt.systemKey
-                  const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveTypeId)
-                  if (!isUnlimited && (!bal || bal.remaining <= 0)) {
-                    setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
-                    return
+                  if (!isBalanceExempt(lt)) {
+                    const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveTypeId)
+                    if (!bal || bal.remaining <= 0) {
+                      setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
+                      return
+                    }
                   }
 
                   const hasShiftOnDate = shifts.some(s =>

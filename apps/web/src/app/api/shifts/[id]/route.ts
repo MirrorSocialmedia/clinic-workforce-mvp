@@ -43,6 +43,10 @@ export async function PUT(
     if (body.secondaryClinicId) {
       const deniedSecondary = assertClinicAccess(scope, session, body.secondaryClinicId)
       if (deniedSecondary) return deniedSecondary
+      // ★ 調鋪店不可與主店相同
+      if (body.secondaryClinicId === existing.clinicId) {
+        return NextResponse.json({ error: '調鋪店不可與主店相同' }, { status: 400 })
+      }
     }
 
     const beforeJson = JSON.stringify(existing)
