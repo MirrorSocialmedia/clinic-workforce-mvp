@@ -51,6 +51,19 @@ fi
 
 echo "🔧 [$(date)] Starting restore..."
 
+# ★ Pre-restore safety backup — protect current state before dropping
+SAFETY="${HOME}/backups/pre-restore-$(date +%Y%m%d_%H%M%S).sql.gz"
+mkdir -p "${HOME}/backups"
+echo "🛟 先備份現況到 ${SAFETY} ..."
+docker exec "${DB_CONTAINER}" pg_dump -U "${DB_USER:-clinic}" \
+  --clean --if-exists --no-owner --no-acl "${DB_NAME}" | gzip > "${SAFETY}"
+
+if [ ! -s "${SAFETY}" ] || [ "$(stat -c%s "${SAFETY}")" -lt 1000 ]; then
+  echo "❌ 現況備份失敗（檔案過細），為安全起見中止還原。"
+  exit 1
+fi
+echo "✅ 現況已備份"
+
 # Check that DB container is running
 if ! docker ps --format '{{.Names}}' | grep -q "^${DB_CONTAINER}$"; then
   echo "❌ 容器 ${DB_CONTAINER} 未運行，無法恢復"
@@ -90,14 +103,48 @@ gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql \
   -U "${DB_USER:-clinic}" \
   -d "${DB_NAME}"
 
+# ★ Post-restore data summary
+echo "📊 還原後資料摘要："
+docker exec "${DB_CONTAINER}" psql -U "${DB_USER:-clinic}" -d "${DB_NAME}" -c \
+'SELECT
+   (SELECT count(*) FROM "User")        AS users,
+   (SELECT count(*) FROM "Employee")    AS employees,
+   (SELECT count(*) FROM "Shift")       AS shifts,
+   (SELECT count(*) FROM "PunchRecord") AS punches,
+   (SELECT max("punchTime") FROM "PunchRecord") AS latest_punch;'
+
 # ★ 補跑 migration — 備份的 schema 可能落後於當前代碼
+# ⚠️  migration 失敗唔可以係 fatal —— 資料已經成功還原
+#    避免 set -euo pipefail 令 script 直接 exit 而跳過 restart + 提示
+
 echo "🔧 補跑 migration (備份的 schema 可能落後於當前代碼)..."
 docker start "${APP_CONTAINER}" >/dev/null 2>&1 || true
 sleep 5
-docker exec "${APP_CONTAINER}" sh -c "npx prisma migrate deploy --schema apps/web/prisma/schema.prisma"
 
-# Restart app to apply schema changes
+MIGRATE_OK=1
+docker exec "${APP_CONTAINER}" sh -c \
+  "npx prisma migrate deploy --schema apps/web/prisma/schema.prisma" || MIGRATE_OK=0
+
 echo "🔄 重啟 web 容器..."
 docker restart "${APP_CONTAINER}" >/dev/null 2>&1 || true
 
-echo "🎉 [$(date)] Restore complete"
+if [ "${MIGRATE_OK}" -eq 1 ]; then
+  echo "🎉 [$(date)] Restore complete — 資料已還原，migration 已套用"
+else
+  cat <<'EOF'
+
+⚠️  資料已成功還原，但 migration 未完成。
+    ★★ 唔好再 restore 一次 —— 資料係完好嘅。★★
+
+    P3009 = 備份入面本身帶住「失敗嘅 migration 記錄」，還原幾多次都一樣。
+    P3018 = 資料唔滿足新約束（例如唯一索引）。
+
+    處理：
+      1. 睇失敗嗰個 migration 嘅 SQL，清理對應髒資料
+      2. docker exec clinic-prod-app sh -c \
+           "npx prisma migrate resolve --rolled-back <migration_name> \
+            --schema apps/web/prisma/schema.prisma"
+      3. docker exec clinic-prod-app sh -c \
+           "npx prisma migrate deploy --schema apps/web/prisma/schema.prisma"
+EOF
+fi
