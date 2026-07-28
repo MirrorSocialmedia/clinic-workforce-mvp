@@ -106,7 +106,7 @@ export async function requireAuth(
   // tokenVersion + KIOSK IP + status check (single DB query)
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
-    select: { tokenVersion: true, status: true, ipAllowlist: true },
+    select: { tokenVersion: true, status: true, ipAllowlist: true, clinics: { select: { clinicId: true } } },
   })
 
   if (!user || user.status !== 'ACTIVE') {
@@ -125,12 +125,17 @@ export async function requireAuth(
     }
   }
 
+  // ★ 授權範圍一律以 DB 為準。
+  //   session.clinics 係登入嗰刻嘅 JWT 快照，經理事後被指派新店唔會反映，
+  //   而 session 有 365 日，等於呢個過期快照可以掛足一年。
+  const freshClinics = user.clinics.map(c => c.clinicId)
+
   // Data scope
   let scope: DataScope = 'all'
   if (session.role === 'MANAGER') scope = 'my-clinics'
   if (session.role === 'EMPLOYEE' || session.role === 'KIOSK') scope = 'self'
 
-  return { session, scope }
+  return { session: { ...session, clinics: freshClinics }, scope }
 }
 
 /**
@@ -196,7 +201,7 @@ export async function requirePerm(
     // Still verify tokenVersion + status
     const user = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: { tokenVersion: true, status: true },
+      select: { tokenVersion: true, status: true, clinics: { select: { clinicId: true } } },
     })
     if (!user || user.status !== 'ACTIVE') {
       return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
@@ -204,16 +209,19 @@ export async function requirePerm(
     if (session.tokenVersion !== undefined && user.tokenVersion !== session.tokenVersion) {
       return { error: NextResponse.json({ error: 'Session invalidated' }, { status: 401 }) }
     }
-    return { session, scope: 'all' }
+    // ★ 授權範圍一律以 DB 為準（不要靠 JWT 快照）
+    const freshClinics = user.clinics.map(c => c.clinicId)
+    return { session: { ...session, clinics: freshClinics }, scope: 'all' }
   }
 
-  // Fetch user for tokenVersion, status, and permissionsJson
+  // Fetch user for tokenVersion, status, permissionsJson, and clinics
   let grant: string[] = []
   let deny: string[] = []
+  let freshClinics: string[] = session.clinics ?? []
   try {
     const user = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: { tokenVersion: true, status: true, ipAllowlist: true, permissionsJson: true },
+      select: { tokenVersion: true, status: true, ipAllowlist: true, permissionsJson: true, clinics: { select: { clinicId: true } } },
     })
 
     if (!user || user.status !== 'ACTIVE') {
@@ -240,6 +248,10 @@ export async function requirePerm(
       grant = (parsed as any).grant || []
       deny = (parsed as any).deny || []
     }
+    // ★ 授權範圍一律以 DB 為準。
+    //   session.clinics 係登入嗰刻嘅 JWT 快照，經理事後被指派新店唔會反映，
+    //   而 session 有 365 日，等於呢個過期快照可以掛足一年。
+    freshClinics = user.clinics.map(c => c.clinicId)
   } catch {
     return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   }
@@ -260,7 +272,7 @@ export async function requirePerm(
   const SCOPE_ELEVATING = ['scheduling', 'attendance_manage', 'leave_approve', 'timebank_ops', 'payroll_view', 'payroll_generate']
   if (SCOPE_ELEVATING.includes(perm)) scope = 'my-clinics'
 
-  return { session, scope }
+  return { session: { ...session, clinics: freshClinics }, scope }
 }
 
 /**

@@ -39,6 +39,12 @@ export async function PUT(
       if (deniedTarget) return deniedTarget
     }
 
+    // ★ secondaryClinicId 也要檢查權限
+    if (body.secondaryClinicId) {
+      const deniedSecondary = assertClinicAccess(scope, session, body.secondaryClinicId)
+      if (deniedSecondary) return deniedSecondary
+    }
+
     const beforeJson = JSON.stringify(existing)
     const updateData: any = {}
 

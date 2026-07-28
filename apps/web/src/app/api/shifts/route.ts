@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
-import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAuth, requirePerm, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 
 // ============================================================
@@ -146,8 +146,18 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Validate employee belongs to clinic (OWNER can bypass)
+      // Validate clinic access + employee belongs to clinic (OWNER can bypass)
       if (scope !== 'all') {
+        // ★ 同 PUT 一致：經理只可以喺自己管嘅店排更
+        const denied = assertClinicAccess(scope, session, clinicId)
+        if (denied) return denied
+
+        // ★ secondaryClinicId 也要檢查權限
+        if (secondaryClinicId) {
+          const deniedSecondary = assertClinicAccess(scope, session, secondaryClinicId)
+          if (deniedSecondary) return deniedSecondary
+        }
+
         const empClinic = await prisma.employeeClinic.findFirst({
           where: { employeeId, clinicId },
         })
