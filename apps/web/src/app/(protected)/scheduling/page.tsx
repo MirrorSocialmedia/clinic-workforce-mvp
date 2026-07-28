@@ -161,6 +161,12 @@ function useDragOutDeleteWithUndo(
 // ============================================================
 export default function SchedulingPage() {
   const router = useRouter()
+
+  // ★ 讀取類 fetch 一律繞過瀏覽器快取。
+  //   Next 的 `export const dynamic = 'force-dynamic'` 只管伺服器，唔管瀏覽器。
+  const getJSON = (url: string) =>
+    fetch(url, { credentials: 'include', cache: 'no-store' })
+
   // Permission guard state
   const [userRole, setUserRole] = useState<string>('')
   const [grant, setGrant] = useState<string[]>([])
@@ -336,7 +342,7 @@ export default function SchedulingPage() {
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
   useEffect(() => {
     if (!selectedEmployeeId) { setSelectedEmpBalances([]); return }
-    fetch(`/api/leave-balance?employeeId=${selectedEmployeeId}`, { credentials: 'include' })
+    getJSON(`/api/leave-balance?employeeId=${selectedEmployeeId}`)
       .then(r => r.ok ? r.json() : { leaveBalances: [] })
       .then(d => setSelectedEmpBalances(d.leaveBalances || []))
       .catch(() => setSelectedEmpBalances([]))
@@ -345,12 +351,15 @@ export default function SchedulingPage() {
   // 🔧 Fix #4a: Refresh leave balances after drag-drop or delete
   const refreshLeaveBalances = useCallback(async () => {
     if (!selectedEmployeeId) return
-    const res = await fetch(`/api/leave-balance?employeeId=${selectedEmployeeId}`, { credentials: 'include' })
+    const res = await getJSON(`/api/leave-balance?employeeId=${selectedEmployeeId}`)
     if (res.ok) {
       const d = await res.json()
       setSelectedEmpBalances(d.leaveBalances || [])
     }
   }, [selectedEmployeeId])
+
+  // ★ B-02①: in-flight guard — prevent duplicate shift creation on same cell
+  const [creatingKey, setCreatingKey] = useState<string | null>(null)
 
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
@@ -474,10 +483,10 @@ function getShiftCode(shift: Shift): string {
   const loadData = useCallback(async () => {
     try {
       const [meRes, clinicsRes, employeesRes, changesRes] = await Promise.all([
-        fetch('/api/me', { credentials: 'include' }),
-        fetch('/api/clinics', { credentials: 'include' }),
-        fetch('/api/employees?pageSize=200', { credentials: 'include' }),
-        fetch('/api/shift-changes', { credentials: 'include' }),
+        getJSON('/api/me'),
+        getJSON('/api/clinics'),
+        getJSON('/api/employees?pageSize=200'),
+        getJSON('/api/shift-changes'),
       ])
 
       if (meRes.ok) {
@@ -519,7 +528,7 @@ function getShiftCode(shift: Shift): string {
   // Load shift rule config for selected clinic
   useEffect(() => {
     if (!selectedClinicId) return
-    fetch(`/api/clinics/${selectedClinicId}/shift-rule-config`, { credentials: 'include' })
+    getJSON(`/api/clinics/${selectedClinicId}/shift-rule-config`)
       .then(r => r.json())
       .then(d => setShiftRuleConfig(d.shiftRules || { ...DEFAULT_SHIFT_RULE_CONFIG }))
       .catch(() => setShiftRuleConfig({ ...DEFAULT_SHIFT_RULE_CONFIG }))
@@ -528,7 +537,7 @@ function getShiftCode(shift: Shift): string {
   // Load templates scoped to current company (reloads when clinic/company changes)
   useEffect(() => {
     if (!currentCompanyId) return
-    fetch(`/api/shifts/templates?companyId=${currentCompanyId}`, { credentials: 'include' })
+    getJSON(`/api/shifts/templates?companyId=${currentCompanyId}`)
       .then(r => r.json())
       .then(d => setTemplates(d.templates || []))
       .catch(() => setTemplates([]))
@@ -540,7 +549,7 @@ function getShiftCode(shift: Shift): string {
     const monthStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))  // tz-ok: client-side browser
     const monthEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))  // tz-ok: client-side browser
     try {
-      const r = await fetch(`/api/shifts?startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`, { credentials: 'include' })
+      const r = await getJSON(`/api/shifts?startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`)
       if (r.ok) {
         const d = await r.json()
         setMonthShifts(d.shifts || [])
@@ -674,7 +683,7 @@ function getShiftCode(shift: Shift): string {
   useEffect(() => {
     const fetchLeaveTypes = async () => {
       try {
-        const res = await fetch('/api/leave-types', { credentials: 'include' })
+        const res = await getJSON('/api/leave-types')
         if (res.ok) {
           const data = await res.json()
           if (Array.isArray(data.leaveTypes)) setLeaveTypes(data.leaveTypes)
@@ -701,8 +710,8 @@ function getShiftCode(shift: Shift): string {
 
     try {
       const [shiftsRes, leavesRes] = await Promise.all([
-        fetch(url, { credentials: 'include' }),
-        fetch(`/api/leave-requests?startDate=${viewRange.start}&endDate=${endDateStr}&status=APPROVED`, { credentials: 'include' }),
+        getJSON(url),
+        getJSON(`/api/leave-requests?startDate=${viewRange.start}&endDate=${endDateStr}&status=APPROVED`),
       ])
       if (shiftsRes.ok) {
         const data = await shiftsRes.json()
@@ -728,7 +737,7 @@ function getShiftCode(shift: Shift): string {
     const weekEnd = mobileWeekDays[6]
     if (!weekStart || !weekEnd) return
     const url = `/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`
-    fetch(url, { credentials: 'include' })
+    getJSON(url)
       .then(r => r.ok ? r.json() : { shifts: [] })
       .then(d => { if (Array.isArray(d.shifts)) setShifts((prev: Shift[]) => {
         const existingIds = new Set(prev.map((s: Shift) => s.id))
@@ -737,7 +746,7 @@ function getShiftCode(shift: Shift): string {
       }) })
       .catch(err => console.error('Failed to load mobile shifts:', err))
     // Also load leave requests for the mobile week
-    fetch(`/api/leave-requests?startDate=${weekStart}&endDate=${weekEnd}&status=APPROVED`, { credentials: 'include' })
+    getJSON(`/api/leave-requests?startDate=${weekStart}&endDate=${weekEnd}&status=APPROVED`)
       .then(r => r.ok ? r.json() : { leaveRequests: [] })
       .then(d => { if (Array.isArray(d.leaveRequests)) setLeaveRequests((prev: any[]) => {
         const existingIds = new Set(prev.map((lr: any) => lr.id))
@@ -931,27 +940,32 @@ function getShiftCode(shift: Shift): string {
       return false
     }
 
-    // Build start/end times from template — timezone-safe
-    const pad = (n: number) => String(n).padStart(2, '0')
-    const startTime = new Date(`${date}T${pad(template.startHour)}:${pad(template.startMinute)}:00+08:00`)
-    const endTime = new Date(`${date}T${pad(template.endHour)}:${pad(template.endMinute)}:00+08:00`)
-
-    // For night shifts, end time is next day
-    if (template.isNightShift) {
-      endTime.setTime(endTime.getTime() + 86400000)
-    }
-
-    // Validate first
-    const validationResult = await validateBeforeCreate(employeeId, date, startTime.toISOString(), endTime.toISOString())
-    if (!validationResult.valid) {
-      setValidationIssues([
-        ...validationResult.errors.map((e: any) => ({ type: 'error' as const, rule: e.rule, message: e.message })),
-        ...validationResult.warnings.map((w: any) => ({ type: 'warning' as const, rule: w.rule, message: w.message })),
-      ])
-      if (validationResult.errors.length > 0) return false // Block on errors
-    }
+    // ★ 同一格建立中就唔好再送 —— LAG 時撳兩下會出兩張一樣嘅更
+    const key = `${employeeId}:${date}:${template.id}`
+    if (creatingKey === key) return false
+    setCreatingKey(key)
 
     try {
+      // Build start/end times from template — timezone-safe
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const startTime = new Date(`${date}T${pad(template.startHour)}:${pad(template.startMinute)}:00+08:00`)
+      const endTime = new Date(`${date}T${pad(template.endHour)}:${pad(template.endMinute)}:00+08:00`)
+
+      // For night shifts, end time is next day
+      if (template.isNightShift) {
+        endTime.setTime(endTime.getTime() + 86400000)
+      }
+
+      // Validate first
+      const validationResult = await validateBeforeCreate(employeeId, date, startTime.toISOString(), endTime.toISOString())
+      if (!validationResult.valid) {
+        setValidationIssues([
+          ...validationResult.errors.map((e: any) => ({ type: 'error' as const, rule: e.rule, message: e.message })),
+          ...validationResult.warnings.map((w: any) => ({ type: 'warning' as const, rule: w.rule, message: w.message })),
+        ])
+        if (validationResult.errors.length > 0) return false // Block on errors
+      }
+
       const res = await fetch('/api/shifts', {
         method: 'POST',
         credentials: 'include',
@@ -985,6 +999,8 @@ function getShiftCode(shift: Shift): string {
       console.error('Create shift error:', error)
       setValidationIssues([{ type: 'error', rule: 'network', message: '❌ 網路錯誤，建立失敗' }])
       return false
+    } finally {
+      setCreatingKey(null)
     }
   }
 
@@ -1118,7 +1134,7 @@ function getShiftCode(shift: Shift): string {
       }
 
       loadShifts()
-      const changesRes = await fetch('/api/shift-changes', { credentials: 'include' })
+      const changesRes = await getJSON('/api/shift-changes')
       if (changesRes.ok) {
         const data = await changesRes.json()
         setChangeRequests(data.requests || [])

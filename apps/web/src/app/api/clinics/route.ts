@@ -18,10 +18,16 @@ export async function GET(req: NextRequest) {
   if (scope !== 'all') {
     const sessionClinics = session.clinics ?? []
     const filtered = clinics.filter((c: any) => sessionClinics.includes(c.id))
-    return NextResponse.json({ clinics: filtered, total: filtered.length })
+    return NextResponse.json(
+      { clinics: filtered, total: filtered.length },
+      { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+    )
   }
 
-  return NextResponse.json({ clinics, total: clinics.length })
+  return NextResponse.json(
+    { clinics, total: clinics.length },
+    { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+  )
 }
 
 // POST /api/clinics — create clinic (OWNER only)

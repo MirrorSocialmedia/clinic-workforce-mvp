@@ -102,13 +102,10 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  return NextResponse.json({
-    shifts: shiftsWithPunch,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
-  })
+  return NextResponse.json(
+    { shifts: shiftsWithPunch, total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+    { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+  )
 }
 
 // ============================================================

@@ -87,13 +87,10 @@ export async function GET(req: NextRequest) {
     prisma.employee.count({ where }),
   ])
 
-  return NextResponse.json({
-    employees,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
-  })
+  return NextResponse.json(
+    { employees, total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+    { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+  )
 }
 
 // ============================================================

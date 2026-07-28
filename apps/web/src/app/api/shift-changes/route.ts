@@ -133,5 +133,8 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  return NextResponse.json({ requests, total: requests.length })
+  return NextResponse.json(
+    { requests, total: requests.length },
+    { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+  )
 }

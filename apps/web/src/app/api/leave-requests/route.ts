@@ -54,7 +54,10 @@ export async function GET(req: NextRequest) {
     take: 200,
   })
 
-  return NextResponse.json({ leaveRequests: requests })
+  return NextResponse.json(
+    { leaveRequests: requests },
+    { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+  )
 }
 
 // ============================================================
