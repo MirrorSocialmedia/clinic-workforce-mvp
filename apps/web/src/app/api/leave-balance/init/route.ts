@@ -34,6 +34,13 @@ export async function POST(req: NextRequest) {
 
     const results = []
     for (const empId of targets) {
+      // ★ 病假不設額度（systemKey='SICK'），開餘額 row 只會令 UI 誤導
+      const lt = await prisma.leaveType.findUnique({
+        where: { id: leaveTypeId },
+        select: { systemKey: true },
+      })
+      if (lt?.systemKey === 'SICK') continue
+
       // Read original values before upsert
       const before = await prisma.leaveBalance.findUnique({
         where: {

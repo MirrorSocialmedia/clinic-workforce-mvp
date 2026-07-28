@@ -543,10 +543,21 @@ export default function LeavePage() {
                         {b.employee?.user?.name || b.employeeId}
                       </div>
                       <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{b.leaveType.name} ({b.year})</div>
-                      <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
-                      <div style={{ fontSize: 12, color: '#888' }}>
-                        剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
-                      </div>
+                      {b.leaveType?.systemKey === 'SICK' ? (
+                        <>
+                          <div style={{ fontSize: 20, fontWeight: 700, color: '#16a34a' }}>無上限</div>
+                          <div style={{ fontSize: 12, color: '#888' }}>
+                            病假不設額度，薪酬按《僱傭條例》喺計糧時結算
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
+                          <div style={{ fontSize: 12, color: '#888' }}>
+                            剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))}
               </div>

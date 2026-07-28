@@ -240,6 +240,7 @@ export default function SchedulingPage() {
 
   // UI State
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
+  const [selectedLeaveType, setSelectedLeaveType] = useState<any | null>(null)
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
@@ -292,6 +293,14 @@ export default function SchedulingPage() {
   const [showNewShiftModal, setShowNewShiftModal] = useState(false)
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
+
+  // B-03: Bulk scheduling modal state
+  const [showBulkModal, setShowBulkModal] = useState(false)
+  const [bulkEmployeeId, setBulkEmployeeId] = useState('')
+  const [bulkTemplateId, setBulkTemplateId] = useState('')
+  const [bulkStartDate, setBulkStartDate] = useState('')
+  const [bulkEndDate, setBulkEndDate] = useState('')
+  const [bulkWeekdays, setBulkWeekdays] = useState([1,2,3,4,5,6]) // 預設週一至六
   const [displayWarning, setDisplayWarning] = useState<string | null>(null)
   const [fullscreenOverview, setFullscreenOverview] = useState(false)
 

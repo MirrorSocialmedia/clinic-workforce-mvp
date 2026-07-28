@@ -158,10 +158,21 @@ export default function MyLeavePage() {
                   <div className="text-xs text-gray-400 mt-0.5">已用 {b.used.toFixed(1)} 天</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-lg font-bold text-gray-900 dark:text-white">{b.remaining.toFixed(1)}</div>
-                  <div className="text-xs text-gray-400">
-                    天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}
-                  </div>
+                  {b.leaveType?.systemKey === 'SICK' ? (
+                    <>
+                      <div className="text-lg font-bold" style={{ color: '#16a34a' }}>無上限</div>
+                      <div className="text-xs text-gray-400">
+                        病假不設額度，薪酬按《僱傭條例》喺計糧時結算
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-lg font-bold text-gray-900 dark:text-white">{b.remaining.toFixed(1)}</div>
+                      <div className="text-xs text-gray-400">
+                        天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
