@@ -309,7 +309,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
           <strong>尚未初始化工資歷史</strong>
           <p style={{ fontSize: 13, marginTop: 4 }}>
             ADW（平均每日工資）需要過去 12 個月嘅工資記錄先計得到。
-            已生成計糧嘅月份會自動補上；之前嘅月份請用下面「批量填入」手動輸入。
+            已生成計糧嘅月份會自動補上；之前嘅月份請用下面「初始化 / 快速填入」手動輸入。
           </p>
         </div>
       )}
@@ -405,7 +405,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
             {rows.length === 0 && (
               <tr>
                 <td colSpan={6} className="text-center py-8 text-muted-foreground">
-                  暫無記錄。可使用「快速填入」批量建立。
+                  暫無記錄。可使用下方「初始化 / 快速填入」批量建立。
                 </td>
               </tr>
             )}
@@ -536,7 +536,10 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
       {/* Batch fill */}
       {canWrite && (
         <div className="rounded-lg border p-4 space-y-3">
-          <div className="font-medium text-sm">快速填入</div>
+          <div className="font-medium text-sm">初始化 / 快速填入</div>
+          <div className="text-xs text-muted-foreground">
+            系統啟用前嘅月份請喺呢度輸入月薪同月份範圍，一次過建立 12 個月工資記錄
+          </div>
           <div className="flex flex-wrap gap-3 items-end">
             <div>
               <label className="text-xs text-muted-foreground">月薪</label>
@@ -577,6 +580,13 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
           <div className="text-xs text-muted-foreground">
             ⚠️ 該員工已有系統計糧的月份會跳過。若有病假/年假月份，需逐月調整「剔除天數」與「剔除款額」
           </div>
+        </div>
+      )}
+
+      {/* Non-owner hint */}
+      {!canWrite && (
+        <div className="text-xs text-muted-foreground">
+          只有 OWNER / 會計可以編輯工資歷史
         </div>
       )}
 
