@@ -2561,7 +2561,10 @@ function getShiftCode(shift: Shift): string {
           </div>
 
           {/* Shift Template Management */}
-          {userRole === 'OWNER' && (
+          {/* ★ 由 userRole === 'OWNER' 改成 canManage：
+                後端 templates 四條 route 全部行 requirePerm('scheduling')，
+                有編更權限就應該管得到模版。role 寫死會繞過權限系統。 */}
+          {canManage && (
             <div style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
               <h3 style={{ margin: '0 0 12px 0', fontSize: 15, fontWeight: 600 }} className="flex items-center gap-2"><ClipboardList size={16} /> 更次模版管理{currentCompanyName ? ` — ${currentCompanyName}` : ''}</h3>
               {templates.map(t => (

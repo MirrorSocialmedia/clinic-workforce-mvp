@@ -89,6 +89,8 @@ export const CONFIG = {
     'DELETE /api/shifts/:id': ['OWNER', 'MANAGER', 'EMPLOYEE'],
     'POST /api/shifts/validate': ['OWNER', 'MANAGER', 'EMPLOYEE'],
     'GET /api/shifts/templates': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    // ⚠️ 以下三條係死 key —— 對應 route 行 requirePerm('scheduling')，唔會查呢個矩陣。
+    //    保留只為文件性質，改呢度唔會有任何效果。
     'POST /api/shifts/templates': ['OWNER', 'MANAGER'],
     'PUT /api/shifts/templates/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/shifts/templates/:id': ['OWNER', 'MANAGER'],
@@ -262,9 +264,6 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/clinics/:id': ['scheduling'],
   'GET /api/clinics/:id/shift-rule-config': ['scheduling'],
   'PUT /api/clinics/:id/shift-rule-config': ['scheduling'],
-  'POST /api/shifts/templates': ['scheduling'],
-  'PUT /api/shifts/templates/:id': ['scheduling'],
-  'DELETE /api/shifts/templates/:id': ['scheduling'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

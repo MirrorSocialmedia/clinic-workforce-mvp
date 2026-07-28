@@ -56,7 +56,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
   // Inline edit state: periodMonth → { wage, excludedDays, excludedWage }
   const [edits, setEdits] = useState<Record<string, { wage: number; excludedDays: number; excludedWage: number }>>({})
 
-  const canWrite = userRole === 'OWNER'
+  const canWrite = userRole === 'OWNER' || userRole === 'ACCOUNTANT'
 
   // ---- Load data ----
   const loadAll = useCallback(async () => {
