@@ -241,6 +241,16 @@ export default function SchedulingPage() {
   // UI State
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
   const [selectedLeaveType, setSelectedLeaveType] = useState<any | null>(null)
+
+  // B-04: Pickers with mutual exclusion (template ↔ leave type)
+  const pickTemplate = useCallback((t: ShiftTemplate) => {
+    setSelectedLeaveType(null)
+    setSelectedTemplate(t)
+  }, [])
+  const pickLeaveType = useCallback((lt: any) => {
+    setSelectedTemplate(null)
+    setSelectedLeaveType(lt)
+  }, [])
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
@@ -1052,47 +1062,37 @@ function getShiftCode(shift: Shift): string {
     }
   }
 
-  const bulkApplyTemplate = async () => {
-    if (!selectedTemplate) {
-      alert('請先選擇更次模板')
+  const bulkApplyTemplate = async (employeeId: string, template: ShiftTemplate, dates: string[]) => {
+    if (!selectedClinicId) {
+      setValidationIssues([{ type: 'error', rule: 'clinic', message: '⚠️ 請先選擇診所' }])
       return
     }
-
-    const { startDate, endDate } = getDateRange()
-    const dates: string[] = []
-    const start = new Date(startDate)
-    const end = new Date(endDate)
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {  // tz-ok: client-side browser
-      dates.push(formatDate(d))
-    }
-
-    // Filter employees by selected clinic
-    const clinicEmps = employees.filter(emp =>
-      emp.clinics.some(ec => ec.clinic.id === selectedClinicId)
-    )
-
+    if (!employeeId || dates.length === 0) return
     try {
       const res = await fetch('/api/shifts', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          employeeId: clinicEmps[0]?.id, // bulk mode with dates
+          employeeId,
           clinicId: selectedClinicId,
           date: dates[0],
-          startTime: buildTime(dates[0], selectedTemplate.startHour, selectedTemplate.startMinute),
-          endTime: buildTime(dates[0], selectedTemplate.endHour, selectedTemplate.endMinute, selectedTemplate.isNightShift),
-          templateId: selectedTemplate.id,
+          startTime: buildTime(dates[0], template.startHour, template.startMinute),
+          endTime: buildTime(dates[0], template.endHour, template.endMinute, template.isNightShift),
+          templateId: template.id,
           bulkDates: dates,
         }),
       })
-
-      if (res.ok) {
-        await refreshAll()
-        alert('批量套用成功')
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setValidationIssues([{ type: 'error', rule: 'api', message: `${err.error || '批量排班失敗'}（已全部取消，冇建立任何更次）` }])
+        return
       }
-    } catch (error) {
-      console.error('Bulk apply error:', error)
+      await refreshAll()
+      const d = await res.json()
+      alert(`批量排班成功，共 ${d.shifts?.length ?? dates.length} 張`)
+    } catch {
+      setValidationIssues([{ type: 'error', rule: 'network', message: '網路錯誤' }])
     }
   }
 
@@ -1101,6 +1101,59 @@ function getShiftCode(shift: Shift): string {
     let dt = new Date(`${date}T${pad(hour)}:${pad(minute)}:00+08:00`)
     if (isNight) dt.setTime(dt.getTime() + 86400000)
     return dt.toISOString()
+  }
+
+  // B-04: Create leave on overview cell click (copied from handleOverviewDrop leave branch)
+  const createLeaveOnCell = async (employeeId: string, dateStr: string, leaveType: any) => {
+    if (!canManage) return
+
+    // Unlimited types (quantity === null && no systemKey) skip balance check
+    const isUnlimited = leaveType.quantity == null && !leaveType.systemKey
+    if (!isUnlimited) {
+      const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveType.id)
+      if (!bal || bal.remaining <= 0) {
+        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
+        return
+      }
+    }
+
+    // Check no existing shift on that day for that employee (more ↔ 假互斥)
+    const hasShiftOnDate = shifts.some(s =>
+      s.employeeId === employeeId &&
+      toHKDateStr(new Date(s.date)) === dateStr
+    )
+    if (hasShiftOnDate) {
+      setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
+      return
+    }
+
+    try {
+      const res = await fetch('/api/leave-requests', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leaveTypeId: leaveType.id,
+          employeeId,
+          startDate: dateStr,
+          endDate: dateStr,
+          days: 1,
+          reason: `排班總覽點擊請假`,
+          isPlanned: true,
+          clinicId: selectedClinicId,
+        }),
+      })
+      if (res.ok) {
+        setValidationIssues([])
+        await refreshAll()
+        await refreshLeaveBalances()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])
+      }
+    } catch {
+      setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
+    }
   }
 
   // ============================================================
@@ -1343,8 +1396,14 @@ function getShiftCode(shift: Shift): string {
         setValidationIssues([{ type: 'warning', rule: 'employee', message: '📱 請先點選左側員工' }])
         return
       }
+      // B-04: If leave type is selected, create leave on FC grid click
+      if (selectedLeaveType) {
+        const dateStr = info.dateStr
+        await createLeaveOnCell(selectedEmployeeId, dateStr, selectedLeaveType)
+        return
+      }
       if (!selectedTemplate) {
-        setValidationIssues([{ type: 'warning', rule: 'template', message: '📱 請先點選更次模板' }])
+        setValidationIssues([{ type: 'warning', rule: 'template', message: '📱 請先點選更次模板或假期類型' }])
         return
       }
       const dateStr = info.dateStr
@@ -1564,8 +1623,12 @@ function getShiftCode(shift: Shift): string {
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
     clickTimerRef.current = setTimeout(async () => {
       if (!canManage) return
+      // B-04: 假期優先 — 揀咗假期類型就建立假期，否則建立更次
+      if (selectedLeaveType) {
+        return createLeaveOnCell(empId, dateStr, selectedLeaveType)
+      }
       if (!selectedTemplate) {
-        setValidationIssues([{ type: 'warning', rule: 'template', message: '請先選更次模板' }])
+        setValidationIssues([{ type: 'warning', rule: 'ui', message: '請先喺左邊揀一個更次模板或假期類型' }])
         return
       }
       const hasLeave = leaveRequests.some(lr =>
@@ -1583,14 +1646,46 @@ function getShiftCode(shift: Shift): string {
   const handleOverviewCellDblClick = async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
     if (!canManage) return
+
+    // B-04④: 雙擊刪假期 — 對齊更次做法，同日有多筆就 prompt 問刪邊筆
+    const dayLeaves = leaveRequests.filter(
+      lr => lr.employeeId === empId && leaveCoversDate(lr, dateStr)
+    )
     const dayShifts = shifts.filter(
       s => s.employeeId === empId &&
         toHKDateStr(new Date(s.date)) === dateStr &&
         s.status !== 'CANCELLED'
     )
+
+    // Delete shift logic (existing)
+    if (dayShifts.length === 0 && dayLeaves.length === 0) return
+
+    // If there are leaves, handle leave deletion
+    if (dayLeaves.length > 0) {
+      let target: any
+      if (dayLeaves.length === 1) {
+        target = dayLeaves[0]
+      } else {
+        const names = dayLeaves.map((lr, i) =>
+          `${i + 1}. ${lr.leaveType?.name ?? ''}（${lr.startDate}${lr.endDate !== lr.startDate ? '–' + lr.endDate : ''}）`
+        ).join('\n')
+        const pick = prompt(`該日有 ${dayLeaves.length} 筆假期，要刪邊筆？輸入編號：\n${names}`)
+        const i = Number(pick) - 1
+        if (!Number.isInteger(i) || i < 0 || i >= dayLeaves.length) return
+        target = dayLeaves[i]
+      }
+      const name = employees.find(e => e.id === empId)?.user?.name || empId
+      if (confirm(`刪除 ${name} ${dateStr} 的假期？`)) {
+        await deleteLeave(target.id)
+        await refreshAll()
+      }
+      return
+    }
+
+    // Original shift deletion logic
     if (dayShifts.length === 0) return
 
-    let target = dayShifts.find(s => s.clinicId === selectedClinicId) ?? null
+    let shiftTarget = dayShifts.find(s => s.clinicId === selectedClinicId) ?? null
     // ★ 調鋪日有多張更 → 要問清楚，唔可以靜靜刪其中一張
     if (dayShifts.length > 1) {
       const names = dayShifts.map((s, i) =>
@@ -1599,16 +1694,15 @@ function getShiftCode(shift: Shift): string {
       const pick = prompt(`該日有 ${dayShifts.length} 張更，要刪邊張？輸入編號：\n${names}`)
       const i = Number(pick) - 1
       if (!Number.isInteger(i) || i < 0 || i >= dayShifts.length) return
-      target = dayShifts[i]
+      shiftTarget = dayShifts[i]
     }
-    if (!target) {
-      // ★ 之前係 `if (!existing) return` —— 用家撳極冇反應唔知發生咩事
+    if (!shiftTarget) {
       setValidationIssues([{ type: 'warning', rule: 'shift', message: '該格喺目前選中嘅診所冇更次' }])
       return
     }
     const name = employees.find(e => e.id === empId)?.user?.name || empId
     if (confirm(`刪除 ${name} ${dateStr} 的更次？`)) {
-      await deleteShift(target.id)
+      await deleteShift(shiftTarget.id)
       await refreshAll()
     }
   }
@@ -3180,7 +3274,7 @@ function getShiftCode(shift: Shift): string {
                 onPointerDown={() => {
                   if (!isTouch) draggingTemplate.current = { templateId: t.id, employeeId: selectedEmployeeId }
                 }}
-                onClick={() => setSelectedTemplate(t)}
+                onClick={() => pickTemplate(t)}
                 style={{
                   padding: '6px 4px', margin: '3px 0', borderRadius: 6,
                   cursor: canManage ? 'grab' : 'pointer',
@@ -3210,16 +3304,16 @@ function getShiftCode(shift: Shift): string {
               background: '#fef3c7', border: '1px solid #fde68a',
               fontSize: 10, color: '#92400e', lineHeight: 1.4,
             }}>
-              📱 點選模式：先點左側員工 → 點更次 → 點總覽或日曆格子排班
-              {(selectedEmployeeId || selectedTemplate) && (
+              📱 點選模式：先點左側員工 → 點更次/假期 → 點總覽或日曆格子排班
+              {(selectedEmployeeId || selectedTemplate || selectedLeaveType) && (
                 <div style={{ marginTop: 3 }}>
                   <span style={{ color: '#166534' }}>
                     {selectedEmployeeId ? `✅ ${(clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name || '未知員工')}` : '⬜ 員工'}
                     {' + '}
-                    {selectedTemplate ? `✅ ${selectedTemplate.name}` : '⬜ 更次'}
+                    {selectedTemplate ? `✅ ${selectedTemplate.name}` : selectedLeaveType ? `✅ 假-${selectedLeaveType.name}` : '⬜ 更次/假期'}
                   </span>
                   <button
-                    onClick={() => { setSelectedEmployeeId(''); setSelectedTemplate(null) }}
+                    onClick={() => { setSelectedEmployeeId(''); setSelectedTemplate(null); setSelectedLeaveType(null) }}
                     style={{ marginLeft: 6, fontSize: 10, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
                   >取消選取</button>
                 </div>
@@ -3243,6 +3337,7 @@ function getShiftCode(shift: Shift): string {
                 const isRestDay = lt.systemKey === 'REST_DAY'
                 // ★ 未選員工時可拖（drop 時彈選人 modal + 驗餘額）
                 const canDragLeave = canManage && (!selectedEmployeeId || isUnlimited || isRestDay || remaining > 0)
+                const isSelected = selectedLeaveType?.id === lt.id
                 return (
                   <div
                     key={lt.id}
@@ -3253,9 +3348,10 @@ function getShiftCode(shift: Shift): string {
                       draggingLeave.current = { leaveTypeId: lt.id, employeeId: selectedEmployeeId }
                       // 不加 e.stopPropagation() ——FC Draggable 委託需要事件冒泡
                     }}
+                    onClick={() => canManage && pickLeaveType(lt)}
                     style={{
                       padding: '6px 4px', margin: '3px 0',
-                      background: canDragLeave ? '#4a4a4a' : '#3a3a3a',
+                      background: isSelected ? '#1a1a2e' : (canDragLeave ? '#4a4a4a' : '#3a3a3a'),
                       color: canDragLeave ? '#fff' : '#888',
                       borderRadius: 6,
                       cursor: canDragLeave ? 'grab' : 'not-allowed',
@@ -3265,8 +3361,10 @@ function getShiftCode(shift: Shift): string {
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       userSelect: 'none',
+                      outline: isSelected ? '2px solid #fbbf24' : 'none',
+                      outlineOffset: isSelected ? '2px' : undefined,
                     }}
-                    title={canDragLeave ? `拖到日曆建立請假 - ${lt.name}` : '無餘額，無法拖放'}
+                    title={canDragLeave ? `點擊選中或拖到日曆建立請假 - ${lt.name}` : '無餘額，無法拖放'}
                   >
                     <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
                     <span style={{ fontSize: 10, fontWeight: 600 }}>{isUnlimited ? '（無限）' : selectedEmployeeId ? `（剩 ${remaining.toFixed(1)} 天）` : ''}</span>
@@ -3331,6 +3429,29 @@ function getShiftCode(shift: Shift): string {
                   >
                     {shareBusy ? '處理中…' : '📷 截圖本週'}
                   </button>
+                  {canManage && (
+                    <button
+                      onClick={() => {
+                        // Initialize bulk modal with this week's Monday-Saturday
+                        const monday = weekDays[0]?.dateStr || ''
+                        const saturday = weekDays[6]?.dateStr || ''
+                        setBulkStartDate(monday)
+                        setBulkEndDate(saturday)
+                        setBulkWeekdays([1,2,3,4,5,6])
+                        setBulkEmployeeId(clinicEmployees[0]?.id || '')
+                        setBulkTemplateId(templates[0]?.id || '')
+                        setShowBulkModal(true)
+                      }}
+                      style={{
+                        fontSize: 11, padding: '3px 8px', borderRadius: 4,
+                        border: '1px solid #16a34a', background: '#f0fdf4', color: '#15803d',
+                        cursor: 'pointer', marginLeft: 2, whiteSpace: 'nowrap',
+                      }}
+                      title="批量排班：揀員工、模板、日期範圍，一次過排多日"
+                    >
+                      📋 批量排班
+                    </button>
+                  )}
                 </div>
               </div>
               {/* Two weeks rendered via renderOverviewWeek */}
@@ -4183,6 +4304,178 @@ function getShiftCode(shift: Shift): string {
               )}
               <button className="btn btn-sm" onClick={handleDownload}>下載 PNG</button>
               <button className="btn btn-sm" onClick={closeShare}>關閉</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* B-03: Bulk scheduling modal */}
+      {showBulkModal && (
+        <div
+          onClick={() => setShowBulkModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 12, padding: 20,
+              width: '440px', maxWidth: '92vw', maxHeight: '90vh', overflowY: 'auto',
+            }}
+          >
+            <h3 style={{ margin: '0 0 16px 0', fontSize: 16 }}>📋 批量排班</h3>
+
+            {/* Employee select */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>員工</label>
+              <select
+                value={bulkEmployeeId}
+                onChange={e => setBulkEmployeeId(e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+              >
+                {clinicEmployees.map(emp => (
+                  <option key={emp.id} value={emp.id}>{emp.user?.name ?? '?'}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Template select */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>更次模板</label>
+              <select
+                value={bulkTemplateId}
+                onChange={e => setBulkTemplateId(e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+              >
+                {templates.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date range */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>日期範圍</label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="date"
+                  value={bulkStartDate}
+                  onChange={e => setBulkStartDate(e.target.value)}
+                  style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+                />
+                <span style={{ fontSize: 12, color: '#888' }}>→</span>
+                <input
+                  type="date"
+                  value={bulkEndDate}
+                  onChange={e => setBulkEndDate(e.target.value)}
+                  style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13 }}
+                />
+              </div>
+            </div>
+
+            {/* Weekday checkboxes */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>星期（剔勾=排班）</label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {(['日','一','二','三','四','五','六'] as const).map((name, dow) => {
+                  const checked = bulkWeekdays.includes(dow)
+                  return (
+                    <label key={dow} style={{
+                      display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer',
+                      padding: '3px 8px', borderRadius: 4,
+                      background: checked ? '#eff6ff' : '#f9fafb',
+                      border: checked ? '1px solid #93c5fd' : '1px solid #e5e7eb',
+                      fontSize: 12, fontWeight: 500,
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setBulkWeekdays(prev => [...prev, dow].sort())
+                          } else {
+                            setBulkWeekdays(prev => prev.filter(d => d !== dow))
+                          }
+                        }}
+                      />
+                      週{name}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Preview */}
+            <div style={{
+              background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
+              padding: '8px 12px', marginBottom: 16, fontSize: 12, color: '#166534',
+            }}>
+              {(() => {
+                if (!bulkStartDate || !bulkEndDate || bulkWeekdays.length === 0) {
+                  return '請設定日期範圍同星期'
+                }
+                const previewDates: string[] = []
+                let d = new Date(bulkStartDate)
+                const end = new Date(bulkEndDate)
+                while (d <= end) {
+                  if (bulkWeekdays.includes(d.getDay())) {
+                    previewDates.push(`${d.getMonth() + 1}/${d.getDate()}`)
+                  }
+                  d.setDate(d.getDate() + 1)
+                }
+                if (previewDates.length === 0) return '日期範圍內冇符合嘅星期'
+                return `將建立 ${previewDates.length} 張更次：${previewDates.join(', ')}`
+              })()}
+            </div>
+
+            {/* Buttons */}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowBulkModal(false)}
+                style={{
+                  padding: '6px 16px', borderRadius: 6, border: '1px solid #d1d5db',
+                  background: '#fff', fontSize: 13, cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={async () => {
+                  if (!bulkEmployeeId || !bulkTemplateId || !bulkStartDate || !bulkEndDate) {
+                    alert('請填齊所有欄位')
+                    return
+                  }
+                  // Expand date range × weekdays into dates[]
+                  const dates: string[] = []
+                  let d = new Date(bulkStartDate)
+                  const end = new Date(bulkEndDate)
+                  while (d <= end) {
+                    if (bulkWeekdays.includes(d.getDay())) {
+                      dates.push(toHKDateStr(d))
+                    }
+                    d.setDate(d.getDate() + 1)
+                  }
+                  if (dates.length === 0) {
+                    alert('日期範圍內冇符合嘅星期')
+                    return
+                  }
+                  const tpl = templates.find(t => t.id === bulkTemplateId)
+                  if (!tpl) {
+                    alert('模板不存在')
+                    return
+                  }
+                  setShowBulkModal(false)
+                  await bulkApplyTemplate(bulkEmployeeId, tpl, dates)
+                }}
+                style={{
+                  padding: '6px 16px', borderRadius: 6, border: 'none',
+                  background: '#16a34a', color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 500,
+                }}
+              >
+                確認批量排班
+              </button>
             </div>
           </div>
         </div>
