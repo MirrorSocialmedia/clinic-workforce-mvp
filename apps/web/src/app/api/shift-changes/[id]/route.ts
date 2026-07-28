@@ -73,15 +73,47 @@ export async function PUT(
 
     // APPROVE action
     if (action === 'APPROVE') {
+      // ★ 換更 / 頂更都會改 Shift.employeeId，同樣要防撞更。
+      //   D1 個守喺 PUT /api/shifts/[id]，呢條路徑直接 prisma.shift.update 會繞過。
+      if (changeRequest.toEmployeeId) {
+        const s = changeRequest.shift   // include 已經帶咗
+        const clash = await prisma.shift.findFirst({
+          where: {
+            id: { not: changeRequest.shiftId },
+            employeeId: changeRequest.toEmployeeId,
+            status: { not: 'CANCELLED' },
+            date: { gte: new Date(s.startTime.getTime() - 86400000), lte: s.endTime },
+            startTime: { lt: s.endTime },
+            endTime: { gt: s.startTime },
+          },
+          select: { id: true, clinicId: true, startTime: true, endTime: true },
+        })
+        if (clash) {
+          return NextResponse.json(
+            { error: '接更員工在此時段已有排班，無法批准', conflictShiftId: clash.id },
+            { status: 409 },
+          )
+        }
+      }
+
       if (changeRequest.type === 'SWAP' && changeRequest.toEmployeeId) {
-        const targetShift = await prisma.shift.findFirst({
+        // ★ 同店分更：對手員工當日可能有多張更，要揀【時段最貼近】嗰張，
+        //   唔可以靠 findFirst（順序由 DB 決定，換錯更而且唔可重現）。
+        const s = changeRequest.shift
+        const candidates = await prisma.shift.findMany({
           where: {
             employeeId: changeRequest.toEmployeeId,
-            clinicId: changeRequest.shift.clinicId,
-            date: changeRequest.shift.date,
+            clinicId: s.clinicId,
             status: { not: 'CANCELLED' },
+            // 唔用 date 相等：通宵更嘅 date 係開工日
+            date: { gte: new Date(s.startTime.getTime() - 86400000), lte: s.endTime },
           },
+          orderBy: [{ startTime: 'asc' }],
         })
+        const targetShift = candidates.sort((a, b) =>
+          Math.abs(a.startTime.getTime() - s.startTime.getTime()) -
+          Math.abs(b.startTime.getTime() - s.startTime.getTime())
+        )[0] ?? null
 
         if (targetShift) {
           await prisma.$transaction([

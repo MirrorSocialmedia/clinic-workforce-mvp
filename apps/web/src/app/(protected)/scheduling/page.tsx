@@ -1105,17 +1105,23 @@ function getShiftCode(shift: Shift): string {
         body: JSON.stringify({ action, reason }),
       })
 
-      if (res.ok) {
-        loadShifts()
-        const changesRes = await fetch('/api/shift-changes', { credentials: 'include' })
-        if (changesRes.ok) {
-          const data = await changesRes.json()
-          setChangeRequests(data.requests || [])
-        }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '審批失敗' }])
         await refreshAll()
+        return
       }
+
+      loadShifts()
+      const changesRes = await fetch('/api/shift-changes', { credentials: 'include' })
+      if (changesRes.ok) {
+        const data = await changesRes.json()
+        setChangeRequests(data.requests || [])
+      }
+      await refreshAll()
     } catch (error) {
       console.error('Approve change request error:', error)
+      setValidationIssues([{ type: 'error', rule: 'api', message: '審批失敗，請重試' }])
     }
   }
 
