@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken, type SessionPayload } from './auth'
 import { CONFIG, type Role } from './config'
 import { cookies } from 'next/headers'
-import { type PermKey, ROLE_DEFAULTS } from './permissions'
+import { type PermKey, ROLE_DEFAULTS, PERMISSIONS } from './permissions'
 import { prisma } from '@/lib/prisma'
 
 // ----------------------------------------------------------
@@ -21,6 +21,7 @@ interface AuthSuccess {
   error?: never
   session: SessionPayload
   scope: DataScope
+  perms?: string[]
 }
 
 type AuthResult = AuthError | AuthSuccess
@@ -135,7 +136,27 @@ export async function requireAuth(
   if (session.role === 'MANAGER') scope = 'my-clinics'
   if (session.role === 'EMPLOYEE' || session.role === 'KIOSK') scope = 'self'
 
-  return { session: { ...session, clinics: freshClinics }, scope }
+  // ★ 有效權限 = role 預設 + grant − deny（同 requirePerm 同一條公式）
+  let grant: string[] = []
+  let deny: string[] = []
+  try {
+    const permUser = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { permissionsJson: true },
+    })
+    if (permUser?.permissionsJson) {
+      const parsed = typeof permUser.permissionsJson === 'string'
+        ? JSON.parse(permUser.permissionsJson) : permUser.permissionsJson
+      grant = (parsed as any).grant || []
+      deny = (parsed as any).deny || []
+    }
+  } catch { /* ignore — perms not critical for basic auth */ }
+  const base = ROLE_DEFAULTS[session.role] || []
+  const perms = session.role === 'OWNER'
+    ? Object.keys(PERMISSIONS)
+    : [...new Set([...base, ...grant])].filter(p => !deny.includes(p))
+
+  return { session: { ...session, clinics: freshClinics }, scope, perms }
 }
 
 /**
@@ -266,13 +287,23 @@ export async function requirePerm(
   }
 
   // Scope: MANAGER → my-clinics; everyone else → self
-  // ★ Management-class permissions elevate scope to my-clinics
   let scope: DataScope = 'self'
   if (session.role === 'MANAGER') scope = 'my-clinics'
-  const SCOPE_ELEVATING = ['scheduling', 'attendance_manage', 'leave_approve', 'timebank_ops', 'payroll_view', 'payroll_generate']
+
+  // 管理類權限 → 提升到自己管嘅店
+  const SCOPE_ELEVATING = ['attendance_manage', 'leave_approve', 'timebank_ops', 'payroll_view', 'payroll_generate']
   if (SCOPE_ELEVATING.includes(perm)) scope = 'my-clinics'
 
-  return { session: { ...session, clinics: freshClinics }, scope }
+  // ★ 「編更」= 全店權限。
+  //   調鋪 / 跨公司借調係日常操作，排班嘅人本來就要睇晒所有店先排得到，
+  //   所以 scheduling 一有就係全店，唔按 UserClinic 綁定收窄。
+  const SCOPE_ALL = ['scheduling']
+  if (SCOPE_ALL.includes(perm)) scope = 'all'
+
+  // ★ 回傳 perms 同 requireAuth 一致（重用上頭嘅 base）
+  const perms = [...new Set([...base, ...grant])].filter(p => !deny.includes(p))
+
+  return { session: { ...session, clinics: freshClinics }, scope, perms }
 }
 
 /**

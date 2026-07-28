@@ -12,7 +12,7 @@ export async function PUT(
 ) {
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -39,9 +39,11 @@ export async function PUT(
       return NextResponse.json({ error: `Change request is already ${changeRequest.status}` }, { status: 409 })
     }
 
-    // ★ MANAGER 只可以審自己店嘅換更
-    const denied = assertClinicAccess(scope, session, changeRequest.shift?.clinicId)
-    if (denied) return denied
+    // ★ 有編更權限就可以審批任何店嘅換更（同排班一致）
+    if (!(perms ?? []).includes('scheduling')) {
+      const denied = assertClinicAccess(scope, session, changeRequest.shift?.clinicId)
+      if (denied) return denied
+    }
 
     const beforeJson = JSON.stringify(changeRequest)
 
@@ -193,7 +195,7 @@ export async function DELETE(
 ) {
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   try {
     const id = params.id
@@ -203,9 +205,11 @@ export async function DELETE(
     })
     if (!changeRequest) return NextResponse.json({ error: 'Change request not found' }, { status: 404 })
 
-    // ★ MANAGER 只可以管理自己店嘅換更
-    const denied = assertClinicAccess(scope, session, changeRequest.shift?.clinicId)
-    if (denied) return denied
+    // ★ 有編更權限就可以審批任何店嘅換更（同排班一致）
+    if (!(perms ?? []).includes('scheduling')) {
+      const denied = assertClinicAccess(scope, session, changeRequest.shift?.clinicId)
+      if (denied) return denied
+    }
 
     const emp = await prisma.employee.findUnique({ where: { userId: session.userId } })
     if (!emp || emp.id !== changeRequest.fromEmployeeId) {

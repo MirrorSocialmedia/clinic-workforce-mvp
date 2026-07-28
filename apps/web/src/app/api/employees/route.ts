@@ -13,7 +13,7 @@ import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   const { searchParams } = new URL(req.url)
   const clinicId = searchParams.get('clinicId')
@@ -57,8 +57,10 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Non-OWNER roles filter by clinic access
-  if (scope !== 'all') {
+  // ★ 有編更權限要排全部店，所以要見到全部員工
+  const canSeeAllEmployees = scope === 'all' || (perms ?? []).includes('scheduling')
+
+  if (!canSeeAllEmployees) {
     where.user = {
       ...(where.user || {}),
       clinics: { some: { clinicId: { in: session.clinics ?? [] } } },

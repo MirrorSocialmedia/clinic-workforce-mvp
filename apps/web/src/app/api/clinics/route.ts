@@ -8,14 +8,17 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   const clinics = await prisma.clinic.findMany({ 
     orderBy: { createdAt: 'asc' },
     include: { company: { select: { id: true, name: true } } },
   })
 
-  if (scope !== 'all') {
+  // ★ 有編更權限 = 要排全部店，所以要見到全部診所（診所名單本身唔敏感）
+  const canSeeAllClinics = scope === 'all' || (perms ?? []).includes('scheduling')
+
+  if (!canSeeAllClinics) {
     const sessionClinics = session.clinics ?? []
     const filtered = clinics.filter((c: any) => sessionClinics.includes(c.id))
     return NextResponse.json(
