@@ -78,15 +78,18 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
         }).then(r => r.ok ? r.json() : null).catch(() => null),
       ])
 
-      setUserRole(roleRes?.role ?? '')
+      // ★ /api/me 回傳 { user: {...}, faceMode, lunchEnabled }，role 在 user 入面
+      setUserRole(roleRes?.user?.role ?? '')
       if (wageRes?.rows) {
         setRows(wageRes.rows)
       }
-      if (empRes) {
+      // ★ /api/employees/[id] 回傳 { employee }，要拆多一層
+      const emp = empRes?.employee
+      if (emp) {
         setEmployee({
-          id: empRes.id,
-          name: empRes.user?.name ?? empRes.name ?? '未知員工',
-          joinDate: empRes.joinDate,
+          id: emp.id,
+          name: emp.user?.name ?? emp.name ?? '未知員工',
+          joinDate: emp.joinDate,
         })
       }
       if (adwRes) {
