@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken, type SessionPayload } from './auth'
-import { CONFIG, type Role } from './config'
+import { CONFIG, RBAC_PERM_OVERRIDES, type Role } from './config'
 import { cookies } from 'next/headers'
 import { type PermKey, ROLE_DEFAULTS, PERMISSIONS } from './permissions'
 import { prisma } from '@/lib/prisma'
@@ -97,11 +97,52 @@ export async function requireAuth(
   const normalized = normalizeRoute(parsedUrl, method)
   const allowed = CONFIG.RBAC_MATRIX[normalized]
 
-  if (!allowed || !allowed.includes(session.role)) {
-    if (!allowed && process.env.NODE_ENV !== 'production') {
+  if (!allowed) {
+    if (process.env.NODE_ENV !== 'production') {
       console.error(`⚠️ RBAC MISS: "${normalized}" not in matrix! New API forgot to register?`)
     }
     return { error: NextResponse.json({ error: `Forbidden (route not registered: ${normalized})` }, { status: 403 }) }
+  }
+
+  let roleOk = allowed.includes(session.role)
+
+  // ★ 有效權限 = role 預設 + grant − deny（提前計算，供權限覆蓋使用）
+  let grant: string[] = []
+  let deny: string[] = []
+  try {
+    const permUser = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { permissionsJson: true },
+    })
+    if (permUser?.permissionsJson) {
+      const parsed = typeof permUser.permissionsJson === 'string'
+        ? JSON.parse(permUser.permissionsJson) : permUser.permissionsJson
+      grant = (parsed as any).grant || []
+      deny = (parsed as any).deny || []
+    }
+  } catch { /* ignore — perms not critical for basic auth */ }
+  const base = ROLE_DEFAULTS[session.role] || []
+  const perms = session.role === 'OWNER'
+    ? Object.keys(PERMISSIONS)
+    : [...new Set([...base, ...grant])].filter(p => !deny.includes(p))
+
+  // ★ 權限覆蓋：角色唔喺白名單，但持有指定權限一樣放行
+  let viaPerm = false
+  if (!roleOk) {
+    const needPerms = RBAC_PERM_OVERRIDES[normalized]
+    if (needPerms?.some(p => (perms ?? []).includes(p))) {
+      roleOk = true
+      viaPerm = true
+    }
+  }
+
+  if (!roleOk) {
+    return {
+      error: NextResponse.json(
+        { error: `Forbidden (role ${session.role} not allowed on ${normalized})` },
+        { status: 403 },
+      ),
+    }
   }
 
   // tokenVersion + KIOSK IP + status check (single DB query)
@@ -136,25 +177,10 @@ export async function requireAuth(
   if (session.role === 'MANAGER') scope = 'my-clinics'
   if (session.role === 'EMPLOYEE' || session.role === 'KIOSK') scope = 'self'
 
-  // ★ 有效權限 = role 預設 + grant − deny（同 requirePerm 同一條公式）
-  let grant: string[] = []
-  let deny: string[] = []
-  try {
-    const permUser = await prisma.user.findUnique({
-      where: { id: session.userId },
-      select: { permissionsJson: true },
-    })
-    if (permUser?.permissionsJson) {
-      const parsed = typeof permUser.permissionsJson === 'string'
-        ? JSON.parse(permUser.permissionsJson) : permUser.permissionsJson
-      grant = (parsed as any).grant || []
-      deny = (parsed as any).deny || []
-    }
-  } catch { /* ignore — perms not critical for basic auth */ }
-  const base = ROLE_DEFAULTS[session.role] || []
-  const perms = session.role === 'OWNER'
-    ? Object.keys(PERMISSIONS)
-    : [...new Set([...base, ...grant])].filter(p => !deny.includes(p))
+  // ★ 經 scheduling 權限放行嘅，scope = all（同 requirePerm 一致）
+  if (viaPerm && RBAC_PERM_OVERRIDES[normalized]?.includes('scheduling')) {
+    scope = 'all'
+  }
 
   return { session: { ...session, clinics: freshClinics }, scope, perms }
 }

@@ -8,11 +8,18 @@ import { parseShiftRuleConfig } from '@/lib/shift-rule-config'
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
-  const { scope } = auth
+  const { session, scope, perms } = auth
 
   const id = params.id
-  if (scope !== 'all' && !scope.includes(id)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // ★ 原本寫 `!scope.includes(id)` —— scope 係字串唔係陣列，永遠 false，
+  //   等於所有非 'all' scope 一律 403（MANAGER 都中）。應該查 session.clinics。
+  const canRead =
+    scope === 'all' ||
+    (perms ?? []).includes('scheduling') ||
+    (session.clinics ?? []).includes(id)
+
+  if (!canRead) {
+    return NextResponse.json({ error: 'Forbidden (clinic not in scope)' }, { status: 403 })
   }
 
   const clinic = await prisma.clinic.findUnique({ where: { id }, select: { config: true } })
@@ -26,14 +33,18 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, scope, perms } = auth
 
-  // Only OWNER or MANAGER can update
-  if (!['OWNER', 'MANAGER'].includes(session.role)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // ★ 改用權限判斷（原本 role 寫死繞過權限系統）
+  if (!(perms ?? []).includes('scheduling')) {
+    return NextResponse.json({ error: 'Forbidden (missing permission: scheduling)' }, { status: 403 })
   }
 
   const id = params.id
+  const canWrite = scope === 'all' || (perms ?? []).includes('scheduling') || (session.clinics ?? []).includes(id)
+  if (!canWrite) {
+    return NextResponse.json({ error: 'Forbidden (clinic not in scope)' }, { status: 403 })
+  }
   const body = await req.json()
 
   // Read existing config

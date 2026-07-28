@@ -245,4 +245,26 @@ export const CONFIG = {
   DEMO_PASSWORD: 'demo1234',
 }
 
+/**
+ * ★ 權限覆蓋：除咗角色白名單，持有以下權限嘅人一樣可以存取。
+ *
+ * 背景：系統有兩套授權機制並存 —— requirePerm（識權限）同角色矩陣（只識 role）。
+ * 排班功能橫跨兩者，所以純角色白名單會擋住「EMPLOYEE + scheduling 權限」呢種組合。
+ * 呢個 map 係過渡橋樑，等唔使一次過把 80+ 條 route 全部改寫成 requirePerm。
+ *
+ * key 格式同 RBAC_MATRIX 完全一致（動態段一律 :id / :date）。
+ */
+export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
+  // —— 排班：有 scheduling 權限就等同全排班權 ——
+  'GET /api/shift-changes': ['scheduling'],
+  'PUT /api/shift-changes/:id': ['scheduling'],
+  'DELETE /api/shift-changes/:id': ['scheduling'],
+  'GET /api/clinics/:id': ['scheduling'],
+  'GET /api/clinics/:id/shift-rule-config': ['scheduling'],
+  'PUT /api/clinics/:id/shift-rule-config': ['scheduling'],
+  'POST /api/shifts/templates': ['scheduling'],
+  'PUT /api/shifts/templates/:id': ['scheduling'],
+  'DELETE /api/shifts/templates/:id': ['scheduling'],
+}
+
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]
