@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
@@ -737,6 +738,9 @@ export default function AccountsPage() {
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           <button className="btn btn-sm" style={{ background: '#f0f0f0' }} onClick={() => handleEdit(acc)}>編輯</button>
                           {acc.employeeId && (
+                            <Link href={`/accounts/${acc.employeeId}/wage-history`} className="text-xs underline text-blue-600 hover:no-underline" onClick={e => e.stopPropagation()}>工資歷史</Link>
+                          )}
+                          {acc.employeeId && (
                             <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
                             <span className="flex items-center gap-1"><Wallet size={16} /> 薪酬規則</span>
                           </button>
@@ -880,6 +884,9 @@ export default function AccountsPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleEdit(acc)}>編輯</button>
+                    {acc.employeeId && (
+                      <Link href={`/accounts/${acc.employeeId}/wage-history`} className="px-3 py-1.5 rounded-md text-xs text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100" onClick={e => e.stopPropagation()}>工資歷史</Link>
+                    )}
                     {acc.employeeId && (
                       <button className="px-3 py-1.5 rounded-md text-xs border text-emerald-700 border-emerald-200 bg-emerald-50" onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
                         <Wallet size={12} className="inline mr-1" /> 薪酬規則

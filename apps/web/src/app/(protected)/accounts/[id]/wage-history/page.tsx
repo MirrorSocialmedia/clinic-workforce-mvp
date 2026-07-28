@@ -303,6 +303,17 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
         <div className="text-sm text-destructive bg-destructive/5 rounded px-3 py-2">{error}</div>
       )}
 
+      {/* Empty state when no records */}
+      {rows.length === 0 && (
+        <div style={{ padding: 16, background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 8 }}>
+          <strong>尚未初始化工資歷史</strong>
+          <p style={{ fontSize: 13, marginTop: 4 }}>
+            ADW（平均每日工資）需要過去 12 個月嘅工資記錄先計得到。
+            已生成計糧嘅月份會自動補上；之前嘅月份請用下面「批量填入」手動輸入。
+          </p>
+        </div>
+      )}
+
       {/* Info banner */}
       <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm space-y-1">
         <div>

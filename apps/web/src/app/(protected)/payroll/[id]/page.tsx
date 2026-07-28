@@ -444,10 +444,16 @@ export default function PayrollDetailPage() {
                     {confidential ? (
                       <span style={{ color: '#888', fontSize: 12, cursor: 'not-allowed' }} title="此員工薪資已設保密">🔒 保密</span>
                     ) : (
-                      <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
-                        style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 12 }}>
-                        查看
-                      </Link>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                        <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
+                          style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 12 }}>
+                          查看
+                        </Link>
+                        <Link href={`/accounts/${item.employeeId}/wage-history`}
+                          style={{ color: '#059669', textDecoration: 'none', fontSize: 12 }}>
+                          工資歷史
+                        </Link>
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -539,10 +545,16 @@ export default function PayrollDetailPage() {
                   {confidential ? (
                     <span style={{ color: '#888', fontSize: 12, cursor: 'not-allowed' }} title="此員工薪資已設保密">🔒 保密</span>
                   ) : (
-                    <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
-                      style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
-                      明細 →
-                    </Link>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <Link href={`/accounts/${item.employeeId}/wage-history`}
+                        style={{ color: '#059669', textDecoration: 'none', fontSize: 12 }}>
+                        工資歷史
+                      </Link>
+                      <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
+                        style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
+                        明細 →
+                      </Link>
+                    </div>
                   )}
                 </div>
               </div>
