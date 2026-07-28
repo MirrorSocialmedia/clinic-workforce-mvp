@@ -908,6 +908,11 @@ function getShiftCode(shift: Shift): string {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedRules),
       })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(`排班規則儲存失敗：${err.error || '未知錯誤'}`)
+        return
+      }
       if (res.ok) {
         const data = await res.json()
         setShiftRuleConfig(data.shiftRules)
@@ -2461,12 +2466,12 @@ function getShiftCode(shift: Shift): string {
                                 endMinute: em,
                               }),
                             })
-                            if (res.ok) {
-                              await refreshAll()
-                            } else {
-                              const err = await res.json()
-                              alert(err.error || '修改失敗')
+                            if (!res.ok) {
+                              const err = await res.json().catch(() => ({}))
+                              setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '模板更新失敗' }])
+                              return
                             }
+                            await refreshAll()
                           } catch (e) { console.error('Edit template error:', e) }
                         }}
                       >編輯</button>

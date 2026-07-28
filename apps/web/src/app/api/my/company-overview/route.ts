@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Attach clinic names
-  const clinicNameMap = new Map(allClinics.map(c => [c.id, c.name]))
+  const clinicNameMap = new Map<string, string>(allClinics.map(c => [c.id, c.name]))
   for (const emp of employees.values()) {
     emp.clinics = emp.clinics.map(c => ({ id: c.id, name: clinicNameMap.get(c.id) || '' }))
   }
