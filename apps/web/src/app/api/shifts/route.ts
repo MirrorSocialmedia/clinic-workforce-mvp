@@ -136,6 +136,7 @@ export async function POST(req: NextRequest) {
         templateId,
         status = 'CONFIRMED',
         bulkDates,
+        secondaryClinicId,
       } = body
 
       if (!employeeId || !clinicId || !date || !startTime || !endTime) {
@@ -213,6 +214,7 @@ export async function POST(req: NextRequest) {
               role: role || null,
               status: status as any,
               templateId: templateId || null,
+              secondaryClinicId: secondaryClinicId || null,
               createdBy: session.userId,
             },
             include: {
@@ -255,6 +257,7 @@ export async function POST(req: NextRequest) {
             role: role || null,
             status: status as any,
             templateId: templateId || null,
+            secondaryClinicId: secondaryClinicId || null,
             createdBy: session.userId,
           },
           include: {
@@ -271,7 +274,14 @@ export async function POST(req: NextRequest) {
         { success: true, shifts, count: shifts.length },
         { status: 201 }
       )
-    } catch (error) {
+    } catch (error: any) {
+      // ★ P2002: unique constraint violation (duplicate shift submission)
+      if (error?.code === 'P2002') {
+        return NextResponse.json(
+          { error: '該時段已有相同排班（可能重複提交）' },
+          { status: 409 }
+        )
+      }
       console.error('Create shift error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }

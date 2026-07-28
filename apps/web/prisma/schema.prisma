@@ -270,6 +270,7 @@ model Shift {
   role        String?
   status      ShiftStatus @default(CONFIRMED)
   templateId  String?
+  secondaryClinicId String? // ★ 調鋪：當日第二間店（時間唔確定，唔分段）
   createdBy   String
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
@@ -282,6 +283,9 @@ model Shift {
   @@index([employeeId, date])
   @@index([clinicId, date])
   @@index([status])
+  @@index([secondaryClinicId])
+  @@index([employeeId, startTime])
+  @@unique([employeeId, clinicId, startTime], name: "uniq_emp_clinic_start")
 }
 
 // Punch record — APPEND ONLY (no UPDATE/DELETE API)

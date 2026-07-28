@@ -135,7 +135,7 @@ async function calculateWorkedHours(
   clinicIds: string[] | null,
   monthStart: Date,
   monthEnd: Date,
-  shifts?: Array<{ date: Date | string; clinicId?: string; startTime?: Date | string; endTime?: Date | string }>
+  shifts?: Array<{ date: Date | string; clinicId?: string; secondaryClinicId?: string | null; startTime?: Date | string; endTime?: Date | string }>
 ): Promise<Array<{
   date: string
   clinicId: string
@@ -257,22 +257,22 @@ async function calculateWorkedHours(
 
     // ★ 決定 2：調鋪唔打離店卡係正常流程 ——
     //   同日喺【另一間店】仲有更，就唔當 A 店缺卡，避免考勤異常報表日日出現調鋪日。
+    //   ★ 調鋪方案 1：secondaryClinicId 嘅更（一張更兩間店）都唔當缺卡。
     if (hasIn && !hasOut && shifts && shifts.length > 0) {
       const hasOtherClinicShiftToday = shifts.some(s =>
         toHKDateStr(new Date(s.date)) === dayStr &&
-        s.clinicId && s.clinicId !== clinicId
+        ((s.clinicId && s.clinicId !== clinicId) || s.secondaryClinicId === clinicId)
       )
       if (hasOtherClinicShiftToday) isPartial = false
     }
 
     // ★ 調鋪唔打離店卡：A 店只有 IN 冇 OUT，要用【A 店嗰張更】嘅收工時間補足。
-    //   舊版 shifts.find(只按日期) 可能攞到 B 店嗰張更嘅 endTime，
-    //   令 A 店由 4 小時變 9 小時（而且 row order 唔定 = 唔可重現）。
+    //   ★ 調鋪方案 1：亦要揾到 secondaryClinicId 匹配 A 店嘅更。
     if (hasIn && !hasOut && lastIn && shifts && shifts.length > 0) {
       const inTime = lastIn.getTime()
       const dayShifts = shifts.filter(s =>
         toHKDateStr(new Date(s.date)) === dayStr &&
-        (!s.clinicId || s.clinicId === clinicId) &&
+        (s.clinicId === clinicId || s.secondaryClinicId === clinicId) &&
         s.endTime
       )
       // 揀開工時間最接近呢個上班卡嗰張
@@ -1399,12 +1399,19 @@ export async function calculateTimeBank(
     const winEnd = nextShift
       ? (new Date(shift.endTime).getTime() + new Date(nextShift.startTime).getTime()) / 2
       : Infinity
+    // ★ needTimeWindow: 同店分更（朝更 + 晚更）clinicId 分唔開，要按時間窗切。
+    //   ★ 調鋪方案 1：same clinic 定義包括 secondaryClinicId 交集。
     const needTimeWindow =
-      sameDayShifts.filter((s: any) => s.clinicId === shift.clinicId).length > 1
+      sameDayShifts.filter((s: any) =>
+        s.clinicId === shift.clinicId ||
+        s.clinicId === shift.secondaryClinicId ||
+        s.secondaryClinicId === shift.clinicId
+      ).length > 1
 
     const dayPunches = effectivePunches.filter((ep: any) => {
       if (toHKDateStr(ep.effectiveTime) !== shiftDateStr) return false
-      if (ep.clinicId !== shift.clinicId) return false
+      // ★ 調鋪方案 1：punch 可以碌喺主店或調鋪店
+      if (ep.clinicId !== shift.clinicId && ep.clinicId !== shift.secondaryClinicId) return false
       if (!needTimeWindow) return true               // 調鋪：clinicId 已經分得開
       const t = ep.effectiveTime.getTime()
       return t >= winStart && t < winEnd

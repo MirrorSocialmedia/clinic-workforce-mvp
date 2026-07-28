@@ -89,6 +89,7 @@ interface Shift {
   status: string
   templateId?: string
   hasPunch?: boolean
+  secondaryClinicId?: string | null
   employee?: { user: { name: string } }
   clinic?: { name: string }
   template?: { name: string; shortName?: string | null }
@@ -380,6 +381,9 @@ export default function SchedulingPage() {
   // ★ B-02①: in-flight guard — prevent duplicate shift creation on same cell
   const [creatingKey, setCreatingKey] = useState<string | null>(null)
 
+  // ★ 調鋪方案 1: secondary clinic selection for shift creation
+  const [secondaryClinicId, setSecondaryClinicId] = useState<string | null>(null)
+
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
   const [savingRules, setSavingRules] = useState(false)
@@ -489,6 +493,19 @@ const CLINIC_ABBR: Record<string, string> = {
   '銅鑼灣診所': '銅', '旺角診所': '旺', '荃灣診所': '荃',
   '仁愛診所': '仁', '沙田診所': '沙', '元朗診所': '元',
 }
+
+// ★ 調鋪方案 1: 生成膠囊 clinic label（支援 A→B）
+function getClinicLabel(shift: Shift, allClinics: Clinic[]): string {
+  const clinic = allClinics.find(c => c.id === shift.clinicId)
+  const abbr = CLINIC_ABBR[clinic?.name || ''] || clinic?.shortName || clinic?.name?.slice(0, 1) || '?'
+  if (shift.secondaryClinicId) {
+    const secClinic = allClinics.find(c => c.id === shift.secondaryClinicId)
+    const secAbbr = CLINIC_ABBR[secClinic?.name || ''] || secClinic?.shortName || secClinic?.name?.slice(0, 1) || '?'
+    return `${abbr}→${secAbbr}`
+  }
+  return abbr
+}
+
 function getShiftCode(shift: Shift): string {
   const clinicName = shift.clinic?.name || ''
   const abbr = CLINIC_ABBR[clinicName] || clinicName?.[0] || '?'
@@ -953,7 +970,7 @@ function getShiftCode(shift: Shift): string {
     }
   }
 
-  const createShift = async (employeeId: string, date: string, template: ShiftTemplate): Promise<boolean> => {
+  const createShift = async (employeeId: string, date: string, template: ShiftTemplate, _secondaryClinicId?: string | null): Promise<boolean> => {
     if (!selectedClinicId) {
       setValidationIssues([{ type: 'error', rule: 'clinic', message: '⚠️ 請先選擇診所' }])
       return false
@@ -996,6 +1013,7 @@ function getShiftCode(shift: Shift): string {
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
           templateId: template.id,
+          secondaryClinicId: _secondaryClinicId || secondaryClinicId || null,
         }),
       })
 
@@ -1724,7 +1742,7 @@ function getShiftCode(shift: Shift): string {
               const tpl = templates.find(t => t.id === s.templateId)
               const clinic = clinics.find(c => c.id === s.clinicId)
               const parts: string[] = []
-              if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+              if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
               if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
               if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
               const bg = shiftColor(s)
@@ -1914,7 +1932,7 @@ function getShiftCode(shift: Shift): string {
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
                           const parts: string[] = []
-                          if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+                          if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
                           if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
                           if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
                           const shiftLabel = parts.filter(Boolean).join('·')
@@ -2040,7 +2058,7 @@ function getShiftCode(shift: Shift): string {
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
                           const parts: string[] = []
-                          if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+                          if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
                           if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
                           if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
                           const shiftLabel = parts.filter(Boolean).join('·')
@@ -2171,7 +2189,7 @@ function getShiftCode(shift: Shift): string {
                               const tpl = templates.find(t => t.id === s.templateId)
                               const clinic = clinics.find(c => c.id === s.clinicId)
                               const parts: string[] = []
-                              if (labelParts.includes('clinic')) parts.push(clinic?.shortName || clinic?.name?.slice(0, 1) || '')
+                              if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
                               if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
                               if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
                               const shiftLabel = parts.filter(Boolean).join('·')
@@ -4016,6 +4034,18 @@ function getShiftCode(shift: Shift): string {
               </select>
             </div>
 
+            <div className="form-group">
+              <label>調鋪店（選填）</label>
+              <select id="editShiftSecondaryClinic">
+                <option value="">無調鋪</option>
+                {clinics.filter(c => c.id !== editingShift.clinicId).map(c => (
+                  <option key={c.id} value={c.id} selected={editingShift.secondaryClinicId === c.id}>
+                    {c.shortName || c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <button
                 onClick={() => setEditingShift(null)}
@@ -4031,6 +4061,7 @@ function getShiftCode(shift: Shift): string {
                   const endTime = (document.getElementById('editShiftEnd') as HTMLInputElement).value
                   const role = (document.getElementById('editShiftRole') as HTMLSelectElement).value
                   const status = (document.getElementById('editShiftStatus') as HTMLSelectElement).value
+                  const secondaryClinicId = (document.getElementById('editShiftSecondaryClinic') as HTMLSelectElement).value || null
 
                   if (!date || !startTime || !endTime) {
                     alert('請填寫完整資訊')
@@ -4054,6 +4085,7 @@ function getShiftCode(shift: Shift): string {
                         endTime: endTimeISO,
                         role: role || null,
                         status,
+                        secondaryClinicId,
                       }),
                     })
 

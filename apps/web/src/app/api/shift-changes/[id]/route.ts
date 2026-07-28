@@ -116,15 +116,45 @@ export async function PUT(
         )[0] ?? null
 
         if (targetShift) {
-          await prisma.$transaction([
-            prisma.shift.update({ where: { id: changeRequest.shiftId }, data: { employeeId: changeRequest.toEmployeeId! } }),
-            prisma.shift.update({ where: { id: targetShift.id }, data: { employeeId: changeRequest.fromEmployeeId } }),
-          ])
+          try {
+            await prisma.$transaction([
+              prisma.shift.update({ where: { id: changeRequest.shiftId }, data: { employeeId: changeRequest.toEmployeeId! } }),
+              prisma.shift.update({ where: { id: targetShift.id }, data: { employeeId: changeRequest.fromEmployeeId } }),
+            ])
+          } catch (e: any) {
+            if (e?.code === 'P2002') {
+              return NextResponse.json(
+                { error: '換更衝突：該時段已有相同排班' },
+                { status: 409 },
+              )
+            }
+            throw e
+          }
         } else {
-          await prisma.shift.update({ where: { id: changeRequest.shiftId }, data: { employeeId: changeRequest.toEmployeeId! } })
+          try {
+            await prisma.shift.update({ where: { id: changeRequest.shiftId }, data: { employeeId: changeRequest.toEmployeeId! } })
+          } catch (e: any) {
+            if (e?.code === 'P2002') {
+              return NextResponse.json(
+                { error: '換更衝突：該時段已有相同排班' },
+                { status: 409 },
+              )
+            }
+            throw e
+          }
         }
       } else if (changeRequest.type === 'COVER' && changeRequest.toEmployeeId) {
-        await prisma.shift.update({ where: { id: changeRequest.shiftId }, data: { employeeId: changeRequest.toEmployeeId! } })
+        try {
+          await prisma.shift.update({ where: { id: changeRequest.shiftId }, data: { employeeId: changeRequest.toEmployeeId! } })
+        } catch (e: any) {
+          if (e?.code === 'P2002') {
+            return NextResponse.json(
+              { error: '頂更衝突：該時段已有相同排班' },
+              { status: 409 },
+            )
+          }
+          throw e
+        }
       }
 
       const updated = await prisma.shiftChangeRequest.update({

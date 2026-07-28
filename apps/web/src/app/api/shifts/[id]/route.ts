@@ -66,6 +66,7 @@ export async function PUT(
     if (body.role !== undefined) updateData.role = body.role
     if (body.status !== undefined) updateData.status = body.status
     if (body.templateId !== undefined) updateData.templateId = body.templateId
+    if (body.secondaryClinicId !== undefined) updateData.secondaryClinicId = body.secondaryClinicId || null
 
     // ★ D1: check collision before writing
     const targetStart = updateData.startTime ?? existing.startTime
@@ -109,7 +110,18 @@ export async function PUT(
         clinic: { select: { id: true, name: true } },
         template: { select: { id: true, name: true } },
       },
+    }).catch(async (e: any) => {
+      // ★ P2002: unique constraint violation
+      if (e?.code === 'P2002') {
+        return NextResponse.json(
+          { error: '該時段已有相同排班（可能重複提交）' },
+          { status: 409 }
+        )
+      }
+      throw e
     })
+
+    if (shift instanceof NextResponse) return shift
 
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
