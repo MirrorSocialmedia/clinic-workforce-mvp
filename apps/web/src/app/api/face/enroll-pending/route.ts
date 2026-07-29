@@ -8,7 +8,12 @@ export async function GET(req: NextRequest) {
  if (isAuthError(auth)) return auth.error
 
  const pending = await prisma.faceTemplate.findMany({
-  where: { active: false, approvedAt: null },
+  where: {
+   active: false,
+   approvedAt: null,
+   embedding: { not: '' },       // ★ 隔走登記中途失敗嘅佔位記錄
+   refFrameId: { not: null },    // ★ 冇參考照嘅審核唔到，唔好出
+  },
   include: { employee: { include: { user: { select: { name: true } } } } },
   orderBy: { enrolledAt: 'desc' },
  })

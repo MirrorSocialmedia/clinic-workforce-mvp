@@ -50,6 +50,11 @@ export default function FaceEnrollPage() {
   } catch (e: any) { setError(e.message || '相機錯誤') }
  }
 
+ const stopCamera = () => {
+  streamRef.current?.getTracks().forEach(t => t.stop())
+  streamRef.current = null
+ }
+
  const takeShot = async () => {
   setError('')
   if (!videoRef.current?.readyState) return
@@ -74,11 +79,17 @@ export default function FaceEnrollPage() {
     setTimeout(() => router.push('/my/dashboard'), 2000)
    } else {
     const data = await res.json().catch(() => ({}))
-    setError(data.error || '登記失敗')
+    // ★ 500 / HTML 錯誤頁會 parse 唔到，要有可行動嘅 fallback
+    setError(
+      data.error ||
+      (res.status >= 500
+        ? `伺服器處理失敗（${res.status}），請稍後再試；持續失敗請通知管理員`
+        : `登記失敗（${res.status}）`)
+    )
     setUploading(false)
    }
   } catch {
-   setError('上傳失敗，請重試')
+   setError('上傳失敗，請檢查網絡後重試')
    setUploading(false)
   }
  }
@@ -122,6 +133,10 @@ export default function FaceEnrollPage() {
       disabled={!consentChecked} onClick={() => { setStep('capture'); startCamera() }}>
       同意，開始登記
      </button>
+     <button className="w-full mt-3 py-2 text-sm text-gray-500 rounded-lg"
+      onClick={() => { setStep('code'); setConsentChecked(false) }}>
+      ← 返回
+     </button>
     </div>
    )}
 
@@ -146,7 +161,23 @@ export default function FaceEnrollPage() {
        onClick={takeShot} disabled={submitting}>
        📸 拍攝
       </button>
-      {error && <div style={{ fontSize: 15, color: '#dc2626', marginTop: 12, fontWeight: 500 }}>{error}</div>}
+      {error && <div style={{ marginTop: 12 }}>
+       <div style={{ fontSize: 15, color: '#dc2626', fontWeight: 500 }}>{error}</div>
+       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button
+         onClick={() => { setError(''); setUploading(false); startCamera() }}
+         style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: '#1a1a2e', color: '#fff', fontSize: 15 }}
+        >
+         重新拍攝
+        </button>
+        <button
+         onClick={() => { stopCamera(); setError(''); setStep('code') }}
+         style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', fontSize: 15 }}
+        >
+         取消
+        </button>
+       </div>
+      </div>}
      </div>
     </div>
    )}

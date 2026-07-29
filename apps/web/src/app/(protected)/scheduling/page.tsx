@@ -3351,7 +3351,7 @@ function getShiftCode(shift: Shift): string {
               </select>
               {secondaryClinicId && (
                 <div style={{ fontSize: 10, color: '#c2410c', marginTop: 4 }}>
-                  ⚠️ 下一張建立嘅更次會標記為調鋪（{clinics.find(c => c.id === selectedClinicId)?.name} → {clinics.find(c => c.id === secondaryClinicId)?.name}）
+                  （{clinics.find(c => c.id === selectedClinicId)?.name} → {clinics.find(c => c.id === secondaryClinicId)?.name}）
                 </div>
               )}
             </div>

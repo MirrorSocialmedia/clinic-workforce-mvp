@@ -52,15 +52,37 @@ export async function POST(req: NextRequest) {
   const fd = new FormData()
   frames.forEach(f => fd.append('files', f))
   fd.append('store_ref', template.id)
-  const res = await fetch(`${CONFIG.FACE_SERVICE_URL}/embed`, {
-    method: 'POST',
-    body: fd,
-    signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
-  })
-  const data = await res.json()
-  if (!res.ok || !data.ok) {
-    await prisma.faceTemplate.delete({ where: { id: template.id } }) // 失敗清佔位
-    return NextResponse.json({ error: data.error || '特徵提取失敗' }, { status: 422 })
+
+  let data: any
+  try {
+    const res = await fetch(`${CONFIG.FACE_SERVICE_URL}/embed`, {
+      method: 'POST',
+      body: fd,
+      // ★ 用 EMBED 專用 timeout，唔好用打卡嗰個 5 秒
+      signal: AbortSignal.timeout(CONFIG.FACE_EMBED_TIMEOUT_MS),
+    })
+    data = await res.json().catch(() => ({}))
+    if (!res.ok || !data?.ok) {
+      await prisma.faceTemplate.delete({ where: { id: template.id } })
+      return NextResponse.json(
+        { error: data?.error || `特徵提取失敗（${res.status}）` },
+        { status: 422 },
+      )
+    }
+  } catch (e: any) {
+    // ★ 超時 / 連線失敗一樣要清走佔位 template，
+    //   否則會變成「老闆見到申請但冇參考照」嘅孤兒記錄。
+    await prisma.faceTemplate.delete({ where: { id: template.id } }).catch(() => {})
+    const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError'
+    return NextResponse.json(
+      {
+        error: isTimeout
+          ? '人臉分析超時，請喺光線充足嘅地方、面向鏡頭再試一次'
+          : '人臉服務暫時無法連線，請稍後再試',
+        reason: isTimeout ? 'FACE_TIMEOUT' : 'FACE_UNAVAILABLE',
+      },
+      { status: isTimeout ? 504 : 503 },
+    )
   }
 
   // ③ 成功回寫 embedding + refFrameId（核銷 code 照舊）

@@ -10,8 +10,19 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
  const { session, scope } = auth
 
  const template = await prisma.faceTemplate.findUnique({ where: { id: params.id } })
- if (!template || !template.refFrameId) return NextResponse.json(
-  { error: '此登記無參考照（舊版登記），請拒絕並讓員工重新登記' }, { status: 404 })
+ if (!template) {
+  return NextResponse.json({ error: '登記記錄不存在' }, { status: 404 })
+ }
+ // ★ 分辨：孤兒（登記中途失敗） vs 舊版登記（成功但冇存參考照）
+ if (!template.refFrameId) {
+  const isOrphan = !template.embedding
+  return NextResponse.json({
+   error: isOrphan
+    ? '此登記未完成（人臉分析中途失敗），請拒絕並讓員工重新登記'
+    : '此登記無參考照（舊版登記），請拒絕並讓員工重新登記',
+   reason: isOrphan ? 'INCOMPLETE_ENROLLMENT' : 'LEGACY_NO_REF',
+  }, { status: 404 })
+ }
 
  // ★ IDOR: MANAGER 只可以睇自己店員工嘅人臉
  const emp = await prisma.employee.findUnique({
@@ -38,7 +49,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const res = await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${template.refFrameId}`, {
     signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
   })
-  if (!res.ok) return NextResponse.json({ error: 'Frame not found' }, { status: 404 })
+  if (!res.ok) return NextResponse.json(
+   { error: `參考照檔案遺失（face-service ${res.status}）`, reason: 'FRAME_MISSING' },
+   { status: 404 })
   const buf = await res.arrayBuffer()
   return new NextResponse(buf, { headers: { 'Content-Type': 'image/jpeg' } })
  } catch {

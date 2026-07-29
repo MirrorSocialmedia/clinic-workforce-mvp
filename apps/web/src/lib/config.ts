@@ -241,7 +241,10 @@ export const CONFIG = {
 
   // Face service
   FACE_SERVICE_URL: process.env.FACE_SERVICE_URL || 'http://face:8000',
+  // 打卡驗證：單幀，要快 fail 唔好阻住打卡
   FACE_TIMEOUT_MS: parseInt(process.env.FACE_TIMEOUT_MS || '5000', 10),
+  // ★ 登記 embedding：3+ 幀 × InsightFace CPU inference，5 秒必然唔夠
+  FACE_EMBED_TIMEOUT_MS: parseInt(process.env.FACE_EMBED_TIMEOUT_MS || '45000', 10),
 
   // Default demo password
   DEMO_PASSWORD: 'demo1234',
