@@ -22,6 +22,7 @@
 // ============================================================
 
 import { calculateADW } from './adw'
+import { statutoryDailyWage } from './payroll-engine'
 
 const MATERNITY_CAP_WEEK_11_14 = 80000 // Weeks 11-14 four-week total cap
 
@@ -39,6 +40,7 @@ export async function calculateMaternityPay(
   employeeId: string,
   maternityStartDate: Date,
   daysInThisMonth: Array<Date>,
+  monthlySalary?: number,
 ): Promise<{
   amount: number
   capped: boolean
@@ -47,7 +49,17 @@ export async function calculateMaternityPay(
   governmentClaimable: number
 }> {
   // ADW specified date = first day of maternity leave
-  const adwResult = await calculateADW(db, employeeId, maternityStartDate)
+  let adwResult: any
+  try {
+    adwResult = await calculateADW(db, employeeId, maternityStartDate)
+  } catch (e) {
+    // ★ ADW 計唔到唔應該令整份計糧 500；退回月薪推算並記低警告
+    const fallbackSalary = monthlySalary ?? 10000
+    adwResult = {
+      adw: statutoryDailyWage(fallbackSalary),
+      warnings: [`ADW fallback: ${e instanceof Error ? e.message : String(e)}`],
+    }
+  }
   const dailyPay = adwResult.adw * 0.8
 
   let normalDays = 0   // Weeks 1-10
@@ -100,12 +112,22 @@ export async function calculatePaternityPay(
   employeeId: string,
   firstPaternityDay: Date,
   days: number,
+  monthlySalary?: number,
 ): Promise<{
   amount: number
   adw: number
   warnings: string[]
 }> {
-  const adwResult = await calculateADW(db, employeeId, firstPaternityDay)
+  let adwResult: any
+  try {
+    adwResult = await calculateADW(db, employeeId, firstPaternityDay)
+  } catch (e) {
+    const fallbackSalary = monthlySalary ?? 10000
+    adwResult = {
+      adw: statutoryDailyWage(fallbackSalary),
+      warnings: [`ADW fallback: ${e instanceof Error ? e.message : String(e)}`],
+    }
+  }
   const amount = adwResult.adw * 0.8 * days
 
   return {

@@ -77,16 +77,48 @@ export async function calculateADW(
     )
   }
 
+  // ★ 指定日喺入職當月/次月時，periodStart 會大過 periodEnd（區間倒轉），
+  //   startMonth > endMonth 令查詢永遠 0 筆 → adw 0 → 引擎靜靜 fallback。
+  if (periodStart > periodEnd) {
+    warnings.push(
+      `入職日（${joinDateHK}）在計算期間之後，無足夠歷史資料計算 ADW。` +
+      `系統將以「月薪 × 12 ÷ 365」推算日薪。`,
+    )
+    return {
+      adw: 0, totalWage: 0, totalDays: 0, isShortPeriod: true,
+      periodStart: toHKDateStr(periodStart),
+      periodEnd: toHKDateStr(periodEnd),
+      sources: [], warnings,
+    }
+  }
+
   // 3) Convert to YYYY-MM month strings
   const startMonth = toHKDateStr(periodStart).slice(0, 7)
   const endMonth = toHKDateStr(periodEnd).slice(0, 7)
+
+  // ★ PayrollRun.periodMonth 係 DateTime（寫入時係 HK 月初午夜），
+  //   唔可以同 "YYYY-MM" 字串比較 —— 舊寫法會令 Prisma 擲 ValidationError，
+  //   令整個 ADW 靜靜 fallback 去「月薪 × 12 ÷ 365」。
+  //   前後各留 2 日緩衝（兜返早期可能以 UTC 午夜寫入嘅資料），之後再按 pmStr 精準過濾。
+  const runFrom = new Date(
+    new Date(`${startMonth}-01T00:00:00+08:00`).getTime() - 2 * 86400000,
+  )
+  const nextOfEnd = (() => {
+    const [ey, em] = endMonth.split('-').map(Number)
+    const ny = em === 12 ? ey + 1 : ey
+    const nm = em === 12 ? 1 : em + 1
+    return `${ny}-${String(nm).padStart(2, '0')}`
+  })()
+  const runTo = new Date(
+    new Date(`${nextOfEnd}-01T00:00:00+08:00`).getTime() + 2 * 86400000,
+  )
 
   // 4) Fetch PayrollItem + WageHistory for the period
   const [payrollItems, wageHistories] = await Promise.all([
     db.payrollItem.findMany({
       where: {
         employeeId,
-        run: { periodMonth: { gte: startMonth, lte: endMonth } },
+        run: { periodMonth: { gte: runFrom, lt: runTo } }, // ★ Date vs Date
       },
       include: { run: { select: { periodMonth: true } } },
     }),
@@ -112,6 +144,8 @@ export async function calculateADW(
   for (const pi of payrollItems) {
     const pm = (pi.run as { periodMonth: Date | string }).periodMonth
     const pmStr = typeof pm === 'string' ? pm : toHKDateStr(pm).slice(0, 7)
+    // ★ 上面用咗 ±2 日緩衝，可能多拉咗前後一個月，喺呢度精準剔走
+    if (pmStr < startMonth || pmStr > endMonth) continue
     byMonth.set(pmStr, {
       periodMonth: pmStr,
       source: 'PayrollItem',
@@ -241,7 +275,11 @@ export async function snapshotWagesForADW(
   })
   if (!run) return
 
-  const [y, m] = run.periodMonth.split('-').map(Number)
+  // ★ run.periodMonth 係 DateTime，冇 .split()
+  const pmStr = typeof run.periodMonth === 'string'
+    ? run.periodMonth
+    : toHKDateStr(run.periodMonth).slice(0, 7)
+  const [y, m] = pmStr.split('-').map(Number)
   const calendarDays = new Date(Date.UTC(y, m, 0)).getUTCDate()
 
   for (const item of run.items) {
@@ -312,11 +350,11 @@ export async function snapshotWagesForADW(
       entity: 'PayrollRun',
       entityId: runId,
       afterJson: JSON.stringify({
-        periodMonth: run.periodMonth,
+        periodMonth: pmStr,
         itemCount: run.items.length,
         calendarDays,
       }),
-      notes: `計糧確認，已沉澱 ${run.items.length} 位員工的 ${run.periodMonth} 工資記錄供 ADW 計算`,
+      notes: `計糧確認，已沉澱 ${run.items.length} 位員工的 ${pmStr} 工資記錄供 ADW 計算`,
     },
   })
 }

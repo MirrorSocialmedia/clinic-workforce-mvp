@@ -627,6 +627,11 @@ export default function EmployeePayrollDetailPage() {
               <div className="text-xs text-muted-foreground border-t pt-2 mt-2">
                 本期假期薪酬按《僱傭條例》12個月平均工資計算：
                 ADW = ${item.adwUsed.toFixed(2)}/天
+                {detail?.adwSource === 'fallback' && (
+                  <span style={{ color: '#c2410c', marginLeft: 6 }}>
+                    （推算值：歷史工資不足，以月薪 × 12 ÷ 365 計）
+                  </span>
+                )}
                 <br />
                 法定假日 / 年假 = ADW × 100% | 病假 / 產假 / 侍產假 = ADW × 80%
               </div>

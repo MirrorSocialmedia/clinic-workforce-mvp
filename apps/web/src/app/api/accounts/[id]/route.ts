@@ -73,29 +73,57 @@ export async function DELETE(
       const empId = user.employee.id
 
       // Check business records
-      const [punches, shifts, items, leaves] = await Promise.all([
+      const [punches, shifts, items, leaves, corrections, expenses, changes] = await Promise.all([
         prisma.punchRecord.count({ where: { employeeId: empId } }),
         prisma.shift.count({ where: { employeeId: empId } }),
         prisma.payrollItem.count({ where: { employeeId: empId } }),
         prisma.leaveRequest.count({ where: { employeeId: empId } }),
+        prisma.punchCorrection.count({ where: { employeeId: empId } }),
+        prisma.expenseEntry.count({ where: { employeeId: empId } }),
+        prisma.shiftChangeRequest.count({ where: { fromEmployeeId: empId } }),
       ])
-      const total = punches + shifts + items + leaves
+      const total = punches + shifts + items + leaves + corrections + expenses + changes
 
       if (total > 0) {
         return NextResponse.json({
-          error: `此員工已有 ${total} 筆業務記錄（打卡${punches}/排班${shifts}/計糧${items}/假期${leaves}），不可刪除。請改為「停用」（保留歷史與審計）。`,
+          error: `此員工已有 ${total} 筆業務記錄（打卡${punches}/排班${shifts}/計糧${items}/假期${leaves}/補登${corrections}/報銷${expenses}/換更${changes}），不可刪除。請改為「停用」（保留歷史與審計）。`,
         }, { status: 400 })
       }
 
-      // Clean account: cascade delete in transaction
-      await prisma.$transaction([
-        prisma.timeBankEntry.deleteMany({ where: { employeeId: empId } }),
-        prisma.leaveBalance.deleteMany({ where: { employeeId: empId } }),
-        prisma.employeeClinic.deleteMany({ where: { employeeId: empId } }),
-        prisma.payRule.deleteMany({ where: { employeeId: empId } }),
-        prisma.employee.delete({ where: { id: empId } }),
-        prisma.user.delete({ where: { id: params.id } }),
-      ])
+      // ★ 以下 model 對 Employee 係 Restrict（schema 冇寫 onDelete），
+      //   唔喺交易入面刪就會擲 P2003 → 500。
+      try {
+        await prisma.$transaction([
+          prisma.faceEnrollCode.deleteMany({ where: { employeeId: empId } }),
+          prisma.faceTemplate.deleteMany({ where: { employeeId: empId } }),
+          prisma.punchCorrection.deleteMany({ where: { employeeId: empId } }),
+          prisma.expenseEntry.deleteMany({ where: { employeeId: empId } }),
+          prisma.shiftChangeRequest.deleteMany({
+            where: {
+              OR: [
+                { fromEmployeeId: empId },
+                { toEmployeeId: empId },
+                { approverId: empId },
+              ],
+            },
+          }),
+          prisma.timeBankEntry.deleteMany({ where: { employeeId: empId } }),
+          prisma.leaveBalance.deleteMany({ where: { employeeId: empId } }),
+          prisma.employeeClinic.deleteMany({ where: { employeeId: empId } }),
+          prisma.payRule.deleteMany({ where: { employeeId: empId } }),
+          prisma.employee.delete({ where: { id: empId } }),
+          prisma.user.delete({ where: { id: params.id } }),
+        ])
+      } catch (e: any) {
+        if (e?.code === 'P2003') {
+          const field = e?.meta?.field_name || e?.meta?.constraint || '未知關聯'
+          return NextResponse.json({
+            error: `此員工仍被其他記錄引用（${field}），無法刪除。請改為「停用」以保留歷史與審計。`,
+            code: 'P2003',
+          }, { status: 409 })
+        }
+        throw e
+      }
     } else {
       await prisma.user.delete({ where: { id: params.id } })
     }

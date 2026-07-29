@@ -33,8 +33,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: '無權查看此員工的薪酬資料' }, { status: 403 })
   }
 
-  const specifiedDate = date ? new Date(date + 'T00:00:00+08:00') : new Date()
+  const specifiedDate = date ? new Date(`${date}T00:00:00+08:00`) : new Date()
+  if (isNaN(specifiedDate.getTime())) {
+    return NextResponse.json({ error: 'date 格式錯誤，應為 YYYY-MM-DD' }, { status: 400 })
+  }
 
-  const result = await calculateADW(prisma, employeeId, specifiedDate)
-  return NextResponse.json(result)
+  try {
+    const result = await calculateADW(prisma, employeeId, specifiedDate)
+    return NextResponse.json(result)
+  } catch (e: any) {
+    console.error('[adw/preview]', e)
+    return NextResponse.json(
+      { error: `ADW 計算失敗：${e?.message || '未知錯誤'}` },
+      { status: 500 },
+    )
+  }
 }

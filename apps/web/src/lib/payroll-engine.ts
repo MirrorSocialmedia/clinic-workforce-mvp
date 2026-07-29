@@ -116,7 +116,7 @@ function getOtThreshold(config: PayRuleConfig, payType: PayType): number {
  * @deprecated Use calculateADW from './adw' for EO-compliant ADW-based calculations.
  * Kept as fallback when ADW data is insufficient.
  */
-function statutoryDailyWage(monthlySalary: number): number {
+export function statutoryDailyWage(monthlySalary: number): number {
   return (monthlySalary * 12) / 365
 }
 
@@ -2737,7 +2737,7 @@ export async function calculatePayrollWithRules(
 
     if (maternityDays.length > 0) {
       maternityDaysInMonth = maternityDays.length
-      const matResult = await calculateMaternityPay(prisma, employeeId, maternityStart, maternityDays)
+      const matResult = await calculateMaternityPay(prisma, employeeId, maternityStart, maternityDays, (result.detail as any)?.monthlySalary)
       maternityPay = matResult.amount
       maternityPayDetail = {
         adw: matResult.adw,
@@ -2775,7 +2775,7 @@ export async function calculatePayrollWithRules(
     }
 
     if (paternityDaysInMonth > 0) {
-      const patResult = await calculatePaternityPay(prisma, employeeId, firstPaternityDay, paternityDaysInMonth)
+      const patResult = await calculatePaternityPay(prisma, employeeId, firstPaternityDay, paternityDaysInMonth, (result.detail as any)?.monthlySalary)
       paternityPay = patResult.amount
       paternityPayDetail = {
         adw: patResult.adw,

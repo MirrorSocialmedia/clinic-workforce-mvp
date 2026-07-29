@@ -239,8 +239,12 @@ export default function AccountsPage() {
     if (!confirm(`確定刪除帳號「${acc.name}」？此操作不可復原。`)) return
     try {
       const res = await fetch(`/api/accounts/${acc.id}`, { method: 'DELETE', credentials: 'include' })
-      if (res.ok) { fetchData() }
-      else { const err = await res.json(); alert(err.error || '刪除失敗') }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || `刪除失敗（${res.status}）`)
+        return
+      }
+      fetchData()
     } catch { alert('刪除失敗') }
   }
 
