@@ -21,6 +21,10 @@ import { hasPermission } from '@/lib/permissions'
 // ============================================================
 const ROLE_ORDER: Record<string, number> = { OWNER: 0, MANAGER: 1, ACCOUNTANT: 2, EMPLOYEE: 3 }
 const roleOf = (e: any) => e.user?.role ?? e.role ?? null
+
+/** LeaveType 可能係物件（relation）或字串（舊版），統一取名 */
+const leaveName = (lt: any): string =>
+  typeof lt === 'string' ? lt : (lt?.name ?? '假期')
 const roleRank = (e: any) => {
   const r = roleOf(e)
   return (r != null && r in ROLE_ORDER) ? ROLE_ORDER[r] : 99
@@ -710,8 +714,14 @@ function getShiftCode(shift: Shift): string {
     }
     if (empLeavesOnDay.length > 0) {
       const lr = empLeavesOnDay[0]
-      const leaveTypeMap: Record<string, string> = { ANNUAL: '年', SICK: '病', HALF_SICK: '半病', UNPAID: '無薪', SPECIAL: '特' }
-      return { label: leaveTypeMap[lr.leaveType] || '假', bg: '#fef3c7', detail: leaveTypeMap[lr.leaveType] || '假' }
+      // ★ 用 DB 的 LeaveType.name / color，唔好用寫死的 enum map
+      const name = lr.leaveType?.name ?? '假'
+      const label = name.length > 2 ? name.slice(0, 2) : name
+      return {
+        label,
+        bg: lr.leaveType?.color ?? '#fef3c7',
+        detail: name,
+      }
     }
     return { label: '—', bg: 'transparent', detail: '' }
   }, [ovShifts, leaveRequests, shiftColor])
@@ -2892,16 +2902,18 @@ function getShiftCode(shift: Shift): string {
                     </div>
                   ))}
                   {dayLeaves.map(lr => {
-                    const leaveTypeMap = { ANNUAL: '年假', SICK: '病假', HALF_SICK: '半日病假', UNPAID: '無薪假', SPECIAL: '特假' }
+                    // ★ lr.leaveType 是 LeaveType 物件（{id, name, isPaid, color}），唔係 enum 字串。
                     const empName = clinicEmployees.find(e => e.id === lr.employeeId)?.user?.name || '未知'
+                    const ltName = lr.leaveType?.name ?? '假期'
+                    const ltColor = lr.leaveType?.color ?? '#92400e'
                     return (
                       <div key={lr.id} className="rounded-xl border shadow-card p-3" style={{ background: '#fefce8' }}>
                         <div className="flex justify-between items-center mb-1">
                           <span className="font-semibold text-sm">{empName}</span>
                           <span className="text-xs text-muted-foreground">{lr.startDate} ~ {lr.endDate}</span>
                         </div>
-                        <div className="text-xs" style={{ color: '#92400e' }}>
-                          🏖 {leaveTypeMap[lr.leaveType as keyof typeof leaveTypeMap] || lr.leaveType}
+                        <div className="text-xs" style={{ color: ltColor }}>
+                          🏖 {ltName}
                         </div>
                       </div>
                     )
