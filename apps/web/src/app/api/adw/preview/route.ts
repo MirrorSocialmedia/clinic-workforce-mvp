@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
-import { calculateADW } from '@/lib/adw'
+import { calculateADW, applyAdwPolicy } from '@/lib/adw'
 
 // ============================================================
 // GET /api/adw/preview?employeeId=xxx&date=2026-08-01
@@ -19,10 +19,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'employeeId required' }, { status: 400 })
   }
 
-  // Check pay confidentiality: only OWNER can view confidential employees
+  // Check pay confidentiality + 攞現行 PayRule（政策計算需要）
   const emp = await prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { payConfidential: true },
+    select: {
+      payConfidential: true,
+      payRules: {
+        where: { isActive: true },
+        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+        take: 1,
+        select: { configJson: true },
+      },
+    },
   })
 
   if (!emp) {
@@ -39,8 +47,26 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await calculateADW(prisma, employeeId, specifiedDate)
-    return NextResponse.json(result)
+    const raw = await calculateADW(prisma, employeeId, specifiedDate)
+
+    // ★ 同時回傳「條例原始值」同「計糧實際採用值」——
+    //   兩者喺開咗 adw_policy 之後會唔同，UI 必須分得清，
+    //   否則用家會攞條例值去對數然後以為計錯（2026-07-31 就撞過）。
+    let cfg: any = {}
+    try { cfg = JSON.parse(emp.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇政策 */ }
+    const monthlySalary = Number(cfg?.monthly_salary) || 0
+
+    const policied = monthlySalary > 0
+      ? applyAdwPolicy(raw.adw, monthlySalary, cfg?.adw_policy)
+      : { adw: raw.adw, adwRaw: raw.adw, policyApplied: 'none' as const, currentEquivalent: 0 }
+
+    return NextResponse.json({
+      ...raw,                        // adw = 條例原始值（保持向後相容）
+      effectiveAdw: policied.adw,    // ★ 計糧實際採用
+      policyApplied: policied.policyApplied,
+      currentEquivalent: policied.currentEquivalent,
+      monthlySalary,
+    })
   } catch (e: any) {
     console.error('[adw/preview]', e)
     return NextResponse.json(

@@ -18,6 +18,10 @@ interface WageRow {
 /** ADW preview result */
 interface ADWData {
   adw: number
+  effectiveAdw?: number
+  policyApplied?: 'none' | 'floor' | 'cap'
+  currentEquivalent?: number
+  monthlySalary?: number
   totalWage: number
   totalDays: number
   isShortPeriod: boolean
@@ -343,41 +347,69 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
             </div>
           </div>
 
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-bold font-mono">${adwPreview.adw.toFixed(2)}</span>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="text-3xl font-bold font-mono">
+              ${(adwPreview.effectiveAdw ?? adwPreview.adw).toFixed(2)}
+            </span>
             <span className="text-sm text-muted-foreground">/ 天</span>
             {adwPreview.isShortPeriod && (
               <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">
                 受僱不足12個月
               </span>
             )}
+            {adwPreview.policyApplied === 'floor' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-800">
+                已套用加薪保障
+              </span>
+            )}
+            {adwPreview.policyApplied === 'cap' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-800">
+                已套用減薪上限
+              </span>
+            )}
           </div>
 
+          {/* ★ 政策生效時，條例原始值一定要並列，否則對數會對唔上 */}
+          {adwPreview.policyApplied !== 'none' && adwPreview.policyApplied != null && (
+            <div className="text-xs text-muted-foreground">
+              條例計算值 <span className="font-mono">${adwPreview.adw.toFixed(2)}</span>
+              <span className="mx-1">→</span>
+              實際採用 <span className="font-mono font-medium">${adwPreview.effectiveAdw!.toFixed(2)}</span>
+              （現薪等值 ${adwPreview.currentEquivalent?.toFixed(2)}）
+            </div>
+          )}
+
           <div className="text-xs text-muted-foreground">
+            {adwPreview.policyApplied !== 'none' && '條例值：'}
             ${adwPreview.totalWage.toLocaleString()} ÷ {adwPreview.totalDays} 天
             <span className="mx-2">·</span>
             期間 {adwPreview.periodStart} ~ {adwPreview.periodEnd}
           </div>
 
           {/* Holiday pay breakdown */}
-          <div className="grid grid-cols-2 gap-2 text-sm border-t pt-3">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">法定假日 / 年假</span>
-              <span className="font-mono">${adwPreview.adw.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">病假 (4/5)</span>
-              <span className="font-mono">${(adwPreview.adw * 0.8).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">產假 (4/5)</span>
-              <span className="font-mono">${(adwPreview.adw * 0.8).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">侍產假 (4/5)</span>
-              <span className="font-mono">${(adwPreview.adw * 0.8).toFixed(2)}</span>
-            </div>
-          </div>
+          {(() => {
+            const eff = adwPreview.effectiveAdw ?? adwPreview.adw
+            return (
+              <div className="grid grid-cols-2 gap-2 text-sm border-t pt-3">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">法定假日 / 年假</span>
+                  <span className="font-mono">${eff.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">病假 (4/5)</span>
+                  <span className="font-mono">${(eff * 0.8).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">產假 (4/5)</span>
+                  <span className="font-mono">${(eff * 0.8).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">侍產假 (4/5)</span>
+                  <span className="font-mono">${(eff * 0.8).toFixed(2)}</span>
+                </div>
+              </div>
+            )
+          })()}
 
           {adwPreview.warnings?.length > 0 && (
             <div className="space-y-1">

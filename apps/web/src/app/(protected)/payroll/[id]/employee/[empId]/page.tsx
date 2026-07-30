@@ -7,7 +7,7 @@ import { fmtDateTime, fmtDate, fmtTime, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
-import { ADWCard } from '@/components/ADWCard'
+
 
 interface PayrollItemData {
   id: string
@@ -957,13 +957,6 @@ export default function EmployeePayrollDetailPage() {
         </>
         )}
       </Card>
-
-      {/* ADW Card (payroll detail — compact mode) */}
-      <ADWCard
-        employeeId={item.employeeId}
-        asOfDate={`${periodMonth}-01`}
-        compact
-      />
 
       {/* Punch Records Table */}
       {punches.length > 0 && (
