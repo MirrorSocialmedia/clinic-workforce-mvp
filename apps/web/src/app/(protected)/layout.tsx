@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
-import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users } from 'lucide-react'
+import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission } from '@/lib/permissions'
 
@@ -162,6 +162,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/clinics', label: '診所管理', icon: Building2, roles: ['OWNER'] },
     { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER'] },
     { path: '/face-review', label: '臉部覆核', icon: FileText, roles: ['OWNER', 'MANAGER'] },
+    { path: '/hash', label: '完整性驗證', icon: ShieldCheck, roles: ['OWNER'] },
   ]
 
   const visibleNav = navItems.filter(item => {

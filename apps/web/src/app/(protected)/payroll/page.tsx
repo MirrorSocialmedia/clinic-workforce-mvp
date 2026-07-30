@@ -190,6 +190,9 @@ export default function PayrollListPage() {
             >
               💰 雜項費用
             </button>
+            <Link href="/payroll/reports/exceptions" className="px-4 py-2 rounded-md border bg-white hover:bg-slate-50 text-sm font-semibold transition-colors inline-block">
+              📋 考勤異常報表
+            </Link>
             <Link href="/payroll/new" className="px-4 py-2 rounded-md bg-brand text-white text-sm font-semibold hover:bg-brand-dark transition-colors inline-block" style={{ textDecoration: 'none' }}>
               + 生成計糧
             </Link>

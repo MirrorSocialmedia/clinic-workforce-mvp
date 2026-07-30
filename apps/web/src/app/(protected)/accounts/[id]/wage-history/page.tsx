@@ -425,7 +425,8 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
 
       {/* Monthly Table */}
       <div className="rounded-lg border overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto -mx-4 px-4">
+          <table className="w-full text-sm" style={{ minWidth: 640 }}>
           <thead>
             <tr className="text-xs text-muted-foreground border-b bg-muted/30">
               <th className="text-left py-2 px-3">月份</th>
@@ -566,6 +567,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Batch fill */}

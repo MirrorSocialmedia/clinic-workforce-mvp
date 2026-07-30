@@ -342,7 +342,7 @@ export default function MySchedulePage() {
       </div>
 
       {/* Shift cards (mobile-friendly) */}
-      {Object.keys(shiftsByDate).length > 0 && (
+      {Object.keys(shiftsByDate).length > 0 ? (
         <div className="card">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">班次詳情</h2>
           <div className="space-y-2">
@@ -394,6 +394,12 @@ export default function MySchedulePage() {
                   )}
                 </div>
               )})}
+          </div>
+        </div>
+      ) : (
+        <div className="card">
+          <div className="text-center py-12 text-sm text-muted-foreground">
+            本月未有排班
           </div>
         </div>
       )}

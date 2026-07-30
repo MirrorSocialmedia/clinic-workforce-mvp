@@ -13,6 +13,7 @@ import {
   Monitor,
   AlertTriangle,
   Wallet,
+  ShieldCheck,
 } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
@@ -78,6 +79,12 @@ export default function MobileMorePage() {
       label: '審計日志',
       href: '/audit-logs',
       icon: FileText,
+      roles: ['OWNER'],
+    },
+    {
+      label: '完整性驗證',
+      href: '/hash',
+      icon: ShieldCheck,
       roles: ['OWNER'],
     },
   ]
