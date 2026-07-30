@@ -21,7 +21,7 @@
 //     NO separate holiday pay required.
 // ============================================================
 
-import { calculateADW, applyAdwPolicy } from './adw'
+import { calculateADW, getEffectiveADW } from './adw'
 import { statutoryDailyWage } from './payroll-engine'
 
 const MATERNITY_CAP_WEEK_11_14 = 80000 // Weeks 11-14 four-week total cap
@@ -52,14 +52,8 @@ export async function calculateMaternityPay(
   // ADW specified date = first day of maternity leave
   let adwResult: any
   try {
-    const raw = await calculateADW(db, employeeId, maternityStartDate)
-    // ★ 套用薪金調整政策
-    if (monthlySalary != null && monthlySalary > 0) {
-      const policied = applyAdwPolicy(raw.adw, monthlySalary, adwPolicy)
-      adwResult = { ...raw, adw: policied.adw }
-    } else {
-      adwResult = raw
-    }
+    const eff = await getEffectiveADW(db, employeeId, maternityStartDate, monthlySalary ?? 0, adwPolicy)
+    adwResult = { ...eff }
   } catch (e) {
     // ★ ADW 計唔到唔應該令整份計糧 500；退回月薪推算並記低警告
     const fallbackSalary = monthlySalary ?? 10000
@@ -129,14 +123,8 @@ export async function calculatePaternityPay(
 }> {
   let adwResult: any
   try {
-    const raw = await calculateADW(db, employeeId, firstPaternityDay)
-    // ★ 套用薪金調整政策
-    if (monthlySalary != null && monthlySalary > 0) {
-      const policied = applyAdwPolicy(raw.adw, monthlySalary, adwPolicy)
-      adwResult = { ...raw, adw: policied.adw }
-    } else {
-      adwResult = raw
-    }
+    const eff = await getEffectiveADW(db, employeeId, firstPaternityDay, monthlySalary ?? 0, adwPolicy)
+    adwResult = { ...eff }
   } catch (e) {
     const fallbackSalary = monthlySalary ?? 10000
     adwResult = {

@@ -11,7 +11,7 @@ import { prisma, basePrisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
 import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
-import { calculateADW, applyAdwPolicy } from './adw'
+import { calculateADW, getEffectiveADW } from './adw'
 import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 
@@ -485,17 +485,11 @@ export async function computeSickDeduction(
       let adwRawValue: number | undefined
 
       try {
-        const adwResult = await calculateADW(db, employeeId, episodeFirstDay)
-        // ★ 套用薪金調整政策 —— 疾病津貼係政策嘅主要應用場景
-        if (monthlySalary > 0) {
-          const policied = applyAdwPolicy(adwResult.adw, monthlySalary, adwPolicy)
-          adwValue = policied.adw
-          adwPolicyApplied = policied.policyApplied
-          adwRawValue = policied.adwRaw
-        } else {
-          adwValue = adwResult.adw
-        }
-        adwWarnings = adwResult.warnings || []
+        const eff = await getEffectiveADW(db, employeeId, episodeFirstDay, monthlySalary, adwPolicy)
+        adwValue = eff.adw
+        adwPolicyApplied = eff.policyApplied
+        adwRawValue = eff.adwRaw
+        adwWarnings = eff.warnings || []
         if (adwValue <= 0) {
           throw new Error('ADW calculated as 0 or negative')
         }
@@ -2848,6 +2842,9 @@ export async function calculatePayrollWithRules(
   let adwUsed: number | null = null
   let adwWarnings: string[] = []
   let adwSource: 'calculated' | 'fallback' | null = null
+  let adwPolicyResult: AdwPolicyResult = {
+    adw: 0, adwRaw: 0, policyApplied: 'none', currentEquivalent: 0,
+  }
   const monthlySalary = (result.detail as any)?.monthlySalary ?? 0
   // ★ 用 monthlyWorkingDays（已扣休息日 + 公眾假期）。
   //   端午節已作為休息日發放，唔應該同時當工作日計入分母。
@@ -2857,10 +2854,16 @@ export async function calculatePayrollWithRules(
 
   if (monthlySalary > 0) {
     try {
-      const adwResult = await calculateADW(prisma, employeeId, monthStart)
-      adwUsed = adwResult.adw
-      adwWarnings = adwResult.warnings || []
+      const eff = await getEffectiveADW(prisma, employeeId, monthStart, monthlySalary, config.adw_policy)
+      adwUsed = eff.adw
+      adwWarnings = eff.warnings || []
       adwSource = 'calculated'
+      adwPolicyResult = {
+        adw: eff.adw,
+        adwRaw: eff.adwRaw,
+        policyApplied: eff.policyApplied,
+        currentEquivalent: eff.currentEquivalent,
+      }
       if (adwUsed <= 0) throw new Error('ADW calculated as 0 or negative')
     } catch (err) {
       // Fallback: use statutory daily wage
@@ -2870,24 +2873,25 @@ export async function calculatePayrollWithRules(
     }
   }
 
-  // ★ Phase 3.5: ADW 薪金調整政策 —— 必須喺任何用 adwUsed 計錢之前套用
-  let adwPolicyResult: AdwPolicyResult = {
-    adw: adwUsed ?? 0,
-    adwRaw: adwUsed ?? 0,
-    policyApplied: 'none',
-    currentEquivalent: 0,
-  }
-  if (adwUsed != null && adwUsed > 0 && monthlySalary > 0) {
-    adwPolicyResult = applyAdwPolicy(adwUsed, monthlySalary, config.adw_policy)
-    adwUsed = adwPolicyResult.adw
-    if (adwPolicyResult.policyApplied === 'cap') {
-      console.warn(
-        `[adw_policy] ⚠️ cap 已套用 — employeeId=${employeeId} ` +
-        `month=${toHKDateStr(monthDate).slice(0, 7)} ` +
-        `raw=${adwPolicyResult.adwRaw.toFixed(2)} capped=${adwPolicyResult.adw.toFixed(2)} ` +
-        `currentEquivalent=${adwPolicyResult.currentEquivalent.toFixed(2)}`,
-      )
-    }
+  // ★ Phase 3.5: cap audit trail
+  if (adwPolicyResult.policyApplied === 'cap') {
+    console.warn(
+      `[adw_policy] ⚠️ cap 已套用 — employeeId=${employeeId} ` +
+      `month=${toHKDateStr(monthDate).slice(0, 7)} ` +
+      `raw=${adwPolicyResult.adwRaw.toFixed(2)} capped=${adwPolicyResult.adw.toFixed(2)} ` +
+      `currentEquivalent=${adwPolicyResult.currentEquivalent.toFixed(2)}`,
+    )
+    // ★ 影響法定支付金額，要有永久紀錄
+    await prisma.auditLog.create({
+      data: {
+        actorId: null,
+        action: 'ADW_POLICY_CAP',
+        entity: 'PayrollItem',
+        entityId: employeeId,
+        targetEmployeeId: employeeId,
+        notes: `${toHKDateStr(monthDate).slice(0, 7)} ADW 上限：條例值 ${adwPolicyResult.adwRaw} → ${adwPolicyResult.adw}（現薪等值 ${adwPolicyResult.currentEquivalent}）`,
+      },
+    })
   }
 
   // ★ ADW adjustment for public holidays & paid leave (100% ADW per EO)

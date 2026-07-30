@@ -1288,9 +1288,51 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
           </>
           )}
 
-          {/* ═══ 4️⃣ Effective Date ═══ */}
+          {/* ═══ 5️⃣ ADW 薪金調整政策 ═══ */}
           <div style={sectionStyle}>
-            <div style={sectionTitleStyle}>4️⃣ 生效日期</div>
+            <div style={sectionTitleStyle}>5️⃣ ADW 薪金調整政策</div>
+
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 10 }}>
+              <input
+                type="checkbox"
+                checked={config.adw_policy?.floor_at_current_salary ?? false}
+                onChange={e => setConfig(c => ({ ...c, adw_policy: { ...c.adw_policy, floor_at_current_salary: e.target.checked } }))}
+              />
+              <span style={{ fontSize: 12 }}>
+                <strong>加薪保障</strong>（建議開啟）<br />
+                <span style={{ color: '#6b7280' }}>
+                  員工加薪後，假期／病假薪酬不低於「現時月薪 × 12 ÷ 365」。
+                  屬優於法例嘅公司政策，合法。
+                </span>
+              </span>
+            </label>
+
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={config.adw_policy?.cap_at_current_salary ?? false}
+                onChange={e => setConfig(c => ({ ...c, adw_policy: { ...c.adw_policy, cap_at_current_salary: e.target.checked } }))}
+              />
+              <span style={{ fontSize: 12 }}>
+                <strong style={{ color: '#c2410c' }}>⚠️ 減薪上限</strong><br />
+                <span style={{ color: '#c2410c' }}>
+                  員工減薪後，法定津貼以「現時月薪 × 12 ÷ 365」為上限。
+                  <strong>此設定可能令支付低於《僱傭條例》第 41 條嘅法定最低標準
+                  （ADW × 4/5），啟用前請先取得法律意見。</strong>
+                </span>
+              </span>
+            </label>
+
+            {config.adw_policy?.floor_at_current_salary && config.adw_policy?.cap_at_current_salary && (
+              <div style={{ marginTop: 8, padding: 8, background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: 6, fontSize: 11 }}>
+                ⚠️ 兩項同時開啟 = ADW 永遠等於現薪等值，12 個月回溯機制完全失效。請確認係咪有意如此。
+              </div>
+            )}
+          </div>
+
+          {/* ═══ 6️⃣ Effective Date ═══ */}
+          <div style={sectionStyle}>
+            <div style={sectionTitleStyle}>6️⃣ 生效日期</div>
             <div className="form-group">
               <input
                 type="date"

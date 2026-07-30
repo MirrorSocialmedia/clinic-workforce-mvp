@@ -685,6 +685,19 @@ export default function EmployeePayrollDetailPage() {
                 )}
                 <br />
                 法定假日 / 年假 = ADW × 100% | 病假 / 產假 / 侍產假 = ADW × 80%
+                {detail?.adwPolicyApplied === 'floor' && (
+                  <div className="text-xs text-green-700 mt-1">
+                    ℹ️ 已按公司特優政策以現時月薪為基準計算
+                    （條例計算值 ${detail.adwRaw?.toFixed(2)}，實用 ${detail.adwUsed?.toFixed(2)}）
+                  </div>
+                )}
+                {detail?.adwPolicyApplied === 'cap' && (
+                  <div className="text-xs text-orange-700 mt-1">
+                    ⚠️ 已套用 ADW 上限（條例計算值 ${detail.adwRaw?.toFixed(2)}，
+                    實用 ${detail.adwUsed?.toFixed(2)}，
+                    差額約 ${(((detail.adwRaw ?? 0) - (detail.adwUsed ?? 0)) * 0.8).toFixed(2)}/日）
+                  </div>
+                )}
               </div>
             )}
           </div>

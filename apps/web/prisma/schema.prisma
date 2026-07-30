@@ -408,7 +408,7 @@ model DailyHash {
 // Audit log — APPEND ONLY
 model AuditLog {
   id          String   @id @default(cuid())
-  actorId     String
+  actorId     String?  // null for system-generated entries (e.g. ADW policy cap)
   action      String   // CREATE, UPDATE, DELETE, CORRECT, APPROVE, REJECT
   entity      String
   entityId    String
@@ -421,7 +421,7 @@ model AuditLog {
   userAgent   String?
   createdAt   DateTime @default(now())
 
-  actor       User     @relation("ActorLogs", fields: [actorId], references: [id])
+  actor       User?    @relation("ActorLogs", fields: [actorId], references: [id])
   targetEmployee Employee? @relation("AuditTarget", fields: [targetEmployeeId], references: [id])
 
   @@index([actorId, createdAt])
