@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { CONFIG } from '@/lib/config'
 import { buildDefaultPayConfig, syncConfigToPayType } from '@/lib/pay-rule-defaults'
 
 export async function GET(
@@ -88,6 +89,20 @@ export async function DELETE(
         return NextResponse.json({
           error: `此員工已有 ${total} 筆業務記錄（打卡${punches}/排班${shifts}/計糧${items}/假期${leaves}/補登${corrections}/報銷${expenses}/換更${changes}），不可刪除。請改為「停用」（保留歷史與審計）。`,
         }, { status: 400 })
+      }
+
+      // ★ 永久保留參考照 ⇒ 刪員工時一定要清走實體檔，否則變成孤兒生物特徵資料
+      const faceTemplates = await prisma.faceTemplate.findMany({
+       where: { employeeId: empId, refFrameId: { not: null } },
+       select: { refFrameId: true },
+      })
+      for (const t of faceTemplates) {
+       try {
+        await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${t.refFrameId}`, {
+         method: 'DELETE',
+         signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
+        })
+       } catch { /* 檔可能早已不存在 */ }
       }
 
       // ★ 以下 model 對 Employee 係 Restrict（schema 冇寫 onDelete），

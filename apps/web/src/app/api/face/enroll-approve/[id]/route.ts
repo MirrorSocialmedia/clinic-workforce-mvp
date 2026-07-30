@@ -21,16 +21,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   return NextResponse.json({ error: '不能核准自己的臉部登記，請由另一位管理員處理' }, { status: 400 })
  }
 
- // 刪除參考照
- if (template.refFrameId) {
-  try {
-   await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${template.refFrameId}`, {
-      method: 'DELETE',
-      signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
-    })
-  } catch { /* ignore */ }
- }
-
+ // ★ 決定（2026-07-29）：核准後永久保留參考照，作為「該次登記經核准」嘅憑證。
+ //   拒絕嘅情況仍然即刻刪 —— 冇核准就冇保留嘅理由。
  if (action === 'approve') {
   // Atomic switch: deactivate old active template, activate new one
   await prisma.$transaction([
@@ -40,7 +32,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }),
     prisma.faceTemplate.update({
       where: { id: params.id },
-      data: { active: true, approvedAt: new Date(), approvedBy: auth.session.userId, refFrameId: null },
+      data: {
+       active: true,
+       approvedAt: new Date(),
+       approvedBy: auth.session.userId,
+       // ★ 唔再清 refFrameId —— 永久保留參考照
+      },
     }),
   ])
   await prisma.auditLog.create({
@@ -50,10 +47,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     entity: 'FaceTemplate',
     entityId: template.id,
     targetEmployeeId: template.employeeId,
-    notes: `核准員工 ${template.employeeId} 臉部登記（原子切換，舊模板停用保留）`,
+    notes: `核准員工 ${template.employeeId} 臉部登記（原子切換，舊模板停用保留；參考照永久保留）`,
    },
   })
  } else {
+  // 拒絕：刪相 + 刪記錄
+  if (template.refFrameId) {
+   try {
+    await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${template.refFrameId}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
+     })
+   } catch { /* ignore */ }
+  }
   await prisma.faceTemplate.delete({ where: { id: params.id } })
   await prisma.auditLog.create({
    data: {

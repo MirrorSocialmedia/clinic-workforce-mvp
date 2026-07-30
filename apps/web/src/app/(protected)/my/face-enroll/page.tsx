@@ -1,5 +1,5 @@
 'use client'
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useFaceLandmark, type Pose } from '@/lib/use-face-landmark'
 
@@ -39,21 +39,32 @@ export default function FaceEnrollPage() {
   setCheckingCode(false)
  }
 
- const startCamera = async () => {
-  try {
-   const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-   streamRef.current = stream
-   if (videoRef.current) {
-    videoRef.current.srcObject = stream
-    await videoRef.current.play()
-   }
-  } catch (e: any) { setError(e.message || '相機錯誤') }
- }
-
  const stopCamera = () => {
   streamRef.current?.getTracks().forEach(t => t.stop())
   streamRef.current = null
  }
+
+ // ★ 等 step 真正切到 capture（DOM 已 mount）才開相機
+ useEffect(() => {
+  if (step !== 'capture') return
+  let cancelled = false
+  ;(async () => {
+   try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+     video: { facingMode: 'user', width: { ideal: 720 } },
+    })
+    if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+    streamRef.current = stream
+    if (videoRef.current) {
+     videoRef.current.srcObject = stream
+     await videoRef.current.play()
+    }
+   } catch (e: any) {
+    setError(e?.name === 'NotAllowedError' ? '請允許使用相機權限' : (e?.message || '相機錯誤'))
+   }
+  })()
+  return () => { cancelled = true; stopCamera() }
+ }, [step])
 
  const takeShot = async () => {
   setError('')
@@ -115,22 +126,22 @@ export default function FaceEnrollPage() {
 
    {step === 'consent' && (
     <div>
-     <h2 className="font-bold mb-3">同意書 v2</h2>
+     <h2 className="font-bold mb-3">同意書 v3</h2>
      <div className="border rounded-lg p-4 max-h-60 overflow-y-auto text-sm space-y-2 mb-4">
       <p><strong>目的：</strong>本系統收集您的臉部特徵用於打卡驗證，確保打卡紀錄為本人操作。</p>
-      <p><strong>收集範圍：</strong>僅收集臉部幾何特徵（512 維向量），不儲存原始照片。</p>
-      <p><strong>儲存方式：</strong>臉部特徵向量儲存於伺服器資料庫，僅用於打卡比對。</p>
-      <p><strong>資料安全：</strong>臉部特徵資料不會離開本伺服器，不會上傳至第三方或雲端。</p>
-      <p><strong>身份核實：</strong>登記時將保留一張正面照片供管理員核實身份，核准或拒絕後即時刪除。</p>
+      <p><strong>收集範圍：</strong>臉部幾何特徵（512 維向量），以及登記時一張正面照片。</p>
+      <p><strong>儲存方式：</strong>臉部特徵向量及登記照片儲存於本診所伺服器，僅用於打卡比對及身份核實。</p>
+      <p><strong>資料安全：</strong>所有臉部資料不會離開本伺服器，不會上傳至第三方或雲端。</p>
+      <p><strong>登記照片保留：</strong>登記時的正面照片會<strong>長期保留</strong>，作為日後核實「該次登記由本人提交並經管理員核准」的憑證。只有系統管理員可查閱。</p>
       <p><strong>拒絕權利：</strong>您可以拒絕登記臉部識別，不會影響正常工作。拒絕後打卡將標記為「未登記」，不會被拒絕。</p>
-      <p><strong>資料刪除：</strong>離職時您的臉部特徵資料將立即刪除。</p>
+      <p><strong>資料刪除：</strong>離職時您的臉部特徵資料及登記照片將立即刪除。您亦可隨時要求刪除，惟刪除後需重新登記方可使用臉部打卡。</p>
      </div>
      <label className="flex items-center gap-2 mb-4">
       <input type="checkbox" className="w-4 h-4" checked={consentChecked} onChange={e => setConsentChecked(e.target.checked)} />
       <span className="text-sm">我已閱讀並同意以上條款</span>
      </label>
      <button className="w-full py-3 bg-blue-600 text-white rounded-lg disabled:opacity-50"
-      disabled={!consentChecked} onClick={() => { setStep('capture'); startCamera() }}>
+      disabled={!consentChecked} onClick={() => setStep('capture')}>
       同意，開始登記
      </button>
      <button className="w-full mt-3 py-2 text-sm text-gray-500 rounded-lg"
@@ -140,47 +151,46 @@ export default function FaceEnrollPage() {
     </div>
    )}
 
-   {step === 'capture' && (
-    <div className="text-center">
-     <div className="relative mb-4">
-      <video ref={videoRef} muted playsInline className="w-full rounded-lg" style={{ width: '100%', transform: 'scaleX(-1)' }} />
-      {/* 人形框: 橢圓透明窗 + 四周壓暗 */}
-      <div style={{
-       position: 'absolute', left: '50%', top: '48%', transform: 'translate(-50%, -50%)',
-       width: '62%', height: '78%', borderRadius: '50%',
-       border: '2.5px dashed rgba(255,255,255,.85)',
-       boxShadow: '0 0 0 999px rgba(0,0,0,.45)',
-       pointerEvents: 'none',
-      }} />
-     </div>
-     <div style={{ textAlign: 'center', marginTop: 12 }}>
-      <div style={{ fontSize: 22, fontWeight: 700, minHeight: 32 }}>{steps[idx].hint}</div>
-      <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>第 {idx + 1} / 5 張</div>
-      <button
-       className="mt-4 py-3 px-10 bg-blue-600 text-white rounded-lg text-lg disabled:opacity-50"
-       onClick={takeShot} disabled={submitting}>
-       📸 拍攝
-      </button>
-      {error && <div style={{ marginTop: 12 }}>
-       <div style={{ fontSize: 15, color: '#dc2626', fontWeight: 500 }}>{error}</div>
-       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button
-         onClick={() => { setError(''); setUploading(false); startCamera() }}
-         style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: '#1a1a2e', color: '#fff', fontSize: 15 }}
-        >
-         重新拍攝
-        </button>
-        <button
-         onClick={() => { stopCamera(); setError(''); setStep('code') }}
-         style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', fontSize: 15 }}
-        >
-         取消
-        </button>
-       </div>
-      </div>}
-     </div>
+   {/* ★ video 不可以條件 render —— ref 會為 null。永遠 mount，靠 display 控制。 */}
+   <div style={{ display: step === 'capture' ? 'block' : 'none' }} className="text-center">
+    <div className="relative mb-4">
+     <video ref={videoRef} muted playsInline className="w-full rounded-lg" style={{ width: '100%', transform: 'scaleX(-1)' }} />
+     {/* 人形框: 橢圓透明窗 + 四周壓暗 */}
+     <div style={{
+      position: 'absolute', left: '50%', top: '48%', transform: 'translate(-50%, -50%)',
+      width: '62%', height: '78%', borderRadius: '50%',
+      border: '2.5px dashed rgba(255,255,255,.85)',
+      boxShadow: '0 0 0 999px rgba(0,0,0,.45)',
+      pointerEvents: 'none',
+     }} />
     </div>
-   )}
+    <div style={{ textAlign: 'center', marginTop: 12 }}>
+     <div style={{ fontSize: 22, fontWeight: 700, minHeight: 32 }}>{steps[idx].hint}</div>
+     <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>第 {idx + 1} / 5 張</div>
+     <button
+      className="mt-4 py-3 px-10 bg-blue-600 text-white rounded-lg text-lg disabled:opacity-50"
+      onClick={takeShot} disabled={submitting}>
+      📸 拍攝
+     </button>
+     {error && <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 15, color: '#dc2626', fontWeight: 500 }}>{error}</div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+       <button
+        onClick={() => { setError(''); setUploading(false) }}
+        style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: '#1a1a2e', color: '#fff', fontSize: 15 }}
+       >
+        重新拍攝
+       </button>
+       <button
+        onClick={() => { stopCamera(); setError(''); setStep('code') }}
+        style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', fontSize: 15 }}
+       >
+        取消
+       </button>
+      </div>
+     </div>}
+    </div>
+   </div>
 
    {step === 'done' && (
     <div className="text-center py-8">
