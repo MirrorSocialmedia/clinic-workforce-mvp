@@ -47,15 +47,25 @@ export default function NewPayrollPage() {
   const [showPrecheckModal, setShowPrecheckModal] = useState(false)
   const [precheckWarnings, setPrecheckWarnings] = useState<Array<{ employeeId: string; employeeName: string; error: string }>>([])
 
-  // Store bonus states
-  const [storeBonuses, setStoreBonuses] = useState<Record<string, number>>({})
+  // ★ P1-3 fix: string state for inputs (allows empty/clearable), number state for submit
   const [storeBonusInputs, setStoreBonusInputs] = useState<Record<string, string>>({})
+  const [storeBonuses, setStoreBonuses] = useState<Record<string, number>>({})
   const [fillAll, setFillAll] = useState('')
 
   // Split pay states
-  const [splitPays, setSplitPays] = useState<Record<string, number>>({})
   const [splitPayInputs, setSplitPayInputs] = useState<Record<string, string>>({})
+  const [splitPays, setSplitPays] = useState<Record<string, number>>({})
   const [bulkSplit, setBulkSplit] = useState('')
+
+  // ★ P1-3: parse string inputs to numbers on blur
+  const handleStoreBonusBlur = (employeeId: string) => {
+    const n = parseFloat(storeBonusInputs[employeeId] ?? '')
+    setStoreBonuses(s => ({ ...s, [employeeId]: Number.isFinite(n) ? n : 0 }))
+  }
+  const handleSplitPayBlur = (employeeId: string) => {
+    const n = parseFloat(splitPayInputs[employeeId] ?? '')
+    setSplitPays(s => ({ ...s, [employeeId]: Number.isFinite(n) ? n : 0 }))
+  }
 
   const fetchClinics = useCallback(async () => {
     try {
@@ -166,6 +176,14 @@ export default function NewPayrollPage() {
     setError(null)
 
     try {
+      // ★ P1-3: parse string inputs at submit time for reliability
+      const storeBonusObj = previewResult?.items
+        .filter(i => storeBonusInputs[i.employeeId] && storeBonusInputs[i.employeeId] !== '')
+        .map(i => [i.employeeId, parseFloat(storeBonusInputs[i.employeeId]) || 0]) || []
+      const splitPayObj = previewResult?.items
+        .filter(i => splitPayInputs[i.employeeId] && splitPayInputs[i.employeeId] !== '')
+        .map(i => [i.employeeId, parseFloat(splitPayInputs[i.employeeId]) || 0]) || []
+
       const res = await fetch('/api/payroll-runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -173,8 +191,8 @@ export default function NewPayrollPage() {
         body: JSON.stringify({
           periodMonth,
           clinicId: selectedClinic,
-          storeBonuses: Object.keys(storeBonuses).length > 0 ? storeBonuses : undefined,
-          splitPays: Object.keys(splitPays).length > 0 ? splitPays : undefined,
+          storeBonuses: storeBonusObj.length > 0 ? Object.fromEntries(storeBonusObj) : undefined,
+          splitPays: splitPayObj.length > 0 ? Object.fromEntries(splitPayObj) : undefined,
         }),
       })
 
@@ -320,9 +338,9 @@ export default function NewPayrollPage() {
                   onClick={() => {
                     const v = parseFloat(fillAll)
                     if (!isFinite(v) || v < 0) return
-                    const entries = previewResult?.items.filter(i => i.payType === 'MONTHLY').map(i => [i.employeeId, v]) || []
-                    setStoreBonuses(Object.fromEntries(entries))
-                    setStoreBonusInputs(Object.fromEntries(entries.map(([k, n]) => [k, String(n)])))
+                    const entries = previewResult?.items.filter(i => i.payType === 'MONTHLY').map(i => [i.employeeId, String(v)]) || []
+                    setStoreBonusInputs(Object.fromEntries(entries))
+                    setStoreBonuses(Object.fromEntries(entries.map(([k, s]) => [k, parseFloat(s) || 0])))
                   }}
                   className="px-3 py-1 text-xs rounded-md bg-brand text-white hover:bg-brand-dark transition-colors"
                 >
@@ -349,11 +367,10 @@ export default function NewPayrollPage() {
                   onClick={() => {
                     const v = parseFloat(bulkSplit)
                     if (!isFinite(v) || v < 0) return
-                    const next: Record<string, number> = {}
-                    const nextStr: Record<string, string> = {}
-                    previewResult?.items.forEach((it: any) => { if (!it.error) { next[it.employeeId] = v; nextStr[it.employeeId] = String(v) } })
-                    setSplitPays(next)
-                    setSplitPayInputs(nextStr)
+                    const entries: Array<[string, string]> = []
+                    previewResult?.items.forEach((it: any) => { if (!it.error) entries.push([it.employeeId, String(v)]) })
+                    setSplitPayInputs(Object.fromEntries(entries))
+                    setSplitPays(Object.fromEntries(entries.map(([k, s]) => [k, parseFloat(s) || 0])))
                   }}
                   className="px-3 py-1 text-xs rounded-md bg-brand text-white hover:bg-brand-dark transition-colors"
                 >
@@ -435,10 +452,7 @@ export default function NewPayrollPage() {
                                       setStoreBonusInputs(s => ({ ...s, [item.employeeId]: v }))
                                     }
                                   }}
-                                  onBlur={() => {
-                                    const n = parseFloat(storeBonusInputs[item.employeeId] ?? '')
-                                    setStoreBonuses(s => ({ ...s, [item.employeeId]: Number.isFinite(n) ? n : 0 }))
-                                  }}
+                                  onBlur={() => handleStoreBonusBlur(item.employeeId)}
                                   className="w-16 text-center px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                                 />
                               ) : (
@@ -456,10 +470,7 @@ export default function NewPayrollPage() {
                                   setSplitPayInputs(s => ({ ...s, [item.employeeId]: v }))
                                 }
                               }}
-                              onBlur={() => {
-                                const n = parseFloat(splitPayInputs[item.employeeId] ?? '')
-                                setSplitPays(s => ({ ...s, [item.employeeId]: Number.isFinite(n) ? n : 0 }))
-                              }}
+                              onBlur={() => handleSplitPayBlur(item.employeeId)}
                               className="w-16 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                               placeholder="金額" />
                           </td>
@@ -503,10 +514,7 @@ export default function NewPayrollPage() {
                                 setStoreBonusInputs(s => ({ ...s, [item.employeeId]: v }))
                               }
                             }}
-                            onBlur={() => {
-                              const n = parseFloat(storeBonusInputs[item.employeeId] ?? '')
-                              setStoreBonuses(s => ({ ...s, [item.employeeId]: Number.isFinite(n) ? n : 0 }))
-                            }}
+                            onBlur={() => handleStoreBonusBlur(item.employeeId)}
                             className="w-24 text-right px-2 py-1 rounded border text-sm focus:outline-none focus:ring-1 focus:ring-brand/30"
                           />
                         </div>
