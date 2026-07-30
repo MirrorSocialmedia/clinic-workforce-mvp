@@ -7,6 +7,9 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
 
+// ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
+class InsufficientBalanceError extends Error {}
+
 // ============================================================
 // GET /api/leave-requests — List leave requests
 // Roles: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
@@ -175,7 +178,9 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Transaction: create request (audit handled by Prisma extension)
+      // ★ 建立 + 扣餘額 一定要同一個交易 ——
+      //   舊寫法交易只包 create，扣餘額失敗會留低一筆已 commit 嘅假期，
+      //   前端收到 500 唔會 refresh，結果「格被佔用但冇膠囊」。
       const request = await prisma.$transaction(async (tx) => {
         const req = await tx.leaveRequest.create({
           data: {
@@ -196,27 +201,62 @@ export async function POST(req: NextRequest) {
           },
         })
 
+        // ★ 扣餘額搬入交易內（SICK 除外 —— 成本喺計糧端結算）
+        if (req.status === 'APPROVED' && !isUnlimited && leaveType.systemKey !== 'SICK') {
+          const currentYear = new Date().getUTCFullYear()
+          const bal = await tx.leaveBalance.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: currentYear },
+            },
+          })
+
+          // ★ 決定 1：休息日要手動補，後端唔自動補血。
+          if (!bal || bal.remaining < days) {
+            const hint = leaveType.systemKey === 'REST_DAY'
+              ? '請先喺「假期管理 → 發放休息日」為該員工發放，再排班。'
+              : '請先調整該員工嘅假期額度。'
+            throw new InsufficientBalanceError(
+              `${leaveType.name}餘額不足（需 ${days} 天，剩 ${bal?.remaining ?? 0} 天）。${hint}`,
+            )
+          }
+
+          await tx.leaveBalance.update({
+            where: {
+              employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: currentYear },
+            },
+            data: {
+              used: { increment: days },
+              remaining: { decrement: days },
+            },
+          })
+        }
+
         return req
       })
 
-      // If auto-approved, deduct from balance + notify (skip for unlimited types and SICK)
-      if (request.status === 'APPROVED' && !isUnlimited) {
-        if (leaveType.systemKey !== 'SICK') {
-          await deductLeaveBalance(employee.id, leaveTypeId, days)
+      // ★ 通知失敗唔應該令整筆假期失敗 —— 放交易外，包 try/catch
+      if (request.status === 'APPROVED') {
+        try {
+          await createNotification({
+            employeeId: employee.id,
+            type: 'LEAVE_APPROVED',
+            content: `Your ${leaveType.name} request (${days} days) has been approved.`,
+            relatedEntity: 'LeaveRequest',
+            relatedId: request.id,
+          })
+        } catch (e) {
+          console.error('notify failed', e)
         }
-        await createNotification({
-          employeeId: employee.id,
-          type: 'LEAVE_APPROVED',
-          content: `Your ${leaveType.name} request (${days} days) has been approved.`,
-          relatedEntity: 'LeaveRequest',
-          relatedId: request.id,
-        })
       }
 
       return NextResponse.json({ success: true, leaveRequest: request }, { status: 201 })
     } catch (error) {
       console.error('Leave request error:', error)
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+      // ★ 餘額不足係用家錯誤（400），唔係伺服器錯誤（500）
+      if (error instanceof InsufficientBalanceError) {
+        return NextResponse.json({ error: error.message }, { status: 400 })
+      }
+      return NextResponse.json({ error: '建立假期失敗，請重試' }, { status: 500 })
     }
   })
 }
@@ -224,29 +264,4 @@ export async function POST(req: NextRequest) {
 function isAnnualLeave(leaveType: { name: string }): boolean {
   const lower = leaveType.name.toLowerCase()
   return lower.includes('年假') || lower.includes('annual leave') || lower.includes('annual')
-}
-
-async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number): Promise<void> {
-  const lt = await prisma.leaveType.findUnique({ where: { id: leaveTypeId }, select: { systemKey: true } })
-  // SICK: skip balance deduction — cost settled at payroll end
-  if (lt?.systemKey === 'SICK') return
-
-  const currentYear = new Date().getUTCFullYear()
-  const bal = await prisma.leaveBalance.findUnique({
-    where: {
-      employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: currentYear },
-    },
-  })
-  if (!bal || bal.remaining < days) {
-    throw new Error(`Insufficient leave balance. Requested: ${days}, Remaining: ${bal?.remaining ?? 0}`)
-  }
-  await prisma.leaveBalance.update({
-    where: {
-      employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: currentYear },
-    },
-    data: {
-      used: { increment: days },
-      remaining: { decrement: days },
-    },
-  })
 }

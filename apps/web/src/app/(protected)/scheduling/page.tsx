@@ -48,15 +48,15 @@ const byName = (a: any, b: any) => {
 
 /**
  * 呢個假期類型可唔可以唔理餘額直接安排。
- * ★ 病假（SICK）冇額度 —— 成本喺計糧端按連續日數分級結算，同 LeaveBalance 完全無關。
- * ★ REST_DAY 剩 0 仍可拖（server ensure 補血）。
+ * ★ 病假（SICK）冇額度 —— 成本喺計糧端按 ADW × 80% 結算，同 LeaveBalance 無關。
  * ★ quantity=null 且冇 systemKey = 自訂無限類型。
+ * ★ REST_DAY 已移除豁免（2026-07-31 決定：要手動補）——
+ *   後端唔會自動補血，前端放行只會令用家撞 400。
  */
 const isBalanceExempt = (lt: any): boolean =>
   !!lt && (
     (lt.quantity == null && !lt.systemKey) ||
-    lt.systemKey === 'SICK' ||
-    lt.systemKey === 'REST_DAY'
+    lt.systemKey === 'SICK'
   )
 
 // ============================================================
@@ -1191,10 +1191,13 @@ function getShiftCode(shift: Shift): string {
         await refreshLeaveBalances()
       } else {
         const err = await res.json().catch(() => ({}))
-        setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])
+        setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || `建立假期失敗（${res.status}）` }])
+        await refreshAll() // ★ 失敗都要 refresh —— 可能已經有部分寫入
+        return
       }
     } catch {
-      setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
+      setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立假期失敗' }])
+      await refreshAll()
     }
   }
 
@@ -1329,11 +1332,14 @@ function getShiftCode(shift: Shift): string {
           await refreshAll()
           await refreshLeaveBalances()
         } else {
-          const err = await res.json()
-          setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || '建立請假失敗' }])
+          const err = await res.json().catch(() => ({}))
+          setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || `建立假期失敗（${res.status}）` }])
+          await refreshAll() // ★ 失敗都要 refresh
+          return
         }
       } catch {
-        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立請假失敗' }])
+        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立假期失敗' }])
+        await refreshAll()
       }
       return
     }

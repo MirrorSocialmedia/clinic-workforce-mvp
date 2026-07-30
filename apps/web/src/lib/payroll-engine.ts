@@ -324,7 +324,7 @@ async function getApprovedLeaveDays(
   employeeId: string,
   monthStart: Date,
   monthEnd: Date
-): Promise<{ totalDays: number; byType: Array<{ leaveTypeName: string; days: number; isPaid: boolean }> }> {
+): Promise<{ totalDays: number; byType: Array<{ leaveTypeName: string; days: number; isPaid: boolean; systemKey: string | null }> }> {
   const leaves = await prisma.leaveRequest.findMany({
     where: {
       employeeId,
@@ -333,12 +333,12 @@ async function getApprovedLeaveDays(
       endDate: { gte: monthStart },
     },
     include: {
-      leaveType: { select: { name: true, isPaid: true } },
+      leaveType: { select: { name: true, isPaid: true, systemKey: true } },
     },
   })
 
   let totalDays = 0
-  const byType: Array<{ leaveTypeName: string; days: number; isPaid: boolean }> = []
+  const byType: Array<{ leaveTypeName: string; days: number; isPaid: boolean; systemKey: string | null }> = []
 
   for (const leave of leaves) {
     const effectiveStart = new Date(Math.max(leave.startDate.getTime(), monthStart.getTime()))
@@ -358,6 +358,7 @@ async function getApprovedLeaveDays(
       leaveTypeName: leave.leaveType.name,
       days: overlapDays,
       isPaid: leave.leaveType.isPaid,
+      systemKey: leave.leaveType.systemKey,
     })
   }
 
@@ -380,6 +381,7 @@ export async function computeSickDeduction(
   monthlySalary: number,
   deductionRate: number,
   db: any,
+  workingDays: number,        // ★ 新增：用嚟算「base 實際已付嘅日率」
 ): Promise<{
   amount: number;
   paidAmount: number;      // ★ 病假期間實收工資（供 ADW excludedWage）
@@ -420,6 +422,13 @@ export async function computeSickDeduction(
   if (cur.length) episodes.push(cur)
 
   // 逐段結算（只扣落在本月的日子；檔位看整段）
+  // ★ 決定 2（2026-07-31）：病假要扣至 EO 法定水平。
+  //   基準必須用「月薪 ÷ 當月工作日」—— basePay 就係按呢個日率把病假日照付咗。
+  //   舊版用 statutoryDailyWage（月薪×12÷365 = 較低），令比較失真、幾乎永遠扣 0。
+  const baseDailyRate = workingDays > 0
+    ? monthlySalary / workingDays
+    : statutoryDailyWage(monthlySalary)
+
   // ★ Phase 3: ADW compliance — ≥4 days uses 4/5 ADW; <4 days uses statutoryDailyWage (no sick pay entitlement)
   const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
   let amount = 0
@@ -463,7 +472,7 @@ export async function computeSickDeduction(
       // If 4/5 ADW < what's already in base, no additional deduction needed
       // If 4/5 ADW > what's in base, we pay the full base (no extra deduction)
       const sicknessAllowance = adwValue * 0.8 * daysInMonth
-      const alreadyInBase = statutoryDailyWage(monthlySalary) * daysInMonth
+      const alreadyInBase = baseDailyRate * daysInMonth              // ★ 由 statutoryDailyWage 改
       const deductionAmount = Math.max(0, alreadyInBase - sicknessAllowance)
       amount += deductionAmount * deductionRate
       paidAmount += alreadyInBase - deductionAmount * deductionRate    // ★ 實收
@@ -478,8 +487,8 @@ export async function computeSickDeduction(
         warnings: adwWarnings.length > 0 ? adwWarnings : undefined,
       })
     } else {
-      // <4 consecutive days: no sick pay entitlement → full deduction (statutoryDailyWage)
-      const dailyRate = statutoryDailyWage(monthlySalary)
+      // <4 consecutive days: no sick pay entitlement → full deduction (base daily rate)
+      const dailyRate = baseDailyRate                                // ★ 由 statutoryDailyWage 改
       amount += daysInMonth * dailyRate * deductionRate
       paidAmount += daysInMonth * dailyRate * (1 - deductionRate)      // ★ 實收
 
@@ -1031,7 +1040,7 @@ interface WorkData {
   otDeductedAbsences: Array<{ date: string; minutes: number }>
   shifts: any[]
   makeupEntries: Array<{ date: string; minutes: number; note: string }>
-  leaveByType: Array<{ leaveTypeName: string; days: number; isPaid: boolean }>
+  leaveByType: Array<{ leaveTypeName: string; days: number; isPaid: boolean; systemKey: string | null }>
 }
 
 /**
@@ -2682,7 +2691,7 @@ export async function calculatePayrollWithRules(
 
   // ★ 病假扣減：只在 MONTHLY 分支接線（時薪員工天然零成本）
   const sickDeduction = (result.detail as any)?.monthlySalary != null
-    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma)
+    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma, (result.detail as any)?.workingDays ?? 0)
     : { amount: 0, paidAmount: 0, episodes: [] }
 
   // ★ Phase 4: Maternity / Paternity pay (EO Ch.6 / Ch.7)
@@ -2830,7 +2839,15 @@ export async function calculatePayrollWithRules(
       holidayDays = payableHolidays
     }
 
-    const adjustmentDays = holidayDays + workData.paidLeaveDays
+    // ★ ADW × 100% 補足只適用於法定假日、年假等「全薪」假期。
+    //   病假 / 產假 / 侍產假 按 EO 係 ADW × 80%，而且已經分別由
+    //   computeSickDeduction / maternityPay 處理 —— 計入呢度等於重複補足。
+    const EIGHTY_PCT_KEYS = ['SICK', 'MATERNITY', 'PATERNITY']
+    const fullPayLeaveDays = (workData.leaveByType ?? [])
+      .filter((lt: any) => lt.isPaid && !EIGHTY_PCT_KEYS.includes(lt.systemKey))
+      .reduce((sum: number, lt: any) => sum + lt.days, 0)
+
+    const adjustmentDays = holidayDays + fullPayLeaveDays
     if (adjustmentDays <= 0) return 0
     return (adwUsed - currentDailyRate) * adjustmentDays
   })()

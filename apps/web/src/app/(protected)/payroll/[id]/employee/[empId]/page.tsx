@@ -462,6 +462,12 @@ export default function EmployeePayrollDetailPage() {
               ))}
             </div>
           )}
+          {/* ★ 未排班提示（P2） */}
+          {typeof scheduledDays === 'number' && scheduledDays === 0 && item.basePay > 0 && (
+            <div className="text-xs text-muted-foreground mt-2">
+              ℹ️ 本月未排班，月薪員工按全月薪金計算，不受排班日數影響。
+            </div>
+          )}
         </div>
 
         {/* 💰 薪資計算 */}
@@ -518,6 +524,51 @@ export default function EmployeePayrollDetailPage() {
                 </span>
               </div>
             )}
+
+            {/* ★ ADW 補足：法定假日/年假按 ADW×100%，補足與月薪日率嘅差額。 */}
+            {(detail?.adwAdjustment ?? 0) !== 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm">假期薪酬 ADW 補足</span>
+                <span className="font-mono font-medium text-green-600">+{fmtCurrency(detail.adwAdjustment)}</span>
+              </div>
+            )}
+
+            {/* ★ 病假明細：即使扣 0 都要顯示，否則用家見到「已批假期 4」但成張單冇提過病假 */}
+            {sickDeduction === 0 && (detail?.sickEpisodes?.length ?? 0) > 0 && (
+              <>
+                {detail.sickEpisodes.map((ep: any, i: number) => (
+                  <div key={ep.range} className="flex justify-between py-2">
+                    <span className="text-sm">
+                      病假 {ep.range}（{ep.daysInMonth} 天
+                      {ep.totalDays >= 4
+                        ? `，連續 ${ep.totalDays} 天 → ADW × 80%`
+                        : `，連續 ${ep.totalDays} 天 → 無疾病津貼，全額扣`}）
+                      {ep.adwSource === 'fallback' && (
+                        <span className="text-orange-600 text-xs ml-1">（ADW 為推算值）</span>
+                      )}
+                    </span>
+                    <span className="text-muted-foreground text-xs">
+                      {ep.adw ? `ADW $${ep.adw.toFixed(2)}` : ''}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex justify-between py-1">
+                  <span className="text-sm">病假扣減合計</span>
+                  <span className="font-mono text-orange-600">−{fmtCurrency(0)}</span>
+                </div>
+              </>
+            )}
+
+            {/* ★ 對帳 guard (dev only) —— 防止將來再有隱藏項目 */}
+            {process.env.NODE_ENV !== 'production' && (() => {
+              const shown = item.basePay + (attendanceBonus ?? 0) + (detail?.adwAdjustment ?? 0)
+                + (storeBonus ?? 0) + (item.splitPay ?? 0) + (item.otPay ?? 0)
+                - (sickDeduction ?? 0) - (item.deduction ?? 0) + (allowances ?? 0)
+              const diff = Math.abs(shown - (grossPay ?? 0))
+              return diff > 0.05
+                ? <div className="text-xs text-red-600 mt-1">⚠️ 明細對不上 Gross，差 ${diff.toFixed(2)}</div>
+                : null
+            })()}
 
             {/* ★ Phase 4: Maternity Pay */}
             {maternityPay > 0 && (
