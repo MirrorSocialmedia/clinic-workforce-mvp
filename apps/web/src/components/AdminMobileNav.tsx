@@ -2,20 +2,31 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, CheckSquare, ClipboardList, Menu, QrCode } from 'lucide-react'
+import { CalendarDays, LayoutDashboard, CheckSquare, ClipboardList, Menu, QrCode } from 'lucide-react'
 import { useTodoCount } from '@/lib/use-todo-count'
+import { hasPermission } from '@/lib/permissions'
 
-export default function AdminMobileNav() {
+export default function AdminMobileNav({
+  role, grant, deny,
+}: { role: string; grant: string[]; deny: string[] }) {
   const pathname = usePathname()
   const todoCount = useTodoCount()
 
-  const items = [
-    { href: '/dashboard', label: '今日', Icon: LayoutDashboard },
-    { href: '/punch', label: '打卡', Icon: QrCode },
-    { href: '/todo', label: '待辦', Icon: CheckSquare, badge: todoCount.total },
-    { href: '/attendance', label: '考勤', Icon: ClipboardList },
-    { href: '/mobile-more', label: '更多', Icon: Menu },
+  const allItems = [
+    { href: '/dashboard', label: '今日', Icon: LayoutDashboard, perm: null },
+    { href: '/punch', label: '打卡', Icon: QrCode, perm: null },
+    { href: '/todo', label: '待辦', Icon: CheckSquare, perm: null, badge: todoCount.total },
+    { href: '/attendance', label: '考勤', Icon: ClipboardList, perm: 'attendance_manage' },
+    { href: '/scheduling', label: '排班', Icon: CalendarDays, perm: 'scheduling' },
+    { href: '/mobile-more', label: '更多', Icon: Menu, perm: null },
   ]
+
+  // 按權限過濾，「更多」永遠在最後，上限 5 個
+  const more = allItems[allItems.length - 1]
+  const rest = allItems
+    .filter(i => i.href !== '/mobile-more' && (!i.perm || hasPermission(role as any, i.perm as any, grant, deny)))
+    .slice(0, 4)
+  const items = [...rest, more]
 
   return (
     <nav

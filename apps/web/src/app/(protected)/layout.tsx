@@ -140,12 +140,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const viewRoles = ['OWNER', 'MANAGER', 'ACCOUNTANT'] as const
 
   const navItems = [
-    // My section items (not for OWNER)
-    { path: '/my/dashboard', label: '我的首頁', icon: LayoutDashboard, roles: myRoles },
-    { path: '/my/schedule', label: '我的班表', icon: Calendar, roles: myRoles },
-    { path: '/my/punches', label: '我的考勤', icon: ClipboardList, roles: myRoles },
-    { path: '/my/leave', label: '我的假期', icon: Palmtree, roles: myRoles },
-    { path: '/my/notifications', label: '通知', icon: Bell, roles: myRoles },
+    // My section items (perm: null → visible to all non-OWNER via sidebar filter; perm check allows mgmt-EMPLOYEE)
+    { path: '/my/dashboard', label: '我的首頁', icon: LayoutDashboard, roles: allRoles, perm: null },
+    { path: '/my/schedule', label: '我的班表', icon: Calendar, roles: allRoles, perm: null },
+    { path: '/my/punches', label: '我的考勤', icon: ClipboardList, roles: allRoles, perm: null },
+    { path: '/my/leave', label: '我的假期', icon: Palmtree, roles: allRoles, perm: null },
+    { path: '/my/face-enroll', label: '人臉登記', icon: Palmtree, roles: allRoles, perm: null },
+    { path: '/my/notifications', label: '通知', icon: Bell, roles: allRoles, perm: null },
 
     // Punch (all non-owner)
     { path: '/punch', label: '我要打卡', icon: Smartphone, roles: myRoles },
@@ -165,6 +166,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   const visibleNav = navItems.filter(item => {
     if (item.roles.includes(user.role as any)) return true
+    // perm: null means no permission gate — visible to everyone regardless of roles
+    if (!item.perm) return true
     if (item.perm) return hasPermission(user.role, item.perm as any, grant, deny)
     return false
   })
@@ -363,7 +366,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         {children}
         <PWAPrompt />
         </div>
-        {['OWNER', 'MANAGER'].includes(user?.role) && <AdminMobileNav />}
+        {/* ★ 有管理權限的 EMPLOYEE 會跌落這個 layout（見 :198），role 寫死會令兩個導覽都沒有 */}
+        {hasAnyMgmtPerm && <AdminMobileNav role={user.role} grant={grant} deny={deny} />}
       </main>
 
       {/* Toast notifications */}

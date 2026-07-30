@@ -105,11 +105,11 @@ export default function MobileMorePage() {
       <div>
         <h1 className="text-xl font-bold">更多</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {userRole === 'OWNER'
+          {userRole === 'OWNER' /* ROLE-OK: subtitle display only */
             ? '創辦人 / 總管理'
-            : userRole === 'MANAGER'
+            : userRole === 'MANAGER' /* ROLE-OK: subtitle display only */
               ? '診所經理'
-              : userRole === 'ACCOUNTANT'
+              : userRole === 'ACCOUNTANT' /* ROLE-OK: subtitle display only */
                 ? '會計'
                 : ''}
         </p>
@@ -153,6 +153,25 @@ export default function MobileMorePage() {
             </Link>
           )
         })}
+      </div>
+
+      {/* 我的 — perm: null, 人人可見 */}
+      <div className="mt-6">
+        <div className="text-xs font-semibold text-muted-foreground mb-2">我的</div>
+        <div className="divide-y border rounded-lg overflow-hidden">
+          {[
+            { href: '/my/dashboard', label: '我的首頁' },
+            { href: '/my/schedule', label: '我的班表' },
+            { href: '/my/leave', label: '我的假期' },
+            { href: '/my/punches', label: '我的打卡記錄' },
+            { href: '/my/face-enroll', label: '人臉登記' },
+            { href: '/my/notifications', label: '通知' },
+          ].map(x => (
+            <Link key={x.href} href={x.href} className="block px-4 py-3 text-sm hover:bg-muted">
+              {x.label}
+            </Link>
+          ))}
+        </div>
       </div>
 
       {/* Logout */}
