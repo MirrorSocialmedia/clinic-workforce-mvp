@@ -11,8 +11,8 @@ import { prisma, basePrisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
 import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
-import { calculateADW } from './adw'
-import type { ADWResult } from './adw'
+import { calculateADW, applyAdwPolicy } from './adw'
+import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 
 // ------------------------------------------------------------------
@@ -1170,6 +1170,14 @@ export interface PayRuleConfigModular {
 
   // Legacy fields (backwards compat)
   consultation_target?: number
+
+  // ADW salary adjustment policy
+  adw_policy?: {
+    /** 加薪保障：ADW 不低於「現薪 × 12 ÷ 365」。合法（優於法例），預設開 */
+    floor_at_current_salary?: boolean
+    /** 減薪上限：ADW 不高於「現薪 × 12 ÷ 365」。可能低於法定最低，預設關 */
+    cap_at_current_salary?: boolean
+  }
 }
 
 // ------------------------------------------------------------------
@@ -2878,6 +2886,27 @@ export async function calculatePayrollWithRules(
 
   const resolvedAdwAdjustment = await adwAdjustmentValue
 
+  // ★ Phase 3.5: Apply ADW salary adjustment policy
+  let adwPolicyResult: AdwPolicyResult = {
+    adw: adwUsed ?? 0,
+    adwRaw: adwUsed ?? 0,
+    policyApplied: 'none',
+    currentEquivalent: 0,
+  }
+  if (adwUsed != null && adwUsed > 0 && monthlySalary > 0) {
+    adwPolicyResult = applyAdwPolicy(adwUsed, monthlySalary, config.adw_policy)
+    // Replace adwUsed with policy-adjusted value for subsequent use
+    ;(adwUsed as number) = adwPolicyResult.adw
+    if (adwPolicyResult.policyApplied === 'cap') {
+      console.warn(
+        `[adw_policy] ⚠️ cap 已套用 — employeeId=${employeeId} ` +
+        `month=${toHKDateStr(monthDate).slice(0, 7)} ` +
+        `raw=${adwPolicyResult.adwRaw.toFixed(2)} capped=${adwPolicyResult.adw.toFixed(2)} ` +
+        `currentEquivalent=${adwPolicyResult.currentEquivalent.toFixed(2)}`,
+      )
+    }
+  }
+
   result.splitPay = effectiveSplitPay // 顯示與計算統一
   const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay
 
@@ -2908,6 +2937,10 @@ export async function calculatePayrollWithRules(
     adwSource,
     adwWarnings: adwWarnings.length > 0 ? adwWarnings : undefined,
     adwAdjustment: adwSource ? Math.round(resolvedAdwAdjustment * 100) / 100 : 0,
+    // ★ Phase 3.5: ADW policy audit trail
+    adwRaw: adwPolicyResult.adwRaw,
+    adwPolicyApplied: adwPolicyResult.policyApplied,
+    adwCurrentEquivalent: adwPolicyResult.currentEquivalent,
     // ★ Phase 4: Maternity / Paternity pay
     maternityPay,
     maternityPayDetail: maternityPayDetail || null,
@@ -3073,9 +3106,10 @@ export async function calculatePayrollWithRules(
   const NON_EO_WAGE = storeBonus // 酌情花紅
   const eoWage = Math.round((finalGrossPay - NON_EO_WAGE) * 100) / 100
 
-  // ★ 對帳：逐項加總必須等於最終 grossPay。
-  //   兩邊由唔同途徑得出（一個逐項砌、一個經 OT 重算調整），所以呢個 guard 真係會 fire。
-  if (process.env.NODE_ENV !== 'production') {
+  // ★ 對帳 guard 永遠開 —— 計糧一個月一次，log 成本可忽略，
+  //   而靜靜計錯數嘅代價遠高於一行 log。
+  //   兩邊由唔同途徑得出（逐項砌 vs 經 OT 重算調整），所以呢個 guard 真係會 fire。
+  {
     const itemised =
       result.basePay
       - result.deduction
@@ -3091,13 +3125,14 @@ export async function calculatePayrollWithRules(
     if (Math.abs(itemised - finalGrossPay) > 0.05) {
       console.warn(
         `[grossPay] 逐項加總對唔上 detail.grossPay：` +
+        `employeeId=${employeeId} month=${toHKDateStr(monthDate).slice(0, 7)} ` +
         `itemised=${itemised.toFixed(2)} final=${finalGrossPay.toFixed(2)} ` +
         `diff=${(itemised - finalGrossPay).toFixed(2)}`,
       )
     }
   }
 
-  // 剔除日數 / 款額：病假 + 無薪假 + 產假 + 侍產假
+  // 剔除日數：病假 + 無薪假 + 產假 + 侍產假 + 缺勤
   const sickDays = (sickDeduction.episodes ?? [])
     .reduce((s: number, e: any) => s + (e.daysInMonth ?? e.days ?? 0), 0)
   const noPayLeaveDays = (workData.leaveByType ?? [])
@@ -3105,8 +3140,9 @@ export async function calculatePayrollWithRules(
     .reduce((s: number, lt: any) => s + lt.days, 0)
   const maternityDays = (result.detail as any).maternityDaysInMonth ?? 0
   const paternityDays = (result.detail as any).paternityDaysInMonth ?? 0
+  const absentDays = result.absentDays ?? 0
 
-  const excludedDays = Math.round(sickDays + noPayLeaveDays + maternityDays + paternityDays)
+  const excludedDays = Math.round(sickDays + noPayLeaveDays + maternityDays + paternityDays + absentDays)
   const excludedWage = Math.round((
       // 病假：實付部分 = 應付日薪 × 日數 − 已扣減
       ((sickDeduction as any).paidAmount ?? 0)

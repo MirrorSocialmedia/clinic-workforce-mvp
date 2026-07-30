@@ -371,3 +371,56 @@ function safeParseDetail(jsonStr: string | null | undefined): Record<string, unk
   if (!jsonStr) return {}
   try { return JSON.parse(jsonStr) } catch { return {} }
 }
+
+// ------------------------------------------------------------------
+// ADW Salary Adjustment Policy
+// ------------------------------------------------------------------
+
+export type AdwPolicyResult = {
+  adw: number
+  adwRaw: number
+  policyApplied: 'none' | 'floor' | 'cap'
+  currentEquivalent: number
+}
+
+/**
+ * 套用薪金調整政策之後嘅有效 ADW。
+ *
+ * currentEquivalent = 月薪 × 12 ÷ 365
+ * = 假設過去 12 個月都係現薪、冇剔除期間時 ADW 應有嘅值
+ *
+ * ⚠️ cap 可能令支付低於 EO 第 41 條嘅法定最低（ADW × 4/5）——
+ *    只喺取得法律意見之後才好啟用。
+ */
+export function applyAdwPolicy(
+  rawAdw: number,
+  monthlySalary: number,
+  policy?: { floor_at_current_salary?: boolean; cap_at_current_salary?: boolean },
+): AdwPolicyResult {
+  const currentEquivalent = (monthlySalary * 12) / 365
+  let adw = rawAdw
+  let policyApplied: 'none' | 'floor' | 'cap' = 'none'
+
+  if (policy?.floor_at_current_salary && policy?.cap_at_current_salary) {
+    console.warn(
+      '[adw_policy] floor 同 cap 同時開啟 → ADW 永遠等於現薪等值，' +
+      '12 個月回溯機制完全失效。請確認係咪有意如此。',
+    )
+  }
+
+  if (policy?.floor_at_current_salary && adw < currentEquivalent) {
+    adw = currentEquivalent
+    policyApplied = 'floor'
+  }
+  if (policy?.cap_at_current_salary && adw > currentEquivalent) {
+    adw = currentEquivalent
+    policyApplied = 'cap'
+  }
+
+  return {
+    adw: Math.round(adw * 100) / 100,
+    adwRaw: Math.round(rawAdw * 100) / 100,
+    policyApplied,
+    currentEquivalent: Math.round(currentEquivalent * 100) / 100,
+  }
+}
