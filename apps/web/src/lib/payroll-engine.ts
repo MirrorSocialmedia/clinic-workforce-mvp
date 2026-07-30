@@ -11,7 +11,7 @@ import { prisma, basePrisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
 import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
-import { calculateADW, getEffectiveADW } from './adw'
+import { getEffectiveADW } from './adw'
 import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 

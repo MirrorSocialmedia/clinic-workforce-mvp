@@ -21,7 +21,7 @@
 //     NO separate holiday pay required.
 // ============================================================
 
-import { calculateADW, getEffectiveADW } from './adw'
+import { getEffectiveADW } from './adw'
 import { statutoryDailyWage } from './payroll-engine'
 
 const MATERNITY_CAP_WEEK_11_14 = 80000 // Weeks 11-14 four-week total cap

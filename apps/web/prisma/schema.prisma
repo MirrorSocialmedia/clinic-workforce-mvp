@@ -421,7 +421,7 @@ model AuditLog {
   userAgent   String?
   createdAt   DateTime @default(now())
 
-  actor       User?    @relation("ActorLogs", fields: [actorId], references: [id])
+  actor       User?    @relation("ActorLogs", fields: [actorId], references: [id], onDelete: Restrict)
   targetEmployee Employee? @relation("AuditTarget", fields: [targetEmployeeId], references: [id])
 
   @@index([actorId, createdAt])
