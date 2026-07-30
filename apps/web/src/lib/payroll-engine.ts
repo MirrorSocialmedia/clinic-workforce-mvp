@@ -407,10 +407,15 @@ export async function computeSickDeduction(
   db: any,
   monthDate: Date,                                  // ★ 用嚟算當月曆日數
   deductionBasis: 'calendar' | 'fixed30' = 'calendar',
+  adwPolicy?: { floor_at_current_salary?: boolean; cap_at_current_salary?: boolean },   // ★ ADW 薪金調整政策
 ): Promise<{
   amount: number;
   paidAmount: number;      // ★ 病假期間實收工資（供 ADW excludedWage）
-  episodes: Array<{ range: string; totalDays: number; daysInMonth: number; rate: number }>;
+  episodes: Array<{
+    range: string; totalDays: number; daysInMonth: number; rate: number;
+    adw?: number; adwSource?: 'calculated' | 'fallback';
+    adwPolicyApplied?: 'none' | 'floor' | 'cap'; adwRaw?: number;
+  }>;
 }> {
   // 窗口跨出本月 ±40 天：跨月連續段兩頭都要看得到
   const winStart = new Date(monthStart.getTime() - 40 * 86400000)
@@ -461,6 +466,8 @@ export async function computeSickDeduction(
     rate: number;
     adw?: number;
     adwSource?: 'calculated' | 'fallback';
+    adwPolicyApplied?: 'none' | 'floor' | 'cap';
+    adwRaw?: number;
     warnings?: string[];
   }> = []
   for (const ep of episodes) {
@@ -474,10 +481,20 @@ export async function computeSickDeduction(
       let adwValue: number
       let adwSource: 'calculated' | 'fallback' = 'calculated'
       let adwWarnings: string[] = []
+      let adwPolicyApplied: 'none' | 'floor' | 'cap' = 'none'
+      let adwRawValue: number | undefined
 
       try {
         const adwResult = await calculateADW(db, employeeId, episodeFirstDay)
-        adwValue = adwResult.adw
+        // ★ 套用薪金調整政策 —— 疾病津貼係政策嘅主要應用場景
+        if (monthlySalary > 0) {
+          const policied = applyAdwPolicy(adwResult.adw, monthlySalary, adwPolicy)
+          adwValue = policied.adw
+          adwPolicyApplied = policied.policyApplied
+          adwRawValue = policied.adwRaw
+        } else {
+          adwValue = adwResult.adw
+        }
         adwWarnings = adwResult.warnings || []
         if (adwValue <= 0) {
           throw new Error('ADW calculated as 0 or negative')
@@ -505,6 +522,8 @@ export async function computeSickDeduction(
         rate: 0.8,
         adw: adwValue,
         adwSource,
+        adwPolicyApplied,
+        adwRaw: adwRawValue,
         warnings: adwWarnings.length > 0 ? adwWarnings : undefined,
       })
     } else {
@@ -2720,7 +2739,7 @@ export async function calculatePayrollWithRules(
 
   // ★ 病假扣減：只在 MONTHLY 分支接線（時薪員工天然零成本）
   const sickDeduction = (result.detail as any)?.monthlySalary != null
-    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma, monthDate, (config as any).deduction_basis ?? 'calendar')
+    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma, monthDate, (config as any).deduction_basis ?? 'calendar', config.adw_policy)
     : { amount: 0, paidAmount: 0, episodes: [] }
 
   // ★ Phase 4: Maternity / Paternity pay (EO Ch.6 / Ch.7)
@@ -2775,7 +2794,7 @@ export async function calculatePayrollWithRules(
 
     if (maternityDays.length > 0) {
       maternityDaysInMonth = maternityDays.length
-      const matResult = await calculateMaternityPay(prisma, employeeId, maternityStart, maternityDays, (result.detail as any)?.monthlySalary)
+      const matResult = await calculateMaternityPay(prisma, employeeId, maternityStart, maternityDays, (result.detail as any)?.monthlySalary, config.adw_policy)
       maternityPay = matResult.amount
       maternityPayDetail = {
         adw: matResult.adw,
@@ -2813,7 +2832,7 @@ export async function calculatePayrollWithRules(
     }
 
     if (paternityDaysInMonth > 0) {
-      const patResult = await calculatePaternityPay(prisma, employeeId, firstPaternityDay, paternityDaysInMonth, (result.detail as any)?.monthlySalary)
+      const patResult = await calculatePaternityPay(prisma, employeeId, firstPaternityDay, paternityDaysInMonth, (result.detail as any)?.monthlySalary, config.adw_policy)
       paternityPay = patResult.amount
       paternityPayDetail = {
         adw: patResult.adw,
@@ -2851,10 +2870,31 @@ export async function calculatePayrollWithRules(
     }
   }
 
+  // ★ Phase 3.5: ADW 薪金調整政策 —— 必須喺任何用 adwUsed 計錢之前套用
+  let adwPolicyResult: AdwPolicyResult = {
+    adw: adwUsed ?? 0,
+    adwRaw: adwUsed ?? 0,
+    policyApplied: 'none',
+    currentEquivalent: 0,
+  }
+  if (adwUsed != null && adwUsed > 0 && monthlySalary > 0) {
+    adwPolicyResult = applyAdwPolicy(adwUsed, monthlySalary, config.adw_policy)
+    adwUsed = adwPolicyResult.adw
+    if (adwPolicyResult.policyApplied === 'cap') {
+      console.warn(
+        `[adw_policy] ⚠️ cap 已套用 — employeeId=${employeeId} ` +
+        `month=${toHKDateStr(monthDate).slice(0, 7)} ` +
+        `raw=${adwPolicyResult.adwRaw.toFixed(2)} capped=${adwPolicyResult.adw.toFixed(2)} ` +
+        `currentEquivalent=${adwPolicyResult.currentEquivalent.toFixed(2)}`,
+      )
+    }
+  }
+
   // ★ ADW adjustment for public holidays & paid leave (100% ADW per EO)
   // Current basePay uses monthlySalary/workingDays as effective daily rate
   // If ADW > currentDailyRate, we need to top up the difference for holiday/leave days
   // ★ Phase 4: Exclude public holidays falling within maternity leave (EO: only maternity pay applies)
+  //   — 此時 adwUsed 已經係政策調整後嘅值
   const adwAdjustmentValue = (async (): Promise<number> => {
     if (adwUsed == null || adwUsed <= currentDailyRate) return 0
 
@@ -2885,27 +2925,6 @@ export async function calculatePayrollWithRules(
   })()
 
   const resolvedAdwAdjustment = await adwAdjustmentValue
-
-  // ★ Phase 3.5: Apply ADW salary adjustment policy
-  let adwPolicyResult: AdwPolicyResult = {
-    adw: adwUsed ?? 0,
-    adwRaw: adwUsed ?? 0,
-    policyApplied: 'none',
-    currentEquivalent: 0,
-  }
-  if (adwUsed != null && adwUsed > 0 && monthlySalary > 0) {
-    adwPolicyResult = applyAdwPolicy(adwUsed, monthlySalary, config.adw_policy)
-    // Replace adwUsed with policy-adjusted value for subsequent use
-    ;(adwUsed as number) = adwPolicyResult.adw
-    if (adwPolicyResult.policyApplied === 'cap') {
-      console.warn(
-        `[adw_policy] ⚠️ cap 已套用 — employeeId=${employeeId} ` +
-        `month=${toHKDateStr(monthDate).slice(0, 7)} ` +
-        `raw=${adwPolicyResult.adwRaw.toFixed(2)} capped=${adwPolicyResult.adw.toFixed(2)} ` +
-        `currentEquivalent=${adwPolicyResult.currentEquivalent.toFixed(2)}`,
-      )
-    }
-  }
 
   result.splitPay = effectiveSplitPay // 顯示與計算統一
   const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay

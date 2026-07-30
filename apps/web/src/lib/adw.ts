@@ -242,6 +242,22 @@ function monthsBetween(start: string, end: string): number {
 }
 
 /**
+ * 攞「可以直接用嚟計錢」嘅 ADW —— 已套用薪金調整政策。
+ * ★ 除非你真係要原始條例值做審計比較，否則一律用呢個，唔好直接叫 calculateADW()。
+ */
+export async function getEffectiveADW(
+  db: PrismaClient,
+  employeeId: string,
+  atDate: Date,
+  monthlySalary: number,
+  policy?: { floor_at_current_salary?: boolean; cap_at_current_salary?: boolean },
+): Promise<ADWResult & AdwPolicyResult> {
+  const raw = await calculateADW(db, employeeId, atDate)
+  const policied = applyAdwPolicy(raw.adw, monthlySalary, policy)
+  return { ...raw, ...policied }
+}
+
+/**
  * When a payroll run is FINALIZED, write EO wage fields back to each PayrollItem.
  *
  * Writes:
