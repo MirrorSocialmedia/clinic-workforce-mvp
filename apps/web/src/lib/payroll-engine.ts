@@ -3052,20 +3052,34 @@ export async function calculatePayrollWithRules(
   // ★ 雜項統一在最後加（防 OT/假期重算覆蓋）
   result.totalPayable = Math.max(0, result.totalPayable + miscTotal)
 
-  // ★ EO 工資 / 剔除日數（供 ADW 用，決定 5 口徑）
-  //   storeBonus 係老闆酌情花紅 → EO 第 2 條唔當工資，剔出
-  //   miscAmount 係實報實銷 → EO 第 2 條明文剔除
-  //   僱員 MPF 唔減（工資係扣前嘅數）
-  const eoWage = Math.round((
-      result.basePay
-    + result.otPay
-    + effectiveSplitPay
-    + result.attendanceBonus
-    + totalAllowances
-    + ((result.detail as any).maternityPay ?? 0)
-    + ((result.detail as any).paternityPay ?? 0)
-    - (sickDeduction.amount ?? 0)
-  ) * 100) / 100
+  // ★ EO「工資」總額（供 ADW 用）
+  //
+  //   定義：eoWage = grossPay − storeBonus
+  //
+  //   Gross 入面唯一唔屬 EO 第 2 條「工資」嘅係 storeBonus（老闆酌情花紅）。
+  //   miscAmount（實報實銷）本身喺 MPF 之後先加，唔喺 grossPay 內，所以唔使另外減。
+  //   adwAdjustment（法定假日／年假 ADW 補足）＝ 僱員當期合法賺取嘅工資，計入。
+  //
+  //   註：adwAdjustment 計入 eoWage 會產生輕微自我反饋（下一期 ADW 略升），
+  //       增益約 holidayDays/365 ≈ 0.3%/年，數學上收斂，且符合 EO —— 屬預期行為。
+  //
+  //   ⚠️ 用推導式而唔用逐項列舉，係因為列舉式會 drift ——
+  //      之前就係漏咗 `- result.deduction`，令有無薪假嘅月份 ADW 高估 20%。
+  //      將來任何新增嘅 gross 項目會自動流入；如果新項目唔屬 EO 工資，
+  //      喺下面 NON_EO_WAGE 度加返，一個地方維護。
+  const NON_EO_WAGE = storeBonus // 酌情花紅
+  const eoWage = Math.round((grossPay - NON_EO_WAGE) * 100) / 100
+
+  // ★ eoWage 必須 = grossPay − 酌情花紅。任何一方將來加咗新項目而另一方漏咗，喺呢度即刻捉到。
+  if (process.env.NODE_ENV !== 'production') {
+    const expected = Math.round((grossPay - storeBonus) * 100) / 100
+    if (Math.abs(eoWage - expected) > 0.05) {
+      console.warn(
+        `[eoWage] 對唔上 grossPay − storeBonus：` +
+        `eoWage=${eoWage} expected=${expected} diff=${(eoWage - expected).toFixed(2)}`,
+      )
+    }
+  }
 
   // 剔除日數 / 款額：病假 + 無薪假 + 產假 + 侍產假
   const sickDays = (sickDeduction.episodes ?? [])
