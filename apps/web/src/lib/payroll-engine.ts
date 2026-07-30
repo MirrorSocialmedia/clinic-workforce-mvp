@@ -450,7 +450,7 @@ export async function computeSickDeduction(
   // ★ 扣薪日率（當月曆日數）—— 同 :2230 缺勤／無薪假用同一個基準
   const dailyDeduct = deductionDailyRate(monthlySalary, monthDate, deductionBasis)
 
-  // ★ Phase 3: ADW compliance — ≥4 days uses 4/5 ADW; <4 days uses statutoryDailyWage (no sick pay entitlement)
+  // ★ ADW compliance — ≥4 days: 同 ADW×80% 比較；<4 days: 當無薪缺勤，按扣薪日率全額扣
   const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
   let amount = 0
   let paidAmount = 0
@@ -2230,7 +2230,7 @@ async function collectWorkData(
 // 3. Base Module Calculators
 // ------------------------------------------------------------------
 
-function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, monthDate?: Date): PayrollResult {
+function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, monthDate: Date): PayrollResult {
   const monthlySalary = config.monthly_salary || 0
   const deductionRate = config.deduction_rate ?? 1
   const otMultiplier = config.ot_multiplier ?? 1.5
@@ -2255,9 +2255,7 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
   const workingDays = workData.workingDays
   const basePay = monthlySalary * monthlyPayMultiplier  // 全額底薪，不縮水
   // ★ 扣薪用當月曆日數，唔用 statutoryDailyWage（月薪×12÷365 屬法定權益公式）
-  const dailyRate = monthDate
-    ? deductionDailyRate(monthlySalary, monthDate, (config as any).deduction_basis ?? 'calendar')
-    : statutoryDailyWage(monthlySalary)
+  const dailyRate = deductionDailyRate(monthlySalary, monthDate, (config as any).deduction_basis ?? 'calendar')
   const deduction = (absentDays + unpaidLeaveDays) * dailyRate * deductionRate
 
   const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
@@ -2392,7 +2390,7 @@ function calcDailyBase(config: PayRuleConfigModular, workData: WorkData): Payrol
   }
 }
 
-function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDate?: Date): PayrollResult {
+function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDate: Date): PayrollResult {
   const splitRatio = config.split_ratio ?? 0
   const basePay = config.monthly_salary ?? 0
 
@@ -2410,9 +2408,7 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDa
       0,
       expectedWorkDays - workData.actualAttendanceDays - (workData.approvedLeaveDays - workData.paidLeaveDays) - workData.publicHolidayDays
     )
-    const dailyRate = monthDate
-      ? deductionDailyRate(basePay, monthDate, (config as any).deduction_basis ?? 'calendar')
-      : statutoryDailyWage(basePay)
+    const dailyRate = deductionDailyRate(basePay, monthDate, (config as any).deduction_basis ?? 'calendar')
     deduction = absentDays * dailyRate * deductionRate
   }
 
@@ -2443,7 +2439,7 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDa
 /**
  * Run the selected base module (monthly/hourly/daily/split).
  */
-export function runBaseModule(config: PayRuleConfigModular, workData: WorkData, monthDate?: Date): PayrollResult {
+export function runBaseModule(config: PayRuleConfigModular, workData: WorkData, monthDate: Date): PayrollResult {
   const baseType = config.base_type || 'monthly'
   switch (baseType) {
     case 'monthly': return calcMonthlyBase(config, workData, monthDate)
@@ -2991,6 +2987,13 @@ export async function calculatePayrollWithRules(
   const earlyLeaveCount = workData.earlyLeaveRecords?.length ?? 0
 
   const leaveTaken = workData.approvedLeaveDays
+
+  // ★ OT 重算區塊（:2940）之後，result.detail.grossPay 已更新，
+  //   但本地 const grossPay（:2886）仍係舊值 —— 一定要取最終值。
+  const finalGrossPay = (result.detail as any).grossPay ?? grossPay
+  const finalMpf = (result.detail as any).mpf ?? mpf
+  const finalNetPay = (result.detail as any).netPay ?? netPay
+
   result.detail = {
     ...result.detail,
     // 出勤
@@ -3016,10 +3019,10 @@ export async function calculatePayrollWithRules(
       allowances: Math.round(totalAllowances * 100) / 100,
       sickDeduction: sickDeduction.amount,
       sickEpisodes: sickDeduction.episodes,
-      grossPay: Math.round(grossPay * 100) / 100,
-      mpf: Math.round(mpf * 100) / 100,
+      grossPay: Math.round(finalGrossPay * 100) / 100,
+      mpf: Math.round(finalMpf * 100) / 100,
       mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05,
-      netPay: Math.round(netPay * 100) / 100,
+      netPay: Math.round(finalNetPay * 100) / 100,
     },
     // 假期與 OT
     leaveAndOt: {
@@ -3068,15 +3071,28 @@ export async function calculatePayrollWithRules(
   //      將來任何新增嘅 gross 項目會自動流入；如果新項目唔屬 EO 工資，
   //      喺下面 NON_EO_WAGE 度加返，一個地方維護。
   const NON_EO_WAGE = storeBonus // 酌情花紅
-  const eoWage = Math.round((grossPay - NON_EO_WAGE) * 100) / 100
+  const eoWage = Math.round((finalGrossPay - NON_EO_WAGE) * 100) / 100
 
-  // ★ eoWage 必須 = grossPay − 酌情花紅。任何一方將來加咗新項目而另一方漏咗，喺呢度即刻捉到。
+  // ★ 對帳：逐項加總必須等於最終 grossPay。
+  //   兩邊由唔同途徑得出（一個逐項砌、一個經 OT 重算調整），所以呢個 guard 真係會 fire。
   if (process.env.NODE_ENV !== 'production') {
-    const expected = Math.round((grossPay - storeBonus) * 100) / 100
-    if (Math.abs(eoWage - expected) > 0.05) {
+    const itemised =
+      result.basePay
+      - result.deduction
+      + result.otPay // ← OT 重算後嘅值
+      + effectiveSplitPay
+      + result.attendanceBonus
+      + storeBonus
+      + totalAllowances
+      - (sickDeduction.amount ?? 0)
+      + (adwSource ? resolvedAdwAdjustment : 0)
+      + maternityPay
+      + paternityPay
+    if (Math.abs(itemised - finalGrossPay) > 0.05) {
       console.warn(
-        `[eoWage] 對唔上 grossPay − storeBonus：` +
-        `eoWage=${eoWage} expected=${expected} diff=${(eoWage - expected).toFixed(2)}`,
+        `[grossPay] 逐項加總對唔上 detail.grossPay：` +
+        `itemised=${itemised.toFixed(2)} final=${finalGrossPay.toFixed(2)} ` +
+        `diff=${(itemised - finalGrossPay).toFixed(2)}`,
       )
     }
   }
