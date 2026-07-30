@@ -4158,8 +4158,9 @@ function getShiftCode(shift: Shift): string {
                       setCardRefreshTick(t => t + 1)
                     } else {
                       const err = await res.json().catch(() => ({}))
-                      setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '更新失敗' }])
+                      setValidationIssues([{ type: 'error', rule: 'api', message: err.error || `更新失敗（${res.status}）` }])
                       await refreshAll()
+                      return
                     }
                   } catch (error) {
                     console.error('Update shift error:', error)

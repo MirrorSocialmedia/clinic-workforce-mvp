@@ -49,10 +49,12 @@ export default function NewPayrollPage() {
 
   // Store bonus states
   const [storeBonuses, setStoreBonuses] = useState<Record<string, number>>({})
+  const [storeBonusInputs, setStoreBonusInputs] = useState<Record<string, string>>({})
   const [fillAll, setFillAll] = useState('')
 
   // Split pay states
   const [splitPays, setSplitPays] = useState<Record<string, number>>({})
+  const [splitPayInputs, setSplitPayInputs] = useState<Record<string, string>>({})
   const [bulkSplit, setBulkSplit] = useState('')
 
   const fetchClinics = useCallback(async () => {
@@ -318,9 +320,9 @@ export default function NewPayrollPage() {
                   onClick={() => {
                     const v = parseFloat(fillAll)
                     if (!isFinite(v) || v < 0) return
-                    setStoreBonuses(Object.fromEntries(
-                      previewResult?.items.filter(i => i.payType === 'MONTHLY').map(i => [i.employeeId, v]) || []
-                    ))
+                    const entries = previewResult?.items.filter(i => i.payType === 'MONTHLY').map(i => [i.employeeId, v]) || []
+                    setStoreBonuses(Object.fromEntries(entries))
+                    setStoreBonusInputs(Object.fromEntries(entries.map(([k, n]) => [k, String(n)])))
                   }}
                   className="px-3 py-1 text-xs rounded-md bg-brand text-white hover:bg-brand-dark transition-colors"
                 >
@@ -348,8 +350,10 @@ export default function NewPayrollPage() {
                     const v = parseFloat(bulkSplit)
                     if (!isFinite(v) || v < 0) return
                     const next: Record<string, number> = {}
-                    previewResult?.items.forEach((it: any) => { if (!it.error) next[it.employeeId] = v })
+                    const nextStr: Record<string, string> = {}
+                    previewResult?.items.forEach((it: any) => { if (!it.error) { next[it.employeeId] = v; nextStr[it.employeeId] = String(v) } })
                     setSplitPays(next)
+                    setSplitPayInputs(nextStr)
                   }}
                   className="px-3 py-1 text-xs rounded-md bg-brand text-white hover:bg-brand-dark transition-colors"
                 >
@@ -422,10 +426,19 @@ export default function NewPayrollPage() {
                             <td className="px-1 py-1.5 text-center">
                               {item.payType === 'MONTHLY' ? (
                                 <input
-                                  type="number"
-                                  min={0}
-                                  value={storeBonuses[item.employeeId] ?? ''}
-                                  onChange={e => setStoreBonuses(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={storeBonusInputs[item.employeeId] ?? ''}
+                                  onChange={e => {
+                                    const v = e.target.value
+                                    if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                                      setStoreBonusInputs(s => ({ ...s, [item.employeeId]: v }))
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    const n = parseFloat(storeBonusInputs[item.employeeId] ?? '')
+                                    setStoreBonuses(s => ({ ...s, [item.employeeId]: Number.isFinite(n) ? n : 0 }))
+                                  }}
                                   className="w-16 text-center px-1 py-0.5 rounded g border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                                 />
                               ) : (
@@ -435,9 +448,18 @@ export default function NewPayrollPage() {
                           )}
                           <td className="px-1 py-1.5 text-center">
                             <input
-                              type="number" min={0}
-                              value={splitPays[item.employeeId] ?? ''}
-                              onChange={e => setSplitPays(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
+                              type="text" inputMode="decimal"
+                              value={splitPayInputs[item.employeeId] ?? ''}
+                              onChange={e => {
+                                const v = e.target.value
+                                if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                                  setSplitPayInputs(s => ({ ...s, [item.employeeId]: v }))
+                                }
+                              }}
+                              onBlur={() => {
+                                const n = parseFloat(splitPayInputs[item.employeeId] ?? '')
+                                setSplitPays(s => ({ ...s, [item.employeeId]: Number.isFinite(n) ? n : 0 }))
+                              }}
                               className="w-16 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
                               placeholder="金額" />
                           </td>
@@ -472,10 +494,19 @@ export default function NewPayrollPage() {
                         <div className="flex items-center gap-2 mb-2">
                           <label className="text-xs">店舖獎金:</label>
                           <input
-                            type="number"
-                            min={0}
-                            value={storeBonuses[item.employeeId] ?? ''}
-                            onChange={e => setStoreBonuses(s => ({ ...s, [item.employeeId]: parseFloat(e.target.value) || 0 }))}
+                            type="text"
+                            inputMode="decimal"
+                            value={storeBonusInputs[item.employeeId] ?? ''}
+                            onChange={e => {
+                              const v = e.target.value
+                              if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                                setStoreBonusInputs(s => ({ ...s, [item.employeeId]: v }))
+                              }
+                            }}
+                            onBlur={() => {
+                              const n = parseFloat(storeBonusInputs[item.employeeId] ?? '')
+                              setStoreBonuses(s => ({ ...s, [item.employeeId]: Number.isFinite(n) ? n : 0 }))
+                            }}
                             className="w-24 text-right px-2 py-1 rounded border text-sm focus:outline-none focus:ring-1 focus:ring-brand/30"
                           />
                         </div>
