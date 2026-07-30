@@ -133,7 +133,7 @@ export default function EmployeePayrollDetailPage() {
   const corrections = data.corrections || []
 
   const employeeName = item.employee.user.name
-  const periodMonth = data.periodMonth ? toHKDateStr(new Date(data.periodMonth)).slice(0, 7) : '-'
+  const periodMonth = data.periodMonth ?? '-'
   const payType = item.employee.payRules[0]?.payType || '-'
 
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

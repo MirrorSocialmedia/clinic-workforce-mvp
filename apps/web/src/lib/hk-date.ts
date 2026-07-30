@@ -94,3 +94,18 @@ export function addDays(dateStr: string, n: number): string {
   const utc = new Date(Date.UTC(y, m - 1, day + n))
   return toHKDateStr(utc)
 }
+
+/** PayrollRun.periodMonth (DateTime, HK 月初午夜) → "YYYY-MM"
+ *  — Date → toHKDateStr().slice(0,7)
+ *  — plain "YYYY-MM" string → passthrough
+ *  — ISO "YYYY-MM-DDT..." string → toHKDateStr().slice(0,7) (UTC→HK safe)
+ */
+export function periodMonthKey(pm: Date | string): string {
+  if (typeof pm === 'string') {
+    // Plain "YYYY-MM" — return as-is
+    if (/^\d{4}-\d{2}$/.test(pm)) return pm
+    // ISO timestamp — convert via HK
+    return toHKDateStr(pm).slice(0, 7)
+  }
+  return toHKDateStr(pm).slice(0, 7)
+}

@@ -6,12 +6,14 @@ import { useRouter } from 'next/navigation'
 /** Wage history row */
 interface WageRow {
   id: string
+  rowKey: string
   periodMonth: string
   wage: number
   excludedDays: number
   excludedWage: number
   calendarDays: number
   source: 'PayrollItem' | 'WageHistory'
+  editable: boolean
   note?: string | null
 }
 
@@ -112,7 +114,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
 
   // ---- Save single row (WageHistory only) ----
   const handleSave = async (row: WageRow) => {
-    if (!canWrite || row.source !== 'WageHistory') return
+    if (!canWrite || !row.editable) return
     const edit = edits[row.periodMonth]
     if (!edit) return
 
@@ -125,20 +127,10 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
         body: JSON.stringify(edit),
       })
       if (!res.ok) throw new Error('更新失敗')
-      setRows(prev =>
-        prev.map(r =>
-          r.id === row.id
-            ? { ...r, wage: edit.wage, excludedDays: edit.excludedDays, excludedWage: edit.excludedWage }
-            : r,
-        ),
-      )
+      // ★ Refetch everything instead of local patch — ensures merge logic is respected
       delete edits[row.periodMonth]
       setEdits({ ...edits })
-      // Refresh ADW preview
-      const adwRes = await fetch(`/api/adw/preview?employeeId=${employeeId}&date=${new Date().toISOString().slice(0, 10)}`, {
-        credentials: 'include', cache: 'no-store',
-      })
-      if (adwRes.ok) setAdwPreview(await adwRes.json())
+      await loadAll()
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -159,7 +151,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
 
   // ---- Start editing ----
   const handleEdit = (row: WageRow) => {
-    if (!canWrite || row.source !== 'WageHistory') return
+    if (!canWrite || !row.editable) return
     setEdits(prev => ({
       ...prev,
       [row.periodMonth]: { wage: row.wage, excludedDays: row.excludedDays, excludedWage: row.excludedWage },
@@ -168,7 +160,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
 
   // ---- Delete (WageHistory only) ----
   const handleDelete = async (row: WageRow) => {
-    if (!canWrite || row.source !== 'WageHistory') return
+    if (!canWrite || !row.editable) return
     if (!confirm(`確定刪除 ${row.periodMonth} 的歷史工資記錄？`)) return
 
     setDeleting(row.id)
@@ -178,12 +170,8 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
         credentials: 'include',
       })
       if (!res.ok) throw new Error('刪除失敗')
-      setRows(prev => prev.filter(r => r.id !== row.id))
-      // Refresh ADW
-      const adwRes = await fetch(`/api/adw/preview?employeeId=${employeeId}&date=${new Date().toISOString().slice(0, 10)}`, {
-        credentials: 'include', cache: 'no-store',
-      })
-      if (adwRes.ok) setAdwPreview(await adwRes.json())
+      // ★ Refetch everything instead of local filter
+      await loadAll()
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -257,26 +245,8 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
         }),
       )
 
-      const newRows = results.filter(Boolean) as WageRow[]
-      // Merge: replace existing WageHistory, add new ones, keep PayrollItem
-      setRows(prev => {
-        const updated = prev.map(r => {
-          const match = newRows.find(nr => nr.periodMonth === r.periodMonth)
-          return match ? { ...match } : r
-        })
-        // Add rows that aren't in prev
-        const prevMonths = new Set(prev.map(r => r.periodMonth))
-        for (const nr of newRows) {
-          if (!prevMonths.has(nr.periodMonth)) updated.push(nr)
-        }
-        return updated.sort((a, b) => a.periodMonth.localeCompare(b.periodMonth))
-      })
-
-      // Refresh ADW
-      const adwRes = await fetch(`/api/adw/preview?employeeId=${employeeId}&date=${new Date().toISOString().slice(0, 10)}`, {
-        credentials: 'include', cache: 'no-store',
-      })
-      if (adwRes.ok) setAdwPreview(await adwRes.json())
+      // ★ Refetch everything instead of local merge
+      await loadAll()
 
       setBatchSalary('')
       setBatchStart('')
@@ -448,13 +418,13 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
             {rows.map((row) => {
               const isEditing = !!edits[row.periodMonth]
               const edit = edits[row.periodMonth]
-              const isWageHistory = row.source === 'WageHistory'
+              const isEditable = row.editable
               return (
-                <tr key={row.periodMonth} className="border-b hover:bg-muted/20">
+                <tr key={row.rowKey} className="border-b hover:bg-muted/20">
                   <td className="py-2 px-3 font-medium">{row.periodMonth}</td>
 
                   <td className="text-right px-2 py-1">
-                    {isWageHistory && canWrite && isEditing ? (
+                    {isEditable && canWrite && isEditing ? (
                       <input
                         type="number"
                         value={edit.wage}
@@ -467,14 +437,14 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
                         className="w-28 text-right rounded border px-2 py-1 text-sm"
                       />
                     ) : (
-                      <span className={isWageHistory ? '' : 'text-muted-foreground'}>
+                      <span className={isEditable ? '' : 'text-muted-foreground'}>
                         ${row.wage.toFixed(2)}
                       </span>
                     )}
                   </td>
 
                   <td className="text-right px-2 py-1">
-                    {isWageHistory && canWrite && isEditing ? (
+                    {isEditable && canWrite && isEditing ? (
                       <input
                         type="number"
                         value={edit.excludedDays}
@@ -487,14 +457,14 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
                         className="w-16 text-right rounded border px-2 py-1 text-sm"
                       />
                     ) : (
-                      <span className={isWageHistory ? '' : 'text-muted-foreground'}>
+                      <span className={isEditable ? '' : 'text-muted-foreground'}>
                         {row.excludedDays}
                       </span>
                     )}
                   </td>
 
                   <td className="text-right px-2 py-1">
-                    {isWageHistory && canWrite && isEditing ? (
+                    {isEditable && canWrite && isEditing ? (
                       <input
                         type="number"
                         value={edit.excludedWage}
@@ -507,7 +477,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
                         className="w-24 text-right rounded border px-2 py-1 text-sm"
                       />
                     ) : (
-                      <span className={isWageHistory ? '' : 'text-muted-foreground'}>
+                      <span className={isEditable ? '' : 'text-muted-foreground'}>
                         ${row.excludedWage.toFixed(2)}
                       </span>
                     )}
@@ -526,7 +496,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
                   </td>
 
                   <td className="text-right px-3 py-1">
-                    {isWageHistory && canWrite ? (
+                    {isEditable && canWrite ? (
                       isEditing ? (
                         <div className="flex gap-1 justify-end">
                           <button

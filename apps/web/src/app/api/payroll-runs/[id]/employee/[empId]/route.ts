@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
-import { getMonthRange } from '@/lib/hk-date'
+import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
 export async function GET(
@@ -79,6 +79,6 @@ export async function GET(
 
   return NextResponse.json({
     item, detail, punches, leaves, corrections,
-    periodMonth: item.run.periodMonth.toISOString(),
+    periodMonth: periodMonthKey(item.run.periodMonth),
   })
 }

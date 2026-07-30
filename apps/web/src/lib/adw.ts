@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client'
-import { toHKDateStr } from './hk-date'
+import { toHKDateStr, periodMonthKey } from './hk-date'
 
 export interface ADWSource {
   periodMonth: string
@@ -143,7 +143,7 @@ export async function calculateADW(
 
   for (const pi of payrollItems) {
     const pm = (pi.run as { periodMonth: Date | string }).periodMonth
-    const pmStr = typeof pm === 'string' ? pm : toHKDateStr(pm).slice(0, 7)
+    const pmStr = periodMonthKey(pm)
     // ★ 上面用咗 ±2 日緩衝，可能多拉咗前後一個月，喺呢度精準剔走
     if (pmStr < startMonth || pmStr > endMonth) continue
     byMonth.set(pmStr, {
@@ -291,10 +291,8 @@ export async function snapshotWagesForADW(
   })
   if (!run) return
 
-  // ★ run.periodMonth 係 DateTime，冇 .split()
-  const pmStr = typeof run.periodMonth === 'string'
-    ? run.periodMonth
-    : toHKDateStr(run.periodMonth).slice(0, 7)
+  // ★ run.periodMonth is DateTime — use periodMonthKey for HK-correct month
+  const pmStr = periodMonthKey(run.periodMonth)
   const [y, m] = pmStr.split('-').map(Number)
   const calendarDays = new Date(Date.UTC(y, m, 0)).getUTCDate()
 

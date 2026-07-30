@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { periodMonthKey } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/wage-history?employeeId=xxx
@@ -34,21 +35,26 @@ export async function GET(req: NextRequest) {
   for (const wh of wageHistories) {
     byMonth.set(wh.periodMonth, {
       id: wh.id,
+      rowKey: `wh:${wh.id}`,
       periodMonth: wh.periodMonth,
       wage: wh.totalWage,
       excludedDays: wh.excludedDays,
       excludedWage: wh.excludedWage,
       calendarDays: wh.calendarDays,
       source: 'WageHistory',
+      editable: true,
       note: wh.note,
     })
   }
 
   for (const pi of payrollItems) {
+    // ★ PayrollRun.periodMonth is HK midnight (upper midnight of month start).
+    //   toISOString() converts to UTC → off by 1 month. Must use periodMonthKey.
     const pm = (pi.run as any).periodMonth
-    const pmStr = typeof pm === 'string' ? pm : new Date(pm).toISOString().slice(0, 7)
+    const pmStr = periodMonthKey(pm)
     byMonth.set(pmStr, {
       id: pi.id,
+      rowKey: `pi:${pi.id}`,
       periodMonth: pmStr,
       wage: (pi as any).eoWage ?? 0,
       excludedDays: (pi as any).excludedDays ?? 0,
@@ -58,6 +64,7 @@ export async function GET(req: NextRequest) {
         return new Date(Date.UTC(y, m, 0)).getUTCDate()
       })(),
       source: 'PayrollItem',
+      editable: false,
     })
   }
 
