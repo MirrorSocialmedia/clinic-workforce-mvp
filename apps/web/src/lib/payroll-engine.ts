@@ -111,13 +111,37 @@ function getOtThreshold(config: PayRuleConfig, payType: PayType): number {
 }
 
 /**
- * HK Statutory Daily Wage = monthlySalary × 12 ÷ 365
- * Per HK Employment Ordinance
+ * ⚠️ 呢個【唔係】扣薪日率。
+ *
+ * 月薪 × 12 ÷ 365 只係 ADW 喺「固定月薪 + 過去 12 個月無剔除期間」之下嘅化簡值。
+ * 一旦有 ≥4 天病假（4/5 糧）、無薪假等剔除期間，就唔成立 —— 必須用 calculateADW()。
+ *
+ * 用途：只作為 calculateADW() 失敗時嘅 fallback。
+ * 扣薪請用 deductionDailyRate()。
+ *
  * @deprecated Use calculateADW from './adw' for EO-compliant ADW-based calculations.
  * Kept as fallback when ADW data is insufficient.
  */
 export function statutoryDailyWage(monthlySalary: number): number {
   return (monthlySalary * 12) / 365
+}
+
+/**
+ * 【扣薪日率】月薪 ÷ 當月曆日數。
+ * 用於：無薪缺勤、事假、<4 天無薪病假，以及「月薪已替某幾日付了多少」的比較基準。
+ *
+ * ★ 唔可以用 statutoryDailyWage（月薪×12÷365）—— 嗰個係 ADW 喺「固定月薪 + 無剔除期間」
+ *   之下嘅化簡值，屬於法定權益公式，唔係扣薪標準。
+ *   香港實務上月薪制扣薪慣用「當月實際天數」或「固定 30 天」為分母。
+ */
+export function deductionDailyRate(
+  monthlySalary: number,
+  monthDate: Date,
+  mode: 'calendar' | 'fixed30' = 'calendar',
+): number {
+  if (mode === 'fixed30') return monthlySalary / 30
+  const days = hkDaysInMonth(monthDate)   // 6月=30、7月=31
+  return days > 0 ? monthlySalary / days : monthlySalary / 30
 }
 
 // ------------------------------------------------------------------
@@ -381,7 +405,8 @@ export async function computeSickDeduction(
   monthlySalary: number,
   deductionRate: number,
   db: any,
-  workingDays: number,        // ★ 新增：用嚟算「base 實際已付嘅日率」
+  monthDate: Date,                                  // ★ 用嚟算當月曆日數
+  deductionBasis: 'calendar' | 'fixed30' = 'calendar',
 ): Promise<{
   amount: number;
   paidAmount: number;      // ★ 病假期間實收工資（供 ADW excludedWage）
@@ -422,12 +447,8 @@ export async function computeSickDeduction(
   if (cur.length) episodes.push(cur)
 
   // 逐段結算（只扣落在本月的日子；檔位看整段）
-  // ★ 決定 2（2026-07-31）：病假要扣至 EO 法定水平。
-  //   基準必須用「月薪 ÷ 當月工作日」—— basePay 就係按呢個日率把病假日照付咗。
-  //   舊版用 statutoryDailyWage（月薪×12÷365 = 較低），令比較失真、幾乎永遠扣 0。
-  const baseDailyRate = workingDays > 0
-    ? monthlySalary / workingDays
-    : statutoryDailyWage(monthlySalary)
+  // ★ 扣薪日率（當月曆日數）—— 同 :2230 缺勤／無薪假用同一個基準
+  const dailyDeduct = deductionDailyRate(monthlySalary, monthDate, deductionBasis)
 
   // ★ Phase 3: ADW compliance — ≥4 days uses 4/5 ADW; <4 days uses statutoryDailyWage (no sick pay entitlement)
   const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
@@ -472,7 +493,7 @@ export async function computeSickDeduction(
       // If 4/5 ADW < what's already in base, no additional deduction needed
       // If 4/5 ADW > what's in base, we pay the full base (no extra deduction)
       const sicknessAllowance = adwValue * 0.8 * daysInMonth
-      const alreadyInBase = baseDailyRate * daysInMonth              // ★ 由 statutoryDailyWage 改
+      const alreadyInBase = dailyDeduct * daysInMonth   // ★ 由 baseDailyRate 改（扣薪日率 = 月薪÷曆日）
       const deductionAmount = Math.max(0, alreadyInBase - sicknessAllowance)
       amount += deductionAmount * deductionRate
       paidAmount += alreadyInBase - deductionAmount * deductionRate    // ★ 實收
@@ -487,10 +508,9 @@ export async function computeSickDeduction(
         warnings: adwWarnings.length > 0 ? adwWarnings : undefined,
       })
     } else {
-      // <4 consecutive days: no sick pay entitlement → full deduction (base daily rate)
-      const dailyRate = baseDailyRate                                // ★ 由 statutoryDailyWage 改
-      amount += daysInMonth * dailyRate * deductionRate
-      paidAmount += daysInMonth * dailyRate * (1 - deductionRate)      // ★ 實收
+      // <4 連續日：EO 無疾病津貼權利 → 當無薪缺勤，按扣薪日率全額扣
+      amount += daysInMonth * dailyDeduct * deductionRate
+      paidAmount += daysInMonth * dailyDeduct * (1 - deductionRate)
 
       detail.push({
         range: `${ep[0]}~${ep[ep.length - 1]}`,
@@ -2210,7 +2230,7 @@ async function collectWorkData(
 // 3. Base Module Calculators
 // ------------------------------------------------------------------
 
-function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, monthDate?: Date): PayrollResult {
   const monthlySalary = config.monthly_salary || 0
   const deductionRate = config.deduction_rate ?? 1
   const otMultiplier = config.ot_multiplier ?? 1.5
@@ -2234,8 +2254,10 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData): Payr
   // 之前錯誤：basePay 按 (paidDays/workingDays) 縮水 + deduction 再扣一次 = 同一件事扣兩次
   const workingDays = workData.workingDays
   const basePay = monthlySalary * monthlyPayMultiplier  // 全額底薪，不縮水
-  // HK Statutory: dailyRate = monthlySalary × 12 ÷ 365
-  const dailyRate = statutoryDailyWage(monthlySalary)
+  // ★ 扣薪用當月曆日數，唔用 statutoryDailyWage（月薪×12÷365 屬法定權益公式）
+  const dailyRate = monthDate
+    ? deductionDailyRate(monthlySalary, monthDate, (config as any).deduction_basis ?? 'calendar')
+    : statutoryDailyWage(monthlySalary)
   const deduction = (absentDays + unpaidLeaveDays) * dailyRate * deductionRate
 
   const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
@@ -2370,7 +2392,7 @@ function calcDailyBase(config: PayRuleConfigModular, workData: WorkData): Payrol
   }
 }
 
-function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDate?: Date): PayrollResult {
   const splitRatio = config.split_ratio ?? 0
   const basePay = config.monthly_salary ?? 0
 
@@ -2388,7 +2410,10 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): Payrol
       0,
       expectedWorkDays - workData.actualAttendanceDays - (workData.approvedLeaveDays - workData.paidLeaveDays) - workData.publicHolidayDays
     )
-    deduction = absentDays * statutoryDailyWage(basePay) * deductionRate
+    const dailyRate = monthDate
+      ? deductionDailyRate(basePay, monthDate, (config as any).deduction_basis ?? 'calendar')
+      : statutoryDailyWage(basePay)
+    deduction = absentDays * dailyRate * deductionRate
   }
 
   return {
@@ -2418,13 +2443,13 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData): Payrol
 /**
  * Run the selected base module (monthly/hourly/daily/split).
  */
-export function runBaseModule(config: PayRuleConfigModular, workData: WorkData): PayrollResult {
+export function runBaseModule(config: PayRuleConfigModular, workData: WorkData, monthDate?: Date): PayrollResult {
   const baseType = config.base_type || 'monthly'
   switch (baseType) {
-    case 'monthly': return calcMonthlyBase(config, workData)
+    case 'monthly': return calcMonthlyBase(config, workData, monthDate)
     case 'hourly': return calcHourlyBase(config, workData)
     case 'daily': return calcDailyBase(config, workData)
-    case 'split': return calcSplitBase(config, workData)
+    case 'split': return calcSplitBase(config, workData, monthDate)
     default:
       return {
         basePay: 0, otPay: 0, splitPay: null, attendanceBonus: 0,
@@ -2658,7 +2683,7 @@ export async function calculatePayrollWithRules(
   const workData = await collectWorkData(employeeId, monthDate, clinicId)
 
   // 2. Run base module
-  const baseResult = runBaseModule(config, workData)
+  const baseResult = runBaseModule(config, workData, monthDate)
 
   // 3. Apply modifiers in order
   let result: PayrollResult = baseResult
@@ -2691,7 +2716,7 @@ export async function calculatePayrollWithRules(
 
   // ★ 病假扣減：只在 MONTHLY 分支接線（時薪員工天然零成本）
   const sickDeduction = (result.detail as any)?.monthlySalary != null
-    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma, (result.detail as any)?.workingDays ?? 0)
+    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma, monthDate, (config as any).deduction_basis ?? 'calendar')
     : { amount: 0, paidAmount: 0, episodes: [] }
 
   // ★ Phase 4: Maternity / Paternity pay (EO Ch.6 / Ch.7)
@@ -2801,7 +2826,10 @@ export async function calculatePayrollWithRules(
   let adwWarnings: string[] = []
   let adwSource: 'calculated' | 'fallback' | null = null
   const monthlySalary = (result.detail as any)?.monthlySalary ?? 0
-  const workingDays = (result.detail as any)?.workingDays ?? 0
+  // ★ 用 monthlyWorkingDays（已扣休息日 + 公眾假期）。
+  //   端午節已作為休息日發放，唔應該同時當工作日計入分母。
+  const workingDays = (result.detail as any)?.monthlyWorkingDays
+    ?? (result.detail as any)?.workingDays ?? 0
   const currentDailyRate = workingDays > 0 ? monthlySalary / workingDays : 0
 
   if (monthlySalary > 0) {
