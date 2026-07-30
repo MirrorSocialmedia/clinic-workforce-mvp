@@ -9,7 +9,7 @@
 
 import { prisma, basePrisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
-import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts } from './hk-date'
+import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts, leaveCoversDate } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
 import { getEffectiveADW } from './adw'
 import type { ADWResult, AdwPolicyResult } from './adw'
@@ -660,8 +660,10 @@ function calculateMonthly(
     workingDays - actualAttendanceDays - approvedLeaveDays - publicHolidayDays
   )
 
-  // ✅ 修正：基本薪資根據實際出勤日數 / 工作天數比例計算
-  // 有出勤的天數 = actualAttendanceDays + paidLeaveDays（有薪假期也算出勤）
+  // ★ LEGACY: paidDays = actualAttendanceDays + paidLeaveDays + publicHolidayDays
+  //   模型 A 下 basePay 唔用 paidDays（全額底薪，缺勤才扣）。
+  //   呢度保留做顯示參考，但唔應該用於計糧。
+  //   如果公眾假期同 REST_DAY 假期重疊，paidDays 會雙重計數。
   const paidDays = actualAttendanceDays + paidLeaveDays + publicHolidayDays
   const basePay = workingDays > 0 ? (paidDays / workingDays) * monthlySalary : 0
   // HK Statutory: dailyRate = monthlySalary × 12 ÷ 365
@@ -1357,6 +1359,8 @@ export async function calculateTimeBank(
   note: string
   totalLunchDeductMinutes: number
   timeAccountDetail: Array<any>
+  dailyLate: Array<{ date: string; minutes: number }>
+  dailyEarly: Array<{ date: string; minutes: number }>
 }> {
   // TZ-safe month range
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
@@ -1414,6 +1418,10 @@ export async function calculateTimeBank(
 
   // ★ Time account detail: per-day breakdown
   const timeAccountDetail: Array<any> = []
+
+  // ★ QA24: dailyLate / dailyEarly for attendance bonus — single source of truth
+  const dailyLate: Array<{ date: string; minutes: number }> = []
+  const dailyEarly: Array<{ date: string; minutes: number }> = []
 
   // ★ 調鋪支援：同日可以有多張不同店嘅更。
   // 預先按日期分組並按開工時間排序，用嚟判斷「當日有冇下一張更」。
@@ -1558,6 +1566,10 @@ export async function calculateTimeBank(
     if (dayLunchLate > 0) dayEntry.lunchLate = dayLunchLate
     if (Object.keys(dayEntry).length > 1) timeAccountDetail.push(dayEntry)
 
+    // ★ QA24: push dailyLate / dailyEarly (includes lunchLate for late)
+    if (dayLate + dayLunchLate > 0) dailyLate.push({ date: shiftDateStr, minutes: dayLate + dayLunchLate })
+    if (dayEarly > 0) dailyEarly.push({ date: shiftDateStr, minutes: dayEarly })
+
     // ★ Accumulate monthly totals
     lateMinutes += dayLate
     earlyLeaveMinutes += dayEarly
@@ -1646,6 +1658,8 @@ export async function calculateTimeBank(
     note,
     totalLunchDeductMinutes,
     timeAccountDetail,
+    dailyLate,
+    dailyEarly,
   }
 }
 
@@ -2154,9 +2168,47 @@ async function collectWorkData(
   const lateRecords: Array<{ date: string; minutes: number }> = []
   const earlyLeaveRecords: Array<{ date: string; minutes: number }> = []
 
+  // ★ QA24: 同 calculateTimeBank 一致：按 clinicId（含 secondaryClinicId）過濾，
+  //   同店分更按時間窗切，Math.floor 取整。
+  // 預先按日期分組並按開工時間排序
+  const shiftsByDate = new Map<string, any[]>()
+  for (const s of shifts) {
+    const ds = toHKDateStr(new Date(s.date))
+    if (!shiftsByDate.has(ds)) shiftsByDate.set(ds, [])
+    shiftsByDate.get(ds)!.push(s)
+  }
+  for (const arr of shiftsByDate.values()) {
+    arr.sort((a: any, b: any) =>
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+  }
+
   for (const shift of shifts) {
     const shiftDateStr = toHKDateStr(new Date(shift.date))
-    const dayPunches = effPunches.filter(p => toHKDateStr(p.effectiveTime) === shiftDateStr)
+    const sameDayShifts = shiftsByDate.get(shiftDateStr) ?? []
+    const idx = sameDayShifts.findIndex((s: any) => s.id === shift.id)
+    const prevShift = idx > 0 ? sameDayShifts[idx - 1] : null
+    const nextShift = idx >= 0 && idx < sameDayShifts.length - 1 ? sameDayShifts[idx + 1] : null
+    const winStart = prevShift
+      ? (new Date(prevShift.endTime).getTime() + new Date(shift.startTime).getTime()) / 2
+      : -Infinity
+    const winEnd = nextShift
+      ? (new Date(shift.endTime).getTime() + new Date(nextShift.startTime).getTime()) / 2
+      : Infinity
+    const needTimeWindow =
+      sameDayShifts.filter((s: any) =>
+        s.clinicId === shift.clinicId ||
+        s.clinicId === shift.secondaryClinicId ||
+        s.secondaryClinicId === shift.clinicId
+      ).length > 1
+
+    const dayPunches = effPunches.filter((p: any) => {
+      if (toHKDateStr(p.effectiveTime) !== shiftDateStr) return false
+      // ★ 調鋪方案 1：punch 可以碌喺主店或調鋪店
+      if (p.clinicId !== shift.clinicId && p.clinicId !== shift.secondaryClinicId) return false
+      if (!needTimeWindow) return true
+      const t = p.effectiveTime.getTime()
+      return t >= winStart && t < winEnd
+    })
 
     // 遲到：明確取「最早的上班卡」
     const clockIn = dayPunches
@@ -2167,7 +2219,8 @@ async function collectWorkData(
       if (!makeupLateDates.has(shiftDateStr)) {
         lateRecords.push({
           date: shiftDateStr,
-          minutes: Math.ceil((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000),
+          // ★ QA24: Math.floor（同 calculateTimeBank 一致，夠足 1 分鐘先計）
+          minutes: Math.floor((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000),
         })
       }
     }
@@ -2179,7 +2232,8 @@ async function collectWorkData(
     const shiftEnd = new Date(shift.endTime)
     if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
       if (!makeupEarlyDates.has(shiftDateStr)) {
-        const minutes = Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
+        // ★ QA24: Math.floor（同 calculateTimeBank 一致）
+        const minutes = Math.floor((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
         if (minutes > 0) {
           earlyLeaveRecords.push({ date: shiftDateStr, minutes })
         }
@@ -2190,27 +2244,34 @@ async function collectWorkData(
   // Consultation fees (for split pay)
   const consultationFees = await getConsultationRevenue(employeeId, clinicId, monthDate)
 
-  // Compute scheduledDays and absentDays from shifts
-  const scheduledDays = shifts.length
-  const punchByDate: Record<string, boolean> = {}
+  // ★ QA24: scheduledDays = day count (Set size), not shift count
+  //   分更／調鋪日：應出勤 1 日（唔係 N 張更）
+  const scheduledDateSet = new Set(shifts.map(s => formatDate(new Date(s.date))))
+  const scheduledDays = scheduledDateSet.size
+
+  // ★ QA24: punchByDateClinic = 「日期:clinicId」set
+  //   調鋪日 A 店返咗、B 店冇去 → B 店缺勤計入
+  //   分更日朝更返咗、晚更缺席 → 晚更缺勤計入
+  const punchByDateClinic = new Set<string>()
   for (const pd of allPunchDays) {
-    if (pd.hours > 0 || pd.isPartial) punchByDate[pd.date] = true
-  }
-  const leaveDateSet = new Set<string>()
-  for (const lr of leaveRecords) {
-    let current = toHKDateStr(lr.startDate)
-    const endStr = toHKDateStr(lr.endDate)
-    while (current <= endStr) {
-      leaveDateSet.add(current)
-      current = addDays(current, 1)
-    }
+    if (pd.hours > 0 || pd.isPartial) punchByDateClinic.add(`${pd.date}:${pd.clinicId}`)
   }
 
+  // ★ QA24: leaveDateSet 使用 leaveCoversDate 確保跨表日期比較正確
+  const leaveDateSet = new Set<string>()
+  for (const dateStr of scheduledDateSet) {
+    const hasLeave = leaveRecords.some((lr: any) => leaveCoversDate(lr, dateStr))
+    if (hasLeave) leaveDateSet.add(dateStr)
+  }
+
+  // ★ QA24: absentDays 按「日期 + clinicId」判斷
   let absentDays = 0
   const otDeductedAbsences: Array<{ date: string; minutes: number }> = []
   for (const shift of shifts) {
     const shiftDateStr = formatDate(new Date(shift.date))
-    const hasPunch = punchByDate[shiftDateStr]
+    const hasPunch =
+      punchByDateClinic.has(`${shiftDateStr}:${shift.clinicId}`) ||
+      (shift.secondaryClinicId && punchByDateClinic.has(`${shiftDateStr}:${shift.secondaryClinicId}`))
     const hasLeave = leaveDateSet.has(shiftDateStr)
     if (!hasPunch && !hasLeave) {
       if (makeupAbsentDates.has(shiftDateStr)) {
@@ -2482,11 +2543,14 @@ export function runBaseModule(config: PayRuleConfigModular, workData: WorkData, 
 // 3. Modifier Application
 // ------------------------------------------------------------------
 
-function applyAttendanceBonusModifier(
+async function applyAttendanceBonusModifier(
   modConfig: { amount: number; cancel_if: { late_minutes_exceed?: number; late_is_cumulative?: boolean; any_unplanned_leave?: boolean; any_absence?: boolean } },
   result: PayrollResult,
-  workData: WorkData
-): PayrollResult {
+  workData: WorkData,
+  employeeId: string,
+  monthDate: Date,
+  config: PayRuleConfigModular
+): Promise<PayrollResult> {
   // ★ 缺勤扣OT鐘也取消勤工（即使 absentDays 已排除 OT-deducted 的天數）
   if (workData.otDeductedAbsences && workData.otDeductedAbsences.length > 0) {
     const next = { ...result }
@@ -2499,9 +2563,16 @@ function applyAttendanceBonusModifier(
     return next
   }
 
+  // ★ QA24: 勤工獎必須用 calculateTimeBank 的遲到/早退結果
+  //   collectWorkData 的 lateRecords/earlyLeaveRecords 已修正 clinic 過濾，
+  //   但 calculateTimeBank 是唯一經過調鋪/分更/floor/補鐘修正的單一事實來源。
+  //   dailyLate/dailyEarly 支持 late_is_cumulative 兩種模式（累計 sum / 單次 max）。
+  const tbConfig = { negative_carry: (config as any)?.negative_carry ?? 'reset' }
+  const tb = await calculateTimeBank(employeeId, monthDate, tbConfig, prisma)
+
   const bonus = evaluateAttendanceBonus(modConfig, {
-    lateRecords: workData.lateRecords.map(r => ({ minutes: r.minutes })),
-    earlyRecords: workData.earlyLeaveRecords.map(r => ({ minutes: r.minutes })),
+    lateRecords: tb.dailyLate.map(r => ({ minutes: r.minutes })),
+    earlyRecords: tb.dailyEarly.map(r => ({ minutes: r.minutes })),
     leaveRecords: workData.leaveRecords,
     absentDays: workData.absentDays,
   })
@@ -2699,6 +2770,15 @@ export async function calculatePayrollWithRules(
   // 1. Collect work data
   const workData = await collectWorkData(employeeId, monthDate, clinicId)
 
+  // ★ QA24: restDays from config, not hardcoded [6,0]
+  //   collectWorkData uses [6,0] as default; override here with actual config
+  const restDayCfg = (config as any)?.modifiers?.rest_days?.days
+    ?? (config as any)?.rest_days
+    ?? [6, 0]
+  const actualRestDays = countRestDaysInMonth(year, month, restDayCfg)
+  workData.restDays = actualRestDays
+  workData.monthlyWorkingDays = hkDaysInMonth(monthDate) - actualRestDays - workData.publicHolidayDays
+
   // 2. Run base module
   const baseResult = runBaseModule(config, workData, monthDate)
 
@@ -2715,7 +2795,7 @@ export async function calculatePayrollWithRules(
   }
 
   if (mods.attendance_bonus) {
-    result = applyAttendanceBonusModifier(mods.attendance_bonus, result, workData)
+    result = await applyAttendanceBonusModifier(mods.attendance_bonus, result, workData, employeeId, monthDate, config)
   }
   if (mods.overtime) {
     result = applyOvertimeModifier(mods.overtime, result, workData)
