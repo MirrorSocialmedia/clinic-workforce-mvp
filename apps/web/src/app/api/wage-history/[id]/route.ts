@@ -15,7 +15,19 @@ export async function PUT(
   const { session, scope } = auth
 
   const body = await req.json()
-  const { totalWage, excludedDays, excludedWage, note } = body
+  // ★ 兼容 wage（舊前端 key）同 totalWage（DB 欄位名）
+  const totalWage = body.totalWage ?? body.wage
+  const { excludedDays, excludedWage, note } = body
+
+  // ★ 拒絕空更新 — 避免 Prisma 靜默吞掉無效請求
+  const hasChange =
+    totalWage != null || excludedDays != null || excludedWage != null || note !== undefined
+  if (!hasChange) {
+    return NextResponse.json(
+      { error: '冇任何可更新欄位（請檢查 body 欄位名：totalWage / excludedDays / excludedWage / note）' },
+      { status: 400 },
+    )
+  }
 
   const before = await prisma.wageHistory.findUnique({
     where: { id: params.id },
@@ -51,15 +63,18 @@ export async function PUT(
       entityId: updated.id,
       targetEmployeeId: updated.employeeId,
       beforeJson: JSON.stringify({
+        periodMonth: before.periodMonth,
         totalWage: before.totalWage,
         excludedDays: before.excludedDays,
         excludedWage: before.excludedWage,
+        note: before.note,
       }),
       afterJson: JSON.stringify({
+        periodMonth: updated.periodMonth,
         totalWage: updated.totalWage,
         excludedDays: updated.excludedDays,
         excludedWage: updated.excludedWage,
-        periodMonth: updated.periodMonth,
+        note: updated.note,
       }),
     } as any,
   })

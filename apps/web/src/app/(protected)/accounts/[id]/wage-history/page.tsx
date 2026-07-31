@@ -60,7 +60,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
   const [batching, setBatching] = useState(false)
 
   // Inline edit state: periodMonth → { wage, excludedDays, excludedWage }
-  const [edits, setEdits] = useState<Record<string, { wage: number; excludedDays: number; excludedWage: number }>>({})
+  const [edits, setEdits] = useState<Record<string, { totalWage: number; excludedDays: number; excludedWage: number }>>({})
 
   const canWrite = userRole === 'OWNER' || userRole === 'ACCOUNTANT'
 
@@ -144,7 +144,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
     if (!row) return
     setEdits(prev => {
       const next = { ...prev }
-      next[periodMonth] = { wage: row.wage, excludedDays: row.excludedDays, excludedWage: row.excludedWage }
+      next[periodMonth] = { totalWage: row.wage, excludedDays: row.excludedDays, excludedWage: row.excludedWage }
       return next
     })
   }
@@ -154,7 +154,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
     if (!canWrite || !row.editable) return
     setEdits(prev => ({
       ...prev,
-      [row.periodMonth]: { wage: row.wage, excludedDays: row.excludedDays, excludedWage: row.excludedWage },
+      [row.periodMonth]: { totalWage: row.wage, excludedDays: row.excludedDays, excludedWage: row.excludedWage },
     }))
   }
 
@@ -427,11 +427,11 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
                     {isEditable && canWrite && isEditing ? (
                       <input
                         type="number"
-                        value={edit.wage}
+                        value={edit.totalWage}
                         onChange={e =>
                           setEdits(prev => ({
                             ...prev,
-                            [row.periodMonth]: { ...edit, wage: parseFloat(e.target.value) || 0 },
+                            [row.periodMonth]: { ...edit, totalWage: parseFloat(e.target.value) || 0 },
                           }))
                         }
                         className="w-28 text-right rounded border px-2 py-1 text-sm"
