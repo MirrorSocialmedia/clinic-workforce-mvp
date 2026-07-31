@@ -35,7 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const { start, end } = getMonthRange(run.periodMonth)
   const empIds = run.items.map(i => i.employeeId)
 
-  const [pendingCorrections, pendingLeaves, partialPunches, zeroBonus, negativeNet] = await Promise.all([
+  const [pendingCorrections, pendingLeaves, partialPunches, zeroBonus, negativeNet, zeroNet] = await Promise.all([
     prisma.punchCorrection.count({
       where: {
         employeeId: { in: empIds },
@@ -59,13 +59,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       },
     }),
     Promise.resolve(run.items.filter(i => (i.storeBonus ?? 0) === 0).length),
-    Promise.resolve(run.items.filter(i => (i.totalPayable ?? 0) <= 0).length),
+    Promise.resolve(run.items.filter(i => (i.totalPayable ?? 0) < 0).length),
+    Promise.resolve(run.items.filter(i => (i.totalPayable ?? 0) === 0).length),
   ])
 
   const blockers: string[] = []
   const warnings: string[] = []
 
-  if (negativeNet > 0) blockers.push(`${negativeNet} 位員工實發 ≤ $0，請先檢查`)
+  if (negativeNet > 0) blockers.push(`${negativeNet} 位員工實發為負數，請檢查扣減項是否過多`)
+  if (zeroNet > 0) warnings.push(`${zeroNet} 位員工實發為 $0（當月無工作記錄）—— 確認係咪應該包含喺呢張計糧單`)
+  if (partialPunches > 0) warnings.push(`${partialPunches} 筆打卡記錄未配對到排班（缺卡/多卡）`)
   if (pendingCorrections > 0) warnings.push(`本月有 ${pendingCorrections} 筆補登申請未批 —— 批咗要重新生成先反映`)
   if (pendingLeaves > 0) warnings.push(`本月有 ${pendingLeaves} 筆假期申請未批`)
   if (zeroBonus > 0) warnings.push(`${zeroBonus} 位員工店舖獎金為 $0 —— 確認係咪冇獎金而唔係漏輸`)

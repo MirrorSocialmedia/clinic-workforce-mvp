@@ -681,14 +681,16 @@ export default function PayrollDetailPage() {
               <button
                 onClick={doConfirm}
                 disabled={preflight.blockers.length > 0 || confirming}
+                title={preflight.blockers.length > 0 ? '請先處理上面紅色項目' : ''}
                 style={{
                   flex: 1, padding: '8px 16px', borderRadius: 6, border: 'none',
                   background: preflight.blockers.length > 0 ? '#9ca3af' : '#2563eb',
                   color: '#fff', cursor: preflight.blockers.length > 0 ? 'not-allowed' : 'pointer',
                   fontSize: 14, fontWeight: 600,
+                  opacity: preflight.blockers.length > 0 ? 0.7 : 1,
                 }}
               >
-                {confirming ? '處理中…' : '確認計糧'}
+                {confirming ? '處理中…' : preflight.blockers.length > 0 ? '有項目未處理' : '確認計糧'}
               </button>
             </div>
           </div>
