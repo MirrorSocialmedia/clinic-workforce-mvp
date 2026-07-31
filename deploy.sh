@@ -13,6 +13,11 @@ find /opt/clinic/backups -mtime +14 -delete
 echo "== 拉代碼 =="
 git pull
 
+echo "🔍 Typecheck..."
+docker exec -T app npx tsc --noEmit --project apps/web/tsconfig.json || {
+  echo "❌ Typecheck 失敗，中止部署"; exit 1
+}
+
 echo "== 重建 app（migration 檔在映像裡，build 必須在 migrate 之前）=="
 $DC up -d --build app
 

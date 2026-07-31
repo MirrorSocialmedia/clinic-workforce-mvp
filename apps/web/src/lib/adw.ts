@@ -291,12 +291,22 @@ export async function snapshotWagesForADW(
     ? run.periodMonth
     : toHKDateStr(run.periodMonth).slice(0, 7)
 
-  // ★ 驗證引擎有冇寫入 —— 冇寫入代表舊版引擎生成，唔應該當佢已快照
-  const missing = run.items.filter((i: any) => i.eoWage == null || i.eoWage === 0)
-  if (missing.length > 0) {
+  // ★ QA30: 判斷「引擎有冇計過」而唔係「值係咪 0」——
+  //   eoWage = 0 可以係完全合法（時薪員工當月冇返工、全月無薪假），
+  //   舊版寫法會令呢啲 run 永遠確認唔到，而且提示叫人「重新生成」形成死循環。
+  const notComputed = run.items.filter((i: any) => {
+    if (!i.detailJson) return true
+    try {
+      const d = JSON.parse(i.detailJson)
+      return d.eoWage === undefined  // 引擎新版一定會寫呢個 key
+    } catch {
+      return true
+    }
+  })
+  if (notComputed.length > 0) {
     throw new Error(
-      `有 ${missing.length} 位員工的 EO 工資未計算（eoWage 為 0）。` +
-      `請先「重新生成」計糧再確認 —— 呢個 run 可能係舊版引擎產生。`,
+      `有 ${notComputed.length} 位員工的 EO 工資未計算 —— 呢個計糧單可能係舊版引擎產生。` +
+      `請先「重新生成」計糧再確認。`,
     )
   }
 

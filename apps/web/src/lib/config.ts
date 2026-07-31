@@ -162,6 +162,7 @@ export const CONFIG = {
     'GET /api/payroll-runs': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/payroll-runs': ['OWNER', 'MANAGER'],
     'GET /api/payroll-runs/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/payroll-runs/:id/preflight': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'PUT /api/payroll-runs/:id': ['OWNER'],
     'DELETE /api/payroll-runs/:id': ['OWNER'],
     'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],

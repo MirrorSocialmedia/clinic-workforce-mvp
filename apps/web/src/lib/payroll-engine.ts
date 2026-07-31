@@ -2260,7 +2260,9 @@ async function collectWorkData(
 
   // ★ QA24: scheduledDays = day count (Set size), not shift count
   //   分更／調鋪日：應出勤 1 日（唔係 N 張更）
-  const scheduledDateSet = new Set(shifts.map(s => formatDate(new Date(s.date))))
+  // ★ QA30: 明確 Set<string> —— 唔標嘅話 shifts.map 會推斷成 unknown[]，
+  //   令下面 leaveCoversDate() / leaveDateSet.add() 報 TS2345
+  const scheduledDateSet = new Set<string>(shifts.map(s => formatDate(new Date(s.date))))
   const scheduledDays = scheduledDateSet.size
 
   // ★ QA24: punchByDateClinic = 「日期:clinicId」set
