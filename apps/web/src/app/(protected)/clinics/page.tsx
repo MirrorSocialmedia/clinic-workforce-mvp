@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { fmtDate } from '@/lib/hk-date'
 import { compressToDataUrl } from '@/lib/image'
-import { textOn } from '@/lib/color'
+import { textOn, shiftShade } from '@/lib/color'
 
 interface Clinic {
   id: string
@@ -394,21 +394,39 @@ export default function ClinicsPage() {
             </div>
             <div className="form-group">
               <label>更表膠囊顏色</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  type="color"
-                  value={form.color}
-                  onChange={e => setForm({ ...form, color: e.target.value })}
-                  style={{ width: 40, height: 32, padding: 0, border: '1px solid #ddd',
-                           borderRadius: 4, cursor: 'pointer', background: 'none' }}
-                />
-                <span style={{
-                  padding: '2px 8px', borderRadius: 4, fontSize: 12,
-                  background: form.color, color: textOn(form.color),
-                }}>
-                  {form.shortName || form.name.slice(0, 2) || '預覽'}·早
-                </span>
-              </div>
+              {(() => {
+                const PRESET = ['#16a34a', '#2563eb', '#dc2626', '#ea580c', '#7c3aed', '#0891b2', '#ca8a04', '#db2777']
+                return (
+                <>
+                  <div className="flex gap-2 mt-2 flex-wrap">
+                    {PRESET.map(c => (
+                      <button key={c} type="button" onClick={() => setForm(f => ({ ...f, color: c }))}
+                        style={{
+                          width: 32, height: 32, borderRadius: 8, background: c,
+                          border: form.color === c ? '3px solid #111' : '1px solid #ddd',
+                        }} />
+                    ))}
+                    <input type="color" value={form.color ?? '#95a5a6'}
+                      onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
+                      style={{ width: 32, height: 32, padding: 0, border: 'none', cursor: 'pointer', background: 'none' }} />
+                  </div>
+                  {/* ★ 即時預覽同色系階梯 */}
+                  {form.color && (
+                    <div className="flex gap-1 mt-3">
+                      {[0, 1, 2, 3].map(i => {
+                        const bg = shiftShade(form.color, i, 4)
+                        return (
+                          <span key={i} style={{
+                            background: bg, color: textOn(bg),
+                            padding: '4px 10px', borderRadius: 6, fontSize: 12,
+                          }}>更{i + 1}</span>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
+                )
+              })()}
             </div>
             <div className="form-group">
               <label>地址</label>

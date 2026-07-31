@@ -210,15 +210,14 @@ export default function LeavePage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // Time Account Overview — same source as dashboard
+  // Time Account Overview — 專用 API（所有在職月薪員工，唔係只本月有活動）
   useEffect(() => {
     const load = async () => {
       try {
-        const ym = toHKDateStr(new Date()).slice(0, 7) // YYYY-MM HK perspective
-        const res = await fetch(`/api/payroll-runs/exceptions?periodMonth=${ym}`, { credentials: 'include' })
+        const res = await fetch('/api/timebank/overview', { credentials: 'include' })
         if (!res.ok) return
         const data = await res.json()
-        setTbOverview((data.summaries || []).filter((e: any) => e.timeAccountMinutes != null))
+        setTbOverview(data.summaries || [])
       } finally { setTbLoading(false) }
     }
     load()
@@ -422,10 +421,9 @@ export default function LeavePage() {
         setConvertForm({ employeeId: '', days: '', direction: 'to_leave' })
         fetchBalances()
         // Refresh time account overview
-        const ym = toHKDateStr(new Date()).slice(0, 7)
-        fetch(`/api/payroll-runs/exceptions?periodMonth=${ym}`, { credentials: 'include' })
+        fetch('/api/timebank/overview', { credentials: 'include' })
           .then(r => r.ok ? r.json() : null)
-          .then(d => d && setTbOverview((d.summaries || []).filter((e: any) => e.timeAccountMinutes != null)))
+          .then(d => d && setTbOverview(d.summaries || []))
       } else {
         setConvertResult(`❌ ${data.error || '兌換失敗'}`)
       }
@@ -468,10 +466,9 @@ export default function LeavePage() {
         setInitAccountResult(`✅ 初始化成功：帳戶 ${signed >= 0 ? '+' : ''}${signed} 分鐘`)
         setInitAccountForm({ employeeId: '', days: '', minutes: '', direction: 'debt', effectiveMonth: toHKDateStr(new Date()).slice(0, 7), reason: '' })
         // Refresh time account overview
-        const ym = toHKDateStr(new Date()).slice(0, 7)
-        fetch(`/api/payroll-runs/exceptions?periodMonth=${ym}`, { credentials: 'include' })
+        fetch('/api/timebank/overview', { credentials: 'include' })
           .then(r => r.ok ? r.json() : null)
-          .then(d => d && setTbOverview((d.summaries || []).filter((e: any) => e.timeAccountMinutes != null)))
+          .then(d => d && setTbOverview(d.summaries || []))
       } else {
         setInitAccountResult(`❌ ${data.error || '初始化失敗'}`)
       }
@@ -567,10 +564,15 @@ export default function LeavePage() {
           </section>
 
           {/* 2. 時間帳戶總覽（累計） */}
-          {isManager && (
+          {isManager && (() => {
+            const ym = toHKDateStr(new Date()).slice(0, 7)
+            return (
             <div className="border rounded-xl p-4 mb-4">
-              <h3 className="font-semibold mb-1">⏱ 時間帳戶總覽（累計）</h3>
-              <p className="text-xs text-muted-foreground mb-3">正數 = 公司欠員工（可換假）；負數 = 員工拖欠（可用休息日還鐘）</p>
+              <h3 className="font-semibold mb-1">⏱ 時間帳戶總覽（累計至 {ym}）</h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                正數 = 公司欠員工（可換假）；負數 = 員工拖欠（可用休息日還鐘）。
+                數值為<strong>歷來累計</strong>，包含之前月份結轉。
+              </p>
               {tbLoading ? (
                 <div className="text-sm text-muted-foreground">載入中...</div>
               ) : tbOverview.length === 0 ? (
@@ -669,7 +671,8 @@ export default function LeavePage() {
                 </>
               )}
             </div>
-          )}
+            )
+          })}
 
           {/* 3. OT 假期兌換（OWNER+MANAGER） */}
           {isManager && (

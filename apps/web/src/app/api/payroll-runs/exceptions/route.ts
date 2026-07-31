@@ -72,14 +72,20 @@ export async function GET(req: NextRequest) {
   })
   const seen = new Set<string>()
   const hourlyEmpIds = new Set<string>()
+  // ★ 每個員工的 pay rule config —— 之前傳空 {} 令 OT 門檻/午休設定全部失效，
+  //   總覽同計糧算出兩套唔同數字（OT 門檻 15 變 0、午休卡唔認）
+  const ruleByEmp = new Map<string, any>()
   for (const r of activeRules) {
     if (seen.has(r.employeeId)) continue
     seen.add(r.employeeId)
+    let cfg: any = {}
     try {
-      if (JSON.parse(r.configJson || '{}')?.base_type === 'hourly') {
+      cfg = JSON.parse(r.configJson || '{}')
+      if (cfg?.base_type === 'hourly') {
         hourlyEmpIds.add(r.employeeId)
       }
     } catch { /* 壞 JSON 當非時薪 */ }
+    ruleByEmp.set(r.employeeId, cfg)
   }
 
   const effectivePunches = await getEffectivePunches(monthStart, monthEnd, {
@@ -416,7 +422,7 @@ export async function GET(req: NextRequest) {
   const employeeSummaries = await Promise.all(
     uniqueEmployeeIds.map(async (empId) => {
       const isHourly = (payTypeMap.get(empId) || 'MONTHLY') === 'HOURLY'
-      const tb = await calculateTimeBank(empId, monthDate, {}, prisma)
+      const tb = await calculateTimeBank(empId, monthDate, ruleByEmp.get(empId) ?? {}, prisma)
       const emp = exceptions.find(e => e.employeeId === empId)
       return {
         employeeId: empId,

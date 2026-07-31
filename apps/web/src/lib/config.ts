@@ -191,6 +191,9 @@ export const CONFIG = {
     'PATCH /api/time-bank/:id': ['OWNER'],
     'DELETE /api/time-bank/:id': ['OWNER'],
 
+    // Timebank overview (dedicated — all active monthly employees)
+    'GET /api/timebank/overview': ['OWNER', 'MANAGER'],
+
     // My timebank
     'GET /api/my/timebank': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 

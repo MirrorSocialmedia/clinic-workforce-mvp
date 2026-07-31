@@ -9,7 +9,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK } from '@/lib/hk-date'
-import { textOn } from '@/lib/color'
+import { textOn, shiftShade } from '@/lib/color'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
@@ -214,10 +214,6 @@ export default function SchedulingPage() {
     () => new Map(clinics.map((c: any) => [c.id, c.color || '#95a5a6'])),
     [clinics]
   )
-  const shiftColor = useCallback(
-    (s: any) => clinicColorMap.get(s.clinicId) || '#95a5a6',
-    [clinicColorMap]
-  )
   const [employees, setEmployees] = useState<Employee[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
   const [cardShifts, setCardShifts] = useState<Shift[]>([])
@@ -240,6 +236,22 @@ export default function SchedulingPage() {
   }, [viewRange?.start, selectedClinicId, cardRefreshTick])
   const [templates, setTemplates] = useState<ShiftTemplate[]>([])
   const [changeRequests, setChangeRequests] = useState<ShiftChangeRequest[]>([])
+
+  // ★ 更次顏色 = 店舖色相 + 按模板次序遞進明度（同一間店一眼認出、唔同更分得開）
+  const templateIndexMap = useMemo(() => {
+    const m = new Map<string, { idx: number; total: number }>()
+    const sorted = [...templates].sort((a, b) =>
+      (a.startHour * 60 + a.startMinute) - (b.startHour * 60 + b.startMinute)
+    )
+    sorted.forEach((t, i) => m.set(t.id, { idx: i, total: sorted.length }))
+    return m
+  }, [templates])
+
+  const shiftColor = useCallback((s: any) => {
+    const base = clinicColorMap.get(s.clinicId) || '#95a5a6'
+    const pos = s.templateId ? templateIndexMap.get(s.templateId) : undefined
+    return pos ? shiftShade(base, pos.idx, pos.total) : base
+  }, [clinicColorMap, templateIndexMap])
 
   // Step 7: Overview scope
   const [ovScope, setOvScope] = useState<OvScope>({ type: 'all' })
@@ -1754,10 +1766,14 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // 📷 Screenshot capture helpers
   // ============================================================
-  const renderExportRows = (list: any[]) => list.map(emp => (
+  // ★ renderExportRows 支援 borrowed flag（借調員工名加原店標籤、膠囊虛線邊框）
+  const renderExportRows = (list: any[], opts?: { borrowed?: boolean }) => list.map(emp => (
     <tr key={emp.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
       <td style={{ padding: '8px 10px', fontWeight: 500, color: '#111827', whiteSpace: 'nowrap' }}>
         {emp.user?.name ?? '?'}
+        {opts?.borrowed && emp.homeClinicShort && (
+          <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 4 }}>· {emp.homeClinicShort}</span>
+        )}
       </td>
       {weekDays.map((wd, i) => {
         const ss = ovShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === wd.dateStr)
@@ -1776,6 +1792,7 @@ function getShiftCode(shift: Shift): string {
                 <div key={'s' + si} style={{
                   display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
                   fontSize: 14, background: bg, color: textOn(bg), whiteSpace: 'nowrap',
+                  border: opts?.borrowed ? '1px dashed #2563eb' : 'none',  // ★ 借調膠囊虛線
                 }}>
                   {parts.filter(Boolean).join('·')}
                 </div>
@@ -3586,6 +3603,29 @@ function getShiftCode(shift: Shift): string {
                     </tr>
                   )}
                   {renderExportRows(ovEmployees.part)}
+                  {/* ★ 借調組 —— 截圖要同畫面一致 */}
+                  {borrowedEmployees.length > 0 && (
+                    <>
+                      <tr>
+                        <td colSpan={8} style={{
+                          background: '#eff6ff', borderTop: '2px solid #3b82f6',
+                          padding: '4px 8px', fontSize: 12, fontWeight: 600, color: '#1d4ed8',
+                        }}>
+                          ↗ 借調 ({borrowedEmployees.length})
+                        </td>
+                      </tr>
+                      {renderExportRows(
+                        borrowedEmployees.map((emp: any) => {
+                          const homeClinic = clinics.find(c =>
+                            emp.clinics?.some((ec: any) => ec.clinic?.id === c.id)
+                          )
+                          return { ...emp, homeClinicShort: homeClinic?.shortName || homeClinic?.name?.slice(0, 2) || '' }
+                        }),
+                        { borrowed: true }
+                      )}
+                    </>
+                  )}
+                  {/* ⚠️ 呢個節點要同畫面嘅週總覽保持一致 —— 加組別記得兩邊都改 */}
                 </tbody>
               </table>
             </div>
