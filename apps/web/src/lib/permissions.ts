@@ -15,6 +15,9 @@ export const PERMISSIONS = {
 
 export type PermKey = keyof typeof PERMISSIONS
 
+/** Management permissions used to distinguish mgmt-enabled EMPLOYEE from regular EMPLOYEE */
+export const MGMT_PERMS = ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops'] as const
+
 export const ROLE_DEFAULTS: Record<string, PermKey[]> = {
   OWNER: Object.keys(PERMISSIONS) as PermKey[],
   MANAGER: ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops'],

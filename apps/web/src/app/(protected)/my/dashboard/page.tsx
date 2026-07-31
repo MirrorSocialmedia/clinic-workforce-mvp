@@ -76,6 +76,17 @@ export default function MyDashboardPage() {
   useEffect(() => { fetchData() }, [fetchData])
 
   if (loading) return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
+  if (error === 'Employee profile not found' || error?.includes('not allowed')) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center' }}>
+        <p style={{ fontSize: 15, marginBottom: 8 }}>呢一頁只適用於員工帳戶</p>
+        <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 16 }}>
+          你嘅帳戶類型冇對應嘅員工資料
+        </p>
+        <button onClick={() => window.location.replace('/')}>返回首頁</button>
+      </div>
+    )
+  }
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
 
   return (

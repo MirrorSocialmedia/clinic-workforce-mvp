@@ -10,7 +10,7 @@ import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
 import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
-import { hasPermission } from '@/lib/permissions'
+import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
@@ -198,7 +198,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }
 
   // 有管理權限的 EMPLOYEE → 走桌面側邊欄；普通 EMPLOYEE → 手機佈局
-  const MGMT_PERMS = ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops']
+
   const hasAnyMgmtPerm = MGMT_PERMS.some(p => hasPermission(user.role, p as any, grant, deny))
 
   if (user.role === 'EMPLOYEE' && !hasAnyMgmtPerm) {
