@@ -849,9 +849,11 @@ export async function generatePayrollRun(
     },
   })
 
-  // FIX #2: Handle recalculation
+  // ★ 重新生成前先記低手動輸入嘅獎金／拆帳 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
   const isRecalculation = !!existing
+  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number> } =
+    { storeBonus: {}, splitPay: {} }
   if (existing) {
     // CONFIRMED (FINALIZED/EXPORTED) — block recalculation
     if (existing.status === 'FINALIZED' || existing.status === 'EXPORTED') {
@@ -861,7 +863,15 @@ export async function generatePayrollRun(
         status: existing.status,
       }
     }
-    // DRAFT — allow recalculation: delete old items
+    // DRAFT — allow recalculation: save bonus/splitPay then delete old items
+    const oldItems = await prisma.payrollItem.findMany({
+      where: { runId: existing.id },
+      select: { employeeId: true, storeBonus: true, splitPay: true },
+    })
+    for (const oi of oldItems) {
+      if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
+      if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
+    }
     await prisma.payrollItem.deleteMany({ where: { runId: existing.id } })
   }
 
@@ -952,8 +962,10 @@ export async function generatePayrollRun(
             continue
           }
           calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
-            ...(config.base_type !== 'hourly' && storeBonuses?.[emp.id] ? { storeBonus: storeBonuses[emp.id] } : {}),
-            ...(config.base_type !== 'hourly' && splitPays?.[emp.id] != null ? { splitPay: splitPays[emp.id] } : {}),
+            ...(config.base_type !== 'hourly' && (storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
+              ? { storeBonus: storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
+            ...(config.base_type !== 'hourly' && (splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+              ? { splitPay: splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
           })
         } else {
           // No rule at all → skip with warning
@@ -971,9 +983,11 @@ export async function generatePayrollRun(
           absentDays: calcResult.absentDays,
           basePay: calcResult.basePay,
           otPay: calcResult.otPay,
-          splitPay: splitPays?.[emp.id] != null ? splitPays[emp.id] : calcResult.splitPay,
+          splitPay: (splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+            ? (splitPays?.[emp.id] ?? carried.splitPay[emp.id])
+            : calcResult.splitPay,
           deduction: calcResult.deduction,
-          storeBonus: (calcResult.detail as any)?.storeBonus ?? 0,
+          storeBonus: storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] ?? ((calcResult.detail as any)?.storeBonus ?? 0),
           totalPayable: calcResult.totalPayable,
           miscAmount: (calcResult.detail as any)?.miscAmount ?? 0,
           miscDetailJson: (calcResult.detail as any)?.miscDetailJson ?? null,

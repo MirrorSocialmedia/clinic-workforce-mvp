@@ -25,6 +25,31 @@ export async function POST(req: NextRequest) {
     const [yearStr, monthStr] = periodMonth.split('-')
     const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
 
+    // ★ Check for existing DRAFT to carry over storeBonus / splitPay
+    const existing = await prisma.payrollRun.findFirst({
+      where: {
+        clinicId: clinicId ?? null,
+        status: 'DRAFT',
+        periodMonth: {
+          gte: new Date(`${periodMonth}-01T00:00:00+08:00`),
+          lte: new Date(`${periodMonth}-28T23:59:59+08:00`),
+        },
+      },
+    })
+
+    const carriedStoreBonus: Record<string, number> = {}
+    const carriedSplitPay: Record<string, number> = {}
+    if (existing) {
+      const oldItems = await prisma.payrollItem.findMany({
+        where: { runId: existing.id },
+        select: { employeeId: true, storeBonus: true, splitPay: true },
+      })
+      for (const oi of oldItems) {
+        if (oi.storeBonus) carriedStoreBonus[oi.employeeId] = oi.storeBonus
+        if (oi.splitPay != null) carriedSplitPay[oi.employeeId] = oi.splitPay
+      }
+    }
+
     // Get employees — use homeClinicId instead of EmployeeClinic to avoid multi-clinic duplicates
     const where: any = {
       status: 'ACTIVE',
@@ -82,10 +107,12 @@ export async function POST(req: NextRequest) {
           absentDays: result.absentDays,
           basePay: result.basePay,
           otPay: result.otPay,
-          splitPay: result.splitPay,
           deduction: result.deduction,
           totalPayable: result.totalPayable,
           detail: result.detail,
+          // ★ Carry over existing draft values for pre-fill
+          storeBonus: carriedStoreBonus[emp.id] ?? (result.detail as any)?.storeBonus ?? 0,
+          splitPay: carriedSplitPay[emp.id] != null ? carriedSplitPay[emp.id] : result.splitPay,
         })
       } catch (err: any) {
         items.push({

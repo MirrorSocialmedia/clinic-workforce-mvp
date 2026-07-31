@@ -258,21 +258,13 @@ export async function getEffectiveADW(
 }
 
 /**
- * When a payroll run is FINALIZED, write EO wage fields back to each PayrollItem.
+ * 計糧確認時的工資快照。
  *
- * Writes:
- *  - eoWage        = basePay + otPay + splitPay + storeBonus + attendanceBonus - deduction
- *  - excludedDays  = restDays + publicHolidayDays + annualLeaveDays + sickDays + …
- *  - excludedWage  = holidayPay + annualLeavePay + maternityPay + paternityPay + sickAllowance(4/5 portion)
- *
- * Design: does NOT write WageHistory — WageHistory is only for pre-system manual entries.
- * Post-system months are sourced directly from PayrollItem (calculateADW prioritises PayrollItem).
- *
- * Audit: creates a WAGE_SNAPSHOT audit log entry.
- *
- * @param tx          Prisma transaction client
- * @param runId       PayrollRun id
- * @param actorId     user id of the person who finalized the run
+ * ★ 唔會重算任何數值 —— 引擎生成時已經寫好 eoWage / excludedDays / excludedWage
+ *   舊版喺呢度用另一套公式覆蓋，令「生成時啱、確認後錯」：
+ *     · eoWage 包含 storeBonus（同決定相反）
+ *     · excludedDays 包含休息日／公眾假期配額（月薪員工嗰啲係有薪，唔應剔除）
+ *   單一計算來源 = 引擎。呢度只負責驗證 + 審計留痕。
  */
 export async function snapshotWagesForADW(
   tx: any,
@@ -283,80 +275,31 @@ export async function snapshotWagesForADW(
     where: { id: runId },
     include: {
       items: {
-        include: {
-          employee: { select: { id: true, user: { select: { name: true } } } },
+        select: {
+          id: true,
+          employeeId: true,
+          eoWage: true,
+          excludedDays: true,
+          excludedWage: true,
         },
       },
     },
   })
   if (!run) return
 
-  // ★ run.periodMonth is DateTime — use periodMonthKey for HK-correct month
-  const pmStr = periodMonthKey(run.periodMonth)
-  const [y, m] = pmStr.split('-').map(Number)
-  const calendarDays = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const pmStr = typeof run.periodMonth === 'string'
+    ? run.periodMonth
+    : toHKDateStr(run.periodMonth).slice(0, 7)
 
-  for (const item of run.items) {
-    // ── 1) EO wage (excludes misc reimbursement, employer MPF) ──
-    const eoWage =
-      (item.basePay ?? 0) +
-      (item.otPay ?? 0) +
-      (item.splitPay ?? 0) +
-      (item.storeBonus ?? 0) +
-      deriveAttendanceBonusFromDetail(item) -
-      (item.deduction ?? 0)
-
-    // ── 2) Excluded days & wage (EO 713) ──
-    // The engine writes detailJson with nested keys:
-    //   leaveAndOt.monthlyLeaveDays  = rest days + public holidays (entitlement)
-    //   leaveAndOt.leaveTaken        = actual leave consumed this month
-    //   salary.sickEpisodes          = [{ range, totalDays, daysInMonth, rate }]
-    //   salary.sickDeduction         = deduction amount for sick days
-    //   Top-level storeBonus, grossPay, mpf, netPay, etc.
-    // We approximate excludedDays from available data.
-    const detail = safeParseDetail(item.detailJson)
-    const leaveAndOt: any = detail.leaveAndOt || {}
-    const salary: any = detail.salary || {}
-
-    // restDays + publicHolidayDays = monthlyLeaveDays (entitlement, best available)
-    const restAndHolidayDays = leaveAndOt.monthlyLeaveDays ?? 0
-    // Leave days actually taken this month
-    const leaveTaken = leaveAndOt.leaveTaken ?? (item.leaveDays ?? 0)
-    // Sick days: sum daysInMonth from sickEpisodes
-    const sickEpisodes: Array<{ daysInMonth?: number; rate?: number }> = salary.sickEpisodes || detail.sickEpisodes || []
-    const sickDays = sickEpisodes.reduce((s: number, e: any) => s + (e.daysInMonth ?? 0), 0)
-    // Maternity / paternity days (Phase 4: engine writes to detail)
-    const maternityDays = (detail as any).maternityDaysInMonth ?? (detail as any).maternityDays ?? 0
-    const paternityDays = (detail as any).paternityDaysInMonth ?? (detail as any).paternityDays ?? 0
-
-    const excludedDays = restAndHolidayDays + leaveTaken + sickDays + maternityDays + paternityDays
-
-    // Excluded wage: payments during excluded periods
-    // holidayPay + annualLeavePay are part of basePay (already included)
-    // sickAllowance 4/5 portion: daily base × 0.8 × sickDays
-    const dailyWage = salary.dailyWage ?? ((item.basePay / calendarDays) || 0)
-    const sickAllowance4Over5 = sickEpisodes
-      .filter((e: any) => e.rate === 0.8)
-      .reduce((s: number, e: any) => s + dailyWage * 0.8 * (e.daysInMonth ?? 0), 0)
-
-    const excludedWage =
-      ((detail as any).holidayPay ?? 0) +
-      ((detail as any).annualLeavePay ?? 0) +
-      (item.maternityPay ?? 0) +
-      (item.paternityPay ?? 0) +
-      sickAllowance4Over5
-
-    await tx.payrollItem.update({
-      where: { id: item.id },
-      data: {
-        eoWage: Math.round(eoWage * 100) / 100,
-        excludedDays,
-        excludedWage: Math.round(excludedWage * 100) / 100,
-      },
-    })
+  // ★ 驗證引擎有冇寫入 —— 冇寫入代表舊版引擎生成，唔應該當佢已快照
+  const missing = run.items.filter((i: any) => i.eoWage == null || i.eoWage === 0)
+  if (missing.length > 0) {
+    throw new Error(
+      `有 ${missing.length} 位員工的 EO 工資未計算（eoWage 為 0）。` +
+      `請先「重新生成」計糧再確認 —— 呢個 run 可能係舊版引擎產生。`,
+    )
   }
 
-  // ── 3) Audit log ──
   await tx.auditLog.create({
     data: {
       actorId,
@@ -366,24 +309,11 @@ export async function snapshotWagesForADW(
       afterJson: JSON.stringify({
         periodMonth: pmStr,
         itemCount: run.items.length,
-        calendarDays,
+        totalEoWage: run.items.reduce((s: number, i: any) => s + (i.eoWage ?? 0), 0),
       }),
-      notes: `計糧確認，已沉澱 ${run.items.length} 位員工的 ${pmStr} 工資記錄供 ADW 計算`,
+      notes: `計糧確認：${pmStr} 共 ${run.items.length} 位員工，EO 工資已鎖定供 ADW 計算`,
     },
   })
-}
-
-/** Extract attendanceBonus from detailJson (top-level or nested in salary). */
-function deriveAttendanceBonusFromDetail(item: any): number {
-  const detail = safeParseDetail(item.detailJson)
-  // Top-level first (set by attendance bonus modifier), then salary.attendanceBonus
-  return ((detail as any).attendanceBonus ?? (detail as any).salary?.attendanceBonus ?? 0) as number
-}
-
-/** Safely parse detailJson; returns {} on error. */
-function safeParseDetail(jsonStr: string | null | undefined): Record<string, unknown> {
-  if (!jsonStr) return {}
-  try { return JSON.parse(jsonStr) } catch { return {} }
 }
 
 // ------------------------------------------------------------------

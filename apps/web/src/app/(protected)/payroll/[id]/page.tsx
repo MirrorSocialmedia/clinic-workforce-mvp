@@ -70,6 +70,11 @@ export default function PayrollDetailPage() {
   const [updateNote, setUpdateNote] = useState('')
   const [statusAction, setStatusAction] = useState<string | null>(null)
 
+  // ★ C2: Preflight modal state
+  const [showPreflight, setShowPreflight] = useState(false)
+  const [preflight, setPreflight] = useState<{ periodMonth: string; itemCount: number; blockers: string[]; warnings: string[] } | null>(null)
+  const [confirming, setConfirming] = useState(false)
+
   const fetchRun = useCallback(async () => {
     setLoading(true)
     try {
@@ -117,6 +122,62 @@ export default function PayrollDetailPage() {
       console.error('Failed to update status:', err)
     } finally {
       setStatusAction(null)
+    }
+  }
+
+  // ★ B2: 退回草稿
+  const handleRevert = async () => {
+    const reason = prompt(
+      '退回草稿之後可以重新生成計糧。\n' +
+      '⚠️ 呢個動作會記入審計日誌。\n\n' +
+      '請填寫原因（至少 5 個字）：'
+    )
+    if (!reason || reason.trim().length < 5) return
+    const res = await fetch(`/api/payroll-runs/${runId}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'DRAFT', reason: reason.trim() }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      alert(err.error || `退回失敗（${res.status}）`)
+      return
+    }
+    await fetchRun()
+  }
+
+  // ★ C2: 確認前檢查
+  const handleConfirmClick = async () => {
+    const res = await fetch(`/api/payroll-runs/${runId}/preflight`, {
+      credentials: 'include', cache: 'no-store',
+    })
+    if (!res.ok) { alert('檢查失敗，請重試'); return }
+    setPreflight(await res.json())
+    setShowPreflight(true)
+  }
+
+  const doConfirm = async () => {
+    setConfirming(true)
+    try {
+      const res = await fetch(`/api/payroll-runs/${runId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'FINALIZED' }),
+      })
+      if (res.ok) {
+        setShowPreflight(false)
+        await fetchRun()
+      } else {
+        const err = await res.json()
+        alert(err.error || '確認失敗')
+      }
+    } catch (err) {
+      console.error('Confirm failed:', err)
+      alert('確認失敗')
+    } finally {
+      setConfirming(false)
     }
   }
 
@@ -277,16 +338,25 @@ export default function PayrollDetailPage() {
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {run.status === 'DRAFT' && isOwner && (
-            <button onClick={() => handleStatusChange('FINALIZED')} disabled={statusAction !== null}
+            <button onClick={handleConfirmClick} disabled={statusAction !== null}
               style={{ padding: '8px 16px', background: '#0d6efd', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
               確認計糧
             </button>
           )}
           {run.status === 'FINALIZED' && isOwner && (
-            <button onClick={() => handleStatusChange('EXPORTED')} disabled={statusAction !== null}
-              style={{ padding: '8px 16px', background: '#198754', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
-              標記已匯出
-            </button>
+            <>
+              <button onClick={() => handleStatusChange('EXPORTED')} disabled={statusAction !== null}
+                style={{ padding: '8px 16px', background: '#198754', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
+                標記已匯出
+              </button>
+              {/* ★ B2: 退回草稿 */}
+              <button
+                onClick={handleRevert}
+                style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #f59e0b', background: '#fff', color: '#b45309', fontSize: 14, cursor: 'pointer' }}
+              >
+                退回草稿
+              </button>
+            </>
           )}
           <button onClick={() => handleExport('xlsx')} disabled={exporting !== null}
             style={{ padding: '8px 16px', background: '#198754', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
@@ -561,7 +631,72 @@ export default function PayrollDetailPage() {
             </div>
           )
         })}
-      </div>
+      {/* ★ C2: Preflight Modal */}
+      {showPreflight && preflight && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+          onClick={() => setShowPreflight(false)}
+        >
+          <div
+            style={{
+              background: '#fff', borderRadius: 12, padding: 24,
+              width: '520px', maxWidth: '90vw', maxHeight: '80vh',
+              overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>確認計糧前檢查 —— {preflight.periodMonth}</h3>
+            <p style={{ fontSize: 14, color: '#6b7280', margin: '0 0 12px' }}>共 {preflight.itemCount} 位員工</p>
+
+            {preflight.blockers.length > 0 && (
+              <div style={{ background: '#fee2e2', padding: 12, borderRadius: 8, marginTop: 12 }}>
+                <strong style={{ color: '#b91c1c' }}>必須先處理</strong>
+                <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                  {preflight.blockers.map((b: string) => <li key={b}>{b}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {preflight.warnings.length > 0 && (
+              <div style={{ background: '#fef3c7', padding: 12, borderRadius: 8, marginTop: 12 }}>
+                <strong style={{ color: '#b45309' }}>請確認</strong>
+                <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                  {preflight.warnings.map((w: string) => <li key={w}>{w}</li>)}
+                </ul>
+              </div>
+            )}
+
+            <p style={{ fontSize: 13, color: '#6b7280', marginTop: 16 }}>
+              確認之後計糧單會鎖定，工資記錄會用於日後 ADW 計算。
+              如需修改，OWNER 可以「退回草稿」（會記入審計日誌）。
+            </p>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button onClick={() => setShowPreflight(false)}
+                style={{ flex: 1, padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd', background: '#f5f5f5', cursor: 'pointer', fontSize: 14 }}>
+                取消
+              </button>
+              <button
+                onClick={doConfirm}
+                disabled={preflight.blockers.length > 0 || confirming}
+                style={{
+                  flex: 1, padding: '8px 16px', borderRadius: 6, border: 'none',
+                  background: preflight.blockers.length > 0 ? '#9ca3af' : '#2563eb',
+                  color: '#fff', cursor: preflight.blockers.length > 0 ? 'not-allowed' : 'pointer',
+                  fontSize: 14, fontWeight: 600,
+                }}
+              >
+                {confirming ? '處理中…' : '確認計糧'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
     </div>
   )
 }

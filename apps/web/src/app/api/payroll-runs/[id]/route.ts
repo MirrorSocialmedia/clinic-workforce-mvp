@@ -92,9 +92,25 @@ export async function PUT(
       if (!validStatuses.includes(status as any)) {
         return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 })
       }
+
       const order: Record<string, number> = { DRAFT: 0, FINALIZED: 1, EXPORTED: 2 }
-      if (order[status] < order[run.status]) {
-        return NextResponse.json({ error: `Cannot downgrade status from ${run.status} to ${status}` }, { status: 400 })
+      const isDowngrade = order[status] < order[run.status]
+
+      if (isDowngrade) {
+        // ★ 退回草稿：只准 FINALIZED → DRAFT，OWNER 限定，必須填原因
+        if (!(run.status === 'FINALIZED' && status === 'DRAFT')) {
+          return NextResponse.json(
+            { error: `唔支援由 ${run.status} 退回 ${status}（已匯出的計糧單唔可以退回）` },
+            { status: 400 },
+          )
+        }
+        if (session.role !== 'OWNER') {
+          return NextResponse.json({ error: '只有 OWNER 可以退回計糧單至草稿' }, { status: 403 })
+        }
+        const reason = (body.reason ?? '').trim()
+        if (reason.length < 5) {
+          return NextResponse.json({ error: '退回草稿必須填寫原因（至少 5 個字）' }, { status: 400 })
+        }
       }
     }
 
@@ -109,6 +125,21 @@ export async function PUT(
       // ★★ DRAFT → FINALIZED: auto-snapshot wage records for ADW
       if (status === 'FINALIZED' && run.status === 'DRAFT') {
         await snapshotWagesForADW(tx, params.id, auditCtx.actorId)
+      }
+
+      // ★ 退回草稿：獨立 action，方便日後追查
+      if (status === 'DRAFT' && run.status === 'FINALIZED') {
+        await tx.auditLog.create({
+          data: {
+            actorId: auditCtx.actorId,
+            action: 'PAYROLL_REVERT_TO_DRAFT',
+            entity: 'PayrollRun',
+            entityId: params.id,
+            beforeJson: JSON.stringify({ status: run.status }),
+            afterJson: JSON.stringify({ status: 'DRAFT' }),
+            notes: `退回草稿。原因：${body.reason}`,
+          },
+        })
       }
 
       // Manual audit inside same transaction

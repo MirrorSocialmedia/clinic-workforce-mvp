@@ -135,6 +135,19 @@ export default function NewPayrollPage() {
     }
   }, [userRole, canGenerate, router])
 
+  // ★ A2: 預填現有草稿的手動輸入值
+  useEffect(() => {
+    if (!previewResult?.items?.length) return
+    const sb: Record<string, string> = {}
+    const sp: Record<string, string> = {}
+    for (const it of previewResult.items) {
+      if ((it as any).storeBonus) sb[it.employeeId] = String((it as any).storeBonus)
+      if ((it as any).splitPay != null) sp[it.employeeId] = String((it as any).splitPay)
+    }
+    if (Object.keys(sb).length) setStoreBonusInputs(prev => ({ ...sb, ...prev }))
+    if (Object.keys(sp).length) setSplitPayInputs(prev => ({ ...sp, ...prev }))
+  }, [previewResult?.items])
+
   // Auto-run preview when clinic + month are both selected
   useEffect(() => {
     if (selectedClinic && periodMonth) runPreview()
@@ -164,6 +177,36 @@ export default function NewPayrollPage() {
       }
     }
 
+    // ★ A4: 檢查是否有現有草稿，提示用戶
+    try {
+      const checkRes = await fetch('/api/payroll-runs', {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (checkRes.ok) {
+        const checkData = await checkRes.json()
+        const existingDraft = (checkData.runs || []).find(
+          (r: any) => r.periodMonth && (
+            r.periodMonth === periodMonth ||
+            r.periodMonth.startsWith(periodMonth + '-') ||
+            r.periodMonth.slice(0, 7) === periodMonth
+          ) && r.clinicId === selectedClinic && r.status === 'DRAFT'
+        )
+        if (existingDraft) {
+          const ok = confirm(
+            `該月已有草稿（${existingDraft.itemCount || '?'} 位員工）。\n\n` +
+            `重新生成會用最新嘅打卡／補登／假期重算，\n` +
+            `已輸入嘅店舖獎金同拆帳會保留。\n\n` +
+            `確定重新生成？`
+          )
+          if (!ok) return
+        }
+      }
+    } catch (err) {
+      console.error('Failed to check existing draft:', err)
+    }
+
     await doGenerate()
   }
 
@@ -176,13 +219,15 @@ export default function NewPayrollPage() {
     setError(null)
 
     try {
-      // ★ P1-3: parse string inputs at submit time for reliability
-      const storeBonusObj = previewResult?.items
-        .filter(i => storeBonusInputs[i.employeeId] && storeBonusInputs[i.employeeId] !== '')
-        .map(i => [i.employeeId, parseFloat(storeBonusInputs[i.employeeId]) || 0]) || []
-      const splitPayObj = previewResult?.items
-        .filter(i => splitPayInputs[i.employeeId] && splitPayInputs[i.employeeId] !== '')
-        .map(i => [i.employeeId, parseFloat(splitPayInputs[i.employeeId]) || 0]) || []
+      // ★ A3: 所有有輸入框嘅員工都要傳值（包括 0），配合 A1 嘅 ?? 語意
+      const storeBonusPayload: Record<string, number> = {}
+      const splitPayPayload: Record<string, number> = {}
+      for (const it of previewResult?.items || []) {
+        const sbRaw = storeBonusInputs[it.employeeId]
+        if (sbRaw !== undefined) storeBonusPayload[it.employeeId] = parseFloat(sbRaw) || 0
+        const spRaw = splitPayInputs[it.employeeId]
+        if (spRaw !== undefined) splitPayPayload[it.employeeId] = parseFloat(spRaw) || 0
+      }
 
       const res = await fetch('/api/payroll-runs', {
         method: 'POST',
@@ -191,8 +236,8 @@ export default function NewPayrollPage() {
         body: JSON.stringify({
           periodMonth,
           clinicId: selectedClinic,
-          storeBonuses: storeBonusObj.length > 0 ? Object.fromEntries(storeBonusObj) : undefined,
-          splitPays: splitPayObj.length > 0 ? Object.fromEntries(splitPayObj) : undefined,
+          storeBonuses: storeBonusPayload,
+          splitPays: splitPayPayload,
         }),
       })
 
@@ -346,7 +391,7 @@ export default function NewPayrollPage() {
                 >
                   全部填入同額
                 </button>
-                <span className="text-xs text-muted-foreground">（重新生成需重新輸入店舖獎金）</span>
+                <span className="text-xs text-muted-foreground">（重新生成會保留已輸入嘅店舖獎金）</span>
               </div>
             )}
 
@@ -376,7 +421,7 @@ export default function NewPayrollPage() {
                 >
                   全部填入同額
                 </button>
-                <span className="text-xs text-muted-foreground">（重新生成需重新輸入拆帳金額）</span>
+                <span className="text-xs text-muted-foreground">（重新生成會保留已輸入嘅拆帳金額）</span>
               </div>
             )}
 

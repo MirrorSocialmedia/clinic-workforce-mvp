@@ -123,7 +123,8 @@ export default function DashboardPage() {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const fromDate = toHKDateStr(sevenDaysAgo).slice(0, 10)
     const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT', 'CREATE_PUNCH',
-      'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT', 'LEAVE_INIT', 'EXPENSE_CREATE', 'EXPENSE_DELETE']
+      'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT', 'LEAVE_INIT', 'EXPENSE_CREATE', 'EXPENSE_DELETE',
+      'PAYROLL_REVERT_TO_DRAFT']
 
     let promises = sensitiveActions.map(action =>
       fetch(`/api/audit-logs?action=${action}&fromDate=${fromDate}`, { credentials: 'include' })
