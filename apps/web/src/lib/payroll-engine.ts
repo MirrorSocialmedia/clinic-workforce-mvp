@@ -848,10 +848,13 @@ export async function generatePayrollRun(
   clinicId: string | null,
   periodMonth: string,
   auditCtx?: AuditCtx,
-  storeBonuses?: Record<string, number>, // { employeeId: amount }
-  splitPays?: Record<string, number> // { employeeId: amount }
+  opts?: {
+    storeBonuses?: Record<string, number>
+    splitPays?: Record<string, number>
+    excludeConfidential?: boolean // ★ 新增：非 OWNER 排除保密員工
+  },
 ): Promise<
-  | { runId: string; itemCount: number; totalPayable: number }
+  | { runId: string; itemCount: number; totalPayable: number; skipped?: Array<{ employeeId: string; name: string; reason: string }>; transitionWarning?: string | null }
   | { error: string; runId: string; status: string }
 > {
   // Parse YYYY-MM → HK-tz-safe Date (use +08:00 suffix to avoid local TZ confusion)
@@ -897,6 +900,7 @@ export async function generatePayrollRun(
   // FIX: Use homeClinicId instead of EmployeeClinic to avoid multi-clinic duplicates
   // Employees with assigned clinic but no homeClinicId get a transition warning
   const where: any = {
+    ...(opts?.excludeConfidential ? { payConfidential: false } : {}), // ★ 非 OWNER 排除保密員工
     OR: [
       { status: 'ACTIVE' },
       {
@@ -981,10 +985,10 @@ export async function generatePayrollRun(
             continue
           }
           calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
-            ...(config.base_type !== 'hourly' && (storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
-              ? { storeBonus: storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
-            ...(config.base_type !== 'hourly' && (splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
-              ? { splitPay: splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
+            ...(config.base_type !== 'hourly' && (opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
+              ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
+            ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+              ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
           })
         } else {
           // No rule at all → skip with warning
@@ -1002,11 +1006,11 @@ export async function generatePayrollRun(
           absentDays: calcResult.absentDays,
           basePay: calcResult.basePay,
           otPay: calcResult.otPay,
-          splitPay: (splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
-            ? (splitPays?.[emp.id] ?? carried.splitPay[emp.id])
+          splitPay: (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+            ? (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id])
             : calcResult.splitPay,
           deduction: calcResult.deduction,
-          storeBonus: storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] ?? ((calcResult.detail as any)?.storeBonus ?? 0),
+          storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] ?? ((calcResult.detail as any)?.storeBonus ?? 0),
           totalPayable: calcResult.totalPayable,
           miscAmount: (calcResult.detail as any)?.miscAmount ?? 0,
           miscDetailJson: (calcResult.detail as any)?.miscDetailJson ?? null,

@@ -166,11 +166,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   ]
 
   const visibleNav = navItems.filter(item => {
+    // ① role 白名單直接放行
     if (item.roles.includes(user.role as any)) return true
-    // perm: null means no permission gate — visible to everyone regardless of roles
-    if (!item.perm) return true
-    if (item.perm) return hasPermission(user.role, item.perm as any, grant, deny)
-    return false
+    // ② 冇 perm 就淨係睇 role —— 舊版 `return true` 令所有冇 perm 嘅項目
+    //    對任何角色都顯示（帳號管理／診所管理／審計日志全部漏晒出去）
+    if (!item.perm) return false
+    // ③ 有 perm：權限可以覆蓋 role 白名單（例如 EMPLOYEE + scheduling）
+    return hasPermission(user.role, item.perm as any, grant, deny)
   })
 
   const isActive = (itemPath: string) => {

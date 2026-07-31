@@ -114,14 +114,29 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, storeBonuses, splitPays)
+      // ★ 非 OWNER 唔可以觸發保密員工嘅計糧計算 —— 唔止「顯示時隱藏」，
+      //   而係由頭到尾唔應該為佢哋建立 PayrollItem
+      const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, {
+        storeBonuses, splitPays,
+        excludeConfidential: session.role !== 'OWNER', // ROLE-OK：保密隔離刻意用 role
+      })
 
       // FIX #2: If result has error field (e.g., CONFIRMED blocked), return 409
       if ((result as any).error) {
         return NextResponse.json(result, { status: 409 })
       }
 
-      return NextResponse.json(result, { status: 201 })
+      // ★ 計算被略過的保密員工數量
+      const skipped = session.role !== 'OWNER'
+        ? await prisma.employee.count({ where: { payConfidential: true, status: 'ACTIVE' } })
+        : 0
+
+      return NextResponse.json({
+        ...result,
+        ...(skipped > 0 ? {
+          notice: `已略過 ${skipped} 位薪酬保密員工，需由帳戶擁有人另行生成`,
+        } : {}),
+      }, { status: 201 })
     } catch (err: any) {
       console.error('Failed to generate payroll:', err)
       return NextResponse.json({ error: err.message || 'Internal error' }, { status: 500 })

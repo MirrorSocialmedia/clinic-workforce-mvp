@@ -24,7 +24,7 @@ export default function NewPayrollPage() {
   })
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ runId: string; itemCount: number; totalPayable: number } | null>(null)
+  const [result, setResult] = useState<{ runId: string; itemCount: number; totalPayable: number; notice?: string } | null>(null)
   const [userRole, setUserRole] = useState<string>('')
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
@@ -341,6 +341,11 @@ export default function NewPayrollPage() {
             <div className="mb-2 font-semibold">✅ 計糧生成成功！</div>
             <div>員工數: {result.itemCount}</div>
             <div>應付總額: HK${result.totalPayable.toLocaleString()}</div>
+            {result.notice && (
+              <div className="mt-2 p-2 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                ⚠️ {result.notice}
+              </div>
+            )}
             <div style={{ marginTop: 12 }}>
               <a
                 href={`/payroll/${result.runId}`}
