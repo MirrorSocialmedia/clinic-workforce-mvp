@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
-cd /opt/clinic
-DC="docker compose -p clinic -f /opt/clinic/docker-compose.yml"
+cd /home/clinicapp/clinic
+DC="docker compose -p clinic -f /home/clinicapp/clinic/docker-compose.yml"
 
 echo "== 備份 =="
-BK=/opt/clinic/backups/clinic_$(date +%F_%H%M).sql.gz
-mkdir -p /opt/clinic/backups
+BK=/home/clinicapp/clinic/backups/clinic_$(date +%F_%H%M).sql.gz
+mkdir -p /home/clinicapp/clinic/backups
 docker exec clinic-prod-db pg_dump -U clinic clinic_prod | gzip > $BK
 echo " $BK"
-find /opt/clinic/backups -mtime +14 -delete
+find /home/clinicapp/clinic/backups -mtime +14 -delete
 
 echo "== 拉代碼 =="
 git pull
