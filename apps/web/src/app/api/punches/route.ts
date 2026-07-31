@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, applyScopeFilter, isAuthError } from '@/lib/require-auth'
 
@@ -31,8 +32,8 @@ export async function GET(req: NextRequest) {
 
   if (startDate || endDate) {
     where.punchTime = {}
-    if (startDate) where.punchTime.gte = new Date(startDate)
-    if (endDate) where.punchTime.lte = new Date(endDate)
+    if (startDate) where.punchTime.gte = hkDateStart(startDate)
+    if (endDate) where.punchTime.lte = hkDateEnd(endDate)
   }
 
   // Data scope filtering
@@ -67,11 +68,8 @@ export async function GET(req: NextRequest) {
     prisma.punchRecord.count({ where }),
   ])
 
-  return NextResponse.json({
-    records,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
-  })
+  return NextResponse.json(
+    { records, total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+    { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+  )
 }

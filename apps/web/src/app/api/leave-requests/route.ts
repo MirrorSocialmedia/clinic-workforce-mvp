@@ -147,8 +147,8 @@ export async function POST(req: NextRequest) {
         where: {
           employeeId: employee.id,
           status: { in: ['PENDING', 'APPROVED'] },
-          startDate: { lte: new Date(endDate) },
-          endDate: { gte: new Date(startDate) },
+          startDate: { lte: new Date(endDate) }, // TZ-OK: LeaveRequest 用 UTC 午夜儲存
+          endDate: { gte: new Date(startDate) }, // TZ-OK
         },
       })
       if (overlap) {

@@ -288,7 +288,7 @@ export default function AttendancePage() {
   // Shared data loading
   const fetchUserData = async () => {
     try {
-      const res = await fetch('/api/me', { credentials: 'include' })
+      const res = await fetch('/api/me', { credentials: 'include', cache: 'no-store' })
       if (!res.ok) { router.push('/login'); return }
       const data = await res.json()
       setUser({ role: data.user.role, clinics: data.user.clinicIds || [] })
@@ -298,8 +298,8 @@ export default function AttendancePage() {
   const fetchClinicsAndEmployees = async () => {
     try {
       const [cRes, eRes] = await Promise.all([
-        fetch('/api/clinics', { credentials: 'include' }),
-        fetch('/api/employees', { credentials: 'include' }),
+        fetch('/api/clinics', { credentials: 'include', cache: 'no-store' }),
+        fetch('/api/employees', { credentials: 'include', cache: 'no-store' }),
       ])
       if (cRes.ok) { const d = await cRes.json(); setClinics(d.clinics || []); setExClinics(d.clinics || []) }
       if (eRes.ok) {
@@ -323,7 +323,7 @@ export default function AttendancePage() {
       if (employeeFilter) params.set('employeeId', employeeFilter)
       if (startDate) params.set('startDate', startDate)
       if (endDate) params.set('endDate', endDate)
-      const res = await fetch(`/api/punches?${params}`, { credentials: 'include' })
+      const res = await fetch(`/api/punches?${params}`, { credentials: 'include', cache: 'no-store' })
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `伺服器錯誤 (${res.status})`) }
       const data = await res.json()
       setRecords(data.records || []); setTotal(data.total || 0)
@@ -352,6 +352,7 @@ export default function AttendancePage() {
         if (employeeFilter) params.set('employeeId', employeeFilter)
         const res = await fetch(`/api/payroll-runs/exceptions?${params}`, {
           credentials: 'include',
+          cache: 'no-store',
         })
         if (res.ok) {
           const d = await res.json()
@@ -376,7 +377,7 @@ export default function AttendancePage() {
       const params = new URLSearchParams({ periodMonth })
       if (exClinicId) params.set('clinicId', exClinicId)
       if (exEmployeeId) params.set('employeeId', exEmployeeId)
-      const res = await fetch(`/api/payroll-runs/exceptions?${params}`, { credentials: 'include' })
+      const res = await fetch(`/api/payroll-runs/exceptions?${params}`, { credentials: 'include', cache: 'no-store' })
       if (res.ok) { const data = await res.json(); setExceptions(data.exceptions || []) }
       else { setExceptions([]) }
     } catch { setExceptions([]) }
@@ -472,7 +473,7 @@ export default function AttendancePage() {
   // Hash
   const fetchHashClinics = useCallback(async () => {
     try {
-      const res = await fetch('/api/clinics', { credentials: 'include' })
+      const res = await fetch('/api/clinics', { credentials: 'include', cache: 'no-store' })
       if (res.ok) { const data = await res.json(); setClinics(data.clinics || []) }
     } catch {}
   }, [])
@@ -484,7 +485,7 @@ export default function AttendancePage() {
       const params = new URLSearchParams({ clinicId: selectedClinic })
       if (dateRange.start) params.set('startDate', dateRange.start)
       if (dateRange.end) params.set('endDate', dateRange.end)
-      const res = await fetch(`/api/daily-hash?${params}`, { credentials: 'include' })
+      const res = await fetch(`/api/daily-hash?${params}`, { credentials: 'include', cache: 'no-store' })
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `伺服器錯誤 (${res.status})`) }
       const data = await res.json()
       setHashes(data.hashes || [])
@@ -510,7 +511,7 @@ export default function AttendancePage() {
   const verifyHash = useCallback(async () => {
     if (!selectedClinic || !selectedDate) return
     try {
-      const res = await fetch(`/api/daily-hash/${selectedDate}?clinicId=${selectedClinic}&verify=true`, { credentials: 'include' })
+      const res = await fetch(`/api/daily-hash/${selectedDate}?clinicId=${selectedClinic}&verify=true`, { credentials: 'include', cache: 'no-store' })
       if (res.ok) { const data = await res.json(); setVerifyResult(data) }
     } catch { alert('驗證失敗') }
   }, [selectedClinic, selectedDate])

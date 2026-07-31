@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
@@ -25,10 +26,10 @@ export async function GET(req: NextRequest) {
   const where: any = { employeeId: employee.id }
 
   if (from) {
-    where.punchTime = { gte: new Date(from) }
+    where.punchTime = { gte: hkDateStart(from) }
   }
   if (to) {
-    where.punchTime = { ...(where.punchTime || {}), lte: new Date(to) }
+    where.punchTime = { ...(where.punchTime || {}), lte: hkDateEnd(to) }
   }
 
   const punches = await prisma.punchRecord.findMany({

@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 
 // ============================================================
@@ -42,8 +43,8 @@ export async function GET(req: NextRequest) {
 
     if (startDate || endDate) {
       where.date = {}
-      if (startDate) where.date.gte = new Date(startDate)
-      if (endDate) where.date.lte = new Date(endDate)
+      if (startDate) where.date.gte = hkDateStart(startDate)
+      if (endDate) where.date.lte = hkDateEnd(endDate)
     }
 
     const shifts = await prisma.shift.findMany({

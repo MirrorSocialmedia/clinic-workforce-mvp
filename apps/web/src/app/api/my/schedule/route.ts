@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { toHKDateStr } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/my/schedule — My upcoming schedule
@@ -27,13 +27,13 @@ export async function GET(req: NextRequest) {
   const where: any = { employeeId: employee.id }
 
   if (from) {
-    where.startTime = { gte: new Date(from) }
+    where.startTime = { gte: hkDateStart(from) }
   } else {
     where.startTime = { gte: new Date() }
   }
 
   if (to) {
-    where.startTime = { ...where.startTime, lte: new Date(to) }
+    where.startTime = { ...where.startTime, lte: hkDateEnd(to) }
   }
 
   const shifts = await prisma.shift.findMany({
