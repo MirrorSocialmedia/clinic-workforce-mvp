@@ -3222,12 +3222,19 @@ export async function calculatePayrollWithRules(
   //      之前就係漏咗 `- result.deduction`，令有無薪假嘅月份 ADW 高估 20%。
   //      將來任何新增嘅 gross 項目會自動流入；如果新項目唔屬 EO 工資，
   //      喺下面 NON_EO_WAGE 度加返，一個地方維護。
-  const NON_EO_WAGE = storeBonus // 酌情花紅
+  //
+  //   ★ 2026-07-31 更正：店舖營業額獎金寫喺合約裡面（按營業額公式計，
+  //     僱員有合理預期），屬 EO 第 2 條嘅「工資」，要計入。
+  //     舊版當佢係酌情花紅剔出，係基於錯誤前提。
+  //     EO 第 2 條剔除嘅係「非經常性 / 僱主酌情」嘅花紅 —— 目前系統冇呢類項目。
+  //     miscAmount（實報實銷）本身喺 MPF 之後先加，唔喺 grossPay 內，唔使另外減。
+  const NON_EO_WAGE = 0 // 目前 grossPay 入面冇任何唔屬 EO 工資嘅項目
   const eoWage = Math.round((finalGrossPay - NON_EO_WAGE) * 100) / 100
 
   // ★ 對帳 guard 永遠開 —— 計糧一個月一次，log 成本可忽略，
   //   而靜靜計錯數嘅代價遠高於一行 log。
   //   兩邊由唔同途徑得出（逐項砌 vs 經 OT 重算調整），所以呢個 guard 真係會 fire。
+  //   註：eoWage 而家等於 grossPay（NON_EO_WAGE = 0），所以只需要驗呢一條。
   {
     const itemised =
       result.basePay

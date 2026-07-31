@@ -1,15 +1,10 @@
 import { PrismaClient } from '@prisma/client'
 
 /**
- * Backfill eoWage for existing FINALIZED/EXPORTED PayrollItems that have eoWage === 0.
+ * Backfill eoWage for existing PayrollItems.
  *
- * EO wage = grossPay − storeBonus
- *   where grossPay is stored in detailJson (computed at payroll generation time).
- *
- * This formula covers:
- *   basePay − deduction + otPay + splitPay + attendanceBonus + storeBonus
- *   + totalAllowances − sickDeduction + adwAdjustment + maternityPay + paternityPay
- *   (all rolled into grossPay; only storeBonus is subtracted back out)
+ * ★ 2026-07-31 更正：EO wage = grossPay（店舖獎金屬合約工資，唔再剔除）
+ *   舊版係 grossPay − storeBonus，基於「酌情花紅」嘅錯誤前提。
  *
  * Usage:
  *   npx tsx scripts/backfill-eo-wage.ts
@@ -60,13 +55,13 @@ function deriveEoWage(item: any): number | null {
       (item.paternityPay ?? 0)
   }
 
-  return Math.round((grossPay! - storeBonus) * 100) / 100
+  return Math.round(grossPay! * 100) / 100
 }
 
 async function main() {
   const items = await prisma.payrollItem.findMany({
     where: {
-      eoWage: 0,
+      // eoWage: 0, ← 拿走：已有值嘅都係舊口徑，要重算
       run: { status: { in: ['FINALIZED', 'EXPORTED'] } },
     },
     include: { run: true },
