@@ -6,6 +6,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
 class InsufficientBalanceError extends Error {}
@@ -248,6 +249,9 @@ export async function POST(req: NextRequest) {
           console.error('notify failed', e)
         }
       }
+
+      // ★ 假期影響缺勤判斷同午飯扣減 → 快取要失效
+      await invalidateTimeBankFrom(employee.id, new Date(startDate), prisma)
 
       return NextResponse.json({ success: true, leaveRequest: request }, { status: 201 })
     } catch (error) {

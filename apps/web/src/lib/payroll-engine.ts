@@ -16,6 +16,25 @@ import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 
 // ------------------------------------------------------------------
+// TimeBank Engine Version + Cache Key
+// ------------------------------------------------------------------
+/**
+ * ★ Bump this version whenever calculateTimeBank logic changes.
+ *   TimeBank cache entries with mismatched versions are auto-invalidated.
+ */
+const TIMEBANK_ENGINE_VERSION = 3 // v3: 分更時間窗 + floor 取整
+
+/** Generate a fingerprint of the pay rule config + engine version. */
+function timeBankCacheKey(config: any): string {
+  const sig = JSON.stringify({
+    ot: config?.modifiers?.overtime ?? null,
+    lunch: config?.modifiers?.lunch_break ?? null,
+    rest: config?.working_days?.rest_days ?? null,
+  })
+  return `v${TIMEBANK_ENGINE_VERSION}:${sig}`
+}
+
+// ------------------------------------------------------------------
 // Types
 // ------------------------------------------------------------------
 
@@ -1285,12 +1304,14 @@ export function evaluateAttendanceBonus(
  * Get carried-from balance, recursively backfilling missing months.
  * If last month has no TimeBank record but has punch data, recalculates it on the fly.
  * @param depth - recursion depth (max 24 months)
+ * @param config - pay rule config for cacheKey fingerprint matching
  */
 async function getCarriedFrom(
   employeeId: string,
   monthDate: Date,
   db: any,
-  depth = 0
+  depth = 0,
+  config: any = {},
 ): Promise<number> {
   if (depth > 24) return 0
 
@@ -1301,13 +1322,15 @@ async function getCarriedFrom(
   const lastMonth = new Date(`${String(lastMonthY).padStart(4, '0')}-${String(lastMonthM + 1).padStart(2, '0')}-01T00:00:00+08:00`)
   const { start: lStart, end: lEnd } = getMonthRange(lastMonth)
 
-  // ① Check existing TimeBank record
+  // ① Check existing TimeBank record — validate cacheKey fingerprint
+  const key = timeBankCacheKey(config)
   const rec = await db.timeBank.findFirst({
     where: { employeeId, periodMonth: { gte: lStart, lte: lEnd } },
   })
-  if (rec) return rec.balance ?? 0
+  // ★ 快取指紋不夾（config 改了 或 引擎版本 bump 或 舊 row cacheKey=null）→ 當沒有快取，重新計
+  if (rec && rec.cacheKey === key) return rec.balance ?? 0
 
-  // ② No record: check if last month had any activity (punches OR TimeBankEntry)
+  // ② No record (or stale cache): check if last month had any activity (punches OR TimeBankEntry)
   // ★ TimeBankEntry (INIT_ADJUST/REST_TO_ACCOUNT etc.) also counts as activity!
   const hasPunch = await db.punchRecord.findFirst({
     where: {
@@ -1322,24 +1345,27 @@ async function getCarriedFrom(
   const hasActivity = hasPunch || hasTimeBankEntry
   if (!hasActivity) return 0 // No activity → chain starts here
 
-  // ③ Has activity but no TimeBank → recursively recalculate last month (single source of truth)
-  const tb = await calculateTimeBank(employeeId, lastMonth, {}, db, depth + 1)
+  // ③ Has activity but no (valid) TimeBank → recursively recalculate last month (single source of truth)
+  // ★ 遞歸要用同一份 config，否則過往月份的 OT 門檻／午休設定全部失效
+  const tb = await calculateTimeBank(employeeId, lastMonth, config, db, depth + 1)
 
   // ④ Persist the backfilled record so future lookups are fast
+  // ★ 六個欄全部寫齊 —— update 只寫兩欄會令 row 內部矛盾（新 balance + 舊明細）
+  const cacheData = {
+    balance: tb.balance,
+    carriedFrom: tb.carriedFrom,
+    otMinutes: tb.otMinutes,
+    lateMinutes: tb.lateMinutes,
+    earlyLeaveMinutes: tb.earlyLeaveMinutes,
+    makeupMinutes: tb.makeupMinutes,
+    cacheKey: key,
+  }
   await db.timeBank.upsert({
     where: {
       employeeId_periodMonth: { employeeId, periodMonth: lStart },
     },
-    update: { balance: tb.balance, carriedFrom: tb.carriedFrom },
-    create: {
-      employeeId,
-      periodMonth: lStart,
-      balance: tb.balance,
-      carriedFrom: tb.carriedFrom,
-      otMinutes: tb.otMinutes,
-      lateMinutes: tb.lateMinutes,
-      makeupMinutes: tb.makeupMinutes,
-    },
+    update: cacheData,
+    create: { employeeId, periodMonth: lStart, ...cacheData },
   })
   return tb.balance
 }
@@ -1410,7 +1436,8 @@ export async function calculateTimeBank(
   }
 
   // Previous month carry — recursive backfill (pass depth to prevent infinite recursion)
-  const carriedFrom = await getCarriedFrom(employeeId, monthDate, db, depth)
+  // ★ 傳同一份 config，否則過往月份的 OT 門檻／午休設定全部失效
+  const carriedFrom = await getCarriedFrom(employeeId, monthDate, db, depth, config)
 
   // Grab ALL effective punches (CLOCK_IN + CLOCK_OUT) with corrections applied
   const effectivePunches = await getEffectivePunches(monthStart, monthEnd, { employeeId, db })
@@ -3116,7 +3143,8 @@ export async function calculatePayrollWithRules(
     const netDeficitMinutes = Math.max(0, deficitMinutes - tb.makeupMinutes)
 
     // carriedFrom — recursive backfill
-    const carriedFrom = await getCarriedFrom(employeeId, monthDate, prisma)
+    // ★ 傳同一份 config，否則過往月份的 OT 門檻／午休設定全部失效
+    const carriedFrom = await getCarriedFrom(employeeId, monthDate, prisma, 0, timeBankConfig)
 
     // 可用OT = OT − 補鐘消耗 − 淨 deficit + 上月結轉
     const netOtMinutes = otMinutesFromResult

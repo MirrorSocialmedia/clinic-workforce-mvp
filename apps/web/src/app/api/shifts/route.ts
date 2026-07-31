@@ -6,6 +6,7 @@ import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-writ
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, requirePerm, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // ============================================================
 // GET /api/shifts — list shifts with filters
@@ -282,6 +283,15 @@ export async function POST(req: NextRequest) {
         })
 
         shifts.push(shift)
+      }
+
+      // ★ 排班影響遲到／早退／OT 判斷 → 快取要失效
+      // 批量排班用最早日期（invalidateTimeBankFrom 會清該月及之後全部）
+      if (shifts.length > 0) {
+        const dates = shifts.map((s: any) => new Date(s.date).getTime()).sort()
+        const earliest = new Date(dates[0])
+        const empId = shifts[0].employeeId
+        await invalidateTimeBankFrom(empId, earliest, prisma)
       }
 
       return NextResponse.json(

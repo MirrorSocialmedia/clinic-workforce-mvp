@@ -648,8 +648,12 @@ model TimeBank {
   lateMinutes       Int      @default(0)
   earlyLeaveMinutes Int      @default(0)
   makeupMinutes     Int      @default(0)
-  balance           Int      @default(0) // ot - late
+  /// 累計時間帳戶 = carriedFrom + (ot − makeup − netDeficit) + 換假消耗
+  /// 正 = 公司欠員工；負 = 員工拖欠。同 calculateTimeBank 嘅 timeAccountMinutes 相同
+  balance           Int      @default(0)
   carriedFrom       Int      @default(0) // 上月結轉
+  /// 計算時的 pay rule config 指紋 + 引擎版本，不夾就重算
+  cacheKey          String?
   monthEndNote      String?  // 月底結算備註
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

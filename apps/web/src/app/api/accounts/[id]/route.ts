@@ -330,6 +330,12 @@ export async function PUT(
                   afterJson: JSON.stringify({ payType, baseAmount, configJson: incomingConfig, effectiveFrom: effDate }),
                 } as any,
               })
+
+              // ★ 改 OT 門檻/午休設定會影響所有歷史月份的時間帳戶計算結果 →
+              //   清晒該員工全部快取，唔使只清某個月
+              await prisma.timeBank.deleteMany({
+                where: { employeeId: employee.id },
+              })
             } catch (e: any) {
               if (e?.code === 'P2002') {
                 return NextResponse.json(

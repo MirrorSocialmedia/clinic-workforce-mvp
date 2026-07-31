@@ -5,6 +5,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // PUT /api/leave-requests/[id] — Approve/Reject leave request
 export async function PUT(
@@ -117,6 +118,11 @@ export async function PUT(
       relatedId: request.id,
     })
 
+    // ★ 假期審批影響缺勤判斷同午飯扣減 → 快取要失效
+    if (status === 'APPROVED') {
+      await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
+    }
+
     // Audit handled by Prisma extension (LeaveRequest ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true, leaveRequest: updated })
@@ -178,6 +184,9 @@ export async function DELETE(
       }
 
       await prisma.leaveRequest.delete({ where: { id: requestId } })
+
+      // ★ 刪除假期影響缺勤判斷同午飯扣減 → 快取要失效
+      await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
 
       return NextResponse.json({ success: true })
     } catch (error) {

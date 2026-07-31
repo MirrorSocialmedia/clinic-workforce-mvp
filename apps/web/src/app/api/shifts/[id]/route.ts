@@ -6,6 +6,7 @@ import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
 import { requirePerm, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // PUT /api/shifts/[id] — edit shift
 export async function PUT(
@@ -133,6 +134,12 @@ export async function PUT(
 
     if (shift instanceof NextResponse) return shift
 
+    // ★ 排班變更影響遲到／早退／OT 判斷 → 新舊日期都要失效（改期會影響兩個月）
+    await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
+    if (updateData.date) {
+      await invalidateTimeBankFrom(existing.employeeId, updateData.date, prisma)
+    }
+
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true, shift })
@@ -165,6 +172,9 @@ export async function DELETE(
 
     const beforeJson = JSON.stringify(existing)
     await prisma.shift.delete({ where: { id } })
+
+    // ★ 刪除排班影響遲到／早退／OT 判斷 → 快取要失效
+    await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
 
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
