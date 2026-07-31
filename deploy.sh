@@ -14,7 +14,7 @@ echo "== 拉代碼 =="
 git pull
 
 echo "🔍 Typecheck..."
-docker exec -T app npx tsc --noEmit --project apps/web/tsconfig.json || {
+docker exec app npx tsc --noEmit --project apps/web/tsconfig.json || {
   echo "❌ Typecheck 失敗，中止部署"; exit 1
 }
 
@@ -24,7 +24,7 @@ $DC up -d --build app
 echo "── Face service（warn-only，永不擋主站）──"
 if $DC build face && $DC up -d face; then
  sleep 15
- if $DC exec -T app node -e "fetch('http://face:8000/health').then(r=>r.json()).then(d=>{if(!d.ok)process.exit(1)}).catch(()=>process.exit(1))" 2>/dev/null; then
+ if $DC exec app node -e "fetch('http://face:8000/health').then(r=>r.json()).then(d=>{if(!d.ok)process.exit(1)}).catch(()=>process.exit(1))" 2>/dev/null; then
   echo "✅ face service 健康"
  else
   echo "⚠️ face 未回應——打卡將標 SKIPPED，主站不受影響（$DC logs face 查）"
@@ -34,7 +34,7 @@ else
 fi
 
 echo "== 套用 migration =="
-$DC exec -T app npx prisma migrate deploy --schema apps/web/prisma/schema.prisma
+$DC exec app npx prisma migrate deploy --schema apps/web/prisma/schema.prisma
 
 echo "== 完成 =="
 docker logs clinic-prod-app --tail 5
