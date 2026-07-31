@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { CONFIG } from '@/lib/config'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/face/review/[punchId] — Return frame image + audit
 // POST /api/face/review/[punchId] — Confirm or flag the punch
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const punchId = params.id
   const punch = await prisma.punchRecord.findUnique({ where: { id: punchId } })
   if (!punch || !punch.faceFramePath) {
-    return NextResponse.json({ error: 'frame not found' }, { status: 404 })
+    return jsonNoStore({ error: 'frame not found' }, { status: 404 })
   }
 
   // ★ IDOR: MANAGER 只可以覆核自己店嘅打卡
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const res = await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${punchId}`, {
     signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
   })
-  if (!res.ok) return NextResponse.json({ error: 'frame fetch failed' }, { status: 404 })
+  if (!res.ok) return jsonNoStore({ error: 'frame fetch failed' }, { status: 404 })
   const buffer = await res.arrayBuffer()
   return new Response(buffer, {
     status: 200,
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { action } = body // 'confirm' | 'flag'
 
   const punch = await prisma.punchRecord.findUnique({ where: { id: punchId } })
-  if (!punch) return NextResponse.json({ error: 'not found' }, { status: 404 })
+  if (!punch) return jsonNoStore({ error: 'not found' }, { status: 404 })
 
   // ★ IDOR: MANAGER 只可以處置自己店嘅打卡
   const denied = assertClinicAccess(scope, session, punch.clinicId)
@@ -102,5 +103,5 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     },
   })
 
-  return NextResponse.json({ ok: true })
+  return jsonNoStore({ ok: true })
 }

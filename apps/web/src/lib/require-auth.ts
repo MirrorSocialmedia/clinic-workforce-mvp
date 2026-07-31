@@ -199,6 +199,16 @@ export async function requireAuth(
     scope = 'all'
   }
 
+  /**
+   * ★ 考勤管理需要读到的数据 route。
+   * 有 attendance_manage 权限 = 管理考勤，需要睇到所有员工嘅补登记录。
+   * 唔改呢度会出现同假期一模一样的症状：补登成功但列表睇不到。
+   */
+  const ATTENDANCE_DATA_ROUTES = ['GET /api/punch-corrections', 'GET /api/punches']
+  if ((perms ?? []).includes('attendance_manage') && ATTENDANCE_DATA_ROUTES.includes(normalized)) {
+    scope = 'all'
+  }
+
   return { session: { ...session, clinics: freshClinics }, scope, perms }
 }
 

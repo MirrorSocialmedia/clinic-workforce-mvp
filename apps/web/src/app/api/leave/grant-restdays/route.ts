@@ -8,7 +8,15 @@ import { hkParts } from '@/lib/hk-date'
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error as NextResponse
-  if (auth.session.role !== 'OWNER') return NextResponse.json({ error: '僅老闆可發放' }, { status: 403 })
+  const { session, perms } = auth
+  // ★ 排休息日係排班工作嘅一部分 —— 冇發放權就會撞死路
+  //   （leave-requests:233 個提示叫用家去發放，但佢哋冇權）
+  if (!(perms ?? []).includes('scheduling')) {
+    return NextResponse.json(
+      { error: 'Forbidden (missing permission: scheduling)' },
+      { status: 403 },
+    )
+  }
 
   const { which, employeeScope } = await req.json()
   // which: 'this' | 'next'

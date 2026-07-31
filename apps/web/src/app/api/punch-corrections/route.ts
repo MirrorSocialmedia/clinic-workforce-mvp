@@ -285,9 +285,19 @@ export async function GET(req: NextRequest) {
     const emp = await prisma.employee.findUnique({
       where: { userId: session.userId },
     })
-    if (emp) {
-      where.employeeId = emp.id
+    // ★ fail-closed：冇 Employee 記錄唔可以當「冇限制」——
+    //   舊版 `if (emp)` 令呢類角色攞到全公司補登記錄
+    if (!emp) {
+      return jsonNoStore({ error: 'Employee profile not found' }, { status: 400 })
     }
+    // ★ 明確拒絕，唔好靜靜回自己嘅（同 leave-balance / leave-requests 一致）
+    if (employeeId && employeeId !== emp.id) {
+      return jsonNoStore(
+        { error: 'Forbidden (cannot read other employees\' punch corrections)' },
+        { status: 403 },
+      )
+    }
+    where.employeeId = emp.id
   }
 
   if (clinicId) where.clinicId = clinicId

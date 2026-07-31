@@ -2,8 +2,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
-import { toHKDateStr } from '@/lib/hk-date'
-import { calculateTimeBank } from '@/lib/payroll-engine'
+import { jsonNoStore } from '@/lib/api-response'
+import { getTimeAccountSummary } from '@/lib/timebank-summary'
 
 /**
  * GET /api/timebank/overview
@@ -38,19 +38,6 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  const monthDate = new Date(`${toHKDateStr(new Date()).slice(0, 7)}-01T00:00:00+08:00`)
-  const summaries = []
-  for (const e of employees) {
-    let cfg: any = {}
-    try { cfg = JSON.parse(e.payRules[0]?.configJson || '{}') } catch {}
-    if (cfg.base_type === 'hourly') continue // 兼職不計時間帳戶
-    const tb = await calculateTimeBank(e.id, monthDate, cfg, prisma)
-    summaries.push({
-      employeeId: e.id,
-      employeeName: e.user.name,
-      timeAccountMinutes: tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes),
-    })
-  }
-
-  return NextResponse.json({ summaries })
+  const summaries = await getTimeAccountSummary(prisma, employees)
+  return jsonNoStore({ summaries: summaries.filter(r => r.timeAccountMinutes != null) })
 }

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { todayHK, hkDateStart } from '@/lib/hk-date'
+import { getTimeAccountSummary } from '@/lib/timebank-summary'
 
 /** Get start/end of today in HK (UTC+8) */
 function hkTodayBounds() {
@@ -164,16 +165,14 @@ export async function GET(req: NextRequest) {
       homeClinicId: true,
       user: { select: { name: true } },
       homeClinic: { select: { id: true, name: true } },
-      payRules: { where: { isActive: true }, select: { payType: true }, take: 1 },
+      payRules: { where: { isActive: true }, select: { payType: true, configJson: true }, take: 1 },
     },
   })
 
   // ── Time Bank balances per employee ──
-  const timeBankEntries = await prisma.timeBankEntry.groupBy({
-    by: ['employeeId'],
-    _sum: { minutes: true },
-  })
-  const tbMap = new Map(timeBankEntries.map(t => [t.employeeId, t._sum.minutes ?? 0]))
+  // ★ 唔好再 sum TimeBankEntry —— 嗰张表只有手动调整，冇打卡算出来的迟到／早退／OT
+  const tbRows = await getTimeAccountSummary(prisma, activeEmployees)
+  const tbMap = new Map(tbRows.map(r => [r.employeeId, r.timeAccountMinutes]))
 
   // empSummary: each employee with timeAccountMinutes (null for HOURLY/part-time)
   const empSummary = activeEmployees.map(emp => {
@@ -184,7 +183,7 @@ export async function GET(req: NextRequest) {
       clinicId: emp.homeClinicId ?? emp.homeClinic?.id ?? null,
       clinicName: emp.homeClinic?.name ?? '',
       payType,
-      timeAccountMinutes: payType === 'HOURLY' ? null : (tbMap.get(emp.id) ?? 0),
+      timeAccountMinutes: tbMap.get(emp.id) ?? null,
     }
   })
 

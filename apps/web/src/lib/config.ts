@@ -141,7 +141,7 @@ export const CONFIG = {
     'POST /api/leave-balance/init': ['OWNER', 'MANAGER'],
     'DELETE /api/leave-balance': ['OWNER'],
     'PATCH /api/leave-balance': ['OWNER', 'MANAGER'],
-    'POST /api/leave/grant-restdays': ['OWNER'],
+    'POST /api/leave/grant-restdays': ['OWNER', 'EMPLOYEE'],
 
     // HK public holiday routes
     'GET /api/hk-public-holidays': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
@@ -276,6 +276,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
 
   // —— 離職結算：有 leave_approve 或 payroll_generate 權限可以觸發 ——
   'POST /api/leave-settlement': ['leave_approve', 'payroll_generate'],
+
+  // —— 發放休息日：有 scheduling 權限就可以發放（grant-restdays route 改用 scheduling 權限） ——
+  'POST /api/leave/grant-restdays': ['scheduling'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]
