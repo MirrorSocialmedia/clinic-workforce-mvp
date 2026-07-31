@@ -64,6 +64,8 @@ export async function GET(req: NextRequest) {
     page,
     pageSize,
     totalPages: Math.ceil(total / pageSize),
+  }, {
+    headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })
 }
 

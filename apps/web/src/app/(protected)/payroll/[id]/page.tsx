@@ -7,6 +7,12 @@ import { BackButton } from '@/components/BackButton'
 import { Wallet, Trash2 } from 'lucide-react'
 import { periodMonthKey } from '@/lib/hk-date'
 
+// ★ 讀取類 fetch 一律繞過瀏覽器快取。
+// PUT 同 GET 用同一個 URL，唔加就會喺寫入之後攞返舊 response
+// （確認計糧「冇反應」就係咁嚟）。
+const api = (url: string, init?: RequestInit) =>
+  fetch(url, { credentials: 'include', cache: 'no-store', ...init })
+
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
 
 interface PayrollItem {
@@ -78,7 +84,7 @@ export default function PayrollDetailPage() {
   const fetchRun = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/payroll-runs/${runId}`)
+      const res = await api(`/api/payroll-runs/${runId}`)
       if (!res.ok) {
         if (res.status === 404) router.push('/payroll')
         return
@@ -95,7 +101,7 @@ export default function PayrollDetailPage() {
 
   useEffect(() => {
     fetchRun()
-    fetch('/api/me').then(async r => {
+    api('/api/me').then(async r => {
       if (!r.ok) return { user: { role: '' } }
       const d = await r.json()
       setUserRole(d.user?.role || '')
@@ -106,10 +112,9 @@ export default function PayrollDetailPage() {
 
   const handleStatusChange = async (newStatus: string) => {
     try {
-      const res = await fetch(`/api/payroll-runs/${runId}`, {
+      const res = await api(`/api/payroll-runs/${runId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ status: newStatus }),
       })
       if (res.ok) {
@@ -133,9 +138,8 @@ export default function PayrollDetailPage() {
       '請填寫原因（至少 5 個字）：'
     )
     if (!reason || reason.trim().length < 5) return
-    const res = await fetch(`/api/payroll-runs/${runId}`, {
+    const res = await api(`/api/payroll-runs/${runId}`, {
       method: 'PUT',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'DRAFT', reason: reason.trim() }),
     })
@@ -149,9 +153,7 @@ export default function PayrollDetailPage() {
 
   // ★ C2: 確認前檢查
   const handleConfirmClick = async () => {
-    const res = await fetch(`/api/payroll-runs/${runId}/preflight`, {
-      credentials: 'include', cache: 'no-store',
-    })
+    const res = await api(`/api/payroll-runs/${runId}/preflight`)
     if (!res.ok) { alert('檢查失敗，請重試'); return }
     setPreflight(await res.json())
     setShowPreflight(true)
@@ -160,10 +162,9 @@ export default function PayrollDetailPage() {
   const doConfirm = async () => {
     setConfirming(true)
     try {
-      const res = await fetch(`/api/payroll-runs/${runId}`, {
+      const res = await api(`/api/payroll-runs/${runId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ status: 'FINALIZED' }),
       })
       if (res.ok) {
@@ -184,9 +185,8 @@ export default function PayrollDetailPage() {
   const handleDelete = async () => {
     if (!confirm('確定刪除？此操作不可復原。')) return
     try {
-      const res = await fetch(`/api/payroll-runs/${runId}`, {
+      const res = await api(`/api/payroll-runs/${runId}`, {
         method: 'DELETE',
-        credentials: 'include',
       })
       if (res.ok) {
         router.push('/payroll')
@@ -202,10 +202,9 @@ export default function PayrollDetailPage() {
   const handleExport = async (format: 'xlsx' | 'pdf') => {
     setExporting(format)
     try {
-      const res = await fetch(`/api/payroll-runs/${runId}/export`, {
+      const res = await api(`/api/payroll-runs/${runId}/export`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ format }),
       })
       if (!res.ok) throw new Error('匯出失敗')
@@ -228,10 +227,9 @@ export default function PayrollDetailPage() {
 
   const handleUpdateNotes = async () => {
     try {
-      const res = await fetch(`/api/payroll-runs/${runId}`, {
+      const res = await api(`/api/payroll-runs/${runId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ notes: updateNote }),
       })
       if (res.ok) fetchRun()

@@ -62,7 +62,9 @@ export async function GET(
     totalAbsentDays: items.reduce((s: number, i: any) => s + i.absentDays, 0),
   }
 
-  return NextResponse.json({ run: { ...run, items }, summary })
+  return NextResponse.json({ run: { ...run, items }, summary }, {
+    headers: { 'Cache-Control': 'no-store, must-revalidate' },
+  })
 }
 
 // PUT /api/payroll-runs/[id] — Update payroll run status/notes
