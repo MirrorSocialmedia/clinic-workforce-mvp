@@ -318,15 +318,13 @@ export default function SchedulingPage() {
     setMobileSelectedDate(toHKDateStr(d))
   }
 
-  // Desktop: week navigation linked with FullCalendar
+  // Desktop: week navigation — no longer depends on calendarRef
   const shiftViewWeek = (delta: number) => {
-    const api = calendarRef.current?.getApi()
-    if (api) { delta < 0 ? api.prev() : api.next(); return }
-    if (viewRange) {
-      const s = new Date(viewRange.start); s.setDate(s.getDate() + delta)
-      const e = new Date(viewRange.end); e.setDate(e.getDate() + delta)
-      setViewRange({ start: toHKDateStr(s), end: toHKDateStr(e) })
-    }
+    setCurrentDate(prev => {
+      const d = new Date(prev)
+      d.setDate(d.getDate() + delta)
+      return d
+    })
   }
 
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
@@ -392,6 +390,36 @@ export default function SchedulingPage() {
   // ★ Month overview state
   const monthExportRef = useRef<HTMLDivElement>(null)
   const [ovMonth, setOvMonth] = useState(() => toHKDateStr(new Date()).slice(0, 7))
+
+  // ★ Sync ovMonth with currentDate when switching to month view
+  useEffect(() => {
+    if (viewMode !== 'month') return
+    const ym = toHKDateStr(currentDate).slice(0, 7)
+    setOvMonth(prev => (prev === ym ? prev : ym))
+  }, [viewMode, currentDate])
+
+  // ★ viewRange self-calculation — independent of FullCalendar datesSet.
+  //   When calendar is hidden (SHOW_LEGACY_CALENDAR=false), viewRange would
+  //   stay null otherwise, causing both overviews to disappear.
+  useEffect(() => {
+    if (viewMode === 'week') {
+      const d = new Date(currentDate)
+      const dow = d.getDay()
+      const monday = new Date(d)
+      monday.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      const next = { start: toHKDateStr(monday), end: toHKDateStr(sunday) }
+      setViewRange(prev =>
+        prev?.start === next.start && prev?.end === next.end ? prev : next)
+    } else {
+      const [y, m] = ovMonth.split('-').map(Number)
+      const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
+      const next = { start: `${ovMonth}-01`, end: `${ovMonth}-${String(last).padStart(2, '0')}` }
+      setViewRange(prev =>
+        prev?.start === next.start && prev?.end === next.end ? prev : next)
+    }
+  }, [viewMode, currentDate, ovMonth])
   const [ovMonthShifts, setOvMonthShifts] = useState<any[]>([]) // separate from ovShifts
   const [monthLeaveRequests, setMonthLeaveRequests] = useState<any[]>([])
 
@@ -2017,7 +2045,7 @@ function getShiftCode(shift: Shift): string {
       <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', margin: '8px 0 4px 10px' }}>
         {title}（{days[0]?.dateStr.slice(5)} – {days[6]?.dateStr.slice(5)}）
       </div>
-      <div style={{ display: 'flex', justifyContent: 'center', overflowX: 'auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-start', overflowX: 'auto' }}>
         <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%', tableLayout: 'fixed' }}>
           <colgroup>
             <col style={{ width: '12%' }} />
@@ -3679,6 +3707,31 @@ function getShiftCode(shift: Shift): string {
           </div>
         </div>
         <div id="fc-section" style={{ minWidth: 0, flex: 1 }}>
+          {/* ★ week/month toggle — independent of FullCalendar, always visible */}
+          <div style={{ display: 'inline-flex', border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
+            <button
+              onClick={() => setViewMode('week')}
+              style={{
+                padding: '4px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
+                background: viewMode === 'week' ? '#1a1a2e' : '#fff',
+                color: viewMode === 'week' ? '#fff' : '#374151',
+              }}
+            >
+              週視圖<span style={{ fontSize: 10, opacity: .7, marginLeft: 4 }}>兩週總覽</span>
+            </button>
+            <button
+              onClick={() => setViewMode('month')}
+              style={{
+                padding: '4px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
+                borderLeft: '1px solid #d1d5db',
+                background: viewMode === 'month' ? '#1a1a2e' : '#fff',
+                color: viewMode === 'month' ? '#fff' : '#374151',
+              }}
+            >
+              月視圖<span style={{ fontSize: 10, opacity: .7, marginLeft: 4 }}>整月總覽</span>
+            </button>
+          </div>
+
           {/* Overview Grid — compact mode, always shown */}
           {viewMode === 'week' && viewRange && ovEmployees.ordered.length > 0 && (
             <div ref={overviewRef} className="ov-compact" style={{
@@ -3750,9 +3803,11 @@ function getShiftCode(shift: Shift): string {
             </div>
           )}
 
-          {/* ★ 月版全局總覽 —— 唯讀、sticky 名欄、橫捲、三組（全職/兼職/借調） */}
-          {monthDays.length > 0 && ovEmployees.full.length > 0 && (
-            <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
+          {/* ★ 月版全局總覽 —— 只喺 month 模式顯示，同兩週總覽互斥。
+                原本冇 viewMode 條件，令 week 模式下兩個一齊出，畫面過長；
+                而切去 month 時兩週消失，用家以為壞咗。 */}
+          {viewMode === 'month' && monthDays.length > 0 && ovEmployees.ordered.length > 0 && (
+            <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%', overflow: 'hidden' }}>
               {/* Month header: navigation + capture */}
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3781,8 +3836,8 @@ function getShiftCode(shift: Shift): string {
                 </button>
               </div>
               {/* Month table: scrollable body, sticky name column */}
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 11 }}>
+              <div style={{ overflowX: 'auto', width: '100%', maxWidth: '100%' }}>
+                <table style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 11, width: 'max-content' }}>
                   <thead>
                     <tr>
                       <th style={{
@@ -4016,7 +4071,7 @@ function getShiftCode(shift: Shift): string {
                ⚠️ 呢度唔可以有 overflow-x:auto 同 sticky：
                   · overflow 會令 html2canvas 只影到可視部分
                   · sticky 喺離屏渲染會定位錯，個名欄會重複畫喺每個捲動位 */}
-          {monthDays.length > 0 && ovEmployees.full.length > 0 && (
+          {monthDays.length > 0 && ovEmployees.ordered.length > 0 && (
             <div
               ref={monthExportRef}
               aria-hidden
@@ -4147,6 +4202,7 @@ function getShiftCode(shift: Shift): string {
                 right: 'timeGridWeek,dayGridMonth',
               }}
               datesSet={(dateInfo) => {
+                if (!SHOW_LEGACY_CALENDAR) return
                 // Sync viewMode from FC view type
                 const viewType = dateInfo.view.type
                 if (viewType === 'timeGridWeek') {
