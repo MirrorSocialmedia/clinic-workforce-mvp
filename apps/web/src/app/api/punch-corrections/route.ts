@@ -6,6 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // POST /api/punch-corrections — Create a punch correction request
@@ -14,7 +15,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -62,11 +63,11 @@ export async function POST(req: NextRequest) {
       // Get employee — use provided employeeId (manager) or own profile (employee)
       let employee: any
       if (requestBodyEmployeeId) {
-        // Manager creating for another employee
-        if (session.role !== 'OWNER' && session.role !== 'MANAGER') {
+        // ★ 補登係考勤管理嘅一部分，唔應該淨係 OWNER/MANAGER。
+        if (!(perms ?? []).includes('attendance_manage')) {
           return NextResponse.json(
-            { error: 'Only managers can create corrections for other employees' },
-            { status: 403 }
+            { error: 'Forbidden (missing permission: attendance_manage)' },
+            { status: 403 },
           )
         }
         employee = await prisma.employee.findUnique({
@@ -119,7 +120,8 @@ export async function POST(req: NextRequest) {
 
       // Transaction: create correction + punchRecord (if no original exists)
       const correction = await prisma.$transaction(async (tx) => {
-        const isManager = session.role === 'OWNER' || session.role === 'MANAGER'
+        // ★ 同上：唔改呢度，補登會成功但唔建立 PunchRecord
+        const isManager = (perms ?? []).includes('attendance_manage')
 
         // ★ Check if punchType changed (originalPunchType provided and different)
         let voidedOriginalId: string | null = null
@@ -252,7 +254,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { success: true, correction, createdPunchRecord: !!(!existing && (session.role === 'OWNER' || session.role === 'MANAGER')) },
+        { success: true, correction, createdPunchRecord: !!(!existing && (perms ?? []).includes('attendance_manage')) },
         { status: 201 }
       )
     } catch (error) {
@@ -316,5 +318,5 @@ export async function GET(req: NextRequest) {
     take: 100,
   })
 
-  return NextResponse.json({ corrections })
+  return jsonNoStore({ corrections })
 }

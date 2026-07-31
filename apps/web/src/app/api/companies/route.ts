@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/companies — list companies (with clinic count)
 // RBAC: OWNER, MANAGER, ACCOUNTANT, EMPLOYEE
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'asc' },
     include: { _count: { select: { clinics: true } } },
   })
-  return NextResponse.json(companies)
+  return jsonNoStore(companies)
 }
 
 // POST /api/companies — create company { name }

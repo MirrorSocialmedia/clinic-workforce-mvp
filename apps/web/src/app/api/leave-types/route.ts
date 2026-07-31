@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/leave-types — List leave types
@@ -13,7 +14,7 @@ export async function GET() {
     where: { isActive: true },
     orderBy: { createdAt: 'asc' },
   })
-  return NextResponse.json({ leaveTypes: types })
+  return jsonNoStore({ leaveTypes: types })
 }
 
 // ============================================================

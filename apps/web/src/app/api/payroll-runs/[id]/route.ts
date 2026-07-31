@@ -38,7 +38,7 @@ export async function GET(
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // ★ Non-OWNER: filter out confidential employee rows entirely (not just mask amounts)
-  const isOwner = session.role === 'OWNER'
+  const isOwner = session.role === 'OWNER' // ROLE-OK：保密員工隔離刻意用 role
   let items = run.items
   if (!isOwner) {
     items = items.filter((item: any) => !item.employee?.payConfidential)
@@ -106,7 +106,7 @@ export async function PUT(
             { status: 400 },
           )
         }
-        if (session.role !== 'OWNER') {
+        if (session.role !== 'OWNER') { // ROLE-OK：保密員工隔離刻意用 role
           return NextResponse.json({ error: '只有 OWNER 可以退回計糧單至草稿' }, { status: 403 })
         }
         const reason = (body.reason ?? '').trim()

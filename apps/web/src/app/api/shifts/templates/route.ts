@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/shifts/templates — list shift templates (scoped by companyId)
@@ -31,10 +32,10 @@ export async function GET(req: NextRequest) {
 
     if (templates.length === 0) {
       const defaults = await seedDefaultTemplates(companyId)
-      return NextResponse.json({ templates: defaults, seeded: true, total: defaults.length })
+      return jsonNoStore({ templates: defaults, seeded: true, total: defaults.length })
     }
 
-    return NextResponse.json({ templates, seeded: false, total: templates.length })
+    return jsonNoStore({ templates, seeded: false, total: templates.length })
   } catch (error) {
     console.error('Get templates error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

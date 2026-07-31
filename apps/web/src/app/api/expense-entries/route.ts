@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/expense-entries — List expense entries
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  return NextResponse.json({ entries })
+  return jsonNoStore({ entries })
 }
 
 // ============================================================

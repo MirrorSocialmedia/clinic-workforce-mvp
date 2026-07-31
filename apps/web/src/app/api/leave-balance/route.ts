@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/leave-balance — Get leave balance
@@ -25,6 +26,14 @@ export async function GET(req: NextRequest) {
       where: { userId: session.userId },
     })
     if (!emp) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
+    // ★ 明确拒绝，唔好静静回自己的 —— 旧版收到 ?employeeId=X 照回自己的餘額，
+    //   前端以為係 X 嘅數，做出「顯示 9 天但實際 0 天」呢種對唔上。
+    if (employeeId && employeeId !== emp.id) {
+      return NextResponse.json(
+        { error: 'Forbidden (cannot read other employees\' leave balance)' },
+        { status: 403 },
+      )
+    }
     targetEmployeeId = emp.id
   } else if (employeeId) {
     targetEmployeeId = employeeId
@@ -44,7 +53,7 @@ export async function GET(req: NextRequest) {
     orderBy: [{ year: 'desc' }, { leaveType: { name: 'asc' } }],
   })
 
-  return NextResponse.json({ leaveBalances: balances })
+  return jsonNoStore({ leaveBalances: balances })
 }
 
 // ============================================================

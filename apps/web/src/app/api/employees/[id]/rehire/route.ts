@@ -9,7 +9,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  if (auth.session.role !== 'OWNER')
+  if (auth.session.role !== 'OWNER') // ROLE-OK：復職只能由 OWNER 執行
     return NextResponse.json({ error: '僅老闆可辦理復職' }, { status: 403 })
 
   const resolvedParams = await params

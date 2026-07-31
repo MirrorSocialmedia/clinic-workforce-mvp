@@ -6,7 +6,7 @@ import { prisma } from '@/lib/prisma'
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error as NextResponse
-  if (auth.session.role !== 'OWNER') return NextResponse.json({ error: '僅老闆可執行' }, { status: 403 })
+  if (auth.session.role !== 'OWNER') return NextResponse.json({ error: '僅老闆可執行' }, { status: 403 }) // ROLE-OK：遷移只能由 OWNER 執行
 
   // 1. 找現有全局模板
   const globals = await prisma.shiftTemplate.findMany({ where: { companyId: null, isActive: true } })

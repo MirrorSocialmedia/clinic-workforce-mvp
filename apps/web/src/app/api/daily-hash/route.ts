@@ -5,6 +5,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { generateDailyHash, listDailyHashes, verifyDailyHash } from '@/lib/daily-hash'
 import { hkDateStart } from '@/lib/hk-date'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // POST /api/daily-hash — Generate daily hash for a clinic
@@ -81,7 +82,7 @@ export async function GET(req: NextRequest) {
 
     if (verify === 'true') {
       const result = await verifyDailyHash(clinicId, targetDate)
-      return NextResponse.json({ clinicId, date: targetDate.toISOString(), ...result })
+      return jsonNoStore({ clinicId, date: targetDate.toISOString(), ...result })
     }
 
     const hash = await prisma.dailyHash.findUnique({
@@ -89,7 +90,7 @@ export async function GET(req: NextRequest) {
       include: { clinic: { select: { id: true, name: true } } },
     })
 
-    return NextResponse.json({ hash })
+    return jsonNoStore({ hash })
   }
 
   let effectiveClinicId = clinicId
@@ -111,5 +112,5 @@ export async function GET(req: NextRequest) {
     endDate ? new Date(endDate) : undefined
   )
 
-  return NextResponse.json({ hashes })
+  return jsonNoStore({ hashes })
 }

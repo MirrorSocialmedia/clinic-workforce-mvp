@@ -45,7 +45,7 @@ export async function GET(
   if (denied) return denied
 
   // Server-side confidentiality check
-  const isOwner = session.role === 'OWNER'
+  const isOwner = session.role === 'OWNER' // ROLE-OK：保密員工隔離刻意用 role
   if (!isOwner && item.employee.payConfidential) {
     return NextResponse.json({ error: '此員工薪資已設保密' }, { status: 403 })
   }

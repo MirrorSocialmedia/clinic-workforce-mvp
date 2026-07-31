@@ -2046,7 +2046,7 @@ function getShiftCode(shift: Shift): string {
         {title}（{days[0]?.dateStr.slice(5)} – {days[6]?.dateStr.slice(5)}）
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-start', overflowX: 'auto' }}>
-        <table className="overview-table" style={{ borderCollapse: 'collapse', fontSize: 11, width: '100%', tableLayout: 'fixed' }}>
+        <table className="overview-table" style={{ margin: '0 auto', borderCollapse: 'collapse', fontSize: 11, width: '100%', tableLayout: 'fixed' }}>
           <colgroup>
             <col style={{ width: '12%' }} />
             {days.map((d, i) => <col key={i} style={{ width: `${88 / 7}%` }} />)}
@@ -3643,6 +3643,11 @@ function getShiftCode(shift: Shift): string {
               <>
               <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6 }}>
                 假期
+                {selectedEmployeeId && (
+                  <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 400, marginTop: 2 }}>
+                    餘額：{clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name ?? '—'}
+                  </div>
+                )}
               </div>
               {leaveTypes.map(lt => {
                 const bal = selectedEmpBalances.find(b => b.leaveTypeId === lt.id)
@@ -3836,8 +3841,8 @@ function getShiftCode(shift: Shift): string {
                 </button>
               </div>
               {/* Month table: scrollable body, sticky name column */}
-              <div style={{ overflowX: 'auto', width: '100%', maxWidth: '100%' }}>
-                <table style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 11, width: 'max-content' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-start', overflowX: 'auto', width: '100%', maxWidth: '100%' }}>
+                <table style={{ margin: '0 auto', borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 11, width: 'max-content' }}>
                   <thead>
                     <tr>
                       <th style={{

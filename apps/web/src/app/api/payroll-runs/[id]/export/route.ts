@@ -30,7 +30,7 @@ export async function POST(
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
-  const isOwner = session.role === 'OWNER'
+  const isOwner = session.role === 'OWNER' // ROLE-OK：保密員工隔離刻意用 role
 
   const body = await req.json().catch(() => ({})) // empty body = default xlsx
   const format = body.format || 'xlsx'

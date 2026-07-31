@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { periodMonthKey } from '@/lib/hk-date'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/wage-history?employeeId=xxx
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
     a.periodMonth.localeCompare(b.periodMonth),
   )
 
-  return NextResponse.json({ employeeId, rows })
+  return jsonNoStore({ employeeId, rows })
 }
 
 // ============================================================

@@ -3,6 +3,7 @@ import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { getMonthRange } from '@/lib/hk-date'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/consultation-revenue — List consultation revenue records
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
     orderBy: { month: 'desc' },
   })
 
-  return NextResponse.json({ records })
+  return jsonNoStore({ records })
 }
 
 // ============================================================

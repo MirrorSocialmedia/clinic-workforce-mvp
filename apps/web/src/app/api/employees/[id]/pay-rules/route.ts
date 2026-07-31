@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/employees/:id/pay-rules — get all pay rules for employee
 export async function GET(
@@ -23,7 +24,7 @@ export async function GET(
     configJson: r.configJson ? JSON.parse(r.configJson) : null,
   }))
 
-  return NextResponse.json(rulesWithConfig)
+  return jsonNoStore(rulesWithConfig)
 }
 
 // POST /api/employees/:id/pay-rules — add new pay rule

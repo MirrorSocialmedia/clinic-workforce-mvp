@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/time-bank/[id] — Single time bank record
@@ -34,7 +35,7 @@ export async function GET(
   const denied = assertClinicAccess(scope, session, record.employee?.homeClinicId)
   if (denied) return denied
 
-  return NextResponse.json({ timeBank: record })
+  return jsonNoStore({ timeBank: record })
 }
 
 // ============================================================

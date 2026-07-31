@@ -3,6 +3,7 @@ import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { calculateTimeBank } from '@/lib/payroll-engine'
+import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
 // GET /api/time-bank — List time bank records
@@ -21,7 +22,15 @@ export async function GET(req: NextRequest) {
   if (employeeId && scope !== 'self') where.employeeId = employeeId
   if (scope === 'self') {
     const emp = await prisma.employee.findUnique({ where: { userId: session.userId } })
-    if (emp) where.employeeId = emp.id
+    if (!emp) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
+    // ★ 明确拒绝，唔好静静回自己的
+    if (employeeId && employeeId !== emp.id) {
+      return NextResponse.json(
+        { error: 'Forbidden (cannot read other employees\' time bank)' },
+        { status: 403 },
+      )
+    }
+    where.employeeId = emp.id
   }
   if (periodMonth) {
     const [yearStr, monthStr] = periodMonth.split('-')
@@ -42,7 +51,7 @@ export async function GET(req: NextRequest) {
     take: 500,
   })
 
-  return NextResponse.json({ timeBank: records })
+  return jsonNoStore({ timeBank: records })
 }
 
 // ============================================================

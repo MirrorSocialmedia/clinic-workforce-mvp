@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/employees/[id] — employee detail
 export async function GET(
@@ -44,7 +45,7 @@ export async function GET(
     if (!hasAccess) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  return NextResponse.json({ employee })
+  return jsonNoStore({ employee })
 }
 
 // PUT /api/employees/[id] — edit employee

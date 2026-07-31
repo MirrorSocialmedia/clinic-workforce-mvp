@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/users — list users (OWNER only)
 export async function GET(req: NextRequest) {
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
   })
 
   const safeUsers = users.map(({ password, ...user }) => user)
-  return NextResponse.json({ users: safeUsers, total: safeUsers.length })
+  return jsonNoStore({ users: safeUsers, total: safeUsers.length })
 }
 
 // POST /api/users — create user (OWNER only)

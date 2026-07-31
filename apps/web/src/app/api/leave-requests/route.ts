@@ -31,12 +31,18 @@ export async function GET(req: NextRequest) {
 
   // EMPLOYEE only sees own requests
   if (scope === 'self') {
-    const emp = await prisma.employee.findUnique({
+    const emp = await prisma.employee.findFirst({
       where: { userId: session.userId },
     })
-    if (emp) {
-      where.employeeId = emp.id
+    if (!emp) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
+    // ★ 同上：明确拒绝，唔好静静收窄成自己
+    if (employeeId && employeeId !== emp.id) {
+      return NextResponse.json(
+        { error: 'Forbidden (cannot read other employees\' leave requests)' },
+        { status: 403 },
+      )
     }
+    where.employeeId = emp.id
   }
 
   if (employeeId && scope !== 'self') where.employeeId = employeeId

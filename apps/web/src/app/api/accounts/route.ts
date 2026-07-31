@@ -6,6 +6,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { toHKDateStr } from '@/lib/hk-date'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/accounts — merged User + Employee list
 export async function GET(req: NextRequest) {
@@ -99,7 +100,7 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  return NextResponse.json({ accounts })
+  return jsonNoStore({ accounts })
 }
 
 // POST /api/accounts — create user + optionally employee

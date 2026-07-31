@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/punches/[id] — Single punch record + full correction chain
 export async function GET(
@@ -47,7 +48,7 @@ export async function GET(
     })
   }
 
-  return NextResponse.json({
+  return jsonNoStore({
     record: {
       id: record.id, employeeId: record.employeeId, clinicId: record.clinicId,
       punchTime: record.punchTime.toISOString(), punchType: record.punchType,

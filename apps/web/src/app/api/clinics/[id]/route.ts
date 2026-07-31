@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
+import { jsonNoStore } from '@/lib/api-response'
 
 // GET /api/clinics/:id — get single clinic
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   if (!clinic) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  return NextResponse.json({ clinic })
+  return jsonNoStore({ clinic })
 }
 
 // PUT /api/clinics/:id — update clinic (OWNER only)

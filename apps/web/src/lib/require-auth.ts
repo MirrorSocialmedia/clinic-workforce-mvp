@@ -182,6 +182,23 @@ export async function requireAuth(
     scope = 'all'
   }
 
+  /**
+   * ★ 排班需要读到的数据 route。
+   * 有 scheduling 权限 = 全店排班权，排班必然要睇到所有员工嘅假期 + 假期余额。
+   * ⚠️ 唔可以只喺 viaPerm 时提升 —— EMPLOYEE 本身喺呢啲 route 嘅 role 白名單内，
+   *   根本唔会走 viaPerm 分支，结果 scope 一直係 'self'。
+   * ⚠️ 亦唔可以无差别提升所有 requireAuth route —— 打卡记录、审计等唔属排班范围。
+   */
+  const SCHEDULING_DATA_ROUTES = [
+    'GET /api/leave-requests',
+    'GET /api/leave-balance',
+    'GET /api/employees',
+    'GET /api/clinics',
+  ]
+  if ((perms ?? []).includes('scheduling') && SCHEDULING_DATA_ROUTES.includes(normalized)) {
+    scope = 'all'
+  }
+
   return { session: { ...session, clinics: freshClinics }, scope, perms }
 }
 

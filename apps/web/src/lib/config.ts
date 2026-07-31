@@ -200,6 +200,8 @@ export const CONFIG = {
     // Leave balance refresh
     'POST /api/leave-balance/refresh': ['OWNER', 'MANAGER'],
 
+    // Leave settlement (resignation)
+    'POST /api/leave-settlement': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -271,6 +273,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/clinics/:id': ['scheduling'],
   'GET /api/clinics/:id/shift-rule-config': ['scheduling'],
   'PUT /api/clinics/:id/shift-rule-config': ['scheduling'],
+
+  // —— 離職結算：有 leave_approve 或 payroll_generate 權限可以觸發 ——
+  'POST /api/leave-settlement': ['leave_approve', 'payroll_generate'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

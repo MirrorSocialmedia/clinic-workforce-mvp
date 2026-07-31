@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     if (employeeId) where.id = employeeId
 
     // ★ Non-OWNER: exclude payConfidential employees from preview entirely
-    if (session.role !== 'OWNER') {
+    if (session.role !== 'OWNER') { // ROLE-OK：保密員工隔離刻意用 role
       where.payConfidential = false
     }
 

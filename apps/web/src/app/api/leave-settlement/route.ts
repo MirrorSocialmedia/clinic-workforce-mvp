@@ -18,10 +18,11 @@ import { settleLeaveOnResign, isInProbation, LeaveSettlement } from '@/lib/leave
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, perms } = auth
 
-  if (session.role !== 'OWNER' && session.role !== 'MANAGER' && session.role !== 'ACCOUNTANT') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // ★ 離職結算用權限判斷而非 role 寫死
+  if (!(perms ?? []).includes('leave_approve') && !(perms ?? []).includes('payroll_generate')) {
+    return NextResponse.json({ error: 'Forbidden (missing permission: leave_approve / payroll_generate)' }, { status: 403 })
   }
 
   try {

@@ -6,6 +6,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { CONFIG } from '@/lib/config'
 import { buildDefaultPayConfig, syncConfigToPayType } from '@/lib/pay-rule-defaults'
+import { jsonNoStore } from '@/lib/api-response'
 
 export async function GET(
   req: NextRequest,
@@ -30,7 +31,7 @@ export async function GET(
   if (!user) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const { password, ...safeUser } = user
-  return NextResponse.json({ account: safeUser })
+  return jsonNoStore({ account: safeUser })
 }
 
 // ============================================================
