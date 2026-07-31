@@ -46,7 +46,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const buffer = await res.arrayBuffer()
   return new Response(buffer, {
     status: 200,
-    headers: { 'Content-Type': 'image/jpeg' },
+    headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store, must-revalidate' },
   })
 }
 
