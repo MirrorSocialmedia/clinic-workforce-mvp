@@ -389,6 +389,52 @@ export default function SchedulingPage() {
   const [shareUrl, setShareUrl] = useState<string | null>(null)
   const [shareBusy, setShareBusy] = useState(false)
 
+  // ★ Month overview state
+  const monthExportRef = useRef<HTMLDivElement>(null)
+  const [ovMonth, setOvMonth] = useState(() => toHKDateStr(new Date()).slice(0, 7))
+  const [ovMonthShifts, setOvMonthShifts] = useState<any[]>([]) // separate from ovShifts
+  const [monthLeaveRequests, setMonthLeaveRequests] = useState<any[]>([])
+
+  // Days of the selected month (UTC-safe)
+  const monthDays = useMemo(() => {
+    const [y, m] = ovMonth.split('-').map(Number)
+    const n = new Date(Date.UTC(y, m, 0)).getUTCDate()
+    return Array.from({ length: n }, (_, i) => `${ovMonth}-${String(i + 1).padStart(2, '0')}`)
+  }, [ovMonth])
+
+  // Load month shifts via pagination (don't hard-code pageSize)
+  useEffect(() => {
+    if (!monthDays.length) return
+    const fetchAll = async () => {
+      const allShifts: any[] = []
+      let page = 1
+      const pageSize = 200
+      while (true) {
+        const r = await getJSON(
+          `/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays.at(-1)}&pageSize=${pageSize}&page=${page}`
+        )
+        if (!r.ok) break
+        const d = await r.json()
+        const batch = d.shifts || []
+        allShifts.push(...batch)
+        if (batch.length < pageSize) break
+        page++
+      }
+      setOvMonthShifts(allShifts)
+      // Also load month leave requests (APPROVED only)
+      try {
+        const lrRes = await getJSON(
+          `/api/leave-requests?startDate=${monthDays[0]}&endDate=${monthDays.at(-1)}&status=APPROVED`
+        )
+        if (lrRes.ok) {
+          const lrData = await lrRes.json()
+          setMonthLeaveRequests(lrData.leaveRequests || [])
+        }
+      } catch { /* ignore */ }
+    }
+    fetchAll()
+  }, [ovMonth, monthDays])
+
   // 🔧 Fix #3a: 抓當前選中員工的假期餘額
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
   useEffect(() => {
@@ -1892,6 +1938,77 @@ function getShiftCode(shift: Shift): string {
     } catch { /* 用戶取消 */ }
   }
 
+  // ★ 共用格內容 —— 週截圖同月總覽都係咁渲染，唔好另寫一套
+  const getExportCell = useCallback((empId: string, dateStr: string, shifts: any[], leaveReqs?: any[], opts?: { borrowed?: boolean }) => {
+    const ss = shifts.filter(s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr)
+    const ls = (leaveReqs ?? leaveRequests).filter(lr => lr.employeeId === empId && leaveCoversDate(lr, dateStr))
+    const parts: React.ReactNode[] = []
+    ss.forEach((s, si) => {
+      const tpl = templates.find(t => t.id === s.templateId)
+      const p: string[] = []
+      if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
+      if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+      if (labelParts.includes('name')) p.push(s.employee?.user?.name?.slice(0, 2) || '')
+      const bg = shiftColor(s)
+      parts.push(
+        <div key={'s' + si} style={{
+          display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
+          fontSize: 14, background: bg, color: textOn(bg), whiteSpace: 'nowrap',
+          border: opts?.borrowed ? '1px dashed #2563eb' : 'none',
+        }}>
+          {p.filter(Boolean).join('·')}
+        </div>
+      )
+    })
+    ls.forEach((lr, li) => {
+      const lc = lr.leaveType?.color ?? '#9ca3af'
+      parts.push(
+        <div key={'l' + li} style={{
+          display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
+          fontSize: 14, background: lc + '26', color: '#1f2937',
+          borderLeft: `3px solid ${lc}`, whiteSpace: 'nowrap',
+        }}>
+          {lr.leaveType?.name}
+        </div>
+      )
+    })
+    if (parts.length === 0) parts.push(<span key="empty" style={{ fontSize: 14, color: '#9ca3af' }}>—</span>)
+    return <td style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle' }}>{parts}</td>
+  }, [leaveRequests, templates, labelParts, clinics, shiftColor])
+
+  // ★ 月截圖 handler —— 離屏節點有明確 width/height，確保截到完整 31 日
+  const handleCaptureMonth = async () => {
+    if (!monthExportRef.current || shareBusy) return
+    setShareBusy(true)
+    try {
+      const html2canvas = (await import('html2canvas')).default
+      const node = monthExportRef.current
+      const canvas = await html2canvas(node, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        logging: false,
+        width: node.scrollWidth,
+        height: node.scrollHeight,
+        windowWidth: node.scrollWidth,
+        windowHeight: node.scrollHeight,
+      })
+      canvas.toBlob(blob => {
+        if (!blob) return
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `排班總覽_${ovMonth}.png`
+        a.click()
+        URL.revokeObjectURL(url)
+      }, 'image/png')
+    } catch (e) {
+      console.error('capture month failed', e)
+      alert('截圖失敗，請重試')
+    } finally {
+      setShareBusy(false)
+    }
+  }
+
   // ============================================================
   // Render Overview Week — takes a days array, renders title + table + stats
   // ============================================================
@@ -2389,6 +2506,10 @@ function getShiftCode(shift: Shift): string {
   const selectedEmpName = selectedEmployeeId ? (clinicEmployees.find(e => e.id === selectedEmployeeId)?.user?.name || '') : ''
   const excludeEmployeeId = editingShift?.employeeId || ''
   const availableEmployees = clinicEmployees.filter((e: Employee) => e.id !== excludeEmployeeId)
+
+  // ★ 舊版下方日曆 —— 暫時隱藏，之後可能要用返。
+  //   用 flag 唔好刪，方便一句話開返。
+  const SHOW_LEGACY_CALENDAR = false
 
   // ============================================================
   // Render
@@ -3629,6 +3750,193 @@ function getShiftCode(shift: Shift): string {
             </div>
           )}
 
+          {/* ★ 月版全局總覽 —— 唯讀、sticky 名欄、橫捲、三組（全職/兼職/借調） */}
+          {monthDays.length > 0 && ovEmployees.full.length > 0 && (
+            <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff' }}>
+              {/* Month header: navigation + capture */}
+              <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>📅 {ovMonth} 排班總覽（{scopeLabel}）</span>
+                  <button onClick={() => {
+                    const [y, m] = ovMonth.split('-').map(Number)
+                    const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
+                    setOvMonth(prev)
+                  }} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>◀ 上月</button>
+                  <button onClick={() => {
+                    const [y, m] = ovMonth.split('-').map(Number)
+                    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
+                    setOvMonth(next)
+                  }} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>下月 ▶</button>
+                </div>
+                <button
+                  onClick={handleCaptureMonth}
+                  disabled={shareBusy}
+                  style={{
+                    fontSize: 11, padding: '3px 8px', borderRadius: 4,
+                    border: '1px solid #2563eb', background: '#eff6ff', color: '#1d4ed8',
+                    cursor: shareBusy ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {shareBusy ? '處理中…' : '📷 截圖當月'}
+                </button>
+              </div>
+              {/* Month table: scrollable body, sticky name column */}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th style={{
+                        position: 'sticky', left: 0, zIndex: 2, background: '#fff',
+                        width: 78, minWidth: 78, borderRight: '0.5px solid #e5e7eb',
+                        padding: '4px 6px', textAlign: 'left',
+                      }}>員工</th>
+                      {monthDays.map(d => {
+                        const dow = new Date(`${d}T00:00:00+08:00`).getDay()
+                        const isWeekend = dow === 0 || dow === 6
+                        return (
+                          <th key={d} style={{
+                            width: 56, minWidth: 56, padding: '4px 0', fontWeight: 400, fontSize: 10,
+                            background: isWeekend ? '#f9fafb' : undefined,
+                            color: isWeekend ? '#9ca3af' : '#6b7280',
+                          }}>
+                            {['日','一','二','三','四','五','六'][dow]}<br />{Number(d.slice(-2))}
+                          </th>
+                        )
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Full-time */}
+                    {ovEmployees.full.map(emp => (
+                      <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{
+                          position: 'sticky', left: 0, zIndex: 1,
+                          background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+                          padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                        }}>{emp.user?.name ?? '?'}</td>
+                        {monthDays.map((d, di) => (
+                          <td key={di} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0' }}>
+                            {(() => {
+                              const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
+                              const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                              if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
+                              const parts: React.ReactNode[] = []
+                              ss.forEach((s, si) => {
+                                const tpl = templates.find(t => t.id === s.templateId)
+                                const p: string[] = []
+                                if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
+                                if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                                const bg = shiftColor(s)
+                                parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
+                              })
+                              ls.forEach((lr, li) => {
+                                const lc = lr.leaveType?.color ?? '#9ca3af'
+                                parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
+                              })
+                              return parts
+                            })()}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                    {/* Part-time group header */}
+                    {ovEmployees.part.length > 0 && (
+                      <tr>
+                        <td colSpan={monthDays.length + 1} style={{
+                          padding: '3px 12px', background: '#fef3c7', borderTop: '2px solid #f59e0b',
+                          fontSize: 12, fontWeight: 600, color: '#92400e',
+                          position: 'sticky', left: 0, zIndex: 1,
+                        }}>兼職</td>
+                      </tr>
+                    )}
+                    {/* Part-time */}
+                    {ovEmployees.part.map(emp => (
+                      <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{
+                          position: 'sticky', left: 0, zIndex: 1,
+                          background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+                          padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                        }}>{emp.user?.name ?? '?'}</td>
+                        {monthDays.map((d, di) => (
+                          <td key={di} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0' }}>
+                            {(() => {
+                              const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
+                              const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                              if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
+                              const parts: React.ReactNode[] = []
+                              ss.forEach((s, si) => {
+                                const tpl = templates.find(t => t.id === s.templateId)
+                                const p: string[] = []
+                                if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
+                                if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                                const bg = shiftColor(s)
+                                parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
+                              })
+                              ls.forEach((lr, li) => {
+                                const lc = lr.leaveType?.color ?? '#9ca3af'
+                                parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
+                              })
+                              return parts
+                            })()}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                    {/* Borrowed group header */}
+                    {borrowedEmployees.length > 0 && (
+                      <tr>
+                        <td colSpan={monthDays.length + 1} style={{
+                          padding: '3px 12px', background: '#eff6ff', borderTop: '2px solid #3b82f6',
+                          fontSize: 12, fontWeight: 600, color: '#1d4ed8',
+                          position: 'sticky', left: 0, zIndex: 1,
+                        }}>↗ 借調 ({borrowedEmployees.length})</td>
+                      </tr>
+                    )}
+                    {/* Borrowed */}
+                    {borrowedEmployees.map(emp => {
+                      const homeClinic = clinics.find(c => emp.clinics?.some((ec: any) => ec.clinic?.id === c.id))
+                      const homeLabel = homeClinic?.shortName || homeClinic?.name?.slice(0, 2) || ''
+                      return (
+                        <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={{
+                            position: 'sticky', left: 0, zIndex: 1,
+                            background: '#fafbfc', padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                          }}>
+                            {emp.user?.name ?? '?'}
+                            {homeLabel && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
+                          </td>
+                          {monthDays.map((d, di) => (
+                            <td key={di} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0' }}>
+                              {(() => {
+                                const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
+                                const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                                if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
+                                const parts: React.ReactNode[] = []
+                                ss.forEach((s, si) => {
+                                  const tpl = templates.find(t => t.id === s.templateId)
+                                  const p: string[] = []
+                                  if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
+                                  if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                                  const bg = shiftColor(s)
+                                  parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap', border: '1px dashed #2563eb' }}>{p.filter(Boolean).join('·')}</div>)
+                                })
+                                ls.forEach((lr, li) => {
+                                  const lc = lr.leaveType?.color ?? '#9ca3af'
+                                  parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
+                                })
+                                return parts
+                              })()}
+                            </td>
+                          ))}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* 截圖用離屏節點 —— 不可用 display:none，html2canvas 影唔到 */}
           {viewMode === 'week' && weekDays.length === 7 && (
             <div
@@ -3703,6 +4011,107 @@ function getShiftCode(shift: Shift): string {
             </div>
           )}
 
+          {/* ★ 月截圖離屏節點 —— 唔可以用 display:none（html2canvas 影唔到），
+               用 position:absolute + left:-99999px。
+               ⚠️ 呢度唔可以有 overflow-x:auto 同 sticky：
+                  · overflow 會令 html2canvas 只影到可視部分
+                  · sticky 喺離屏渲染會定位錯，個名欄會重複畫喺每個捲動位 */}
+          {monthDays.length > 0 && ovEmployees.full.length > 0 && (
+            <div
+              ref={monthExportRef}
+              aria-hidden
+              style={{
+                position: 'absolute', left: -99999, top: 0,
+                background: '#fff', padding: 16,
+                fontFamily: 'system-ui, -apple-system, "PingFang HK", "Microsoft JhengHei", sans-serif',
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 10 }}>
+                {ovMonth} 排班總覽 · {currentCompanyName || scopeLabel}
+              </div>
+              <table style={{ borderCollapse: 'collapse', width: 'max-content', fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th style={{
+                      width: 80, padding: '4px 8px', textAlign: 'left',
+                      fontWeight: 600, borderBottom: '2px solid #d1d5db',
+                    }}>員工</th>
+                    {monthDays.map(d => {
+                      const dow = new Date(`${d}T00:00:00+08:00`).getDay()
+                      const isWeekend = dow === 0 || dow === 6
+                      return (
+                        <th key={d} style={{
+                          width: 58, padding: '4px 0', textAlign: 'center',
+                          background: isWeekend ? '#f9fafb' : undefined,
+                          color: isWeekend ? '#9ca3af' : '#6b7280',
+                          fontWeight: 400, fontSize: 11, borderBottom: '2px solid #d1d5db',
+                        }}>
+                          {['日','一','二','三','四','五','六'][dow]} {Number(d.slice(-2))}
+                        </th>
+                      )
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Full-time */}
+                  {ovEmployees.full.map(emp => (
+                    <tr key={emp.id}>
+                      <td style={{ padding: '4px 8px', fontWeight: 500, color: '#111827', whiteSpace: 'nowrap', borderBottom: '1px solid #e5e7eb' }}>
+                        {emp.user?.name ?? '?'}
+                      </td>
+                      {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests))}
+                    </tr>
+                  ))}
+                  {/* Part-time group header */}
+                  {ovEmployees.part.length > 0 && (
+                    <tr>
+                      <td colSpan={monthDays.length + 1} style={{
+                        padding: '4px 12px', background: '#fef3c7',
+                        borderTop: '2px solid #f59e0b', fontSize: 14, fontWeight: 600, color: '#92400e',
+                      }}>兼職</td>
+                    </tr>
+                  )}
+                  {/* Part-time */}
+                  {ovEmployees.part.map(emp => (
+                    <tr key={emp.id}>
+                      <td style={{ padding: '4px 8px', fontWeight: 500, color: '#111827', whiteSpace: 'nowrap', borderBottom: '1px solid #e5e7eb' }}>
+                        {emp.user?.name ?? '?'}
+                      </td>
+                      {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests))}
+                    </tr>
+                  ))}
+                  {/* Borrowed group header */}
+                  {borrowedEmployees.length > 0 && (
+                    <tr>
+                      <td colSpan={monthDays.length + 1} style={{
+                        padding: '4px 12px', background: '#eff6ff',
+                        borderTop: '2px solid #3b82f6', fontSize: 14, fontWeight: 600, color: '#1d4ed8',
+                      }}>↗ 借調 ({borrowedEmployees.length})</td>
+                    </tr>
+                  )}
+                  {/* Borrowed */}
+                  {borrowedEmployees.map(emp => {
+                    const homeClinic = clinics.find(c => emp.clinics?.some((ec: any) => ec.clinic?.id === c.id))
+                    const homeLabel = homeClinic?.shortName || homeClinic?.name?.slice(0, 2) || ''
+                    return (
+                      <tr key={emp.id}>
+                        <td style={{ padding: '4px 8px', fontWeight: 500, color: '#111827', whiteSpace: 'nowrap', borderBottom: '1px solid #e5e7eb' }}>
+                          {emp.user?.name ?? '?'}
+                          {homeLabel && <span style={{ fontSize: 11, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
+                        </td>
+                        {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests, { borrowed: true }))}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* ★ 舊版下方日曆 —— 暫時隱藏，之後可能要用返。
+               用 flag 唔好刪，方便一句話開返。 */}
+          {SHOW_LEGACY_CALENDAR && (
+          <>
           {/* Calendar toggle + clinic info */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
             <button
@@ -3948,6 +4357,7 @@ function getShiftCode(shift: Shift): string {
           </div>
             </>
           )}
+          </>)}
         </div>
       </div>
 

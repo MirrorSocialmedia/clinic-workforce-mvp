@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -93,9 +93,16 @@ export async function POST(req: NextRequest) {
 
       // Support manager creating leave for another employee
       let employee: any
+      // ★ 排休息日／假期本身就係排班嘅一部分，唔應該淨係 OWNER/MANAGER 做得到。
+      //   role 寫死會令有 scheduling 權限嘅員工排唔到。
       if (requestBodyEmployeeId) {
-        if (session.role !== 'OWNER' && session.role !== 'MANAGER') {
-          return NextResponse.json({ error: 'Only managers can create leave for other employees' }, { status: 403 })
+        const canCreateForOthers =
+          (perms ?? []).includes('scheduling') || (perms ?? []).includes('leave_approve')
+        if (!canCreateForOthers) {
+          return NextResponse.json(
+            { error: 'Forbidden (missing permission: scheduling / leave_approve)' },
+            { status: 403 },
+          )
         }
         employee = await prisma.employee.findUnique({ where: { id: requestBodyEmployeeId } })
       } else {
@@ -141,7 +148,10 @@ export async function POST(req: NextRequest) {
       }
       // SICK: 不驗餘額、不扣 balance——成本在計糧端結算
 
-      const isApprover = session.role === 'OWNER' || session.role === 'MANAGER'
+      // ★ 同上：用權限判斷。只修上面唔修呢度，假期會變 PENDING ——
+      //   排班總覽唔會當佢係已批假期，該日仍然算缺勤，表面成功但實際冇生效。
+      const isApprover =
+        (perms ?? []).includes('leave_approve') || (perms ?? []).includes('scheduling')
 
       // Fix #5: check for overlapping leave (PENDING or APPROVED)
       const overlap = await prisma.leaveRequest.findFirst({
