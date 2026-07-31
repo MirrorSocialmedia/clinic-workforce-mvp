@@ -19,11 +19,13 @@ export default function FaceEnrollPage() {
  const [consentChecked, setConsentChecked] = useState(false)
  const [idx, setIdx] = useState(0)
  const [error, setError] = useState('')
- const [submitting, setSubmitting] = useState(false)
  const [uploading, setUploading] = useState(false)
+ const [shooting, setShooting] = useState(false)
+ const [flash, setFlash] = useState(false)
  const framesRef = useRef<Blob[]>([])
  const streamRef = useRef<MediaStream | null>(null)
  const videoRef = useRef<HTMLVideoElement>(null)
+ const shootingRef = useRef(false) // 同步鎖 —— state 非同步，連按時擋不住
  const { shoot } = useFaceLandmark()
 
  const checkCode = async () => {
@@ -63,18 +65,47 @@ export default function FaceEnrollPage() {
     setError(e?.name === 'NotAllowedError' ? '請允許使用相機權限' : (e?.message || '相機錯誤'))
    }
   })()
-  return () => { cancelled = true; stopCamera() }
+  return () => { cancelled = true; stopCamera(); shootingRef.current = false }
  }, [step])
 
  const takeShot = async () => {
+  // 用 ref 做鎖唔用 state —— state 更新係非同步
+  if (shootingRef.current || uploading) return
+  shootingRef.current = true
+  setShooting(true)
   setError('')
-  if (!videoRef.current?.readyState) return
-  const r = await shoot(videoRef.current, steps[idx].pose)
-  if (!r.blob) { setError(r.error!); return }
-  framesRef.current.push(r.blob)
-  if (idx + 1 < steps.length) setIdx(i => i + 1)
-  else await submitFrames(framesRef.current)
+
+  try {
+   if (!videoRef.current?.readyState) {
+    setError('相機未就緒，請稍候再試')
+    return
+   }
+   // 鎖住當下 idx
+   const currentIdx = idx
+   const r = await shoot(videoRef.current, steps[currentIdx].pose)
+   if (!r.blob) {
+    setError(r.error || '拍攝失敗，請按提示調整姿勢')
+    return
+   }
+   framesRef.current.push(r.blob)
+   setFlash(true); setTimeout(() => setFlash(false), 150)
+   if (currentIdx + 1 < steps.length) {
+    setIdx(currentIdx + 1)
+   } else {
+    await submitFrames(framesRef.current)
+   }
+  } finally {
+   shootingRef.current = false
+   setShooting(false)
+  }
  }
+
+ // 錯誤 3.5s 自動消失
+ useEffect(() => {
+  if (!error) return
+  const t = setTimeout(() => setError(''), 3500)
+  return () => clearTimeout(t)
+ }, [error])
 
  const submitFrames = async (frames: Blob[]) => {
   setUploading(true); setError('')
@@ -107,7 +138,7 @@ export default function FaceEnrollPage() {
 
  return (
   <div className="max-w-md mx-auto p-4">
-   <h1 className="text-xl font-bold mb-6">臉部登記</h1>
+   {step !== 'capture' && <h1 className="text-xl font-bold mb-6">臉部登記</h1>}
 
    {step === 'code' && (
     <div>
@@ -145,50 +176,105 @@ export default function FaceEnrollPage() {
       同意，開始登記
      </button>
      <button className="w-full mt-3 py-2 text-sm text-gray-500 rounded-lg"
-      onClick={() => { setStep('code'); setConsentChecked(false) }}>
+      onClick={() => {
+       stopCamera()
+       setError('')
+       setIdx(0)
+       framesRef.current = []
+       setUploading(false)
+       shootingRef.current = false
+       setShooting(false)
+       setStep('code')
+       setConsentChecked(false)
+      }}>
       ← 返回
      </button>
     </div>
    )}
 
    {/* ★ video 不可以條件 render —— ref 會為 null。永遠 mount，靠 display 控制。 */}
-   <div style={{ display: step === 'capture' ? 'block' : 'none' }} className="text-center">
-    <div className="relative mb-4">
-     <video ref={videoRef} muted playsInline className="w-full rounded-lg" style={{ width: '100%', transform: 'scaleX(-1)' }} />
-     {/* 人形框: 橢圓透明窗 + 四周壓暗 */}
+   <div
+    style={{
+     display: step === 'capture' ? 'flex' : 'none',
+     flexDirection: 'column',
+     height: '100dvh',
+     position: 'fixed', inset: 0, background: '#000', zIndex: 50,
+    }}
+   >
+    {/* ── 提示：最頂，永遠見到，唔使碌 ── */}
+    <div style={{ padding: '14px 16px 10px', textAlign: 'center', flexShrink: 0, color: '#fff' }}>
+     <div style={{ fontSize: 22, fontWeight: 700, minHeight: 30 }}>{steps[idx].hint}</div>
+     <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 8 }}>
+      {steps.map((_, i) => (
+       <span key={i} style={{
+        width: 8, height: 8, borderRadius: '50%',
+        background: i < idx ? '#22c55e' : i === idx ? '#fff' : 'rgba(255,255,255,.3)',
+       }} />
+      ))}
+     </div>
+    </div>
+
+    {/* ── 相機：佔剩餘空間，overflow hidden 令陰影唔會蓋出去 ── */}
+    <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
+     <video
+      ref={videoRef} muted playsInline
+      style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
+     />
      <div style={{
-      position: 'absolute', left: '50%', top: '48%', transform: 'translate(-50%, -50%)',
-      width: '62%', height: '78%', borderRadius: '50%',
+      position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+      width: '68%', height: '62%', borderRadius: '50%',
       border: '2.5px dashed rgba(255,255,255,.85)',
       boxShadow: '0 0 0 999px rgba(0,0,0,.45)',
       pointerEvents: 'none',
      }} />
-    </div>
-    <div style={{ textAlign: 'center', marginTop: 12 }}>
-     <div style={{ fontSize: 22, fontWeight: 700, minHeight: 32 }}>{steps[idx].hint}</div>
-     <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>第 {idx + 1} / 5 張</div>
-     <button
-      className="mt-4 py-3 px-10 bg-blue-600 text-white rounded-lg text-lg disabled:opacity-50"
-      onClick={takeShot} disabled={submitting}>
-      📸 拍攝
-     </button>
-     {error && <div style={{ marginTop: 12 }}>
-      <div style={{ fontSize: 15, color: '#dc2626', fontWeight: 500 }}>{error}</div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-       <button
-        onClick={() => { setError(''); setUploading(false) }}
-        style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: '#1a1a2e', color: '#fff', fontSize: 15 }}
-       >
-        重新拍攝
-       </button>
-       <button
-        onClick={() => { stopCamera(); setError(''); setStep('code') }}
-        style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', fontSize: 15 }}
-       >
-        取消
-       </button>
+
+     {/* 閃白效果 */}
+     {flash && <div style={{ position: 'absolute', inset: 0, background: '#fff', opacity: .7, pointerEvents: 'none' }} />}
+
+     {/* ★ 錯誤訊息浮喺相機上面 —— 唔使碌，撳完即刻見到 */}
+     {error && (
+      <div style={{
+       position: 'absolute', left: 12, right: 12, bottom: 12, zIndex: 10,
+       background: 'rgba(220,38,38,.95)', color: '#fff',
+       padding: '10px 14px', borderRadius: 10, fontSize: 15,
+       textAlign: 'center', fontWeight: 500,
+      }}>
+       {error}
       </div>
-     </div>}
+     )}
+    </div>
+
+    {/* ── 按鈕：貼底，永遠喺視窗內 ── */}
+    <div style={{ padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', flexShrink: 0, background: '#000' }}>
+     <button
+      onClick={takeShot}
+      disabled={shooting || uploading}
+      style={{
+       width: '100%', padding: '15px 0', fontSize: 18, fontWeight: 600,
+       borderRadius: 12, border: 'none', color: '#fff',
+       background: (shooting || uploading) ? '#4b5563' : '#2563eb',
+      }}
+     >
+      {uploading ? '上傳中…' : shooting ? '處理中…' : '📸 拍攝'}
+     </button>
+     <button
+      onClick={() => {
+       stopCamera()
+       setError('')
+       setIdx(0)
+       framesRef.current = []
+       setUploading(false)
+       shootingRef.current = false
+       setShooting(false)
+       setStep('code')
+      }}
+      style={{
+       width: '100%', marginTop: 8, padding: '10px 0', fontSize: 14,
+       background: 'transparent', border: 'none', color: 'rgba(255,255,255,.6)',
+      }}
+     >
+      取消
+     </button>
     </div>
    </div>
 
