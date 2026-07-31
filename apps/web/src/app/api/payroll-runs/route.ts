@@ -34,14 +34,22 @@ export async function GET(req: NextRequest) {
 
   // MANAGER only sees their clinics (own clinics + cross-store runs with null clinicId)
   const sessionClinics = session.clinics ?? []
-  if (scope === 'my-clinics' && sessionClinics.length > 0) {
-    const clinicScopeFilter = {
+  // ★ fail-closed：冇綁店的 MANAGER 應該乜都見不到，
+  //   唔可以因為 sessionClinics 空就跳過 filter（會變成睇晒全公司計糧單）。
+  //   exceptions route:46 已經咁做，呢度之前漏咗。
+  if (scope === 'my-clinics') {
+    if (sessionClinics.length === 0) {
+      return NextResponse.json(
+        { runs: [], total: 0, page, pageSize, totalPages: 0 },
+        { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+      )
+    }
+    where.AND = [...(where.AND ?? []), {
       OR: [
         { clinicId: { in: sessionClinics } }, // 自己的診所（純字串陣列）
         { clinicId: null },                   // 跨店計糧（clinicId 為空）
       ],
-    }
-    where.AND = [...(where.AND ?? []), clinicScopeFilter] // AND 追加，不覆蓋 periodMonth/status/clinicId 等
+    }]
   }
 
   const [runs, total] = await Promise.all([
@@ -118,7 +126,7 @@ export async function POST(req: NextRequest) {
       //   而係由頭到尾唔應該為佢哋建立 PayrollItem
       const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, {
         storeBonuses, splitPays,
-        excludeConfidential: session.role !== 'OWNER', // ROLE-OK：保密隔離刻意用 role
+        excludeConfidential: session.role !== 'OWNER', // ROLE-OK
       })
 
       // FIX #2: If result has error field (e.g., CONFIRMED blocked), return 409

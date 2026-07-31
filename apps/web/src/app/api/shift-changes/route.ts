@@ -102,12 +102,17 @@ export async function GET(req: NextRequest) {
     const emp = await prisma.employee.findUnique({
       where: { userId: session.userId },
     })
-    if (emp) {
-      where.OR = [
-        { fromEmployeeId: emp.id },
-        { toEmployeeId: emp.id },
-      ]
+    // ★ fail-closed：冇 Employee 記錄唔可以當「冇限制」
+    if (!emp) {
+      return NextResponse.json(
+        { error: 'Employee profile not found' },
+        { status: 400 },
+      )
     }
+    where.OR = [
+      { fromEmployeeId: emp.id },
+      { toEmployeeId: emp.id },
+    ]
   } else if (scope === 'my-clinics' && (session.clinics ?? []).length > 0) {
     where.OR = (session.clinics ?? []).map((clinicId: string) => ({
       shift: { clinicId },

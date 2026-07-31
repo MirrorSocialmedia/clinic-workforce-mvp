@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
   }
 
-  if (emp.payConfidential && auth.session.role !== 'OWNER') {
+  if (emp.payConfidential && auth.session.role !== 'OWNER') { // ROLE-OK
     return NextResponse.json({ error: '無權查看此員工的薪酬資料' }, { status: 403 })
   }
 

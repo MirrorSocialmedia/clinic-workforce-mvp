@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     const primaryClinicId = user.clinics.find((uc: any) => uc.isPrimary)?.clinicId
 
     // KIOSK IP enforcement at login
-    if (user.role === 'KIOSK' && user.ipAllowlist) {
+    if (user.role === 'KIOSK' && user.ipAllowlist) { // ROLE-OK
       const clientIp = (req.headers.get('cf-connecting-ip')
         || (req.headers.get('x-forwarded-for') || '').split(',')[0].trim())
         || 'unknown'

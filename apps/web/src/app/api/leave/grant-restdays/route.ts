@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { grantMonthlyRestDays, countMonthlyLeaveDays } from '@/lib/payroll-engine'
-import { hkParts } from '@/lib/hk-date'
+import { hkParts, toHKDateStr } from '@/lib/hk-date'
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -23,7 +23,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // employeeScope: 'all' | employeeId string
 
   const base = new Date()
-  const target = which === 'next' ? new Date(base.getFullYear(), base.getMonth() + 1, 1) : base
+  // ★ 唔好用 new Date(y, m, 1) —— 伺服器 UTC，得出 UTC 午夜（差 8 小時）
+  const baseYm = toHKDateStr(base).slice(0, 7)
+  const [by, bm] = baseYm.split('-').map(Number)
+  const nextYm = bm === 12 ? `${by + 1}-01` : `${by}-${String(bm + 1).padStart(2, '0')}`
+  const target = which === 'next'
+    ? new Date(`${nextYm}-01T00:00:00+08:00`)
+    : base
   const { y, m } = hkParts(target) // m is 0-indexed
 
   let emps: Array<{ id: string }>

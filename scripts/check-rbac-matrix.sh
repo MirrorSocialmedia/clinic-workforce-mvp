@@ -24,6 +24,8 @@ for f in $(grep -rl "requireAuth" apps/web/src/app/api --include=route.ts); do
   
   # Check common HTTP methods
   for method in GET POST PUT PATCH DELETE; do
+    # ★ Skip methods the route doesn't implement — avoids false positives
+    grep -q "export async function $method" "$f" || continue
     key="$method /api/$route"
     if grep -q "requireAuth" "$f"; then
       if ! grep -q "\"$key\"" "$CONFIG_FILE" && ! grep -q "'$key'" "$CONFIG_FILE"; then

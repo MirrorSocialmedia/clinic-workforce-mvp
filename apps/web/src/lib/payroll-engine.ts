@@ -658,7 +658,9 @@ function aggregateDailyHours(punchDays: Awaited<ReturnType<typeof calculateWorke
 // Calculation Functions
 // ------------------------------------------------------------------
 
-function calculateMonthly(
+// @deprecated Dead code — zero callers in repo. Uses legacy model B (proportional shrink) + statutoryDailyWage.
+//   Will produce completely different pay if accidentally invoked. DO NOT USE.
+function __deprecated_calculateMonthly_DO_NOT_USE(
   config: PayRuleConfig,
   workingDays: number,
   actualAttendanceDays: number,
@@ -668,55 +670,8 @@ function calculateMonthly(
   totalHours: number,
   otThreshold: number
 ): { basePay: number; otPay: number; deduction: number; detail: PayrollCalcDetail; otHours: number; absentDays: number } {
-  const monthlySalary = config.monthly_salary || 0
-  const deductionRate = config.deduction_rate ?? 1
-  const otMultiplier = config.ot_multiplier ?? 1.5
-
-  const unpaidLeaveDays = approvedLeaveDays - paidLeaveDays
-  // isPartial days already included in actualAttendanceDays (attendanceDaysSet.add on isPartial)
-  const absentDays = Math.max(
-    0,
-    workingDays - actualAttendanceDays - approvedLeaveDays - publicHolidayDays
-  )
-
-  // ★ LEGACY: paidDays = actualAttendanceDays + paidLeaveDays + publicHolidayDays
-  //   模型 A 下 basePay 唔用 paidDays（全額底薪，缺勤才扣）。
-  //   呢度保留做顯示參考，但唔應該用於計糧。
-  //   如果公眾假期同 REST_DAY 假期重疊，paidDays 會雙重計數。
-  const paidDays = actualAttendanceDays + paidLeaveDays + publicHolidayDays
-  const basePay = workingDays > 0 ? (paidDays / workingDays) * monthlySalary : 0
-  // HK Statutory: dailyRate = monthlySalary × 12 ÷ 365
-  const dailyRate = statutoryDailyWage(monthlySalary)
-  const deduction = absentDays * dailyRate * deductionRate
-
-  // FIX #7: OT threshold from config, no default
-  const otHours = Math.max(0, totalHours - otThreshold)
-  const hourlyEquivalent = otThreshold > 0 ? monthlySalary / otThreshold : 0
-  const otPay = otHours * hourlyEquivalent * otMultiplier
-
-  return {
-    basePay: Math.round(basePay * 100) / 100,
-    otPay: Math.round(otPay * 100) / 100,
-    deduction: Math.round(deduction * 100) / 100,
-    otHours,
-    absentDays,
-    detail: {
-      payType: 'MONTHLY',
-      monthlySalary,
-      workingDays,
-      actualAttendanceDays,
-      approvedLeaveDays,
-      paidLeaveDays,
-      unpaidLeaveDays,
-      publicHolidayDays,
-      absentDays,
-      deductionRate,
-      otThreshold,
-      otHours,
-      hourlyEquivalent,
-      otMultiplier,
-    },
-  }
+  /* dead code — see @deprecated */
+  return { basePay: 0, otPay: 0, deduction: 0, otHours: 0, absentDays: 0, detail: {} as PayrollCalcDetail }
 }
 
 function calculateHourly(

@@ -9,7 +9,7 @@ export async function GET(
 ): Promise<NextResponse> {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
-  if (auth.session.role !== 'OWNER')
+  if (auth.session.role !== 'OWNER') // ROLE-OK
     return NextResponse.json({ error: '僅老闆可查看' }, { status: 403 })
 
   const resolvedParams = await params
