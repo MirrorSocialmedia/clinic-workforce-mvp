@@ -247,10 +247,12 @@ export default function SchedulingPage() {
     return m
   }, [templates])
 
+  // ★ 固定 6 階梯 —— 避免加刪模板令同店所有更次變色
+  const FIXED_STEPS = 6
   const shiftColor = useCallback((s: any) => {
     const base = clinicColorMap.get(s.clinicId) || '#95a5a6'
     const pos = s.templateId ? templateIndexMap.get(s.templateId) : undefined
-    return pos ? shiftShade(base, pos.idx, pos.total) : base
+    return pos ? shiftShade(base, Math.min(pos.idx, FIXED_STEPS - 1), FIXED_STEPS) : base
   }, [clinicColorMap, templateIndexMap])
 
   // Step 7: Overview scope
@@ -416,6 +418,7 @@ export default function SchedulingPage() {
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
   const [savingRules, setSavingRules] = useState(false)
+  const [ruleColor, setRuleColor] = useState<string>('#95a5a6')
 
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
@@ -595,7 +598,10 @@ function getShiftCode(shift: Shift): string {
     if (!selectedClinicId) return
     getJSON(`/api/clinics/${selectedClinicId}/shift-rule-config`)
       .then(r => r.json())
-      .then(d => setShiftRuleConfig(d.shiftRules || { ...DEFAULT_SHIFT_RULE_CONFIG }))
+      .then(d => {
+        setShiftRuleConfig(d.shiftRules || { ...DEFAULT_SHIFT_RULE_CONFIG })
+        setRuleColor(d.color || '#95a5a6')
+      })
       .catch(() => setShiftRuleConfig({ ...DEFAULT_SHIFT_RULE_CONFIG }))
   }, [selectedClinicId])
 
@@ -985,19 +991,21 @@ function getShiftCode(shift: Shift): string {
       const res = await fetch(`/api/clinics/${selectedClinicId}/shift-rule-config`, {
         method: 'PUT',
         credentials: 'include',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedRules),
+        body: JSON.stringify({ ...updatedRules, color: ruleColor }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         alert(`排班規則儲存失敗：${err.error || '未知錯誤'}`)
         return
       }
-      if (res.ok) {
-        const data = await res.json()
-        setShiftRuleConfig(data.shiftRules)
-        alert('排班規則已更新')
-      }
+      const data = await res.json()
+      setShiftRuleConfig(data.shiftRules)
+      setRuleColor(data.color || '#95a5a6')
+      // ★ 顏色變咗要重拉診所清單，否則 clinicColorMap 仲係舊色，總覽膠囊要 F5 先變
+      await loadData()
+      alert('排班規則已更新')
     } catch (err) {
       console.error('Save shift rule config error:', err)
     } finally {
@@ -2509,6 +2517,70 @@ function getShiftCode(shift: Shift): string {
             </h2>
             <button onClick={() => setShowRuleSettings(false)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}><X size={18} /></button>
           </div>
+
+          {/* ★ 店舖顏色 —— 放最頂，因為佢影響成塊面板下面所有更次嘅預覽 */}
+          <div style={{
+            marginBottom: 16, padding: 12,
+            background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
+              店舖顏色
+            </div>
+            <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 10 }}>
+              正在設定：<strong>{clinics.find(c => c.id === selectedClinicId)?.name ?? '—'}</strong>
+               · 更次會用同色系嘅深淺區分
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {['#16a34a', '#2563eb', '#dc2626', '#ea580c', '#7c3aed', '#0891b2', '#ca8a04', '#db2777'].map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setRuleColor(c)}
+                  title={c}
+                  style={{
+                    width: 30, height: 30, borderRadius: 8, background: c, cursor: 'pointer',
+                    border: ruleColor.toLowerCase() === c ? '3px solid #111' : '1px solid #d1d5db',
+                  }}
+                />
+              ))}
+              <input
+                type="color"
+                value={ruleColor}
+                onChange={e => setRuleColor(e.target.value)}
+                style={{ width: 30, height: 30, padding: 0, border: '1px solid #d1d5db', borderRadius: 8 }}
+              />
+            </div>
+
+            {/* ★ 即時預覽 —— 用該公司真實模板數量，固定 6 階梯 */}
+            {(() => {
+              if (templates.length === 0) {
+                return (
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 10 }}>
+                    呢間店未有更次模板，加咗之後會喺呢度預覽深淺
+                  </div>
+                )
+              }
+              return (
+                <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                  {templates.map((t) => {
+                    const pos = templateIndexMap.get(t.id)
+                    const idx = pos ? Math.min(pos.idx, FIXED_STEPS - 1) : 0
+                    const bg = shiftShade(ruleColor, idx, FIXED_STEPS)
+                    return (
+                      <span key={t.id} style={{
+                        background: bg, color: textOn(bg),
+                        padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                      }}>
+                        {t.name}
+                      </span>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             {[
               { key: 'maxDailyHours', label: '單日工時上限', unit: '小時', enabledKey: 'maxDailyHoursEnabled', type: 'warning' },

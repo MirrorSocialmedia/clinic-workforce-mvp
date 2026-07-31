@@ -394,39 +394,9 @@ export default function ClinicsPage() {
             </div>
             <div className="form-group">
               <label>更表膠囊顏色</label>
-              {(() => {
-                const PRESET = ['#16a34a', '#2563eb', '#dc2626', '#ea580c', '#7c3aed', '#0891b2', '#ca8a04', '#db2777']
-                return (
-                <>
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    {PRESET.map(c => (
-                      <button key={c} type="button" onClick={() => setForm(f => ({ ...f, color: c }))}
-                        style={{
-                          width: 32, height: 32, borderRadius: 8, background: c,
-                          border: form.color === c ? '3px solid #111' : '1px solid #ddd',
-                        }} />
-                    ))}
-                    <input type="color" value={form.color ?? '#95a5a6'}
-                      onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
-                      style={{ width: 32, height: 32, padding: 0, border: 'none', cursor: 'pointer', background: 'none' }} />
-                  </div>
-                  {/* ★ 即時預覽同色系階梯 */}
-                  {form.color && (
-                    <div className="flex gap-1 mt-3">
-                      {[0, 1, 2, 3].map(i => {
-                        const bg = shiftShade(form.color, i, 4)
-                        return (
-                          <span key={i} style={{
-                            background: bg, color: textOn(bg),
-                            padding: '4px 10px', borderRadius: 6, fontSize: 12,
-                          }}>更{i + 1}</span>
-                        )
-                      })}
-                    </div>
-                  )}
-                </>
-                )
-              })()}
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
+                顏色於「排班管理 → 排班規則」設定
+              </div>
             </div>
             <div className="form-group">
               <label>地址</label>
@@ -475,27 +445,14 @@ export default function ClinicsPage() {
                     <td style={{ fontWeight: 500 }}>{clinic.name}</td>
                     <td className="text-muted">{clinic.shortName || '—'}</td>
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <input
-                          type="color"
-                          value={clinic.color || '#95a5a6'}
-                          onChange={e => setClinics(prev => prev.map(c =>
-                            c.id === clinic.id ? { ...c, color: e.target.value } : c))}
-                          onBlur={e => saveClinicColor(clinic.id, e.target.value)}
-                          style={{ width: 34, height: 26, padding: 0, border: '1px solid #ddd',
-                                   borderRadius: 4, cursor: 'pointer', background: 'none' }}
-                          title="更表膠囊顏色"
-                        />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{
-                          padding: '1px 6px', borderRadius: 3, fontSize: 11,
-                          background: clinic.color || '#95a5a6',
-                          color: textOn(clinic.color),
-                        }}>
-                          {clinic.shortName || clinic.name.slice(0, 2)}·早
+                          width: 16, height: 16, borderRadius: 4,
+                          background: clinic.color || '#95a5a6', border: '1px solid #d1d5db',
+                        }} />
+                        <span style={{ fontSize: 12, color: '#6b7280' }}>
+                          顏色於「排班管理 → 排班規則」設定
                         </span>
-                        {clinic.color && (
-                          <button className="btn btn-sm" onClick={() => saveClinicColor(clinic.id, '')}>清除</button>
-                        )}
                       </div>
                     </td>
                     <td className="text-muted">{clinic.address || '—'}</td>

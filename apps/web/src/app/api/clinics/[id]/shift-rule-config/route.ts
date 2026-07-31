@@ -22,11 +22,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'Forbidden (clinic not in scope)' }, { status: 403 })
   }
 
-  const clinic = await prisma.clinic.findUnique({ where: { id }, select: { config: true } })
+  const clinic = await prisma.clinic.findUnique({ where: { id }, select: { config: true, color: true } })
   if (!clinic) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const config = parseShiftRuleConfig(clinic.config)
-  return NextResponse.json({ shiftRules: config })
+  return NextResponse.json({ shiftRules: config, color: clinic.color })
 }
 
 // PUT /api/clinics/:id/shift-rule-config
@@ -46,6 +46,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: 'Forbidden (clinic not in scope)' }, { status: 403 })
   }
   const body = await req.json()
+  const { color, ...ruleBody } = body
+
+  if (color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(color)) {
+    return NextResponse.json({ error: '顏色格式錯誤（需為 #RRGGBB）' }, { status: 400 })
+  }
 
   // Read existing config
   const clinic = await prisma.clinic.findUnique({ where: { id }, select: { config: true } })
@@ -61,15 +66,22 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     ...existingOtherFields,
     shiftRules: {
       ...existing,
-      ...body,
+      ...ruleBody,
     },
   }
 
-  await prisma.clinic.update({
+  const updated = await prisma.clinic.update({
     where: { id },
-    data: { config: JSON.stringify(merged) },
+    data: {
+      config: JSON.stringify(merged),
+      ...(color !== undefined ? { color } : {}),
+    },
+    select: { color: true },
   })
 
   const config = parseShiftRuleConfig(JSON.stringify(merged))
-  return NextResponse.json({ success: true, shiftRules: config })
+  return NextResponse.json(
+    { success: true, shiftRules: config, color: updated.color },
+    { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+  )
 }
