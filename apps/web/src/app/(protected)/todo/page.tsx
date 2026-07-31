@@ -328,7 +328,7 @@ export default function TodoPage() {
                       <div className="flex-1">
                         <div className="font-semibold">{empName} · 補登 {punchTypeLabel}</div>
                         <div className="text-sm text-muted-foreground mt-1">
-                          {new Date(c.correctedTime).toLocaleString('zh-HK')}
+                          {new Date(c.correctedTime).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}
                         </div>
                         {clinicName && (
                           <div className="text-xs text-muted-foreground">診所: {clinicName}</div>
@@ -379,7 +379,7 @@ export default function TodoPage() {
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold">{e.employeeName}</div>
                       <div className="text-xs text-muted-foreground mt-1">
-                        登記: {new Date(e.enrolledAt).toLocaleString('zh-HK')}
+                        登記: {new Date(e.enrolledAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -443,7 +443,7 @@ export default function TodoPage() {
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground mt-1">
-                        {r.clinicName} · {new Date(r.punchTime).toLocaleString('zh-HK')}
+                        {r.clinicName} · {new Date(r.punchTime).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {r.faceScore != null && `分數: ${r.faceScore.toFixed(4)}`}

@@ -271,7 +271,7 @@ export default function PayrollListPage() {
                         </td>
                         <td className="py-1.5 text-right text-emerald-600">+{e.amount.toLocaleString()}</td>
                         <td className="py-1.5 pl-3">{e.description}</td>
-                        <td className="py-1.5 text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('zh-HK')}</td>
+                        <td className="py-1.5 text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}</td>
                         <td className="py-1.5 text-right">
                           {canGenerate && (
                             <button onClick={() => delExpense(e.id, e.employee?.user?.name, e.amount)}

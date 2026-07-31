@@ -54,7 +54,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // 拒絕：刪相 + 刪記錄
   if (template.refFrameId) {
    try {
-    await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${template.refFrameId}`, {
+    await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${template.refFrameId}?allow_ref=1`, {
       method: 'DELETE',
       signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
      })

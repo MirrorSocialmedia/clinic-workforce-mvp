@@ -279,6 +279,11 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
 
   // —— 發放休息日：有 scheduling 權限就可以發放（grant-restdays route 改用 scheduling 權限） ——
   'POST /api/leave/grant-restdays': ['scheduling'],
+
+  // —— 假期修改：有 scheduling 或 leave_approve 權限可以修改/刪除假期 ——
+  'PUT /api/leave-requests/:id': ['scheduling', 'leave_approve'],
+  'DELETE /api/leave-requests/:id': ['scheduling', 'leave_approve'],
+  'PATCH /api/leave-requests/:id': ['scheduling', 'leave_approve'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

@@ -136,7 +136,7 @@ export async function DELETE(
 ) {
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   const auditCtx = {
     actorId: session.userId,
@@ -160,9 +160,11 @@ export async function DELETE(
       const denied = assertClinicAccess(scope, session, emp?.homeClinicId)
       if (denied) return denied
 
-      // Only allow deleting PENDING or approved requests by manager/owner
-      if (request.status === 'APPROVED' && session.role !== 'OWNER' && session.role !== 'MANAGER') {
-        return NextResponse.json({ error: 'Only managers can delete approved leave requests' }, { status: 403 })
+      // ★ 第二道閘：改用 perms（非 role 寫死），同 RBAC_PERM_OVERRIDES 一致
+      if (request.status === 'APPROVED'
+        && !(perms ?? []).includes('scheduling')
+        && !(perms ?? []).includes('leave_approve')) {
+        return NextResponse.json({ error: 'Forbidden (cannot modify approved leave)' }, { status: 403 })
       }
 
       // Restore leave balance if approved

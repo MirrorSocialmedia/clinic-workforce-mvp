@@ -103,7 +103,7 @@ export default function FaceReviewPage() {
                 <div className="flex-1">
                   <div className="font-bold">{p.employeeName}</div>
                   <div className="text-xs text-gray-500">
-                    登記時間：{new Date(p.enrolledAt).toLocaleString('zh-HK')}
+                    登記時間：{new Date(p.enrolledAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -138,7 +138,7 @@ export default function FaceReviewPage() {
                       {item.faceStatus === 'NO_FACE' ? 'NO_FACE' : 'FAIL'}
                     </span>
                   </div>
-                  <div className="text-sm text-gray-500">{item.clinicName} · {new Date(item.punchTime).toLocaleString('zh-HK')}</div>
+                  <div className="text-sm text-gray-500">{item.clinicName} · {new Date(item.punchTime).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}</div>
                   <div className="text-sm">
                     {item.faceScore != null && `分數: ${item.faceScore.toFixed(4)}`}
                     {item.faceLiveness != null && ` | 活體: ${item.faceLiveness.toFixed(4)}`}

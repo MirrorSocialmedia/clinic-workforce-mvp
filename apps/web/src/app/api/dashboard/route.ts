@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { todayHK, hkDateStart } from '@/lib/hk-date'
+import { todayHK, hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
 import { getTimeAccountSummary } from '@/lib/timebank-summary'
 
 /** Get start/end of today in HK (UTC+8) */
@@ -146,17 +146,17 @@ export async function GET(req: NextRequest) {
   const distinctEmployeeCount = new Set(allEmployeeClinics.map(ec => ec.employeeId)).size
 
   // ── Work hours: current week (Mon–Sun) + current month ──
-  const now = new Date()
-  const hkNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' }))
-  const dow = hkNow.getDay()
+  // ★ 唔好用 toLocaleString 造假 Date —— getFullYear() 等會攞到 UTC 解讀的假時間，
+  //   再用 new Date(y,m,1) 建構就變咗 UTC 午夜，同 HK 月初差 8 小時。
+  //   統一用 hk-date helper。
+  const todayHKDate = toHKDateStr(new Date()) // 'YYYY-MM-DD'
+  const { start: monthStart, end: monthEnd } = getMonthRange(hkDateStart(todayHKDate))
+
+  const dow = new Date(`${todayHKDate}T12:00:00+08:00`).getUTCDay() // 中午取 dow，避免邊界
   const monOff = dow === 0 ? -6 : 1 - dow
-  const weekStart = new Date(hkNow)
-  weekStart.setDate(hkNow.getDate() + monOff)
-  weekStart.setHours(0, 0, 0, 0)
-  const weekEnd = new Date(weekStart)
-  weekEnd.setDate(weekStart.getDate() + 7)
-  const monthStart = new Date(hkNow.getFullYear(), hkNow.getMonth(), 1)
-  const monthEnd = new Date(hkNow.getFullYear(), hkNow.getMonth() + 1, 1)
+  const weekStartStr = toHKDateStr(new Date(hkDateStart(todayHKDate).getTime() + monOff * 86400000))
+  const weekStart = hkDateStart(weekStartStr)
+  const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
 
   const activeEmployees = await prisma.employee.findMany({
     where: { status: 'ACTIVE' },

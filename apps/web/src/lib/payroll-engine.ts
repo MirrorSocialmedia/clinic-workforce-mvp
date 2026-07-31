@@ -2903,13 +2903,15 @@ export async function calculatePayrollWithRules(
     for (const leave of maternityLeaves) {
       const effStart = new Date(Math.max(new Date(leave.startDate).getTime(), monthStart.getTime()))
       const effEnd = new Date(Math.min(new Date(leave.endDate).getTime(), monthEnd.getTime()))
-      let d = new Date(effStart)
-      d.setHours(0, 0, 0, 0)
-      const endOfDay = new Date(effEnd)
-      endOfDay.setHours(23, 59, 59, 999)
-      while (d <= endOfDay) {
-        maternityDays.push(new Date(d))
-        d.setDate(d.getDate() + 1)
+      // ★ 唔好用 setHours —— 伺服器係 UTC，setHours(0,0,0,0) 設嘅係 UTC 午夜。
+      //   而 monthStart/End 係 HK 邊界，兩種基準混合比較係靠巧合先啱。
+      //   統一用 HK 日期字串迭代。
+      let cur = toHKDateStr(effStart)
+      const last = toHKDateStr(effEnd)
+      while (cur <= last) {
+        maternityDays.push(hkDateStart(cur))
+        const nx = new Date(hkDateStart(cur).getTime() + 86400000)
+        cur = toHKDateStr(nx)
       }
     }
 
@@ -2942,13 +2944,13 @@ export async function calculatePayrollWithRules(
     for (const leave of paternityLeaves) {
       const effStart = new Date(Math.max(new Date(leave.startDate).getTime(), monthStart.getTime()))
       const effEnd = new Date(Math.min(new Date(leave.endDate).getTime(), monthEnd.getTime()))
-      let d = new Date(effStart)
-      d.setHours(0, 0, 0, 0)
-      const endOfDay = new Date(effEnd)
-      endOfDay.setHours(23, 59, 59, 999)
-      while (d <= endOfDay) {
+      // ★ 唔好用 setHours —— 同上。統一用 HK 日期字串迭代。
+      let cur = toHKDateStr(effStart)
+      const last = toHKDateStr(effEnd)
+      while (cur <= last) {
         paternityDaysInMonth++
-        d.setDate(d.getDate() + 1)
+        const nx = new Date(hkDateStart(cur).getTime() + 86400000)
+        cur = toHKDateStr(nx)
       }
     }
 

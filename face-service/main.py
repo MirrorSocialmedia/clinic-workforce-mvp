@@ -101,7 +101,11 @@ def frame(punch_id: str):
     return FileResponse(p, media_type='image/jpeg')
 
 @app.delete('/frame/{punch_id}')
-def delete_frame(punch_id: str):
+def delete_frame(punch_id: str, allow_ref: bool = False):
+    # ★ 參考照係核准後永久保留（2026-07-29 決定），
+    #   唔可以經一般打卡幀刪除路徑誤刪。
+    if punch_id.startswith('ref_') and not allow_ref:
+        return JSONResponse({'error': 'ref frames are protected'}, status_code=403)
     p = os.path.join(FRAMES_DIR, f'{punch_id}.jpg')
     if os.path.exists(p):
         os.remove(p)

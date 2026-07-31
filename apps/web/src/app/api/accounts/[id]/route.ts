@@ -99,7 +99,7 @@ export async function DELETE(
       })
       for (const t of faceTemplates) {
        try {
-        await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${t.refFrameId}`, {
+        await fetch(`${CONFIG.FACE_SERVICE_URL}/frame/${t.refFrameId}?allow_ref=1`, {
          method: 'DELETE',
          signal: AbortSignal.timeout(CONFIG.FACE_TIMEOUT_MS),
         })
