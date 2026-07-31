@@ -181,6 +181,7 @@ export default function EmployeePayrollDetailPage() {
   const scheduledDays = attendanceDetail.expectedWorkDays ?? detail.scheduledDays ?? '-'
   const actualAttendanceDays = attendanceDetail.actualAttendanceDays ?? detail.actualAttendanceDays ?? item.workedHours
   const absentDays = attendanceDetail.absentDays ?? detail.absentDays ?? item.absentDays
+  const unpaidLeaveDays = attendanceDetail.unpaidLeaveDays ?? detail.unpaidLeaveDays ?? 0
   const otDeductedAbsences = (attendanceDetail.otDeductedAbsences as Array<{ date: string; minutes: number }>) || []
   const leaveDays = detail.approvedLeaveDays ?? item.leaveDays
   const lateRecords = (attendanceDetail.lateRecords ?? detail.lateRecords) || []
@@ -190,7 +191,9 @@ export default function EmployeePayrollDetailPage() {
   // Salary breakdown
   const basePay = salaryDetail.basePay ?? item.basePay
   const deduction = salaryDetail.deduction ?? item.deduction
-  const dailyWage = salaryDetail.dailyWage ?? (typeof basePay === 'number' && scheduledDays !== '-' ? basePay / Number(scheduledDays) : 0)
+  // ★ 冇 salaryDetail.dailyWage 就唔好估 —— 顯示 0 令人知道係缺資料，
+  //   basePay ÷ scheduledDays 唔係扣薪日率（差 50%），估錯比唔顯示更差
+  const dailyWage = salaryDetail.dailyWage ?? 0
   const attendanceBonus = salaryDetail.attendanceBonus ?? detail.attendanceBonus ?? 0
   const sickDeduction = salaryDetail.sickDeduction ?? detail.sickDeduction ?? 0
   const sickEpisodes = salaryDetail.sickEpisodes ?? detail.sickEpisodes ?? []
@@ -479,10 +482,22 @@ export default function EmployeePayrollDetailPage() {
               <span className="font-mono font-medium">{fmtCurrency(basePay)}</span>
             </div>
 
-            {absentDays > 0 && (
+            {deduction > 0 && (
               <div className="flex justify-between items-center text-red-500">
                 <span className="text-sm">
-                  缺勤扣款 {absentDays}天 × {fmtCurrency(dailyWage)} (法定日薪)
+                  {(() => {
+                    // ★ deduction = (缺勤 + 無薪假) × 扣薪日率
+                    //   舊版標籤只寫缺勤天數，令金額同說明對唔上；
+                    //   而且條件用 absentDays > 0，只有無薪假時成行唔顯示。
+                    const parts: string[] = []
+                    if (absentDays > 0) parts.push(`缺勤 ${absentDays} 天`)
+                    if (unpaidLeaveDays > 0) parts.push(`無薪假 ${unpaidLeaveDays} 天`)
+                    const total = absentDays + unpaidLeaveDays
+                    const label = parts.length ? parts.join(' + ') : '扣款'
+                    return dailyWage > 0
+                      ? `${label}（共 ${total} 天 × ${fmtCurrency(dailyWage)}/天）`
+                      : `${label}（共 ${total} 天）`
+                  })()}
                 </span>
                 <span className="font-mono font-medium">-{fmtCurrency(deduction)}</span>
               </div>
