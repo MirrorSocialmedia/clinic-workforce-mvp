@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { toHKDateStr } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { useTodoCount } from '@/lib/use-todo-count'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'

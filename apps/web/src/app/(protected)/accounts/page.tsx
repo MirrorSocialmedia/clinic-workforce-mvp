@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
 import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from '@/lib/permissions'
@@ -822,9 +823,10 @@ export default function AccountsPage() {
                                 </h4>
                                 {leaveBalances[acc.employeeId!] && leaveBalances[acc.employeeId!].length > 0 ? (
                                   leaveBalances[acc.employeeId!]
-                                    // 週年發放制：年假只顯示當年
+                                    // ★ 年假係累積 row (year=0)，唔可以按曆年過濾
                                     .filter(b => {
-                                      if (b.leaveType?.systemKey === 'ANNUAL_LEAVE' && b.year !== currentYear) return false
+                                      if (b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL) return true
+                                      if (b.year !== currentYear) return false
                                       return true
                                     })
                                     .map(b => (

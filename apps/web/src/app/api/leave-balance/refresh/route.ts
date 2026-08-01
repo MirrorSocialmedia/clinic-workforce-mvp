@@ -2,40 +2,44 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { serviceMonths, serviceYears, annualLeaveEntitlement, PROBATION_MONTHS } from '@/lib/leave-calculation'
-import { toHKDateStr } from '@/lib/hk-date'
+import { serviceMonths, totalAccruedLeave, PROBATION_MONTHS } from '@/lib/leave-calculation'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+
+// ★ 年假採累積制（2026-07-31 決定）：year 固定 0，代表「由入職累計」。
+//   舊版按曆年開 row，令週年日一過上年未放餘額變孤兒（UI 全部過濾 currentYear）。
+const ANNUAL_ACCRUAL_YEAR = 0
 
 /**
  * POST /api/leave-balance/refresh
  *
  * 重新計算指定員工（或在職全部）的年假 LeaveBalance。
- * 按服務年度逐筆 upsert，保留已用天數。
+ * 累積制：entitled = totalAccruedLeave(joinDate, asOf)，remaining = entitled - used。
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, perms } = auth
 
-  if (session.role !== 'OWNER' && session.role !== 'MANAGER') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // ★ 改用權限判斷；權限不足係 403 唔係 401（401 = 未登入，前端會誤導向登入頁）
+  if (!(perms ?? []).includes('leave_approve')) {
+    return NextResponse.json(
+      { error: 'Forbidden (missing permission: leave_approve)' },
+      { status: 403 },
+    )
   }
 
   try {
     const body = await req.json().catch(() => ({}))
     const { employeeId } = body
 
-    // 找到所有年假類型的 LeaveType
     const annualLeaveType = await prisma.leaveType.findUnique({
-      where: { systemKey: 'ANNUAL_LEAVE' },
+      where: { systemKey: LEAVE_SYSTEM_KEYS.ANNUAL },
     })
 
     if (!annualLeaveType) {
-      return NextResponse.json({ error: '未找到年假類型的 LeaveType (ANNUAL_LEAVE)' }, { status: 400 })
+      return NextResponse.json({ error: '未找到年假類型 (ANNUAL_LEAVE)' }, { status: 400 })
     }
 
-    const annualLeaveTypeId = annualLeaveType.id
-
-    // 取得目標員工列表
     const targetEmployees = employeeId
       ? [await prisma.employee.findUnique({ where: { id: employeeId } })].filter(Boolean)
       : await prisma.employee.findMany({ where: { status: { in: ['ACTIVE', 'PROBATION'] } } })
@@ -45,44 +49,37 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date()
-    const currentYear = parseInt(toHKDateStr(now).slice(0, 4))
     let updated = 0
     const skipped: string[] = []
 
     for (const emp of targetEmployees as any[]) {
       if (!emp.joinDate) { skipped.push(emp.id); continue }
 
-      // 試用期檢查：不足 3 個月 → 0
       const months = serviceMonths(new Date(emp.joinDate), now)
-      if (months < PROBATION_MONTHS) {
-        skipped.push(emp.id)
-        continue
-      }
+      if (months < PROBATION_MONTHS) { skipped.push(emp.id); continue }
 
-      // 週年發放制：已滿整年數
-      const completedYears = serviceYears(new Date(emp.joinDate), now)
-      // 滿 1 年=7、滿 2 年=7、滿 3 年=8 … 滿 9 年+=14；未滿 1 年=0
-      const entitledNow = completedYears >= 1
-        ? annualLeaveEntitlement(completedYears)
-        : 0
+      // ★ 累積制：由入職逐個服務年度按比例加總，未放部分自動結轉
+      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now)
 
       const existing = await prisma.leaveBalance.findUnique({
         where: {
           employeeId_leaveTypeId_year: {
             employeeId: emp.id,
-            leaveTypeId: annualLeaveTypeId,
-            year: currentYear,
+            leaveTypeId: annualLeaveType.id,
+            year: ANNUAL_ACCRUAL_YEAR,
           },
         },
       })
 
       if (existing) {
-        const delta = entitledNow - existing.entitled
-        if (delta !== 0) {
-          // 冪等：額沒變就不動；有變化則差額進 remaining，已用不受影響
+        // ★ remaining 由 entitled − used 推導，唔可以用 increment delta ——
+        //   累積制之下 entitled 持續增長，delta 累加會失準。
+        //   used 保留唔動（真實已放天數）。
+        const nextRemaining = Math.max(0, entitledNow - existing.used)
+        if (existing.entitled !== entitledNow || existing.remaining !== nextRemaining) {
           await prisma.leaveBalance.update({
             where: { id: existing.id },
-            data: { entitled: entitledNow, remaining: { increment: delta } },
+            data: { entitled: entitledNow, remaining: nextRemaining },
           })
           updated++
         }
@@ -90,8 +87,8 @@ export async function POST(req: NextRequest) {
         await prisma.leaveBalance.create({
           data: {
             employeeId: emp.id,
-            leaveTypeId: annualLeaveTypeId,
-            year: currentYear,
+            leaveTypeId: annualLeaveType.id,
+            year: ANNUAL_ACCRUAL_YEAR,
             entitled: entitledNow,
             used: 0,
             remaining: entitledNow,
@@ -103,7 +100,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      refreshedCount: updated,
       updatedCount: updated,
       employeeCount: targetEmployees.length,
       skipped: skipped.length,

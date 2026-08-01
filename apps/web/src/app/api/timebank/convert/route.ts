@@ -4,10 +4,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 
 async function getOtLeaveTypeId() {
   const lt = await prisma.leaveType.findUnique({
-    where: { systemKey: 'OT_LEAVE' },
+    where: { systemKey: LEAVE_SYSTEM_KEYS.OT },
   })
   return lt?.id
 }
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
 
   if (direction === 'rest_to_account') {
     // ① 找休息日餘額（REST_DAY 系統類型）
-    const restType = await prisma.leaveType.findFirst({ where: { systemKey: 'REST_DAY' } })
+    const restType = await prisma.leaveType.findFirst({ where: { systemKey: LEAVE_SYSTEM_KEYS.REST_DAY } })
     if (!restType) {
       return NextResponse.json({ error: '找不到 REST_DAY 類型' }, { status: 400 })
     }

@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmtDateTime, fmtDate, fmtTime, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel, punchColor } from '@/lib/punch-label'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
 
@@ -97,9 +98,13 @@ export default function EmployeePayrollDetailPage() {
   }, [fetchData])
 
   // Fetch leave balances from API (authentic source — same as 假期管理)
+  // ★ 年假係累積 row (year=0)，唔可以按曆年過濾。
+  //   唔傳 year 拎晒，前端按 systemKey 分流。
   useEffect(() => {
     if (!empId) return
-    fetch(`/api/leave-balance?employeeId=${empId}`, { credentials: 'include' })
+    fetch(`/api/leave-balance?employeeId=${empId}`, {
+      credentials: 'include', cache: 'no-store',
+    })
       .then(r => r.ok ? r.json() : { leaveBalances: [] })
       .then(d => setLeaveBalances(d.leaveBalances || []))
       .catch(() => setLeaveBalances([]))
@@ -213,12 +218,20 @@ export default function EmployeePayrollDetailPage() {
   const monthlyLeaveDays = leaveAndOtDetail.monthlyLeaveDays ?? 0
   const leaveTaken = leaveAndOtDetail.leaveTaken ?? item.leaveDays
   // FIX: 從 leaveBalance 表讀取（與假期管理同源），不再用 detail 中硬編碼的 0
-  const restDayBalance = leaveBalances.find(b => b.leaveType?.systemKey === 'REST_DAY')
+  // ★ 年假係累積 row (year=0)，唔可以按曆年過濾；其餘假期按薪資單所屬曆年過濾。
+  const periodYear = item.run?.periodMonth
+    ? Number(String(item.run.periodMonth).slice(0, 4))
+    : null
+  const annualBalance = leaveBalances.find(b => b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL)
+  const annualRemaining = annualBalance?.remaining ?? 0
+  const restDayBalance = periodYear
+    ? leaveBalances.find(b => b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.REST_DAY && b.year === periodYear)
+    : leaveBalances.find(b => b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.REST_DAY)
   const restDayRemaining = restDayBalance?.remaining ?? 0
   const restDayEntitled = restDayBalance?.entitled ?? 0
-  const annualBalance = leaveBalances.find(b => b.leaveType?.systemKey === 'ANNUAL_LEAVE')
-  const annualRemaining = annualBalance?.remaining ?? 0
-  const otBalance = leaveBalances.find(b => b.leaveType?.systemKey === 'OT_LEAVE')
+  const otBalance = periodYear
+    ? leaveBalances.find(b => b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.OT && b.year === periodYear)
+    : leaveBalances.find(b => b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.OT)
   const otRemaining = otBalance?.remaining ?? 0
   // Total leave balance = sum of all types
   const totalLeaveBalance = restDayRemaining + annualRemaining + otRemaining
@@ -729,15 +742,33 @@ export default function EmployeePayrollDetailPage() {
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">本月已用假期</div>
-                <div className="text-lg font-bold mt-1">{leaveTaken} 天</div>
+                <div className="text-lg font-bold mt-1">
+                  {(leaveAndOtDetail.leaveTakenQuota ?? leaveTaken)} 天
+                </div>
+                {(leaveAndOtDetail.leaveTakenOther ?? 0) > 0 && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    另有 {leaveAndOtDetail.leaveTakenOther} 天（病假等，不佔額度）
+                  </div>
+                )}
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">假期餘額</div>
                 <div className="text-lg font-bold mt-1">{totalLeaveBalance.toFixed(1)} 天</div>
                 <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                  {restDayRemaining > 0 && <div>休息日: {restDayRemaining.toFixed(1)} (應得 {restDayEntitled})</div>}
-                  {annualRemaining > 0 && <div>年假: {annualRemaining.toFixed(1)}</div>}
-                  {otRemaining > 0 && <div>OT 補假: {otRemaining.toFixed(1)}</div>}
+                  {/* ★ 用 != null 唔用 > 0 —— 餘額啱啱用晒（0）都要顯示，
+                        否則用家會以為系統漏咗。同「無薪假扣款」嗰个 bug 同一 pattern。 */}
+                  {restDayBalance != null && (
+                    <div>休息日: {restDayRemaining.toFixed(1)} / {restDayEntitled}</div>
+                  )}
+                  {annualBalance != null && (
+                    <div>年假: {annualRemaining.toFixed(1)} / {annualBalance.entitled ?? 0}</div>
+                  )}
+                  {otBalance != null && (
+                    <div>OT 補假: {otRemaining.toFixed(1)} / {otBalance.entitled ?? 0}</div>
+                  )}
+                  {restDayBalance == null && annualBalance == null && otBalance == null && (
+                    <div className="text-amber-600">未設定假期額度</div>
+                  )}
                 </div>
               </div>
               <div className="rounded-lg border p-3">

@@ -500,7 +500,9 @@ model LeaveBalance {
   employee    Employee  @relation(fields: [employeeId], references: [id])
   leaveTypeId String
   leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
-  year        Int       // 年份
+  /// 年份。★ 年假（ANNUAL_LEAVE）採累積制，固定用 0 代表「由入職累計」（2026-07-31 決定）；
+  /// 其餘假期類型（休息日、OT補假）用曆年。
+  year        Int
   entitled    Float     // 總額
   used        Float     @default(0)
   remaining   Float     @default(0)

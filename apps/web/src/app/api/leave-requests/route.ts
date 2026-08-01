@@ -7,6 +7,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 
 // ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
 class InsufficientBalanceError extends Error {}
@@ -138,14 +139,16 @@ export async function POST(req: NextRequest) {
       }
 
       // Validate remaining balance (skip for unlimited types)
-      // 🆕 Use startDate year instead of current date year to avoid cross-year misalignment
-      const currentYear = Number(toHKDateStr(new Date(startDate)).slice(0, 4))
+      // ★ 年假採累積制，用 year=0；其餘假期用曆年
+      const balanceYear = leaveType.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL
+        ? 0
+        : Number(toHKDateStr(new Date(startDate)).slice(0, 4))
       const balance = await prisma.leaveBalance.findFirst({
-        where: { employeeId: employee.id, leaveTypeId, year: currentYear },
+        where: { employeeId: employee.id, leaveTypeId, year: balanceYear },
       })
 
       if (!isUnlimited && balance && leaveType.annualQuota !== null && leaveType.annualQuota > 0) {
-        if (leaveType.systemKey !== 'SICK' && days > balance.remaining) {
+        if (leaveType.systemKey !== LEAVE_SYSTEM_KEYS.SICK && days > balance.remaining) {
           return NextResponse.json(
             { error: `Insufficient leave balance. Remaining: ${balance.remaining} days` },
             { status: 400 }
@@ -219,17 +222,20 @@ export async function POST(req: NextRequest) {
         })
 
         // ★ 扣餘額搬入交易內（SICK 除外 —— 成本喺計糧端結算）
-        if (req.status === 'APPROVED' && !isUnlimited && leaveType.systemKey !== 'SICK') {
-          const currentYear = new Date().getUTCFullYear()
+        if (req.status === 'APPROVED' && !isUnlimited && leaveType.systemKey !== LEAVE_SYSTEM_KEYS.SICK) {
+          // ★ 年假採累積制，用 year=0；其餘假期用曆年
+          const deductYear = leaveType.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL
+            ? 0
+            : Number(toHKDateStr(new Date(startDate)).slice(0, 4))
           const bal = await tx.leaveBalance.findUnique({
             where: {
-              employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: currentYear },
+              employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: deductYear },
             },
           })
 
           // ★ 決定 1：休息日要手動補，後端唔自動補血。
           if (!bal || bal.remaining < days) {
-            const hint = leaveType.systemKey === 'REST_DAY'
+            const hint = leaveType.systemKey === LEAVE_SYSTEM_KEYS.REST_DAY
               ? '請先喺「假期管理 → 發放休息日」為該員工發放，再排班。'
               : '請先調整該員工嘅假期額度。'
             throw new InsufficientBalanceError(
@@ -239,7 +245,7 @@ export async function POST(req: NextRequest) {
 
           await tx.leaveBalance.update({
             where: {
-              employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: currentYear },
+              employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: deductYear },
             },
             data: {
               used: { increment: days },

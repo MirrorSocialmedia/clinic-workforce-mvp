@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { toHKDateStr } from '@/lib/hk-date'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { Plus } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
@@ -152,7 +153,7 @@ export default function LeavePage() {
         // 找 REST_DAY 類型 id
         const typesRes = await fetch('/api/leave-types', { credentials: 'include' })
         const typesData = await typesRes.json()
-        const restType = typesData?.leaveTypes?.find((t: any) => t.systemKey === 'REST_DAY')
+        const restType = typesData?.leaveTypes?.find((t: any) => t.systemKey === LEAVE_SYSTEM_KEYS.REST_DAY)
         if (!restType) return setRestDayBalance(null)
         const bal = d.leaveBalances.find((b: any) => b.employeeId === convertForm.employeeId && b.leaveTypeId === restType.id && b.year === year)
         setRestDayBalance(bal?.remaining ?? null)
@@ -164,7 +165,7 @@ export default function LeavePage() {
   const isOwner = userRole === 'OWNER'
 
   // 週年發放制：找 ANNUAL_LEAVE 類型 id 與當前公曆年，用於 UI 過濾
-  const annualLeaveTypeId = leaveTypes.find(t => t.systemKey === 'ANNUAL_LEAVE')?.id
+  const annualLeaveTypeId = leaveTypes.find(t => t.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL)?.id
   const currentYear = new Date().getFullYear()
 
   const fetchData = useCallback(async () => {
@@ -525,9 +526,10 @@ export default function LeavePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {balances
                   .filter(b => balanceEmployeeId === 'all' || b.employeeId === balanceEmployeeId)
-                  // 週年發放制：年假只顯示當年
+                  // ★ 年假係累積 row (year=0)，唔可以按曆年過濾
                   .filter(b => {
-                    if (b.leaveTypeId === annualLeaveTypeId && b.year !== currentYear) return false
+                    if (b.leaveTypeId === annualLeaveTypeId) return true
+                    if (b.year !== currentYear) return false
                     return true
                   })
                   .map(b => (
@@ -540,7 +542,7 @@ export default function LeavePage() {
                         {b.employee?.user?.name || b.employeeId}
                       </div>
                       <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{b.leaveType.name} ({b.year})</div>
-                      {b.leaveType?.systemKey === 'SICK' ? (
+                      {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.SICK ? (
                         <>
                           <div style={{ fontSize: 20, fontWeight: 700, color: '#16a34a' }}>無上限</div>
                           <div style={{ fontSize: 12, color: '#888' }}>

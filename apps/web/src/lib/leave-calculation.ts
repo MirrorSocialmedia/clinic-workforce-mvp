@@ -46,7 +46,11 @@ export function serviceYears(joinDate: Date, asOf: Date): number {
 export function serviceMonths(joinDate: Date, asOf: Date): number {
   const a = hkParts(asOf), j = hkParts(joinDate)
   let months = (a.y - j.y) * 12 + (a.m - j.m)
-  if (a.day < j.day) months--
+  // ★ 月尾入職（例如 3/31）遇上短月，a.day 永遠細過 j.day，
+  //   會令試用期遲一日先過。用「當月最後一日」做 fallback。
+  const lastDayOfAsOfMonth = new Date(Date.UTC(a.y, a.m + 1, 0)).getUTCDate()
+  const effJoinDay = Math.min(j.day, lastDayOfAsOfMonth)
+  if (a.day < effJoinDay) months--
   return months
 }
 

@@ -8,6 +8,7 @@
 // ============================================================
 
 import { prisma, basePrisma } from './prisma'
+import { QUOTA_LEAVE_KEYS } from './leave-types'
 import { getEffectivePunches } from './punch-query'
 import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts, leaveCoversDate } from './hk-date'
 import type { PayType, RunStatus } from '@prisma/client'
@@ -2012,7 +2013,7 @@ export async function grantMonthlyRestDays(
 ): Promise<void> {
   if (quota <= 0) return
 
-  const restDayType = await getLeaveTypeBySystemKey(db, 'REST_DAY')
+  const restDayType = await getLeaveTypeBySystemKey(db, QUOTA_LEAVE_KEYS[0])
   if (!restDayType) return
 
   const grantKey = `restday_grant_${year}_${month + 1}`
@@ -3224,7 +3225,15 @@ export async function calculatePayrollWithRules(
     // 假期與 OT
     leaveAndOt: {
       monthlyLeaveDays: monthlyLeaveDays.total,
-      leaveTaken,
+      leaveTaken,                                          // 保留（向後相容）
+      // ★ 拆開：只有 REST_DAY / ANNUAL_LEAVE / OT_LEAVE 會扣額度，
+      //   病假／無薪假唔佔額度，混埋一齊顯示會令用家以為餘額被食咗
+      leaveTakenQuota: (workData.leaveByType ?? [])
+        .filter((lt: any) => QUOTA_LEAVE_KEYS.includes(lt.systemKey))
+        .reduce((s: number, lt: any) => s + lt.days, 0),
+      leaveTakenOther: (workData.leaveByType ?? [])
+        .filter((lt: any) => !QUOTA_LEAVE_KEYS.includes(lt.systemKey))
+        .reduce((s: number, lt: any) => s + lt.days, 0),
       leaveBalance: leaveBalanceRemaining,
       otHours: Math.round(result.otHours * 100) / 100,
       otBalanceMinutes: tb.balance ?? 0,
