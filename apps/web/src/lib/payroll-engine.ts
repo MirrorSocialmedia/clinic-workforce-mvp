@@ -679,22 +679,6 @@ function aggregateDailyHours(punchDays: Awaited<ReturnType<typeof calculateWorke
 // Calculation Functions
 // ------------------------------------------------------------------
 
-// @deprecated Dead code — zero callers in repo. Uses legacy model B (proportional shrink) + statutoryDailyWage.
-//   Will produce completely different pay if accidentally invoked. DO NOT USE.
-function __deprecated_calculateMonthly_DO_NOT_USE(
-  config: PayRuleConfig,
-  workingDays: number,
-  actualAttendanceDays: number,
-  approvedLeaveDays: number,
-  paidLeaveDays: number,
-  publicHolidayDays: number,
-  totalHours: number,
-  otThreshold: number
-): { basePay: number; otPay: number; deduction: number; detail: PayrollCalcDetail; otHours: number; absentDays: number } {
-  /* dead code — see @deprecated */
-  return { basePay: 0, otPay: 0, deduction: 0, otHours: 0, absentDays: 0, detail: {} as PayrollCalcDetail }
-}
-
 function calculateHourly(
   config: PayRuleConfig,
   dailyEntries: DailyHoursEntry[],
@@ -1720,7 +1704,8 @@ function isPublicHoliday(date: Date): boolean {
 }
 
 /**
- * Count working days in a month with custom rest_days + public holidays.
+ * @deprecated 已被 calculatePayrollWithRules 内的 restDayCfg override 取代（:2825）。
+ * 保留作参考，唔好新增 caller。
  */
 export function countWorkingDaysInMonth(
   year: number,
@@ -2074,26 +2059,6 @@ export async function grantMonthlyRestDays(
     })
   }
 }
-
-/**
- * Ensure monthly rest day entitlement exists for the month of `targetDate`.
- * Idempotent — safe to call repeatedly. Uses delta method internally.
- */
-export async function ensureRestDayGranted(employeeId: string, targetDate: Date, db: any): Promise<void> {
-  const rule = await db.payRule.findFirst({
-    where: { employeeId, isActive: true },
-    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-  })
-  const config = rule?.configJson
-    ? (typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson)
-    : {}
-  const restDays = config.working_days?.rest_days ?? [6, 0] // default Sat+Sun
-
-  const { y, m } = hkParts(targetDate) // m is 0-indexed
-  const quota = countMonthlyLeaveDays(y, m, restDays)
-  await grantMonthlyRestDays(employeeId, y, m, quota.total, db)
-}
-
 
 // ------------------------------------------------------------------
 // 3. Modular Engine: Work Data Collection
@@ -2841,6 +2806,9 @@ export async function calculatePayrollWithRules(
   const actualRestDays = countRestDaysInMonth(year, month, restDayCfg)
   workData.restDays = actualRestDays
   workData.monthlyWorkingDays = hkDaysInMonth(monthDate) - actualRestDays - workData.publicHolidayDays
+  // ★ workingDays 亦要覆盖 —— countWorkingDays 硬编码周六日，
+  //   诊所若唔系放周末，expectedWorkDays 个 fallback 会错
+  workData.workingDays = hkDaysInMonth(monthDate) - actualRestDays
 
   // 2. Run base module
   const baseResult = runBaseModule(config, workData, monthDate)
@@ -3351,45 +3319,4 @@ export async function calculatePayrollWithRules(
   }
 }
 
-// ------------------------------------------------------------------
-// Confidentiality Masking (server-side enforcement)
-// ------------------------------------------------------------------
 
-/**
- * Mask financial fields for a payroll item if the employee's salary is confidential
- * and the requesting user is not OWNER. Attendance stats (workedHours, otHours,
- * leaveDays, absentDays) are preserved so managers can still see performance.
- *
- * @returns the item with `confidential: true` flag if masked
- */
-export function maskIfConfidential(item: any, role: string): any {
-  const isOwner = role === 'OWNER'
-  const isConfidential = item.employee?.payConfidential === true
-
-  if (isOwner || !isConfidential) {
-    return item
-  }
-
-  return {
-    ...item,
-    confidential: true,
-    // Mask all monetary fields — attendance stats remain visible
-    basePay: null,
-    otPay: null,
-    splitPay: null,
-    deduction: null,
-    storeBonus: null,
-    totalPayable: null,
-    detailJson: null,
-  }
-}
-
-/**
- * Check if any items in a run are confidential for a given role.
- * If true, the summary totals must also be masked to prevent reverse-engineering.
- */
-export function hasConfidentialItems(items: any[], role: string): boolean {
-  const isOwner = role === 'OWNER'
-  if (isOwner) return false
-  return items.some((item: any) => item.employee?.payConfidential === true)
-}

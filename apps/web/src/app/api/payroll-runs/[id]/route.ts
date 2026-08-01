@@ -38,6 +38,8 @@ export async function GET(
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // ★ Non-OWNER: filter out confidential employee rows entirely (not just mask amounts)
+  // ★ 保密员工系"整行隐藏"唔系"遮罩金额"（2026-07 决定）——
+  // 隐藏之后总额要由可见行重算（见下面 summary），否则相减可反推。
   const isOwner = session.role === 'OWNER' // ROLE-OK：保密員工隔離刻意用 role
   let items = run.items
   if (!isOwner) {

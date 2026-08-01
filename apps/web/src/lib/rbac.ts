@@ -5,6 +5,10 @@ export function requireRole(...allowedRoles: Role[]): (role: Role) => boolean {
 }
 
 // Check if a role has access to a given route
+/**
+ * @deprecated 已被 lib/require-auth.ts 的 requireAuth + RBAC_MATRIX 取代。
+ * 新 route 请用 requireAuth，唔好直接用呢啲函数（会绕过 RBAC_PERM_OVERRIDES）。
+ */
 export function hasRouteAccess(role: Role, method: string, path: string): boolean {
   const key = `${method} ${path}` as keyof typeof CONFIG.RBAC_MATRIX
   const allowed = CONFIG.RBAC_MATRIX[key]
@@ -20,12 +24,20 @@ export function hasRouteAccess(role: Role, method: string, path: string): boolea
 
 // Check if a role can access a specific clinic
 // OWNER sees all, others only see their assigned clinics
+/**
+ * @deprecated 已被 lib/require-auth.ts 的 requireAuth + RBAC_MATRIX 取代。
+ * 新 route 请用 requireAuth，唔好直接用呢啲函数（会绕过 RBAC_PERM_OVERRIDES）。
+ */
 export function hasClinicAccess(role: Role, clinicId: string, userClinics: string[]): boolean {
   if (CONFIG.UNRESTRICTED_ROLES.includes(role as any)) return true
   return userClinics.includes(clinicId)
 }
 
 // Filter clinics based on role
+/**
+ * @deprecated 已被 lib/require-auth.ts 的 requireAuth + RBAC_MATRIX 取代。
+ * 新 route 请用 requireAuth，唔好直接用呢啲函数（会绕过 RBAC_PERM_OVERRIDES）。
+ */
 export function filterClinicsByRole(clinics: { id: string }[], role: Role, userClinics: string[]): { id: string }[] {
   if (CONFIG.UNRESTRICTED_ROLES.includes(role as any)) return clinics
   return clinics.filter(c => userClinics.includes(c.id))
