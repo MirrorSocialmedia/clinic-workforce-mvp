@@ -63,10 +63,13 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const auth = await requireAuth(req, 'PATCH', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, perms } = auth
 
-  if (session.role !== 'OWNER' && session.role !== 'MANAGER') {
-    return NextResponse.json({ error: 'Only managers can update leave balances' }, { status: 403 })
+  if (!(perms ?? []).includes('leave_approve')) {
+    return NextResponse.json(
+      { error: 'Forbidden (missing permission: leave_approve)' },
+      { status: 403 },
+    )
   }
 
   try {
@@ -110,8 +113,9 @@ export async function DELETE(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
+  // ROLE-OK: 批量删除假期余额只准 OWNER
   if (session.role !== 'OWNER') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return NextResponse.json({ error: 'Forbidden (only OWNER can clear leave balances)' }, { status: 403 })
   }
 
   const { searchParams } = new URL(req.url)

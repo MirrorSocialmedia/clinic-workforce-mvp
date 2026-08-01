@@ -284,6 +284,10 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'PUT /api/leave-requests/:id': ['scheduling', 'leave_approve'],
   'DELETE /api/leave-requests/:id': ['scheduling', 'leave_approve'],
   'PATCH /api/leave-requests/:id': ['scheduling', 'leave_approve'],
+
+  // —— 假期額度管理：有 leave_approve 權限可以更新/初始化假期餘額 ——
+  'PATCH /api/leave-balance': ['leave_approve'],
+  'POST /api/leave-balance/init': ['leave_approve'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

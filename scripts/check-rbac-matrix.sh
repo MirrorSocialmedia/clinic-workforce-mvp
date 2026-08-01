@@ -20,7 +20,7 @@ fi
 for f in $(grep -rl "requireAuth" apps/web/src/app/api --include=route.ts); do
   # Extract the route path from the file location
   # apps/web/src/app/api/foo/bar/route.ts → /api/foo/bar
-  route=$(echo "$f" | sed 's|apps/web/src/app/api/||;s|/route.ts$||' | sed 's|/\[.*\]|/:id|g; s|/\[.*\]|/:id|g')
+  route=$(echo "$f" | sed 's|apps/web/src/app/api/||;s|/route.ts$||' | sed 's|/\[date\]|/:date|g' | sed 's|/\[.*\]|/:id|g')
   
   # Check common HTTP methods
   for method in GET POST PUT PATCH DELETE; do

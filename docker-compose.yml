@@ -16,6 +16,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1024m
+        reservations:
+          memory: 256m
 
   app:
     build:
@@ -36,6 +42,12 @@ services:
       FACE_THRESHOLD: ${FACE_THRESHOLD}
       FACE_MODE: shadow
     networks: [clinic_net]
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+        reservations:
+          memory: 512m
 
   tunnel:
     image: cloudflare/cloudflared:latest
@@ -46,6 +58,12 @@ services:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
     depends_on: [app]
     networks: [clinic_net]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 64m
 
   face:
     build: ./face-service
@@ -55,6 +73,12 @@ services:
       - face_models:/root/.insightface
       - face_frames:/data/frames
       - ./face-service/models:/srv/models
+    deploy:
+      resources:
+        limits:
+          memory: 2560m
+        reservations:
+          memory: 512m
 
 networks:
   clinic_net:

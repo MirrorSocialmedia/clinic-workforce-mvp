@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Pencil, Plus, Smartphone, Wrench, Search, Clock } from 'lucide-react'
 import { toHKDateStr, fmtDateTime, fmtDate, todayHK } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
+import { hasPermission } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type TabKey = 'records' | 'exceptions' | 'hash'
@@ -92,7 +93,7 @@ interface ExceptionRecord {
 // ============================================================
 // Shared component: OtDeductCell (扣OT鐘三態)
 // ============================================================
-function OtDeductCell({ row, userRole }: { row: { employeeId: string; date: string; shiftMinutes: number; otDeducted: boolean }, userRole: Role }) {
+function OtDeductCell({ row, canManageAttendance }: { row: { employeeId: string; date: string; shiftMinutes: number; otDeducted: boolean }, canManageAttendance: boolean }) {
   const handleOtDeduct = async () => {
     if (!confirm(`用時間帳戶抵 ${row.date} 缺勤？\n扣 ${row.shiftMinutes} 分鐘（不足將拖欠）。\n該日不扣薪，但當月勤工獎仍取消。`)) return
     const res = await fetch('/api/timebank/absent-deduct', {
@@ -124,11 +125,11 @@ function OtDeductCell({ row, userRole }: { row: { employeeId: string; date: stri
           <span className="px-2 py-1 text-xs rounded bg-violet-50 text-violet-700 border border-violet-200">
             ✓ 已扣OT鐘 −{row.shiftMinutes}分
           </span>
-          {userRole === 'OWNER' && (
+          {canManageAttendance && (
             <button onClick={cancelOtDeduct} className="text-xs text-red-600 underline">取消</button>
           )}
         </span>
-      ) : userRole === 'OWNER' ? (
+      ) : canManageAttendance ? (
         <button onClick={handleOtDeduct} className="text-xs px-2 py-1 rounded-md font-medium" style={{ background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
           扣OT鐘（−{row.shiftMinutes}分）
         </button>
@@ -141,7 +142,7 @@ function OtDeductCell({ row, userRole }: { row: { employeeId: string; date: stri
 
 export default function AttendancePage() {
   const router = useRouter()
-  const [user, setUser] = useState<{ role: Role; clinics: string[] } | null>(null)
+  const [user, setUser] = useState<{ role: Role; clinics: string[]; grant: string[]; deny: string[] } | null>(null)
   const [activeTab, setActiveTab] = useState<TabKey>('records')
 
   // Records tab state
@@ -291,7 +292,7 @@ export default function AttendancePage() {
       const res = await fetch('/api/me', { credentials: 'include', cache: 'no-store' })
       if (!res.ok) { router.push('/login'); return }
       const data = await res.json()
-      setUser({ role: data.user.role, clinics: data.user.clinicIds || [] })
+      setUser({ role: data.user.role, clinics: data.user.clinicIds || [], grant: data.user.grant || [], deny: data.user.deny || [] })
     } catch { router.push('/login') }
   }
 
@@ -557,6 +558,7 @@ export default function AttendancePage() {
   if (!user) return <div style={{ padding: 20 }}>Loading...</div>
 
   const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER'
+  const hasAttendanceManage = hasPermission(user.role, 'attendance_manage', user.grant, user.deny)
   const totalPages = Math.ceil(total / pageSize)
 
   return (
@@ -867,7 +869,7 @@ export default function AttendancePage() {
                           <td className="p-3"><span style={{ color: '#dc3545', fontWeight: 700 }}>缺勤</span></td>
                           <td className="p-3 text-sm text-muted-foreground" colSpan={5}>排班 {ar.shiftMinutes} 分鐘，無打卡</td>
                           <td className="p-3 text-sm">—</td>
-                          <OtDeductCell row={{ employeeId: ar.employeeId, date: ar.date, shiftMinutes: ar.shiftMinutes, otDeducted: ar.otDeducted }} userRole={user.role} />
+                          <OtDeductCell row={{ employeeId: ar.employeeId, date: ar.date, shiftMinutes: ar.shiftMinutes, otDeducted: ar.otDeducted }} canManageAttendance={hasAttendanceManage} />
                           <td className="p-3">—</td>
                         </tr>
                       )
@@ -996,7 +998,7 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3">
                         {/* Makeup only for late/early; HOURLY employees skip */}
-                        {((isClockIn && showLate) || (isClockOut && showEarly)) && user.role === 'OWNER' && (
+                        {((isClockIn && showLate) || (isClockOut && showEarly)) && hasAttendanceManage && (
                           (isClockIn ? (showLate?.payType !== 'HOURLY') : (showEarly?.payType !== 'HOURLY')) && (
                           ((isClockIn && showLate?.madeUp) || (isClockOut && showEarly?.madeUp)) ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -1024,7 +1026,7 @@ export default function AttendancePage() {
                           className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
                           <Pencil size={14} /> 修正
                         </button>
-                        {!isVoided && record.source === 'MANUAL_CORRECTION' && user?.role === 'OWNER' && (
+                        {!isVoided && record.source === 'MANUAL_CORRECTION' && hasAttendanceManage && (
                           <button onClick={() => { setVoidRecord(record); setVoidReason(''); setShowVoidModal(true) }}
                             className="text-red-600 text-sm mr-2 hover:underline" title="作廢此補登記錄">
                             作廢
@@ -1158,7 +1160,7 @@ export default function AttendancePage() {
                     </div>
                     {ex.detail && <div className="text-xs text-muted-foreground mb-1">{ex.detail}</div>}
                     <div className="flex justify-end gap-2">
-                      {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && user.role === 'OWNER' && ex.payType !== 'HOURLY' && (
+                      {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && hasAttendanceManage && ex.payType !== 'HOURLY' && (
                         ex.madeUp ? (
                           <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                             ✓ 已補鐘
@@ -1174,7 +1176,7 @@ export default function AttendancePage() {
                       {ex.type === 'ABSENT' && ex.payType !== 'HOURLY' && (
                         <OtDeductCell
                           row={{ employeeId: ex.employeeId, date: ex.date, shiftMinutes: ex.shiftMinutes || 0, otDeducted: !!ex.otDeducted }}
-                          userRole={user.role}
+                          canManageAttendance={hasAttendanceManage}
                         />
                       )}
                     </div>
@@ -1209,7 +1211,7 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">{ex.detail}</td>
                       <td className="p-3">
-                        {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && user.role === 'OWNER' && ex.payType !== 'HOURLY' && (
+                        {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && hasAttendanceManage && ex.payType !== 'HOURLY' && (
                           ex.madeUp ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                               ✓ 已補鐘
@@ -1229,7 +1231,7 @@ export default function AttendancePage() {
                         {ex.type === 'ABSENT' && ex.payType !== 'HOURLY' && (
                           <OtDeductCell
                             row={{ employeeId: ex.employeeId, date: ex.date, shiftMinutes: ex.shiftMinutes || 0, otDeducted: !!ex.otDeducted }}
-                            userRole={user.role}
+                            canManageAttendance={hasAttendanceManage}
                           />
                         )}
                       </td>

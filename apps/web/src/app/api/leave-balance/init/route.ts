@@ -10,10 +10,13 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+  const { session, perms } = auth
 
-  if (session.role !== 'OWNER' && session.role !== 'MANAGER') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!(perms ?? []).includes('leave_approve')) {
+    return NextResponse.json(
+      { error: 'Forbidden (missing permission: leave_approve)' },
+      { status: 403 },
+    )
   }
 
   try {

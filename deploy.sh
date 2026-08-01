@@ -11,6 +11,19 @@ docker exec clinic-prod-db pg_dump -U clinic clinic_prod | gzip > $BK
 echo " $BK"
 find "$ROOT/backups" -mtime +14 -delete
 
+echo "== 預部署靜態檢查 =="
+for script in check-rbac-matrix.sh check-dates.sh check-role-hardcode.sh check-rbac-api.sh; do
+  if [ -f "scripts/$script" ]; then
+    echo "▶ $script"
+    if [ "$script" = "check-dates.sh" ]; then
+      # check-dates.sh: server-side zero hits = fail, frontend warnings = continue
+      bash "scripts/$script" || { echo "❌ $script failed (server-side issues), aborting deploy"; exit 1; }
+    else
+      bash "scripts/$script" || { echo "❌ $script failed, aborting deploy"; exit 1; }
+    fi
+  fi
+done
+
 echo "== 拉代碼 =="
 git pull
 
