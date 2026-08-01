@@ -65,7 +65,13 @@ export async function POST(request: NextRequest) {
     const hashedPassword = await bcrypt.hash(newPassword, 12)
     await prisma.user.update({
       where: { id: user.id },
-      data: { password: hashedPassword },
+      data: {
+        password: hashedPassword,
+        // ★ 改密碼一定要令所有舊 session 失效 ——
+        //   否則「忘記密碼」重設之後，盜用者的舊 session 仍然有效。
+        //   session 係 365 日，窗口好長。
+        tokenVersion: { increment: 1 },
+      },
     })
 
     // Log the password reset in audit log

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
-import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck } from 'lucide-react'
+import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
 
@@ -147,6 +147,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/my/leave', label: '我的假期', icon: Palmtree, roles: allRoles, perm: null },
     { path: '/my/face-enroll', label: '人臉登記', icon: Palmtree, roles: allRoles, perm: null },
     { path: '/my/notifications', label: '通知', icon: Bell, roles: allRoles, perm: null },
+    { path: '/my/change-password', label: '修改密碼', icon: KeyRound, roles: allRoles, perm: null },
 
     // Punch (all non-owner)
     { path: '/punch', label: '我要打卡', icon: Smartphone, roles: myRoles },

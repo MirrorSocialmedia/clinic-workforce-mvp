@@ -173,6 +173,7 @@ export default function MobileMorePage() {
             { href: '/my/punches', label: '我的打卡記錄' },
             { href: '/my/face-enroll', label: '人臉登記' },
             { href: '/my/notifications', label: '通知' },
+            { href: '/my/change-password', label: '修改密碼' },
           ].map(x => (
             <Link key={x.href} href={x.href} className="block px-4 py-3 text-sm hover:bg-muted">
               {x.label}

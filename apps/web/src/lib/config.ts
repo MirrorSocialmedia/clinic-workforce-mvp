@@ -32,6 +32,7 @@ export const CONFIG = {
   RBAC_MATRIX: {
     // Auth routes (all authenticated users)
     'POST /api/auth/logout': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/auth/change-password': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Self routes
     'GET /api/me': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE', 'KIOSK'],
