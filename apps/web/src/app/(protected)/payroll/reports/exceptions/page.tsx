@@ -44,7 +44,7 @@ export default function ExceptionsReportPage() {
   const [makeupForm, setMakeupForm] = useState({ date: '', minutes: '', reason: '' })
   const [makeupSubmitting, setMakeupSubmitting] = useState(false)
 
-  const isOwner = userRole === 'OWNER'
+  const isOwner = userRole === 'OWNER' // ROLE-OK: 保密員工薪金隔離，刻意用 role 唔用權限
 
   const fetchClinics = useCallback(async () => {
     try {

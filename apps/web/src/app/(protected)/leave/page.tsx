@@ -161,8 +161,10 @@ export default function LeavePage() {
       .catch(() => setRestDayBalance(null))
   }, [convertForm.employeeId, convertForm.direction])
 
-  const isManager = userRole === 'OWNER' || userRole === 'MANAGER'
-  const isOwner = userRole === 'OWNER'
+  // ROLE-OK(TEMP): API 已改用 leave_approve / scheduling（leave-requests:96/143/164），
+  //   但 UI 未跟。TODO(2026-08): 決定 leave_approve 解鎖邊啲入口後改用 hasPermission。
+  const isManager = userRole === 'OWNER' || userRole === 'MANAGER' /* ROLE-OK(TEMP): 見上面 TODO */
+  const isOwner = userRole === 'OWNER' /* ROLE-OK(TEMP): 見上面 TODO */
 
   // 週年發放制：找 ANNUAL_LEAVE 類型 id 與當前公曆年，用於 UI 過濾
   const annualLeaveTypeId = leaveTypes.find(t => t.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL)?.id
@@ -191,8 +193,8 @@ export default function LeavePage() {
       setLeaveTypes(typesData.leaveTypes || [])
 
       // Fetch employees for init/clear dropdowns
-      // ✅ Use local role instead of stale-closure isManager
-      if (role === 'OWNER' || role === 'MANAGER') {
+      // ROLE-OK(TEMP): 同 :164 重複判斷（避免 stale-closure），見上面 TODO(2026-08)。
+      if (role === 'OWNER' || role === 'MANAGER') /* ROLE-OK(TEMP): 見上面 TODO */ {
         const empRes = await fetch('/api/employees', { credentials: 'include' })
         if (empRes.ok) {
           const empData = await empRes.json()

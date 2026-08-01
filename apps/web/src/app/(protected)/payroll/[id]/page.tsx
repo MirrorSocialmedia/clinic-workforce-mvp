@@ -108,7 +108,7 @@ export default function PayrollDetailPage() {
     })
   }, [fetchRun])
 
-  const isOwner = userRole === 'OWNER'
+  const isOwner = userRole === 'OWNER' // ROLE-OK: 保密員工薪金隔離，刻意用 role 唔用權限
 
   const handleStatusChange = async (newStatus: string) => {
     try {

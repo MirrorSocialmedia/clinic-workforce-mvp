@@ -348,8 +348,8 @@ export default function DashboardPage() {
         )
       })()}
 
-      {/* ── Sensitive Operations Summary (OWNER only) ── */}
-      {data.role === 'OWNER' && (
+      {/* ROLE-OK: OWNER 專屬儀表板卡 */}
+      {data.role === 'OWNER' /* ROLE-OK: OWNER 專屬儀表板卡 */ && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

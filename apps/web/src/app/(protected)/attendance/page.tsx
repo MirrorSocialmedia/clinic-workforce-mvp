@@ -557,7 +557,10 @@ export default function AttendancePage() {
 
   if (!user) return <div style={{ padding: 20 }}>Loading...</div>
 
-  const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER'
+  // ROLE-OK(TEMP): API 已改用 attendance_manage（punch-corrections:67/124/257），
+  //   但 UI 未跟 —— 有權限嘅員工見唔到補登入口。
+  //   TODO(2026-08): 決定 attendance_manage 解鎖邊啲入口（補登/作廢/修正）後改用 hasPermission。
+  const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER' /* ROLE-OK(TEMP): 見上面 TODO */
   const hasAttendanceManage = hasPermission(user.role, 'attendance_manage', user.grant, user.deny)
   const totalPages = Math.ceil(total / pageSize)
 

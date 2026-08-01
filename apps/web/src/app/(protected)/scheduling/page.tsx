@@ -1732,7 +1732,7 @@ function getShiftCode(shift: Shift): string {
   }
 
   const canManage = userRole ? canSchedule : false
-  const isCanRead = userRole === 'OWNER' || userRole === 'MANAGER' || userRole === 'ACCOUNTANT' || userRole === 'EMPLOYEE'
+  const isCanRead = userRole === 'OWNER' || userRole === 'MANAGER' || userRole === 'ACCOUNTANT' || userRole === 'EMPLOYEE' // ROLE-OK: 四個角色全包 = 人人可讀，唔係 gate
 
   // ============================================================
   // Render Helpers

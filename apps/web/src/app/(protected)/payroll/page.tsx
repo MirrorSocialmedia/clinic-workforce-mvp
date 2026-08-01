@@ -83,7 +83,7 @@ export default function PayrollListPage() {
 
   const canGenerate = hasPermission(userRole, 'payroll_generate', grant, deny)
   const canView = hasPermission(userRole, 'payroll_view', grant, deny)
-  const canDelete = userRole === 'OWNER' // DELETE /api/payroll-runs/:id is OWNER-only in RBAC
+  const canDelete = userRole === 'OWNER' // ROLE-OK: DELETE /api/payroll-runs/:id 喺 RBAC 亦係 OWNER-only
 
   /* ── Expense card (persistent, not modal) ── */
 

@@ -363,7 +363,7 @@ export default function AccountsPage() {
     return { label: typeLabel, amount }
   }
 
-  const isOwner = userRole === 'OWNER'
+  const isOwner = userRole === 'OWNER' // ROLE-OK: 帳號管理限 OWNER（含最後一個 OWNER 保護）
 
   // KIOSK account creation
   const generateRandomPassword = () => {
@@ -537,7 +537,8 @@ export default function AccountsPage() {
                 </div>
               )}
 
-              {form.role === 'OWNER' && (
+              {/* ROLE-OK: OWNER 專屬表單欄位 */}
+              {form.role === 'OWNER' /* ROLE-OK: OWNER 專屬表單欄位 */ && (
                 <div style={{ gridColumn: '1 / -1', fontSize: 12, color: '#888', padding: '4px 0' }}>
                   🔒 Owner 擁有所有權限，不可調整
                 </div>
@@ -718,9 +719,10 @@ export default function AccountsPage() {
                     }} style={{ cursor: 'pointer' }}>
                       <td style={{ fontWeight: 500 }}>{acc.name}</td>
                       <td>{acc.phone}</td>
+                      {/* ROLE-OK: 純顯示（角色標籤顏色） */}
                       <td>
                         <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
-                          background: acc.role === 'OWNER' ? '#1a1a2e20' : '#88820', color: acc.role === 'OWNER' ? '#1a1a2e' : '#888' }}>
+                          background: acc.role === 'OWNER' /* ROLE-OK */ ? '#1a1a2e20' : '#88820', color: acc.role === 'OWNER' ? '#1a1a2e' : '#888' }}>
                           {ROLE_LABELS[acc.role] || acc.role}
                         </span>
                       </td>
@@ -892,8 +894,9 @@ export default function AccountsPage() {
                   </div>
                   <div className="flex justify-between items-center text-sm mb-1">
                     <span>{acc.phone}</span>
+                    {/* ROLE-OK: 純顯示（角色標籤顏色） */}
                     <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12,
-                      background: acc.role === 'OWNER' ? '#1a1a2e20' : '#88820', color: acc.role === 'OWNER' ? '#1a1a2e' : '#888' }}>
+                      background: acc.role === 'OWNER' /* ROLE-OK */ ? '#1a1a2e20' : '#88820', color: acc.role === 'OWNER' ? '#1a1a2e' : '#888' }}>
                       {ROLE_LABELS[acc.role] || acc.role}
                     </span>
                   </div>

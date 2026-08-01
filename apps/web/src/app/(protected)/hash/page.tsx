@@ -149,8 +149,8 @@ export default function HashPage() {
         </select>
       </div>
 
-      {/* Generate hash */}
-      {['OWNER', 'MANAGER'].includes(user.role) && (
+      {/* ROLE-OK: 同 RBAC matrix 'GET /api/daily-hash/:date' 一致 */}
+      {['OWNER', 'MANAGER'].includes(user.role) /* ROLE-OK: 同 RBAC matrix 'GET /api/daily-hash/:date' 一致 */ && (
         <div style={{
           background: '#f9f9f9', borderRadius: 8, padding: 16,
           marginBottom: 20, border: '1px solid #eee',

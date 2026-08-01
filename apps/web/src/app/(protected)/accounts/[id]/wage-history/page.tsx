@@ -62,7 +62,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
   // Inline edit state: periodMonth → { wage, excludedDays, excludedWage }
   const [edits, setEdits] = useState<Record<string, { totalWage: number; excludedDays: number; excludedWage: number }>>({})
 
-  const canWrite = userRole === 'OWNER' || userRole === 'ACCOUNTANT'
+  const canWrite = userRole === 'OWNER' || userRole === 'ACCOUNTANT' // ROLE-OK: 工資歷史編輯限 OWNER/會計
 
   // ---- Load data ----
   const loadAll = useCallback(async () => {
