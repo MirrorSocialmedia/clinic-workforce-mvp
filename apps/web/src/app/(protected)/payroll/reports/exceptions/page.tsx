@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { BackButton } from '@/components/BackButton'
 import { toHKDateStr } from '@/lib/hk-date'
+import { hasPermission } from '@/lib/permissions'
 
 interface ExceptionRecord {
   employeeId: string
@@ -39,13 +40,18 @@ export default function ExceptionsReportPage() {
   const [clinics, setClinics] = useState<Array<{ id: string; name: string }>>([])
   const [employees, setEmployees] = useState<Array<{ id: string; name: string }>>([])
   const [userRole, setUserRole] = useState<string>('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
   const [employeeSummaries, setEmployeeSummaries] = useState<EmployeeSummary[]>([])
   const [makeupOpen, setMakeupOpen] = useState<{ employeeId: string; type: 'LATE' | 'EARLY_LEAVE' } | null>(null)
   const [makeupForm, setMakeupForm] = useState({ date: '', minutes: '', reason: '' })
   const [makeupSubmitting, setMakeupSubmitting] = useState(false)
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 保密員工薪金隔離，刻意用 role 唔用權限
-  const isManagerOrAbove = userRole === 'OWNER' || userRole === 'MANAGER'
+  // ★ 補鐘 = 時間帳戶操作，用 timebank_ops（同 api/timebank/makeup 一致）。
+  //   唔用 role —— MANAGER 預設有呢個權限，所以行為同之前一樣，
+  //   但有 timebank_ops 嘅員工而家都見到入口。
+  const canMakeup = hasPermission(userRole as any, 'timebank_ops', grant, deny)
 
   const fetchClinics = useCallback(async () => {
     try {
@@ -73,6 +79,8 @@ export default function ExceptionsReportPage() {
       if (res.ok) {
         const data = await res.json()
         setUserRole(data.user?.role || '')
+        setGrant(data.user?.grant || [])
+        setDeny(data.user?.deny || [])
       }
     } catch { /* ignore */ }
   }, [])
@@ -301,13 +309,13 @@ export default function ExceptionsReportPage() {
                 <th style={{ textAlign: 'left', padding: '8px 6px' }}>日期</th>
                 <th style={{ textAlign: 'left', padding: '8px 6px' }}>類型</th>
                 <th style={{ textAlign: 'left', padding: '8px 6px' }}>詳情</th>
-                {isManagerOrAbove && <th style={{ textAlign: 'left', padding: '8px 6px' }}>操作</th>}
+                {canMakeup && <th style={{ textAlign: 'left', padding: '8px 6px' }}>操作</th>}
               </tr>
             </thead>
             <tbody>
               {exceptions.map((ex, i) => {
                 const tb = getEmployeeTimebank(ex.employeeId)
-                const showMakeupBtn = (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && isManagerOrAbove && ex.payType !== 'HOURLY'
+                const showMakeupBtn = (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && canMakeup && ex.payType !== 'HOURLY'
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                     <td style={{ padding: '8px 6px', fontWeight: 600 }}>{ex.employeeName}</td>
@@ -326,7 +334,7 @@ export default function ExceptionsReportPage() {
                       </span>
                     </td>
                     <td style={{ padding: '8px 6px', fontSize: 12, color: '#888' }}>{ex.detail}</td>
-                    {isManagerOrAbove && (
+                    {canMakeup && (
                       <td style={{ padding: '8px 6px' }}>
                         {showMakeupBtn && (
                           <button
@@ -358,7 +366,7 @@ export default function ExceptionsReportPage() {
       )}
 
       {/* Makeup Modal */}
-      {makeupOpen && isManagerOrAbove && (
+      {makeupOpen && canMakeup && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center',

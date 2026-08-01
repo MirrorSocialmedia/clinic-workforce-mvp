@@ -562,6 +562,8 @@ export default function AttendancePage() {
   //   TODO(2026-08): 決定 attendance_manage 解鎖邊啲入口（補登/作廢/修正）後改用 hasPermission。
   const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER' /* ROLE-OK(TEMP): 見上面 TODO */
   const hasAttendanceManage = hasPermission(user.role, 'attendance_manage', user.grant, user.deny)
+  // ★ 補鐘 = 時間帳戶操作，唔係考勤管理 —— 同 api/timebank/makeup 用同一個權限。
+  const canMakeup = hasPermission(user.role, 'timebank_ops', user.grant, user.deny)
   const totalPages = Math.ceil(total / pageSize)
 
   return (
@@ -1013,7 +1015,7 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3">
                         {/* Makeup only for late/early; HOURLY employees skip */}
-                        {((isClockIn && showLate) || (isClockOut && showEarly)) && hasAttendanceManage && (
+                        {((isClockIn && showLate) || (isClockOut && showEarly)) && canMakeup && (
                           (isClockIn ? (showLate?.payType !== 'HOURLY') : (showEarly?.payType !== 'HOURLY')) && (
                           ((isClockIn && showLate?.madeUp) || (isClockOut && showEarly?.madeUp)) ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -1175,7 +1177,7 @@ export default function AttendancePage() {
                     </div>
                     {ex.detail && <div className="text-xs text-muted-foreground mb-1">{ex.detail}</div>}
                     <div className="flex justify-end gap-2">
-                      {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && hasAttendanceManage && ex.payType !== 'HOURLY' && (
+                      {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && canMakeup && ex.payType !== 'HOURLY' && (
                         ex.madeUp ? (
                           <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                             ✓ 已補鐘
@@ -1226,7 +1228,7 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3 text-xs text-muted-foreground">{ex.detail}</td>
                       <td className="p-3">
-                        {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && hasAttendanceManage && ex.payType !== 'HOURLY' && (
+                        {(ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && canMakeup && ex.payType !== 'HOURLY' && (
                           ex.madeUp ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                               ✓ 已補鐘
