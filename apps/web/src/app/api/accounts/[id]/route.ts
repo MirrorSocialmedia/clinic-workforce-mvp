@@ -5,7 +5,6 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { CONFIG } from '@/lib/config'
-import { buildDefaultPayConfig, syncConfigToPayType } from '@/lib/pay-rule-defaults'
 import { toHKDateStr, hkDateOnly } from '@/lib/hk-date'
 import { serviceMonths, totalAccruedLeave, PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { jsonNoStore } from '@/lib/api-response'
@@ -256,10 +255,21 @@ export async function PUT(
         }
       }
 
+      // ★ 2026-08-01 決定：薪酬設定單一來源係 PayRule（薪酬規則面板）。
+      //   帳號管理唔再改薪酬 —— 舊版會建立新 PayRule 並停用舊嗰條，
+      //   而且用前端打開視窗嗰刻嘅 configJson 快照，會覆蓋期間嘅設定改動。
+      //   ⚠️ 唔係靜靜忽略 —— 明確回 400，令誤用即刻暴露。
+      if (payType !== undefined || baseAmount !== undefined || configJson !== undefined) {
+        return NextResponse.json(
+          { error: '薪酬設定請喺「薪酬規則」面板修改（PUT /api/employees/:id/pay-rules）' },
+          { status: 400 },
+        )
+      }
+
       // Update employee if exists (may have just been backfilled above)
       let homeClinicCleared = false
       let empUpdate: any = {} // ★ declared here so AuditLog can reference it after the block
-      if (employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined || payConfidential !== undefined || homeClinicId !== undefined || joinDate !== undefined && joinDate !== '')) {
+      if (employee && (employeeStatus !== undefined || payConfidential !== undefined || homeClinicId !== undefined || joinDate !== undefined && joinDate !== '')) {
         empUpdate = {}
         if (employeeStatus !== undefined) empUpdate.status = employeeStatus
         if (payConfidential !== undefined) empUpdate.payConfidential = payConfidential
@@ -331,76 +341,6 @@ export async function PUT(
                   remaining: entitled,
                 },
               })
-            }
-          }
-        }
-
-        if (payType !== undefined) {
-          const effDate = effectiveFrom ? new Date(effectiveFrom) : new Date()
-
-          // ① 檢查是否真的有變更——無變更就不建新規則（防連按兩次）
-          const current = await prisma.payRule.findFirst({
-            where: { employeeId: employee.id, isActive: true },
-            orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-          })
-          // 冇 active 就攞最近一筆（包括已停用），最後先落 default
-          const fallback = current ?? await prisma.payRule.findFirst({
-            where: { employeeId: employee.id, configJson: { not: null } },
-            orderBy: [{ createdAt: 'desc' }],
-          })
-          const incomingConfig = configJson
-            || (fallback?.configJson
-                && syncConfigToPayType(fallback.configJson, payType, baseAmount))
-            || JSON.stringify(buildDefaultPayConfig(payType, baseAmount))
-          const unchanged = current
-            && current.payType === payType
-            && current.baseAmount === (baseAmount ?? null)
-            && current.configJson === incomingConfig
-
-          if (!unchanged) {
-            try {
-              // ② 包 $transaction 防止並發產生兩筆 active
-              const newRule = await prisma.$transaction(async (tx) => {
-                await tx.payRule.updateMany({
-                  where: { employeeId: employee.id, isActive: true },
-                  data: { isActive: false, effectiveTo: new Date(effDate.getTime() - 86400000) },
-                })
-                return tx.payRule.create({
-                  data: {
-                    employeeId: employee.id,
-                    payType,
-                    baseAmount: baseAmount ?? null,
-                    configJson: incomingConfig,
-                    effectiveFrom: effDate,
-                    isActive: true,
-                    createdBy: session.userId,
-                  },
-                })
-              })
-
-              // 審計記錄 PayRule 變更（保持 transaction 外，用 newRule.id）
-              await prisma.auditLog.create({
-                data: {
-                  actorId: session.userId,
-                  action: 'PAY_RULE_UPDATE_VIA_ACCOUNTS',
-                  entity: 'PayRule',
-                  entityId: newRule.id,
-                  targetEmployeeId: employee.id,
-                  afterJson: JSON.stringify({ payType, baseAmount, configJson: incomingConfig, effectiveFrom: effDate }),
-                } as any,
-              })
-
-              // ★ 改 OT 門檻/午休設定會影響所有歷史月份的時間帳戶計算結果 →
-              //   清晒該員工全部快取，唔使只清某個月
-              await prisma.timeBank.deleteMany({
-                where: { employeeId: employee.id },
-              })
-            } catch (e: any) {
-              if (e?.code === 'P2002') {
-                return NextResponse.json(
-                  { error: '薪資規則正在更新中，請重新整理後再試' }, { status: 409 })
-              }
-              throw e
             }
           }
         }

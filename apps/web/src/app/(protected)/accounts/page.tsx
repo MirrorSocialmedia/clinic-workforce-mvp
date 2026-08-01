@@ -160,9 +160,13 @@ export default function AccountsPage() {
       // KIOSK: no employee data, no permissions
       if (form.role !== 'KIOSK') {
         body.joinDate = form.joinDate || undefined
-        body.payType = form.payType
-        body.baseAmount = form.baseAmount ? parseFloat(form.baseAmount) : null
-        body.configJson = form.configJson || undefined
+        // ★ 編輯模式唔送薪酬欄 —— 避免覆蓋薪酬規則面板嘅設定。
+        // 新增模式仍然要送（api/accounts POST 用佢建立第一條 PayRule）。
+        if (!editingId) {
+          body.payType = form.payType
+          body.baseAmount = form.baseAmount ? parseFloat(form.baseAmount) : null
+          body.configJson = form.configJson || undefined
+        }
         body.assignEmployee = form.assignEmployee
         body.payConfidential = form.payConfidential
         body.fullName = form.fullName
@@ -228,7 +232,9 @@ export default function AccountsPage() {
       payConfidential: acc.payConfidential || false,
       fullName: acc.fullName || '', employeeId: acc.employeeId,
       homeClinicId: acc.homeClinicId || '', permGrant: grant, permDeny: deny })
-    setEditingId(acc.id); setShowForm(true)
+    setEditingId(acc.id)
+    if (acc.employeeId) loadPayRules(acc.employeeId)
+    setShowForm(true)
   }
 
   const handleResetPassword = async (acc: Account) => {
@@ -373,10 +379,9 @@ export default function AccountsPage() {
       }
       return { label: labels[baseType] || (rule.payType || '-'), amount }
     }
-    // Fallback to account-level data
-    const typeLabel = acc.payType === 'HOURLY' ? '時薪' : acc.payType === 'MONTHLY' ? '月薪' : '-'
-    const amount = acc.payType ? `${acc.payType === 'HOURLY' ? '時薪' : '月薪'}: ${acc.baseAmount || 0}` : '-'
-    return { label: typeLabel, amount }
+    // ★ 冇 configJson 就話畀用家知，唔好用 payType/baseAmount 頂替 ——
+    //   嗰兩個欄同 configJson 係兩個來源，可能唔一致。
+    return { label: rule?.payType || '-', amount: '未設定完整規則' }
   }
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 帳號管理限 OWNER（含最後一個 OWNER 保護）
@@ -575,18 +580,76 @@ export default function AccountsPage() {
                     <label>到職日（員工）</label>
                     <input type="date" value={form.joinDate} onChange={e => setForm({ ...form, joinDate: e.target.value })} />
                   </div>
-                  <div className="form-group">
-                    <label>計薪方式</label>
-                    <select value={form.payType} onChange={e => setForm({ ...form, payType: e.target.value })}>
-                      <option value="HOURLY">時薪</option>
-                      <option value="MONTHLY">月薪</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>{form.payType === 'HOURLY' ? '時薪' : '月薪'}</label>
-                    <input type="number" step="0.01" value={form.baseAmount}
-                      onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
-                  </div>
+                  {/* ★ 薪酬設定唯讀 —— 編輯一律經「薪酬規則」面板（2026-08-01 決定）。
+                        舊版喺呢度改會建立新 PayRule 並停用舊嗰條，而且用打開視窗嗰刻嘅
+                        configJson 快照，會靜靜覆蓋薪酬規則面板嘅完整設定（OT/午休/勤工獎…）。 */}
+                  {form.assignEmployee && editingId && (
+                    <div style={{
+                      gridColumn: '1 / -1',
+                      padding: 12,
+                      background: '#f9fafb',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 8,
+                    }}>
+                      <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>薪酬設定</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 15, fontWeight: 600 }}>
+                          {(() => {
+                            const rule = payRules[form.employeeId!]
+                            if (!rule?.configJson) return '未設定'
+                            const cfg = typeof rule.configJson === 'string'
+                              ? JSON.parse(rule.configJson) : rule.configJson
+                            const labels: Record<string, string> = {
+                              monthly: '月薪', hourly: '時薪', daily: '日薪', split: '拆帳',
+                            }
+                            const amounts: Record<string, string> = {
+                              monthly: `HK$${cfg.monthly_salary ?? '-'}`,
+                              hourly: `HK$${cfg.hourly_rate ?? '-'}/時`,
+                              daily: `HK$${cfg.daily_rate ?? '-'}/日`,
+                              split: `${cfg.split_ratio ?? '-'}%`,
+                            }
+                            const bt = cfg.base_type || ''
+                            return `${labels[bt] ?? bt} ${amounts[bt] ?? ''}`
+                          })()}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPayRuleEmployeeId(form.employeeId!)
+                            setShowPayRuleModal(true)
+                          }}
+                          style={{
+                            padding: '4px 12px', fontSize: 12, borderRadius: 6,
+                            border: '1px solid #a7f3d0', background: '#ecfdf5', color: '#047857',
+                          }}
+                        >
+                          編輯薪酬規則
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6 }}>
+                        OT 門檻、午休、勤工獎、拆帳等完整設定喺薪酬規則面板
+                      </div>
+                    </div>
+                  )}
+                  {form.assignEmployee && !editingId && (
+                    <>
+                      <div className="form-group">
+                        <label>計薪方式</label>
+                        <select value={form.payType} onChange={e => setForm({ ...form, payType: e.target.value })}>
+                          <option value="HOURLY">時薪</option>
+                          <option value="MONTHLY">月薪</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label>{form.payType === 'HOURLY' ? '時薪' : '月薪'}</label>
+                        <input type="number" step="0.01" value={form.baseAmount}
+                          onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                        建立後可喺「薪酬規則」設定 OT、午休、勤工獎等細節
+                      </div>
+                    </>
+                  )}
                   {form.assignEmployee && (
                     <div style={{ fontSize: 12, color: '#6b7280', padding: '8px 0' }}>
                       年假額度由入職日自動計算（《僱傭條例》年資階梯 7→14 天，累積制）。可喺「假期管理 → 重新計算假期」更新。
