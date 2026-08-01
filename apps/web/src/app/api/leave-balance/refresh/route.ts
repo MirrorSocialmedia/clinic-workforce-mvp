@@ -41,8 +41,11 @@ export async function POST(req: NextRequest) {
     }
 
     const targetEmployees = employeeId
-      ? [await prisma.employee.findUnique({ where: { id: employeeId } })].filter(Boolean)
-      : await prisma.employee.findMany({ where: { status: { in: ['ACTIVE', 'PROBATION'] } } })
+      ? [await prisma.employee.findUnique({ where: { id: employeeId }, include: { user: { select: { name: true } } } })].filter(Boolean)
+      : await prisma.employee.findMany({
+        where: { status: { in: ['ACTIVE', 'PROBATION'] } },
+        include: { user: { select: { name: true } } },
+      })
 
     if (targetEmployees.length === 0) {
       return NextResponse.json({ error: '未找到目標員工' }, { status: 400 })
@@ -50,13 +53,19 @@ export async function POST(req: NextRequest) {
 
     const now = new Date()
     let updated = 0
-    const skipped: string[] = []
+    const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
 
     for (const emp of targetEmployees as any[]) {
-      if (!emp.joinDate) { skipped.push(emp.id); continue }
+      if (!emp.joinDate) {
+        skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: '未設定入職日期' })
+        continue
+      }
 
       const months = serviceMonths(new Date(emp.joinDate), now)
-      if (months < PROBATION_MONTHS) { skipped.push(emp.id); continue }
+      if (months < PROBATION_MONTHS) {
+        skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: `試用期中（到職 ${months} 個月）` })
+        continue
+      }
 
       // ★ 日常餘額用【已賺取】—— 進行中嗰年未賺到，唔可以畀員工放。
       // 離職結算另外用 'prorata'（settleLeaveOnResign）。
@@ -103,7 +112,7 @@ export async function POST(req: NextRequest) {
       success: true,
       updatedCount: updated,
       employeeCount: targetEmployees.length,
-      skipped: skipped.length,
+      skipped,
     })
   } catch (error) {
     console.error('Refresh leave balance error:', error)

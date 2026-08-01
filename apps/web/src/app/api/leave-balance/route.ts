@@ -74,7 +74,7 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { balanceId, entitled, remaining } = body
+    const { balanceId, entitled, used, remaining } = body
 
     if (!balanceId) {
       return NextResponse.json({ error: 'balanceId is required' }, { status: 400 })
@@ -82,7 +82,24 @@ export async function PATCH(req: NextRequest) {
 
     const updateData: any = {}
     if (entitled !== undefined) updateData.entitled = entitled
-    if (remaining !== undefined) updateData.remaining = remaining
+
+    // ★ used 係「真實已放天數」—— 支援人手校正（例如舊系統遷移過嚟嘅歷史假期）。
+    //   refresh 唔會覆蓋 used，所以人手改咗會保留。
+    if (used !== undefined) {
+      if (typeof used !== 'number' || used < 0) {
+        return NextResponse.json({ error: '已用天數必須係 0 或以上嘅數字' }, { status: 400 })
+      }
+      updateData.used = used
+    }
+
+    // ★ remaining 一律由 entitled − used 推導，唔接受人手輸入 ——
+    //   三個數互相依賴，容許獨立設定就會出現 entitled 10 / used 3 / remaining 99 呢種矛盾。
+    const cur = await prisma.leaveBalance.findUnique({ where: { id: balanceId } })
+    if (!cur) return NextResponse.json({ error: '找不到餘額記錄' }, { status: 404 })
+
+    const nextEntitled = updateData.entitled ?? cur.entitled
+    const nextUsed = updateData.used ?? cur.used
+    updateData.remaining = Math.max(0, nextEntitled - nextUsed)
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
@@ -94,6 +111,19 @@ export async function PATCH(req: NextRequest) {
       include: {
         leaveType: { select: { id: true, name: true } },
         employee: { include: { user: { select: { id: true, name: true } } } },
+      },
+    })
+
+    // ★ 審計記錄
+    await prisma.auditLog.create({
+      data: {
+        actorId: session.userId,
+        action: 'LEAVE_BALANCE_ADJUST',
+        entity: 'LeaveBalance',
+        entityId: balanceId,
+        targetEmployeeId: cur.employeeId,
+        beforeJson: JSON.stringify({ entitled: cur.entitled, used: cur.used, remaining: cur.remaining }),
+        afterJson: JSON.stringify({ entitled: nextEntitled, used: nextUsed, remaining: updateData.remaining }),
       },
     })
 

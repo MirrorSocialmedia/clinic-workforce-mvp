@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { toHKDateStr } from '@/lib/hk-date'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { Plus } from 'lucide-react'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
@@ -103,6 +104,9 @@ export default function LeavePage() {
 
   // Balance employee filter
   const [balanceEmployeeId, setBalanceEmployeeId] = useState('all')
+
+  // ★ used inputs — 字串 state，好讓 0 可以清到空（唔好用 parseFloat(...) || 0）
+  const [usedInputs, setUsedInputs] = useState<Record<string, string>>({})
 
   // Leave Types management state
   const [activeTab, setActiveTab] = useState<TabKey>('balance')
@@ -366,7 +370,14 @@ export default function LeavePage() {
       })
       const data = await res.json()
       if (res.ok) {
-        setRefreshResult(`✅ 完成！更新 ${data.refreshedCount || data.updatedCount || 0} 筆記錄`)
+        if (data.skipped?.length) {
+          setRefreshResult(
+            `✅ 已更新 ${data.updatedCount} 人。\n\n以下 ${data.skipped.length} 人未處理：\n` +
+            data.skipped.map((s: any) => `· ${s.name} — ${s.reason}`).join('\n')
+          )
+        } else {
+          setRefreshResult(`✅ 完成！更新 ${data.updatedCount} 筆記錄`)
+        }
         fetchBalances()
       } else {
         setRefreshResult(`❌ ${data.error || '計算失敗'}`)
@@ -562,9 +573,38 @@ export default function LeavePage() {
                       ) : (
                         <>
                           <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
-                          <div style={{ fontSize: 12, color: '#888' }}>
+                          <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
                             剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
                           </div>
+                          {isManager && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                              <label style={{ fontSize: 11, color: '#6b7280' }}>校正已用：</label>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={usedInputs[b.id] ?? String(b.used)}
+                                onChange={e => {
+                                  const v = e.target.value
+                                  if (v === '' || /^\d*\.?\d*$/.test(v)) setUsedInputs(s => ({ ...s, [b.id]: v }))
+                                }}
+                                onBlur={async () => {
+                                  const n = parseFloat(usedInputs[b.id] ?? '')
+                                  if (!Number.isFinite(n) || n === b.used) return
+                                  try {
+                                    const res = await fetch('/api/leave-balance', {
+                                      method: 'PATCH',
+                                      credentials: 'include',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ balanceId: b.id, used: n }),
+                                    })
+                                    if (res.ok) { setUsedInputs(s => { const n2 = { ...s }; delete n2[b.id]; return n2 }); fetchBalances() }
+                                  } catch {}
+                                }}
+                                style={{ width: 60, textAlign: 'right', fontSize: 12, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd' }}
+                              />
+                              <span style={{ fontSize: 10, color: '#9ca3af' }}>（remaining 自動推導）</span>
+                            </div>
+                          )}
                           {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && b.remaining === 0 && b.used > b.entitled && (
                             <div style={{ fontSize: 10, color: '#c2410c', marginTop: 4 }}>
                               ⚠️ 已放 {b.used} 天，超出已賺取 {b.entitled} 天
@@ -942,6 +982,10 @@ export default function LeavePage() {
                 >
                   {refreshing ? '計算中...' : '🔄 自動計算全部'}
                 </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6 }}>
+                按入職日重算年假額度（累積制）。<strong>已用天數會保留</strong>，
+                手動改過嘅額度會被覆蓋。
               </div>
               {refreshResult && (
                 <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 6, fontSize: 13,

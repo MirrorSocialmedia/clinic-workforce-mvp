@@ -6,6 +6,7 @@ import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
+import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
@@ -54,7 +55,7 @@ export default function AccountsPage() {
   const [showResignModal, setShowResignModal] = useState(false)
   const [resignEmployee, setResignEmployee] = useState<Account | null>(null)
   const [lastDay, setLastDay] = useState(new Date().toISOString().split('T')[0])
-  const [resignPreview, setResignPreview] = useState<{ futureShifts: number; futureApprovedLeaves: number } | null>(null)
+  const [resignPreview, setResignPreview] = useState<{ futureShifts: number; futureApprovedLeaves: number; leaveSettlement: any } | null>(null)
   const [resignLoading, setResignLoading] = useState(false)
 
   // KIOSK account creation state
@@ -110,7 +111,7 @@ export default function AccountsPage() {
         )
         if (res.ok) {
           const data = await res.json()
-          setResignPreview({ futureShifts: data.futureShifts, futureApprovedLeaves: data.futureApprovedLeaves })
+          setResignPreview({ futureShifts: data.futureShifts, futureApprovedLeaves: data.futureApprovedLeaves, leaveSettlement: data.leaveSettlement ?? null })
         }
       } catch {}
     }
@@ -325,7 +326,7 @@ export default function AccountsPage() {
     } catch (err) { console.error('Failed to load leave balances:', err) }
   }
 
-  const updateLeaveBalance = async (balanceId: string, field: 'entitled' | 'remaining', value: number) => {
+  const updateLeaveBalance = async (balanceId: string, field: 'entitled' | 'used', value: number) => {
     try {
       const res = await fetch('/api/leave-balance', {
         method: 'PATCH',
@@ -913,7 +914,27 @@ export default function AccountsPage() {
                                     onClick={() => loadLeaveBalances(acc.employeeId!)}
                                   >載入</button>
                                 </h4>
-                                {leaveBalances[acc.employeeId!] && leaveBalances[acc.employeeId!].length > 0 ? (
+                                {leaveBalances[acc.employeeId!] === undefined ? (
+                                  <span style={{ fontSize: 12, color: '#aaa' }}>點擊「載入」查看假期額度</span>
+                                ) : leaveBalances[acc.employeeId!].length === 0 ? (
+                                  (() => {
+                                    const monthsInService = acc.joinDate
+                                      ? (() => {
+                                          const join = new Date(acc.joinDate)
+                                          const now = new Date()
+                                          return (now.getFullYear() - join.getFullYear()) * 12 + (now.getMonth() - join.getMonth())
+                                        })()
+                                      : -1
+                                    const isInProbation = monthsInService >= 0 && monthsInService < PROBATION_MONTHS
+                                    return (
+                                      <span style={{ fontSize: 12, color: '#9ca3af' }}>
+                                        {isInProbation
+                                          ? '試用期中（未開始累積）'
+                                          : '⚠️ 未計算 — 請撳「重新計算假期」'}
+                                      </span>
+                                    )
+                                  })()
+                                ) : (
                                   leaveBalances[acc.employeeId!]
                                     // ★ 年假係累積 row (year=0)，唔可以按曆年過濾
                                     .filter(b => {
@@ -952,8 +973,6 @@ export default function AccountsPage() {
                                       )}
                                     </div>
                                   ))
-                                ) : (
-                                  <span style={{ fontSize: 12, color: '#aaa' }}>點擊「載入」查看假期額度</span>
                                 )}
                               </div>
                             )}
@@ -1161,6 +1180,64 @@ export default function AccountsPage() {
                 <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>（僅取消最後工作日之後的記錄）</div>
               </div>
             )}
+
+            {/* ★ 離職年假結算預覽卡 */}
+            {resignPreview?.leaveSettlement && (() => {
+              const s = resignPreview.leaveSettlement
+              return (
+                <div style={{
+                  padding: 14, background: '#fffbeb', border: '1px solid #fde68a',
+                  borderRadius: 10, marginTop: 12,
+                }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>
+                    離職年假結算（預覽）
+                  </div>
+                  <div style={{ fontSize: 11, color: '#92400e', marginBottom: 10 }}>
+                    ⚠️ 純預覽，唔會寫入任何記錄。以最後上班日 {lastDay} 計算。
+                  </div>
+                  <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>入職日</span><span>{fmtDate(s.joinDate)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>服務年資</span><span>{Math.floor(s.serviceMonths / 12)} 年 {s.serviceMonths % 12} 個月</span>
+                    </div>
+                    <div style={{ borderTop: '1px dashed #fbbf24', margin: '4px 0' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#9ca3af', fontSize: 12 }}>
+                      <span>日常可放（已賺取）</span><span>{s.earnedNow} 天</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                      <span>離職累積（含按比例）</span><span>{s.accrued} 天</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>已用</span><span>− {s.used} 天</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                      <span>可結算</span><span>{s.unused} 天</span>
+                    </div>
+                    <div style={{ borderTop: '1px dashed #fbbf24', margin: '4px 0' }} />
+                    {s.isEstimate ? (
+                      <div style={{ fontSize: 12, color: '#b45309' }}>
+                        ⚠️ 非月薪制員工，年假薪酬需另行按 ADW 計算
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#9ca3af', fontSize: 12 }}>
+                          <span>日薪（月薪×12÷365）</span><span>${s.dailyWage}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 15 }}>
+                          <span>應付年假薪酬</span><span>${s.payout.toLocaleString()}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 10, lineHeight: 1.5 }}>
+                    「日常可放」按已完成服務年度（EO s.41A）；<br />
+                    「離職累積」加埋進行中年度按比例（EO s.41D）—— 所以會多過日常數字。
+                  </div>
+                </div>
+              )
+            })()}
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button className="btn" style={{ background: '#eee', color: '#333' }}
