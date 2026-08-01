@@ -25,7 +25,8 @@ for script in check-rbac-matrix.sh check-dates.sh check-role-hardcode.sh check-r
 done
 
 echo "== 拉代碼 =="
-git pull
+git fetch origin
+git reset --hard origin/main
 
 echo "== 重建 app（migration 檔在映像裡，build 必須在 migrate 之前）=="
 if ! $DC up -d --build app; then
