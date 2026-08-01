@@ -150,7 +150,15 @@ export async function GET(req: NextRequest) {
 
   const shifts = await prisma.shift.findMany({
     where: shiftWhere,
-    include: {
+    select: {
+      id: true,
+      employeeId: true,
+      clinicId: true,
+      secondaryClinicId: true,
+      date: true,
+      startTime: true,
+      endTime: true,
+      status: true,
       employee: {
         include: {
           user: { select: { name: true } },
@@ -160,6 +168,28 @@ export async function GET(req: NextRequest) {
       clinic: { select: { id: true, name: true } },
     },
   })
+
+  // ★ 有已批假期嘅日子唔算缺勤 —— 計糧路徑（payroll-engine:2260）有做，
+  // 呢度之前完全冇讀假期，令請咗假嘅日子照標缺勤。
+  const leaves = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId: { in: [...new Set(shifts.map(s => s.employeeId))] },
+      status: 'APPROVED',
+      startDate: { lte: monthEnd }, // TZ-OK：LeaveRequest 用 UTC 午夜儲存
+      endDate: { gte: monthStart },
+    },
+    select: { employeeId: true, startDate: true, endDate: true },
+  })
+
+  const leaveDateSet = new Set<string>()
+  for (const lv of leaves) {
+    let cur = toHKDateStr(lv.startDate)
+    const last = toHKDateStr(lv.endDate)
+    while (cur <= last) {
+      leaveDateSet.add(`${lv.employeeId}:${cur}`)
+      cur = toHKDateStr(new Date(new Date(`${cur}T00:00:00+08:00`).getTime() + 86400000))
+    }
+  }
 
   const exceptions: Array<{
     employeeId: string; employeeName: string; clinicName: string;
@@ -199,6 +229,9 @@ export async function GET(req: NextRequest) {
   // Detect LATE from effective clock-in punches vs shift start
   for (const ep of clockIns) {
     const punchDateStr = toHKDateStr(ep.effectiveTime)
+    // ⚠️ TODO: 改用 matchPunchesToShifts（lib/shift-punch-match.ts）——
+    //   而家用 .find() 攞第一張，分更日會配對錯更次。
+    //   同 calculateTimeBank 的結果可能不一致。
     const matchingShift = shifts.find(s =>
       s.employeeId === ep.raw.employeeId &&
       toHKDateStr(new Date(s.date)) === punchDateStr &&
@@ -226,6 +259,9 @@ export async function GET(req: NextRequest) {
   // Detect EARLY_LEAVE from effective clock-out punches vs shift end
   for (const ep of clockOuts) {
     const punchDateStr = toHKDateStr(ep.effectiveTime)
+    // ⚠️ TODO: 改用 matchPunchesToShifts（lib/shift-punch-match.ts）——
+    //   而家用 .find() 攞第一張，分更日會配對錯更次。
+    //   同 calculateTimeBank 的結果可能不一致。
     const matchingShift = shifts.find(s =>
       s.employeeId === ep.raw.employeeId &&
       toHKDateStr(new Date(s.date)) === punchDateStr &&
@@ -278,6 +314,9 @@ export async function GET(req: NextRequest) {
   // OT 偵測：下班晚於排班結束 (use effectiveTime) — with per-day threshold
   for (const ep of clockOuts) {
     const punchDateStr = toHKDateStr(ep.effectiveTime)
+    // ⚠️ TODO: 改用 matchPunchesToShifts（lib/shift-punch-match.ts）——
+    //   而家用 .find() 攞第一張，分更日會配對錯更次。
+    //   同 calculateTimeBank 的結果可能不一致。
     const matchingShift = shifts.find(
       s =>
         s.employeeId === ep.raw.employeeId &&
@@ -307,17 +346,30 @@ export async function GET(req: NextRequest) {
   }
 
   // Detect ABSENT from shifts with no effective punches
+  // ★ 未收工嘅更次唔可以當缺勤。
+  // 用 endTime 唔用 date —— 今日 09:00-18:00 嘅更，喺 14:00 睇仲未收工，
+  // 員工可能仲喺度返緊工，只係未打落班卡。
+  // 如果用 `date < today`，今日已收工嘅早更（09:00-13:00，而家 15:00）
+  // 就會漏咗，要等到聽日先標到。
+  const nowTs = Date.now()
+
   for (const shift of shifts) {
+    const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
+    if (shiftEnd.getTime() > nowTs) continue // ★ 未收工，跳過
+
     const shiftDayStr = toHKDateStr(new Date(shift.date))
     const hasPunch = effectivePunches.some(ep =>
       ep.raw.employeeId === shift.employeeId &&
       toHKDateStr(ep.effectiveTime) === shiftDayStr &&
-      ep.clinicId === shift.clinicId
+      // ★ 調鋪：主店同副店嘅打卡都算（同 payroll-engine:2200 一致）
+      (ep.clinicId === shift.clinicId || ep.clinicId === shift.secondaryClinicId)
     )
     if (!hasPunch) {
+      if (leaveDateSet.has(`${shift.employeeId}:${shiftDayStr}`)) continue // ★ 有假期
+
       const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
-      const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
-      const shiftMinutes = Math.round((shiftEnd.getTime() - shiftStart.getTime()) / 60000)
+      const shiftEnd2 = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
+      const shiftMinutes = Math.round((shiftEnd2.getTime() - shiftStart.getTime()) / 60000)
       exceptions.push({
         employeeId: shift.employeeId, employeeName: shift.employee?.user?.name || 'Unknown',
         clinicName: shift.clinic?.name || 'Unknown', date: shiftDayStr, type: 'ABSENT',

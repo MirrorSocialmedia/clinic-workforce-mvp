@@ -2260,9 +2260,20 @@ async function collectWorkData(
   }
 
   // ★ QA24: absentDays 按「日期 + clinicId」判斷
+  // ★ 未收工嘅更次唔可以當缺勤 —— 月中 preview 時，
+  //   未到嘅日子會被當缺勤扣薪。
+  //   用 endTime 唔用 date：今日已收工嘅早更應該計，未收工嘅唔計。
+  //
+  //   ⚠️ 陷阱：8/31 23:00 跑 8 月計糧，當日晚更（22:00-02:00）仲未收工
+  //   → 唔算缺勤。要 9/1 之後重跑先完整。preflight 會警告（見改動 7）。
+  const nowTs = Date.now()
+
   let absentDays = 0
   const otDeductedAbsences: Array<{ date: string; minutes: number }> = []
   for (const shift of shifts) {
+    const shiftEndTs = new Date(shift.endTime).getTime()
+    if (shiftEndTs > nowTs) continue // ★ 未收工，跳過
+
     const shiftDateStr = formatDate(new Date(shift.date))
     const hasPunch =
       punchByDateClinic.has(`${shiftDateStr}:${shift.clinicId}`) ||

@@ -66,6 +66,24 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const blockers: string[] = []
   const warnings: string[] = []
 
+  // ★ 月中 preview 提醒 —— absentDays 只計已收工嘅更次（collectWorkData:2258），
+  // 所以未到嘅日子唔會扣錢，但都要話畀用家知呢張計糧單未完整。
+  const nowTs = Date.now()
+  const pendingShifts = await prisma.shift.count({
+    where: {
+      employeeId: { in: empIds },
+      status: 'CONFIRMED',
+      date: { gte: start, lte: end },
+      endTime: { gt: new Date(nowTs) },
+    },
+  })
+  if (pendingShifts > 0) {
+    warnings.push(
+      `本月仲有 ${pendingShifts} 個更次未收工 —— 呢張計糧單未完整，` +
+      `建議月結後重新生成再確認。`,
+    )
+  }
+
   if (negativeNet > 0) blockers.push(`${negativeNet} 位員工實發為負數，請檢查扣減項是否過多`)
   if (zeroNet > 0) warnings.push(`${zeroNet} 位員工實發為 $0（當月無工作記錄）—— 確認係咪應該包含喺呢張計糧單`)
   if (partialPunches > 0) warnings.push(`${partialPunches} 筆打卡記錄未配對到排班（缺卡/多卡）`)

@@ -32,6 +32,15 @@ export async function POST(req: NextRequest) {
     const dayStart = hkDateStart(date)
     const dayEnd = hkDateEnd(date)
 
+    // ★ 唔可以扣未發生嘅日子 —— 前端曾經因為 exceptions 標錯未來缺勤而顯示咗掣。
+    // 就算前端修好，API 都要自己守（可能有人直接打）。
+    if (dayStart.getTime() > Date.now()) {
+      return NextResponse.json(
+        { error: `${date} 尚未到，唔可以扣缺勤` },
+        { status: 400 },
+      )
+    }
+
     const shift = await prisma.shift.findFirst({
       where: {
         employeeId,
