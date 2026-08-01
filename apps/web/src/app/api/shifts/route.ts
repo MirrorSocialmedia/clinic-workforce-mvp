@@ -296,7 +296,11 @@ export async function POST(req: NextRequest) {
         const dates = shifts.map((s: any) => new Date(s.date).getTime()).sort()
         const earliest = new Date(dates[0])
         const empId = shifts[0].employeeId
-        await invalidateTimeBankFrom(empId, earliest, prisma)
+        try {
+          await invalidateTimeBankFrom(empId, earliest, prisma)
+        } catch (e) {
+          console.error(`[timebank-cache] invalidate failed employeeId=${empId} date=${earliest}`, e)
+        }
       }
 
       return NextResponse.json(

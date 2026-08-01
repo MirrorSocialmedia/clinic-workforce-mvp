@@ -49,6 +49,10 @@ async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, mon
     }
   } catch { /* 壞 JSON 當冇 config */ }
 
+  // ★ 只 hash 會影響【時間帳戶分鐘數】嘅 config。
+  //   金額類（monthly_salary / deduction_rate）唔影響分鐘，唔使入。
+  //   將來加新 config 時問一句：改咗佢，同一批打卡會唔會算出唔同分鐘？
+  //   會 → 要加入指紋；唔會 → 唔使。
   return `v${TIMEBANK_ENGINE_VERSION}:` + JSON.stringify({
     ot: cfg?.modifiers?.overtime ?? null,
     lunch: cfg?.modifiers?.lunch_break ?? null,
@@ -1882,19 +1886,22 @@ async function updateTimeBank(
 }
 
 /**
- * TimeBank cache write — single entry point for the entire system.
- * Guarantees all 6 detail fields + cacheKey are written atomically via upsert.
+ * TimeBank 快取寫入 —— 全系統唯一入口。
+ *
+ * ★ 唔提供 balanceOverride —— balance 必須同 tb 嘅明細一致。
+ *   容許 override 就會出現「override 嘅 balance + tb 嘅明細」，
+ *   由 row 推唔返個數（2026-08-01 就係咁漏咗 convertedMinutes）。
+ *   要改 balance 就改 calculateTimeBank 嘅公式，唔好喺呼叫端補。
  */
 export async function persistTimeBank(
   db: any,
   employeeId: string,
   periodMonth: Date,
   tb: any,
-  balanceOverride?: number,
 ): Promise<void> {
   const { start, end } = getMonthRange(periodMonth)
   const cacheData = {
-    balance: balanceOverride ?? tb.balance,
+    balance: tb.balance, // ★ 唯一來源
     carriedFrom: tb.carriedFrom,
     otMinutes: tb.otMinutes,
     lateMinutes: tb.lateMinutes,
@@ -3053,7 +3060,11 @@ export async function calculatePayrollWithRules(
 
   // 🔑 OT 唯一來源：時間銀行 otMinutes（排班外工時，分鐘制）
   // 提前呼叫 calculateTimeBank，後續 OT→Leave / 明細都用同一結果
-  const timeBankConfig = mods.time_bank || { negative_carry: 'reset' }
+  // ★ 即使 mods.time_bank 存在但結構唔同，都要有 negative_carry 預設值
+  const timeBankConfig = {
+    negative_carry: 'reset',
+    ...(mods.time_bank ?? {}),
+  }
   const tb = await calculateTimeBank(employeeId, monthDate, timeBankConfig, prisma)
   result.otHours = tb.otMinutes / 60 // 從分鐘換算，不自己算
 
@@ -3083,29 +3094,16 @@ export async function calculatePayrollWithRules(
     }
   }
 
-  // 7. Task 4: OT Balance only (no auto-convert; boss handles via /api/timebank/convert)
-  {
-    // deficit = 遲到 + 早退，補鐘統一抵扣（用 tb 計算結果）
-    const deficitMinutes = tb.lateMinutes + tb.earlyLeaveMinutes
-    const netDeficitMinutes = Math.max(0, deficitMinutes - tb.makeupMinutes)
-
-    // carriedFrom — recursive backfill
-    const carriedFrom = await getCarriedFrom(employeeId, monthDate, prisma, 0, timeBankConfig)
-
-    // 可用OT = OT − 補鐘消耗 − 淨 deficit + 上月結轉
-    const netOtMinutes = tb.otMinutes
-      - tb.makeupMinutes       // 補鐘消耗OT
-      - netDeficitMinutes      // 未補鐘 deficit（遲到+早退）扣OT
-      + carriedFrom            // 上月結轉
-
-    // ★ balance 可以係負數 —— 語意係「正 = 公司欠員工、負 = 員工拖欠」。
-    //   舊版 Math.max(0,…) 令所有拖欠嘅員工累計歸零，而且下個月
-    //   getCarriedFrom 讀到 0，成條鏈斷晒。
-    //
-    // ★ persistTimeBank 保證六欄 + cacheKey 一齊寫，唔再出現
-    //   「新 balance + 舊明細」嘅內部矛盾。
-    await persistTimeBank(prisma, employeeId, monthDate, tb, netOtMinutes)
-  }
+  // 7. Task 4: OT Balance —— 直接持久化 calculateTimeBank 嘅結果
+  //
+  // ★ 唔好喺呢度自己再算一次 balance。
+  //   tb.balance 已經係 carriedFrom + netOtThisMonth + convertedMinutes（calculateTimeBank 內），
+  //   舊版自己砌條式漏咗 convertedMinutes，令換假／初始調整全部被抹走 ——
+  //   跑一次計糧，員工換咗嘅假就會「復活」成 OT。
+  //
+  // ★ 亦唔使再叫 getCarriedFrom —— calculateTimeBank 內部已經叫過，
+  //   呢度係第二次遞歸，純浪費。
+  await persistTimeBank(prisma, employeeId, monthDate, tb)
 
   // 8. Task 6 + TimeBank: Build comprehensive detail JSON with timebank data
   // tb already computed at line 1992 (OT唯一來源)

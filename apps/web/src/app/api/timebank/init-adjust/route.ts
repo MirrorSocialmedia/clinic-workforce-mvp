@@ -66,7 +66,11 @@ export async function POST(req: NextRequest) {
     },
   } as any)
 
-  await invalidateTimeBankFrom(employeeId, date, prisma)
+  try {
+    await invalidateTimeBankFrom(employeeId, date, prisma)
+  } catch (e) {
+    console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${date}`, e)
+  }
 
   return NextResponse.json({ ok: true, minutes: totalMinutes })
 }

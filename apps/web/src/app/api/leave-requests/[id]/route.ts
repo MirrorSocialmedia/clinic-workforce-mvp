@@ -120,7 +120,11 @@ export async function PUT(
 
     // ★ 假期審批影響缺勤判斷同午飯扣減 → 快取要失效
     if (status === 'APPROVED') {
-      await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
+      try {
+        await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
+      } catch (e) {
+        console.error(`[timebank-cache] invalidate failed employeeId=${request.employeeId} date=${new Date(request.startDate)}`, e)
+      }
     }
 
     // Audit handled by Prisma extension (LeaveRequest ∈ AUDIT_ENTITIES)
@@ -188,7 +192,11 @@ export async function DELETE(
       await prisma.leaveRequest.delete({ where: { id: requestId } })
 
       // ★ 刪除假期影響缺勤判斷同午飯扣減 → 快取要失效
-      await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
+      try {
+        await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
+      } catch (e) {
+        console.error(`[timebank-cache] invalidate failed employeeId=${request.employeeId} date=${new Date(request.startDate)}`, e)
+      }
 
       return NextResponse.json({ success: true })
     } catch (error) {

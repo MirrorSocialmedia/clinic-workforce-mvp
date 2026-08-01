@@ -51,7 +51,11 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   })
 
   // Invalidate TimeBank so carry chain recalculates from void date
-  await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, prisma)
+  try {
+    await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, prisma)
+  } catch (e) {
+    console.error(`[timebank-cache] invalidate failed employeeId=${punch.employeeId} date=${punch.punchTime}`, e)
+  }
 
   return NextResponse.json({ ok: true })
 }

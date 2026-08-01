@@ -38,7 +38,11 @@ export async function POST(req: NextRequest) {
     await prisma.timeBankEntry.delete({ where: { id: entry.id } })
 
     // Invalidate TimeBank so carry chain recalculates
-    await invalidateTimeBankFrom(employeeId, dayStart, prisma)
+    try {
+      await invalidateTimeBankFrom(employeeId, dayStart, prisma)
+    } catch (e) {
+      console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${dayStart}`, e)
+    }
 
     await prisma.auditLog.create({
       data: {

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // PUT /api/punch-corrections/[id] — Approve/reject a correction
 export async function PUT(
@@ -66,6 +67,17 @@ export async function PUT(
 
       return result
     })
+
+    // ★ 審批通過會新增 PunchRecord（:53-64），快取必須清。
+    // 建立路徑（route.ts:253）有清，但審批呢條路徑之前漏咗 ——
+    // 結果係「員工申請 → 經理批」之後，時間帳戶仍然係批准前嘅數。
+    if (status === 'APPROVED') {
+      try {
+        await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
+      } catch (e) {
+        console.error(`[timebank-cache] invalidate failed employeeId=${correction.employeeId} date=${correction.correctedTime}`, e)
+      }
+    }
 
     // Notification outside transaction (non-critical side effect)
 

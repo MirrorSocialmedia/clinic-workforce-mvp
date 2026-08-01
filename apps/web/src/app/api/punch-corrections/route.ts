@@ -250,7 +250,11 @@ export async function POST(req: NextRequest) {
 
       // Invalidate TimeBank from correction date so carry chain recalculates (only for APPROVED)
       if (correction.status === 'APPROVED') {
-        await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
+        try {
+          await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
+        } catch (e) {
+          console.error(`[timebank-cache] invalidate failed employeeId=${correction.employeeId} date=${correction.correctedTime}`, e)
+        }
       }
 
       return NextResponse.json(

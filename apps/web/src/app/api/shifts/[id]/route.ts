@@ -135,9 +135,17 @@ export async function PUT(
     if (shift instanceof NextResponse) return shift
 
     // ★ 排班變更影響遲到／早退／OT 判斷 → 新舊日期都要失效（改期會影響兩個月）
-    await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
+    try {
+      await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
+    } catch (e) {
+      console.error(`[timebank-cache] invalidate failed employeeId=${existing.employeeId} date=${existing.date}`, e)
+    }
     if (updateData.date) {
-      await invalidateTimeBankFrom(existing.employeeId, updateData.date, prisma)
+      try {
+        await invalidateTimeBankFrom(existing.employeeId, updateData.date, prisma)
+      } catch (e) {
+        console.error(`[timebank-cache] invalidate failed employeeId=${existing.employeeId} date=${updateData.date}`, e)
+      }
     }
 
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
@@ -174,7 +182,11 @@ export async function DELETE(
     await prisma.shift.delete({ where: { id } })
 
     // ★ 刪除排班影響遲到／早退／OT 判斷 → 快取要失效
-    await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
+    try {
+      await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
+    } catch (e) {
+      console.error(`[timebank-cache] invalidate failed employeeId=${existing.employeeId} date=${existing.date}`, e)
+    }
 
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 

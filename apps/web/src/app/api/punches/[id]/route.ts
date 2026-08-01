@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { getMonthRange } from '@/lib/hk-date'
 
 // GET /api/punches/[id] — Single punch record + full correction chain
 export async function GET(
@@ -142,6 +144,28 @@ export async function PUT(
     })
     return nr
   })
+
+  // ★ 改 punchTime / punchType 直接影響遲到／早退／OT 配對，快取必須清。
+  // ⚠️ 新舊時間所屬月份【兩個都要清】——
+  //    由 5/31 改去 6/1，兩個月嘅數字都變咗。
+  // （同資料夾嘅 void/route.ts:54 有清，呢度之前漏咗）
+  try {
+    await invalidateTimeBankFrom(oldRecord.employeeId, oldRecord.punchTime, prisma)
+  } catch (e) {
+    console.error(`[timebank-cache] invalidate failed employeeId=${oldRecord.employeeId} date=${oldRecord.punchTime}`, e)
+  }
+  if (punchTime) {
+    const newTime = new Date(punchTime)
+    const { start: oldMonth } = getMonthRange(oldRecord.punchTime)
+    const { start: newMonth } = getMonthRange(newTime)
+    if (newMonth.getTime() !== oldMonth.getTime()) {
+      try {
+        await invalidateTimeBankFrom(oldRecord.employeeId, newTime, prisma)
+      } catch (e) {
+        console.error(`[timebank-cache] invalidate failed employeeId=${oldRecord.employeeId} date=${newTime}`, e)
+      }
+    }
+  }
 
   return NextResponse.json({ ok: true, record: { id: newRecord.id } })
 }

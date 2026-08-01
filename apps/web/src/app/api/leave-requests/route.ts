@@ -273,7 +273,11 @@ export async function POST(req: NextRequest) {
       }
 
       // ★ 假期影響缺勤判斷同午飯扣減 → 快取要失效
-      await invalidateTimeBankFrom(employee.id, new Date(startDate), prisma)
+      try {
+        await invalidateTimeBankFrom(employee.id, new Date(startDate), prisma)
+      } catch (e) {
+        console.error(`[timebank-cache] invalidate failed employeeId=${employee.id} date=${new Date(startDate)}`, e)
+      }
 
       return NextResponse.json({ success: true, leaveRequest: request }, { status: 201 })
     } catch (error) {

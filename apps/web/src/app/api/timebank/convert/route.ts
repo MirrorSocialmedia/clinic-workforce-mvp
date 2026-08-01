@@ -106,7 +106,11 @@ export async function POST(req: NextRequest) {
         notes: JSON.stringify({ days: daysInt, minutes, note: note?.trim() }),
       },
     } as any)
-    await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    try {
+      await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    } catch (e) {
+      console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${new Date()}`, e)
+    }
     return NextResponse.json({ ok: true })
   }
 
@@ -131,7 +135,11 @@ export async function POST(req: NextRequest) {
     const otLeaveTypeId = await getOtLeaveTypeId()
     if (otLeaveTypeId) await addLeaveBalance(employeeId, otLeaveTypeId, daysInt)
     const afterBalance = await tbBalance(employeeId)
-    await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    try {
+      await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    } catch (e) {
+      console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${new Date()}`, e)
+    }
     await prisma.auditLog.create({
       data: {
         actorId: auth.session.userId,
@@ -170,7 +178,11 @@ export async function POST(req: NextRequest) {
     })
     await deductLeaveBalance(employeeId, otLeaveTypeId, daysInt)
     const afterBalance = await tbBalance(employeeId)
-    await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    try {
+      await invalidateTimeBankFrom(employeeId, new Date(), prisma)
+    } catch (e) {
+      console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${new Date()}`, e)
+    }
     await prisma.auditLog.create({
       data: {
         actorId: auth.session.userId,

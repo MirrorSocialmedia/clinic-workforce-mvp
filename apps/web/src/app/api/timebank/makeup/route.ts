@@ -114,7 +114,11 @@ export async function POST(req: NextRequest) {
   })
 
   // Invalidate TimeBank so carry chain recalculates from makeup date
-  await invalidateTimeBankFrom(makeup.employeeId, makeup.date, prisma)
+  try {
+    await invalidateTimeBankFrom(makeup.employeeId, makeup.date, prisma)
+  } catch (e) {
+    console.error(`[timebank-cache] invalidate failed employeeId=${makeup.employeeId} date=${makeup.date}`, e)
+  }
 
   const afterBalance = await tbBalance(employeeId)
 
