@@ -830,22 +830,34 @@ export default function AccountsPage() {
                                       return true
                                     })
                                     .map(b => (
-                                    <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12 }}>
-                                      <span style={{ minWidth: 60, color: '#555' }}>{b.leaveType?.name}</span>
-                                      <input
-                                        type="number"
-                                        defaultValue={b.entitled}
-                                        min="0"
-                                        step="0.5"
-                                        style={{ width: 70, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
-                                        onBlur={e => {
-                                          const v = parseFloat(e.target.value)
-                                          if (isFinite(v) && v !== b.entitled) updateLeaveBalance(b.id, 'entitled', v)
-                                          else e.target.value = String(b.entitled)
-                                        }}
-                                      />
-                                      <span style={{ color: '#aaa' }}>已用: {b.used}</span>
-                                      <span style={{ color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>餘: {b.remaining}</span>
+                                    <div key={b.id} style={{ display: 'flex', flexDirection: 'column', marginBottom: 4 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                                        <span style={{ minWidth: 60, color: '#555' }}>{b.leaveType?.name}</span>
+                                        <input
+                                          type="number"
+                                          defaultValue={b.entitled}
+                                          min="0"
+                                          step="0.5"
+                                          style={{ width: 70, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12 }}
+                                          onBlur={e => {
+                                            const v = parseFloat(e.target.value)
+                                            if (isFinite(v) && v !== b.entitled) updateLeaveBalance(b.id, 'entitled', v)
+                                            else e.target.value = String(b.entitled)
+                                          }}
+                                        />
+                                        <span style={{ color: '#aaa' }}>已用: {b.used}</span>
+                                        <span style={{ color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>餘: {b.remaining}</span>
+                                      </div>
+                                      {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && (
+                                        <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
+                                          已賺取（已完成服務年度）· 本年度進行中，離職時可另按比例結算
+                                        </div>
+                                      )}
+                                      {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && b.remaining === 0 && b.used > b.entitled && (
+                                        <div style={{ fontSize: 10, color: '#c2410c', marginTop: 2 }}>
+                                          ⚠️ 已放 {b.used} 天，超出已賺取 {b.entitled} 天
+                                        </div>
+                                      )}
                                     </div>
                                   ))
                                 ) : (

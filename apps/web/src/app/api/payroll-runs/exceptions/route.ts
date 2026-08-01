@@ -400,6 +400,21 @@ export async function GET(req: NextRequest) {
     ex.payType = hourlyEmpIds.has(ex.employeeId) ? 'HOURLY' : 'MONTHLY'
   })
 
+  // ★ 位置異常都應該入計糧前檢查 —— 而家只有人手開考勤頁先睇到
+  const empIds = [...new Set(exceptions.map(e => e.employeeId))]
+  const geoAnomalies = await prisma.punchRecord.count({
+    where: {
+      employeeId: { in: empIds },
+      punchTime: { gte: monthStart, lte: monthEnd },
+      locationFlag: { in: ['OUT_OF_RANGE', 'DENIED'] },
+      void: { is: null },
+    },
+  })
+  const warnings: string[] = []
+  if (geoAnomalies > 0) {
+    warnings.push(`本月有 ${geoAnomalies} 筆打卡位置異常（超出範圍或拒絕定位）`)
+  }
+
   exceptions.sort((a, b) => b.date.localeCompare(a.date))
 
   // Compute per-employee timebank summaries — include ALL employees with punch/shift data (not just those with exceptions)
@@ -459,6 +474,8 @@ export async function GET(req: NextRequest) {
       correction: exceptions.filter(e => e.type === 'CORRECTION').length,
       earlyLeave: exceptions.filter(e => e.type === 'EARLY_LEAVE').length,
     },
+    geoAnomalies,
+    warnings,
     periodMonth: periodMonth || undefined,
   })
 }

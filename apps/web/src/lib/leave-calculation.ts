@@ -71,20 +71,34 @@ export function leaveForServiceYear(joinDate: Date, serviceYearIndex: number, as
 
   const daysInThisYear = Math.floor((periodEnd.getTime() - yearStart.getTime()) / 86400000)
   const entitlement = LEAVE_TABLE[Math.min(serviceYearIndex, LEAVE_TABLE.length - 1)]
-  return entitlement * daysInThisYear / YEAR_DAYS
+  // ★ 閏年（366 日）会令比例 > 1，令完整年度得出 7.02 —— clamp 住
+  const ratio = Math.min(1, daysInThisYear / YEAR_DAYS)
+  return entitlement * ratio
 }
 
 /**
- * 累計總應得年假（從入職到基準日所有服務年度的加總）
- * 不足試用期（3個月）→ 0
+ * 累計年假。
+ *
+ * @param mode
+ * 'earned' —— 只計【已完成】嘅服務年度（EO s.41A：完成一個年度先賺到）。
+ * 日常餘額顯示、請假扣減都用呢個。
+ * 'prorata' —— 加埋【進行中】嗰年嘅按比例部分（EO s.41D：離職結算）。
+ *
+ * ★ 兩個數唔同係正確嘅 —— 唔好統一。日常用 earned 防止員工預支未賺到嘅假。
  */
-export function totalAccruedLeave(joinDate: Date, asOf: Date): number {
+export function totalAccruedLeave(
+  joinDate: Date,
+  asOf: Date,
+  mode: 'earned' | 'prorata' = 'earned', // ★ 預設 earned（安全側）
+): number {
   const months = serviceMonths(joinDate, asOf)
   if (months < PROBATION_MONTHS) return 0
 
   const years = serviceYears(joinDate, asOf)
   let total = 0
-  for (let i = 0; i <= years; i++) {
+  // ★ i < years = 只計完成咗嘅年度；i <= years = 加埋進行中嗰年
+  const last = mode === 'prorata' ? years : years - 1
+  for (let i = 0; i <= last; i++) {
     total += leaveForServiceYear(joinDate, i, asOf)
   }
   return Math.round(total * 100) / 100
@@ -115,7 +129,8 @@ export function settleLeaveOnResign(
     return { accrued: 0, used: usedDays, unused: 0, payout: 0 }
   }
 
-  const accrued = totalAccruedLeave(joinDate, resignDate)
+  // ★ 離職結算要加埋進行中年度嘅按比例部分（EO s.41D）
+  const accrued = totalAccruedLeave(joinDate, resignDate, 'prorata')
   const unused = Math.max(0, accrued - usedDays)
   const dailyWage = monthlySalary * 12 / YEAR_DAYS
   const payout = Math.round(unused * dailyWage * 100) / 100

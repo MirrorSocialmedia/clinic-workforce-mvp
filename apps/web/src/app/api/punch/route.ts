@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
       let clinicId: string | null = null
       let source: string = 'QR_DYNAMIC'
       let tokenValid: boolean | null = true
+      let crossClinic = false
 
       // ★ Token + clinic resolution: token-first, explicit-fallback
       if (qrToken) {
@@ -80,13 +81,13 @@ export async function POST(req: NextRequest) {
           )
         }
 
-        // Verify employee belongs to this clinic
+        // ★ 決定（2026-08-01）：借調係常態，唔擋跨店打卡。
+        // 排班嗰邊已經唔檢查 EmployeeClinic（2026-07-28 全店排班權），
+        // 打卡呢邊繼續擋就會出現「排到更但打唔到卡」。
+        // 改為標記，考勤報表顯示，經理自行判斷。
         const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
         if (!empClinicIds.includes(clinicId)) {
-          return NextResponse.json(
-            { error: 'You are not assigned to this clinic' },
-            { status: 403 }
-          )
+          crossClinic = true
         }
 
         source = validation.source || 'QR_DYNAMIC'
@@ -159,7 +160,20 @@ export async function POST(req: NextRequest) {
         if (clinic?.latitude != null && clinic?.longitude != null) {
           distanceM = distanceMeters(lat, lng, clinic.latitude, clinic.longitude)
           const radius = clinic.geoRadius ?? Number(process.env.GEO_DEFAULT_RADIUS || 200)
+
           if (distanceM > radius) locationFlag = 'OUT_OF_RANGE'
+
+          // ★ 明顯唔喺附近（radius × 3）先硬擋。
+          // 唔用 radius 直接擋 —— GPS 室內／大廈密集会飄幾十米，会誤擋真員工。
+          // geoAccuracy 差嗰陣（定位本身唔準）唔擋。
+          const hardLimit = radius * 3
+          const accOk = geoAccuracy == null || geoAccuracy < 100
+          if (distanceM > hardLimit && accOk) {
+            return NextResponse.json({
+              error: `距離診所 ${Math.round(distanceM)} 米，超出打卡範圍。如喺診所內請重新定位再試。`,
+              distanceM: Math.round(distanceM),
+            }, { status: 403 })
+          }
         }
       } else if (!locationFlag) {
         locationFlag = 'NO_GPS'
@@ -181,6 +195,9 @@ export async function POST(req: NextRequest) {
             distanceM,
             locationFlag,
             geoAccuracy,
+            notes: crossClinic
+              ? `跨店打卡（非指派診所）${body.notes ? ' · ' + body.notes : ''}`
+              : (body.notes || null),
           },
         })
 

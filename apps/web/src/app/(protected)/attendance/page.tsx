@@ -812,6 +812,11 @@ export default function AttendancePage() {
                     <div className="flex items-center gap-2">
                       {mobileFaceBadge()}
                       {mobileLocBadge()}
+                      {record.notes?.includes('跨店打卡') && (
+                        <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: '#e0e7ff', color: '#3730a3' }}>
+                          ↗ 跨店
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex justify-between items-center mt-1">
@@ -981,7 +986,14 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td className="p-3 text-sm">{faceBadge(record)}</td>
-                      <td className="p-3 text-sm">{locBadge(record)}</td>
+                      <td className="p-3 text-sm">
+                        {locBadge(record)}
+                        {record.notes?.includes('跨店打卡') && (
+                          <span style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px', borderRadius: 4, background: '#e0e7ff', color: '#3730a3' }}>
+                            ↗ 跨店
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {record.source === 'QR_DYNAMIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 動態碼</> : record.source === 'QR_STATIC' ? <><Smartphone size={14} style={{ marginRight: 4 }} /> 固定碼</> : record.source === 'MANUAL_CORRECTION' ? <><Pencil size={14} style={{ marginRight: 4 }} /> 補打卡</> : <><Wrench size={14} style={{ marginRight: 4 }} /> 系統</>}
                       </td>

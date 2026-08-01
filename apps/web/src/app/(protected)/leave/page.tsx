@@ -541,7 +541,15 @@ export default function LeavePage() {
                       <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
                         {b.employee?.user?.name || b.employeeId}
                       </div>
-                      <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>{b.leaveType.name} ({b.year})</div>
+                      <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>
+                        {b.leaveType.name}
+                        {b.leaveType?.systemKey !== LEAVE_SYSTEM_KEYS.ANNUAL && ` (${b.year})`}
+                      </div>
+                      {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && (
+                        <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2, marginBottom: 4 }}>
+                          已賺取（已完成服務年度）· 本年度進行中，離職時可另按比例結算
+                        </div>
+                      )}
                       {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.SICK ? (
                         <>
                           <div style={{ fontSize: 20, fontWeight: 700, color: '#16a34a' }}>無上限</div>
@@ -555,6 +563,11 @@ export default function LeavePage() {
                           <div style={{ fontSize: 12, color: '#888' }}>
                             剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
                           </div>
+                          {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && b.remaining === 0 && b.used > b.entitled && (
+                            <div style={{ fontSize: 10, color: '#c2410c', marginTop: 4 }}>
+                              ⚠️ 已放 {b.used} 天，超出已賺取 {b.entitled} 天
+                            </div>
+                          )}
                         </>
                       )}
                     </div>

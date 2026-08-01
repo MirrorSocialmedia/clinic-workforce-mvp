@@ -761,7 +761,12 @@ export default function EmployeePayrollDetailPage() {
                     <div>休息日: {restDayRemaining.toFixed(1)} / {restDayEntitled}</div>
                   )}
                   {annualBalance != null && (
-                    <div>年假: {annualRemaining.toFixed(1)} / {annualBalance.entitled ?? 0}</div>
+                    <>
+                      <div>年假: {annualRemaining.toFixed(1)} / {annualBalance.entitled ?? 0}</div>
+                      <div style={{ fontSize: 10, color: '#9ca3af' }}>
+                        按已完成服務年度計 · 進行中年度離職時按比例結算
+                      </div>
+                    </>
                   )}
                   {otBalance != null && (
                     <div>OT 補假: {otRemaining.toFixed(1)} / {otBalance.entitled ?? 0}</div>

@@ -58,8 +58,9 @@ export async function POST(req: NextRequest) {
       const months = serviceMonths(new Date(emp.joinDate), now)
       if (months < PROBATION_MONTHS) { skipped.push(emp.id); continue }
 
-      // ★ 累積制：由入職逐個服務年度按比例加總，未放部分自動結轉
-      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now)
+      // ★ 日常餘額用【已賺取】—— 進行中嗰年未賺到，唔可以畀員工放。
+      // 離職結算另外用 'prorata'（settleLeaveOnResign）。
+      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now, 'earned')
 
       const existing = await prisma.leaveBalance.findUnique({
         where: {
