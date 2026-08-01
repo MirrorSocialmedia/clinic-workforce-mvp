@@ -6,6 +6,8 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { CONFIG } from '@/lib/config'
 import { buildDefaultPayConfig, syncConfigToPayType } from '@/lib/pay-rule-defaults'
+import { toHKDateStr, hkDateOnly } from '@/lib/hk-date'
+import { serviceMonths, totalAccruedLeave, PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { jsonNoStore } from '@/lib/api-response'
 
 export async function GET(
@@ -232,7 +234,7 @@ export async function PUT(
         employee = await prisma.employee.create({
           data: {
             userId: params.id,
-            joinDate: joinDate ? new Date(joinDate) : new Date(),
+            joinDate: joinDate ? hkDateOnly(joinDate) : new Date(),
             status: 'ACTIVE',
           },
         })
@@ -254,10 +256,22 @@ export async function PUT(
 
       // Update employee if exists (may have just been backfilled above)
       let homeClinicCleared = false
-      if (employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined || payConfidential !== undefined || homeClinicId !== undefined)) {
-        const empUpdate: any = {}
+      let empUpdate: any = {} // ★ declared here so AuditLog can reference it after the block
+      if (employee && (employeeStatus !== undefined || payType !== undefined || baseAmount !== undefined || payConfidential !== undefined || homeClinicId !== undefined || joinDate !== undefined && joinDate !== '')) {
+        empUpdate = {}
         if (employeeStatus !== undefined) empUpdate.status = employeeStatus
         if (payConfidential !== undefined) empUpdate.payConfidential = payConfidential
+
+        // ★ joinDate 之前只在建立新 Employee 時用（:235），更新現有員工完全冇處理 ——
+        //   前端改了入職日、API 回 200，但 DB 冇變（Prisma 對缺欄係「唔更新」唔係報錯）。
+        //   employees/[id]/route.ts:91 做啱咗，呢條 route 漏咗。
+        if (joinDate !== undefined && joinDate !== '') {
+          const jd = hkDateOnly(joinDate) // ★ HK 午夜，同 create 一致
+          if (isNaN(jd.getTime())) {
+            return NextResponse.json({ error: '入職日期格式錯誤（需為 YYYY-MM-DD）' }, { status: 400 })
+          }
+          empUpdate.joinDate = jd
+        }
         if (homeClinicId !== undefined) {
           if (homeClinicId === '' || homeClinicId === null) {
             empUpdate.homeClinicId = null
@@ -276,6 +290,48 @@ export async function PUT(
           where: { id: employee.id },
           data: empUpdate,
         })
+
+        // ★ 入職日直接決定年假累積額度（totalAccruedLeave）——
+        //   改了要即刻重算，否則 LeaveBalance 一直用舊值，
+        //   要等有人手動撳「重新計算假期」先反映。
+        if (empUpdate.joinDate) {
+          const annualType = await prisma.leaveType.findUnique({
+            where: { systemKey: 'ANNUAL_LEAVE' },
+          })
+          if (annualType) {
+            const months = serviceMonths(empUpdate.joinDate, new Date())
+            const entitled = months < PROBATION_MONTHS
+              ? 0
+              : totalAccruedLeave(empUpdate.joinDate, new Date(), 'earned')
+
+            const bal = await prisma.leaveBalance.findUnique({
+              where: {
+                employeeId_leaveTypeId_year: {
+                  employeeId: employee.id,
+                  leaveTypeId: annualType.id,
+                  year: 0, // ★ 累積制用 year=0
+                },
+              },
+            })
+            if (bal) {
+              await prisma.leaveBalance.update({
+                where: { id: bal.id },
+                data: { entitled, remaining: Math.max(0, entitled - bal.used) },
+              })
+            } else if (entitled > 0) {
+              await prisma.leaveBalance.create({
+                data: {
+                  employeeId: employee.id,
+                  leaveTypeId: annualType.id,
+                  year: 0,
+                  entitled,
+                  used: 0,
+                  remaining: entitled,
+                },
+              })
+            }
+          }
+        }
 
         if (payType !== undefined) {
           const effDate = effectiveFrom ? new Date(effectiveFrom) : new Date()
@@ -348,6 +404,10 @@ export async function PUT(
         }
       }
 
+      // ★ 審計記錄：beforeJson/afterJson 對稱包含 joinDate
+      const beforeJoinDate = existing.employee?.joinDate ? toHKDateStr(existing.employee.joinDate) : null
+      const afterJoinDate = empUpdate.joinDate ? toHKDateStr(empUpdate.joinDate) : undefined
+
       await prisma.auditLog.create({
         data: {
           action: 'UPDATE_ACCOUNT',
@@ -355,7 +415,8 @@ export async function PUT(
           entityId: params.id,
           actorId: session.userId,
           ...(employee ? { targetEmployeeId: employee.id } : {}),
-          notes: JSON.stringify({ updated: body }),
+          beforeJson: JSON.stringify({ joinDate: beforeJoinDate }),
+          afterJson: JSON.stringify({ joinDate: afterJoinDate }),
         },
       })
 

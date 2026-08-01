@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { jsonNoStore } from '@/lib/api-response'
+import { hkDateOnly } from '@/lib/hk-date'
 
 // GET /api/employees/[id] — employee detail
 export async function GET(
@@ -88,7 +89,7 @@ export async function PUT(
     }
 
     const employeeUpdateData: any = {}
-    if (joinDate) employeeUpdateData.joinDate = new Date(joinDate)
+    if (joinDate) employeeUpdateData.joinDate = hkDateOnly(joinDate)
     if (status) employeeUpdateData.status = status
     if (notes !== undefined) employeeUpdateData.notes = notes
     if (status === 'RESIGNED' && !employee.leaveDate) {
