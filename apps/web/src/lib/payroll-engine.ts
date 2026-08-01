@@ -11,6 +11,7 @@ import { prisma, basePrisma } from './prisma'
 import { QUOTA_LEAVE_KEYS } from './leave-types'
 import { getEffectivePunches } from './punch-query'
 import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts, leaveCoversDate } from './hk-date'
+import { matchPunchesToShifts } from './shift-punch-match'
 import type { PayType, RunStatus } from '@prisma/client'
 import { getEffectiveADW } from './adw'
 import type { ADWResult, AdwPolicyResult } from './adw'
@@ -1442,8 +1443,15 @@ export async function calculateTimeBank(
   }
   const lunchDeductedDates = new Set<string>() // ★ 一日只扣一次午飯，唔理當日有幾多張更
 
+  // ★ Pairing logic extracted to lib/shift-punch-match.ts — single source of truth
+  const matched = matchPunchesToShifts(shifts, effectivePunches as any)
+  const matchByShift = new Map(matched.map((m: any) => [m.shiftId, m]))
+
   for (const shift of shifts) {
-    const shiftDateStr = toHKDateStr(new Date(shift.date))
+    const m = matchByShift.get(shift.id)
+    if (!m) continue
+
+    const shiftDateStr = m.date
     const sameDayShifts = shiftsByDate.get(shiftDateStr) ?? []
     const hasLaterShiftToday = sameDayShifts.some(
       (s: any) =>
@@ -1451,76 +1459,28 @@ export async function calculateTimeBank(
         new Date(s.startTime).getTime() > new Date(shift.startTime).getTime(),
     )
 
-    // ★ 同店分更（朝更 + 晚更）clinicId 分唔開，要按時間窗切。
-    //   窗口 = 上一張更收工↔本更開工嘅中點  到  本更收工↔下一張更開工嘅中點
-    const idx = sameDayShifts.findIndex((s: any) => s.id === shift.id)
-    const prevShift = idx > 0 ? sameDayShifts[idx - 1] : null
-    const nextShift = idx >= 0 && idx < sameDayShifts.length - 1 ? sameDayShifts[idx + 1] : null
-    const winStart = prevShift
-      ? (new Date(prevShift.endTime).getTime() + new Date(shift.startTime).getTime()) / 2
-      : -Infinity
-    const winEnd = nextShift
-      ? (new Date(shift.endTime).getTime() + new Date(nextShift.startTime).getTime()) / 2
-      : Infinity
-    // ★ needTimeWindow: 同店分更（朝更 + 晚更）clinicId 分唔開，要按時間窗切。
-    //   ★ 調鋪方案 1：same clinic 定義包括 secondaryClinicId 交集。
-    const needTimeWindow =
-      sameDayShifts.filter((s: any) =>
-        s.clinicId === shift.clinicId ||
-        s.clinicId === shift.secondaryClinicId ||
-        s.secondaryClinicId === shift.clinicId
-      ).length > 1
-
-    const dayPunches = effectivePunches.filter((ep: any) => {
-      if (toHKDateStr(ep.effectiveTime) !== shiftDateStr) return false
-      // ★ 調鋪方案 1：punch 可以碌喺主店或調鋪店
-      if (ep.clinicId !== shift.clinicId && ep.clinicId !== shift.secondaryClinicId) return false
-      if (!needTimeWindow) return true               // 調鋪：clinicId 已經分得開
-      const t = ep.effectiveTime.getTime()
-      return t >= winStart && t < winEnd
-    })
-
-    const clockIn = dayPunches
-      .filter((ep: any) => ep.punchType === 'CLOCK_IN')
-      .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
-
-    const clockOut = dayPunches
-      .filter((ep: any) => ep.punchType === 'CLOCK_OUT')
-      .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
-
-    const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
-    const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
-
-    // ★ Per-day tracking
-    let dayLate = 0
-    let dayEarly = 0
-    let dayClockOutOt = 0
+    let dayLate = m.lateMinutes
+    let dayEarly = m.earlyMinutes
+    let dayClockOutOt = m.otMinutes
     let dayLunchOt = 0
     let dayLunchLate = 0
 
-    // Late — use effectiveTime
-    if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
-      // ★ 決定 4：夠足 1 分鐘先計，59 秒唔算（同 OT 一致）
-      dayLate = Math.floor((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
-    }
-    // Early leave — use effectiveTime
-    if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
-      dayEarly = Math.floor((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
-    }
-    // ★ 決定 1：當日仲有下一張更就唔計 OT（早退照計 —— 提早走咗就係提早走）
-    if (clockOut && !hasLaterShiftToday
-      && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
-      const dayOt = Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
-      if (dayOt > 0 && dayOt >= otMinMinutes) {
+    // ★ OT threshold + rounding — timebank-specific logic (needs pay rule config)
+    if (m.hasClockOut && !hasLaterShiftToday && dayClockOutOt > 0) {
+      if (dayClockOutOt >= otMinMinutes) {
         dayClockOutOt = otRoundMinutes > 0
-          ? Math.floor(dayOt / otRoundMinutes) * otRoundMinutes // 16→10, 29→20 (每10)
-          : dayOt // 0=不取整，原樣
+          ? Math.floor(dayClockOutOt / otRoundMinutes) * otRoundMinutes
+          : dayClockOutOt
+      } else {
+        dayClockOutOt = 0
       }
+    } else if (!m.hasClockOut || hasLaterShiftToday) {
+      dayClockOutOt = 0
     }
 
     // ★ 午休扣減（地基：有上班嘅日子一律扣 lunchDefault）
     // 決定 1 相關：同日多張更只扣一次，唔可以每張更加一次
-    if (clockIn && !lunchDeductedDates.has(shiftDateStr)) {
+    if (m.hasClockIn && !lunchDeductedDates.has(shiftDateStr)) {
       // ★ 決定 3：同日多張更之間嘅空檔本身已經係無薪休息
       //   （工時按每張更分段計，空檔唔入數），唔應該再扣多次午飯。
       //   規則：全日無薪空檔總和唔夠 lunchDefault 先補扣差額。

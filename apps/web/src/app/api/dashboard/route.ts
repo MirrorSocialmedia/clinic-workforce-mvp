@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { todayHK, hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
 import { getTimeAccountSummary } from '@/lib/timebank-summary'
+import { matchPunchesToShifts, estimateScheduledHours } from '@/lib/shift-punch-match'
 
 /** Get start/end of today in HK (UTC+8) */
 function hkTodayBounds() {
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
         date: { gte: todayStart, lt: todayEnd },
         status: { notIn: ['CANCELLED', 'DRAFT'] },
       },
-      select: { employeeId: true, startTime: true },
+      select: { id: true, employeeId: true, startTime: true, endTime: true, clinicId: true, secondaryClinicId: true, date: true, status: true },
     })
 
     const employeeIds = scheduledEmployees.map((s) => s.employeeId)
@@ -83,26 +84,26 @@ export async function GET(req: NextRequest) {
             where: {
               clinicId: clinic.id,
               employeeId: { in: employeeIds },
-              punchType: 'CLOCK_IN',
               punchTime: { gte: todayStart, lt: todayEnd },
               void: { is: null }, // 已作廢的不算
             },
-            select: { employeeId: true, punchTime: true },
+            select: { employeeId: true, punchTime: true, punchType: true, clinicId: true },
           })
         : []
 
-    const clockedInSet = new Set(punchRecords.map((p) => p.employeeId))
+    const clockedInSet = new Set(punchRecords.filter(p => p.punchType === 'CLOCK_IN').map((p) => p.employeeId))
     const clockedIn = clockedInSet.size
 
-    // 4. Late count: CLOCK_IN punchTime > shift startTime
-    const shiftStartTimeMap = new Map(scheduledEmployees.map((s) => [s.employeeId, s.startTime.getTime()]))
-    let late = 0
-    for (const punch of punchRecords) {
-      const shiftStartTs = shiftStartTimeMap.get(punch.employeeId)
-      if (shiftStartTs != null && punch.punchTime.getTime() > shiftStartTs) {
-        late++
-      }
-    }
+    // ★ 用共用配對邏輯（唔再用 Map(employeeId → 第一張更)）
+    const matched = matchPunchesToShifts(
+      scheduledEmployees,
+      punchRecords.map(p => ({
+        effectiveTime: p.punchTime,
+        punchType: p.punchType,
+        clinicId: p.clinicId,
+      })),
+    )
+    const late = matched.filter(m => m.lateMinutes > 0).length
 
     return {
       clinicId: clinic.id,
@@ -192,19 +193,28 @@ export async function GET(req: NextRequest) {
     select: { employeeId: true, startTime: true, endTime: true, date: true },
   })
 
-  const LUNCH_H = 1
-  const hoursOf = (s: any) =>
-    Math.max(0,
-      (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - LUNCH_H
-    )
+  // ★ 午飯扣減讀 config，唔寫死 1 小時
+  const lunchMinutesMap = new Map<string, number>()
+  for (const emp of activeEmployees) {
+    try {
+      const cfg = JSON.parse(emp.payRules?.[0]?.configJson || '{}')
+      lunchMinutesMap.set(emp.id, cfg?.modifiers?.lunch_break?.defaultMinutes ?? 60)
+    } catch {
+      lunchMinutesMap.set(emp.id, 60)
+    }
+  }
+
+  const estimated = estimateScheduledHours(monthShifts, (empId) => lunchMinutesMap.get(empId) ?? 60)
 
   const workHours = activeEmployees.map(emp => {
-    const empShifts = monthShifts.filter(s => s.employeeId === emp.id)
-    const weekH = empShifts.filter(s => {
-      const d = new Date(s.date)
-      return d >= weekStart && d < weekEnd
-    }).reduce((a, s) => a + hoursOf(s), 0)
-    const monthH = empShifts.reduce((a, s) => a + hoursOf(s), 0)
+    const empDays = estimated.get(emp.id) ?? []
+    let weekH = 0
+    let monthH = 0
+    for (const d of empDays) {
+      const dt = new Date(d.date + 'T12:00:00+08:00')
+      monthH += d.hours
+      if (dt >= weekStart && dt < weekEnd) weekH += d.hours
+    }
     return {
       employeeId: emp.id,
       name: emp.user?.name ?? '?',

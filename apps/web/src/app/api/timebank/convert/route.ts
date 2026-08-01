@@ -37,7 +37,7 @@ async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days:
 }
 
 async function tbBalance(employeeId: string) {
-  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
+  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
   return r._sum.minutes ?? 0
 }
 

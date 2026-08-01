@@ -6,7 +6,7 @@ import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 async function tbBalance(employeeId: string) {
-  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
+  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
   return r._sum.minutes ?? 0
 }
 

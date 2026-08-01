@@ -9,6 +9,7 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
 import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK } from '@/lib/hk-date'
+import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { textOn, shiftShade } from '@/lib/color'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
 import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
@@ -1604,17 +1605,18 @@ function getShiftCode(shift: Shift): string {
       return [...m.values()]
     })()
 
+    // ★ 用 estimateScheduledHours — 按員工+日期 group，分更日一日只扣一次午飯
+    const estimated = estimateScheduledHours(merged as any, () => 60) // 預設 60 分鐘午飯
+
     const byEmp = new Map<string, { month: number; week: number }>()
-    merged.forEach(s => {
-      if (s.status === 'CANCELLED') return
-      // ★ Removed clinic filter — cross-clinic shifts count toward employee hours
-      const d = toHKDateStr(new Date(s.date))
-      const h = Math.max(0, (new Date(s.endTime).getTime() - new Date(s.startTime).getTime()) / 3600000 - 1)
-      const cur = byEmp.get(s.employeeId) || { month: 0, week: 0 }
-      if (d >= mStart && d <= mEnd) cur.month += h
-      if (d >= wStartStr && d <= wEndStr) cur.week += h
-      byEmp.set(s.employeeId, cur)
-    })
+    for (const [empId, days] of estimated) {
+      for (const d of days) {
+        const cur = byEmp.get(empId) || { month: 0, week: 0 }
+        if (d.date >= mStart && d.date <= mEnd) cur.month += d.hours
+        if (d.date >= wStartStr && d.date <= wEndStr) cur.week += d.hours
+        byEmp.set(empId, cur)
+      }
+    }
     return clinicEmployees
       .map(e => {
         const v = byEmp.get(e.id) || { month: 0, week: 0 }
@@ -1634,13 +1636,10 @@ function getShiftCode(shift: Shift): string {
       s => s.employeeId === selectedEmployeeId && daySet.has(toHKDateStr(new Date(s.date)))
     )
     const dayCount = new Set(empShifts.map(s => s.date)).size
-    const lunchDefaultMin = 60 // ★ 預設午休 1 小時（與 payroll engine 一致）
-    const hours = empShifts.reduce((sum, s) => {
-      const shiftMs = new Date(s.endTime).getTime() - new Date(s.startTime).getTime()
-      const shiftHours = shiftMs / 3600000
-      const withLunchDeduct = Math.max(0, shiftHours - lunchDefaultMin / 60)
-      return sum + withLunchDeduct
-    }, 0)
+    // ★ 用 estimateScheduledHours — 按員工+日期 group，分更日一日只扣一次午飯
+    const estimated = estimateScheduledHours(empShifts as any, () => 60)
+    const empDays = estimated.get(selectedEmployeeId) ?? []
+    const hours = empDays.reduce((sum, d) => sum + d.hours, 0)
     return { name: emp.user?.name ?? '?', days: dayCount, hours: Math.round(hours * 10) / 10 }
   }, [selectedEmployeeId, shifts, clinicEmployees])
 

@@ -5,7 +5,7 @@ import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 async function tbBalance(employeeId: string) {
-  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
+  const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
   return r._sum.minutes ?? 0
 }
 
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
         const clockIn = dayPunches
           .filter((ep: any) => ep.punchType === 'CLOCK_IN')
           .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
-        if (clockIn && clockIn.effectiveTime.getTime() > new Date(shift.startTime).getTime()) {
+        if (clockIn && clockIn.effectiveTime.getTime() > new Date(shift.startTime).getTime()) { // CALC-OK: makeup validation, not general calculation
           actualMinutes = Math.ceil((clockIn.effectiveTime.getTime() - new Date(shift.startTime).getTime()) / 60000)
         }
       } else {

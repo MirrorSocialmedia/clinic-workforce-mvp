@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { toHKDateStr, getMonthRange } from '@/lib/hk-date'
+import { calculateTimeBank } from '@/lib/payroll-engine'
 
 // ============================================================
 // GET /api/my/summary — Monthly summary (hours/OT/leave)
@@ -32,32 +33,21 @@ export async function GET(req: NextRequest) {
 
   const { start: monthStart, end: monthEnd } = getMonthRange(new Date(`${targetMonth}-01T00:00:00+08:00`))
 
+  // ★ 決定（2026-08-01）：員工首頁同薪資單／考勤用【同一個數】。
+  //   calculateTimeBank 內部自己查 pay rule，傳 {} 冇問題（只影響 negative_carry）。
+  const monthDate = new Date(`${targetMonth}-01T00:00:00+08:00`)
+  const tb = await calculateTimeBank(employee.id, monthDate, {}, prisma)
+
+  const shiftCount = (await prisma.shift.count({
+    where: { employeeId: employee.id, date: { gte: monthStart, lte: monthEnd } },
+  }))
+
   const punches = await prisma.punchRecord.findMany({
     where: { employeeId: employee.id, punchTime: { gte: monthStart, lt: monthEnd }, void: { is: null } },
   })
 
   const clockIns = punches.filter(p => p.punchType === 'CLOCK_IN')
   const clockOuts = punches.filter(p => p.punchType === 'CLOCK_OUT')
-
-  const shifts = await prisma.shift.findMany({
-    where: { employeeId: employee.id, startTime: { gte: monthStart, lt: monthEnd } },
-  })
-
-  // Late attendance tracking: compare CLOCK_IN vs shift startTime
-  let lateCount = 0
-  let lateMinutes = 0
-
-  for (const clockIn of clockIns) {
-    // Find the matching shift on the same day (same clinic, same HK date)
-    const clockInHKDate = toHKDateStr(clockIn.punchTime)
-    const shift = shifts.find(s => toHKDateStr(s.startTime) === clockInHKDate)
-
-    if (shift && clockIn.punchTime > shift.startTime) {
-      lateCount++
-      const diffMs = clockIn.punchTime.getTime() - shift.startTime.getTime()
-      lateMinutes += Math.round(diffMs / 60000)
-    }
-  }
 
   const leaveRequests = await prisma.leaveRequest.findMany({
     where: {
@@ -80,10 +70,13 @@ export async function GET(req: NextRequest) {
       punchCount: punches.length,
       clockInCount: clockIns.length,
       clockOutCount: clockOuts.length,
-      shiftCount: shifts.length,
+      shiftCount,
       leaveDays: totalLeaveDays,
-      lateCount,
-      lateMinutes,
+      lateCount: (tb.dailyLate ?? []).length,
+      lateMinutes: tb.netLateMinutes, // 已扣補鐘
+      earlyLeaveMinutes: tb.netEarlyMinutes,
+      otMinutes: tb.otMinutes,
+      timeAccountMinutes: tb.timeAccountMinutes,
       leaveRequests: leaveRequests.map(r => ({
         type: r.leaveType.name,
         days: r.days,
