@@ -45,6 +45,7 @@ export default function ExceptionsReportPage() {
   const [makeupSubmitting, setMakeupSubmitting] = useState(false)
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 保密員工薪金隔離，刻意用 role 唔用權限
+  const isManagerOrAbove = userRole === 'OWNER' || userRole === 'MANAGER'
 
   const fetchClinics = useCallback(async () => {
     try {
@@ -300,13 +301,13 @@ export default function ExceptionsReportPage() {
                 <th style={{ textAlign: 'left', padding: '8px 6px' }}>日期</th>
                 <th style={{ textAlign: 'left', padding: '8px 6px' }}>類型</th>
                 <th style={{ textAlign: 'left', padding: '8px 6px' }}>詳情</th>
-                {isOwner && <th style={{ textAlign: 'left', padding: '8px 6px' }}>操作</th>}
+                {isManagerOrAbove && <th style={{ textAlign: 'left', padding: '8px 6px' }}>操作</th>}
               </tr>
             </thead>
             <tbody>
               {exceptions.map((ex, i) => {
                 const tb = getEmployeeTimebank(ex.employeeId)
-                const showMakeupBtn = (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && isOwner && ex.payType !== 'HOURLY'
+                const showMakeupBtn = (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') && isManagerOrAbove && ex.payType !== 'HOURLY'
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                     <td style={{ padding: '8px 6px', fontWeight: 600 }}>{ex.employeeName}</td>
@@ -325,7 +326,7 @@ export default function ExceptionsReportPage() {
                       </span>
                     </td>
                     <td style={{ padding: '8px 6px', fontSize: 12, color: '#888' }}>{ex.detail}</td>
-                    {isOwner && (
+                    {isManagerOrAbove && (
                       <td style={{ padding: '8px 6px' }}>
                         {showMakeupBtn && (
                           <button
@@ -357,7 +358,7 @@ export default function ExceptionsReportPage() {
       )}
 
       {/* Makeup Modal */}
-      {makeupOpen && isOwner && (
+      {makeupOpen && isManagerOrAbove && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center',

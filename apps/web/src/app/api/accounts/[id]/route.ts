@@ -47,7 +47,7 @@ export async function DELETE(
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
-  if (session.role !== 'OWNER') {
+  if (session.role !== 'OWNER') { // ROLE-OK: 刪除帳號限 OWNER（含最後一個 OWNER 保護）
     return NextResponse.json({ error: '只有 OWNER 可以刪除帳號' }, { status: 403 })
   }
 

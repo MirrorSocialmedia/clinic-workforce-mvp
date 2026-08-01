@@ -9,7 +9,7 @@ const MINUTES_PER_DAY = 540
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  // ★ OWNER only
+  // ROLE-OK: 可憑空設定帳戶起始餘額，冇對應事實，維持 OWNER-only
   if (auth.session.role !== 'OWNER') {
     return NextResponse.json({ error: '只有老闆可初始化時間帳戶' }, { status: 403 })
   }

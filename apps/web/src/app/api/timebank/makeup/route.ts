@@ -12,8 +12,16 @@ async function tbBalance(employeeId: string) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  if (auth.session.role !== 'OWNER') {
-    return NextResponse.json({ error: '只有老闆可補鐘' }, { status: 403 })
+  const { session, scope, perms } = auth
+
+  // ★ 補鐘 = 時間帳戶操作（還鐘），用 timebank_ops 權限。
+  // 同組嘅 convert（換假）／absent-deduct 早就係 OWNER+MANAGER，
+  // 只有 makeup 漏咗鎖住 OWNER，唔一致。
+  if (!(perms ?? []).includes('timebank_ops')) {
+    return NextResponse.json(
+      { error: 'Forbidden (missing permission: timebank_ops)' },
+      { status: 403 },
+    )
   }
 
   const { employeeId, date, minutes, reason, targetType } = await req.json()
