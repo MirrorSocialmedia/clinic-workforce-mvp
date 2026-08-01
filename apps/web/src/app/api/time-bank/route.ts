@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { calculateTimeBank } from '@/lib/payroll-engine'
+import { calculateTimeBank, persistTimeBank } from '@/lib/payroll-engine'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
   }
   if (periodMonth) {
     const [yearStr, monthStr] = periodMonth.split('-')
-    const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
+    const monthDate = new Date(`${yearStr}-${monthStr.padStart(2, '0')}-01T00:00:00+08:00`)
     where.periodMonth = monthDate
   }
 
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
       }
 
       const [yearStr, monthStr] = periodMonth.split('-')
-      const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
+      const monthDate = new Date(`${yearStr}-${monthStr.padStart(2, '0')}-01T00:00:00+08:00`)
 
       // Calculate time bank data
       const result = await calculateTimeBank(
@@ -92,27 +92,12 @@ export async function POST(req: NextRequest) {
         basePrisma
       )
 
-      // Upsert the record
-      const record = await prisma.timeBank.upsert({
-        where: {
-          employeeId_periodMonth: { employeeId, periodMonth: monthDate },
-        },
-        create: {
-          employeeId,
-          periodMonth: monthDate,
-          otMinutes: result.otMinutes,
-          lateMinutes: result.lateMinutes,
-          balance: result.balance,
-          carriedFrom: result.carriedFrom,
-          monthEndNote: result.note || null,
-        },
-        update: {
-          otMinutes: result.otMinutes,
-          lateMinutes: result.lateMinutes,
-          balance: result.balance,
-          carriedFrom: result.carriedFrom,
-          monthEndNote: result.note || null,
-        },
+      // ★ persistTimeBank guarantees all 6 fields + cacheKey written atomically
+      await persistTimeBank(basePrisma, employeeId, monthDate, result)
+
+      // Read back for response
+      const record = await prisma.timeBank.findUnique({
+        where: { employeeId_periodMonth: { employeeId, periodMonth: monthDate } },
       })
 
       return NextResponse.json({ success: true, timeBank: record }, { status: 201 })

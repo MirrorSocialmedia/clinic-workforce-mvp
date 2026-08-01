@@ -24,14 +24,34 @@ import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMa
  */
 const TIMEBANK_ENGINE_VERSION = 3 // v3: 分更時間窗 + floor 取整
 
-/** Generate a fingerprint of the pay rule config + engine version. */
-function timeBankCacheKey(config: any): string {
-  const sig = JSON.stringify({
-    ot: config?.modifiers?.overtime ?? null,
-    lunch: config?.modifiers?.lunch_break ?? null,
-    rest: config?.working_days?.rest_days ?? null,
+/**
+ * ★ Fingerprint must reflect the employee's real pay rule config.
+ *   Old version received config from caller, but the payroll path passed
+ *   mods.time_bank (only negative_carry, no .modifiers), making the key
+ *   always the null combination — equivalent to cacheKey being useless,
+ *   and the key written by payroll differed from overview, causing mutual invalidation.
+ */
+async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, monthStart: Date): Promise<string> {
+  let cfg: any = {}
+  try {
+    const rule = await db.payRule.findFirst({
+      where: {
+        employeeId, isActive: true,
+        effectiveFrom: { lte: monthEnd },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
+      },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+    })
+    if (rule?.configJson) {
+      cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
+    }
+  } catch { /* 壞 JSON 當冇 config */ }
+
+  return `v${TIMEBANK_ENGINE_VERSION}:` + JSON.stringify({
+    ot: cfg?.modifiers?.overtime ?? null,
+    lunch: cfg?.modifiers?.lunch_break ?? null,
+    rest: cfg?.working_days?.rest_days ?? null,
   })
-  return `v${TIMEBANK_ENGINE_VERSION}:${sig}`
 }
 
 // ------------------------------------------------------------------
@@ -1282,7 +1302,7 @@ async function getCarriedFrom(
   const { start: lStart, end: lEnd } = getMonthRange(lastMonth)
 
   // ① Check existing TimeBank record — validate cacheKey fingerprint
-  const key = timeBankCacheKey(config)
+  const key = await timeBankCacheKey(db, employeeId, lEnd, lStart)
   const rec = await db.timeBank.findFirst({
     where: { employeeId, periodMonth: { gte: lStart, lte: lEnd } },
   })
@@ -1875,8 +1895,11 @@ async function getOrCreateTimeBank(
         periodMonth,
         otMinutes: 0,
         lateMinutes: 0,
+        earlyLeaveMinutes: 0,
+        makeupMinutes: 0,
         balance: 0,
         carriedFrom: 0,
+        cacheKey: await timeBankCacheKey(db, employeeId, periodMonth, periodMonth),
       },
     })
   }
@@ -1890,7 +1913,16 @@ async function getOrCreateTimeBank(
 async function updateTimeBank(
   employeeId: string,
   monthDate: Date,
-  data: { otMinutes?: number; lateMinutes?: number; carriedFrom?: number; balance?: number; monthEndNote?: string },
+  data: {
+    otMinutes?: number
+    lateMinutes?: number
+    earlyLeaveMinutes?: number
+    makeupMinutes?: number
+    carriedFrom?: number
+    balance?: number
+    cacheKey?: string
+    monthEndNote?: string
+  },
   db: any
 ): Promise<any> {
   const periodMonth = getMonthRange(monthDate).start
@@ -1900,6 +1932,34 @@ async function updateTimeBank(
       employeeId_periodMonth: { employeeId, periodMonth },
     },
     data,
+  })
+}
+
+/**
+ * TimeBank cache write — single entry point for the entire system.
+ * Guarantees all 6 detail fields + cacheKey are written atomically via upsert.
+ */
+export async function persistTimeBank(
+  db: any,
+  employeeId: string,
+  periodMonth: Date,
+  tb: any,
+  balanceOverride?: number,
+): Promise<void> {
+  const { start, end } = getMonthRange(periodMonth)
+  const cacheData = {
+    balance: balanceOverride ?? tb.balance,
+    carriedFrom: tb.carriedFrom,
+    otMinutes: tb.otMinutes,
+    lateMinutes: tb.lateMinutes,
+    earlyLeaveMinutes: tb.earlyLeaveMinutes,
+    makeupMinutes: tb.makeupMinutes,
+    cacheKey: await timeBankCacheKey(db, employeeId, end, start),
+  }
+  await db.timeBank.upsert({
+    where: { employeeId_periodMonth: { employeeId, periodMonth: start } },
+    update: cacheData,
+    create: { employeeId, periodMonth: start, ...cacheData },
   })
 }
 
@@ -3096,30 +3156,26 @@ export async function calculatePayrollWithRules(
 
   // 7. Task 4: OT Balance only (no auto-convert; boss handles via /api/timebank/convert)
   {
-    const otMinutesFromResult = tb.otMinutes
-    const timeBank = await getOrCreateTimeBank(employeeId, monthDate, prisma)
-
     // deficit = 遲到 + 早退，補鐘統一抵扣（用 tb 計算結果）
     const deficitMinutes = tb.lateMinutes + tb.earlyLeaveMinutes
     const netDeficitMinutes = Math.max(0, deficitMinutes - tb.makeupMinutes)
 
     // carriedFrom — recursive backfill
-    // ★ 傳同一份 config，否則過往月份的 OT 門檻／午休設定全部失效
     const carriedFrom = await getCarriedFrom(employeeId, monthDate, prisma, 0, timeBankConfig)
 
     // 可用OT = OT − 補鐘消耗 − 淨 deficit + 上月結轉
-    const netOtMinutes = otMinutesFromResult
+    const netOtMinutes = tb.otMinutes
       - tb.makeupMinutes       // 補鐘消耗OT
       - netDeficitMinutes      // 未補鐘 deficit（遲到+早退）扣OT
       + carriedFrom            // 上月結轉
 
-    // 只存餘額，不換假
-    await updateTimeBank(employeeId, monthDate, {
-      otMinutes: otMinutesFromResult,
-      balance: Math.max(0, netOtMinutes),
-      carriedFrom,
-      monthEndNote: `本月OT結餘 ${Math.max(0, netOtMinutes)} 分鐘`,
-    }, prisma)
+    // ★ balance 可以係負數 —— 語意係「正 = 公司欠員工、負 = 員工拖欠」。
+    //   舊版 Math.max(0,…) 令所有拖欠嘅員工累計歸零，而且下個月
+    //   getCarriedFrom 讀到 0，成條鏈斷晒。
+    //
+    // ★ persistTimeBank 保證六欄 + cacheKey 一齊寫，唔再出現
+    //   「新 balance + 舊明細」嘅內部矛盾。
+    await persistTimeBank(prisma, employeeId, monthDate, tb, netOtMinutes)
   }
 
   // 8. Task 6 + TimeBank: Build comprehensive detail JSON with timebank data
