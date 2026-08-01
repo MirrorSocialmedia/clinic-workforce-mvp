@@ -81,6 +81,7 @@ export async function GET(req: NextRequest) {
       return {
       id: user.id,
       name: user.name,
+      fullName: user.fullName,
       phone: user.phone,
       email: user.email,
       role: user.role,
@@ -121,7 +122,7 @@ export async function POST(req: NextRequest) {
         name, phone, email, password, role, clinicIds,
         joinDate, payType, baseAmount, configJson, effectiveFrom,
         assignEmployee = false,
-        annualLeave,
+        fullName,
         payConfidential = false,
         homeClinicId,
         permissionsJson,
@@ -149,6 +150,7 @@ export async function POST(req: NextRequest) {
           password: hashedPassword,
           role: role as any,
           status: 'ACTIVE',
+          fullName: fullName || null,
           clinics: clinicData,
           permissionsJson: permissionsJson ? JSON.stringify(permissionsJson) : null,
           ipAllowlist: ipAllowlist || null,
@@ -200,33 +202,11 @@ export async function POST(req: NextRequest) {
           },
         })
 
-        // Create initial leave balances for the new employee
-        const currentYear = new Date().getUTCFullYear()
-        if (annualLeave || annualLeave === 0) {
-          // Get or create leave types using findFirst + create
-          let annualType = await prisma.leaveType.findFirst({ where: { name: '年假' } })
-
-          if (!annualType) {
-            annualType = await prisma.leaveType.create({
-              data: { name: '年假', isPaid: true, annualQuota: annualLeave || 12, color: '#2196F3' },
-            })
-          }
-
-          const leaveBalanceData = []
-          if (annualLeave != null) {
-            leaveBalanceData.push({
-              employeeId: employee.id,
-              leaveTypeId: annualType.id,
-              year: currentYear,
-              entitled: annualLeave,
-              remaining: annualLeave,
-            })
-          }
-
-          if (leaveBalanceData.length > 0) {
-            await prisma.leaveBalance.createMany({ data: leaveBalanceData })
-          }
-        }
+        // ★ 唔再喺建立帳號時人手設年假額度（2026-08-01 決定）。
+        //   年假採累積制（year=0），由 totalAccruedLeave(joinDate, now, 'earned') 自動計算。
+        //   舊版寫入 year=當前曆年 + 人手 entitled，同累積制並存兩個 row，
+        //   而且按 name:'年假' 搵 LeaveType（唔係 systemKey）有機會建立重複類型。
+        //   新員工嘅年假會喺下次 refresh 時自動建立；入職未滿試用期時本來就應該係 0。
       }
 
       const auditAction = assignEmployee ? 'CREATE_ACCOUNT_WITH_EMPLOYEE' : 'CREATE_ACCOUNT'

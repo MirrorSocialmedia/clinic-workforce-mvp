@@ -50,7 +50,7 @@ export async function POST(
           employee: {
             select: {
               payConfidential: true,
-              user: { select: { name: true, phone: true } },
+              user: { select: { name: true, phone: true, fullName: true } },
               clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
               payRules: { where: { isActive: true }, take: 1 },
             },
@@ -83,6 +83,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     const payType = item.employee.payRules[0]?.payType || 'N/A'
     return {
       '員工姓名': item.employee.user.name,
+      '全名': item.employee.user.fullName || '',
       '聯絡電話': item.employee.user.phone,
       '診所': clinics,
       '薪酬類型': payType,
@@ -103,7 +104,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.json_to_sheet(rows)
   ws['!cols'] = [
-    { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 },
+    { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 },
     { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
     { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 },
   ]

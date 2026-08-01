@@ -35,7 +35,7 @@ interface PayrollItemData {
     clinic: { id: string; name: string } | null
   }
   employee: {
-    user: { id: string; name: string; phone: string }
+    user: { id: string; name: string; phone: string; fullName?: string | null }
     clinics: { clinicId: string; clinic: { name: string } }[]
     payRules: Array<{ payType: string; configJson: string | null }>
   }
@@ -305,6 +305,11 @@ export default function EmployeePayrollDetailPage() {
               <h1 className="text-2xl font-bold tracking-tight">
                 {employeeName} — {periodMonth} 薪資明細
               </h1>
+              {item.employee.user.fullName && (
+                <div style={{ fontSize: 13, color: '#666', marginTop: 2 }}>
+                  全名：{item.employee.user.fullName}
+                </div>
+              )}
               <div className="text-sm text-muted-foreground mt-1">
                 診所: {item.employee.clinics.map(c => c.clinic.name).join(', ')} | 薪酬: {payType} | 電話: {item.employee.user.phone}
               </div>

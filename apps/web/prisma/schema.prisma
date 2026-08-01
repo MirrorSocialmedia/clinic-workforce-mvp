@@ -133,6 +133,8 @@ model Clinic {
 model User {
   id        String       @id @default(cuid())
   name      String
+  /// 身份證全名 —— 純記錄用，會喺薪資明細顯示。唔用於登入或搜尋。
+  fullName  String?
   phone     String       @unique
   email     String?
   password  String       // bcrypt hash

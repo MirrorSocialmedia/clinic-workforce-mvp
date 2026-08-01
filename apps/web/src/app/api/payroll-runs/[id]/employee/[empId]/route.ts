@@ -30,7 +30,7 @@ export async function GET(
       employee: {
         select: {
           payConfidential: true,
-          user: { select: { id: true, name: true, phone: true } },
+          user: { select: { id: true, name: true, phone: true, fullName: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
           payRules: { where: { isActive: true }, orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }], take: 1 },
         },

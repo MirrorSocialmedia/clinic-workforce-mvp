@@ -12,7 +12,7 @@ type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
 interface Clinic { id: string; name: string }
 interface Account {
-  id: string; name: string; phone: string; email?: string | null
+  id: string; name: string; fullName?: string | null; phone: string; email?: string | null
   role: Role; status: string; createdAt: string
   employeeId: string | null
   employeeStatus: string | null
@@ -75,7 +75,7 @@ export default function AccountsPage() {
     configJson: null as string | null,
     assignEmployee: true,
     payConfidential: false,
-    annualLeave: '12',  // string — parse on submit
+    fullName: '',
     employeeId: null as string | null,
     homeClinicId: '',
     permGrant: [] as string[], // permissions granted beyond role default
@@ -165,7 +165,7 @@ export default function AccountsPage() {
         body.configJson = form.configJson || undefined
         body.assignEmployee = form.assignEmployee
         body.payConfidential = form.payConfidential
-        body.annualLeave = form.assignEmployee ? (parseFloat(form.annualLeave) || 0) : undefined
+        body.fullName = form.fullName
         body.homeClinicId = form.assignEmployee ? form.homeClinicId || null : undefined
 
         // Permissions: compute grant/deny diff from ROLE_DEFAULTS
@@ -179,7 +179,23 @@ export default function AccountsPage() {
       if (editingId && form.password) body.newPassword = form.password
 
       const res = await fetch(url, { method, credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      if (res.ok) { resetForm(); fetchData() }
+      if (res.ok) {
+        resetForm(); fetchData()
+        // ★ 建立成功後即刻算一次年假（唔阻建立流程）
+        if (!editingId && form.assignEmployee) {
+          try {
+            const data = await res.json()
+            const newEmployeeId = data.employee?.id
+            if (newEmployeeId) {
+              await fetch('/api/leave-balance/refresh', {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ employeeId: newEmployeeId }),
+              })
+            }
+          } catch { /* 唔阻建立流程 */ }
+        }
+      }
       else { const err = await res.json(); alert(err.error || '操作失敗') }
     } catch (err) { console.error('Submit error:', err) }
   }
@@ -187,7 +203,7 @@ export default function AccountsPage() {
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
       clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', configJson: null, assignEmployee: true,
-      payConfidential: false, annualLeave: '12', employeeId: null, homeClinicId: '',
+      payConfidential: false, fullName: '', employeeId: null, homeClinicId: '',
       permGrant: [], permDeny: [] })
     setShowForm(false); setEditingId(null); setShowPwd(false)
   }
@@ -210,7 +226,7 @@ export default function AccountsPage() {
       baseAmount: acc.baseAmount?.toString() || '', configJson: acc.configJson || null,
       assignEmployee: !!acc.employeeId,
       payConfidential: acc.payConfidential || false,
-      annualLeave: '12', employeeId: acc.employeeId,
+      fullName: acc.fullName || '', employeeId: acc.employeeId,
       homeClinicId: acc.homeClinicId || '', permGrant: grant, permDeny: deny })
     setEditingId(acc.id); setShowForm(true)
   }
@@ -452,6 +468,16 @@ export default function AccountsPage() {
                 <label>姓名</label>
                 <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required placeholder="姓名" />
               </div>
+              <div>
+                <label style={{ fontSize: 12, color: '#666' }}>全名（身份證）</label>
+                <input
+                  type="text"
+                  value={form.fullName}
+                  onChange={e => setForm({ ...form, fullName: e.target.value })}
+                  placeholder="選填，會喺薪資明細顯示"
+                  style={{ width: '100%', padding: '8px', borderRadius: 6, border: '1px solid #ddd' }}
+                />
+              </div>
               <div className="form-group">
                 <label>電話</label>
                 <input type="text" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} required placeholder="電話" />
@@ -562,13 +588,9 @@ export default function AccountsPage() {
                       onChange={e => setForm({ ...form, baseAmount: e.target.value })} />
                   </div>
                   {form.assignEmployee && (
-                    <>
-                      <div className="form-group">
-                        <label>年假額度（天）</label>
-                        <input type="number" value={form.annualLeave} min="0" step="0.5" inputMode="decimal"
-                          onChange={e => setForm({ ...form, annualLeave: e.target.value })} />
-                      </div>
-                    </>
+                    <div style={{ fontSize: 12, color: '#6b7280', padding: '8px 0' }}>
+                      年假額度由入職日自動計算（《僱傭條例》年資階梯 7→14 天，累積制）。可喺「假期管理 → 重新計算假期」更新。
+                    </div>
                   )}
                   {/* 同時創建員工記錄 — 整行、checkbox+文字一體 */}
                   <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
@@ -717,7 +739,12 @@ export default function AccountsPage() {
                         }
                       }
                     }} style={{ cursor: 'pointer' }}>
-                      <td style={{ fontWeight: 500 }}>{acc.name}</td>
+                      <td style={{ fontWeight: 500 }}>
+                        {acc.name}
+                        {acc.fullName && (
+                          <div style={{ fontSize: 11, color: '#888' }}>{acc.fullName}</div>
+                        )}
+                      </td>
                       <td>{acc.phone}</td>
                       {/* ROLE-OK: 純顯示（角色標籤顏色） */}
                       <td>

@@ -178,7 +178,7 @@ export async function PUT(
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId, permissionsJson, ipAllowlist } = body
+      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId, permissionsJson, ipAllowlist, fullName } = body
 
       const existing = await prisma.user.findUnique({
         where: { id: params.id },
@@ -207,6 +207,8 @@ export async function PUT(
       if (ipAllowlist !== undefined) {
         userUpdate.ipAllowlist = ipAllowlist || null
       }
+      // ★ 全名（身份證）—— 純記錄，會喺薪資明細顯示
+      if (fullName !== undefined) userUpdate.fullName = fullName || null
 
       await prisma.user.update({
         where: { id: params.id },
