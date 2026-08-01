@@ -118,7 +118,7 @@ export default function MyLeavePage() {
     }
   }
 
-  const isEmployee = userRole === 'EMPLOYEE'
+  const isEmployee = userRole === 'EMPLOYEE' // ROLE-OK: 員工版唔顯示「代其他員工請假」
 
   const filteredRequests = filter ? requests.filter(r => r.status === filter) : requests
 

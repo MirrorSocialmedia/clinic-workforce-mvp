@@ -113,8 +113,7 @@ export async function DELETE(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
   const { session } = auth
 
-  // ROLE-OK: 批量删除假期余额只准 OWNER
-  if (session.role !== 'OWNER') {
+  if (session.role !== 'OWNER') { // ROLE-OK: 批量刪除假期餘額只准 OWNER
     return NextResponse.json({ error: 'Forbidden (only OWNER can clear leave balances)' }, { status: 403 })
   }
 

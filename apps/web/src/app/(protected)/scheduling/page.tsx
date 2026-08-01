@@ -4445,7 +4445,7 @@ function getShiftCode(shift: Shift): string {
           </div>
 
           {/* New change request form (for employees) */}
-          {userRole === 'EMPLOYEE' && !editingShift && (
+          {userRole === 'EMPLOYEE' && !editingShift && ( // ROLE-OK: 員工版排班 UI
             <div style={{ marginBottom: 20 }}>
               <h3 style={{ fontSize: 14, marginBottom: 12 }}>發起新申請</h3>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

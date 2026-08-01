@@ -84,7 +84,7 @@ export default function DashboardPage() {
         return res.json()
       })
       .then(d => {
-        if (d.role === 'EMPLOYEE') {
+        if (d.role === 'EMPLOYEE') { // ROLE-OK: 角色路由
           setIsEmployee(true)
           router.replace('/my/dashboard')
           return
@@ -118,7 +118,7 @@ export default function DashboardPage() {
   // Fetch sensitive operations (OWNER only)
   useEffect(() => {
     const role = data?.role
-    if (role !== 'OWNER') return
+    if (role !== 'OWNER') return // ROLE-OK: OWNER 專屬營運數據
 
     setOpsLoading(true)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)

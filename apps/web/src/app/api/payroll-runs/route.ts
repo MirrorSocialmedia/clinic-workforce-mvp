@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
 
       // ★ 計算被略過的保密員工數量
       // ROLE-OK: 保密員工計數，同 excludeConfidential 一致，刻意用 role
-      const skipped = session.role !== 'OWNER'
+      const skipped = session.role !== 'OWNER' // ROLE-OK: 保密員工計數，同 excludeConfidential 一致
         ? await prisma.employee.count({ where: { payConfidential: true, status: 'ACTIVE' } })
         : 0
 
