@@ -3311,6 +3311,12 @@ export async function calculatePayrollWithRules(
       deduction: Math.round(result.deduction * 100) / 100,
       dailyWage: (result.detail as any).dailyWage ?? 0,
       deductionRate: config.deduction_rate ?? 1,
+      // ★ 2026-08-02: 扣薪分母四件套 —— 前端讀 detail.salary，
+      //   之前只寫喺 calcMonthlyBase 嘅 detail 頂層，令 restDays 顯示 0。
+      monthlyWorkingDays: (result.detail as any).monthlyWorkingDays ?? 0,
+      restDaysInMonth: (result.detail as any).restDaysInMonth ?? 0,
+      publicHolidayDays: (result.detail as any).publicHolidayDays ?? 0,
+      calendarDays: (result.detail as any).calendarDays ?? 0,
       attendanceBonus: Math.round(result.attendanceBonus * 100) / 100,
       otPay: Math.round(result.otPay * 100) / 100,
       allowances: Math.round(totalAllowances * 100) / 100,
