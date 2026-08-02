@@ -2511,7 +2511,7 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
       dailyWage: Math.round(dailyRate * 100) / 100,
       // ★ 2026-08-02: 薪資單顯示分母
       monthlyWorkingDays: workData.monthlyWorkingDays,
-      restDaysInMonth: workData.restDays,
+      restDaysInMonth: hkDaysInMonth(monthDate) - workData.monthlyWorkingDays - workData.publicHolidayDays, // ★ 從恆等式反推，避免因 config rest_days 不同於 [6,0] 導致顯示為 0
       calendarDays: hkDaysInMonth(monthDate), // ★ 用 hkDaysInMonth 代替 workData.totalDaysInMonth（undefined 會顯示 0）
       // ★ 恆等式自檢 —— 曆日 = 工作日 + 休息日 + 公眾假期
       //   對唔上代表三個數來源唔一致（2026-08-02 撞過）
