@@ -48,6 +48,7 @@ interface LeaveBalanceItem {
   entitled: number
   used: number
   remaining: number
+  systemUsed?: number
   employee?: {
     user: { id: string; name: string }
   }
@@ -603,6 +604,14 @@ export default function LeavePage() {
                                 style={{ width: 60, textAlign: 'right', fontSize: 12, padding: '2px 4px', borderRadius: 4, border: '1px solid #ddd' }}
                               />
                               <span style={{ fontSize: 10, color: '#9ca3af' }}>（remaining 自動推導）</span>
+                              <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                                （系統 {b.systemUsed ?? 0} 天
+                                {b.used !== (b.systemUsed ?? 0) && (
+                                  <span style={{ color: '#c2410c' }}>
+                                    ，差 {(b.used - (b.systemUsed ?? 0)).toFixed(1)}
+                                  </span>
+                                )}）
+                              </span>
                             </div>
                           )}
                           {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && b.remaining === 0 && b.used > b.entitled && (

@@ -53,7 +53,30 @@ export async function GET(req: NextRequest) {
     orderBy: [{ year: 'desc' }, { leaveType: { name: 'asc' } }],
   })
 
-  return jsonNoStore({ leaveBalances: balances })
+  // ★ 系統實際已批天數 —— 同 lb.used（可人手校正）做對照
+  const empIds = [...new Set(balances.map(b => b.employeeId))]
+  const typeIds = [...new Set(balances.map(b => b.leaveTypeId))]
+
+  const approved = empIds.length > 0 ? await prisma.leaveRequest.groupBy({
+    by: ['employeeId', 'leaveTypeId'],
+    where: {
+      employeeId: { in: empIds },
+      leaveTypeId: { in: typeIds },
+      status: 'APPROVED',
+    },
+    _sum: { days: true },
+  }) : []
+
+  const sysMap = new Map(
+    approved.map(a => [`${a.employeeId}:${a.leaveTypeId}`, a._sum.days ?? 0]),
+  )
+
+  return jsonNoStore({
+    leaveBalances: balances.map(b => ({
+      ...b,
+      systemUsed: sysMap.get(`${b.employeeId}:${b.leaveTypeId}`) ?? 0,
+    })),
+  })
 }
 
 // ============================================================
@@ -74,10 +97,20 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { balanceId, entitled, used, remaining } = body
+    const { balanceId, entitled, used } = body
 
     if (!balanceId) {
       return NextResponse.json({ error: 'balanceId is required' }, { status: 400 })
+    }
+
+    // ★ 先檢查有冇真嘢改，再推導 remaining ——
+    //   remaining 無條件寫入會令下面個 Object.keys() 檢查永遠通過，
+    //   結果係「乜都唔改」都會寫 DB + 寫審計。
+    if (entitled === undefined && used === undefined) {
+      return NextResponse.json(
+        { error: '冇任何可更新欄位（entitled / used）' },
+        { status: 400 },
+      )
     }
 
     const updateData: any = {}
@@ -92,8 +125,6 @@ export async function PATCH(req: NextRequest) {
       updateData.used = used
     }
 
-    // ★ remaining 一律由 entitled − used 推導，唔接受人手輸入 ——
-    //   三個數互相依賴，容許獨立設定就會出現 entitled 10 / used 3 / remaining 99 呢種矛盾。
     const cur = await prisma.leaveBalance.findUnique({ where: { id: balanceId } })
     if (!cur) return NextResponse.json({ error: '找不到餘額記錄' }, { status: 404 })
 
@@ -101,8 +132,13 @@ export async function PATCH(req: NextRequest) {
     const nextUsed = updateData.used ?? cur.used
     updateData.remaining = Math.max(0, nextEntitled - nextUsed)
 
-    if (Object.keys(updateData).length === 0) {
-      return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
+    // ★ 值完全冇變就唔好寫 DB／寫審計（例如前端重複送同一個值）
+    if (
+      nextEntitled === cur.entitled &&
+      nextUsed === cur.used &&
+      updateData.remaining === cur.remaining
+    ) {
+      return NextResponse.json({ success: true, leaveBalance: cur, unchanged: true })
     }
 
     const updated = await prisma.leaveBalance.update({
