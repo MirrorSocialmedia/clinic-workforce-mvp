@@ -498,7 +498,7 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const draggingTemplate = useRef<{ templateId: string; employeeId: string } | null>(null)
-  const draggingLeave = useRef<{ leaveTypeId: string; employeeId: string } | null>(null)
+  const draggingLeave = useRef<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>(null)
   const justDroppedRef = useRef(false)
 
   // Click timer for single/double-click debouncing in overview cells
@@ -1268,13 +1268,16 @@ function getShiftCode(shift: Shift): string {
       }
     }
 
-    // Check no existing shift on that day for that employee (more ↔ 假互斥)
-    const hasShiftOnDate = shifts.some(s =>
+    // ★ 病假可以覆蓋更次（2026-08-02）—— 更次保留作為「本來要返工」嘅證據，
+    //   扣薪要靠佢分辨工作日／休息日。後端 leave-requests:184 已經豁免。
+    //   其餘假期（年假／無薪假／休息日）維持互斥。
+    const isSickLeave = leaveType?.systemKey === 'SICK'
+    const hasShiftOnDate = !isSickLeave && shifts.some(s =>
       s.employeeId === employeeId &&
       toHKDateStr(new Date(s.date)) === dateStr
     )
     if (hasShiftOnDate) {
-      setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
+      setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期（病假除外）' }])
       return
     }
 
@@ -1410,13 +1413,16 @@ function getShiftCode(shift: Shift): string {
         }
       }
 
-      // Check no existing shift on that day for that employee
-      const hasShiftOnDate = shifts.some(s =>
+      // ★ 病假可以覆蓋更次（2026-08-02）—— 更次保留作為「本來要返工」嘅證據，
+      //   扣薪要靠佢分辨工作日／休息日。後端 leave-requests:184 已經豁免。
+      //   其餘假期（年假／無薪假／休息日）維持互斥。
+      const isSickLeave = lt?.systemKey === 'SICK'
+      const hasShiftOnDate = !isSickLeave && shifts.some(s =>
         s.employeeId === dl.employeeId &&
         toHKDateStr(new Date(s.date)) === dateStr
       )
       if (hasShiftOnDate) {
-        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
+        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期（病假除外）' }])
         return
       }
 
@@ -2139,7 +2145,8 @@ function getShiftCode(shift: Shift): string {
                         ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
                       }}
                       onPointerLeave={e => {
-                        if (hasShift) return
+                        // ★ 拖緊病假時，有更次嘅格都要有 hover 反饋
+                        if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
                         if (hasLeave) {
                           ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
                         } else {
@@ -2156,10 +2163,10 @@ function getShiftCode(shift: Shift): string {
                         verticalAlign: 'middle',
                       }}
                       onMouseEnter={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
                       }}
                       onMouseLeave={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                       }}
                       onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
@@ -2235,7 +2242,7 @@ function getShiftCode(shift: Shift): string {
                             </div>
                           )
                         })}
-                        {(!hasShift && !hasLeave) && (
+                        {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
                           <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
                         )}
                       </div>
@@ -2295,7 +2302,8 @@ function getShiftCode(shift: Shift): string {
                         ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
                       }}
                       onPointerLeave={e => {
-                        if (hasShift) return
+                        // ★ 拖緊病假時，有更次嘅格都要有 hover 反饋
+                        if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
                         if (hasLeave) {
                           ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
                         } else {
@@ -2312,10 +2320,10 @@ function getShiftCode(shift: Shift): string {
                         verticalAlign: 'middle',
                       }}
                       onMouseEnter={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
                       }}
                       onMouseLeave={e => {
-                        if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                       }}
                       onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
@@ -2389,7 +2397,7 @@ function getShiftCode(shift: Shift): string {
                             </div>
                           )
                         })}
-                        {(!hasShift && !hasLeave) && (
+                        {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
                           <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
                         )}
                       </div>
@@ -2454,7 +2462,8 @@ function getShiftCode(shift: Shift): string {
                             ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
                           }}
                           onPointerLeave={e => {
-                            if (hasShift) return
+                            // ★ 拖緊病假時，有更次嘅格都要有 hover 反饋
+                            if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
                             if (hasLeave) {
                               ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
                             } else {
@@ -2471,10 +2480,10 @@ function getShiftCode(shift: Shift): string {
                             verticalAlign: 'middle',
                           }}
                           onMouseEnter={e => {
-                            if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                            if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
                           }}
                           onMouseLeave={e => {
-                            if (!hasShift && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                            if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                           }}
                           onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
                           onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
@@ -2546,7 +2555,7 @@ function getShiftCode(shift: Shift): string {
                                 </div>
                               )
                             })}
-                            {(!hasShift && !hasLeave) && (
+                            {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
                               <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
                             )}
                           </div>
@@ -3802,7 +3811,7 @@ function getShiftCode(shift: Shift): string {
                     data-leave-id={lt.id}
                     data-name={lt.name}
                     onPointerDown={() => {
-                      draggingLeave.current = { leaveTypeId: lt.id, employeeId: selectedEmployeeId }
+                      draggingLeave.current = { leaveTypeId: lt.id, systemKey: lt.systemKey, employeeId: selectedEmployeeId }
                       // 不加 e.stopPropagation() ——FC Draggable 委託需要事件冒泡
                     }}
                     onClick={() => canManage && pickLeaveType(lt)}
@@ -4400,12 +4409,16 @@ function getShiftCode(shift: Shift): string {
                     }
                   }
 
-                  const hasShiftOnDate = shifts.some(s =>
+                  // ★ 病假可以覆蓋更次（2026-08-02）—— 更次保留作為「本來要返工」嘅證據，
+                  //   扣薪要靠佢分辨工作日／休息日。後端 leave-requests:184 已經豁免。
+                  //   其餘假期（年假／無薪假／休息日）維持互斥。
+                  const isSickLeave = lt?.systemKey === 'SICK'
+                  const hasShiftOnDate = !isSickLeave && shifts.some(s =>
                     s.employeeId === selectedEmployeeId &&
                     toHKDateStr(new Date(s.date)) === date
                   )
                   if (hasShiftOnDate) {
-                    setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期' }])
+                    setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 該員工該天已有排班，無法設置假期（病假除外）' }])
                     return
                   }
 
