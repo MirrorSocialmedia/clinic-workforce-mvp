@@ -64,9 +64,17 @@ IFS=',' read -r L_USER L_EMP L_SHIFT L_PUNCH L_ITEM <<< "${LIVE}"
 # ② 備份檔實際入咗幾多（數 COPY 區塊行數）
 count_copy() {
   gunzip -c "${BACKUP_FILE}" | awk -v tbl="$1" '
-    $0 ~ "^COPY public\\."" tbl """ " { inblk=1; n=0; next }
-    inblk && /^\\.$/ { print n; exit }
-    inblk { n++ }
+    # ★ use index() for prefix match, avoid regex quote hell
+    BEGIN { n = 0; inblk = 0; found = 0 }
+    {
+      if (inblk) {
+        if ($0 == "\\.") { inblk = 0; next }
+        n++
+      } else if (index($0, "COPY public.\"" tbl "\" ") == 1) {
+        inblk = 1; found = 1
+      }
+    }
+    END { print (found ? n : 0) }
   '
 }
 B_USER=$(count_copy User);        B_EMP=$(count_copy Employee)
