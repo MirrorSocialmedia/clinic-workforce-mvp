@@ -489,28 +489,37 @@ export async function GET(req: NextRequest) {
   const employeeSummaries = await Promise.all(
     uniqueEmployeeIds.map(async (empId) => {
       const isHourly = (payTypeMap.get(empId) || 'MONTHLY') === 'HOURLY'
-      const tb = await calculateTimeBank(empId, monthDate, ruleByEmp.get(empId) ?? {}, prisma)
+      let tb: any = null
+      let status: 'ok' | 'not_applicable' | 'error' = isHourly ? 'not_applicable' : 'ok'
+      try {
+        tb = await calculateTimeBank(empId, monthDate, ruleByEmp.get(empId) ?? {}, prisma)
+      } catch (err) {
+        console.error(`[exceptions] calculateTimeBank failed for employee ${empId}`, err)
+        status = 'error'
+      }
       const emp = exceptions.find(e => e.employeeId === empId)
+      const taMinutes = isHourly ? null : (tb ? (tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes)) : null)
       return {
         employeeId: empId,
         employeeName: emp?.employeeName || 'Unknown',
         payType: payTypeMap.get(empId) || 'MONTHLY',
-        timeAccountMinutes: isHourly ? null : (tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes)),
-        otMinutes: tb.otMinutes,
-        owedMinutes: isHourly ? null : tb.owedMinutes,
-        availableMinutes: isHourly ? null : tb.availableMinutes,
-        convertibleLeaveDays: isHourly ? null : tb.convertibleLeaveDays,
+        timeAccountMinutes: taMinutes,
+        otMinutes: tb ? tb.otMinutes : 0,
+        owedMinutes: isHourly ? null : (tb ? tb.owedMinutes : null),
+        availableMinutes: isHourly ? null : (tb ? tb.availableMinutes : null),
+        convertibleLeaveDays: isHourly ? null : (tb ? tb.convertibleLeaveDays : null),
         lateCount: exceptions.filter(e => e.employeeId === empId && e.type === 'LATE').length,
         lateMinutes: exceptions
           .filter(e => e.employeeId === empId && e.type === 'LATE')
           .reduce((s, e) => s + (e.lateMinutes || 0), 0),
         otCount: exceptions.filter(e => e.employeeId === empId && e.type === 'OT').length,
-        makeupMinutes: isHourly ? null : tb.makeupMinutes,
+        makeupMinutes: isHourly ? null : (tb ? tb.makeupMinutes : null),
         earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
-        netEarlyMinutes: isHourly ? null : tb.netEarlyMinutes,
+        netEarlyMinutes: isHourly ? null : (tb ? tb.netEarlyMinutes : null),
         earlyLeaveMinutes: exceptions
           .filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE')
           .reduce((s, e) => s + (e.earlyMinutes || 0), 0),
+        status,
       }
     })
   )

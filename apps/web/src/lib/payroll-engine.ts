@@ -1332,7 +1332,7 @@ async function getCarriedFrom(
   depth = 0,
   config: any = {},
 ): Promise<number> {
-  if (depth > 24) return 0
+  if (depth >= 24) return 0
 
   // TZ-safe: subtract one month from monthDate using hkParts
   const { y, m } = hkParts(monthDate)
@@ -1362,7 +1362,13 @@ async function getCarriedFrom(
     where: { employeeId, date: { gte: lStart, lte: lEnd } },
   }).catch(() => null)
   const hasActivity = hasPunch || hasTimeBankEntry
-  if (!hasActivity) return 0 // No activity → chain starts here
+  // ★ 2026-08-02：冇活動唔代表鏈斷 ——
+  // 員工可能長期病假、產假、停薪留職，或者月頭仲未打卡。
+  // 舊版直接 return 0，令累計餘額被靜靜清零。
+  // 繼續往前搵，depth 上限（現有參數）防止無限遞歸。
+  if (!hasActivity) {
+    return getCarriedFrom(employeeId, lastMonth, db, depth + 1, config)
+  }
 
   // ③ Has activity but no (valid) TimeBank → recursively recalculate last month (single source of truth)
   // ★ 遞歸要用同一份 config，否則過往月份的 OT 門檻／午休設定全部失效

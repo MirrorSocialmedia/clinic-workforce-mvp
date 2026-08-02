@@ -63,6 +63,9 @@ export default function DashboardPage() {
   const [opsLoading, setOpsLoading] = useState(false)
   const [expandedActor, setExpandedActor] = useState<string | null>(null)
 
+  // ★ 2026-08-02: Current month string for time account card title
+  const currentMonth = toHKDateStr(new Date()).slice(0, 7) // YYYY-MM
+
   // Group balances by employeeId + systemKey
   const balancesByEmp = (() => {
     const m = new Map<string, Record<string, any>>()
@@ -464,29 +467,46 @@ export default function DashboardPage() {
       </Card>
 
       {/* ── Time Account Overview Card (cumulative) ── */}
-      {empSummary.some(e => e.timeAccountMinutes != null) && (
+      {empSummary.length > 0 && (
         <div className="bg-card border rounded-xl p-6 shadow-card mb-6">
-          <h3 className="text-lg font-semibold mb-3">⏱ 時間帳戶總覽（累計）</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {empSummary
-              .filter(e => e.timeAccountMinutes != null) // 兼職不列
-              .sort((a, b) => (a.timeAccountMinutes ?? 0) - (b.timeAccountMinutes ?? 0)) // 拖欠排前面
-              .map(e => (
-                <div key={e.employeeId} className="flex items-center justify-between px-3 py-2 rounded-lg border"
-                  style={{
-                    borderColor: (e.timeAccountMinutes ?? 0) >= 0 ? '#d1fae5' : '#fecaca',
-                    background: (e.timeAccountMinutes ?? 0) >= 0 ? '#f0fdf4' : '#fef2f2',
-                  }}>
-                  <span className="text-sm font-medium">{e.employeeName}</span>
-                  <span className="font-bold" style={{
-                    color: (e.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
-                  }}>
-                    {(e.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(e.timeAccountMinutes ?? 0)} 分
-                    {(e.timeAccountMinutes ?? 0) < 0 && <span className="text-xs text-red-600 ml-1">（約 {(Math.abs(e.timeAccountMinutes ?? 0) / 540).toFixed(1)} 日）</span>}
-                  </span>
-                </div>
-              ))}
-          </div>
+          <h3 className="text-lg font-semibold mb-3">⏱ 時間帳戶（累計至 {currentMonth}）</h3>
+          <p style={{ fontSize: 11, color: '#6b7280' }}>
+            正數 = 公司欠員工（可換假）；負數 = 員工拖欠。
+            數值為<strong>歷來累計</strong>，包含之前月份結轉。
+          </p>
+          {empSummary.filter(e => e.timeAccountMinutes != null || e.status === 'error').length === 0 ? (
+            <div style={{ fontSize: 13, color: '#9ca3af', padding: 12 }}>
+              暫無月薪員工嘅時間帳戶資料
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {empSummary
+                .filter(e => e.timeAccountMinutes != null || e.status === 'error') // 兼職不列，但顯示計算失敗嘅
+                .sort((a, b) => (a.timeAccountMinutes ?? 0) - (b.timeAccountMinutes ?? 0)) // 拖欠排前面
+                .map(e => (
+                  <div key={e.employeeId} className="flex items-center justify-between px-3 py-2 rounded-lg border"
+                    style={{
+                      borderColor: e.status === 'error' ? '#fecaca' : (e.timeAccountMinutes ?? 0) >= 0 ? '#d1fae5' : '#fecaca',
+                      background: e.status === 'error' ? '#fef2f2' : (e.timeAccountMinutes ?? 0) >= 0 ? '#f0fdf4' : '#fef2f2',
+                    }}>
+                    <span className="text-sm font-medium">
+                      {e.employeeName}
+                      {e.status === 'error' && <span title="計算失敗" className="ml-1">⚠️</span>}
+                    </span>
+                    <span className="font-bold" style={{
+                      color: e.status === 'error' ? '#dc2626' : (e.timeAccountMinutes ?? 0) >= 0 ? '#059669' : '#dc2626',
+                    }}>
+                      {e.status === 'error' ? '—' : (
+                        <>
+                          {(e.timeAccountMinutes ?? 0) >= 0 ? '+' : '−'}{Math.abs(e.timeAccountMinutes ?? 0)} 分
+                          {(e.timeAccountMinutes ?? 0) < 0 && <span className="text-xs text-red-600 ml-1">（約 {(Math.abs(e.timeAccountMinutes ?? 0) / 540).toFixed(1)} 日）</span>}
+                        </>
+                      )}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -5,6 +5,7 @@ export type TimeAccountRow = {
   employeeId: string
   employeeName: string
   timeAccountMinutes: number | null   // null = 時薪／兼職，不設時間帳戶
+  status: 'ok' | 'not_applicable' | 'error'  // ★ 三態：正常 / 時薪不適用 / 計算失敗
 }
 
 /**
@@ -37,7 +38,7 @@ export async function getTimeAccountSummary(
 
     // 時薪／兼職不設時間帳戶
     if (cfg?.base_type === 'hourly') {
-      rows.push({ employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null })
+      rows.push({ employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null, status: 'not_applicable' })
       continue
     }
 
@@ -47,11 +48,12 @@ export async function getTimeAccountSummary(
         employeeId: e.id,
         employeeName: e.user?.name ?? '—',
         timeAccountMinutes: tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes),
+        status: 'ok',
       })
     } catch (err) {
       // ★ 單一員工計唔到唔應該令成個總覽掛咗 —— 標 null 令 UI 顯示「—」
       console.error(`[timebank-summary] employee ${e.id} failed`, err)
-      rows.push({ employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null })
+      rows.push({ employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null, status: 'error' })
     }
   }
   return rows
