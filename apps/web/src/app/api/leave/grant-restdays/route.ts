@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { grantMonthlyRestDays, countMonthlyLeaveDays } from '@/lib/payroll-engine'
+import { grantMonthlyRestDays, countMonthlyLeaveDays, getPublicHolidayDays } from '@/lib/payroll-engine'
 import { hkParts, toHKDateStr } from '@/lib/hk-date'
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -54,7 +54,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ? (typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson)
       : {}
     const restDays = cfg.working_days?.rest_days ?? [6, 0]
-    const quota = countMonthlyLeaveDays(y, m, restDays)
+    // ★ 2026-08-02: 改用 DB 來源
+    const mStart = new Date(`${y}-${String(m+1).padStart(2,'0')}-01T00:00:00+08:00`)
+    const mEnd = new Date(`${y}-${String(m+1).padStart(2,'0')}-${new Date(Date.UTC(y, m+1, 0)).getUTCDate()}T23:59:59+08:00`)
+    const ph = await getPublicHolidayDays(mStart, mEnd)
+    const phSet = new Set(ph.map(d => toHKDateStr(d)))
+    const quota = countMonthlyLeaveDays(y, m, restDays, phSet)
     await grantMonthlyRestDays(e.id, y, m, quota.total, prisma)
     n++
   }

@@ -404,7 +404,16 @@ async function getApprovedLeaveDays(
   employeeId: string,
   monthStart: Date,
   monthEnd: Date
-): Promise<{ totalDays: number; byType: Array<{ leaveTypeName: string; days: number; isPaid: boolean; systemKey: string | null }> }> {
+): Promise<{
+  totalDays: number
+  byType: Array<{
+    leaveTypeName: string
+    days: number
+    dates: string[] // ★ 新增：畀 paidLeaveDays 同 restDayDates 用
+    isPaid: boolean
+    systemKey: string | null
+  }>
+}> {
   const leaves = await prisma.leaveRequest.findMany({
     where: {
       employeeId,
@@ -417,32 +426,42 @@ async function getApprovedLeaveDays(
     },
   })
 
-  let totalDays = 0
-  const byType: Array<{ leaveTypeName: string; days: number; isPaid: boolean; systemKey: string | null }> = []
+  // ★ 2026-08-02: 同一日可以有多筆假期（病假覆蓋休息日）——
+  //   逐筆 += overlapDays 會重複計，令 approvedLeaveDays 虛高、
+  //   unpaidLeaveDays 變負數。改為按【日期】去重。
+  const allLeaveDates = new Set<string>()
+  const byType: Array<{
+    leaveTypeName: string
+    days: number
+    dates: string[]
+    isPaid: boolean
+    systemKey: string | null
+  }> = []
 
   for (const leave of leaves) {
     const effectiveStart = new Date(Math.max(leave.startDate.getTime(), monthStart.getTime()))
     const effectiveEnd = new Date(Math.min(leave.endDate.getTime(), monthEnd.getTime()))
 
-    // TZ-safe date iteration via string arithmetic
+    const dates: string[] = []
     let current = toHKDateStr(effectiveStart)
     const endStr = toHKDateStr(effectiveEnd)
-    let overlapDays = 0
     while (current <= endStr) {
-      overlapDays++
+      dates.push(current)
+      allLeaveDates.add(current)
       current = addDays(current, 1)
     }
 
-    totalDays += overlapDays
+    // ★ 分類仍然按各自日數（病假計算要知實際幾多日）
     byType.push({
       leaveTypeName: leave.leaveType.name,
-      days: overlapDays,
+      days: dates.length,
+      dates,
       isPaid: leave.leaveType.isPaid,
       systemKey: leave.leaveType.systemKey,
     })
   }
 
-  return { totalDays, byType }
+  return { totalDays: allLeaveDates.size, byType } // ★ 去重後
 }
 
 // ------------------------------------------------------------------
@@ -509,8 +528,7 @@ export async function computeSickDeduction(
   }
   if (cur.length) episodes.push(cur)
 
-  // ★ 該員工當月有排更嘅日期（用嚟分辨「本應返工」定「休息日」）
-  //   病假覆蓋更次之後，病假日仍然有更次記錄 —— 靠呢個分辨。
+  // ★ 該員工當月有排更嘅日期（fallback 用）
   const shifts = await db.shift.findMany({
     where: {
       employeeId,
@@ -520,6 +538,28 @@ export async function computeSickDeduction(
     select: { date: true },
   })
   const scheduledDateSet = new Set<string>(shifts.map((s: any) => toHKDateStr(new Date(s.date))))
+
+  // ★ 2026-08-02: 該月休息日日期集（準則 B）
+  //   排班制之下「冇排更」有兩種意思：
+  //     ① 排咗休息日 → 唔應該扣（本來就唔使返工）
+  //     ② 更表未排／漏咗 → 應該扣（本來要返工，只係更表未填）
+  //   所以唔可以單靠「有冇 shift」，要睇有冇明確嘅休息日記錄。
+  const restDayLeaves = await db.leaveRequest.findMany({
+    where: {
+      employeeId,
+      status: 'APPROVED',
+      leaveType: { systemKey: 'REST_DAY' },
+      startDate: { lte: monthEnd },
+      endDate: { gte: monthStart },
+    },
+    select: { startDate: true, endDate: true },
+  })
+  const restDayDates = new Set<string>()
+  for (const rl of restDayLeaves) {
+    let cur = toHKDateStr(rl.startDate)
+    const last = toHKDateStr(rl.endDate)
+    while (cur <= last) { restDayDates.add(cur); cur = addDays(cur, 1) }
+  }
 
   // 逐段結算（只扣落在本月的日子；檔位看整段）
   // ★ 扣薪日率（工作日分母）—— 同缺勤／無薪假用同一個基準
@@ -552,8 +592,16 @@ export async function computeSickDeduction(
     // ★ 津貼日數：全部病假日（方案 1，EO 4/5 糧唔跟工作日縮）
     const allowanceDays = inMonth.length
 
-    // ★ 扣款日數：只數有排更嘅日 —— 休息日冇排更，月薪冇為佢多付，唔應扣
-    const deductDays = inMonth.filter(d => scheduledDateSet.has(d)).length
+    // ★ 2026-08-02: 準則 B + 過渡保護
+    //   B: 冇休息日記錄就扣；A fallback: 冇排更就扣（更表未排時）
+    const hasAnyRestDay = restDayDates.size > 0
+    const deductDays = hasAnyRestDay
+      ? inMonth.filter(d => !restDayDates.has(d)).length // B: 冇休息日記錄就扣
+      : inMonth.filter(d => scheduledDateSet.has(d)).length // A: fallback（更表未排）
+    const _ymKey = toHKDateStr(monthDate).slice(0, 7)
+    const _fallbackWarning = !hasAnyRestDay && inMonth.length > 0
+      ? [`🟡 ${_ymKey} 冇休息日記錄，病假扣款按「有排更」計算 —— 請確認更表已排`]
+      : []
 
     if (ep.length >= 4) {
       // ★ EO: ≥4 consecutive days = 疾病日 → 4/5 ADW
@@ -605,7 +653,7 @@ export async function computeSickDeduction(
         sicknessAllowance,
         alreadyInBase,
         deductionAmount,
-        warnings: adwWarnings.length > 0 ? adwWarnings : undefined,
+        warnings: [...adwWarnings, ..._fallbackWarning].length > 0 ? [...adwWarnings, ..._fallbackWarning] : undefined,
       })
     } else {
       // <4 連續日：EO 無疾病津貼權利 → 當無薪缺勤，只扣有排更嘅日
@@ -620,6 +668,7 @@ export async function computeSickDeduction(
         rate: 0,
         dailyDeduct,
         deductionAmount: deductDays * dailyDeduct * deductionRate,
+        warnings: _fallbackWarning.length > 0 ? _fallbackWarning : undefined,
       })
     }
   }
@@ -1127,7 +1176,7 @@ interface WorkData {
   otDeductedAbsences: Array<{ date: string; minutes: number }>
   shifts: any[]
   makeupEntries: Array<{ date: string; minutes: number; note: string }>
-  leaveByType: Array<{ leaveTypeName: string; days: number; isPaid: boolean; systemKey: string | null }>
+  leaveByType: Array<{ leaveTypeName: string; days: number; dates: string[]; isPaid: boolean; systemKey: string | null }>
 }
 
 /**
@@ -1693,8 +1742,8 @@ export async function calculateTimeBank(
 // ------------------------------------------------------------------
 
 /**
- * Check if a date is a HK public holiday (built-in 2026 data).
- * TODO: Replace with external data source (e.g., HKPublicHoliday table or API)
+ * @deprecated ⛔ 2026-08-02: 硬編碼清單 2026 年有 13 處錯誤。
+ * 公眾假期一律由 HKPublicHoliday 表提供（scripts/import-hk-holidays.mjs 匯入官方 iCal）。
  */
 function isPublicHoliday(date: Date): boolean {
   const ymd = toHKDateStr(date)
@@ -1781,11 +1830,13 @@ function countRestDaysInMonth(year: number, month: number, restDays: number[] = 
 /**
  * Count monthly leave entitlement = rest days + public holidays in a month.
  * This is the "leave you get this month" — if not taken, it can be banked.
+ * ★ 2026-08-02: publicHolidaySet 由 HKPublicHoliday 表提供，同 monthlyWorkingDays 用同一來源。
  */
 export function countMonthlyLeaveDays(
   year: number,
   month: number, // 0-indexed
   restDays: number[] = [],
+  publicHolidaySet?: Set<string>, // ★ 新增：由呼叫者傳入（已由 DB 讀好）
 ): { restDayCount: number; publicHolidayCount: number; total: number } {
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
   let restDayCount = 0, publicHolidayCount = 0
@@ -1793,7 +1844,9 @@ export function countMonthlyLeaveDays(
   for (let d = 1; d <= daysInMonth; d++) {
     const dow = new Date(Date.UTC(year, month, d)).getUTCDay()
     if (restDays.includes(dow)) restDayCount++
-    if (isPublicHoliday(new Date(Date.UTC(year, month, d)))) publicHolidayCount++ // ← 用硬編碼的 isPublicHoliday，含 7/1
+    // ★ 唔再用硬編碼 isPublicHoliday —— 嗰個 2026 有 13 處錯。
+    //   統一由 HKPublicHoliday 表提供，同 monthlyWorkingDays 用同一來源。
+    if (publicHolidaySet?.has(toHKDateStr(new Date(Date.UTC(year, month, d))))) publicHolidayCount++
   }
 
   return { restDayCount, publicHolidayCount, total: restDayCount + publicHolidayCount }
@@ -2141,7 +2194,14 @@ async function collectWorkData(
 
   const { totalDays: approvedLeaveDays, byType: leaveByType } =
     await getApprovedLeaveDays(employeeId, monthStart, monthEnd)
-  const paidLeaveDays = leaveByType.reduce((sum, lt) => sum + (lt.isPaid ? lt.days : 0), 0)
+
+  // ★ 2026-08-02: 有薪假期日數按日去重 —— 病假同休息日都係 isPaid，
+  //   重疊日計兩次會令 unpaidLeaveDays 變負。
+  const paidDates = new Set<string>()
+  for (const lt of leaveByType) {
+    if (lt.isPaid) lt.dates.forEach(d => paidDates.add(d))
+  }
+  const paidLeaveDays = paidDates.size
 
   // Leave records with isPlanned flag
   const leaveRecords = await prisma.leaveRequest.findMany({
@@ -2166,12 +2226,26 @@ async function collectWorkData(
     }))
 
   const publicHolidays = await getPublicHolidayDays(monthStart, monthEnd)
+  const publicHolidaySet = new Set(publicHolidays.map(d => toHKDateStr(d))) // ★ 2026-08-02
   const publicHolidayDays = publicHolidays.length
+
+  // ★ 2026-08-02: 空表保護
+  const ymKey = toHKDateStr(monthDate).slice(0, 7)
+  if (publicHolidays.length === 0) {
+    const anyHoliday = await prisma.hKPublicHoliday.count()
+    if (anyHoliday === 0) {
+      console.error(`[payroll] ⛔ HKPublicHoliday 表完全空 —— ${ymKey} 工作日數會算錯！請跑 scripts/import-hk-holidays.mjs`)
+    } else {
+      console.log(`[payroll] ${ymKey} 冇公眾假期（正常）`)
+    }
+  }
 
   // Dynamic rest days: default [6, 0] (Sat+Sun); will be overridden by config at calc time
   const restDays = countRestDaysInMonth(year, month, [6, 0])
   // Total calendar days in month minus rest days minus public holidays (UTC-safe)
   const monthlyWorkingDays = hkDaysInMonth(monthDate) - restDays - publicHolidayDays
+  // ★ 2026-08-02: countMonthlyLeaveDays 改用 DB 來源，同 monthlyWorkingDays 一致
+  const monthlyLeaveDaysInfo = countMonthlyLeaveDays(year, month, [6, 0], publicHolidaySet)
   // Fallback to old countWorkingDays for backward compat
   const workingDays = countWorkingDays(year, month)
 
@@ -2439,6 +2513,10 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
       absenceBasis,
       expectedWorkDays,
       dailyWage: Math.round(dailyRate * 100) / 100,
+      // ★ 2026-08-02: 薪資單顯示分母
+      monthlyWorkingDays: workData.monthlyWorkingDays,
+      restDaysInMonth: workData.restDays,
+      calendarDays: workData.totalDaysInMonth,
     },
   }
 }
@@ -3139,7 +3217,10 @@ export async function calculatePayrollWithRules(
 
   // 5. Task 2: Count monthly leave days
   const restDaysConfig = mods.working_days?.rest_days ?? [6, 0] // 預設週六日
-  const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig)
+  // ★ 2026-08-02: 改用 DB 來源，同 monthlyWorkingDays 一致
+  const _ph = await getPublicHolidayDays(monthStart, monthEnd)
+  const _phSet = new Set(_ph.map(d => toHKDateStr(d)))
+  const monthlyLeaveDays = countMonthlyLeaveDays(year, month, restDaysConfig, _phSet)
   let leaveBalanceRemaining = 0 // Tracked via LeaveBalance, not inline
 
   // 🔑 OT 唯一來源：時間銀行 otMinutes（排班外工時，分鐘制）

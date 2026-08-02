@@ -200,9 +200,9 @@ export default function EmployeePayrollDetailPage() {
   //   basePay ÷ scheduledDays 唔係扣薪日率（差 50%），估錯比唔顯示更差
   const dailyWage = salaryDetail.dailyWage ?? 0
   const monthlyWorkingDays = salaryDetail.monthlyWorkingDays ?? detail.monthlyWorkingDays ?? 0
-  const restDaysCount = salaryDetail.restDays ?? detail.restDays ?? 0
+  const restDaysCount = salaryDetail.restDaysInMonth ?? salaryDetail.restDays ?? detail.restDays ?? 0
   const publicHolidayDays = salaryDetail.publicHolidayDays ?? detail.publicHolidayDays ?? 0
-  const daysInMonthCount = salaryDetail.workingDays ?? detail.workingDays ?? 0
+  const daysInMonthCount = salaryDetail.calendarDays ?? detail.calendarDays ?? 0
   const attendanceBonus = salaryDetail.attendanceBonus ?? detail.attendanceBonus ?? 0
   const sickDeduction = salaryDetail.sickDeduction ?? detail.sickDeduction ?? 0
   const sickEpisodes = salaryDetail.sickEpisodes ?? detail.sickEpisodes ?? []
@@ -524,7 +524,7 @@ export default function EmployeePayrollDetailPage() {
                   </span>
                   {monthlyWorkingDays > 0 && (
                     <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
-                      日薪 = 月薪 ÷ {monthlyWorkingDays} 個工作日{daysInMonthCount > 0 && restDaysCount > 0 && `（${daysInMonthCount} 天 − ${restDaysCount} 休息 − ${publicHolidayDays} 公眾假期）`}
+                      日薪 = 月薪 ÷ {monthlyWorkingDays} 個工作日{daysInMonthCount > 0 && `（${daysInMonthCount} 天 − ${restDaysCount} 休息 − ${publicHolidayDays} 公眾假期）`}
                     </div>
                   )}
                 </div>
