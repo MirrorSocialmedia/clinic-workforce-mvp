@@ -1006,127 +1006,123 @@ export async function generatePayrollRun(
     }
   }
 
-  // FIX #1: Use $transaction — run creation/update + items + audit in same transaction
-  const result = await basePrisma.$transaction(async (tx) => {
-    // Create new run or use existing (DRAFT re-calc)
-    if (!run) {
-      run = await tx.payrollRun.create({
-        data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
+  // ★ 2026-08-02: Ensure run exists before calculation loop —
+  //   calculatePayrollWithRules does 8+ queries per employee (shift, punch, leave,
+  //   timebank recursion, etc.). 5 employees × 8+ queries exceeds Prisma's default
+  //   5s transaction timeout. Calculation is read-only (no mutations), so it's safe
+  //   to move outside transaction; transaction only handles writes.
+  if (!run) {
+    run = await basePrisma.payrollRun.create({
+      data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
+    })
+  }
+
+  // ★ Calculate payroll outside transaction — prevents timeout
+  const { start: monthStartForRule, end: monthEndForRule } = getMonthRange(monthDate)
+  const items: Array<any> = []
+  const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
+  for (const emp of employees) {
+    try {
+      // Read employee pay rule — now outside transaction, uses prisma directly
+      const payRule = await prisma.payRule.findFirst({
+        where: {
+          employeeId: emp.id,
+          isActive: true,
+          effectiveFrom: { lte: monthEndForRule },
+          OR: [
+            { effectiveTo: null },
+            { effectiveTo: { gte: monthStartForRule } },
+          ],
+        },
+        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
       })
-    }
 
-    // TODO: strict types
-    const items: Array<any> = []
-    const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
-    for (const emp of employees) {
-      try {
-        // Read employee pay rule to determine engine
-        // 🔧 Fix: 按計糧月份選規則，時區安全
-        const { start: monthStartForRule, end: monthEndForRule } = getMonthRange(monthDate)
-        const payRule = await tx.payRule.findFirst({
-          where: {
-            employeeId: emp.id,
-            isActive: true,
-            effectiveFrom: { lte: monthEndForRule },
-            OR: [
-              { effectiveTo: null },
-              { effectiveTo: { gte: monthStartForRule } },
-            ],
-          },
-          orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-        })
-
-        let calcResult
-        if (payRule?.configJson) {
-          const config = JSON.parse(payRule.configJson)
-          // Safety check: if still old format, error instead of silently using old engine
-          if (!config.base_type && !config.modifiers) {
-            console.error(`Employee ${emp.id} still has old-format payRule! Run migrate-payrules.`)
-            skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
-            continue
-          }
-          calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
-            ...(config.base_type !== 'hourly' && (opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
-              ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
-            ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
-              ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
-            attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
-          })
-        } else {
-          // No rule at all → skip with warning
-          console.warn(`Employee ${emp.id} has no payRule, skipping`)
-          skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })
+      let calcResult
+      if (payRule?.configJson) {
+        const config = JSON.parse(payRule.configJson)
+        if (!config.base_type && !config.modifiers) {
+          console.error(`Employee ${emp.id} still has old-format payRule! Run migrate-payrules.`)
+          skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
           continue
         }
-
-        items.push({
-          runId: run.id,
-          employeeId: emp.id,
-          workedHours: calcResult.workedHours,
-          otHours: calcResult.otHours,
-          leaveDays: calcResult.leaveDays,
-          absentDays: calcResult.absentDays,
-          basePay: calcResult.basePay,
-          otPay: calcResult.otPay,
-          splitPay: (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
-            ? (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id])
-            : calcResult.splitPay,
-          deduction: calcResult.deduction,
-          storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] ?? ((calcResult.detail as any)?.storeBonus ?? 0),
-          totalPayable: calcResult.totalPayable,
-          miscAmount: (calcResult.detail as any)?.miscAmount ?? 0,
-          miscDetailJson: (calcResult.detail as any)?.miscDetailJson ?? null,
-          detailJson: JSON.stringify(calcResult.detail),
-          // ★ Phase 3: ADW used for this payroll calculation (audit trail)
-          adwUsed: (calcResult.detail as any)?.adwUsed ?? null,
-          // ★ EO 第 2 條定義嘅「工資」總額（供 ADW 用）
-          eoWage: (calcResult.detail as any)?.eoWage ?? 0,
-          excludedDays: (calcResult.detail as any)?.excludedDays ?? 0,
-          excludedWage: (calcResult.detail as any)?.excludedWage ?? 0,
-          // ★ Phase 4: Maternity / Paternity pay
-          maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
-          paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
-          // ★ 勤工獎覆蓋（三態）
-          attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? null,
+        calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
+          ...(config.base_type !== 'hourly' && (opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
+            ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
+          ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+            ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
+          attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
         })
-      } catch (err) {
-        console.error(`Failed payroll for ${emp.id}:`, err)
-        items.push({
-          runId: run.id,
-          employeeId: emp.id,
-          workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
-          basePay: 0, otPay: 0, splitPay: null, deduction: 0, storeBonus: 0, totalPayable: 0,
-          miscAmount: 0,
-          detailJson: JSON.stringify({ error: String(err) }),
-        })
+      } else {
+        console.warn(`Employee ${emp.id} has no payRule, skipping`)
+        skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })
+        continue
       }
-    }
 
+      items.push({
+        employeeId: emp.id,
+        workedHours: calcResult.workedHours,
+        otHours: calcResult.otHours,
+        leaveDays: calcResult.leaveDays,
+        absentDays: calcResult.absentDays,
+        basePay: calcResult.basePay,
+        otPay: calcResult.otPay,
+        splitPay: (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+          ? (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id])
+          : calcResult.splitPay,
+        deduction: calcResult.deduction,
+        storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] ?? ((calcResult.detail as any)?.storeBonus ?? 0),
+        totalPayable: calcResult.totalPayable,
+        miscAmount: (calcResult.detail as any)?.miscAmount ?? 0,
+        miscDetailJson: (calcResult.detail as any)?.miscDetailJson ?? null,
+        detailJson: JSON.stringify(calcResult.detail),
+        adwUsed: (calcResult.detail as any)?.adwUsed ?? null,
+        eoWage: (calcResult.detail as any)?.eoWage ?? 0,
+        excludedDays: (calcResult.detail as any)?.excludedDays ?? 0,
+        excludedWage: (calcResult.detail as any)?.excludedWage ?? 0,
+        maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
+        paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
+        attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? null,
+      })
+    } catch (err) {
+      console.error(`Failed payroll for ${emp.id}:`, err)
+      items.push({
+        employeeId: emp.id,
+        workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
+        basePay: 0, otPay: 0, splitPay: null, deduction: 0, storeBonus: 0, totalPayable: 0,
+        miscAmount: 0,
+        detailJson: JSON.stringify({ error: String(err) }),
+      })
+    }
+  }
+
+  // ★ Transaction only handles writes — fast, won't timeout
+  const result = await basePrisma.$transaction(async (tx) => {
+    if (isRecalculation) {
+      await tx.payrollItem.deleteMany({ where: { runId: run!.id } })
+    }
     if (items.length > 0) {
-      await tx.payrollItem.createMany({ data: items })
+      await tx.payrollItem.createMany({
+        data: items.map(it => ({ ...it, runId: run!.id })),
+      })
     }
-
-    // Manual audit inside same transaction
     if (auditCtx?.actorId) {
       await tx.auditLog.create({
         data: {
           actorId: auditCtx.actorId,
           action: 'CREATE_PAYROLL_RUN',
           entity: 'PayrollRun',
-          entityId: run.id,
+          entityId: run!.id,
           notes: `Generated payroll for ${periodMonth}: ${items.length} employees${isRecalculation ? ' (recalculation)' : ''}`,
           ipAddress: auditCtx.ip || null,
           userAgent: auditCtx.ua || null,
         },
       })
     }
+    return run
+  }, { maxWait: 10_000, timeout: 60_000 })
 
-    const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
-
-    return { runId: run.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped, transitionWarning }
-  })
-
-  return result
+  const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
+  return { runId: run!.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped, transitionWarning }
 }
 
 // Export for testing
@@ -2516,7 +2512,19 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
       // ★ 2026-08-02: 薪資單顯示分母
       monthlyWorkingDays: workData.monthlyWorkingDays,
       restDaysInMonth: workData.restDays,
-      calendarDays: workData.totalDaysInMonth,
+      calendarDays: hkDaysInMonth(monthDate), // ★ 用 hkDaysInMonth 代替 workData.totalDaysInMonth（undefined 會顯示 0）
+      // ★ 恆等式自檢 —— 曆日 = 工作日 + 休息日 + 公眾假期
+      //   對唔上代表三個數來源唔一致（2026-08-02 撞過）
+      _identityCheck: (() => {
+        const _cal = hkDaysInMonth(monthDate)
+        const _sum = workData.monthlyWorkingDays + workData.restDays + workData.publicHolidayDays
+        if (_cal !== _sum) {
+          console.error(
+            `[payroll] ⛔ 工作日恆等式唔成立：${_cal} ≠ ${workData.monthlyWorkingDays} + ${workData.restDays} + ${workData.publicHolidayDays}`
+          )
+        }
+        return _cal === _sum
+      })(),
     },
   }
 }
