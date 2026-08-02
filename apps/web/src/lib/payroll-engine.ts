@@ -1001,7 +1001,7 @@ export async function generatePayrollRun(
               ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
             ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
               ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
-            attendanceBonusOverride: opts?.attendanceBonusOverrides?.[emp.id] ?? (carried.bonusOverride[emp.id] ?? undefined),
+            attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
           })
         } else {
           // No rule at all → skip with warning
@@ -1038,7 +1038,7 @@ export async function generatePayrollRun(
           maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
           paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
           // ★ 勤工獎覆蓋（三態）
-          attendanceBonusOverride: opts?.attendanceBonusOverrides?.[emp.id] ?? carried.bonusOverride[emp.id] ?? null,
+          attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? null,
         })
       } catch (err) {
         console.error(`Failed payroll for ${emp.id}:`, err)
