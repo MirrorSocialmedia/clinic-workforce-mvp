@@ -57,6 +57,9 @@ export default function NewPayrollPage() {
   const [splitPays, setSplitPays] = useState<Record<string, number>>({})
   const [bulkSplit, setBulkSplit] = useState('')
 
+  // ★ 2026-08-02：勤工獎三態覆蓋（AUTO/FORCE_ON/FORCE_OFF）
+  const [bonusOverrides, setBonusOverrides] = useState<Record<string, 'FORCE_ON' | 'FORCE_OFF'>>({})
+
   // ★ P1-3: parse string inputs to numbers on blur
   const handleStoreBonusBlur = (employeeId: string) => {
     const n = parseFloat(storeBonusInputs[employeeId] ?? '')
@@ -238,6 +241,7 @@ export default function NewPayrollPage() {
           clinicId: selectedClinic,
           storeBonuses: storeBonusPayload,
           splitPays: splitPayPayload,
+          attendanceBonusOverrides: bonusOverrides,
         }),
       })
 
@@ -460,6 +464,7 @@ export default function NewPayrollPage() {
                     {selectedClinic && (
                       <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">店舖獎金($)</th>
                     )}
+                    <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">勤工獎</th>
                     <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">拆帳($)</th>
                     <th className="px-1 py-1.5 text-center text-[10px] font-semibold uppercase g text-muted-foreground bg-slate-50">總額($)</th>
                   </tr>
@@ -508,6 +513,33 @@ export default function NewPayrollPage() {
                               ) : (
                                 <span className="text-muted-foreground">—</span>
                               )}
+                            </td>
+                          )}
+                          {/* ★ 2026-08-02：勤工獎三態覆蓋 */}
+                          {item.payType === 'MONTHLY' && (
+                            <td className="px-1 py-1.5 text-center">
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+                                <label style={{ fontSize: 9, color: '#666' }}>勤工獎</label>
+                                <select
+                                  value={bonusOverrides[item.employeeId] ?? 'AUTO'}
+                                  onChange={e => {
+                                    const v = e.target.value
+                                    if (v === 'AUTO') {
+                                      setBonusOverrides(s => { const n = { ...s }; delete n[item.employeeId]; return n })
+                                    } else {
+                                      setBonusOverrides(s => ({ ...s, [item.employeeId]: v }))
+                                    }
+                                  }}
+                                  className="text-xs px-1 py-0.5 rounded border focus:outline-none focus:ring-1 focus:ring-brand/30"
+                                >
+                                  <option value="AUTO">自動（{(item.detail as any)?.attendanceBonus > 0 ? `發 $${(item.detail as any)?.attendanceBonus}` : '不發'}）</option>
+                                  <option value="FORCE_ON">強制發放</option>
+                                  <option value="FORCE_OFF">強制取消</option>
+                                </select>
+                                {bonusOverrides[item.employeeId] && (
+                                  <span style={{ fontSize: 9, color: '#c2410c' }}>已人手覆蓋</span>
+                                )}
+                              </div>
                             </td>
                           )}
                           <td className="px-1 py-1.5 text-center">

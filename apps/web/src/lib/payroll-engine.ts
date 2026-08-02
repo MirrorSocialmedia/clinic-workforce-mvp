@@ -172,19 +172,30 @@ export function statutoryDailyWage(monthlySalary: number): number {
 }
 
 /**
- * 【扣薪日率】月薪 ÷ 當月曆日數。
- * 用於：無薪缺勤、事假、<4 天無薪病假，以及「月薪已替某幾日付了多少」的比較基準。
+ * 【扣薪日率】
  *
- * ★ 唔可以用 statutoryDailyWage（月薪×12÷365）—— 嗰個係 ADW 喺「固定月薪 + 無剔除期間」
- *   之下嘅化簡值，屬於法定權益公式，唔係扣薪標準。
- *   香港實務上月薪制扣薪慣用「當月實際天數」或「固定 30 天」為分母。
+ * ★ 2026-08-02 決定：改用 'workday'（《臻善牙科員工守則》4.2）
+ *   「每月工作日數為該月總日數，扣除星期六、星期日及法定假日。」
+ *   注意係【數目】唔係【日期】—— 輪班制之下實際休息日由更表決定，
+ *   但分母一律用「該月六日數 + 公眾假期數」去扣。
+ *
+ * ★ 唔可以用 statutoryDailyWage（月薪×12÷365）—— 嗰個係 ADW 嘅化簡值，
+ *   屬法定權益公式，唔係扣薪標準。
  */
 export function deductionDailyRate(
   monthlySalary: number,
   monthDate: Date,
-  mode: 'calendar' | 'fixed30' = 'calendar',
+  mode: 'calendar' | 'fixed30' | 'workday' = 'workday',
+  monthlyWorkingDays?: number,
 ): number {
   if (mode === 'fixed30') return monthlySalary / 30
+  if (mode === 'workday') {
+    // ★ 必須由呼叫者傳入 —— 佢要讀 pay rule 嘅 rest_days config，
+    //   喺呢個純函數入面計唔到。傳唔到就 fallback 去曆日（安全側：扣少啲）。
+    if (monthlyWorkingDays && monthlyWorkingDays > 0) return monthlySalary / monthlyWorkingDays
+    const days = hkDaysInMonth(monthDate)
+    return days > 0 ? monthlySalary / days : monthlySalary / 30
+  }
   const days = hkDaysInMonth(monthDate)   // 6月=30、7月=31
   return days > 0 ? monthlySalary / days : monthlySalary / 30
 }
@@ -451,15 +462,17 @@ export async function computeSickDeduction(
   deductionRate: number,
   db: any,
   monthDate: Date,                                  // ★ 用嚟算當月曆日數
-  deductionBasis: 'calendar' | 'fixed30' = 'calendar',
+  deductionBasis: 'calendar' | 'fixed30' | 'workday' = 'workday',
   adwPolicy?: { floor_at_current_salary?: boolean; cap_at_current_salary?: boolean },   // ★ ADW 薪金調整政策
+  monthlyWorkingDays?: number,                      // ★ workday 模式需要
 ): Promise<{
   amount: number;
   paidAmount: number;      // ★ 病假期間實收工資（供 ADW excludedWage）
   episodes: Array<{
-    range: string; totalDays: number; daysInMonth: number; rate: number;
+    range: string; totalDays: number; daysInMonth: number; deductDays: number; rate: number;
     adw?: number; adwSource?: 'calculated' | 'fallback';
     adwPolicyApplied?: 'none' | 'floor' | 'cap'; adwRaw?: number;
+    dailyDeduct?: number; sicknessAllowance?: number; alreadyInBase?: number; deductionAmount?: number;
   }>;
 }> {
   // 窗口跨出本月 ±40 天：跨月連續段兩頭都要看得到
@@ -496,9 +509,21 @@ export async function computeSickDeduction(
   }
   if (cur.length) episodes.push(cur)
 
+  // ★ 該員工當月有排更嘅日期（用嚟分辨「本應返工」定「休息日」）
+  //   病假覆蓋更次之後，病假日仍然有更次記錄 —— 靠呢個分辨。
+  const shifts = await db.shift.findMany({
+    where: {
+      employeeId,
+      date: { gte: monthStart, lte: monthEnd },
+      status: { not: 'CANCELLED' },
+    },
+    select: { date: true },
+  })
+  const scheduledDateSet = new Set<string>(shifts.map((s: any) => toHKDateStr(new Date(s.date))))
+
   // 逐段結算（只扣落在本月的日子；檔位看整段）
-  // ★ 扣薪日率（當月曆日數）—— 同 :2230 缺勤／無薪假用同一個基準
-  const dailyDeduct = deductionDailyRate(monthlySalary, monthDate, deductionBasis)
+  // ★ 扣薪日率（工作日分母）—— 同缺勤／無薪假用同一個基準
+  const dailyDeduct = deductionDailyRate(monthlySalary, monthDate, deductionBasis, monthlyWorkingDays)
 
   // ★ ADW compliance — ≥4 days: 同 ADW×80% 比較；<4 days: 當無薪缺勤，按扣薪日率全額扣
   const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
@@ -508,16 +533,27 @@ export async function computeSickDeduction(
     range: string;
     totalDays: number;
     daysInMonth: number;
+    deductDays: number;
     rate: number;
     adw?: number;
     adwSource?: 'calculated' | 'fallback';
     adwPolicyApplied?: 'none' | 'floor' | 'cap';
     adwRaw?: number;
+    dailyDeduct?: number;
+    sicknessAllowance?: number;
+    alreadyInBase?: number;
+    deductionAmount?: number;
     warnings?: string[];
   }> = []
   for (const ep of episodes) {
-    const daysInMonth = ep.filter(d => d >= mStart && d <= mEnd).length
-    if (daysInMonth === 0) continue
+    const inMonth = ep.filter(d => d >= mStart && d <= mEnd)
+    if (inMonth.length === 0) continue
+
+    // ★ 津貼日數：全部病假日（方案 1，EO 4/5 糧唔跟工作日縮）
+    const allowanceDays = inMonth.length
+
+    // ★ 扣款日數：只數有排更嘅日 —— 休息日冇排更，月薪冇為佢多付，唔應扣
+    const deductDays = inMonth.filter(d => scheduledDateSet.has(d)).length
 
     if (ep.length >= 4) {
       // ★ EO: ≥4 consecutive days = 疾病日 → 4/5 ADW
@@ -548,8 +584,9 @@ export async function computeSickDeduction(
       // Base pay already includes these days proportionally
       // If 4/5 ADW < what's already in base, no additional deduction needed
       // If 4/5 ADW > what's in base, we pay the full base (no extra deduction)
-      const sicknessAllowance = adwValue * 0.8 * daysInMonth
-      const alreadyInBase = dailyDeduct * daysInMonth   // ★ 由 baseDailyRate 改（扣薪日率 = 月薪÷曆日）
+      // ★ 津貼用 allowanceDays（全部日），扣款用 deductDays（只數工作日）
+      const sicknessAllowance = adwValue * 0.8 * allowanceDays
+      const alreadyInBase = dailyDeduct * deductDays
       const deductionAmount = Math.max(0, alreadyInBase - sicknessAllowance)
       amount += deductionAmount * deductionRate
       paidAmount += alreadyInBase - deductionAmount * deductionRate    // ★ 實收
@@ -557,24 +594,32 @@ export async function computeSickDeduction(
       detail.push({
         range: `${ep[0]}~${ep[ep.length - 1]}`,
         totalDays: ep.length,
-        daysInMonth,
+        daysInMonth: allowanceDays,
+        deductDays,
         rate: 0.8,
         adw: adwValue,
         adwSource,
         adwPolicyApplied,
         adwRaw: adwRawValue,
+        dailyDeduct,
+        sicknessAllowance,
+        alreadyInBase,
+        deductionAmount,
         warnings: adwWarnings.length > 0 ? adwWarnings : undefined,
       })
     } else {
-      // <4 連續日：EO 無疾病津貼權利 → 當無薪缺勤，按扣薪日率全額扣
-      amount += daysInMonth * dailyDeduct * deductionRate
-      paidAmount += daysInMonth * dailyDeduct * (1 - deductionRate)
+      // <4 連續日：EO 無疾病津貼權利 → 當無薪缺勤，只扣有排更嘅日
+      amount += deductDays * dailyDeduct * deductionRate
+      paidAmount += deductDays * dailyDeduct * (1 - deductionRate)
 
       detail.push({
         range: `${ep[0]}~${ep[ep.length - 1]}`,
         totalDays: ep.length,
-        daysInMonth,
-        rate: 1,
+        daysInMonth: allowanceDays,
+        deductDays,
+        rate: 0,
+        dailyDeduct,
+        deductionAmount: deductDays * dailyDeduct * deductionRate,
       })
     }
   }
@@ -816,6 +861,7 @@ export async function generatePayrollRun(
   opts?: {
     storeBonuses?: Record<string, number>
     splitPays?: Record<string, number>
+    attendanceBonusOverrides?: Record<string, 'FORCE_ON' | 'FORCE_OFF'>  // ★ 三態覆蓋
     excludeConfidential?: boolean // ★ 新增：非 OWNER 排除保密員工
   },
 ): Promise<
@@ -836,11 +882,11 @@ export async function generatePayrollRun(
     },
   })
 
-  // ★ 重新生成前先記低手動輸入嘅獎金／拆帳 —— 唔記低就會被 deleteMany 一齊清走
+  // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
   const isRecalculation = !!existing
-  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number> } =
-    { storeBonus: {}, splitPay: {} }
+  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } =
+    { storeBonus: {}, splitPay: {}, bonusOverride: {} }
   if (existing) {
     // CONFIRMED (FINALIZED/EXPORTED) — block recalculation
     if (existing.status === 'FINALIZED' || existing.status === 'EXPORTED') {
@@ -850,14 +896,15 @@ export async function generatePayrollRun(
         status: existing.status,
       }
     }
-    // DRAFT — allow recalculation: save bonus/splitPay then delete old items
+    // DRAFT — allow recalculation: save bonus/splitPay/bonusOverride then delete old items
     const oldItems = await prisma.payrollItem.findMany({
       where: { runId: existing.id },
-      select: { employeeId: true, storeBonus: true, splitPay: true },
+      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true },
     })
     for (const oi of oldItems) {
       if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
       if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
+      if (oi.attendanceBonusOverride) carried.bonusOverride[oi.employeeId] = oi.attendanceBonusOverride as 'FORCE_ON' | 'FORCE_OFF'
     }
     await prisma.payrollItem.deleteMany({ where: { runId: existing.id } })
   }
@@ -954,6 +1001,7 @@ export async function generatePayrollRun(
               ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
             ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
               ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
+            attendanceBonusOverride: opts?.attendanceBonusOverrides?.[emp.id] ?? (carried.bonusOverride[emp.id] ?? undefined),
           })
         } else {
           // No rule at all → skip with warning
@@ -989,6 +1037,8 @@ export async function generatePayrollRun(
           // ★ Phase 4: Maternity / Paternity pay
           maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
           paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
+          // ★ 勤工獎覆蓋（三態）
+          attendanceBonusOverride: opts?.attendanceBonusOverrides?.[emp.id] ?? carried.bonusOverride[emp.id] ?? null,
         })
       } catch (err) {
         console.error(`Failed payroll for ${emp.id}:`, err)
@@ -2343,7 +2393,7 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
   const workingDays = workData.workingDays
   const basePay = monthlySalary * monthlyPayMultiplier  // 全額底薪，不縮水
   // ★ 扣薪用當月曆日數，唔用 statutoryDailyWage（月薪×12÷365 屬法定權益公式）
-  const dailyRate = deductionDailyRate(monthlySalary, monthDate, (config as any).deduction_basis ?? 'calendar')
+  const dailyRate = deductionDailyRate(monthlySalary, monthDate, (config as any).deduction_basis ?? 'workday', workData.monthlyWorkingDays)
   const deduction = (absentDays + unpaidLeaveDays) * dailyRate * deductionRate
 
   const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
@@ -2496,7 +2546,7 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDa
       0,
       expectedWorkDays - workData.actualAttendanceDays - (workData.approvedLeaveDays - workData.paidLeaveDays) - workData.publicHolidayDays
     )
-    const dailyRate = deductionDailyRate(basePay, monthDate, (config as any).deduction_basis ?? 'calendar')
+    const dailyRate = deductionDailyRate(basePay, monthDate, (config as any).deduction_basis ?? 'workday', workData.monthlyWorkingDays)
     deduction = absentDays * dailyRate * deductionRate
   }
 
@@ -2555,7 +2605,8 @@ async function applyAttendanceBonusModifier(
   workData: WorkData,
   employeeId: string,
   monthDate: Date,
-  config: PayRuleConfigModular
+  config: PayRuleConfigModular,
+  attendanceBonusOverride?: 'FORCE_ON' | 'FORCE_OFF' | null,  // ★ 三態覆蓋
 ): Promise<PayrollResult> {
   // ★ 缺勤扣OT鐘也取消勤工（即使 absentDays 已排除 OT-deducted 的天數）
   if (workData.otDeductedAbsences && workData.otDeductedAbsences.length > 0) {
@@ -2583,13 +2634,29 @@ async function applyAttendanceBonusModifier(
     absentDays: workData.absentDays,
   })
 
+  // ★ 人手覆蓋（合約第 8 條：病假有醫生紙唔扣勤工、冇紙就扣）
+  //   三態：null = 自動；FORCE_ON = 強制發放；FORCE_OFF = 強制取消
+  let finalBonus = bonus.amount
+  let bonusCancelled = bonus.cancelled
+  let bonusReason = bonus.reason
+
+  if (attendanceBonusOverride === 'FORCE_OFF') {
+    finalBonus = 0
+    bonusCancelled = true
+    bonusReason = '人手取消'
+  } else if (attendanceBonusOverride === 'FORCE_ON') {
+    finalBonus = modConfig?.amount ?? 0
+    bonusCancelled = false
+    bonusReason = '人手發放'
+  }
+
   const next = { ...result }
-  next.attendanceBonus = bonus.amount
-  next.attendanceBonusCancelled = bonus.cancelled
-  next.attendanceBonusReason = bonus.reason
-  const rawTotal = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + bonus.amount
+  next.attendanceBonus = finalBonus
+  next.attendanceBonusCancelled = bonusCancelled
+  next.attendanceBonusReason = bonusReason
+  const rawTotal = result.basePay - result.deduction + result.otPay + (result.splitPay || 0) + finalBonus
   next.totalPayable = Math.max(0, rawTotal)
-  next.detail = { ...result.detail, attendanceBonus: bonus.amount, attendanceBonusCancelled: bonus.cancelled, attendanceBonusReason: bonus.reason, rawTotal: Math.round(rawTotal * 100) / 100 }
+  next.detail = { ...result.detail, attendanceBonus: finalBonus, attendanceBonusCancelled: bonusCancelled, attendanceBonusReason: bonusReason, rawTotal: Math.round(rawTotal * 100) / 100 }
   return next
 }
 
@@ -2763,7 +2830,7 @@ export async function calculatePayrollWithRules(
   monthDate: Date,
   clinicId: string | null,
   config: PayRuleConfigModular,
-  options?: { storeBonus?: number; splitPay?: number } // 店舖獎金 + 手動拆帳；只有月薪路徑會收到
+  options?: { storeBonus?: number; splitPay?: number; attendanceBonusOverride?: 'FORCE_ON' | 'FORCE_OFF' | null } // 店舖獎金 + 手動拆帳 + 勤工獎覆蓋
 ): Promise<PayrollResult> {
   // ★ Part-time hourly: bypass all modifier logic entirely
   if (config.base_type === 'hourly') {
@@ -2804,7 +2871,7 @@ export async function calculatePayrollWithRules(
   }
 
   if (mods.attendance_bonus) {
-    result = await applyAttendanceBonusModifier(mods.attendance_bonus, result, workData, employeeId, monthDate, config)
+    result = await applyAttendanceBonusModifier(mods.attendance_bonus, result, workData, employeeId, monthDate, config, options?.attendanceBonusOverride)
   }
   if (mods.overtime) {
     result = applyOvertimeModifier(mods.overtime, result, workData)
@@ -2822,7 +2889,7 @@ export async function calculatePayrollWithRules(
 
   // ★ 病假扣減：只在 MONTHLY 分支接線（時薪員工天然零成本）
   const sickDeduction = (result.detail as any)?.monthlySalary != null
-    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma, monthDate, (config as any).deduction_basis ?? 'calendar', config.adw_policy)
+    ? await computeSickDeduction(employeeId, monthStart, monthEnd, (result.detail as any).monthlySalary, config.deduction_rate ?? 1, prisma, monthDate, (config as any).deduction_basis ?? 'workday', config.adw_policy, workData.monthlyWorkingDays)
     : { amount: 0, paidAmount: 0, episodes: [] }
 
   // ★ Phase 4: Maternity / Paternity pay (EO Ch.6 / Ch.7)

@@ -505,6 +505,7 @@ export async function validateShiftBatch(
 /**
  * Check if an employee has an approved leave on a given shift date.
  * Returns { conflict: true, leaveName: string } or { conflict: false }.
+ * ★ 2026-08-02：病假豁免 —— 病假可以同更次並存，只有年假/無薪假/休息日等才阻擋排更。
  * Intended to be called from API routes (POST/PUT shifts).
  */
 export async function checkShiftLeaveConflict(
@@ -519,9 +520,14 @@ export async function checkShiftLeaveConflict(
       startDate: { lte: new Date(`${dateStr}T23:59:59.999+08:00`) },
       endDate: { gte: new Date(`${dateStr}T00:00:00+08:00`) },
     },
-    include: { leaveType: { select: { name: true } } },
+    include: { leaveType: { select: { name: true, systemKey: true } } },
   })
-  const hit = candidates.find(lr => leaveCoversDate(lr as any, dateStr))
+  // ★ 病假唔阻擋排更
+  const hit = candidates.find(lr => {
+    const covers = leaveCoversDate(lr as any, dateStr)
+    const isSick = lr.leaveType?.systemKey === 'SICK'
+    return covers && !isSick
+  })
   if (hit) return { conflict: true, leaveName: hit.leaveType?.name || '未命名假期' }
   return { conflict: false }
 }

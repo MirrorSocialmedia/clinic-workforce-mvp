@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { periodMonth, clinicId, storeBonuses, splitPays } = body
+      const { periodMonth, clinicId, storeBonuses, splitPays, attendanceBonusOverrides } = body
 
       if (!periodMonth) {
         return NextResponse.json({ error: 'periodMonth (YYYY-MM) is required' }, { status: 400 })
@@ -122,10 +122,19 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // ★ Validate attendanceBonusOverrides if provided
+      if (attendanceBonusOverrides) {
+        for (const [k, v] of Object.entries(attendanceBonusOverrides as Record<string, string>)) {
+          if (v !== 'FORCE_ON' && v !== 'FORCE_OFF') {
+            return NextResponse.json({ error: `Invalid attendanceBonusOverride for ${k}: must be FORCE_ON or FORCE_OFF` }, { status: 400 })
+          }
+        }
+      }
+
       // ★ 非 OWNER 唔可以觸發保密員工嘅計糧計算 —— 唔止「顯示時隱藏」，
       //   而係由頭到尾唔應該為佢哋建立 PayrollItem
       const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, {
-        storeBonuses, splitPays,
+        storeBonuses, splitPays, attendanceBonusOverrides: attendanceBonusOverrides as Record<string, 'FORCE_ON' | 'FORCE_OFF'> | undefined,
         excludeConfidential: session.role !== 'OWNER', // ROLE-OK
       })
 

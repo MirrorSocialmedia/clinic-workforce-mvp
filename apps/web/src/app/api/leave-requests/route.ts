@@ -178,8 +178,12 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Fix: check shift conflict before auto-approving
-      if (isApprover) {
+      // ★ 2026-08-02：病假係突發、事後補登，更次應該保留作為
+      //   「本來要返工」嘅證據 —— 扣薪要靠佢分辨工作日／休息日。
+      //   其餘假期（年假／無薪假／休息日）事先安排，維持「先移除排班」流程。
+      const isSickLeave = leaveType.systemKey === 'SICK'
+
+      if (isApprover && !isSickLeave) {
         const conflictShift = await prisma.shift.findFirst({
           where: {
             employeeId: employee.id,

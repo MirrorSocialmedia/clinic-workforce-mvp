@@ -788,6 +788,8 @@ function getShiftCode(shift: Shift): string {
     const empLeavesOnDay = leaveRequests.filter(lr =>
       lr.employeeId === empId && leaveCoversDate(lr, dateStr)
     )
+    const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+
     if (empShiftsOnDay.length > 0) {
       // ★ 調鋪日可能有多張更，桌面版用 .map 全部顯示，手機版之前只取 [0] 睇唔到第二間店
       const parts = empShiftsOnDay.map((s: any) => {
@@ -799,6 +801,18 @@ function getShiftCode(shift: Shift): string {
         return p.join('·') || '班'
       })
       const s0 = empShiftsOnDay[0]
+
+      // ★ 病假覆蓋更次（2026-08-02）—— 更次保留作為「本來要返工」嘅證據，
+      //   但顯示上要一眼睇到佢病假，唔會嚟。
+      if (sickLeave) {
+        return {
+          label: `病·${parts[0]}`,
+          bg: sickLeave.leaveType?.color ?? '#fca5a5',
+          detail: `病假（原排 ${parts.join(' / ')}）`,
+          isSick: true,
+        }
+      }
+
       return {
         label: parts.length > 1 ? `${parts[0]}+${parts.length - 1}` : parts[0],
         bg: shiftColor(s0),
@@ -1859,40 +1873,68 @@ function getShiftCode(shift: Shift): string {
       {weekDays.map((wd, i) => {
         const ss = ovShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === wd.dateStr)
         const ls = leaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, wd.dateStr))
+        // ★ 2026-08-02：病假覆蓋更次 —— 病假日有更次時合併顯示
+        const sickLeave = ls.find(lr => lr.leaveType?.systemKey === 'SICK')
         return (
           <td key={i} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle' }}>
-            {ss.map((s, si) => {
-              const tpl = templates.find(t => t.id === s.templateId)
-              const clinic = clinics.find(c => c.id === s.clinicId)
-              const parts: string[] = []
-              if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
-              if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
-              if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
-              const bg = shiftColor(s)
-              return (
-                <div key={'s' + si} style={{
-                  display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
-                  fontSize: 14, background: bg, color: textOn(bg), whiteSpace: 'nowrap',
-                  border: opts?.borrowed ? '1px dashed #2563eb' : 'none',  // ★ 借調膠囊虛線
-                }}>
-                  {parts.filter(Boolean).join('·')}
-                </div>
-              )
-            })}
-            {ls.map((lr, li) => {
-              const lc = lr.leaveType?.color ?? '#9ca3af'
-              return (
-                <div key={'l' + li} style={{
-                  display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
-                  fontSize: 14, background: lc + '26', color: '#1f2937',
-                  borderLeft: `3px solid ${lc}`, whiteSpace: 'nowrap',
-                }}>
-                  {lr.leaveType?.name}
-                </div>
-              )
-            })}
-            {ss.length === 0 && ls.length === 0 && (
-              <span style={{ fontSize: 14, color: '#9ca3af' }}>—</span>
+            {ss.length > 0 && sickLeave ? (
+              // ★ 病假疊層：顯示病·更次，斜紋底
+              (() => {
+                const s0 = ss[0]
+                const tpl = templates.find(t => t.id === s0.templateId)
+                const clinic = clinics.find(c => c.id === s0.clinicId)
+                const parts: string[] = []
+                if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
+                if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s0.startTime))
+                if (labelParts.includes('name')) parts.push(s0.employee?.user?.name?.slice(0, 2) || '')
+                const sickColor = sickLeave.leaveType?.color ?? '#fca5a5'
+                return (
+                  <div style={{
+                    display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
+                    fontSize: 14, background: sickColor, color: textOn(sickColor), whiteSpace: 'nowrap',
+                    backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)',
+                  }}>
+                    {`病·${parts.filter(Boolean).join('·')}`}
+                  </div>
+                )
+              })()
+            ) : (
+              <>
+                {ss.map((s, si) => {
+                  const tpl = templates.find(t => t.id === s.templateId)
+                  const clinic = clinics.find(c => c.id === s.clinicId)
+                  const parts: string[] = []
+                  if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
+                  if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                  if (labelParts.includes('name')) parts.push(s.employee?.user?.name?.slice(0, 2) || '')
+                  const bg = shiftColor(s)
+                  return (
+                    <div key={'s' + si} style={{
+                      display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
+                      fontSize: 14, background: bg, color: textOn(bg), whiteSpace: 'nowrap',
+                      border: opts?.borrowed ? '1px dashed #2563eb' : 'none',  // ★ 借調膠囊虛線
+                    }}>
+                      {parts.filter(Boolean).join('·')}
+                    </div>
+                  )
+                })}
+                {/* ★ 非病假嘅假期正常顯示；病假同更次疊層時唔再單獨顯示 */}
+                {ls.filter(lr => lr.leaveType?.systemKey !== 'SICK').map((lr, li) => {
+                  const lc = lr.leaveType?.color ?? '#9ca3af'
+                  return (
+                    <div key={'l' + li} style={{
+                      display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
+                      fontSize: 14, background: lc + '26', color: '#1f2937',
+                      borderLeft: `3px solid ${lc}`, whiteSpace: 'nowrap',
+                    }}>
+                      {lr.leaveType?.name}
+                    </div>
+                  )
+                })}
+                {ss.length === 0 && ls.length === 0 && (
+                  <span style={{ fontSize: 14, color: '#9ca3af' }}>—</span>
+                )}
+              </>
             )}
           </td>
         )
@@ -2123,7 +2165,36 @@ function getShiftCode(shift: Shift): string {
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
                       <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
+                        {/* ★ 2026-08-02：病假疊層 —— 病假日有更次時合併為單一膠囊 */}
+                        {(() => {
+                          const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+                          if (empShiftsOnDay.length > 0 && sickLeave) {
+                            const s0 = empShiftsOnDay[0]
+                            const tpl = templates.find(t => t.id === s0.templateId)
+                            const clinic = clinics.find(c => c.id === s0.clinicId)
+                            const parts: string[] = []
+                            if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
+                            if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s0.startTime))
+                            if (labelParts.includes('name')) parts.push(s0.employee?.user?.name?.slice(0, 2) || '')
+                            const sickLabel = `病·${parts.filter(Boolean).join('·')}`
+                            const sickTitle = `病假（原排 ${parts.filter(Boolean).join(' / ')}）`
+                            const sickColor = sickLeave.leaveType?.color ?? '#fca5a5'
+                            return (
+                              <div key={'sick-overlay'} className="ov-capsule" title={sickTitle} style={{
+                                background: sickColor, color: textOn(sickColor),
+                                backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)',
+                              }}>
+                                {sickLabel}
+                              </div>
+                            )
+                          }
+                          return null
+                        })()}
                         {empShiftsOnDay.map((s, si) => {
+                          // ★ 病假日有更次時已由上面疊層顯示，唔好再單獨顯示
+                          const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+                          if (sickLeave) return null
+
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
                           const parts: string[] = []
@@ -2144,7 +2215,8 @@ function getShiftCode(shift: Shift): string {
                             </div>
                           )
                         })}
-                        {empLeavesOnDay.map((lr, li) => {
+                        {/* ★ 非病假假期正常顯示；病假同更次疊層時唔再單獨顯示 */}
+                        {empLeavesOnDay.filter(lr => lr.leaveType?.systemKey !== 'SICK' || empShiftsOnDay.length === 0).map((lr, li) => {
                           const leaveColor = lr.leaveType?.color ?? '#9ca3af'
                           const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
                           const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
@@ -2249,7 +2321,35 @@ function getShiftCode(shift: Shift): string {
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
                       <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
+                        {/* ★ 2026-08-02：病假疊層 */}
+                        {(() => {
+                          const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+                          if (empShiftsOnDay.length > 0 && sickLeave) {
+                            const s0 = empShiftsOnDay[0]
+                            const tpl = templates.find(t => t.id === s0.templateId)
+                            const clinic = clinics.find(c => c.id === s0.clinicId)
+                            const parts: string[] = []
+                            if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
+                            if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s0.startTime))
+                            if (labelParts.includes('name')) parts.push(s0.employee?.user?.name?.slice(0, 2) || '')
+                            const sickLabel = `病·${parts.filter(Boolean).join('·')}`
+                            const sickTitle = `病假（原排 ${parts.filter(Boolean).join(' / ')}）`
+                            const sickColor = sickLeave.leaveType?.color ?? '#fca5a5'
+                            return (
+                              <div key={'sick-overlay'} className="ov-capsule" title={sickTitle} style={{
+                                background: sickColor, color: textOn(sickColor),
+                                backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)',
+                              }}>
+                                {sickLabel}
+                              </div>
+                            )
+                          }
+                          return null
+                        })()}
                         {empShiftsOnDay.map((s, si) => {
+                          const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+                          if (sickLeave) return null
+
                           const tpl = templates.find(t => t.id === s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
                           const parts: string[] = []
@@ -2270,7 +2370,7 @@ function getShiftCode(shift: Shift): string {
                             </div>
                           )
                         })}
-                        {empLeavesOnDay.map((lr, li) => {
+                        {empLeavesOnDay.filter(lr => lr.leaveType?.systemKey !== 'SICK' || empShiftsOnDay.length === 0).map((lr, li) => {
                           const leaveColor = lr.leaveType?.color ?? '#9ca3af'
                           const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
                           const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
@@ -2380,7 +2480,35 @@ function getShiftCode(shift: Shift): string {
                           onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                         >
                           <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
+                            {/* ★ 2026-08-02：病假疊層 */}
+                            {(() => {
+                              const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+                              if (empShiftsOnDay.length > 0 && sickLeave) {
+                                const s0 = empShiftsOnDay[0]
+                                const tpl = templates.find(t => t.id === s0.templateId)
+                                const clinic = clinics.find(c => c.id === s0.clinicId)
+                                const parts: string[] = []
+                                if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
+                                if (labelParts.includes('shift')) parts.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s0.startTime))
+                                if (labelParts.includes('name')) parts.push(s0.employee?.user?.name?.slice(0, 2) || '')
+                                const sickLabel = `病·${parts.filter(Boolean).join('·')}`
+                                const sickTitle = `病假（原排 ${parts.filter(Boolean).join(' / ')}）`
+                                const sickColor = sickLeave.leaveType?.color ?? '#fca5a5'
+                                return (
+                                  <div key={'sick-overlay'} className="ov-capsule" title={sickTitle} style={{
+                                    background: sickColor, color: textOn(sickColor),
+                                    backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)',
+                                  }}>
+                                    {sickLabel}
+                                  </div>
+                                )
+                              }
+                              return null
+                            })()}
                             {empShiftsOnDay.map((s, si) => {
+                              const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+                              if (sickLeave) return null
+
                               const tpl = templates.find(t => t.id === s.templateId)
                               const clinic = clinics.find(c => c.id === s.clinicId)
                               const parts: string[] = []
@@ -2400,7 +2528,7 @@ function getShiftCode(shift: Shift): string {
                                 </div>
                               )
                             })}
-                            {empLeavesOnDay.map((lr, li) => {
+                            {empLeavesOnDay.filter(lr => lr.leaveType?.systemKey !== 'SICK' || empShiftsOnDay.length === 0).map((lr, li) => {
                               const leaveColor = lr.leaveType?.color ?? '#9ca3af'
                               const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
                               const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
@@ -3223,7 +3351,13 @@ function getShiftCode(shift: Shift): string {
                       <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}</td>
                       {mobileWeekDays.map(d => {
                         const cell = getMobileCell(emp.id, d)
-                        return <td key={d} className="text-center px-0" style={{ background: cell.bg, fontSize: 9 }}>{cell.label}</td>
+                        return <td key={d} className="text-center px-0" style={{
+                          background: cell.bg,
+                          backgroundImage: cell.isSick
+                            ? 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)'
+                            : undefined,
+                          fontSize: 9,
+                        }}>{cell.label}</td>
                       })}
                     </tr>
                   ))}
@@ -3268,7 +3402,13 @@ function getShiftCode(shift: Shift): string {
                     {mobileWeekDays.map(d => {
                       const cell = getMobileCell(emp.id, d)
                       return <td key={d} className="text-center px-1 py-1 min-w-[80px]"
-                        style={{ background: cell.bg, fontSize: 12 }}>{cell.detail ?? cell.label}</td>
+                        style={{
+                          background: cell.bg,
+                          backgroundImage: cell.isSick
+                            ? 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)'
+                            : undefined,
+                          fontSize: 12,
+                        }}>{cell.detail ?? cell.label}</td>
                     })}
                   </tr>
                 ))}

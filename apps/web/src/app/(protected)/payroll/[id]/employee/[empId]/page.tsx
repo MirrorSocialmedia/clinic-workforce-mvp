@@ -199,6 +199,10 @@ export default function EmployeePayrollDetailPage() {
   // ★ 冇 salaryDetail.dailyWage 就唔好估 —— 顯示 0 令人知道係缺資料，
   //   basePay ÷ scheduledDays 唔係扣薪日率（差 50%），估錯比唔顯示更差
   const dailyWage = salaryDetail.dailyWage ?? 0
+  const monthlyWorkingDays = salaryDetail.monthlyWorkingDays ?? detail.monthlyWorkingDays ?? 0
+  const restDaysCount = salaryDetail.restDays ?? detail.restDays ?? 0
+  const publicHolidayDays = salaryDetail.publicHolidayDays ?? detail.publicHolidayDays ?? 0
+  const daysInMonthCount = salaryDetail.workingDays ?? detail.workingDays ?? 0
   const attendanceBonus = salaryDetail.attendanceBonus ?? detail.attendanceBonus ?? 0
   const sickDeduction = salaryDetail.sickDeduction ?? detail.sickDeduction ?? 0
   const sickEpisodes = salaryDetail.sickEpisodes ?? detail.sickEpisodes ?? []
@@ -501,22 +505,29 @@ export default function EmployeePayrollDetailPage() {
             </div>
 
             {deduction > 0 && (
-              <div className="flex justify-between items-center text-red-500">
-                <span className="text-sm">
-                  {(() => {
-                    // ★ deduction = (缺勤 + 無薪假) × 扣薪日率
-                    //   舊版標籤只寫缺勤天數，令金額同說明對唔上；
-                    //   而且條件用 absentDays > 0，只有無薪假時成行唔顯示。
-                    const parts: string[] = []
-                    if (absentDays > 0) parts.push(`缺勤 ${absentDays} 天`)
-                    if (unpaidLeaveDays > 0) parts.push(`無薪假 ${unpaidLeaveDays} 天`)
-                    const total = absentDays + unpaidLeaveDays
-                    const label = parts.length ? parts.join(' + ') : '扣款'
-                    return dailyWage > 0
-                      ? `${label}（共 ${total} 天 × ${fmtCurrency(dailyWage)}/天）`
-                      : `${label}（共 ${total} 天）`
-                  })()}
-                </span>
+              <div className="flex justify-between items-start text-red-500">
+                <div>
+                  <span className="text-sm">
+                    {(() => {
+                      // ★ deduction = (缺勤 + 無薪假) × 扣薪日率
+                      //   舊版標籤只寫缺勤天數，令金額同說明對唔上；
+                      //   而且條件用 absentDays > 0，只有無薪假時成行唔顯示。
+                      const parts: string[] = []
+                      if (absentDays > 0) parts.push(`缺勤 ${absentDays} 天`)
+                      if (unpaidLeaveDays > 0) parts.push(`無薪假 ${unpaidLeaveDays} 天`)
+                      const total = absentDays + unpaidLeaveDays
+                      const label = parts.length ? parts.join(' + ') : '扣款'
+                      return dailyWage > 0
+                        ? `${label}（共 ${total} 天 × ${fmtCurrency(dailyWage)}/天）`
+                        : `${label}（共 ${total} 天）`
+                    })()}
+                  </span>
+                  {monthlyWorkingDays > 0 && (
+                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
+                      日薪 = 月薪 ÷ {monthlyWorkingDays} 個工作日{daysInMonthCount > 0 && restDaysCount > 0 && `（${daysInMonthCount} 天 − ${restDaysCount} 休息 − ${publicHolidayDays} 公眾假期）`}
+                    </div>
+                  )}
+                </div>
                 <span className="font-mono font-medium">-{fmtCurrency(deduction)}</span>
               </div>
             )}
@@ -545,15 +556,42 @@ export default function EmployeePayrollDetailPage() {
             )}
 
             {sickDeduction > 0 && (
-              <div className="flex justify-between items-center">
-                <span className="text-sm">病假扣減</span>
+              <div className="flex justify-between items-start">
+                <div className="text-sm">
+                  <div>病假扣減</div>
+                  {(sickEpisodes || []).map((ep: any, i: number) => (
+                    <div key={ep.range} style={{ fontSize: 11, marginTop: 4, lineHeight: 1.6 }}>
+                      <div>{ep.range} 共{ep.totalDays}天
+                        {ep.totalDays >= 4 ? '（連續≥4，付4/5）' : '（連續<4，無薪）'}
+                      </div>
+                      <div style={{ color: '#9ca3af' }}>
+                        · 本月 {ep.daysInMonth} 天，其中 <strong>{ep.deductDays ?? ep.daysInMonth} 天為工作日</strong>
+                        {ep.daysInMonth > (ep.deductDays ?? ep.daysInMonth) &&
+                          `（${ep.daysInMonth - (ep.deductDays ?? ep.daysInMonth)} 天為休息日，不扣）`}
+                      </div>
+                      {ep.totalDays >= 4 ? (
+                        <>
+                          <div style={{ color: '#9ca3af' }}>
+                            · 月薪已付 {fmtCurrency(ep.dailyDeduct)} × {ep.deductDays ?? ep.daysInMonth} = {fmtCurrency(ep.alreadyInBase ?? 0)}
+                          </div>
+                          <div style={{ color: '#9ca3af' }}>
+                            · 疾病津貼 {fmtCurrency((ep.adw ?? 0) * 0.8)} × {ep.daysInMonth} = {fmtCurrency(ep.sicknessAllowance ?? 0)}
+                          </div>
+                          <div style={{ color: '#9ca3af' }}>
+                            · 差額扣減 {fmtCurrency(ep.deductionAmount ?? 0)}
+                            {(ep.deductionAmount ?? 0) === 0 && '（津貼高於月薪已付，不扣減）'}
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ color: '#9ca3af' }}>
+                          · {fmtCurrency(ep.dailyDeduct)} × {ep.deductDays ?? ep.daysInMonth} = {fmtCurrency(ep.deductionAmount ?? 0)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
                 <span className="font-mono font-medium text-red-600">
                   -{fmtCurrency(sickDeduction)}
-                  <span className="block text-xs text-red-500 font-normal mt-1" style={{ fontFamily: 'sans-serif' }}>
-                    {(sickEpisodes || []).map((e: any) =>
-                      `${e.range} 共${e.totalDays}天${e.totalDays >= 4 ? '(連續≥4,付4/5)' : '(<4,全扣)'} × 本月${e.daysInMonth}天`
-                    ).join('; ')}
-                  </span>
                 </span>
               </div>
             )}
@@ -571,15 +609,22 @@ export default function EmployeePayrollDetailPage() {
               <>
                 {detail.sickEpisodes.map((ep: any, i: number) => (
                   <div key={ep.range} className="flex justify-between py-2">
-                    <span className="text-sm">
-                      病假 {ep.range}（{ep.daysInMonth} 天
-                      {ep.totalDays >= 4
-                        ? `，連續 ${ep.totalDays} 天 → ADW × 80%`
-                        : `，連續 ${ep.totalDays} 天 → 無疾病津貼，全額扣`}）
-                      {ep.adwSource === 'fallback' && (
-                        <span className="text-orange-600 text-xs ml-1">（ADW 為推算值）</span>
+                    <div>
+                      <span className="text-sm">
+                        病假 {ep.range}（{ep.daysInMonth} 天
+                        {ep.totalDays >= 4
+                          ? `，連續 ${ep.totalDays} 天 → ADW × 80%`
+                          : `，連續 ${ep.totalDays} 天 → 無疾病津貼，全額扣`}）
+                        {ep.adwSource === 'fallback' && (
+                          <span className="text-orange-600 text-xs ml-1">（ADW 為推算值）</span>
+                        )}
+                      </span>
+                      {ep.deductDays != null && (
+                        <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                          · 其中 {ep.deductDays} 天為工作日（{ep.daysInMonth - ep.deductDays} 天為休息日，不扣）
+                        </div>
                       )}
-                    </span>
+                    </div>
                     <span className="text-muted-foreground text-xs">
                       {ep.adw ? `ADW $${ep.adw.toFixed(2)}` : ''}
                     </span>

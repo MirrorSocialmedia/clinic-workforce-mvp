@@ -15,6 +15,13 @@ export const PROBATION_MONTHS = 3 as const
 const YEAR_DAYS = 365
 
 /**
+ * 生日假（公司政策，合約第 8 條）—— 固定 1 天，唔跟年資階梯。
+ * ★ 合併入年假額度發放，但唔加入 LEAVE_TABLE ——
+ *   加入嘅話第 9 年會變 15 天（生日假變相變成 2 天）。
+ */
+export const BIRTHDAY_LEAVE_DAYS = 1 as const
+
+/**
  * 根據服務年資返回年假額度
  * @param serviceYears 滿幾年（1-9+）
  */
@@ -100,6 +107,14 @@ export function totalAccruedLeave(
   const last = mode === 'prorata' ? years : years - 1
   for (let i = 0; i <= last; i++) {
     total += leaveForServiceYear(joinDate, i, asOf)
+
+    // ★ 生日假唔按比例（2026-08-02 決定）——
+    //   合約寫「每滿十二個月便可享有…1天」，「每滿」係條件，未滿就冇。
+    //   所以只有【完成咗嘅服務年度】先計，prorata 模式下進行中嗰年唔加。
+    const yearFullyCompleted = new Date(
+      Date.UTC(hkParts(joinDate).y + i + 1, hkParts(joinDate).m - 1, hkParts(joinDate).day)
+    ) <= asOf
+    if (yearFullyCompleted) total += BIRTHDAY_LEAVE_DAYS
   }
   return Math.round(total * 100) / 100
 }

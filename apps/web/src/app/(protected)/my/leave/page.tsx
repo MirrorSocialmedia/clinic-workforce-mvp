@@ -34,6 +34,7 @@ interface LeaveTypeItem {
   isPaid: boolean
   annualQuota: number | null
   color: string | null
+  systemKey?: string | null
 }
 
 const STATUS_LABELS: Record<LeaveStatus, string> = {
@@ -201,6 +202,19 @@ export default function MyLeavePage() {
                     </option>
                   ))}
                 </select>
+                {/* ★ 2026-08-02：無薪假按工作日扣薪提示 */}
+                {(() => {
+                  const leaveType = leaveTypes.find(t => t.id === form.leaveTypeId)
+                  if (leaveType?.systemKey !== 'SICK' && !leaveType?.isPaid) {
+                    return (
+                      <div style={{ fontSize: 11, color: '#b45309', marginTop: 4 }}>
+                        ⚠️ 無薪假按工作日扣薪（月薪 ÷ 該月工作日數），
+                        請避免涵蓋休息日 —— 休息日包含喺申請範圍內一樣會扣。
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="form-group">
