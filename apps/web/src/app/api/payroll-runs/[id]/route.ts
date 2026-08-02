@@ -46,25 +46,37 @@ export async function GET(
     items = items.filter((item: any) => !item.employee?.payConfidential)
   }
 
+  // ★ Extract sickDeduction from detailJson for each item
+  //   (2026-08-02: sickDeduction is stored in detailJson, not in PayrollItem.deduction)
+  const itemsWithSickDeduction = items.map((it: any) => ({
+    ...it,
+    sickDeduction: (() => {
+      try { return JSON.parse(it.detailJson || '{}').sickDeduction ?? 0 } catch { return 0 }
+    })(),
+  }))
+
   // ★ Totals recalculated from visible items only (prevents reverse-engineering)
   const summary = {
-    totalEmployees: items.length,
-    totalBasePay: items.reduce((s: number, i: any) => s + (i.basePay || 0), 0),
-    totalOTPay: items.reduce((s: number, i: any) => s + (i.otPay || 0), 0),
-    totalSplitPay: items.reduce((s: number, i: any) => s + (i.splitPay || 0), 0),
-    totalDeduction: items.reduce((s: number, i: any) => s + (i.deduction || 0), 0),
-    totalPayable: items.reduce((s: number, i: any) => s + (i.totalPayable || 0), 0),
-    totalWorkedHours: items.reduce((s: number, i: any) => s + i.workedHours, 0),
-    totalOTHours: items.reduce((s: number, i: any) => {
+    totalEmployees: itemsWithSickDeduction.length,
+    totalBasePay: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.basePay || 0), 0),
+    totalOTPay: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.otPay || 0), 0),
+    totalSplitPay: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.splitPay || 0), 0),
+    // ★ totalDeduction includes both absent/unpaid deduction AND sick deduction (2026-08-02)
+    totalDeduction: itemsWithSickDeduction.reduce(
+      (s: number, i: any) => s + (i.deduction || 0) + (i.sickDeduction || 0), 0,
+    ),
+    totalPayable: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.totalPayable || 0), 0),
+    totalWorkedHours: itemsWithSickDeduction.reduce((s: number, i: any) => s + i.workedHours, 0),
+    totalOTHours: itemsWithSickDeduction.reduce((s: number, i: any) => {
       let detail: any = null
       try { detail = i.detailJson ? JSON.parse(i.detailJson) : null } catch {}
       return s + (detail?.timebank?.otMinutes ?? i.otHours * 60) / 60
     }, 0),
-    totalLeaveDays: items.reduce((s: number, i: any) => s + i.leaveDays, 0),
-    totalAbsentDays: items.reduce((s: number, i: any) => s + i.absentDays, 0),
+    totalLeaveDays: itemsWithSickDeduction.reduce((s: number, i: any) => s + i.leaveDays, 0),
+    totalAbsentDays: itemsWithSickDeduction.reduce((s: number, i: any) => s + i.absentDays, 0),
   }
 
-  return NextResponse.json({ run: { ...run, items }, summary }, {
+  return NextResponse.json({ run: { ...run, items: itemsWithSickDeduction }, summary }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })
 }

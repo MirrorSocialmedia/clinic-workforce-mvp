@@ -57,6 +57,7 @@ export async function GET(
 
   const punches = await prisma.punchRecord.findMany({
     where: { employeeId: params.empId, punchTime: { gte: periodStart, lte: periodEnd }, void: { is: null } },
+    include: { clinic: { select: { id: true, name: true, shortName: true } } },
     orderBy: { punchTime: 'asc' },
     take: 100,
   })
@@ -77,8 +78,20 @@ export async function GET(
     orderBy: { correctedTime: 'asc' },
   })
 
+  // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
+  const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]
+  const clinicsMap = new Map<string, { name: string; shortName: string | null }>()
+  if (clinicIds.length > 0) {
+    const clinics = await prisma.clinic.findMany({
+      where: { id: { in: clinicIds } },
+      select: { id: true, name: true, shortName: true },
+    })
+    for (const c of clinics) clinicsMap.set(c.id, { name: c.name, shortName: c.shortName })
+  }
+
   return NextResponse.json({
     item, detail, punches, leaves, corrections,
+    clinicsMap: Object.fromEntries(clinicsMap),
     periodMonth: periodMonthKey(item.run.periodMonth),
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },

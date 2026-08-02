@@ -136,6 +136,7 @@ export default function EmployeePayrollDetailPage() {
   const punches = data.punches || []
   const leaves = data.leaves || []
   const corrections = data.corrections || []
+  const clinicsMap: Record<string, { name: string; shortName: string | null }> = data.clinicsMap || {}
 
   const employeeName = item.employee.user.name
   const periodMonth = data.periodMonth ?? '-'
@@ -1088,7 +1089,7 @@ export default function EmployeePayrollDetailPage() {
                 {punches.map((p: any) => (
                   <tr key={p.id} className="border-b">
                     <td className="py-2 px-2">{fmtDate(p.punchTime)}</td>
-                    <td className="py-2 px-2">{p.clinicId}</td>
+                    <td className="py-2 px-2">{p.clinic?.shortName || p.clinic?.name || p.clinicId}</td>
                     <td className="py-2 px-2">{fmtTimeLocal(p.punchTime)}</td>
                     <td className="py-2 px-2">
                       <span className={punchColor(p.punchType) + ' font-semibold'}>
@@ -1161,7 +1162,7 @@ export default function EmployeePayrollDetailPage() {
                 {corrections.map((c: any) => (
                   <tr key={c.id} className="border-b">
                     <td className="py-2 px-2">{fmtDateTime(c.correctedTime)}</td>
-                    <td className="py-2 px-2">{c.clinicId}</td>
+                    <td className="py-2 px-2">{clinicsMap[c.clinicId]?.shortName || clinicsMap[c.clinicId]?.name || c.clinicId}</td>
                     <td className="py-2 px-2">
                       {punchLabel(c.punchType)}
                     </td>

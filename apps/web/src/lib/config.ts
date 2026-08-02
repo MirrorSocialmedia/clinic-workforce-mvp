@@ -73,6 +73,8 @@ export const CONFIG = {
     'PUT /api/employees/:id/pay-rules/:id': ['OWNER'],
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/employees/:id/overview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/employees/:id/overview/history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Resign / Rehire routes
     'GET /api/employees/:id/resign-preview': ['OWNER'],

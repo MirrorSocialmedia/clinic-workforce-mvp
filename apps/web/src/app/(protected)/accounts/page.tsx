@@ -838,6 +838,13 @@ export default function AccountsPage() {
                           {acc.employeeId && (
                             <Link href={`/accounts/${acc.employeeId}/wage-history`} className="text-xs underline text-blue-600 hover:no-underline" onClick={e => e.stopPropagation()}>工資歷史</Link>
                           )}
+                          {/* ★ Overview link — hidden for confidential employees when not OWNER (2026-08-02) */}
+                          {acc.employeeId && !acc.payConfidential && (
+                            <Link href={`/employees/${acc.employeeId}/overview`} className="text-xs underline text-purple-600 hover:no-underline" onClick={e => e.stopPropagation()}>總覽</Link>
+                          )}
+                          {acc.employeeId && isOwner && acc.payConfidential && (
+                            <Link href={`/employees/${acc.employeeId}/overview`} className="text-xs underline text-purple-600 hover:no-underline" onClick={e => e.stopPropagation()}>總覽</Link>
+                          )}
                           {acc.employeeId && (
                             <button className="btn btn-sm" style={{ background: '#e8f5e9', color: '#2e7d32' }} onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
                             <span className="flex items-center gap-1"><Wallet size={16} /> 薪酬規則</span>
@@ -1016,6 +1023,13 @@ export default function AccountsPage() {
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleEdit(acc)}>編輯</button>
                     {acc.employeeId && (
                       <Link href={`/accounts/${acc.employeeId}/wage-history`} className="px-3 py-1.5 rounded-md text-xs text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100" onClick={e => e.stopPropagation()}>工資歷史</Link>
+                    )}
+                    {/* ★ Overview link — hidden for confidential employees when not OWNER (2026-08-02) */}
+                    {acc.employeeId && !acc.payConfidential && (
+                      <Link href={`/employees/${acc.employeeId}/overview`} className="px-3 py-1.5 rounded-md text-xs text-purple-600 border border-purple-200 bg-purple-50 hover:bg-purple-100" onClick={e => e.stopPropagation()}>總覽</Link>
+                    )}
+                    {acc.employeeId && isOwner && acc.payConfidential && (
+                      <Link href={`/employees/${acc.employeeId}/overview`} className="px-3 py-1.5 rounded-md text-xs text-purple-600 border border-purple-200 bg-purple-50 hover:bg-purple-100" onClick={e => e.stopPropagation()}>總覽</Link>
                     )}
                     {acc.employeeId && (
                       <button className="px-3 py-1.5 rounded-md text-xs border text-emerald-700 border-emerald-200 bg-emerald-50" onClick={() => { setPayRuleEmployeeId(acc.employeeId); setShowPayRuleModal(true) }}>
