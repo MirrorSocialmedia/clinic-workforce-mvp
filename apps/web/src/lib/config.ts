@@ -174,6 +174,7 @@ export const CONFIG = {
     'POST /api/payroll-runs/preview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'GET /api/payroll-runs/allowed-clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Account management routes
     'GET /api/accounts': ['OWNER'],
@@ -310,6 +311,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ 生成／預檢限 payroll_generate（淨係 payroll_view 唔夠）
   'POST /api/payroll-runs': ['payroll_generate'],
   'GET /api/payroll-runs/:id/preflight': ['payroll_generate'],
+
+  // ★ 診所範圍 — 計糧生成用獨立 route，同 POST /api/payroll-runs 同一範圍
+  'GET /api/payroll-runs/allowed-clinics': ['payroll_generate'],
 
   // ★ 考勤補登
   'POST /api/punch-corrections': ['attendance_manage'],

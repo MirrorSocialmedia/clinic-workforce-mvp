@@ -55,10 +55,13 @@ export default function ExceptionsReportPage() {
 
   const fetchClinics = useCallback(async () => {
     try {
-      const res = await fetch('/api/clinics')
+      // ★ 用 allowed-clinics 而非 /api/clinics，避免有 scheduling 權限嘅人見到全部診所
+      const res = await fetch('/api/payroll-runs/allowed-clinics', {
+        credentials: 'include', cache: 'no-store',
+      })
       if (res.ok) {
         const data = await res.json()
-        setClinics(data.clinics || data || [])
+        setClinics(data.clinics || [])
       }
     } catch { /* ignore */ }
   }, [])

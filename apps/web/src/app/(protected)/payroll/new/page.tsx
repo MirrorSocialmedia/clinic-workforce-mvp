@@ -72,10 +72,13 @@ export default function NewPayrollPage() {
 
   const fetchClinics = useCallback(async () => {
     try {
-      const res = await fetch('/api/clinics')
+      // ★ 唔好用 /api/clinics —— 佢對有 scheduling 權限嘅人回全部診所
+      const res = await fetch('/api/payroll-runs/allowed-clinics', {
+        credentials: 'include', cache: 'no-store',
+      })
       if (res.ok) {
         const data = await res.json()
-        setClinics(data.clinics || data || [])
+        setClinics(data.clinics || [])
       }
     } catch (err) {
       console.error('Failed to fetch clinics:', err)
@@ -137,6 +140,11 @@ export default function NewPayrollPage() {
       router.push('/payroll')
     }
   }, [userRole, canGenerate, router])
+
+  // ★ 只有一間可選 → 自動選定
+  useEffect(() => {
+    if (clinics.length === 1 && !selectedClinic) setSelectedClinic(clinics[0].id)
+  }, [clinics, selectedClinic])
 
   // ★ A2: 預填現有草稿的手動輸入值
   useEffect(() => {
@@ -296,6 +304,11 @@ export default function NewPayrollPage() {
           <label className="block mb-1.5 font-semibold text-sm text-foreground">
             店鋪（必選）
           </label>
+          {clinics.length === 0 && (
+            <div style={{ color: '#dc3545', padding: 12 }}>
+              你冇可生成計糧嘅診所 — 請聯絡帳戶擁有人設定主屬診所
+            </div>
+          )}
           <select
             value={selectedClinic}
             onChange={e => setSelectedClinic(e.target.value)}
