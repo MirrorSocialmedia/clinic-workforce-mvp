@@ -16,78 +16,84 @@ export async function GET(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
-  const { searchParams } = new URL(req.url)
-  const employeeId = searchParams.get('employeeId')
-  const year = searchParams.get('year')
+  try {
+    const { searchParams } = new URL(req.url)
+    const employeeId = searchParams.get('employeeId')
+    const year = searchParams.get('year')
 
-  let targetEmployeeId: string | undefined
+    let targetEmployeeId: string | undefined
 
-  // Employees only see their own balance
-  if (scope === 'self') {
-    const emp = await prisma.employee.findUnique({
-      where: { userId: session.userId },
-    })
-    if (!emp) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
-    // ★ 明确拒绝，唔好静静回自己的 —— 旧版收到 ?employeeId=X 照回自己的餘額，
-    //   前端以為係 X 嘅數，做出「顯示 9 天但實際 0 天」呢種對唔上。
-    if (employeeId && employeeId !== emp.id) {
-      return NextResponse.json(
-        { error: 'Forbidden (cannot read other employees\' leave balance)' },
-        { status: 403 },
-      )
-    }
-    targetEmployeeId = emp.id
-  } else if (employeeId) {
-    targetEmployeeId = employeeId
-  }
-
-  const where: any = targetEmployeeId ? { employeeId: targetEmployeeId } : {}
-  if (year) where.year = parseInt(year)
-
-  const balances = await prisma.leaveBalance.findMany({
-    where,
-    include: {
-      leaveType: { select: { id: true, name: true, isPaid: true, annualQuota: true, color: true, systemKey: true } },
-      employee: {
-        select: { joinDate: true },
-        include: { user: { select: { id: true, name: true } } },
-      },
-    },
-    orderBy: [{ year: 'desc' }, { leaveType: { name: 'asc' } }],
-  })
-
-  // ★ 系統實際已批天數 —— 同 lb.used（可人手校正）做對照
-  const empIds = [...new Set(balances.map(b => b.employeeId))]
-  const typeIds = [...new Set(balances.map(b => b.leaveTypeId))]
-
-  const approved = empIds.length > 0 ? await prisma.leaveRequest.groupBy({
-    by: ['employeeId', 'leaveTypeId'],
-    where: {
-      employeeId: { in: empIds },
-      leaveTypeId: { in: typeIds },
-      status: 'APPROVED',
-    },
-    _sum: { days: true },
-  }) : []
-
-  const sysMap = new Map(
-    approved.map(a => [`${a.employeeId}:${a.leaveTypeId}`, a._sum.days ?? 0]),
-  )
-
-  return jsonNoStore({
-    leaveBalances: balances.map(b => {
-      const lt = b.leaveType
-      const emp = b.employee as any
-      return {
-        ...b,
-        systemUsed: sysMap.get(`${b.employeeId}:${b.leaveTypeId}`) ?? 0,
-        // ★ 年假拆解（法定 + 生日假）—— 前端顯示用
-        ...(lt.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && emp.joinDate
-          ? { breakdown: annualLeaveBreakdown(new Date(emp.joinDate), new Date(), 'prorata') }
-          : {}),
+    // Employees only see their own balance
+    if (scope === 'self') {
+      const emp = await prisma.employee.findUnique({
+        where: { userId: session.userId },
+      })
+      if (!emp) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
+      if (employeeId && employeeId !== emp.id) {
+        return NextResponse.json(
+          { error: 'Forbidden (cannot read other employees\' leave balance)' },
+          { status: 403 },
+        )
       }
-    }),
-  })
+      targetEmployeeId = emp.id
+    } else if (employeeId) {
+      targetEmployeeId = employeeId
+    }
+
+    const where: any = targetEmployeeId ? { employeeId: targetEmployeeId } : {}
+    if (year) where.year = parseInt(year)
+
+    const balances = await prisma.leaveBalance.findMany({
+      where,
+      include: {
+        leaveType: { select: { id: true, name: true, isPaid: true, annualQuota: true, color: true, systemKey: true } },
+        employee: {
+          // Prisma does not allow select + include on the same level.
+          // (2026-08-03: adding annualLeaveBreakdown needed joinDate, changed to select+include, causing 500)
+          select: {
+            joinDate: true,
+            user: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: [{ year: 'desc' }, { leaveType: { name: 'asc' } }],
+    })
+
+    // 系統實際已批天數
+    const empIds = [...new Set(balances.map(b => b.employeeId))]
+    const typeIds = [...new Set(balances.map(b => b.leaveTypeId))]
+
+    const approved = empIds.length > 0 ? await prisma.leaveRequest.groupBy({
+      by: ['employeeId', 'leaveTypeId'],
+      where: {
+        employeeId: { in: empIds },
+        leaveTypeId: { in: typeIds },
+        status: 'APPROVED',
+      },
+      _sum: { days: true },
+    }) : []
+
+    const sysMap = new Map(
+      approved.map(a => [`${a.employeeId}:${a.leaveTypeId}`, a._sum.days ?? 0]),
+    )
+
+    return jsonNoStore({
+      leaveBalances: balances.map(b => {
+        const lt = b.leaveType
+        const emp = b.employee as any
+        return {
+          ...b,
+          systemUsed: sysMap.get(`${b.employeeId}:${b.leaveTypeId}`) ?? 0,
+          ...(lt.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && emp.joinDate
+            ? { breakdown: annualLeaveBreakdown(new Date(emp.joinDate), new Date(), 'prorata') }
+            : {}),
+        }
+      }),
+    })
+  } catch (error) {
+    console.error('[leave-balance GET]', error)
+    return NextResponse.json({ error: '載入假期餘額失敗' }, { status: 500 })
+  }
 }
 
 // ============================================================
