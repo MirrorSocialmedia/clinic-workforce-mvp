@@ -110,7 +110,7 @@ export default function EmployeeOverviewPage() {
   if (error) {
     return (
       <div style={{ padding: 24 }}>
-        <BackButton to="/accounts" label="返回帳號管理" />
+        <BackButton to="/employees" label="返回員工總覽" />
         <div style={{ textAlign: 'center', padding: 60, color: '#dc3545', fontSize: 16 }}>
           {error}
         </div>
@@ -125,7 +125,7 @@ export default function EmployeeOverviewPage() {
   if (!canView) {
     return (
       <div style={{ padding: 24 }}>
-        <BackButton to="/accounts" label="返回帳號管理" />
+        <BackButton to="/employees" label="返回員工總覽" />
         <div style={{ textAlign: 'center', padding: 60, color: '#dc3545', fontSize: 16 }}>
           無權查看 — 需要「員工總覽」權限
         </div>
@@ -158,7 +158,7 @@ export default function EmployeeOverviewPage() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <BackButton to="/accounts" label="返回帳號管理" />
+          <BackButton to="/employees" label="返回員工總覽" />
           <h1 style={{ margin: '8px 0 0', fontSize: 24 }}>
             <span className="flex items-center gap-2"><User size={20} /> 員工個人總覽：{basic?.name || empId}</span>
           </h1>

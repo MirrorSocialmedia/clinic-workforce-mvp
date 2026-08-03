@@ -15,7 +15,7 @@ export default function AdminMobileNav({
   const allItems = [
     { href: '/dashboard', label: '今日', Icon: LayoutDashboard, perm: null },
     { href: '/punch', label: '打卡', Icon: QrCode, perm: null },
-    { href: '/todo', label: '待辦', Icon: CheckSquare, perm: null, badge: todoCount.total },
+    { href: '/todo', label: '待辦', Icon: CheckSquare, perm: ['scheduling', 'leave_approve', 'attendance_manage'], badge: todoCount.total },
     { href: '/attendance', label: '考勤', Icon: ClipboardList, perm: 'attendance_manage' },
     { href: '/scheduling', label: '排班', Icon: CalendarDays, perm: 'scheduling' },
     { href: '/mobile-more', label: '更多', Icon: Menu, perm: null },
@@ -24,7 +24,13 @@ export default function AdminMobileNav({
   // 按權限過濾，「更多」永遠在最後，上限 5 個
   const more = allItems[allItems.length - 1]
   const rest = allItems
-    .filter(i => i.href !== '/mobile-more' && (!i.perm || hasPermission(role as any, i.perm as any, grant, deny)))
+    .filter(i => {
+      if (i.href === '/mobile-more') return false
+      if (!i.perm) return true
+      // 陣列 = 有其中一個就得（2026-08-03，同 layout.tsx nav filter 一致）
+      const ps = Array.isArray(i.perm) ? i.perm : [i.perm]
+      return ps.some(p => hasPermission(role as any, p as any, grant, deny))
+    })
     .slice(0, 4)
   const items = [...rest, more]
 

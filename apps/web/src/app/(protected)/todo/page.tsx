@@ -74,6 +74,9 @@ export default function TodoPage() {
   const [employees, setEmployees] = useState<EmployeeItem[]>([])
   const [loading, setLoading] = useState(true)
 
+  // ROLE-OK: 人臉審核冇對應權限，matrix 係 ['OWNER','MANAGER']
+  const [userRole, setUserRole] = useState<string>('')
+
   // Enroll code shortcut
   const [codeEmployeeId, setCodeEmployeeId] = useState('')
   const [codeLoading, setCodeLoading] = useState(false)
@@ -83,12 +86,19 @@ export default function TodoPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [leavesRes, correctionsRes, enrollsRes, reviewsRes, empsRes] = await Promise.all([
-        fetch('/api/leave-requests?status=PENDING', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => ({})),
-        fetch('/api/punch-corrections?status=PENDING', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
-        fetch('/api/face/enroll-pending', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
-        fetch('/api/face/review', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
-        fetch('/api/employees?all=1', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
+      const [leavesRes, correctionsRes, enrollsRes, reviewsRes, empsRes, meRes] = await Promise.all([
+        fetch('/api/leave-requests?status=PENDING', { credentials: 'include', cache: 'no-store' })
+          .then(r => r.json()).catch(e => { if (e.status !== 403) console.warn('[todo] /api/leave-requests failed', e); return {} }),
+        fetch('/api/punch-corrections?status=PENDING', { credentials: 'include', cache: 'no-store' })
+          .then(r => r.json()).catch(e => { if (e.status !== 403) console.warn('[todo] /api/punch-corrections failed', e); return [] }),
+        fetch('/api/face/enroll-pending', { credentials: 'include', cache: 'no-store' })
+          .then(r => r.json()).catch(e => { if (e?.status !== 403) console.warn('[todo] /api/face/enroll-pending failed', e); return [] }),
+        fetch('/api/face/review', { credentials: 'include', cache: 'no-store' })
+          .then(r => r.json()).catch(e => { if (e?.status !== 403) console.warn('[todo] /api/face/review failed', e); return [] }),
+        fetch('/api/employees?all=1', { credentials: 'include', cache: 'no-store' })
+          .then(r => r.json()).catch(e => { if (e?.status !== 403) console.warn('[todo] /api/employees failed', e); return [] }),
+        fetch('/api/me', { credentials: 'include', cache: 'no-store' })
+          .then(r => r.json()).catch(() => ({ user: { role: '' } })),
       ])
 
       setLeaves(leavesRes.leaveRequests || leavesRes.items || [])
@@ -97,6 +107,7 @@ export default function TodoPage() {
       setReviews(Array.isArray(reviewsRes) ? reviewsRes : [])
       const empArr = Array.isArray(empsRes) ? empsRes : (empsRes.employees || [])
       setEmployees(empArr)
+      setUserRole(meRes.user?.role || '')
     } finally {
       setLoading(false)
     }
@@ -224,7 +235,9 @@ export default function TodoPage() {
     )
   }
 
-  const hasItems = leaves.length > 0 || corrections.length > 0 || enrolls.length > 0 || reviews.length > 0
+  const canReviewFace = ['OWNER', 'MANAGER'].includes(userRole)
+
+  const hasItems = leaves.length > 0 || corrections.length > 0 || (canReviewFace && enrolls.length > 0) || (canReviewFace && reviews.length > 0)
 
   /* ── Render ── */
 
@@ -361,7 +374,7 @@ export default function TodoPage() {
       )}
 
       {/* ── C: Enroll Pending ── */}
-      {enrolls.length > 0 && (
+      {canReviewFace && enrolls.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
             臉部登記待核准 ({enrolls.length})
@@ -405,7 +418,7 @@ export default function TodoPage() {
       )}
 
       {/* ── D: Face Review ── */}
-      {reviews.length > 0 && (
+      {canReviewFace && reviews.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
             臉部驗證覆核 ({reviews.length})

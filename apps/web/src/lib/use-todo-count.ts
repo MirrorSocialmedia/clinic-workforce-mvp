@@ -42,14 +42,20 @@ export function useTodoCount(): TodoCounts {
           credentials: 'include',
           cache: 'no-store',
         })
-          .then((r) => r.json())
-          .catch(() => []),
+          .then((r) => {
+            if (r.status === 403) return []
+            return r.json()
+          })
+          .catch((e) => { console.warn('[todo] /api/face/enroll-pending failed', e); return [] }),
         fetch('/api/face/review', {
           credentials: 'include',
           cache: 'no-store',
         })
-          .then((r) => r.json())
-          .catch(() => []),
+          .then((r) => {
+            if (r.status === 403) return []
+            return r.json()
+          })
+          .catch((e) => { console.warn('[todo] /api/face/review failed', e); return [] }),
       ]).then(([lv, corr, en, rv]) => {
         const leaveN = lv.leaveRequests?.length || lv.length || 0
         const correctionArr = Array.isArray(corr) ? corr : corr.punchCorrections || corr.items || []
