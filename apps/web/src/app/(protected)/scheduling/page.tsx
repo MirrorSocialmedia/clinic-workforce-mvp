@@ -628,7 +628,7 @@ function getShiftCode(shift: Shift): string {
       const [meRes, clinicsRes, employeesRes, changesRes] = await Promise.all([
         getJSON('/api/me'),
         getJSON('/api/clinics'),
-        getJSON('/api/employees?pageSize=200'),
+        getJSON('/api/employees?all=1'),
         getJSON('/api/shift-changes'),
       ])
 

@@ -88,7 +88,7 @@ export default function TodoPage() {
         fetch('/api/punch-corrections?status=PENDING', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
         fetch('/api/face/enroll-pending', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
         fetch('/api/face/review', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
-        fetch('/api/employees', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
+        fetch('/api/employees?all=1', { credentials: 'include', cache: 'no-store' }).then(r => r.json()).catch(() => []),
       ])
 
       setLeaves(leavesRes.leaveRequests || leavesRes.items || [])

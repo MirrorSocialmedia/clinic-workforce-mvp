@@ -201,7 +201,7 @@ export default function LeavePage() {
       // Fetch employees for init/clear dropdowns
       // ROLE-OK(TEMP): 同 :164 重複判斷（避免 stale-closure），見上面 TODO(2026-08)。
       if (role === 'OWNER' || role === 'MANAGER') /* ROLE-OK(TEMP): 見上面 TODO */ {
-        const empRes = await fetch('/api/employees', { credentials: 'include' })
+        const empRes = await fetch('/api/employees?all=1', { credentials: 'include' })
         if (empRes.ok) {
           const empData = await empRes.json()
           // 兼容兩種格式：直接陣列 或 { employees: [...] }

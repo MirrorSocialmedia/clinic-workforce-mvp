@@ -171,9 +171,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(result, { status: 409 })
       }
 
-      // ★ 計算被略過的保密員工數量
+      // ★ 計算被略過的保密員工數量 — 按診所計，唔係全公司（2026-08-03）
       const skipped = excludeConfidential
-        ? await prisma.employee.count({ where: { payConfidential: true, status: 'ACTIVE' } })
+        ? await prisma.employee.count({
+            where: {
+              payConfidential: true,
+              status: 'ACTIVE',
+              ...(clinicId ? { homeClinicId: clinicId } : {}),
+            },
+          })
         : 0
 
       return NextResponse.json({

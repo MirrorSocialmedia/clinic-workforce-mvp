@@ -26,6 +26,10 @@ export async function GET(req: NextRequest) {
   const pageSize = Math.min(200, Math.max(1, parseInt(searchParams.get('pageSize') || '20', 10) || 20))
   const skip = (page - 1) * pageSize
 
+  // ★ 下拉選單需要全部員工 —— 分頁預設 20 會靜靜漏人（2026-08-03 撞過）。
+  // all=1 唔分頁，但只可以用喺內部管理頁（員工數目可控）。
+  const takeAll = searchParams.get('all') === '1'
+
   const where: any = {}
 
   // Default: exclude RESIGNED employees unless explicitly requested
@@ -104,8 +108,8 @@ export async function GET(req: NextRequest) {
         },
       },
       orderBy: { createdAt: 'desc' },
-      skip,
-      take: pageSize,
+      skip: takeAll ? 0 : skip,
+      take: takeAll ? 500 : pageSize,
     }),
     prisma.employee.count({ where }),
   ])

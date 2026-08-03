@@ -65,7 +65,7 @@ export default function ExceptionsReportPage() {
 
   const fetchEmployees = useCallback(async () => {
     try {
-      const res = await fetch('/api/employees')
+      const res = await fetch('/api/employees?all=1')
       if (res.ok) {
         const data = await res.json()
         setEmployees(data.employees || data || [])

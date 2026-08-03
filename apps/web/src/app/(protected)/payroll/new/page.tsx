@@ -120,7 +120,7 @@ export default function NewPayrollPage() {
       setGrant(Array.isArray(d.user?.grant) ? d.user.grant : [])
       setDeny(Array.isArray(d.user?.deny) ? d.user.deny : [])
     })
-    fetch('/api/employees?pageSize=200').then(async r => {
+    fetch('/api/employees?all=1').then(async r => {
       if (!r.ok) return
       const d = await r.json()
       setEmployees((d.employees || []).map((e: any) => ({

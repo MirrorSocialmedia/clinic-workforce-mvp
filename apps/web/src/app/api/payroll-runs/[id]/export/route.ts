@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { getOwnHomeClinicId } from '@/lib/scope-helpers'
+import { getConfidentialScope } from '@/lib/scope-helpers'
 import { toHKDateStr } from '@/lib/hk-date'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
@@ -65,12 +65,13 @@ export async function POST(
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // ★ Confidential filter: OWNER sees all; others only same home clinic (2026-08-03)
-  const homeClinicId = session.role === 'OWNER' ? null : await getOwnHomeClinicId(session.userId) // ROLE-OK: OWNER 全公司
+  // ★ Confidential filter — 用 getConfidentialScope 一次過算好範圍（2026-08-03）
+  const perms = auth.perms ?? []
+  const confidentialScope = await getConfidentialScope(session, perms)
   let items = run.items
-  if (homeClinicId !== null) {
+  if (confidentialScope !== null) {
     items = items.filter((item: any) =>
-      !item.employee?.payConfidential || item.employee?.homeClinicId === homeClinicId
+      !item.employee?.payConfidential || (!!item.employee?.homeClinicId && confidentialScope.includes(item.employee.homeClinicId))
     )
   }
 

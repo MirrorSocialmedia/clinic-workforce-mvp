@@ -12,7 +12,7 @@ export default function EmployeesOverviewPage() {
   useEffect(() => {
     Promise.all([
       fetch('/api/me', { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/employees?status=ACTIVE&pageSize=200&excludeConfidential=1', { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/employees?status=ACTIVE&all=1&excludeConfidential=1', { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
     ])
       .then(([me, emp]) => {
         setUserRole(me.user?.role || '')

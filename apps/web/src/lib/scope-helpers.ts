@@ -40,6 +40,24 @@ export async function resolveClinicScope(
 }
 
 /**
+ * 保密員工可見範圍（畀列表過濾用，避免逐個 await）。
+ *
+ * @returns null = 全部可見（OWNER）；string[] = 只可見呢啲診所嘅保密員工
+ */
+export async function getConfidentialScope(
+  session: { userId: string; role: string },
+  perms: string[],
+): Promise<string[] | null> {
+  // ROLE-OK: OWNER 全公司，刻意用 role
+  if (session.role === 'OWNER') return null
+  // ROLE-OK: 2026-08-03 決定 MANAGER 一律唔見保密員工，唔放寬
+  if (session.role === 'MANAGER') return []
+  if (!perms.includes('payroll_generate') && !perms.includes('employee_overview')) return []
+  const home = await getOwnHomeClinicId(session.userId)
+  return home ? [home] : []
+}
+
+/**
  * 可唔可以睇某員工嘅保密薪金。
  *
  * ★ 2026-08-03 決定：
@@ -53,14 +71,7 @@ export async function canSeeConfidential(
   targetEmployee: { payConfidential: boolean; homeClinicId: string | null },
 ): Promise<boolean> {
   if (!targetEmployee.payConfidential) return true
-  // ROLE-OK: 保密員工隔離
-  if (session.role === 'OWNER') return true
-  // ROLE-OK: MANAGER 唔會因為主屬診所而放寬（2026-08-03 決定）
-  if (session.role === 'MANAGER') return false
-
-  if (!perms.includes('payroll_generate') && !perms.includes('employee_overview')) return false
-
-  const home = await getOwnHomeClinicId(session.userId)
-  // ★ 兩邊都要有主屬店先算「同店」—— null 唔應該當成 match
-  return !!home && !!targetEmployee.homeClinicId && home === targetEmployee.homeClinicId
+  const scope = await getConfidentialScope(session, perms)
+  if (scope === null) return true
+  return !!targetEmployee.homeClinicId && scope.includes(targetEmployee.homeClinicId)
 }

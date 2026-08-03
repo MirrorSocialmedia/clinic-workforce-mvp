@@ -128,14 +128,17 @@ export async function GET(req: NextRequest) {
   }
 
   // ★ Resolve secondary clinic names (no Prisma relation — raw string field)
+  // ★ 明確標型別 —— 三元運算嘅 `: []` 令 TS 推斷成 never[]，
+  // Map.get() 回 {}，之後 .name / .shortName 就報 TS2339
+  type ClinicLite = { id: string; name: string; shortName: string | null }
   const secondaryClinicIds = [...new Set(shifts.map((s) => s.secondaryClinicId).filter((v): v is string => Boolean(v)))]
-  const secondaryClinics = secondaryClinicIds.length
+  const secondaryClinics: ClinicLite[] = secondaryClinicIds.length
     ? await prisma.clinic.findMany({
         where: { id: { in: secondaryClinicIds } },
         select: { id: true, name: true, shortName: true },
       })
     : []
-  const secondaryClinicMap = new Map(secondaryClinics.map(c => [c.id, c]))
+  const secondaryClinicMap = new Map<string, ClinicLite>(secondaryClinics.map(c => [c.id, c]))
 
   const formattedShifts = shifts.map(s => {
     const secClinic = s.secondaryClinicId ? secondaryClinicMap.get(s.secondaryClinicId) : null

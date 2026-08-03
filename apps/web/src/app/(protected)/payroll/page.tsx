@@ -117,7 +117,7 @@ export default function PayrollListPage() {
   useEffect(() => {
     ;(async () => {
       try {
-        const empsRes = await fetch('/api/employees', { credentials: 'include', cache: 'no-store' })
+        const empsRes = await fetch('/api/employees?all=1', { credentials: 'include', cache: 'no-store' })
         const emps = await empsRes.json()
         setExpEmployees(Array.isArray(emps) ? emps : (emps.employees || []))
       } catch {}

@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { getOwnHomeClinicId } from '@/lib/scope-helpers'
+import { getConfidentialScope } from '@/lib/scope-helpers'
 import { calculatePayrollWithRules } from '@/lib/payroll-engine'
 
 // ============================================================
@@ -58,10 +58,11 @@ export async function POST(req: NextRequest) {
     if (clinicId) where.homeClinicId = clinicId
     if (employeeId) where.id = employeeId
 
-    // ★ Confidential filter: OWNER sees all; others only same home clinic (2026-08-03)
-    const homeClinicId = session.role === 'OWNER' ? null : await getOwnHomeClinicId(session.userId) // ROLE-OK: OWNER 全公司
-    if (homeClinicId !== null) {
-      where.OR = [{ payConfidential: false }, { homeClinicId }]
+    // ★ Confidential filter — 用 getConfidentialScope 一次過算好範圍（2026-08-03）
+    const perms = auth.perms ?? []
+    const confidentialScope = await getConfidentialScope(session, perms)
+    if (confidentialScope !== null) {
+      where.OR = [{ payConfidential: false }, { homeClinicId: { in: confidentialScope } }]
     }
 
     const employees = await prisma.employee.findMany({

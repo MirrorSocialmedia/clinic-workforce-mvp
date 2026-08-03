@@ -300,7 +300,7 @@ export default function AttendancePage() {
     try {
       const [cRes, eRes] = await Promise.all([
         fetch('/api/clinics', { credentials: 'include', cache: 'no-store' }),
-        fetch('/api/employees', { credentials: 'include', cache: 'no-store' }),
+        fetch('/api/employees?all=1', { credentials: 'include', cache: 'no-store' }),
       ])
       if (cRes.ok) { const d = await cRes.json(); setClinics(d.clinics || []); setExClinics(d.clinics || []) }
       if (eRes.ok) {
