@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { toHKDateStr, getMonthRange } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart, hkDateEnd, getMonthRange } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 
 // ============================================================
@@ -53,12 +53,26 @@ export async function GET(req: NextRequest) {
     where: {
       employeeId: employee.id,
       status: 'APPROVED',
-      startDate: { gte: monthStart, lt: monthEnd },
+      // ★ 跨月假期：startDate <= 月尾 AND endDate >= 月初
+      startDate: { lte: monthEnd },
+      endDate: { gte: monthStart },
     },
     include: { leaveType: { select: { name: true, isPaid: true } } },
   })
 
-  const totalLeaveDays = leaveRequests.reduce((sum, r) => sum + r.days, 0)
+  // ★ 按日去重 + 只計本月佔嘅日數
+  const monthStartStr = toHKDateStr(monthStart)
+  const monthEndStr = toHKDateStr(monthEnd)
+  const leaveDateSet = new Set<string>()
+  for (const r of leaveRequests) {
+    let cur = toHKDateStr(r.startDate)
+    const last = toHKDateStr(r.endDate)
+    while (cur <= last) {
+      if (cur >= monthStartStr && cur <= monthEndStr) leaveDateSet.add(cur)
+      cur = toHKDateStr(new Date(hkDateStart(cur).getTime() + 86400000))
+    }
+  }
+  const totalLeaveDays = leaveDateSet.size
 
   const corrections = await prisma.punchCorrection.count({
     where: { employeeId: employee.id, status: 'APPROVED' },

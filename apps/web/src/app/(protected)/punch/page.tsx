@@ -476,13 +476,25 @@ export default function PunchPage() {
         </div>
       )}
 
-      {/* Error banner (inline, auto-clears on next scan) */}
+      {/* ★ Error banner — fixed top for immediate visibility */}
       {error && (
-        <Alert variant="destructive">
-          <XCircle className="h-4 w-4" />
-          <AlertTitle>失敗</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <div
+          className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex items-start gap-3 shadow-lg"
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999 }}
+        >
+          <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold text-red-800 dark:text-red-200 text-sm">打卡失敗</div>
+            <div className="text-sm text-red-700 dark:text-red-300 mt-0.5">{error}</div>
+          </div>
+          <button
+            onClick={() => setError(null)}
+            className="text-red-500 hover:text-red-700 flex-shrink-0 p-1 rounded hover:bg-red-100"
+            aria-label="關閉"
+          >
+            ✕
+          </button>
+        </div>
       )}
 
       {/* Recent records */}

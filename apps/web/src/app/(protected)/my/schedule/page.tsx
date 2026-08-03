@@ -366,8 +366,17 @@ export default function MySchedulePage() {
                           {s.startTime ? ` ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}` : ''}
                         </div>
                         <div className="text-xs text-gray-400 mt-0.5">
-                          {s.clinicName || s.clinic?.name || '-'}
+                          {s.secondaryClinicName
+                            ? <>
+                                {s.clinicShortName || s.clinicName || s.clinic?.name || '-'}
+                                <span className="mx-0.5 text-amber-600 font-medium">→</span>
+                                {s.secondaryClinicShortName || s.secondaryClinicName}
+                              </>
+                            : (s.clinicShortName || s.clinicName || s.clinic?.name || '-')}
                           {s.role ? ` · ${s.role}` : ''}
+                          {s.secondaryClinicName && (
+                            <span className="text-amber-600 ml-1">⚠️ 調鋪</span>
+                          )}
                         </div>
                       </div>
                       <span

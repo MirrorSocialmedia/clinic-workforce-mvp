@@ -31,19 +31,22 @@ export default function MyDashboardPage() {
   const [summary, setSummary] = useState<any>(null)
   const [schedule, setSchedule] = useState<any[]>([])
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
-  const [timebank, setTimebank] = useState<any>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState<any[]>([])
 
   const fetchData = useCallback(async () => {
     setError('')
     try {
-      const [summaryRes, scheduleRes, leaveRes, notifRes, tbRes] = await Promise.all([
+      const [summaryRes, scheduleRes, leaveRes, notifRes] = await Promise.all([
         fetch('/api/my/summary', { credentials: 'include' }),
-        fetch('/api/my/schedule', { credentials: 'include' }),
+        (() => {
+          // ★ 2026-08-02：前端傳 from/to（今天 + 明天），確保 API 唔會因為預設值錯而漏晒今日
+          const today = toHKDateStr(new Date())
+          const tomorrow = toHKDateStr(new Date(Date.now() + 86400000))
+          return fetch(`/api/my/schedule?from=${today}&to=${tomorrow}`, { credentials: 'include' })
+        })(),
         fetch('/api/my/leave', { credentials: 'include' }),
         fetch('/api/notifications', { credentials: 'include' }),
-        fetch('/api/my/timebank', { credentials: 'include' }).then(r => r).catch(() => ({ ok: false } as Response)),
       ])
 
       if (!summaryRes.ok || !scheduleRes.ok || !leaveRes.ok || !notifRes.ok) {
@@ -58,14 +61,17 @@ export default function MyDashboardPage() {
       const scheduleData = await scheduleRes.json()
       const leaveData = await leaveRes.json()
       const notifData = await notifRes.json()
-      const tbData = tbRes.ok ? await tbRes.json() : null
 
       setSummary(summaryData.summary)
-      setSchedule(scheduleData.shifts || [])
+      // ★ 按開工時間排序（分更顯示正確）
+      setSchedule(
+        (scheduleData.shifts || []).sort(
+          (a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+        ),
+      )
       setLeaveBalances(leaveData.leaveBalances || [])
       setNotifications(notifData.notifications || [])
       setUnreadCount(notifData.unreadCount || 0)
-      setTimebank(tbData)
     } catch (err: any) {
       setError(err.message || '載入失敗')
     } finally {
@@ -161,9 +167,21 @@ export default function MyDashboardPage() {
                         <div className="text-sm font-semibold text-foreground">
                           {startTime} - {endTime}
                         </div>
+                        {/* ★ 調鋪：顯示「主店 → 副店」*/}
                         <div className="text-xs text-muted-foreground mt-0.5">
-                          📍 {s.clinic?.name || s.clinicName || '-'}
+                          📍 {s.secondaryClinicName
+                            ? <>
+                                {s.clinicShortName || s.clinicName || s.clinic?.name || '-'}
+                                <span className="mx-1 text-amber-600 font-medium">→</span>
+                                {s.secondaryClinicShortName || s.secondaryClinicName}
+                              </>
+                            : (s.clinicShortName || s.clinicName || s.clinic?.name || '-')}
                         </div>
+                        {s.secondaryClinicName && (
+                          <div className="text-[10px] text-amber-600 mt-0.5">
+                            ⚠️ 調鋪：上班喺{s.clinicShortName || s.clinicName}、落班喺{s.secondaryClinicShortName || s.secondaryClinicName}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -187,30 +205,18 @@ export default function MyDashboardPage() {
         <StatCard value={summary?.leaveDays || 0} title="本月請假（天）" color="amber" />
       </div>
 
-      {/* Late Attendance — 2-col grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <div className="bg-card border rounded-xl p-4 border-l-4 border-l-red-500 shadow-sm">
-          <div className="text-3xl font-bold text-foreground tabular-nums tracking-tight">{summary?.lateCount || 0}</div>
-          <div className="text-sm text-muted-foreground mt-1">本月遲到次數</div>
-          {summary?.lateMinutes != null && summary.lateMinutes > 0 && (
-            <div className="text-xs text-muted-foreground mt-1">共 {summary.lateMinutes} 分鐘</div>
-          )}
-          {summary?.lateMinutes != null && summary.lateMinutes > 30 && (
-            <div className="text-xs text-destructive mt-1">⚠️ 已超30分，勤工獎可能取消</div>
-          )}
-        </div>
-        <StatCard value={summary?.lateMinutes || 0} title="本月遲到（分鐘）" color="violet" />
-      </div>
+      {/* Late Attendance — StatCard only */}
+      <StatCard value={summary?.lateMinutes || 0} title="本月遲到（分鐘）" color="violet" />
 
-      {/* Time Bank — 單一時間帳戶 */}
-      {timebank && (
+      {/* Time Bank — use summary data (少咗 /api/my/timebank fetch) */}
+      {summary && summary.timeAccountMinutes != null && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">時間銀行</CardTitle>
           </CardHeader>
           <CardContent>
             {(() => {
-              const timeAccount = timebank.timeAccountMinutes ?? (timebank.balance ?? (timebank.availableMinutes ?? 0) - (timebank.owedMinutes ?? 0))
+              const timeAccount = summary.timeAccountMinutes
               return (
                 <div className="rounded-xl p-5 text-center" style={{
                   borderColor: timeAccount >= 0 ? '#10b981' : '#dc2626',
@@ -233,12 +239,12 @@ export default function MyDashboardPage() {
                   {/* 參考明細 */}
                   <div className="grid grid-cols-2 gap-3 mt-4 text-left">
                     <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold text-emerald-600">{timebank.otMinutes ?? 0}</div>
+                      <div className="text-lg font-bold text-emerald-600">{summary.otMinutes ?? 0}</div>
                       <div className="text-xs text-muted-foreground">本月 OT</div>
                     </div>
                     <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold" style={{ color: (timebank.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
-                        {timebank.lateMinutes ?? 0}
+                      <div className="text-lg font-bold" style={{ color: (summary.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
+                        {summary.lateMinutes ?? 0}
                       </div>
                       <div className="text-xs text-muted-foreground">本月遲到</div>
                     </div>
@@ -309,7 +315,20 @@ export default function MyDashboardPage() {
                     {' - '}
                     {fmtTime(s.endTime)}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{s.clinic?.name || '-'}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {s.secondaryClinicName
+                      ? <>
+                          📍 {s.clinicShortName || s.clinicName || s.clinic?.name || '-'}
+                          <span className="mx-1 text-amber-600 font-medium">→</span>
+                          {s.secondaryClinicShortName || s.secondaryClinicName}
+                        </>
+                      : `📍 ${s.clinicShortName || s.clinicName || s.clinic?.name || '-'}`}
+                  </div>
+                  {s.secondaryClinicName && (
+                    <div className="text-[10px] text-amber-600 mt-0.5">
+                      ⚠️ 調鋪：上班喺{s.clinicShortName || s.clinicName}、落班喺{s.secondaryClinicShortName || s.secondaryClinicName}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
