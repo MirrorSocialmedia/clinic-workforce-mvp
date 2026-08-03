@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope, getOwnHomeClinicId } from '@/lib/scope-helpers'
+import { resolveClinicScope, getOwnHomeClinicId, getConfidentialScope } from '@/lib/scope-helpers'
 import { generatePayrollRun } from '@/lib/payroll-engine'
 import { getMonthRange } from '@/lib/hk-date'
 
@@ -14,7 +14,7 @@ import { getMonthRange } from '@/lib/hk-date'
 export async function GET(req: NextRequest) {
   const auth = await requirePerm(req, 'payroll_view')
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, perms } = auth
 
   const { searchParams } = new URL(req.url)
   const clinicId = searchParams.get('clinicId')
@@ -33,13 +33,10 @@ export async function GET(req: NextRequest) {
     where.periodMonth = { gte: monthStart, lte: monthEnd }
   }
 
-  // MANAGER only sees their clinics (own clinics + cross-store runs with null clinicId)
-  const sessionClinics = session.clinics ?? []
-  // ★ fail-closed：冇綁店的 MANAGER 應該乜都見不到，
-  //   唔可以因為 sessionClinics 空就跳過 filter（會變成睇晒全公司計糧單）。
-  //   exceptions route:46 已經咁做，呢度之前漏咗。
-  if (scope === 'my-clinics') {
-    if (sessionClinics.length === 0) {
+  // ★ 2026-08-03: MANAGER 見全公司計糧單（保密員工由 getConfidentialScope 喺 items 層擋住）
+  const allowed = await resolveClinicScope(session, perms ?? [])
+  if (allowed !== null) {
+    if (allowed.length === 0) {
       return NextResponse.json(
         { runs: [], total: 0, page, pageSize, totalPages: 0 },
         { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
@@ -47,8 +44,8 @@ export async function GET(req: NextRequest) {
     }
     where.AND = [...(where.AND ?? []), {
       OR: [
-        { clinicId: { in: sessionClinics } }, // 自己的診所（純字串陣列）
-        { clinicId: null },                   // 跨店計糧（clinicId 為空）
+        { clinicId: { in: allowed } }, // 自己的診所
+        { clinicId: null },             // 跨店計糧（clinicId 為空）
       ],
     }]
   }
@@ -155,11 +152,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // ★ excludeConfidential: 同主屬診所嘅人唔需要排除保密員工（2026-08-03）
-      const home = session.role === 'OWNER' ? null : await getOwnHomeClinicId(session.userId) // ROLE-OK: OWNER 全公司
-      const excludeConfidential =
-        session.role !== 'OWNER' &&                                   // ROLE-OK
-        !(!!home && clinicId === home)
+      // ★ MANAGER 生成任何診所都要排除保密員工（2026-08-03 決定）
+      // 用 getConfidentialScope 推導，唔好自己寫 role 判斷
+      const cScope = await getConfidentialScope(session, auth.perms ?? [])
+      const excludeConfidential = cScope !== null &&
+        !(clinicId && cScope.includes(clinicId))
 
       const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, {
         storeBonuses, splitPays, attendanceBonusOverrides: attendanceBonusOverrides as Record<string, 'FORCE_ON' | 'FORCE_OFF'> | undefined,

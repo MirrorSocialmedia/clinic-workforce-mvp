@@ -154,11 +154,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
     // System management
     { path: '/clinic/qr', label: '診所打卡螢幕', icon: Monitor, roles: mgmtRoles },
-    { path: '/dashboard', label: '儀表板', icon: BarChart3, roles: viewRoles },
-    { path: '/attendance', label: '考勤', icon: ClipboardList, roles: viewRoles },
+    { path: '/dashboard', label: '儀表板', icon: BarChart3, roles: viewRoles, perm: [...MGMT_PERMS] },
+    { path: '/attendance', label: '考勤', icon: ClipboardList, roles: viewRoles, perm: 'attendance_manage' },
     { path: '/scheduling', label: '排班管理', icon: Calendar, roles: mgmtRoles, perm: 'scheduling' },
-    { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles },
-    { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles },
+    { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles, perm: ['leave_approve', 'timebank_ops'] },
+    { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles, perm: ['payroll_view', 'payroll_generate'] },
     // ★ 員工總覽 —— OWNER + MANAGER（ACCOUNTANT 唔包，佢只需要計糧）
     //   保密員工由 API 層隔離（employees/:id/overview:46），MANAGER 睇唔到
     //   perm: 'employee_overview' allows EMPLOYEE with this perm to also see it
@@ -173,11 +173,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const visibleNav = navItems.filter(item => {
     // ① role 白名單直接放行
     if (item.roles.includes(user.role as any)) return true
-    // ② 冇 perm 就淨係睇 role —— 舊版 `return true` 令所有冇 perm 嘅項目
-    //    對任何角色都顯示（帳號管理／診所管理／審計日志全部漏晒出去）
+    // ② 冇 perm 就淨係睇 role
     if (!item.perm) return false
-    // ③ 有 perm：權限可以覆蓋 role 白名單（例如 EMPLOYEE + scheduling）
-    return hasPermission(user.role, item.perm as any, grant, deny)
+    // ③ 有 perm：陣列 = 有其中一個就得（2026-08-03）
+    const perms = Array.isArray(item.perm) ? item.perm : [item.perm]
+    return perms.some(p => hasPermission(user.role, p as any, grant, deny))
   })
 
   const isActive = (itemPath: string) => {

@@ -25,7 +25,7 @@ interface MenuItem {
   href: string
   icon: any
   roles?: Role[]
-  perm?: string
+  perm?: string | string[]
   description?: string
   warning?: boolean
 }
@@ -55,6 +55,7 @@ export default function MobileMorePage() {
       href: '/payroll',
       icon: Wallet,
       roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+      perm: ['payroll_view', 'payroll_generate'],
     },
     {
       label: '員工總覽',
@@ -107,8 +108,11 @@ export default function MobileMorePage() {
     if (!userRole) return false
     // role-based check
     if (item.roles?.includes(userRole)) return true
-    // perm-based check
-    if (item.perm && hasPermission(userRole, item.perm as any, grant, deny)) return true
+    // perm-based check — array = has any (2026-08-03)
+    if (item.perm) {
+      const perms = Array.isArray(item.perm) ? item.perm : [item.perm]
+      if (perms.some(p => hasPermission(userRole, p as any, grant, deny))) return true
+    }
     return false
   })
 

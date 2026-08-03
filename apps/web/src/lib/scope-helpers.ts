@@ -27,8 +27,8 @@ export async function resolveClinicScope(
   // ROLE-OK: OWNER 全公司，刻意用 role
   if (session.role === 'OWNER') return null
 
-  // ★ MANAGER：自己被指派嘅診所（同現行 scope='my-clinics' 一致）
-  if (session.role === 'MANAGER') return session.clinics
+  // ROLE-OK: 2026-08-03 決定 MANAGER 見全公司（保密由 getConfidentialScope 擋）
+  if (session.role === 'MANAGER') return null
 
   // ★ EMPLOYEE 靠權限放行 → 只限主屬診所（2026-08-03 決定）
   if (perms.includes('payroll_generate') || perms.includes('employee_overview')) {

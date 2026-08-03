@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
+import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
 
 // ============================================================
@@ -66,15 +66,28 @@ export async function GET(req: NextRequest) {
   //   預設 false，唔傳參數時行為不變（排班等 caller 唔受影響）
   //   排班需要見到全部員工（保密只係薪金，唔影響排更）
   const excludeConfidential = searchParams.get('excludeConfidential') === '1'
-  if (excludeConfidential && session.role !== 'OWNER') { // ROLE-OK: 保密員工隔離，刻意用 role 唔用權限
-    where.payConfidential = false
+  if (excludeConfidential) {
+    // ★ 用 getConfidentialScope —— 保密員工可見範圍同計糧單一致（2026-08-03）
+    const cScope = await getConfidentialScope(session, perms ?? [])
+    if (cScope !== null) {
+      const confidentialCond = cScope.length
+        ? { OR: [{ payConfidential: false }, { payConfidential: true, homeClinicId: { in: cScope } }] }
+        : { payConfidential: false }
+      // ★ 用 AND 包 —— where 可能已經有 OR，直接寫 where.OR 會覆蓋
+      where.AND = [...(where.AND ?? []), confidentialCond]
+    }
   }
 
   // ★ employee_overview 只睇主屬診所（2026-08-03）
-  const scopeToHome = searchParams.get('scopeToHome') === '1'
-  if (scopeToHome) {
+  if (searchParams.get('scopeToHome') === '1') {
     const allowed = await resolveClinicScope(session, perms ?? [])
-    if (allowed !== null && allowed.length > 0) {
+    if (allowed !== null) {
+      if (allowed.length === 0) {
+        return NextResponse.json(
+          { employees: [], total: 0, page: 1, pageSize: 0, totalPages: 0 },
+          { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
+        )
+      }
       where.homeClinicId = { in: allowed }
     }
   }
