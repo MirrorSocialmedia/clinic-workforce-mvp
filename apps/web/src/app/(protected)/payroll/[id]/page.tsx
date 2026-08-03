@@ -264,8 +264,11 @@ export default function PayrollDetailPage() {
     )
   }
 
-  const fmtCurrency = (v: number | null) => {
-    if (v == null) return '🔒 保密'
+  // ★ null 有兩種意思：保密（item.confidential）同「計算失敗／未生成」。
+  //   混埋一齊會令計糧錯誤扮成保密（2026-08-03 Kathy 撞到）。
+  const fmtCurrency = (v: number | null | undefined, isConfidential = false) => {
+    if (isConfidential) return '🔒 保密'
+    if (v == null) return '—' // ★ 冇資料
     return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
@@ -389,10 +392,10 @@ export default function PayrollDetailPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
             {[
               { label: '員工數', value: summary.totalEmployees, color: '#0d6efd' },
-              { label: '總基本薪資', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalBasePay), color: '#6c757d' },
-              { label: '總加班費', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalOTPay), color: '#198754' },
-              { label: '總扣款', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalDeduction), color: '#dc3545' },
-              { label: '應付總額', value: summary.confidential ? '🔒 保密' : fmtCurrency(summary.totalPayable), color: '#0d6efd', bold: true },
+              { label: '總基本薪資', value: fmtCurrency(summary.totalBasePay, summary.confidential), color: '#6c757d' },
+              { label: '總加班費', value: fmtCurrency(summary.totalOTPay, summary.confidential), color: '#198754' },
+              { label: '總扣款', value: fmtCurrency(summary.totalDeduction, summary.confidential), color: '#dc3545' },
+              { label: '應付總額', value: fmtCurrency(summary.totalPayable, summary.confidential), color: '#0d6efd', bold: true },
               { label: '總工時', value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
               { label: '總加班時數', value: `${(summary.totalOTHours || 0).toFixed(1)}h`, color: '#6c757d' },
               { label: '總請假/缺勤', value: `${summary.totalLeaveDays.toFixed(1)} / ${summary.totalAbsentDays.toFixed(1)} 天`, color: '#6c757d' },
@@ -491,27 +494,27 @@ export default function PayrollDetailPage() {
                     {item.absentDays.toFixed(1)}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                    {fmtCurrency(item.basePay)}
+                    {fmtCurrency(item.basePay, confidential)}
                   </td>
                   {renderAttendanceBonus(item)}
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                    {fmtCurrency(item.otPay)}
+                    {fmtCurrency(item.otPay, confidential)}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                    {fmtCurrency(item.splitPay)}
+                    {fmtCurrency(item.splitPay, confidential)}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.deduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
-                    {fmtCurrency(item.deduction)}
+                    {fmtCurrency(item.deduction, confidential)}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.sickDeduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
-                    {fmtCurrency(item.sickDeduction ?? 0)}
+                    {fmtCurrency(item.sickDeduction ?? 0, confidential)}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#059669' }}
                     title={item.miscDetailJson ? JSON.parse(item.miscDetailJson).map((d: any) => `${d.description} $${d.amount}`).join('\n') : undefined}>
                     {item.miscAmount ? `+${item.miscAmount.toLocaleString()}` : '+0'}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
-                    {fmtCurrency(item.totalPayable)}
+                    {fmtCurrency(item.totalPayable, confidential)}
                   </td>
                   <td style={{ padding: '8px 6px', textAlign: 'center' }}>
                     {confidential ? (
@@ -588,22 +591,22 @@ export default function PayrollDetailPage() {
               <div style={{ borderTop: '1px dashed #e5e7eb', paddingTop: 8, marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={{ fontSize: 12, color: '#888' }}>基本薪資</span>
-                  <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.basePay)}</span>
+                  <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.basePay, confidential)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={{ fontSize: 12, color: '#888' }}>加班費</span>
-                  <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.otPay)}</span>
+                  <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.otPay, confidential)}</span>
                 </div>
                 {item.deduction && item.deduction > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontSize: 12, color: '#dc3545' }}>扣款</span>
-                    <span style={{ fontSize: 13, fontFamily: 'monospace', color: '#dc3545' }}>-{fmtCurrency(item.deduction)}</span>
+                    <span style={{ fontSize: 13, fontFamily: 'monospace', color: '#dc3545' }}>-{fmtCurrency(item.deduction, confidential)}</span>
                   </div>
                 )}
                 {item.sickDeduction && item.sickDeduction > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontSize: 12, color: '#dc3545' }}>病假扣減</span>
-                    <span style={{ fontSize: 13, fontFamily: 'monospace', color: '#dc3545' }}>-{fmtCurrency(item.sickDeduction)}</span>
+                    <span style={{ fontSize: 13, fontFamily: 'monospace', color: '#dc3545' }}>-{fmtCurrency(item.sickDeduction, confidential)}</span>
                   </div>
                 )}
                 {item.miscAmount && item.miscAmount > 0 && (
@@ -618,7 +621,7 @@ export default function PayrollDetailPage() {
               {/* Net pay + action */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: 18, fontWeight: 700, fontFamily: 'monospace' }}>
-                  {fmtCurrency(item.totalPayable)}
+                  {fmtCurrency(item.totalPayable, confidential)}
                 </span>
                 <div>
                   {confidential ? (

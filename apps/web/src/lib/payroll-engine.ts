@@ -2976,12 +2976,20 @@ export async function calculatePayrollWithRules(
   if (mods.overtime) {
     result = applyOvertimeModifier(mods.overtime, result, workData)
   }
-  if (mods.allowances && mods.allowances.length > 0) {
-    result = applyAllowancesModifier(mods.allowances, result)
+  // ★ allowances 可能被寫成 {} —— config 由人手／舊版 UI 寫入，
+  //   `mods.allowances || []` 對 {} 無效（{} 係 truthy），
+  //   之後 .reduce() 就會爆（2026-08-03 Kathy 撞到）。
+  const allowances = Array.isArray(mods.allowances) ? mods.allowances : []
+  if (mods.allowances && !Array.isArray(mods.allowances)) {
+    console.warn(
+      `[payroll] employeeId=${employeeId} allowances 唔係陣列（${typeof mods.allowances}），已忽略`,
+    )
+  }
+  if (allowances.length > 0) {
+    result = applyAllowancesModifier(allowances, result)
   }
 
   // 4. Task 5: Apply MPF deduction
-  const allowances = mods.allowances || []
   const totalAllowances = allowances.reduce((sum, a) => sum + a.amount, 0)
   const storeBonus = options?.storeBonus ?? 0
   const manualSplitPay = options?.splitPay

@@ -557,11 +557,12 @@ export default function AttendancePage() {
 
   if (!user) return <div style={{ padding: 20 }}>Loading...</div>
 
-  // ROLE-OK(TEMP): API 已改用 attendance_manage（punch-corrections:67/124/257），
-  //   但 UI 未跟 —— 有權限嘅員工見唔到補登入口。
-  //   TODO(2026-08): 決定 attendance_manage 解鎖邊啲入口（補登/作廢/修正）後改用 hasPermission。
-  const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER' /* ROLE-OK(TEMP): 見上面 TODO */
-  const hasAttendanceManage = hasPermission(user.role, 'attendance_manage', user.grant, user.deny)
+  // ★ 2026-08-03：拆開兩個 gate ——
+  //   補登打卡：attendance_manage（補回事實，風險低）
+  //   作廢／修正：維持 role（影響防篡改證據鏈，見 :1283）
+  const canAddCorrection = hasPermission(user.role, 'attendance_manage', user.grant, user.deny)
+  const hasAttendanceManage = canAddCorrection // alias for existing callers
+  const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER' /* ROLE-OK: 作廢/修正工具區塊影響防篡改證據鏈 */
   // ★ 補鐘 = 時間帳戶操作，唔係考勤管理 —— 同 api/timebank/makeup 用同一個權限。
   const canMakeup = hasPermission(user.role, 'timebank_ops', user.grant, user.deny)
   const totalPages = Math.ceil(total / pageSize)
@@ -584,7 +585,7 @@ export default function AttendancePage() {
         ))}
       </div>
       {/* 補登打卡 button: separate row, right-aligned */}
-      {isManagerOrAbove && (
+      {canAddCorrection && (
         <div className="flex justify-end mb-3">
           <button
             onClick={() => {

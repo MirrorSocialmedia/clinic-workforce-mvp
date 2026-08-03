@@ -297,7 +297,22 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— 員工總覽：有 employee_overview 權限可以查看員工總覽（限主屬診所） ——
   'GET /api/employees/:id/overview': ['employee_overview'],
   'GET /api/employees/:id/overview/history': ['employee_overview'],
-  'GET /api/employees': ['employee_overview'],
+  'GET /api/employees': ['employee_overview', 'payroll_view', 'payroll_generate'],
+
+  // ★ 2026-08-03：計糧相關 —— 側欄已開放畀有權限嘅 EMPLOYEE，
+  //   API 層要跟，否則入口開咗但 403（第六次撞呢個模式）
+  'GET /api/payroll-runs': ['payroll_view', 'payroll_generate'],
+  'GET /api/payroll-runs/:id': ['payroll_view', 'payroll_generate'],
+  'GET /api/payroll-runs/:id/employee/:id': ['payroll_view', 'payroll_generate'],
+  'POST /api/payroll-runs/:id/export': ['payroll_view', 'payroll_generate'],
+  'GET /api/payroll-runs/exceptions': ['payroll_view', 'payroll_generate'],
+  'POST /api/payroll-runs/preview': ['payroll_view', 'payroll_generate'],
+  // ★ 生成／預檢限 payroll_generate（淨係 payroll_view 唔夠）
+  'POST /api/payroll-runs': ['payroll_generate'],
+  'GET /api/payroll-runs/:id/preflight': ['payroll_generate'],
+
+  // ★ 考勤補登
+  'POST /api/punch-corrections': ['attendance_manage'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]
