@@ -26,6 +26,11 @@ interface LeaveBalanceItem {
   entitled: number
   used: number
   remaining: number
+  breakdown?: {
+    annual: number
+    birthday: number
+    total: number
+  }
 }
 
 interface LeaveTypeItem {
@@ -55,26 +60,48 @@ export default function MyLeavePage() {
   const [leaveTypes, setLeaveTypes] = useState<LeaveTypeItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [showForm, setShowForm] = useState(false)
+  const [balanceError, setBalanceError] = useState(false)
   const [filter, setFilter] = useState<LeaveStatus | ''>('')
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
   const [userRole, setUserRole] = useState<string>('')
 
   const fetchData = useCallback(async () => {
     setError('')
+    setBalanceError(false)
     try {
-      const [leaveRes, meRes] = await Promise.all([
-        fetch('/api/my/leave', { credentials: 'include' }),
-        fetch('/api/me', { credentials: 'include' }).then(r => r).catch(() => ({ ok: false } as Response)),
+      const [leaveRes, balanceRes, typesRes, meRes] = await Promise.all([
+        fetch('/api/my/leave', { credentials: 'include', cache: 'no-store' })
+          .catch(() => ({ ok: false } as Response)),
+        // ★ 2026-08-03：餘額另外攞——/api/my/leave 的 balance 無 breakdown（生日假拆解）
+        fetch('/api/leave-balance', { credentials: 'include', cache: 'no-store' })
+          .catch(() => ({ ok: false } as Response)),
+        fetch('/api/leave-types', { credentials: 'include', cache: 'no-store' })
+          .catch(() => ({ ok: false } as Response)),
+        fetch('/api/me', { credentials: 'include' })
+          .catch(() => ({ ok: false } as Response)),
       ])
+
       if (!leaveRes.ok) {
         const body = await leaveRes.json().catch(() => ({}))
         throw new Error(body.error || `伺服器錯誤 (${leaveRes.status})`)
       }
       const data = await leaveRes.json()
       setRequests(data.leaveRequests || [])
-      setBalances(data.leaveBalances || [])
-      setLeaveTypes(data.leaveTypes || [])
+
+      // ★ 餘額攞唔到要留痕——唔好靜靜當「冇假期」
+      if (balanceRes.ok) {
+        const bData = await balanceRes.json()
+        setBalances(bData.leaveBalances || [])
+      } else {
+        console.warn(`[my/leave] /api/leave-balance ${balanceRes.status}`)
+        setBalanceError(true)
+      }
+
+      if (typesRes.ok) {
+        const tData = await typesRes.json()
+        setLeaveTypes(tData.leaveTypes || tData || [])
+      }
+
       if (meRes.ok) {
         const meData = await meRes.json()
         setUserRole(meData.user?.role || '')
@@ -108,7 +135,6 @@ export default function MyLeavePage() {
 
       if (res.ok) {
         setForm({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
-        setShowForm(false)
         fetchData()
       } else {
         const err = await res.json()
@@ -130,20 +156,21 @@ export default function MyLeavePage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold text-gray-900 dark:text-white">🏖️ 我的假期</h1>
-        {!isEmployee && (
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowForm(!showForm)}
-          >
-            {showForm ? '取消' : '+ 申請'}
-          </button>
-        )}
       </div>
 
-      {/* Leave Balance */}
-      {balances.length > 0 && (
-        <div className="card mb-3">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">假期餘額</h2>
+      {/* ① Leave Balance — 放最上，員工最常睇 */}
+      <div className="card mb-3">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">假期餘額</h2>
+
+        {balanceError ? (
+          <div className="text-sm text-red-500 py-3">
+            載入失敗，請重新整理
+          </div>
+        ) : balances.length === 0 ? (
+          <div className="text-sm text-gray-400 py-3">
+            暫無假期額度 — 試用期滿三個月後開始累積年假
+          </div>
+        ) : (
           <div className="space-y-2">
             {balances.map(b => (
               <div
@@ -157,6 +184,18 @@ export default function MyLeavePage() {
                 <div>
                   <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{b.leaveType.name}</div>
                   <div className="text-xs text-gray-400 mt-0.5">已用 {b.used.toFixed(1)} 天</div>
+                  {/* ★ 年假加生日假拆解 */}
+                  {b.leaveType?.systemKey === 'ANNUAL_LEAVE' && b.breakdown && (
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      （法定年假 {b.breakdown.annual.toFixed(1)} + 生日假 {b.breakdown.birthday}）
+                    </div>
+                  )}
+                  {/* ★ 休息日加說明 */}
+                  {b.leaveType?.systemKey === 'REST_DAY' && (
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      每月按該月星期六日 + 公眾假期數目發放
+                    </div>
+                  )}
                 </div>
                 <div className="text-right">
                   {b.leaveType?.systemKey === 'SICK' ? (
@@ -178,14 +217,18 @@ export default function MyLeavePage() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Apply Form */}
-      {showForm && !isEmployee && (
-        <div className="card mb-3">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">申請假期</h2>
-          <form onSubmit={handleApply}>
+      {/* ② Apply Form — 非員工才可展開 */}
+      {!isEmployee && (
+        <details className="card mb-3">
+          <summary className="text-sm font-medium cursor-pointer py-1">
+            申請假期
+            <span className="text-xs text-gray-400 ml-2">（一般由主管代為安排）</span>
+          </summary>
+          <div className="mt-3">
+            <form onSubmit={handleApply}>
             <div className="space-y-3">
               <div className="form-group">
                 <label>假期類型</label>
@@ -266,14 +309,15 @@ export default function MyLeavePage() {
                 type="button"
                 className="btn"
                 style={{ background: '#eee', color: '#333' }}
-                onClick={() => setShowForm(false)}
+                onClick={() => setForm({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })}
               >
                 取消
               </button>
               <button type="submit" className="btn btn-primary">提交申請</button>
             </div>
           </form>
-        </div>
+          </div>
+        </details>
       )}
 
       {/* Filters */}
