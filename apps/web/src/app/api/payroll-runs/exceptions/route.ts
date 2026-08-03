@@ -40,7 +40,9 @@ export async function GET(req: NextRequest) {
 
   // ★ 診所範圍檢查 —— 用 resolveClinicScope 取代硬編碼 scope 判斷，
   //   令靠管理權限放行嘅 EMPLOYEE（scope='self'）都可以見到自己店嘅異常報告。（2026-08-03）
-  // forPerms: 考勤異常 → companyWide（attendance_manage/scheduling 跨店），homeOnly（payroll_view/generate 限主屬店）
+  // ★ exceptions 同時畀考勤頁同計糧異常報表用，統一全公司範圍（2026-08-03）——
+  // 異常報告只含遲到/缺勤/OT 分鐘，唔含薪金，所以範圍寬啲可以接受。
+  // ⚠️ 如果將來加咗金額欄位，就要分開兩個用途。
   const sessionClinics = session.clinics ?? []
   let scopedClinicId: string | undefined = clinicId || undefined
   let scopedClinicIds: string[] | undefined

@@ -30,6 +30,15 @@ export async function resolveClinicScope(
     /** 呢啲權限 → 主屬店 */ homeOnly?: string[]
   },
 ): Promise<string[] | null> {
+  // ★ 同時填兩組 = 設計問題 —— 同一個人可能兩組權限都有，
+  // companyWide 會靜靜蓋過 homeOnly（2026-08-03 撞到）。
+  if ((forPerms.companyWide?.length ?? 0) > 0 && (forPerms.homeOnly?.length ?? 0) > 0) {
+    console.warn(
+      '[resolveClinicScope] ⚠️ companyWide + homeOnly both set on same call — ' +
+      'companyWide takes priority. Use separate calls or query params to split.',
+    )
+  }
+
   // ROLE-OK: OWNER 全公司，刻意用 role
   if (session.role === 'OWNER') return null
 
