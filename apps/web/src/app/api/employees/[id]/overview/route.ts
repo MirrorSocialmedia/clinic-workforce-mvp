@@ -43,7 +43,7 @@ export async function GET(
   if (!emp) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
 
   // ★ 保密員工隔離 — 同計糧一致，刻意用 role 唔用權限
-  if (emp.payConfidential && session.role !== 'OWNER') {
+  if (emp.payConfidential && session.role !== 'OWNER') { // ROLE-OK: 保密員工薪金隔離，同 payroll-runs/[id]:43 一致，刻意用 role 唔用權限
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

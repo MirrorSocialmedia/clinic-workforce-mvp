@@ -95,9 +95,10 @@ export default function EmployeeOverviewPage() {
     return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  const isOwner = userRole === 'OWNER'
-  const isManagerOrAccountant = userRole === 'MANAGER' || userRole === 'ACCOUNTANT'
-  const canView = isOwner || isManagerOrAccountant
+  // ROLE-OK: 員工總覽限管理層查看，同 RBAC matrix
+  //   'GET /api/employees/:id/overview': ['OWNER','MANAGER','ACCOUNTANT'] 一致。
+  //   前端 gate 只為咗顯示友善訊息，實際攔截喺 API。
+  const canView = ['OWNER', 'MANAGER', 'ACCOUNTANT'].includes(userRole) /* ROLE-OK: 同上 */
 
   if (error) {
     return (
