@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope, getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { generatePayrollRun } from '@/lib/payroll-engine'
 import { getMonthRange } from '@/lib/hk-date'
 
@@ -104,6 +105,29 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: '請指定店鋪（每店營業獎金不同，不支援全店合併生成）' }, { status: 400 })
       }
 
+      // ★ 診所範圍限制（2026-08-03）
+      const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+      if (allowedClinics !== null) {
+        if (allowedClinics.length === 0) {
+          return NextResponse.json(
+            { error: '你冇主屬診所，無法生成計糧 —— 請聯絡帳戶擁有人設定' },
+            { status: 403 },
+          )
+        }
+        if (!clinicId) {
+          return NextResponse.json(
+            { error: '請指定診所（你只可以為主屬診所生成計糧）' },
+            { status: 400 },
+          )
+        }
+        if (!allowedClinics.includes(clinicId)) {
+          return NextResponse.json(
+            { error: '你只可以為主屬診所生成計糧' },
+            { status: 403 },
+          )
+        }
+      }
+
       // Validate storeBonuses if provided
       if (storeBonuses) {
         for (const [k, v] of Object.entries(storeBonuses)) {
@@ -131,11 +155,15 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // ★ 非 OWNER 唔可以觸發保密員工嘅計糧計算 —— 唔止「顯示時隱藏」，
-      //   而係由頭到尾唔應該為佢哋建立 PayrollItem
+      // ★ excludeConfidential: 同主屬診所嘅人唔需要排除保密員工（2026-08-03）
+      const home = session.role === 'OWNER' ? null : await getOwnHomeClinicId(session.userId) // ROLE-OK: OWNER 全公司
+      const excludeConfidential =
+        session.role !== 'OWNER' &&                                   // ROLE-OK
+        !(!!home && clinicId === home)
+
       const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, {
         storeBonuses, splitPays, attendanceBonusOverrides: attendanceBonusOverrides as Record<string, 'FORCE_ON' | 'FORCE_OFF'> | undefined,
-        excludeConfidential: session.role !== 'OWNER', // ROLE-OK
+        excludeConfidential,
       })
 
       // FIX #2: If result has error field (e.g., CONFIRMED blocked), return 409
@@ -144,8 +172,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ★ 計算被略過的保密員工數量
-      // ROLE-OK: 保密員工計數，同 excludeConfidential 一致，刻意用 role
-      const skipped = session.role !== 'OWNER' // ROLE-OK: 保密員工計數，同 excludeConfidential 一致
+      const skipped = excludeConfidential
         ? await prisma.employee.count({ where: { payConfidential: true, status: 'ACTIVE' } })
         : 0
 

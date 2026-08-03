@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { calculateADW, getEffectiveADW } from '@/lib/adw'
 import { getTimeAccountSummary } from '@/lib/timebank-summary'
 import { deductionDailyRate } from '@/lib/payroll-engine'
@@ -42,8 +43,14 @@ export async function GET(
 
   if (!emp) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
 
-  // ★ 保密員工隔離 — 同計糧一致，刻意用 role 唔用權限
-  if (emp.payConfidential && session.role !== 'OWNER') { // ROLE-OK: 保密員工薪金隔離，同 payroll-runs/[id]:43 一致，刻意用 role 唔用權限
+  // ★ Scope check: EMPLOYEE with employee_overview can only see same home-clinic employees
+  const allowed = await resolveClinicScope(session, auth.perms ?? [])
+  if (allowed !== null && emp.homeClinicId && !allowed.includes(emp.homeClinicId)) {
+    return NextResponse.json({ error: '只可以查看主屬診所嘅員工' }, { status: 403 })
+  }
+
+  // ★ Confidential check via unified helper (2026-08-03)
+  if (!(await canSeeConfidential(session, auth.perms ?? [], emp))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

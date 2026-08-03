@@ -14,7 +14,9 @@ import {
   AlertTriangle,
   Wallet,
   ShieldCheck,
+  UserCircle,
 } from 'lucide-react'
+import { hasPermission } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -22,7 +24,8 @@ interface MenuItem {
   label: string
   href: string
   icon: any
-  roles: Role[]
+  roles?: Role[]
+  perm?: string
   description?: string
   warning?: boolean
 }
@@ -31,12 +34,16 @@ export default function MobileMorePage() {
   const router = useRouter()
   const [userRole, setUserRole] = useState<Role | null>(null)
   const [loading, setLoading] = useState(true)
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
 
   useEffect(() => {
     fetch('/api/me', { credentials: 'include' })
       .then(async (res) => {
         const data = await res.json()
         setUserRole(data.user.role as Role)
+        setGrant(data.user?.grant ?? [])
+        setDeny(data.user?.deny ?? [])
       })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -48,6 +55,13 @@ export default function MobileMorePage() {
       href: '/payroll',
       icon: Wallet,
       roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    },
+    {
+      label: '員工總覽',
+      href: '/employees',
+      icon: UserCircle,
+      roles: ['OWNER', 'MANAGER'],
+      perm: 'employee_overview',
     },
     {
       label: '排班管理',
@@ -89,9 +103,14 @@ export default function MobileMorePage() {
     },
   ]
 
-  const visibleItems = menuItems.filter((item) =>
-    userRole ? item.roles.includes(userRole) : false
-  )
+  const visibleItems = menuItems.filter((item) => {
+    if (!userRole) return false
+    // role-based check
+    if (item.roles?.includes(userRole)) return true
+    // perm-based check
+    if (item.perm && hasPermission(userRole, item.perm as any, grant, deny)) return true
+    return false
+  })
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })

@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { canSeeConfidential } from '@/lib/scope-helpers'
 import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
@@ -30,6 +31,7 @@ export async function GET(
       employee: {
         select: {
           payConfidential: true,
+          homeClinicId: true,
           user: { select: { id: true, name: true, phone: true, fullName: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
           payRules: { where: { isActive: true }, orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }], take: 1 },
@@ -44,9 +46,9 @@ export async function GET(
   const denied = assertClinicAccess(scope, session, item.run?.clinicId)
   if (denied) return denied
 
-  // Server-side confidentiality check
-  const isOwner = session.role === 'OWNER' // ROLE-OK：保密員工隔離刻意用 role
-  if (!isOwner && item.employee.payConfidential) {
+  // ★ Confidential check via unified helper (2026-08-03)
+  const emp = { payConfidential: item.employee.payConfidential, homeClinicId: item.employee.homeClinicId }
+  if (!(await canSeeConfidential(session, auth.perms ?? [], emp))) {
     return NextResponse.json({ error: '此員工薪資已設保密' }, { status: 403 })
   }
 

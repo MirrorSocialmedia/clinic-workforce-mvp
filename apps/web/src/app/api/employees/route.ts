@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
 
 // ============================================================
@@ -63,6 +64,15 @@ export async function GET(req: NextRequest) {
   const excludeConfidential = searchParams.get('excludeConfidential') === '1'
   if (excludeConfidential && session.role !== 'OWNER') { // ROLE-OK: 保密員工隔離，刻意用 role 唔用權限
     where.payConfidential = false
+  }
+
+  // ★ employee_overview 只睇主屬診所（2026-08-03）
+  const scopeToHome = searchParams.get('scopeToHome') === '1'
+  if (scopeToHome) {
+    const allowed = await resolveClinicScope(session, perms ?? [])
+    if (allowed !== null && allowed.length > 0) {
+      where.homeClinicId = { in: allowed }
+    }
   }
 
   // ★ MANAGER 睇到全公司員工係刻意嘅（2026-08-03 決定）——

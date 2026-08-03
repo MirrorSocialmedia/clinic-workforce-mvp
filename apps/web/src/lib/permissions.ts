@@ -8,6 +8,9 @@ export const PERMISSIONS = {
   pay_view_confidential: '查看保密薪資',
   leave_approve: '假期審批',
   timebank_ops: '時間帳戶操作（換假/還鐘）',
+  // ★ 2026-08-03：員工總覽（薪酬 + 假期 + 考勤 + 時間帳戶）
+  //   EMPLOYEE 攞到呢個權限只睇到【主屬診所】員工
+  employee_overview: '員工總覽',
   accounts_manage: '帳號管理',
   clinic_manage: '診所/公司管理',
   audit_view: '審計日誌',
@@ -16,11 +19,11 @@ export const PERMISSIONS = {
 export type PermKey = keyof typeof PERMISSIONS
 
 /** Management permissions used to distinguish mgmt-enabled EMPLOYEE from regular EMPLOYEE */
-export const MGMT_PERMS = ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops'] as const
+export const MGMT_PERMS = ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops', 'employee_overview'] as const
 
 export const ROLE_DEFAULTS: Record<string, PermKey[]> = {
   OWNER: Object.keys(PERMISSIONS) as PermKey[],
-  MANAGER: ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops'],
+  MANAGER: ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops', 'employee_overview'],
   ACCOUNTANT: ['payroll_view'],
   EMPLOYEE: [],
 }

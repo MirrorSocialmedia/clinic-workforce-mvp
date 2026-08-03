@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
 
@@ -24,6 +25,7 @@ export async function GET(
           employee: {
             select: {
               payConfidential: true,
+              homeClinicId: true,
               user: { select: { id: true, name: true, phone: true } },
               clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
               payRules: { where: { isActive: true }, take: 1 },
@@ -37,13 +39,13 @@ export async function GET(
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // ★ Non-OWNER: filter out confidential employee rows entirely (not just mask amounts)
-  // ★ 保密员工系"整行隐藏"唔系"遮罩金额"（2026-07 决定）——
-  // 隐藏之后总额要由可见行重算（见下面 summary），否则相减可反推。
-  const isOwner = session.role === 'OWNER' // ROLE-OK：保密員工隔離刻意用 role
+  // ★ Confidential filter: OWNER sees all; others only same home clinic (2026-08-03)
+  const homeClinicId = session.role === 'OWNER' ? null : await getOwnHomeClinicId(session.userId) // ROLE-OK: OWNER 全公司
   let items = run.items
-  if (!isOwner) {
-    items = items.filter((item: any) => !item.employee?.payConfidential)
+  if (homeClinicId !== null) {
+    items = items.filter((item: any) =>
+      !item.employee?.payConfidential || item.employee?.homeClinicId === homeClinicId
+    )
   }
 
   // ★ Extract sickDeduction from detailJson for each item

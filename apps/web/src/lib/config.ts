@@ -293,6 +293,11 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— 假期額度管理：有 leave_approve 權限可以更新/初始化假期餘額 ——
   'PATCH /api/leave-balance': ['leave_approve'],
   'POST /api/leave-balance/init': ['leave_approve'],
+
+  // —— 員工總覽：有 employee_overview 權限可以查看員工總覽（限主屬診所） ——
+  'GET /api/employees/:id/overview': ['employee_overview'],
+  'GET /api/employees/:id/overview/history': ['employee_overview'],
+  'GET /api/employees': ['employee_overview'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

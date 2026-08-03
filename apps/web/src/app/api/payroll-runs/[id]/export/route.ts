@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { toHKDateStr } from '@/lib/hk-date'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
@@ -50,6 +51,7 @@ export async function POST(
           employee: {
             select: {
               payConfidential: true,
+              homeClinicId: true,
               user: { select: { name: true, phone: true, fullName: true } },
               clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
               payRules: { where: { isActive: true }, take: 1 },
@@ -63,10 +65,13 @@ export async function POST(
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // ★ Non-OWNER: filter out confidential employee rows entirely (not just mask)
+  // ★ Confidential filter: OWNER sees all; others only same home clinic (2026-08-03)
+  const homeClinicId = session.role === 'OWNER' ? null : await getOwnHomeClinicId(session.userId) // ROLE-OK: OWNER 全公司
   let items = run.items
-  if (!isOwner) {
-    items = items.filter((item: any) => !item.employee?.payConfidential)
+  if (homeClinicId !== null) {
+    items = items.filter((item: any) =>
+      !item.employee?.payConfidential || item.employee?.homeClinicId === homeClinicId
+    )
   }
 
   const runData = { ...run, items }

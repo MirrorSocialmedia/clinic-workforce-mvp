@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { canSeeConfidential } from '@/lib/scope-helpers'
 import { prisma } from '@/lib/prisma'
 import { calculateADW, applyAdwPolicy } from '@/lib/adw'
 
@@ -24,6 +25,7 @@ export async function GET(req: NextRequest) {
     where: { id: employeeId },
     select: {
       payConfidential: true,
+      homeClinicId: true,
       payRules: {
         where: { isActive: true },
         orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
@@ -37,7 +39,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
   }
 
-  if (emp.payConfidential && auth.session.role !== 'OWNER') { // ROLE-OK
+  // ★ Confidential check via unified helper (2026-08-03)
+  if (!(await canSeeConfidential(auth.session, auth.perms ?? [], emp))) {
     return NextResponse.json({ error: '無權查看此員工的薪酬資料' }, { status: 403 })
   }
 

@@ -161,7 +161,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles },
     // ★ 員工總覽 —— OWNER + MANAGER（ACCOUNTANT 唔包，佢只需要計糧）
     //   保密員工由 API 層隔離（employees/:id/overview:46），MANAGER 睇唔到
-    { path: '/employees', label: '員工總覽', icon: UserCircle, roles: ['OWNER', 'MANAGER'] },
+    //   perm: 'employee_overview' allows EMPLOYEE with this perm to also see it
+    { path: '/employees', label: '員工總覽', icon: UserCircle, roles: ['OWNER', 'MANAGER'], perm: 'employee_overview' },
     { path: '/accounts', label: '帳號管理', icon: Users, roles: ['OWNER'] },
     { path: '/clinics', label: '診所管理', icon: Building2, roles: ['OWNER'] },
     { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER'] },
