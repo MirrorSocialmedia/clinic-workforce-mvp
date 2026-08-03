@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
 import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
-import { requirePerm, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
@@ -31,19 +32,24 @@ export async function PUT(
     if (!existing) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
     // ★ MANAGER 只可以動自己店嘅更
-    const denied = assertClinicAccess(scope, session, existing.clinicId)
-    if (denied) return denied
+    // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
+    const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+    if (allowedClinics !== null && !allowedClinics.includes(existing.clinicId)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     // ★ 調鋪：改店時目標店都要喺權限內
     if (body.clinicId !== undefined) {
-      const deniedTarget = assertClinicAccess(scope, session, body.clinicId)
-      if (deniedTarget) return deniedTarget
+      if (allowedClinics !== null && !allowedClinics.includes(body.clinicId)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
     }
 
     // ★ secondaryClinicId 也要檢查權限
     if (body.secondaryClinicId) {
-      const deniedSecondary = assertClinicAccess(scope, session, body.secondaryClinicId)
-      if (deniedSecondary) return deniedSecondary
+      if (allowedClinics !== null && !allowedClinics.includes(body.secondaryClinicId)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
       // ★ 調鋪店不可與主店相同
       if (body.secondaryClinicId === existing.clinicId) {
         return NextResponse.json({ error: '調鋪店不可與主店相同' }, { status: 400 })
@@ -175,8 +181,11 @@ export async function DELETE(
     if (!existing) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
     // ★ MANAGER 只可以動自己店嘅更
-    const denied = assertClinicAccess(scope, session, existing.clinicId)
-    if (denied) return denied
+    // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
+    const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+    if (allowedClinics !== null && !allowedClinics.includes(existing.clinicId)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const beforeJson = JSON.stringify(existing)
     await prisma.shift.delete({ where: { id } })

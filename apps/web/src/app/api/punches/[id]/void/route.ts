@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { prisma } from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
@@ -24,8 +25,11 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   }
 
   // ★ IDOR: MANAGER 只可以作廢自己店嘅打卡
-  const denied = assertClinicAccess(scope, session, punch.clinicId)
-  if (denied) return denied
+  // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+  if (allowedClinics !== null && !allowedClinics.includes(punch.clinicId)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   // Check not already voided
   const existingVoid = await prisma.punchVoid.findUnique({

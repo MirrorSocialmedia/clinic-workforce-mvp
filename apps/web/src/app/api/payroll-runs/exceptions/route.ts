@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { toHKDateStr, fmtTime, getMonthRange } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
@@ -37,17 +38,32 @@ export async function GET(req: NextRequest) {
 
   const monthDate = monthStart
 
-  // ★ MANAGER 只睇自己店
+  // ★ 診所範圍檢查 —— 用 resolveClinicScope 取代硬編碼 scope 判斷，
+  //   令靠管理權限放行嘅 EMPLOYEE（scope='self'）都可以見到自己店嘅異常報告。（2026-08-03）
   const sessionClinics = session.clinics ?? []
   let scopedClinicId: string | undefined = clinicId || undefined
   let scopedClinicIds: string[] | undefined
-  // ★ fail-closed：未綁任何店嘅 MANAGER（或者舊 JWT 被 normalize 成 clinics: []）
-  //   唔應該見到全公司資料
-  if (scope === 'my-clinics' && sessionClinics.length === 0) {
-    return NextResponse.json({ exceptions: [], summary: {} })
-  }
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
 
-  if (scope === 'my-clinics') {
+  if (allowedClinics !== null) {
+    // OWNER/MANAGER 以外嘅範圍限制
+    if (allowedClinics.length === 0) {
+      return NextResponse.json({ exceptions: [], summary: {} })
+    }
+    if (clinicId) {
+      if (!allowedClinics.includes(clinicId)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+      scopedClinicId = clinicId
+    } else {
+      scopedClinicIds = allowedClinics
+      scopedClinicId = undefined
+    }
+  } else if (scope === 'my-clinics') {
+    // ★ fallback: scope='my-clinics' 但 allowedClinics=null（唔應該發生，保留舊邏輯）
+    if (sessionClinics.length === 0) {
+      return NextResponse.json({ exceptions: [], summary: {} })
+    }
     if (clinicId) {
       if (!sessionClinics.includes(clinicId)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -58,6 +74,7 @@ export async function GET(req: NextRequest) {
       scopedClinicId = undefined
     }
   }
+  // ★ scope='all' 且 allowedClinics=null → 唔限制（OWNER）
 
   // ★ P2-16: 同引擎口徑一致：只認 configJson.base_type，唔睇 payType 欄；
   // 而且要按計糧月份揀規則（同 generatePayrollRun:857 一樣）

@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { getMonthRange } from '@/lib/hk-date'
@@ -27,8 +28,11 @@ export async function GET(
   if (!record) return NextResponse.json({ error: 'Record not found' }, { status: 404 })
 
   // ★ IDOR: MANAGER 只可以睇自己店嘅打卡
-  const denied = assertClinicAccess(scope, session, record.clinicId)
-  if (denied) return denied
+  // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+  if (allowedClinics !== null && !allowedClinics.includes(record.clinicId)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const chain: any[] = [{
     type: 'original', id: record.id,
@@ -93,8 +97,11 @@ export async function PUT(
   if (!oldRecord) return NextResponse.json({ error: '記錄不存在' }, { status: 404 })
 
   // ★ IDOR: MANAGER 只可以改自己店嘅打卡
-  const denied = assertClinicAccess(scope, session, oldRecord.clinicId)
-  if (denied) return denied
+  // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+  if (allowedClinics !== null && !allowedClinics.includes(oldRecord.clinicId)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   // 檢查是否已被 void
   const existingVoid = await prisma.punchVoid.findUnique({ where: { punchRecordId: params.id } })

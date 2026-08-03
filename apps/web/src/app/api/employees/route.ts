@@ -95,7 +95,14 @@ export async function GET(req: NextRequest) {
   // ★ MANAGER 睇到全公司員工係刻意嘅（2026-08-03 決定）——
   //   排班需要跨店調人（調鋪／借調），限制成自己診所會令排班做唔到。
   //   員工總覽頁有診所篩選，唔方便嘅問題由 UI 解決而唔係限制資料。
-  const canSeeAllEmployees = scope === 'all' || (perms ?? []).includes('scheduling')
+  // ★ 2026-08-03：靠管理權限放行嘅 EMPLOYEE 都要見到員工清單。
+  //   考勤範圍係全公司（調鋪員工會跨店出現，限制範圍會漏人）。
+  const MGMT_DATA_PERMS = [
+    'scheduling', 'attendance_manage',
+    'payroll_view', 'payroll_generate', 'employee_overview',
+  ]
+  const canSeeAllEmployees =
+    scope === 'all' || MGMT_DATA_PERMS.some(p => (perms ?? []).includes(p))
 
   if (!canSeeAllEmployees) {
     where.user = {

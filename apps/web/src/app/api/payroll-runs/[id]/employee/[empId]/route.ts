@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
-import { canSeeConfidential } from '@/lib/scope-helpers'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
@@ -42,11 +42,22 @@ export async function GET(
 
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // ★ IDOR: MANAGER 只可以睇自己店嘅計糧單
-  const denied = assertClinicAccess(scope, session, item.run?.clinicId)
-  if (denied) return denied
+  // ★ 診所範圍檢查 —— 唔可以用 assertClinicAccess（佢對 scope='self' 一律 403，
+  //   令靠 payroll_* 權限放行嘅 EMPLOYEE 入唔到）。
+  //   改用 resolveClinicScope：OWNER/MANAGER → null（全公司）、
+  //   有權限嘅 EMPLOYEE → [主屬店]。（2026-08-03）
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+  if (allowedClinics !== null) {
+    const runClinic = item.run?.clinicId
+    const ok = runClinic
+      ? allowedClinics.includes(runClinic)
+      : allowedClinics.includes(item.employee.homeClinicId ?? '')
+    if (!ok) {
+      return NextResponse.json({ error: '你冇權限查看呢間診所嘅計糧單' }, { status: 403 })
+    }
+  }
 
-  // ★ Confidential check via unified helper (2026-08-03)
+  // ★ 保密判斷（訊息要同診所範圍分開）
   const emp = { payConfidential: item.employee.payConfidential, homeClinicId: item.employee.homeClinicId }
   if (!(await canSeeConfidential(session, auth.perms ?? [], emp))) {
     return NextResponse.json({ error: '此員工薪資已設保密' }, { status: 403 })

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
 import { User, Printer, Eye } from 'lucide-react'
 import { fmtDate } from '@/lib/hk-date'
+import { hasPermission } from '@/lib/permissions'
 
 const api = (url: string, init?: RequestInit) =>
   fetch(url, { credentials: 'include', cache: 'no-store', ...init })
@@ -34,6 +35,8 @@ export default function EmployeeOverviewPage() {
   const [resignLoading, setResignLoading] = useState(false)
 
   const [userRole, setUserRole] = useState<string>('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -84,9 +87,11 @@ export default function EmployeeOverviewPage() {
     fetchBasic()
     fetchHistory()
     api('/api/me').then(async r => {
-      if (!r.ok) return { user: { role: '' } }
+      if (!r.ok) return { user: { role: '', grant: [], deny: [] } }
       const d = await r.json()
       setUserRole(d.user?.role || '')
+      setGrant(d.user?.grant || [])
+      setDeny(d.user?.deny || [])
     })
   }, [fetchBasic, fetchHistory])
 
@@ -95,10 +100,12 @@ export default function EmployeeOverviewPage() {
     return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  // ROLE-OK: 員工總覽限管理層查看，同 RBAC matrix
-  //   'GET /api/employees/:id/overview': ['OWNER','MANAGER','ACCOUNTANT'] 一致。
-  //   前端 gate 只為咗顯示友善訊息，實際攔截喺 API。
-  const canView = ['OWNER', 'MANAGER', 'ACCOUNTANT'].includes(userRole) /* ROLE-OK: 同上 */
+  // ★ 權限可以覆蓋 role 白名單（同 layout.tsx 的 nav filter 一致）——
+  //   舊版硬編碼白名單，令有 employee_overview 的 EMPLOYEE 被前端擋住（API 已經通）
+  //   ACCOUNTANT 刻意剔走（2026-08-03 決定側欄只有 OWNER + MANAGER）
+  const canView =
+    ['OWNER', 'MANAGER'].includes(userRole) /* ROLE-OK: 同上 */ ||
+    hasPermission(userRole as any, 'employee_overview', grant, deny)
 
   if (error) {
     return (
@@ -120,7 +127,7 @@ export default function EmployeeOverviewPage() {
       <div style={{ padding: 24 }}>
         <BackButton to="/accounts" label="返回帳號管理" />
         <div style={{ textAlign: 'center', padding: 60, color: '#dc3545', fontSize: 16 }}>
-          無權查看 — 只有 Owner、Manager、Accountant 可以查看員工總覽
+          無權查看 — 需要「員工總覽」權限
         </div>
       </div>
     )

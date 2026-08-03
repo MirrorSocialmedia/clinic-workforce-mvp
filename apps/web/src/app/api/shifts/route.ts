@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
-import { requireAuth, requirePerm, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
@@ -154,15 +155,17 @@ export async function POST(req: NextRequest) {
 
       // Validate clinic access + employee belongs to clinic (OWNER can bypass)
       if (scope !== 'all') {
-        // ★ 同 PUT 一致：經理只可以喺自己管嘅店排更
-        const denied = assertClinicAccess(scope, session, clinicId)
-        if (denied) return denied
-
-        // ★ secondaryClinicId 也要檢查權限
-        if (secondaryClinicId) {
-          const deniedSecondary = assertClinicAccess(scope, session, secondaryClinicId)
-          if (deniedSecondary) return deniedSecondary
-          // ★ 調鋪店不可與主店相同
+        // ★ 用 resolveClinicScope 取代 assertClinicAccess ——
+        //   assertClinicAccess 對 scope='self' 一律 403，令靠 scheduling 權限放行嘅
+        //   EMPLOYEE 入唔到（2026-08-03）。
+        const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+        if (allowedClinics !== null) {
+          if (!allowedClinics.includes(clinicId)) {
+            return NextResponse.json({ error: '你冇權喺呢間診所排更' }, { status: 403 })
+          }
+          if (secondaryClinicId && !allowedClinics.includes(secondaryClinicId)) {
+            return NextResponse.json({ error: '你冇權喺呢間診所排更' }, { status: 403 })
+          }
           if (secondaryClinicId === clinicId) {
             return NextResponse.json({ error: '調鋪店不可與主店相同' }, { status: 400 })
           }
