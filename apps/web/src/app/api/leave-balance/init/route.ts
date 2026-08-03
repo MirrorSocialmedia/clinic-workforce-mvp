@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 
 // ============================================================
 // POST /api/leave-balance/init — Batch initialize leave balances
@@ -25,6 +26,16 @@ export async function POST(req: NextRequest) {
 
     if (!leaveTypeId || !days || !year) {
       return NextResponse.json({ error: '缺少必要参数' }, { status: 400 })
+    }
+
+    // ★ 年假採累積制（year=0），由 totalAccruedLeave 自動計算。
+    // 喺呢度初始化會清零 used + 建立曆年 row，兩者都係錯。
+    const lt = await prisma.leaveType.findUnique({ where: { id: leaveTypeId } })
+    if (lt?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL) {
+      return NextResponse.json(
+        { error: '年假唔可以喺呢度初始化 —— 請用「重新計算假期」，如需校正已放天數請用「校正已用」' },
+        { status: 400 },
+      )
     }
 
     const targets = employeeId === 'all'

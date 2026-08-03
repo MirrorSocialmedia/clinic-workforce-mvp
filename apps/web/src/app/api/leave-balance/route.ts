@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
+import { annualLeaveBreakdown } from '@/lib/leave-calculation'
+import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 
 // ============================================================
 // GET /api/leave-balance — Get leave balance
@@ -47,6 +49,7 @@ export async function GET(req: NextRequest) {
     include: {
       leaveType: { select: { id: true, name: true, isPaid: true, annualQuota: true, color: true, systemKey: true } },
       employee: {
+        select: { joinDate: true },
         include: { user: { select: { id: true, name: true } } },
       },
     },
@@ -72,10 +75,18 @@ export async function GET(req: NextRequest) {
   )
 
   return jsonNoStore({
-    leaveBalances: balances.map(b => ({
-      ...b,
-      systemUsed: sysMap.get(`${b.employeeId}:${b.leaveTypeId}`) ?? 0,
-    })),
+    leaveBalances: balances.map(b => {
+      const lt = b.leaveType
+      const emp = b.employee as any
+      return {
+        ...b,
+        systemUsed: sysMap.get(`${b.employeeId}:${b.leaveTypeId}`) ?? 0,
+        // ★ 年假拆解（法定 + 生日假）—— 前端顯示用
+        ...(lt.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && emp.joinDate
+          ? { breakdown: annualLeaveBreakdown(new Date(emp.joinDate), new Date(), 'prorata') }
+          : {}),
+      }
+    }),
   })
 }
 

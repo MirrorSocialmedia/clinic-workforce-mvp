@@ -84,29 +84,25 @@ export function leaveForServiceYear(joinDate: Date, serviceYearIndex: number, as
 }
 
 /**
- * 累計年假。
- *
- * @param mode
- * 'earned' —— 只計【已完成】嘅服務年度（EO s.41A：完成一個年度先賺到）。
- * 日常餘額顯示、請假扣減都用呢個。
- * 'prorata' —— 加埋【進行中】嗰年嘅按比例部分（EO s.41D：離職結算）。
- *
- * ★ 兩個數唔同係正確嘅 —— 唔好統一。日常用 earned 防止員工預支未賺到嘅假。
+ * 年假累積明細 —— 拆開法定年假同生日假，畀 UI 顯示用。
+ * ★ 2026-08-03：合約寫明「7 天年假 + 1 天生日假」，
+ * 系統存埋一齊，UI 要拆返出嚟先對得上合約。
  */
-export function totalAccruedLeave(
+export function annualLeaveBreakdown(
   joinDate: Date,
   asOf: Date,
-  mode: 'earned' | 'prorata' = 'earned', // ★ 預設 earned（安全側）
-): number {
+  mode: 'earned' | 'prorata' = 'prorata',
+): { annual: number; birthday: number; total: number } {
   const months = serviceMonths(joinDate, asOf)
-  if (months < PROBATION_MONTHS) return 0
+  if (months < PROBATION_MONTHS) return { annual: 0, birthday: 0, total: 0 }
 
   const years = serviceYears(joinDate, asOf)
-  let total = 0
-  // ★ i < years = 只計完成咗嘅年度；i <= years = 加埋進行中嗰年
+  let annual = 0
+  let birthday = 0
+  // ★ i < years = 只計完成咗嘅年度（earned）；i <= years = 加埋進行中嗰年（prorata）
   const last = mode === 'prorata' ? years : years - 1
   for (let i = 0; i <= last; i++) {
-    total += leaveForServiceYear(joinDate, i, asOf)
+    annual += leaveForServiceYear(joinDate, i, asOf)
 
     // ★ 生日假唔按比例（2026-08-02 決定）——
     //   合約寫「每滿十二個月便可享有…1天」，「每滿」係條件，未滿就冇。
@@ -114,9 +110,37 @@ export function totalAccruedLeave(
     const yearFullyCompleted = new Date(
       Date.UTC(hkParts(joinDate).y + i + 1, hkParts(joinDate).m - 1, hkParts(joinDate).day)
     ) <= asOf
-    if (yearFullyCompleted) total += BIRTHDAY_LEAVE_DAYS
+    if (yearFullyCompleted) birthday += BIRTHDAY_LEAVE_DAYS
   }
-  return Math.round(total * 100) / 100
+
+  return {
+    annual: Math.round(annual * 100) / 100,
+    birthday,
+    total: Math.round((annual + birthday) * 100) / 100,
+  }
+}
+
+/**
+ * 累計年假。
+ *
+ * @param mode
+ * 'prorata' —— 按月比例累積（公司政策，2026-08-03 老闆決定）。
+ * 進行中嘅服務年度按已過月數比例計。
+ * ★ 日常餘額同離職結算【都用呢個】，兩者一致。
+ * 'earned' —— 只計已完成嘅服務年度（EO s.41A 法定最低）。
+ * 保留作參考，目前冇 caller。
+ *
+ * ★ 2026-08-03 更正：之前預設 'earned'（防止預支），
+ * 但老闆確認公司政策係按月比例給。
+ * 按月比例【優於法定】，而且令日常同離職口徑一致 ——
+ * 員工放晒 prorata 嘅假之後離職，結算啱好係 0，唔會出現預支。
+ */
+export function totalAccruedLeave(
+  joinDate: Date,
+  asOf: Date,
+  mode: 'earned' | 'prorata' = 'prorata', // ★ 預設改咗
+): number {
+  return annualLeaveBreakdown(joinDate, asOf, mode).total
 }
 
 /** 離職結算結果 */

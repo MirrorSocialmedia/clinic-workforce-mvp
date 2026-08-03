@@ -67,9 +67,8 @@ export async function POST(req: NextRequest) {
         continue
       }
 
-      // ★ 日常餘額用【已賺取】—— 進行中嗰年未賺到，唔可以畀員工放。
-      // 離職結算另外用 'prorata'（settleLeaveOnResign）。
-      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now, 'earned')
+      // ★ 2026-08-03：年假按月比例累積（公司政策），日常顯示同離職結算同一口徑
+      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now, 'prorata')
 
       const existing = await prisma.leaveBalance.findUnique({
         where: {

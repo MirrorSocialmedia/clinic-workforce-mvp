@@ -49,6 +49,7 @@ interface LeaveBalanceItem {
   used: number
   remaining: number
   systemUsed?: number
+  breakdown?: { annual: number; birthday: number; total: number }
   employee?: {
     user: { id: string; name: string }
   }
@@ -561,7 +562,13 @@ export default function LeavePage() {
                       </div>
                       {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && (
                         <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2, marginBottom: 4 }}>
-                          已賺取（已完成服務年度）· 本年度進行中，離職時可另按比例結算
+                          按月累積（公司政策）· 日常餘額同離職結算同一口徑
+                        </div>
+                      )}
+                      {/* ★ 拆開顯示 —— 合約寫「7天年假 + 1天生日假」，系統存埋一齊，UI 要拆返出嚟先對得上合約 */}
+                      {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && b.breakdown && (
+                        <div className="text-xs text-muted-foreground mt-1" style={{ fontSize: 11, color: '#6b7280' }}>
+                          （法定年假 {b.breakdown.annual.toFixed(1)} + 生日假 {b.breakdown.birthday}）
                         </div>
                       )}
                       {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.SICK ? (
@@ -616,7 +623,7 @@ export default function LeavePage() {
                           )}
                           {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && b.remaining === 0 && b.used > b.entitled && (
                             <div style={{ fontSize: 10, color: '#c2410c', marginTop: 4 }}>
-                              ⚠️ 已放 {b.used} 天，超出已賺取 {b.entitled} 天
+                              ⚠️ 已放 {b.used} 天，超出按月累積 {b.entitled} 天
                             </div>
                           )}
                         </>
@@ -910,7 +917,14 @@ export default function LeavePage() {
                   <select value={initForm.leaveTypeId} onChange={e => setInitForm({ ...initForm, leaveTypeId: e.target.value })}
                     className="px-3 py-2 rounded-md border text-sm">
                     <option value="">-- 選擇 --</option>
-                    {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    {leaveTypes.map(t => (
+                      <option key={t.id} value={t.id}
+                        // ★ 年假由入職日自動計算，唔可以喺呢度初始化
+                        disabled={t.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL}
+                      >
+                        {t.name}{t.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL ? '（請用「重新計算假期」）' : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -927,6 +941,9 @@ export default function LeavePage() {
                   onClick={handleInitLeave} disabled={!initForm.leaveTypeId}>
                   <span className="flex items-center gap-1"><Plus size={14} /> 初始化</span>
                 </button>
+              </div>
+              <div style={{ fontSize: 11, color: '#b45309', marginTop: 6 }}>
+                ⚠️ 會覆蓋「應得」並<strong>清零「已用」</strong>。年假請改用「重新計算假期」+「校正已用」。
               </div>
             </section>
           )}
