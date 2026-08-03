@@ -25,7 +25,10 @@ export async function GET(
   if (!emp) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
 
   // ★ Scope check: EMPLOYEE with employee_overview can only see same home-clinic employees
-  const allowed = await resolveClinicScope(session, auth.perms ?? [])
+  // forPerms: 員工總覽歷史 → homeOnly（只限主屬診所）
+  const allowed = await resolveClinicScope(session, auth.perms ?? [], {
+    homeOnly: ['employee_overview'],
+  })
   if (allowed !== null && emp.homeClinicId && !allowed.includes(emp.homeClinicId)) {
     return NextResponse.json({ error: '只可以查看主屬診所嘅員工' }, { status: 403 })
   }

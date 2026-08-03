@@ -16,13 +16,19 @@ export async function getOwnHomeClinicId(userId: string): Promise<string | null>
 }
 
 /**
- * 計糧／總覽嘅診所範圍。
+ * 診所範圍。
  *
- * @returns null = 唔限制（OWNER）；string[] = 只限呢啲診所
+ * @param forPerms 只考慮呢啲權限 —— 因為唔同用途對同一個員工要求唔同範圍：
+ * · 計糧生成 / 員工總覽 → 主屬店（涉及薪金）
+ * · 考勤 / 排班 → 全公司（調鋪要跨店）
  */
 export async function resolveClinicScope(
   session: { userId: string; role: string; clinics: string[] },
   perms: string[],
+  forPerms: {
+    /** 呢啲權限 → 全公司 */ companyWide?: string[]
+    /** 呢啲權限 → 主屬店 */ homeOnly?: string[]
+  },
 ): Promise<string[] | null> {
   // ROLE-OK: OWNER 全公司，刻意用 role
   if (session.role === 'OWNER') return null
@@ -30,8 +36,11 @@ export async function resolveClinicScope(
   // ROLE-OK: 2026-08-03 決定 MANAGER 見全公司（保密由 getConfidentialScope 擋）
   if (session.role === 'MANAGER') return null
 
-  // ★ EMPLOYEE 靠權限放行 → 只限主屬診所（2026-08-03 決定）
-  if (perms.includes('payroll_generate') || perms.includes('employee_overview')) {
+  // ★ companyWide：有其中一個權限 → 全公司（考勤、排班需要跨店）
+  if ((forPerms.companyWide ?? []).some(p => perms.includes(p))) return null
+
+  // ★ homeOnly：有其中一個權限 → 只限主屬店（計糧、總覽涉及薪金）
+  if ((forPerms.homeOnly ?? []).some(p => perms.includes(p))) {
     const home = await getOwnHomeClinicId(session.userId)
     return home ? [home] : [] // ★ 冇主屬店 = 乜都睇唔到（fail-closed）
   }

@@ -40,10 +40,14 @@ export async function GET(req: NextRequest) {
 
   // ★ 診所範圍檢查 —— 用 resolveClinicScope 取代硬編碼 scope 判斷，
   //   令靠管理權限放行嘅 EMPLOYEE（scope='self'）都可以見到自己店嘅異常報告。（2026-08-03）
+  // forPerms: 考勤異常 → companyWide（attendance_manage/scheduling 跨店），homeOnly（payroll_view/generate 限主屬店）
   const sessionClinics = session.clinics ?? []
   let scopedClinicId: string | undefined = clinicId || undefined
   let scopedClinicIds: string[] | undefined
-  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+    companyWide: ['attendance_manage', 'scheduling'],
+    homeOnly: ['payroll_view', 'payroll_generate'],
+  })
 
   if (allowedClinics !== null) {
     // OWNER/MANAGER 以外嘅範圍限制

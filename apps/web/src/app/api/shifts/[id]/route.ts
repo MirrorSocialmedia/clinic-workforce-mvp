@@ -33,7 +33,10 @@ export async function PUT(
 
     // ★ MANAGER 只可以動自己店嘅更
     // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
-    const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+    // forPerms: 編輯排班 → companyWide（排班跨店）
+    const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+      companyWide: ['attendance_manage', 'scheduling'],
+    })
     if (allowedClinics !== null && !allowedClinics.includes(existing.clinicId)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
@@ -182,7 +185,10 @@ export async function DELETE(
 
     // ★ MANAGER 只可以動自己店嘅更
     // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
-    const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+    // forPerms: 刪除排班 → companyWide（排班跨店）
+    const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+      companyWide: ['attendance_manage', 'scheduling'],
+    })
     if (allowedClinics !== null && !allowedClinics.includes(existing.clinicId)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }

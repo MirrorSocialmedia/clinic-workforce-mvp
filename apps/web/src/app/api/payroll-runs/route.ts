@@ -34,7 +34,10 @@ export async function GET(req: NextRequest) {
   }
 
   // ★ 2026-08-03: MANAGER 見全公司計糧單（保密員工由 getConfidentialScope 喺 items 層擋住）
-  const allowed = await resolveClinicScope(session, perms ?? [])
+  // forPerms: 計糧列表 → homeOnly（只限主屬診所）
+  const allowed = await resolveClinicScope(session, perms ?? [], {
+    homeOnly: ['payroll_generate'],
+  })
   if (allowed !== null) {
     if (allowed.length === 0) {
       return NextResponse.json(
@@ -103,7 +106,10 @@ export async function POST(req: NextRequest) {
       }
 
       // ★ 診所範圍限制（2026-08-03）
-      const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+      // forPerms: 計糧生成 → homeOnly（只限主屬診所）
+      const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+        homeOnly: ['payroll_generate'],
+      })
       if (allowedClinics !== null) {
         if (allowedClinics.length === 0) {
           return NextResponse.json(

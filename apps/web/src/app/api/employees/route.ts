@@ -80,7 +80,11 @@ export async function GET(req: NextRequest) {
 
   // ★ employee_overview 只睇主屬診所（2026-08-03）
   if (searchParams.get('scopeToHome') === '1') {
-    const allowed = await resolveClinicScope(session, perms ?? [])
+    // forPerms: 員工列表篩選 → companyWide（排班/考勤跨店），homeOnly（計糧/總覽限主屬店）
+    const allowed = await resolveClinicScope(session, perms ?? [], {
+      companyWide: ['scheduling', 'attendance_manage'],
+      homeOnly: ['payroll_view', 'payroll_generate', 'employee_overview'],
+    })
     if (allowed !== null) {
       if (allowed.length === 0) {
         return NextResponse.json(

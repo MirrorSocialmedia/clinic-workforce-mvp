@@ -46,7 +46,10 @@ export async function GET(
   //   令靠 payroll_* 權限放行嘅 EMPLOYEE 入唔到）。
   //   改用 resolveClinicScope：OWNER/MANAGER → null（全公司）、
   //   有權限嘅 EMPLOYEE → [主屬店]。（2026-08-03）
-  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+  // forPerms: 計糧明細 → homeOnly（只限主屬診所）
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+    homeOnly: ['payroll_generate'],
+  })
   if (allowedClinics !== null) {
     const runClinic = item.run?.clinicId
     const ok = runClinic

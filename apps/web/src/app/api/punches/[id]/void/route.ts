@@ -26,7 +26,10 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
 
   // ★ IDOR: MANAGER 只可以作廢自己店嘅打卡
   // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
-  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+  // forPerms: 作廢打卡 → companyWide（考勤跨店）
+  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+    companyWide: ['attendance_manage', 'scheduling'],
+  })
   if (allowedClinics !== null && !allowedClinics.includes(punch.clinicId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }

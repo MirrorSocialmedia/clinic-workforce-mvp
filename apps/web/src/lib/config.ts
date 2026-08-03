@@ -305,7 +305,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/payroll-runs/:id': ['payroll_view', 'payroll_generate'],
   'GET /api/payroll-runs/:id/employee/:id': ['payroll_view', 'payroll_generate'],
   'POST /api/payroll-runs/:id/export': ['payroll_view', 'payroll_generate'],
-  'GET /api/payroll-runs/exceptions': ['payroll_view', 'payroll_generate'],
+  'GET /api/payroll-runs/exceptions': ['payroll_view', 'payroll_generate', 'attendance_manage'],
   'POST /api/payroll-runs/preview': ['payroll_view', 'payroll_generate'],
   // ★ 生成／預檢限 payroll_generate（淨係 payroll_view 唔夠）
   'POST /api/payroll-runs': ['payroll_generate'],
@@ -313,6 +313,11 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
 
   // ★ 考勤補登
   'POST /api/punch-corrections': ['attendance_manage'],
+
+  // ★ 考勤（2026-08-03）—— 範圍全公司，因為調鋪員工會喺其他店出現
+  'GET /api/punches': ['attendance_manage'],
+  'GET /api/punches/:id': ['attendance_manage'],
+  'PUT /api/punch-corrections/:id': ['attendance_manage'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

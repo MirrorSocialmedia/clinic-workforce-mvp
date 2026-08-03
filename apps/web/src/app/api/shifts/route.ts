@@ -158,7 +158,10 @@ export async function POST(req: NextRequest) {
         // ★ 用 resolveClinicScope 取代 assertClinicAccess ——
         //   assertClinicAccess 對 scope='self' 一律 403，令靠 scheduling 權限放行嘅
         //   EMPLOYEE 入唔到（2026-08-03）。
-        const allowedClinics = await resolveClinicScope(session, auth.perms ?? [])
+        // forPerms: 建立排班 → companyWide（排班跨店）
+        const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+          companyWide: ['attendance_manage', 'scheduling'],
+        })
         if (allowedClinics !== null) {
           if (!allowedClinics.includes(clinicId)) {
             return NextResponse.json({ error: '你冇權喺呢間診所排更' }, { status: 403 })
