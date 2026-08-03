@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get('search')
   const includeResigned = searchParams.get('includeResigned') === 'true'
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1)
-  const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '20', 10) || 20))
+  const pageSize = Math.min(200, Math.max(1, parseInt(searchParams.get('pageSize') || '20', 10) || 20))
   const skip = (page - 1) * pageSize
 
   const where: any = {}
@@ -57,7 +57,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ★ 有編更權限要排全部店，所以要見到全部員工
+  // ★ 保密員工隔離參數（員工總覽用）——
+  //   預設 false，唔傳參數時行為不變（排班等 caller 唔受影響）
+  //   排班需要見到全部員工（保密只係薪金，唔影響排更）
+  const excludeConfidential = searchParams.get('excludeConfidential') === '1'
+  if (excludeConfidential && session.role !== 'OWNER') { // ROLE-OK: 保密員工隔離，刻意用 role 唔用權限
+    where.payConfidential = false
+  }
+
+  // ★ MANAGER 睇到全公司員工係刻意嘅（2026-08-03 決定）——
+  //   排班需要跨店調人（調鋪／借調），限制成自己診所會令排班做唔到。
+  //   員工總覽頁有診所篩選，唔方便嘅問題由 UI 解決而唔係限制資料。
   const canSeeAllEmployees = scope === 'all' || (perms ?? []).includes('scheduling')
 
   if (!canSeeAllEmployees) {
@@ -75,6 +85,7 @@ export async function GET(req: NextRequest) {
         clinics: {
           include: { clinic: { select: { id: true, name: true } } },
         },
+        homeClinic: { select: { id: true, name: true } },
         payRules: {
           where: { isActive: true },
           orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],

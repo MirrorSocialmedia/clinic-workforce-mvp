@@ -73,8 +73,10 @@ export const CONFIG = {
     'PUT /api/employees/:id/pay-rules/:id': ['OWNER'],
     'POST /api/employees/import': ['OWNER'],
     'GET /api/employees/:id/pay-history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'GET /api/employees/:id/overview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'GET /api/employees/:id/overview/history': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    // ★ 2026-08-03：員工總覽限 OWNER + MANAGER（同側欄一致）——
+    //   ACCOUNTANT 只需要計糧，唔需要員工完整資料（含假期、考勤、時間帳戶）
+    'GET /api/employees/:id/overview': ['OWNER', 'MANAGER'],
+    'GET /api/employees/:id/overview/history': ['OWNER', 'MANAGER'],
 
     // Resign / Rehire routes
     'GET /api/employees/:id/resign-preview': ['OWNER'],

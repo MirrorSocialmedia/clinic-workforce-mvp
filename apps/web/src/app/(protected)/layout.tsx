@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
-import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound } from 'lucide-react'
+import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
 
@@ -159,6 +159,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/scheduling', label: '排班管理', icon: Calendar, roles: mgmtRoles, perm: 'scheduling' },
     { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles },
     { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles },
+    // ★ 員工總覽 —— OWNER + MANAGER（ACCOUNTANT 唔包，佢只需要計糧）
+    //   保密員工由 API 層隔離（employees/:id/overview:46），MANAGER 睇唔到
+    { path: '/employees', label: '員工總覽', icon: UserCircle, roles: ['OWNER', 'MANAGER'] },
     { path: '/accounts', label: '帳號管理', icon: Users, roles: ['OWNER'] },
     { path: '/clinics', label: '診所管理', icon: Building2, roles: ['OWNER'] },
     { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER'] },
