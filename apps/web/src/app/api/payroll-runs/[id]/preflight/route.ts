@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { toHKDateStr, getMonthRange } from '@/lib/hk-date'
 
 interface PreflightRun {
   id: string
   periodMonth: Date
+  clinicId: string | null
   status: string
   items: Array<{
     employeeId: string
@@ -29,6 +31,19 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }) as unknown as PreflightRun | null
 
   if (!raw) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // ★ Cross-clinic guard (2026-08-03): 被限制範圍嘅人唔可以預覽跨店計糧單
+  const allowed = await resolveClinicScope(auth.session, auth.perms ?? [], {
+    homeOnly: ['payroll_view', 'payroll_generate'],
+  })
+  if (allowed !== null) {
+    if (!raw.clinicId) {
+      return NextResponse.json({ error: '你冇權限預覽跨店計糧單' }, { status: 403 })
+    }
+    if (!allowed.includes(raw.clinicId)) {
+      return NextResponse.json({ error: '你冇權限預覽呢間診所嘅計糧單' }, { status: 403 })
+    }
+  }
 
   const run = raw
   const pmStr = toHKDateStr(run.periodMonth).slice(0, 7)

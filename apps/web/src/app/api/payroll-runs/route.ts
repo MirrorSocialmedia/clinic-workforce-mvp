@@ -47,8 +47,11 @@ export async function GET(req: NextRequest) {
     }
     where.AND = [...(where.AND ?? []), {
       OR: [
-        { clinicId: { in: allowed } }, // 自己的診所
-        { clinicId: null },             // 跨店計糧（clinicId 為空）
+        { clinicId: { in: allowed } },
+        // ★ 跨店計糧單（clinicId = null）：只有【唔限診所】嘅人先見到。
+        //   allowed !== null 代表呢個人被限制咗範圍 ——
+        //   而跨店單包含全公司員工，畀佢見到就繞過咗限制（2026-08-03 撞到）。
+        //   OWNER / MANAGER 走唔到呢個分支（allowed === null），所以佢哋照樣見到。
       ],
     }]
   }

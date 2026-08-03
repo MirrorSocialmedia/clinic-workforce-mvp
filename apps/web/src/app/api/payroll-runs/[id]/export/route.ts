@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { getConfidentialScope } from '@/lib/scope-helpers'
+import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { toHKDateStr } from '@/lib/hk-date'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
@@ -64,6 +64,19 @@ export async function POST(
   })
 
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // ★ Cross-clinic guard (2026-08-03): 被限制範圍嘅人唔可以匯出跨店計糧單
+  const allowed = await resolveClinicScope(session, auth.perms ?? [], {
+    homeOnly: ['payroll_view', 'payroll_generate'],
+  })
+  if (allowed !== null) {
+    if (!run.clinicId) {
+      return NextResponse.json({ error: '你冇權限匯出跨店計糧單' }, { status: 403 })
+    }
+    if (!allowed.includes(run.clinicId)) {
+      return NextResponse.json({ error: '你冇權限匯出呢間診所嘅計糧單' }, { status: 403 })
+    }
+  }
 
   // ★ Confidential filter — 用 getConfidentialScope 一次過算好範圍（2026-08-03）
   const perms = auth.perms ?? []

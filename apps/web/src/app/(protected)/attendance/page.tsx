@@ -529,6 +529,14 @@ export default function AttendancePage() {
 
   // Merge absent rows with punch records for "全部記錄" tab
   // NOTE: useMemo MUST be before early return (Rules of Hooks)
+  // ★ Empty-state hint: detect default month range so we can suggest changing dates (2026-08-03)
+  const isDefaultMonthRange = (() => {
+    const now = new Date()
+    const defStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
+    const defEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    return startDate === defStart && endDate === defEnd
+  })()
+
   const allRows = useMemo<((AbsentRow | PunchRow) & { isAbsentRow: boolean })[]>(() => {
     const absentRows: AbsentRow[] = recordsExceptions
       .filter(ex => ex.type === 'ABSENT')
@@ -727,7 +735,11 @@ export default function AttendancePage() {
             {loading ? (
               <div className="text-center py-5 text-muted-foreground">載入中...</div>
             ) : allRows.length === 0 ? (
-              <div className="text-center py-5 text-muted-foreground">沒有考勤記錄</div>
+              <div className="text-center py-5 text-muted-foreground">
+                {isDefaultMonthRange
+                  ? `${startDate.slice(0, 7)} 冇打卡記錄 — 試下改日期範圍`
+                  : '冇符合條件嘅記錄'}
+              </div>
             ) : allRows.map((row) => {
               if ((row as AbsentRow).isAbsentRow) {
                 const ar = row as AbsentRow
@@ -866,7 +878,11 @@ export default function AttendancePage() {
                 {loading ? (
                   <tr><td colSpan={12} className="text-center py-5 text-muted-foreground">載入中...</td></tr>
                 ) : allRows.length === 0 ? (
-                  <tr><td colSpan={12} className="text-center py-5 text-muted-foreground">沒有考勤記錄</td></tr>
+                  <tr><td colSpan={12} className="text-center py-5 text-muted-foreground">
+                    {isDefaultMonthRange
+                      ? `${startDate.slice(0, 7)} 冇打卡記錄 — 試下改日期範圍`
+                      : '冇符合條件嘅記錄'}
+                  </td></tr>
                 ) : (
                   allRows.map((row) => {
                     // ABSENT row
