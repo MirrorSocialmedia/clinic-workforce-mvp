@@ -838,11 +838,8 @@ export default function AccountsPage() {
                           {acc.employeeId && (
                             <Link href={`/accounts/${acc.employeeId}/wage-history`} className="text-xs underline text-blue-600 hover:no-underline" onClick={e => e.stopPropagation()}>工資歷史</Link>
                           )}
-                          {/* ★ Overview link — hidden for confidential employees when not OWNER (2026-08-02) */}
-                          {acc.employeeId && !acc.payConfidential && (
-                            <Link href={`/employees/${acc.employeeId}/overview`} className="text-xs underline text-purple-600 hover:no-underline" onClick={e => e.stopPropagation()}>總覽</Link>
-                          )}
-                          {acc.employeeId && isOwner && acc.payConfidential && (
+                          {/* ★ 保密員工只有 OWNER 睇得到總覽（同 API employees/:id/overview:46 一致） */}
+                          {acc.employeeId && (!acc.payConfidential || isOwner) && (
                             <Link href={`/employees/${acc.employeeId}/overview`} className="text-xs underline text-purple-600 hover:no-underline" onClick={e => e.stopPropagation()}>總覽</Link>
                           )}
                           {acc.employeeId && (
@@ -1024,11 +1021,8 @@ export default function AccountsPage() {
                     {acc.employeeId && (
                       <Link href={`/accounts/${acc.employeeId}/wage-history`} className="px-3 py-1.5 rounded-md text-xs text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100" onClick={e => e.stopPropagation()}>工資歷史</Link>
                     )}
-                    {/* ★ Overview link — hidden for confidential employees when not OWNER (2026-08-02) */}
-                    {acc.employeeId && !acc.payConfidential && (
-                      <Link href={`/employees/${acc.employeeId}/overview`} className="px-3 py-1.5 rounded-md text-xs text-purple-600 border border-purple-200 bg-purple-50 hover:bg-purple-100" onClick={e => e.stopPropagation()}>總覽</Link>
-                    )}
-                    {acc.employeeId && isOwner && acc.payConfidential && (
+                    {/* ★ 保密員工只有 OWNER 睇得到總覽（同 API employees/:id/overview:46 一致） */}
+                    {acc.employeeId && (!acc.payConfidential || isOwner) && (
                       <Link href={`/employees/${acc.employeeId}/overview`} className="px-3 py-1.5 rounded-md text-xs text-purple-600 border border-purple-200 bg-purple-50 hover:bg-purple-100" onClick={e => e.stopPropagation()}>總覽</Link>
                     )}
                     {acc.employeeId && (

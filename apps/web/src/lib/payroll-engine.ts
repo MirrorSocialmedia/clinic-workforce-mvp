@@ -2444,7 +2444,7 @@ async function collectWorkData(
 // 3. Base Module Calculators
 // ------------------------------------------------------------------
 
-function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, monthDate: Date): PayrollResult {
+function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, monthDate: Date, employeeId?: string): PayrollResult {
   const monthlySalary = config.monthly_salary || 0
   const deductionRate = config.deduction_rate ?? 1
   const otMultiplier = config.ot_multiplier ?? 1.5
@@ -2475,6 +2475,10 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
   const otHours = otThreshold > 0 ? Math.max(0, workData.totalWorkedHours - otThreshold) : 0
   const hourlyEquivalent = otThreshold > 0 ? monthlySalary / otThreshold : 0
   const otPay = otHours * hourlyEquivalent * otMultiplier
+
+  // ★ 恆等式自檢 —— 曆日 = 工作日 + 休息日 + 公眾假期
+  //   ⚠️ 唔好放入 detail —— detail 會存入 detailJson，debug flag 唔應該入業務資料
+  assertMonthlyIdentity(monthDate, workData.monthlyWorkingDays, workData.restDays, workData.publicHolidayDays, employeeId);
 
   return {
     basePay,
@@ -2511,21 +2515,46 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
       dailyWage: Math.round(dailyRate * 100) / 100,
       // ★ 2026-08-02: 薪資單顯示分母
       monthlyWorkingDays: workData.monthlyWorkingDays,
-      restDaysInMonth: hkDaysInMonth(monthDate) - workData.monthlyWorkingDays - workData.publicHolidayDays, // ★ 從恆等式反推，避免因 config rest_days 不同於 [6,0] 導致顯示為 0
+      // ★ 用真值唔好反推 —— 反推令恆等式永遠成立，等於掩蓋問題。
+      //   workData.restDays 已經喺 runPayroll 按 config rest_days override，係可靠嘅。
+      //   之前顯示 0 係前端 fallback 欄名唔夾，唔係呢個值有問題。
+      restDaysInMonth: workData.restDays,
       calendarDays: hkDaysInMonth(monthDate), // ★ 用 hkDaysInMonth 代替 workData.totalDaysInMonth（undefined 會顯示 0）
-      // ★ 恆等式自檢 —— 曆日 = 工作日 + 休息日 + 公眾假期
-      //   對唔上代表三個數來源唔一致（2026-08-02 撞過）
-      _identityCheck: (() => {
-        const _cal = hkDaysInMonth(monthDate)
-        const _sum = workData.monthlyWorkingDays + workData.restDays + workData.publicHolidayDays
-        if (_cal !== _sum) {
-          console.error(
-            `[payroll] ⛔ 工作日恆等式唔成立：${_cal} ≠ ${workData.monthlyWorkingDays} + ${workData.restDays} + ${workData.publicHolidayDays}`
-          )
-        }
-        return _cal === _sum
-      })(),
     },
+  };
+}
+
+// ★ 恆等式自檢 —— 曆日 = 工作日 + 休息日 + 公眾假期
+//   ⚠️ 唔好放入 detail —— detail 會存入 detailJson，debug flag 唔應該入業務資料
+function assertMonthlyIdentity(monthDate: Date, monthlyWorkingDays: number, restDays: number, publicHolidayDays: number, employeeId?: string): void {
+  const _cal = hkDaysInMonth(monthDate)
+  const _sum = monthlyWorkingDays + restDays + publicHolidayDays
+  if (_cal !== _sum) {
+    console.error(
+      `[payroll] ⛔ 恆等式唔成立 employeeId=${employeeId || '?'} ${toHKDateStr(monthDate).slice(0, 7)}：` +
+      `${_cal} ≠ ${monthlyWorkingDays}(工作) + ${restDays}(休息) + ${publicHolidayDays}(公眾假期)`
+    )
+  }
+}
+
+/**
+ * Run the selected base module (monthly/hourly/daily/split).
+ */
+export function runBaseModule(config: PayRuleConfigModular, workData: WorkData, monthDate: Date, employeeId?: string): PayrollResult {
+  const baseType = config.base_type || 'monthly'
+  switch (baseType) {
+    case 'monthly': return calcMonthlyBase(config, workData, monthDate, employeeId)
+    case 'hourly': return calcHourlyBase(config, workData)
+    case 'daily': return calcDailyBase(config, workData)
+    case 'split': return calcSplitBase(config, workData, monthDate)
+    default:
+      return {
+        basePay: 0, otPay: 0, splitPay: null, attendanceBonus: 0,
+        attendanceBonusCancelled: false, deduction: 0, totalPayable: 0,
+        absentDays: 0, otHours: 0, workedHours: 0, leaveDays: 0,
+        detail: {},
+        error: `Unknown base_type: ${baseType}`,
+      }
   }
 }
 
@@ -2663,27 +2692,6 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDa
       absentDays: workData.absentDays,
       lateRecords: workData.lateRecords,
     },
-  }
-}
-
-/**
- * Run the selected base module (monthly/hourly/daily/split).
- */
-export function runBaseModule(config: PayRuleConfigModular, workData: WorkData, monthDate: Date): PayrollResult {
-  const baseType = config.base_type || 'monthly'
-  switch (baseType) {
-    case 'monthly': return calcMonthlyBase(config, workData, monthDate)
-    case 'hourly': return calcHourlyBase(config, workData)
-    case 'daily': return calcDailyBase(config, workData)
-    case 'split': return calcSplitBase(config, workData, monthDate)
-    default:
-      return {
-        basePay: 0, otPay: 0, splitPay: null, attendanceBonus: 0,
-        attendanceBonusCancelled: false, deduction: 0, totalPayable: 0,
-        absentDays: 0, otHours: 0, workedHours: 0, leaveDays: 0,
-        detail: {},
-        error: `Unknown base_type: ${baseType}`,
-      }
   }
 }
 
@@ -2948,7 +2956,7 @@ export async function calculatePayrollWithRules(
   workData.workingDays = hkDaysInMonth(monthDate) - actualRestDays
 
   // 2. Run base module
-  const baseResult = runBaseModule(config, workData, monthDate)
+  const baseResult = runBaseModule(config, workData, monthDate, employeeId)
 
   // 3. Apply modifiers in order
   let result: PayrollResult = baseResult
