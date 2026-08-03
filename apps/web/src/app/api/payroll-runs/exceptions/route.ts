@@ -209,7 +209,7 @@ export async function GET(req: NextRequest) {
     const existing = empInfo.get(rp.employeeId)
     if (!existing) {
       empInfo.set(rp.employeeId, {
-        name: rp.employee?.user?.name || 'Unknown',
+        name: rp.employee?.user?.name || '—',
         clinics: rp.employee?.clinics?.map(c => ({ clinicId: c.clinicId, clinicName: c.clinic?.name || c.clinicId })) || [],
       })
     }
@@ -220,10 +220,28 @@ export async function GET(req: NextRequest) {
 
   // Helper: get employee info for a given employeeId
   function getEmpInfo(eid: string) {
-    return empInfo.get(eid) || { name: 'Unknown', clinics: [] }
+    return empInfo.get(eid) || { name: '—', clinics: [] }
   }
   function getClinicName(eid: string, cid: string) {
     return getEmpInfo(eid).clinics.find(c => c.clinicId === cid)?.clinicName || cid
+  }
+
+  // ★ 統一查員工名 —— exceptions / empInfo 都係由「有活動」嘅記錄砌成，
+  //   零異常（例如準時返工、或者啱初始化時間帳戶）就攞唔到名，
+  //   之前會 fallback 成 'Unknown'（2026-08-03）。
+  //   提前喺 exception loops 之前查詢，確保 ABSENT/CORRECTION/summaries 都有名。
+  const allEmpIds = [...new Set([
+    ...shifts.map(s => s.employeeId),
+    ...corrections.map(c => c.employeeId),
+    ...rawPunches.map(p => p.employeeId),
+  ])]
+  const empNames = new Map<string, string>()
+  if (allEmpIds.length > 0) {
+    const emps = await prisma.employee.findMany({
+      where: { id: { in: allEmpIds } },
+      select: { id: true, user: { select: { name: true } } },
+    })
+    emps.forEach(e => empNames.set(e.id, e.user?.name ?? '—'))
   }
 
   // Detect LATE from effective clock-in punches vs shift start
@@ -371,8 +389,8 @@ export async function GET(req: NextRequest) {
       const shiftEnd2 = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
       const shiftMinutes = Math.round((shiftEnd2.getTime() - shiftStart.getTime()) / 60000)
       exceptions.push({
-        employeeId: shift.employeeId, employeeName: shift.employee?.user?.name || 'Unknown',
-        clinicName: shift.clinic?.name || 'Unknown', date: shiftDayStr, type: 'ABSENT',
+        employeeId: shift.employeeId, employeeName: empNames.get(shift.employeeId) ?? '—',
+        clinicName: shift.clinic?.name || '—', date: shiftDayStr, type: 'ABSENT',
         detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)})`,
         shiftMinutes,
       })
@@ -419,7 +437,7 @@ export async function GET(req: NextRequest) {
   for (const c of corrections) {
     const clinic = c.employee?.clinics?.find(cl => cl.clinicId === c.clinicId)?.clinic
     exceptions.push({
-      employeeId: c.employeeId, employeeName: c.employee?.user?.name || 'Unknown',
+      employeeId: c.employeeId, employeeName: empNames.get(c.employeeId) ?? '—',
       clinicName: clinic?.name || c.clinicId,
       date: toHKDateStr(c.correctedTime), type: 'CORRECTION',
       detail: `補登 ${TYPE_LABEL[c.punchType] || c.punchType} 至 ${fmtTime(c.correctedTime)}${c.reason ? ` (${c.reason})` : ''}`,
@@ -476,6 +494,9 @@ export async function GET(req: NextRequest) {
   if (employeeId && !uniqueEmployeeIds.includes(employeeId)) {
     uniqueEmployeeIds.push(employeeId)
   }
+  // empNames already defined earlier (after getClinicName) — covers all employees
+  // from shifts, corrections, and raw punches.
+
   // Fix #2a: excluded HOURLY from exception detection; keep them in summaries with payType
   const empPayRules = await prisma.payRule.findMany({
     where: {
@@ -497,11 +518,12 @@ export async function GET(req: NextRequest) {
         console.error(`[exceptions] calculateTimeBank failed for employee ${empId}`, err)
         status = 'error'
       }
-      const emp = exceptions.find(e => e.employeeId === empId)
       const taMinutes = isHourly ? null : (tb ? (tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes)) : null)
       return {
         employeeId: empId,
-        employeeName: emp?.employeeName || 'Unknown',
+        // ★ fallback 用 '—' 唔好用 'Unknown' —— 前者一眼睇得出係缺資料，
+        //   後者似係一個真嘅員工名，出事時容易被忽略。
+        employeeName: empNames.get(empId) ?? '—',
         payType: payTypeMap.get(empId) || 'MONTHLY',
         timeAccountMinutes: taMinutes,
         otMinutes: tb ? tb.otMinutes : 0,
