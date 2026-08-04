@@ -247,6 +247,7 @@ model ShiftTemplate {
   endMinute   Int      // minute of day end (0-59)
   isNightShift Boolean @default(false) // true if end crosses midnight
   shortName     String?  // 總覽顯示用簡稱（如「早」「夜」「A」），null 用 name
+  shade         Int?     // 更次深淺（0 = 最深，FIXED_STEPS-1 = 最淺）。null = 沿用舊行為（按模板順序自動算）。
   isDefault   Boolean  @default(false) // system default template
   isActive    Boolean  @default(true)
   createdBy   String?

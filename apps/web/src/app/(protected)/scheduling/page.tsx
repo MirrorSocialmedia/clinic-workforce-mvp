@@ -73,6 +73,7 @@ interface Employee {
   clinics: { clinic: { id: string; name: string } }[]
   payRules?: { payType: string }[]
   status: string
+  homeClinicId?: string | null
 }
 
 interface Clinic {
@@ -94,6 +95,7 @@ interface ShiftTemplate {
   isNightShift: boolean
   isDefault: boolean
   shortName?: string | null
+  shade?: number | null
 }
 
 interface Shift {
@@ -252,9 +254,15 @@ export default function SchedulingPage() {
   const FIXED_STEPS = 6
   const shiftColor = useCallback((s: any) => {
     const base = clinicColorMap.get(s.clinicId) || '#95a5a6'
-    const pos = s.templateId ? templateIndexMap.get(s.templateId) : undefined
+    if (!s.templateId) return base
+    // ★ 2026-08-03：優先用模板自訂 shade；冇設定就沿用舊嘅順序推導
+    const tpl = templates.find(t => t.id === s.templateId)
+    if (tpl?.shade != null) {
+      return shiftShade(base, Math.min(tpl.shade, FIXED_STEPS - 1), FIXED_STEPS)
+    }
+    const pos = templateIndexMap.get(s.templateId)
     return pos ? shiftShade(base, Math.min(pos.idx, FIXED_STEPS - 1), FIXED_STEPS) : base
-  }, [clinicColorMap, templateIndexMap])
+  }, [clinicColorMap, templateIndexMap, templates])
 
   // Step 7: Overview scope
   const [ovScope, setOvScope] = useState<OvScope>({ type: 'all' })
@@ -713,10 +721,36 @@ function getShiftCode(shift: Shift): string {
   const clinicEmployees = useMemo(() => {
     const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
     if (empScope === 'all' || !selectedClinicId) return activeEmployees
-    return activeEmployees.filter(emp =>
-      emp.clinics.some(ec => ec.clinic.id === selectedClinicId)
-    )
+    // ★ 2026-08-03：「本店」= 主屬診所（homeClinicId）
+    return activeEmployees.filter(emp => emp.homeClinicId === selectedClinicId)
   }, [employees, selectedClinicId, empScope])
+
+  // ★ 2026-08-03：「全部」時左邊員工欄按主屬店分組
+  const groupedEmployees = useMemo(() => {
+    if (empScope !== 'all') return null
+    const byClinic = new Map<string, { name: string; emps: any[] }>()
+    const noHome: any[] = []
+    for (const emp of clinicEmployees) {
+      if (!emp.homeClinicId) { noHome.push(emp); continue }
+      if (!byClinic.has(emp.homeClinicId)) {
+        const c = clinics.find(x => x.id === emp.homeClinicId)
+        byClinic.set(emp.homeClinicId, {
+          name: (c as any)?.shortName || c?.name || '未知診所',
+          emps: [],
+        })
+      }
+      byClinic.get(emp.homeClinicId)!.emps.push(emp)
+    }
+    const groups = [...byClinic.entries()]
+      .map(([id, g]) => ({ id, ...g }))
+      .sort((a, b) => {
+        if (a.id === selectedClinicId) return -1
+        if (b.id === selectedClinicId) return 1
+        return a.name.localeCompare(b.name, 'zh-HK')
+      })
+    if (noHome.length) groups.push({ id: '__none__', name: '未設主屬店', emps: noHome })
+    return groups
+  }, [empScope, clinicEmployees, clinics, selectedClinicId])
 
   // ★ 真正的本店員工 ID 集合 — 不受 empScope 影響，專供借調判斷
   const trueLocalEmployeeIds = useMemo(() => {
@@ -1172,6 +1206,25 @@ function getShiftCode(shift: Shift): string {
       return false
     } finally {
       setCreatingKey(null)
+    }
+  }
+
+  // ★ 2026-08-03：儲存更次深淺設定
+  const saveTemplateShade = async (templateId: string, shade: number) => {
+    try {
+      const res = await fetch(`/api/shifts/templates/${templateId}`, {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shade }),
+      })
+      if (res.ok) {
+        setTemplates(prev => prev.map(t => t.id === templateId ? { ...t, shade } : t))
+      } else {
+        const err = await res.json()
+        alert(err.error || '儲存深淺失敗')
+      }
+    } catch {
+      alert('儲存深淺失敗')
     }
   }
 
@@ -2864,6 +2917,41 @@ function getShiftCode(shift: Shift): string {
                 </div>
               )
             })()}
+
+            {/* ★ 2026-08-03：更次深淺自選 */}
+            <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 12, marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+                更次深淺 — 撳色塊揀
+              </div>
+              {templates.map(tpl => {
+                const base = ruleColor
+                const current = tpl.shade ?? templateIndexMap.get(tpl.id)?.idx ?? 0
+                return (
+                  <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7 }}>
+                    <span style={{ fontSize: 12, width: 20, fontWeight: 600 }}>{tpl.shortName || tpl.name?.slice(0, 2)}</span>
+                    {Array.from({ length: FIXED_STEPS }).map((_, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => saveTemplateShade(tpl.id, i)}
+                        style={{
+                          width: 34, height: 26, borderRadius: 5,
+                          background: shiftShade(base, i, FIXED_STEPS),
+                          border: 'none',
+                          boxShadow: current === i ? '0 0 0 2px #111827' : 'none',
+                          cursor: 'pointer',
+                          color: textOn(shiftShade(base, i, FIXED_STEPS)),
+                          fontSize: 10,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )
+              })}
+              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 10 }}>
+                深淺為全公司共用，底色跟各店設定變化
+              </div>
+            </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -3548,95 +3636,151 @@ function getShiftCode(shift: Shift): string {
               ))}
             </div>
           </div>
-          {/* Full-time + Part-time — single container for Draggable callback ref */}
-          <div ref={attachEmployeePanel}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center' }}>
-              全職
-            </div>
-            {fullTimeEmps.map(emp => (
-              <div
-                key={emp.id}
-                className="employee-card"
-                data-employee-id={emp.id}
-                data-name={emp.user?.name ?? ''}
-                onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
-                draggable={canManage && !isTouch}
-                onDragStart={(e) => {
-                  if (canManage && !isTouch) {
-                    e.dataTransfer.setData('text/plain', emp.id)
-                    setSelectedEmployeeId(emp.id)
-                  }
-                }}
-                style={{
-                  padding: '5px 4px',
-                  marginBottom: 4,
-                  borderRadius: 6,
-                  fontSize: 11,
-                  textAlign: 'center',
-                  cursor: canManage ? 'grab' : 'pointer',
-                  background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
-                  color: selectedEmployeeId === emp.id ? '#333' : '#fff',
-                  border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
-                  outline: isTouch && selectedEmployeeId === emp.id ? '2px solid #fbbf24' : 'none',
-                  outlineOffset: isTouch && selectedEmployeeId === emp.id ? '2px' : undefined,
-                  transition: 'all 0.15s',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  userSelect: 'none',
-                }}
-                title={emp.user?.name ?? ''}
-              >
-                {emp.user?.name ?? '?'}
-              </div>
-            ))}
-
-            {/* Part-time */}
-            {partTimeEmps.length > 0 && (
-              <>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center', marginTop: 8 }}>
-                  兼職
-                </div>
-                {partTimeEmps.map(emp => (
-                  <div
-                    key={emp.id}
-                    className="employee-card"
-                    data-employee-id={emp.id}
-                    data-name={emp.user?.name ?? ''}
-                    onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
-                    draggable={canManage && !isTouch}
-                    onDragStart={(e) => {
-                      if (canManage && !isTouch) {
-                        e.dataTransfer.setData('text/plain', emp.id)
-                        setSelectedEmployeeId(emp.id)
-                      }
-                    }}
-                    style={{
-                      padding: '5px 4px',
-                      marginBottom: 4,
-                      borderRadius: 6,
-                      fontSize: 11,
-                      textAlign: 'center',
-                      cursor: canManage ? 'grab' : 'pointer',
-                      background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
-                      color: selectedEmployeeId === emp.id ? '#333' : '#fff',
-                      border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
-                      outline: isTouch && selectedEmployeeId === emp.id ? '2px solid #fbbf24' : 'none',
-                      outlineOffset: isTouch && selectedEmployeeId === emp.id ? '2px' : undefined,
-                      transition: 'all 0.15s',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      userSelect: 'none',
-                    }}
-                    title={emp.user?.name ?? ''}
-                  >
-                    {emp.user?.name ?? '?'}
+          {/* Employee cards — grouped by clinic when "全部"; otherwise full-time/part-time */}
+          {groupedEmployees ? (
+            <div ref={attachEmployeePanel} style={{ maxHeight: 420, overflowY: 'auto' }}>
+              {groupedEmployees.map(g => (
+                <div key={g.id} style={{ marginBottom: 8 }}>
+                  <div style={{
+                    fontSize: 10, padding: '3px 6px', borderRadius: 3, marginBottom: 4,
+                    background: g.id === '__none__' ? '#fef3c7'
+                      : g.id === selectedClinicId ? '#E6F1FB' : '#f3f4f6',
+                    color: g.id === '__none__' ? '#854F0B'
+                      : g.id === selectedClinicId ? '#0C447C' : '#6b7280',
+                    position: 'sticky', top: 0, zIndex: 2,
+                  }}>
+                    {g.name} · {g.emps.length}
                   </div>
-                ))}
-              </>
-            )}
-          </div>
+                  {g.emps.map(emp => (
+                    <div
+                      key={emp.id}
+                      className="employee-card"
+                      data-employee-id={emp.id}
+                      data-name={emp.user?.name ?? ''}
+                      onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                      draggable={canManage && !isTouch}
+                      onDragStart={(e) => {
+                        if (canManage && !isTouch) {
+                          e.dataTransfer.setData('text/plain', emp.id)
+                          setSelectedEmployeeId(emp.id)
+                        }
+                      }}
+                      style={{
+                        padding: '5px 4px',
+                        marginBottom: 4,
+                        borderRadius: 6,
+                        fontSize: 11,
+                        textAlign: 'center',
+                        cursor: canManage ? 'grab' : 'pointer',
+                        background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                        color: selectedEmployeeId === emp.id ? '#333' : '#fff',
+                        border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                        outline: isTouch && selectedEmployeeId === emp.id ? '2px solid #fbbf24' : 'none',
+                        outlineOffset: isTouch && selectedEmployeeId === emp.id ? '2px' : undefined,
+                        transition: 'all 0.15s',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        userSelect: 'none',
+                      }}
+                      title={emp.user?.name ?? ''}
+                    >
+                      {emp.user?.name ?? '?'}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div ref={attachEmployeePanel}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center' }}>
+                全職
+              </div>
+              {fullTimeEmps.map(emp => (
+                <div
+                  key={emp.id}
+                  className="employee-card"
+                  data-employee-id={emp.id}
+                  data-name={emp.user?.name ?? ''}
+                  onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                  draggable={canManage && !isTouch}
+                  onDragStart={(e) => {
+                    if (canManage && !isTouch) {
+                      e.dataTransfer.setData('text/plain', emp.id)
+                      setSelectedEmployeeId(emp.id)
+                    }
+                  }}
+                  style={{
+                    padding: '5px 4px',
+                    marginBottom: 4,
+                    borderRadius: 6,
+                    fontSize: 11,
+                    textAlign: 'center',
+                    cursor: canManage ? 'grab' : 'pointer',
+                    background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                    color: selectedEmployeeId === emp.id ? '#333' : '#fff',
+                    border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                    outline: isTouch && selectedEmployeeId === emp.id ? '2px solid #fbbf24' : 'none',
+                    outlineOffset: isTouch && selectedEmployeeId === emp.id ? '2px' : undefined,
+                    transition: 'all 0.15s',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    userSelect: 'none',
+                  }}
+                  title={emp.user?.name ?? ''}
+                >
+                  {emp.user?.name ?? '?'}
+                </div>
+              ))}
+
+              {/* Part-time */}
+              {partTimeEmps.length > 0 && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4, textAlign: 'center', marginTop: 8 }}>
+                    兼職
+                  </div>
+                  {partTimeEmps.map(emp => (
+                    <div
+                      key={emp.id}
+                      className="employee-card"
+                      data-employee-id={emp.id}
+                      data-name={emp.user?.name ?? ''}
+                      onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                      draggable={canManage && !isTouch}
+                      onDragStart={(e) => {
+                        if (canManage && !isTouch) {
+                          e.dataTransfer.setData('text/plain', emp.id)
+                          setSelectedEmployeeId(emp.id)
+                        }
+                      }}
+                      style={{
+                        padding: '5px 4px',
+                        marginBottom: 4,
+                        borderRadius: 6,
+                        fontSize: 11,
+                        textAlign: 'center',
+                        cursor: canManage ? 'grab' : 'pointer',
+                        background: selectedEmployeeId === emp.id ? '#fff' : colorFor(emp.id),
+                        color: selectedEmployeeId === emp.id ? '#333' : '#fff',
+                        border: selectedEmployeeId === emp.id ? `2px solid ${colorFor(emp.id)}` : '2px solid transparent',
+                        outline: isTouch && selectedEmployeeId === emp.id ? '2px solid #fbbf24' : 'none',
+                        outlineOffset: isTouch && selectedEmployeeId === emp.id ? '2px' : undefined,
+                        transition: 'all 0.15s',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        userSelect: 'none',
+                      }}
+                      title={emp.user?.name ?? ''}
+                    >
+                      {emp.user?.name ?? '?'}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
           {/* Clear weekly shifts + leave button */}
           {selectedEmployeeId && canManage && (
             <button
@@ -4015,38 +4159,69 @@ function getShiftCode(shift: Shift): string {
                   </thead>
                   <tbody>
                     {/* Full-time */}
-                    {ovEmployees.full.map(emp => (
-                      <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                        <td style={{
-                          position: 'sticky', left: 0, zIndex: 1,
-                          background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                          padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
-                        }}>{emp.user?.name ?? '?'}</td>
-                        {monthDays.map((d, di) => (
-                          <td key={di} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0' }}>
-                            {(() => {
-                              const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
-                              const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
-                              if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
-                              const parts: React.ReactNode[] = []
-                              ss.forEach((s, si) => {
-                                const tpl = templates.find(t => t.id === s.templateId)
-                                const p: string[] = []
-                                if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
-                                if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
-                                const bg = shiftColor(s)
-                                parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
-                              })
-                              ls.forEach((lr, li) => {
-                                const lc = lr.leaveType?.color ?? '#9ca3af'
-                                parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
-                              })
-                              return parts
-                            })()}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                    {ovEmployees.full.map(emp => {
+                      return (
+                        <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={{
+                            position: 'sticky', left: 0, zIndex: 1,
+                            background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+                            padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                          }}>{emp.user?.name ?? '?'}</td>
+                          {monthDays.map((d, di) => {
+                            const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
+                            const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                            const hasShift = ss.length > 0
+                            const hasLeave = ls.length > 0
+                            return (
+                              <td key={di}
+                                className="overview-cell"
+                                onPointerUp={() => handleOverviewDrop(emp.id, d)}
+                                onPointerEnter={e => {
+                                  if (!draggingTemplate.current && !draggingLeave.current) return
+                                  ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                                }}
+                                onPointerLeave={e => {
+                                  if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
+                                  if (hasLeave) {
+                                    ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                                  } else {
+                                    ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                                  }
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                                }}
+                                style={{
+                                  padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
+                                  cursor: canManage ? 'pointer' : 'default',
+                                  background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
+                                  transition: 'background 0.15s',
+                                }}
+                              >
+                                {(() => {
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
+                                  const parts: React.ReactNode[] = []
+                                  ss.forEach((s, si) => {
+                                    const tpl = templates.find(t => t.id === s.templateId)
+                                    const p: string[] = []
+                                    if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
+                                    if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                                    const bg = shiftColor(s)
+                                    parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
+                                  })
+                                  ls.forEach((lr, li) => {
+                                    const lc = lr.leaveType?.color ?? '#9ca3af'
+                                    parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
+                                  })
+                                  return parts
+                                })()}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })}
                     {/* Part-time group header */}
                     {ovEmployees.part.length > 0 && (
                       <tr>
@@ -4058,38 +4233,69 @@ function getShiftCode(shift: Shift): string {
                       </tr>
                     )}
                     {/* Part-time */}
-                    {ovEmployees.part.map(emp => (
-                      <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                        <td style={{
-                          position: 'sticky', left: 0, zIndex: 1,
-                          background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                          padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
-                        }}>{emp.user?.name ?? '?'}</td>
-                        {monthDays.map((d, di) => (
-                          <td key={di} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0' }}>
-                            {(() => {
-                              const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
-                              const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
-                              if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
-                              const parts: React.ReactNode[] = []
-                              ss.forEach((s, si) => {
-                                const tpl = templates.find(t => t.id === s.templateId)
-                                const p: string[] = []
-                                if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
-                                if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
-                                const bg = shiftColor(s)
-                                parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
-                              })
-                              ls.forEach((lr, li) => {
-                                const lc = lr.leaveType?.color ?? '#9ca3af'
-                                parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
-                              })
-                              return parts
-                            })()}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                    {ovEmployees.part.map(emp => {
+                      return (
+                        <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={{
+                            position: 'sticky', left: 0, zIndex: 1,
+                            background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+                            padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                          }}>{emp.user?.name ?? '?'}</td>
+                          {monthDays.map((d, di) => {
+                            const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
+                            const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                            const hasShift = ss.length > 0
+                            const hasLeave = ls.length > 0
+                            return (
+                              <td key={di}
+                                className="overview-cell"
+                                onPointerUp={() => handleOverviewDrop(emp.id, d)}
+                                onPointerEnter={e => {
+                                  if (!draggingTemplate.current && !draggingLeave.current) return
+                                  ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                                }}
+                                onPointerLeave={e => {
+                                  if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
+                                  if (hasLeave) {
+                                    ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                                  } else {
+                                    ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                                  }
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                                }}
+                                style={{
+                                  padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
+                                  cursor: canManage ? 'pointer' : 'default',
+                                  background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
+                                  transition: 'background 0.15s',
+                                }}
+                              >
+                                {(() => {
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
+                                  const parts: React.ReactNode[] = []
+                                  ss.forEach((s, si) => {
+                                    const tpl = templates.find(t => t.id === s.templateId)
+                                    const p: string[] = []
+                                    if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
+                                    if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+                                    const bg = shiftColor(s)
+                                    parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
+                                  })
+                                  ls.forEach((lr, li) => {
+                                    const lc = lr.leaveType?.color ?? '#9ca3af'
+                                    parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
+                                  })
+                                  return parts
+                                })()}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })}
                     {/* Borrowed group header */}
                     {borrowedEmployees.length > 0 && (
                       <tr>
