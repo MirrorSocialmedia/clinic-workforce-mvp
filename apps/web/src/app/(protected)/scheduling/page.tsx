@@ -8,7 +8,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
-import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK, addDaysStr } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { textOn, shiftShade } from '@/lib/color'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
@@ -178,6 +178,11 @@ function useDragOutDeleteWithUndo(
   }
   return { start, ghost }
 }
+
+// ============================================================
+// Shared empty array — avoid creating new [] on every render
+// ============================================================
+const EMPTY: any[] = []
 
 // ============================================================
 // Main Component
@@ -450,6 +455,35 @@ export default function SchedulingPage() {
     const n = new Date(Date.UTC(y, m, 0)).getUTCDate()
     return Array.from({ length: n }, (_, i) => `${ovMonth}-${String(i + 1).padStart(2, '0')}`)
   }, [ovMonth])
+
+  // ★ Pre-group month shifts by employeeId|date for O(1) lookups instead of per-cell filter
+  const monthShiftsByKey = useMemo(() => {
+    const m = new Map<string, any[]>()
+    for (const s of ovMonthShifts) {
+      const k = `${s.employeeId}|${toHKDateStr(new Date(s.date))}`
+      const arr = m.get(k)
+      if (arr) arr.push(s)
+      else m.set(k, [s])
+    }
+    return m
+  }, [ovMonthShifts])
+
+  const monthLeavesByKey = useMemo(() => {
+    const m = new Map<string, any[]>()
+    for (const lr of monthLeaveRequests) {
+      let cur = toHKDateStr(new Date(lr.startDate))
+      const last = toHKDateStr(new Date(lr.endDate))
+      let guard = 0
+      while (cur <= last && guard++ < 400) {
+        const k = `${lr.employeeId}|${cur}`
+        const arr = m.get(k)
+        if (arr) arr.push(lr)
+        else m.set(k, [lr])
+        cur = addDaysStr(cur, 1)
+      }
+    }
+    return m
+  }, [monthLeaveRequests])
 
   // Load month shifts via pagination (extracted so refreshAll can call it)
   const loadOvMonth = useCallback(async () => {
@@ -851,6 +885,35 @@ function getShiftCode(shift: Shift): string {
     return shifts.filter(s => scopeClinicIds.has(s.clinicId) || scopedEmployeeIds.has(s.employeeId))
   }, [shifts, scopeClinicIds, employees])
 
+  // ★ Pre-group shifts by employeeId|date for O(1) lookups instead of per-cell filter
+  const weekShiftsByKey = useMemo(() => {
+    const m = new Map<string, any[]>()
+    for (const s of ovShifts) {
+      const k = `${s.employeeId}|${toHKDateStr(new Date(s.date))}`
+      const arr = m.get(k)
+      if (arr) arr.push(s)
+      else m.set(k, [s])
+    }
+    return m
+  }, [ovShifts])
+
+  const weekLeavesByKey = useMemo(() => {
+    const m = new Map<string, any[]>()
+    for (const lr of leaveRequests) {
+      let cur = toHKDateStr(new Date(lr.startDate))
+      const last = toHKDateStr(new Date(lr.endDate))
+      let guard = 0
+      while (cur <= last && guard++ < 400) {
+        const k = `${lr.employeeId}|${cur}`
+        const arr = m.get(k)
+        if (arr) arr.push(lr)
+        else m.set(k, [lr])
+        cur = addDaysStr(cur, 1)
+      }
+    }
+    return m
+  }, [leaveRequests])
+
   // Step 7: Companies derived from clinics (deduplicated)
   const companies = useMemo(() => {
     const m = new Map<string, { id: string; name: string }>()
@@ -862,12 +925,8 @@ function getShiftCode(shift: Shift): string {
 
   // Helper: get mobile overview cell for an employee on a given date
   const getMobileCell = useCallback((empId: string, dateStr: string) => {
-    const empShiftsOnDay = ovShifts.filter(s =>
-      s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr
-    )
-    const empLeavesOnDay = leaveRequests.filter(lr =>
-      lr.employeeId === empId && leaveCoversDate(lr, dateStr)
-    )
+    const empShiftsOnDay = weekShiftsByKey.get(`${empId}|${dateStr}`) ?? EMPTY
+    const empLeavesOnDay = weekLeavesByKey.get(`${empId}|${dateStr}`) ?? EMPTY
     const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
 
     if (empShiftsOnDay.length > 0) {
@@ -911,7 +970,7 @@ function getShiftCode(shift: Shift): string {
       }
     }
     return { label: '—', bg: 'transparent', detail: '' }
-  }, [ovShifts, leaveRequests, shiftColor])
+  }, [weekShiftsByKey, weekLeavesByKey, shiftColor])
 
   // Mobile week label: "M/D–M/D"
   const mobileWeekLabel = useMemo(() => {
@@ -1990,8 +2049,8 @@ function getShiftCode(shift: Shift): string {
         )}
       </td>
       {weekDays.map((wd, i) => {
-        const ss = ovShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === wd.dateStr)
-        const ls = leaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, wd.dateStr))
+        const ss = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+        const ls = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
         // ★ 2026-08-02：病假覆蓋更次 —— 病假日有更次時合併顯示
         const sickLeave = ls.find(lr => lr.leaveType?.systemKey === 'SICK')
         return (
@@ -2286,14 +2345,8 @@ function getShiftCode(shift: Shift): string {
                   fontWeight: 500, fontSize: 11,
                 }}>{emp.user?.name ?? '?'}</td>
                 {days.map((wd, dayIdx) => {
-                  const empShiftsOnDay = ovShifts.filter(s =>
-                    s.employeeId === emp.id &&
-                    toHKDateStr(new Date(s.date)) === wd.dateStr
-                  )
-                  const empLeavesOnDay = leaveRequests.filter(lr =>
-                    lr.employeeId === emp.id &&
-                    leaveCoversDate(lr, wd.dateStr)
-                  )
+                  const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                  const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const hasShift = empShiftsOnDay.length > 0
                   const hasLeave = empLeavesOnDay.length > 0
                   return (
@@ -2446,14 +2499,8 @@ function getShiftCode(shift: Shift): string {
                   fontWeight: 500, fontSize: 11,
                 }}>{emp.user?.name ?? '?'}</td>
                 {days.map((wd, dayIdx) => {
-                  const empShiftsOnDay = ovShifts.filter(s =>
-                    s.employeeId === emp.id &&
-                    toHKDateStr(new Date(s.date)) === wd.dateStr
-                  )
-                  const empLeavesOnDay = leaveRequests.filter(lr =>
-                    lr.employeeId === emp.id &&
-                    leaveCoversDate(lr, wd.dateStr)
-                  )
+                  const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                  const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const hasShift = empShiftsOnDay.length > 0
                   const hasLeave = empLeavesOnDay.length > 0
                   return (
@@ -2609,14 +2656,8 @@ function getShiftCode(shift: Shift): string {
                       </span>
                     </td>
                     {days.map((wd, dayIdx) => {
-                      const empShiftsOnDay = ovShifts.filter(s =>
-                        s.employeeId === emp.id &&
-                        toHKDateStr(new Date(s.date)) === wd.dateStr
-                      )
-                      const empLeavesOnDay = leaveRequests.filter(lr =>
-                        lr.employeeId === emp.id &&
-                        leaveCoversDate(lr, wd.dateStr)
-                      )
+                      const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                      const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                       const hasShift = empShiftsOnDay.length > 0
                       const hasLeave = empLeavesOnDay.length > 0
                       return (
@@ -4497,8 +4538,8 @@ function getShiftCode(shift: Shift): string {
                             fontSize: 11,
                           }}>{emp.user?.name ?? '?'}</td>
                           {monthDays.map((d, di) => {
-                            const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
-                            const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                            const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
+                            const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const hasShift = ss.length > 0
                             const hasLeave = ls.length > 0
                             return (
@@ -4587,8 +4628,8 @@ function getShiftCode(shift: Shift): string {
                             fontSize: 11,
                           }}>{emp.user?.name ?? '?'}</td>
                           {monthDays.map((d, di) => {
-                            const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
-                            const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                            const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
+                            const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const hasShift = ss.length > 0
                             const hasLeave = ls.length > 0
                             return (
@@ -4682,8 +4723,8 @@ function getShiftCode(shift: Shift): string {
                             {homeLabel && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
                           </td>
                           {monthDays.map((d, di) => {
-                            const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
-                            const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                            const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
+                            const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const hasShift = ss.length > 0
                             const hasLeave = ls.length > 0
                             return (

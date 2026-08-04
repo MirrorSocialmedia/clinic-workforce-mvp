@@ -82,7 +82,7 @@ export async function PUT(
 
     if (status === 'APPROVED') {
       // ★ 累積制假期用 year = 0（2026-08-04 修）
-      const leaveYear = balanceYearFor(request.leaveType?.systemKey)
+      const leaveYear = balanceYearFor(request.leaveType?.systemKey, new Date(request.startDate))
       const bal = await prisma.leaveBalance.findUnique({
         where: {
           employeeId_leaveTypeId_year: {
@@ -98,16 +98,20 @@ export async function PUT(
           { status: 400 }
         )
       }
-      await prisma.leaveBalance.update({
+      const updated = await prisma.leaveBalance.updateMany({
         where: {
-          employeeId_leaveTypeId_year: {
-            employeeId: request.employeeId,
-            leaveTypeId: request.leaveTypeId,
-            year: leaveYear,
-          },
+          employeeId: request.employeeId,
+          leaveTypeId: request.leaveTypeId,
+          year: leaveYear,
         },
         data: { used: { increment: request.days }, remaining: { decrement: request.days } },
       })
+      if (updated.count === 0) {
+        console.error(
+          `[leave-approve] ⛔ 扣額度失敗：employeeId=${request.employeeId} ` +
+          `leaveTypeId=${request.leaveTypeId} year=${leaveYear} days=${request.days}`,
+        )
+      }
     }
 
     await createNotification({

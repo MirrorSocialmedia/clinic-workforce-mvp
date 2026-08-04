@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { LEAVE_SYSTEM_KEYS, balanceYearFor } from '@/lib/leave-types'
 
 async function getOtLeaveTypeId() {
   const lt = await prisma.leaveType.findUnique({
@@ -14,7 +14,7 @@ async function getOtLeaveTypeId() {
 }
 
 async function addLeaveBalance(employeeId: string, leaveTypeId: string, days: number) {
-  const year = new Date().getUTCFullYear()
+  const year = balanceYearFor(LEAVE_SYSTEM_KEYS.OT)
   await prisma.leaveBalance.upsert({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
     update: { entitled: { increment: days }, remaining: { increment: days } },
@@ -23,7 +23,7 @@ async function addLeaveBalance(employeeId: string, leaveTypeId: string, days: nu
 }
 
 async function deductLeaveBalance(employeeId: string, leaveTypeId: string, days: number) {
-  const year = new Date().getUTCFullYear()
+  const year = balanceYearFor(LEAVE_SYSTEM_KEYS.OT)
   const bal = await prisma.leaveBalance.findUnique({
     where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
   })
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '找不到 REST_DAY 類型' }, { status: 400 })
     }
     // 找員工該類型的 leaveBalance（按年）
-    const year = new Date().getUTCFullYear()
+    const year = balanceYearFor(LEAVE_SYSTEM_KEYS.REST_DAY)
     let bal = await prisma.leaveBalance.findFirst({
       where: { employeeId, leaveTypeId: restType.id, year },
     })
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
     }
 
     const otLeave = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId: otLeaveTypeId, year: new Date().getUTCFullYear() },
+      where: { employeeId, leaveTypeId: otLeaveTypeId, year: balanceYearFor(LEAVE_SYSTEM_KEYS.OT) },
     })
     if (!otLeave || otLeave.remaining < daysInt) {
       return NextResponse.json({ error: 'OT 假不足' }, { status: 400 })

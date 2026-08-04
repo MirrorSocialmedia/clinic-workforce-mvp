@@ -98,6 +98,13 @@ export function addDays(dateStr: string, n: number): string {
   return toHKDateStr(utc)
 }
 
+/** 日期字串加 N 日（YYYY-MM-DD）—— 唔經 Intl 格式化，避免時區同效能問題 */
+export function addDaysStr(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d + n))
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`
+}
+
 /** PayrollRun.periodMonth (DateTime, HK 月初午夜) → "YYYY-MM"
  *  — Date → toHKDateStr().slice(0,7)
  *  — plain "YYYY-MM" string → passthrough
