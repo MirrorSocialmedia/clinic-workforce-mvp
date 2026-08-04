@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { serviceMonths, totalAccruedLeave, PROBATION_MONTHS } from '@/lib/leave-calculation'
+import { serviceMonths, totalAccruedLeave, accruedBirthdayLeave, PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
 
 // ★ 年假採累積制（2026-07-31 決定）：year 固定 0，代表「由入職累計」。
@@ -41,10 +41,10 @@ export async function POST(req: NextRequest) {
     }
 
     const targetEmployees = employeeId
-      ? [await prisma.employee.findUnique({ where: { id: employeeId }, include: { user: { select: { name: true } } } })].filter(Boolean)
+      ? [await prisma.employee.findUnique({ where: { id: employeeId }, include: { user: { select: { name: true } }, payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { configJson: true } } } })].filter(Boolean)
       : await prisma.employee.findMany({
         where: { status: { in: ['ACTIVE', 'PROBATION'] } },
-        include: { user: { select: { name: true } } },
+        include: { user: { select: { name: true } }, payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { configJson: true } } },
       })
 
     if (targetEmployees.length === 0) {
@@ -108,6 +108,47 @@ export async function POST(req: NextRequest) {
           },
         })
         updated++
+      }
+
+      // ★ 2026-08-04：生日假獨立計算
+      const rule = emp.payRules?.[0]
+      let birthdayDays = 0
+      try {
+        const cfg = rule && rule.configJson ? JSON.parse(rule.configJson) : {}
+        birthdayDays = cfg?.modifiers?.birthday_leave?.days_per_year ?? 0
+      } catch { /* config 壞咗就當冇生日假 */ }
+
+      if (birthdayDays > 0) {
+        const birthdayType = await prisma.leaveType.findUnique({
+          where: { systemKey: LEAVE_SYSTEM_KEYS.BIRTHDAY },
+        })
+        if (birthdayType) {
+          const birthdayEntitled = accruedBirthdayLeave(new Date(emp.joinDate), now, birthdayDays)
+          const birthdayExisting = await prisma.leaveBalance.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: {
+                employeeId: emp.id,
+                leaveTypeId: birthdayType.id,
+                year: 0, // ★ year: 0 累積制
+              },
+            },
+          })
+
+          if (birthdayExisting) {
+            if (birthdayExisting.entitled !== birthdayEntitled || birthdayExisting.remaining !== Math.max(0, birthdayEntitled - birthdayExisting.used)) {
+              await prisma.leaveBalance.update({
+                where: { id: birthdayExisting.id },
+                data: { entitled: birthdayEntitled, remaining: Math.max(0, birthdayEntitled - birthdayExisting.used) },
+              })
+              updated++
+            }
+          } else if (birthdayEntitled > 0) {
+            await prisma.leaveBalance.create({
+              data: { employeeId: emp.id, leaveTypeId: birthdayType.id, year: 0, entitled: birthdayEntitled, used: 0, remaining: birthdayEntitled },
+            })
+            updated++
+          }
+        }
       }
     }
 

@@ -14,12 +14,7 @@ export const PROBATION_MONTHS = 3 as const
 // 每年天數（按比例計算用）
 const YEAR_DAYS = 365
 
-/**
- * 生日假（公司政策，合約第 8 條）—— 固定 1 天，唔跟年資階梯。
- * ★ 合併入年假額度發放，但唔加入 LEAVE_TABLE ——
- *   加入嘅話第 9 年會變 15 天（生日假變相變成 2 天）。
- */
-export const BIRTHDAY_LEAVE_DAYS = 1 as const
+
 
 /**
  * 根據服務年資返回年假額度
@@ -84,63 +79,56 @@ export function leaveForServiceYear(joinDate: Date, serviceYearIndex: number, as
 }
 
 /**
- * 年假累積明細 —— 拆開法定年假同生日假，畀 UI 顯示用。
- * ★ 2026-08-03：合約寫明「7 天年假 + 1 天生日假」，
- * 系統存埋一齊，UI 要拆返出嚟先對得上合約。
- */
-export function annualLeaveBreakdown(
-  joinDate: Date,
-  asOf: Date,
-  mode: 'earned' | 'prorata' = 'prorata',
-): { annual: number; birthday: number; total: number } {
-  const months = serviceMonths(joinDate, asOf)
-  if (months < PROBATION_MONTHS) return { annual: 0, birthday: 0, total: 0 }
-
-  const years = serviceYears(joinDate, asOf)
-  let annual = 0
-  let birthday = 0
-  // ★ i < years = 只計完成咗嘅年度（earned）；i <= years = 加埋進行中嗰年（prorata）
-  const last = mode === 'prorata' ? years : years - 1
-  for (let i = 0; i <= last; i++) {
-    annual += leaveForServiceYear(joinDate, i, asOf)
-
-    // ★ 生日假唔按比例（2026-08-02 決定）——
-    //   合約寫「每滿十二個月便可享有…1天」，「每滿」係條件，未滿就冇。
-    //   所以只有【完成咗嘅服務年度】先計，prorata 模式下進行中嗰年唔加。
-    const yearFullyCompleted = new Date(
-      Date.UTC(hkParts(joinDate).y + i + 1, hkParts(joinDate).m - 1, hkParts(joinDate).day)
-    ) <= asOf
-    if (yearFullyCompleted) birthday += BIRTHDAY_LEAVE_DAYS
-  }
-
-  return {
-    annual: Math.round(annual * 100) / 100,
-    birthday,
-    total: Math.round((annual + birthday) * 100) / 100,
-  }
-}
-
-/**
- * 累計年假。
+ * 累計年假（純法定，唔含生日假）。
  *
- * @param mode
- * 'prorata' —— 按月比例累積（公司政策，2026-08-03 老闆決定）。
- * 進行中嘅服務年度按已過月數比例計。
- * ★ 日常餘額同離職結算【都用呢個】，兩者一致。
- * 'earned' —— 只計已完成嘅服務年度（EO s.41A 法定最低）。
- * 保留作參考，目前冇 caller。
- *
- * ★ 2026-08-03 更正：之前預設 'earned'（防止預支），
- * 但老闆確認公司政策係按月比例給。
- * 按月比例【優於法定】，而且令日常同離職口徑一致 ——
- * 員工放晒 prorata 嘅假之後離職，結算啱好係 0，唔會出現預支。
+ * ★ 2026-08-04：生日假拆咗出去獨立計算 ——
+ * 唔係每間公司都有，改由 PayRule.modifiers.birthday_leave 控制。
+ * 見 accruedBirthdayLeave()。
  */
 export function totalAccruedLeave(
   joinDate: Date,
   asOf: Date,
-  mode: 'earned' | 'prorata' = 'prorata', // ★ 預設改咗
+  mode: 'earned' | 'prorata' = 'prorata',
 ): number {
-  return annualLeaveBreakdown(joinDate, asOf, mode).total
+  const months = serviceMonths(joinDate, asOf)
+  if (months < PROBATION_MONTHS) return 0
+
+  const years = serviceYears(joinDate, asOf)
+  let total = 0
+  const last = mode === 'prorata' ? years : years - 1
+  for (let i = 0; i <= last; i++) {
+    total += leaveForServiceYear(joinDate, i, asOf)
+  }
+  return Math.round(total * 100) / 100
+}
+
+/**
+ * 生日假累積天數。
+ *
+ * ★ 2026-08-04：由 PayRule.modifiers.birthday_leave 控制。
+ * 唔按比例 —— 每滿一年先計。
+ *
+ * @param daysPerYear 每完成一年幾多天（PayRule 設定）
+ */
+export function accruedBirthdayLeave(
+  joinDate: Date,
+  asOf: Date,
+  daysPerYear: number,
+): number {
+  if (!daysPerYear || daysPerYear <= 0) return 0
+
+  const years = serviceYears(joinDate, asOf)
+  if (years < 1) return 0
+
+  const j = hkParts(joinDate)
+  let count = 0
+  for (let i = 0; i < years; i++) {
+    const anniversary = new Date(
+      `${j.y + i + 1}-${String(j.m + 1).padStart(2, '0')}-${String(j.day).padStart(2, '0')}T00:00:00+08:00`,
+    )
+    if (anniversary <= asOf) count++
+  }
+  return count * daysPerYear
 }
 
 /** 離職結算結果 */

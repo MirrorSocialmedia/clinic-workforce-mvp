@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 import { todayHK, toHKDateStr } from '@/lib/hk-date'
-import { DEFAULT_MODIFIERS } from '@/lib/pay-rule-defaults'
+import { DEFAULT_MODIFIERS, BIRTHDAY_LEAVE_DEFAULT } from '@/lib/pay-rule-defaults'
 
 type BaseType = 'monthly' | 'hourly' | 'split'
 
@@ -203,7 +203,11 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
         if (mods[key]) {
           delete mods[key]
         } else {
-          mods[key] = structuredClone((DEFAULT_MODIFIERS as any)[key] || {})
+          mods[key] = structuredClone(
+            key === 'birthday_leave'
+              ? BIRTHDAY_LEAVE_DEFAULT
+              : (DEFAULT_MODIFIERS as any)[key] || {},
+          )
         }
         next.modifiers = mods
         return next
@@ -1208,6 +1212,48 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 </button>
               </div>
             )}
+
+            {/* ★ 生日假 —— 公司政策，唔係每間都有 */}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={!!modifiers.birthday_leave}
+                  onChange={() => toggleModifier('birthday_leave')}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <span style={{ fontWeight: 600, fontSize: 13 }}>生日假</span>
+                <span style={{ fontSize: 11, color: '#9ca3af' }}>每完成一年服務年度發放，唔按比例</span>
+              </div>
+              {modifiers.birthday_leave && (
+                <div style={{ paddingLeft: 36 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    每年天數
+                    <input
+                      type="number" min={0} max={10} step={0.5}
+                      value={modifiers.birthday_leave?.days_per_year ?? 1}
+                      onChange={e => {
+                        setConfig((prev) => ({
+                          ...prev,
+                          modifiers: {
+                            ...prev.modifiers!,
+                            birthday_leave: {
+                              ...modifiers.birthday_leave,
+                              days_per_year: Number(e.target.value),
+                            },
+                          },
+                        }))
+                      }}
+                      style={{ width: 70 }}
+                    />
+                    天
+                  </label>
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+                    ⚠️ 改咗要撳「重新計算假期」先生效
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           
           {/* ═══ 3️⃣ MPF 強積金 (hidden for hourly) ═══ */}

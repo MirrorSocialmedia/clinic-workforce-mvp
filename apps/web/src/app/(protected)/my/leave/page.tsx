@@ -184,12 +184,6 @@ export default function MyLeavePage() {
                 <div>
                   <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{b.leaveType.name}</div>
                   <div className="text-xs text-gray-400 mt-0.5">已用 {b.used.toFixed(1)} 天</div>
-                  {/* ★ 年假加生日假拆解 */}
-                  {b.leaveType?.systemKey === 'ANNUAL_LEAVE' && b.breakdown && (
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      （法定年假 {b.breakdown.annual.toFixed(1)} + 生日假 {b.breakdown.birthday}）
-                    </div>
-                  )}
                   {/* ★ 休息日加說明 */}
                   {b.leaveType?.systemKey === 'REST_DAY' && (
                     <div className="text-xs text-gray-400 mt-0.5">

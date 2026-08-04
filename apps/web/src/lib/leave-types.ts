@@ -7,6 +7,7 @@ export const LEAVE_SYSTEM_KEYS = {
   ANNUAL: 'ANNUAL_LEAVE',
   OT: 'OT_LEAVE',
   SICK: 'SICK',
+  BIRTHDAY: 'BIRTHDAY_LEAVE', // ★ 2026-08-04 新增
 } as const
 
 /** Leave types that deduct from LeaveBalance quota — SICK / unpaid are excluded. */
@@ -14,6 +15,7 @@ export const QUOTA_LEAVE_KEYS = [
   LEAVE_SYSTEM_KEYS.REST_DAY,
   LEAVE_SYSTEM_KEYS.ANNUAL,
   LEAVE_SYSTEM_KEYS.OT,
+  LEAVE_SYSTEM_KEYS.BIRTHDAY, // ★ 2026-08-04 要扣額度
 ] as const
 
 /** 可以預支（餘額可負）嘅假期類型 —— 下個月還 */

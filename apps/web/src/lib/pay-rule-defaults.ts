@@ -36,6 +36,11 @@ export const DEFAULT_MODIFIERS = {
   },
 } satisfies NonNullable<PayRuleConfigModular['modifiers']>
 
+/** 生日假 modifier 嘅預設值（用家撳「啟用」時填入） */
+export const BIRTHDAY_LEAVE_DEFAULT = {
+  days_per_year: 1,
+} as const
+
 export function buildDefaultPayConfig(payType: string, baseAmount?: number | null): any {
   const isMonthly = payType === 'MONTHLY'
   const modifiers: any = {

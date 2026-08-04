@@ -49,7 +49,6 @@ interface LeaveBalanceItem {
   used: number
   remaining: number
   systemUsed?: number
-  breakdown?: { annual: number; birthday: number; total: number }
   employee?: {
     user: { id: string; name: string }
   }
@@ -563,12 +562,6 @@ export default function LeavePage() {
                       {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && (
                         <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2, marginBottom: 4 }}>
                           按月累積（公司政策）· 日常餘額同離職結算同一口徑
-                        </div>
-                      )}
-                      {/* ★ 拆開顯示 —— 合約寫「7天年假 + 1天生日假」，系統存埋一齊，UI 要拆返出嚟先對得上合約 */}
-                      {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && b.breakdown && (
-                        <div className="text-xs text-muted-foreground mt-1" style={{ fontSize: 11, color: '#6b7280' }}>
-                          （法定年假 {b.breakdown.annual.toFixed(1)} + 生日假 {b.breakdown.birthday}）
                         </div>
                       )}
                       {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.SICK ? (

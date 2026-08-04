@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { annualLeaveBreakdown } from '@/lib/leave-calculation'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 
 // ============================================================
@@ -84,9 +83,6 @@ export async function GET(req: NextRequest) {
         return {
           ...b,
           systemUsed: sysMap.get(`${b.employeeId}:${b.leaveTypeId}`) ?? 0,
-          ...(lt.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && emp.joinDate
-            ? { breakdown: annualLeaveBreakdown(new Date(emp.joinDate), new Date(), 'prorata') }
-            : {}),
         }
       }),
     })

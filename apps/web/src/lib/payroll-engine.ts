@@ -1264,6 +1264,9 @@ export interface PayRuleConfigModular {
       defaultMinutes?: number
       minMinutes?: number
     }
+    birthday_leave?: {
+      days_per_year: number
+    }
   }
 
   // Leave banking: 不放的假存起來
