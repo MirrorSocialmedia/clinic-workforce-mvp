@@ -367,8 +367,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main content */}
+      {/* ★ min-w-0 唔可以刪 —— flex 子項預設 min-width:auto（唔可以細過內容），
+      會令闊表格（例如排班月視圖 1814px）撐大 <main>，
+      內部嘅 overflow-x:auto 容器就冇嘢好捲，變成成個頁面橫捲。（2026-08-03） */}
       <main
-        className={`flex-1 transition-[margin] duration-300 ml-0 ${collapsed ? 'md:ml-20' : 'md:ml-64'}`}
+        className={`flex-1 min-w-0 transition-[margin] duration-300 ml-0 ${collapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         <div className="main-content pb-16 md:pb-0">
         {children}
