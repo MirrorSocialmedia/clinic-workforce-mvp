@@ -196,7 +196,9 @@ export default function MyLeavePage() {
                     </>
                   ) : (
                     <>
-                      <div className="text-lg font-bold text-gray-900 dark:text-white">{b.remaining.toFixed(1)}</div>
+                      <div className="text-lg font-bold" style={{ color: b.remaining < 0 ? '#dc2626' : undefined }}>
+                        {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
+                      </div>
                       <div className="text-xs text-gray-400">
                         天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}
                       </div>

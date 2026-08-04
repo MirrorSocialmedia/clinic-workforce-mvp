@@ -4,9 +4,29 @@
 
 import { hkParts } from './hk-date'
 
-// 年資額度對照表（可配置）
-// Index 0 = 第1年, 1 = 第2年, ..., 8 = 第9年+
-export const LEAVE_TABLE = [7, 7, 8, 9, 10, 11, 12, 13, 14] as const
+/**
+ * 法定年假階梯（EO s.41）——【最低保障】，唔可以低過。
+ * Index 0 = 第1年, 1 = 第2年, …, 8 = 第9年+
+ */
+export const STATUTORY_LEAVE_TABLE = [7, 7, 8, 9, 10, 11, 12, 13, 14] as const
+
+/** @deprecated 改用 STATUTORY_LEAVE_TABLE */
+export const LEAVE_TABLE = STATUTORY_LEAVE_TABLE
+
+/**
+ * 解析實際適用嘅年假階梯。
+ *
+ * ★ 容許逐個員工自訂（PayRule.modifiers.annual_leave.table），
+ * 但【每一年都取自訂同法定嘅較大者】—— EO s.70 規定任何低過法定嘅條款無效。
+ */
+export function resolveLeaveTable(custom?: number[] | null): number[] {
+  const N = STATUTORY_LEAVE_TABLE.length // 9
+  if (!custom || custom.length === 0) return [...STATUTORY_LEAVE_TABLE]
+  return Array.from({ length: N }, (_, i) => {
+    const c = custom[Math.min(i, custom.length - 1)] ?? 0
+    return Math.max(c, STATUTORY_LEAVE_TABLE[i])
+  })
+}
 
 // 試用期門檻（月）
 export const PROBATION_MONTHS = 3 as const
@@ -19,10 +39,12 @@ const YEAR_DAYS = 365
 /**
  * 根據服務年資返回年假額度
  * @param serviceYears 滿幾年（1-9+）
+ * @param table 自訂年假階梯（預設法定）
  */
-export function annualLeaveEntitlement(serviceYears: number): number {
-  const idx = Math.min(serviceYears - 1, LEAVE_TABLE.length - 1)
-  return idx < 0 ? 0 : LEAVE_TABLE[idx]
+export function annualLeaveEntitlement(serviceYears: number, table?: number[]): number {
+  const t = table ?? STATUTORY_LEAVE_TABLE
+  const idx = Math.min(serviceYears - 1, t.length - 1)
+  return idx < 0 ? 0 : t[idx]
 }
 
 /**
@@ -61,8 +83,9 @@ export function serviceMonths(joinDate: Date, asOf: Date): number {
  * @param joinDate 入職日期
  * @param serviceYearIndex 服務年度索引（0=第1年, 1=第2年...）
  * @param asOf 計算基準日
+ * @param table 自訂年假階梯（預設法定）
  */
-export function leaveForServiceYear(joinDate: Date, serviceYearIndex: number, asOf: Date): number {
+export function leaveForServiceYear(joinDate: Date, serviceYearIndex: number, asOf: Date, table?: number[]): number {
   const j = hkParts(joinDate)
   // HK-safe anniversary dates via ISO string with +08:00
   const pad = (n: number) => String(n + 1).padStart(2, '0')
@@ -72,7 +95,8 @@ export function leaveForServiceYear(joinDate: Date, serviceYearIndex: number, as
   if (periodEnd <= yearStart) return 0
 
   const daysInThisYear = Math.floor((periodEnd.getTime() - yearStart.getTime()) / 86400000)
-  const entitlement = LEAVE_TABLE[Math.min(serviceYearIndex, LEAVE_TABLE.length - 1)]
+  const t = table ?? STATUTORY_LEAVE_TABLE
+  const entitlement = t[Math.min(serviceYearIndex, t.length - 1)]
   // ★ 閏年（366 日）会令比例 > 1，令完整年度得出 7.02 —— clamp 住
   const ratio = Math.min(1, daysInThisYear / YEAR_DAYS)
   return entitlement * ratio
@@ -89,6 +113,7 @@ export function totalAccruedLeave(
   joinDate: Date,
   asOf: Date,
   mode: 'earned' | 'prorata' = 'prorata',
+  table?: number[],
 ): number {
   const months = serviceMonths(joinDate, asOf)
   if (months < PROBATION_MONTHS) return 0
@@ -97,7 +122,7 @@ export function totalAccruedLeave(
   let total = 0
   const last = mode === 'prorata' ? years : years - 1
   for (let i = 0; i <= last; i++) {
-    total += leaveForServiceYear(joinDate, i, asOf)
+    total += leaveForServiceYear(joinDate, i, asOf, table)
   }
   return Math.round(total * 100) / 100
 }
@@ -150,6 +175,7 @@ export function settleLeaveOnResign(
   resignDate: Date,
   monthlySalary: number,
   usedDays: number,
+  table?: number[],
 ): LeaveSettlement {
   const months = serviceMonths(joinDate, resignDate)
   if (months < PROBATION_MONTHS) {
@@ -157,7 +183,7 @@ export function settleLeaveOnResign(
   }
 
   // ★ 離職結算要加埋進行中年度嘅按比例部分（EO s.41D）
-  const accrued = totalAccruedLeave(joinDate, resignDate, 'prorata')
+  const accrued = totalAccruedLeave(joinDate, resignDate, 'prorata', table)
   const unused = Math.max(0, accrued - usedDays)
   const dailyWage = monthlySalary * 12 / YEAR_DAYS
   const payout = Math.round(unused * dailyWage * 100) / 100

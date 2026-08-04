@@ -582,7 +582,7 @@ export default function DashboardPage() {
                           const rd = bal.REST_DAY
                           if (!rd) return '-'
                           const val = rd.remaining ?? rd.entitled ?? 0
-                          return Number(val).toFixed(1)
+                          return val < 0 ? `欠 ${Math.abs(val).toFixed(1)}` : Number(val).toFixed(1)
                         })()}
                       </TableCell>
                       <TableCell>
@@ -590,7 +590,8 @@ export default function DashboardPage() {
                           const bal = balancesByEmp.get(emp.employeeId) || {}
                           const al = bal.ANNUAL_LEAVE
                           if (!al) return '-'
-                          return Number(al.remaining ?? 0).toFixed(1)
+                          const val = al.remaining ?? 0
+                          return val < 0 ? `欠 ${Math.abs(val).toFixed(1)}` : Number(val).toFixed(1)
                         })()}
                       </TableCell>
                       <TableCell>
@@ -633,8 +634,8 @@ export default function DashboardPage() {
                         </div>
                       </div>
                       <div className="flex justify-between text-xs text-muted-foreground mt-1 pt-1 border-t">
-                        <span>休息日 {(rd ? Number(rd.remaining ?? 0).toFixed(1) : '—')}天</span>
-                        <span>年假 {(al ? Number(al.remaining ?? 0).toFixed(1) : '—')}天</span>
+                        <span>休息日 {(rd ? (rd.remaining < 0 ? `欠 ${Math.abs(rd.remaining).toFixed(1)}` : Number(rd.remaining).toFixed(1)) : '—')}天</span>
+                        <span>年假 {(al ? (al.remaining < 0 ? `欠 ${Math.abs(al.remaining).toFixed(1)}` : Number(al.remaining).toFixed(1)) : '—')}天</span>
                         <span>OT假 {(ol ? Number(ol.remaining ?? 0).toFixed(1) : '—')}天</span>
                       </div>
                     </div>

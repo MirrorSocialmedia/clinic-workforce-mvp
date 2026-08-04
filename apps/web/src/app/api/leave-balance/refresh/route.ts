@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { serviceMonths, totalAccruedLeave, accruedBirthdayLeave, PROBATION_MONTHS } from '@/lib/leave-calculation'
+import { serviceMonths, totalAccruedLeave, accruedBirthdayLeave, PROBATION_MONTHS, resolveLeaveTable } from '@/lib/leave-calculation'
 import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
 
 // ★ 年假採累積制（2026-07-31 決定）：year 固定 0，代表「由入職累計」。
@@ -68,7 +68,16 @@ export async function POST(req: NextRequest) {
       }
 
       // ★ 2026-08-03：年假按月比例累積（公司政策），日常顯示同離職結算同一口徑
-      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now, 'prorata')
+      // ★ 2026-08-04：讀 PayRule 自訂年假階梯（resolveLeaveTable 自動保護法定底線）
+      let leaveTable: number[] | undefined
+      try {
+        const rule = emp.payRules?.[0]
+        const cfg = rule && rule.configJson ? JSON.parse(rule.configJson) : {}
+        const t = cfg?.modifiers?.annual_leave?.table
+        if (Array.isArray(t) && t.length) leaveTable = resolveLeaveTable(t)
+      } catch { /* config 壞咗就用法定 */ }
+
+      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now, 'prorata', leaveTable)
 
       const existing = await prisma.leaveBalance.findUnique({
         where: {

@@ -41,6 +41,11 @@ export const BIRTHDAY_LEAVE_DEFAULT = {
   days_per_year: 1,
 } as const
 
+/** 年假階梯 modifier 嘅預設值（用家撳「啟用」時填入） */
+export const ANNUAL_LEAVE_DEFAULT = {
+  table: [] as number[],
+} as const
+
 export function buildDefaultPayConfig(payType: string, baseAmount?: number | null): any {
   const isMonthly = payType === 'MONTHLY'
   const modifiers: any = {

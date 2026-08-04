@@ -4,7 +4,8 @@ import { useState, useCallback, useEffect } from 'react'
 import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 import { todayHK, toHKDateStr } from '@/lib/hk-date'
-import { DEFAULT_MODIFIERS, BIRTHDAY_LEAVE_DEFAULT } from '@/lib/pay-rule-defaults'
+import { DEFAULT_MODIFIERS, BIRTHDAY_LEAVE_DEFAULT, ANNUAL_LEAVE_DEFAULT } from '@/lib/pay-rule-defaults'
+import { resolveLeaveTable, STATUTORY_LEAVE_TABLE } from '@/lib/leave-calculation'
 
 type BaseType = 'monthly' | 'hourly' | 'split'
 
@@ -206,7 +207,9 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
           mods[key] = structuredClone(
             key === 'birthday_leave'
               ? BIRTHDAY_LEAVE_DEFAULT
-              : (DEFAULT_MODIFIERS as any)[key] || {},
+              : key === 'annual_leave'
+                ? ANNUAL_LEAVE_DEFAULT
+                : (DEFAULT_MODIFIERS as any)[key] || {},
           )
         }
         next.modifiers = mods
@@ -1212,6 +1215,82 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 </button>
               </div>
             )}
+
+            {/* ★ 年假階梯設定 */}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={!!modifiers.annual_leave}
+                  onChange={() => toggleModifier('annual_leave')}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <span style={{ fontWeight: 600, fontSize: 13 }}>年假階梯（9 年）</span>
+                <span style={{ fontSize: 11, color: '#9ca3af' }}>法定底線保護（EO s.41）</span>
+              </div>
+              {modifiers.annual_leave && (
+                <div style={{ paddingLeft: 36 }}>
+                  <div className="form-group">
+                    <label style={{ fontSize: 12 }}>自訂階梯（逗號分隔，9 年）</label>
+                    <input
+                      type="text"
+                      value={(modifiers.annual_leave as any)?.table?.join(',') ?? ''}
+                      onChange={e => {
+                        const raw = e.target.value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n >= 0)
+                        setConfig(prev => ({
+                          ...prev,
+                          modifiers: {
+                            ...prev.modifiers!,
+                            annual_leave: { ...modifiers.annual_leave, table: raw },
+                          },
+                        }))
+                      }}
+                      placeholder="如 7,8,9,10,11,12,13,14,15"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+
+                  {/* 即時預覽表格 */}
+                  {(() => {
+                    const raw = (modifiers.annual_leave as any)?.table
+                    const resolved = Array.isArray(raw) && raw.length ? resolveLeaveTable(raw) : resolveLeaveTable()
+                    return (
+                      <div style={{ marginTop: 8, fontSize: 11, overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid #ddd' }}>
+                              <th style={{ textAlign: 'left', padding: '2px 4px' }}>年度</th>
+                              <th style={{ textAlign: 'right', padding: '2px 4px' }}>你設定</th>
+                              <th style={{ textAlign: 'right', padding: '2px 4px' }}>法定</th>
+                              <th style={{ textAlign: 'right', padding: '2px 4px' }}>實際發放</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {STATUTORY_LEAVE_TABLE.map((stat, i) => {
+                              const custom = raw?.[Math.min(i, raw.length - 1)] ?? null
+                              const actual = resolved[i]
+                              const bumped = custom !== null && custom < stat
+                              return (
+                                <tr key={i} style={{ background: bumped ? '#fef3c7' : 'transparent' }}>
+                                  <td style={{ padding: '2px 4px' }}>第 {i + 1} 年{bumped ? ' ⚠️' : ''}</td>
+                                  <td style={{ textAlign: 'right', padding: '2px 4px', color: bumped ? '#b45309' : '#555' }}>{custom ?? '—'}</td>
+                                  <td style={{ textAlign: 'right', padding: '2px 4px', color: '#888' }}>{stat}</td>
+                                  <td style={{ textAlign: 'right', padding: '2px 4px', fontWeight: 600 }}>{actual}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  })()}
+
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+                    ⚠️ 改咗要撳「重新計算假期」先生效
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* ★ 生日假 —— 公司政策，唔係每間都有 */}
             <div style={{ marginTop: 12 }}>

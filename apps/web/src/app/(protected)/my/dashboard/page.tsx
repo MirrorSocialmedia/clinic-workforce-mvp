@@ -277,7 +277,9 @@ export default function MyDashboardPage() {
                     <div className="text-sm text-muted-foreground">{b.leaveType.name}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-lg font-bold text-foreground">{b.remaining.toFixed(1)}</div>
+                    <div className="text-lg font-bold" style={{ color: b.remaining < 0 ? '#dc2626' : undefined }}>
+                      {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
+                    </div>
                     <div className="text-xs text-muted-foreground">天剩餘</div>
                   </div>
                 </div>

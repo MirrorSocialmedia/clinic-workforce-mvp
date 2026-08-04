@@ -1267,6 +1267,9 @@ export interface PayRuleConfigModular {
     birthday_leave?: {
       days_per_year: number
     }
+    annual_leave?: {
+      table?: number[]  // ★ 2026-08-04 自訂年假階梯
+    }
   }
 
   // Leave banking: 不放的假存起來
