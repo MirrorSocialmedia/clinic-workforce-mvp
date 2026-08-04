@@ -4255,8 +4255,20 @@ function getShiftCode(shift: Shift): string {
                 </button>
               </div>
               {/* Month table: scrollable body, sticky name column */}
-              <div style={{ display: 'flex', justifyContent: 'flex-start', overflowX: 'auto', width: '100%', maxWidth: '100%' }}>
-                <table style={{ margin: '0 auto', borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', fontSize: 11, width: 'max-content' }}>
+              <div style={{
+                  /* ★ Remove display:flex + justifyContent — flex + margin:0 auto breaks sticky left */
+                  overflowX: 'auto',
+                  width: '100%',
+                  maxWidth: '100%',
+                }}>
+                <table style={{
+                  /* ★ Remove margin: '0 auto' — centering breaks sticky left */
+                  borderCollapse: 'separate',
+                  borderSpacing: 0,
+                  tableLayout: 'fixed',
+                  fontSize: 11,
+                  width: 'max-content',
+                }}>
                   <thead>
                     <tr>
                       <th style={{
@@ -4284,12 +4296,21 @@ function getShiftCode(shift: Shift): string {
                   <tbody>
                     {/* Full-time */}
                     {ovEmployees.full.map(emp => {
+                      /* ★ 2026-08-03: selected row highlight */
+                      const isSelected = emp.id === selectedEmployeeId
                       return (
-                        <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <tr key={emp.id} style={{
+                          borderBottom: '1px solid #f0f0f0',
+                          background: isSelected ? 'rgba(55, 138, 221, 0.07)' : undefined,
+                        }}>
                           <td style={{
                             position: 'sticky', left: 0, zIndex: 1,
                             background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                            padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                            backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+                            borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
+                            padding: '4px 8px', whiteSpace: 'nowrap',
+                            fontWeight: isSelected ? 600 : 500,
+                            fontSize: 11,
                           }}>{emp.user?.name ?? '?'}</td>
                           {monthDays.map((d, di) => {
                             const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
@@ -4308,22 +4329,23 @@ function getShiftCode(shift: Shift): string {
                                 }}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
-                                  ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                                  ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
                                   ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
                                   ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
                                 }}
                                 onPointerLeave={e => {
                                   if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
                                   if (hasLeave) {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#4a4a4a10'
                                   } else {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = 'transparent'
                                   }
                                   ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
                                   ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
                                 }}
                                 style={{
                                   padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
+                                  backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
                                   cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
                                   background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
                                   transition: 'background 0.15s',
@@ -4364,12 +4386,21 @@ function getShiftCode(shift: Shift): string {
                     )}
                     {/* Part-time */}
                     {ovEmployees.part.map(emp => {
+                      /* ★ 2026-08-03: selected row highlight */
+                      const isSelected = emp.id === selectedEmployeeId
                       return (
-                        <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <tr key={emp.id} style={{
+                          borderBottom: '1px solid #f0f0f0',
+                          background: isSelected ? 'rgba(55, 138, 221, 0.07)' : undefined,
+                        }}>
                           <td style={{
                             position: 'sticky', left: 0, zIndex: 1,
                             background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                            padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                            backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+                            borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
+                            padding: '4px 8px', whiteSpace: 'nowrap',
+                            fontWeight: isSelected ? 600 : 500,
+                            fontSize: 11,
                           }}>{emp.user?.name ?? '?'}</td>
                           {monthDays.map((d, di) => {
                             const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
@@ -4388,22 +4419,23 @@ function getShiftCode(shift: Shift): string {
                                 }}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
-                                  ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
+                                  ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
                                   ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
                                   ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
                                 }}
                                 onPointerLeave={e => {
                                   if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
                                   if (hasLeave) {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
+                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#4a4a4a10'
                                   } else {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = 'transparent'
                                   }
                                   ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
                                   ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
                                 }}
                                 style={{
                                   padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
+                                  backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
                                   cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
                                   background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
                                   transition: 'background 0.15s',
@@ -4444,19 +4476,32 @@ function getShiftCode(shift: Shift): string {
                     )}
                     {/* Borrowed */}
                     {borrowedEmployees.map(emp => {
+                      /* ★ 2026-08-03: selected row highlight */
+                      const isSelected = emp.id === selectedEmployeeId
                       const homeClinic = clinics.find(c => emp.clinics?.some((ec: any) => ec.clinic?.id === c.id))
                       const homeLabel = homeClinic?.shortName || homeClinic?.name?.slice(0, 2) || ''
                       return (
-                        <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <tr key={emp.id} style={{
+                          borderBottom: '1px solid #f0f0f0',
+                          background: isSelected ? 'rgba(55, 138, 221, 0.07)' : undefined,
+                        }}>
                           <td style={{
                             position: 'sticky', left: 0, zIndex: 1,
-                            background: '#fafbfc', padding: '4px 8px', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 11,
+                            background: '#fafbfc',
+                            backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+                            borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
+                            padding: '4px 8px', whiteSpace: 'nowrap',
+                            fontWeight: isSelected ? 600 : 500,
+                            fontSize: 11,
                           }}>
                             {emp.user?.name ?? '?'}
                             {homeLabel && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
                           </td>
                           {monthDays.map((d, di) => (
-                            <td key={di} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0' }}>
+                            <td key={di} style={{
+                              padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
+                              backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+                            }}>
                               {(() => {
                                 const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
                                 const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
