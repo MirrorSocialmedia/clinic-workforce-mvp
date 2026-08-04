@@ -15,3 +15,10 @@ export const QUOTA_LEAVE_KEYS = [
   LEAVE_SYSTEM_KEYS.ANNUAL,
   LEAVE_SYSTEM_KEYS.OT,
 ] as const
+
+/** 可以預支（餘額可負）嘅假期類型 —— 下個月還 */
+export const NEGATIVE_ALLOWED_KEYS = [LEAVE_SYSTEM_KEYS.REST_DAY] as const
+
+export function allowsNegativeBalance(systemKey: string | null): boolean {
+  return NEGATIVE_ALLOWED_KEYS.includes(systemKey as any)
+}

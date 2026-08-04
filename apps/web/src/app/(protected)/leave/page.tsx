@@ -580,7 +580,7 @@ export default function LeavePage() {
                         </>
                       ) : (
                         <>
-                          <div style={{ fontSize: 24, fontWeight: 700, color: '#1a1a2e' }}>{b.remaining.toFixed(1)}</div>
+                          <div style={{ fontSize: 24, fontWeight: 700, color: b.remaining < 0 ? '#dc2626' : '#1a1a2e' }}>{b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}</div>
                           <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
                             剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
                           </div>

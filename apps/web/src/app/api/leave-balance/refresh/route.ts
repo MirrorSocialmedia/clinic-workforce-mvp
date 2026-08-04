@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { serviceMonths, totalAccruedLeave, PROBATION_MONTHS } from '@/lib/leave-calculation'
-import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
 
 // ★ 年假採累積制（2026-07-31 決定）：year 固定 0，代表「由入職累計」。
 //   舊版按曆年開 row，令週年日一過上年未放餘額變孤兒（UI 全部過濾 currentYear）。
@@ -84,7 +84,11 @@ export async function POST(req: NextRequest) {
         // ★ remaining 由 entitled − used 推導，唔可以用 increment delta ——
         //   累積制之下 entitled 持續增長，delta 累加會失準。
         //   used 保留唔動（真實已放天數）。
-        const nextRemaining = Math.max(0, entitledNow - existing.used)
+        // ★ 2026-08-04：休息日可預支（負餘額）—— 唔 clamp 到 0，
+        //   否則撳一次「重新計算」就洗走咗員工欠公司嘅天數。
+        const nextRemaining = allowsNegativeBalance(annualLeaveType.systemKey)
+          ? entitledNow - existing.used
+          : Math.max(0, entitledNow - existing.used)
         if (existing.entitled !== entitledNow || existing.remaining !== nextRemaining) {
           await prisma.leaveBalance.update({
             where: { id: existing.id },

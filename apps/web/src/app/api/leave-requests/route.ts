@@ -7,7 +7,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
 
 // ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
 class InsufficientBalanceError extends Error {}
@@ -148,7 +148,10 @@ export async function POST(req: NextRequest) {
       })
 
       if (!isUnlimited && balance && leaveType.annualQuota !== null && leaveType.annualQuota > 0) {
-        if (leaveType.systemKey !== LEAVE_SYSTEM_KEYS.SICK && days > balance.remaining) {
+        // ★ 2026-08-04：休息日可以預支（餘額可負）—— 員工下個月還。
+        //   年假／OT 補假仍然唔可以負。
+        const canGoNegative = allowsNegativeBalance(leaveType.systemKey)
+        if (leaveType.systemKey !== LEAVE_SYSTEM_KEYS.SICK && !canGoNegative && days > balance.remaining) {
           return NextResponse.json(
             { error: `Insufficient leave balance. Remaining: ${balance.remaining} days` },
             { status: 400 }
@@ -231,14 +234,30 @@ export async function POST(req: NextRequest) {
           const deductYear = leaveType.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL
             ? 0
             : Number(toHKDateStr(new Date(startDate)).slice(0, 4))
-          const bal = await tx.leaveBalance.findUnique({
+          let bal = await tx.leaveBalance.findUnique({
             where: {
               employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: deductYear },
             },
           })
 
-          // ★ 決定 1：休息日要手動補，後端唔自動補血。
-          if (!bal || bal.remaining < days) {
+          // ★ 2026-08-04：休息日可預支 —— 冇 row 可創建 0 額度 row 再扣。
+          if (!bal) {
+            if (allowsNegativeBalance(leaveType.systemKey)) {
+              // 冇 row 但可預支 → 建立一個 0 額度嘅 row 再扣
+              bal = await tx.leaveBalance.create({
+                data: {
+                  employeeId: employee.id, leaveTypeId, year: deductYear,
+                  entitled: 0, used: 0, remaining: 0,
+                },
+              })
+            } else {
+              throw new InsufficientBalanceError(
+                `${leaveType.name}未設定額度，請先調整該員工嘅假期額度。`,
+              )
+            }
+          }
+
+          if (!allowsNegativeBalance(leaveType.systemKey) && bal.remaining < days) {
             const hint = leaveType.systemKey === LEAVE_SYSTEM_KEYS.REST_DAY
               ? '請先喺「假期管理 → 發放休息日」為該員工發放，再排班。'
               : '請先調整該員工嘅假期額度。'

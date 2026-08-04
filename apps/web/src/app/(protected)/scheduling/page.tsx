@@ -16,6 +16,7 @@ import { DEFAULT_SHIFT_RULE_CONFIG } from '@/lib/shift-rule-config'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { hasPermission } from '@/lib/permissions'
+import { allowsNegativeBalance } from '@/lib/leave-types'
 
 // ============================================================
 // Sorting helpers
@@ -1381,9 +1382,9 @@ function getShiftCode(shift: Shift): string {
     if (!canManage) return
 
     // ★ 豁免類型（病假 / 休息日 / 自訂無限）跳過餘額檢查
-    if (!isBalanceExempt(leaveType)) {
+      if (!isBalanceExempt(leaveType)) {
       const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveType.id)
-      if (!bal || bal.remaining <= 0) {
+      if ((!bal || bal.remaining <= 0) && !allowsNegativeBalance(leaveType.systemKey)) {
         setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
         return
       }
@@ -1529,7 +1530,7 @@ function getShiftCode(shift: Shift): string {
       const lt = leaveTypes.find(l => l.id === dl.leaveTypeId)
       if (!isBalanceExempt(lt)) {
         const bal = selectedEmpBalances.find(b => b.leaveTypeId === dl.leaveTypeId)
-        if (!bal || bal.remaining <= 0) {
+        if ((!bal || bal.remaining <= 0) && !allowsNegativeBalance(lt.systemKey)) {
           setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
           return
         }
@@ -2915,7 +2916,8 @@ function getShiftCode(shift: Shift): string {
                     <button key={`${g.clinicId}-${it.template.id}`}
                       onClick={async () => {
                         setCellMenu(null)
-                        setSelectedTemplate(it.template)
+                        // ★ 2026-08-04：唔好 setSelectedTemplate ——
+                        //   選單揀嘅係「呢一格用咩」，唔係「之後都用呢個」。
                         const cm = cellMenu
                         if (!cm) return
                         await createShift(cm.empId, cm.dateStr, it.template, null, g.clinicId)
@@ -2944,7 +2946,7 @@ function getShiftCode(shift: Shift): string {
                 const bal = selectedEmpBalances.find(b => b.leaveTypeId === lt.id)
                 const isUnlimited = lt.systemKey === 'SICK' || lt.systemKey === 'UNPAID'
                 const loading = selectedEmployeeId === cellMenu.empId && selectedEmpBalances.length === 0
-                const disabled = !isUnlimited && bal != null && bal.remaining <= 0
+                const disabled = !isUnlimited && !allowsNegativeBalance(lt.systemKey) && bal != null && bal.remaining <= 0
                 return (
                 <button key={lt.id}
                   onClick={async () => {
@@ -2962,7 +2964,7 @@ function getShiftCode(shift: Shift): string {
                   <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: 10 }}>
                     {isUnlimited ? '無上限'
                       : loading ? '…'
-                      : bal ? `剩 ${bal.remaining.toFixed(1)}` : '—'}
+                      : bal ? (bal.remaining < 0 ? `欠 ${Math.abs(bal.remaining).toFixed(1)}` : `剩 ${bal.remaining.toFixed(1)}`) : '—'}
                   </span>
                 </button>
                 )
@@ -4102,7 +4104,7 @@ function getShiftCode(shift: Shift): string {
                 const remaining = bal?.remaining ?? 0
                 const exempt = isBalanceExempt(lt)
                 const isNoQuota = lt.systemKey === 'SICK' || (lt.quantity == null && !lt.systemKey)
-                const canDragLeave = canManage && (!selectedEmployeeId || exempt || remaining > 0)
+                const canDragLeave = canManage && (!selectedEmployeeId || exempt || remaining > 0 || allowsNegativeBalance(lt.systemKey))
                 const isSelected = selectedLeaveType?.id === lt.id
                 return (
                   <div
@@ -4133,10 +4135,10 @@ function getShiftCode(shift: Shift): string {
                     title={canDragLeave ? `點擊選中或拖到日曆建立請假 - ${lt.name}` : '無餘額，無法拖放'}
                   >
                     <Palmtree size={11} style={{ marginRight: 2, verticalAlign: 'middle' }} /> {lt.name}
-                    <span style={{ fontSize: 10, fontWeight: 600 }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: remaining < 0 ? '#dc2626' : undefined }}>
                       {isNoQuota
                         ? '（無上限）'
-                        : selectedEmployeeId ? `（剩 ${remaining.toFixed(1)} 天）` : ''}
+                        : selectedEmployeeId ? (remaining < 0 ? `（欠 ${Math.abs(remaining).toFixed(1)} 天）` : `（剩 ${remaining.toFixed(1)} 天）`) : ''}
                     </span>
                     {!canDragLeave && !exempt && remaining <= 0 &&
                       <span style={{ fontSize: 9, color: '#dc2626' }}> 無餘額</span>}
@@ -4838,7 +4840,7 @@ function getShiftCode(shift: Shift): string {
                   const lt = leaveTypes.find(l => l.id === leaveTypeId)
                   if (!isBalanceExempt(lt)) {
                     const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveTypeId)
-                    if (!bal || bal.remaining <= 0) {
+                    if ((!bal || bal.remaining <= 0) && !allowsNegativeBalance(lt.systemKey)) {
                       setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
                       return
                     }
