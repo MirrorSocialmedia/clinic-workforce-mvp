@@ -2278,47 +2278,11 @@ function getShiftCode(shift: Shift): string {
                 color: '#9ca3af', textAlign: 'center',
                 background: '#f9fafb', borderRight: '1px solid #e5e7eb',
               }}>備註</th>
-              {days.map((wd, i) => {
-                const note = scheduleNotes[wd.dateStr] ?? ''
-                const isEditing = editingNote === wd.dateStr
-                return (
-                  <th key={`note-${i}`} style={{ padding: 3, fontWeight: 400 }}>
-                    {isEditing ? (
-                      <input
-                        autoFocus
-                        defaultValue={note}
-                        maxLength={20}
-                        onBlur={e => { saveScheduleNote(wd.dateStr, e.target.value); setEditingNote(null) }}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                          if (e.key === 'Escape') { setEditingNote(null) }
-                        }}
-                        style={{
-                          width: '100%', fontSize: 10, padding: '3px 5px',
-                          border: '1.5px solid #378ADD', borderRadius: 4, outline: 'none',
-                          textAlign: 'center',
-                        }}
-                      />
-                    ) : (
-                      <div
-                        onClick={() => canManage && setEditingNote(wd.dateStr)}
-                        title={note || undefined}
-                        style={{
-                          fontSize: 10, padding: '3px 5px', minHeight: 20, borderRadius: 4,
-                          border: note ? '1px solid #e5e7eb' : '1px dashed #e5e7eb',
-                          background: note ? '#f9fafb' : 'transparent',
-                          color: note ? '#374151' : '#d1d5db',
-                          cursor: canManage ? 'pointer' : 'default',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          textAlign: 'center',
-                        }}
-                      >
-                        {note || (canManage ? '＋' : '')}
-                      </div>
-                    )}
-                  </th>
-                )
-              })}
+              {days.map((wd, i) => (
+                <th key={`note-${i}`} style={{ padding: 3, fontWeight: 400 }}>
+                  {renderNoteCell(wd.dateStr, { editable: true })}
+                </th>
+              ))}
             </tr>
             <tr>
               <th style={{
@@ -2866,6 +2830,52 @@ function getShiftCode(shift: Shift): string {
     } catch {
       await loadScheduleNotes()
     }
+  }
+
+  // ★ 2026-08-04: 備註格共用 render —— 四個地方用（週/月 × 互動/截圖）。
+  //   ⚠️ 加新視圖時記得用呢個，唔好又寫多一份（月截圖已經漏過一次）。
+  const renderNoteCell = (dateStr: string, opts: {
+    editable: boolean
+    compact?: boolean
+  }) => {
+    const note = scheduleNotes[dateStr] ?? ''
+    const fs = opts.compact ? 9 : 10
+
+    if (!opts.editable) {
+      return (
+        <div title={note || undefined} style={{
+          fontSize: fs, textAlign: 'center', color: '#374151',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>{note}</div>
+      )
+    }
+
+    const isEditing = editingNote === dateStr
+    return isEditing ? (
+      <input autoFocus defaultValue={note} maxLength={20}
+        onBlur={e => { saveScheduleNote(dateStr, e.target.value); setEditingNote(null) }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') setEditingNote(null)
+        }}
+        style={{ width: '100%', fontSize: fs, textAlign: 'center',
+                 border: '1.5px solid #378ADD', borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '2px 3px' : '3px 5px', outline: 'none' }}
+      />
+    ) : (
+      <div onClick={() => canManage && setEditingNote(dateStr)}
+        title={note || undefined}
+        style={{
+          fontSize: fs, textAlign: 'center',
+          color: note ? '#374151' : (opts.compact ? '#e5e7eb' : '#d1d5db'),
+          background: note ? '#f9fafb' : 'transparent',
+          borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '2px 3px' : '3px 5px',
+          minHeight: opts.compact ? 16 : 20,
+          cursor: canManage ? 'pointer' : 'default',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          ...(opts.compact ? {} : { border: note ? '1px solid #e5e7eb' : '1px dashed #e5e7eb' }),
+        }}
+      >{note || (canManage ? (opts.compact ? '·' : '＋') : '')}</div>
+    )
   }
 
   // Fix #1b: Orphan shift detection — shifts stored but not displayed in dual-week grid
@@ -4460,40 +4470,11 @@ function getShiftCode(shift: Shift): string {
                         width: 78, minWidth: 78, borderRight: '0.5px solid #e5e7eb',
                         padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'center',
                       }}>備註</th>
-                      {monthDays.map(d => {
-                        const note = scheduleNotes[d] ?? ''
-                        const isEditing = editingNote === d
-                        return (
-                          <th key={`note-${d}`} style={{ width: 56, minWidth: 56, padding: 2, fontWeight: 400 }}>
-                            {isEditing ? (
-                              <input
-                                autoFocus defaultValue={note} maxLength={20}
-                                onBlur={e => { saveScheduleNote(d, e.target.value); setEditingNote(null) }}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                                  if (e.key === 'Escape') setEditingNote(null)
-                                }}
-                                style={{ width: '100%', fontSize: 9, padding: '2px 3px', border: '1.5px solid #378ADD', borderRadius: 3, textAlign: 'center' }}
-                              />
-                            ) : (
-                              <div
-                                onClick={() => canManage && setEditingNote(d)}
-                                title={note || undefined}
-                                style={{
-                                  fontSize: 9, padding: '2px 3px', minHeight: 16,
-                                  color: note ? '#4b5563' : '#e5e7eb',
-                                  background: note ? '#f9fafb' : 'transparent',
-                                  borderRadius: 3, cursor: canManage ? 'pointer' : 'default',
-                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                  textAlign: 'center',
-                                }}
-                              >
-                                {note || (canManage ? '·' : '')}
-                              </div>
-                            )}
-                          </th>
-                        )
-                      })}
+                      {monthDays.map(d => (
+                        <th key={`note-${d}`} style={{ width: 56, minWidth: 56, padding: 2, fontWeight: 400 }}>
+                          {renderNoteCell(d, { editable: true, compact: true })}
+                        </th>
+                      ))}
                     </tr>
                     <tr>
                       <th style={{
@@ -4805,7 +4786,7 @@ function getShiftCode(shift: Shift): string {
                         textAlign: 'center',
                         borderBottom: '1px solid #e5e7eb',
                       }}>
-                        {scheduleNotes[wd.dateStr] || ''}
+                        {renderNoteCell(wd.dateStr, { editable: false })}
                       </th>
                     ))}
                   </tr>
@@ -4877,6 +4858,22 @@ function getShiftCode(shift: Shift): string {
               </div>
               <table style={{ borderCollapse: 'collapse', width: 'max-content', fontSize: 13 }}>
                 <thead>
+                  {/* ★ 2026-08-04: 月截圖版備註 —— 純顯示，editable=false */}
+                  <tr>
+                    <th style={{
+                      width: 80, padding: '3px 8px', fontSize: 10, fontWeight: 400,
+                      color: '#6b7280', textAlign: 'left', borderBottom: '1px solid #e5e7eb',
+                    }}>備註</th>
+                    {monthDays.map(d => (
+                      <th key={`note-${d}`} style={{
+                        width: 58, padding: '3px 2px', fontSize: 9, fontWeight: 400, color: '#374151',
+                        textAlign: 'center',
+                        borderBottom: '1px solid #e5e7eb',
+                      }}>
+                        {renderNoteCell(d, { editable: false, compact: true })}
+                      </th>
+                    ))}
+                  </tr>
                   <tr>
                     <th style={{
                       width: 80, padding: '4px 8px', textAlign: 'left',

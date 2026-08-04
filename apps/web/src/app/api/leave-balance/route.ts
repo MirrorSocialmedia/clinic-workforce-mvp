@@ -154,26 +154,33 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, leaveBalance: cur, unchanged: true })
     }
 
-    const updated = await prisma.leaveBalance.update({
-      where: { id: balanceId },
-      data: updateData,
-      include: {
-        leaveType: { select: { id: true, name: true } },
-        employee: { include: { user: { select: { id: true, name: true } } } },
-      },
-    })
+    // ★ 2026-08-04: 包裝在 $transaction —— 審計失敗 = 資料唔改
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.leaveBalance.update({
+        where: { id: balanceId },
+        data: updateData,
+        include: {
+          leaveType: { select: { id: true, name: true } },
+          employee: { include: { user: { select: { id: true, name: true } } } },
+        },
+      })
 
-    // ★ 審計記錄
-    await prisma.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'LEAVE_BALANCE_ADJUST',
-        entity: 'LeaveBalance',
-        entityId: balanceId,
-        targetEmployeeId: cur.employeeId,
-        beforeJson: JSON.stringify({ entitled: cur.entitled, used: cur.used, remaining: cur.remaining }),
-        afterJson: JSON.stringify({ entitled: nextEntitled, used: nextUsed, remaining: updateData.remaining }),
-      },
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'LEAVE_BALANCE_ADJUST',
+          entity: 'LeaveBalance',
+          entityId: balanceId,
+          targetEmployeeId: cur.employeeId,
+          beforeJson: JSON.stringify({ entitled: cur.entitled, used: cur.used, remaining: cur.remaining }),
+          afterJson: JSON.stringify({ entitled: nextEntitled, used: nextUsed, remaining: updateData.remaining }),
+          notes: `校正${u.leaveType?.name ?? ''}已用：${cur.used} → ${nextUsed}`,
+          ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+          userAgent: req.headers.get('user-agent') ?? null,
+        },
+      })
+
+      return u
     })
 
     return NextResponse.json({ success: true, leaveBalance: updated })
@@ -202,44 +209,47 @@ export async function DELETE(req: NextRequest) {
 
   if (!year) return NextResponse.json({ error: '需要年份参数' }, { status: 400 })
 
-  const deleted = await prisma.leaveBalance.deleteMany({
-    where: {
-      ...(employeeId && employeeId !== 'all' ? { employeeId } : {}),
-      year,
-    },
-  })
-
-  // 審計記錄
-  const targetEmpId = employeeId && employeeId !== 'all' ? employeeId : null
-  // 取得受影響的假期類型名稱
+  // ★ 2026-08-04: 逐行審計——先查舊值，再入 transaction 刪除 + 審計
   const whereClause: any = { year }
   if (employeeId && employeeId !== 'all') whereClause.employeeId = employeeId
-  const affectedTypes = await prisma.leaveBalance.findMany({
-    where: whereClause,
-    select: { leaveTypeId: true },
-  })
-  const typeIds = [...new Set(affectedTypes.map(r => r.leaveTypeId))]
-  const leaveTypeNames = typeIds.length > 0
-    ? (await prisma.leaveType.findMany({
-        where: { id: { in: typeIds } },
-        select: { name: true },
-      })).map(r => r.name).join('、')
-    : '全部'
-  const empName = targetEmpId
-    ? (await prisma.employee.findUnique({ where: { id: targetEmpId }, include: { user: { select: { name: true } } } }))?.user?.name || targetEmpId
-    : '全部員工'
 
-  await prisma.auditLog.create({
-    data: {
-      actorId: session.userId,
-      action: 'DELETE',
-      entity: 'LeaveBalance',
-      entityId: 'batch',
-      ...(targetEmpId ? { targetEmployeeId: targetEmpId } : {}),
-      notes: `假期類型: ${leaveTypeNames}｜對象: ${empName}｜年份: ${year}｜共 ${deleted.count} 筆`,
-      afterJson: JSON.stringify({ leaveTypes: leaveTypeNames, year, count: deleted.count }),
+  const rowsToDelete = await prisma.leaveBalance.findMany({
+    where: whereClause,
+    include: {
+      leaveType: { select: { id: true, name: true } },
+      employee: { select: { id: true, user: { select: { id: true, name: true } } } },
     },
   })
 
-  return NextResponse.json({ count: deleted.count })
+  let deletedCount = 0
+  for (const row of rowsToDelete) {
+    await prisma.$transaction(async (tx) => {
+      await tx.leaveBalance.delete({ where: { id: row.id } })
+
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'LEAVE_BALANCE_DELETE',
+          entity: 'LeaveBalance',
+          entityId: row.id,
+          targetEmployeeId: row.employeeId,
+          beforeJson: JSON.stringify({
+            entitled: row.entitled,
+            used: row.used,
+            remaining: row.remaining,
+            leaveTypeName: row.leaveType?.name ?? '',
+            employeeName: row.employee?.user?.name ?? '',
+          }),
+          afterJson: null,
+          notes: `刪除${row.leaveType?.name ?? ''}餘額 (${row.employee?.user?.name ?? ''}, 年份 ${year})`,
+          ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+          userAgent: req.headers.get('user-agent') ?? null,
+        },
+      })
+
+      deletedCount++
+    })
+  }
+
+  return NextResponse.json({ count: deletedCount })
 }

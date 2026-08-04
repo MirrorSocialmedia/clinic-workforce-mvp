@@ -37,6 +37,12 @@ export async function PUT(
     }
   }
 
+  const before = await prisma.payRule.findUnique({
+    where: { id: params.ruleId },
+    include: { employee: { select: { id: true, user: { select: { name: true } } } } },
+  })
+  if (!before) return NextResponse.json({ error: 'PayRule not found' }, { status: 404 })
+
   const rule = await prisma.payRule.update({
     where: { id: params.ruleId },
     data: {
@@ -44,6 +50,32 @@ export async function PUT(
       ...(baseAmount !== undefined ? { baseAmount } : {}),
       ...(modularConfig ? { configJson: JSON.stringify(modularConfig) } : {}),
       ...(effectiveFrom ? { effectiveFrom: new Date(`${effectiveFrom}T00:00:00+08:00`) } : {}),
+    },
+  })
+
+  // ★ 2026-08-04: 薪酬規則變更必須審計
+  await prisma.auditLog.create({
+    data: {
+      actorId: session.userId,
+      action: 'PAY_RULE_UPDATE',
+      entity: 'PayRule',
+      entityId: rule.id,
+      targetEmployeeId: rule.employeeId,
+      beforeJson: JSON.stringify({
+        payType: before!.payType,
+        baseAmount: before!.baseAmount,
+        configJson: before!.configJson,
+        effectiveFrom: before!.effectiveFrom?.toISOString(),
+      }),
+      afterJson: JSON.stringify({
+        payType: rule.payType,
+        baseAmount: rule.baseAmount,
+        configJson: rule.configJson,
+        effectiveFrom: rule.effectiveFrom?.toISOString(),
+      }),
+      notes: `更新薪酬規則 (${before!.employee?.user?.name ?? ''})`,
+      ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: req.headers.get('user-agent') ?? null,
     },
   })
 
