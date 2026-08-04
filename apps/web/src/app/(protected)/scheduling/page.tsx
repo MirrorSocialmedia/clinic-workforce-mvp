@@ -429,7 +429,8 @@ export default function SchedulingPage() {
         prev?.start === next.start && prev?.end === next.end ? prev : next)
     }
   }, [viewMode, currentDate, ovMonth])
-  const [ovMonthShifts, setOvMonthShifts] = useState<any[]>([]) // separate from ovShifts
+  const [ovMonthShifts, setOvMonthShifts] = useState<any[]>([]) // ★ 月視圖表格專用（跟 ovMonth 切換）—— 同 monthShifts（當前月工時統計）唔同，
+  // 排完班要 loadOvMonth() 先會更新（2026-08-03 撞過）
   const [monthLeaveRequests, setMonthLeaveRequests] = useState<any[]>([])
 
   // Days of the selected month (UTC-safe)
@@ -439,38 +440,38 @@ export default function SchedulingPage() {
     return Array.from({ length: n }, (_, i) => `${ovMonth}-${String(i + 1).padStart(2, '0')}`)
   }, [ovMonth])
 
-  // Load month shifts via pagination (don't hard-code pageSize)
-  useEffect(() => {
+  // Load month shifts via pagination (extracted so refreshAll can call it)
+  const loadOvMonth = useCallback(async () => {
     if (!monthDays.length) return
-    const fetchAll = async () => {
-      const allShifts: any[] = []
-      let page = 1
-      const pageSize = 200
-      while (true) {
-        const r = await getJSON(
-          `/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays.at(-1)}&pageSize=${pageSize}&page=${page}`
-        )
-        if (!r.ok) break
-        const d = await r.json()
-        const batch = d.shifts || []
-        allShifts.push(...batch)
-        if (batch.length < pageSize) break
-        page++
-      }
-      setOvMonthShifts(allShifts)
-      // Also load month leave requests (APPROVED only)
-      try {
-        const lrRes = await getJSON(
-          `/api/leave-requests?startDate=${monthDays[0]}&endDate=${monthDays.at(-1)}&status=APPROVED`
-        )
-        if (lrRes.ok) {
-          const lrData = await lrRes.json()
-          setMonthLeaveRequests(lrData.leaveRequests || [])
-        }
-      } catch { /* ignore */ }
+    const allShifts: any[] = []
+    let page = 1
+    const pageSize = 200
+    while (true) {
+      const r = await getJSON(
+        `/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&page=${page}&pageSize=${pageSize}`,
+      )
+      if (!r.ok) break
+      const d = await r.json()
+      const batch = d.shifts || []
+      allShifts.push(...batch)
+      if (batch.length < pageSize) break
+      page++
+      if (page > 20) break
     }
-    fetchAll()
-  }, [ovMonth, monthDays])
+    setOvMonthShifts(allShifts)
+
+    try {
+      const lrRes = await getJSON(
+        `/api/leave-requests?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}`,
+      )
+      if (lrRes.ok) {
+        const lrData = await lrRes.json()
+        setMonthLeaveRequests(lrData.leaveRequests || [])
+      }
+    } catch { /* ignore */ }
+  }, [monthDays])
+
+  useEffect(() => { loadOvMonth() }, [loadOvMonth])
 
   // 🔧 Fix #3a: 抓當前選中員工的假期餘額
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
@@ -960,8 +961,9 @@ function getShiftCode(shift: Shift): string {
   const refreshAll = useCallback(async () => {
     await loadShifts()
     await loadMonthShifts()
+    await loadOvMonth() // ★ 月視圖表格用嘅（ovMonthShifts）
     setCardRefreshTick(t => t + 1)
-  }, [loadShifts, loadMonthShifts])
+  }, [loadShifts, loadMonthShifts, loadOvMonth])
 
   // Unified deleteLeave helper — single entry point for all leave deletions
   const deleteLeave = useCallback(async (leaveId: string) => {
@@ -1136,8 +1138,9 @@ function getShiftCode(shift: Shift): string {
     }
   }
 
-  const createShift = async (employeeId: string, date: string, template: ShiftTemplate, _secondaryClinicId?: string | null): Promise<boolean> => {
-    if (!selectedClinicId) {
+  const createShift = async (employeeId: string, date: string, template: ShiftTemplate, _secondaryClinicId?: string | null, clinicIdOverride?: string | null): Promise<boolean> => {
+    const targetClinicId = clinicIdOverride ?? selectedClinicId
+    if (!targetClinicId) {
       setValidationIssues([{ type: 'error', rule: 'clinic', message: '⚠️ 請先選擇診所' }])
       return false
     }
@@ -1174,7 +1177,7 @@ function getShiftCode(shift: Shift): string {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           employeeId,
-          clinicId: selectedClinicId,
+          clinicId: targetClinicId,
           date,
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
@@ -1422,7 +1425,8 @@ function getShiftCode(shift: Shift): string {
   // Drag and Drop Handlers
   // ============================================================
   // Drop handler for overview grid — drag template to any (employee, day) cell or drag leave to create leave request
-  const handleOverviewDrop = async (employeeId: string, dateStr: string) => {
+  const handleOverviewDrop = async (employeeId: string, dateStr: string, clinicIdOverride?: string | null) => {
+    const targetClinicId = clinicIdOverride ?? selectedClinicId
     // ① Template drag → create shift (existing logic)
     const drag = draggingTemplate.current
     if (drag) {
@@ -1446,7 +1450,7 @@ function getShiftCode(shift: Shift): string {
         return
       }
 
-      await createShift(empId, dateStr, tpl)
+      await createShift(empId, dateStr, tpl, undefined, targetClinicId)
       return
     }
 
@@ -1492,7 +1496,7 @@ function getShiftCode(shift: Shift): string {
             days: 1,
             reason: `排班總覽拖曳請假`,
             isPlanned: true,
-            clinicId: selectedClinicId,
+            clinicId: targetClinicId,
           }),
         })
         if (res.ok) {
@@ -4148,10 +4152,12 @@ function getShiftCode(shift: Shift): string {
                         return (
                           <th key={d} style={{
                             width: 56, minWidth: 56, padding: '4px 0', fontWeight: 400, fontSize: 10,
+                            textAlign: 'center', // ★ 明確置中
                             background: isWeekend ? '#f9fafb' : undefined,
                             color: isWeekend ? '#9ca3af' : '#6b7280',
                           }}>
-                            {['日','一','二','三','四','五','六'][dow]}<br />{Number(d.slice(-2))}
+                            <div style={{ lineHeight: 1.3 }}>{['日','一','二','三','四','五','六'][dow]}</div>
+                            <div style={{ lineHeight: 1.3, fontWeight: 500 }}>{Number(d.slice(-2))}</div>
                           </th>
                         )
                       })}
@@ -4175,7 +4181,7 @@ function getShiftCode(shift: Shift): string {
                             return (
                               <td key={di}
                                 className="overview-cell"
-                                onPointerUp={() => handleOverviewDrop(emp.id, d)}
+                                onPointerUp={() => canManage && handleOverviewDrop(emp.id, d, selectedClinicId)}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
                                   ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
@@ -4249,7 +4255,7 @@ function getShiftCode(shift: Shift): string {
                             return (
                               <td key={di}
                                 className="overview-cell"
-                                onPointerUp={() => handleOverviewDrop(emp.id, d)}
+                                onPointerUp={() => canManage && handleOverviewDrop(emp.id, d, selectedClinicId)}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
                                   ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
