@@ -20,9 +20,15 @@ export async function GET(req: NextRequest) {
 
   const employee = await prisma.employee.findUnique({
     where: { userId: session.userId },
+    select: {
+      id: true,
+      homeClinic: { select: { companyId: true } },
+    },
   })
 
   if (!employee) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
+
+  const companyId = employee.homeClinic?.companyId ?? null
 
   const where: any = {
     employeeId: employee.id,
@@ -158,8 +164,8 @@ export async function GET(req: NextRequest) {
   })
 
   if (includeCoworkers) {
-    return NextResponse.json({ myShifts: formattedShifts, coworkerShifts })
+    return NextResponse.json({ myShifts: formattedShifts, coworkerShifts, companyId })
   }
 
-  return NextResponse.json({ shifts: formattedShifts })
+  return NextResponse.json({ shifts: formattedShifts, companyId })
 }

@@ -246,6 +246,10 @@ export const CONFIG = {
 
     // ADW preview
     'GET /api/adw/preview': ['OWNER', 'ACCOUNTANT'],
+
+    // ★ 2026-08-04: 排班每日備註
+    'GET /api/schedule-notes': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'PUT /api/schedule-notes': ['OWNER', 'MANAGER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
@@ -322,6 +326,10 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/punches': ['attendance_manage'],
   'GET /api/punches/:id': ['attendance_manage'],
   'PUT /api/punch-corrections/:id': ['attendance_manage'],
+
+  // ★ 2026-08-04: 排班每日備註 —— 有 scheduling 權限可讀/寫
+  'GET /api/schedule-notes': ['scheduling'],
+  'PUT /api/schedule-notes': ['scheduling'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

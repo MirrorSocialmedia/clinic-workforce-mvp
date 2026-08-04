@@ -2208,6 +2208,54 @@ function getShiftCode(shift: Shift): string {
             {days.map((d, i) => <col key={i} style={{ width: `${88 / 7}%` }} />)}
           </colgroup>
           <thead>
+            {/* ★ 2026-08-04: 每日備註列 —— 喺日期上方，每日一格 */}
+            <tr>
+              <th style={{
+                padding: '4px 6px', fontSize: 10, fontWeight: 400,
+                color: '#9ca3af', textAlign: 'left',
+                background: '#f9fafb', borderRight: '1px solid #e5e7eb',
+              }}>備註</th>
+              {days.map((wd, i) => {
+                const note = scheduleNotes[wd.dateStr] ?? ''
+                const isEditing = editingNote === wd.dateStr
+                return (
+                  <th key={`note-${i}`} style={{ padding: 3, fontWeight: 400 }}>
+                    {isEditing ? (
+                      <input
+                        autoFocus
+                        defaultValue={note}
+                        maxLength={20}
+                        onBlur={e => { saveScheduleNote(wd.dateStr, e.target.value); setEditingNote(null) }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                          if (e.key === 'Escape') { setEditingNote(null) }
+                        }}
+                        style={{
+                          width: '100%', fontSize: 10, padding: '3px 5px',
+                          border: '1.5px solid #378ADD', borderRadius: 4, outline: 'none',
+                        }}
+                      />
+                    ) : (
+                      <div
+                        onClick={() => canManage && setEditingNote(wd.dateStr)}
+                        title={note || undefined}
+                        style={{
+                          fontSize: 10, padding: '3px 5px', minHeight: 20, borderRadius: 4,
+                          border: note ? '1px solid #e5e7eb' : '1px dashed #e5e7eb',
+                          background: note ? '#f9fafb' : 'transparent',
+                          color: note ? '#374151' : '#d1d5db',
+                          cursor: canManage ? 'pointer' : 'default',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          textAlign: 'left',
+                        }}
+                      >
+                        {note || (canManage ? '＋' : '')}
+                      </div>
+                    )}
+                  </th>
+                )
+              })}
+            </tr>
             <tr>
               <th style={{
                 position: 'sticky', left: 0, background: '#f3f4f6',
@@ -2722,6 +2770,57 @@ function getShiftCode(shift: Shift): string {
     nextMonday.setDate(nextMonday.getDate() + 7) // tz-ok: client-side browser
     return makeWeekDays(nextMonday)
   }, [weekDays, makeWeekDays])
+
+  // ★ 2026-08-04: 排班每日備註（按公司）—— key = 'YYYY-MM-DD'
+  // Placed here: after monthDays (L500), weekDays (L2760), weekDays2 (L2767)
+  const [scheduleNotes, setScheduleNotes] = useState<Record<string, string>>({})
+  const [editingNote, setEditingNote] = useState<string | null>(null)
+
+  const loadScheduleNotes = useCallback(async () => {
+    if (!currentCompanyId) { setScheduleNotes({}); return }
+    const all = [
+      ...monthDays,
+      ...weekDays.map(d => d.dateStr),
+      ...weekDays2.map(d => d.dateStr),
+    ].filter(Boolean).sort()
+    const start = all[0], end = all[all.length - 1]
+    if (!start || !end) return
+    try {
+      const r = await getJSON(`/api/schedule-notes?companyId=${currentCompanyId}&startDate=${start}&endDate=${end}`)
+      if (r.ok) {
+        const d = await r.json()
+        const map: Record<string, string> = {}
+        ;(d.notes || []).forEach((n: any) => { map[n.date] = n.text })
+        setScheduleNotes(map)
+      }
+    } catch { /* ignore */ }
+  }, [currentCompanyId, monthDays, weekDays, weekDays2])
+
+  useEffect(() => { loadScheduleNotes() }, [loadScheduleNotes])
+
+  const saveScheduleNote = async (date: string, text: string) => {
+    if (!currentCompanyId) return
+    setScheduleNotes(prev => {
+      const next = { ...prev }
+      if (text.trim()) next[date] = text.trim()
+      else delete next[date]
+      return next
+    })
+    try {
+      const r = await fetch('/api/schedule-notes', {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: currentCompanyId, date, text }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        setValidationIssues([{ type: 'error', rule: 'note', message: `❌ ${err.error || '備註儲存失敗'}` }])
+        await loadScheduleNotes()
+      }
+    } catch {
+      await loadScheduleNotes()
+    }
+  }
 
   // Fix #1b: Orphan shift detection — shifts stored but not displayed in dual-week grid
   // Only check in week view; month view has different date range
@@ -4308,6 +4407,47 @@ function getShiftCode(shift: Shift): string {
                   width: 78 + monthDays.length * 56,
                 }}>
                   <thead>
+                    {/* ★ 2026-08-04: 每日備註列 —— 月視圖用「·」唔係「＋」 */}
+                    <tr>
+                      <th style={{
+                        position: 'sticky', left: 0, zIndex: 2, background: '#fff',
+                        width: 78, minWidth: 78, borderRight: '0.5px solid #e5e7eb',
+                        padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'left',
+                      }}>備註</th>
+                      {monthDays.map(d => {
+                        const note = scheduleNotes[d] ?? ''
+                        const isEditing = editingNote === d
+                        return (
+                          <th key={`note-${d}`} style={{ width: 56, minWidth: 56, padding: 2, fontWeight: 400 }}>
+                            {isEditing ? (
+                              <input
+                                autoFocus defaultValue={note} maxLength={20}
+                                onBlur={e => { saveScheduleNote(d, e.target.value); setEditingNote(null) }}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                                  if (e.key === 'Escape') setEditingNote(null)
+                                }}
+                                style={{ width: '100%', fontSize: 9, padding: '2px 3px', border: '1.5px solid #378ADD', borderRadius: 3 }}
+                              />
+                            ) : (
+                              <div
+                                onClick={() => canManage && setEditingNote(d)}
+                                title={note || undefined}
+                                style={{
+                                  fontSize: 9, padding: '2px 3px', minHeight: 16,
+                                  color: note ? '#4b5563' : '#e5e7eb',
+                                  background: note ? '#f9fafb' : 'transparent',
+                                  borderRadius: 3, cursor: canManage ? 'pointer' : 'default',
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {note || (canManage ? '·' : '')}
+                              </div>
+                            )}
+                          </th>
+                        )
+                      })}
+                    </tr>
                     <tr>
                       <th style={{
                         position: 'sticky', left: 0, zIndex: 2, background: '#fff',

@@ -97,8 +97,24 @@ model Company {
   logoData  String?  // data URL (image/png;base64,...)
   createdAt DateTime @default(now())
 
-  clinics   Clinic[]
+  clinics       Clinic[]
   shiftTemplates ShiftTemplate[]
+  scheduleNotes  ScheduleNote[]
+}
+
+// ★ 2026-08-04: 排班每日備註 —— 按公司，每日一條（上限 20 字）
+model ScheduleNote {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  date      String   // ★ HK date string YYYY-MM-DD, not DateTime
+  text      String   // max 20 chars
+  createdBy String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, date])
+  @@index([companyId, date])
 }
 
 // Clinic entity

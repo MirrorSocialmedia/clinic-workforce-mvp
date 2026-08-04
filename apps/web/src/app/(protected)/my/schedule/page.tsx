@@ -122,6 +122,8 @@ export default function MySchedulePage() {
   const [coworkerShifts, setCoworkerShifts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [includeCoworkers, setIncludeCoworkers] = useState(false)
+  const [companyId, setCompanyId] = useState<string | null>(null)
+  const [notes, setNotes] = useState<Record<string, string>>({})
   const [month, setMonth] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`  // tz-ok: client-side browser
@@ -161,9 +163,11 @@ export default function MySchedulePage() {
       if (includeCoworkers) {
         setShifts(data.myShifts || [])
         setCoworkerShifts(data.coworkerShifts || [])
+        setCompanyId(data.companyId ?? null)
       } else {
         setShifts(data.shifts || [])
         setCoworkerShifts([])
+        setCompanyId(data.companyId ?? null)
       }
     } catch (err) {
       console.error('Fetch schedule error:', err)
@@ -173,6 +177,23 @@ export default function MySchedulePage() {
   }, [month, includeCoworkers])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ★ 2026-08-04: Fetch schedule notes (read-only for employee)
+  useEffect(() => {
+    if (!companyId || shifts.length === 0) { setNotes({}); return }
+    const dates = shifts.map(s => s.date || toHKDateStr(new Date(s.startTime))).sort()
+    const start = dates[0], end = dates[dates.length - 1]
+    if (!start || !end) return
+    fetch(`/api/schedule-notes?companyId=${companyId}&startDate=${start}&endDate=${end}`,
+      { credentials: 'include', cache: 'no-store' })
+      .then(r => r.ok ? r.json() : { notes: [] })
+      .then(d => {
+        const m: Record<string, string> = {}
+        ;(d.notes || []).forEach((n: any) => { m[n.date] = n.text })
+        setNotes(m)
+      })
+      .catch(() => {})
+  }, [companyId, shifts])
 
   const goToMonth = (delta: number) => {
     const parts = month.split('-').map(Number)
@@ -355,6 +376,14 @@ export default function MySchedulePage() {
                   <div className="font-semibold text-sm text-gray-900 dark:text-white mb-2">
                     {date}
                   </div>
+                  {notes[date] && (
+                    <div style={{
+                      fontSize: 11, color: '#b45309', background: '#fffbeb',
+                      borderRadius: 4, padding: '3px 8px', marginTop: 4,
+                    }}>
+                      📌 {notes[date]}
+                    </div>
+                  )}
                   {dayShiftsList.map(s => (
                     <div
                       key={s.id}
