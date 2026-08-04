@@ -6,6 +6,7 @@ import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { balanceYearFor } from '@/lib/leave-types'
 
 // PUT /api/leave-requests/[id] — Approve/Reject leave request
 export async function PUT(
@@ -34,7 +35,7 @@ export async function PUT(
     const request = await prisma.leaveRequest.findUnique({
       where: { id: requestId },
       include: {
-        leaveType: { select: { id: true, name: true, isPaid: true } },
+        leaveType: { select: { id: true, name: true, isPaid: true, systemKey: true } },
         employee: { include: { user: { select: { id: true, name: true } } } },
       },
     })
@@ -80,13 +81,14 @@ export async function PUT(
     })
 
     if (status === 'APPROVED') {
-      const currentYear = new Date().getUTCFullYear()
+      // ★ 累積制假期用 year = 0（2026-08-04 修）
+      const leaveYear = balanceYearFor(request.leaveType?.systemKey)
       const bal = await prisma.leaveBalance.findUnique({
         where: {
           employeeId_leaveTypeId_year: {
             employeeId: request.employeeId,
             leaveTypeId: request.leaveTypeId,
-            year: currentYear,
+            year: leaveYear,
           },
         },
       })
@@ -101,7 +103,7 @@ export async function PUT(
           employeeId_leaveTypeId_year: {
             employeeId: request.employeeId,
             leaveTypeId: request.leaveTypeId,
-            year: currentYear,
+            year: leaveYear,
           },
         },
         data: { used: { increment: request.days }, remaining: { decrement: request.days } },
@@ -151,7 +153,10 @@ export async function DELETE(
   return runWithAudit(auditCtx, async () => {
     try {
       const requestId = params.id
-      const request = await prisma.leaveRequest.findUnique({ where: { id: requestId } })
+      const request = await prisma.leaveRequest.findUnique({
+        where: { id: requestId },
+        include: { leaveType: { select: { systemKey: true } } },
+      })
       if (!request) {
         return NextResponse.json({ error: 'Leave request not found' }, { status: 404 })
       }
@@ -173,20 +178,24 @@ export async function DELETE(
 
       // Restore leave balance if approved
       if (request.status === 'APPROVED') {
-        const leaveYear = new Date(request.startDate).getUTCFullYear()
-        await prisma.leaveBalance.update({
+        // ★ 累積制假期用 year = 0（2026-08-04 修）
+        const leaveYear = balanceYearFor(request.leaveType?.systemKey, new Date(request.startDate))
+        const updated = await prisma.leaveBalance.updateMany({
           where: {
-            employeeId_leaveTypeId_year: {
-              employeeId: request.employeeId,
-              leaveTypeId: request.leaveTypeId,
-              year: leaveYear,
-            },
+            employeeId: request.employeeId,
+            leaveTypeId: request.leaveTypeId,
+            year: leaveYear,
           },
           data: { used: { decrement: request.days }, remaining: { increment: request.days } },
-        }).catch(() => {
-          // Balance record may not exist if it was created without one
-          console.warn(`Leave balance record not found for restoration: ${request.employeeId}/${request.leaveTypeId}/${leaveYear}`)
         })
+
+        // ★ 唔好靜靜吞 —— 還唔到額度係資料錯誤，一定要留痕
+        if (updated.count === 0) {
+          console.error(
+            `[leave-delete] ⛔ 還額度失敗：employeeId=${request.employeeId} ` +
+            `leaveTypeId=${request.leaveTypeId} year=${leaveYear} days=${request.days}`,
+          )
+        }
       }
 
       await prisma.leaveRequest.delete({ where: { id: requestId } })

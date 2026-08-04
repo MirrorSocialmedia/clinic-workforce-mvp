@@ -43,3 +43,18 @@ export const NEGATIVE_ALLOWED_KEYS = [
 export function allowsNegativeBalance(systemKey: string | null): boolean {
   return NEGATIVE_ALLOWED_KEYS.includes(systemKey as any)
 }
+
+/**
+ * 攞 LeaveBalance 應該用嘅 year 值。
+ *
+ * ★ 累積制假期（年假／生日假）用 year = 0，唔按曆年重置。
+ *   其餘（休息日／OT 補假）用曆年。
+ *
+ * ⚠️ 唔可以喺各處自己寫 getFullYear() ——
+ *    2026-08-04 撞過：刪年假時用曆年查，搵唔到 year=0 嗰筆，
+ *    額度靜靜冇還返（而且被 .catch() 吞咗）。
+ */
+export function balanceYearFor(systemKey: string | null | undefined, refDate?: Date): number {
+  if (isAccumulativeLeave(systemKey)) return 0
+  return (refDate ?? new Date()).getUTCFullYear()
+}

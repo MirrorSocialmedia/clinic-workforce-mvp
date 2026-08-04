@@ -1003,12 +1003,16 @@ function getShiftCode(shift: Shift): string {
   }, [mobileSelectedDate, selectedClinicId])
 
   // Refresh all data after shift changes (Task 2)
+  // ★ 2026-08-04: 合併 refreshLeaveBalances + Promise.all 加快
   const refreshAll = useCallback(async () => {
-    await loadShifts()
-    await loadMonthShifts()
-    await loadOvMonth() // ★ 月視圖表格用嘅（ovMonthShifts）
+    await Promise.all([
+      loadShifts(),
+      loadMonthShifts(),
+      loadOvMonth(), // ★ 月視圖表格用嘅（ovMonthShifts）
+      refreshLeaveBalances(), // ★ 加入嚟，唔使各處記得叫
+    ])
     setCardRefreshTick(t => t + 1)
-  }, [loadShifts, loadMonthShifts, loadOvMonth])
+  }, [loadShifts, loadMonthShifts, loadOvMonth, refreshLeaveBalances])
 
   // Unified deleteLeave helper — single entry point for all leave deletions
   const deleteLeave = useCallback(async (leaveId: string) => {
@@ -2212,7 +2216,7 @@ function getShiftCode(shift: Shift): string {
             <tr>
               <th style={{
                 padding: '4px 6px', fontSize: 10, fontWeight: 400,
-                color: '#9ca3af', textAlign: 'left',
+                color: '#9ca3af', textAlign: 'center',
                 background: '#f9fafb', borderRight: '1px solid #e5e7eb',
               }}>備註</th>
               {days.map((wd, i) => {
@@ -2233,6 +2237,7 @@ function getShiftCode(shift: Shift): string {
                         style={{
                           width: '100%', fontSize: 10, padding: '3px 5px',
                           border: '1.5px solid #378ADD', borderRadius: 4, outline: 'none',
+                          textAlign: 'center',
                         }}
                       />
                     ) : (
@@ -2246,7 +2251,7 @@ function getShiftCode(shift: Shift): string {
                           color: note ? '#374151' : '#d1d5db',
                           cursor: canManage ? 'pointer' : 'default',
                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          textAlign: 'left',
+                          textAlign: 'center',
                         }}
                       >
                         {note || (canManage ? '＋' : '')}
@@ -4412,7 +4417,7 @@ function getShiftCode(shift: Shift): string {
                       <th style={{
                         position: 'sticky', left: 0, zIndex: 2, background: '#fff',
                         width: 78, minWidth: 78, borderRight: '0.5px solid #e5e7eb',
-                        padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'left',
+                        padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'center',
                       }}>備註</th>
                       {monthDays.map(d => {
                         const note = scheduleNotes[d] ?? ''
@@ -4427,7 +4432,7 @@ function getShiftCode(shift: Shift): string {
                                   if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                                   if (e.key === 'Escape') setEditingNote(null)
                                 }}
-                                style={{ width: '100%', fontSize: 9, padding: '2px 3px', border: '1.5px solid #378ADD', borderRadius: 3 }}
+                                style={{ width: '100%', fontSize: 9, padding: '2px 3px', border: '1.5px solid #378ADD', borderRadius: 3, textAlign: 'center' }}
                               />
                             ) : (
                               <div
@@ -4439,6 +4444,7 @@ function getShiftCode(shift: Shift): string {
                                   background: note ? '#f9fafb' : 'transparent',
                                   borderRadius: 3, cursor: canManage ? 'pointer' : 'default',
                                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                  textAlign: 'center',
                                 }}
                               >
                                 {note || (canManage ? '·' : '')}
@@ -4748,6 +4754,20 @@ function getShiftCode(shift: Shift): string {
                   {weekDays.map((_, i) => <col key={i} style={{ width: `${87 / 7}%` }} />)}
                 </colgroup>
                 <thead>
+                  {/* ★ 2026-08-04: 截圖版都要有備註 —— 純顯示，唔使＋和 onClick */}
+                  <tr>
+                    <th style={{ padding: '4px 10px', textAlign: 'center', fontSize: 11, fontWeight: 400,
+                                 color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>備註</th>
+                    {weekDays.map((wd, i) => (
+                      <th key={i} style={{
+                        padding: '4px 6px', fontSize: 11, fontWeight: 400, color: '#374151',
+                        textAlign: 'center',
+                        borderBottom: '1px solid #e5e7eb',
+                      }}>
+                        {scheduleNotes[wd.dateStr] || ''}
+                      </th>
+                    ))}
+                  </tr>
                   <tr style={{ background: '#f3f4f6' }}>
                     <th style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600, color: '#111827', borderBottom: '2px solid #d1d5db' }}>員工</th>
                     {weekDays.map((wd, i) => (

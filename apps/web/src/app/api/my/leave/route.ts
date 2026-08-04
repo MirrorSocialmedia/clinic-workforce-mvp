@@ -27,9 +27,10 @@ export async function GET(req: NextRequest) {
     take: 50,
   })
 
+  // ★ 2026-08-04: 累積制假期（年假/生日假）用 year=0，要一併撈返
   const currentYear = new Date().getUTCFullYear()
   const balances = await prisma.leaveBalance.findMany({
-    where: { employeeId: employee.id, year: currentYear },
+    where: { employeeId: employee.id, year: { in: [currentYear, 0] } },
     include: {
       leaveType: { select: { id: true, name: true, isPaid: true, annualQuota: true, color: true, systemKey: true } },
     },
