@@ -4159,7 +4159,7 @@ function getShiftCode(shift: Shift): string {
             </button>
           </div>
         </div>
-        <div id="fc-section" style={{ minWidth: 0, flex: 1 }}>
+        <div id="fc-section" style={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
           {/* ★ week/month toggle — independent of FullCalendar, always visible */}
           <div style={{ display: 'inline-flex', border: '1px solid #d1d5db', borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
             <button
@@ -4260,7 +4260,7 @@ function getShiftCode(shift: Shift): string {
                 原本冇 viewMode 條件，令 week 模式下兩個一齊出，畫面過長；
                 而切去 month 時兩週消失，用家以為壞咗。 */}
           {viewMode === 'month' && monthDays.length > 0 && ovEmployees.ordered.length > 0 && (
-            <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%', overflow: 'hidden' }}>
+            <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%' }}>
               {/* Month header: navigation + capture */}
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -4301,7 +4301,9 @@ function getShiftCode(shift: Shift): string {
                   borderSpacing: 0,
                   tableLayout: 'fixed',
                   fontSize: 11,
-                  width: 'max-content',
+                  // ★ Explicit width — max-content + table-layout:fixed is contradictory,
+                  // causing inconsistent scroll behavior across browsers (2026-08-03)
+                  width: 78 + monthDays.length * 56,
                 }}>
                   <thead>
                     <tr>
