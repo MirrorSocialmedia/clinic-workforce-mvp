@@ -96,6 +96,7 @@ interface ShiftTemplate {
   isDefault: boolean
   shortName?: string | null
   shade?: number | null
+  companyId?: string
 }
 
 interface Shift {
@@ -342,6 +343,15 @@ export default function SchedulingPage() {
   const [showNewShiftModal, setShowNewShiftModal] = useState(false)
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
+
+  // Cell click menu (month view)
+  const [cellMenu, setCellMenu] = useState<{
+    empId: string
+    dateStr: string
+    x: number
+    y: number
+  } | null>(null)
+  useEffect(() => { setCellMenu(null) }, [selectedClinicId])
 
   // B-03: Bulk scheduling modal state
   const [showBulkModal, setShowBulkModal] = useState(false)
@@ -725,6 +735,40 @@ function getShiftCode(shift: Shift): string {
     // ★ 2026-08-03：「本店」= 主屬診所（homeClinicId）
     return activeEmployees.filter(emp => emp.homeClinicId === selectedClinicId)
   }, [employees, selectedClinicId, empScope])
+
+  // ★ Cell shift options for month view click menu
+  const cellShiftOptions = useMemo(() => {
+    if (!selectedClinicId) return []
+    const current = clinics.find(c => c.id === selectedClinicId)
+    const companyId = current?.company?.id
+    if (!companyId) return []
+
+    const sameCompanyClinics = clinics
+      .filter(c => c.company?.id === companyId)
+      .sort((a, b) => {
+        if (a.id === selectedClinicId) return -1
+        if (b.id === selectedClinicId) return 1
+        return a.name.localeCompare(b.name, 'zh-HK')
+      })
+
+    const companyTemplates = templates.filter(t => t.companyId === companyId)
+
+    return sameCompanyClinics.map(c => ({
+      clinicId: c.id,
+      clinicName: c.name,
+      clinicLabel: (c as any).shortName || c.name.slice(0, 3),
+      isCurrent: c.id === selectedClinicId,
+      items: companyTemplates.map(t => ({
+        template: t,
+        label: `${(c as any).shortName || c.name.slice(0, 3)}-${t.shortName || t.name}`,
+        color: shiftShade(
+          clinicColorMap.get(c.id) || '#95a5a6',
+          Math.min((t as any).shade ?? templateIndexMap.get(t.id)?.idx ?? 0, FIXED_STEPS - 1),
+          FIXED_STEPS,
+        ),
+      })),
+    }))
+  }, [selectedClinicId, clinics, templates, clinicColorMap, templateIndexMap])
 
   // ★ 2026-08-03：「全部」時左邊員工欄按主屬店分組
   const groupedEmployees = useMemo(() => {
@@ -1304,6 +1348,27 @@ function getShiftCode(shift: Shift): string {
     }
   }
 
+  // ★ Apply leave to a cell (shared by handleOverviewDrop + cell menu)
+  const applyLeaveToCell = async (empId: string, dateStr: string, leaveTypeId: string) => {
+    const res = await fetch('/api/leave-requests', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employeeId: empId, leaveTypeId,
+        startDate: dateStr, endDate: dateStr, days: 1,
+        reason: '排班設定',
+      }),
+    })
+    if (res.ok) {
+      await refreshAll()
+      await refreshLeaveBalances()
+    } else {
+      const err = await res.json().catch(() => ({}))
+      setValidationIssues([{ type: 'error', rule: 'leave', message: `❌ ${err.error || '設定假期失敗'}` }])
+      await refreshAll()
+    }
+  }
+
   const buildTime = (date: string, hour: number, minute: number, isNight = false): string => {
     const pad = (n: number) => String(n).padStart(2, '0')
     let dt = new Date(`${date}T${pad(hour)}:${pad(minute)}:00+08:00`)
@@ -1483,36 +1548,8 @@ function getShiftCode(shift: Shift): string {
         return
       }
 
-      try {
-        const res = await fetch('/api/leave-requests', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            leaveTypeId: dl.leaveTypeId,
-            employeeId: dl.employeeId,
-            startDate: dateStr,
-            endDate: dateStr,
-            days: 1,
-            reason: `排班總覽拖曳請假`,
-            isPlanned: true,
-            clinicId: targetClinicId,
-          }),
-        })
-        if (res.ok) {
-          setValidationIssues([])
-          await refreshAll()
-          await refreshLeaveBalances()
-        } else {
-          const err = await res.json().catch(() => ({}))
-          setValidationIssues([{ type: 'error', rule: 'leave', message: err.error || `建立假期失敗（${res.status}）` }])
-          await refreshAll() // ★ 失敗都要 refresh
-          return
-        }
-      } catch {
-        setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立假期失敗' }])
-        await refreshAll()
-      }
+      // ★ Use shared applyLeaveToCell
+      await applyLeaveToCell(dl.employeeId, dateStr, dl.leaveTypeId)
       return
     }
   }
@@ -2821,6 +2858,87 @@ function getShiftCode(shift: Shift): string {
           opacity: .75;
         }
       `}</style>
+
+      {/* ★ Cell click menu (month view) */}
+      {cellMenu && (() => {
+        const emp = employees.find(x => x.id === cellMenu.empId)
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onClick={() => setCellMenu(null)} />
+            <div style={{
+              position: 'fixed',
+              left: Math.min(cellMenu.x, window.innerWidth - 230),
+              top: Math.min(cellMenu.y + 4, window.innerHeight - 380),
+              width: 220, maxHeight: 360, overflowY: 'auto',
+              background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
+              boxShadow: '0 8px 24px rgba(0,0,0,.14)', zIndex: 999,
+            }}>
+              <div style={{ padding: '7px 10px', fontSize: 11, color: '#6b7280',
+                borderBottom: '1px solid #e5e7eb', background: '#f9fafb',
+                position: 'sticky', top: 0 }}>
+                {emp?.user?.name} · {cellMenu.dateStr.slice(5)}
+              </div>
+
+              {cellShiftOptions.map(g => (
+                <div key={g.clinicId}>
+                  <div style={{
+                    padding: '5px 10px 3px', fontSize: 10,
+                    background: g.isCurrent ? '#E6F1FB' : undefined,
+                    color: g.isCurrent ? '#0C447C' : '#9ca3af',
+                  }}>
+                    {g.clinicName} {g.clinicLabel}{g.isCurrent ? ' · 當前' : ''}
+                  </div>
+                  {g.items.map(it => (
+                    <button key={`${g.clinicId}-${it.template.id}`}
+                      onClick={async () => {
+                        setCellMenu(null)
+                        const cm = cellMenu
+                        if (!cm) return
+                        await createShift(cm.empId, cm.dateStr, it.template, null, g.clinicId)
+                        await refreshAll()
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%',
+                        padding: '5px 10px', fontSize: 11, border: 'none',
+                        background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f3f4f6' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+                    >
+                      <span style={{ width: 22, height: 14, borderRadius: 3, background: it.color, flexShrink: 0 }} />
+                      {it.label}
+                      <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: 10 }}>
+                        {String(it.template.startHour).padStart(2, '0')}{String(it.template.startMinute).padStart(2, '0')}–{String(it.template.endHour).padStart(2, '0')}{String(it.template.endMinute).padStart(2, '0')}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+
+              {/* 假期 — 放最底 */}
+              <div style={{ padding: '6px 10px 3px', fontSize: 10, color: '#9ca3af',
+                borderTop: '1px solid #e5e7eb', background: '#f9fafb' }}>假期</div>
+              {leaveTypes.map(lt => (
+                <button key={lt.id}
+                  onClick={async () => {
+                    setCellMenu(null)
+                    const cm = cellMenu
+                    if (!cm) return
+                    await applyLeaveToCell(cm.empId, cm.dateStr, lt.id)
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%',
+                    padding: '5px 10px', fontSize: 11, border: 'none',
+                    background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f3f4f6' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+                >
+                  <span style={{ width: 22, height: 14, borderRadius: 3, background: lt.color || '#9CA3AF', flexShrink: 0 }} />
+                  {lt.name}
+                </button>
+              ))}
+            </div>
+          </>
+        )
+      })()}
+
       {/* Header */}
       <div className="flex justify-between items-center mb-4" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -4182,6 +4300,12 @@ function getShiftCode(shift: Shift): string {
                               <td key={di}
                                 className="overview-cell"
                                 onPointerUp={() => canManage && handleOverviewDrop(emp.id, d, selectedClinicId)}
+                                onClick={e => {
+                                  if (!canManage || hasShift || hasLeave) return
+                                  if (justDroppedRef.current) return
+                                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                                  setCellMenu({ empId: emp.id, dateStr: d, x: r.left, y: r.bottom })
+                                }}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
                                   ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
@@ -4200,7 +4324,7 @@ function getShiftCode(shift: Shift): string {
                                 }}
                                 style={{
                                   padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
-                                  cursor: canManage ? 'pointer' : 'default',
+                                  cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
                                   background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
                                   transition: 'background 0.15s',
                                 }}
@@ -4256,6 +4380,12 @@ function getShiftCode(shift: Shift): string {
                               <td key={di}
                                 className="overview-cell"
                                 onPointerUp={() => canManage && handleOverviewDrop(emp.id, d, selectedClinicId)}
+                                onClick={e => {
+                                  if (!canManage || hasShift || hasLeave) return
+                                  if (justDroppedRef.current) return
+                                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                                  setCellMenu({ empId: emp.id, dateStr: d, x: r.left, y: r.bottom })
+                                }}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
                                   ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
@@ -4274,7 +4404,7 @@ function getShiftCode(shift: Shift): string {
                                 }}
                                 style={{
                                   padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
-                                  cursor: canManage ? 'pointer' : 'default',
+                                  cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
                                   background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
                                   transition: 'background 0.15s',
                                 }}
