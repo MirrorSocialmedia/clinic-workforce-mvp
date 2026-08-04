@@ -1870,27 +1870,41 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // Overview cell click / double-click handlers
   // ============================================================
-  const handleOverviewCellClick = async (empId: string, dateStr: string) => {
+  const handleOverviewCellClick = async (
+    empId: string,
+    dateStr: string,
+    anchor?: DOMRect,
+  ) => {
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
     clickTimerRef.current = setTimeout(async () => {
       if (!canManage) return
-      // B-04: 假期優先 — 揀咗假期類型就建立假期，否則建立更次
+
+      // ① 已經揀咗假期 → 直接建立
       if (selectedLeaveType) {
         return createLeaveOnCell(empId, dateStr, selectedLeaveType)
       }
-      if (!selectedTemplate) {
-        setValidationIssues([{ type: 'warning', rule: 'ui', message: '請先喺左邊揀一個更次模板或假期類型' }])
+
+      // ② 已經揀咗模板 → 直接建立（批量排班保留）
+      if (selectedTemplate) {
+        const hasLeave = leaveRequests.some(lr =>
+          lr.employeeId === empId && leaveCoversDate(lr, dateStr)
+        )
+        if (hasLeave) {
+          setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
+          return
+        }
+        const ok = await createShift(empId, dateStr, selectedTemplate)
+        if (ok) { setValidationIssues([]); await refreshAll() }
         return
       }
-      const hasLeave = leaveRequests.some(lr =>
-        lr.employeeId === empId && leaveCoversDate(lr, dateStr)
-      )
-      if (hasLeave) {
-        setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
-        return
-      }
-      const ok = await createShift(empId, dateStr, selectedTemplate)
-      if (ok) { setValidationIssues([]); await refreshAll() }
+
+      // ③ 乜都冇揀 → 彈選單
+      setSelectedEmployeeId(empId)
+      setCellMenu({
+        empId, dateStr,
+        x: anchor?.left ?? 0,
+        y: anchor?.bottom ?? 0,
+      })
     }, 250)
   }
 
@@ -2262,7 +2276,10 @@ function getShiftCode(shift: Shift): string {
                       onMouseLeave={e => {
                         if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                       }}
-                      onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
+                      onClick={e => handleOverviewCellClick(
+                        emp.id, wd.dateStr,
+                        (e.currentTarget as HTMLElement).getBoundingClientRect(),
+                      )}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
                       <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
@@ -2419,7 +2436,10 @@ function getShiftCode(shift: Shift): string {
                       onMouseLeave={e => {
                         if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                       }}
-                      onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
+                      onClick={e => handleOverviewCellClick(
+                        emp.id, wd.dateStr,
+                        (e.currentTarget as HTMLElement).getBoundingClientRect(),
+                      )}
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
                       <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
@@ -2579,7 +2599,10 @@ function getShiftCode(shift: Shift): string {
                           onMouseLeave={e => {
                             if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
                           }}
-                          onClick={() => handleOverviewCellClick(emp.id, wd.dateStr)}
+                          onClick={e => handleOverviewCellClick(
+                            emp.id, wd.dateStr,
+                            (e.currentTarget as HTMLElement).getBoundingClientRect(),
+                          )}
                           onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                         >
                           <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
@@ -2892,6 +2915,7 @@ function getShiftCode(shift: Shift): string {
                     <button key={`${g.clinicId}-${it.template.id}`}
                       onClick={async () => {
                         setCellMenu(null)
+                        setSelectedTemplate(it.template)
                         const cm = cellMenu
                         if (!cm) return
                         await createShift(cm.empId, cm.dateStr, it.template, null, g.clinicId)
@@ -2916,24 +2940,33 @@ function getShiftCode(shift: Shift): string {
               {/* 假期 — 放最底 */}
               <div style={{ padding: '6px 10px 3px', fontSize: 10, color: '#9ca3af',
                 borderTop: '1px solid #e5e7eb', background: '#f9fafb' }}>假期</div>
-              {leaveTypes.map(lt => (
+              {leaveTypes.map(lt => {
+                const bal = selectedEmpBalances.find(b => b.leaveTypeId === lt.id)
+                const isUnlimited = lt.systemKey === 'SICK' || lt.systemKey === 'UNPAID'
+                const loading = selectedEmployeeId === cellMenu.empId && selectedEmpBalances.length === 0
+                const disabled = !isUnlimited && bal != null && bal.remaining <= 0
+                return (
                 <button key={lt.id}
                   onClick={async () => {
                     setCellMenu(null)
-                    const cm = cellMenu
-                    if (!cm) return
-                    await applyLeaveToCell(cm.empId, cm.dateStr, lt.id)
+                    await applyLeaveToCell(cellMenu.empId, cellMenu.dateStr, lt.id)
                   }}
+                  disabled={disabled}
                   style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%',
                     padding: '5px 10px', fontSize: 11, border: 'none',
-                    background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f3f4f6' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+                    background: 'transparent', cursor: disabled ? 'not-allowed' : 'pointer',
+                    textAlign: 'left', opacity: disabled ? 0.4 : 1 }}
                 >
                   <span style={{ width: 22, height: 14, borderRadius: 3, background: lt.color || '#9CA3AF', flexShrink: 0 }} />
                   {lt.name}
+                  <span style={{ marginLeft: 'auto', color: '#9ca3af', fontSize: 10 }}>
+                    {isUnlimited ? '無上限'
+                      : loading ? '…'
+                      : bal ? `剩 ${bal.remaining.toFixed(1)}` : '—'}
+                  </span>
                 </button>
-              ))}
+                )
+              })}
             </div>
           </>
         )
@@ -3678,6 +3711,7 @@ function getShiftCode(shift: Shift): string {
         <div className="flex" style={{
         gap: 12,
         alignItems: 'start',
+        minWidth: 0,
       }}>
 
         {/* LEFTMOST: Clinic Sidebar grouped by Company */}
@@ -4324,9 +4358,9 @@ function getShiftCode(shift: Shift): string {
                                 onClick={e => {
                                   if (!canManage || hasShift || hasLeave) return
                                   if (justDroppedRef.current) return
-                                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                                  setCellMenu({ empId: emp.id, dateStr: d, x: r.left, y: r.bottom })
+                                  handleOverviewCellClick(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
                                 }}
+                                onDoubleClick={() => handleOverviewCellDblClick(emp.id, d)}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
                                   ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
@@ -4414,9 +4448,9 @@ function getShiftCode(shift: Shift): string {
                                 onClick={e => {
                                   if (!canManage || hasShift || hasLeave) return
                                   if (justDroppedRef.current) return
-                                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                                  setCellMenu({ empId: emp.id, dateStr: d, x: r.left, y: r.bottom })
+                                  handleOverviewCellClick(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
                                 }}
+                                onDoubleClick={() => handleOverviewCellDblClick(emp.id, d)}
                                 onPointerEnter={e => {
                                   if (!draggingTemplate.current && !draggingLeave.current) return
                                   ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
@@ -4497,14 +4531,25 @@ function getShiftCode(shift: Shift): string {
                             {emp.user?.name ?? '?'}
                             {homeLabel && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
                           </td>
-                          {monthDays.map((d, di) => (
-                            <td key={di} style={{
-                              padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
-                              backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
-                            }}>
+                          {monthDays.map((d, di) => {
+                            const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
+                            const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
+                            const hasShift = ss.length > 0
+                            const hasLeave = ls.length > 0
+                            return (
+                            <td key={di}
+                              onDoubleClick={() => handleOverviewCellDblClick(emp.id, d)}
+                              onClick={e => {
+                                if (!canManage || hasShift || hasLeave) return
+                                if (justDroppedRef.current) return
+                                handleOverviewCellClick(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
+                              }}
+                              style={{
+                                padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
+                                backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+                                cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
+                              }}>
                               {(() => {
-                                const ss = ovMonthShifts.filter(s => s.employeeId === emp.id && toHKDateStr(new Date(s.date)) === d)
-                                const ls = monthLeaveRequests.filter(lr => lr.employeeId === emp.id && leaveCoversDate(lr, d))
                                 if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
                                 const parts: React.ReactNode[] = []
                                 ss.forEach((s, si) => {
@@ -4522,7 +4567,8 @@ function getShiftCode(shift: Shift): string {
                                 return parts
                               })()}
                             </td>
-                          ))}
+                          )
+                          })}
                         </tr>
                       )
                     })}
