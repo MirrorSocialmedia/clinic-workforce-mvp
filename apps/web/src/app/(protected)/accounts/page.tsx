@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
-import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
@@ -936,9 +936,9 @@ export default function AccountsPage() {
                                   })()
                                 ) : (
                                   leaveBalances[acc.employeeId!]
-                                    // ★ 年假係累積 row (year=0)，唔可以按曆年過濾
+                                    // 累積制假期（年假、生日假）year=0，唔可以按曆年過濾
                                     .filter(b => {
-                                      if (b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL) return true
+                                      if (isAccumulativeLeave(b.leaveType?.systemKey)) return true
                                       if (b.year !== currentYear) return false
                                       return true
                                     })

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { toHKDateStr } from '@/lib/hk-date'
-import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { Plus } from 'lucide-react'
 
@@ -171,8 +171,6 @@ export default function LeavePage() {
   const isManager = userRole === 'OWNER' || userRole === 'MANAGER' /* ROLE-OK(TEMP): 見上面 TODO */
   const isOwner = userRole === 'OWNER' /* ROLE-OK(TEMP): 見上面 TODO */
 
-  // 週年發放制：找 ANNUAL_LEAVE 類型 id 與當前公曆年，用於 UI 過濾
-  const annualLeaveTypeId = leaveTypes.find(t => t.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL)?.id
   const currentYear = new Date().getFullYear()
 
   const fetchData = useCallback(async () => {
@@ -540,9 +538,9 @@ export default function LeavePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {balances
                   .filter(b => balanceEmployeeId === 'all' || b.employeeId === balanceEmployeeId)
-                  // ★ 年假係累積 row (year=0)，唔可以按曆年過濾
+                  // 累積制假期（年假、生日假）year=0，唔可以按曆年過濾
                   .filter(b => {
-                    if (b.leaveTypeId === annualLeaveTypeId) return true
+                    if (isAccumulativeLeave(b.leaveType?.systemKey)) return true
                     if (b.year !== currentYear) return false
                     return true
                   })

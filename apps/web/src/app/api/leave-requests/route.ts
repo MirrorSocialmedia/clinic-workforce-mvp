@@ -7,7 +7,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
+import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance, isAccumulativeLeave } from '@/lib/leave-types'
 
 // ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
 class InsufficientBalanceError extends Error {}
@@ -139,9 +139,8 @@ export async function POST(req: NextRequest) {
       }
 
       // Validate remaining balance (skip for unlimited types)
-      // ★ 年假採累積制，用 year=0；生日假亦用 year=0；其餘假期用曆年
-      const balanceYear = (leaveType.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL
-        || leaveType.systemKey === LEAVE_SYSTEM_KEYS.BIRTHDAY)
+      // 累積制假期（年假、生日假）用 year=0；其餘假期用曆年
+      const balanceYear = isAccumulativeLeave(leaveType.systemKey)
         ? 0
         : Number(toHKDateStr(new Date(startDate)).slice(0, 4))
       const balance = await prisma.leaveBalance.findFirst({
@@ -231,9 +230,8 @@ export async function POST(req: NextRequest) {
 
         // ★ 扣餘額搬入交易內（SICK 除外 —— 成本喺計糧端結算）
         if (req.status === 'APPROVED' && !isUnlimited && leaveType.systemKey !== LEAVE_SYSTEM_KEYS.SICK) {
-          // ★ 年假採累積制，用 year=0；生日假亦用 year=0；其餘假期用曆年
-          const deductYear = (leaveType.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL
-            || leaveType.systemKey === LEAVE_SYSTEM_KEYS.BIRTHDAY)
+          // 累積制假期（年假、生日假）用 year=0；其餘假期用曆年
+          const deductYear = isAccumulativeLeave(leaveType.systemKey)
             ? 0
             : Number(toHKDateStr(new Date(startDate)).slice(0, 4))
           let bal = await tx.leaveBalance.findUnique({
