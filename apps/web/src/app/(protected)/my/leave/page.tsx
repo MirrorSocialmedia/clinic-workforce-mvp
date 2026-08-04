@@ -26,11 +26,6 @@ interface LeaveBalanceItem {
   entitled: number
   used: number
   remaining: number
-  breakdown?: {
-    annual: number
-    birthday: number
-    total: number
-  }
 }
 
 interface LeaveTypeItem {
@@ -72,7 +67,7 @@ export default function MyLeavePage() {
       const [leaveRes, balanceRes, typesRes, meRes] = await Promise.all([
         fetch('/api/my/leave', { credentials: 'include', cache: 'no-store' })
           .catch(() => ({ ok: false } as Response)),
-        // ★ 2026-08-03：餘額另外攞——/api/my/leave 的 balance 無 breakdown（生日假拆解）
+        // 2026-08-04: 餘額另外攞——生日假已拆出獨立 LeaveType
         fetch('/api/leave-balance', { credentials: 'include', cache: 'no-store' })
           .catch(() => ({ ok: false } as Response)),
         fetch('/api/leave-types', { credentials: 'include', cache: 'no-store' })
