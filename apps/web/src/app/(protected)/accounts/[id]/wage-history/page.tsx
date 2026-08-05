@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { toHKDateStr } from '@/lib/hk-date'
 
 /** Wage history row */
 interface WageRow {
@@ -79,7 +80,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
           if (!r.ok) return null
           return r.json()
         }).catch(() => null),
-        fetch(`/api/adw/preview?employeeId=${employeeId}&date=${new Date().toISOString().slice(0, 10)}`, {
+        fetch(`/api/adw/preview?employeeId=${employeeId}&date=${toHKDateStr(new Date())}`, {
           credentials: 'include', cache: 'no-store',
         }).then(r => r.ok ? r.json() : null).catch(() => null),
       ])

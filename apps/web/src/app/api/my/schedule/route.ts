@@ -36,6 +36,23 @@ export async function GET(req: NextRequest) {
     status: { not: 'CANCELLED' },
   }
 
+  // ★ 只接受 'YYYY-MM-DD' —— 其他格式會令 hkDateStart 產生 Invalid Date，
+  //   而 Prisma 收到 Invalid Date 會 throw 一個好難查嘅 validation error
+  //   （2026-08-04：前端傳 toISOString() 撞到，員工端班表完全開唔到）。
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+  if (from && !DATE_RE.test(from)) {
+    return NextResponse.json(
+      { error: `日期格式錯誤（需要 YYYY-MM-DD，收到 ${from}）` },
+      { status: 400 },
+    )
+  }
+  if (to && !DATE_RE.test(to)) {
+    return NextResponse.json(
+      { error: `日期格式錯誤（需要 YYYY-MM-DD，收到 ${to}）` },
+      { status: 400 },
+    )
+  }
+
   if (from) {
     where.startTime = { gte: hkDateStart(from) }
   } else {

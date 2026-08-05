@@ -25,6 +25,21 @@ export async function GET(req: NextRequest) {
 
   const where: any = { employeeId: employee.id }
 
+  // ★ 2026-08-04：只接受 'YYYY-MM-DD'（同 my/schedule route）
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+  if (from && !DATE_RE.test(from)) {
+    return NextResponse.json(
+      { error: `日期格式錯誤（需要 YYYY-MM-DD，收到 ${from}）` },
+      { status: 400 },
+    )
+  }
+  if (to && !DATE_RE.test(to)) {
+    return NextResponse.json(
+      { error: `日期格式錯誤（需要 YYYY-MM-DD，收到 ${to}）` },
+      { status: 400 },
+    )
+  }
+
   if (from) {
     where.punchTime = { gte: hkDateStart(from) }
   }

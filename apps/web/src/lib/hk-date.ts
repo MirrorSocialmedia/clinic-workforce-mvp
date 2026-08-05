@@ -16,7 +16,14 @@ export function todayHK(): string {
 
 /** YYYY-MM-DD → midnight HK (e.g. "2026-07-06" → new Date("2026-07-06T00:00:00+08:00")) */
 export function hkDateStart(dateStr: string): Date {
-  return new Date(`${dateStr}T00:00:00+08:00`)
+  const d = new Date(`${dateStr}T00:00:00+08:00`)
+  // ★ 傳錯格式（例如 ISO 全格式）會拼出 Invalid Date，
+  //   而 Invalid Date 傳落 Prisma 只會出一個好難查嘅 validation error。
+  //   喺呢度即刻報，訊息清楚好多。
+  if (isNaN(d.getTime())) {
+    throw new Error(`hkDateStart: 無效日期字串「${dateStr}」（需要 YYYY-MM-DD）`)
+  }
+  return d
 }
 
 /** 'YYYY-MM-DD' → HK 午夜 Date。用於 joinDate / leaveDate 等純日期欄位。 */
@@ -24,7 +31,11 @@ export const hkDateOnly = (s: string): Date => new Date(`${s}T00:00:00+08:00`)
 
 /** YYYY-MM-DD → end of day HK (e.g. "2026-07-06" → new Date("2026-07-06T23:59:59.999+08:00")) */
 export function hkDateEnd(dateStr: string): Date {
-  return new Date(`${dateStr}T23:59:59.999+08:00`)
+  const d = new Date(`${dateStr}T23:59:59.999+08:00`)
+  if (isNaN(d.getTime())) {
+    throw new Error(`hkDateEnd: 無效日期字串「${dateStr}」（需要 YYYY-MM-DD）`)
+  }
+  return d
 }
 
 const HK = { timeZone: 'Asia/Hong_Kong' } as const

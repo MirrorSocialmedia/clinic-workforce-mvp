@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { fmtDateTime } from '@/lib/hk-date'
+import { fmtDateTime, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel, punchBg, punchTextColor } from '@/lib/punch-label'
 
 export default function MyPunchesPage() {
@@ -27,8 +27,12 @@ export default function MyPunchesPage() {
       const monthStart = new Date(`${month}-01`)
       const monthEnd = new Date(monthStart)
       monthEnd.setMonth(monthEnd.getMonth() + 1)  // tz-ok: client-side browser
+      // ★ 2026-08-04：與 my/schedule 相同 — toISOString() 會傳 ISO 全格式
+      //   令後端 hkDateStart() 產生 Invalid Date + UTC 差一日
+      const fromStr = toHKDateStr(monthStart)
+      const toStr = toHKDateStr(monthEnd)
       const res = await fetch(
-        `/api/my/punches?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}`,
+        `/api/my/punches?from=${fromStr}&to=${toStr}`,
         { credentials: 'include' }
       )
       const data = await res.json()

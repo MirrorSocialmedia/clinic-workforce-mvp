@@ -155,9 +155,14 @@ export default function MySchedulePage() {
       const monthStart = new Date(`${month}-01`)
       const monthEnd = new Date(monthStart)
       monthEnd.setMonth(monthEnd.getMonth() + 1)  // tz-ok: client-side browser
+      // ★ 2026-08-04：後端 hkDateStart() 期望 'YYYY-MM-DD' 純日期字串
+      //   toISOString() 會拼成 '…000ZT00:00:00+08:00' → Invalid Date → Prisma 500
+      //   且 toISOString() 轉 UTC，HK 8/1 00:00 會變 7/31 —— 差一日
+      const fromStr = toHKDateStr(monthStart)
+      const toStr = toHKDateStr(monthEnd)
       const url = includeCoworkers
-        ? `/api/my/schedule?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}&includeCoworkers=true`
-        : `/api/my/schedule?from=${monthStart.toISOString()}&to=${monthEnd.toISOString()}`
+        ? `/api/my/schedule?from=${fromStr}&to=${toStr}&includeCoworkers=true`
+        : `/api/my/schedule?from=${fromStr}&to=${toStr}`
       const res = await fetch(url, { credentials: 'include' })
       const data = await res.json()
       if (includeCoworkers) {
