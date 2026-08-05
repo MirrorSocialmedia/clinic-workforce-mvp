@@ -50,6 +50,13 @@ export default function AccountsPage() {
   const [payRules, setPayRules] = useState<Record<string, any>>({})
   const [enrollCode, setEnrollCode] = useState<{ code: string; name: string } | null>(null)
 
+  // Purge state (test accounts)
+  const [showPurgeModal, setShowPurgeModal] = useState(false)
+  const [purgeTarget, setPurgeTarget] = useState<Account | null>(null)
+  const [purgePreview, setPurgePreview] = useState<any>(null)
+  const [purgeConfirmName, setPurgeConfirmName] = useState('')
+  const [purgeLoading, setPurgeLoading] = useState(false)
+
   // Resign / Rehire state
   const [showResigned, setShowResigned] = useState(false)
   const [showResignModal, setShowResignModal] = useState(false)
@@ -270,6 +277,52 @@ export default function AccountsPage() {
       }
       fetchData()
     } catch { alert('刪除失敗') }
+  }
+
+  // ─── Purge (test accounts) ───
+  const openPurge = async (acc: Account) => {
+    setPurgeTarget(acc)
+    setPurgePreview(null)
+    setPurgeConfirmName('')
+    setShowPurgeModal(true)
+    try {
+      const res = await fetch(`/api/accounts/${acc.id}/purge-preview`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setPurgePreview(data)
+      } else {
+        const err = await res.json()
+        alert(err.error || '載入清除預覽失敗')
+        setShowPurgeModal(false)
+      }
+    } catch { alert('網絡錯誤') }
+  }
+
+  const handlePurge = async () => {
+    if (!purgeTarget || !purgePreview?.user) return
+    if (purgeConfirmName.trim() !== purgePreview.user.name) {
+      alert('請輸入正確嘅帳號全名確認')
+      return
+    }
+    if (purgePreview.blocks?.length > 0) return // blocked — button disabled
+    setPurgeLoading(true)
+    try {
+      const res = await fetch(`/api/accounts/${purgeTarget.id}/purge`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmName: purgeConfirmName.trim() }),
+      })
+      if (res.ok) {
+        setShowPurgeModal(false)
+        setPurgeTarget(null)
+        fetchData()
+      } else {
+        const err = await res.json()
+        alert(err.error || '清除失敗')
+      }
+    } catch { alert('網絡錯誤') }
+    finally { setPurgeLoading(false) }
   }
 
   // ─── Resign / Rehire ───
@@ -855,6 +908,9 @@ export default function AccountsPage() {
                           {isOwner && userRole !== acc.role && (
                             <button className="btn btn-sm" style={{ background: '#fde8e8', color: '#dc3545' }} onClick={() => handleDelete(acc)}>刪除</button>
                           )}
+                          {isOwner && userRole !== acc.role && (
+                            <button className="btn btn-sm" style={{ background: '#7f1d1d', color: 'white' }} onClick={() => openPurge(acc)}>徹底清除</button>
+                          )}
                           {isOwner && acc.employeeId && acc.employeeStatus !== 'RESIGNED' && (
                             <button className="btn btn-sm" style={{ background: '#fef2f2', color: '#dc2626' }} onClick={() => openResign(acc)}>離職</button>
                           )}
@@ -1039,6 +1095,9 @@ export default function AccountsPage() {
                     {isOwner && userRole !== acc.role && (
                       <button className="px-3 py-1.5 rounded-md text-xs text-red-600 border border-red-200 bg-red-50" onClick={() => handleDelete(acc)}>刪除</button>
                     )}
+                    {isOwner && userRole !== acc.role && (
+                      <button className="px-3 py-1.5 rounded-md text-xs text-white border border-red-800 bg-red-900" onClick={() => openPurge(acc)}>徹底清除</button>
+                    )}
                     {isOwner && acc.employeeId && acc.employeeStatus !== 'RESIGNED' && (
                       <button className="px-3 py-1.5 rounded-md text-xs text-red-600 border border-red-200 bg-red-50" onClick={() => openResign(acc)}>離職</button>
                     )}
@@ -1150,6 +1209,72 @@ export default function AccountsPage() {
             <button className="w-full py-2 bg-blue-600 text-white rounded-lg" onClick={() => setEnrollCode(null)}>
               關閉
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Purge Modal (test accounts) */}
+      {showPurgeModal && purgeTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => { setShowPurgeModal(false); setPurgeTarget(null) }}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-8 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold mb-2 text-red-700">⚠️ 徹底清除帳號（測試帳號用）</h3>
+            <p className="text-sm text-gray-500 mb-4">此操作不可復原。會清除所有業務記錄 + 審計日誌，只保留一筆 PURGE 審計。</p>
+
+            {purgePreview?.user && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{purgePreview.user.name}</div>
+                <div style={{ fontSize: 12, color: '#888' }}>{purgePreview.user.email || '無電郵'} · {purgePreview.user.hasEmployee ? '有員工記錄' : '純用戶'}</div>
+              </div>
+            )}
+
+            {purgePreview?.blocks?.length > 0 && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#dc2626', marginBottom: 4 }}>❌ 以下原因阻止清除：</div>
+                {purgePreview.blocks.map((b: any, i: number) => (
+                  <div key={i} style={{ fontSize: 12, color: '#7f1d1d', marginBottom: 4 }}>{b.message}</div>
+                ))}
+              </div>
+            )}
+
+            {purgePreview?.counts && (
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>將清除以下記錄：</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4, fontSize: 12 }}>
+                  {Object.entries(purgePreview.counts).map(([key, value]: [string, any]) => (
+                    <div key={key} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#555' }}>{key}</span>
+                      <span style={{ fontWeight: value > 0 ? 600 : 400, color: value > 0 ? '#dc2626' : '#aaa' }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>輸入帳號全名確認</label>
+              <input
+                type="text"
+                value={purgeConfirmName}
+                onChange={e => setPurgeConfirmName(e.target.value)}
+                placeholder={purgePreview?.user?.name}
+                className="px-3 py-2 rounded-md border text-sm w-full"
+              />
+              {purgeConfirmName && purgeConfirmName.trim() !== purgePreview?.user?.name && (
+                <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>姓名不符</div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" style={{ background: '#eee', color: '#333' }}
+                onClick={() => { setShowPurgeModal(false); setPurgeTarget(null) }}>取消</button>
+              <button className="btn" style={{ background: '#dc2626', color: 'white' }}
+                onClick={handlePurge}
+                disabled={purgeLoading || !purgeConfirmName.trim() || purgeConfirmName.trim() !== purgePreview?.user?.name || purgePreview?.blocks?.length > 0}>
+                {purgeLoading ? '清除中...' : '確認徹底清除'}
+              </button>
+            </div>
           </div>
         </div>
       )}

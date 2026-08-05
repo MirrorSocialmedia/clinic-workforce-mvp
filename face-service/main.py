@@ -110,3 +110,104 @@ def delete_frame(punch_id: str, allow_ref: bool = False):
     if os.path.exists(p):
         os.remove(p)
     return {'ok': True}
+
+# ──────────────────────────────────────────────
+# Mask detection endpoint (P1)
+# ──────────────────────────────────────────────
+
+# ONNX mask classifier (optional — zero new package, onnxruntime is insightface dep)
+MASK_MODEL = None
+MASK_MODEL_PATH = '/models/mask_detector.onnx'
+try:
+    import onnxruntime as ort
+    if os.path.exists(MASK_MODEL_PATH):
+        MASK_MODEL = ort.InferenceSession(MASK_MODEL_PATH, providers=['CPUExecutionProvider'])
+except Exception:
+    MASK_MODEL = None
+
+def _heuristic_mask_check(img, bbox):
+    """Fallback: landmark + lower-face color heuristic when ONNX model is unavailable."""
+    try:
+        x1, y1, x2, y2 = [int(v) for v in bbox[:4]]
+        h, w = img.shape[:2]
+        # Mouth landmark index 13 (left), 14 (right) in InsightFace 5-point
+        # Use lower half of face bbox as mouth region
+        face_h = y2 - y1
+        mouth_y_start = int(y1 + face_h * 0.55)
+        mouth_y_end = int(y1 + face_h * 0.80)
+        mouth_x_start = int(x1 + face_h * 0.2)
+        mouth_x_end = int(x2 - face_h * 0.2)
+        mouth_y_start = min(mouth_y_start, h - 1)
+        mouth_y_end = min(mouth_y_end, h - 1)
+        mouth_x_start = max(mouth_x_start, 0)
+        mouth_x_end = min(mouth_x_end, w - 1)
+        mouth_region = img[mouth_y_start:mouth_y_end, mouth_x_start:mouth_x_end]
+        if mouth_region.size == 0:
+            return False, 0.5
+        # If lower-face region is predominantly dark (mask), classify as masked
+        gray = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
+        mean_luma = float(np.mean(gray))
+        # Skin tones typically > 120; masks typically < 100
+        masked = mean_luma < 90
+        confidence = 1.0 - abs(mean_luma - 90) / 100.0
+        confidence = max(0.3, min(0.7, confidence))
+        return masked, confidence
+    except Exception:
+        return False, 0.3
+
+@app.post('/mask')
+async def mask_check(file: UploadFile = File(...)):
+    """
+    POST /mask — Detect whether person is wearing a mask.
+    
+    Returns:
+    - { masked: bool, confidence: float, degraded: bool }
+    - degraded=true means heuristic fallback was used
+    - Never returns 5xx; worst case: { masked: false, degraded: true }
+    
+    Kill switch: env MASK_CHECK=off → { masked: false }
+    """
+    # Kill switch
+    if os.environ.get('MASK_CHECK', '').lower() == 'off':
+        return {'masked': False, 'confidence': 0.0, 'degraded': False}
+
+    try:
+        raw = await file.read()
+        img = decode(raw)
+
+        # Detect face
+        faces = fa.get(img)
+        if len(faces) != 1:
+            return {'masked': False, 'confidence': 0.0, 'degraded': True}
+
+        bbox = faces[0].bbox
+
+        # Tier 1: ONNX mask classifier
+        if MASK_MODEL is not None:
+            try:
+                x1, y1, x2, y2 = [int(v) for v in bbox[:4]]
+                face_crop = img[y1:y2, x1:x2]
+                face_crop = cv2.resize(face_crop, (128, 128)).astype(np.float32)
+                face_crop = np.transpose(face_crop, (2, 0, 1))[None]
+                input_name = MASK_MODEL.get_inputs()[0].name
+                output = MASK_MODEL.run(None, {input_name: face_crop})[0]
+                # Assume binary classifier: output[0][0] = not_masked, output[0][1] = masked
+                if output.shape[1] == 2:
+                    probs = np.exp(output[0]) / np.sum(np.exp(output[0]))
+                    masked = probs[1] > 0.5
+                    confidence = float(probs[1] if masked else probs[0])
+                else:
+                    val = float(output[0][0])
+                    masked = val > 0.5
+                    confidence = val
+                return {'masked': masked, 'confidence': round(confidence, 4), 'degraded': False}
+            except Exception:
+                pass  # Fall through to heuristic
+
+        # Tier 2: Heuristic fallback
+        masked, confidence = _heuristic_mask_check(img, bbox)
+        return {'masked': masked, 'confidence': round(confidence, 4), 'degraded': True}
+
+    except Exception:
+        # Tier 3: Any error → fail-open
+        return {'masked': False, 'confidence': 0.0, 'degraded': True}

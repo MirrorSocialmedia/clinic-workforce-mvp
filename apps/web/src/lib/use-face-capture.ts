@@ -3,6 +3,8 @@ import { useRef, useCallback } from 'react'
 
 export function useFaceCapture() {
   const detectorRef = useRef<any>(null)
+  // ★ maskGate latch — null = not yet checked, true = server error/latched (pass through)
+  const maskLatchRef = useRef<boolean | null>(null)
 
   const init = useCallback(async () => {
     if (detectorRef.current) return
@@ -21,6 +23,7 @@ export function useFaceCapture() {
   }, [])
 
   const captureQualified = useCallback(async (video: HTMLVideoElement, timeoutMs = 3000, onHint?: (h: string) => void): Promise<Blob | null> => {
+    maskLatchRef.current = null // reset latch per capture attempt
     await init()
     // ★ Wait for first frame — WebKit 252465
     const frameDeadline = Date.now() + 2000
@@ -65,6 +68,44 @@ export function useFaceCapture() {
           onHint?.('請將臉移入框內')
           await new Promise(r => setTimeout(r, 120))
           continue
+        }
+
+        // ★ maskGate — after inFrame+distance, before light/capture
+        //   latch on any error (fail-open), 1.5s re-check interval, 8s hard deadline
+        if (maskLatchRef.current !== true) {
+          try {
+            // Capture current frame for mask check (320px jpeg)
+            const maskCanvas = document.createElement('canvas')
+            const ms = Math.min(1, 320 / video.videoWidth)
+            maskCanvas.width = Math.round(video.videoWidth * ms)
+            maskCanvas.height = Math.round(video.videoHeight * ms)
+            const mctx = maskCanvas.getContext('2d')!
+            mctx.drawImage(video, 0, 0, maskCanvas.width, maskCanvas.height)
+            const maskBlob = await new Promise<Blob | null>(r => maskCanvas.toBlob(b => r(b), 'image/jpeg', 0.7))
+            if (maskBlob) {
+              const mfd = new FormData()
+              mfd.append('frame', maskBlob, 'mask.jpg')
+              const mRes = await Promise.race([
+                fetch('/api/face/mask-check', { method: 'POST', credentials: 'include', body: mfd }),
+                new Promise<null>(r => setTimeout(() => r(null), 1200)),
+              ])
+              if (mRes && mRes.ok) {
+                const mData = await mRes.json()
+                if (mData.masked === true) {
+                  maskLatchRef.current = null // not latched yet
+                  onHint?.('😷 請除下口罩再看鏡頭')
+                  await new Promise(r => setTimeout(r, 1500))
+                  continue
+                }
+              }
+            }
+            // OK (not masked) or fail → pass through
+            maskLatchRef.current = true
+          } catch {
+            // Any error → latch and pass through (fail-open)
+            console.warn('[face-capture] maskGate error, latching pass-through')
+            maskLatchRef.current = true
+          }
         }
 
         // 降採樣

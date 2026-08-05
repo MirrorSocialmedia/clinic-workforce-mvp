@@ -153,6 +153,25 @@ export default function PunchPage() {
     })
   }, [warmup])
 
+  // ★ Mask-check warmup ping — latch early if server is down, zero latency on punch
+  useEffect(() => {
+    const mc = async () => {
+      try {
+        // Send a tiny placeholder blob
+        const blob = new Blob([new Uint8Array(1)], { type: 'image/jpeg' })
+        const fd = new FormData()
+        fd.append('frame', blob, 'warmup.jpg')
+        await Promise.race([
+          fetch('/api/face/mask-check', { method: 'POST', credentials: 'include', body: fd }),
+          new Promise<null>(r => setTimeout(() => r(null), 1200)),
+        ])
+      } catch {
+        // Latch will handle this — fail-open
+      }
+    }
+    mc()
+  }, [])
+
   // ★ GPS watchPosition 保溫 — 頁面在就追蹤，離頁立即停
   useEffect(() => {
     if (!navigator.geolocation) return

@@ -184,6 +184,8 @@ export const CONFIG = {
     'GET /api/accounts/:id': ['OWNER'],
     'PUT /api/accounts/:id': ['OWNER'],
     'DELETE /api/accounts/:id': ['OWNER'],
+    'GET /api/accounts/:id/purge-preview': ['OWNER'],
+    'POST /api/accounts/:id/purge': ['OWNER'],
 
     // Time-bank routes
     'GET /api/time-bank': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -231,6 +233,7 @@ export const CONFIG = {
 
     // Face enrollment status (self)
     'GET /api/face/my-status': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/face/mask-check': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Admin migration routes
     'POST /api/admin/migrate-shift-templates': ['OWNER'],

@@ -29,6 +29,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PAYROLL_REVERT_TO_DRAFT', label: '計糧重製草稿' },
   // ★ 2026-08-05: Additional sensitive actions from coverage scan
   { action: 'ACCOUNT_DELETE', label: '刪除帳戶' },
+  { action: 'ACCOUNT_PURGE', label: '⚠️ 徹底清除帳號' },
   { action: 'UPDATE_ACCOUNT', label: '更新帳戶' },
   { action: 'ADW_POLICY_CAP', label: '扣OT政策上限' },
   { action: 'CREATE_PAYROLL_RUN', label: '建立計糧批次' },
