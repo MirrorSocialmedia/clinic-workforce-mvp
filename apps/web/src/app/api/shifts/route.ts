@@ -97,8 +97,11 @@ export async function GET(req: NextRequest) {
     })
 
     shiftsWithPunch = shifts.map((s: any) => {
-      const dayStart = hkDateStart(s.date)
-      const dayEnd = hkDateEnd(s.date)
+      // ★ 2026-08-05: s.date 係 Prisma Date — hkDateStart 只收 'YYYY-MM-DD' 字串。
+      // 舊寫法靜靜產生 Invalid Date，令 hasPunch 永遠 false；
+      // 32a048c 加咗嚴格驗證後變 500（fail-loud 做啱咗佢嘅工作）。
+      const dayStart = hkDateStart(toHKDateStr(s.date))
+      const dayEnd = hkDateEnd(toHKDateStr(s.date))
       const hasPunch = allPunches.some((p: any) =>
         p.employeeId === s.employeeId &&
         p.clinicId === s.clinicId &&
