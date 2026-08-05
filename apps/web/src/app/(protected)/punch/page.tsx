@@ -329,7 +329,7 @@ export default function PunchPage() {
     let outcome: 'sent' | 'no_face' | 'skipped' = 'skipped'
     let fd_reason: string = ''
     let noFaceEvidence: Blob | null = null
-    let stage: 'gum' | 'play' | 'cap' = 'gum'
+    let stage: 'gum' | 'play' | 'cap' | 'send' = 'gum'
     try {
       if (!faceVideoRef.current) throw Object.assign(new Error('face video not mounted'), { name: 'NotMounted' })
       setFaceHint('請看鏡頭')
@@ -345,22 +345,31 @@ export default function PunchPage() {
           blob = await captureQualified(faceVideoRef.current, 8000, setFaceHint)
         } catch (ce: any) {
           // ★ MediaPipe 係 client 前置閘 — 真正驗證喺 server
-          if (ce?.name !== 'NoFrame' && faceVideoRef.current.videoWidth > 0) {
+          const v = faceVideoRef.current
+          if (ce?.name !== 'NoFrame' && v && v.videoWidth > 0) {
             console.error('[punch] client 偵測器失敗，改送 raw 幀', { name: ce?.name, message: ce?.message })
             setFaceHint('請看鏡頭')
             await new Promise(r => setTimeout(r, 800))
-            blob = await captureRaw(faceVideoRef.current)
+            try {
+              blob = await captureRaw(v)
+            } catch {
+              throw ce // ★ fallback 自己都死 → 掟返「原本」嘅錯，唔准換名
+            }
           } else {
             throw ce
           }
         }
 
         if (blob) {
+          stage = 'send' // ★ 上載階段 — 網絡層錯誤唔准再扮 capture 錯
           setFaceHint('分析中…')
           const fd = new FormData()
           fd.append('punchId', punchId)
           fd.append('frame', blob, 'punch.jpg')
-          const r = await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
+          // ★ 2026-08-05：keepalive 有 64KB body 上限，frame 正常 40-120KB
+          // → 超標即掟 TypeError（camera_cap_type saga 根因）。
+          // redirect 由 faceDone 扣住，page 唔會走 — keepalive 冇必要。
+          const r = await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
           if (r.ok) {
             const j = await r.json()
             setFaceHint(j.status === 'PASS' ? '✅ 驗證通過' : null)
@@ -388,7 +397,11 @@ export default function PunchPage() {
       else if (name === 'NoFrame') fd_reason = `camera_noframe${suffix}`
       else if (name.startsWith('Init_')) fd_reason = `camera_init_${short.slice(5)}${suffix}`
       else if (name.startsWith('Detect_')) fd_reason = `camera_detect_${short.slice(7)}${suffix}`
-      else fd_reason = `camera_${stage}_${short}${suffix}`
+      else {
+        // ★ 附帶 message 頭 20 字元（淨字母數字）
+        const msg = String(e?.message || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 20).toLowerCase()
+        fd_reason = `camera_${stage}_${short}${suffix}${msg ? `~${msg}` : ''}`
+      }
 
       console.error('[punch] face verify 失敗', { name, message: e?.message, standalone: isStandalone, ua: navigator.userAgent })
 
@@ -414,13 +427,15 @@ export default function PunchPage() {
         if (noFaceEvidence) fd.append('frame', noFaceEvidence, 'noface.jpg')
         fd.append('reason', fd_reason || 'no_face_8s')
         fd.append('result', 'NO_FACE')
-        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
+        // ★ 2026-08-05：keepalive 有 64KB body 上限（同上）。
+        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
       } else {
         const fd = new FormData()
         fd.append('punchId', punchId)
         fd.append('result', 'SKIPPED')
         if (fd_reason) fd.append('reason', fd_reason)
-        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
+        // ★ 2026-08-05：keepalive 有 64KB body 上限（同上）。
+        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
       }
       setFaceHint(outcome === 'no_face' ? '未拍攝到人臉' : '臉部驗證略過')
       setTimeout(() => setFaceHint(null), 1500)
