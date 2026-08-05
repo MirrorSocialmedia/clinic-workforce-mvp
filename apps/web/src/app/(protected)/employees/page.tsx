@@ -83,7 +83,7 @@ export default function EmployeesOverviewPage() {
               )}
               {e.status === 'RESIGNED' && (
                 <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 6 }}>
-                  已離職{e.resignedAt ? ` · ${String(e.resignedAt).slice(0, 10)}` : ''}
+                  已離職{e.leaveDate ? ` · ${String(e.leaveDate).slice(0, 10)}` : ''}
                 </span>
               )}
             </div>
