@@ -926,7 +926,7 @@ export default function AttendancePage() {
                             if (r.faceReviewAction === 'FLAGGED') {
                               return <span style={{ color: '#dc2626', fontWeight: 600 }} title={reviewTitle}>⚠️ 未通過·有疑點</span>
                             }
-                            return <span style={{ color: '#059669' }} title={reviewTitle}>未通過·已確認本人 ✓</span>
+                            return <span style={{ color: '#6b7280' }} title={reviewTitle}>未通過·已確認本人 ✓</span>
                           }
                           return <Link href="/face-review" style={{ color: '#dc2626', fontWeight: 600, textDecoration: 'underline' }}
                             title={`臉部驗證未通過${reasonTitle(r)}`}>⚠️ 未通過</Link>

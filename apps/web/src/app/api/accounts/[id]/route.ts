@@ -149,6 +149,13 @@ export async function DELETE(
         throw e
       }
     } else {
+      // ★ 非員工帳號 — 審計記錄都係删除障礙
+      const auditCount = await prisma.auditLog.count({ where: { actorId: params.id } })
+      if (auditCount > 0) {
+        return NextResponse.json({
+          error: `此帳號有 ${auditCount} 筆審計記錄（登入／操作痕跡），為保審計完整不可刪除。請改為「停用」。`,
+        }, { status: 409 })
+      }
       try {
         await prisma.user.delete({ where: { id: params.id } })
       } catch (e: any) {
