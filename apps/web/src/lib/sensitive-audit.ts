@@ -1,0 +1,49 @@
+/**
+ * 敏感操作審計 — 單一來源。
+ * ★ 新增任何 audit action 都要喺呢度表態：放入 SPEC（入摘要）或 EXEMPT（明確豁免）。
+ * scripts/check-sensitive-coverage.sh 會檢查每個自訂 action 都有冇分類。
+ */
+
+export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; label: string }> = [
+  { action: 'VOID_PUNCH', label: '作廢打卡' },
+  { action: 'CREATE_PUNCH', label: '補登打卡' },
+  { action: 'PUNCH_EDIT', label: '編輯打卡' },
+  { action: 'ABSENT_DEDUCT', label: '缺勤扣OT' },
+  { action: 'ABSENT_DEDUCT_CANCEL', label: '取消扣OT' },
+  { action: 'CONVERT', label: 'OT換假' },
+  { action: 'CREATE', entity: 'PunchCorrection', label: '補登申請（改時間）' },
+  { action: 'UPDATE', entity: 'PunchCorrection', label: '批核補登申請' },
+  { action: 'FACE_REVIEW_ACTION', label: '人臉覆核批核' },
+  { action: 'TIMEBANK_INIT_ADJUST', label: '初始化時間帳戶' },
+  { action: 'TIMEBANK_MAKEUP', label: '補鐘' },
+  { action: 'TIMEBANK_CONVERT', label: '時間帳戶兌換' },
+  { action: 'TIMEBANK_ABSENT_DEDUCT', label: '缺勤扣OT鐘' },
+  { action: 'TIMEBANK_REST_TO_ACCOUNT', label: '休息日還鐘' },
+  { action: 'LEAVE_INIT', label: '初始化假期額度' },
+  { action: 'LEAVE_BALANCE_ADJUST', label: '校正假期餘額' },
+  { action: 'LEAVE_BALANCE_DELETE', label: '刪除假期餘額' },
+  { action: 'DELETE', entity: 'LeaveRequest', label: '刪除請假' },
+  { action: 'EXPENSE_CREATE', label: '新增雜項' },
+  { action: 'EXPENSE_DELETE', label: '刪除雜項' },
+  { action: 'PAYROLL_REVERT_TO_DRAFT', label: '計糧重製草稿' },
+  // ★ 2026-08-05: Additional sensitive actions from coverage scan
+  { action: 'ACCOUNT_DELETE', label: '刪除帳戶' },
+  { action: 'UPDATE_ACCOUNT', label: '更新帳戶' },
+  { action: 'ADW_POLICY_CAP', label: '扣OT政策上限' },
+  { action: 'CREATE_PAYROLL_RUN', label: '建立計糧批次' },
+  { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
+  { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
+  { action: 'FACE_ENROLL_APPROVE', label: '批准人臉登記' },
+  { action: 'FACE_ENROLL_REJECT', label: '拒絕人臉登記' },
+  { action: 'PAY_RULE_UPDATE', label: '更新計薪規則' },
+  { action: 'WAGE_HISTORY_CREATE', label: '新增工資記錄' },
+  { action: 'WAGE_HISTORY_UPDATE', label: '更新工資記錄' },
+  { action: 'WAGE_HISTORY_DELETE', label: '刪除工資記錄' },
+]
+
+export const SENSITIVE_AUDIT_EXEMPT = new Set([
+  'LOGIN', 'LOGOUT', 'PASSWORD_CHANGE', 'PASSWORD_RESET',
+  'FACE_VERIFY', 'FACE_FRAME_VIEW', 'FACE_REF_VIEW',
+  'WAGE_SNAPSHOT', 'MUTATE', 'UPSERT',
+  'FACE_ENROLL', 'FACE_ENROLL_CODE_ISSUED', // routine face enrollment steps
+])

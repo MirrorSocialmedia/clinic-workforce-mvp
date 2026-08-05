@@ -127,6 +127,7 @@ export default function DashboardPage() {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const fromDate = toHKDateStr(sevenDaysAgo).slice(0, 10)
     const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT', 'CREATE_PUNCH',
+      'PUNCH_EDIT', 'FACE_REVIEW_ACTION', // ★ 2026-08-05 漏網
       'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT', 'LEAVE_INIT', 'EXPENSE_CREATE', 'EXPENSE_DELETE',
       'PAYROLL_REVERT_TO_DRAFT', 'LEAVE_BALANCE_ADJUST', 'LEAVE_BALANCE_DELETE']
 
@@ -141,6 +142,14 @@ export default function DashboardPage() {
         .then(r => r.ok ? r.json() : { logs: [] })
         .catch(() => ({ logs: [] }))
     )
+    // ★ 補登申請（auto 格式）：CREATE=提出/即批改時間、UPDATE=批准/拒絕
+    for (const act of ['CREATE', 'UPDATE']) {
+      promises.push(
+        fetch(`/api/audit-logs?action=${act}&entity=PunchCorrection&fromDate=${fromDate}`, { credentials: 'include' })
+          .then(r => r.ok ? r.json() : { logs: [] })
+          .catch(() => ({ logs: [] }))
+      )
+    }
 
     Promise.all(promises).then(results => {
       const allLogs = results.flatMap(r => r.logs || [])
@@ -153,6 +162,10 @@ export default function DashboardPage() {
         CONVERT: 'OT換假',
         LEAVE_DELETE: '刪除請假',
         CREATE_PUNCH: '補登打卡',
+        PUNCH_EDIT: '編輯打卡',
+        FACE_REVIEW_ACTION: '人臉覆核批核',
+        CORRECTION_CREATE: '補登申請（改時間）',
+        CORRECTION_REVIEW: '批核補登申請',
         TIMEBANK_INIT_ADJUST: '初始化時間帳戶',
         TIMEBANK_MAKEUP: '補鐘',
         TIMEBANK_CONVERT: '時間帳戶兌換',
@@ -167,8 +180,12 @@ export default function DashboardPage() {
       for (const log of allLogs) {
         const actorName = log.actor?.name || log.actorId
         const actorRole = log.actor?.role || ''
-        // Normalize: DELETE on LeaveRequest → LEAVE_DELETE
-        const action = (log.action === 'DELETE' && log.entity === 'LeaveRequest') ? 'LEAVE_DELETE' : log.action
+        // Normalize: DELETE on LeaveRequest → LEAVE_DELETE; PunchCorrection → CORRECTION_CREATE/REVIEW
+        const action =
+          (log.action === 'DELETE' && log.entity === 'LeaveRequest') ? 'LEAVE_DELETE'
+          : (log.action === 'CREATE' && log.entity === 'PunchCorrection') ? 'CORRECTION_CREATE'
+          : (log.action === 'UPDATE' && log.entity === 'PunchCorrection') ? 'CORRECTION_REVIEW'
+          : log.action
         const existing = byActor.get(log.actorId)
         if (!existing) {
           byActor.set(log.actorId, { name: actorName, role: actorRole, count: 1, byAction: { [action]: 1 }, logs: [log] })
