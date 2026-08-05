@@ -7,6 +7,7 @@ import { BackButton } from '@/components/BackButton'
 import { User, Printer, Eye } from 'lucide-react'
 import { fmtDate } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
+import { zeroEntitledHint } from '@/lib/leave-types'
 
 const api = (url: string, init?: RequestInit) =>
   fetch(url, { credentials: 'include', cache: 'no-store', ...init })
@@ -220,7 +221,14 @@ export default function EmployeeOverviewPage() {
             <tbody>
               {leaveBalances.map((b: any) => (
                 <tr key={b.id}>
-                  <td style={{ padding: '4px 8px' }}>{b.leaveTypeName}</td>
+                  <td style={{ padding: '4px 8px' }}>
+                    {b.leaveTypeName}
+                    {b.entitled === 0 && zeroEntitledHint(b.systemKey) && (
+                      <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>
+                        {zeroEntitledHint(b.systemKey)}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: '4px 8px', textAlign: 'right' }}>{b.entitled}</td>
                   <td style={{ padding: '4px 8px', textAlign: 'right' }}>{b.used}</td>
                   <td style={{ padding: '4px 8px', textAlign: 'right', color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>

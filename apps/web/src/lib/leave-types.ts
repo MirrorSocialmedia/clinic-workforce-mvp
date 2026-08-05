@@ -58,3 +58,10 @@ export function balanceYearFor(systemKey: string | null | undefined, refDate?: D
   if (isAccumulativeLeave(systemKey)) return 0
   return (refDate ?? new Date()).getUTCFullYear()
 }
+
+/** ★ 2026-08-05：entitled = 0 時的說明文字 —— 前端三處共用 */
+export function zeroEntitledHint(systemKey?: string | null): string {
+  if (systemKey === LEAVE_SYSTEM_KEYS.ANNUAL) return '試用期滿三個月後開始累積'
+  if (systemKey === LEAVE_SYSTEM_KEYS.BIRTHDAY) return '受僱滿一年後發放'
+  return ''
+}

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
-import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS, zeroEntitledHint } from '@/lib/leave-types'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
@@ -961,6 +961,11 @@ export default function AccountsPage() {
                                         <span style={{ color: '#aaa' }}>已用: {b.used}</span>
                                         <span style={{ color: b.remaining >= 0 ? '#4CAF50' : '#dc3545' }}>餘: {b.remaining}</span>
                                       </div>
+                                      {b.entitled === 0 && zeroEntitledHint(b.leaveType?.systemKey) && (
+                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
+                                          {zeroEntitledHint(b.leaveType?.systemKey)}
+                                        </div>
+                                      )}
                                       {b.leaveType?.systemKey === LEAVE_SYSTEM_KEYS.ANNUAL && (
                                         <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
                                           已賺取（已完成服務年度）· 本年度進行中，離職時可另按比例結算

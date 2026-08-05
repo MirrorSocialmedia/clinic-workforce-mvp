@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { fmtDate } from '@/lib/hk-date'
+import { zeroEntitledHint } from '@/lib/leave-types'
 
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 
@@ -202,6 +203,11 @@ export default function MyLeavePage() {
                       <div className="text-xs text-gray-400">
                         天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}
                       </div>
+                      {b.entitled === 0 && zeroEntitledHint(b.leaveType?.systemKey) && (
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {zeroEntitledHint(b.leaveType?.systemKey)}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>

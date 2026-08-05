@@ -62,10 +62,8 @@ export async function POST(req: NextRequest) {
       }
 
       const months = serviceMonths(new Date(emp.joinDate), now)
-      if (months < PROBATION_MONTHS) {
-        skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: `試用期中（到職 ${months} 個月）` })
-        continue
-      }
+      // ★ 2026-08-05：改用 flag 取代 continue —— continue 令結果視乎路徑（有舊 row 嘅有卡，冇嘅冇卡）
+      const inProbation = months < PROBATION_MONTHS
 
       // ★ 2026-08-03：年假按月比例累積（公司政策），日常顯示同離職結算同一口徑
       // ★ 2026-08-04：讀 PayRule 自訂年假階梯（resolveLeaveTable 自動保護法定底線）
@@ -77,7 +75,10 @@ export async function POST(req: NextRequest) {
         if (Array.isArray(t) && t.length) leaveTable = resolveLeaveTable(t)
       } catch { /* config 壞咗就用法定 */ }
 
-      const entitledNow = totalAccruedLeave(new Date(emp.joinDate), now, 'prorata', leaveTable)
+      // 試用期年假 entitled = 0（未滿 3 個月不累積）
+      const entitledNow = inProbation
+        ? 0
+        : totalAccruedLeave(new Date(emp.joinDate), now, 'prorata', leaveTable)
 
       const existing = await prisma.leaveBalance.findUnique({
         where: {
@@ -119,6 +120,12 @@ export async function POST(req: NextRequest) {
         updated++
       }
 
+      // ★ 2026-08-05：試用期 skip 訊息放喺年假 upsert 之後（生日假之前），
+      //   確保生日假邏輯也能跑（之前 continue 令生日假永遠跑不到）。
+      if (inProbation) {
+        skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: `試用期中（到職 ${months} 個月）` })
+      }
+
       // ★ 2026-08-04：生日假獨立計算
       const rule = emp.payRules?.[0]
       let birthdayDays = 0
@@ -151,7 +158,9 @@ export async function POST(req: NextRequest) {
               })
               updated++
             }
-          } else if (birthdayEntitled > 0) {
+          } else {
+            // ★ 2026-08-05：移除 birthdayEntitled > 0 條件 —— 未滿一年都要建 row
+            //   （之前 entitled = 0 → 冇 row → 生日假卡不顯示）
             await prisma.leaveBalance.create({
               data: { employeeId: emp.id, leaveTypeId: birthdayType.id, year: 0, entitled: birthdayEntitled, used: 0, remaining: birthdayEntitled },
             })

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { toHKDateStr } from '@/lib/hk-date'
-import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS, zeroEntitledHint } from '@/lib/leave-types'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { Plus } from 'lucide-react'
 
@@ -575,6 +575,11 @@ export default function LeavePage() {
                           <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
                             剩餘 / 已用 {b.used.toFixed(1)} / 共 {b.entitled.toFixed(1)} 天
                           </div>
+                          {b.entitled === 0 && zeroEntitledHint(b.leaveType?.systemKey) && (
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+                              {zeroEntitledHint(b.leaveType?.systemKey)}
+                            </div>
+                          )}
                           {isManager && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
                               <label style={{ fontSize: 11, color: '#6b7280' }}>校正已用：</label>
