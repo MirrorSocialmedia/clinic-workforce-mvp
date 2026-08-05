@@ -126,32 +126,67 @@ except Exception:
     MASK_MODEL = None
 
 def _heuristic_mask_check(img, bbox):
-    """Fallback: landmark + lower-face color heuristic when ONNX model is unavailable."""
+    """Fallback: forehead-reference + uniformity heuristic.
+
+    Uses upper face (forehead) as skin-tone reference, then compares
+    lower face region. Detects masks by: (1) large color distance from
+    reference AND (2) low standard deviation (uniform color = mask-like).
+    White masks (bright + uniform) and blue masks (color distance + uniform)
+    both trigger. Beards (non-uniform) don't trigger.
+    """
     try:
         x1, y1, x2, y2 = [int(v) for v in bbox[:4]]
         h, w = img.shape[:2]
-        # Mouth landmark index 13 (left), 14 (right) in InsightFace 5-point
-        # Use lower half of face bbox as mouth region
         face_h = y2 - y1
-        mouth_y_start = int(y1 + face_h * 0.55)
-        mouth_y_end = int(y1 + face_h * 0.80)
-        mouth_x_start = int(x1 + face_h * 0.2)
-        mouth_x_end = int(x2 - face_h * 0.2)
-        mouth_y_start = min(mouth_y_start, h - 1)
-        mouth_y_end = min(mouth_y_end, h - 1)
-        mouth_x_start = max(mouth_x_start, 0)
-        mouth_x_end = min(mouth_x_end, w - 1)
-        mouth_region = img[mouth_y_start:mouth_y_end, mouth_x_start:mouth_x_end]
-        if mouth_region.size == 0:
+        face_w = x2 - x1
+
+        # Reference region: upper 1/3 (forehead) — should be bare skin
+        ref_y_start = int(y1 + face_h * 0.05)
+        ref_y_end = int(y1 + face_h * 0.35)
+        ref_x_start = int(x1 + face_w * 0.15)
+        ref_x_end = int(x2 - face_w * 0.15)
+        ref_y_start = min(ref_y_start, h - 1)
+        ref_y_end = min(ref_y_end, h - 1)
+        ref_x_start = max(ref_x_start, 0)
+        ref_x_end = min(ref_x_end, w - 1)
+        ref_region = img[ref_y_start:ref_y_end, ref_x_start:ref_x_end]
+
+        # Lower face region: middle-lower 30% (nose to chin)
+        low_y_start = int(y1 + face_h * 0.50)
+        low_y_end = int(y1 + face_h * 0.80)
+        low_x_start = int(x1 + face_w * 0.20)
+        low_x_end = int(x2 - face_w * 0.20)
+        low_y_start = min(low_y_start, h - 1)
+        low_y_end = min(low_y_end, h - 1)
+        low_x_start = max(low_x_start, 0)
+        low_x_end = min(low_x_end, w - 1)
+        low_region = img[low_y_start:low_y_end, low_x_start:low_x_end]
+
+        if ref_region.size == 0 or low_region.size == 0:
             return False, 0.5
-        # If lower-face region is predominantly dark (mask), classify as masked
-        gray = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
-        mean_luma = float(np.mean(gray))
-        # Skin tones typically > 120; masks typically < 100
-        masked = mean_luma < 90
-        confidence = 1.0 - abs(mean_luma - 90) / 100.0
-        confidence = max(0.3, min(0.7, confidence))
-        return masked, confidence
+
+        # Compute reference mean RGB (skin tone from forehead)
+        ref_mean = np.mean(ref_region, axis=(0, 1))  # (R, G, B)
+        # Compute lower region stats
+        low_mean = np.mean(low_region, axis=(0, 1))
+        low_std = float(np.std(low_region))
+
+        # Condition 1: Color distance (Euclidean in RGB)
+        color_dist = float(np.sqrt(np.sum((low_mean - ref_mean) ** 2)))
+        # Condition 2: Low uniformity (std < 40 = large uniform patch like mask)
+        is_uniform = low_std < 40
+
+        # Mask detection: significant color shift + uniform region
+        # color_dist > 30 catches both light masks (very different from skin) and dark masks
+        masked = color_dist > 30 and is_uniform
+
+        if masked:
+            # Confidence: higher for more uniform + larger color distance
+            confidence = min(0.7, 0.3 + (color_dist - 30) / 200 + (40 - low_std) / 100)
+        else:
+            confidence = max(0.3, 1.0 - color_dist / 200)
+
+        return bool(masked), float(confidence)
     except Exception:
         return False, 0.3
 
@@ -188,6 +223,8 @@ async def mask_check(file: UploadFile = File(...)):
                 x1, y1, x2, y2 = [int(v) for v in bbox[:4]]
                 face_crop = img[y1:y2, x1:x2]
                 face_crop = cv2.resize(face_crop, (128, 128)).astype(np.float32)
+                # TODO: normalize input (divide by 255 or mean/std) per model card —
+                # wrong normalize = all false positives/negatives
                 face_crop = np.transpose(face_crop, (2, 0, 1))[None]
                 input_name = MASK_MODEL.get_inputs()[0].name
                 output = MASK_MODEL.run(None, {input_name: face_crop})[0]

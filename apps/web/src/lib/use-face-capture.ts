@@ -85,10 +85,10 @@ export function useFaceCapture() {
             if (maskBlob) {
               const mfd = new FormData()
               mfd.append('frame', maskBlob, 'mask.jpg')
-              const mRes = await Promise.race([
-                fetch('/api/face/mask-check', { method: 'POST', credentials: 'include', body: mfd }),
-                new Promise<null>(r => setTimeout(() => r(null), 1200)),
-              ])
+              const mRes = await fetch('/api/face/mask-check', {
+                method: 'POST', credentials: 'include', body: mfd,
+                signal: AbortSignal.timeout(1200),
+              }).catch(() => null)
               if (mRes && mRes.ok) {
                 const mData = await mRes.json()
                 if (mData.masked === true) {

@@ -148,12 +148,12 @@ export async function POST(
         await tx.payRule.deleteMany({ where: { employeeId: empId } })
         await tx.wageHistory.deleteMany({ where: { employeeId: empId } })
         await tx.timeBank.deleteMany({ where: { employeeId: empId } })
-        await tx.employee.delete({ where: { id: empId } })
       }
-      await tx.userClinic.deleteMany({ where: { userId } })
       await tx.auditLog.deleteMany({
         where: { OR: [{ actorId: userId }, ...(empId ? [{ targetEmployeeId: empId }] : [])] },
       })
+      if (empId) await tx.employee.delete({ where: { id: empId } })
+      await tx.userClinic.deleteMany({ where: { userId } })
       await tx.user.delete({ where: { id: userId } })
     })
 
@@ -164,7 +164,7 @@ export async function POST(
         entity: 'ACCOUNT',
         entityId: userId,
         actorId: session.userId,
-        ...(empId ? { targetEmployeeId: empId } : {}),
+        // targetEmployeeId 唔寫 — 目標 employee 已刪除，寫咗必 FK violation
         afterJson: JSON.stringify({
           name: user.name,
           email: user.email,
