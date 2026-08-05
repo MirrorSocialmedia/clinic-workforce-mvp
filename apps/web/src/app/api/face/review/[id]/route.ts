@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { CONFIG } from '@/lib/config'
 import { jsonNoStore } from '@/lib/api-response'
 
@@ -21,9 +22,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return jsonNoStore({ error: 'frame not found' }, { status: 404 })
   }
 
-  // ★ IDOR: MANAGER 只可以覆核自己店嘅打卡
-  const denied = assertClinicAccess(scope, session, punch.clinicId)
-  if (denied) return denied
+  // ★ 2026-08-05：對齊 08-03 決定 — 覆核係考勤操作，MANAGER 全公司
+  const allowed = await resolveClinicScope(session, [], { companyWide: ['attendance_manage'] })
+  if (allowed !== null && !allowed.includes(punch.clinicId)) {
+    return jsonNoStore({ error: 'Forbidden' }, { status: 403 })
+  }
 
   // Audit: 記錄誰看了覆核圖
   await prisma.auditLog.create({
@@ -63,9 +66,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const punch = await prisma.punchRecord.findUnique({ where: { id: punchId } })
   if (!punch) return jsonNoStore({ error: 'not found' }, { status: 404 })
 
-  // ★ IDOR: MANAGER 只可以處置自己店嘅打卡
-  const denied = assertClinicAccess(scope, session, punch.clinicId)
-  if (denied) return denied
+  // ★ 2026-08-05：對齊 08-03 決定 — 覆核係考勤操作，MANAGER 全公司
+  const allowed = await resolveClinicScope(session, [], { companyWide: ['attendance_manage'] })
+  if (allowed !== null && !allowed.includes(punch.clinicId)) {
+    return jsonNoStore({ error: 'Forbidden' }, { status: 403 })
+  }
 
   if (action === 'confirm') {
     // 確認本人：刪除 frame，置 null

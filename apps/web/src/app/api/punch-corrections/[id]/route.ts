@@ -30,7 +30,10 @@ export async function PUT(
     }
 
     const id = params.id
-    const correction = await prisma.punchCorrection.findUnique({ where: { id } })
+    const correction = await prisma.punchCorrection.findUnique({
+      where: { id },
+      include: { employee: { select: { userId: true } } },
+    })
     if (!correction) return NextResponse.json({ error: 'Correction not found' }, { status: 404 })
     if (correction.status !== 'PENDING') {
       return NextResponse.json({ error: `Correction already ${correction.status}` }, { status: 400 })
@@ -67,6 +70,24 @@ export async function PUT(
 
       return result
     })
+
+    // ★ 自批記錄：批核自己提出嘅 PENDING 申請
+    if (status === 'APPROVED' && correction.employee?.userId === session.userId) {
+      await prisma.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'CORRECTION_SELF_APPROVE',
+          entity: 'PunchCorrection',
+          entityId: correction.id,
+          targetEmployeeId: correction.employeeId,
+          clinicId: correction.clinicId,
+          afterJson: JSON.stringify({ correctedTime: correction.correctedTime, punchType: correction.punchType }),
+          notes: '批核自己提出的補登申請',
+          ipAddress: req.headers.get('x-forwarded-for') || null,
+          userAgent: req.headers.get('user-agent') || null,
+        },
+      })
+    }
 
     // ★ 審批通過會新增 PunchRecord（:53-64），快取必須清。
     // 建立路徑（route.ts:253）有清，但審批呢條路徑之前漏咗 ——

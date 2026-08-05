@@ -72,12 +72,12 @@ export async function POST(req: NextRequest) {
         }
         employee = await prisma.employee.findUnique({
           where: { id: requestBodyEmployeeId },
-          include: { clinics: { select: { clinicId: true } } },
+          include: { clinics: { select: { clinicId: true } }, user: { select: { id: true } } },
         })
       } else {
         employee = await prisma.employee.findUnique({
           where: { userId: session.userId },
-          include: { clinics: { select: { clinicId: true } } },
+          include: { clinics: { select: { clinicId: true } }, user: { select: { id: true } } },
         })
       }
 
@@ -209,6 +209,25 @@ export async function POST(req: NextRequest) {
             approvedBy: isManager ? session.userId : null,
           },
         })
+
+        // ★ 2026-08-05：自批唔擋（老闆決定），但要有專屬記錄浮上敏感摘要
+        if (isManager && employee.userId === session.userId) {
+          await tx.auditLog.create({
+            data: {
+              actorId: session.userId,
+              action: 'CORRECTION_SELF_APPROVE',
+              entity: 'PunchCorrection',
+              entityId: c.id,
+              targetEmployeeId: employee.id,
+              clinicId,
+              beforeJson: punchRecordId ? JSON.stringify({ punchRecordId }) : null,
+              afterJson: JSON.stringify({ punchType, correctedTime: date, reason: reason || null }),
+              notes: `自批補登：${punchLabel(punchType as any)} → ${date}`,
+              ipAddress: req.headers.get('x-forwarded-for') || null,
+              userAgent: req.headers.get('user-agent') || null,
+            },
+          })
+        }
 
         // If APPROVED and no original punchRecord exists → create one (source=CORRECTION)
         if (isManager && !punchRecordId && !newPunchRecordId) {

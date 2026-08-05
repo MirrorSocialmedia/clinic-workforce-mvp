@@ -58,6 +58,7 @@ export const CONFIG = {
 
     // Audit log routes (OWNER only)
     'GET /api/audit-logs': ['OWNER'],
+    'GET /api/audit-logs/sensitive-summary': ['OWNER'],
 
     // Dashboard
     'GET /api/dashboard': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
@@ -77,6 +78,7 @@ export const CONFIG = {
     //   ACCOUNTANT 只需要計糧，唔需要員工完整資料（含假期、考勤、時間帳戶）
     'GET /api/employees/:id/overview': ['OWNER', 'MANAGER'],
     'GET /api/employees/:id/overview/history': ['OWNER', 'MANAGER'],
+    'GET /api/employees/:id/overview/attendance-days': ['OWNER', 'MANAGER'],
 
     // Resign / Rehire routes
     'GET /api/employees/:id/resign-preview': ['OWNER'],
@@ -302,6 +304,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— 員工總覽：有 employee_overview 權限可以查看員工總覽（限主屬診所） ——
   'GET /api/employees/:id/overview': ['employee_overview'],
   'GET /api/employees/:id/overview/history': ['employee_overview'],
+  'GET /api/employees/:id/overview/attendance-days': ['employee_overview'],
   'GET /api/employees': ['employee_overview', 'payroll_view', 'payroll_generate'],
 
   // ★ 2026-08-03：計糧相關 —— 側欄已開放畀有權限嘅 EMPLOYEE，

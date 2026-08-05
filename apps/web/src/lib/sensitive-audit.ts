@@ -13,6 +13,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'CONVERT', label: 'OT換假' },
   { action: 'CREATE', entity: 'PunchCorrection', label: '補登申請（改時間）' },
   { action: 'UPDATE', entity: 'PunchCorrection', label: '批核補登申請' },
+  { action: 'CORRECTION_SELF_APPROVE', label: '⚠️ 自批補登' },
   { action: 'FACE_REVIEW_ACTION', label: '人臉覆核批核' },
   { action: 'TIMEBANK_INIT_ADJUST', label: '初始化時間帳戶' },
   { action: 'TIMEBANK_MAKEUP', label: '補鐘' },
