@@ -41,10 +41,10 @@ export async function POST(req: NextRequest) {
     }
 
     const targetEmployees = employeeId
-      ? [await prisma.employee.findUnique({ where: { id: employeeId }, include: { user: { select: { name: true } }, payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { configJson: true } } } })].filter(Boolean)
+      ? [await prisma.employee.findUnique({ where: { id: employeeId }, include: { user: { select: { name: true } }, payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { payType: true, configJson: true } } } })].filter(Boolean)
       : await prisma.employee.findMany({
         where: { status: { in: ['ACTIVE', 'PROBATION'] } },
-        include: { user: { select: { name: true } }, payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { configJson: true } } },
+        include: { user: { select: { name: true } }, payRules: { where: { isActive: true }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { payType: true, configJson: true } } },
       })
 
     if (targetEmployees.length === 0) {
@@ -58,6 +58,19 @@ export async function POST(req: NextRequest) {
     for (const emp of targetEmployees as any[]) {
       if (!emp.joinDate) {
         skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: '未設定入職日期' })
+        continue
+      }
+
+      // ★ 2026-08-04：時薪員工唔發年假 —— 同 grant-restdays:51 一致。
+      // ⚠️ 法律依據：EO s.41 唔分薪酬類型，係睇「連續性合約」
+      // （連續 4 星期、每星期 ≥18 小時）。
+      // 2026-08 核實：Hing/Peggy/Sally/Jess 每 30 日只有 0-4 更
+      // （約每星期 1 更），唔符合連續性合約，故排除。
+      // ⚠️ 如果將來有時薪員工轉做恆常返工，一定要移除呢個排除，
+      // 否則就係違法扣減法定年假。
+      const payType = emp.payRules?.[0]?.payType
+      if (payType === 'HOURLY') {
+        skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: '時薪，不適用' })
         continue
       }
 
