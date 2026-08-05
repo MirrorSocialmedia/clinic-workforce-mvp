@@ -119,8 +119,14 @@ export async function GET(req: NextRequest) {
   const [employees, total] = await Promise.all([
     prisma.employee.findMany({
       where,
-      include: {
-        user: { select: { id: true, name: true, phone: true, email: true } },
+      select: {
+        id: true,
+        joinDate: true,
+        leaveDate: true,
+        resignedAt: true,
+        status: true,
+        payConfidential: true,
+        user: { select: { id: true, name: true, phone: true, email: true, fullName: true } },
         clinics: {
           include: { clinic: { select: { id: true, name: true } } },
         },

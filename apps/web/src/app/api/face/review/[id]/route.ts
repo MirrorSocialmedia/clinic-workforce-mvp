@@ -80,7 +80,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     })
     await prisma.punchRecord.update({
       where: { id: punchId },
-      data: { faceReviewedAt: new Date(), faceReviewedBy: session.userId, faceFramePath: null },
+      data: { faceReviewedAt: new Date(), faceReviewedBy: session.userId, faceFramePath: null, faceReviewAction: 'CONFIRMED' },
     })
   } else if (action === 'flag') {
     // 有疑點：保留 frame 至 30 天期滿，notes 追加標記
@@ -89,6 +89,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       data: {
         faceReviewedAt: new Date(),
         faceReviewedBy: session.userId,
+        faceReviewAction: 'FLAGGED',
         notes: `${punch.notes || ''}\n臉部覆核：有疑點 (${new Date().toISOString()})`.trim(),
       },
     })

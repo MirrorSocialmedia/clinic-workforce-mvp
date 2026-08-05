@@ -8,11 +8,12 @@ export default function EmployeesOverviewPage() {
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
   const [clinicFilter, setClinicFilter] = useState('all')
+  const [showResigned, setShowResigned] = useState(false)
 
   useEffect(() => {
     Promise.all([
       fetch('/api/me', { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/employees?status=ACTIVE&all=1&excludeConfidential=1&scopeToHome=1', { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
+      fetch(`/api/employees?all=1&excludeConfidential=1&scopeToHome=1${showResigned ? '&includeResigned=1' : '&status=ACTIVE'}`, { credentials: 'include', cache: 'no-store' }).then(r => r.json()),
     ])
       .then(([me, emp]) => {
         setUserRole(me.user?.role || '')
@@ -20,7 +21,7 @@ export default function EmployeesOverviewPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [showResigned])
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 前端提示保密員工過濾，同 API 層一致
 
@@ -56,6 +57,10 @@ export default function EmployeesOverviewPage() {
           <option value="all">全部診所</option>
           {clinics.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        <label style={{ alignSelf: 'center', fontSize: 13, color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input type="checkbox" checked={showResigned} onChange={e => setShowResigned(e.target.checked)} />
+          顯示已離職
+        </label>
         <span style={{ alignSelf: 'center', fontSize: 12, color: '#6b7280' }}>
           共 {visible.length} 人
         </span>
@@ -75,6 +80,11 @@ export default function EmployeesOverviewPage() {
               {e.user?.name}
               {e.user?.fullName && (
                 <span style={{ fontSize: 11, color: '#888', marginLeft: 6 }}>{e.user.fullName}</span>
+              )}
+              {e.status === 'RESIGNED' && (
+                <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 6 }}>
+                  已離職{e.resignedAt ? ` · ${String(e.resignedAt).slice(0, 10)}` : ''}
+                </span>
               )}
             </div>
             <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>

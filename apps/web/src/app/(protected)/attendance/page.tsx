@@ -914,16 +914,32 @@ export default function AttendancePage() {
                       return '｜' + (REASON_TEXT[r.faceReason] || r.faceReason)
                     }
                     const faceBadge = (r: any) => {
+                      const isReviewed = !!r.faceReviewedAt
+                      const reviewTitle = isReviewed
+                        ? `已覆核 · ${r.faceReviewerName || '—'} · ${r.faceReviewedAt ? new Date(r.faceReviewedAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' }) : ''}`
+                        : ''
                       switch (r.faceStatus) {
                         case 'PASS':
                           return <span style={{ color: '#059669' }} title={`比對分數 ${r.faceScore?.toFixed(2) ?? '—'}`}>✅ 通過</span>
                         case 'FAIL':
+                          if (isReviewed) {
+                            if (r.faceReviewAction === 'FLAGGED') {
+                              return <span style={{ color: '#dc2626', fontWeight: 600 }} title={reviewTitle}>⚠️ 未通過·有疑點</span>
+                            }
+                            return <span style={{ color: '#059669' }} title={reviewTitle}>未通過·已確認本人 ✓</span>
+                          }
                           return <Link href="/face-review" style={{ color: '#dc2626', fontWeight: 600, textDecoration: 'underline' }}
                             title={`臉部驗證未通過${reasonTitle(r)}`}>⚠️ 未通過</Link>
                         case 'NO_FACE':
+                          if (isReviewed) {
+                            return <span style={{ color: '#6b7280' }} title={reviewTitle}>未拍攝·已覆核 ✓</span>
+                          }
                           return <Link href="/face-review" style={{ color: '#ea580c', fontWeight: 600 }}
                             title={`8秒內未拍到人臉${reasonTitle(r)}`}>🟠 未拍攝</Link>
                         case 'SKIPPED':
+                          if (isReviewed) {
+                            return <span style={{ color: '#9ca3af' }} title={reviewTitle}>略過·已覆核 ✓</span>
+                          }
                           return <span style={{ color: '#9ca3af' }} title={`相機不可用，已略過${reasonTitle(r)}`}>略過</span>
                         case 'NOT_ENROLLED': return <span style={{ color: '#9ca3af' }}>未登記</span>
                         case 'PENDING_ENROLL': return <span style={{ color: '#9ca3af' }} title="臉部登記待管理員核准">審核中</span>

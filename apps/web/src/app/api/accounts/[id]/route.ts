@@ -76,7 +76,7 @@ export async function DELETE(
       const empId = user.employee.id
 
       // Check business records
-      const [punches, shifts, items, leaves, corrections, expenses, changes] = await Promise.all([
+      const [punches, shifts, items, leaves, corrections, expenses, changes, auditCount] = await Promise.all([
         prisma.punchRecord.count({ where: { employeeId: empId } }),
         prisma.shift.count({ where: { employeeId: empId } }),
         prisma.payrollItem.count({ where: { employeeId: empId } }),
@@ -84,6 +84,7 @@ export async function DELETE(
         prisma.punchCorrection.count({ where: { employeeId: empId } }),
         prisma.expenseEntry.count({ where: { employeeId: empId } }),
         prisma.shiftChangeRequest.count({ where: { fromEmployeeId: empId } }),
+        prisma.auditLog.count({ where: { actorId: params.id } }),
       ])
       const total = punches + shifts + items + leaves + corrections + expenses + changes
 
@@ -91,6 +92,12 @@ export async function DELETE(
         return NextResponse.json({
           error: `此員工已有 ${total} 筆業務記錄（打卡${punches}/排班${shifts}/計糧${items}/假期${leaves}/補登${corrections}/報銷${expenses}/換更${changes}），不可刪除。請改為「停用」（保留歷史與審計）。`,
         }, { status: 400 })
+      }
+
+      if (auditCount > 0) {
+        return NextResponse.json({
+          error: `此帳號有 ${auditCount} 筆審計記錄（登入／操作痕跡），為保審計完整不可刪除。請改為「停用」。`,
+        }, { status: 409 })
       }
 
       // ★ 永久保留參考照 ⇒ 刪員工時一定要清走實體檔，否則變成孤兒生物特徵資料
@@ -142,7 +149,17 @@ export async function DELETE(
         throw e
       }
     } else {
-      await prisma.user.delete({ where: { id: params.id } })
+      try {
+        await prisma.user.delete({ where: { id: params.id } })
+      } catch (e: any) {
+        if (e?.code === 'P2003') {
+          return NextResponse.json({
+            error: '此帳號仍被其他記錄引用（多數係審計日誌），無法刪除。請改為「停用」。',
+            code: 'P2003',
+          }, { status: 409 })
+        }
+        throw e
+      }
     }
 
     await prisma.auditLog.create({

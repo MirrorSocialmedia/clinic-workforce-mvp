@@ -324,6 +324,7 @@ model PunchRecord {
   faceFramePath String? // 只有 FAIL 有值；30 天清
   faceReviewedAt DateTime?
   faceReviewedBy String?
+  faceReviewAction String? // 'CONFIRMED' | 'FLAGGED'
   faceReason     String? // 異常原因代碼
 
   // GPS location verification (shadow mode — observation only)

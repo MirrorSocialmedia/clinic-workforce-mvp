@@ -68,8 +68,19 @@ export async function GET(req: NextRequest) {
     prisma.punchRecord.count({ where }),
   ])
 
+  // Map reviewer userId → name
+  const reviewerIds = [...new Set(records.map((p: any) => p.faceReviewedBy).filter(Boolean))] as string[]
+  const reviewers = reviewerIds.length
+    ? await prisma.user.findMany({ where: { id: { in: reviewerIds } }, select: { id: true, name: true } })
+    : []
+  const reviewerName = Object.fromEntries(reviewers.map(u => [u.id, u.name]))
+  const out = records.map((p: any) => ({
+    ...p,
+    faceReviewerName: p.faceReviewedBy ? (reviewerName[p.faceReviewedBy] ?? null) : null,
+  }))
+
   return NextResponse.json(
-    { records, total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+    { records: out, total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
     { headers: { 'Cache-Control': 'no-store, must-revalidate' } },
   )
 }
