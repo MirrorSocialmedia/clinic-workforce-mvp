@@ -67,9 +67,15 @@ export async function POST(req: NextRequest) {
         const validation = await validateAndMarkTokenUsed(qrToken, employee.id)
 
         if (!validation || !validation.valid) {
+          if (validation?.reason === 'ALREADY_USED') {
+            return NextResponse.json(
+              { error: '呢個 QR 你已經掃過，請等螢幕更新後再掃' },
+              { status: 409 }, // 409 Conflict - 已經用過
+            )
+          }
           return NextResponse.json(
-            { error: `QR token invalid: ${validation?.reason || 'unknown'}` },
-            { status: 400 }
+            { error: `QR token 無效：${validation?.reason || '未知錯誤'}` },
+            { status: 400 },
           )
         }
 

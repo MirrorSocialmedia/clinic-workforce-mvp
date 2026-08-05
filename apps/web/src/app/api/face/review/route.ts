@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const items = await prisma.punchRecord.findMany({
-    where: { faceStatus: { in: ['FAIL', 'NO_FACE'] }, faceReviewedAt: null },
+    where: { faceStatus: { in: ['FAIL', 'NO_FACE', 'SKIPPED'] }, faceReviewedAt: null },
     include: {
       employee: { include: { user: { select: { name: true } } } },
       clinic: { select: { name: true } },

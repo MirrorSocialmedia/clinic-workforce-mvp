@@ -125,8 +125,13 @@ export default function FaceReviewPage() {
           <div className="space-y-3">
             {failItems.map(item => (
               <div key={item.id} className="border rounded-lg p-3 flex items-center gap-4"
-                style={{ borderColor: item.faceStatus === 'NO_FACE' ? '#ea580c' : '#dc2626' }}>
-                {item.faceFramePath ? (
+                style={{ borderColor: item.faceStatus === 'NO_FACE' ? '#ea580c' : item.faceStatus === 'SKIPPED' ? '#6b7280' : '#dc2626' }}>
+                {item.faceStatus === 'SKIPPED' ? (
+                  <div style={{ width: 64, height: 64, borderRadius: 8, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', padding: 4 }}>
+                    <div style={{ fontSize: 18 }}>📷</div>
+                    <div style={{ fontSize: 9, color: '#9ca3af', textAlign: 'center' }}>冇影像</div>
+                  </div>
+                ) : item.faceFramePath ? (
                   <img src={`/api/face/review/${item.id}`} alt="frame" className="w-16 h-16 object-cover rounded" />
                 ) : (
                   <div className="w-16 h-16 rounded bg-gray-100 flex items-center justify-center text-2xl">📷</div>
@@ -134,8 +139,8 @@ export default function FaceReviewPage() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-bold">{item.employeeName}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${item.faceStatus === 'NO_FACE' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
-                      {item.faceStatus === 'NO_FACE' ? 'NO_FACE' : 'FAIL'}
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${item.faceStatus === 'NO_FACE' ? 'bg-orange-100 text-orange-700' : item.faceStatus === 'SKIPPED' ? 'bg-gray-100 text-gray-700' : 'bg-red-100 text-red-700'}`}>
+                      {item.faceStatus === 'NO_FACE' ? 'NO_FACE' : item.faceStatus === 'SKIPPED' ? 'SKIPPED' : 'FAIL'}
                     </span>
                   </div>
                   <div className="text-sm text-gray-500">{item.clinicName} · {new Date(item.punchTime).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}</div>
@@ -143,6 +148,7 @@ export default function FaceReviewPage() {
                     {item.faceScore != null && `分數: ${item.faceScore.toFixed(4)}`}
                     {item.faceLiveness != null && ` | 活體: ${item.faceLiveness.toFixed(4)}`}
                     {item.faceReason && <span className="text-xs text-gray-400 ml-2">· {item.faceReason}</span>}
+                    {item.faceStatus === 'SKIPPED' && <span className="text-xs text-gray-500 ml-1">相機失敗時已放行，請向員工確認</span>}
                   </div>
                 </div>
                 <div className="flex gap-2">

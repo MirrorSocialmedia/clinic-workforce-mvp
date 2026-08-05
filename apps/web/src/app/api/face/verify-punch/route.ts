@@ -69,7 +69,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (!frame) {
-    const reason = String(form.get('reason') || '') || null
+    // ★ 只接受 camera_ 開頭、限長度 — 防止前端亂傳
+    const reasonRaw = form.get('reason')
+    const reason = (typeof reasonRaw === 'string' && reasonRaw.startsWith('camera_'))
+      ? reasonRaw.slice(0, 50)
+      : null
     await prisma.punchRecord.update({ where: { id: punchId }, data: { faceStatus: 'SKIPPED', faceReason: reason } })
     return NextResponse.json({ status: 'SKIPPED' })
   }

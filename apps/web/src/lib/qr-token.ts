@@ -96,7 +96,7 @@ export async function validateAndMarkTokenUsed(
     })
   } catch (e: any) {
     if (e.code === 'P2002') {
-      return { valid: false, reason: 'You already used this code' }
+      return { valid: false, reason: 'ALREADY_USED' }
     }
     throw e
   }

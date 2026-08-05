@@ -352,10 +352,34 @@ export default function PunchPage() {
       }
     } catch (e: any) {
       outcome = 'skipped'
-      if (e?.name === 'NotAllowedError') fd_reason = 'camera_denied'
-      else if (e?.name === 'NotReadableError' || e?.name === 'AbortError') fd_reason = 'camera_busy'
-      else if (e?.message?.includes('not mounted')) fd_reason = 'ui_not_mounted'
-      else fd_reason = 'camera_error'
+      // ★ 2026-08-05：相機錯誤要保留足夠粒度用於診斷
+      // NotReadableError = 相機被佔用（stream 冇 stop）
+      // NotAllowedError = 權限被拒
+      // AbortError = 硬件/OS 層失敗（iOS PWA 常見）
+      // NotFoundError = 冇相機
+      // OverconstrainedError = facingMode: exact 揾唔到
+      const name = e?.name ?? 'UnknownError'
+      const isStandalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches
+      const suffix = isStandalone ? '_pwa' : '_web'
+
+      if (name === 'NotAllowedError') fd_reason = `camera_denied${suffix}`
+      else if (name === 'NotReadableError' || name === 'AbortError') fd_reason = `camera_busy${suffix}`
+      else if (e?.message?.includes('not mounted')) fd_reason = `ui_not_mounted${suffix}`
+      else if (name === 'NotFoundError') fd_reason = `camera_notfound${suffix}`
+      else if (name === 'OverconstrainedError') fd_reason = `camera_overconstrained${suffix}`
+      else fd_reason = `camera_error${suffix}`
+
+      // ★ console.error 記錄 error.name + PWA 狀態用於診斷
+      console.error('[punch] getUserMedia 失敗', { name, message: e?.message, standalone: isStandalone, ua: navigator.userAgent })
+
+      // ★ 人話提示畀用家
+      setFaceHint(
+        name === 'NotReadableError' || name === 'AbortError'
+          ? '相機被佔用 —— 請完全關閉本應用程式（上滑掃走）再重開'
+          : name === 'NotAllowedError'
+          ? '未授權使用相機 —— 請喺裝置設定開啟'
+          : '相機無法使用，已略過人臉驗證'
+      )
     }
 
     if (outcome === 'sent') {
