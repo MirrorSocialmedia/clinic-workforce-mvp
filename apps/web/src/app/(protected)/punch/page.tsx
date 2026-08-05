@@ -79,6 +79,9 @@ export default function PunchPage() {
   const [gpsDenied, setGpsDenied] = useState(false)
   const [gpsFailed, setGpsFailed] = useState(false)
 
+  // ★ Stale hint for warmup failure
+  const [staleHint, setStaleHint] = useState(false)
+
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
 
@@ -94,7 +97,7 @@ export default function PunchPage() {
   const [scannerKey, setScannerKey] = useState(0)
 
   // ★ Scanner stop ref — release rear camera before starting front camera
-  const scannerStopRef = useRef<(() => void) | null>(null)
+  const scannerStopRef = useRef<(() => Promise<void> | void) | null>(null)
 
   // ★ Face enrollment status
   const [faceEnrollStatus, setFaceEnrollStatus] = useState<string | null>(null)
@@ -106,7 +109,7 @@ export default function PunchPage() {
       .catch(() => {})
   }, [])
 
-  const handleScannerReady = useCallback((stop: () => void) => {
+  const handleScannerReady = useCallback((stop: () => Promise<void> | void) => {
     scannerStopRef.current = stop
   }, [])
 
@@ -142,7 +145,13 @@ export default function PunchPage() {
   }, [user, fetchRecords])
 
   // ★ 背景預熱偵測器(wasm+模型)，打卡時已是熱的
-  useEffect(() => { warmup().catch(() => {}) }, [warmup])
+  // ★ warmup 失敗唔好吞：PWA chunk 404 會死喺呢度
+  useEffect(() => {
+    warmup().catch((e: any) => {
+      console.error('[punch] warmup 失敗', { name: e?.name, message: e?.message })
+      setStaleHint(true)
+    })
+  }, [warmup])
 
   // ★ GPS watchPosition 保溫 — 頁面在就追蹤，離頁立即停
   useEffect(() => {
@@ -253,7 +262,7 @@ export default function PunchPage() {
       })
       setCountdown(3)
       fetchRecords()
-      scannerStopRef.current?.()
+      await scannerStopRef.current?.()
 
       // ★ Reset type selection after successful punch
       setPendingType(null)
@@ -320,14 +329,32 @@ export default function PunchPage() {
     let outcome: 'sent' | 'no_face' | 'skipped' = 'skipped'
     let fd_reason: string = ''
     let noFaceEvidence: Blob | null = null
+    let stage: 'gum' | 'play' | 'cap' = 'gum'
     try {
-      if (!faceVideoRef.current) throw new Error('face video not mounted')
+      if (!faceVideoRef.current) throw Object.assign(new Error('face video not mounted'), { name: 'NotMounted' })
       setFaceHint('請看鏡頭')
-      const stream = await openFrontCamera()
+      const stream = await openFrontCamera() // stage = 'gum'
       try {
         faceVideoRef.current.srcObject = stream
+        stage = 'play'
         await faceVideoRef.current.play()
-        const blob = await captureQualified(faceVideoRef.current, 8000, setFaceHint) // ★ 8 秒死線 + frame guide
+        stage = 'cap'
+
+        let blob: Blob | null = null
+        try {
+          blob = await captureQualified(faceVideoRef.current, 8000, setFaceHint)
+        } catch (ce: any) {
+          // ★ MediaPipe 係 client 前置閘 — 真正驗證喺 server
+          if (ce?.name !== 'NoFrame' && faceVideoRef.current.videoWidth > 0) {
+            console.error('[punch] client 偵測器失敗，改送 raw 幀', { name: ce?.name, message: ce?.message })
+            setFaceHint('請看鏡頭')
+            await new Promise(r => setTimeout(r, 800))
+            blob = await captureRaw(faceVideoRef.current)
+          } else {
+            throw ce
+          }
+        }
+
         if (blob) {
           setFaceHint('分析中…')
           const fd = new FormData()
@@ -352,32 +379,28 @@ export default function PunchPage() {
       }
     } catch (e: any) {
       outcome = 'skipped'
-      // ★ 2026-08-05：相機錯誤要保留足夠粒度用於診斷
-      // NotReadableError = 相機被佔用（stream 冇 stop）
-      // NotAllowedError = 權限被拒
-      // AbortError = 硬件/OS 層失敗（iOS PWA 常見）
-      // NotFoundError = 冇相機
-      // OverconstrainedError = facingMode: exact 揾唔到
-      const name = e?.name ?? 'UnknownError'
+      const name: string = e?.name ?? 'UnknownError'
       const isStandalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches
       const suffix = isStandalone ? '_pwa' : '_web'
+      const short = name.replace(/Error$/i, '').toLowerCase()
 
-      if (name === 'NotAllowedError') fd_reason = `camera_denied${suffix}`
-      else if (name === 'NotReadableError' || name === 'AbortError') fd_reason = `camera_busy${suffix}`
-      else if (e?.message?.includes('not mounted')) fd_reason = `ui_not_mounted${suffix}`
-      else if (name === 'NotFoundError') fd_reason = `camera_notfound${suffix}`
-      else if (name === 'OverconstrainedError') fd_reason = `camera_overconstrained${suffix}`
-      else fd_reason = `camera_error${suffix}`
+      if (name === 'NotMounted') fd_reason = `camera_notmounted${suffix}`
+      else if (name === 'NoFrame') fd_reason = `camera_noframe${suffix}`
+      else if (name.startsWith('Init_')) fd_reason = `camera_init_${short.slice(5)}${suffix}`
+      else if (name.startsWith('Detect_')) fd_reason = `camera_detect_${short.slice(7)}${suffix}`
+      else fd_reason = `camera_${stage}_${short}${suffix}`
 
-      // ★ console.error 記錄 error.name + PWA 狀態用於診斷
-      console.error('[punch] getUserMedia 失敗', { name, message: e?.message, standalone: isStandalone, ua: navigator.userAgent })
+      console.error('[punch] face verify 失敗', { name, message: e?.message, standalone: isStandalone, ua: navigator.userAgent })
 
-      // ★ 人話提示畀用家
       setFaceHint(
-        name === 'NotReadableError' || name === 'AbortError'
-          ? '相機被佔用 —— 請完全關閉本應用程式（上滑掃走）再重開'
+        name.startsWith('Init_')
+          ? 'App 版本過舊 — 請完全關閉本應用程式（上滑掃走）再重開'
+          : name === 'NotReadableError'
+          ? '相機被其他應用程式佔用 — 請完全關閉其他 app 再試'
+          : name === 'AbortError' || name === 'NoFrame'
+          ? '相機啟動失敗 — 請完全關閉本應用程式（上滑掃走）再重開'
           : name === 'NotAllowedError'
-          ? '未授權使用相機 —— 請喺裝置設定開啟'
+          ? '未授權使用相機 — 請喺裝置設定開啟'
           : '相機無法使用，已略過人臉驗證'
       )
     }
@@ -570,6 +593,13 @@ export default function PunchPage() {
               ✅ 臉部識別已啟用 · <Link href="/my/face-enroll" className="underline">重新登記</Link>
             </span>
           )}
+        </div>
+      )}
+
+      {/* ── Stale hint warning ── */}
+      {staleHint && !punchResult && (
+        <div style={{ fontSize: 12, color: '#b45309', textAlign: 'center', marginTop: 4 }}>
+          ⚠️ 人臉驗證元件載入失敗（App 版本可能過舊）— 請完全關閉本應用程式（上滑掃走）再重開
         </div>
       )}
 

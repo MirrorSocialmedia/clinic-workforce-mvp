@@ -6,20 +6,42 @@ export function useFaceCapture() {
 
   const init = useCallback(async () => {
     if (detectorRef.current) return
-    const { FaceDetector, FilesetResolver } = await import('@mediapipe/tasks-vision')
-    const vision = await FilesetResolver.forVisionTasks('/models/wasm')
-    detectorRef.current = await FaceDetector.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: '/models/blaze_face_short_range.tflite' },
-      runningMode: 'VIDEO',
-    })
+    try {
+      const { FaceDetector, FilesetResolver } = await import('@mediapipe/tasks-vision')
+      const vision = await FilesetResolver.forVisionTasks('/models/wasm')
+      detectorRef.current = await FaceDetector.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: '/models/blaze_face_short_range.tflite' },
+        runningMode: 'VIDEO',
+      })
+    } catch (e: any) {
+      const err: any = new Error(e?.message || 'detector init failed')
+      err.name = `Init_${e?.name ?? 'Error'}`
+      throw err
+    }
   }, [])
 
   const captureQualified = useCallback(async (video: HTMLVideoElement, timeoutMs = 3000, onHint?: (h: string) => void): Promise<Blob | null> => {
     await init()
+    // ★ Wait for first frame — WebKit 252465
+    const frameDeadline = Date.now() + 2000
+    while (!video.videoWidth && Date.now() < frameDeadline)
+      await new Promise(r => setTimeout(r, 100))
+    if (!video.videoWidth) {
+      const err: any = new Error('video has no frames (videoWidth=0)')
+      err.name = 'NoFrame'
+      throw err
+    }
     const canvas = document.createElement('canvas')
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      const det = detectorRef.current.detectForVideo(video, performance.now())
+      let det: any
+      try {
+        det = detectorRef.current.detectForVideo(video, performance.now())
+      } catch (e: any) {
+        const err: any = new Error(e?.message || 'detect failed')
+        err.name = `Detect_${e?.name ?? 'Error'}`
+        throw err
+      }
       const d = det?.detections?.[0]
       if (det?.detections?.length === 1 && d.boundingBox) {
         const bb = d.boundingBox

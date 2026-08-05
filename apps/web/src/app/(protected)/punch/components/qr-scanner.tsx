@@ -9,7 +9,7 @@ const QrScannerClient = dynamic(() => import('./qr-scanner-client'), {
 
 interface QrScannerProps {
   onScan: (token: string) => Promise<boolean>
-  onScannerReady?: (stop: () => void) => void
+  onScannerReady?: (stop: () => Promise<void> | void) => void
 }
 
 export default function QrScanner({ onScan, onScannerReady }: QrScannerProps) {

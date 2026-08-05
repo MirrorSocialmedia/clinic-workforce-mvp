@@ -5,7 +5,7 @@ import QrScanner from 'qr-scanner'
 
 interface QrScannerClientProps {
   onScan: (token: string) => Promise<boolean> // 回傳是否成功（成功即停）
-  onScannerReady?: (stop: () => void) => void
+  onScannerReady?: (stop: () => Promise<void> | void) => void
 }
 
 export default function QrScannerClient({ onScan, onScannerReady }: QrScannerClientProps) {
@@ -48,10 +48,11 @@ export default function QrScannerClient({ onScan, onScannerReady }: QrScannerCli
       }
     )
     scannerRef.current = scanner
-    // 暴露 stop 方法
+    // 暴露 stop 方法（含 pause(true) 即時釋放 track）
     if (onScannerReady) {
-      onScannerReady(() => {
-        try { scanner.stop() } catch {}
+      onScannerReady(async () => {
+        try { await scanner.pause(true) } catch { /* ignore */ }
+        try { scanner.stop() } catch { /* ignore */ }
       })
     }
     scanner.start()
