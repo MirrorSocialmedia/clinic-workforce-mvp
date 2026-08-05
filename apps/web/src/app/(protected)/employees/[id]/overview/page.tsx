@@ -23,7 +23,7 @@ export default function EmployeeOverviewPage() {
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
   const [timeAccount, setTimeAccount] = useState<any>(null)
   const [adw, setAdw] = useState<any>(null)
-  const [effectiveADW, setEffectiveADW] = useState<number>(0)
+  const [effectiveADW, setEffectiveADW] = useState<any>(null)
   const [deductionDailyRate, setDeductionDailyRate] = useState<number>(0)
 
   // History data (slow)
@@ -198,7 +198,21 @@ export default function EmployeeOverviewPage() {
             {payRules.dailyRate && <InfoRow label="日薪" value={fmtCurrency(payRules.dailyRate)} />}
             {payRules.splitRatio != null && <InfoRow label="拆帳比例" value={`${payRules.splitRatio}%`} />}
             {adw && <InfoRow label="ADW" value={fmtCurrency(adw.adw)} />}
-            <InfoRow label="Effective ADW" value={fmtCurrency(effectiveADW)} />
+            <InfoRow
+              label="Effective ADW"
+              value={
+                effectiveADW
+                  ? `${fmtCurrency(effectiveADW.adw)}${
+                      effectiveADW.policyApplied === 'floor' ? '（已按現薪保底）'
+                      : effectiveADW.policyApplied === 'cap' ? '（已按現薪封頂）'
+                      : ''
+                    }`
+                  : '—'
+              }
+            />
+            {effectiveADW && effectiveADW.policyApplied !== 'none' && (
+              <InfoRow label="ADW（政策前）" value={fmtCurrency(effectiveADW.adwRaw)} />
+            )}
             <InfoRow label="扣薪日率" value={fmtCurrency(deductionDailyRate)} />
           </div>
         </OverviewSection>
@@ -263,9 +277,9 @@ export default function EmployeeOverviewPage() {
                     ? `${timeAccount.minutes >= 0 ? '+' : ''}${timeAccount.minutes} 分鐘`
                     : '不適用（時薪／兼職）'}
                 </div>
-                {timeAccount.minutes != null && timeAccount.minutes > 0 && (
+                {timeAccount.compLeaveDays != null && (
                   <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                    可換假：{(timeAccount.minutes / 480).toFixed(2)} 天（按每日 480 分鐘）
+                    可換假：{timeAccount.compLeaveDays} 天（按每日 {timeAccount.compLeaveDayMinutes} 分鐘）
                   </div>
                 )}
                 {timeAccount.status === 'not_applicable' && (
@@ -277,10 +291,10 @@ export default function EmployeeOverviewPage() {
             )}
           </OverviewSection>
 
-          {/* ⑤ Attendance Summary */}
-          <OverviewSection title="📊 考勤摘要（近 12 個月）">
+          {/* ⑤ Payroll Monthly Summary */}
+          <OverviewSection title="💰 計糧月度摘要">
             {history.attendance.length === 0 ? (
-              <div style={{ color: '#888', fontSize: 13 }}>無考勤記錄</div>
+              <div style={{ color: '#888', fontSize: 13 }}>未有計糧記錄 — 出糧後此處顯示月度統計</div>
             ) : (
               <table style={{ width: '100%', fontSize: 12 }}>
                 <thead>
@@ -307,6 +321,11 @@ export default function EmployeeOverviewPage() {
                 </tbody>
               </table>
             )}
+          </OverviewSection>
+
+          {/* ⑤b Attendance Detail (打卡記錄) */}
+          <OverviewSection title="📊 考勤明細（打卡記錄）">
+            <AttendanceDetail empId={empId} />
           </OverviewSection>
 
           {/* ⑥ Payroll History */}
@@ -516,6 +535,98 @@ function InfoRow({ label, value }: { label: string; value: string | number | nul
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 13 }}>
       <span style={{ color: '#6b7280' }}>{label}</span>
       <span style={{ fontWeight: 500 }}>{value ?? '-'}</span>
+    </div>
+  )
+}
+
+function AttendanceDetail({ empId }: { empId: string }) {
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState<any[]>([])
+  const [page, setPage] = useState(1)
+  const [range, setRange] = useState<{ from?: string; to?: string }>({})
+  const [state, setState] = useState<'idle' | 'loading' | 'error' | 'done'>('idle')
+  const [hasMore, setHasMore] = useState(false)
+
+  const load = useCallback(async (p: number, r: any = range, append = false) => {
+    setState('loading')
+    try {
+      const qs = new URLSearchParams({ page: String(p), pageSize: '20' })
+      if (r?.from) qs.set('from', r.from)
+      if (r?.to) qs.set('to', r.to)
+      const res = await api(`/api/employees/${empId}/overview/attendance-days?${qs}`)
+      if (!res.ok) throw new Error(String(res.status))
+      const d = await res.json()
+      setRows(prev => append ? [...prev, ...d.days] : d.days)
+      setHasMore(d.hasMore)
+      setState('done')
+    } catch (e) {
+      console.error('[overview] 考勤明細載入失敗', e)
+      setState('error')
+    }
+  }, [empId, range])
+
+  if (!open) {
+    return (
+      <button onClick={() => { setOpen(true); load(1) }} style={{ fontSize: 13, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+        顯示打卡明細 ▸
+      </button>
+    )
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8, fontSize: 12 }}>
+        {[['近7日', 7], ['近30日', 30]].map(([label, d]) => (
+          <button key={label as string} onClick={() => {
+            const to = new Date()
+            const from = new Date(Date.now() - (d as number) * 86400000)
+            const r = { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) }
+            setRange(r); setPage(1); load(1, r)
+          }} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {state === 'error' ? (
+        <div style={{ color: '#c2410c', fontSize: 13 }}>
+          載入失敗 <button onClick={() => load(page)} style={{ marginLeft: 8 }}>重試</button>
+        </div>
+      ) : rows.length === 0 && state === 'done' ? (
+        <div style={{ color: '#888', fontSize: 13 }}>此範圍內冇打卡記錄</div>
+      ) : (
+        <>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead><tr>
+              <th style={{ textAlign: 'left', padding: '4px 6px' }}>日期</th>
+              <th style={{ textAlign: 'left', padding: '4px 6px' }}>店</th>
+              <th style={{ textAlign: 'center', padding: '4px 6px' }}>上班</th>
+              <th style={{ textAlign: 'center', padding: '4px 6px' }}>下班</th>
+              <th style={{ textAlign: 'right', padding: '4px 6px' }}>工時</th>
+              <th style={{ textAlign: 'center', padding: '4px 6px' }}>狀態</th>
+            </tr></thead>
+            <tbody>{rows.map((r: any, i: number) => (
+              <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                <td style={{ padding: '4px 6px' }}>{r.date}</td>
+                <td style={{ padding: '4px 6px' }}>{r.clinicName}</td>
+                <td style={{ textAlign: 'center', padding: '4px 6px' }}>{r.firstIn ?? '—'}</td>
+                <td style={{ textAlign: 'center', padding: '4px 6px' }}>{r.lastOut ?? '—'}</td>
+                <td style={{ textAlign: 'right', padding: '4px 6px' }}>{r.workedMinutes != null ? (r.workedMinutes / 60).toFixed(1) + 'h' : '—'}</td>
+                <td style={{ textAlign: 'center', padding: '4px 6px' }}>
+                  {r.flags?.includes('MISSING_OUT') ? '缺下班卡'
+                    : r.lateMin > 0 ? `遲到 ${r.lateMin} 分` : '✓'}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {hasMore && (
+            <button onClick={() => { const p = page + 1; setPage(p); load(p, range, true) }}
+              style={{ marginTop: 8, fontSize: 13, padding: '2px 12px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+              載入更多
+            </button>
+          )}
+          {state === 'loading' && <span style={{ fontSize: 12, color: '#888' }}> 載入中…</span>}
+        </>
+      )}
     </div>
   )
 }

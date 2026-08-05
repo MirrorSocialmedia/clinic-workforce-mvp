@@ -87,6 +87,14 @@ export async function GET(
   ])
   const timeAccount = timeAccountRows[0]
 
+  // ★ 換假換算：comp_leave_day_minutes → ot_threshold_daily×60 → 540（公司固定 9 小時）
+  const dayMin = config.comp_leave_day_minutes
+    ?? (config.ot_threshold_daily ? config.ot_threshold_daily * 60 : null)
+    ?? 540
+  const compLeaveDays = timeAccount?.timeAccountMinutes != null && timeAccount.timeAccountMinutes > 0
+    ? +(timeAccount.timeAccountMinutes / dayMin).toFixed(2)
+    : null
+
   return NextResponse.json({
     basic: {
       id: emp.id,
@@ -136,6 +144,8 @@ export async function GET(
     timeAccount: timeAccount ? {
       minutes: timeAccount.timeAccountMinutes,
       status: timeAccount.status,
+      compLeaveDayMinutes: dayMin,
+      compLeaveDays,
     } : null,
     adw: {
       adw: adwResult.adw,
