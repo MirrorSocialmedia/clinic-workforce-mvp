@@ -48,6 +48,7 @@ export async function GET(
         lte: dateTo,
       },
       punchType: { in: ['CLOCK_IN', 'CLOCK_OUT'] },
+      void: { is: null },
     },
     orderBy: { punchTime: 'desc' },
     include: {

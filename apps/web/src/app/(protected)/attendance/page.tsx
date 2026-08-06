@@ -1073,34 +1073,30 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3">
                         {/* Makeup only for late/early; HOURLY employees skip */}
-                        {((showLate || showEarly) && canMakeup) && (
-                          ((showLate?.payType !== 'HOURLY') || (showEarly?.payType !== 'HOURLY')) && (
-                          ((showLate?.madeUp) || (showEarly?.madeUp)) ? (
-                            <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              ✓ 已補鐘
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => { const ex = showLate || showEarly || undefined; if (ex) handleMakeup(ex) }}
+                        {(() => {
+                          const mkEx = showLate || showEarly
+                          if (!mkEx || !canMakeup || mkEx.payType === 'HOURLY') return null
+                          return mkEx.madeUp
+                            ? <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">✓ 已補鐘</span>
+                            : <button onClick={() => handleMakeup(mkEx)}
                               className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
                               style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
-                              title="補鐘：用OT補這次遲到/早退，免扣勤工"
-                            >
+                              title="補鐘：用OT補這次遲到/早退，免扣勤工">
                               <Clock size={12} /> 補鐘
                             </button>
-                          )
-                          )
-                        )}
+                        })()}
                       </td>
                       <td className="p-3">
                         {isVoided ? (
                           <span className="px-2 py-1 text-xs rounded bg-gray-200 text-gray-600 border border-gray-300"
                             title={(record.void as any)?.reason || ''}>已作廢</span>
                         ) : null}
-                        <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '', punchType: record.punchType }); setShowCorrectionModal(true) }}
-                          className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
-                          <Pencil size={14} /> 修正
-                        </button>
+                        {!isVoided && (
+                          <button onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '', punchType: record.punchType }); setShowCorrectionModal(true) }}
+                            className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
+                            <Pencil size={14} /> 修正
+                          </button>
+                        )}
                         {!isVoided && hasAttendanceManage && (
                           <button onClick={() => { setVoidRecord(record); setVoidReason(''); setShowVoidModal(true) }}
                             className="text-red-600 text-sm mr-2 hover:underline" title="作廢此打卡記錄">
