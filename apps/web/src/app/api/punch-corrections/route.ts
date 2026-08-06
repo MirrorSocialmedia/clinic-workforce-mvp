@@ -88,14 +88,9 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Verify employee belongs to clinic
-      const empClinicIds = employee.clinics.map((ec: any) => ec.clinicId)
-      if (!empClinicIds.includes(clinicId)) {
-        return NextResponse.json(
-          { error: 'Employee is not assigned to this clinic' },
-          { status: 403 }
-        )
-      }
+      // ★ 2026-08-06：剷走 EmployeeClinic 綁定檢查 — 臨時鋪係日常操作，
+      // 跟 2026-07-28「全店排班權」同一決定。證據鏈不變：
+      // correction 照記 clinicId + 經理身份 + audit（CORRECTION_* 入敏感摘要）。
 
       // Derive HK date string from parsed correctedTime for day boundary lookup
       const dayStr = toHKDateStr(correctedTime)

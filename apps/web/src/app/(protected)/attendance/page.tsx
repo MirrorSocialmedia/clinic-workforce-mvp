@@ -675,8 +675,8 @@ export default function AttendancePage() {
 
           {/* Records Table */}
           {(() => {
-            const fails = records.filter((r: any) => r.faceStatus === 'FAIL').length
-            const noFace = records.filter((r: any) => r.faceStatus === 'NO_FACE').length
+            const fails = records.filter((r: any) => r.faceStatus === 'FAIL' && !r.faceReviewedAt).length
+            const noFace = records.filter((r: any) => r.faceStatus === 'NO_FACE' && !r.faceReviewedAt).length
             if (fails > 0 || noFace > 0) {
               return (
                 <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>

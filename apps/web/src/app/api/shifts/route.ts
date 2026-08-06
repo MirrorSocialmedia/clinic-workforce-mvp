@@ -177,15 +177,8 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const empClinic = await prisma.employeeClinic.findFirst({
-          where: { employeeId, clinicId },
-        })
-        if (!empClinic) {
-          return NextResponse.json(
-            { error: 'Employee is not assigned to this clinic' },
-            { status: 400 }
-          )
-        }
+        // ★ 2026-08-06：剷走 EmployeeClinic 綁定檢查 — 臨時鋪係日常操作。
+        // 07-28 punch/route.ts 註解已經講唔檢查，但呢度漏咗。
       }
 
       const shifts: any[] = []
