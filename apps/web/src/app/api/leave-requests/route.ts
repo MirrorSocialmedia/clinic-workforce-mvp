@@ -51,6 +51,15 @@ export async function GET(req: NextRequest) {
   if (leaveTypeId) where.leaveTypeId = leaveTypeId
   if (clinicId) where.clinicId = clinicId
 
+  // ★ 2026-08-06：處理 startDate/endDate 參數（overlap 語義 — 假期同查詢範圍有重疊就中）
+  // 唔處理會令 take:200 截斷舊假期，導致部分員工嘅假期喺更表唔見
+  const qsStart = searchParams.get('startDate')
+  const qsEnd = searchParams.get('endDate')
+  if (qsStart && qsEnd) {
+    where.startDate = { lte: new Date(`${qsEnd}T23:59:59.999+08:00`) }  // 假期頭 ≤ 範圍尾
+    where.endDate = { gte: new Date(`${qsStart}T00:00:00+08:00`) }       // 假期尾 ≥ 範圍頭
+  }
+
   const requests = await prisma.leaveRequest.findMany({
     where,
     include: {

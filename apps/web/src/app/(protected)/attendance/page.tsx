@@ -692,8 +692,8 @@ export default function AttendancePage() {
 
           {/* Records Table */}
           {(() => {
-            const fails = records.filter((r: any) => r.faceStatus === 'FAIL' && !r.faceReviewedAt).length
-            const noFace = records.filter((r: any) => r.faceStatus === 'NO_FACE' && !r.faceReviewedAt).length
+            const fails = records.filter((r: any) => r.faceStatus === 'FAIL' && !r.faceReviewedAt && !r.void).length
+            const noFace = records.filter((r: any) => r.faceStatus === 'NO_FACE' && !r.faceReviewedAt && !r.void).length
             if (fails > 0 || noFace > 0) {
               return (
                 <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
@@ -1101,9 +1101,9 @@ export default function AttendancePage() {
                           className="text-amber-600 text-sm mr-2 hover:underline flex items-center gap-1" title="修正此記錄">
                           <Pencil size={14} /> 修正
                         </button>
-                        {!isVoided && record.source === 'MANUAL_CORRECTION' && hasAttendanceManage && (
+                        {!isVoided && hasAttendanceManage && (
                           <button onClick={() => { setVoidRecord(record); setVoidReason(''); setShowVoidModal(true) }}
-                            className="text-red-600 text-sm mr-2 hover:underline" title="作廢此補登記錄">
+                            className="text-red-600 text-sm mr-2 hover:underline" title="作廢此打卡記錄">
                             作廢
                           </button>
                         )}
