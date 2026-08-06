@@ -25,27 +25,43 @@ export async function generateQRToken(clinicId: string): Promise<{
   expiresAt: Date
 }> {
   const raw = `${clinicId}:${Date.now()}:${randomBytes(16).toString('hex')}`
-  const token = createHash('sha256').update(raw).digest('hex')
-  const shortCode = generateShortCode()
+  let token = createHash('sha256').update(raw).digest('hex')
+  let shortCode = generateShortCode()
   const issuedAt = new Date()
   const expiresAt = new Date(issuedAt.getTime() + TOKEN_TTL_SECONDS * 1000)
 
-  const record = await prisma.qRToken.create({
-    data: {
-      clinicId,
-      token,
-      shortCode,
-      issuedAt,
-      expiresAt,
-    },
-  })
-
-  return {
-    id: record.id,
-    token: record.token,
-    shortCode: record.shortCode!,
-    expiresAt: record.expiresAt,
+  // ★ 2026-08-06: retry-on-conflict — shortCode 48-bit 空間極低衝突，
+  // 但 cleanup 同 generate 之間有 race window（舊碼先刪、新碼重覆）
+  // 三次未中 → 加時間戳擴容（8+3=11 chars），理論 zero collision
+  let maxRetries = 3
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const record = await prisma.qRToken.create({
+        data: {
+          clinicId,
+          token,
+          shortCode,
+          issuedAt,
+          expiresAt,
+        },
+      })
+      return {
+        id: record.id,
+        token: record.token,
+        shortCode: record.shortCode!,
+        expiresAt: record.expiresAt,
+      }
+    } catch (err: any) {
+      if (err?.code === 'P2002' && attempt < maxRetries - 1) {
+        // Retry with new random short code
+        shortCode = randomBytes(6).toString('base64url').slice(0, 8)
+        token = createHash('sha256').update(clinicId + issuedAt.getTime() + shortCode).digest('hex')
+      } else {
+        throw err
+      }
+    }
   }
+  throw new Error('Failed to generate QR token after retries')
 }
 
 /**
@@ -114,6 +130,8 @@ export async function validateAndMarkTokenUsed(
  * ★ 只刪【冇人用過】嘅 —— 用過嘅要保留做證據（QRTokenUsage 有 onDelete: Cascade，
  * 刪 token 會連「邊個幾時用咗邊個碼」一齊抹走）。
  * 注意：`used` 欄位喺新流程從來冇被 set 過，唔可以用嚟做條件。
+ * ★ 2026-08-06：cleanup 同 generate 之間有 12s race window — 舊碼 cleanup 咗但顯示頁
+ * 仲喺度顯示，到時會生成新碼。generateQRToken 有 retry-on-conflict 處理。
  */
 export async function cleanupExpiredTokens(): Promise<number> {
   const result = await prisma.qRToken.deleteMany({
