@@ -273,7 +273,7 @@ export async function GET(req: NextRequest) {
     if (matchingShift) {
       const shiftStart = new Date(matchingShift.startTime)
       if (ep.effectiveTime.getTime() > shiftStart.getTime()) {
-        const lateMins = Math.ceil((ep.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
+        const lateMins = Math.floor((ep.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
         if (lateMins > 0) {
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
@@ -303,7 +303,7 @@ export async function GET(req: NextRequest) {
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
       if (ep.effectiveTime.getTime() < shiftEnd.getTime()) {
-        const earlyMins = Math.ceil((shiftEnd.getTime() - ep.effectiveTime.getTime()) / 60000)
+        const earlyMins = Math.floor((shiftEnd.getTime() - ep.effectiveTime.getTime()) / 60000)
         if (earlyMins > 0) {
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,

@@ -273,13 +273,19 @@ export default function AttendancePage() {
   } => {
     const recordDate = toHKDateStr(new Date(record.punchTime))
     const late = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'LATE'
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'LATE' &&
+        e.punchTime && record.punchTime &&
+        Math.abs(new Date(e.punchTime).getTime() - new Date(record.punchTime).getTime()) < 60000
     )
     const earlyLeave = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_LEAVE'
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_LEAVE' &&
+        e.punchTime && record.punchTime &&
+        Math.abs(new Date(e.punchTime).getTime() - new Date(record.punchTime).getTime()) < 60000
     )
     const ot = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'OT'
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'OT' &&
+        e.punchTime && record.punchTime &&
+        Math.abs(new Date(e.punchTime).getTime() - new Date(record.punchTime).getTime()) < 60000
     )
     return {
       late: late || null,
