@@ -90,22 +90,27 @@ export default function AccountsPage() {
     permDeny: [] as string[],  // permissions denied despite role default
   })
 
+  const fetchAccounts = useCallback(async () => {
+    const res = await fetch(`/api/accounts${showResigned ? '?includeResigned=1' : ''}`, { credentials: 'include' })
+    if (res.ok) { const d = await res.json(); setAccounts(d.accounts || []) }
+  }, [showResigned])
+
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [meRes, accRes, clinicRes] = await Promise.all([
+      const [meRes, clinicRes] = await Promise.all([
         fetch('/api/me', { credentials: 'include' }),
-        fetch('/api/accounts', { credentials: 'include' }),
         fetch('/api/clinics', { credentials: 'include' }),
       ])
+      await fetchAccounts()
       if (meRes.ok) { const d = await meRes.json(); setUserRole(d.user.role) }
-      if (accRes.ok) { const d = await accRes.json(); setAccounts(d.accounts || []) }
       if (clinicRes.ok) { const d = await clinicRes.json(); setClinics(d.clinics || []) }
     } catch (err) { console.error('Failed to load accounts:', err) }
     finally { setLoading(false) }
-  }, [])
+  }, [fetchAccounts])
 
   useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => { fetchAccounts() }, [fetchAccounts])
 
   // Fetch resign preview when modal is open and lastDay changes
   useEffect(() => {

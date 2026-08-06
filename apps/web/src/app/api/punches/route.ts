@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
   const punchType = searchParams.get('punchType')
+  const includeVoided = searchParams.get('includeVoided') === '1'
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1)
   const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10) || 50))
   const skip = (page - 1) * pageSize
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
     prisma.punchRecord.findMany({
       where: {
         ...where,
-        void: { is: null }, // Exclude voided punches
+        ...(includeVoided ? {} : { void: { is: null } }), // ★ opt-in voided
       },
       include: {
         employee: {
@@ -65,7 +66,9 @@ export async function GET(req: NextRequest) {
       skip,
       take: pageSize,
     }),
-    prisma.punchRecord.count({ where }),
+    prisma.punchRecord.count({
+      where: { ...where, ...(includeVoided ? {} : { void: { is: null } }) },
+    }),
   ])
 
   // Map reviewer userId → name

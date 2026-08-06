@@ -177,6 +177,7 @@ export default function AttendancePage() {
     const now = new Date()
     return toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
   })
+  const [showVoided, setShowVoided] = useState(false)
 
   // Mobile horizontal date picker state
   const [attSelectedDay, setAttSelectedDay] = useState(() => {
@@ -341,6 +342,7 @@ export default function AttendancePage() {
       if (employeeFilter) params.set('employeeId', employeeFilter)
       if (startDate) params.set('startDate', startDate)
       if (endDate) params.set('endDate', endDate)
+      if (showVoided) params.set('includeVoided', '1')
       const res = await fetch(`/api/punches?${params}`, { credentials: 'include', cache: 'no-store' })
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `伺服器錯誤 (${res.status})`) }
       const data = await res.json()
@@ -386,7 +388,7 @@ export default function AttendancePage() {
     if (user && activeTab === 'records') fetchRecordExceptions()
   }, [user, activeTab, fetchRecordExceptions])
 
-  useEffect(() => { if (user) fetchRecords() }, [user, page, clinicFilter, employeeFilter, startDate, endDate])
+  useEffect(() => { if (user) fetchRecords() }, [user, page, clinicFilter, employeeFilter, startDate, endDate, showVoided])
 
   // Exceptions
   const fetchExceptions = useCallback(async () => {
@@ -657,6 +659,12 @@ export default function AttendancePage() {
                 className="px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
             </div>
             <div className="flex items-end">
+              <label className="flex items-center gap-1 text-sm text-gray-600">
+                <input type="checkbox" checked={showVoided} onChange={e => setShowVoided(e.target.checked)} />
+                顯示已作廢
+              </label>
+            </div>
+            <div className="flex items-end">
               <button onClick={() => { setClinicFilter(''); setEmployeeFilter(''); setStartDate(''); setEndDate(''); setPage(1) }}
                 className="px-3 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">
                 清除篩查
@@ -682,7 +690,11 @@ export default function AttendancePage() {
                 {employees.map((e) => (<option key={e.id} value={e.id}>{e.name}</option>))}
               </select>
             </div>
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1 text-sm text-gray-600">
+                <input type="checkbox" checked={showVoided} onChange={e => setShowVoided(e.target.checked)} />
+                顯示已作廢
+              </label>
               <button onClick={() => { setClinicFilter(''); setEmployeeFilter(''); setStartDate(''); setEndDate(''); setPage(1) }}
                 className="px-3 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">
                 清除篩查
