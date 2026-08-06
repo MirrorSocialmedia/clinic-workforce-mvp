@@ -1653,6 +1653,53 @@ export async function calculateTimeBank(
     lateMinutes += dayLunchLate
   }
 
+  // ★ 2026-08-06 假期返工 OT：
+  //   當日 ∈ APPROVED 假期（leaveCoversDate — HK 日期口徑）
+  //   && 該日 punch pair 完整（isPartial=false）
+  //   && 冇 shift（shift↔leave mutex 保證，判定簡單）
+  //   → dayOt += pair 時長（分鐘）
+  //   單腳：唔計 OT（維持 isPartial 現有處理，唔當缺勤 — 假期日本身唔會標缺勤）
+  try {
+    const leaveRecords = await db.leaveRequest.findMany({
+      where: {
+        employeeId,
+        status: 'APPROVED',
+        startDate: { lte: monthEnd },
+        endDate: { gte: monthStart },
+      },
+    })
+    const shiftDates = new Set(shiftsByDate.keys())
+    // Group effective punches by HK date
+    const epByDate = new Map<string, any[]>()
+    for (const ep of effectivePunches) {
+      if (ep.punchType !== 'CLOCK_IN' && ep.punchType !== 'CLOCK_OUT') continue
+      const d = toHKDateStr(ep.effectiveTime)
+      if (!epByDate.has(d)) epByDate.set(d, [])
+      epByDate.get(d)!.push(ep)
+    }
+    for (const [dateStr, dayPunches] of epByDate) {
+      if (shiftDates.has(dateStr)) continue // skip days with shifts
+      const hasLeave = leaveRecords.some((lr: any) => leaveCoversDate(lr, dateStr))
+      if (!hasLeave) continue
+      const hasIn = dayPunches.some((p: any) => p.punchType === 'CLOCK_IN')
+      const hasOut = dayPunches.some((p: any) => p.punchType === 'CLOCK_OUT')
+      if (!hasIn || !hasOut) continue // single punch → no OT
+      const firstIn = dayPunches.filter((p: any) => p.punchType === 'CLOCK_IN')
+        .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
+      const lastOut = dayPunches.filter((p: any) => p.punchType === 'CLOCK_OUT')
+        .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
+      let pairMins = Math.floor((lastOut.effectiveTime.getTime() - firstIn.effectiveTime.getTime()) / 60000)
+      if (pairMins <= 0) continue
+      // Apply ot_min_minutes / ot_round_minutes (same as shift-based OT)
+      if (pairMins >= otMinMinutes) {
+        pairMins = otRoundMinutes > 0 ? Math.floor(pairMins / otRoundMinutes) * otRoundMinutes : pairMins
+      } else {
+        pairMins = 0
+      }
+      otMinutes += pairMins
+    }
+  } catch { /* leave table may not exist */ }
+
   // Grab makeup entries for this month — split by targetType
   let makeupMinutes = 0
   let makeupLateMinutes = 0

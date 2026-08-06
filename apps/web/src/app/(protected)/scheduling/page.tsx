@@ -41,6 +41,14 @@ const byRoleThenName = (a: any, b: any) => {
   return (a.id || '').localeCompare(b.id || '')
 }
 
+// ★ 2026-08-06: 調入 badge — 非主屬店員工喺 scope 內顯示
+function TransferBadge({ emp, scopeClinicIds }: { emp: any; scopeClinicIds: Set<string> | null }) {
+  if (!scopeClinicIds) return null
+  if (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId)) return null
+  return <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4,
+    background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>調入</span>
+}
+
 const byName = (a: any, b: any) => {
   const na = (a.name || a.user?.name || '').toLowerCase()
   const nb = (b.name || b.user?.name || '').toLowerCase()
@@ -864,25 +872,38 @@ function getShiftCode(shift: Shift): string {
   // Step 7: Overview employees (filtered by scope + sorted by role then name, full/part split)
   const ovEmployees = useMemo(() => {
     const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
-    const scoped = !scopeClinicIds ? activeEmployees
-      : activeEmployees.filter(e => e.clinics?.some((ec: any) => scopeClinicIds.has(ec.clinic?.id)))
+    let scoped = activeEmployees
+    if (scopeClinicIds) {
+      // ★ 2026-08-06 拍板：綁定 → 主屬＋更次三條件（圖示確認）
+      // 月視圖嘅更喺 ovMonthShifts — 兩個陣列都要掃，
+      // 否則「下個月先調入」嘅人喺月視圖唔會有行
+      const touching = new Set<string>()
+      for (const s of [...shifts, ...ovMonthShifts]) {
+        if (scopeClinicIds.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds.has(s.secondaryClinicId))) {
+          touching.add(s.employeeId)
+        }
+      }
+      scoped = activeEmployees.filter(e =>
+        (e.homeClinicId && scopeClinicIds.has(e.homeClinicId)) || // ① 主屬
+        touching.has(e.id) // ②③ 開工／調入
+      )
+    }
     const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byRoleThenName)
     const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byRoleThenName)
     return { full, part, ordered: [...full, ...part] }
-  }, [employees, scopeClinicIds])
+  }, [employees, scopeClinicIds, shifts, ovMonthShifts])
 
   // Step 7: Overview shifts (filtered by scope)
-  // Step 7: Overview shifts — include shifts for scoped employees at ANY clinic
-  // (cross-clinic loan shifts should still be visible)
   const ovShifts = useMemo(() => {
     if (!scopeClinicIds) return shifts
-    // Get employee IDs that belong to the scoped clinics
-    const scopedEmployeeIds = new Set(
-      employees
-        .filter(e => e.clinics?.some((ec: any) => scopeClinicIds.has(ec.clinic?.id)))
-        .map(e => e.id)
+    const homeEmpIds = new Set(
+      employees.filter(e => e.homeClinicId && scopeClinicIds.has(e.homeClinicId)).map(e => e.id)
     )
-    return shifts.filter(s => scopeClinicIds.has(s.clinicId) || scopedEmployeeIds.has(s.employeeId))
+    return shifts.filter(s =>
+      scopeClinicIds.has(s.clinicId) ||
+      (s.secondaryClinicId && scopeClinicIds.has(s.secondaryClinicId)) || // ★ 調入
+      homeEmpIds.has(s.employeeId) // 本範圍人嘅外借更（1a）
+    )
   }, [shifts, scopeClinicIds, employees])
 
   // ★ Pre-group shifts by employeeId|date for O(1) lookups instead of per-cell filter
@@ -2307,7 +2328,7 @@ function getShiftCode(shift: Shift): string {
                   background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                   padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
                   fontWeight: 500, fontSize: 11,
-                }}>{emp.user?.name ?? '?'}</td>
+                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
                 {days.map((wd, dayIdx) => {
                   const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
@@ -2461,7 +2482,7 @@ function getShiftCode(shift: Shift): string {
                   background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                   padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
                   fontWeight: 500, fontSize: 11,
-                }}>{emp.user?.name ?? '?'}</td>
+                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
                 {days.map((wd, dayIdx) => {
                   const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
@@ -3757,7 +3778,7 @@ function getShiftCode(shift: Shift): string {
                 <tbody>
                   {ovEmployees.ordered.map((emp: any) => (
                     <tr key={emp.id} className="border-t">
-                      <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}</td>
+                      <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
                       {mobileWeekDays.map(d => {
                         const cell = getMobileCell(emp.id, d)
                         return <td key={d} className="text-center px-0" style={{
@@ -3807,7 +3828,7 @@ function getShiftCode(shift: Shift): string {
               <tbody>
                 {ovEmployees.ordered.map((emp: any) => (
                   <tr key={emp.id} className="border-t">
-                    <td className="text-left sticky left-0 bg-white pl-1.5">{emp.user?.name ?? '?'}</td>
+                    <td className="text-left sticky left-0 bg-white pl-1.5">{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
                     {mobileWeekDays.map(d => {
                       const cell = getMobileCell(emp.id, d)
                       return <td key={d} className="text-center px-1 py-1 min-w-[80px]"
@@ -4517,7 +4538,7 @@ function getShiftCode(shift: Shift): string {
                             padding: '4px 8px', whiteSpace: 'nowrap',
                             fontWeight: isSelected ? 600 : 500,
                             fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}</td>
+                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
                           {monthDays.map((d, di) => {
                             const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
@@ -4607,7 +4628,7 @@ function getShiftCode(shift: Shift): string {
                             padding: '4px 8px', whiteSpace: 'nowrap',
                             fontWeight: isSelected ? 600 : 500,
                             fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}</td>
+                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
                           {monthDays.map((d, di) => {
                             const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY

@@ -88,6 +88,8 @@ interface ExceptionRecord {
   otDeducted?: boolean
   shiftMinutes?: number
   clinicId?: string
+  // ★ 2026-08-06: 假期返工標記
+  leaveWork?: boolean
 }
 
 // ============================================================
@@ -806,7 +808,15 @@ export default function AttendancePage() {
               if (monthLoaded) {
                 if (showLate) exceptionLabel = `遲到 ${showLate.lateMinutes || 0} 分`
                 else if (showEarly) exceptionLabel = `早退 ${showEarly.earlyMinutes || 0} 分`
-                else if (showOt) exceptionLabel = `OT ${showOt.otMinutes || 0} 分`
+                else if (showOt) {
+                  if (showOt.leaveWork) {
+                    exceptionLabel = (showOt.otMinutes ?? 0) > 0
+                      ? `假期返工 OT ${showOt.otMinutes} 分`
+                      : '假期返工·打卡不完整'
+                  } else {
+                    exceptionLabel = `OT ${showOt.otMinutes || 0} 分`
+                  }
+                }
               }
 
               const typeLabel = punchLabel(record.punchType)
@@ -840,7 +850,7 @@ export default function AttendancePage() {
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-muted-foreground">{record.clinic?.name || record.clinicId} · {sourceLabel}</span>
                     {exceptionLabel && <span className="text-xs font-semibold" style={{
-                      color: showLate ? '#d97706' : showEarly ? '#dc2626' : '#059669'
+                      color: showLate ? '#d97706' : showEarly ? '#dc2626' : showOt?.leaveWork ? '#7c3aed' : '#059669'
                     }}>{exceptionLabel}</span>}
                   </div>
                   {isVoided && <div className="text-xs text-gray-500 mt-1">已作廢</div>}

@@ -179,9 +179,14 @@ export async function GET(req: NextRequest) {
 
   // ★ 有已批假期嘅日子唔算缺勤 —— 計糧路徑（payroll-engine:2260）有做，
   // 呢度之前完全冇讀假期，令請咗假嘅日子照標缺勤。
+  // ★ 2026-08-06: 擴充 employeeId 列表加入 punch 員工（假期返工偵測）
+  const allShiftAndPunchEmpIds = [...new Set([
+    ...shifts.map(s => s.employeeId),
+    ...effectivePunches.map(ep => ep.raw.employeeId),
+  ])]
   const leaves = await prisma.leaveRequest.findMany({
     where: {
-      employeeId: { in: [...new Set(shifts.map(s => s.employeeId))] },
+      employeeId: { in: allShiftAndPunchEmpIds },
       status: 'APPROVED',
       startDate: { lte: monthEnd }, // TZ-OK：LeaveRequest 用 UTC 午夜儲存
       endDate: { gte: monthStart },
@@ -209,6 +214,8 @@ export async function GET(req: NextRequest) {
     // ABSENT-specific fields
     otDeducted?: boolean;
     shiftMinutes?: number;
+    // ★ 2026-08-06: 假期返工標記
+    leaveWork?: boolean;
   }> = []
 
   // Build employee info map from raw punches for display names
@@ -337,6 +344,67 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ★ 2026-08-06: lunch config from ruleByEmp (Fix 2 + Fix 4 shared)
+  const lunchDefaultByEmp = new Map<string, number>()
+  const lunchEnabledByEmp = new Map<string, boolean>()
+  for (const [empId, cfg] of ruleByEmp) {
+    const lunch = cfg?.modifiers?.lunch_break ?? {}
+    lunchEnabledByEmp.set(empId, !!lunch.enabled)
+    lunchDefaultByEmp.set(empId, lunch.defaultMinutes ?? 60)
+  }
+
+  // ★ 2026-08-06: lunch pair detection (Fix 2)
+  // Group effective punches by employee+HK date for LUNCH_START/LUNCH_END pairs
+  const lunchPunchesByEmpDate = new Map<string, any[]>()
+  for (const ep of effectivePunches) {
+    if (ep.punchType !== 'LUNCH_START' && ep.punchType !== 'LUNCH_END') continue
+    const key = `${ep.raw.employeeId}|${toHKDateStr(ep.effectiveTime)}`
+    if (!lunchPunchesByEmpDate.has(key)) lunchPunchesByEmpDate.set(key, [])
+    lunchPunchesByEmpDate.get(key)!.push(ep)
+  }
+
+  for (const [key, lunchPunches] of lunchPunchesByEmpDate) {
+    const [empId, dateStr] = key.split('|')
+    const lunchCfg = ruleByEmp.get(empId)?.modifiers?.lunch_break
+    if (!lunchCfg?.enabled) continue
+
+    const ls = lunchPunches
+      .filter((p: any) => p.punchType === 'LUNCH_START')
+      .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
+    const le = lunchPunches
+      .filter((p: any) => p.punchType === 'LUNCH_END')
+      .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
+    if (!ls || !le) continue
+
+    const actualMins = Math.floor((le.effectiveTime.getTime() - ls.effectiveTime.getTime()) / 60000)
+    if (actualMins <= 0) continue
+    const minMins = lunchCfg.minMinutes ?? 30
+    const effectiveMins = Math.max(actualMins, minMins)
+    const defaultMins = lunchCfg.defaultMinutes ?? 60
+
+    if (effectiveMins < defaultMins) {
+      const shortfall = defaultMins - effectiveMins
+      exceptions.push({
+        employeeId: empId, employeeName: empNames.get(empId) ?? '—',
+        clinicName: getEmpInfo(empId).clinics[0]?.clinicName || '—',
+        date: dateStr, type: 'OT',
+        otMinutes: shortfall,
+        detail: `午休提早返 ${shortfall} 分鐘 (OT)`,
+        punchTime: le.effectiveTime.toISOString(),
+      })
+    } else if (effectiveMins > defaultMins) {
+      const excess = effectiveMins - defaultMins
+      exceptions.push({
+        employeeId: empId, employeeName: empNames.get(empId) ?? '—',
+        clinicName: getEmpInfo(empId).clinics[0]?.clinicName || '—',
+        date: dateStr, type: 'LATE',
+        lateMinutes: excess,
+        detail: `午休超時 ${excess} 分鐘`,
+        punchTime: le.effectiveTime.toISOString(),
+      })
+    }
+  }
+
   // OT 偵測：下班晚於排班結束 (use effectiveTime) — with per-day threshold
   for (const ep of clockOuts) {
     const punchDateStr = toHKDateStr(ep.effectiveTime)
@@ -371,6 +439,65 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ★ 2026-08-06: Leave-work OT detection (Fix 3 display)
+  // APPROVED leave day + complete punch pair (IN+OUT) → OT
+  // Single punch (only IN or only OUT) → no OT, marked incomplete
+  const leavePunchesByEmpDate = new Map<string, any[]>()
+  for (const ep of effectivePunches) {
+    if (ep.punchType !== 'CLOCK_IN' && ep.punchType !== 'CLOCK_OUT') continue
+    const key = `${ep.raw.employeeId}|${toHKDateStr(ep.effectiveTime)}`
+    if (!leavePunchesByEmpDate.has(key)) leavePunchesByEmpDate.set(key, [])
+    leavePunchesByEmpDate.get(key)!.push(ep)
+  }
+
+  for (const [key, punches] of leavePunchesByEmpDate) {
+    const [empId, dateStr] = key.split('|')
+    if (!leaveDateSet.has(`${empId}:${dateStr}`)) continue
+
+    const hasIn = punches.some((p: any) => p.punchType === 'CLOCK_IN')
+    const hasOut = punches.some((p: any) => p.punchType === 'CLOCK_OUT')
+
+    if (hasIn && hasOut) {
+      // Complete pair → OT
+      const firstIn = punches.filter((p: any) => p.punchType === 'CLOCK_IN')
+        .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
+      const lastOut = punches.filter((p: any) => p.punchType === 'CLOCK_OUT')
+        .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
+      const pairMins = Math.floor((lastOut.effectiveTime.getTime() - firstIn.effectiveTime.getTime()) / 60000)
+      if (pairMins <= 0) continue
+
+      const minReq = otMinByEmp.get(empId) ?? 0
+      const roundReq = otRoundByEmp.get(empId) ?? 0
+      let displayOt = pairMins
+      if (displayOt >= minReq) {
+        displayOt = roundReq > 0 ? Math.floor(displayOt / roundReq) * roundReq : displayOt
+      } else {
+        displayOt = 0
+      }
+
+      exceptions.push({
+        employeeId: empId, employeeName: empNames.get(empId) ?? '—',
+        clinicName: getEmpInfo(empId).clinics[0]?.clinicName || '—',
+        date: dateStr, type: 'OT',
+        otMinutes: displayOt,
+        detail: `假期返工 OT ${displayOt} 分鐘`,
+        punchTime: lastOut.effectiveTime.toISOString(),
+        leaveWork: true,
+      })
+    } else {
+      // Single punch → incomplete, no OT
+      exceptions.push({
+        employeeId: empId, employeeName: empNames.get(empId) ?? '—',
+        clinicName: getEmpInfo(empId).clinics[0]?.clinicName || '—',
+        date: dateStr, type: 'OT',
+        otMinutes: 0,
+        detail: '假期返工·打卡不完整',
+        punchTime: punches[0].effectiveTime.toISOString(),
+        leaveWork: true,
+      })
+    }
+  }
+
   // Detect ABSENT from shifts with no effective punches
   // ★ 未收工嘅更次唔可以當缺勤。
   // 用 endTime 唔用 date —— 今日 09:00-18:00 嘅更，喺 14:00 睇仲未收工，
@@ -396,11 +523,12 @@ export async function GET(req: NextRequest) {
       const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
       const shiftEnd2 = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
       const shiftMinutes = Math.round((shiftEnd2.getTime() - shiftStart.getTime()) / 60000)
+      const deductedMinutes = Math.max(0, shiftMinutes - (lunchDefaultByEmp.get(shift.employeeId) ?? 0))
       exceptions.push({
         employeeId: shift.employeeId, employeeName: empNames.get(shift.employeeId) ?? '—',
         clinicName: shift.clinic?.name || '—', date: shiftDayStr, type: 'ABSENT',
-        detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)})`,
-        shiftMinutes,
+        detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)}，應返 ${deductedMinutes} 分鐘·已扣午飯)`,
+        shiftMinutes: deductedMinutes,
       })
     }
   }
