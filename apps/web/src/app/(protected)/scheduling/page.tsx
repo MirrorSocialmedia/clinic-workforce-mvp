@@ -42,11 +42,17 @@ const byRoleThenName = (a: any, b: any) => {
 }
 
 // ★ 2026-08-06: 調入 badge — 非主屬店員工喺 scope 內顯示
-function TransferBadge({ emp, scopeClinicIds }: { emp: any; scopeClinicIds: Set<string> | null }) {
+function TransferBadge({ emp, scopeClinicIds, clinicName, crossCompany }: {
+  emp: any; scopeClinicIds: Set<string> | null; clinicName?: string; crossCompany?: boolean
+}) {
   if (!scopeClinicIds) return null
   if (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId)) return null
-  return <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4,
-    background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>調入</span>
+  const tone = crossCompany
+    ? { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }
+    : { background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }
+  return <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, ...tone }}>
+    調入·{clinicName || '未設'}
+  </span>
 }
 
 const byName = (a: any, b: any) => {
@@ -868,6 +874,15 @@ function getShiftCode(shift: Shift): string {
     if (ovScope.type === 'company') return new Set(clinics.filter(c => c.company?.id === ovScope.id).map(c => c.id))
     return new Set([ovScope.id])
   }, [ovScope, clinics])
+
+  // ★ 2026-08-06: Clinic maps for transfer badge dual-tone
+  const clinicNameById = useMemo(() => new Map(clinics.map((c: any) => [c.id, c.name])), [clinics])
+  const clinicCompanyById = useMemo(() => new Map(clinics.map((c: any) => [c.id, c.company?.id])), [clinics])
+  const scopeCompanyId = useMemo(() => {
+    if (ovScope.type === 'company') return ovScope.id
+    if (ovScope.type === 'clinic') return clinicCompanyById.get(ovScope.id)
+    return null // 'all' view badge itself doesn't render
+  }, [ovScope, clinicCompanyById])
 
   // Step 7: Overview employees (filtered by scope + sorted by role then name, full/part split)
   const ovEmployees = useMemo(() => {
@@ -2286,7 +2301,20 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // Render Overview Week — takes a days array, renders title + table + stats
   // ============================================================
-  const renderOverviewWeek = (days: typeof weekDays, title: string) => (
+  const renderOverviewWeek = (days: typeof weekDays, title: string) => {
+    // ★ 2026-08-06: 調入行只喺該週有更嘅週先出現
+    const weekDates = days.map(d => d.dateStr)
+    const weekEmpsFull = ovEmployees.full.filter(emp => {
+      const ih = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+      if (ih) return true
+      return weekDates.some(d => weekShiftsByKey.has(`${emp.id}|${d}`))
+    })
+    const weekEmpsPart = ovEmployees.part.filter(emp => {
+      const ih = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+      if (ih) return true
+      return weekDates.some(d => weekShiftsByKey.has(`${emp.id}|${d}`))
+    })
+    return (
     <div style={{ marginBottom: 0 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', margin: '8px 0 4px 10px' }}>
         {title}（{days[0]?.dateStr.slice(5)} – {days[6]?.dateStr.slice(5)}）
@@ -2327,14 +2355,17 @@ function getShiftCode(shift: Shift): string {
           </thead>
           <tbody>
             {/* Full-time employees (sorted by role then name) */}
-            {ovEmployees.full.map(emp => (
+            {weekEmpsFull.map(emp => (
               <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                 <td style={{
                   position: 'sticky', left: 0,
                   background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                   padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
                   fontWeight: 500, fontSize: 11,
-                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
+                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
+  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
+    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                 {days.map((wd, dayIdx) => {
                   const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
@@ -2371,10 +2402,11 @@ function getShiftCode(shift: Shift): string {
                         verticalAlign: 'middle',
                       }}
                       onMouseEnter={e => {
-                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = (rowIsTransfer && cellIsEmpty) ? '#7b8494' : '#e0e7ff'
                       }}
                       onMouseLeave={e => {
-                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                        const cellBg = (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasLeave ? '#4a4a4a10' : 'transparent')
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = cellBg
                       }}
                       onClick={e => handleOverviewCellClick(
                         emp.id, wd.dateStr,
@@ -2463,7 +2495,7 @@ function getShiftCode(shift: Shift): string {
               </tr>
             ))}
             {/* Full-time ↔ Part-time separator */}
-            {ovEmployees.full.length > 0 && ovEmployees.part.length > 0 && (
+            {weekEmpsFull.length > 0 && weekEmpsPart.length > 0 && (
               <tr>
                 <td colSpan={days.length + 1} style={{ padding: 0 }}>
                   <div style={{
@@ -2483,14 +2515,17 @@ function getShiftCode(shift: Shift): string {
               </tr>
             )}
             {/* Part-time employees (sorted by role then name) */}
-            {ovEmployees.part.map(emp => (
+            {weekEmpsPart.map(emp => (
               <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                 <td style={{
                   position: 'sticky', left: 0,
                   background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                   padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
                   fontWeight: 500, fontSize: 11,
-                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
+                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
+  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
+    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                 {days.map((wd, dayIdx) => {
                   const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
@@ -2527,10 +2562,11 @@ function getShiftCode(shift: Shift): string {
                         verticalAlign: 'middle',
                       }}
                       onMouseEnter={e => {
-                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = '#e0e7ff'
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = (rowIsTransfer && cellIsEmpty) ? '#7b8494' : '#e0e7ff'
                       }}
                       onMouseLeave={e => {
-                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                        const cellBg = (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasLeave ? '#4a4a4a10' : 'transparent')
+                        if ((!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave) (e.currentTarget as HTMLTableCellElement).style.background = cellBg
                       }}
                       onClick={e => handleOverviewCellClick(
                         emp.id, wd.dateStr,
@@ -2780,6 +2816,7 @@ function getShiftCode(shift: Shift): string {
       {renderWeekStats(days)}
     </div>
   )
+  }
 
   // Factory: derive 7 days starting from a given Monday
   const makeWeekDays = useCallback((monday: Date) => {
@@ -3788,7 +3825,10 @@ function getShiftCode(shift: Shift): string {
                 <tbody>
                   {ovEmployees.ordered.map((emp: any) => (
                     <tr key={emp.id} className="border-t">
-                      <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
+                      <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
+  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
+    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                       {mobileWeekDays.map(d => {
                         const cell = getMobileCell(emp.id, d)
                         return <td key={d} className="text-center px-0" style={{
@@ -3838,7 +3878,10 @@ function getShiftCode(shift: Shift): string {
               <tbody>
                 {ovEmployees.ordered.map((emp: any) => (
                   <tr key={emp.id} className="border-t">
-                    <td className="text-left sticky left-0 bg-white pl-1.5">{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
+                    <td className="text-left sticky left-0 bg-white pl-1.5">{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
+  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
+    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                     {mobileWeekDays.map(d => {
                       const cell = getMobileCell(emp.id, d)
                       return <td key={d} className="text-center px-1 py-1 min-w-[80px]"
@@ -4548,7 +4591,10 @@ function getShiftCode(shift: Shift): string {
                             padding: '4px 8px', whiteSpace: 'nowrap',
                             fontWeight: isSelected ? 600 : 500,
                             fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
+                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
+  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
+    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                           {monthDays.map((d, di) => {
                             const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
@@ -4640,7 +4686,10 @@ function getShiftCode(shift: Shift): string {
                             padding: '4px 8px', whiteSpace: 'nowrap',
                             fontWeight: isSelected ? 600 : 500,
                             fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds} /></td>
+                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
+  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
+    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                           {monthDays.map((d, di) => {
                             const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
