@@ -70,7 +70,7 @@ export default function PunchPage() {
   const [faceHint, setFaceHint] = useState<string | null>(null)
   const [faceDone, setFaceDone] = useState(true) // 驗證是否已了結(扣倒數用;預設true)
   const faceVideoRef = useRef<HTMLVideoElement>(null)
-  const { captureQualified, captureRaw, warmup } = useFaceCapture()
+  const { captureQualified, captureRaw, captureLoose, warmup } = useFaceCapture()
 
   // GPS warmup state
   const lastPosRef = useRef<{ lat: number; lng: number; acc: number; t: number } | null>(null)
@@ -361,7 +361,7 @@ export default function PunchPage() {
 
         let blob: Blob | null = null
         try {
-          blob = await captureQualified(faceVideoRef.current, 8000, setFaceHint)
+          blob = await captureQualified(faceVideoRef.current, 15000, setFaceHint)
         } catch (ce: any) {
           // ★ MediaPipe 係 client 前置閘 — 真正驗證喺 server
           const v = faceVideoRef.current
@@ -379,6 +379,14 @@ export default function PunchPage() {
           }
         }
 
+        if (!blob) {
+          setFaceHint('請對準鏡頭')
+          try { blob = await captureLoose(faceVideoRef.current, 2000) } catch {}
+          if (!blob) {
+            await new Promise(r => setTimeout(r, 300))
+            blob = await captureRaw(faceVideoRef.current) // ★ 最後盲影安全網
+          }
+        }
         if (blob) {
           stage = 'send' // ★ 上載階段 — 網絡層錯誤唔准再扮 capture 錯
           setFaceHint('分析中…')

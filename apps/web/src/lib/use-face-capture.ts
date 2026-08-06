@@ -36,6 +36,8 @@ export function useFaceCapture() {
     }
     const canvas = document.createElement('canvas')
     const deadline = Date.now() + timeoutMs
+    let stableCount = 0
+    let prevCx = -1, prevCy = -1 // ★ 位移追蹤
     while (Date.now() < deadline) {
       let det: any
       try {
@@ -54,6 +56,7 @@ export function useFaceCapture() {
 
         // 太遠 (<0.15) 不收
         if (wRatio < 0.15 || wRatio > 0.70) {
+          stableCount = 0; prevCx = -1; prevCy = -1
           onHint?.(wRatio < 0.15 ? '請再靠近一點' : '請退遠一點')
           await new Promise(r => setTimeout(r, 120))
           continue
@@ -65,9 +68,25 @@ export function useFaceCapture() {
           Math.abs(cy - 0.48) < 0.26
 
         if (!inFrame) {
+          stableCount = 0; prevCx = -1; prevCy = -1
           onHint?.('請將臉移入框內')
           await new Promise(r => setTimeout(r, 120))
           continue
+        }
+
+        // ★ 2026-08-06 穩定幀 gate：連續 6 幀合格＋冇明顯移動先影
+        const moved = prevCx >= 0 &&
+          (Math.abs(cx - prevCx) > 0.03 || Math.abs(cy - prevCy) > 0.03)
+        prevCx = cx; prevCy = cy
+        if (moved) {
+          stableCount = 0
+          onHint?.('請保持穩定')
+          await new Promise(r => setTimeout(r, 120)); continue
+        }
+        stableCount++
+        if (stableCount < 6) {
+          onHint?.('請保持穩定…')
+          await new Promise(r => setTimeout(r, 120)); continue
         }
 
         // ★ maskGate — after inFrame+distance, before light/capture
@@ -123,8 +142,47 @@ export function useFaceCapture() {
           return await new Promise(r => canvas.toBlob(b => r(b), 'image/jpeg', 0.85))
         }
         if (luma <= 55) onHint?.('光線不足')
+      } else {
+        stableCount = 0; prevCx = -1; prevCy = -1
       }
       await new Promise(r => setTimeout(r, 120))
+    }
+    return null
+  }, [init])
+
+  /** 寬鬆模式：單臉存在即影（唔理距離/框/穩定/mask）— 盲影前最後機會 */
+  const captureLoose = useCallback(async (video: HTMLVideoElement, timeoutMs = 2000): Promise<Blob | null> => {
+    await init()
+    // Wait for first frame
+    const frameDeadline = Date.now() + 2000
+    while (!video.videoWidth && Date.now() < frameDeadline)
+      await new Promise(r => setTimeout(r, 100))
+    if (!video.videoWidth) {
+      const err: any = new Error('video has no frames (videoWidth=0)')
+      err.name = 'NoFrame'
+      throw err
+    }
+    const canvas = document.createElement('canvas')
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      let det: any
+      try {
+        det = detectorRef.current.detectForVideo(video, performance.now())
+      } catch (e: any) {
+        const err: any = new Error(e?.message || 'detect failed')
+        err.name = `Detect_${e?.name ?? 'Error'}`
+        throw err
+      }
+      if (det?.detections?.length === 1) {
+        // 有單臉就影（唔理距離/框/穩定/mask）
+        const scale = Math.min(1, 640 / video.videoWidth)
+        canvas.width = Math.round(video.videoWidth * scale)
+        canvas.height = Math.round(video.videoHeight * scale)
+        const ctx = canvas.getContext('2d')!
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        return await new Promise(r => canvas.toBlob(b => r(b), 'image/jpeg', 0.85))
+      }
+      await new Promise(r => setTimeout(r, 150))
     }
     return null
   }, [init])
@@ -140,5 +198,5 @@ export function useFaceCapture() {
     return new Promise(r => canvas.toBlob(b => r(b), 'image/jpeg', 0.8))
   }, [])
 
-  return { captureQualified, captureRaw, warmup: init }
+  return { captureQualified, captureRaw, captureLoose, warmup: init }
 }
