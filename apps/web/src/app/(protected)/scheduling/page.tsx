@@ -888,8 +888,14 @@ function getShiftCode(shift: Shift): string {
         touching.has(e.id) // ②③ 開工／調入
       )
     }
-    const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byRoleThenName)
-    const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byRoleThenName)
+    // ★ 2026-08-06: 調入員工排最後（同 TransferBadge 判斷式一致）
+    const isHome = (e: any) =>
+      !scopeClinicIds || (e.homeClinicId && scopeClinicIds.has(e.homeClinicId))
+    const byHomeThenRoleName = (a: any, b: any) =>
+      ((isHome(b) ? 1 : 0) - (isHome(a) ? 1 : 0)) || byRoleThenName(a, b)
+
+    const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byHomeThenRoleName)
+    const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byHomeThenRoleName)
     return { full, part, ordered: [...full, ...part] }
   }, [employees, scopeClinicIds, shifts, ovMonthShifts])
 
@@ -2334,6 +2340,8 @@ function getShiftCode(shift: Shift): string {
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const hasShift = empShiftsOnDay.length > 0
                   const hasLeave = empLeavesOnDay.length > 0
+                  const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
+                  const cellIsEmpty = !hasShift && !hasLeave
                   return (
                     <td key={dayIdx}
                       className="overview-cell"
@@ -2358,7 +2366,7 @@ function getShiftCode(shift: Shift): string {
                       style={{
                         padding: '2px 3px', textAlign: 'center',
                         cursor: canManage ? 'pointer' : 'default',
-                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
+                        background: (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent'),
                         transition: 'background 0.15s',
                         verticalAlign: 'middle',
                       }}
@@ -2446,7 +2454,7 @@ function getShiftCode(shift: Shift): string {
                           )
                         })}
                         {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
-                          <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
+                          <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
                         )}
                       </div>
                     </td>
@@ -2488,6 +2496,8 @@ function getShiftCode(shift: Shift): string {
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const hasShift = empShiftsOnDay.length > 0
                   const hasLeave = empLeavesOnDay.length > 0
+                  const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
+                  const cellIsEmpty = !hasShift && !hasLeave
                   return (
                     <td key={dayIdx}
                       className="overview-cell"
@@ -2512,7 +2522,7 @@ function getShiftCode(shift: Shift): string {
                       style={{
                         padding: '2px 3px', textAlign: 'center',
                         cursor: canManage ? 'pointer' : 'default',
-                        background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
+                        background: (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent'),
                         transition: 'background 0.15s',
                         verticalAlign: 'middle',
                       }}
@@ -2598,7 +2608,7 @@ function getShiftCode(shift: Shift): string {
                           )
                         })}
                         {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
-                          <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
+                          <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
                         )}
                       </div>
                     </td>
@@ -4544,6 +4554,8 @@ function getShiftCode(shift: Shift): string {
                             const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const hasShift = ss.length > 0
                             const hasLeave = ls.length > 0
+                            const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
+                            const cellIsEmpty = !hasShift && !hasLeave
                             return (
                               <td key={di}
                                 className="overview-cell"
@@ -4574,12 +4586,12 @@ function getShiftCode(shift: Shift): string {
                                   padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
                                   backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
                                   cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
-                                  background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
+                                  background: (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent'),
                                   transition: 'background 0.15s',
                                 }}
                               >
                                 {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
                                     const tpl = templates.find(t => t.id === s.templateId)
@@ -4634,6 +4646,8 @@ function getShiftCode(shift: Shift): string {
                             const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
                             const hasShift = ss.length > 0
                             const hasLeave = ls.length > 0
+                            const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
+                            const cellIsEmpty = !hasShift && !hasLeave
                             return (
                               <td key={di}
                                 className="overview-cell"
@@ -4664,12 +4678,12 @@ function getShiftCode(shift: Shift): string {
                                   padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
                                   backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
                                   cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
-                                  background: hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent',
+                                  background: (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent'),
                                   transition: 'background 0.15s',
                                 }}
                               >
                                 {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
                                     const tpl = templates.find(t => t.id === s.templateId)
