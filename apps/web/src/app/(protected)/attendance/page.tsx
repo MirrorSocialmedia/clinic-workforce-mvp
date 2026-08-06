@@ -271,21 +271,30 @@ export default function AttendancePage() {
     earlyLeave: ExceptionRecord | null;
     ot: ExceptionRecord | null;
   } => {
+    // ★ 2026-08-06: record 用 effective time（修正後），exceptions 本身已用 effectiveTime
+    // 補卡通常改幾分鐘至幾個鐘，用 punchTime（原始）一定超過 60s 容差 → match 失敗
+    const recEffectiveMs = (() => {
+      const appr = record.corrections?.filter((c: any) => c.status === 'APPROVED')
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      const latest = appr?.length ? appr[0] : null
+      return new Date(latest?.correctedTime ?? record.punchTime).getTime()
+    })()
+
     const recordDate = toHKDateStr(new Date(record.punchTime))
     const late = recordsExceptions.find(
       e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'LATE' &&
-        e.punchTime && record.punchTime &&
-        Math.abs(new Date(e.punchTime).getTime() - new Date(record.punchTime).getTime()) < 60000
+        e.punchTime &&
+        Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
     )
     const earlyLeave = recordsExceptions.find(
       e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_LEAVE' &&
-        e.punchTime && record.punchTime &&
-        Math.abs(new Date(e.punchTime).getTime() - new Date(record.punchTime).getTime()) < 60000
+        e.punchTime &&
+        Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
     )
     const ot = recordsExceptions.find(
       e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'OT' &&
-        e.punchTime && record.punchTime &&
-        Math.abs(new Date(e.punchTime).getTime() - new Date(record.punchTime).getTime()) < 60000
+        e.punchTime &&
+        Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
     )
     return {
       late: late || null,
