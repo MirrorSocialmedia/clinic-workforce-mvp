@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'crypto'
 import { prisma } from './prisma'
+import { QR_REFRESH_SECONDS } from './qr-constants'
 
-const TOKEN_TTL_SECONDS = 60 // 顯示30秒換新，舊碼多活30秒——尾端掃描不再過期
+const TOKEN_TTL_SECONDS = QR_REFRESH_SECONDS * 2 // 舊碼多活一個週期 — 尾端掃描唔過期
 
 /**
  * Generate an 8-char base64url short code.

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import QRCode from 'qrcode'
+import { QR_REFRESH_SECONDS } from '@/lib/qr-constants'
 
 export default function ClinicQRPage() {
   const router = useRouter()
@@ -56,7 +57,7 @@ export default function ClinicQRPage() {
       const newToken = data.token
       setToken(newToken)
       setShortCode(data.shortCode || '')
-      setCountdown(30)
+      setCountdown(QR_REFRESH_SECONDS)
       // Only reset kiosk if token actually changed
       if (prevTokenRef.current !== newToken && prevTokenRef.current) {
         setIsKiosk(true)
@@ -89,7 +90,7 @@ export default function ClinicQRPage() {
       setCountdown((prev) => {
         if (prev <= 1) {
           fetchToken()
-          return 30
+          return QR_REFRESH_SECONDS
         }
         return prev - 1
       })
@@ -262,7 +263,7 @@ export default function ClinicQRPage() {
       {/* Info */}
       <div className="max-w-md w-full mt-8 bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 text-left">
         <div className="font-bold mb-2 text-gray-300">📋 說明</div>
-        <div>• QR 碼每 30 秒自動刷新，防止翻拍舊碼</div>
+        <div>• QR 碼每 ${QR_REFRESH_SECONDS} 秒自動刷新，防止翻拍舊碼</div>
         <div>• 點擊「進入全螢幕櫃檯模式」隱藏操作選項</div>
         <div>• 員工用手機掃描 QR 碼即可完成打卡</div>
       </div>

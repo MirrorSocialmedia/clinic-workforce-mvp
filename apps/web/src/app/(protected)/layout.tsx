@@ -197,6 +197,14 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   if (user.role === 'KIOSK') {
     return (
       <div className="min-h-screen bg-background">
+        <button
+          onClick={() => { if (confirm('確定登出打卡屏？登出後需要管理員重新登入。')) handleLogout() }}
+          style={{ position: 'fixed', top: 12, right: 12, zIndex: 50, fontSize: 12,
+            padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb',
+            background: 'rgba(255,255,255,.9)', color: '#6b7280' }}
+        >
+          登出
+        </button>
         {children}
       </div>
     )
