@@ -130,6 +130,7 @@ export async function GET(req: NextRequest) {
         clinics: {
           include: { clinic: { select: { id: true, name: true } } },
         },
+        homeClinicId: true, // ★ 2026-08-06：daeb3de 重整 select 時跌咗 — 排班「本店」filter 同「全部」分組讀 scalar
         homeClinic: { select: { id: true, name: true } },
         payRules: {
           where: { isActive: true },
