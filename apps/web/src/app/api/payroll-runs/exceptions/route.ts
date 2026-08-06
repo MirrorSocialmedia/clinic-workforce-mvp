@@ -43,7 +43,6 @@ export async function GET(req: NextRequest) {
   // ★ exceptions 同時畀考勤頁同計糧異常報表用，統一全公司範圍（2026-08-03）——
   // 異常報告只含遲到/缺勤/OT 分鐘，唔含薪金，所以範圍寬啲可以接受。
   // ⚠️ 如果將來加咗金額欄位，就要分開兩個用途。
-  const sessionClinics = session.clinics ?? []
   let scopedClinicId: string | undefined = clinicId || undefined
   let scopedClinicIds: string[] | undefined
   const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
@@ -63,20 +62,6 @@ export async function GET(req: NextRequest) {
       scopedClinicId = clinicId
     } else {
       scopedClinicIds = allowedClinics
-      scopedClinicId = undefined
-    }
-  } else if (scope === 'my-clinics') {
-    // ★ fallback: scope='my-clinics' 但 allowedClinics=null（唔應該發生，保留舊邏輯）
-    if (sessionClinics.length === 0) {
-      return NextResponse.json({ exceptions: [], summary: {} })
-    }
-    if (clinicId) {
-      if (!sessionClinics.includes(clinicId)) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-      }
-      scopedClinicId = clinicId
-    } else {
-      scopedClinicIds = sessionClinics
       scopedClinicId = undefined
     }
   }
@@ -276,7 +261,7 @@ export async function GET(req: NextRequest) {
     const matchingShift = shifts.find(s =>
       s.employeeId === ep.raw.employeeId &&
       toHKDateStr(new Date(s.date)) === punchDateStr &&
-      s.clinicId === ep.clinicId
+      (s.clinicId === ep.clinicId || s.secondaryClinicId === ep.clinicId)
     )
     if (matchingShift) {
       const shiftStart = new Date(matchingShift.startTime)
@@ -306,7 +291,7 @@ export async function GET(req: NextRequest) {
     const matchingShift = shifts.find(s =>
       s.employeeId === ep.raw.employeeId &&
       toHKDateStr(new Date(s.date)) === punchDateStr &&
-      s.clinicId === ep.clinicId
+      (s.clinicId === ep.clinicId || s.secondaryClinicId === ep.clinicId)
     )
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
@@ -362,7 +347,7 @@ export async function GET(req: NextRequest) {
       s =>
         s.employeeId === ep.raw.employeeId &&
         toHKDateStr(new Date(s.date)) === punchDateStr &&
-        s.clinicId === ep.clinicId
+        (s.clinicId === ep.clinicId || s.secondaryClinicId === ep.clinicId)
     )
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
