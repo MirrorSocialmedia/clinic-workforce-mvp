@@ -778,9 +778,9 @@ export default function AttendancePage() {
               const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
               const isClockIn = record.punchType === 'CLOCK_IN'
               const isClockOut = record.punchType === 'CLOCK_OUT'
-              const showLate = isClockIn ? lateEx : undefined
-              const showEarly = isClockOut ? earlyEx : undefined
-              const showOt = isClockOut ? otEx : undefined
+              const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
+              const showEarly = earlyEx
+              const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
               const recordDateStr = toHKDateStr(new Date(record.punchTime))
               const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
               const isVoided = !!(record.void as any)
@@ -988,9 +988,9 @@ export default function AttendancePage() {
                     const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
                     const isClockIn = record.punchType === 'CLOCK_IN'
                     const isClockOut = record.punchType === 'CLOCK_OUT'
-                    const showLate = isClockIn ? lateEx : undefined
-                    const showEarly = isClockOut ? earlyEx : undefined
-                    const showOt = isClockOut ? otEx : undefined
+                    const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
+                    const showEarly = earlyEx
+                    const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
                     const recordDateStr = toHKDateStr(new Date(record.punchTime))
                     const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
                     const isVoided = !!(record.void as any)
@@ -1073,15 +1073,15 @@ export default function AttendancePage() {
                       </td>
                       <td className="p-3">
                         {/* Makeup only for late/early; HOURLY employees skip */}
-                        {((isClockIn && showLate) || (isClockOut && showEarly)) && canMakeup && (
-                          (isClockIn ? (showLate?.payType !== 'HOURLY') : (showEarly?.payType !== 'HOURLY')) && (
-                          ((isClockIn && showLate?.madeUp) || (isClockOut && showEarly?.madeUp)) ? (
+                        {((showLate || showEarly) && canMakeup) && (
+                          ((showLate?.payType !== 'HOURLY') || (showEarly?.payType !== 'HOURLY')) && (
+                          ((showLate?.madeUp) || (showEarly?.madeUp)) ? (
                             <span className="px-2 py-1 text-xs rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                               ✓ 已補鐘
                             </span>
                           ) : (
                             <button
-                              onClick={() => { const ex = isClockIn ? (lateEx || undefined) : (earlyEx || undefined); if (ex) handleMakeup(ex) }}
+                              onClick={() => { const ex = showLate || showEarly || undefined; if (ex) handleMakeup(ex) }}
                               className="text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1"
                               style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}
                               title="補鐘：用OT補這次遲到/早退，免扣勤工"
