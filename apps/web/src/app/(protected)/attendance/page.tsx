@@ -83,6 +83,7 @@ interface ExceptionRecord {
   earlyMinutes?: number
   otMinutes?: number
   madeUp?: boolean
+  lunchLate?: boolean // ★ 2026-08-07: lunch超時產生的LATE標記
   payType?: 'HOURLY' | 'MONTHLY'
   // ABSENT-specific
   otDeducted?: boolean
@@ -417,8 +418,8 @@ export default function AttendancePage() {
           employeeId: record.employeeId,
           date: record.date,
           minutes,
-          targetType: record.type,
-          reason: `${record.type === 'LATE' ? '遲到' : '早退'}補鐘`,
+          targetType: record.lunchLate ? 'LATE_LUNCH' : record.type,
+          reason: `${(record.lunchLate ? 'LATE_LUNCH' : record.type) === 'EARLY_LEAVE' ? '早退' : '遲到'}補鐘`,
         }),
       })
       const data = await res.json()

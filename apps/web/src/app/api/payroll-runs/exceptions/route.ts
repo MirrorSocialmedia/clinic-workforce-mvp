@@ -210,6 +210,7 @@ export async function GET(req: NextRequest) {
     detail: string; punchTime?: string; correctionTime?: string;
     lateMinutes?: number; earlyMinutes?: number; otMinutes?: number;
     madeUp?: boolean;
+    lunchLate?: boolean; // ★ 2026-08-07: lunch超時產生的LATE標記
     payType?: 'HOURLY' | 'MONTHLY';
     // ABSENT-specific fields
     otDeducted?: boolean;
@@ -398,6 +399,7 @@ export async function GET(req: NextRequest) {
         employeeId: empId, employeeName: empNames.get(empId) ?? '—',
         clinicName: getEmpInfo(empId).clinics[0]?.clinicName || '—',
         date: dateStr, type: 'LATE',
+        lunchLate: true, // ★ 2026-08-07: lunch超時產生的LATE
         lateMinutes: excess,
         detail: `午休超時 ${excess} 分鐘`,
         punchTime: le.effectiveTime.toISOString(),
@@ -596,7 +598,8 @@ export async function GET(req: NextRequest) {
     )
     exceptions.forEach(ex => {
       if (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') {
-        ex.madeUp = makeupSet.has(`${ex.employeeId}_${ex.date}_${ex.type}`)
+        const matchType = (ex as any).lunchLate ? 'LATE_LUNCH' : ex.type
+        ex.madeUp = makeupSet.has(`${ex.employeeId}_${ex.date}_${matchType}`)
       }
     })
   } catch {}

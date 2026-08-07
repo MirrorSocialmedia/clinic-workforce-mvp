@@ -30,9 +30,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'employeeId, date, minutes 為必填' }, { status: 400 })
   }
 
-  // 嚴格必填：targetType 必須是 LATE 或 EARLY_LEAVE
-  if (targetType !== 'LATE' && targetType !== 'EARLY_LEAVE') {
-    return NextResponse.json({ error: 'targetType 必須是 LATE 或 EARLY_LEAVE' }, { status: 400 })
+  // 嚴格必填：targetType 必須是 LATE、LATE_LUNCH 或 EARLY_LEAVE
+  if (targetType !== 'LATE' && targetType !== 'LATE_LUNCH' && targetType !== 'EARLY_LEAVE') {
+    return NextResponse.json({ error: 'targetType 必須是 LATE、LATE_LUNCH 或 EARLY_LEAVE' }, { status: 400 })
   }
 
   // 🔧 一次性遷移：修復 targetType = null 的舊 MAKEUP 記錄
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
       const dayPunches = await getEffectivePunches(dayStart, dayEnd, { employeeId, db: prisma })
 
       let actualMinutes = 0
-      if (targetType === 'LATE') {
+      if (targetType === 'LATE' || targetType === 'LATE_LUNCH') {
         const clockIn = dayPunches
           .filter((ep: any) => ep.punchType === 'CLOCK_IN')
           .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]

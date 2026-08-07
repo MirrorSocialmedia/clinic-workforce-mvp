@@ -41,17 +41,19 @@ const byRoleThenName = (a: any, b: any) => {
   return (a.id || '').localeCompare(b.id || '')
 }
 
-// ★ 2026-08-06: 調入 badge — 非主屬店員工喺 scope 內顯示
-function TransferBadge({ emp, scopeClinicIds, clinicName, crossCompany }: {
-  emp: any; scopeClinicIds: Set<string> | null; clinicName?: string; crossCompany?: boolean
+// ★ 2026-08-07: HomeTag — 全員顯示，主屬顯示簡稱（灰色），調入顯示雙色
+function HomeTag({ emp, scopeClinicIds, shortName, crossCompany }: {
+  emp: any; scopeClinicIds: Set<string> | null; shortName?: string; crossCompany?: boolean
 }) {
   if (!scopeClinicIds) return null
-  if (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId)) return null
-  const tone = crossCompany
-    ? { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }
-    : { background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }
+  const home = emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId)
+  const tone = home
+    ? { background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
+    : crossCompany
+      ? { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }
+      : { background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }
   return <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, ...tone }}>
-    調入·{clinicName || '未設'}
+    {home ? shortName : `調入·${shortName || '未設'}`}
   </span>
 }
 
@@ -877,6 +879,7 @@ function getShiftCode(shift: Shift): string {
 
   // ★ 2026-08-06: Clinic maps for transfer badge dual-tone
   const clinicNameById = useMemo(() => new Map(clinics.map((c: any) => [c.id, c.name])), [clinics])
+  const clinicShortById = useMemo(() => new Map(clinics.map((c: any) => [c.id, (c as any).shortName || c.name])), [clinics])
   const clinicCompanyById = useMemo(() => new Map(clinics.map((c: any) => [c.id, c.company?.id])), [clinics])
   const scopeCompanyId = useMemo(() => {
     if (ovScope.type === 'company') return ovScope.id
@@ -884,7 +887,13 @@ function getShiftCode(shift: Shift): string {
     return null // 'all' view badge itself doesn't render
   }, [ovScope, clinicCompanyById])
 
-  // Step 7: Overview employees (filtered by scope + sorted by role then name, full/part split)
+  // ★ 2026-08-07: 按主店分組排序（公司視圖）
+  const homeOrder = useMemo(() => {
+    const ids = clinics.filter((c: any) => scopeClinicIds?.has(c.id)).map((c: any) => c.id)
+    return new Map(ids.map((id, i) => [id, i]))
+  }, [clinics, scopeClinicIds])
+
+  // Step 7: Overview employees (filtered by scope + sorted by home-group then role, full/part split)
   const ovEmployees = useMemo(() => {
     const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
     let scoped = activeEmployees
@@ -903,16 +912,20 @@ function getShiftCode(shift: Shift): string {
         touching.has(e.id) // ②③ 開工／調入
       )
     }
-    // ★ 2026-08-06: 調入員工排最後（同 TransferBadge 判斷式一致）
-    const isHome = (e: any) =>
-      !scopeClinicIds || (e.homeClinicId && scopeClinicIds.has(e.homeClinicId))
-    const byHomeThenRoleName = (a: any, b: any) =>
-      ((isHome(b) ? 1 : 0) - (isHome(a) ? 1 : 0)) || byRoleThenName(a, b)
+    // ★ 2026-08-07: 按主店分組排序
+    const rankOf = (e: any) => {
+      if (!scopeClinicIds) return 0
+      if (e.homeClinicId && scopeClinicIds.has(e.homeClinicId))
+        return homeOrder.get(e.homeClinicId) ?? 8000
+      return e.homeClinicId ? 9000 : 8500
+    }
+    const byHomeGroupThenRoleName = (a: any, b: any) =>
+      rankOf(a) - rankOf(b) || byRoleThenName(a, b)
 
-    const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byHomeThenRoleName)
-    const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byHomeThenRoleName)
+    const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byHomeGroupThenRoleName)
+    const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byHomeGroupThenRoleName)
     return { full, part, ordered: [...full, ...part] }
-  }, [employees, scopeClinicIds, shifts, ovMonthShifts])
+  }, [employees, scopeClinicIds, shifts, ovMonthShifts, homeOrder])
 
   // Step 7: Overview shifts (filtered by scope)
   const ovShifts = useMemo(() => {
@@ -2362,8 +2375,8 @@ function getShiftCode(shift: Shift): string {
                   background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                   padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
                   fontWeight: 500, fontSize: 11,
-                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
-  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+                }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
+  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                 {days.map((wd, dayIdx) => {
@@ -2522,8 +2535,8 @@ function getShiftCode(shift: Shift): string {
                   background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
                   padding: '4px 8px', whiteSpace: 'nowrap', zIndex: 5,
                   fontWeight: 500, fontSize: 11,
-                }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
-  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+                }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
+  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                 {days.map((wd, dayIdx) => {
@@ -3825,8 +3838,8 @@ function getShiftCode(shift: Shift): string {
                 <tbody>
                   {ovEmployees.ordered.map((emp: any) => (
                     <tr key={emp.id} className="border-t">
-                      <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
-  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+                      <td className="text-left truncate sticky left-0 bg-white pl-1.5" style={{ minWidth: 50 }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
+  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                       {mobileWeekDays.map(d => {
@@ -3878,8 +3891,8 @@ function getShiftCode(shift: Shift): string {
               <tbody>
                 {ovEmployees.ordered.map((emp: any) => (
                   <tr key={emp.id} className="border-t">
-                    <td className="text-left sticky left-0 bg-white pl-1.5">{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
-  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+                    <td className="text-left sticky left-0 bg-white pl-1.5">{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
+  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                     {mobileWeekDays.map(d => {
@@ -4591,8 +4604,8 @@ function getShiftCode(shift: Shift): string {
                             padding: '4px 8px', whiteSpace: 'nowrap',
                             fontWeight: isSelected ? 600 : 500,
                             fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
-  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+                          }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
+  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                           {monthDays.map((d, di) => {
@@ -4686,8 +4699,8 @@ function getShiftCode(shift: Shift): string {
                             padding: '4px 8px', whiteSpace: 'nowrap',
                             fontWeight: isSelected ? 600 : 500,
                             fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}<TransferBadge emp={emp} scopeClinicIds={scopeClinicIds}
-  clinicName={emp.homeClinicId ? clinicNameById.get(emp.homeClinicId) : undefined}
+                          }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
+  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                           {monthDays.map((d, di) => {
