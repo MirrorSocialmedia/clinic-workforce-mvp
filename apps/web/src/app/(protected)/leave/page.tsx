@@ -79,7 +79,7 @@ export default function LeavePage() {
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
 
   // Leave init/clear state
-  const [initForm, setInitForm] = useState({ employeeId: 'all', leaveTypeId: '', days: 14, year: 2026 })
+  const [initForm, setInitForm] = useState({ employeeId: 'all', leaveTypeId: '', days: 14, year: 2026, mode: 'init', reason: '' })
   const [clearEmployeeId, setClearEmployeeId] = useState('all')
   const [clearYear, setClearYear] = useState(2026)
 
@@ -327,18 +327,22 @@ export default function LeavePage() {
   }, [])
 
   const handleInitLeave = async () => {
-    if (!confirm(`確定初始化 ${initForm.year} 年${initForm.employeeId === 'all' ? '全部員工' : ''}的假期額度？`)) return
+    const isAdd = initForm.mode === 'add'
+    const confirmMsg = isAdd
+      ? `確定為${initForm.employeeId === 'all' ? '全部員工' : ''}增加假期額度？`
+      : `確定初始化 ${initForm.year} 年${initForm.employeeId === 'all' ? '全部員工' : ''}的假期額度？`
+    if (!confirm(confirmMsg)) return
     try {
       const res = await fetch('/api/leave-balance/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(initForm),
+        body: JSON.stringify({ ...initForm, days: typeof initForm.days === 'number' ? initForm.days : (parseInt(initForm.days) || 0) }),
       })
       const data = await res.json()
-      if (res.ok) { alert(`成功初始化 ${data.count} 筆記錄`); fetchBalances() }
-      else alert(data.error || '初始化失敗')
-    } catch (err) { alert('初始化失敗') }
+      if (res.ok) { alert(isAdd ? `成功增加 ${data.count} 筆記錄` : `成功初始化 ${data.count} 筆記錄`); fetchBalances() }
+      else alert(data.error || (isAdd ? '增加失敗' : '初始化失敗'))
+    } catch (err) { alert(isAdd ? '增加失敗' : '初始化失敗') }
   }
 
   const handleClearLeave = async () => {
@@ -908,6 +912,22 @@ export default function LeavePage() {
                     {employees.map(e => <option key={e.id} value={e.id}>{e.user?.name || e.id}</option>)}
                   </select>
                 </div>
+                {/* ★ 2026-08-07 mode radio */}
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">模式</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-1 text-sm">
+                      <input type="radio" name="initMode" value="init" checked={initForm.mode === 'init'}
+                        onChange={() => setInitForm({ ...initForm, mode: 'init', reason: '' })} />
+                      初始化（覆蓋）
+                    </label>
+                    <label className="flex items-center gap-1 text-sm">
+                      <input type="radio" name="initMode" value="add" checked={initForm.mode === 'add'}
+                        onChange={() => setInitForm({ ...initForm, mode: 'add' })} />
+                      增加額度
+                    </label>
+                  </div>
+                </div>
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">假期類型</label>
                   <select value={initForm.leaveTypeId} onChange={e => setInitForm({ ...initForm, leaveTypeId: e.target.value })}
@@ -924,7 +944,9 @@ export default function LeavePage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-muted-foreground mb-1">額度（天）</label>
+                  <label className="block text-xs text-muted-foreground mb-1">
+                    {initForm.mode === 'add' ? '增加日數' : '額度（天）'}
+                  </label>
                   <input type="number" value={initForm.days} onChange={e => setInitForm({ ...initForm, days: parseInt(e.target.value) || 0 })}
                     className="px-3 py-2 rounded-md border text-sm w-20" min="0" />
                 </div>
@@ -933,13 +955,25 @@ export default function LeavePage() {
                   <input type="number" value={initForm.year} onChange={e => setInitForm({ ...initForm, year: parseInt(e.target.value) || 2026 })}
                     className="px-3 py-2 rounded-md border text-sm w-20" min="2020" max="2030" />
                 </div>
+                {initForm.mode === 'add' && (
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="block text-xs text-muted-foreground mb-1">原因 <span className="text-red-500">*</span></label>
+                    <textarea value={initForm.reason}
+                      onChange={e => setInitForm({ ...initForm, reason: e.target.value })}
+                      className="px-3 py-2 rounded-md border text-sm w-full" rows={2}
+                      placeholder="填寫增加原因（會寫入審計）" />
+                  </div>
+                )}
                 <button className="px-3 py-2 rounded-md text-sm font-semibold text-white transition-colors" style={{ background: '#0d6efd' }}
-                  onClick={handleInitLeave} disabled={!initForm.leaveTypeId}>
-                  <span className="flex items-center gap-1"><Plus size={14} /> 初始化</span>
+                  onClick={handleInitLeave}
+                  disabled={!initForm.leaveTypeId || (initForm.mode === 'add' && !initForm.reason?.trim())}>
+                  <span className="flex items-center gap-1"><Plus size={14} /> {initForm.mode === 'add' ? '增加額度' : '初始化'}</span>
                 </button>
               </div>
               <div style={{ fontSize: 11, color: '#b45309', marginTop: 6 }}>
-                ⚠️ 會覆蓋「應得」並<strong>清零「已用」</strong>。年假請改用「重新計算假期」+「校正已用」。
+                {initForm.mode === 'add'
+                  ? 'ℹ️ 喺現有額度上增加，唔會清零「已用」。年假唔支持增加。'
+                  : '⚠️ 會覆蓋「應得」並<strong>清零「已用」</strong>。年假請改用「重新計算假期」+「校正已用」。'}
               </div>
             </section>
           )}

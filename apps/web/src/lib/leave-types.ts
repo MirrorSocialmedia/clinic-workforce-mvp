@@ -38,6 +38,7 @@ export function isAccumulativeLeave(systemKey: string | null | undefined): boole
 export const NEGATIVE_ALLOWED_KEYS = [
   LEAVE_SYSTEM_KEYS.REST_DAY,
   LEAVE_SYSTEM_KEYS.ANNUAL, // ★ 2026-08-04 新增：年假可預支
+  LEAVE_SYSTEM_KEYS.BIRTHDAY, // ★ 2026-08-07 生日假可預支
 ] as const
 
 export function allowsNegativeBalance(systemKey: string | null): boolean {

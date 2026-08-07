@@ -21,6 +21,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'TIMEBANK_ABSENT_DEDUCT', label: '缺勤扣OT鐘' },
   { action: 'TIMEBANK_REST_TO_ACCOUNT', label: '休息日還鐘' },
   { action: 'LEAVE_INIT', label: '初始化假期額度' },
+  { action: 'LEAVE_ADD', label: '增加假期額度' },
   { action: 'LEAVE_BALANCE_ADJUST', label: '校正假期餘額' },
   { action: 'LEAVE_BALANCE_DELETE', label: '刪除假期餘額' },
   { action: 'DELETE', entity: 'LeaveRequest', label: '刪除請假' },
