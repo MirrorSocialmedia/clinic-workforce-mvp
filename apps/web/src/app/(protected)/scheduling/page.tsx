@@ -307,21 +307,32 @@ export default function SchedulingPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<ShiftTemplate | null>(null)
   const [selectedLeaveType, setSelectedLeaveType] = useState<any | null>(null)
 
+  // ★ Perf: selection ref bridge — grid reads ref, not state.
+  //   Selection state kept for UI highlight (picker buttons). ref updates don't trigger re-render.
+  const selectionRef = useRef({ template: null as ShiftTemplate | null, leaveType: null as any, employeeId: '' as string })
+
   // B-04: Pickers with mutual exclusion (template ↔ leave type)
   const pickTemplate = useCallback((t: ShiftTemplate) => {
     setSelectedLeaveType(null)
-    setSelectedTemplate(prev => (prev?.id === t.id ? null : t))
-  }, [])
+    selectionRef.current.leaveType = null
+    const next = selectedTemplate?.id === t.id ? null : t
+    setSelectedTemplate(next)
+    selectionRef.current.template = next
+  }, [selectedTemplate])
   const pickLeaveType = useCallback((lt: any) => {
     setSelectedTemplate(null)
-    setSelectedLeaveType((prev: any) => (prev?.id === lt.id ? null : lt))
-  }, [])
+    selectionRef.current.template = null
+    const next = (selectedLeaveType as any)?.id === lt.id ? null : lt
+    setSelectedLeaveType(next)
+    selectionRef.current.leaveType = next
+  }, [selectedLeaveType])
 
   // Clear all selection state
   const clearSelection = useCallback(() => {
     setSelectedTemplate(null)
     setSelectedLeaveType(null)
     setSelectedEmployeeId('')
+    selectionRef.current = { template: null, leaveType: null, employeeId: '' }
   }, [])
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
@@ -2011,13 +2022,15 @@ function getShiftCode(shift: Shift): string {
     clickTimerRef.current = setTimeout(async () => {
       if (!canManage) return
 
+      const sel = selectionRef.current
+
       // ① 已經揀咗假期 → 直接建立
-      if (selectedLeaveType) {
-        return createLeaveOnCell(empId, dateStr, selectedLeaveType)
+      if (sel.leaveType) {
+        return createLeaveOnCell(empId, dateStr, sel.leaveType)
       }
 
       // ② 已經揀咗模板 → 直接建立（批量排班保留）
-      if (selectedTemplate) {
+      if (sel.template) {
         const hasLeave = leaveRequests.some(lr =>
           lr.employeeId === empId && leaveCoversDate(lr, dateStr)
         )
@@ -2025,7 +2038,7 @@ function getShiftCode(shift: Shift): string {
           setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
           return
         }
-        const ok = await createShift(empId, dateStr, selectedTemplate)
+        const ok = await createShift(empId, dateStr, sel.template)
         if (ok) { setValidationIssues([]); await refreshAll() }
         return
       }
@@ -4076,7 +4089,7 @@ function getShiftCode(shift: Shift): string {
                       className="employee-card"
                       data-employee-id={emp.id}
                       data-name={emp.user?.name ?? ''}
-                      onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                      onClick={() => { const next = selectedEmployeeId === emp.id ? '' : emp.id; setSelectedEmployeeId(next); selectionRef.current.employeeId = next }}
                       draggable={canManage && !isTouch}
                       onDragStart={(e) => {
                         if (canManage && !isTouch) {
@@ -4121,7 +4134,7 @@ function getShiftCode(shift: Shift): string {
                   className="employee-card"
                   data-employee-id={emp.id}
                   data-name={emp.user?.name ?? ''}
-                  onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                  onClick={() => { const next = selectedEmployeeId === emp.id ? '' : emp.id; setSelectedEmployeeId(next); selectionRef.current.employeeId = next }}
                   draggable={canManage && !isTouch}
                   onDragStart={(e) => {
                     if (canManage && !isTouch) {
@@ -4165,7 +4178,7 @@ function getShiftCode(shift: Shift): string {
                       className="employee-card"
                       data-employee-id={emp.id}
                       data-name={emp.user?.name ?? ''}
-                      onClick={() => setSelectedEmployeeId(prev => prev === emp.id ? '' : emp.id)}
+                      onClick={() => { const next = selectedEmployeeId === emp.id ? '' : emp.id; setSelectedEmployeeId(next); selectionRef.current.employeeId = next }}
                       draggable={canManage && !isTouch}
                       onDragStart={(e) => {
                         if (canManage && !isTouch) {
