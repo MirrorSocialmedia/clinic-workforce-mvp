@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
         },
         void: true, // Include void info for UI
       },
-      orderBy: { punchTime: 'desc' },
+      orderBy: [{ punchTime: 'desc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
       skip,
       take: pageSize,
     }),

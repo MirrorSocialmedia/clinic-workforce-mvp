@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
         clinic: { select: { id: true, name: true } },
         template: { select: { id: true, name: true } },
       },
-      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+      orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
       skip,
       take: pageSize,
     }),

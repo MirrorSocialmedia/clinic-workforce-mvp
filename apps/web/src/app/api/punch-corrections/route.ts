@@ -342,7 +342,7 @@ export async function GET(req: NextRequest) {
         },
       },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
     take: 100,
   })
 

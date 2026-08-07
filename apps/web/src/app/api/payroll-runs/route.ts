@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
         clinic: { select: { id: true, name: true } },
         _count: { select: { items: true } },
       },
-      orderBy: { periodMonth: 'desc' },
+      orderBy: [{ periodMonth: 'desc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
       skip,
       take: pageSize,
     }),

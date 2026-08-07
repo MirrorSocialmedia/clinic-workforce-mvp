@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
         },
       },
     },
-    orderBy: [{ periodMonth: 'desc' }, { employeeId: 'asc' }],
+    orderBy: [{ periodMonth: 'desc' }, { employeeId: 'asc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
     take: 500,
   })
 

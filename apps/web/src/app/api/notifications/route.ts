@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   const notifications = await prisma.notification.findMany({
     where,
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
     take: 100,
   })
 
