@@ -113,6 +113,7 @@ interface ShiftTemplate {
   isDefault: boolean
   shortName?: string | null
   shade?: number | null
+  deductLunch?: boolean // ★ 2026-08-07 false = 唔扣午飯鐘
   companyId?: string
 }
 
@@ -506,7 +507,7 @@ export default function SchedulingPage() {
     if (!monthDays.length) return
     const allShifts: any[] = []
     let page = 1
-    const pageSize = 200
+    const pageSize = 1000 // ★ 2026-08-07 26人×30日≈780更，200→4 round trip
     while (true) {
       const r = await getJSON(
         `/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&page=${page}&pageSize=${pageSize}`,
@@ -6051,7 +6052,7 @@ function getShiftCode(shift: Shift): string {
 // ============================================================
 // NewShiftTemplateForm — Inline form for creating new shift templates
 // ============================================================
-function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; shortName: string | null; startHour: number; startMinute: number; endHour: number; endMinute: number; isNightShift: boolean }) => void }) {
+function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; shortName: string | null; startHour: number; startMinute: number; endHour: number; endMinute: number; isNightShift: boolean; deductLunch?: boolean }) => void }) {
   const [name, setName] = useState('')
   const [shortName, setShortName] = useState('')
   const [startHour, setStartHour] = useState(9)
@@ -6059,6 +6060,7 @@ function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; 
   const [endHour, setEndHour] = useState(18)
   const [endMinute, setEndMinute] = useState(0)
   const [isNightShift, setIsNightShift] = useState(false)
+  const [deductLunch, setDeductLunch] = useState(true) // ★ 2026-08-07
 
   return (
     <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -6105,12 +6107,16 @@ function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; 
         <input type="checkbox" checked={isNightShift} onChange={e => setIsNightShift(e.target.checked)} />
         夜更
       </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+        <input type="checkbox" checked={deductLunch} onChange={e => setDeductLunch(e.target.checked)} />
+        扣午飯鐘
+      </label>
       <button
         className="btn btn-sm"
         style={{ background: '#e8f5e9', color: '#2e7d32', border: '1px solid #c8e6c9', fontSize: 11, padding: '4px 12px' }}
         onClick={() => {
           if (!name.trim()) { alert('請輸入名稱'); return }
-          onCreated({ name: name.trim(), shortName: shortName.trim() || null, startHour, startMinute, endHour, endMinute, isNightShift })
+          onCreated({ name: name.trim(), shortName: shortName.trim() || null, startHour, startMinute, endHour, endMinute, isNightShift, deductLunch })
           setName('')
           setShortName('')
         }}
