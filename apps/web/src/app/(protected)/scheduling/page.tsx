@@ -523,7 +523,7 @@ export default function SchedulingPage() {
 
     try {
       const lrRes = await getJSON(
-        `/api/leave-requests?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}`,
+        `/api/leave-requests?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&status=APPROVED`,
       )
       if (lrRes.ok) {
         const lrData = await lrRes.json()

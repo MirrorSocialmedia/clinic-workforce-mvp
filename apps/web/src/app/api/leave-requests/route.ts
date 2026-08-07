@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
       },
     },
     orderBy: { createdAt: 'desc' },
-    take: 200,
+    take: (qsStart && qsEnd) ? 1000 : 200, // ★ 有窗口 = 已 bounded，cap 只做保險
   })
 
   return NextResponse.json(
