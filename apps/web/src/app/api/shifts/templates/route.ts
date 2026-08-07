@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, shortName, startHour, startMinute, endHour, endMinute, isNightShift, companyId } = body
+      const { name, shortName, startHour, startMinute, endHour, endMinute, isNightShift, companyId, deductLunch } = body
 
       if (!name || startHour === undefined || endHour === undefined) {
         return NextResponse.json(
@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
           endHour,
           endMinute: endMinute ?? 0,
           isNightShift: isNightShift ?? false,
+          deductLunch: deductLunch !== false, // ★ default true
           createdBy: session.userId,
           companyId,
         },

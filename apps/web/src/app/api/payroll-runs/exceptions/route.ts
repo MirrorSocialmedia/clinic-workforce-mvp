@@ -167,6 +167,7 @@ export async function GET(req: NextRequest) {
       startTime: true,
       endTime: true,
       status: true,
+      templateId: true, // ★ 2026-08-07 deductLunch gate
       employee: {
         include: {
           user: { select: { name: true } },
@@ -218,6 +219,19 @@ export async function GET(req: NextRequest) {
     // ★ 2026-08-06: 假期返工標記
     leaveWork?: boolean;
   }> = []
+
+  // ★ 2026-08-07: Build templateId → deductLunch map for gate logic
+  const templateDeductLunch = new Map<string, boolean>()
+  {
+    const templateIds = [...new Set(shifts.map(s => s.templateId).filter((id): id is string => id !== null && id !== undefined))]
+    if (templateIds.length > 0) {
+      const templates = await prisma.shiftTemplate.findMany({
+        where: { id: { in: templateIds } },
+        select: { id: true, deductLunch: true },
+      })
+      templates.forEach(t => templateDeductLunch.set(t.id, t.deductLunch))
+    }
+  }
 
   // Build employee info map from raw punches for display names
   const empInfo = new Map<string, { name: string; clinics: Array<{ clinicId: string; clinicName: string }> }>()
@@ -364,8 +378,23 @@ export async function GET(req: NextRequest) {
     lunchPunchesByEmpDate.get(key)!.push(ep)
   }
 
+  // ★ 2026-08-07: Build emp+date → deductLunch map for gate
+  const empDateDeductsLunch = new Map<string, boolean>()
+  for (const shift of shifts) {
+    const ds = toHKDateStr(new Date(shift.date))
+    const key = `${shift.employeeId}|${ds}`
+    if (!empDateDeductsLunch.has(key)) empDateDeductsLunch.set(key, false)
+    const ded = shift.templateId
+      ? templateDeductLunch.get(shift.templateId) !== false
+      : true // no template = deduct
+    if (ded) empDateDeductsLunch.set(key, true)
+  }
+
   for (const [key, lunchPunches] of lunchPunchesByEmpDate) {
     const [empId, dateStr] = key.split('|')
+    // ★ 2026-08-07: deductLunch gate — skip lunch OT/LATE detection if day doesn't deduct
+    const dayDed = empDateDeductsLunch.get(`${empId}|${dateStr}`) ?? true
+    if (!dayDed) continue
     const lunchCfg = ruleByEmp.get(empId)?.modifiers?.lunch_break
     if (!lunchCfg?.enabled) continue
 
@@ -525,11 +554,18 @@ export async function GET(req: NextRequest) {
       const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
       const shiftEnd2 = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
       const shiftMinutes = Math.round((shiftEnd2.getTime() - shiftStart.getTime()) / 60000)
-      const deductedMinutes = Math.max(0, shiftMinutes - (lunchDefaultByEmp.get(shift.employeeId) ?? 0))
+      // ★ 2026-08-07: deductLunch gate — only deduct lunch if template allows
+      const shiftDeductsLunch = (shift.templateId
+        ? templateDeductLunch.get(shift.templateId) !== false
+        : true) // no template = deduct (safe)
+      const lunchDeduction = shiftDeductsLunch
+        ? (lunchDefaultByEmp.get(shift.employeeId) ?? 0)
+        : 0
+      const deductedMinutes = Math.max(0, shiftMinutes - lunchDeduction)
       exceptions.push({
         employeeId: shift.employeeId, employeeName: empNames.get(shift.employeeId) ?? '—',
         clinicName: shift.clinic?.name || '—', date: shiftDayStr, type: 'ABSENT',
-        detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)}，應返 ${deductedMinutes} 分鐘·已扣午飯)`,
+        detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)}，應返 ${deductedMinutes} 分鐘${shiftDeductsLunch ? '·已扣午飯' : '·未扣午飯'})`,
         shiftMinutes: deductedMinutes,
       })
     }

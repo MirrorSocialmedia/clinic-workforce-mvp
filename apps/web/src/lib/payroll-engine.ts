@@ -1525,6 +1525,7 @@ export async function calculateTimeBank(
       status: { not: 'CANCELLED' },
     },
     orderBy: { date: 'asc' },
+    include: { template: { select: { deductLunch: true } } }, // ★ 2026-08-07
   })
 
   // Compare each shift day against effective punches
@@ -1591,7 +1592,10 @@ export async function calculateTimeBank(
 
     // ★ 午休扣減（地基：有上班嘅日子一律扣 lunchDefault）
     // 決定 1 相關：同日多張更只扣一次，唔可以每張更加一次
-    if (m.hasClockIn && !lunchDeductedDates.has(shiftDateStr)) {
+    // ★ 2026-08-07: deductLunch gate — 當日全部更次 deductLunch=false 先跳；有任何一張要扣（或冇 template）→ 照扣
+    const dayDeductsLunch = sameDayShifts.length === 0 ||
+      sameDayShifts.some((s: any) => s.template?.deductLunch !== false)
+    if (m.hasClockIn && dayDeductsLunch && !lunchDeductedDates.has(shiftDateStr)) {
       // ★ 決定 3：同日多張更之間嘅空檔本身已經係無薪休息
       //   （工時按每張更分段計，空檔唔入數），唔應該再扣多次午飯。
       //   規則：全日無薪空檔總和唔夠 lunchDefault 先補扣差額。
