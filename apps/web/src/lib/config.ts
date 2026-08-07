@@ -103,6 +103,9 @@ export const CONFIG = {
     'DELETE /api/shifts/templates/:id': ['OWNER', 'MANAGER'],
     'GET /api/shifts/my-schedule': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
+    // ★ 2026-08-08 更表完整性檢查（餵排班頁 coverage 對數 — 同 GET /api/shifts 同受眾）
+    'GET /api/schedule-coverage': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
     // Shift change request routes
     'GET /api/shift-changes': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/shift-changes': ['OWNER', 'MANAGER', 'EMPLOYEE'],
