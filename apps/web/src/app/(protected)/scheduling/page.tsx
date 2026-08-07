@@ -310,11 +310,18 @@ export default function SchedulingPage() {
   // B-04: Pickers with mutual exclusion (template ↔ leave type)
   const pickTemplate = useCallback((t: ShiftTemplate) => {
     setSelectedLeaveType(null)
-    setSelectedTemplate(t)
+    setSelectedTemplate(prev => (prev?.id === t.id ? null : t))
   }, [])
   const pickLeaveType = useCallback((lt: any) => {
     setSelectedTemplate(null)
-    setSelectedLeaveType(lt)
+    setSelectedLeaveType((prev: any) => (prev?.id === lt.id ? null : lt))
+  }, [])
+
+  // Clear all selection state
+  const clearSelection = useCallback(() => {
+    setSelectedTemplate(null)
+    setSelectedLeaveType(null)
+    setSelectedEmployeeId('')
   }, [])
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
@@ -1851,14 +1858,19 @@ function getShiftCode(shift: Shift): string {
         byEmp.set(empId, cur)
       }
     }
-    return clinicEmployees
+    // ★ scope-aware: company view shows all employees in that company
+    const hoursEmps = employees.filter(e =>
+      e.status !== 'RESIGNED' &&
+      (!scopeClinicIds || (e.homeClinicId && scopeClinicIds.has(e.homeClinicId)))
+    )
+    return hoursEmps
       .map(e => {
         const v = byEmp.get(e.id) || { month: 0, week: 0 }
         return { id: e.id, name: e.user?.name ?? '?', month: Math.round(v.month * 10) / 10, week: Math.round(v.week * 10) / 10 }
       })
       .filter(x => x.month > 0 || x.week > 0)
       .sort((a, b) => b.month - a.month)
-  }, [cardShifts, shifts, viewRange, clinicEmployees, selectedClinicId])
+  }, [cardShifts, shifts, viewRange, employees, scopeClinicIds])
 
   // Task 3: Per-week stats helper (statsForDays + renderWeekStats)
   const statsForDays = useCallback((days: { date: Date; label: string; dateStr: string }[]) => {
@@ -3474,6 +3486,10 @@ function getShiftCode(shift: Shift): string {
                           if (newEnd === null) return
                           const [sh, sm] = newStart.split(':').map(Number)
                           const [eh, em] = newEnd.split(':').map(Number)
+                          // ★ 2026-08-07: deductLunch prompt (default true for old rows)
+                          const deductLunchStr = prompt(`扣午飯鐘？(y/n，留空預設扣)：`, t.deductLunch === false ? 'n' : 'y')
+                          if (deductLunchStr === null) return
+                          const deductLunch = deductLunchStr.trim().toLowerCase() !== 'n'
                           try {
                             const res = await fetch(`/api/shifts/templates/${t.id}`, {
                               method: 'PUT',
@@ -3486,6 +3502,7 @@ function getShiftCode(shift: Shift): string {
                                 startMinute: sm,
                                 endHour: eh,
                                 endMinute: em,
+                                deductLunch,
                               }),
                             })
                             if (!res.ok) {
@@ -3796,6 +3813,7 @@ function getShiftCode(shift: Shift): string {
               <select value={ovScope.type === 'all' ? 'all' : `${ovScope.type}:${ovScope.id}`}
                 onChange={e => {
                   const v = e.target.value
+                  clearSelection()
                   if (v === 'all') setOvScope({ type: 'all' })
                   else {
                     const [t, id] = v.split(':')
@@ -3982,7 +4000,7 @@ function getShiftCode(shift: Shift): string {
                   borderBottom: '1px solid #ddd', marginBottom: 4, cursor: 'pointer',
                   borderRadius: 4,
                 }}
-                onClick={() => setOvScope({ type: 'company', id: g.companyId, name: g.name })}
+                onClick={() => { clearSelection(); setOvScope({ type: 'company', id: g.companyId, name: g.name }) }}
                 title="點擊切總覽範圍到這家公司"
               >
                 {g.name}
@@ -3990,7 +4008,7 @@ function getShiftCode(shift: Shift): string {
               {g.clinics.map(c => (
                 <button
                   key={c.id}
-                  onClick={() => { setSelectedClinicId(c.id); setOvScope({ type: 'clinic', id: c.id, name: c.name }) }}
+                  onClick={() => { setSelectedClinicId(c.id); clearSelection(); setOvScope({ type: 'clinic', id: c.id, name: c.name }) }}
                   style={{
                     width: '100%', textAlign: 'left', padding: '5px 6px', marginBottom: 2,
                     borderRadius: 4, fontSize: 11, cursor: 'pointer',
@@ -4432,6 +4450,7 @@ function getShiftCode(shift: Shift): string {
 
           {/* Overview Grid — compact mode, always shown */}
           {viewMode === 'week' && viewRange && ovEmployees.ordered.length > 0 && (
+            <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell, [style*="cursor: pointer"]')) clearSelection() }}>
             <div ref={overviewRef} className="ov-compact" style={{
               marginBottom: 12,
               border: '1px solid #e5e7eb',
@@ -4444,7 +4463,7 @@ function getShiftCode(shift: Shift): string {
                 <div className="flex items-center gap-3">
                   <span>📊 全局總覽（{scopeLabel}）</span>
                   {ovScope.type !== 'all' && (
-                    <button onClick={() => setOvScope({ type: 'all' })}
+                    <button onClick={() => { clearSelection(); setOvScope({ type: 'all' }) }}
                       style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>
                       全部
                     </button>
@@ -4499,12 +4518,14 @@ function getShiftCode(shift: Shift): string {
               {renderOverviewWeek(weekDays, '本週')}
               {renderOverviewWeek(weekDays2, '下週')}
             </div>
+            </div>
           )}
 
           {/* ★ 月版全局總覽 —— 只喺 month 模式顯示，同兩週總覽互斥。
                 原本冇 viewMode 條件，令 week 模式下兩個一齊出，畫面過長；
                 而切去 month 時兩週消失，用家以為壞咗。 */}
           {viewMode === 'month' && monthDays.length > 0 && ovEmployees.ordered.length > 0 && (
+            <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell, [style*="cursor: pointer"]')) clearSelection() }}>
             <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%' }}>
               {/* Month header: navigation + capture */}
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -4845,6 +4866,7 @@ function getShiftCode(shift: Shift): string {
                   </tbody>
                 </table>
               </div>
+            </div>
             </div>
           )}
 
