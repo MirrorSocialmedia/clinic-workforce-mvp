@@ -444,20 +444,20 @@ export default function AttendancePage() {
 
   // Records tab: fetch exceptions for color-coding & status display
   // Fix #3a: Cross-month — collect months from visible records
+  // ★ 2026-08-09: Stable monthsKey memo — avoids refetch on every page change
+  const monthsKey = useMemo(() => {
+    const s = new Set<string>()
+    if (startDate) s.add(startDate.slice(0, 7))
+    if (endDate) s.add(endDate.slice(0, 7))
+    for (const r of records) s.add(toHKDateStr(new Date(r.punchTime)).slice(0, 7))
+    if (s.size === 0) s.add(toHKDateStr(new Date()).slice(0, 7))
+    return [...s].sort().join(',')
+  }, [startDate, endDate, records])
+
   const fetchRecordExceptions = useCallback(async () => {
+    const months = monthsKey.split(',')
     try {
-      const months = new Set<string>()
-      if (startDate) months.add(startDate.slice(0, 7))
-      if (endDate) months.add(endDate.slice(0, 7))
-      if (months.size === 0) months.add(toHKDateStr(new Date()).slice(0, 7))
-
-      // Also add months from records that are visible
-      for (const r of records) {
-        months.add(toHKDateStr(new Date(r.punchTime)).slice(0, 7))
-      }
-
-      const all: ExceptionRecord[] = []
-      for (const m of months) {
+      const results = await Promise.all(months.map(async m => {
         const params = new URLSearchParams({ periodMonth: m })
         if (clinicFilter) params.set('clinicId', clinicFilter)
         if (employeeFilter) params.set('employeeId', employeeFilter)
@@ -465,15 +465,14 @@ export default function AttendancePage() {
           credentials: 'include',
           cache: 'no-store',
         })
-        if (res.ok) {
-          const d = await res.json()
-          all.push(...(d.exceptions || []))
-        }
-      }
-      setRecordsExceptions(all)
-      setLoadedMonths(months)
-    } catch {}
-  }, [startDate, endDate, records, clinicFilter, employeeFilter])
+        return res.ok ? (await res.json()).exceptions || [] : []
+      }))
+      setRecordsExceptions(results.flat())
+      setLoadedMonths(new Set(months))
+    } catch (e) {
+      console.error('[attendance] record exceptions fetch failed', e)
+    }
+  }, [monthsKey, clinicFilter, employeeFilter])
 
   useEffect(() => {
     if (user && activeTab === 'records') fetchRecordExceptions()
