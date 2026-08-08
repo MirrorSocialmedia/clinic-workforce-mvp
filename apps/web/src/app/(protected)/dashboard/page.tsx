@@ -118,86 +118,15 @@ export default function DashboardPage() {
       .catch(() => setLeaveBalances([]))
   }, [])
 
-  // Fetch sensitive operations (OWNER only)
+  // Fetch sensitive operations (OWNER only) — single endpoint
   useEffect(() => {
-    const role = data?.role
-    if (role !== 'OWNER') return // ROLE-OK: OWNER 專屬營運數據
-
+    if (data?.role !== 'OWNER') return // ROLE-OK: OWNER 專屬營運數據
     setOpsLoading(true)
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-    const fromDate = toHKDateStr(sevenDaysAgo).slice(0, 10)
-    const sensitiveActions = ['VOID_PUNCH', 'ABSENT_DEDUCT', 'ABSENT_DEDUCT_CANCEL', 'CONVERT', 'CREATE_PUNCH',
-      'PUNCH_EDIT', 'FACE_REVIEW_ACTION', // ★ 2026-08-05 漏網
-      'TIMEBANK_INIT_ADJUST', 'TIMEBANK_MAKEUP', 'TIMEBANK_CONVERT', 'TIMEBANK_ABSENT_DEDUCT', 'TIMEBANK_REST_TO_ACCOUNT', 'LEAVE_INIT', 'EXPENSE_CREATE', 'EXPENSE_DELETE',
-      'PAYROLL_REVERT_TO_DRAFT', 'LEAVE_BALANCE_ADJUST', 'LEAVE_BALANCE_DELETE']
-
-    let promises = sensitiveActions.map(action =>
-      fetch(`/api/audit-logs?action=${action}&fromDate=${fromDate}`, { credentials: 'include' })
-        .then(r => r.ok ? r.json() : { logs: [] })
-        .catch(() => ({ logs: [] }))
-    )
-    // Also fetch DELETE on LeaveRequest (Prisma extension logs as action=DELETE, entity=LeaveRequest)
-    promises.push(
-      fetch(`/api/audit-logs?action=DELETE&entity=LeaveRequest&fromDate=${fromDate}`, { credentials: 'include' })
-        .then(r => r.ok ? r.json() : { logs: [] })
-        .catch(() => ({ logs: [] }))
-    )
-    // ★ 補登申請（auto 格式）：CREATE=提出/即批改時間、UPDATE=批准/拒絕
-    for (const act of ['CREATE', 'UPDATE']) {
-      promises.push(
-        fetch(`/api/audit-logs?action=${act}&entity=PunchCorrection&fromDate=${fromDate}`, { credentials: 'include' })
-          .then(r => r.ok ? r.json() : { logs: [] })
-          .catch(() => ({ logs: [] }))
-      )
-    }
-
-    Promise.all(promises).then(results => {
-      const allLogs = results.flatMap(r => r.logs || [])
-      // Group by actor
-      const byActor = new Map<string, { name: string; role: string; count: number; byAction: Record<string, number>; logs: any[] }>()
-      const actionLabels: Record<string, string> = {
-        VOID_PUNCH: '作廢打卡',
-        ABSENT_DEDUCT: '缺勤扣OT',
-        ABSENT_DEDUCT_CANCEL: '取消扣OT',
-        CONVERT: 'OT換假',
-        LEAVE_DELETE: '刪除請假',
-        CREATE_PUNCH: '補登打卡',
-        PUNCH_EDIT: '編輯打卡',
-        FACE_REVIEW_ACTION: '人臉覆核批核',
-        CORRECTION_CREATE: '補登申請（改時間）',
-        CORRECTION_REVIEW: '批核補登申請',
-        TIMEBANK_INIT_ADJUST: '初始化時間帳戶',
-        TIMEBANK_MAKEUP: '補鐘',
-        TIMEBANK_CONVERT: '時間帳戶兌換',
-        TIMEBANK_ABSENT_DEDUCT: '缺勤扣OT鐘',
-        TIMEBANK_REST_TO_ACCOUNT: '休息日還鐘',
-        LEAVE_INIT: '初始化假期額度',
-        EXPENSE_CREATE: '新增雜項',
-        EXPENSE_DELETE: '刪除雜項',
-        LEAVE_BALANCE_ADJUST: '校正假期餘額',
-        LEAVE_BALANCE_DELETE: '刪除假期餘額',
-      }
-      for (const log of allLogs) {
-        const actorName = log.actor?.name || log.actorId
-        const actorRole = log.actor?.role || ''
-        // Normalize: DELETE on LeaveRequest → LEAVE_DELETE; PunchCorrection → CORRECTION_CREATE/REVIEW
-        const action =
-          (log.action === 'DELETE' && log.entity === 'LeaveRequest') ? 'LEAVE_DELETE'
-          : (log.action === 'CREATE' && log.entity === 'PunchCorrection') ? 'CORRECTION_CREATE'
-          : (log.action === 'UPDATE' && log.entity === 'PunchCorrection') ? 'CORRECTION_REVIEW'
-          : log.action
-        const existing = byActor.get(log.actorId)
-        if (!existing) {
-          byActor.set(log.actorId, { name: actorName, role: actorRole, count: 1, byAction: { [action]: 1 }, logs: [log] })
-        } else {
-          existing.count++
-          existing.byAction[action] = (existing.byAction[action] || 0) + 1
-          existing.logs.push(log)
-        }
-      }
-      const actors = Array.from(byActor.values()).sort((a, b) => b.count - a.count)
-      setSensitiveOps(actors.map(a => ({ ...a, actionLabels })))
-    }).catch(() => setSensitiveOps([])).finally(() => setOpsLoading(false))
+    fetch('/api/audit-logs/sensitive-summary?days=7', { credentials: 'include', cache: 'no-store' })
+      .then(r => r.ok ? r.json() : [])
+      .then((actors: any[]) => setSensitiveOps(Array.isArray(actors) ? actors : []))
+      .catch(() => setSensitiveOps([]))
+      .finally(() => setOpsLoading(false))
   }, [data?.role])
 
   if (isEmployee) return null
