@@ -5,6 +5,30 @@ import { matchPunchesToShifts } from './shift-punch-match'
 import { invalidateTimeBankFrom } from './punch-query'
 
 /**
+ * 由 PayRule.configJson（string 或已 parse 的 object）讀出 Early-in OT 設定。
+ * JSON 中的 key 是 snake_case（RuleComposerModal 寫入格式），
+ * 返回 camelCase 給 computeEarlyInOt 使用。
+ * 三個 caller（approve route、revoke、exceptions route）都用這個函數。
+ */
+export function readEarlyInOtCfg(configJson?: string | null | Record<string, any>): {
+  earlyInMinMinutes: number
+  otMinMinutes: number
+  otRoundMinutes: number
+} {
+  try {
+    const obj = typeof configJson === 'string' ? JSON.parse(configJson) : (configJson ?? {})
+    const ot = obj?.modifiers?.overtime ?? {}
+    return {
+      earlyInMinMinutes: ot.early_in_min_minutes ?? 15,
+      otMinMinutes: ot.ot_min_minutes ?? 0,
+      otRoundMinutes: ot.ot_round_minutes ?? 0,
+    }
+  } catch {
+    return { earlyInMinMinutes: 15, otMinMinutes: 0, otRoundMinutes: 0 }
+  }
+}
+
+/**
  * 計算提早上班 OT 分鐘（過門檻 + 取整後）。
  * 門檻係閘，唔係扣減：rawEarly = 20、門檻 15 → 計 20，唔係計 5。
  * 次序：threshold first, then round（同 payroll-engine.ts:1581-1588 一致）。
@@ -117,13 +141,7 @@ export async function revokeStaleEarlyOt(
     },
     orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
   })
-  let cfg: { earlyInMinMinutes?: number; otMinMinutes?: number; otRoundMinutes?: number } = {}
-  if (empPayRule?.configJson) {
-    try {
-      const parsed = JSON.parse(empPayRule.configJson)
-      cfg = parsed?.modifiers?.overtime ?? {}
-    } catch { /* bad JSON → defaults */ }
-  }
+  const cfg = readEarlyInOtCfg(empPayRule?.configJson)
 
   const recomputed = computeEarlyInOt(rawEarly, cfg)
 

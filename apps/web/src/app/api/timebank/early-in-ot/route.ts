@@ -6,7 +6,7 @@ import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { getEffectivePunches } from '@/lib/punch-query'
 import { matchPunchesToShifts } from '@/lib/shift-punch-match'
-import { computeEarlyInOt } from '@/lib/early-in-ot'
+import { computeEarlyInOt, readEarlyInOtCfg } from '@/lib/early-in-ot'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
@@ -78,15 +78,7 @@ export async function POST(req: NextRequest) {
       },
       orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     })
-    let cfg: { earlyInMinMinutes?: number; otMinMinutes?: number; otRoundMinutes?: number } = {}
-    if (empPayRule?.configJson) {
-      try {
-        const parsed = JSON.parse(empPayRule.configJson)
-        cfg = parsed?.modifiers?.overtime ?? {}
-      } catch (e) {
-        console.error('[early-in-ot] bad configJson employeeId=', employeeId, e)
-      }
-    }
+    const cfg = readEarlyInOtCfg(empPayRule?.configJson)
 
     // 計算最終分鐘
     const finalMinutes = computeEarlyInOt(rawEarly, cfg)

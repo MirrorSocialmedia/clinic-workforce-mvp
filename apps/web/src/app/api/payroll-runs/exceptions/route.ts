@@ -8,7 +8,7 @@ import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
 import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
 import { matchPunchesToShifts } from '@/lib/shift-punch-match'
-import { computeEarlyInOt } from '@/lib/early-in-ot'
+import { computeEarlyInOt, readEarlyInOtCfg } from '@/lib/early-in-ot'
 
 // GET /api/payroll-runs/exceptions — Attendance exceptions report + timebank summaries
 export async function GET(req: NextRequest) {
@@ -673,13 +673,8 @@ export async function GET(req: NextRequest) {
       if (hourlyEmpIds.has(empId)) continue
 
       // Get payRule config for threshold calculation
-      const empCfg = ruleByEmp.get(empId) ?? {}
-      const overtimeCfg = empCfg?.modifiers?.overtime ?? {}
-      const finalMinutes = computeEarlyInOt(rawEarly, {
-        earlyInMinMinutes: overtimeCfg.early_in_min_minutes ?? 15,
-        otMinMinutes: overtimeCfg.ot_min_minutes ?? 0,
-        otRoundMinutes: overtimeCfg.ot_round_minutes ?? 0,
-      })
+      const cfg = readEarlyInOtCfg(ruleByEmp.get(empId) ?? {})
+      const finalMinutes = computeEarlyInOt(rawEarly, cfg)
       if (finalMinutes <= 0) continue // Under threshold — no row needed
 
       // Check existing entry

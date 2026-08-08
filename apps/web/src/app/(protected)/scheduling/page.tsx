@@ -589,6 +589,7 @@ export default function SchedulingPage() {
   const draggingTemplate = useRef<{ templateId: string; employeeId: string } | null>(null)
   const draggingLeave = useRef<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>(null)
   const justDroppedRef = useRef(false)
+  const didInitClinicRef = useRef(false)
 
   // Click timer for single/double-click debouncing in overview cells
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -732,7 +733,9 @@ function getShiftCode(shift: Shift): string {
       if (clinicsRes.ok) {
         const clinicsData = await clinicsRes.json()
         setClinics(clinicsData.clinics || [])
-        if (clinicsData.clinics?.length > 0 && !selectedClinicId) {
+        // Only set default clinic on first load; subsequent runs (e.g., company mode clear) must not override
+        if (clinicsData.clinics?.length > 0 && !didInitClinicRef.current) {
+          didInitClinicRef.current = true
           setSelectedClinicId(clinicsData.clinics[0].id)
         }
       }
@@ -751,7 +754,7 @@ function getShiftCode(shift: Shift): string {
     } finally {
       setLoading(false)
     }
-  }, [selectedClinicId])
+  }, [])
 
   useEffect(() => {
     loadData()
