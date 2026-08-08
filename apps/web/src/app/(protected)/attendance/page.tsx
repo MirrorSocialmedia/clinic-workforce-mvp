@@ -352,6 +352,19 @@ export default function AttendancePage() {
     return { display: `${correctedStr}（原 ${originalStr}）`, hasCorrection: true }
   }
 
+  // Pre-group exceptions by empId|date|type for O(1) lookup (replaces 4× linear .find() per record)
+  const exceptionMap = useMemo(() => {
+    const m = new Map<string, ExceptionRecord[]>()
+    for (const e of recordsExceptions) {
+      if (!e.employeeId || !e.date || !e.type) continue
+      const key = `${e.employeeId}|${e.date}|${e.type}`
+      const arr = m.get(key)
+      if (arr) arr.push(e)
+      else m.set(key, [e])
+    }
+    return m
+  }, [recordsExceptions])
+
   // Helper: build exception lookup using HK timezone dates
   const getRecordException = useCallback((record: PunchRecord): {
     late: ExceptionRecord | null;
@@ -369,32 +382,23 @@ export default function AttendancePage() {
     })()
 
     const recordDate = toHKDateStr(new Date(record.punchTime))
-    const late = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'LATE' &&
-        e.punchTime &&
-        Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
-    )
-    const earlyLeave = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_LEAVE' &&
-        e.punchTime &&
-        Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
-    )
-    const ot = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'OT' &&
-        e.punchTime &&
-        Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
-    )
-    const earlyIn = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_IN' &&
-        e.punchTime && Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
-    )
-    return {
-      late: late || null,
-      earlyLeave: earlyLeave || null,
-      ot: ot || null,
-      earlyIn: earlyIn || null,
+    const base = `${record.employeeId}|${recordDate}`
+
+    const match = (type: string): ExceptionRecord | null => {
+      const candidates = exceptionMap.get(`${base}|${type}`) ?? []
+      for (const e of candidates) {
+        if (e.punchTime && Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000) return e
+      }
+      return null
     }
-  }, [recordsExceptions])
+
+    return {
+      late: match('LATE'),
+      earlyLeave: match('EARLY_LEAVE'),
+      ot: match('OT'),
+      earlyIn: match('EARLY_IN'),
+    }
+  }, [recordsExceptions, exceptionMap])
 
   // Shared data loading
   const fetchUserData = async () => {
