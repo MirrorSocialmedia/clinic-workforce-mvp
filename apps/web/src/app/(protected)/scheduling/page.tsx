@@ -5637,7 +5637,7 @@ function getShiftCode(shift: Shift): string {
 
                     if (res.ok) {
                       setEditingShift(null)
-                      loadShifts()
+                      await refreshAll()
                     } else {
                       const err = await res.json().catch(() => ({}))
                       setValidationIssues([{ type: 'error', rule: 'api', message: err.error || `更新失敗（${res.status}）` }])
@@ -5754,7 +5754,7 @@ function getShiftCode(shift: Shift): string {
                   if (!template) return
 
                   await createShift(employeeId, date, template)
-                  await loadShifts()
+                  await refreshAll()
                   setShowNewShiftModal(false)
                 }}
                 style={{
