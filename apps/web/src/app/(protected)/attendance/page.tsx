@@ -75,7 +75,7 @@ interface ExceptionRecord {
   employeeName: string
   clinicName: string
   date: string
-  type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION' | 'OT'
+  type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION' | 'OT' | 'EARLY_IN'
   detail: string
   punchTime?: string
   correctionTime?: string
@@ -88,9 +88,16 @@ interface ExceptionRecord {
   // ABSENT-specific
   otDeducted?: boolean
   shiftMinutes?: number
+  deductedLunch?: boolean // ★ ABSENT 午飯標示
   clinicId?: string
   // ★ 2026-08-06: 假期返工標記
   leaveWork?: boolean
+  // EARLY_IN-specific
+  earlyInMinutes?: number
+  earlyOtApproved?: boolean
+  earlyOtMinutes?: number
+  earlyOtPreview?: number
+  earlyOtStale?: boolean
 }
 
 // ============================================================
@@ -119,10 +126,10 @@ function OtDeductCell({ row, canManageAttendance }: { row: { employeeId: string;
     window.dispatchEvent(new CustomEvent('attendance-refresh'))
   }
 
-  if (!row.shiftMinutes) return <td>—</td>
+  if (!row.shiftMinutes) return <span>—</span>
 
   return (
-    <td>
+    <span>
       {row.otDeducted ? (
         <span className="inline-flex items-center gap-2">
           <span className="px-2 py-1 text-xs rounded bg-violet-50 text-violet-700 border border-violet-200">
@@ -139,7 +146,7 @@ function OtDeductCell({ row, canManageAttendance }: { row: { employeeId: string;
       ) : (
         <span>—</span>
       )}
-    </td>
+    </span>
   )
 }
 
@@ -182,13 +189,13 @@ function EarlyInOtCell({ row, canManageAttendance }: {
     window.dispatchEvent(new CustomEvent('attendance-refresh'))
   }
 
-  if (!row.earlyInMinutes || row.earlyInMinutes <= 0) return <td>—</td>
+  if (!row.earlyInMinutes || row.earlyInMinutes <= 0) return <span>—</span>
 
   // Under threshold
-  if ((row.earlyOtPreview ?? 0) <= 0) return <td>—</td>
+  if ((row.earlyOtPreview ?? 0) <= 0) return <span>—</span>
 
   return (
-    <td>
+    <span>
       {row.earlyOtApproved && !row.earlyOtStale ? (
         // Approved state
         <span className="inline-flex items-center gap-2">
@@ -217,7 +224,7 @@ function EarlyInOtCell({ row, canManageAttendance }: {
       ) : (
         <span>—</span>
       )}
-    </td>
+    </span>
   )
 }
 
@@ -531,12 +538,12 @@ export default function AttendancePage() {
   }, [activeTab, fetchRecords, fetchRecordExceptions, fetchExceptions])
 
   const typeLabel = (type: string) => {
-    switch (type) { case 'LATE': return '遲到'; case 'EARLY_LEAVE': return '早退'; case 'ABSENT': return '缺勤'; case 'CORRECTION': return '補登'; case 'OT': return 'OT'; default: return type }
+    switch (type) { case 'LATE': return '遲到'; case 'EARLY_LEAVE': return '早退'; case 'ABSENT': return '缺勤'; case 'CORRECTION': return '補登'; case 'OT': return 'OT'; case 'EARLY_IN': return '提早上班'; default: return type }
   }
   const typeColor = (type: string) => {
-    switch (type) { case 'LATE': return '#ffc107'; case 'EARLY_LEAVE': return '#fd7e14'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; case 'OT': return '#059669'; default: return '#888' }
+    switch (type) { case 'LATE': return '#ffc107'; case 'EARLY_LEAVE': return '#fd7e14'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; case 'OT': return '#059669'; case 'EARLY_IN': return '#185FA5'; default: return '#888' }
   }
-  const nonOtExceptions = exceptions.filter(e => e.type !== 'OT')
+  const nonOtExceptions = exceptions.filter(e => e.type !== 'OT' && e.type !== 'EARLY_IN')
   const summary = {
     total: nonOtExceptions.length, late: nonOtExceptions.filter(e => e.type === 'LATE').length,
     absent: nonOtExceptions.filter(e => e.type === 'ABSENT').length, correction: nonOtExceptions.filter(e => e.type === 'CORRECTION').length,
@@ -1318,6 +1325,12 @@ export default function AttendancePage() {
                           canManageAttendance={hasAttendanceManage}
                         />
                       )}
+                      {ex.type === 'EARLY_IN' && ex.payType !== 'HOURLY' && (
+                        <EarlyInOtCell
+                          row={{ employeeId: ex.employeeId, date: ex.date, earlyInMinutes: ex.earlyInMinutes || 0, earlyOtApproved: !!ex.earlyOtApproved, earlyOtMinutes: ex.earlyOtMinutes || 0, earlyOtPreview: ex.earlyOtPreview || 0, earlyOtStale: !!ex.earlyOtStale }}
+                          canManageAttendance={hasAttendanceManage}
+                        />
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1370,6 +1383,13 @@ export default function AttendancePage() {
                         {ex.type === 'ABSENT' && ex.payType !== 'HOURLY' && (
                           <OtDeductCell
                             row={{ employeeId: ex.employeeId, date: ex.date, shiftMinutes: ex.shiftMinutes || 0, otDeducted: !!ex.otDeducted }}
+                            canManageAttendance={hasAttendanceManage}
+                          />
+                        )}
+                        {/* EARLY_IN 三態：共用 EarlyInOtCell */}
+                        {ex.type === 'EARLY_IN' && ex.payType !== 'HOURLY' && (
+                          <EarlyInOtCell
+                            row={{ employeeId: ex.employeeId, date: ex.date, earlyInMinutes: ex.earlyInMinutes || 0, earlyOtApproved: !!ex.earlyOtApproved, earlyOtMinutes: ex.earlyOtMinutes || 0, earlyOtPreview: ex.earlyOtPreview || 0, earlyOtStale: !!ex.earlyOtStale }}
                             canManageAttendance={hasAttendanceManage}
                           />
                         )}
