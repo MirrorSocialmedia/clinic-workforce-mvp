@@ -26,6 +26,9 @@ import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMa
  */
 const TIMEBANK_ENGINE_VERSION = 3 // v3: 分更時間窗 + floor 取整
 
+// ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
+let earlyInOtWarned = false
+
 /**
  * ★ Fingerprint must reflect the employee's real pay rule config.
  *   Old version received config from caller, but the payroll path passed
@@ -1509,7 +1512,10 @@ export async function calculateTimeBank(
       lunchDefault = lunch.defaultMinutes ?? 60
       lunchMin = lunch.minMinutes ?? 30
     }
-  } catch {
+  } catch (e) {
+    console.error('[payroll-engine] pay rule config 讀唔到 —— 午休偵測已關閉(lunchEnabled=false)', {
+      employeeId, monthStart, error: e instanceof Error ? e.message : String(e),
+    })
     otMinMinutes = 0
     otRoundMinutes = 0
   }
@@ -1723,8 +1729,8 @@ export async function calculateTimeBank(
       else makeupLateMinutes += m // 'LATE' or null (legacy) → treat as late
     }
     makeupMinutes = makeupLateMinutes + makeupEarlyMinutes + makeupAbsentMinutes // 總消耗（帳戶用）
-  } catch {
-    // timeBankEntry table may not exist yet
+  } catch (e) {
+    console.error('[payroll-engine] makeup entries read failed, treated as 0', { employeeId, error: e })
   }
 
   // ★ 2026-08-08: 新增 — 本月已批准嘅早到 OT（獨立欄位，★唔入 ADJUST_TYPES）
@@ -1734,7 +1740,9 @@ export async function calculateTimeBank(
       where: { employeeId, type: 'EARLY_IN_OT', date: { gte: monthStart, lte: monthEnd } },
     })
     earlyInOtMinutes = (earlyInRows || []).reduce((s: number, e: any) => s + e.minutes, 0)
-  } catch { /* table may not exist */ }
+  } catch (e) {
+    if (!earlyInOtWarned) { earlyInOtWarned = true; console.error('[payroll-engine] EARLY_IN_OT read failed', e) }
+  }
 
   // 抓換假消耗（LEAVE_CONVERT 負消耗OT，LEAVE_SWAP_BACK 正換回OT，INIT_ADJUST/REST_TO_ACCOUNT 為帳戶調整）
   let convertedMinutes = 0
@@ -1745,8 +1753,8 @@ export async function calculateTimeBank(
       where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
     })
     convertedMinutes = convertEntries?.reduce((s: number, e: any) => s + e.minutes, 0) || 0
-  } catch {
-    // timeBankEntry table may not exist yet
+  } catch (e) {
+    console.error('[payroll-engine] leave convert entries read failed, treated as 0', { employeeId, error: e })
   }
 
   // 各扣各的：netLate = late - makeupLate, netEarly = earlyLeave - makeupEarly
@@ -2348,8 +2356,8 @@ async function collectWorkData(
         makeupLateDates.add(dateStr)
       }
     }
-  } catch {
-    // timeBankEntry may not exist yet
+  } catch (e) {
+    console.error('[payroll-engine] timebankEntry makeup detail read failed', { employeeId, error: e })
   }
 
   // 用 getEffectivePunches（作廢排除+修正套用）
