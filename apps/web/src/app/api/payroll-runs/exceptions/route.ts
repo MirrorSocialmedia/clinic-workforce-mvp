@@ -685,6 +685,10 @@ export async function GET(req: NextRequest) {
       const isStale = !!entry && entry.minutes !== recomputed
 
       // Find a clinic name from the shifts
+      // ★ Get earliest CLOCK_IN effective time for punchTime matching
+      const clockInPunch = dayPunches
+        .filter((p: any) => p.punchType === 'CLOCK_IN')
+        .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
       const clinicName = dayShifts[0]?.clinic?.name || '—'
 
       exceptions.push({
@@ -694,6 +698,7 @@ export async function GET(req: NextRequest) {
         date: dateStr,
         type: 'EARLY_IN',
         detail: `提早上班 ${rawEarly} 分（實得 ${finalMinutes} 分）`,
+        punchTime: clockInPunch?.effectiveTime.toISOString(),
         earlyInMinutes: rawEarly,
         earlyOtApproved: !!entry,
         earlyOtMinutes: entry?.minutes ?? 0,

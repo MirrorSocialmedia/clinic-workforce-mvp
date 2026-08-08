@@ -830,11 +830,15 @@ function getShiftCode(shift: Shift): string {
   // Filter employees by selected clinic
   const clinicEmployees = useMemo(() => {
     const activeEmployees = employees.filter(emp => emp.status === 'ACTIVE' || emp.status === undefined)
-    if (empScope === 'all' || !selectedClinicId) return activeEmployees
-    // ★ 2026-08-03：「本店」= 主屬診所（homeClinicId）
-    return activeEmployees.filter(emp => emp.homeClinicId === selectedClinicId)
-  }, [employees, selectedClinicId, empScope])
-
+    if (empScope === 'all') return activeEmployees
+    if (selectedClinicId) return activeEmployees.filter(emp => emp.homeClinicId === selectedClinicId)
+    // ★ 公司模式：冇單一店，但收窄到該公司所有店
+    if (ovScope.type === 'company') {
+      const ids = new Set(clinics.filter(c => c.company?.id === ovScope.id).map(c => c.id))
+      return activeEmployees.filter(emp => emp.homeClinicId && ids.has(emp.homeClinicId))
+    }
+    return activeEmployees
+  }, [employees, selectedClinicId, empScope, ovScope, clinics])
   // ★ Cell shift options for month view click menu
   const cellShiftOptions = useMemo(() => {
     if (!selectedClinicId) return []

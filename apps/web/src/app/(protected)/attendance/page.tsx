@@ -385,7 +385,8 @@ export default function AttendancePage() {
         Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
     )
     const earlyIn = recordsExceptions.find(
-      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_IN'
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_IN' &&
+        e.punchTime && Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
     )
     return {
       late: late || null,
@@ -855,7 +856,7 @@ export default function AttendancePage() {
               const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
               const showEarly = earlyEx
               const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
-              const showEarlyIn = earlyInEx
+              const showEarlyIn = isClockIn ? earlyInEx : null /* ★ 早到只屬上班卡 */
               const recordDateStr = toHKDateStr(new Date(record.punchTime))
               const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
               const isVoided = !!(record.void as any)
@@ -1069,7 +1070,7 @@ export default function AttendancePage() {
                     const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
                     const showEarly = earlyEx
                     const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
-                    const showEarlyIn = earlyInEx
+                    const showEarlyIn = isClockIn ? earlyInEx : null /* ★ 早到只屬上班卡 */
                     const recordDateStr = toHKDateStr(new Date(record.punchTime))
                     const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
                     const isVoided = !!(record.void as any)
