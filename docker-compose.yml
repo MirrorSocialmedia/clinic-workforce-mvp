@@ -35,7 +35,7 @@ services:
     environment:
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=1024
-      DATABASE_URL: postgresql://clinic:${DB_PASSWORD}@db:5432/clinic_prod
+      DATABASE_URL: postgresql://clinic:${DB_PASSWORD}@db:5432/clinic_prod?connection_limit=15&pool_timeout=20
       JWT_SECRET: ${JWT_SECRET}
       SESSION_SECRET: ${JWT_SECRET}
       FACE_SERVICE_URL: http://face:8000
