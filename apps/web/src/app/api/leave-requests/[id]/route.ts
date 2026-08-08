@@ -277,6 +277,18 @@ export async function PATCH(
         data: updateData,
       })
 
+      // ★ audit: LeaveRequest 變更（PATCH 唔啱入 Prisma extension auto-audit）
+      await prisma.auditLog.create({
+        data: {
+          action: 'LEAVE_REQUEST_PATCH',
+          entity: 'LeaveRequest',
+          entityId: params.id,
+          actorId: session.userId,
+          notes: `PATCH LeaveRequest: isPlanned=${isPlanned}, approvedDays=${approvedDays}`,
+          ipAddress: req.headers.get('x-forwarded-for') || undefined,
+        },
+      })
+
       return NextResponse.json({ success: true, leaveRequest: updated })
     } catch (error) {
       console.error('Leave request update error:', error)

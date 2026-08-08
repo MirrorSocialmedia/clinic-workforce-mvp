@@ -29,6 +29,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LEAVE_BALANCE_ADJUST', label: '校正假期餘額' },
   { action: 'LEAVE_BALANCE_DELETE', label: '刪除假期餘額' },
   { action: 'DELETE', entity: 'LeaveRequest', label: '刪除請假' },
+  { action: 'LEAVE_REQUEST_PATCH', label: '修改請假狀態' },
   { action: 'EXPENSE_CREATE', label: '新增雜項' },
   { action: 'EXPENSE_DELETE', label: '刪除雜項' },
   { action: 'PAYROLL_REVERT_TO_DRAFT', label: '計糧重製草稿' },
