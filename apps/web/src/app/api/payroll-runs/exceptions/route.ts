@@ -70,21 +70,92 @@ export async function GET(req: NextRequest) {
   }
   // ★ scope='all' 且 allowedClinics=null → 唔限制（OWNER）
 
-  // ★ P2-16: 同引擎口徑一致：只認 configJson.base_type，唔睇 payType 欄；
-  // 而且要按計糧月份揀規則（同 generatePayrollRun:857 一樣）
-  const activeRules = await prisma.payRule.findMany({
-    where: {
-      isActive: true,
-      effectiveFrom: { lte: monthEnd },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
-    },
-    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-    select: { employeeId: true, configJson: true },
-  })
+  // ★ C3: Parallelize 5 independent queries
+  const correctionWhere: any = {
+    status: 'APPROVED',
+    correctedTime: { gte: monthStart, lte: monthEnd },
+  }
+  if (scopedClinicId) correctionWhere.clinicId = scopedClinicId
+  else if (scopedClinicIds !== undefined) correctionWhere.clinicId = { in: scopedClinicIds }
+  if (employeeId) correctionWhere.employeeId = employeeId
+
+  const shiftWhere: any = {
+    date: { gte: monthStart, lte: monthEnd },
+    status: 'CONFIRMED',
+  }
+  if (scopedClinicId) shiftWhere.clinicId = scopedClinicId
+  else if (scopedClinicIds !== undefined) shiftWhere.clinicId = { in: scopedClinicIds }
+  if (employeeId) shiftWhere.employeeId = employeeId
+
+  const [activeRules, effectivePunches, rawPunches, corrections, shifts] = await Promise.all([
+    prisma.payRule.findMany({
+      where: {
+        isActive: true,
+        effectiveFrom: { lte: monthEnd },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
+      },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+      select: { employeeId: true, configJson: true },
+    }),
+    getEffectivePunches(monthStart, monthEnd, {
+      clinicId: scopedClinicId,
+      clinicIds: scopedClinicIds,
+      employeeId: employeeId || undefined,
+    }),
+    prisma.punchRecord.findMany({
+      where: {
+        punchTime: { gte: monthStart, lte: monthEnd },
+        void: { is: null },
+        ...(scopedClinicId ? { clinicId: scopedClinicId } : scopedClinicIds ? { clinicId: { in: scopedClinicIds } } : {}),
+        ...(employeeId ? { employeeId } : {}),
+      },
+      include: {
+        employee: {
+          include: {
+            user: { select: { name: true } },
+            clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
+          },
+        },
+      },
+      orderBy: { punchTime: 'asc' },
+    }),
+    prisma.punchCorrection.findMany({
+      where: correctionWhere,
+      include: {
+        employee: {
+          include: {
+            user: { select: { name: true } },
+            clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
+          },
+        },
+      },
+    }),
+    prisma.shift.findMany({
+      where: shiftWhere,
+      select: {
+        id: true,
+        employeeId: true,
+        clinicId: true,
+        secondaryClinicId: true,
+        date: true,
+        startTime: true,
+        endTime: true,
+        status: true,
+        templateId: true, // ★ 2026-08-07 deductLunch gate
+        employee: {
+          include: {
+            user: { select: { name: true } },
+            clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
+          },
+        },
+        clinic: { select: { id: true, name: true } },
+      },
+    }),
+  ])
+
+  // Build lookup maps from parallel results
   const seen = new Set<string>()
   const hourlyEmpIds = new Set<string>()
-  // ★ 每個員工的 pay rule config —— 之前傳空 {} 令 OT 門檻/午休設定全部失效，
-  //   總覽同計糧算出兩套唔同數字（OT 門檻 15 變 0、午休卡唔認）
   const ruleByEmp = new Map<string, any>()
   for (const r of activeRules) {
     if (seen.has(r.employeeId)) continue
@@ -99,91 +170,13 @@ export async function GET(req: NextRequest) {
     ruleByEmp.set(r.employeeId, cfg)
   }
 
-  const effectivePunches = await getEffectivePunches(monthStart, monthEnd, {
-    clinicId: scopedClinicId,
-    clinicIds: scopedClinicIds,
-    employeeId: employeeId || undefined,
-  })
-
-  // Build employee lookup for raw punch employee data (needed for display)
-  const rawPunches = await prisma.punchRecord.findMany({
-    where: {
-      punchTime: { gte: monthStart, lte: monthEnd },
-      void: { is: null },
-      ...(scopedClinicId ? { clinicId: scopedClinicId } : scopedClinicIds ? { clinicId: { in: scopedClinicIds } } : {}),
-      ...(employeeId ? { employeeId } : {}),
-    },
-    include: {
-      employee: {
-        include: {
-          user: { select: { name: true } },
-          clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
-        },
-      },
-    },
-    orderBy: { punchTime: 'asc' },
-  })
-
-  // Map raw punches by raw punch key for employee info lookup
   const rawByTime = new Map<string, typeof rawPunches[0]>()
   for (const rp of rawPunches) {
     const k = `${toHKDateStr(rp.punchTime)}:${rp.clinicId}:${rp.employeeId}:${rp.punchType}`
     rawByTime.set(k, rp)
   }
 
-  const correctionWhere: any = {
-    status: 'APPROVED',
-    correctedTime: { gte: monthStart, lte: monthEnd },
-  }
-  if (scopedClinicId) correctionWhere.clinicId = scopedClinicId
-  else if (scopedClinicIds !== undefined) correctionWhere.clinicId = { in: scopedClinicIds }
-  if (employeeId) correctionWhere.employeeId = employeeId
-
-  const corrections = await prisma.punchCorrection.findMany({
-    where: correctionWhere,
-    include: {
-      employee: {
-        include: {
-          user: { select: { name: true } },
-          clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
-        },
-      },
-    },
-  })
-
-  const shiftWhere: any = {
-    date: { gte: monthStart, lte: monthEnd },
-    status: 'CONFIRMED',
-  }
-  if (scopedClinicId) shiftWhere.clinicId = scopedClinicId
-  else if (scopedClinicIds !== undefined) shiftWhere.clinicId = { in: scopedClinicIds }
-  if (employeeId) shiftWhere.employeeId = employeeId
-
-  const shifts = await prisma.shift.findMany({
-    where: shiftWhere,
-    select: {
-      id: true,
-      employeeId: true,
-      clinicId: true,
-      secondaryClinicId: true,
-      date: true,
-      startTime: true,
-      endTime: true,
-      status: true,
-      templateId: true, // ★ 2026-08-07 deductLunch gate
-      employee: {
-        include: {
-          user: { select: { name: true } },
-          clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
-        },
-      },
-      clinic: { select: { id: true, name: true } },
-    },
-  })
-
-  // ★ 有已批假期嘅日子唔算缺勤 —— 計糧路徑（payroll-engine:2260）有做，
-  // 呢度之前完全冇讀假期，令請咗假嘅日子照標缺勤。
-  // ★ 2026-08-06: 擴充 employeeId 列表加入 punch 員工（假期返工偵測）
+  // ★ leaves depends on shifts + effectivePunches → must stay sequential
   const allShiftAndPunchEmpIds = [...new Set([
     ...shifts.map(s => s.employeeId),
     ...effectivePunches.map(ep => ep.raw.employeeId),
@@ -344,29 +337,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Batch query OT thresholds from payRules (avoids N+1)
-  const uniquePunchEmpIds = [...new Set(effectivePunches.map(ep => ep.raw.employeeId))]
-  const rules = await prisma.payRule.findMany({
-    where: {
-      employeeId: { in: uniquePunchEmpIds },
-      isActive: true,
-      effectiveFrom: { lte: monthEnd },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
-    },
-    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-  })
+  // ★ C2: otMin/otRound derived from ruleByEmp (already loaded above) — skip duplicate payRule query
   const otMinByEmp = new Map<string, number>()
   const otRoundByEmp = new Map<string, number>()
-  for (const r of rules) {
-    if (otMinByEmp.has(r.employeeId)) continue
-    try {
-      const cfg = JSON.parse(r.configJson as any)
-      otMinByEmp.set(r.employeeId, cfg?.modifiers?.overtime?.ot_min_minutes ?? 0)
-      otRoundByEmp.set(r.employeeId, cfg?.modifiers?.overtime?.ot_round_minutes ?? 0)
-    } catch {
-      otMinByEmp.set(r.employeeId, 0)
-      otRoundByEmp.set(r.employeeId, 0)
-    }
+  for (const [empId, cfg] of ruleByEmp) {
+    otMinByEmp.set(empId, cfg?.modifiers?.overtime?.ot_min_minutes ?? 0)
+    otRoundByEmp.set(empId, cfg?.modifiers?.overtime?.ot_round_minutes ?? 0)
   }
 
   // ★ 2026-08-06: lunch config from ruleByEmp (Fix 2 + Fix 4 shared)
@@ -790,6 +766,14 @@ export async function GET(req: NextRequest) {
   })
   const payTypeMap = new Map(empPayRules.map(r => [r.employeeId, r.payType]))
 
+  // ★ C4: Group exceptions by employee for O(1) lookup instead of 5× linear .filter()
+  const exByEmp = new Map<string, any[]>()
+  for (const e of exceptions) {
+    const a = exByEmp.get(e.employeeId)
+    if (a) a.push(e)
+    else exByEmp.set(e.employeeId, [e])
+  }
+
   const employeeSummaries = await Promise.all(
     uniqueEmployeeIds.map(async (empId) => {
       const isHourly = (payTypeMap.get(empId) || 'MONTHLY') === 'HOURLY'
@@ -802,6 +786,7 @@ export async function GET(req: NextRequest) {
         status = 'error'
       }
       const taMinutes = isHourly ? null : (tb ? (tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes)) : null)
+      const mine = exByEmp.get(empId) ?? []
       return {
         employeeId: empId,
         // ★ fallback 用 '—' 唔好用 'Unknown' —— 前者一眼睇得出係缺資料，
@@ -815,17 +800,17 @@ export async function GET(req: NextRequest) {
         owedMinutes: isHourly ? null : (tb ? tb.owedMinutes : null),
         availableMinutes: isHourly ? null : (tb ? tb.availableMinutes : null),
         convertibleLeaveDays: isHourly ? null : (tb ? tb.convertibleLeaveDays : null),
-        lateCount: exceptions.filter(e => e.employeeId === empId && e.type === 'LATE').length,
-        lateMinutes: exceptions
-          .filter(e => e.employeeId === empId && e.type === 'LATE')
+        lateCount: mine.filter(e => e.type === 'LATE').length,
+        lateMinutes: mine
+          .filter(e => e.type === 'LATE')
           .reduce((s, e) => s + (e.lateMinutes || 0), 0),
-        otCount: exceptions.filter(e => e.employeeId === empId && e.type === 'OT').length,
-        earlyInCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_IN').length,
+        otCount: mine.filter(e => e.type === 'OT').length,
+        earlyInCount: mine.filter(e => e.type === 'EARLY_IN').length,
         makeupMinutes: isHourly ? null : (tb ? tb.makeupMinutes : null),
-        earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
+        earlyLeaveCount: mine.filter(e => e.type === 'EARLY_LEAVE').length,
         netEarlyMinutes: isHourly ? null : (tb ? tb.netEarlyMinutes : null),
-        earlyLeaveMinutes: exceptions
-          .filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE')
+        earlyLeaveMinutes: mine
+          .filter(e => e.type === 'EARLY_LEAVE')
           .reduce((s, e) => s + (e.earlyMinutes || 0), 0),
         status,
       }
