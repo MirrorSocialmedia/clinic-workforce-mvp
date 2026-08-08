@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { todayHK, hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
-import { getTimeAccountSummary } from '@/lib/timebank-summary'
 import { matchPunchesToShifts, estimateScheduledHours } from '@/lib/shift-punch-match'
 
 /** Get start/end of today in HK (UTC+8) */
@@ -170,23 +169,7 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  // ── Time Bank balances per employee ──
-  // ★ 唔好再 sum TimeBankEntry —— 嗰张表只有手动调整，冇打卡算出来的迟到／早退／OT
-  const tbRows = await getTimeAccountSummary(prisma, activeEmployees)
-  const tbMap = new Map(tbRows.map(r => [r.employeeId, r.timeAccountMinutes]))
-
-  // empSummary: each employee with timeAccountMinutes (null for HOURLY/part-time)
-  const empSummary = activeEmployees.map(emp => {
-    const payType = emp.payRules?.[0]?.payType ?? 'HOURLY'
-    return {
-      employeeId: emp.id,
-      name: emp.user?.name ?? '?',
-      clinicId: emp.homeClinicId ?? emp.homeClinic?.id ?? null,
-      clinicName: emp.homeClinic?.name ?? '',
-      payType,
-      timeAccountMinutes: tbMap.get(emp.id) ?? null,
-    }
-  })
+  // ── Work hours data only — empSummary removed (frontend uses /api/payroll-runs/exceptions) ──
 
   const monthShifts = await prisma.shift.findMany({
     where: { status: { not: 'CANCELLED' }, date: { gte: monthStart, lt: monthEnd } },
@@ -245,6 +228,5 @@ export async function GET(req: NextRequest) {
     distinctEmployeeCount,
     workHours,
     whClinics: whClinics,
-    empSummary,
   })
 }
