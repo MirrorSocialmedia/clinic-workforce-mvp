@@ -251,6 +251,8 @@ model PayRule {
   createdBy     String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  @@index([employeeId, isActive, effectiveFrom])
 }
 
 // Shift template — reusable shift definitions (scoped to company)
@@ -344,6 +346,8 @@ model PunchRecord {
   void        PunchVoid?        // void record (null = active)
 
   @@index([employeeId, punchTime])
+  @@index([clinicId, punchTime])
+  @@index([punchTime])
 }
 
 // Punch void — cancels a punch record without deleting it (append-only)
@@ -377,6 +381,7 @@ model PunchCorrection {
 
   @@index([employeeId, createdAt])
   @@index([status])
+  @@index([status, correctedTime])
 }
 
 // QR token — short-lived dynamic tokens for punch verification
@@ -512,6 +517,8 @@ model LeaveRequest {
   @@index([employeeId, status])
   @@index([leaveTypeId])
   @@index([clinicId])
+  @@index([startDate, endDate])
+  @@index([employeeId, startDate])
 }
 
 // Leave balance — annual quota tracking per employee
