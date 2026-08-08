@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
@@ -41,14 +42,16 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const shift = await prisma.shift.findFirst({
+    // 攞當日全部更次（孖更日有多張更）
+    const sameDayShifts = await prisma.shift.findMany({
       where: {
         employeeId,
         date: { gte: dayStart, lte: dayEnd },
         status: { not: 'CANCELLED' },
       },
+      include: { template: { select: { deductLunch: true } } },
     })
-    if (!shift) return NextResponse.json({ error: '該日無排班' }, { status: 400 })
+    if (sameDayShifts.length === 0) return NextResponse.json({ error: '該日無排班' }, { status: 400 })
 
     // 檢查是否已批假
     const hasLeave = await prisma.leaveRequest.findFirst({
@@ -82,10 +85,13 @@ export async function POST(req: NextRequest) {
     })
     if (existing) return NextResponse.json({ error: '該日已扣OT鐘' }, { status: 400 })
 
-    // 扣當天排班時數
-    const startTime = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
-    const endTime = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
-    const shiftMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000)
+    // 計算扣分鐘：加總當日全部更次 → 按 deductLunch gate 扣一次午飯
+    const empPayRule = await prisma.payRule.findFirst({
+      where: { employeeId },
+      orderBy: { effectiveFrom: 'desc' },
+    })
+    const lunchCfg = empPayRule ? (JSON.parse(empPayRule.configJson || '{}')?.modifiers?.lunch_break?.defaultMinutes ?? 60) : 60
+    const shiftMinutes = computeAbsentDeductMinutes(sameDayShifts as any, lunchCfg)
 
     const beforeBalance = await tbBalance(employeeId)
     const entry = await prisma.timeBankEntry.create({

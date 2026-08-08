@@ -332,7 +332,6 @@ export default function SchedulingPage() {
     setSelectedTemplate(null)
     setSelectedLeaveType(null)
     setSelectedEmployeeId('')
-    setSelectedClinicId('')
     selectionRef.current = { template: null, leaveType: null, employeeId: '' }
   }, [])
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
@@ -4014,7 +4013,7 @@ function getShiftCode(shift: Shift): string {
                   borderBottom: '1px solid #ddd', marginBottom: 4, cursor: 'pointer',
                   borderRadius: 4,
                 }}
-                onClick={() => { clearSelection(); setOvScope({ type: 'company', id: g.companyId, name: g.name }) }}
+                onClick={() => { clearSelection(); setSelectedClinicId(null); setOvScope({ type: 'company', id: g.companyId, name: g.name }) }}
                 title="點擊切總覽範圍到這家公司"
               >
                 {g.name}
@@ -4477,7 +4476,7 @@ function getShiftCode(shift: Shift): string {
                 <div className="flex items-center gap-3">
                   <span>📊 全局總覽（{scopeLabel}）</span>
                   {ovScope.type !== 'all' && (
-                    <button onClick={() => { clearSelection(); setOvScope({ type: 'all' }) }}
+                    <button onClick={() => { clearSelection(); setSelectedClinicId(null); setOvScope({ type: 'all' }) }}
                       style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}>
                       全部
                     </button>
