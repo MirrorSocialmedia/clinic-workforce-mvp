@@ -31,30 +31,45 @@ export async function getTimeAccountSummary(
   const md = monthDate
     ?? new Date(`${toHKDateStr(new Date()).slice(0, 7)}-01T00:00:00+08:00`)
 
-  const rows: TimeAccountRow[] = []
-  for (const e of employees) {
+  // ★ 2026-08-09: Batch concurrency-8 instead of serial
+  const CONCURRENCY = 8
+  type Task = { e: typeof employees[0]; cfg: any; i: number }
+  const tasks: Task[] = []
+  const rows: TimeAccountRow[] = new Array(employees.length)
+
+  employees.forEach((e, i) => {
     let cfg: any = {}
     try { cfg = JSON.parse(e.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
 
-    // 時薪／兼職不設時間帳戶
     if (cfg?.base_type === 'hourly') {
-      rows.push({ employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null, status: 'not_applicable' })
-      continue
+      rows[i] = { employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null, status: 'not_applicable' }
+    } else {
+      tasks.push({ e, cfg, i })
     }
+  })
 
-    try {
-      const tb = await calculateTimeBank(e.id, md, cfg, db)
-      rows.push({
-        employeeId: e.id,
-        employeeName: e.user?.name ?? '—',
-        timeAccountMinutes: tb.timeAccountMinutes ?? null, // ★ 冇值就 null（UI 顯示 —），唔好計錯數
-        status: 'ok',
-      })
-    } catch (err) {
-      // ★ 單一員工計唔到唔應該令成個總覽掛咗 —— 標 null 令 UI 顯示「—」
-      console.error(`[timebank-summary] employee ${e.id} failed`, err)
-      rows.push({ employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null, status: 'error' })
-    }
+  for (let k = 0; k < tasks.length; k += CONCURRENCY) {
+    const batch = tasks.slice(k, k + CONCURRENCY)
+    await Promise.all(batch.map(async (t) => {
+      try {
+        const tb = await calculateTimeBank(t.e.id, md, t.cfg, db)
+        rows[t.i] = {
+          employeeId: t.e.id,
+          employeeName: t.e.user?.name ?? '—',
+          timeAccountMinutes: tb.timeAccountMinutes ?? null,
+          status: 'ok',
+        }
+      } catch (err) {
+        console.error(`[timebank-summary] employee ${t.e.id} failed`, err)
+        rows[t.i] = {
+          employeeId: t.e.id,
+          employeeName: t.e.user?.name ?? '—',
+          timeAccountMinutes: null,
+          status: 'error',
+        }
+      }
+    }))
   }
+
   return rows
 }
