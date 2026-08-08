@@ -543,7 +543,10 @@ export default function AttendancePage() {
   const typeColor = (type: string) => {
     switch (type) { case 'LATE': return '#ffc107'; case 'EARLY_LEAVE': return '#fd7e14'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; case 'OT': return '#059669'; case 'EARLY_IN': return '#185FA5'; default: return '#888' }
   }
-  const nonOtExceptions = exceptions.filter(e => e.type !== 'OT' && e.type !== 'EARLY_IN')
+  // 表格用：只排 OT（保留 EARLY_IN，粒批准掣要喺度出）
+  const visibleExceptions = exceptions.filter(e => e.type !== 'OT')
+  // 統計用：EARLY_IN 係資訊性，唔算異常
+  const nonOtExceptions = visibleExceptions.filter(e => e.type !== 'EARLY_IN')
   const summary = {
     total: nonOtExceptions.length, late: nonOtExceptions.filter(e => e.type === 'LATE').length,
     absent: nonOtExceptions.filter(e => e.type === 'ABSENT').length, correction: nonOtExceptions.filter(e => e.type === 'CORRECTION').length,
@@ -994,7 +997,9 @@ export default function AttendancePage() {
                           <td className="p-3"><span style={{ color: '#dc3545', fontWeight: 700 }}>缺勤</span></td>
                           <td className="p-3 text-sm text-muted-foreground" colSpan={5}>排班 {ar.shiftMinutes} 分鐘，無打卡</td>
                           <td className="p-3 text-sm">—</td>
-                          <OtDeductCell row={{ employeeId: ar.employeeId, date: ar.date, shiftMinutes: ar.shiftMinutes, otDeducted: ar.otDeducted }} canManageAttendance={hasAttendanceManage} />
+                          <td className="p-3">
+                            <OtDeductCell row={{ employeeId: ar.employeeId, date: ar.date, shiftMinutes: ar.shiftMinutes, otDeducted: ar.otDeducted }} canManageAttendance={hasAttendanceManage} />
+                          </td>
                           <td className="p-3">—</td>
                         </tr>
                       )
@@ -1160,6 +1165,12 @@ export default function AttendancePage() {
                               <Clock size={12} /> 補鐘
                             </button>
                         })()}
+                        {showEarlyIn && showEarlyIn.payType !== 'HOURLY' && (
+                          <EarlyInOtCell
+                            row={{ employeeId: showEarlyIn.employeeId, date: showEarlyIn.date, earlyInMinutes: showEarlyIn.earlyInMinutes || 0, earlyOtApproved: !!showEarlyIn.earlyOtApproved, earlyOtMinutes: showEarlyIn.earlyOtMinutes || 0, earlyOtPreview: showEarlyIn.earlyOtPreview || 0, earlyOtStale: !!showEarlyIn.earlyOtStale }}
+                            canManageAttendance={hasAttendanceManage}
+                          />
+                        )}
                       </td>
                       <td className="p-3">
                         {isVoided ? (
@@ -1285,13 +1296,13 @@ export default function AttendancePage() {
           {/* Table */}
           {exLoading ? (
             <div className="text-center py-10 text-muted-foreground">查詢中...</div>
-          ) : nonOtExceptions.length === 0 ? (
+          ) : visibleExceptions.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">沒有找到異常記錄 🎉</div>
           ) : (
             <>
               {/* Mobile card view */}
               <div className="md:hidden space-y-2">
-                {nonOtExceptions.map((ex, i) => (
+                {visibleExceptions.map((ex, i) => (
                   <div key={i} className="rounded-xl border shadow-card p-3">
                     <div className="flex justify-between items-center mb-1">
                       <span className="font-semibold">{ex.employeeName}</span>
@@ -1350,7 +1361,7 @@ export default function AttendancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {nonOtExceptions.map((ex, i) => (
+                  {visibleExceptions.map((ex, i) => (
                     <tr key={i} className="border-b hover:bg-gray-50">
                       <td className="p-3 font-medium">{ex.employeeName}</td>
                       <td className="p-3">{ex.clinicName}</td>
