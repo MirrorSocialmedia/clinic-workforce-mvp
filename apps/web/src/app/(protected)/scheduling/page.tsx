@@ -243,24 +243,7 @@ export default function SchedulingPage() {
   )
   const [employees, setEmployees] = useState<Employee[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
-  const [cardShifts, setCardShifts] = useState<Shift[]>([])
-  const [cardRefreshTick, setCardRefreshTick] = useState(0)
 
-  // viewRange / clinic 變 → 拉「瀏覽錨點所在月 ∪ 瀏覽週」的 shifts（跨月週不遺漏）
-  useEffect(() => {
-    if (!viewRange || !selectedClinicId) return
-    const anchor = new Date(viewRange.start)
-    const mStart = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth(), 1))
-    const mEnd = toHKDateStr(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0))
-    // ★ 瀏覽週末端(anchor+6)可能跨出月界 → 拉取範圍取兩者較大
-    const wEndD = new Date(anchor); wEndD.setDate(anchor.getDate() + 6)
-    const wEndStr = toHKDateStr(wEndD)
-    const fetchEnd = wEndStr > mEnd ? wEndStr : mEnd
-    fetch(`/api/shifts?startDate=${mStart}&endDate=${fetchEnd}&pageSize=1000`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d.shifts)) setCardShifts(d.shifts) })
-      .catch(() => {})
-  }, [viewRange?.start, selectedClinicId, cardRefreshTick])
   const [templates, setTemplates] = useState<ShiftTemplate[]>([])
   const [changeRequests, setChangeRequests] = useState<ShiftChangeRequest[]>([])
 
@@ -481,8 +464,8 @@ export default function SchedulingPage() {
         prev?.start === next.start && prev?.end === next.end ? prev : next)
     }
   }, [viewMode, currentDate, ovMonth])
-  const [ovMonthShifts, setOvMonthShifts] = useState<any[]>([]) // ★ 月視圖表格專用（跟 ovMonth 切換）—— 同 monthShifts（當前月工時統計）唔同，
-  // 排完班要 loadOvMonth() 先會更新（2026-08-03 撞過）
+  const [ovMonthShifts, setOvMonthShifts] = useState<any[]>([]) // ★ 月視圖表格專用（跟 ovMonth 切換）
+  const cardShifts = ovMonthShifts as Shift[]
   const [monthLeaveRequests, setMonthLeaveRequests] = useState<any[]>([])
 
   // Days of the selected month (UTC-safe)
@@ -695,8 +678,7 @@ export default function SchedulingPage() {
   const dropZoneRef = useRef<HTMLDivElement>(null)
   const [isDraggingEvent, setIsDraggingEvent] = useState(false)
 
-  // Month-level shifts for statistics (Task 3b)
-  const [monthShifts, setMonthShifts] = useState<any[]>([])
+
 
   
 // Fixed color palette for employee drag chips
@@ -807,25 +789,7 @@ function getShiftCode(shift: Shift): string {
       .catch(() => setTemplates([]))
   }, [currentCompanyId])
 
-  // Load month-level shifts for statistics (all clinics)
-  const loadMonthShifts = useCallback(async () => {
-    const now = new Date()
-    const monthStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))  // tz-ok: client-side browser
-    const monthEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))  // tz-ok: client-side browser
-    try {
-      const r = await getJSON(`/api/shifts?startDate=${monthStart}&endDate=${monthEnd}&pageSize=1000`)
-      if (r.ok) {
-        const d = await r.json()
-        setMonthShifts(d.shifts || [])
-      }
-    } catch {
-      setMonthShifts([])
-    }
-  }, [])
 
-  useEffect(() => {
-    loadMonthShifts()
-  }, [loadMonthShifts])
 
   // Filter employees by selected clinic
   const clinicEmployees = useMemo(() => {
@@ -1144,6 +1108,7 @@ function getShiftCode(shift: Shift): string {
 
   // Mobile: load shifts for the current mobile week independently
   useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 768) return
     if (!selectedClinicId || mobileWeekDays.length === 0) return
     const weekStart = mobileWeekDays[0]
     const weekEnd = mobileWeekDays[6]
@@ -1173,13 +1138,11 @@ function getShiftCode(shift: Shift): string {
   const refreshAll = useCallback(async () => {
     await Promise.all([
       loadShifts(),
-      loadMonthShifts(),
       loadOvMonth(), // ★ 月視圖表格用嘅（ovMonthShifts）
       loadCoverage(), // ★ 2026-08-09: 加載 coverage 數據
       refreshLeaveBalances(), // ★ 加入嚟，唔使各處記得叫
     ])
-    setCardRefreshTick(t => t + 1)
-  }, [loadShifts, loadMonthShifts, loadOvMonth, loadCoverage, refreshLeaveBalances])
+  }, [loadShifts, loadOvMonth, loadCoverage, refreshLeaveBalances])
 
   // Unified deleteLeave helper — single entry point for all leave deletions
   const deleteLeave = useCallback(async (leaveId: string) => {
@@ -2028,12 +1991,7 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // Render Helpers
   // ============================================================
-  // Helper: count shift days for an employee this month
-  const empShiftDays = (empId: string): number => {
-    return new Set(
-      monthShifts.filter(s => s.employeeId === empId).map(s => toHKDateStr(new Date(s.date)))
-    ).size
-  }
+
 
   const formatTimeFromShift = (isoString: string): string => fmtTime(isoString)
 
@@ -5681,7 +5639,6 @@ function getShiftCode(shift: Shift): string {
                     if (res.ok) {
                       setEditingShift(null)
                       loadShifts()
-                      setCardRefreshTick(t => t + 1)
                     } else {
                       const err = await res.json().catch(() => ({}))
                       setValidationIssues([{ type: 'error', rule: 'api', message: err.error || `更新失敗（${res.status}）` }])
@@ -5799,7 +5756,6 @@ function getShiftCode(shift: Shift): string {
 
                   await createShift(employeeId, date, template)
                   await loadShifts()
-                  setCardRefreshTick(t => t + 1)
                   setShowNewShiftModal(false)
                 }}
                 style={{
