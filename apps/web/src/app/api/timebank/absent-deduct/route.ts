@@ -86,12 +86,25 @@ export async function POST(req: NextRequest) {
     if (existing) return NextResponse.json({ error: '該日已扣OT鐘' }, { status: 400 })
 
     // 計算扣分鐘：加總當日全部更次 → 按 deductLunch gate 扣一次午飯
+    // ★ 2026-08-08: payRule query 條件同 payroll-engine.ts:1491-1498 一致
     const empPayRule = await prisma.payRule.findFirst({
-      where: { employeeId },
-      orderBy: { effectiveFrom: 'desc' },
+      where: {
+        employeeId,
+        isActive: true,
+        effectiveFrom: { lte: dayEnd },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: dayStart } }],
+      },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
     })
-    const lunchCfg = empPayRule ? (JSON.parse(empPayRule.configJson || '{}')?.modifiers?.lunch_break?.defaultMinutes ?? 60) : 60
-    const shiftMinutes = computeAbsentDeductMinutes(sameDayShifts as any, lunchCfg)
+    let lunchMinutes = 60
+    if (empPayRule?.configJson) {
+      try {
+        lunchMinutes = JSON.parse(empPayRule.configJson)?.modifiers?.lunch_break?.defaultMinutes ?? 60
+      } catch (e) {
+        console.error('[absent-deduct] bad configJson employeeId=', employeeId, e)
+      }
+    }
+    const shiftMinutes = computeAbsentDeductMinutes(sameDayShifts as any, lunchMinutes)
 
     const beforeBalance = await tbBalance(employeeId)
     const entry = await prisma.timeBankEntry.create({

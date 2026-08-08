@@ -6,6 +6,7 @@ import { resolveClinicScope } from '@/lib/scope-helpers'
 import { toHKDateStr, fmtTime, getMonthRange } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
+import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
 
 // GET /api/payroll-runs/exceptions — Attendance exceptions report + timebank summaries
 export async function GET(req: NextRequest) {
@@ -535,8 +536,12 @@ export async function GET(req: NextRequest) {
   // 員工可能仲喺度返緊工，只係未打落班卡。
   // 如果用 `date < today`，今日已收工嘅早更（09:00-13:00，而家 15:00）
   // 就會漏咗，要等到聽日先標到。
+  // ★ 2026-08-08: 按日 group + 用 computeAbsentDeductMinutes lib（單一來源），
+  //   解決孖更日出現兩行 ABSENT（每行各扣一次午飯）嘅問題。
   const nowTs = Date.now()
 
+  // Phase 1: Group absent shifts by employeeId + date
+  const absentByDay = new Map<string, Array<typeof shifts[number]>>()
   for (const shift of shifts) {
     const shiftEnd = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
     if (shiftEnd.getTime() > nowTs) continue // ★ 未收工，跳過
@@ -548,27 +553,38 @@ export async function GET(req: NextRequest) {
       // ★ 調鋪：主店同副店嘅打卡都算（同 payroll-engine:2200 一致）
       (ep.clinicId === shift.clinicId || ep.clinicId === shift.secondaryClinicId)
     )
-    if (!hasPunch) {
-      if (leaveDateSet.has(`${shift.employeeId}:${shiftDayStr}`)) continue // ★ 有假期
+    if (hasPunch) continue
+    if (leaveDateSet.has(`${shift.employeeId}:${shiftDayStr}`)) continue // ★ 有假期
 
-      const shiftStart = shift.startTime instanceof Date ? shift.startTime : new Date(shift.startTime)
-      const shiftEnd2 = shift.endTime instanceof Date ? shift.endTime : new Date(shift.endTime)
-      const shiftMinutes = Math.round((shiftEnd2.getTime() - shiftStart.getTime()) / 60000)
-      // ★ 2026-08-07: deductLunch gate — only deduct lunch if template allows
-      const shiftDeductsLunch = (shift.templateId
-        ? templateDeductLunch.get(shift.templateId) !== false
-        : true) // no template = deduct (safe)
-      const lunchDeduction = shiftDeductsLunch
-        ? (lunchDefaultByEmp.get(shift.employeeId) ?? 0)
-        : 0
-      const deductedMinutes = Math.max(0, shiftMinutes - lunchDeduction)
-      exceptions.push({
-        employeeId: shift.employeeId, employeeName: empNames.get(shift.employeeId) ?? '—',
-        clinicName: shift.clinic?.name || '—', date: shiftDayStr, type: 'ABSENT',
-        detail: `排班但無打卡記錄 (${toHKDateStr(shift.startTime)}，應返 ${deductedMinutes} 分鐘${shiftDeductsLunch ? '·已扣午飯' : '·未扣午飯'})`,
-        shiftMinutes: deductedMinutes,
-      })
-    }
+    const key = `${shift.employeeId}:${shiftDayStr}`
+    if (!absentByDay.has(key)) absentByDay.set(key, [])
+    absentByDay.get(key)!.push(shift)
+  }
+
+  // Phase 2: One ABSENT row per day, using shared lib
+  for (const [key, dayShifts] of absentByDay) {
+    const [empId, dateStr] = key.split(':')
+    const clinicName = dayShifts.length === 1
+      ? dayShifts[0].clinic?.name || '—'
+      : `${dayShifts[0].clinic?.name || '—'}（${dayShifts.length} 更）`
+
+    const deductedMinutes = computeAbsentDeductMinutes(
+      dayShifts.map(s => ({
+        startTime: s.startTime,
+        endTime: s.endTime,
+        template: s.templateId
+          ? { deductLunch: templateDeductLunch.get(s.templateId) }
+          : undefined,
+      })),
+      lunchDefaultByEmp.get(empId) ?? 60, // 對齊 engine:1488 同 absent-deduct
+    )
+
+    exceptions.push({
+      employeeId: empId, employeeName: empNames.get(empId) ?? '—',
+      clinicName, date: dateStr, type: 'ABSENT',
+      detail: `排班但無打卡記錄 (${dayShifts.length} 更，應返 ${deductedMinutes} 分鐘)`,
+      shiftMinutes: deductedMinutes,
+    })
   }
 
   // 查詢 ABSENT 類型的扣OT鐘記錄（標記 otDeducted）
