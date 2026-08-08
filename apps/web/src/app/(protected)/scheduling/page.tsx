@@ -474,31 +474,6 @@ export default function SchedulingPage() {
     return Array.from({ length: n }, (_, i) => `${ovMonth}-${String(i + 1).padStart(2, '0')}`)
   }, [ovMonth])
 
-  // ★ 2026-08-09: Coverage data — red dot for gaps
-  const [coverageData, setCoverageData] = useState<Record<string, string>>({})
-  const loadCoverage = useCallback(async () => {
-    if (!monthDays.length) return
-    try {
-      const res = await fetch(`/api/schedule-coverage?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}`, {
-        credentials: 'include', cache: 'no-store',
-      })
-      if (res.ok) {
-        const d = await res.json()
-        setCoverageData(d.coverage || {})
-      }
-    } catch (e) { console.error('[scheduling] coverage load failed', e) }
-  }, [monthDays])
-
-  useEffect(() => { loadCoverage() }, [loadCoverage])
-
-  const coverageMark = (empId: string, dateStr: string) => {
-    const key = `${empId}|${dateStr}`
-    if (coverageData[key]) {
-      return <span title="有排班記錄但未顯示" style={{ fontSize: 8, color: '#ef4444', marginLeft: 2 }}>●</span>
-    }
-    return null
-  }
-
   // ★ Pre-group month shifts by employeeId|date for O(1) lookups instead of per-cell filter
   const monthShiftsByKey = useMemo(() => {
     const m = new Map<string, any[]>()
@@ -1138,10 +1113,9 @@ function getShiftCode(shift: Shift): string {
     await Promise.all([
       loadShifts(),
       loadOvMonth(), // ★ 月視圖表格用嘅（ovMonthShifts）
-      loadCoverage(), // ★ 2026-08-09: 加載 coverage 數據
       refreshLeaveBalances(), // ★ 加入嚟，唔使各處記得叫
     ])
-  }, [loadShifts, loadOvMonth, loadCoverage, refreshLeaveBalances])
+  }, [loadShifts, loadOvMonth, refreshLeaveBalances])
 
   // Unified deleteLeave helper — single entry point for all leave deletions
   const deleteLeave = useCallback(async (leaveId: string) => {
@@ -4665,7 +4639,7 @@ function getShiftCode(shift: Shift): string {
                                 }}
                               >
                                 {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—{coverageMark(emp.id, d)}</span>
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}></span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
                                     const tpl = templates.find(t => t.id === s.templateId)
@@ -4760,7 +4734,7 @@ function getShiftCode(shift: Shift): string {
                                 }}
                               >
                                 {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—{coverageMark(emp.id, d)}</span>
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}></span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
                                     const tpl = templates.find(t => t.id === s.templateId)
@@ -4834,7 +4808,7 @@ function getShiftCode(shift: Shift): string {
                                 cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
                               }}>
                               {(() => {
-                                if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—{coverageMark(emp.id, d)}</span>
+                                if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}></span>
                                 const parts: React.ReactNode[] = []
                                 ss.forEach((s, si) => {
                                   const tpl = templates.find(t => t.id === s.templateId)
