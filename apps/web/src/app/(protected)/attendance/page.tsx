@@ -856,7 +856,7 @@ export default function AttendancePage() {
               const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
               const showEarly = earlyEx
               const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
-              const showEarlyIn = earlyInEx && earlyInEx.type === 'EARLY_IN'
+              const showEarlyIn = earlyInEx
               const recordDateStr = toHKDateStr(new Date(record.punchTime))
               const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
               const isVoided = !!(record.void as any)
@@ -908,6 +908,7 @@ export default function AttendancePage() {
                     exceptionLabel = `OT ${showOt.otMinutes || 0} 分`
                   }
                 }
+                else if (showEarlyIn) exceptionLabel = `提早上班 ${showEarlyIn.earlyInMinutes || 0} 分`
               }
 
               const typeLabel = punchLabel(record.punchType)
@@ -941,7 +942,7 @@ export default function AttendancePage() {
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-muted-foreground">{record.clinic?.name || record.clinicId} · {sourceLabel}</span>
                     {exceptionLabel && <span className="text-xs font-semibold" style={{
-                      color: showLate ? '#d97706' : showEarly ? '#dc2626' : showOt?.leaveWork ? '#7c3aed' : '#059669'
+                      color: showLate ? '#d97706' : showEarly ? '#dc2626' : showOt?.leaveWork ? '#7c3aed' : showOt ? '#059669' : showEarlyIn ? '#185FA5' : '#000000'
                     }}>{exceptionLabel}</span>}
                   </div>
                   {isVoided && <div className="text-xs text-gray-500 mt-1">已作廢</div>}
@@ -1069,7 +1070,7 @@ export default function AttendancePage() {
                     const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
                     const showEarly = earlyEx
                     const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
-                    const showEarlyIn = earlyInEx && earlyInEx.type === 'EARLY_IN'
+                    const showEarlyIn = earlyInEx
                     const recordDateStr = toHKDateStr(new Date(record.punchTime))
                     const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
                     const isVoided = !!(record.void as any)
