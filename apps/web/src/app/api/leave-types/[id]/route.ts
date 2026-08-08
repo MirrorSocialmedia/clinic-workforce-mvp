@@ -1,3 +1,4 @@
+// ownership-ok: 公司級設定，RBAC matrix 控制，唔涉及 IDOR
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'

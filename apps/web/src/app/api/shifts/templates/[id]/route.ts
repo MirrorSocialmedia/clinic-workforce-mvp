@@ -1,3 +1,4 @@
+// ownership-ok: 全局模版，RBAC matrix 控制
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'

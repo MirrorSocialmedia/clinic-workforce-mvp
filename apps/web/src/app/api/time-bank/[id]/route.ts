@@ -1,3 +1,4 @@
+// ownership-ok: RBAC matrix 控制
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
