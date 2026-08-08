@@ -381,6 +381,7 @@ export default function SchedulingPage() {
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([])
   const [showChangePanel, setShowChangePanel] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
+  const [editingTemplate, setEditingTemplate] = useState<ShiftTemplate | null>(null)
   const [showNewShiftModal, setShowNewShiftModal] = useState(false)
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [showLeaveEmployeeModal, setShowLeaveEmployeeModal] = useState<{ date: string; leaveTypeId: string } | null>(null)
@@ -3487,48 +3488,14 @@ function getShiftCode(shift: Shift): string {
                     {t.isNightShift ? ' (夜更)' : ''}
                   </span>
                   {t.isDefault && <span style={{ fontSize: 10, color: '#1976d2', background: '#e3f2fd', padding: '1px 6px', borderRadius: 4 }}>預設</span>}
+                  {t.deductLunch === false && (
+                    <span style={{ fontSize: 10, color: '#b45309', background: '#fef3c7', padding: '1px 6px', borderRadius: 4 }}>不扣飯鐘</span>
+                  )}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                       <button
                         className="btn btn-sm"
                         style={{ background: '#e3f2fd', color: '#1976d2', border: '1px solid #bbdefb', fontSize: 11, padding: '2px 8px' }}
-                        onClick={async () => {
-                          const newName = prompt('修改更次名稱：', t.name)
-                          if (newName === null) return
-                          const newShort = prompt('修改簡稱（1-4字，總覽顯示，留空用名稱）：', t.shortName || '')
-                          if (newShort === null) return
-                          const newStart = prompt(`修改開始時間 (HH:mm)：`, `${String(t.startHour).padStart(2, '0')}:${String(t.startMinute).padStart(2, '0')}`)
-                          if (newStart === null) return
-                          const newEnd = prompt(`修改結束時間 (HH:mm)：`, `${String(t.endHour).padStart(2, '0')}:${String(t.endMinute).padStart(2, '0')}`)
-                          if (newEnd === null) return
-                          const [sh, sm] = newStart.split(':').map(Number)
-                          const [eh, em] = newEnd.split(':').map(Number)
-                          // ★ 2026-08-07: deductLunch prompt (default true for old rows)
-                          const deductLunchStr = prompt(`扣午飯鐘？(y/n，留空預設扣)：`, t.deductLunch === false ? 'n' : 'y')
-                          if (deductLunchStr === null) return
-                          const deductLunch = deductLunchStr.trim().toLowerCase() !== 'n'
-                          try {
-                            const res = await fetch(`/api/shifts/templates/${t.id}`, {
-                              method: 'PUT',
-                              credentials: 'include',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                name: newName,
-                                shortName: (newShort as string)?.trim() || null,
-                                startHour: sh,
-                                startMinute: sm,
-                                endHour: eh,
-                                endMinute: em,
-                                deductLunch,
-                              }),
-                            })
-                            if (!res.ok) {
-                              const err = await res.json().catch(() => ({}))
-                              setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '模板更新失敗' }])
-                              return
-                            }
-                            await refreshAll()
-                          } catch (e) { console.error('Edit template error:', e) }
-                        }}
+                        onClick={() => setEditingTemplate(t)}
                       >編輯</button>
                       <button
                         className="btn btn-sm"
@@ -3568,6 +3535,29 @@ function getShiftCode(shift: Shift): string {
                   } catch (e) { console.error('Create template error:', e) }
                 }}
               />
+              {editingTemplate && (
+                <EditShiftTemplateForm
+                  template={editingTemplate}
+                  onCancel={() => setEditingTemplate(null)}
+                  onSave={async (data) => {
+                    try {
+                      const res = await fetch(`/api/shifts/templates/${editingTemplate.id}`, {
+                        method: 'PUT',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data),
+                      })
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}))
+                        setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '模板更新失敗' }])
+                        return
+                      }
+                      setEditingTemplate(null)
+                      await refreshAll()
+                    } catch (e) { console.error('Edit template error:', e) }
+                  }}
+                />
+              )}
             </div>
           )}
         </div>
@@ -6159,6 +6149,73 @@ function NewShiftTemplateForm({ onCreated }: { onCreated: (tpl: { name: string; 
           setShortName('')
         }}
       >新增</button>
+    </div>
+  )
+}
+
+// EditShiftTemplateForm — Inline modal for editing existing shift templates
+function EditShiftTemplateForm({ template, onSave, onCancel }: {
+  template: ShiftTemplate
+  onSave: (data: { name: string; shortName: string | null; startHour: number; startMinute: number; endHour: number; endMinute: number; isNightShift: boolean; deductLunch: boolean }) => void
+  onCancel: () => void
+}) {
+  const [name, setName] = useState(template.name)
+  const [shortName, setShortName] = useState(template.shortName ?? '')
+  const [startHour, setStartHour] = useState(template.startHour)
+  const [startMinute, setStartMinute] = useState(template.startMinute)
+  const [endHour, setEndHour] = useState(template.endHour)
+  const [endMinute, setEndMinute] = useState(template.endMinute)
+  const [isNightShift, setIsNightShift] = useState(template.isNightShift)
+  const [deductLunch, setDeductLunch] = useState(template.deductLunch ?? true) // ★ ?? not ||
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+      <div style={{ background: '#fff', borderRadius: 10, padding: 24, minWidth: 380, boxShadow: '0 4px 24px rgba(0,0,0,0.15)' }}>
+        <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 16 }}>編輯更次模版</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+            名稱
+            <input value={name} onChange={e => setName(e.target.value)}
+              style={{ flex: 1, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }} />
+          </label>
+          <label style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+            簡稱
+            <input value={shortName} maxLength={4} onChange={e => setShortName(e.target.value)}
+              style={{ flex: 1, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }} />
+          </label>
+          <label style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+            開始
+            <input type="number" min={0} max={23} value={startHour} onChange={e => setStartHour(parseInt(e.target.value) || 0)}
+              style={{ width: 50, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }} />:
+            <input type="number" min={0} max={59} value={startMinute} onChange={e => setStartMinute(parseInt(e.target.value) || 0)}
+              style={{ width: 50, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }} />
+          </label>
+          <label style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+            結束
+            <input type="number" min={0} max={23} value={endHour} onChange={e => setEndHour(parseInt(e.target.value) || 0)}
+              style={{ width: 50, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }} />:
+            <input type="number" min={0} max={59} value={endMinute} onChange={e => setEndMinute(parseInt(e.target.value) || 0)}
+              style={{ width: 50, padding: '4px 4px', border: '1px solid #ddd', borderRadius: 4, fontSize: 12 }} />
+          </label>
+          <label style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={isNightShift} onChange={e => setIsNightShift(e.target.checked)} />
+            夜更
+          </label>
+          <label style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={deductLunch} onChange={e => setDeductLunch(e.target.checked)} />
+            扣午飯鐘
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button className="btn btn-sm" onClick={onCancel} style={{ fontSize: 12, padding: '4px 12px' }}>取消</button>
+          <button className="btn btn-sm" style={{ background: '#1976d2', color: '#fff', fontSize: 12, padding: '4px 12px' }}
+            onClick={() => {
+              if (!name.trim()) { alert('請輸入名稱'); return }
+              onSave({ name: name.trim(), shortName: shortName.trim() || null, startHour, startMinute, endHour, endMinute, isNightShift, deductLunch })
+            }}
+          >儲存</button>
+        </div>
+      </div>
     </div>
   )
 }
