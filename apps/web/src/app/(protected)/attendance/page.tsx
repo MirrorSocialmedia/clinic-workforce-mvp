@@ -98,7 +98,7 @@ interface ExceptionRecord {
 // ============================================================
 function OtDeductCell({ row, canManageAttendance }: { row: { employeeId: string; date: string; shiftMinutes: number; otDeducted: boolean }, canManageAttendance: boolean }) {
   const handleOtDeduct = async () => {
-    if (!confirm(`用時間帳戶抵 ${row.date} 缺勤？\n扣 ${row.shiftMinutes} 分鐘（不足將拖欠）。\n該日不扣薪，但當月勤工獎仍取消。`)) return
+    if (!confirm(`用時間帳戶抵 ${row.date} 缺勤？\n扣 ${row.shiftMinutes} 分鐘（不足將拖欠）。\n該日不扣薪，不影響勤工獎。`)) return
     const res = await fetch('/api/timebank/absent-deduct', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },

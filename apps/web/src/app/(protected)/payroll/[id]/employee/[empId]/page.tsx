@@ -483,7 +483,7 @@ export default function EmployeePayrollDetailPage() {
               <span className="font-semibold text-blue-700">⏱ 缺勤扣OT鐘（{otDeductedAbsences.length} 天）</span>
               {otDeductedAbsences.map((a: any, i: number) => (
                 <div key={i} className="text-muted-foreground ml-4">
-                  {a.date}：扣OT鐘 {a.minutes} 分鐘（不扣工資，仍取消勤工獎）
+                  {a.date}：扣OT鐘 {a.minutes} 分鐘（不扣工資，不影響勤工獎）
                 </div>
               ))}
             </div>

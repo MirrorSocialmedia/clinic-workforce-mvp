@@ -332,6 +332,7 @@ export default function SchedulingPage() {
     setSelectedTemplate(null)
     setSelectedLeaveType(null)
     setSelectedEmployeeId('')
+    setSelectedClinicId('')
     selectionRef.current = { template: null, leaveType: null, employeeId: '' }
   }, [])
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
@@ -2095,7 +2096,7 @@ function getShiftCode(shift: Shift): string {
     // Original shift deletion logic
     if (dayShifts.length === 0) return
 
-    let shiftTarget = dayShifts.find(s => s.clinicId === selectedClinicId) ?? null
+    let shiftTarget: any = dayShifts.length === 1 ? dayShifts[0] : null
     // ★ 調鋪日有多張更 → 要問清楚，唔可以靜靜刪其中一張
     if (dayShifts.length > 1) {
       const names = dayShifts.map((s, i) =>
@@ -2107,7 +2108,7 @@ function getShiftCode(shift: Shift): string {
       shiftTarget = dayShifts[i]
     }
     if (!shiftTarget) {
-      setValidationIssues([{ type: 'warning', rule: 'shift', message: '該格喺目前選中嘅診所冇更次' }])
+      // prompt 取消，直接 return（唔係外店更問題）
       return
     }
     const name = employees.find(e => e.id === empId)?.user?.name || empId
@@ -4463,7 +4464,7 @@ function getShiftCode(shift: Shift): string {
 
           {/* Overview Grid — compact mode, always shown */}
           {viewMode === 'week' && viewRange && ovEmployees.ordered.length > 0 && (
-            <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell, [style*="cursor: pointer"]')) clearSelection() }}>
+            <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell')) clearSelection() }}>
             <div ref={overviewRef} className="ov-compact" style={{
               marginBottom: 12,
               border: '1px solid #e5e7eb',
@@ -4538,7 +4539,7 @@ function getShiftCode(shift: Shift): string {
                 原本冇 viewMode 條件，令 week 模式下兩個一齊出，畫面過長；
                 而切去 month 時兩週消失，用家以為壞咗。 */}
           {viewMode === 'month' && monthDays.length > 0 && ovEmployees.ordered.length > 0 && (
-            <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell, [style*="cursor: pointer"]')) clearSelection() }}>
+            <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell')) clearSelection() }}>
             <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%' }}>
               {/* Month header: navigation + capture */}
               <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
