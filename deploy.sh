@@ -11,22 +11,30 @@ docker exec clinic-prod-db pg_dump -U clinic clinic_prod | gzip > $BK
 echo " $BK"
 find "$ROOT/backups" -mtime +14 -delete
 
-echo "== 預部署靜態檢查 =="
-for script in check-rbac-matrix.sh check-dates.sh check-role-hardcode.sh check-rbac-api.sh; do
-  if [ -f "scripts/$script" ]; then
-    echo "▶ $script"
-    if [ "$script" = "check-dates.sh" ]; then
-      # check-dates.sh: server-side zero hits = fail, frontend warnings = continue
-      bash "scripts/$script" || { echo "❌ $script failed (server-side issues), aborting deploy"; exit 1; }
-    else
-      bash "scripts/$script" || { echo "❌ $script failed, aborting deploy"; exit 1; }
-    fi
-  fi
-done
-
 echo "== 拉代碼 =="
 git fetch origin
 git reset --hard origin/main
+
+echo "== 預部署靜態檢查 =="
+CHECKS="check-rbac-matrix.sh check-role-hardcode.sh check-role-hardcode-api.sh \
+ check-ownership.sh check-sensitive-coverage.sh check-audit-coverage.sh \
+ check-duplicate-calc.sh check-get-no-store.sh check-balance-year.sh"
+for script in $CHECKS; do
+  if [ ! -f "scripts/$script" ]; then
+    echo "❌ scripts/$script 不存在"
+    exit 1
+  fi
+  echo "▶ $script"
+  bash "scripts/$script" || { echo "❌ $script failed, aborting deploy"; exit 1; }
+done
+
+# Legacy aliases — skip if missing (backwards compat)
+for script in check-rbac-api.sh check-dates.sh; do
+  if [ -f "scripts/$script" ]; then
+    echo "▶ $script"
+    bash "scripts/$script" || { echo "❌ $script failed, aborting deploy"; exit 1; }
+  fi
+done
 
 echo "== 重建 app（migration 檔在映像裡，build 必須在 migrate 之前）=="
 if ! $DC up -d --build app; then
