@@ -190,7 +190,10 @@ export async function GET(req: NextRequest) {
 
   const monthShifts = await prisma.shift.findMany({
     where: { status: { not: 'CANCELLED' }, date: { gte: monthStart, lt: monthEnd } },
-    select: { employeeId: true, startTime: true, endTime: true, date: true },
+    select: {
+      employeeId: true, startTime: true, endTime: true, date: true,
+      template: { select: { deductLunch: true } },  // ★ 唔加呢行，dashboard 永遠 flat 60
+    },
   })
 
   // ★ 午飯扣減讀 config，唔寫死 1 小時

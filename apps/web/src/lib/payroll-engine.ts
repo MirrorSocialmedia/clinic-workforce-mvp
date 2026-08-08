@@ -1702,7 +1702,7 @@ export async function calculateTimeBank(
       }
       otMinutes += pairMins
     }
-  } catch { /* leave table may not exist */ }
+  } catch (e) { console.error('payroll calc error:', e) /* leave table may not exist */ }
 
   // Grab makeup entries for this month — split by targetType
   let makeupMinutes = 0
@@ -2765,17 +2765,6 @@ async function applyAttendanceBonusModifier(
   config: PayRuleConfigModular,
   attendanceBonusOverride?: 'FORCE_ON' | 'FORCE_OFF' | null,  // ★ 三態覆蓋
 ): Promise<PayrollResult> {
-  // ★ 缺勤扣OT鐘也取消勤工（即使 absentDays 已排除 OT-deducted 的天數）
-  if (workData.otDeductedAbsences && workData.otDeductedAbsences.length > 0) {
-    const next = { ...result }
-    next.attendanceBonus = 0
-    next.attendanceBonusCancelled = true
-    next.attendanceBonusReason = '缺勤（已扣OT鐘），取消勤工'
-    const rawTotal = result.basePay - result.deduction + result.otPay + (result.splitPay || 0)
-    next.totalPayable = Math.max(0, rawTotal)
-    next.detail = { ...result.detail, attendanceBonus: 0, attendanceBonusCancelled: true, attendanceBonusReason: '缺勤（已扣OT鐘），取消勤工', rawTotal: Math.round(rawTotal * 100) / 100 }
-    return next
-  }
 
   // ★ QA24: 勤工獎必須用 calculateTimeBank 的遲到/早退結果
   //   collectWorkData 的 lateRecords/earlyLeaveRecords 已修正 clinic 過濾，

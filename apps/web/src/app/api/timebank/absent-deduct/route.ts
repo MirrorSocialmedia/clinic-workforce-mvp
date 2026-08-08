@@ -13,7 +13,7 @@ async function tbBalance(employeeId: string) {
 /**
  * POST /api/timebank/absent-deduct
  * 缺勤扣OT鐘：用時間帳戶買回缺勤工資扣款
- * 規則：不扣工資（全薪），仍取消勤工獎，扣當天排班時數
+ * 規則：不扣工資（全薪），不影響勤工獎，扣當天排班時數
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
