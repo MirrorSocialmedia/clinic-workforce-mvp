@@ -62,26 +62,25 @@ export async function GET(req: NextRequest) {
     where.clinicId = { in: session.clinics ?? [] }
   }
 
-  const [shifts, total] = await Promise.all([
-    prisma.shift.findMany({
-      where,
-      include: {
-        employee: {
-          include: {
-            user: { select: { id: true, name: true, phone: true } },
-          },
+  const shifts = await prisma.shift.findMany({
+    where,
+    include: {
+      employee: {
+        include: {
+          user: { select: { id: true, name: true, phone: true } },
         },
-        clinic: { select: { id: true, name: true } },
-        template: { select: { id: true, name: true, deductLunch: true } },
       },
-      orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
-      skip,
-      take: pageSize,
-    }),
-    prisma.shift.count({ where }),
-  ])
+      clinic: { select: { id: true, name: true } },
+      template: { select: { id: true, name: true, deductLunch: true } },
+    },
+    orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
+    skip,
+    take: pageSize,
+  })
+  // Count shortcut: only run DB count when page is full
+  const total = shifts.length < pageSize ? skip + shifts.length : await prisma.shift.count({ where })
 
-  // Batch-check punch records (fix N+1: 1 query instead of N+1)
+  // Batch-check punch records — Set lookup replaces O(shifts×punches) .some()
   let shiftsWithPunch = shifts
   if (shifts.length > 0) {
     const batchStart = startDate ? hkDateStart(startDate) : new Date(0)
@@ -89,27 +88,23 @@ export async function GET(req: NextRequest) {
 
     const allPunches = await prisma.punchRecord.findMany({
       where: {
-        employeeId: { in: shifts.map((s: any) => s.employeeId) },
+        employeeId: { in: [...new Set(shifts.map((s: any) => s.employeeId))] },
         punchType: 'CLOCK_IN',
         punchTime: { gte: batchStart, lte: batchEnd },
-        void: { is: null }, // Exclude voided punches
+        void: { is: null },
       },
+      select: { employeeId: true, clinicId: true, punchTime: true },
     })
 
-    shiftsWithPunch = shifts.map((s: any) => {
-      // ★ 2026-08-05: s.date 係 Prisma Date — hkDateStart 只收 'YYYY-MM-DD' 字串。
-      // 舊寫法靜靜產生 Invalid Date，令 hasPunch 永遠 false；
-      // 32a048c 加咗嚴格驗證後變 500（fail-loud 做啱咗佢嘅工作）。
-      const dayStart = hkDateStart(toHKDateStr(s.date))
-      const dayEnd = hkDateEnd(toHKDateStr(s.date))
-      const hasPunch = allPunches.some((p: any) =>
-        p.employeeId === s.employeeId &&
-        p.clinicId === s.clinicId &&
-        p.punchTime >= dayStart &&
-        p.punchTime <= dayEnd
-      )
-      return { ...s, hasPunch }
-    })
+    const punchKeys = new Set<string>()
+    for (const p of allPunches) {
+      punchKeys.add(`${p.employeeId}|${p.clinicId}|${toHKDateStr(p.punchTime)}`)
+    }
+
+    shiftsWithPunch = shifts.map((s: any) => ({
+      ...s,
+      hasPunch: punchKeys.has(`${s.employeeId}|${s.clinicId}|${toHKDateStr(s.date)}`),
+    }))
   }
 
   return NextResponse.json(
