@@ -1235,6 +1235,7 @@ export interface PayRuleConfigModular {
       hours_per_leave_day?: number  // 預設 8
       ot_min_minutes?: number       // 每日OT最低分鐘（0=不限）
       ot_round_minutes?: number     // OT向下取整級距（0=不取整）
+      early_in_min_minutes?: number // 提早上班 OT 門檻（早到未滿不計，預設 15）
     }
     late_policy?: {
       deduct_salary?: boolean
@@ -1459,6 +1460,8 @@ export async function calculateTimeBank(
   depth = 0
 ): Promise<{
   otMinutes: number
+  earlyInOtMinutes: number
+  otMinutesForAccount: number
   lateMinutes: number
   netLateMinutes: number
   netEarlyMinutes: number
