@@ -128,22 +128,27 @@ export function matchPunchesToShifts(
  * 排班預估工時（未有打卡時用）。
  * ★ 按「員工 + 日期」group —— 分更日一日只扣一次午飯，
  *   唔好每張更各減一次（會令 09-13 + 15-19 由 8h 變 6h）。
+ * ★ Per-day template flag: 只喺「該日有至少一張更要扣」先扣；
+ *   全部都剔走 → 唔扣；冇 template 嘅自訂更 → 照扣（同 engine 語義一致）。
  */
 export function estimateScheduledHours(
   shifts: Array<{ employeeId: string; date: Date | string; startTime: Date | string; endTime: Date | string; status?: string }>,
   lunchMinutesByEmployee: (employeeId: string) => number,
 ): Map<string, { date: string; hours: number }[]> {
   const byEmpDay = new Map<string, number>()
+  const dayDeducts = new Map<string, boolean>() // ★ 該日有冇「要扣」嘅更
   for (const s of shifts) {
     if (s.status === 'CANCELLED') continue
     const key = `${s.employeeId}:${toHKDateStr(new Date(s.date))}`
     const ms = new Date(s.endTime).getTime() - new Date(s.startTime).getTime()
     byEmpDay.set(key, (byEmpDay.get(key) ?? 0) + ms)
+    // 冇 template / template.deductLunch 唔係 false → 照扣（同 engine 語義）
+    dayDeducts.set(key, (dayDeducts.get(key) ?? false) || (s as any).template?.deductLunch !== false)
   }
   const out = new Map<string, { date: string; hours: number }[]>()
   for (const [key, ms] of byEmpDay) {
     const [empId, date] = key.split(':')
-    const lunchH = lunchMinutesByEmployee(empId) / 60
+    const lunchH = dayDeducts.get(key) ? lunchMinutesByEmployee(empId) / 60 : 0
     const hours = Math.max(0, ms / 3600000 - lunchH)
     if (!out.has(empId)) out.set(empId, [])
     out.get(empId)!.push({ date, hours })

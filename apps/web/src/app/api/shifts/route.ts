@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
           },
         },
         clinic: { select: { id: true, name: true } },
-        template: { select: { id: true, name: true } },
+        template: { select: { id: true, name: true, deductLunch: true } },
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }], // ★ unique tiebreaker for stable pagination
       skip,
@@ -242,7 +242,7 @@ export async function POST(req: NextRequest) {
             include: {
               employee: { include: { user: { select: { id: true, name: true } } } },
               clinic: { select: { id: true, name: true } },
-              template: { select: { id: true, name: true } },
+              template: { select: { id: true, name: true, deductLunch: true } },
             },
           }))
         )
@@ -285,7 +285,7 @@ export async function POST(req: NextRequest) {
           include: {
             employee: { include: { user: { select: { id: true, name: true } } } },
             clinic: { select: { id: true, name: true } },
-            template: { select: { id: true, name: true } },
+            template: { select: { id: true, name: true, deductLunch: true } },
           },
         })
 
