@@ -110,8 +110,8 @@ function OtDeductCell({ row, canManageAttendance }: { row: { employeeId: string;
 
   const cancelOtDeduct = async () => {
     if (!confirm(`取消 ${row.date} 的扣OT鐘？\n該日恢復為缺勤（扣薪+取消勤工），帳戶加回 ${row.shiftMinutes} 分。`)) return
-    const res = await fetch('/api/timebank/absent-deduct', {
-      method: 'DELETE', credentials: 'include',
+    const res = await fetch('/api/timebank/absent-deduct/cancel', {
+      method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ employeeId: row.employeeId, date: row.date }),
     })
@@ -431,38 +431,7 @@ export default function AttendancePage() {
     }
   }
 
-  // 缺勤扣OT鐘
-  const handleAbsentDeduct = async (employeeId: string, date: string) => {
-    if (!confirm(`確定扣OT鐘買回 ${date} 的缺勤？將扣時間帳戶（排班時數）`)) return
-    try {
-      const res = await fetch('/api/timebank/absent-deduct', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId, date }),
-      })
-      const data = await res.json()
-      if (!res.ok) { alert(data.error || '扣OT鐘失敗'); return }
-      alert('✅ 扣OT鐘成功')
-      window.dispatchEvent(new CustomEvent('attendance-refresh'))
-    } catch { alert('網絡錯誤') }
-  }
 
-  const handleCancelAbsentDeduct = async (employeeId: string, date: string) => {
-    if (!confirm(`確定取消 ${date} 的缺勤扣OT鐘？將恢復缺勤狀態。`)) return
-    try {
-      const res = await fetch('/api/timebank/absent-deduct/cancel', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId, date }),
-      })
-      const data = await res.json()
-      if (!res.ok) { alert(data.error || '取消失敗'); return }
-      alert('✅ 取消成功')
-      window.dispatchEvent(new CustomEvent('attendance-refresh'))
-    } catch { alert('網絡錯誤') }
-  }
 
   // Listen for attendance-refresh custom event (fired after 扣OT鐘 / 取消)
   useEffect(() => {
