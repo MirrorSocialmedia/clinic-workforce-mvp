@@ -435,12 +435,11 @@ export default function SchedulingPage() {
   const monthExportRef = useRef<HTMLDivElement>(null)
   const [ovMonth, setOvMonth] = useState(() => toHKDateStr(new Date()).slice(0, 7))
 
-  // ★ Sync ovMonth with currentDate when switching to month view
+  // ★ Sync ovMonth with currentDate in ALL view modes (cross-month week fix)
   useEffect(() => {
-    if (viewMode !== 'month') return
     const ym = toHKDateStr(currentDate).slice(0, 7)
     setOvMonth(prev => (prev === ym ? prev : ym))
-  }, [viewMode, currentDate])
+  }, [currentDate])
 
   // ★ viewRange self-calculation — independent of FullCalendar datesSet.
   //   When calendar is hidden (SHOW_LEGACY_CALENDAR=false), viewRange would
