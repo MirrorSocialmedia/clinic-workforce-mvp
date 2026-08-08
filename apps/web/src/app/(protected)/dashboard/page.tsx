@@ -351,7 +351,7 @@ export default function DashboardPage() {
                             return (
                               <div key={log.id} className="text-xs py-1">
                                 <div className="text-muted-foreground">
-                                  {fmtDateTime(log.createdAt)} {labels[log.action] || log.action}
+                                  {fmtDateTime(log.createdAt)} {log.label || labels[log.action] || log.action}
                                   {targetEmpName && <span className="ml-1" style={{ color: '#2563eb' }}>員工：{targetEmpName}</span>}
                                   {log.notes && <span> — {log.notes}</span>}
                                 </div>

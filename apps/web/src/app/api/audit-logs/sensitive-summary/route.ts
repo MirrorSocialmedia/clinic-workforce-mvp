@@ -58,11 +58,11 @@ export async function GET(req: NextRequest) {
     const actorId = log.actorId || '__system__'
     const existing = byActor.get(actorId)
     if (!existing) {
-      byActor.set(actorId, { name: actorName, role: actorRole, count: 1, byAction: { [label]: 1 }, logs: [log] })
+      byActor.set(actorId, { name: actorName, role: actorRole, count: 1, byAction: { [label]: 1 }, logs: [{ ...log, label }] })
     } else {
       existing.count++
       existing.byAction[label] = (existing.byAction[label] || 0) + 1
-      existing.logs.push(log)
+      existing.logs.push({ ...log, label })
     }
   }
 
