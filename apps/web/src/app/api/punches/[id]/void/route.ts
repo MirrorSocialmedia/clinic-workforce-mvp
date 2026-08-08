@@ -4,6 +4,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { prisma } from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // POST /api/punches/[id]/void — Void a punch record (OWNER/MANAGER)
 export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
@@ -62,6 +64,14 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, prisma)
   } catch (e) {
     console.error(`[timebank-cache] invalidate failed employeeId=${punch.employeeId} date=${punch.punchTime}`, e)
+  }
+
+  // ★ 2026-08-08: Revoke stale early-in OT if punches changed
+  try {
+    const hkDate = toHKDateStr(punch.punchTime)
+    await revokeStaleEarlyOt(punch.employeeId, hkDate, session.userId, 'PUNCH_VOID', prisma)
+  } catch (e) {
+    console.error(`[early-in-ot] revoke failed employeeId=${punch.employeeId}`, e)
   }
 
   return NextResponse.json({ ok: true })

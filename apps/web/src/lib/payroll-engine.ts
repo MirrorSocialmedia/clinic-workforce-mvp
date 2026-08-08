@@ -1724,9 +1724,19 @@ export async function calculateTimeBank(
     // timeBankEntry table may not exist yet
   }
 
+  // ★ 2026-08-08: 新增 — 本月已批准嘅早到 OT（獨立欄位，★唔入 ADJUST_TYPES）
+  let earlyInOtMinutes = 0
+  try {
+    const earlyInRows = await db.timeBankEntry?.findMany?.({
+      where: { employeeId, type: 'EARLY_IN_OT', date: { gte: monthStart, lte: monthEnd } },
+    })
+    earlyInOtMinutes = (earlyInRows || []).reduce((s: number, e: any) => s + e.minutes, 0)
+  } catch { /* table may not exist */ }
+
   // 抓換假消耗（LEAVE_CONVERT 負消耗OT，LEAVE_SWAP_BACK 正換回OT，INIT_ADJUST/REST_TO_ACCOUNT 為帳戶調整）
   let convertedMinutes = 0
   try {
+    // ★ 2026-08-08: EARLY_IN_OT 唔入 ADJUST_TYPES（物理隔離，唔好同錢線撞）
     const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT']
     const convertEntries = await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
@@ -1741,9 +1751,9 @@ export async function calculateTimeBank(
   const netEarlyMinutes = Math.max(0, earlyLeaveMinutes - makeupEarlyMinutes)
   const netDeficitMinutes = netLateMinutes + netEarlyMinutes
 
-  // 本月淨OT = OT − 補鐘消耗 − 未補鐘的 deficit（遲到+早退）
-  // makeupMinutes 已含 ABSENT，所以帳戶總消耗正確
-  const netOtThisMonth = otMinutes - makeupMinutes - netDeficitMinutes
+  // ★ 2026-08-08: 淨值改用「鐘口徑」—— ot + earlyIn 合併後先扣消耗
+  const otMinutesForAccount = otMinutes + earlyInOtMinutes // 鐘口徑
+  const netOtThisMonth = otMinutesForAccount - makeupMinutes - netDeficitMinutes
 
   // 拖欠 = 只看本月淨OT是否為負
   const owedMinutes = netOtThisMonth < 0 ? Math.abs(netOtThisMonth) : 0
@@ -1773,7 +1783,8 @@ export async function calculateTimeBank(
   }
 
   return {
-    otMinutes, lateMinutes, netLateMinutes, netEarlyMinutes, earlyLeaveMinutes, makeupMinutes,
+    otMinutes, earlyInOtMinutes, otMinutesForAccount,
+    lateMinutes, netLateMinutes, netEarlyMinutes, earlyLeaveMinutes, makeupMinutes,
     makeupAbsentMinutes,
     netDeficitMinutes,
     carriedFrom,
@@ -3309,7 +3320,8 @@ export async function calculatePayrollWithRules(
   }
 
   // 🔑 重新計算 otPay — 之前用門檻制 otHours 算錯，現在用時間銀行 otMinutes 換算的小時數
-  {
+  // ★ 2026-08-08: mode gate — time_off 模式下 otPay 恆為 0（止血防線）
+  if ((mods.overtime?.mode ?? 'pay') !== 'time_off') {
     const hourlyEquivalent = (result.detail as any).hourlyEquivalent ?? 0
     const otMultiplier = (result.detail as any).otMultiplier ?? 1.5
     const oldOtPay = result.otPay
@@ -3326,6 +3338,14 @@ export async function calculatePayrollWithRules(
       grossPay: Math.round(newGrossPay * 100) / 100,
       mpf: newMpf,
       netPay: Math.round(newNetPay * 100) / 100,
+    }
+  } else {
+    // OT 只補時間：otHours 照更新（時間帳戶要），otPay 恆為 0
+    result.otPay = 0
+    result.detail = {
+      ...result.detail,
+      otMode: 'time_off',
+      otHoursOff: result.otHours,
     }
   }
 

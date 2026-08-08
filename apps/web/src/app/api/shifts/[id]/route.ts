@@ -8,6 +8,7 @@ import { resolveClinicScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 
 // PUT /api/shifts/[id] — edit shift
 export async function PUT(
@@ -157,6 +158,22 @@ export async function PUT(
       }
     }
 
+    // ★ 2026-08-08: Revoke stale early-in OT on shift changes (old + new date)
+    try {
+      const oldDate = toHKDateStr(existing.date)
+      await revokeStaleEarlyOt(existing.employeeId, oldDate, session.userId, 'SHIFT_EDIT', prisma)
+    } catch (e) {
+      console.error(`[early-in-ot] revoke failed employeeId=${existing.employeeId}`, e)
+    }
+    if (updateData.date) {
+      try {
+        const newDate = toHKDateStr(updateData.date)
+        await revokeStaleEarlyOt(existing.employeeId, newDate, session.userId, 'SHIFT_EDIT', prisma)
+      } catch (e) {
+        console.error(`[early-in-ot] revoke failed employeeId=${existing.employeeId}`, e)
+      }
+    }
+
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true, shift })
@@ -201,6 +218,14 @@ export async function DELETE(
       await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
     } catch (e) {
       console.error(`[timebank-cache] invalidate failed employeeId=${existing.employeeId} date=${existing.date}`, e)
+    }
+
+    // ★ 2026-08-08: Revoke stale early-in OT on shift delete
+    try {
+      const hkDate = toHKDateStr(existing.date)
+      await revokeStaleEarlyOt(existing.employeeId, hkDate, session.userId, 'SHIFT_DELETE', prisma)
+    } catch (e) {
+      console.error(`[early-in-ot] revoke failed employeeId=${existing.employeeId}`, e)
     }
 
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)

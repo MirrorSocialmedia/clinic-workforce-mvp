@@ -6,6 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -268,6 +269,14 @@ export async function POST(req: NextRequest) {
           await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
         } catch (e) {
           console.error(`[timebank-cache] invalidate failed employeeId=${correction.employeeId} date=${correction.correctedTime}`, e)
+        }
+
+        // ★ 2026-08-08: Revoke stale early-in OT if punches changed
+        try {
+          const hkDate = toHKDateStr(correction.correctedTime)
+          await revokeStaleEarlyOt(correction.employeeId, hkDate, session.userId, 'CORRECTION_CREATE', prisma)
+        } catch (e) {
+          console.error(`[early-in-ot] revoke failed employeeId=${correction.employeeId}`, e)
         }
       }
 

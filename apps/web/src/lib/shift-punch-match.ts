@@ -7,6 +7,7 @@ export type MatchedDay = {
   lateMinutes: number // floor，未計午休超時
   earlyMinutes: number // floor
   otMinutes: number // 未過門檻／未取整嘅原始值
+  earlyInMinutes: number // ★ floor（提早上班，clockIn < shiftStart 嘅原始分鐘）
   hasClockIn: boolean
   hasClockOut: boolean
   isPartial: boolean // 有 IN 冇 OUT
@@ -97,9 +98,12 @@ export function matchPunchesToShifts(
     let lateMinutes = 0
     let earlyMinutes = 0
     let otMinutes = 0
+    let earlyInMinutes = 0
 
     if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
       lateMinutes = Math.floor((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
+    } else if (clockIn && clockIn.effectiveTime.getTime() < shiftStart.getTime()) {
+      earlyInMinutes = Math.floor((shiftStart.getTime() - clockIn.effectiveTime.getTime()) / 60000)
     }
     if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
       earlyMinutes = Math.floor((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
@@ -115,6 +119,7 @@ export function matchPunchesToShifts(
       lateMinutes,
       earlyMinutes,
       otMinutes,
+      earlyInMinutes,
       hasClockIn: !!clockIn,
       hasClockOut: !!clockOut,
       isPartial: !!clockIn && !clockOut,

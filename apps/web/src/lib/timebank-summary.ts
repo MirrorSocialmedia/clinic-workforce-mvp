@@ -47,7 +47,7 @@ export async function getTimeAccountSummary(
       rows.push({
         employeeId: e.id,
         employeeName: e.user?.name ?? '—',
-        timeAccountMinutes: tb.timeAccountMinutes ?? (tb.availableMinutes - tb.owedMinutes),
+        timeAccountMinutes: tb.timeAccountMinutes ?? null, // ★ 冇值就 null（UI 顯示 —），唔好計錯數
         status: 'ok',
       })
     } catch (err) {

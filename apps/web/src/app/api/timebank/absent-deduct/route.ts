@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
         console.error('[absent-deduct] bad configJson employeeId=', employeeId, e)
       }
     }
-    const shiftMinutes = computeAbsentDeductMinutes(sameDayShifts as any, lunchMinutes)
+    const { minutes: shiftMinutes } = computeAbsentDeductMinutes(sameDayShifts as any, lunchMinutes)
 
     const beforeBalance = await tbBalance(employeeId)
     const entry = await prisma.timeBankEntry.create({

@@ -7,6 +7,8 @@ import { toHKDateStr, fmtTime, getMonthRange } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
 import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
+import { matchPunchesToShifts } from '@/lib/shift-punch-match'
+import { computeEarlyInOt } from '@/lib/early-in-ot'
 
 // GET /api/payroll-runs/exceptions — Attendance exceptions report + timebank summaries
 export async function GET(req: NextRequest) {
@@ -208,7 +210,7 @@ export async function GET(req: NextRequest) {
 
   const exceptions: Array<{
     employeeId: string; employeeName: string; clinicName: string;
-    date: string; type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION' | 'OT';
+    date: string; type: 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION' | 'OT' | 'EARLY_IN';
     detail: string; punchTime?: string; correctionTime?: string;
     lateMinutes?: number; earlyMinutes?: number; otMinutes?: number;
     madeUp?: boolean;
@@ -217,8 +219,15 @@ export async function GET(req: NextRequest) {
     // ABSENT-specific fields
     otDeducted?: boolean;
     shiftMinutes?: number;
+    deductedLunch?: boolean; // ★ 2026-08-08: ABSENT 午飯標示
     // ★ 2026-08-06: 假期返工標記
     leaveWork?: boolean;
+    // ★ 2026-08-08: EARLY_IN-specific fields
+    earlyInMinutes?: number;
+    earlyOtApproved?: boolean;
+    earlyOtMinutes?: number;
+    earlyOtPreview?: number;
+    earlyOtStale?: boolean;
   }> = []
 
   // ★ 2026-08-07: Build templateId → deductLunch map for gate logic
@@ -568,7 +577,7 @@ export async function GET(req: NextRequest) {
       ? dayShifts[0].clinic?.name || '—'
       : `${dayShifts[0].clinic?.name || '—'}（${dayShifts.length} 更）`
 
-    const deductedMinutes = computeAbsentDeductMinutes(
+    const { minutes: deductedMinutes, deductedLunch } = computeAbsentDeductMinutes(
       dayShifts.map(s => ({
         startTime: s.startTime,
         endTime: s.endTime,
@@ -582,8 +591,9 @@ export async function GET(req: NextRequest) {
     exceptions.push({
       employeeId: empId, employeeName: empNames.get(empId) ?? '—',
       clinicName, date: dateStr, type: 'ABSENT',
-      detail: `排班但無打卡記錄 (${dayShifts.length} 更，應返 ${deductedMinutes} 分鐘)`,
+      detail: `排班但無打卡記錄 (${dayShifts.length} 更，應返 ${deductedMinutes} 分鐘${deductedLunch ? '·已扣午飯' : '·未扣午飯'})`,
       shiftMinutes: deductedMinutes,
+      deductedLunch,
     })
   }
 
@@ -617,6 +627,88 @@ export async function GET(req: NextRequest) {
     }
   } catch {
     // timeBankEntry may not exist
+  }
+
+  // ★ 2026-08-08: EARLY_IN 偵測 —— 由 matchPunchesToShifts 結果入面攞 earlyInMinutes
+  try {
+    // Group shifts by employeeId + date for matching
+    const shiftsByEmpDate = new Map<string, typeof shifts>()
+    for (const s of shifts) {
+      const key = `${s.employeeId}|${toHKDateStr(new Date(s.date))}`
+      if (!shiftsByEmpDate.has(key)) shiftsByEmpDate.set(key, [])
+      shiftsByEmpDate.get(key)!.push(s)
+    }
+
+    // Group effective punches by employeeId + date
+    const punchesByEmpDate = new Map<string, typeof effectivePunches>()
+    for (const ep of effectivePunches) {
+      const key = `${ep.raw.employeeId}|${toHKDateStr(ep.effectiveTime)}`
+      if (!punchesByEmpDate.has(key)) punchesByEmpDate.set(key, [])
+      punchesByEmpDate.get(key)!.push(ep)
+    }
+
+    // Check for EARLY_IN_OT entries for approval status
+    const earlyInEntries = await prisma.timeBankEntry.findMany({
+      where: {
+        type: 'EARLY_IN_OT',
+        date: { gte: monthStart, lte: monthEnd },
+      },
+    })
+    const earlyInSet = new Map<string, any>()
+    for (const e of earlyInEntries) {
+      earlyInSet.set(`${e.employeeId}_${toHKDateStr(new Date(e.date))}`, e)
+    }
+
+    // For each employee+date with both shifts and punches, compute earlyInMinutes
+    for (const [key, dayShifts] of shiftsByEmpDate) {
+      const [empId, dateStr] = key.split('|')
+      const dayPunches = punchesByEmpDate.get(key)
+      if (!dayPunches || dayPunches.length === 0) continue
+
+      const matched = matchPunchesToShifts(dayShifts as any, dayPunches as any)
+      const rawEarly = matched.reduce((max, m) => Math.max(max, m.earlyInMinutes ?? 0), 0)
+      if (rawEarly <= 0) continue
+
+      // Skip HOURLY employees
+      if (hourlyEmpIds.has(empId)) continue
+
+      // Get payRule config for threshold calculation
+      const empCfg = ruleByEmp.get(empId) ?? {}
+      const overtimeCfg = empCfg?.modifiers?.overtime ?? {}
+      const finalMinutes = computeEarlyInOt(rawEarly, {
+        earlyInMinMinutes: overtimeCfg.early_in_min_minutes ?? 15,
+        otMinMinutes: overtimeCfg.ot_min_minutes ?? 0,
+        otRoundMinutes: overtimeCfg.ot_round_minutes ?? 0,
+      })
+      if (finalMinutes <= 0) continue // Under threshold — no row needed
+
+      // Check existing entry
+      const entry = earlyInSet.get(`${empId}_${dateStr}`)
+
+      // Recompute to check staleness
+      const recomputed = finalMinutes // Same computation as approval
+      const isStale = !!entry && entry.minutes !== recomputed
+
+      // Find a clinic name from the shifts
+      const clinicName = dayShifts[0]?.clinic?.name || '—'
+
+      exceptions.push({
+        employeeId: empId,
+        employeeName: empNames.get(empId) ?? '—',
+        clinicName,
+        date: dateStr,
+        type: 'EARLY_IN',
+        detail: `提早上班 ${rawEarly} 分（實得 ${finalMinutes} 分）`,
+        earlyInMinutes: rawEarly,
+        earlyOtApproved: !!entry,
+        earlyOtMinutes: entry?.minutes ?? 0,
+        earlyOtPreview: finalMinutes,
+        earlyOtStale: isStale,
+        payType: 'MONTHLY',
+      })
+    }
+  } catch (e) {
+    console.error('[exceptions] early-in detection failed:', e)
   }
 
   const TYPE_LABEL: Record<string, string> = {
@@ -718,6 +810,8 @@ export async function GET(req: NextRequest) {
         payType: payTypeMap.get(empId) || 'MONTHLY',
         timeAccountMinutes: taMinutes,
         otMinutes: tb ? tb.otMinutes : 0,
+        earlyInOtMinutes: tb ? (tb.earlyInOtMinutes ?? 0) : 0,
+        otMinutesForAccount: tb ? (tb.otMinutesForAccount ?? tb.otMinutes) : 0,
         owedMinutes: isHourly ? null : (tb ? tb.owedMinutes : null),
         availableMinutes: isHourly ? null : (tb ? tb.availableMinutes : null),
         convertibleLeaveDays: isHourly ? null : (tb ? tb.convertibleLeaveDays : null),
@@ -726,6 +820,7 @@ export async function GET(req: NextRequest) {
           .filter(e => e.employeeId === empId && e.type === 'LATE')
           .reduce((s, e) => s + (e.lateMinutes || 0), 0),
         otCount: exceptions.filter(e => e.employeeId === empId && e.type === 'OT').length,
+        earlyInCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_IN').length,
         makeupMinutes: isHourly ? null : (tb ? tb.makeupMinutes : null),
         earlyLeaveCount: exceptions.filter(e => e.employeeId === empId && e.type === 'EARLY_LEAVE').length,
         netEarlyMinutes: isHourly ? null : (tb ? tb.netEarlyMinutes : null),
@@ -747,6 +842,7 @@ export async function GET(req: NextRequest) {
       absent: exceptions.filter(e => e.type === 'ABSENT').length,
       correction: exceptions.filter(e => e.type === 'CORRECTION').length,
       earlyLeave: exceptions.filter(e => e.type === 'EARLY_LEAVE').length,
+      earlyIn: exceptions.filter(e => e.type === 'EARLY_IN').length,
     },
     geoAnomalies,
     warnings,

@@ -5,6 +5,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // PUT /api/punch-corrections/[id] — Approve/reject a correction
 export async function PUT(
@@ -97,6 +99,14 @@ export async function PUT(
         await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
       } catch (e) {
         console.error(`[timebank-cache] invalidate failed employeeId=${correction.employeeId} date=${correction.correctedTime}`, e)
+      }
+
+      // ★ 2026-08-08: Revoke stale early-in OT if punches changed
+      try {
+        const hkDate = toHKDateStr(correction.correctedTime)
+        await revokeStaleEarlyOt(correction.employeeId, hkDate, session.userId, 'CORRECTION_APPROVE', prisma)
+      } catch (e) {
+        console.error(`[early-in-ot] revoke failed employeeId=${correction.employeeId}`, e)
       }
     }
 

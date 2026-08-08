@@ -143,6 +143,84 @@ function OtDeductCell({ row, canManageAttendance }: { row: { employeeId: string;
   )
 }
 
+// ============================================================
+// Shared component: EarlyInOtCell (提早 OT 三態)
+// ============================================================
+function EarlyInOtCell({ row, canManageAttendance }: {
+  row: {
+    employeeId: string
+    date: string
+    earlyInMinutes?: number
+    earlyOtApproved?: boolean
+    earlyOtMinutes?: number
+    earlyOtPreview?: number
+    earlyOtStale?: boolean
+  }
+  canManageAttendance: boolean
+}) {
+  const handleApproveEarlyIn = async () => {
+    if (!confirm(`批准 ${row.date} 提早上班 OT？
+入帳 +${row.earlyOtPreview ?? 0} 分鐘至時間帳戶。`)) return
+    const res = await fetch('/api/timebank/early-in-ot', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId: row.employeeId, date: row.date }),
+    })
+    if (!res.ok) { alert((await res.json().catch(() => ({}))).error || '操作失敗'); return }
+    window.dispatchEvent(new CustomEvent('attendance-refresh'))
+  }
+
+  const cancelEarlyIn = async () => {
+    if (!confirm(`取消 ${row.date} 的提早 OT？
+帳戶扣回 ${row.earlyOtMinutes ?? 0} 分。`)) return
+    const res = await fetch('/api/timebank/early-in-ot/cancel', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId: row.employeeId, date: row.date }),
+    })
+    if (!res.ok) { alert((await res.json().catch(() => ({}))).error || '取消失敗'); return }
+    window.dispatchEvent(new CustomEvent('attendance-refresh'))
+  }
+
+  if (!row.earlyInMinutes || row.earlyInMinutes <= 0) return <td>—</td>
+
+  // Under threshold
+  if ((row.earlyOtPreview ?? 0) <= 0) return <td>—</td>
+
+  return (
+    <td>
+      {row.earlyOtApproved && !row.earlyOtStale ? (
+        // Approved state
+        <span className="inline-flex items-center gap-2">
+          <span className="px-2 py-1 text-xs rounded bg-violet-50 text-violet-700 border border-violet-200">
+            ✓ 已批OT +{row.earlyOtMinutes}分
+          </span>
+          {canManageAttendance && (
+            <button onClick={cancelEarlyIn} className="text-xs text-red-600 underline">取消</button>
+          )}
+        </span>
+      ) : row.earlyOtStale ? (
+        // Stale state
+        <span className="inline-flex items-center gap-2">
+          <span className="px-2 py-1 text-xs rounded bg-red-50 text-red-700 border border-red-200">
+            ⚠️ 打卡已改，需重新批准
+          </span>
+          {canManageAttendance && (
+            <button onClick={handleApproveEarlyIn} className="text-xs text-blue-600 underline">重新批准</button>
+          )}
+        </span>
+      ) : canManageAttendance ? (
+        // Not yet approved
+        <button onClick={handleApproveEarlyIn} className="text-xs px-2 py-1 rounded-md font-medium" style={{ background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
+          批准OT +{row.earlyOtPreview ?? 0}分
+        </button>
+      ) : (
+        <span>—</span>
+      )}
+    </td>
+  )
+}
+
 export default function AttendancePage() {
   const router = useRouter()
   const [user, setUser] = useState<{ role: Role; clinics: string[]; grant: string[]; deny: string[] } | null>(null)
@@ -272,6 +350,7 @@ export default function AttendancePage() {
     late: ExceptionRecord | null;
     earlyLeave: ExceptionRecord | null;
     ot: ExceptionRecord | null;
+    earlyIn: ExceptionRecord | null;
   } => {
     // ★ 2026-08-06: record 用 effective time（修正後），exceptions 本身已用 effectiveTime
     // 補卡通常改幾分鐘至幾個鐘，用 punchTime（原始）一定超過 60s 容差 → match 失敗
@@ -298,10 +377,14 @@ export default function AttendancePage() {
         e.punchTime &&
         Math.abs(new Date(e.punchTime).getTime() - recEffectiveMs) < 60000
     )
+    const earlyIn = recordsExceptions.find(
+      e => e.employeeId === record.employeeId && e.date === recordDate && e.type === 'EARLY_IN'
+    )
     return {
       late: late || null,
       earlyLeave: earlyLeave || null,
       ot: ot || null,
+      earlyIn: earlyIn || null,
     }
   }, [recordsExceptions])
 
@@ -757,12 +840,13 @@ export default function AttendancePage() {
                 )
               }
               const record = row as PunchRecord & { isAbsentRow: false; sortTime: number }
-              const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
+              const { late: lateEx, earlyLeave: earlyEx, ot: otEx, earlyIn: earlyInEx } = getRecordException(record as PunchRecord)
               const isClockIn = record.punchType === 'CLOCK_IN'
               const isClockOut = record.punchType === 'CLOCK_OUT'
               const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
               const showEarly = earlyEx
               const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
+              const showEarlyIn = earlyInEx && earlyInEx.type === 'EARLY_IN'
               const recordDateStr = toHKDateStr(new Date(record.punchTime))
               const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
               const isVoided = !!(record.void as any)
@@ -967,12 +1051,13 @@ export default function AttendancePage() {
                             : <span style={{ color: '#d1d5db' }}>—</span>
                       }
                     }
-                    const { late: lateEx, earlyLeave: earlyEx, ot: otEx } = getRecordException(record as PunchRecord)
+                    const { late: lateEx, earlyLeave: earlyEx, ot: otEx, earlyIn: earlyInEx } = getRecordException(record as PunchRecord)
                     const isClockIn = record.punchType === 'CLOCK_IN'
                     const isClockOut = record.punchType === 'CLOCK_OUT'
                     const showLate = lateEx // ★ match 已保證：朝早遲到→上班卡、午休超時→午飯卡
                     const showEarly = earlyEx
                     const showOt = otEx // ★ 收工 OT→下班卡、午飯 OT→午飯卡、假期返工→OUT 卡
+                    const showEarlyIn = earlyInEx && earlyInEx.type === 'EARLY_IN'
                     const recordDateStr = toHKDateStr(new Date(record.punchTime))
                     const monthLoaded = loadedMonths.has(recordDateStr.slice(0, 7))
                     const isVoided = !!(record.void as any)
@@ -1026,7 +1111,8 @@ export default function AttendancePage() {
                             {showLate && <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {showLate.lateMinutes || 0} 分</span>}
                             {showEarly && <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {showEarly.earlyMinutes || 0} 分</span>}
                             {showOt && <span style={{ color: '#059669', fontWeight: 600 }}>OT {showOt.otMinutes || 0} 分</span>}
-                            {!showLate && !showEarly && !showOt && <span style={{ color: '#16a34a' }}>正常</span>}
+                            {showEarlyIn && <span style={{ color: '#185FA5', fontWeight: 600 }}>提早上班 {showEarlyIn.earlyInMinutes || 0} 分</span>}
+                            {!showLate && !showEarly && !showOt && !showEarlyIn && <span style={{ color: '#16a34a' }}>正常</span>}
                           </>
                         )}
                       </td>
