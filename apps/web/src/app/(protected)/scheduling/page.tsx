@@ -506,6 +506,9 @@ export default function SchedulingPage() {
       }
     } catch (e) { console.error('[scheduling] coverage load failed', e) }
   }, [monthDays])
+
+  useEffect(() => { loadCoverage() }, [loadCoverage])
+
   const coverageMark = (empId: string, dateStr: string) => {
     const key = `${empId}|${dateStr}`
     if (coverageData[key]) {
