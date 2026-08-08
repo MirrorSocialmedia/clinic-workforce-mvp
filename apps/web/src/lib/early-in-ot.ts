@@ -82,7 +82,7 @@ export async function revokeStaleEarlyOt(
     where: {
       employeeId,
       date: { gte: dayStart, lte: dayEnd },
-      status: { not: 'CANCELLED' },
+      status: 'CONFIRMED',
     },
   })
   const effectivePunches = await getEffectivePunches(dayStart, dayEnd, {

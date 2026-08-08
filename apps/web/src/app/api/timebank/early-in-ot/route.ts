@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
       where: {
         employeeId,
         date: { gte: dayStart, lte: dayEnd },
-        status: { not: 'CANCELLED' },
+        status: 'CONFIRMED',
       },
     })
     if (shifts.length === 0) return NextResponse.json({ error: '該日無排班' }, { status: 400 })
