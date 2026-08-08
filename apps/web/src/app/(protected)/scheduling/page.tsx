@@ -257,13 +257,19 @@ export default function SchedulingPage() {
     return m
   }, [templates])
 
+  // ★ O(1) lookup by id instead of linear search on templates array
+  const templateById = useMemo(
+    () => new Map(templates.map(t => [t.id, t])),
+    [templates],
+  )
+
   // ★ 固定 6 階梯 —— 避免加刪模板令同店所有更次變色
   const FIXED_STEPS = 6
   const shiftColor = useCallback((s: any) => {
     const base = clinicColorMap.get(s.clinicId) || '#95a5a6'
     if (!s.templateId) return base
     // ★ 2026-08-03：優先用模板自訂 shade；冇設定就沿用舊嘅順序推導
-    const tpl = templates.find(t => t.id === s.templateId)
+    const tpl = templateById.get(s.templateId)
     if (tpl?.shade != null) {
       return shiftShade(base, Math.min(tpl.shade, FIXED_STEPS - 1), FIXED_STEPS)
     }
@@ -1607,7 +1613,7 @@ function getShiftCode(shift: Shift): string {
       justDroppedRef.current = true
       setTimeout(() => { justDroppedRef.current = false }, 100)
 
-      const tpl = templates.find(t => t.id === drag.templateId)
+      const tpl = templateById.get(drag.templateId)
       if (!tpl) return
 
       const empId = drag.employeeId || employeeId
@@ -2105,7 +2111,7 @@ function getShiftCode(shift: Shift): string {
               // ★ 病假疊層：顯示病·更次，斜紋底
               (() => {
                 const s0 = ss[0]
-                const tpl = templates.find(t => t.id === s0.templateId)
+                const tpl = templateById.get(s0.templateId)
                 const clinic = clinics.find(c => c.id === s0.clinicId)
                 const parts: string[] = []
                 if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
@@ -2125,7 +2131,7 @@ function getShiftCode(shift: Shift): string {
             ) : (
               <>
                 {ss.map((s, si) => {
-                  const tpl = templates.find(t => t.id === s.templateId)
+                  const tpl = templateById.get(s.templateId)
                   const clinic = clinics.find(c => c.id === s.clinicId)
                   const parts: string[] = []
                   if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
@@ -2237,7 +2243,7 @@ function getShiftCode(shift: Shift): string {
     const ls = (leaveReqs ?? leaveRequests).filter(lr => lr.employeeId === empId && leaveCoversDate(lr, dateStr))
     const parts: React.ReactNode[] = []
     ss.forEach((s, si) => {
-      const tpl = templates.find(t => t.id === s.templateId)
+      const tpl = templateById.get(s.templateId)
       const p: string[] = []
       if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
       if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
@@ -2424,7 +2430,7 @@ function getShiftCode(shift: Shift): string {
                           const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
                           if (empShiftsOnDay.length > 0 && sickLeave) {
                             const s0 = empShiftsOnDay[0]
-                            const tpl = templates.find(t => t.id === s0.templateId)
+                            const tpl = templateById.get(s0.templateId)
                             const clinic = clinics.find(c => c.id === s0.clinicId)
                             const parts: string[] = []
                             if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
@@ -2449,7 +2455,7 @@ function getShiftCode(shift: Shift): string {
                           const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
                           if (sickLeave) return null
 
-                          const tpl = templates.find(t => t.id === s.templateId)
+                          const tpl = templateById.get(s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
                           const parts: string[] = []
                           if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
@@ -2584,7 +2590,7 @@ function getShiftCode(shift: Shift): string {
                           const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
                           if (empShiftsOnDay.length > 0 && sickLeave) {
                             const s0 = empShiftsOnDay[0]
-                            const tpl = templates.find(t => t.id === s0.templateId)
+                            const tpl = templateById.get(s0.templateId)
                             const clinic = clinics.find(c => c.id === s0.clinicId)
                             const parts: string[] = []
                             if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
@@ -2608,7 +2614,7 @@ function getShiftCode(shift: Shift): string {
                           const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
                           if (sickLeave) return null
 
-                          const tpl = templates.find(t => t.id === s.templateId)
+                          const tpl = templateById.get(s.templateId)
                           const clinic = clinics.find(c => c.id === s.clinicId)
                           const parts: string[] = []
                           if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
@@ -2741,7 +2747,7 @@ function getShiftCode(shift: Shift): string {
                               const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
                               if (empShiftsOnDay.length > 0 && sickLeave) {
                                 const s0 = empShiftsOnDay[0]
-                                const tpl = templates.find(t => t.id === s0.templateId)
+                                const tpl = templateById.get(s0.templateId)
                                 const clinic = clinics.find(c => c.id === s0.clinicId)
                                 const parts: string[] = []
                                 if (labelParts.includes('clinic')) parts.push(getClinicLabel(s0, clinics))
@@ -2765,7 +2771,7 @@ function getShiftCode(shift: Shift): string {
                               const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
                               if (sickLeave) return null
 
-                              const tpl = templates.find(t => t.id === s.templateId)
+                              const tpl = templateById.get(s.templateId)
                               const clinic = clinics.find(c => c.id === s.clinicId)
                               const parts: string[] = []
                               if (labelParts.includes('clinic')) parts.push(getClinicLabel(s, clinics))
@@ -4642,7 +4648,7 @@ function getShiftCode(shift: Shift): string {
                                   if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}></span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
-                                    const tpl = templates.find(t => t.id === s.templateId)
+                                    const tpl = templateById.get(s.templateId)
                                     const p: string[] = []
                                     if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
                                     if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
@@ -4737,7 +4743,7 @@ function getShiftCode(shift: Shift): string {
                                   if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}></span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
-                                    const tpl = templates.find(t => t.id === s.templateId)
+                                    const tpl = templateById.get(s.templateId)
                                     const p: string[] = []
                                     if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
                                     if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
@@ -4811,7 +4817,7 @@ function getShiftCode(shift: Shift): string {
                                 if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}></span>
                                 const parts: React.ReactNode[] = []
                                 ss.forEach((s, si) => {
-                                  const tpl = templates.find(t => t.id === s.templateId)
+                                  const tpl = templateById.get(s.templateId)
                                   const p: string[] = []
                                   if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
                                   if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
@@ -5177,7 +5183,7 @@ function getShiftCode(shift: Shift): string {
                     setValidationIssues([{ type: 'error', rule: 'employee', message: '⚠️ 請先點擊選擇員工' }])
                     return
                   }
-                  const tpl = templates.find(t => t.id === props.templateId)
+                  const tpl = templateById.get(props.templateId)
                   if (!tpl) {
                     setValidationIssues([{ type: 'error', rule: 'template', message: '⚠️ 請先選擇更次模板' }])
                     return
@@ -5724,7 +5730,7 @@ function getShiftCode(shift: Shift): string {
                     return
                   }
 
-                  const template = templates.find(t => t.id === templateId)
+                  const template = templateById.get(templateId)
                   if (!template) return
 
                   await createShift(employeeId, date, template)
@@ -6012,7 +6018,7 @@ function getShiftCode(shift: Shift): string {
                     alert('日期範圍內冇符合嘅星期')
                     return
                   }
-                  const tpl = templates.find(t => t.id === bulkTemplateId)
+                  const tpl = templateById.get(bulkTemplateId)
                   if (!tpl) {
                     alert('模板不存在')
                     return
