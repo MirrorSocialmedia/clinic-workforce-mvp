@@ -363,7 +363,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
 export default function SchedulingPage() {
   // ★ Profiler (temporary, remove after measurement)
   const logRender = (id: string, phase: string, actualDuration: number) => {
-    if (actualDuration > 20) console.log(`[⏱ ${id}] ${phase} ${actualDuration.toFixed(0)}ms`)
+    if (actualDuration > 0) console.log(`[⏱ ${id}] ${phase} ${actualDuration.toFixed(0)}ms`)
   }
 
   const router = useRouter()
