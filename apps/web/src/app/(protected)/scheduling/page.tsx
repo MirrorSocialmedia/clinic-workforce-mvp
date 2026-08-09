@@ -231,7 +231,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   draggingTemplate: React.MutableRefObject<{ templateId: string; employeeId: string } | null>
   draggingLeave: React.MutableRefObject<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>
   justDroppedRef: React.MutableRefObject<boolean>
-  onDrop: (empId: string, dateStr: string, clinicId: string) => void
+  onDrop: (empId: string, dateStr: string, clinicId: string, rect?: DOMRect) => void
   selectedClinicId: string | null
   homeLabel?: string
 }) {
@@ -298,7 +298,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
 
         if (!isBorrowed) {
           props.className = 'overview-cell'
-          props.onPointerUp = () => canManage && onDrop(emp.id, d, selectedClinicId!)
+          props.onPointerUp = (e: React.PointerEvent<HTMLTableCellElement>) => canManage && onDrop(emp.id, d, selectedClinicId!, (e.currentTarget as HTMLElement).getBoundingClientRect())
           props.onPointerEnter = (e: React.PointerEvent<HTMLTableCellElement>) => {
             if (!draggingTemplate.current && !draggingLeave.current) return
             ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
@@ -561,6 +561,11 @@ export default function SchedulingPage() {
     dateStr: string
     x: number
     y: number
+    conflict?: {
+      kind: 'shift' | 'leave'
+      existing: Array<{ id: string; label: string }>
+      pending: { templateId: string; clinicId: string }
+    }
   } | null>(null)
   useEffect(() => { setCellMenu(null) }, [selectedClinicId])
 
@@ -1499,8 +1504,11 @@ function getShiftCode(shift: Shift): string {
     return { valid: true, errors: [], warnings: [] }
   }, [selectedClinicId])
 
-  const createShift = useCallback(async (employeeId: string, date: string, template: ShiftTemplate, _secondaryClinicId?: string | null, clinicIdOverride?: string | null): Promise<boolean> => {
-    const targetClinicId = clinicIdOverride ?? selectedClinicId
+  const createShift = useCallback(async (
+    employeeId: string, date: string, template: ShiftTemplate,
+    opts?: { clinicIdOverride?: string | null; replaceShiftIds?: string[]; replaceLeaveIds?: string[]; onConflict?: (c: { kind: 'shift' | 'leave', existing: Array<{ id: string; label: string }> }) => void }
+  ): Promise<boolean> => {
+    const targetClinicId = opts?.clinicIdOverride ?? selectedClinicId
     if (!targetClinicId) {
       setValidationIssues([{ type: 'error', rule: 'clinic', message: '⚠️ 請先選擇診所' }])
       return false
@@ -1522,29 +1530,53 @@ function getShiftCode(shift: Shift): string {
         endTime.setTime(endTime.getTime() + 86400000)
       }
 
-      // Validate first
+      // Validate first — split hard errors from collision errors
       const validationResult = await validateBeforeCreate(employeeId, date, startTime.toISOString(), endTime.toISOString())
       if (!validationResult.valid) {
+        const hard = validationResult.errors.filter((e: any) => e.rule !== 'collision_check')
+        const collide = validationResult.errors.filter((e: any) => e.rule === 'collision_check')
         setValidationIssues([
-          ...validationResult.errors.map((e: any) => ({ type: 'error' as const, rule: e.rule, message: e.message })),
+          ...hard.map((e: any) => ({ type: 'error' as const, rule: e.rule, message: e.message })),
           ...validationResult.warnings.map((w: any) => ({ type: 'warning' as const, rule: w.rule, message: w.message })),
         ])
-        if (validationResult.errors.length > 0) return false // Block on errors
+        if (hard.length > 0) return false // Hard errors always block
+        // ★ Collision in non-replace mode → pop cellMenu for replace confirmation
+        if (collide.length > 0 && !opts?.replaceShiftIds) {
+          const dayShifts = shifts.filter(
+            s => s.employeeId === employeeId && toHKDateStr(new Date(s.date)) === date
+          )
+          opts?.onConflict?.({
+            kind: 'shift',
+            existing: dayShifts.map(s => ({
+              id: s.id,
+              label: templateById.get(s.templateId ?? '')?.name ?? s.templateId?.slice(0, 6) ?? '更次',
+            })),
+          })
+          return false
+        }
+      } else {
+        setValidationIssues(
+          validationResult.warnings.map((w: any) => ({ type: 'warning' as const, rule: w.rule, message: w.message }))
+        )
       }
+
+      const body: any = {
+        employeeId,
+        clinicId: targetClinicId,
+        date,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        templateId: template.id,
+        secondaryClinicId: secondaryClinicId || null,
+      }
+      if (opts?.replaceShiftIds?.length) body.replaceShiftIds = opts.replaceShiftIds
+      if (opts?.replaceLeaveIds?.length) body.replaceLeaveIds = opts.replaceLeaveIds
 
       const res = await fetch('/api/shifts', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employeeId,
-          clinicId: targetClinicId,
-          date,
-          startTime: startTime.toISOString(),
-          endTime: endTime.toISOString(),
-          templateId: template.id,
-          secondaryClinicId: _secondaryClinicId || secondaryClinicId || null,
-        }),
+        body: JSON.stringify(body),
       })
 
       if (res.ok) {
@@ -1571,7 +1603,7 @@ function getShiftCode(shift: Shift): string {
     } finally {
       creatingKeyRef.current = null
     }
-  }, [selectedClinicId, secondaryClinicId, setValidationIssues, refreshAll, validateBeforeCreate])
+  }, [selectedClinicId, secondaryClinicId, setValidationIssues, refreshAll, validateBeforeCreate, shifts, templateById])
 
   // ★ 2026-08-03：儲存更次深淺設定
   const saveTemplateShade = async (templateId: string, shade: number) => {
@@ -1661,7 +1693,7 @@ function getShiftCode(shift: Shift): string {
       setValidationIssues([{ type: 'error', rule: 'leave', message: `❌ ${err.error || '設定假期失敗'}` }])
       await refreshAll()
     }
-  }, [refreshAll, refreshLeaveBalances, setValidationIssues])
+  }, [refreshAll, setValidationIssues])
 
   const buildTime = (date: string, hour: number, minute: number, isNight = false): string => {
     const pad = (n: number) => String(n).padStart(2, '0')
@@ -1781,11 +1813,32 @@ function getShiftCode(shift: Shift): string {
     }
   }
 
+  // ★ Handle replace conflict from cellMenu
+  const handleReplaceConflict = useCallback(async (menu: typeof cellMenu) => {
+    if (!menu || !menu.conflict) return
+    setCellMenu(null)
+    const { existing, pending } = menu.conflict
+
+    if (menu.conflict.kind === 'shift') {
+      await createShift(
+        menu.empId, menu.dateStr,
+        templateById.get(pending.templateId)!,
+        { clinicIdOverride: pending.clinicId, replaceShiftIds: existing.map(e => e.id) }
+      )
+    } else if (menu.conflict.kind === 'leave') {
+      await createShift(
+        menu.empId, menu.dateStr,
+        templateById.get(pending.templateId)!,
+        { clinicIdOverride: pending.clinicId, replaceLeaveIds: existing.map(e => e.id) }
+      )
+    }
+  }, [templateById, createShift, setCellMenu])
+
   // ============================================================
   // Drag and Drop Handlers
   // ============================================================
   // Drop handler for overview grid — drag template to any (employee, day) cell or drag leave to create leave request
-  const handleOverviewDrop = useCallback(async (employeeId: string, dateStr: string, clinicIdOverride?: string | null) => {
+  const handleOverviewDrop = useCallback(async (employeeId: string, dateStr: string, clinicIdOverride?: string | null, rect?: DOMRect) => {
     const targetClinicId = clinicIdOverride ?? selectedClinicId
     // ① Template drag → create shift (existing logic)
     const drag = draggingTemplate.current
@@ -1800,17 +1853,33 @@ function getShiftCode(shift: Shift): string {
       const empId = drag.employeeId || employeeId
       if (!empId) return
 
-      // Fix: check if employee has approved leave on that day
-      const hasLeaveOnDate = leaveRequests.some(lr =>
+      // ★ 病假例外：SICK 唔算衝突，直接疊加
+      const dayLeaves = leaveRequests.filter(lr =>
         lr.employeeId === empId &&
-        leaveCoversDate(lr, dateStr)
+        leaveCoversDate(lr, dateStr) &&
+        lr.leaveType?.systemKey !== 'SICK'
       )
-      if (hasLeaveOnDate) {
-        setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
+      if (dayLeaves.length > 0) {
+        const r = rect || { x: 0, y: 0, width: 0, height: 0 }
+        setCellMenu({
+          empId, dateStr,
+          x: r.x + r.width, y: r.y,
+          conflict: {
+            kind: 'leave',
+            existing: dayLeaves.map(lr => ({
+              id: lr.id,
+              label: lr.leaveType?.name ?? '假期',
+            })),
+            pending: {
+              templateId: tpl.id,
+              clinicId: targetClinicId ?? selectedClinicId ?? '',
+            },
+          },
+        })
         return
       }
 
-      await createShift(empId, dateStr, tpl, undefined, targetClinicId)
+      await createShift(empId, dateStr, tpl, { clinicIdOverride: targetClinicId })
       return
     }
 
@@ -1847,7 +1916,7 @@ function getShiftCode(shift: Shift): string {
       await applyLeaveToCell(dl.employeeId, dateStr, dl.leaveTypeId)
       return
     }
-  }, [selectedClinicId, templateById, leaveRequests, leaveTypes, selectedEmpBalances, shifts, createShift, applyLeaveToCell, setValidationIssues])
+  }, [selectedClinicId, templateById, leaveRequests, leaveTypes, selectedEmpBalances, shifts, createShift, applyLeaveToCell, setValidationIssues, setCellMenu])
 
   const handleDragStart = (e: React.DragEvent, employeeId: string) => {
     dragData.current = { employeeId, templateId: selectedTemplate?.id || '' }
@@ -2571,7 +2640,7 @@ function getShiftCode(shift: Shift): string {
                   return (
                     <td key={dayIdx}
                       className="overview-cell"
-                      onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
+                      onPointerUp={(e: React.PointerEvent) => handleOverviewDrop(emp.id, wd.dateStr, undefined, (e.currentTarget as HTMLElement).getBoundingClientRect())}
                       onPointerEnter={e => {
                         if (!draggingTemplate.current && !draggingLeave.current) return
                         ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
@@ -2731,7 +2800,7 @@ function getShiftCode(shift: Shift): string {
                   return (
                     <td key={dayIdx}
                       className="overview-cell"
-                      onPointerUp={() => handleOverviewDrop(emp.id, wd.dateStr)}
+                      onPointerUp={(e: React.PointerEvent) => handleOverviewDrop(emp.id, wd.dateStr, undefined, (e.currentTarget as HTMLElement).getBoundingClientRect())}
                       onPointerEnter={e => {
                         if (!draggingTemplate.current && !draggingLeave.current) return
                         ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
@@ -2889,7 +2958,7 @@ function getShiftCode(shift: Shift): string {
                       return (
                         <td key={dayIdx}
                           className="overview-cell"
-                          onPointerUp={() => canManage && handleOverviewDrop(emp.id, wd.dateStr)}
+                          onPointerUp={(e: React.PointerEvent) => canManage && handleOverviewDrop(emp.id, wd.dateStr, undefined, (e.currentTarget as HTMLElement).getBoundingClientRect())}
                           onPointerEnter={e => {
                             if (!draggingTemplate.current && !draggingLeave.current) return
                             ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
@@ -3321,6 +3390,27 @@ function getShiftCode(shift: Shift): string {
                 {emp?.user?.name} · {cellMenu.dateStr.slice(5)}
               </div>
 
+              {/* ★ Conflict mode or normal menu */}
+              {cellMenu.conflict ? (
+                <>
+                  <div style={{ padding: '8px 10px', fontSize: 11, color: '#d97706' }}>
+                    ⚠️ 已有：{cellMenu.conflict.existing.map(e => e.label).join('、')}
+                  </div>
+                  <button
+                    style={{ display: 'block', width: '100%', padding: '7px 10px', fontSize: 12,
+                      border: 'none', background: '#dbeafe', cursor: 'pointer', color: '#1d4ed8',
+                      borderRadius: 4, textAlign: 'left' }}
+                    onClick={() => handleReplaceConflict(cellMenu)}
+                  >取代</button>
+                  <button
+                    style={{ display: 'block', width: '100%', padding: '7px 10px', fontSize: 12,
+                      border: 'none', background: '#f3f4f6', cursor: 'pointer', color: '#374151',
+                      borderRadius: 4, textAlign: 'left', marginTop: 2 }}
+                    onClick={() => setCellMenu(null)}
+                  >取消</button>
+                </>
+              ) : (
+                <>
               {cellShiftOptions.map(g => (
                 <div key={g.clinicId}>
                   <div style={{
@@ -3338,7 +3428,7 @@ function getShiftCode(shift: Shift): string {
                         //   選單揀嘅係「呢一格用咩」，唔係「之後都用呢個」。
                         const cm = cellMenu
                         if (!cm) return
-                        await createShift(cm.empId, cm.dateStr, it.template, null, g.clinicId)
+                        await createShift(cm.empId, cm.dateStr, it.template, { clinicIdOverride: g.clinicId })
                         await refreshAll()
                       }}
                       style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%',
@@ -3387,6 +3477,8 @@ function getShiftCode(shift: Shift): string {
                 </button>
                 )
               })}
+                </>
+              )}
             </div>
           </>
         )
