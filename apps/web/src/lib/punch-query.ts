@@ -28,6 +28,7 @@ export async function getEffectivePunches(
   end: Date,
   opts?: {
     employeeId?: string
+    employeeIds?: string[]  // ★ 多員工批量查詢（exceptions route）
     clinicId?: string
     clinicIds?: string[]    // ★ MANAGER 多店 scope
     db?: typeof prisma
@@ -40,6 +41,7 @@ export async function getEffectivePunches(
     void: { is: null },
   }
   if (opts?.employeeId) punchWhere.employeeId = opts.employeeId
+  else if (opts?.employeeIds) punchWhere.employeeId = { in: opts.employeeIds }
   if (opts?.clinicId) punchWhere.clinicId = opts.clinicId
   // ★ 空陣列代表「一間店都冇權限」，要配對零筆；用 .length 會變成完全唔 filter（fail-open）
   else if (opts?.clinicIds !== undefined) punchWhere.clinicId = { in: opts.clinicIds }
@@ -49,6 +51,7 @@ export async function getEffectivePunches(
     status: 'APPROVED',
   }
   if (opts?.employeeId) correctionWhere.employeeId = opts.employeeId
+  else if (opts?.employeeIds) correctionWhere.employeeId = { in: opts.employeeIds }
   if (opts?.clinicId) correctionWhere.clinicId = opts.clinicId
   else if (opts?.clinicIds !== undefined) correctionWhere.clinicId = { in: opts.clinicIds }
 

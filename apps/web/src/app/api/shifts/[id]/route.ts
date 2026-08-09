@@ -275,6 +275,9 @@ export async function DELETE(
 
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, payrollLocked: locked ? {
+      month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+      status: locked.status,
+    } : null })
   })
 }

@@ -94,7 +94,18 @@ export async function GET(req: NextRequest) {
   }
   if (employeeId) shiftWhere.employeeId = employeeId
 
-  // ★ 打卡查詢一致化：唔按診所收窄，同 payroll-engine 口徑一致（2026-08-09）
+  // ★ 打卡按「員工範圍」收窄，唔按打卡地點 —— 調鋪日對面店嘅打卡照拉到
+  let scopedEmployeeIds: string[] | undefined = undefined
+  if (scopedClinicId || scopedClinicIds !== undefined) {
+    const links = await prisma.employeeClinic.findMany({
+      where: {
+        clinicId: scopedClinicId ? scopedClinicId : { in: scopedClinicIds! },
+      },
+      select: { employeeId: true },
+    })
+    scopedEmployeeIds = [...new Set(links.map(l => l.employeeId))]
+  }
+
   const [activeRules, effectivePunches, rawPunches, corrections, shifts] = await Promise.all([
     prisma.payRule.findMany({
       where: {
@@ -109,13 +120,13 @@ export async function GET(req: NextRequest) {
       clinicId: undefined,
       clinicIds: undefined,
       employeeId: employeeId || undefined,
+      employeeIds: employeeId ? undefined : scopedEmployeeIds, // ★ 按員工範圍收窄
     }),
     prisma.punchRecord.findMany({
       where: {
         punchTime: { gte: monthStart, lte: monthEnd },
         void: { is: null },
-        // 同 effectivePunches 口徑一致 — 唔按診所 filter
-        ...(employeeId ? { employeeId } : {}),
+        ...(employeeId ? { employeeId } : scopedEmployeeIds ? { employeeId: { in: scopedEmployeeIds } } : {}),
       },
       include: {
         employee: {
