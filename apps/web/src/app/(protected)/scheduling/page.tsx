@@ -761,6 +761,7 @@ export default function SchedulingPage() {
   // ★ 調鋪組合卡片（獨立於左邊店鋪選擇）
   const [tcPrimaryClinicId, setTcPrimaryClinicId] = useState<string | null>(null) // 上午 / 主店
   const [tcTemplateId, setTcTemplateId] = useState<string | null>(null)
+  const [tcEmployeeId, setTcEmployeeId] = useState<string | null>(null)
   // 下午 / 調入店 直接沿用現有 secondaryClinicId，唔好另開一個 state
 
   // Shift rule config state
@@ -1036,6 +1037,29 @@ function getShiftCode(shift: Shift): string {
     [tcPrimaryClinicId, templates, clinicById],
   )
   const tcReady = !!(tcPrimaryClinicId && secondaryClinicId && tcTemplateId)
+
+  // ★ 調鋪員工清單（按主屬診所分組）
+  const tcEmployeeGroups = useMemo(() => {
+    const pool = employees.filter(e => e.status === 'ACTIVE' || e.status === undefined)
+    const byClinic = new Map<string, any[]>()
+    for (const e of pool) {
+      const cid = e.homeClinicId ?? '_none'
+      const arr = byClinic.get(cid); arr ? arr.push(e) : byClinic.set(cid, [e])
+    }
+    return [...byClinic.entries()]
+      .map(([cid, list]) => ({
+        clinicId: cid,
+        label: clinicById.get(cid)?.name ?? '未分配',
+        isPrimary: cid === tcPrimaryClinicId,
+        list: list.sort((a, b) => {
+          const ra = ['OWNER', 'MANAGER', 'STAFF'].indexOf(a.role ?? 'STAFF')
+          const rb = ['OWNER', 'MANAGER', 'STAFF'].indexOf(b.role ?? 'STAFF')
+          if (ra !== rb) return ra - rb
+          return (a.user?.name ?? '').localeCompare(b.user?.name ?? '', 'zh-HK')
+        }),
+      }))
+      .sort((a, b) => (a.isPrimary ? -1 : b.isPrimary ? 1 : a.label.localeCompare(b.label, 'zh-HK')))
+  }, [employees, clinicById, tcPrimaryClinicId])
 
   // ★ 調鋪組合連鎖清空（上午一改，下面三個全部清空）
   const setPrimary = useCallback((id: string | null) => {
@@ -1909,6 +1933,7 @@ function getShiftCode(shift: Shift): string {
         { clinicIdOverride: pending.clinicId, replaceLeaveIds: existing.map(e => e.id) }
       )
     }
+    setTcEmployeeId(null)
   }, [templateById, createShift, setCellMenu])
 
   // ============================================================
@@ -1922,6 +1947,15 @@ function getShiftCode(shift: Shift): string {
       draggingTransfer.current = null
       justDroppedRef.current = true
       setTimeout(() => { justDroppedRef.current = false }, 100)
+
+      // ★ 員工鎖定檢查
+      if (tcEmployeeId && employeeId !== tcEmployeeId) {
+        const name = employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '該員工'
+        setValidationIssues([{ type: 'error', rule: 'transfer',
+          message: `❌ 調鋪組合已鎖定 ${name} —— 請拖去佢嗰行，或者喺卡片清除員工` }])
+        return
+      }
+
       const tpl = templateById.get(tc.templateId)
       if (!tpl || !employeeId) return
       const dayLeaves = leaveRequests.filter(lr =>
@@ -1959,6 +1993,7 @@ function getShiftCode(shift: Shift): string {
           },
         }),
       })
+      setTcEmployeeId(null)
       return
     }
 
@@ -2425,7 +2460,7 @@ function getShiftCode(shift: Shift): string {
         y: anchor?.bottom ?? 0,
       })
     }, 250)
-  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
+  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId, tcEmployeeId, employees])
 
   const handleOverviewCellDblClick = useCallback(async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
@@ -3532,23 +3567,27 @@ function getShiftCode(shift: Shift): string {
             <div style={{
               position: 'fixed',
               left: Math.min(cellMenu.x, window.innerWidth - 230),
-              top: Math.min(cellMenu.y + 4, window.innerHeight - 380),
-              width: 220, maxHeight: 360, overflowY: 'auto',
+              top: Math.max(8, Math.min(cellMenu.y + 4, window.innerHeight - 380)),
+              width: 220, maxHeight: 'min(60vh, 420px)',
               background: '#fff', borderRadius: 8, zIndex: 999,
               border: cellMenu.conflict ? '2px solid #BA7517' : '1px solid #e5e7eb',
               boxShadow: cellMenu.conflict
                 ? '0 8px 24px rgba(186,117,23,.28)'
                 : '0 8px 24px rgba(0,0,0,.14)',
               overflow: 'hidden',
+              display: 'flex', flexDirection: 'column',
             }}>
               {cellMenu.conflict && <div style={{ height: 3, background: '#BA7517' }} />}
               <div style={{ padding: '7px 10px', fontSize: 11,
                 borderBottom: `1px solid ${cellMenu.conflict ? '#EF9F27' : '#e5e7eb'}`,
                 background: cellMenu.conflict ? '#FAEEDA' : '#f9fafb',
                 color: cellMenu.conflict ? '#854F0B' : '#6b7280',
-                position: 'sticky', top: 0 }}>
+                flexShrink: 0 }}>
                 {emp?.user?.name} · {cellMenu.dateStr.slice(5)}
               </div>
+
+              {/* ★ 內層負責滾動 */}
+              <div style={{ overflowY: 'auto', minHeight: 0 }}>
 
               {/* ★ Conflict mode or normal menu */}
               {cellMenu.conflict ? (
@@ -3651,6 +3690,7 @@ function getShiftCode(shift: Shift): string {
               })}
                 </>
               )}
+              </div>
             </div>
           </>
         )
@@ -4520,10 +4560,27 @@ function getShiftCode(shift: Shift): string {
               </select>
             </div>
 
+            {/* ★ 員工（選填 · 鎖定） */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>員工（選填 · 鎖定）</span>
+              <select value={tcEmployeeId ?? ''} onChange={e => setTcEmployeeId(e.target.value || null)}
+                style={{ flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}>
+                <option value="">不限</option>
+                {tcEmployeeGroups.map(g => (
+                  <optgroup key={g.clinicId} label={g.label}>
+                    {g.list.map(emp => <option key={emp.id} value={emp.id}>{emp.user?.name ?? emp.id}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+              {tcEmployeeId && (
+                <button onClick={() => setTcEmployeeId(null)} style={{ padding: '2px 6px', cursor: 'pointer', fontSize: 14, background: 'none', border: 'none', color: '#999' }}>✕</button>
+              )}
+            </div>
+
             {/* 清除掣 + 膠囊 */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <button
-                onClick={() => { setPrimary(null); setSecondaryClinicId(null) }}
+                onClick={() => { setPrimary(null); setSecondaryClinicId(null); setTcEmployeeId(null) }}
                 style={{ fontSize: 10, padding: '2px 10px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', color: '#6b7280' }}
               >
                 清除
@@ -4543,7 +4600,7 @@ function getShiftCode(shift: Shift): string {
                     userSelect: 'none', whiteSpace: 'nowrap',
                   }}
                 >
-                  {clinicById.get(tcPrimaryClinicId)?.name ?? '?'}→{clinicById.get(secondaryClinicId)?.name ?? '?'} · {tcTemplateOptions.find(t => t.id === tcTemplateId)?.name ?? ''}
+                  {clinicById.get(tcPrimaryClinicId)?.name ?? '?'}→{clinicById.get(secondaryClinicId)?.name ?? '?'} · {tcTemplateOptions.find(t => t.id === (tcTemplateId ?? ''))?.name ?? ''}{tcEmployeeId ? ` · ${employees.find(e => e.id === tcEmployeeId)?.user?.name ?? ''}` : ''}
                 </div>
               )}
             </div>
@@ -5063,14 +5120,14 @@ function getShiftCode(shift: Shift): string {
                   fontSize: 11,
                   // ★ Explicit width — max-content + table-layout:fixed is contradictory,
                   // causing inconsistent scroll behavior across browsers (2026-08-03)
-                  width: 78 + monthDays.length * 56,
+                  width: 110 + monthDays.length * 56,
                 }}>
                   <thead>
                     {/* ★ 2026-08-04: 每日備註列 —— 月視圖用「·」唔係「＋」 */}
                     <tr>
                       <th style={{
                         position: 'sticky', left: 0, zIndex: 2, background: '#fff',
-                        width: 78, minWidth: 78, borderRight: '0.5px solid #e5e7eb',
+                        width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
                         padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'center',
                       }}>備註</th>
                       {monthDays.map(d => (
@@ -5082,7 +5139,7 @@ function getShiftCode(shift: Shift): string {
                     <tr>
                       <th style={{
                         position: 'sticky', left: 0, zIndex: 2, background: '#fff',
-                        width: 78, minWidth: 78, borderRight: '0.5px solid #e5e7eb',
+                        width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
                         padding: '4px 6px', textAlign: 'left',
                       }}>員工</th>
                       {monthDays.map(d => {
