@@ -45,8 +45,9 @@ export async function GET(req: NextRequest) {
 
   // Normalize action names
   const normalize = (log: any) => {
-    const key = log.entity ? `${log.action}::${log.entity}` : log.action
-    return labelMap.get(key) || log.action
+    // Try exact key "action::entity" first, fall back to "action", then raw code
+    const exact = log.entity ? labelMap.get(`${log.action}::${log.entity}`) : undefined
+    return exact || labelMap.get(log.action) || log.action
   }
 
   // Group by actor

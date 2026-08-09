@@ -325,15 +325,15 @@ export default function DashboardPage() {
                     <div key={actor.name}>
                       <div onClick={() => setExpandedActor(expandedActor === actor.name ? null : actor.name)}
                         className="flex items-center justify-between px-3 py-2 rounded-lg border cursor-pointer hover:bg-muted/50">
-                        <div>
+                        <div className="shrink-0">
                           <span className="text-sm font-medium">{actor.name}</span>
                           {actor.role && <span className="ml-2 text-xs text-muted-foreground">({actor.role})</span>}
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap justify-end gap-1.5 min-w-0">
                           {Object.entries(actor.byAction).map(([action, count]) => {
                             const labels: Record<string, string> = (actor as any).actionLabels || {}
                             return (
-                              <span key={action} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                              <span key={action} className="whitespace-nowrap text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
                                 {labels[action] || action}: {String(count)}
                               </span>
                             )
