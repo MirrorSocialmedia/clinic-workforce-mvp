@@ -230,7 +230,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   onCellDblClick?: (empId: string, dateStr: string) => void
   draggingTemplate: React.MutableRefObject<{ templateId: string; employeeId: string } | null>
   draggingLeave: React.MutableRefObject<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>
-  draggingTransfer: React.MutableRefObject<{ templateId: string; primaryClinicId: string; secondaryClinicId: string } | null>
+  draggingTransfer: React.MutableRefObject<{ templateId: string; primaryClinicId: string; secondaryClinicId: string; lockedEmployeeId: string | null; lockedEmployeeName: string } | null>
   justDroppedRef: React.MutableRefObject<boolean>
   onDrop: (empId: string, dateStr: string, clinicId: string, rect?: DOMRect) => void
   selectedClinicId: string | null
@@ -801,7 +801,7 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const draggingTemplate = useRef<{ templateId: string; employeeId: string } | null>(null)
-  const draggingTransfer = useRef<{ templateId: string; primaryClinicId: string; secondaryClinicId: string } | null>(null)
+  const draggingTransfer = useRef<{ templateId: string; primaryClinicId: string; secondaryClinicId: string; lockedEmployeeId: string | null; lockedEmployeeName: string } | null>(null)
   const draggingLeave = useRef<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>(null)
   const justDroppedRef = useRef(false)
   const didInitClinicRef = useRef(false)
@@ -1978,10 +1978,9 @@ function getShiftCode(shift: Shift): string {
       setTimeout(() => { justDroppedRef.current = false }, 100)
 
       // ★ 員工鎖定檢查
-      if (tcEmployeeId && employeeId !== tcEmployeeId) {
-        const name = employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '該員工'
+      if (tc.lockedEmployeeId && employeeId !== tc.lockedEmployeeId) {
         setValidationIssues([{ type: 'error', rule: 'transfer',
-          message: `❌ 調鋪組合已鎖定 ${name} —— 請拖去佢嗰行，或者喺卡片清除員工` }])
+          message: `❌ 調鋪組合已鎖定 ${tc.lockedEmployeeName} —— 請拖去佢嗰行，或者喺卡片清除員工` }])
         return
       }
 
@@ -2489,7 +2488,7 @@ function getShiftCode(shift: Shift): string {
         y: anchor?.bottom ?? 0,
       })
     }, 250)
-  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId, tcEmployeeId, employees])
+  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
 
   const handleOverviewCellDblClick = useCallback(async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
@@ -4609,13 +4608,7 @@ function getShiftCode(shift: Shift): string {
             </div>
 
             {/* 清除掣 + 膠囊 */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <button
-                onClick={() => { setPrimary(null); setSecondaryClinicId(null); setTcEmployeeId(null) }}
-                style={{ fontSize: 10, padding: '2px 10px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', color: '#6b7280' }}
-              >
-                清除
-              </button>
+            <div>
               {tcReady && (
                 <div
                   onPointerDown={() => {
@@ -4623,17 +4616,31 @@ function getShiftCode(shift: Shift): string {
                       templateId: tcTemplateId!,
                       primaryClinicId: tcPrimaryClinicId!,
                       secondaryClinicId: secondaryClinicId!,
+                      lockedEmployeeId: tcEmployeeId,
+                      lockedEmployeeName: tcEmployeeId
+                        ? (employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '該員工')
+                        : '',
                     }
                   }}
+                  title={`${clinicById.get(tcPrimaryClinicId)?.name ?? '?'}→${clinicById.get(secondaryClinicId)?.name ?? '?'} · ${(tcTemplateOptions.find(t => t.id === (tcTemplateId ?? '')))?.name ?? ''}${tcEmployeeId ? ' · ' + (employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '') : ''}`}
                   style={{
-                    fontSize: 10, padding: '3px 10px', borderRadius: 12,
+                    fontSize: 10, padding: '4px 8px', borderRadius: 8,
                     background: '#059669', color: '#fff', cursor: 'grab',
-                    userSelect: 'none', whiteSpace: 'nowrap',
+                    userSelect: 'none', textAlign: 'center',
+                    lineHeight: 1.35, marginBottom: 6,
+                    overflowWrap: 'anywhere',
                   }}
                 >
-                  {clinicById.get(tcPrimaryClinicId)?.name ?? '?'}→{clinicById.get(secondaryClinicId)?.name ?? '?'} · {tcTemplateOptions.find(t => t.id === (tcTemplateId ?? ''))?.name ?? ''}{tcEmployeeId ? ` · ${employees.find(e => e.id === tcEmployeeId)?.user?.name ?? ''}` : ''}
+                  {clinicShortById.get(tcPrimaryClinicId) ?? '?'}→{clinicShortById.get(secondaryClinicId) ?? '?'} {tcTemplateOptions.find(t => t.id === (tcTemplateId ?? ''))?.name ?? ''}
+                  {tcEmployeeId && <><br/>{employees.find(e => e.id === tcEmployeeId)?.user?.name ?? ''}</>}
                 </div>
               )}
+              <button
+                onClick={() => { setPrimary(null); setSecondaryClinicId(null); setTcEmployeeId(null) }}
+                style={{ width: '100%', fontSize: 10, padding: '2px 10px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', color: '#6b7280' }}
+              >
+                清除
+              </button>
             </div>
             </div>
           )}
