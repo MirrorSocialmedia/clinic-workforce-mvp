@@ -5415,7 +5415,7 @@ function getShiftCode(shift: Shift): string {
         </div>
       </div>
       {/* Legend */}
-      <React.Profiler id="modals" onRender={logRender}>
+      <React.Profiler id="legend" onRender={logRender}>
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#1976d2' }}></span> 已確認</span>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f57c00' }}></span> 草稿</span>
