@@ -42,3 +42,6 @@ apps/web/prisma/dev.db
 # IDE
 .vscode/
 .idea/
+
+# DB backups —— 絕不可入 repo
+backups/
