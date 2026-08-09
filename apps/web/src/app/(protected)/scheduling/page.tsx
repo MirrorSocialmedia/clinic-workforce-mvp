@@ -743,7 +743,7 @@ export default function SchedulingPage() {
   }, [selectedEmployeeId])
 
   // ★ B-02①: in-flight guard — prevent duplicate shift creation on same cell
-  const [creatingKey, setCreatingKey] = useState<string | null>(null)
+  const creatingKeyRef = useRef<string | null>(null)
 
   // ★ 調鋪方案 1: secondary clinic selection for shift creation
   const [secondaryClinicId, setSecondaryClinicId] = useState<string | null>(null)
@@ -1476,6 +1476,29 @@ function getShiftCode(shift: Shift): string {
     }
   }
 
+  const validateBeforeCreate = useCallback(async (employeeId: string, date: string, startTime: string, endTime: string): Promise<any> => {
+    try {
+      const res = await fetch('/api/shifts/validate', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shift: {
+            employeeId,
+            clinicId: selectedClinicId,
+            date,
+            startTime,
+            endTime,
+          },
+        }),
+      })
+      if (res.ok) return await res.json()
+    } catch {
+      // Validation failed, allow creation with warnings
+    }
+    return { valid: true, errors: [], warnings: [] }
+  }, [selectedClinicId])
+
   const createShift = useCallback(async (employeeId: string, date: string, template: ShiftTemplate, _secondaryClinicId?: string | null, clinicIdOverride?: string | null): Promise<boolean> => {
     const targetClinicId = clinicIdOverride ?? selectedClinicId
     if (!targetClinicId) {
@@ -1485,8 +1508,8 @@ function getShiftCode(shift: Shift): string {
 
     // ★ 同一格建立中就唔好再送 —— LAG 時撳兩下會出兩張一樣嘅更
     const key = `${employeeId}:${date}:${template.id}`
-    if (creatingKey === key) return false
-    setCreatingKey(key)
+    if (creatingKeyRef.current === key) return false
+    creatingKeyRef.current = key
 
     try {
       // Build start/end times from template — timezone-safe
@@ -1546,9 +1569,9 @@ function getShiftCode(shift: Shift): string {
       setValidationIssues([{ type: 'error', rule: 'network', message: '❌ 網路錯誤，建立失敗' }])
       return false
     } finally {
-      setCreatingKey(null)
+      creatingKeyRef.current = null
     }
-  }, [selectedClinicId, secondaryClinicId, creatingKey, setValidationIssues, refreshAll])
+  }, [selectedClinicId, secondaryClinicId, setValidationIssues, refreshAll, validateBeforeCreate])
 
   // ★ 2026-08-03：儲存更次深淺設定
   const saveTemplateShade = async (templateId: string, shade: number) => {
@@ -1567,29 +1590,6 @@ function getShiftCode(shift: Shift): string {
     } catch {
       alert('儲存深淺失敗')
     }
-  }
-
-  const validateBeforeCreate = async (employeeId: string, date: string, startTime: string, endTime: string): Promise<any> => {
-    try {
-      const res = await fetch('/api/shifts/validate', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shift: {
-            employeeId,
-            clinicId: selectedClinicId,
-            date,
-            startTime,
-            endTime,
-          },
-        }),
-      })
-      if (res.ok) return await res.json()
-    } catch {
-      // Validation failed, allow creation with warnings
-    }
-    return { valid: true, errors: [], warnings: [] }
   }
 
   const deleteShift = async (shiftId: string) => {
@@ -1643,7 +1643,7 @@ function getShiftCode(shift: Shift): string {
   }
 
   // ★ Apply leave to a cell (shared by handleOverviewDrop + cell menu)
-  const applyLeaveToCell = async (empId: string, dateStr: string, leaveTypeId: string) => {
+  const applyLeaveToCell = useCallback(async (empId: string, dateStr: string, leaveTypeId: string) => {
     const res = await fetch('/api/leave-requests', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -1661,7 +1661,7 @@ function getShiftCode(shift: Shift): string {
       setValidationIssues([{ type: 'error', rule: 'leave', message: `❌ ${err.error || '設定假期失敗'}` }])
       await refreshAll()
     }
-  }
+  }, [refreshAll, refreshLeaveBalances, setValidationIssues])
 
   const buildTime = (date: string, hour: number, minute: number, isNight = false): string => {
     const pad = (n: number) => String(n).padStart(2, '0')
@@ -1671,7 +1671,7 @@ function getShiftCode(shift: Shift): string {
   }
 
   // B-04: Create leave on overview cell click (copied from handleOverviewDrop leave branch)
-  const createLeaveOnCell = async (employeeId: string, dateStr: string, leaveType: any) => {
+  const createLeaveOnCell = useCallback(async (employeeId: string, dateStr: string, leaveType: any) => {
     if (!canManage) return
 
     // ★ 豁免類型（病假 / 休息日 / 自訂無限）跳過餘額檢查
@@ -1726,7 +1726,8 @@ function getShiftCode(shift: Shift): string {
       setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立假期失敗' }])
       await refreshAll()
     }
-  }
+  }, [selectedEmpBalances, shifts, setValidationIssues, selectedClinicId, refreshAll, refreshLeaveBalances])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- canManage is a stable boolean guard derived from userRole props
 
   // ============================================================
   // Shift Change Requests
