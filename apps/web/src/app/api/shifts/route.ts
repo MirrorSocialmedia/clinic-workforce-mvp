@@ -8,6 +8,8 @@ import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
+import { balanceYearFor } from '@/lib/leave-types'
 
 // ============================================================
 // GET /api/shifts — list shifts with filters
@@ -142,6 +144,8 @@ export async function POST(req: NextRequest) {
         status = 'CONFIRMED',
         bulkDates,
         secondaryClinicId,
+        replaceShiftIds,
+        replaceLeaveIds,
       } = body
 
       if (!employeeId || !clinicId || !date || !startTime || !endTime) {
@@ -246,45 +250,132 @@ export async function POST(req: NextRequest) {
         // Parse date as HK midnight to avoid UTC midnight issue
         const times = buildShiftFromInput(date, startTime, endTime)
 
-        // Fix #4: check overlap before creating
-        const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
-        if (overlap) {
-          return NextResponse.json(
-            { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
-            { status: 409 }
-          )
+        // ★ Skip overlap/leave checks when replace mode is active
+        const isReplaceMode = !!(replaceShiftIds?.length || replaceLeaveIds?.length)
+
+        if (!isReplaceMode) {
+          // Fix #4: check overlap before creating
+          const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
+          if (overlap) {
+            return NextResponse.json(
+              { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
+              { status: 409 }
+            )
+          }
+
+          // Fix: check leave conflict before creating
+          const leaveConflict = await checkShiftLeaveConflict(employeeId, times.date)
+          if (leaveConflict.conflict) {
+            return NextResponse.json(
+              { error: `該員工該天已有假期（${leaveConflict.leaveName}），無法排班` },
+              { status: 409 }
+            )
+          }
         }
 
-        // Fix: check leave conflict before creating
-        const leaveConflict = await checkShiftLeaveConflict(employeeId, times.date)
-        if (leaveConflict.conflict) {
-          return NextResponse.json(
-            { error: `該員工該天已有假期（${leaveConflict.leaveName}），無法排班` },
-            { status: 409 }
-          )
+        // Resolve clinic scope for IDOR check
+        let actorVisibleClinicIds: string[] | null = null
+        if (scope !== 'all') {
+          actorVisibleClinicIds = await resolveClinicScope(session, auth.perms ?? [], {
+            companyWide: ['attendance_manage', 'scheduling'],
+          })
         }
 
-        const shift = await prisma.shift.create({
-          data: {
-            employeeId,
-            clinicId,
-            date: times.date,
-            startTime: times.startTime,
-            endTime: times.endTime,
-            role: role || null,
-            status: status as any,
-            templateId: templateId || null,
-            secondaryClinicId: secondaryClinicId || null,
-            createdBy: session.userId,
-          },
-          include: {
-            employee: { include: { user: { select: { id: true, name: true } } } },
-            clinic: { select: { id: true, name: true } },
-            template: { select: { id: true, name: true, deductLunch: true } },
-          },
+        // ★ Atomic transaction: replace old shifts/leaves then create new shift
+        let replacedShiftDates: string[] = []
+        const created = await prisma.$transaction(async (tx) => {
+          // ① Replace old shifts — verify ownership + scope (prevent IDOR)
+          if (replaceShiftIds?.length) {
+            const victims = await tx.shift.findMany({
+              where: {
+                id: { in: replaceShiftIds },
+                employeeId,
+                date: { gte: times.date, lte: new Date(times.date.getTime() + 86400000) },
+                ...(actorVisibleClinicIds ? { clinicId: { in: actorVisibleClinicIds } } : {}),
+              },
+              select: { id: true, date: true },
+            })
+            if (victims.length !== replaceShiftIds.length) {
+              throw new Error('replace target mismatch: shift ownership or scope check failed')
+            }
+            replacedShiftDates = victims.map(v => toHKDateStr(v.date))
+            await tx.shift.deleteMany({
+              where: { id: { in: victims.map(v => v.id) } },
+            })
+          }
+
+          // ② Replace old leave requests — refund balance + delete
+          if (replaceLeaveIds?.length) {
+            const victimLeaves = await tx.leaveRequest.findMany({
+              where: { id: { in: replaceLeaveIds }, employeeId },
+              include: { leaveType: true },
+            })
+            if (victimLeaves.length !== replaceLeaveIds.length) {
+              throw new Error('replace target mismatch: leave ownership check failed')
+            }
+            // Refund balance (skip balance-exempt types like SICK)
+            for (const vl of victimLeaves) {
+              const systemKey = vl.leaveType?.systemKey
+              if (systemKey && !['SICK', 'UNPAID_LEAVE'].includes(systemKey)) {
+                const leaveYear = balanceYearFor(systemKey, new Date(vl.startDate))
+                await tx.leaveBalance.updateMany({
+                  where: {
+                    employeeId: vl.employeeId,
+                    leaveTypeId: vl.leaveTypeId,
+                    year: leaveYear,
+                  },
+                  data: {
+                    used: { decrement: vl.days },
+                    remaining: { increment: vl.days },
+                  },
+                })
+              }
+            }
+            await tx.leaveRequest.deleteMany({
+              where: { id: { in: victimLeaves.map(v => v.id) } },
+            })
+          }
+
+          return tx.shift.create({
+            data: {
+              employeeId,
+              clinicId,
+              date: times.date,
+              startTime: times.startTime,
+              endTime: times.endTime,
+              role: role || null,
+              status: status as any,
+              templateId: templateId || null,
+              secondaryClinicId: secondaryClinicId || null,
+              createdBy: session.userId,
+            },
+            include: {
+              employee: { include: { user: { select: { id: true, name: true } } } },
+              clinic: { select: { id: true, name: true } },
+              template: { select: { id: true, name: true, deductLunch: true } },
+            },
+          })
         })
 
-        shifts.push(shift)
+        shifts.push(created)
+
+        // ★ deleteMany bypasses DELETE handler hooks — manually revoke OT + invalidate cache
+        if (replacedShiftDates.length > 0) {
+          const uniqueDates = [...new Set(replacedShiftDates)]
+          for (const d of uniqueDates) {
+            try {
+              await revokeStaleEarlyOt(employeeId, d, session.userId, 'SHIFT_REPLACE', prisma)
+            } catch (e) {
+              console.error(`[early-in-ot] revoke failed for replaced shift date=${d}`, e)
+            }
+          }
+          try {
+            const earliest = new Date(Math.min(...replacedShiftDates.map(d => new Date(d).getTime())))
+            await invalidateTimeBankFrom(employeeId, earliest, prisma)
+          } catch (e) {
+            console.error(`[timebank-cache] invalidate failed for replaced shifts`, e)
+          }
+        }
       }
 
       // ★ 排班影響遲到／早退／OT 判斷 → 快取要失效
