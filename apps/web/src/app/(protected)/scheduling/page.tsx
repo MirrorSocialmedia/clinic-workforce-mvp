@@ -3298,6 +3298,7 @@ function getShiftCode(shift: Shift): string {
   }
 
   return (
+    <React.Profiler id="page" onRender={logRender}>
     <div className="w-full" style={{ maxWidth: '100%', padding: '0 16px' }}>
       {/* Overview capsule styles */}
       <style>{`
@@ -6152,6 +6153,7 @@ function getShiftCode(shift: Shift): string {
       )}
 
       </div>
+    </React.Profiler>
   )
 }
 
