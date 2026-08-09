@@ -306,7 +306,13 @@ export async function POST(req: NextRequest) {
           // ② Replace old leave requests — refund balance + delete
           if (replaceLeaveIds?.length) {
             const victimLeaves = await tx.leaveRequest.findMany({
-              where: { id: { in: replaceLeaveIds }, employeeId },
+              where: {
+                id: { in: replaceLeaveIds },
+                employeeId,
+                ...(actorVisibleClinicIds ? {
+                  employee: { clinics: { some: { clinicId: { in: actorVisibleClinicIds } } } },
+                } : {}),
+              },
               include: { leaveType: true },
             })
             if (victimLeaves.length !== replaceLeaveIds.length) {
