@@ -357,41 +357,10 @@ const ScheduleRow = React.memo(function ScheduleRow({
   )
 })
 
-// ★ Render counter (temporary, remove after measurement)
-  // ★ Profiler: render counter (temporary, remove after measurement)
-  const renderCountRef = useRef(0)
-  renderCountRef.current++
-  const currentRender = renderCountRef.current
-  if (currentRender <= 20) {
-    console.log(`[⏱ render #${currentRender}] SchedulingPage`)
-    console.time(`render-${currentRender}`)
-  }
-
-  // ★ Profiler: timing after render commit (temporary, remove after measurement)
-  useEffect(() => {
-    if (currentRender <= 20) console.timeEnd(`render-${currentRender}`)
-  })
-
 // ============================================================
 // Main Component
 // ============================================================
 export default function SchedulingPage() {
-  // ★ Profiler: render counter (temporary, remove after measurement)
-  const renderCountRef = useRef(0)
-  renderCountRef.current++
-  const currentRender = renderCountRef.current
-  if (currentRender <= 20) {
-    console.log(`[⏱ render #${currentRender}] SchedulingPage (${currentRender <= 3 ? 'initial' : 're-render'})`)
-    console.time(`render-${currentRender}`)
-  }
-
-  // ★ Profiler: timing end after render commit (temporary, remove after measurement)
-  useEffect(() => {
-    if (currentRender <= 20) {
-      console.timeEnd(`render-${currentRender}`)
-    }
-  })
-
   const router = useRouter()
 
   // ★ 讀取類 fetch 一律繞過瀏覽器快取。
@@ -5429,8 +5398,6 @@ function getShiftCode(shift: Shift): string {
           </>)}
         </div>
       </div>
-      {typeof currentRender !== 'undefined' && currentRender <= 20 && (() => { console.timeEnd(`render-${currentRender}`); return null })()}
-
       {/* Legend */}
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#1976d2' }}></span> 已確認</span>
