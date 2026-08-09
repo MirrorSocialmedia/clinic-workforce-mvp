@@ -755,7 +755,6 @@ export default function SchedulingPage() {
 
   // ★ 調鋪組合卡片（獨立於左邊店鋪選擇）
   const [tcPrimaryClinicId, setTcPrimaryClinicId] = useState<string | null>(null) // 上午 / 主店
-  const [tcEmployeeId, setTcEmployeeId] = useState<string | null>(null)
   const [tcTemplateId, setTcTemplateId] = useState<string | null>(null)
   // 下午 / 調入店 直接沿用現有 secondaryClinicId，唔好另開一個 state
 
@@ -767,6 +766,7 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const draggingTemplate = useRef<{ templateId: string; employeeId: string } | null>(null)
+  const draggingTransfer = useRef<{ templateId: string; primaryClinicId: string; secondaryClinicId: string } | null>(null)
   const draggingLeave = useRef<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>(null)
   const justDroppedRef = useRef(false)
   const didInitClinicRef = useRef(false)
@@ -774,10 +774,11 @@ export default function SchedulingPage() {
   // Click timer for single/double-click debouncing in overview cells
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Global pointerup cleanup for draggingTemplate & draggingLeave (next tick, let cell's pointerup fire first)
+  // Global pointerup cleanup for draggingTemplate & draggingTransfer & draggingLeave (next tick, let cell's pointerup fire first)
   useEffect(() => {
     const clear = () => setTimeout(() => {
       draggingTemplate.current = null
+      draggingTransfer.current = null
       draggingLeave.current = null
     }, 50)
     window.addEventListener('pointerup', clear)
@@ -1012,45 +1013,20 @@ function getShiftCode(shift: Shift): string {
   }, [selectedClinicId, clinics, templates, clinicColorMap, templateIndexMap, ovScope])
 
   // ★ 調鋪組合卡片派生值
-  const tcCompanyId = useMemo(
-    () => (tcPrimaryClinicId ? clinicById.get(tcPrimaryClinicId)?.company?.id ?? null : null),
-    [tcPrimaryClinicId, clinicById],
-  )
   const tcSecondaryOptions = useMemo(
-    () => (tcCompanyId ? clinics.filter(c => c.company?.id === tcCompanyId && c.id !== tcPrimaryClinicId) : []),
-    [tcCompanyId, tcPrimaryClinicId, clinics],
+    () => (tcPrimaryClinicId ? clinics.filter(c => c.id !== tcPrimaryClinicId) : []),
+    [tcPrimaryClinicId, clinics],
   )
-  const tcEmployeeGroups = useMemo(() => {
-    if (!tcCompanyId) return []
-    const companyClinicIds = new Set(clinics.filter(c => c.company?.id === tcCompanyId).map(c => c.id))
-    const pool = employees.filter(e =>
-      (e.status === 'ACTIVE' || e.status === undefined) &&
-      e.homeClinicId && companyClinicIds.has(e.homeClinicId)
-    )
-    const byClinic = new Map<string, any[]>()
-    for (const e of pool) {
-      const arr = byClinic.get(e.homeClinicId!); arr ? arr.push(e) : byClinic.set(e.homeClinicId!, [e])
-    }
-    return [...byClinic.entries()]
-      .map(([cid, list]) => ({
-        clinicId: cid,
-        label: (clinicById.get(cid) as any)?.name ?? '?',
-        isPrimary: cid === tcPrimaryClinicId,
-        list: list.sort(byRoleThenName),
-      }))
-      .sort((a, b) => (a.isPrimary ? -1 : b.isPrimary ? 1 : a.label.localeCompare(b.label, 'zh-HK')))
-  }, [tcCompanyId, tcPrimaryClinicId, clinics, clinicById, employees])
   const tcTemplateOptions = useMemo(
-    () => (tcCompanyId ? templates.filter(t => t.companyId === tcCompanyId) : []),
-    [tcCompanyId, templates],
+    () => templates.filter(t => t.companyId === (clinicById.get(tcPrimaryClinicId ?? '')?.company?.id ?? null)),
+    [tcPrimaryClinicId, templates, clinicById],
   )
-  const tcReady = !!(tcPrimaryClinicId && secondaryClinicId && tcEmployeeId && tcTemplateId)
+  const tcReady = !!(tcPrimaryClinicId && secondaryClinicId && tcTemplateId)
 
   // ★ 調鋪組合連鎖清空（上午一改，下面三個全部清空）
   const setPrimary = useCallback((id: string | null) => {
     setTcPrimaryClinicId(id)
     setSecondaryClinicId(null)
-    setTcEmployeeId(null)
     setTcTemplateId(null)
   }, [])
 
@@ -1905,6 +1881,52 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // Drop handler for overview grid — drag template to any (employee, day) cell or drag leave to create leave request
   const handleOverviewDrop = useCallback(async (employeeId: string, dateStr: string, clinicIdOverride?: string | null, rect?: DOMRect) => {
+    // ★ 調鋪膠囊 —— 擺最前，優先於一般模板拖放
+    const tc = draggingTransfer.current
+    if (tc) {
+      draggingTransfer.current = null
+      justDroppedRef.current = true
+      setTimeout(() => { justDroppedRef.current = false }, 100)
+      const tpl = templateById.get(tc.templateId)
+      if (!tpl || !employeeId) return
+      const dayLeaves = leaveRequests.filter(lr =>
+        lr.employeeId === employeeId && leaveCoversDate(lr, dateStr) && lr.leaveType?.systemKey !== 'SICK'
+      )
+      if (dayLeaves.length > 0) {
+        const r = rect || { x: 0, y: 0, width: 0, height: 0 }
+        setCellMenu({
+          empId: employeeId, dateStr,
+          x: r.x + r.width, y: r.y,
+          conflict: {
+            kind: 'leave',
+            existing: dayLeaves.map(lr => ({
+              id: lr.id,
+              label: lr.leaveType?.name ?? '假期',
+            })),
+            pending: {
+              templateId: tpl.id,
+              clinicId: tc.primaryClinicId,
+            },
+          },
+        })
+        return
+      }
+      const r = rect || { x: 0, y: 0, width: 0, height: 0 }
+      await createShift(employeeId, dateStr, tpl, {
+        clinicIdOverride: tc.primaryClinicId,
+        onConflict: (c) => setCellMenu({
+          empId: employeeId, dateStr,
+          x: r.x + r.width, y: r.y,
+          conflict: {
+            kind: c.kind,
+            existing: c.existing,
+            pending: { templateId: tpl.id, clinicId: tc.primaryClinicId },
+          },
+        }),
+      })
+      return
+    }
+
     const targetClinicId = clinicIdOverride ?? selectedClinicId
     // ① Template drag → create shift (existing logic)
     const drag = draggingTemplate.current
@@ -2323,25 +2345,7 @@ function getShiftCode(shift: Shift): string {
 
       const sel = selectionRef.current
 
-      // ★ 調鋪組合：只有卡片揀咗嗰位員工嘅行先套用（拍板 B）
-      if (tcReady && empId === tcEmployeeId) {
-        const tpl = templateById.get(tcTemplateId!)
-        if (!tpl) return
-        const hasLeave = leaveRequests.some(lr =>
-          lr.employeeId === empId && leaveCoversDate(lr, dateStr) && lr.leaveType?.systemKey !== 'SICK'
-        )
-        if (hasLeave) {
-          setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
-          return
-        }
-        const ok = await createShift(empId, dateStr, tpl, { clinicIdOverride: tcPrimaryClinicId })
-        if (ok) {
-          setValidationIssues([])
-          setTcEmployeeId(null); setTcTemplateId(null); setSecondaryClinicId(null) // 用完即清
-          await refreshAll()
-        }
-        return
-      }
+      // ★ 調鋪組合：click 不做嘢 — 膠囊要拖去格先套用（handleOverviewDrop 處理）
 
       // ① 已經揀咗假期 → 直接建立
       if (sel.leaveType) {
@@ -2379,7 +2383,7 @@ function getShiftCode(shift: Shift): string {
         y: anchor?.bottom ?? 0,
       })
     }, 250)
-  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcEmployeeId, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
+  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
 
   const handleOverviewCellDblClick = useCallback(async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
@@ -3488,11 +3492,18 @@ function getShiftCode(shift: Shift): string {
               left: Math.min(cellMenu.x, window.innerWidth - 230),
               top: Math.min(cellMenu.y + 4, window.innerHeight - 380),
               width: 220, maxHeight: 360, overflowY: 'auto',
-              background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
-              boxShadow: '0 8px 24px rgba(0,0,0,.14)', zIndex: 999,
+              background: '#fff', borderRadius: 8, zIndex: 999,
+              border: cellMenu.conflict ? '2px solid #BA7517' : '1px solid #e5e7eb',
+              boxShadow: cellMenu.conflict
+                ? '0 8px 24px rgba(186,117,23,.28)'
+                : '0 8px 24px rgba(0,0,0,.14)',
+              overflow: 'hidden',
             }}>
-              <div style={{ padding: '7px 10px', fontSize: 11, color: '#6b7280',
-                borderBottom: '1px solid #e5e7eb', background: '#f9fafb',
+              {cellMenu.conflict && <div style={{ height: 3, background: '#BA7517' }} />}
+              <div style={{ padding: '7px 10px', fontSize: 11,
+                borderBottom: `1px solid ${cellMenu.conflict ? '#EF9F27' : '#e5e7eb'}`,
+                background: cellMenu.conflict ? '#FAEEDA' : '#f9fafb',
+                color: cellMenu.conflict ? '#854F0B' : '#6b7280',
                 position: 'sticky', top: 0 }}>
                 {emp?.user?.name} · {cellMenu.dateStr.slice(5)}
               </div>
@@ -3505,10 +3516,11 @@ function getShiftCode(shift: Shift): string {
                   </div>
                   <button
                     style={{ display: 'block', width: '100%', padding: '7px 10px', fontSize: 12,
-                      border: 'none', background: '#dbeafe', cursor: 'pointer', color: '#1d4ed8',
+                      border: 'none', background: '#dbeafe', cursor: 'pointer',
+                      color: cellMenu.conflict ? '#A32D2D' : '#1d4ed8',
                       borderRadius: 4, textAlign: 'left' }}
                     onClick={() => handleReplaceConflict(cellMenu)}
-                  >取代</button>
+                  >取代原更次</button>
                   <button
                     style={{ display: 'block', width: '100%', padding: '7px 10px', fontSize: 12,
                       border: 'none', background: '#f3f4f6', cursor: 'pointer', color: '#374151',
@@ -4438,25 +4450,7 @@ function getShiftCode(shift: Shift): string {
               </select>
             </div>
 
-            {/* ③ 員工 — 按主屬診所分組 */}
-            <div style={{ marginBottom: 4 }}>
-              <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>員工</label>
-              <select
-                value={tcEmployeeId ?? ''}
-                onChange={e => { setTcEmployeeId(e.target.value || null); setTcTemplateId(null) }}
-                disabled={!tcPrimaryClinicId}
-                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
-              >
-                <option value="">選擇員工</option>
-                {tcEmployeeGroups.map(g => (
-                  <optgroup key={g.clinicId} label={`${g.label}${g.isPrimary ? ' (上午)' : ''}`}>
-                    {g.list.map(e => <option key={e.id} value={e.id}>{e.user?.name ?? '?'}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-            </div>
-
-            {/* ④ 更次 */}
+            {/* ③ 更次 */}
             <div style={{ marginBottom: 6 }}>
               <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>更次</label>
               <select
@@ -4470,7 +4464,7 @@ function getShiftCode(shift: Shift): string {
               </select>
             </div>
 
-            {/* 清除掣 + 提示 */}
+            {/* 清除掣 + 膠囊 */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <button
                 onClick={() => { setPrimary(null); setSecondaryClinicId(null) }}
@@ -4478,10 +4472,23 @@ function getShiftCode(shift: Shift): string {
               >
                 清除
               </button>
-              {tcEmployeeId && (
-                <span style={{ fontSize: 10, color: '#059669' }}>
-                  撳 {employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '?'} 嗰行嘅格就套用
-                </span>
+              {tcReady && (
+                <div
+                  onPointerDown={() => {
+                    draggingTransfer.current = {
+                      templateId: tcTemplateId!,
+                      primaryClinicId: tcPrimaryClinicId!,
+                      secondaryClinicId: secondaryClinicId!,
+                    }
+                  }}
+                  style={{
+                    fontSize: 10, padding: '3px 10px', borderRadius: 12,
+                    background: '#059669', color: '#fff', cursor: 'grab',
+                    userSelect: 'none', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {clinicById.get(tcPrimaryClinicId)?.name ?? '?'}→{clinicById.get(secondaryClinicId)?.name ?? '?'} · {tcTemplateOptions.find(t => t.id === tcTemplateId)?.name ?? ''}
+                </div>
               )}
             </div>
           </div>

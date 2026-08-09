@@ -1,9 +1,10 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr, getMonthRange } from '@/lib/hk-date'
 import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
+import { writeAuditLog } from '@/lib/prisma'
 import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
@@ -181,6 +182,7 @@ export async function POST(req: NextRequest) {
       }
 
       const shifts: any[] = []
+      let payrollLocked: { month: string; status: string } | null = null
 
       /**
        * Check for overlapping shifts (Fix #4: shift overlap validation)
@@ -246,6 +248,31 @@ export async function POST(req: NextRequest) {
           }))
         )
         shifts.push(...created)
+
+        // ★ 已出糧警告：檢查 bulk 嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單
+        if (shifts.length > 0) {
+          const { start: pm } = getMonthRange(shifts[0].date instanceof Date ? shifts[0].date : new Date(shifts[0].date + 'T00:00:00+08:00'))
+          const locked = await prisma.payrollRun.findFirst({
+            where: {
+              periodMonth: pm,
+              status: { in: ['FINALIZED', 'EXPORTED'] },
+              OR: [{ clinicId: null }, { clinicId: clinicId }],
+            },
+            select: { id: true, status: true, clinicId: true },
+          })
+          if (locked) {
+            await writeAuditLog({
+              action: 'SHIFT_EDIT_AFTER_PAYROLL',
+              entity: 'Shift',
+              entityId: (shifts[0] as any).id,
+              notes: `${bulkDates?.[0]} 屬於已${locked.status === 'EXPORTED' ? '匯出' : '確認'}嘅計糧月份，糧單唔會自動更新`,
+            })
+          }
+          payrollLocked = locked ? {
+            month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+            status: locked.status,
+          } : null
+        }
       } else {
         // Parse date as HK midnight to avoid UTC midnight issue
         const times = buildShiftFromInput(date, startTime, endTime)
@@ -368,6 +395,29 @@ export async function POST(req: NextRequest) {
 
         shifts.push(created)
 
+        // ★ 已出糧警告：檢查當月有冇已 FINALIZED/EXPORTED 嘅糧單
+        const { start: pm } = getMonthRange(times.date instanceof Date ? times.date : new Date(times.date + 'T00:00:00+08:00'))
+        const locked = await prisma.payrollRun.findFirst({
+          where: {
+            periodMonth: pm,
+            status: { in: ['FINALIZED', 'EXPORTED'] },
+            OR: [{ clinicId: null }, { clinicId: clinicId }],
+          },
+          select: { id: true, status: true, clinicId: true },
+        })
+        if (locked) {
+          await writeAuditLog({
+            action: 'SHIFT_EDIT_AFTER_PAYROLL',
+            entity: 'Shift',
+            entityId: (created as any).id,
+            notes: `${toHKDateStr(times.date)} 屬於已${locked.status === 'EXPORTED' ? '匯出' : '確認'}嘅計糧月份，糧單唔會自動更新`,
+          })
+        }
+        const payrollLocked = locked ? {
+          month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+          status: locked.status,
+        } : null
+
         // ★ deleteMany bypasses DELETE handler hooks — manually revoke OT + invalidate cache
         if (replacedShiftDates.length > 0) {
           const uniqueDates = [...new Set(replacedShiftDates)]
@@ -401,7 +451,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { success: true, shifts, count: shifts.length },
+        { success: true, shifts, count: shifts.length, payrollLocked },
         { status: 201 }
       )
     } catch (error: any) {

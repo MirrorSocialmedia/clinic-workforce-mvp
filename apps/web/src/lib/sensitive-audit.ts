@@ -47,6 +47,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'WAGE_HISTORY_CREATE', label: '新增工資記錄' },
   { action: 'WAGE_HISTORY_UPDATE', label: '更新工資記錄' },
   { action: 'WAGE_HISTORY_DELETE', label: '刪除工資記錄' },
+  { action: 'SHIFT_EDIT_AFTER_PAYROLL', label: '⚠️ 已出糧月份改更次' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([

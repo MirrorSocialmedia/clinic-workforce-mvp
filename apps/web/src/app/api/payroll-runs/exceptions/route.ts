@@ -83,9 +83,34 @@ export async function GET(req: NextRequest) {
     date: { gte: monthStart, lte: monthEnd },
     status: 'CONFIRMED',
   }
-  if (scopedClinicId) shiftWhere.clinicId = scopedClinicId
-  else if (scopedClinicIds !== undefined) shiftWhere.clinicId = { in: scopedClinicIds }
+  // ★ 調鋪斷鏈修復：shiftWhere 加 secondaryClinicId OR
+  if (scopedClinicId) {
+    shiftWhere.OR = [{ clinicId: scopedClinicId }, { secondaryClinicId: scopedClinicId }]
+  } else if (scopedClinicIds !== undefined) {
+    shiftWhere.OR = [
+      { clinicId: { in: scopedClinicIds } },
+      { secondaryClinicId: { in: scopedClinicIds } },
+    ]
+  }
   if (employeeId) shiftWhere.employeeId = employeeId
+
+  // ★ 調鋪斷鏈修復：查當月該 scope 有冇調鋪更
+  const _scopeOr = scopedClinicId
+    ? { OR: [{ clinicId: scopedClinicId }, { secondaryClinicId: scopedClinicId }] }
+    : (scopedClinicIds !== undefined
+      ? { OR: [{ clinicId: { in: scopedClinicIds } }, { secondaryClinicId: { in: scopedClinicIds } }] }
+      : {})
+  const transferShifts = await prisma.shift.findMany({
+    where: {
+      ..._scopeOr,
+      secondaryClinicId: { not: null },
+      date: { gte: monthStart, lte: monthEnd },
+      status: { in: ['CONFIRMED', 'DRAFT'] },
+    },
+    select: { clinicId: true, secondaryClinicId: true },
+  })
+  // ★ 有調鋪更 → 打卡唔使按 clinic filter（拉到全部）
+  const punchClinicId = (transferShifts.length > 0 && scopedClinicId) ? undefined : scopedClinicId
 
   const [activeRules, effectivePunches, rawPunches, corrections, shifts] = await Promise.all([
     prisma.payRule.findMany({
@@ -98,8 +123,8 @@ export async function GET(req: NextRequest) {
       select: { employeeId: true, configJson: true },
     }),
     getEffectivePunches(monthStart, monthEnd, {
-      clinicId: scopedClinicId,
-      clinicIds: scopedClinicIds,
+      clinicId: punchClinicId,
+      clinicIds: punchClinicId === undefined ? undefined : scopedClinicIds,
       employeeId: employeeId || undefined,
     }),
     prisma.punchRecord.findMany({
