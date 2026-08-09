@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { getTimeAccountSummary } from '@/lib/timebank-summary'
@@ -12,7 +12,7 @@ import { getTimeAccountSummary } from '@/lib/timebank-summary'
  * 就算今個月放晒假，佢嘅累計仍然係 −80，應該顯示。
  */
 export async function GET(req: NextRequest) {
-  const auth = await requirePerm(req, 'timebank_ops')
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 

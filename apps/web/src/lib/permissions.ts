@@ -1,6 +1,6 @@
 // Permission keys and role defaults
 export const PERMISSIONS = {
-  scheduling: '排班管理',
+  scheduling: '排班管理（含時間帳戶/假期餘額查看）',
   attendance_manage: '考勤管理（補登/修正/作廢）',
   payroll_view: '計糧查看',
   payroll_generate: '計糧生成',

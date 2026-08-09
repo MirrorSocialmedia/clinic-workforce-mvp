@@ -290,6 +290,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/shift-changes': ['scheduling'],
   'PUT /api/shift-changes/:id': ['scheduling'],
   'DELETE /api/shift-changes/:id': ['scheduling'],
+  // ★ 排班主管要睇住時間帳戶結餘去編更（2026-08-09）
+  'GET /api/timebank/overview': ['scheduling'],
   'GET /api/clinics/:id': ['scheduling'],
   'GET /api/clinics/:id/shift-rule-config': ['scheduling'],
   'PUT /api/clinics/:id/shift-rule-config': ['scheduling'],

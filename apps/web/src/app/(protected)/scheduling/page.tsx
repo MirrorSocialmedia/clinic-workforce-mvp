@@ -623,9 +623,9 @@ export default function SchedulingPage() {
   useEffect(() => {
     if (!currentCompanyId) { setOtRows([]); return }
     getJSON('/api/timebank/overview')
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
       .then(d => setOtRows(d.summaries ?? []))
-      .catch(() => setOtRows([]))
+      .catch(e => { console.error('[ot-card] load failed', e); setOtRows([]) })
   }, [currentCompanyId])
 
   const otCardRows = useMemo(() => {
@@ -5005,17 +5005,18 @@ function getShiftCode(shift: Shift): string {
         </div>
 
         {/* ★ OT 時間卡片 — 獨立第五欄 */}
-        {(isCanRead) && currentCompanyId && (
+        {canSchedule && currentCompanyId && (
           <div style={{
             ...stickyPanel, width: 100, flexShrink: 0,
             background: '#fafbfc', border: '1px solid #e5e7eb',
             borderRadius: 8, padding: 0, overflow: 'hidden',
+            display: 'flex', flexDirection: 'column',
           }}>
-            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e5e7eb', background: '#fff' }}>
+            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e5e7eb', background: '#fff', flexShrink: 0 }}>
               <div style={{ fontSize: 11, fontWeight: 600 }}>OT 時間</div>
               <div style={{ fontSize: 9, color: '#9ca3af' }}>{currentCompanyName} · {otCardRows.length} 人</div>
             </div>
-            <div style={{ overflowY: 'auto' }}>
+            <div style={{ overflowY: 'auto', minHeight: 0 }}>
               {otCardRows.map(r => {
                 const h = (r.timeAccountMinutes ?? 0) / 60
                 return (
