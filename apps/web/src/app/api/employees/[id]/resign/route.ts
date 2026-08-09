@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 export async function POST(
   req: NextRequest,
@@ -80,6 +81,14 @@ export async function POST(
 
     return { shiftsCancelled: shifts.count, leavesCancelled: leaves.count }
   })
+
+  // ★ 取消未來更次／假期會改變應出勤日 → 清時間帳戶快取（2026-08-10）
+  const cutoffDate = cutoff ?? new Date()
+  try {
+    await invalidateTimeBankFrom(empId, cutoffDate, prisma)
+  } catch (e) {
+    console.error('[timebank-cache] invalidate failed on resign', { empId, cutoff: cutoffDate }, e)
+  }
 
   return NextResponse.json({ ok: true, ...result })
 }
