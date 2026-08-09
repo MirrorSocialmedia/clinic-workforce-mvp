@@ -250,10 +250,8 @@ export async function POST(req: NextRequest) {
         // Parse date as HK midnight to avoid UTC midnight issue
         const times = buildShiftFromInput(date, startTime, endTime)
 
-        // ★ Skip overlap/leave checks when replace mode is active
-        const isReplaceMode = !!(replaceShiftIds?.length || replaceLeaveIds?.length)
-
-        if (!isReplaceMode) {
+        // ★ Separate gates: replace shifts only skips overlap check; replace leaves only skips leave conflict
+        if (!replaceShiftIds?.length) {
           // Fix #4: check overlap before creating
           const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
           if (overlap) {
@@ -262,7 +260,8 @@ export async function POST(req: NextRequest) {
               { status: 409 }
             )
           }
-
+        }
+        if (!replaceLeaveIds?.length) {
           // Fix: check leave conflict before creating
           const leaveConflict = await checkShiftLeaveConflict(employeeId, times.date)
           if (leaveConflict.conflict) {
@@ -290,7 +289,7 @@ export async function POST(req: NextRequest) {
               where: {
                 id: { in: replaceShiftIds },
                 employeeId,
-                date: { gte: times.date, lte: new Date(times.date.getTime() + 86400000) },
+                date: times.date, // ★ Shift.date is HK midnight, exact match is precise
                 ...(actorVisibleClinicIds ? { clinicId: { in: actorVisibleClinicIds } } : {}),
               },
               select: { id: true, date: true },
@@ -313,21 +312,25 @@ export async function POST(req: NextRequest) {
             if (victimLeaves.length !== replaceLeaveIds.length) {
               throw new Error('replace target mismatch: leave ownership check failed')
             }
-            // Refund balance (skip balance-exempt types like SICK)
+            // Refund balance (skip unapproved — only APPROVED leaves had balance deducted)
             for (const vl of victimLeaves) {
-              const systemKey = vl.leaveType?.systemKey
-              if (systemKey && !['SICK', 'UNPAID_LEAVE'].includes(systemKey)) {
-                const leaveYear = balanceYearFor(systemKey, new Date(vl.startDate))
-                await tx.leaveBalance.updateMany({
-                  where: {
-                    employeeId: vl.employeeId,
-                    leaveTypeId: vl.leaveTypeId,
-                    year: leaveYear,
-                  },
-                  data: {
-                    used: { decrement: vl.days },
-                    remaining: { increment: vl.days },
-                  },
+              if (vl.status !== 'APPROVED') continue // ★ PENDING leaves never had balance deducted
+              const leaveYear = balanceYearFor(vl.leaveType?.systemKey, new Date(vl.startDate))
+              const updated = await tx.leaveBalance.updateMany({
+                where: {
+                  employeeId: vl.employeeId,
+                  leaveTypeId: vl.leaveTypeId,
+                  year: leaveYear,
+                },
+                data: {
+                  used: { decrement: vl.days },
+                  remaining: { increment: vl.days },
+                },
+              })
+              // ★ 0 rows = data error — original DELETE route logs same way
+              if (updated.count === 0) {
+                console.error('[shift-replace] leave balance refund affected 0 rows', {
+                  employeeId: vl.employeeId, leaveRequestId: vl.id, leaveTypeId: vl.leaveTypeId, year: leaveYear,
                 })
               }
             }
