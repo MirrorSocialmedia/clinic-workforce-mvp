@@ -1476,7 +1476,7 @@ function getShiftCode(shift: Shift): string {
     }
   }
 
-  const createShift = async (employeeId: string, date: string, template: ShiftTemplate, _secondaryClinicId?: string | null, clinicIdOverride?: string | null): Promise<boolean> => {
+  const createShift = useCallback(async (employeeId: string, date: string, template: ShiftTemplate, _secondaryClinicId?: string | null, clinicIdOverride?: string | null): Promise<boolean> => {
     const targetClinicId = clinicIdOverride ?? selectedClinicId
     if (!targetClinicId) {
       setValidationIssues([{ type: 'error', rule: 'clinic', message: '⚠️ 請先選擇診所' }])
@@ -1548,7 +1548,7 @@ function getShiftCode(shift: Shift): string {
     } finally {
       setCreatingKey(null)
     }
-  }
+  }, [selectedClinicId, secondaryClinicId, creatingKey, setValidationIssues, refreshAll])
 
   // ★ 2026-08-03：儲存更次深淺設定
   const saveTemplateShade = async (templateId: string, shade: number) => {
@@ -1784,7 +1784,7 @@ function getShiftCode(shift: Shift): string {
   // Drag and Drop Handlers
   // ============================================================
   // Drop handler for overview grid — drag template to any (employee, day) cell or drag leave to create leave request
-  const handleOverviewDrop = async (employeeId: string, dateStr: string, clinicIdOverride?: string | null) => {
+  const handleOverviewDrop = useCallback(async (employeeId: string, dateStr: string, clinicIdOverride?: string | null) => {
     const targetClinicId = clinicIdOverride ?? selectedClinicId
     // ① Template drag → create shift (existing logic)
     const drag = draggingTemplate.current
@@ -1846,7 +1846,7 @@ function getShiftCode(shift: Shift): string {
       await applyLeaveToCell(dl.employeeId, dateStr, dl.leaveTypeId)
       return
     }
-  }
+  }, [selectedClinicId, templateById, leaveRequests, leaveTypes, selectedEmpBalances, shifts, createShift, applyLeaveToCell, setValidationIssues])
 
   const handleDragStart = (e: React.DragEvent, employeeId: string) => {
     dragData.current = { employeeId, templateId: selectedTemplate?.id || '' }
