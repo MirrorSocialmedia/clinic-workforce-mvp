@@ -135,6 +135,9 @@ export function matchPunchesToShifts(
  *   唔好每張更各減一次（會令 09-13 + 15-19 由 8h 變 6h）。
  * ★ Per-day template flag: 只喺「該日有至少一張更要扣」先扣；
  *   全部都剔走 → 唔扣；冇 template 嘅自訂更 → 照扣（同 engine 語義一致）。
+ * ★ 2026-08-09: 孖更邏輯保留（engine 支援一日多更、只扣一次午飯），
+ * 但 UI 已封晒入口（collision_check 只准取代，唔准加多一張）。
+ * 如果日後要重開孖更，改 createShift 個 onConflict 分支，唔使郁呢度。
  */
 export function estimateScheduledHours(
   shifts: Array<{ employeeId: string; date: Date | string; startTime: Date | string; endTime: Date | string; status?: string }>,

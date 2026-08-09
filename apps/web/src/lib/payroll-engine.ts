@@ -1599,6 +1599,10 @@ export async function calculateTimeBank(
       dayClockOutOt = 0
     }
 
+    // ★ 2026-08-09: 孖更邏輯保留（engine 支援一日多更、只扣一次午飯），
+    // 但 UI 已封晒入口（collision_check 只准取代，唔准加多一張）。
+    // 如果日後要重開孖更，改 createShift 個 onConflict 分支，唔使郁呢度。
+
     // ★ 午休扣減（地基：有上班嘅日子一律扣 lunchDefault）
     // 決定 1 相關：同日多張更只扣一次，唔可以每張更加一次
     // ★ 2026-08-07: deductLunch gate — 當日全部更次 deductLunch=false 先跳；有任何一張要扣（或冇 template）→ 照扣
