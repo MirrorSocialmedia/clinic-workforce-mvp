@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
+import { writeAuditLog } from '@/lib/prisma'
 import { createNotification } from '@/lib/notification'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, getMonthRange } from '@/lib/hk-date'
 
 // PUT /api/shift-changes/[id] — approve/reject shift change
 export async function PUT(
@@ -208,7 +209,29 @@ export async function PUT(
         }
       }
 
-      return NextResponse.json({ success: true, changeRequest: updated })
+      // ★ 已出糧警告：檢查換更嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單（§四.E）
+      const { start: pm } = getMonthRange(s.date)
+      const locked = await prisma.payrollRun.findFirst({
+        where: {
+          periodMonth: pm,
+          status: { in: ['FINALIZED', 'EXPORTED'] },
+          OR: [{ clinicId: null }, { clinicId: s.clinicId }],
+        },
+        select: { id: true, status: true, clinicId: true },
+      })
+      if (locked) {
+        await writeAuditLog({
+          action: 'SHIFT_EDIT_AFTER_PAYROLL',
+          entity: 'Shift',
+          entityId: changeRequest.shiftId,
+          notes: `${hkDate} 屬於已${locked.status === 'EXPORTED' ? '匯出' : '確認'}嘅計糧月份，糧單唔會自動更新`,
+        })
+      }
+
+      return NextResponse.json({ success: true, changeRequest: updated, payrollLocked: locked ? {
+        month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+        status: locked.status,
+      } : null })
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })

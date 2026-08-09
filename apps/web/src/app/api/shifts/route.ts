@@ -413,7 +413,7 @@ export async function POST(req: NextRequest) {
             notes: `${toHKDateStr(times.date)} 屬於已${locked.status === 'EXPORTED' ? '匯出' : '確認'}嘅計糧月份，糧單唔會自動更新`,
           })
         }
-        const payrollLocked = locked ? {
+        payrollLocked = locked ? {
           month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
           status: locked.status,
         } : null

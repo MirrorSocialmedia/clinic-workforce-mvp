@@ -94,24 +94,7 @@ export async function GET(req: NextRequest) {
   }
   if (employeeId) shiftWhere.employeeId = employeeId
 
-  // ★ 調鋪斷鏈修復：查當月該 scope 有冇調鋪更
-  const _scopeOr = scopedClinicId
-    ? { OR: [{ clinicId: scopedClinicId }, { secondaryClinicId: scopedClinicId }] }
-    : (scopedClinicIds !== undefined
-      ? { OR: [{ clinicId: { in: scopedClinicIds } }, { secondaryClinicId: { in: scopedClinicIds } }] }
-      : {})
-  const transferShifts = await prisma.shift.findMany({
-    where: {
-      ..._scopeOr,
-      secondaryClinicId: { not: null },
-      date: { gte: monthStart, lte: monthEnd },
-      status: { in: ['CONFIRMED', 'DRAFT'] },
-    },
-    select: { clinicId: true, secondaryClinicId: true },
-  })
-  // ★ 有調鋪更 → 打卡唔使按 clinic filter（拉到全部）
-  const punchClinicId = (transferShifts.length > 0 && scopedClinicId) ? undefined : scopedClinicId
-
+  // ★ 打卡查詢一致化：唔按診所收窄，同 payroll-engine 口徑一致（2026-08-09）
   const [activeRules, effectivePunches, rawPunches, corrections, shifts] = await Promise.all([
     prisma.payRule.findMany({
       where: {
@@ -123,15 +106,15 @@ export async function GET(req: NextRequest) {
       select: { employeeId: true, configJson: true },
     }),
     getEffectivePunches(monthStart, monthEnd, {
-      clinicId: punchClinicId,
-      clinicIds: punchClinicId === undefined ? undefined : scopedClinicIds,
+      clinicId: undefined,
+      clinicIds: undefined,
       employeeId: employeeId || undefined,
     }),
     prisma.punchRecord.findMany({
       where: {
         punchTime: { gte: monthStart, lte: monthEnd },
         void: { is: null },
-        ...(scopedClinicId ? { clinicId: scopedClinicId } : scopedClinicIds ? { clinicId: { in: scopedClinicIds } } : {}),
+        // 同 effectivePunches 口徑一致 — 唔按診所 filter
         ...(employeeId ? { employeeId } : {}),
       },
       include: {

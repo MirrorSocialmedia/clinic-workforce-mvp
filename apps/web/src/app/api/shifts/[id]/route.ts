@@ -1,11 +1,12 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
+import { hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
 import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
+import { writeAuditLog } from '@/lib/prisma'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
@@ -174,9 +175,34 @@ export async function PUT(
       }
     }
 
+    // ★ 已出糧警告：檢查新日期/診所嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單（§四.E）
+    const checkClinicId = updateData.clinicId ?? existing.clinicId
+    const checkDate = updateData.date || existing.date
+    const dateStr = toHKDateStr(checkDate instanceof Date ? checkDate : new Date(checkDate + 'T00:00:00+08:00'))
+    const { start: pm } = getMonthRange(checkDate instanceof Date ? checkDate : new Date(checkDate + 'T00:00:00+08:00'))
+    const locked = await prisma.payrollRun.findFirst({
+      where: {
+        periodMonth: pm,
+        status: { in: ['FINALIZED', 'EXPORTED'] },
+        OR: [{ clinicId: null }, { clinicId: checkClinicId }],
+      },
+      select: { id: true, status: true, clinicId: true },
+    })
+    if (locked) {
+      await writeAuditLog({
+        action: 'SHIFT_EDIT_AFTER_PAYROLL',
+        entity: 'Shift',
+        entityId: id,
+        notes: `${dateStr} 屬於已${locked.status === 'EXPORTED' ? '匯出' : '確認'}嘅計糧月份，糧單唔會自動更新`,
+      })
+    }
+
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
-    return NextResponse.json({ success: true, shift })
+    return NextResponse.json({ success: true, shift, payrollLocked: locked ? {
+      month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+      status: locked.status,
+    } : null })
   })
 }
 
@@ -212,6 +238,25 @@ export async function DELETE(
 
     const beforeJson = JSON.stringify(existing)
     await prisma.shift.delete({ where: { id } })
+
+    // ★ 已出糧警告：檢查被刪更嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單（§四.E）
+    const { start: pm } = getMonthRange(existing.date)
+    const locked = await prisma.payrollRun.findFirst({
+      where: {
+        periodMonth: pm,
+        status: { in: ['FINALIZED', 'EXPORTED'] },
+        OR: [{ clinicId: null }, { clinicId: existing.clinicId }],
+      },
+      select: { id: true, status: true, clinicId: true },
+    })
+    if (locked) {
+      await writeAuditLog({
+        action: 'SHIFT_EDIT_AFTER_PAYROLL',
+        entity: 'Shift',
+        entityId: id,
+        notes: `${toHKDateStr(existing.date)} 屬於已${locked.status === 'EXPORTED' ? '匯出' : '確認'}嘅計糧月份，糧單唔會自動更新`,
+      })
+    }
 
     // ★ 刪除排班影響遲到／早退／OT 判斷 → 快取要失效
     try {

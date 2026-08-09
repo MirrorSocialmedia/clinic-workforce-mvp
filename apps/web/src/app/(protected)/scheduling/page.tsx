@@ -1645,6 +1645,12 @@ function getShiftCode(shift: Shift): string {
         }
         // ★ 調鋪係逐張更嘅屬性，用完即清 —— 唔清嘅話之後每張更都會被標成調鋪
         setSecondaryClinicId(null)
+        // ★ payrollLocked warning
+        if (data?.payrollLocked) {
+          setValidationIssues([{ type: 'warning', rule: 'payroll',
+            message: `⚠️ ${data.payrollLocked.month} 已${data.payrollLocked.status === 'EXPORTED' ? '匯出' : '確認'}出糧 —— 呢個改動唔會反映喺已出嘅糧單`,
+          }])
+        }
         await refreshAll()
         return true
       } else {
