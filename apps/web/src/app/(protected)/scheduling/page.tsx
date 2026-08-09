@@ -1594,10 +1594,24 @@ function getShiftCode(shift: Shift): string {
         if (hard.length > 0) return false // Hard errors always block
         // ★ Collision in non-replace mode → pop cellMenu for replace confirmation
         if (collide.length > 0 && !opts?.replaceShiftIds) {
-          const dayShifts = shifts.filter(
-            s => s.employeeId === employeeId && toHKDateStr(new Date(s.date)) === date
-          )
-          opts?.onConflict?.({
+          // ★ 兩個來源都要 —— shifts 係 14 日窗口，月視圖靠 ovMonthShifts
+          const dayShifts = (() => {
+            const m = new Map<string, any>()
+            for (const s of shifts) m.set(s.id, s)
+            for (const s of ovMonthShifts) m.set(s.id, s)
+            return [...m.values()].filter(
+              s => s.employeeId === employeeId && toHKDateStr(new Date(s.date)) === date
+            )
+          })()
+          if (!opts?.onConflict) {
+            // ★ 冇人接 → 起碼要見到，唔好靜靜失敗
+            setValidationIssues(prev => [
+              ...prev,
+              ...collide.map((e: any) => ({ type: 'error' as const, rule: e.rule, message: e.message })),
+            ])
+            return false
+          }
+          opts.onConflict({
             kind: 'shift',
             existing: dayShifts.map(s => ({
               id: s.id,
@@ -1655,7 +1669,7 @@ function getShiftCode(shift: Shift): string {
     } finally {
       creatingKeyRef.current = null
     }
-  }, [selectedClinicId, secondaryClinicId, setValidationIssues, refreshAll, validateBeforeCreate, shifts, templateById])
+  }, [selectedClinicId, secondaryClinicId, setValidationIssues, refreshAll, validateBeforeCreate, shifts, ovMonthShifts, templateById])
 
   // ★ 2026-08-03：儲存更次深淺設定
   const saveTemplateShade = async (templateId: string, shade: number) => {
@@ -1931,7 +1945,19 @@ function getShiftCode(shift: Shift): string {
         return
       }
 
-      await createShift(empId, dateStr, tpl, { clinicIdOverride: targetClinicId })
+      const r = rect || { x: 0, y: 0, width: 0, height: 0 }
+      await createShift(empId, dateStr, tpl, {
+        clinicIdOverride: targetClinicId,
+        onConflict: (c) => setCellMenu({
+          empId, dateStr,
+          x: r.x + r.width, y: r.y,
+          conflict: {
+            kind: c.kind,
+            existing: c.existing,
+            pending: { templateId: tpl.id, clinicId: targetClinicId ?? selectedClinicId ?? '' },
+          },
+        }),
+      })
       return
     }
 
@@ -2331,7 +2357,16 @@ function getShiftCode(shift: Shift): string {
           setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
           return
         }
-        const ok = await createShift(empId, dateStr, sel.template)
+        const ok = await createShift(empId, dateStr, sel.template, {
+          onConflict: (c) => setCellMenu({
+            empId, dateStr,
+            x: anchor?.left ?? 0, y: anchor?.bottom ?? 0,
+            conflict: {
+              kind: c.kind, existing: c.existing,
+              pending: { templateId: sel.template!.id, clinicId: selectedClinicId ?? '' },
+            },
+          }),
+        })
         if (ok) { setValidationIssues([]); await refreshAll() }
         return
       }
@@ -2344,7 +2379,7 @@ function getShiftCode(shift: Shift): string {
         y: anchor?.bottom ?? 0,
       })
     }, 250)
-  }, [canManage, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcEmployeeId, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
+  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcEmployeeId, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
 
   const handleOverviewCellDblClick = useCallback(async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
@@ -3500,7 +3535,18 @@ function getShiftCode(shift: Shift): string {
                         //   選單揀嘅係「呢一格用咩」，唔係「之後都用呢個」。
                         const cm = cellMenu
                         if (!cm) return
-                        await createShift(cm.empId, cm.dateStr, it.template, { clinicIdOverride: g.clinicId })
+                        await createShift(cm.empId, cm.dateStr, it.template, {
+                          clinicIdOverride: g.clinicId,
+                          onConflict: (c) => setCellMenu({
+                            empId: cm.empId, dateStr: cm.dateStr,
+                            x: cm.x, y: cm.y,
+                            conflict: {
+                              kind: c.kind,
+                              existing: c.existing,
+                              pending: { templateId: it.template.id, clinicId: g.clinicId },
+                            },
+                          }),
+                        })
                         await refreshAll()
                       }}
                       style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%',
