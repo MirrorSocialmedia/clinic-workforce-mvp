@@ -358,7 +358,19 @@ const ScheduleRow = React.memo(function ScheduleRow({
 })
 
 // ★ Render counter (temporary, remove after measurement)
-let renderCount = 0
+  // ★ Profiler: render counter (temporary, remove after measurement)
+  const renderCountRef = useRef(0)
+  renderCountRef.current++
+  const currentRender = renderCountRef.current
+  if (currentRender <= 20) {
+    console.log(`[⏱ render #${currentRender}] SchedulingPage`)
+    console.time(`render-${currentRender}`)
+  }
+
+  // ★ Profiler: timing after render commit (temporary, remove after measurement)
+  useEffect(() => {
+    if (currentRender <= 20) console.timeEnd(`render-${currentRender}`)
+  })
 
 // ============================================================
 // Main Component
