@@ -1,12 +1,15 @@
+// ★ formatter 只建立一次 —— new Intl.DateTimeFormat 是熱路徑最貴的一步
+const HK_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Hong_Kong',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
 /** 將 Date 轉為香港時區的 YYYY-MM-DD */
 export function toHKDateStr(d: Date | string): string {
   const dt = typeof d === 'string' ? new Date(d) : d
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Hong_Kong',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(dt)
+  return HK_DATE_FMT.format(dt)
 }
 
 /** 今日香港日期 YYYY-MM-DD */
