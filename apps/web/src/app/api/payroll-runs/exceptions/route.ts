@@ -601,8 +601,9 @@ export async function GET(req: NextRequest) {
         }
       })
     }
-  } catch {
-    // timeBankEntry may not exist
+  } catch (e) {
+    // timeBankEntry may not exist — log but don't fail
+    console.error('[exceptions] timeBankEntry absent query failed:', e)
   }
 
   // ★ 2026-08-08: EARLY_IN 偵測 —— 由 matchPunchesToShifts 結果入面攞 earlyInMinutes
@@ -722,7 +723,9 @@ export async function GET(req: NextRequest) {
         ex.madeUp = makeupSet.has(`${ex.employeeId}_${ex.date}_${matchType}`)
       }
     })
-  } catch {}
+  } catch (e) {
+    console.error('[exceptions] makeup entries query failed:', e)
+  }
 
   // Set payType on all exceptions
   exceptions.forEach(ex => {

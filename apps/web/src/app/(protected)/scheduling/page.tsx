@@ -275,7 +275,7 @@ export default function SchedulingPage() {
     }
     const pos = templateIndexMap.get(s.templateId)
     return pos ? shiftShade(base, Math.min(pos.idx, FIXED_STEPS - 1), FIXED_STEPS) : base
-  }, [clinicColorMap, templateIndexMap, templates])
+  }, [clinicColorMap, templateIndexMap, templateById])
 
   // Step 7: Overview scope
   const [ovScope, setOvScope] = useState<OvScope>({ type: 'all' })
@@ -4645,7 +4645,7 @@ function getShiftCode(shift: Shift): string {
                                 }}
                               >
                                 {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}></span>
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
                                     const tpl = templateById.get(s.templateId)
@@ -4740,7 +4740,7 @@ function getShiftCode(shift: Shift): string {
                                 }}
                               >
                                 {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}></span>
+                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
                                   const parts: React.ReactNode[] = []
                                   ss.forEach((s, si) => {
                                     const tpl = templateById.get(s.templateId)
@@ -4814,7 +4814,7 @@ function getShiftCode(shift: Shift): string {
                                 cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
                               }}>
                               {(() => {
-                                if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}></span>
+                                if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
                                 const parts: React.ReactNode[] = []
                                 ss.forEach((s, si) => {
                                   const tpl = templateById.get(s.templateId)
