@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Settings, X, Trash2, Calendar, ClipboardList, BarChart3, RefreshCw, PlusCircle, Palmtree, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react'
 import FullCalendar from '@fullcalendar/react'
@@ -202,6 +202,162 @@ function useDragOutDeleteWithUndo(
 const EMPTY: any[] = []
 
 // ============================================================
+// ScheduleRow — React.memo'd shared row for month/week views
+// ============================================================
+const ScheduleRow = React.memo(function ScheduleRow({
+  emp, days, shiftsByKey, leavesByKey, shiftColor, getClinicLabelFn,
+  variant, selectedEmployeeId, scopeClinicIds, scopeCompanyId,
+  clinicShortById, clinicCompanyById, labelParts, templateById,
+  canManage, onCellClick, onCellDblClick, draggingTemplate, draggingLeave,
+  justDroppedRef, onDrop, homeLabel, selectedClinicId,
+}: {
+  emp: any
+  days: string[]
+  shiftsByKey: Map<string, any[]>
+  leavesByKey: Map<string, any[]>
+  shiftColor: (s: any) => string
+  getClinicLabelFn: (s: Shift) => string
+  variant?: 'compact' | 'borrowed'
+  selectedEmployeeId: string | null
+  scopeClinicIds: Set<string> | null
+  scopeCompanyId: string | null
+  clinicShortById: Map<string, string>
+  clinicCompanyById: Map<string, string>
+  labelParts: string[]
+  templateById: Map<string, any>
+  canManage: boolean
+  onCellClick?: (empId: string, dateStr: string, rect: DOMRect) => void
+  onCellDblClick?: (empId: string, dateStr: string) => void
+  draggingTemplate: React.MutableRefObject<{ templateId: string; employeeId: string } | null>
+  draggingLeave: React.MutableRefObject<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>
+  justDroppedRef: React.MutableRefObject<boolean>
+  onDrop: (empId: string, dateStr: string, clinicId: string) => void
+  selectedClinicId: string | null
+  homeLabel?: string
+}) {
+  const isSelected = emp.id === selectedEmployeeId
+  const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
+  const isBorrowed = variant === 'borrowed'
+  const isCompact = variant === 'compact'
+
+  const tdBaseStyle: React.CSSProperties = {
+    padding: 4, textAlign: 'center', verticalAlign: 'middle',
+    borderBottom: '1px solid #f0f0f0',
+    backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+  }
+
+  return (
+    <tr>
+      {isBorrowed ? (
+        <td style={{
+          position: 'sticky', left: 0, zIndex: 1,
+          background: '#fafbfc',
+          backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+          borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
+          padding: '4px 8px', whiteSpace: 'nowrap',
+          fontWeight: isSelected ? 600 : 500,
+          fontSize: 11,
+        }}>
+          {emp.user?.name ?? '?'}
+          {homeLabel && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
+        </td>
+      ) : (
+        <td style={{
+          position: 'sticky', left: 0, zIndex: 1,
+          background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
+          backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
+          borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
+          padding: '4px 8px', whiteSpace: 'nowrap',
+          fontWeight: isSelected ? 600 : 500,
+          fontSize: 11,
+        }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
+  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
+  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
+    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
+      )}
+      {days.map((d, di) => {
+        const ss = shiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
+        const ls = leavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
+        const hasShift = ss.length > 0
+        const hasLeave = ls.length > 0
+        const cellIsEmpty = !hasShift && !hasLeave
+
+        let style: React.CSSProperties = { ...tdBaseStyle }
+
+        if (isBorrowed) {
+          style.cursor = canManage && !hasShift && !hasLeave ? 'pointer' : 'default'
+        } else {
+          style.cursor = canManage && !hasShift && !hasLeave ? 'pointer' : 'default'
+          style.background = (rowIsTransfer && cellIsEmpty)
+            ? '#6b7280'
+            : (hasShift ? '' : (hasLeave ? '#4a4a4a10' : 'transparent'))
+          style.transition = 'background 0.15s'
+        }
+
+        const props: any = { key: di, style }
+
+        if (!isBorrowed) {
+          props.className = 'overview-cell'
+          props.onPointerUp = () => canManage && onDrop(emp.id, d, selectedClinicId!)
+          props.onPointerEnter = (e: React.PointerEvent<HTMLTableCellElement>) => {
+            if (!draggingTemplate.current && !draggingLeave.current) return
+            ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
+            ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
+            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+          }
+          props.onPointerLeave = (e: React.PointerEvent<HTMLTableCellElement>) => {
+            if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
+            if (hasLeave) {
+              ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#4a4a4a10'
+            } else {
+              ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = 'transparent'
+            }
+            ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
+            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+          }
+        }
+
+        const shouldClick = canManage && !hasShift && !hasLeave && !justDroppedRef.current
+        if (shouldClick) {
+          props.onClick = (e: React.MouseEvent) => onCellClick?.(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
+          props.onDoubleClick = () => onCellDblClick?.(emp.id, d)
+        }
+
+        let content: React.ReactNode
+        if (ss.length === 0 && ls.length === 0) {
+          content = <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
+        } else {
+          const parts: React.ReactNode[] = []
+          ss.forEach((s, si) => {
+            const tpl = templateById.get(s.templateId)
+            const p: string[] = []
+            if (labelParts.includes('clinic')) p.push(getClinicLabelFn(s))
+            if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
+            const bg = shiftColor(s)
+            parts.push(<div key={'s' + si} style={{
+              display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
+              fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap',
+              border: isBorrowed ? '1px dashed #2563eb' : 'none',
+            }}>{p.filter(Boolean).join('·')}</div>)
+          })
+          ls.forEach((lr, li) => {
+            const lc = lr.leaveType?.color ?? '#9ca3af'
+            parts.push(<div key={'l' + li} style={{
+              display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
+              fontSize: 10, background: lc + '26', color: '#1f2937',
+              borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap',
+            }}>{lr.leaveType?.name}</div>)
+          })
+          content = parts
+        }
+
+        return <td {...props}>{content}</td>
+      })}
+    </tr>
+  )
+})
+
+// ============================================================
 // Main Component
 // ============================================================
 export default function SchedulingPage() {
@@ -266,6 +422,27 @@ export default function SchedulingPage() {
     [templates],
   )
 
+  // ★ O(1) lookup by id instead of linear search on clinics array
+  const clinicById = useMemo(
+    () => new Map(clinics.map(c => [c.id, c])),
+    [clinics],
+  )
+
+  // ★ Memoized clinic label — stable reference for ScheduleRow
+  const memoizedClinicLabel = useCallback(
+    (s: Shift) => {
+      const clinic = clinicById.get(s.clinicId)
+      const abbr = CLINIC_ABBR[clinic?.name || ''] || clinic?.shortName || clinic?.name?.slice(0, 1) || '?'
+      if (s.secondaryClinicId) {
+        const secClinic = clinicById.get(s.secondaryClinicId)
+        const secAbbr = CLINIC_ABBR[secClinic?.name || ''] || secClinic?.shortName || secClinic?.name?.slice(0, 1) || '?'
+        return `${abbr}→${secAbbr}`
+      }
+      return abbr
+    },
+    [clinicById],
+  )
+
   // ★ 固定 6 階梯 —— 避免加刪模板令同店所有更次變色
   const FIXED_STEPS = 6
   const shiftColor = useCallback((s: any) => {
@@ -287,7 +464,7 @@ export default function SchedulingPage() {
   const scopeLabel = useMemo(() => {
     if (ovScope.type === 'all') return '所有診所'
     if (ovScope.type === 'clinic') {
-      const c = clinics.find(x => x.id === ovScope.id)
+      const c = clinicById.get(ovScope.id)
       return (c as any)?.shortName || c?.name || ovScope.name || ''
     }
     // company scope
@@ -422,9 +599,9 @@ export default function SchedulingPage() {
   }
 
   // 🏢 Derive current company from selected clinic
-  const currentCompanyId = clinics.find(c => c.id === selectedClinicId)?.company?.id ?? null
+  const currentCompanyId = clinicById.get(selectedClinicId as string)?.company?.id ?? null
   const currentCompanyName = currentCompanyId
-    ? clinics.find(c => c.id === selectedClinicId)?.company?.name ?? '未知'
+    ? clinicById.get(selectedClinicId as string)?.company?.name ?? '未知'
     : ''
 
   // 🗑 Drag-to-delete via pointer capture (stable, no lost events)
@@ -789,7 +966,7 @@ function getShiftCode(shift: Shift): string {
   // ★ Cell shift options for month view click menu
   const cellShiftOptions = useMemo(() => {
     if (!selectedClinicId) return []
-    const current = clinics.find(c => c.id === selectedClinicId)
+    const current = clinicById.get(selectedClinicId)
     const companyId = current?.company?.id
     if (!companyId) return []
 
@@ -828,7 +1005,7 @@ function getShiftCode(shift: Shift): string {
     for (const emp of clinicEmployees) {
       if (!emp.homeClinicId) { noHome.push(emp); continue }
       if (!byClinic.has(emp.homeClinicId)) {
-        const c = clinics.find(x => x.id === emp.homeClinicId)
+        const c = clinicById.get(emp.homeClinicId)
         byClinic.set(emp.homeClinicId, {
           name: (c as any)?.shortName || c?.name || '未知診所',
           emps: [],
@@ -1916,7 +2093,7 @@ function getShiftCode(shift: Shift): string {
       }
 
       const empName = s.employee?.user?.name || ''
-      const awayClinic = clinics.find(c => c.id === s.clinicId)
+      const awayClinic = clinicById.get(s.clinicId)
       const awayLabel = awayClinic?.shortName || awayClinic?.name?.slice(0, 2) || '他店'
 
       return {
@@ -1987,7 +2164,7 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // Overview cell click / double-click handlers
   // ============================================================
-  const handleOverviewCellClick = async (
+  const handleOverviewCellClick = useCallback(async (
     empId: string,
     dateStr: string,
     anchor?: DOMRect,
@@ -2025,9 +2202,9 @@ function getShiftCode(shift: Shift): string {
         y: anchor?.bottom ?? 0,
       })
     }, 250)
-  }
+  }, [canManage, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu])
 
-  const handleOverviewCellDblClick = async (empId: string, dateStr: string) => {
+  const handleOverviewCellDblClick = useCallback(async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
     if (!canManage) return
 
@@ -2073,7 +2250,7 @@ function getShiftCode(shift: Shift): string {
     // ★ 調鋪日有多張更 → 要問清楚，唔可以靜靜刪其中一張
     if (dayShifts.length > 1) {
       const names = dayShifts.map((s, i) =>
-        `${i + 1}. ${clinics.find(c => c.id === s.clinicId)?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
+        `${i + 1}. ${clinicById.get(s.clinicId)?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`
       ).join('\n')
       const pick = prompt(`該日有 ${dayShifts.length} 張更，要刪邊張？輸入編號：\n${names}`)
       const i = Number(pick) - 1
@@ -2089,7 +2266,7 @@ function getShiftCode(shift: Shift): string {
       await deleteShift(shiftTarget.id)
       await refreshAll()
     }
-  }
+  }, [canManage, leaveRequests, shifts, employees, deleteLeave, deleteShift, refreshAll, clinicById])
 
   // ============================================================
   // 📷 Screenshot capture helpers
@@ -3247,7 +3424,7 @@ function getShiftCode(shift: Shift): string {
         <div className="card rounded-xl g border p-4 shadow-card" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h2 style={{ margin: 0, fontSize: 16 }}>
-              {'⚙️ 排班校驗規則（' + (clinics.find(c => c.id === selectedClinicId)?.name || '') + '）'}
+              {'⚙️ 排班校驗規則（' + (clinicById.get(selectedClinicId as string)?.name || '') + '）'}
             </h2>
             <button onClick={() => setShowRuleSettings(false)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}><X size={18} /></button>
           </div>
@@ -3261,7 +3438,7 @@ function getShiftCode(shift: Shift): string {
               店舖顏色
             </div>
             <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 10 }}>
-              正在設定：<strong>{clinics.find(c => c.id === selectedClinicId)?.name ?? '—'}</strong>
+              正在設定：<strong>{clinicById.get(selectedClinicId as string)?.name ?? '—'}</strong>
                · 更次會用同色系嘅深淺區分
             </div>
 
@@ -4589,90 +4766,21 @@ function getShiftCode(shift: Shift): string {
                   </thead>
                   <tbody>
                     {/* Full-time */}
-                    {ovEmployees.full.map(emp => {
-                      /* ★ 2026-08-03: selected row highlight */
-                      const isSelected = emp.id === selectedEmployeeId
-                      return (
-                        <tr key={emp.id} style={{
-                          borderBottom: '1px solid #f0f0f0',
-                          background: isSelected ? 'rgba(55, 138, 221, 0.07)' : undefined,
-                        }}>
-                          <td style={{
-                            position: 'sticky', left: 0, zIndex: 1,
-                            background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                            backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
-                            borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
-                            padding: '4px 8px', whiteSpace: 'nowrap',
-                            fontWeight: isSelected ? 600 : 500,
-                            fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
-  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
-  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
-    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
-                          {monthDays.map((d, di) => {
-                            const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
-                            const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
-                            const hasShift = ss.length > 0
-                            const hasLeave = ls.length > 0
-                            const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
-                            const cellIsEmpty = !hasShift && !hasLeave
-                            return (
-                              <td key={di}
-                                className="overview-cell"
-                                onPointerUp={() => canManage && handleOverviewDrop(emp.id, d, selectedClinicId)}
-                                onClick={e => {
-                                  if (!canManage || hasShift || hasLeave) return
-                                  if (justDroppedRef.current) return
-                                  handleOverviewCellClick(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
-                                }}
-                                onDoubleClick={() => handleOverviewCellDblClick(emp.id, d)}
-                                onPointerEnter={e => {
-                                  if (!draggingTemplate.current && !draggingLeave.current) return
-                                  ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
-                                }}
-                                onPointerLeave={e => {
-                                  if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
-                                  if (hasLeave) {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#4a4a4a10'
-                                  } else {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = 'transparent'
-                                  }
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
-                                }}
-                                style={{
-                                  padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
-                                  backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
-                                  cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
-                                  background: (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent'),
-                                  transition: 'background 0.15s',
-                                }}
-                              >
-                                {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
-                                  const parts: React.ReactNode[] = []
-                                  ss.forEach((s, si) => {
-                                    const tpl = templateById.get(s.templateId)
-                                    const p: string[] = []
-                                    if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
-                                    if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
-                                    const bg = shiftColor(s)
-                                    parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
-                                  })
-                                  ls.forEach((lr, li) => {
-                                    const lc = lr.leaveType?.color ?? '#9ca3af'
-                                    parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
-                                  })
-                                  return parts
-                                })()}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      )
-                    })}
+                    {ovEmployees.full.map(emp => (
+                      <ScheduleRow key={emp.id}
+                        emp={emp} days={monthDays}
+                        shiftsByKey={monthShiftsByKey} leavesByKey={monthLeavesByKey}
+                        shiftColor={shiftColor} getClinicLabelFn={memoizedClinicLabel}
+                        selectedEmployeeId={selectedEmployeeId} selectedClinicId={selectedClinicId}
+                        scopeClinicIds={scopeClinicIds} scopeCompanyId={scopeCompanyId}
+                        clinicShortById={clinicShortById} clinicCompanyById={clinicCompanyById}
+                        labelParts={labelParts} templateById={templateById}
+                        canManage={canManage} onCellClick={handleOverviewCellClick}
+                        onCellDblClick={handleOverviewCellDblClick}
+                        draggingTemplate={draggingTemplate} draggingLeave={draggingLeave}
+                        justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
+                      />
+                    ))}
                     {/* Part-time group header */}
                     {ovEmployees.part.length > 0 && (
                       <tr>
@@ -4684,90 +4792,22 @@ function getShiftCode(shift: Shift): string {
                       </tr>
                     )}
                     {/* Part-time */}
-                    {ovEmployees.part.map(emp => {
-                      /* ★ 2026-08-03: selected row highlight */
-                      const isSelected = emp.id === selectedEmployeeId
-                      return (
-                        <tr key={emp.id} style={{
-                          borderBottom: '1px solid #f0f0f0',
-                          background: isSelected ? 'rgba(55, 138, 221, 0.07)' : undefined,
-                        }}>
-                          <td style={{
-                            position: 'sticky', left: 0, zIndex: 1,
-                            background: emp.status === 'ACTIVE' || emp.status === undefined ? '#fafbfc' : '#fee2e2',
-                            backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
-                            borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
-                            padding: '4px 8px', whiteSpace: 'nowrap',
-                            fontWeight: isSelected ? 600 : 500,
-                            fontSize: 11,
-                          }}>{emp.user?.name ?? '?'}<HomeTag emp={emp} scopeClinicIds={scopeClinicIds}
-  shortName={emp.homeClinicId ? clinicShortById.get(emp.homeClinicId) : undefined}
-  crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
-    clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
-                          {monthDays.map((d, di) => {
-                            const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
-                            const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
-                            const hasShift = ss.length > 0
-                            const hasLeave = ls.length > 0
-                            const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
-                            const cellIsEmpty = !hasShift && !hasLeave
-                            return (
-                              <td key={di}
-                                className="overview-cell"
-                                onPointerUp={() => canManage && handleOverviewDrop(emp.id, d, selectedClinicId)}
-                                onClick={e => {
-                                  if (!canManage || hasShift || hasLeave) return
-                                  if (justDroppedRef.current) return
-                                  handleOverviewCellClick(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
-                                }}
-                                onDoubleClick={() => handleOverviewCellDblClick(emp.id, d)}
-                                onPointerEnter={e => {
-                                  if (!draggingTemplate.current && !draggingLeave.current) return
-                                  ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
-                                }}
-                                onPointerLeave={e => {
-                                  if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
-                                  if (hasLeave) {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#4a4a4a10'
-                                  } else {
-                                    ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = 'transparent'
-                                  }
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-                                  ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
-                                }}
-                                style={{
-                                  padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
-                                  backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
-                                  cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
-                                  background: (rowIsTransfer && cellIsEmpty) ? '#6b7280' : (hasShift ? '' : hasLeave ? '#4a4a4a10' : 'transparent'),
-                                  transition: 'background 0.15s',
-                                }}
-                              >
-                                {(() => {
-                                  if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
-                                  const parts: React.ReactNode[] = []
-                                  ss.forEach((s, si) => {
-                                    const tpl = templateById.get(s.templateId)
-                                    const p: string[] = []
-                                    if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
-                                    if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
-                                    const bg = shiftColor(s)
-                                    parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap' }}>{p.filter(Boolean).join('·')}</div>)
-                                  })
-                                  ls.forEach((lr, li) => {
-                                    const lc = lr.leaveType?.color ?? '#9ca3af'
-                                    parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
-                                  })
-                                  return parts
-                                })()}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      )
-                    })}
+                    {ovEmployees.part.map(emp => (
+                      <ScheduleRow key={emp.id}
+                        emp={emp} days={monthDays}
+                        shiftsByKey={monthShiftsByKey} leavesByKey={monthLeavesByKey}
+                        shiftColor={shiftColor} getClinicLabelFn={memoizedClinicLabel}
+                        variant="compact"
+                        selectedEmployeeId={selectedEmployeeId} selectedClinicId={selectedClinicId}
+                        scopeClinicIds={scopeClinicIds} scopeCompanyId={scopeCompanyId}
+                        clinicShortById={clinicShortById} clinicCompanyById={clinicCompanyById}
+                        labelParts={labelParts} templateById={templateById}
+                        canManage={canManage} onCellClick={handleOverviewCellClick}
+                        onCellDblClick={handleOverviewCellDblClick}
+                        draggingTemplate={draggingTemplate} draggingLeave={draggingLeave}
+                        justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
+                      />
+                    ))}
                     {/* Borrowed group header */}
                     {borrowedEmployees.length > 0 && (
                       <tr>
@@ -4780,66 +4820,23 @@ function getShiftCode(shift: Shift): string {
                     )}
                     {/* Borrowed */}
                     {borrowedEmployees.map(emp => {
-                      /* ★ 2026-08-03: selected row highlight */
-                      const isSelected = emp.id === selectedEmployeeId
-                      const homeClinic = clinics.find(c => emp.clinics?.some((ec: any) => ec.clinic?.id === c.id))
-                      const homeLabel = homeClinic?.shortName || homeClinic?.name?.slice(0, 2) || ''
+                      const homeClinic = emp.clinics?.find((ec: any) => ec.clinic)
+                      const homeLabel = (homeClinic?.clinic as any)?.shortName || homeClinic?.clinic?.name?.slice(0, 2) || ''
                       return (
-                        <tr key={emp.id} style={{
-                          borderBottom: '1px solid #f0f0f0',
-                          background: isSelected ? 'rgba(55, 138, 221, 0.07)' : undefined,
-                        }}>
-                          <td style={{
-                            position: 'sticky', left: 0, zIndex: 1,
-                            background: '#fafbfc',
-                            backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
-                            borderLeft: isSelected ? '3px solid #378ADD' : '3px solid transparent',
-                            padding: '4px 8px', whiteSpace: 'nowrap',
-                            fontWeight: isSelected ? 600 : 500,
-                            fontSize: 11,
-                          }}>
-                            {emp.user?.name ?? '?'}
-                            {homeLabel && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
-                          </td>
-                          {monthDays.map((d, di) => {
-                            const ss = monthShiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
-                            const ls = monthLeavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
-                            const hasShift = ss.length > 0
-                            const hasLeave = ls.length > 0
-                            return (
-                            <td key={di}
-                              onDoubleClick={() => handleOverviewCellDblClick(emp.id, d)}
-                              onClick={e => {
-                                if (!canManage || hasShift || hasLeave) return
-                                if (justDroppedRef.current) return
-                                handleOverviewCellClick(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
-                              }}
-                              style={{
-                                padding: 4, textAlign: 'center', verticalAlign: 'middle', borderBottom: '1px solid #f0f0f0',
-                                backgroundImage: isSelected ? 'linear-gradient(rgba(55,138,221,.07), rgba(55,138,221,.07))' : undefined,
-                                cursor: canManage && !hasShift && !hasLeave ? 'pointer' : 'default',
-                              }}>
-                              {(() => {
-                                if (ss.length === 0 && ls.length === 0) return <span style={{ fontSize: 10, color: '#9ca3af' }}>—</span>
-                                const parts: React.ReactNode[] = []
-                                ss.forEach((s, si) => {
-                                  const tpl = templateById.get(s.templateId)
-                                  const p: string[] = []
-                                  if (labelParts.includes('clinic')) p.push(getClinicLabel(s, clinics))
-                                  if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
-                                  const bg = shiftColor(s)
-                                  parts.push(<div key={'s'+si} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap', border: '1px dashed #2563eb' }}>{p.filter(Boolean).join('·')}</div>)
-                                })
-                                ls.forEach((lr, li) => {
-                                  const lc = lr.leaveType?.color ?? '#9ca3af'
-                                  parts.push(<div key={'l'+li} style={{ display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1, fontSize: 10, background: lc + '26', color: '#1f2937', borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap' }}>{lr.leaveType?.name}</div>)
-                                })
-                                return parts
-                              })()}
-                            </td>
-                          )
-                          })}
-                        </tr>
+                        <ScheduleRow key={emp.id}
+                          emp={emp} days={monthDays}
+                          shiftsByKey={monthShiftsByKey} leavesByKey={monthLeavesByKey}
+                          shiftColor={shiftColor} getClinicLabelFn={memoizedClinicLabel}
+                          variant="borrowed" homeLabel={homeLabel || undefined}
+                          selectedEmployeeId={selectedEmployeeId} selectedClinicId={selectedClinicId}
+                          scopeClinicIds={scopeClinicIds} scopeCompanyId={scopeCompanyId}
+                          clinicShortById={clinicShortById} clinicCompanyById={clinicCompanyById}
+                          labelParts={labelParts} templateById={templateById}
+                          canManage={canManage} onCellClick={handleOverviewCellClick}
+                          onCellDblClick={handleOverviewCellDblClick}
+                          draggingTemplate={draggingTemplate} draggingLeave={draggingLeave}
+                          justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
+                        />
                       )
                     })}
                   </tbody>
