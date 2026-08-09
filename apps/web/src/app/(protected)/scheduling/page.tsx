@@ -247,6 +247,9 @@ export default function SchedulingPage() {
   const [templates, setTemplates] = useState<ShiftTemplate[]>([])
   const [changeRequests, setChangeRequests] = useState<ShiftChangeRequest[]>([])
 
+  // ★ 離屏截圖表只喺 exporting=true 時 render（省 DOM 節點）
+  const [exporting, setExporting] = useState(false)
+
   // ★ 更次顏色 = 店舖色相 + 按模板次序遞進明度（同一間店一眼認出、唔同更分得開）
   const templateIndexMap = useMemo(() => {
     const m = new Map<string, { idx: number; total: number }>()
@@ -2175,6 +2178,8 @@ function getShiftCode(shift: Shift): string {
   const handleCaptureWeek = async () => {
     if (!exportRef.current || shareBusy) return
     setShareBusy(true)
+    setExporting(true)
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))) // 等兩幀 DOM 上晒
     try {
       const html2canvas = (await import('html2canvas')).default
       const canvas = await html2canvas(exportRef.current, {
@@ -2191,6 +2196,7 @@ function getShiftCode(shift: Shift): string {
       console.error('截圖失敗', e)
       alert('截圖失敗，請重試')
     } finally {
+      setExporting(false)
       setShareBusy(false)
     }
   }
@@ -4844,7 +4850,7 @@ function getShiftCode(shift: Shift): string {
           )}
 
           {/* 截圖用離屏節點 —— 不可用 display:none，html2canvas 影唔到 */}
-          {viewMode === 'week' && weekDays.length === 7 && (
+          {viewMode === 'week' && weekDays.length === 7 && exporting && (
             <div
               ref={exportRef}
               aria-hidden
