@@ -753,6 +753,12 @@ export default function SchedulingPage() {
   // ★ 調鋪方案 1: secondary clinic selection for shift creation
   const [secondaryClinicId, setSecondaryClinicId] = useState<string | null>(null)
 
+  // ★ 調鋪組合卡片（獨立於左邊店鋪選擇）
+  const [tcPrimaryClinicId, setTcPrimaryClinicId] = useState<string | null>(null) // 上午 / 主店
+  const [tcEmployeeId, setTcEmployeeId] = useState<string | null>(null)
+  const [tcTemplateId, setTcTemplateId] = useState<string | null>(null)
+  // 下午 / 調入店 直接沿用現有 secondaryClinicId，唔好另開一個 state
+
   // Shift rule config state
   const [shiftRuleConfig, setShiftRuleConfig] = useState<ShiftRuleConfig>({ ...DEFAULT_SHIFT_RULE_CONFIG })
   const [savingRules, setSavingRules] = useState(false)
@@ -970,16 +976,19 @@ function getShiftCode(shift: Shift): string {
   }, [employees, selectedClinicId, empScope, ovScope, clinics])
   // ★ Cell shift options for month view click menu
   const cellShiftOptions = useMemo(() => {
-    if (!selectedClinicId) return []
-    const current = clinicById.get(selectedClinicId)
-    const companyId = current?.company?.id
+    // ★ 公司模式冇單一主店 —— 由 ovScope 攞公司
+    const companyId = selectedClinicId
+      ? clinicById.get(selectedClinicId)?.company?.id
+      : (ovScope.type === 'company' ? ovScope.id : null)
     if (!companyId) return []
 
     const sameCompanyClinics = clinics
       .filter(c => c.company?.id === companyId)
       .sort((a, b) => {
-        if (a.id === selectedClinicId) return -1
-        if (b.id === selectedClinicId) return 1
+        if (selectedClinicId) {
+          if (a.id === selectedClinicId) return -1
+          if (b.id === selectedClinicId) return 1
+        }
         return a.name.localeCompare(b.name, 'zh-HK')
       })
 
@@ -989,7 +998,7 @@ function getShiftCode(shift: Shift): string {
       clinicId: c.id,
       clinicName: c.name,
       clinicLabel: (c as any).shortName || c.name.slice(0, 3),
-      isCurrent: c.id === selectedClinicId,
+      isCurrent: !!selectedClinicId && c.id === selectedClinicId, // 公司模式冇「· 當前」
       items: companyTemplates.map(t => ({
         template: t,
         label: `${(c as any).shortName || c.name.slice(0, 3)}-${t.shortName || t.name}`,
@@ -1000,7 +1009,50 @@ function getShiftCode(shift: Shift): string {
         ),
       })),
     }))
-  }, [selectedClinicId, clinics, templates, clinicColorMap, templateIndexMap])
+  }, [selectedClinicId, clinics, templates, clinicColorMap, templateIndexMap, ovScope])
+
+  // ★ 調鋪組合卡片派生值
+  const tcCompanyId = useMemo(
+    () => (tcPrimaryClinicId ? clinicById.get(tcPrimaryClinicId)?.company?.id ?? null : null),
+    [tcPrimaryClinicId, clinicById],
+  )
+  const tcSecondaryOptions = useMemo(
+    () => (tcCompanyId ? clinics.filter(c => c.company?.id === tcCompanyId && c.id !== tcPrimaryClinicId) : []),
+    [tcCompanyId, tcPrimaryClinicId, clinics],
+  )
+  const tcEmployeeGroups = useMemo(() => {
+    if (!tcCompanyId) return []
+    const companyClinicIds = new Set(clinics.filter(c => c.company?.id === tcCompanyId).map(c => c.id))
+    const pool = employees.filter(e =>
+      (e.status === 'ACTIVE' || e.status === undefined) &&
+      e.homeClinicId && companyClinicIds.has(e.homeClinicId)
+    )
+    const byClinic = new Map<string, any[]>()
+    for (const e of pool) {
+      const arr = byClinic.get(e.homeClinicId!); arr ? arr.push(e) : byClinic.set(e.homeClinicId!, [e])
+    }
+    return [...byClinic.entries()]
+      .map(([cid, list]) => ({
+        clinicId: cid,
+        label: (clinicById.get(cid) as any)?.name ?? '?',
+        isPrimary: cid === tcPrimaryClinicId,
+        list: list.sort(byRoleThenName),
+      }))
+      .sort((a, b) => (a.isPrimary ? -1 : b.isPrimary ? 1 : a.label.localeCompare(b.label, 'zh-HK')))
+  }, [tcCompanyId, tcPrimaryClinicId, clinics, clinicById, employees])
+  const tcTemplateOptions = useMemo(
+    () => (tcCompanyId ? templates.filter(t => t.companyId === tcCompanyId) : []),
+    [tcCompanyId, templates],
+  )
+  const tcReady = !!(tcPrimaryClinicId && secondaryClinicId && tcEmployeeId && tcTemplateId)
+
+  // ★ 調鋪組合連鎖清空（上午一改，下面三個全部清空）
+  const setPrimary = useCallback((id: string | null) => {
+    setTcPrimaryClinicId(id)
+    setSecondaryClinicId(null)
+    setTcEmployeeId(null)
+    setTcTemplateId(null)
+  }, [])
 
   // ★ 2026-08-03：「全部」時左邊員工欄按主屬店分組
   const groupedEmployees = useMemo(() => {
@@ -2245,6 +2297,26 @@ function getShiftCode(shift: Shift): string {
 
       const sel = selectionRef.current
 
+      // ★ 調鋪組合：只有卡片揀咗嗰位員工嘅行先套用（拍板 B）
+      if (tcReady && empId === tcEmployeeId) {
+        const tpl = templateById.get(tcTemplateId!)
+        if (!tpl) return
+        const hasLeave = leaveRequests.some(lr =>
+          lr.employeeId === empId && leaveCoversDate(lr, dateStr) && lr.leaveType?.systemKey !== 'SICK'
+        )
+        if (hasLeave) {
+          setValidationIssues([{ type: 'error', rule: 'shift', message: '❌ 該員工該天已有假期，無法排班' }])
+          return
+        }
+        const ok = await createShift(empId, dateStr, tpl, { clinicIdOverride: tcPrimaryClinicId })
+        if (ok) {
+          setValidationIssues([])
+          setTcEmployeeId(null); setTcTemplateId(null); setSecondaryClinicId(null) // 用完即清
+          await refreshAll()
+        }
+        return
+      }
+
       // ① 已經揀咗假期 → 直接建立
       if (sel.leaveType) {
         return createLeaveOnCell(empId, dateStr, sel.leaveType)
@@ -2272,7 +2344,7 @@ function getShiftCode(shift: Shift): string {
         y: anchor?.bottom ?? 0,
       })
     }, 250)
-  }, [canManage, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu])
+  }, [canManage, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcEmployeeId, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
 
   const handleOverviewCellDblClick = useCallback(async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
@@ -4279,6 +4351,96 @@ function getShiftCode(shift: Shift): string {
           ))}
         </div>
 
+        {/* ★ 調鋪組合卡片（長期顯示） */}
+        {canManage && (
+          <div style={{
+            ...stickyPanel,
+            marginTop: 8,
+            background: tcReady ? '#ecfdf5' : '#f0f9ff',
+            borderRadius: 8,
+            border: `1px solid ${tcReady ? '#6ee7b7' : '#bae6fd'}`,
+            padding: 8,
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+              調鋪組合
+            </div>
+
+            {/* ① 上午診所（主店） */}
+            <div style={{ marginBottom: 4 }}>
+              <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>上午診所（主店）</label>
+              <select
+                value={tcPrimaryClinicId ?? ''}
+                onChange={e => setPrimary(e.target.value || null)}
+                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}
+              >
+                <option value="">選擇上午診所</option>
+                {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+
+            {/* ② 下午診所（調入店） */}
+            <div style={{ marginBottom: 4 }}>
+              <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>下午診所（調入店）</label>
+              <select
+                value={secondaryClinicId ?? ''}
+                onChange={e => setSecondaryClinicId(e.target.value || null)}
+                disabled={!tcPrimaryClinicId}
+                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
+              >
+                <option value="">選擇下午診所</option>
+                {tcSecondaryOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+
+            {/* ③ 員工 — 按主屬診所分組 */}
+            <div style={{ marginBottom: 4 }}>
+              <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>員工</label>
+              <select
+                value={tcEmployeeId ?? ''}
+                onChange={e => { setTcEmployeeId(e.target.value || null); setTcTemplateId(null) }}
+                disabled={!tcPrimaryClinicId}
+                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
+              >
+                <option value="">選擇員工</option>
+                {tcEmployeeGroups.map(g => (
+                  <optgroup key={g.clinicId} label={`${g.label}${g.isPrimary ? ' (上午)' : ''}`}>
+                    {g.list.map(e => <option key={e.id} value={e.id}>{e.user?.name ?? '?'}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+
+            {/* ④ 更次 */}
+            <div style={{ marginBottom: 6 }}>
+              <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>更次</label>
+              <select
+                value={tcTemplateId ?? ''}
+                onChange={e => setTcTemplateId(e.target.value || null)}
+                disabled={!tcPrimaryClinicId}
+                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
+              >
+                <option value="">選擇更次</option>
+                {tcTemplateOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+
+            {/* 清除掣 + 提示 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <button
+                onClick={() => { setPrimary(null); setSecondaryClinicId(null) }}
+                style={{ fontSize: 10, padding: '2px 10px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', color: '#6b7280' }}
+              >
+                清除
+              </button>
+              {tcEmployeeId && (
+                <span style={{ fontSize: 10, color: '#059669' }}>
+                  撳 {employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '?'} 嗰行嘅格就套用
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* COLUMN 2: Employees split by pay type */}
         <div style={{
           ...stickyPanel,
@@ -4544,35 +4706,6 @@ function getShiftCode(shift: Shift): string {
               </div>
             ))}
           </div>
-
-          {/* ★ 調鋪：新增更次時嘅第二間店 */}
-          {canManage && selectedTemplate && (
-            <div style={{
-              marginTop: 10, padding: '8px 10px',
-              background: secondaryClinicId ? '#fff7ed' : '#f9fafb',
-              border: `1px solid ${secondaryClinicId ? '#fdba74' : '#e5e7eb'}`,
-              borderRadius: 6,
-            }}>
-              <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 4 }}>
-                調鋪店（選填）
-              </label>
-              <select
-                value={secondaryClinicId ?? ''}
-                onChange={e => setSecondaryClinicId(e.target.value || null)}
-                style={{ width: '100%', fontSize: 12, padding: '4px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}
-              >
-                <option value="">無調鋪</option>
-                {clinics
-                  .filter(c => c.id !== selectedClinicId)
-                  .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              {secondaryClinicId && (
-                <div style={{ fontSize: 10, color: '#c2410c', marginTop: 4 }}>
-                  （{clinics.find(c => c.id === selectedClinicId)?.name} → {clinics.find(c => c.id === secondaryClinicId)?.name}）
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Touch mode hint */}
           {isTouch && canManage && (
