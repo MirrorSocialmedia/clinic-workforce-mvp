@@ -2353,11 +2353,12 @@ function getShiftCode(shift: Shift): string {
   ))
 
   const handleCaptureWeek = async () => {
-    if (!exportRef.current || shareBusy) return
+    if (shareBusy) return
     setShareBusy(true)
     setExporting(true)
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))) // 等兩幀 DOM 上晒
     try {
+      if (!exportRef.current) throw new Error('截圖節點未掛載')
       const html2canvas = (await import('html2canvas')).default
       const canvas = await html2canvas(exportRef.current, {
         scale: 2,
