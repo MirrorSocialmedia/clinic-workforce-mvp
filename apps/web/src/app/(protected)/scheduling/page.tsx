@@ -361,18 +361,6 @@ const ScheduleRow = React.memo(function ScheduleRow({
 // Main Component
 // ============================================================
 export default function SchedulingPage() {
-  // ★ Profiler (temporary, remove after measurement)
-  const logRender = (id: string, phase: string, actualDuration: number) => {
-    if (actualDuration > 0) console.log(`[⏱ ${id}] ${phase} ${actualDuration.toFixed(0)}ms`)
-  }
-
-  // ★ TEMP 量度用：?skip=mobile,panels,monthTable,legend — 量完剷走！
-  const [skip, setSkip] = useState<Set<string>>(new Set())
-  useEffect(() => {
-    const raw = new URLSearchParams(window.location.search).get('skip') || ''
-    setSkip(new Set(raw.split(',').map(s => s.trim()).filter(Boolean)))
-  }, [])
-
   const router = useRouter()
 
   // ★ 讀取類 fetch 一律繞過瀏覽器快取。
@@ -3305,7 +3293,6 @@ function getShiftCode(shift: Shift): string {
   }
 
   return (
-    <React.Profiler id="page" onRender={logRender}>
     <div className="w-full" style={{ maxWidth: '100%', padding: '0 16px' }}>
       {/* Overview capsule styles */}
       <style>{`
@@ -3904,8 +3891,6 @@ function getShiftCode(shift: Shift): string {
       )}
 
 
-      {!skip.has('mobile') && (
-      <React.Profiler id="mobile" onRender={logRender}>
       {/* Mobile: Read-only day view + week overview */}
       <div className="md:hidden px-4" style={{ marginTop: 12 }}>
         <p className="text-xs text-muted-foreground mb-3 text-center bg-amber-50 rounded-lg p-2 border border-amber-200">
@@ -4198,9 +4183,6 @@ function getShiftCode(shift: Shift): string {
         </div>
       )}
 
-      </React.Profiler>
-      )}
-
       {/* ============================================================ */}
       {/* MAIN LAYOUT: Clinic Sidebar | Employees | Templates+Leave | Content */}
       {/* ============================================================ */}
@@ -4245,9 +4227,6 @@ function getShiftCode(shift: Shift): string {
         minWidth: 0,
       }}>
 
-        {!skip.has('panels') && (
-        <React.Profiler id="panels" onRender={logRender}>
-        <>
         {/* LEFTMOST: Clinic Sidebar grouped by Company */}
         <div style={{
           ...stickyPanel,
@@ -4693,9 +4672,6 @@ function getShiftCode(shift: Shift): string {
             </button>
           </div>
         </div>
-        </>
-        </React.Profiler>
-        )}
 
         <div id="fc-section" style={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
           {/* ★ week/month toggle — independent of FullCalendar, always visible */}
@@ -4799,8 +4775,7 @@ function getShiftCode(shift: Shift): string {
           {/* ★ 月版全局總覽 —— 只喺 month 模式顯示，同兩週總覽互斥。
                 原本冇 viewMode 條件，令 week 模式下兩個一齊出，畫面過長；
                 而切去 month 時兩週消失，用家以為壞咗。 */}
-          {viewMode === 'month' && monthDays.length > 0 && ovEmployees.ordered.length > 0 && !skip.has('monthTable') && (
-            <React.Profiler id="monthTable" onRender={logRender}>
+          {viewMode === 'month' && monthDays.length > 0 && ovEmployees.ordered.length > 0 && (
             <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell')) clearSelection() }}>
             <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%' }}>
               {/* Month header: navigation + capture */}
@@ -4964,7 +4939,6 @@ function getShiftCode(shift: Shift): string {
               </div>
             </div>
             </div>
-            </React.Profiler>
           )}
 
           {/* 截圖用離屏節點 —— 不可用 display:none，html2canvas 影唔到 */}
@@ -5426,16 +5400,12 @@ function getShiftCode(shift: Shift): string {
         </div>
       </div>
       {/* Legend */}
-      {!skip.has('legend') && (
-      <React.Profiler id="legend" onRender={logRender}>
       <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 12, color: '#888' }}>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#1976d2' }}></span> 已確認</span>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f57c00' }}></span> 草稿</span>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#388e3c' }}></span> 已完成</span>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc3545' }}></span> 已取消</span>
       </div>
-      </React.Profiler>
-      )}
 
       {/* ============================================================ */}
       {/* Shift Change Request Panel */}
@@ -6166,7 +6136,6 @@ function getShiftCode(shift: Shift): string {
       )}
 
       </div>
-    </React.Profiler>
   )
 }
 
