@@ -609,10 +609,39 @@ export default function SchedulingPage() {
   }
 
   // 🏢 Derive current company from selected clinic
-  const currentCompanyId = clinicById.get(selectedClinicId as string)?.company?.id ?? null
+  // ★ 公司模式冇單一診所 —— 由 ovScope 拎公司
+  const currentCompanyId =
+    clinicById.get(selectedClinicId as string)?.company?.id
+    ?? (ovScope.type === 'company' ? ovScope.id : null)
   const currentCompanyName = currentCompanyId
-    ? clinicById.get(selectedClinicId as string)?.company?.name ?? '未知'
+    ? (clinics.find(c => c.company?.id === currentCompanyId)?.company?.name
+      ?? clinicById.get(selectedClinicId as string)?.company?.name ?? '未知')
     : ''
+
+  // ★ OT 時間卡片數據
+  const [otRows, setOtRows] = useState<any[]>([])
+  useEffect(() => {
+    if (!currentCompanyId) { setOtRows([]); return }
+    getJSON('/api/timebank/overview')
+      .then(r => r.json())
+      .then(d => setOtRows(d.summaries ?? []))
+      .catch(() => setOtRows([]))
+  }, [currentCompanyId])
+
+  const otCardRows = useMemo(() => {
+    if (!currentCompanyId) return []
+    const companyClinicIds = new Set(
+      clinics.filter(c => c.company?.id === currentCompanyId).map(c => c.id)
+    )
+    const empById = new Map(employees.map(e => [e.id, e]))
+    return otRows
+      .filter(r => {
+        const e = empById.get(r.employeeId)
+        return e?.homeClinicId && companyClinicIds.has(e.homeClinicId)
+          && r.status !== 'not_applicable'
+      })
+      .sort((a, b) => (b.timeAccountMinutes ?? 0) - (a.timeAccountMinutes ?? 0))
+  }, [otRows, currentCompanyId, clinics, employees])
 
   // 🗑 Drag-to-delete via pointer capture (stable, no lost events)
   const overviewRef = useRef<HTMLDivElement>(null)
@@ -4442,7 +4471,7 @@ function getShiftCode(shift: Shift): string {
         {/* LEFTMOST: Clinic Sidebar + Transfer Card (same column) */}
         <div style={{
           ...stickyPanel,
-          width: '130px',
+          width: '110px',
           flexShrink: 0,
           borderRight: '1px solid #e5e7eb',
           paddingRight: 8,
@@ -4506,32 +4535,32 @@ function getShiftCode(shift: Shift): string {
               padding: 8,
             }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
-              調鋪組合
+              調鋪
             </div>
 
             {/* ① 上午診所（主店） */}
             <div style={{ marginBottom: 4 }}>
-              <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>上午診所（主店）</label>
+              <label title="主店 —— 張更計落呢間" style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>上午</label>
               <select
                 value={tcPrimaryClinicId ?? ''}
                 onChange={e => setPrimary(e.target.value || null)}
-                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}
+                style={{ width: '100%', boxSizing: 'border-box', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}
               >
-                <option value="">選擇上午診所</option>
+                <option value="">揀診所</option>
                 {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
 
             {/* ② 下午診所（調入店） */}
             <div style={{ marginBottom: 4 }}>
-              <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>下午診所（調入店）</label>
+              <label title="調入店" style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>下午</label>
               <select
                 value={secondaryClinicId ?? ''}
                 onChange={e => setSecondaryClinicId(e.target.value || null)}
                 disabled={!tcPrimaryClinicId}
-                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
+                style={{ width: '100%', boxSizing: 'border-box', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
               >
-                <option value="">選擇下午診所</option>
+                <option value="">揀診所</option>
                 {tcSecondaryOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
@@ -4543,9 +4572,9 @@ function getShiftCode(shift: Shift): string {
                 value={tcTemplateId ?? ''}
                 onChange={e => setTcTemplateId(e.target.value || null)}
                 disabled={!tcPrimaryClinicId}
-                style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
+                style={{ width: '100%', boxSizing: 'border-box', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
               >
-                <option value="">選擇更次</option>
+                <option value="">揀更次</option>
                 {/* 按公司分組，唔會重複 */}
                 {[...new Set(templates.map(t => t.companyId).filter(Boolean))].map(cid => {
                   const co = clinics.find(c => c.company?.id === cid)?.company?.name ?? cid
@@ -4561,10 +4590,15 @@ function getShiftCode(shift: Shift): string {
             </div>
 
             {/* ★ 員工（選填 · 鎖定） */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-              <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>員工（選填 · 鎖定）</span>
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                <label style={{ fontSize: 10, color: '#6b7280' }}>鎖定員工 <span style={{ opacity: .6 }}>選填</span></label>
+                {tcEmployeeId && (
+                  <button onClick={() => setTcEmployeeId(null)} style={{ fontSize: 12, padding: 0, background: 'none', border: 'none', color: '#999', cursor: 'pointer' }}>✕</button>
+                )}
+              </div>
               <select value={tcEmployeeId ?? ''} onChange={e => setTcEmployeeId(e.target.value || null)}
-                style={{ flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}>
+                style={{ width: '100%', boxSizing: 'border-box', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db' }}>
                 <option value="">不限</option>
                 {tcEmployeeGroups.map(g => (
                   <optgroup key={g.clinicId} label={g.label}>
@@ -4572,9 +4606,6 @@ function getShiftCode(shift: Shift): string {
                   </optgroup>
                 ))}
               </select>
-              {tcEmployeeId && (
-                <button onClick={() => setTcEmployeeId(null)} style={{ padding: '2px 6px', cursor: 'pointer', fontSize: 14, background: 'none', border: 'none', color: '#999' }}>✕</button>
-              )}
             </div>
 
             {/* 清除掣 + 膠囊 */}
@@ -4972,6 +5003,38 @@ function getShiftCode(shift: Shift): string {
             </button>
           </div>
         </div>
+
+        {/* ★ OT 時間卡片 — 獨立第五欄 */}
+        {(isCanRead) && currentCompanyId && (
+          <div style={{
+            ...stickyPanel, width: 100, flexShrink: 0,
+            background: '#fafbfc', border: '1px solid #e5e7eb',
+            borderRadius: 8, padding: 0, overflow: 'hidden',
+          }}>
+            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e5e7eb', background: '#fff' }}>
+              <div style={{ fontSize: 11, fontWeight: 600 }}>OT 時間</div>
+              <div style={{ fontSize: 9, color: '#9ca3af' }}>{currentCompanyName} · {otCardRows.length} 人</div>
+            </div>
+            <div style={{ overflowY: 'auto' }}>
+              {otCardRows.map(r => {
+                const h = (r.timeAccountMinutes ?? 0) / 60
+                return (
+                  <div key={r.employeeId} title={r.employeeName}
+                    style={{ display: 'flex', justifyContent: 'space-between', gap: 4,
+                      padding: '4px 8px', borderBottom: '0.5px solid #eee', fontSize: 11 }}>
+                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {r.employeeName}
+                    </span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+                      color: h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
+                      {h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         <div id="fc-section" style={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
           {/* ★ week/month toggle — independent of FullCalendar, always visible */}
