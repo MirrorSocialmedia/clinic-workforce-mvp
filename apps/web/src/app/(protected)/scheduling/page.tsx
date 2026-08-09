@@ -208,7 +208,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   emp, days, shiftsByKey, leavesByKey, shiftColor, getClinicLabelFn,
   variant, selectedEmployeeId, scopeClinicIds, scopeCompanyId,
   clinicShortById, clinicCompanyById, labelParts, templateById,
-  canManage, onCellClick, onCellDblClick, draggingTemplate, draggingLeave,
+  canManage, onCellClick, onCellDblClick, draggingTemplate, draggingLeave, draggingTransfer,
   justDroppedRef, onDrop, homeLabel, selectedClinicId,
 }: {
   emp: any
@@ -230,6 +230,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   onCellDblClick?: (empId: string, dateStr: string) => void
   draggingTemplate: React.MutableRefObject<{ templateId: string; employeeId: string } | null>
   draggingLeave: React.MutableRefObject<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>
+  draggingTransfer: React.MutableRefObject<{ templateId: string; primaryClinicId: string; secondaryClinicId: string } | null>
   justDroppedRef: React.MutableRefObject<boolean>
   onDrop: (empId: string, dateStr: string, clinicId: string, rect?: DOMRect) => void
   selectedClinicId: string | null
@@ -300,26 +301,30 @@ const ScheduleRow = React.memo(function ScheduleRow({
           props.className = 'overview-cell'
           props.onPointerUp = (e: React.PointerEvent<HTMLTableCellElement>) => canManage && onDrop(emp.id, d, selectedClinicId!, (e.currentTarget as HTMLElement).getBoundingClientRect())
           props.onPointerEnter = (e: React.PointerEvent<HTMLTableCellElement>) => {
-            if (!draggingTemplate.current && !draggingLeave.current) return
-            ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#ecfdf5'
-            ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+            if (!draggingTemplate.current && !draggingLeave.current && !draggingTransfer.current) return
+            const el = e.currentTarget as HTMLTableCellElement
+            if (el.dataset.prevBg === undefined) el.dataset.prevBg = el.style.backgroundColor || ''
+            el.style.backgroundColor = '#ecfdf5'
+            el.style.outline = '2px dashed #10b981'
+            el.style.outlineOffset = '-2px'
           }
           props.onPointerLeave = (e: React.PointerEvent<HTMLTableCellElement>) => {
-            if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
-            if (hasLeave) {
-              ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = '#4a4a4a10'
-            } else {
-              ;(e.currentTarget as HTMLTableCellElement).style.backgroundColor = 'transparent'
+            const el = e.currentTarget as HTMLTableCellElement
+            if (el.dataset.prevBg !== undefined) {
+              el.style.backgroundColor = el.dataset.prevBg
+              delete el.dataset.prevBg
             }
-            ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+            el.style.outline = ''
+            el.style.outlineOffset = ''
           }
         }
 
         const shouldClick = canManage && !hasShift && !hasLeave && !justDroppedRef.current
         if (shouldClick) {
           props.onClick = (e: React.MouseEvent) => onCellClick?.(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
+        }
+        // ★ 雙擊刪更要喺「有更次」嘅格先有用 —— 唔可以綁喺 shouldClick 入面
+        if (canManage) {
           props.onDoubleClick = () => onCellDblClick?.(emp.id, d)
         }
 
@@ -952,14 +957,23 @@ function getShiftCode(shift: Shift): string {
       .catch(() => setShiftRuleConfig({ ...DEFAULT_SHIFT_RULE_CONFIG }))
   }, [selectedClinicId])
 
-  // Load templates scoped to current company (reloads when clinic/company changes)
+  // Load templates for ALL companies (cross-company transfer + multi-company modes)
   useEffect(() => {
-    if (!currentCompanyId) return
-    getJSON(`/api/shifts/templates?companyId=${currentCompanyId}`)
-      .then(r => r.json())
-      .then(d => setTemplates(d.templates || []))
-      .catch(() => setTemplates([]))
-  }, [currentCompanyId])
+    const companyIds = [...new Set(clinics.map(c => c.company?.id).filter(Boolean))]
+    if (companyIds.length === 0) return
+    Promise.all(
+      companyIds.map(cid =>
+        getJSON(`/api/shifts/templates?companyId=${cid}`)
+          .then(r => r.json())
+          .then(d => d.templates ?? [])
+          .catch(() => [])
+      )
+    ).then(lists => {
+      const m = new Map<string, any>()
+      for (const list of lists) for (const t of list) m.set(t.id, t)
+      setTemplates([...m.values()])
+    })
+  }, [clinics.map(c => c.company?.id).join(',')])
 
 
 
@@ -2753,21 +2767,21 @@ function getShiftCode(shift: Shift): string {
                       className="overview-cell"
                       onPointerUp={(e: React.PointerEvent) => handleOverviewDrop(emp.id, wd.dateStr, undefined, (e.currentTarget as HTMLElement).getBoundingClientRect())}
                       onPointerEnter={e => {
-                        if (!draggingTemplate.current && !draggingLeave.current) return
-                        ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
-                        ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                        if (!draggingTemplate.current && !draggingLeave.current && !draggingTransfer.current) return
+                        const el = e.currentTarget as HTMLTableCellElement
+                        if (el.dataset.prevBg === undefined) el.dataset.prevBg = el.style.background || ''
+                        el.style.background = '#ecfdf5'
+                        el.style.outline = '2px dashed #10b981'
+                        el.style.outlineOffset = '-2px'
                       }}
                       onPointerLeave={e => {
-                        // ★ 拖緊病假時，有更次嘅格都要有 hover 反饋
-                        if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
-                        if (hasLeave) {
-                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
-                        } else {
-                          ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                        const el = e.currentTarget as HTMLTableCellElement
+                        if (el.dataset.prevBg !== undefined) {
+                          el.style.background = el.dataset.prevBg
+                          delete el.dataset.prevBg
                         }
-                        ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                        el.style.outline = ''
+                        el.style.outlineOffset = ''
                       }}
                       style={{
                         padding: '2px 3px', textAlign: 'center',
@@ -2913,21 +2927,21 @@ function getShiftCode(shift: Shift): string {
                       className="overview-cell"
                       onPointerUp={(e: React.PointerEvent) => handleOverviewDrop(emp.id, wd.dateStr, undefined, (e.currentTarget as HTMLElement).getBoundingClientRect())}
                       onPointerEnter={e => {
-                        if (!draggingTemplate.current && !draggingLeave.current) return
-                        ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
-                        ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                        if (!draggingTemplate.current && !draggingLeave.current && !draggingTransfer.current) return
+                        const el = e.currentTarget as HTMLTableCellElement
+                        if (el.dataset.prevBg === undefined) el.dataset.prevBg = el.style.background || ''
+                        el.style.background = '#ecfdf5'
+                        el.style.outline = '2px dashed #10b981'
+                        el.style.outlineOffset = '-2px'
                       }}
                       onPointerLeave={e => {
-                        // ★ 拖緊病假時，有更次嘅格都要有 hover 反饋
-                        if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
-                        if (hasLeave) {
-                          ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
-                        } else {
-                          ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                        const el = e.currentTarget as HTMLTableCellElement
+                        if (el.dataset.prevBg !== undefined) {
+                          el.style.background = el.dataset.prevBg
+                          delete el.dataset.prevBg
                         }
-                        ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-                        ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                        el.style.outline = ''
+                        el.style.outlineOffset = ''
                       }}
                       style={{
                         padding: '2px 3px', textAlign: 'center',
@@ -3071,21 +3085,21 @@ function getShiftCode(shift: Shift): string {
                           className="overview-cell"
                           onPointerUp={(e: React.PointerEvent) => canManage && handleOverviewDrop(emp.id, wd.dateStr, undefined, (e.currentTarget as HTMLElement).getBoundingClientRect())}
                           onPointerEnter={e => {
-                            if (!draggingTemplate.current && !draggingLeave.current) return
-                            ;(e.currentTarget as HTMLTableCellElement).style.background = '#ecfdf5'
-                            ;(e.currentTarget as HTMLTableCellElement).style.outline = '2px dashed #10b981'
-                            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = '-2px'
+                            if (!draggingTemplate.current && !draggingLeave.current && !draggingTransfer.current) return
+                            const el = e.currentTarget as HTMLTableCellElement
+                            if (el.dataset.prevBg === undefined) el.dataset.prevBg = el.style.background || ''
+                            el.style.background = '#ecfdf5'
+                            el.style.outline = '2px dashed #10b981'
+                            el.style.outlineOffset = '-2px'
                           }}
                           onPointerLeave={e => {
-                            // ★ 拖緊病假時，有更次嘅格都要有 hover 反饋
-                            if (hasShift && draggingLeave.current?.systemKey !== 'SICK') return
-                            if (hasLeave) {
-                              ;(e.currentTarget as HTMLTableCellElement).style.background = '#4a4a4a10'
-                            } else {
-                              ;(e.currentTarget as HTMLTableCellElement).style.background = 'transparent'
+                            const el = e.currentTarget as HTMLTableCellElement
+                            if (el.dataset.prevBg !== undefined) {
+                              el.style.background = el.dataset.prevBg
+                              delete el.dataset.prevBg
                             }
-                            ;(e.currentTarget as HTMLTableCellElement).style.outline = ''
-                            ;(e.currentTarget as HTMLTableCellElement).style.outlineOffset = ''
+                            el.style.outline = ''
+                            el.style.outlineOffset = ''
                           }}
                           style={{
                             padding: '2px 3px', textAlign: 'center',
@@ -4357,18 +4371,24 @@ function getShiftCode(shift: Shift): string {
         minWidth: 0,
       }}>
 
-        {/* LEFTMOST: Clinic Sidebar grouped by Company */}
+        {/* LEFTMOST: Clinic Sidebar + Transfer Card (same column) */}
         <div style={{
           ...stickyPanel,
           width: '130px',
           flexShrink: 0,
           borderRight: '1px solid #e5e7eb',
           paddingRight: 8,
-          background: '#fafbfc',
-          borderRadius: 8,
-          border: '1px solid #e5e7eb',
-          padding: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
         }}>
+          {/* Clinic Sidebar */}
+          <div style={{
+            background: '#fafbfc',
+            borderRadius: 8,
+            border: '1px solid #e5e7eb',
+            padding: 8,
+          }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 6, textAlign: 'center' }}>
             店舖
           </div>
@@ -4407,18 +4427,16 @@ function getShiftCode(shift: Shift): string {
               ))}
             </div>
           ))}
-        </div>
+          </div>
 
-        {/* ★ 調鋪組合卡片（長期顯示） */}
-        {canManage && (
-          <div style={{
-            ...stickyPanel,
-            marginTop: 8,
-            background: tcReady ? '#ecfdf5' : '#f0f9ff',
-            borderRadius: 8,
-            border: `1px solid ${tcReady ? '#6ee7b7' : '#bae6fd'}`,
-            padding: 8,
-          }}>
+          {/* ★ 調鋪組合卡片（長期顯示） */}
+          {canManage && (
+            <div style={{
+              background: tcReady ? '#ecfdf5' : '#f0f9ff',
+              borderRadius: 8,
+              border: `1px solid ${tcReady ? '#6ee7b7' : '#bae6fd'}`,
+              padding: 8,
+            }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
               調鋪組合
             </div>
@@ -4460,7 +4478,17 @@ function getShiftCode(shift: Shift): string {
                 style={{ width: '100%', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
               >
                 <option value="">選擇更次</option>
-                {tcTemplateOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {/* 按公司分組，唔會重複 */}
+                {[...new Set(templates.map(t => t.companyId).filter(Boolean))].map(cid => {
+                  const co = clinics.find(c => c.company?.id === cid)?.company?.name ?? cid
+                  const list = templates.filter(t => t.companyId === cid)
+                  if (list.length === 0) return null
+                  return (
+                    <optgroup key={cid} label={co}>
+                      {list.map(t => <option key={t.id} value={t.id}>{t.name} {String(t.startHour).padStart(2,'0')}:{String(t.startMinute).padStart(2,'0')}-{String(t.endHour).padStart(2,'0')}:{String(t.endMinute).padStart(2,'0')}</option>)}
+                    </optgroup>
+                  )
+                })}
               </select>
             </div>
 
@@ -4491,8 +4519,9 @@ function getShiftCode(shift: Shift): string {
                 </div>
               )}
             </div>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
         {/* COLUMN 2: Employees split by pay type */}
         <div style={{
@@ -4728,7 +4757,7 @@ function getShiftCode(shift: Shift): string {
             更次
           </div>
           <div ref={attachTemplatePanel}>
-            {templates.map(t => (
+            {templates.filter(t => t.companyId === currentCompanyId).map(t => (
               <div
                 key={t.id}
                 className="template-card"
@@ -5058,7 +5087,7 @@ function getShiftCode(shift: Shift): string {
                         labelParts={labelParts} templateById={templateById}
                         canManage={canManage} onCellClick={handleOverviewCellClick}
                         onCellDblClick={handleOverviewCellDblClick}
-                        draggingTemplate={draggingTemplate} draggingLeave={draggingLeave}
+                        draggingTemplate={draggingTemplate} draggingLeave={draggingLeave} draggingTransfer={draggingTransfer}
                         justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
                       />
                     ))}
@@ -5085,7 +5114,7 @@ function getShiftCode(shift: Shift): string {
                         labelParts={labelParts} templateById={templateById}
                         canManage={canManage} onCellClick={handleOverviewCellClick}
                         onCellDblClick={handleOverviewCellDblClick}
-                        draggingTemplate={draggingTemplate} draggingLeave={draggingLeave}
+                        draggingTemplate={draggingTemplate} draggingLeave={draggingLeave} draggingTransfer={draggingTransfer}
                         justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
                       />
                     ))}
@@ -5115,7 +5144,7 @@ function getShiftCode(shift: Shift): string {
                           labelParts={labelParts} templateById={templateById}
                           canManage={canManage} onCellClick={handleOverviewCellClick}
                           onCellDblClick={handleOverviewCellDblClick}
-                          draggingTemplate={draggingTemplate} draggingLeave={draggingLeave}
+                          draggingTemplate={draggingTemplate} draggingLeave={draggingLeave} draggingTransfer={draggingTransfer}
                           justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
                         />
                       )

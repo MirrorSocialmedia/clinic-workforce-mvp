@@ -4,6 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
+import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // PUT /api/shift-changes/[id] — approve/reject shift change
 export async function PUT(
@@ -75,6 +78,7 @@ export async function PUT(
 
     // APPROVE action
     if (action === 'APPROVE') {
+      let targetShift: any = null // hoisted for invalidate scope
       // ★ 換更 / 頂更都會改 Shift.employeeId，同樣要防撞更。
       //   D1 個守喺 PUT /api/shifts/[id]，呢條路徑直接 prisma.shift.update 會繞過。
       if (changeRequest.toEmployeeId) {
@@ -112,7 +116,7 @@ export async function PUT(
           },
           orderBy: [{ startTime: 'asc' }],
         })
-        const targetShift = candidates.sort((a, b) =>
+        targetShift = candidates.sort((a, b) =>
           Math.abs(a.startTime.getTime() - s.startTime.getTime()) -
           Math.abs(b.startTime.getTime() - s.startTime.getTime())
         )[0] ?? null
@@ -180,6 +184,29 @@ export async function PUT(
         content: `Your shift change request (${changeRequest.type}) has been approved.`,
         relatedEntity: 'ShiftChangeRequest', relatedId: id,
       })
+
+      // ★ Invalidate timebank cache + revoke stale early OT for affected employees
+      const s = changeRequest.shift
+      const hkDate = toHKDateStr(s.date)
+      const affected = [changeRequest.fromEmployeeId, changeRequest.toEmployeeId].filter(Boolean) as string[]
+      for (const empId of affected) {
+        try { await revokeStaleEarlyOt(empId, hkDate, session.userId, 'SHIFT_CHANGE_APPROVE', prisma) }
+        catch (e) { console.error('[early-in-ot] revoke failed on shift-change approve', { empId, hkDate }, e) }
+        try { await invalidateTimeBankFrom(empId, s.date, prisma) }
+        catch (e) { console.error('[timebank-cache] invalidate failed on shift-change approve', { empId }, e) }
+      }
+      // ★ Also clear targetShift date (SWAP partner shift) if in a different month
+      if (targetShift) {
+        const targetDate = toHKDateStr(targetShift.date)
+        if (targetDate !== hkDate) {
+          for (const empId of affected) {
+            try { await revokeStaleEarlyOt(empId, targetDate, session.userId, 'SHIFT_CHANGE_APPROVE', prisma) }
+            catch (e) { console.error('[early-in-ot] revoke failed on targetShift', { empId, targetDate }, e) }
+            try { await invalidateTimeBankFrom(empId, targetShift.date, prisma) }
+            catch (e) { console.error('[timebank-cache] invalidate failed on targetShift', { empId }, e) }
+          }
+        }
+      }
 
       return NextResponse.json({ success: true, changeRequest: updated })
     }
