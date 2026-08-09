@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Settings, X, Trash2, Calendar, ClipboardList, BarChart3, RefreshCw, PlusCircle, Palmtree, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react'
 import FullCalendar from '@fullcalendar/react'
@@ -806,19 +806,32 @@ export default function SchedulingPage() {
   const justDroppedRef = useRef(false)
   const didInitClinicRef = useRef(false)
 
-  // ★ Month view header sticky offset measurement (2026-08-10)
-  const topBarRef = useRef<HTMLDivElement>(null)
+  // ★ Month view header sticky offset measurement (2026-08-10) — callback ref so it re-measures on view switch
   const [headerOffset, setHeaderOffset] = useState(0)
-  const noteRowHeight = 24 // padding:2 + fontSize:10 ≈ 24
+  const [noteRowH, setNoteRowH] = useState(24)
+  const topBarRoRef = useRef<ResizeObserver | null>(null)
+  const noteRowRoRef = useRef<ResizeObserver | null>(null)
 
-  useLayoutEffect(() => {
-    const el = topBarRef.current
-    if (!el) return
-    const measure = () => setHeaderOffset(Math.round(el.getBoundingClientRect().height))
+  const topBarRef = useCallback((node: HTMLDivElement | null) => {
+    topBarRoRef.current?.disconnect()
+    topBarRoRef.current = null
+    if (!node) return
+    const measure = () => setHeaderOffset(Math.round(node.getBoundingClientRect().height))
     measure()
     const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
+    ro.observe(node)
+    topBarRoRef.current = ro
+  }, [])
+
+  const noteRowRef = useCallback((node: HTMLTableRowElement | null) => {
+    noteRowRoRef.current?.disconnect()
+    noteRowRoRef.current = null
+    if (!node) return
+    const measure = () => setNoteRowH(Math.round(node.getBoundingClientRect().height))
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(node)
+    noteRowRoRef.current = ro
   }, [])
 
   // Click timer for single/double-click debouncing in overview cells
@@ -5210,7 +5223,7 @@ function getShiftCode(shift: Shift): string {
                 }}>
                   <thead>
                     {/* ★ 2026-08-04: 每日備註列 —— 月視圖用「·」唔係「＋」 */}
-                    <tr>
+                    <tr ref={noteRowRef}>
                       <th style={{
                         position: 'sticky', left: 0, top: headerOffset, zIndex: 4, background: '#fff',
                         width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
@@ -5224,7 +5237,7 @@ function getShiftCode(shift: Shift): string {
                     </tr>
                     <tr>
                       <th style={{
-                        position: 'sticky', left: 0, top: headerOffset + noteRowHeight, zIndex: 4, background: '#fff',
+                        position: 'sticky', left: 0, top: headerOffset + noteRowH, zIndex: 4, background: '#fff',
                         width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
                         padding: '4px 6px', textAlign: 'left',
                       }}>員工</th>
@@ -5237,7 +5250,7 @@ function getShiftCode(shift: Shift): string {
                             textAlign: 'center', // ★ 明確置中
                             background: isWeekend ? '#f9fafb' : '#fff',
                             color: isWeekend ? '#9ca3af' : '#6b7280',
-                            position: 'sticky', top: headerOffset + noteRowHeight, zIndex: 3,
+                            position: 'sticky', top: headerOffset + noteRowH, zIndex: 3,
                           }}>
                             <div style={{ lineHeight: 1.3 }}>{['日','一','二','三','四','五','六'][dow]}</div>
                             <div style={{ lineHeight: 1.3, fontWeight: 500 }}>{Number(d.slice(-2))}</div>
