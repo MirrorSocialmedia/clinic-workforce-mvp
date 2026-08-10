@@ -2775,9 +2775,12 @@ function getShiftCode(shift: Shift): string {
 
   // ★ 月截圖 handler —— 離屏節點有明確 width/height，確保截到完整 31 日
   const handleCaptureMonth = async () => {
-    if (!monthExportRef.current || shareBusy) return
+    if (shareBusy) return
     setShareBusy(true)
+    setExporting(true)
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))) // 等兩幀 DOM 上晒
     try {
+      if (!monthExportRef.current) throw new Error('截圖節點未掛載')
       const html2canvas = (await import('html2canvas')).default
       const node = monthExportRef.current
       const canvas = await html2canvas(node, {
@@ -2799,9 +2802,10 @@ function getShiftCode(shift: Shift): string {
         URL.revokeObjectURL(url)
       }, 'image/png')
     } catch (e) {
-      console.error('capture month failed', e)
+      console.error('截圖失敗', e)
       alert('截圖失敗，請重試')
     } finally {
+      setExporting(false)
       setShareBusy(false)
     }
   }
@@ -3420,7 +3424,7 @@ function getShiftCode(shift: Shift): string {
     if (!opts.editable) {
       return (
         <div title={note || undefined} style={{
-          fontSize: fs, textAlign: 'center', color: '#374151',
+          fontSize: fs, lineHeight: 1.6, textAlign: 'center', color: '#374151',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>{note}</div>
       )
@@ -5178,7 +5182,7 @@ function getShiftCode(shift: Shift): string {
             <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell')) clearSelection() }}>
             <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%' }}>
               {/* Month header: navigation + capture */}
-              <div ref={topBarRef} style={{ position: 'sticky', top: 0, zIndex: 5, background: '#fff', padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div ref={topBarRef} style={{ position: 'sticky', top: 0, zIndex: 5, background: '#fff', borderTopLeftRadius: 8, borderTopRightRadius: 8, padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span>📅 {ovMonth} 排班總覽（{scopeLabel}）</span>
                   <button onClick={() => {
@@ -5434,7 +5438,7 @@ function getShiftCode(shift: Shift): string {
                ⚠️ 呢度唔可以有 overflow-x:auto 同 sticky：
                   · overflow 會令 html2canvas 只影到可視部分
                   · sticky 喺離屏渲染會定位錯，個名欄會重複畫喺每個捲動位 */}
-          {monthDays.length > 0 && ovEmployees.ordered.length > 0 && (
+          {monthDays.length > 0 && ovEmployees.ordered.length > 0 && exporting && (
             <div
               ref={monthExportRef}
               aria-hidden
@@ -5452,12 +5456,12 @@ function getShiftCode(shift: Shift): string {
                   {/* ★ 2026-08-04: 月截圖版備註 —— 純顯示，editable=false */}
                   <tr>
                     <th style={{
-                      width: 80, padding: '3px 8px', fontSize: 10, fontWeight: 400,
+                      width: 80, padding: '6px 8px', fontSize: 10, fontWeight: 400,
                       color: '#6b7280', textAlign: 'left', borderBottom: '1px solid #e5e7eb',
                     }}>備註</th>
                     {monthDays.map(d => (
                       <th key={`note-${d}`} style={{
-                        width: 58, padding: '3px 2px', fontSize: 9, fontWeight: 400, color: '#374151',
+                        width: 58, padding: '6px 2px', fontSize: 9, fontWeight: 400, color: '#374151',
                         textAlign: 'center',
                         borderBottom: '1px solid #e5e7eb',
                       }}>
