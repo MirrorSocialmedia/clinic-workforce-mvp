@@ -209,7 +209,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   variant, selectedEmployeeId, scopeClinicIds, scopeCompanyId,
   clinicShortById, clinicCompanyById, labelParts, templateById,
   canManage, onCellClick, onCellDblClick, draggingTemplate, draggingLeave, draggingTransfer,
-  justDroppedRef, onDrop, homeLabel, selectedClinicId,
+  justDroppedRef, onDrop, homeLabel, selectedClinicId, forExport,
 }: {
   emp: any
   days: string[]
@@ -235,6 +235,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   onDrop: (empId: string, dateStr: string, clinicId: string, rect?: DOMRect) => void
   selectedClinicId: string | null
   homeLabel?: string
+  forExport?: boolean
 }) {
   const isSelected = emp.id === selectedEmployeeId
   const rowIsTransfer = scopeClinicIds && emp.homeClinicId && !scopeClinicIds.has(emp.homeClinicId)
@@ -328,6 +329,9 @@ const ScheduleRow = React.memo(function ScheduleRow({
           props.onDoubleClick = () => onCellDblClick?.(emp.id, d)
         }
 
+        const sickLeave = ls.find(lr => lr.leaveType?.systemKey === 'SICK')
+        const dimmed = !!sickLeave && !forExport
+
         let content: React.ReactNode
         if (ss.length === 0 && ls.length === 0) {
           content = <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
@@ -339,20 +343,28 @@ const ScheduleRow = React.memo(function ScheduleRow({
             if (labelParts.includes('clinic')) p.push(getClinicLabelFn(s))
             if (labelParts.includes('shift')) p.push(tpl?.shortName || tpl?.name?.slice(0, 2) || fmtTime(s.startTime))
             const bg = shiftColor(s)
-            parts.push(<div key={'s' + si} style={{
+            parts.push(<div key={'s' + si} title={dimmed ? `已被病假覆蓋 —— 更次保留作為「本來要返工」嘅證據` : undefined} style={{
               display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
               fontSize: 10, background: bg, color: textOn(bg), whiteSpace: 'nowrap',
               border: isBorrowed ? '1px dashed #2563eb' : 'none',
+              opacity: dimmed ? 0.45 : 1,
             }}>{p.filter(Boolean).join('·')}</div>)
           })
-          ls.forEach((lr, li) => {
+          ls.filter(lr => lr.leaveType?.systemKey !== 'SICK').forEach((lr, li) => {
             const lc = lr.leaveType?.color ?? '#9ca3af'
             parts.push(<div key={'l' + li} style={{
               display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
               fontSize: 10, background: lc + '26', color: '#1f2937',
               borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap',
+              opacity: dimmed ? 0.45 : 1,
             }}>{lr.leaveType?.name}</div>)
           })
+          sickLeave && parts.push(<div key={'sick'} style={{
+            display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
+            fontSize: 10, background: sickLeave.leaveType?.color ?? '#fca5a5', color: '#1f2937',
+            borderLeft: `2px solid ${sickLeave.leaveType?.color ?? '#fca5a5'}`, whiteSpace: 'nowrap',
+            opacity: 1,
+          }}>{sickLeave.leaveType?.name}</div>)
           content = parts
         }
 
@@ -2046,11 +2058,14 @@ function getShiftCode(shift: Shift): string {
           },
         }),
       })
-      if (ok) {
-        const empName = tc.lockedEmployeeName || employees.find(e => e.id === targetEmpId)?.user?.name || ''
+      if (ok && tc.lockedEmployeeId) {
+        const empName = tc.lockedEmployeeName
+        const isTransfer = !!tc.secondaryClinicId
         setValidationIssues([{
           type: 'warning', rule: 'transfer',
-          message: `✅ 已為 ${empName} 建立 ${dateStr.slice(5)} 調鋪更（${tc.primaryClinicShort}→${tc.secondaryClinicShort}）`,
+          message: isTransfer
+            ? `✅ 已為 ${empName} 建立 ${dateStr.slice(5)} 調鋪更（${tc.primaryClinicShort}→${tc.secondaryClinicShort}）`
+            : `✅ 已為 ${empName} 建立 ${dateStr.slice(5)} 更次（${tc.primaryClinicShort}）`,
         }])
       }
       setTcEmployeeId(null)
@@ -2931,7 +2946,7 @@ function getShiftCode(shift: Shift): string {
                       onDoubleClick={() => handleOverviewCellDblClick(emp.id, wd.dateStr)}
                     >
                       <div className="overview-cell-inner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
-                        {/* ★ 2026-08-02：病假疊層 —— 病假日有更次時合併為單一膠囊 */}
+                        {/* ★ 2026-08-10：病假半透明 —— 有病假時，非病假嘅膠囊變半透明 */}
                         {(() => {
                           const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
                           if (empShiftsOnDay.length > 0 && sickLeave) {
@@ -4567,9 +4582,9 @@ function getShiftCode(shift: Shift): string {
           {/* ★ 調鋪組合卡片（長期顯示） */}
           {canManage && (
             <div style={{
-              background: tcReady ? '#ecfdf5' : '#f0f9ff',
+              background: !tcReady ? '#f9fafb' : (secondaryClinicId ? '#ecfdf5' : '#eff6ff'),
               borderRadius: 8,
-              border: `1px solid ${tcReady ? '#6ee7b7' : '#bae6fd'}`,
+              border: `1px solid ${!tcReady ? '#e5e7eb' : (secondaryClinicId ? '#6ee7b7' : '#93c5fd')}`,
               padding: 8,
             }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
