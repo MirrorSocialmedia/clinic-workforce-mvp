@@ -818,34 +818,6 @@ export default function SchedulingPage() {
   const justDroppedRef = useRef(false)
   const didInitClinicRef = useRef(false)
 
-  // ★ Month view header sticky offset measurement (2026-08-10) — callback ref so it re-measures on view switch
-  const [headerOffset, setHeaderOffset] = useState(0)
-  const [noteRowH, setNoteRowH] = useState(24)
-  const topBarRoRef = useRef<ResizeObserver | null>(null)
-  const noteRowRoRef = useRef<ResizeObserver | null>(null)
-
-  const topBarRef = useCallback((node: HTMLDivElement | null) => {
-    topBarRoRef.current?.disconnect()
-    topBarRoRef.current = null
-    if (!node) return
-    const measure = () => setHeaderOffset(Math.round(node.getBoundingClientRect().height))
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(node)
-    topBarRoRef.current = ro
-  }, [])
-
-  const noteRowRef = useCallback((node: HTMLTableRowElement | null) => {
-    noteRowRoRef.current?.disconnect()
-    noteRowRoRef.current = null
-    if (!node) return
-    const measure = () => setNoteRowH(Math.round(node.getBoundingClientRect().height))
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(node)
-    noteRowRoRef.current = ro
-  }, [])
-
   // Click timer for single/double-click debouncing in overview cells
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -5207,7 +5179,7 @@ function getShiftCode(shift: Shift): string {
             <div onClick={(e) => { const el = e.target as HTMLElement; if (!el.closest('button, td, input, select, textarea, a, [role="button"], .ov-cell')) clearSelection() }}>
             <div style={{ marginBottom: 12, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', maxWidth: '100%' }}>
               {/* Month header: navigation + capture */}
-              <div ref={topBarRef} style={{ position: 'sticky', top: 0, zIndex: 5, background: '#fff', borderTopLeftRadius: 8, borderTopRightRadius: 8, padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ padding: '6px 10px', borderBottom: '1px solid #e5e7eb', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span>📅 {ovMonth} 排班總覽（{scopeLabel}）</span>
                   <button onClick={() => {
@@ -5252,21 +5224,21 @@ function getShiftCode(shift: Shift): string {
                 }}>
                   <thead>
                     {/* ★ 2026-08-04: 每日備註列 —— 月視圖用「·」唔係「＋」 */}
-                    <tr ref={noteRowRef}>
+                    <tr>
                       <th style={{
-                        position: 'sticky', left: 0, top: headerOffset, zIndex: 4, background: '#fff',
+                        position: 'sticky', left: 0, zIndex: 2, background: '#fff',
                         width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
                         padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'center',
                       }}>備註</th>
                       {monthDays.map(d => (
-                        <th key={`note-${d}`} style={{ width: 56, minWidth: 56, padding: 2, fontWeight: 400, position: 'sticky', top: headerOffset, zIndex: 3, background: '#fff' }}>
+                        <th key={`note-${d}`} style={{ width: 56, minWidth: 56, padding: 2, fontWeight: 400 }}>
                           {renderNoteCell(d, { editable: true, compact: true })}
                         </th>
                       ))}
                     </tr>
                     <tr>
                       <th style={{
-                        position: 'sticky', left: 0, top: headerOffset + noteRowH, zIndex: 4, background: '#fff',
+                        position: 'sticky', left: 0, zIndex: 2, background: '#fff',
                         width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
                         padding: '4px 6px', textAlign: 'left',
                       }}>員工</th>
@@ -5276,10 +5248,9 @@ function getShiftCode(shift: Shift): string {
                         return (
                           <th key={d} style={{
                             width: 56, minWidth: 56, padding: '4px 0', fontWeight: 400, fontSize: 10,
-                            textAlign: 'center', // ★ 明確置中
-                            background: isWeekend ? '#f9fafb' : '#fff',
+                            textAlign: 'center',
+                            background: isWeekend ? '#f9fafb' : undefined,
                             color: isWeekend ? '#9ca3af' : '#6b7280',
-                            position: 'sticky', top: headerOffset + noteRowH, zIndex: 3,
                           }}>
                             <div style={{ lineHeight: 1.3 }}>{['日','一','二','三','四','五','六'][dow]}</div>
                             <div style={{ lineHeight: 1.3, fontWeight: 500 }}>{Number(d.slice(-2))}</div>
