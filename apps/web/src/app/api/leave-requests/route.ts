@@ -174,18 +174,26 @@ export async function POST(req: NextRequest) {
       const isApprover =
         (perms ?? []).includes('leave_approve') || (perms ?? []).includes('scheduling')
 
-      // Fix #5: check for overlapping leave (PENDING or APPROVED)
+      // ★ 病假係突發補登，可以覆蓋休息日／年假（engine 已按日期去重）
+      // 但兩張病假重疊會令 sickDays 虛高 → 病假只檢查有冇另一張病假撞
+      const isSickLeave = leaveType.systemKey === 'SICK'
+
+      // check for overlapping leave (PENDING or APPROVED)
       const overlap = await prisma.leaveRequest.findFirst({
         where: {
           employeeId: employee.id,
           status: { in: ['PENDING', 'APPROVED'] },
           startDate: { lte: new Date(endDate) }, // TZ-OK: LeaveRequest 用 UTC 午夜儲存
           endDate: { gte: new Date(startDate) }, // TZ-OK
+          ...(isSickLeave ? { leaveType: { systemKey: 'SICK' } } : {}),
         },
+        include: { leaveType: { select: { name: true } } },
       })
       if (overlap) {
         return NextResponse.json(
-          { error: '該日期範圍已有請假申請' },
+          { error: isSickLeave
+            ? '該日期範圍已有病假申請'
+            : `該日期範圍已有請假申請（${overlap.leaveType?.name ?? ''}）` },
           { status: 409 }
         )
       }
@@ -193,7 +201,6 @@ export async function POST(req: NextRequest) {
       // ★ 2026-08-02：病假係突發、事後補登，更次應該保留作為
       //   「本來要返工」嘅證據 —— 扣薪要靠佢分辨工作日／休息日。
       //   其餘假期（年假／無薪假／休息日）事先安排，維持「先移除排班」流程。
-      const isSickLeave = leaveType.systemKey === 'SICK'
 
       if (isApprover && !isSickLeave) {
         const conflictShift = await prisma.shift.findFirst({

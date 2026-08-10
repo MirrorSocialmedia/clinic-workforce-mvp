@@ -3514,12 +3514,30 @@ export async function calculatePayrollWithRules(
     }
   }
 
-  // 剔除日數：病假 + 無薪假 + 產假 + 侍產假 + 缺勤
-  const sickDays = (sickDeduction.episodes ?? [])
-    .reduce((s: number, e: any) => s + (e.daysInMonth ?? e.days ?? 0), 0)
-  const noPayLeaveDays = (workData.leaveByType ?? [])
-    .filter((lt: any) => lt.isPaid === false)
-    .reduce((s: number, lt: any) => s + lt.days, 0)
+  // ★ 2026-08-10: 病假可以疊喺休息日／年假之上（leave-requests 已放行）——
+  // excludedDays 一定要按【日期】去重，否則同一日會被病假同無薪假各計一次，
+  // 令 ADW 分母偏差 → 病假／產假／法定假薪金全部錯。
+  const excludedDateSet = new Set<string>()
+
+  // ① 病假日期（由 leaveByType 取得，sickDeduction.episodes 冇 dates 欄）
+  for (const lt of (workData.leaveByType ?? [])) {
+    if (lt.systemKey === 'SICK') {
+      for (const d of (lt.dates ?? [])) excludedDateSet.add(d)
+    }
+  }
+  const sickDays = excludedDateSet.size
+
+  // ② 無薪類假期 —— 已經被病假覆蓋嘅日子唔再計
+  let noPayLeaveDays = 0
+  for (const lt of (workData.leaveByType ?? [])) {
+    if (lt.isPaid !== false) continue
+    for (const d of (lt.dates ?? [])) {
+      if (excludedDateSet.has(d)) continue // ★ 已經計咗
+      excludedDateSet.add(d)
+      noPayLeaveDays++
+    }
+  }
+
   const maternityDays = (result.detail as any).maternityDaysInMonth ?? 0
   const paternityDays = (result.detail as any).paternityDaysInMonth ?? 0
   const absentDays = result.absentDays ?? 0
