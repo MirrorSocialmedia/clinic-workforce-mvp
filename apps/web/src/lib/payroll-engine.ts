@@ -3517,12 +3517,19 @@ export async function calculatePayrollWithRules(
   // ★ 2026-08-10: 病假可以疊喺休息日／年假之上（leave-requests 已放行）——
   // excludedDays 一定要按【日期】去重，否則同一日會被病假同無薪假各計一次，
   // 令 ADW 分母偏差 → 病假／產假／法定假薪金全部錯。
+  // ★ sickDays 必須同 excludedWage(paidAmount) 同源 ——
+  // sickDeduction 只喺月薪員工計，時薪 episodes 係空。
+  // 唔守住就會出現「有剔除日數、冇剔除工資」，污染 ADW。
+  const sickCounted = (sickDeduction.episodes ?? []).length > 0
+
   const excludedDateSet = new Set<string>()
 
   // ① 病假日期（由 leaveByType 取得，sickDeduction.episodes 冇 dates 欄）
-  for (const lt of (workData.leaveByType ?? [])) {
-    if (lt.systemKey === 'SICK') {
-      for (const d of (lt.dates ?? [])) excludedDateSet.add(d)
+  if (sickCounted) {
+    for (const lt of (workData.leaveByType ?? [])) {
+      if (lt.systemKey === 'SICK') {
+        for (const d of (lt.dates ?? [])) excludedDateSet.add(d)
+      }
     }
   }
   const sickDays = excludedDateSet.size
@@ -3543,6 +3550,9 @@ export async function calculatePayrollWithRules(
   const absentDays = result.absentDays ?? 0
 
   const excludedDays = Math.round(sickDays + noPayLeaveDays + maternityDays + paternityDays + absentDays)
+  // ⚠️ 已知限制：maternityDays / paternityDays 未入 excludedDateSet ——
+  // 佢哋由 result.detail 嚟，冇日期清單。如果產假同病假／無薪假同日會 double count。
+  // 實務罕見；真要修就要追 maternityDaysInMonth 嘅日期來源。
   const excludedWage = Math.round((
       // 病假：實付部分 = 應付日薪 × 日數 − 已扣減
       ((sickDeduction as any).paidAmount ?? 0)
