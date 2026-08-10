@@ -282,7 +282,14 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 ? config.hourly_rate
                 : config.split_ratio,
           modularConfig: baseType === 'hourly'
-            ? { base_type: 'hourly', hourly_rate: config.hourly_rate } // clean config, no modifiers
+            ? {
+                base_type: 'hourly',
+                hourly_rate: config.hourly_rate,
+                // ★ 2026-08-10: 時薪只保留午休 —— OT／勤工獎／遲到扣薪係月薪概念，繼續剝走
+                ...(config.modifiers?.lunch_break
+                  ? { modifiers: { lunch_break: config.modifiers.lunch_break } }
+                  : {}),
+              }
             : config,
           effectiveFrom, // POST / PUT 都送生效日期
         }),
@@ -303,6 +310,105 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
   }
 
   const modifiers = config.modifiers || {}
+
+  // ── Shared: Lunch Break Section (hourly + monthly) ───────────────
+  // ★ 2026-08-10: 抽出共用，避免 copy-paste
+  const renderLunchBreakSection = () => {
+    const minMinutes = modifiers.lunch_break?.minMinutes ?? 30
+    return (
+      <>
+        <div style={modifierToggleStyle} onClick={() => toggleModifier('lunch_break')}>
+          <input
+            type="checkbox"
+            checked={!!modifiers.lunch_break}
+            onChange={() => toggleModifier('lunch_break')}
+            onClick={(e) => e.stopPropagation()}
+          />
+          午休設定
+        </div>
+        {modifiers.lunch_break && (
+          <div style={modifierBodyStyle}>
+            <div className="form-group">
+              <label>每天午休扣減（分鐘）</label>
+              <input
+                type="number"
+                min={0}
+                value={modifiers.lunch_break?.defaultMinutes ?? 60}
+                onChange={(e) => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    modifiers: {
+                      ...prev.modifiers!,
+                      lunch_break: {
+                        ...prev.modifiers!.lunch_break!,
+                        defaultMinutes: parseInt(e.target.value) || 0,
+                      },
+                    },
+                  }))
+                }}
+                style={{ width: 80 }}
+              />
+              <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
+                有上班的日子一律扣此時間（即使不啟用下方午休打卡）。設 0 = 不扣午休。
+              </p>
+            </div>
+
+            <label style={{ ...checkboxLabelStyle, marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={modifiers.lunch_break?.enabled ?? false}
+                onChange={(e) => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    modifiers: {
+                      ...prev.modifiers!,
+                      lunch_break: {
+                        ...prev.modifiers!.lunch_break!,
+                        enabled: e.target.checked,
+                      },
+                    },
+                  }))
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+              用實際午休打卡計算
+            </label>
+            <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2, marginLeft: 24 }}>
+              關咗＝一律扣「預設分鐘」；開咗＝有午休卡就用實際時間（最少 {minMinutes} 分鐘）
+            </div>
+            {modifiers.lunch_break?.enabled && (
+              <div style={{ marginLeft: 24, marginTop: 8 }}>
+                <div className="form-group">
+                  <label>最少扣減（分鐘）</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={modifiers.lunch_break.minMinutes ?? 30}
+                    onChange={(e) => {
+                      setConfig((prev) => ({
+                        ...prev,
+                        modifiers: {
+                          ...prev.modifiers!,
+                          lunch_break: {
+                            ...prev.modifiers!.lunch_break!,
+                            minMinutes: parseInt(e.target.value) || 0,
+                          },
+                        },
+                      }))
+                    }}
+                    style={{ width: 80 }}
+                  />
+                  <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
+                    員工打午休卡則用實際時長替代上方預設：少休算 OT（不設門檻）、超休算遲到、最少扣此分鐘。
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </>
+    )
+  }
 
   // ── Render ──────────────────────────────────────────────────────
 
@@ -465,12 +571,17 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
             )}
           </div>
 
-          {/* ═══ 2️⃣ Modifiers (hidden for hourly) ═══ */}
-          {baseType !== 'hourly' && (
-          <>
           {/* ═══ 2️⃣ Modifiers ═══ */}
-          <div style={sectionStyle}>
-            <div style={sectionTitleStyle}>2️⃣ 薪酬修正模組（可選開關）</div>
+          {baseType === 'hourly' ? (
+            <>
+              {/* 時薪：只显示午休區塊 */}
+              {renderLunchBreakSection()}
+            </>
+          ) : (
+            <>
+              {/* ═══ 2️⃣ Modifiers ═══ */}
+              <div style={sectionStyle}>
+                <div style={sectionTitleStyle}>2️⃣ 薪酬修正模組（可選開關）</div>
 
             {/* ── Attendance Bonus ── */}
             <div style={modifierToggleStyle} onClick={() => toggleModifier('attendance_bonus')}>
@@ -844,94 +955,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
             )}
 
             {/* ── Lunch Break ── */}
-            <div style={modifierToggleStyle} onClick={() => toggleModifier('lunch_break')}>
-              <input
-                type="checkbox"
-                checked={!!modifiers.lunch_break}
-                onChange={() => toggleModifier('lunch_break')}
-                onClick={(e) => e.stopPropagation()}
-              />
-              午休設定
-            </div>
-            {modifiers.lunch_break && (
-              <div style={modifierBodyStyle}>
-                {/* 地基：每天扣多少午休，永遠可設，不受開關影響 */}
-                <div className="form-group">
-                  <label>每天午休扣減（分鐘）</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={modifiers.lunch_break?.defaultMinutes ?? 60}
-                    onChange={(e) => {
-                      setConfig((prev) => ({
-                        ...prev,
-                        modifiers: {
-                          ...prev.modifiers!,
-                          lunch_break: {
-                            ...prev.modifiers!.lunch_break!,
-                            defaultMinutes: parseInt(e.target.value) || 0,
-                          },
-                        },
-                      }))
-                    }}
-                    style={{ width: 80 }}
-                  />
-                  <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
-                    有上班的日子一律扣此時間（即使不啟用下方午休打卡）。設 0 = 不扣午休。
-                  </p>
-                </div>
-
-                {/* 調整層：開關 + 下限 */}
-                <label style={{ ...checkboxLabelStyle, marginTop: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={modifiers.lunch_break?.enabled ?? false}
-                    onChange={(e) => {
-                      setConfig((prev) => ({
-                        ...prev,
-                        modifiers: {
-                          ...prev.modifiers!,
-                          lunch_break: {
-                            ...prev.modifiers!.lunch_break!,
-                            enabled: e.target.checked,
-                          },
-                        },
-                      }))
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                  啟用午休打卡（員工可打卡調整實際午休時長）
-                </label>
-                {modifiers.lunch_break?.enabled && (
-                  <div style={{ marginLeft: 24, marginTop: 8 }}>
-                    <div className="form-group">
-                      <label>最少扣減（分鐘）</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={modifiers.lunch_break.minMinutes ?? 30}
-                        onChange={(e) => {
-                          setConfig((prev) => ({
-                            ...prev,
-                            modifiers: {
-                              ...prev.modifiers!,
-                              lunch_break: {
-                                ...prev.modifiers!.lunch_break!,
-                                minMinutes: parseInt(e.target.value) || 0,
-                              },
-                            },
-                          }))
-                        }}
-                        style={{ width: 80 }}
-                      />
-                      <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
-                        員工打午休卡則用實際時長替代上方預設：少休算 OT（不設門檻）、超休算遲到、最少扣此分鐘。
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            {renderLunchBreakSection()}
 
             {/* ── Late Policy ── */}
             <div style={modifierToggleStyle} onClick={() => toggleModifier('late_policy')}>

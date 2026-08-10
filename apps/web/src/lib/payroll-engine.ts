@@ -2908,6 +2908,7 @@ async function calculateSimpleHourlyPay(
 
   for (const [dateStr, dayPunches] of byDate) {
     const shift = shifts.find((s: any) => toHKDateStr(s.date) === dateStr)
+    const noShift = !shift
     // ★ 決定 3（2026-07-25）：調鋪途中嘅交通時間算工時，
     // 所以刻意用「全日第一個 IN → 最後一個 OUT」嘅跨度，唔逐段配對。
     const clockIn = dayPunches.filter((ep: any) => ep.punchType === 'CLOCK_IN')[0]
@@ -2940,6 +2941,8 @@ async function calculateSimpleHourlyPay(
     // ★ 午飯扣減（決定 2）。決定 3：調鋪途中嘅交通時間照計錢，
     // 所以維持「第一個 IN 到最後一個 OUT」嘅跨度，只扣午飯。
     let lunchDeduct = lunchDefault
+    let lunchOtMinutes = 0
+    let lunchLateMinutes = 0
     if (lunchEnabled) {
       const ls = dayPunches
         .filter((p: any) => p.punchType === 'LUNCH_START')
@@ -2949,7 +2952,10 @@ async function calculateSimpleHourlyPay(
         .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
       if (ls && le && le.effectiveTime.getTime() > ls.effectiveTime.getTime()) {
         const actual = Math.floor((le.effectiveTime.getTime() - ls.effectiveTime.getTime()) / 60000)
-        lunchDeduct = Math.max(actual, lunchMin)
+        const effective = Math.max(actual, lunchMin) // ★ floor 保留
+        lunchDeduct = effective
+        if (effective < lunchDefault) lunchOtMinutes = lunchDefault - effective
+        else if (effective > lunchDefault) lunchLateMinutes = effective - lunchDefault
       }
     }
 
@@ -2970,6 +2976,9 @@ async function calculateSimpleHourlyPay(
       minutes,
       amount,
       ...(filledFromShift ? { filledFromShift: true, warning: '缺下班卡，按更次收工時間計' } : {}),
+      ...(lunchOtMinutes > 0 ? { lunchOt: lunchOtMinutes } : {}),
+      ...(lunchLateMinutes > 0 ? { lunchLate: lunchLateMinutes } : {}),
+      ...(noShift ? { noShift: true, warning: '冇排更次，全日打卡照計薪' } : {}),
     })
   }
 
