@@ -399,7 +399,9 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                     style={{ width: 80 }}
                   />
                   <p style={{ fontSize: 11, color: '#888', marginTop: 4, marginBottom: 0 }}>
-                    員工打午休卡則用實際時長替代上方預設：少休算 OT（不設門檻）、超休算遲到、最少扣此分鐘。
+                    員工打午休卡則用實際時長替代上方預設：少休算 OT、超休算遲到。
+                    但實際午休短過此分鐘一律當此分鐘計（防止靠縮短午休換工時）——
+                    例：預設 60、最少 30，實際食 20 → 當 30，OT 30 分鐘（唔係 40）。
                   </p>
                 </div>
               </div>
