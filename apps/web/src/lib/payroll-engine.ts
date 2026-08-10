@@ -2913,8 +2913,20 @@ async function calculateSimpleHourlyPay(
     const clockIn = dayPunches.filter((ep: any) => ep.punchType === 'CLOCK_IN')[0]
     const clockOut = dayPunches.filter((ep: any) => ep.punchType === 'CLOCK_OUT').slice(-1)[0]
 
-    if (!clockIn || !clockOut) {
-      days.push({ date: dateStr, note: '缺卡，不計薪', minutes: 0, amount: 0 })
+    if (!clockIn) {
+      days.push({ date: dateStr, note: '冇上班卡，不計薪', minutes: 0, amount: 0 })
+      continue
+    }
+    // ★ 2026-08-10: 缺下班卡 → 用更次收工時間補（同月薪 :2244 一致）
+    // 冇更次就冇得補，維持不計薪
+    let outTime = clockOut?.effectiveTime ?? null
+    let filledFromShift = false
+    if (!outTime && shift) {
+      outTime = new Date(shift.endTime)
+      filledFromShift = true
+    }
+    if (!outTime) {
+      days.push({ date: dateStr, note: '缺下班卡且冇更次，不計薪', minutes: 0, amount: 0 })
       continue
     }
 
@@ -2923,7 +2935,7 @@ async function calculateSimpleHourlyPay(
     const effStart = shiftStart
       ? Math.max(clockIn.effectiveTime.getTime(), shiftStart)
       : clockIn.effectiveTime.getTime()
-    const spanMinutes = Math.max(0, Math.floor((clockOut.effectiveTime.getTime() - effStart) / 60000))
+    const spanMinutes = Math.max(0, Math.floor((outTime.getTime() - effStart) / 60000))
 
     // ★ 午飯扣減（決定 2）。決定 3：調鋪途中嘅交通時間照計錢，
     // 所以維持「第一個 IN 到最後一個 OUT」嘅跨度，只扣午飯。
@@ -2950,13 +2962,14 @@ async function calculateSimpleHourlyPay(
     days.push({
       date: dateStr,
       in: clockIn.effectiveTime,
-      out: clockOut.effectiveTime,
+      out: outTime,
       shiftStart: shift?.startTime ?? null,
       clamped: shiftStart != null && clockIn.effectiveTime.getTime() < shiftStart,
       spanMinutes,
       lunchDeduct,
       minutes,
       amount,
+      ...(filledFromShift ? { filledFromShift: true, warning: '缺下班卡，按更次收工時間計' } : {}),
     })
   }
 
