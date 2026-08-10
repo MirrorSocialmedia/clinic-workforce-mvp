@@ -230,7 +230,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   onCellDblClick?: (empId: string, dateStr: string) => void
   draggingTemplate: React.MutableRefObject<{ templateId: string; employeeId: string } | null>
   draggingLeave: React.MutableRefObject<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>
-  draggingTransfer: React.MutableRefObject<{ templateId: string; primaryClinicId: string; secondaryClinicId: string; lockedEmployeeId: string | null; lockedEmployeeName: string } | null>
+  draggingTransfer: React.MutableRefObject<{ templateId: string; primaryClinicId: string; secondaryClinicId: string | null; lockedEmployeeId: string | null; lockedEmployeeName: string; primaryClinicShort: string; secondaryClinicShort: string } | null>
   justDroppedRef: React.MutableRefObject<boolean>
   onDrop: (empId: string, dateStr: string, clinicId: string, rect?: DOMRect) => void
   selectedClinicId: string | null
@@ -801,7 +801,7 @@ export default function SchedulingPage() {
   // Drag and drop state
   const dragData = useRef<{ employeeId: string; templateId: string } | null>(null)
   const draggingTemplate = useRef<{ templateId: string; employeeId: string } | null>(null)
-  const draggingTransfer = useRef<{ templateId: string; primaryClinicId: string; secondaryClinicId: string; lockedEmployeeId: string | null; lockedEmployeeName: string } | null>(null)
+  const draggingTransfer = useRef<{ templateId: string; primaryClinicId: string; secondaryClinicId: string | null; lockedEmployeeId: string | null; lockedEmployeeName: string; primaryClinicShort: string; secondaryClinicShort: string } | null>(null)
   const draggingLeave = useRef<{ leaveTypeId: string; systemKey: string; employeeId: string } | null>(null)
   const justDroppedRef = useRef(false)
   const didInitClinicRef = useRef(false)
@@ -1093,7 +1093,7 @@ function getShiftCode(shift: Shift): string {
     () => templates.filter(t => t.companyId === (clinicById.get(tcPrimaryClinicId ?? '')?.company?.id ?? null)),
     [tcPrimaryClinicId, templates, clinicById],
   )
-  const tcReady = !!(tcPrimaryClinicId && secondaryClinicId && tcTemplateId)
+  const tcReady = !!(tcPrimaryClinicId && tcTemplateId)
 
   // ★ 調鋪員工清單（按主屬診所分組）
   const tcEmployeeGroups = useMemo(() => {
@@ -2005,22 +2005,19 @@ function getShiftCode(shift: Shift): string {
       justDroppedRef.current = true
       setTimeout(() => { justDroppedRef.current = false }, 100)
 
-      // ★ 員工鎖定檢查
-      if (tc.lockedEmployeeId && employeeId !== tc.lockedEmployeeId) {
-        setValidationIssues([{ type: 'error', rule: 'transfer',
-          message: `❌ 調鋪組合已鎖定 ${tc.lockedEmployeeName} —— 請拖去佢嗰行，或者喺卡片清除員工` }])
-        return
-      }
+      // ★ 鎖定＝指定收件人：拖去邊一行都好，一律開俾鎖定嗰位員工
+      const targetEmpId = tc.lockedEmployeeId ?? employeeId
+      if (!targetEmpId) return
 
       const tpl = templateById.get(tc.templateId)
-      if (!tpl || !employeeId) return
+      if (!tpl) return
       const dayLeaves = leaveRequests.filter(lr =>
-        lr.employeeId === employeeId && leaveCoversDate(lr, dateStr) && lr.leaveType?.systemKey !== 'SICK'
+        lr.employeeId === targetEmpId && leaveCoversDate(lr, dateStr) && lr.leaveType?.systemKey !== 'SICK'
       )
       if (dayLeaves.length > 0) {
         const r = rect || { x: 0, y: 0, width: 0, height: 0 }
         setCellMenu({
-          empId: employeeId, dateStr,
+          empId: targetEmpId, dateStr,
           x: r.x + r.width, y: r.y,
           conflict: {
             kind: 'leave',
@@ -2037,10 +2034,10 @@ function getShiftCode(shift: Shift): string {
         return
       }
       const r = rect || { x: 0, y: 0, width: 0, height: 0 }
-      await createShift(employeeId, dateStr, tpl, {
+      const ok = await createShift(targetEmpId, dateStr, tpl, {
         clinicIdOverride: tc.primaryClinicId,
         onConflict: (c) => setCellMenu({
-          empId: employeeId, dateStr,
+          empId: targetEmpId, dateStr,
           x: r.x + r.width, y: r.y,
           conflict: {
             kind: c.kind,
@@ -2049,6 +2046,13 @@ function getShiftCode(shift: Shift): string {
           },
         }),
       })
+      if (ok) {
+        const empName = tc.lockedEmployeeName || employees.find(e => e.id === targetEmpId)?.user?.name || ''
+        setValidationIssues([{
+          type: 'warning', rule: 'transfer',
+          message: `✅ 已為 ${empName} 建立 ${dateStr.slice(5)} 調鋪更（${tc.primaryClinicShort}→${tc.secondaryClinicShort}）`,
+        }])
+      }
       setTcEmployeeId(null)
       return
     }
@@ -3417,6 +3421,7 @@ function getShiftCode(shift: Shift): string {
   const renderNoteCell = (dateStr: string, opts: {
     editable: boolean
     compact?: boolean
+    forExport?: boolean
   }) => {
     const note = scheduleNotes[dateStr] ?? ''
     const fs = opts.compact ? 9 : 10
@@ -3425,7 +3430,9 @@ function getShiftCode(shift: Shift): string {
       return (
         <div title={note || undefined} style={{
           fontSize: fs, lineHeight: 1.6, textAlign: 'center', color: '#374151',
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          ...(opts.forExport
+            ? { whiteSpace: 'normal', wordBreak: 'break-all' }
+            : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }),
         }}>{note}</div>
       )
     }
@@ -4584,14 +4591,14 @@ function getShiftCode(shift: Shift): string {
 
             {/* ② 下午診所（調入店） */}
             <div style={{ marginBottom: 4 }}>
-              <label title="調入店" style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>下午</label>
+              <label title="調入店 —— 唔揀就係普通更次" style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>下午 <span style={{ opacity: .6 }}>選填</span></label>
               <select
                 value={secondaryClinicId ?? ''}
                 onChange={e => setSecondaryClinicId(e.target.value || null)}
                 disabled={!tcPrimaryClinicId}
                 style={{ width: '100%', boxSizing: 'border-box', fontSize: 11, padding: '3px 6px', borderRadius: 4, border: '1px solid #d1d5db', opacity: tcPrimaryClinicId ? 1 : 0.5 }}
               >
-                <option value="">揀診所</option>
+                <option value="">唔調鋪</option>
                 {tcSecondaryOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
@@ -4647,23 +4654,26 @@ function getShiftCode(shift: Shift): string {
                     draggingTransfer.current = {
                       templateId: tcTemplateId!,
                       primaryClinicId: tcPrimaryClinicId!,
-                      secondaryClinicId: secondaryClinicId!,
+                      secondaryClinicId: secondaryClinicId,
                       lockedEmployeeId: tcEmployeeId,
                       lockedEmployeeName: tcEmployeeId
                         ? (employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '該員工')
                         : '',
+                      primaryClinicShort: clinicShortById.get(tcPrimaryClinicId) ?? '?',
+                      secondaryClinicShort: secondaryClinicId ? (clinicShortById.get(secondaryClinicId) ?? '?') : '',
                     }
                   }}
-                  title={`${clinicById.get(tcPrimaryClinicId)?.name ?? '?'}→${clinicById.get(secondaryClinicId)?.name ?? '?'} · ${(tcTemplateOptions.find(t => t.id === (tcTemplateId ?? '')))?.name ?? ''}${tcEmployeeId ? ' · ' + (employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '') : ''}`}
+                  title={`${clinicById.get(tcPrimaryClinicId)?.name ?? '?'}${secondaryClinicId ? '→' + (clinicById.get(secondaryClinicId)?.name ?? '?') : ''} · ${(tcTemplateOptions.find(t => t.id === (tcTemplateId ?? '')))?.name ?? ''}${tcEmployeeId ? ' · ' + (employees.find(e => e.id === tcEmployeeId)?.user?.name ?? '') : ''}`}
                   style={{
                     fontSize: 10, padding: '4px 8px', borderRadius: 8,
-                    background: '#059669', color: '#fff', cursor: 'grab',
+                    background: secondaryClinicId ? '#059669' : '#2563eb', color: '#fff', cursor: 'grab',
                     userSelect: 'none', textAlign: 'center',
                     lineHeight: 1.35, marginBottom: 6,
                     overflowWrap: 'anywhere',
                   }}
                 >
-                  {clinicShortById.get(tcPrimaryClinicId) ?? '?'}→{clinicShortById.get(secondaryClinicId) ?? '?'} {tcTemplateOptions.find(t => t.id === (tcTemplateId ?? ''))?.name ?? ''}
+                  {clinicShortById.get(tcPrimaryClinicId) ?? '?'}
+                  {secondaryClinicId ? `→${clinicShortById.get(secondaryClinicId) ?? '?'}` : ''} {tcTemplateOptions.find(t => t.id === (tcTemplateId ?? ''))?.name ?? ''}
                   {tcEmployeeId && <><br/>{employees.find(e => e.id === tcEmployeeId)?.user?.name ?? ''}</>}
                 </div>
               )}
@@ -5381,7 +5391,7 @@ function getShiftCode(shift: Shift): string {
                         textAlign: 'center',
                         borderBottom: '1px solid #e5e7eb',
                       }}>
-                        {renderNoteCell(wd.dateStr, { editable: false })}
+                        {renderNoteCell(wd.dateStr, { editable: false, forExport: true })}
                       </th>
                     ))}
                   </tr>
@@ -5465,7 +5475,7 @@ function getShiftCode(shift: Shift): string {
                         textAlign: 'center',
                         borderBottom: '1px solid #e5e7eb',
                       }}>
-                        {renderNoteCell(d, { editable: false, compact: true })}
+                        {renderNoteCell(d, { editable: false, compact: true, forExport: true })}
                       </th>
                     ))}
                   </tr>
