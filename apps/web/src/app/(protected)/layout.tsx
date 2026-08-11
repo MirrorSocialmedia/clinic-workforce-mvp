@@ -197,6 +197,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   // KIOSK: world is only one page — QR, no navigation
   if (user.role === 'KIOSK') {
+    const onQr = pathname?.startsWith('/clinic/qr')
     return (
       <div className="min-h-screen bg-background">
         <button
@@ -207,9 +208,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         >
           登出
         </button>
-        <Link href="/provider-schedule"
+        <Link href={onQr ? '/provider-schedule' : '/clinic/qr'}
           className="fixed top-3 right-24 text-xs px-3 py-1.5 border rounded bg-background/80 z-50">
-          醫生當值表
+          {onQr ? '醫生當值表' : '← 返回打卡屏'}
         </Link>
         {children}
       </div>

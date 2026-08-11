@@ -27,7 +27,7 @@ import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMa
 const TIMEBANK_ENGINE_VERSION = 3 // v3: 分更時間窗 + floor 取整
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
-let earlyInOtWarned = false
+const earlyInOtWarnedSet = new Set<string>()
 
 /**
  * ★ Fingerprint must reflect the employee's real pay rule config.
@@ -1513,7 +1513,7 @@ export async function calculateTimeBank(
       lunchMin = lunch.minMinutes ?? 30
     }
   } catch (e) {
-    console.error('[payroll-engine] pay rule config 讀唔到 —— 午休偵測已關閉(lunchEnabled=false)', {
+    console.error('[payroll-engine] pay rule config 讀唔到 —— OT 門檻/rounding 已 fallback 做 0（該月計糧需人手覆核）', {
       employeeId, monthStart, error: e instanceof Error ? e.message : String(e),
     })
     otMinMinutes = 0
@@ -1745,7 +1745,7 @@ export async function calculateTimeBank(
     })
     earlyInOtMinutes = (earlyInRows || []).reduce((s: number, e: any) => s + e.minutes, 0)
   } catch (e) {
-    if (!earlyInOtWarned) { earlyInOtWarned = true; console.error('[payroll-engine] EARLY_IN_OT read failed', e) }
+    if (!earlyInOtWarnedSet.has(employeeId)) { earlyInOtWarnedSet.add(employeeId); console.error('[payroll-engine] EARLY_IN_OT read failed', { employeeId, error: e }) }
   }
 
   // 抓換假消耗（LEAVE_CONVERT 負消耗OT，LEAVE_SWAP_BACK 正換回OT，INIT_ADJUST/REST_TO_ACCOUNT 為帳戶調整）
