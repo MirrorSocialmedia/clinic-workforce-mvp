@@ -53,6 +53,21 @@ fi
 gzip -c "${TMP_SQL}" > "${BACKUP_FILE}"
 rm -f "${TMP_SQL}"
 
+# ★ 一次過數晒所有表，避免 gunzip 18 次
+COUNTS_TMP="${BACKUP_DIR}/.counts_${TIMESTAMP}"
+gunzip -c "${BACKUP_FILE}" | awk '
+BEGIN { inblk = 0 }
+inblk == 0 && index($0, "COPY public.\"") == 1 {
+ s = substr($0, 14)
+ q = index(s, "\"")
+ if (q > 1) { tbl = substr(s, 1, q - 1); inblk = 1; n[tbl] = 0 }
+ next
+}
+inblk == 1 && $0 == "\\." { inblk = 0; next }
+inblk == 1 { n[tbl]++ }
+END { for (t in n) printf "%s=%s\n", t, n[t] }
+' > "${COUNTS_TMP}"
+
 # Verify backup file exists and is non-empty
 if [ ! -s "${BACKUP_FILE}" ]; then
   echo "❌ Backup failed: empty or missing file"
@@ -67,24 +82,13 @@ echo "✅ Backup created: ${BACKUP_FILE} (${FILE_SIZE})"
 
 # ② 備份檔實際入咗幾多（數 COPY 區塊行數）
 count_copy() {
-  gunzip -c "${BACKUP_FILE}" | awk -v tbl="$1" '
-    # ★ use index() for prefix match, avoid regex quote hell
-    BEGIN { n = 0; inblk = 0; found = 0 }
-    {
-      if (inblk) {
-        if ($0 == "\\.") { inblk = 0; next }
-        n++
-      } else if (index($0, "COPY public.\"" tbl "\" ") == 1) {
-        inblk = 1; found = 1
-      }
-    }
-    END { print (found ? n : 0) }
-  '
+ awk -F= -v t="$1" '$1 == t { print $2; found = 1 } END { if (!found) print 0 }' "${COUNTS_TMP}"
 }
 
 VERIFY_FAIL=0
 : > "${BACKUP_FILE}.rows"
-echo "🔍 驗證備份內容（${#TABLES} 張表）..."
+TABLE_COUNT=$(echo ${TABLES} | wc -w)
+echo "🔍 驗證備份內容（${TABLE_COUNT} 張表）..."
 for TBL in ${TABLES}; do
  LIVE_N="$(docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" \
   -tAc "SELECT count(*) FROM \"${TBL}\";" 2>/dev/null || echo "SKIP")"
