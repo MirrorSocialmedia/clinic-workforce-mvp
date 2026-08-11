@@ -6,6 +6,7 @@ import { Hand, Smartphone, Calendar, Palmtree, Bell } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { toHKDateStr, fmtTime, fmtDate, fmtDateTime } from '@/lib/hk-date'
+import { timebankLabel } from '@/lib/timebank-labels'
 
 /** Tremor-style Stat Card */
 function StatCard({ value, title, color = 'blue' }: { value: number; title: string; color?: 'blue' | 'emerald' | 'amber' | 'violet' | 'cyan' }) {
@@ -33,6 +34,22 @@ export default function MyDashboardPage() {
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState<any[]>([])
+
+  // ★ Time bank entries — lazy load on expand
+  const [tbOpen, setTbOpen] = useState(false)
+  const [tbEntries, setTbEntries] = useState<any[] | null>(null)
+  const loadEntries = async () => {
+    if (tbEntries !== null) return
+    try {
+      const r = await fetch('/api/my/timebank', { credentials: 'include' })
+      if (r.ok) {
+        const d = await r.json()
+        setTbEntries(d.entries ?? [])
+      }
+    } catch {
+      setTbEntries([])
+    }
+  }
 
   const fetchData = useCallback(async () => {
     setError('')
@@ -248,6 +265,51 @@ export default function MyDashboardPage() {
                       </div>
                       <div className="text-xs text-muted-foreground">本月遲到</div>
                     </div>
+                  </div>
+
+                  {/* ★ 摺疊明細 */}
+                  <button
+                    onClick={() => { setTbOpen(o => !o); if (!tbOpen) loadEntries() }}
+                    className="w-full mt-2 text-xs py-1"
+                  >
+                    {tbOpen ? '收起明細 ▲' : '查看明細 ▼'}
+                  </button>
+
+                  {tbOpen && (
+                    <div className="mt-2 border-t pt-2">
+                      {tbEntries === null ? (
+                        <div className="text-xs text-muted-foreground py-2 text-center">載入中…</div>
+                      ) : tbEntries.length === 0 ? (
+                        <div className="text-xs text-muted-foreground py-2 text-center">呢兩個月冇記錄</div>
+                      ) : (
+                        <>
+                          <div className="text-[10px] text-muted-foreground mb-1">
+                            本月 + 上月 · 共 {tbEntries.length} 筆
+                          </div>
+                          <div style={{ maxHeight: 190, overflowY: 'auto' }}>
+                            {tbEntries.map(e => (
+                              <div key={e.id} title={e.note || undefined}
+                                className="flex justify-between items-center py-1.5 border-b text-xs last:border-0">
+                                <span className="truncate">
+                                  <span className="text-muted-foreground mr-1.5">{e.date.slice(5)}</span>
+                                  {timebankLabel(e.type, e.targetType)}
+                                </span>
+                                <span style={{
+                                  fontVariantNumeric: 'tabular-nums',
+                                  color: e.minutes > 0 ? '#059669' : e.minutes < 0 ? '#dc2626' : '#9ca3af',
+                                }}>
+                                  {e.minutes > 0 ? '+' : e.minutes < 0 ? '−' : ''}{Math.abs(e.minutes)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="text-[10px] text-muted-foreground mt-1">
+                    明細只顯示本月及上月；上面嘅結餘係累積總數
                   </div>
                 </div>
               )
