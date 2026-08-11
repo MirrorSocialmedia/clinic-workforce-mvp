@@ -5,7 +5,7 @@ import { requirePerm } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 
 export async function GET(req: NextRequest) {
-  const auth = await requirePerm(req, 'scheduling')
+  const auth = await requirePerm(req, 'provider_schedule')
   if (auth.error) return auth.error
 
   const providers = await prisma.provider.findMany({

@@ -207,6 +207,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         >
           登出
         </button>
+        <Link href="/provider-schedule"
+          className="fixed top-3 right-3 text-xs px-3 py-1.5 border rounded bg-background/80 z-50">
+          醫生當值表
+        </Link>
         {children}
       </div>
     )

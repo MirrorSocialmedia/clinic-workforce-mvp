@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { apiFetch } from '@/lib/api-client'
-import { todayHK, addDays, fmtTime, hkDayOfWeek } from '@/lib/hk-date'
+import { todayHK, addDays, fmtTime, hkDayOfWeek, toHKDateStr } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -19,14 +19,19 @@ export default function ProviderSchedulePage() {
   const [clinics, setClinics] = useState<any[]>([])
   const [selectedClinicId, setSelectedClinicId] = useState<string | null>(null)
   const [shifts, setShifts] = useState<any[]>([])
-  const [employees, setEmployees] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [userRole, setUserRole] = useState<string>('')
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
+  const [scope, setScope] = useState<string[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  // Staff shifts for employee summary row
+  const [staffShifts, setStaffShifts] = useState<any[]>([])
+  const [staffError, setStaffError] = useState(false)
 
   const canSchedule = userRole
-    ? hasPermission(userRole, 'scheduling' as any, grant, deny)
+    ? hasPermission(userRole, 'provider_schedule' as any, grant, deny)
     : false
 
   // Modal state
@@ -46,6 +51,32 @@ export default function ProviderSchedulePage() {
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   const weekEnd = weekDays[6]
 
+  // ★ visibleClinics: filtered by scope
+  const visibleClinics = scope === null ? clinics : clinics.filter((c: any) => scope.includes(c.id))
+
+  // ★ shiftByDay: Map<"date|providerId", shift[]> — supports multi-shift per cell
+  const shiftByDay = useMemo(() => {
+    const m = new Map<string, any[]>()
+    for (const s of shifts) {
+      const key = `${toHKDateStr(s.date)}|${s.providerId}`
+      if (!m.has(key)) m.set(key, [])
+      m.get(key)!.push(s)
+    }
+    return m
+  }, [shifts])
+
+  // ★ staffByDate: Map<"date", Set<employeeId>>
+  const staffByDate = useMemo(() => {
+    const m = new Map<string, Set<string>>()
+    for (const s of staffShifts) {
+      if (s.clinicId !== selectedClinicId && s.secondaryClinicId !== selectedClinicId) continue
+      const d = toHKDateStr(s.date)
+      if (!m.has(d)) m.set(d, new Set())
+      m.get(d)!.add(s.employeeId)
+    }
+    return m
+  }, [staffShifts, selectedClinicId])
+
   // Load providers, clinics, and user role
   useEffect(() => {
     Promise.all([
@@ -57,61 +88,64 @@ export default function ProviderSchedulePage() {
       setProviders(provs)
       const cls = clinicRes.clinics || []
       setClinics(cls)
-      if (cls.length && !selectedClinicId) setSelectedClinicId(cls[0].id)
       setUserRole(meRes.user?.role ?? '')
       setGrant(meRes.user?.grant ?? [])
       setDeny(meRes.user?.deny ?? [])
     }).finally(() => setLoading(false))
   }, [])
 
-  // Load shifts + employees when date range changes
+  // Load shifts + staff shifts when date range changes
   useEffect(() => {
     loadShifts()
-    if (selectedClinicId) loadEmployees()
+    loadStaffShifts()
   }, [weekStart, weekEnd, selectedClinicId])
 
   async function loadShifts() {
     try {
+      setLoadError(null)
       const params = new URLSearchParams({
         startDate: weekStart, endDate: weekEnd,
         ...(selectedClinicId ? { clinicId: selectedClinicId } : {}),
       })
       const res = await apiFetch<any>(`/api/provider-shifts?${params}`)
       setShifts(res.shifts || [])
-    } catch (e) { console.error('[provider-schedule] load shifts failed', e) }
-  }
-
-  async function loadEmployees() {
-    try {
-      const res = await apiFetch<any>(`/api/employees?active=1${selectedClinicId ? `&clinicId=${selectedClinicId}` : ''}`)
-      setEmployees(res.employees || [])
-    } catch (e) { console.error('[provider-schedule] load employees failed', e) }
-  }
-
-  // Build shift lookup: key = "date|providerId"
-  const shiftMap = useCallback(() => {
-    const m = new Map<string, any>()
-    for (const s of shifts) {
-      const key = `${s.date}|${s.providerId}`
-      m.set(key, s)
+      setScope(res.scope ?? null)
+      // ★ Set default clinic from visible scope
+      if (visibleClinics.length > 0 && !selectedClinicId) {
+        setSelectedClinicId(visibleClinics[0].id)
+      }
+    } catch (e: any) {
+      console.error('[provider-schedule] load shifts failed', e)
+      setLoadError(e?.message ?? '載入當值記錄失敗')
     }
-    return m
-  }, [shifts])
+  }
+
+  async function loadStaffShifts() {
+    try {
+      setStaffError(false)
+      const res = await apiFetch<any>(
+        `/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`)
+      setStaffShifts(res.shifts || [])
+    } catch (e) {
+      console.error('[provider-schedule] load staff shifts failed', e)
+      setStaffShifts([])
+      setStaffError(true)
+    }
+  }
 
   // Cell handlers
   function handleCellClick(e: React.MouseEvent, date: string, providerId: string) {
     if (isDoubleClickRef.current) { isDoubleClickRef.current = false; return }
     e.preventDefault()
-    // Single click: quick set for today
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
     clickTimerRef.current = setTimeout(() => {
       setModalCell({ date, providerId })
-      const existing = shifts.find(s => s.date === date && s.providerId === providerId)
+      const existing = shifts.find(s => toHKDateStr(s.date) === date && s.providerId === providerId)
       setModalEntries([{
         providerId,
         clinicId: selectedClinicId || '',
-        start: existing?.startTime ? new Date(existing.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '09:00',
-        end: existing?.endTime ? new Date(existing.endTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '17:00',
+        start: existing?.startTime ? fmtTime(existing.startTime) : '09:00',
+        end: existing?.endTime ? fmtTime(existing.endTime) : '17:00',
         note: existing?.note || '',
       }])
       setModalRepeatWeeks(1)
@@ -123,7 +157,6 @@ export default function ProviderSchedulePage() {
     isDoubleClickRef.current = true
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
     e.preventDefault()
-    // Double click: open modal for batch
     setModalCell({ date, providerId })
     setModalEntries([{
       providerId,
@@ -175,7 +208,6 @@ export default function ProviderSchedulePage() {
     if (confirm('刪除呢個當值？')) handleDeleteShift(shift.id)
   }
 
-  // Prev/Next week
   function prevWeek() { setWeekStart(addDays(weekStart, -7)) }
   function nextWeek() { setWeekStart(addDays(weekStart, 7)) }
   function goToday() { const t = todayHK(); setWeekStart(addDays(t, -hkDayOfWeek(t))) }
@@ -188,15 +220,25 @@ export default function ProviderSchedulePage() {
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold">醫生當值表</h1>
         <div className="flex items-center gap-2">
-          <select value={selectedClinicId || ''} onChange={e => setSelectedClinicId(e.target.value)} className="border rounded px-2 py-1 text-sm">
-            {clinics.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          {visibleClinics.length === 1
+            ? <span className="text-sm font-medium">{visibleClinics[0].name}</span>
+            : <select value={selectedClinicId || ''} onChange={e => setSelectedClinicId(e.target.value)} className="border rounded px-2 py-1 text-sm">
+                {visibleClinics.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>}
           <button onClick={prevWeek} className="p-1 hover:bg-muted rounded"><ChevronLeft className="w-4 h-4" /></button>
           <button onClick={goToday} className="text-xs px-2 py-1 hover:bg-muted rounded">今日</button>
           <button onClick={nextWeek} className="p-1 hover:bg-muted rounded"><ChevronRight className="w-4 h-4" /></button>
           <span className="text-sm font-medium">{weekDays[0]} ~ {weekDays[6]}</span>
         </div>
       </div>
+
+      {/* Load error */}
+      {loadError && (
+        <div className="mb-2 px-3 py-2 text-sm rounded bg-destructive/10 text-destructive">
+          載入失敗：{loadError}
+          <button onClick={() => { setLoadError(null); loadShifts() }} className="ml-2 underline">重試</button>
+        </div>
+      )}
 
       {/* Schedule Grid */}
       <Card className="overflow-x-auto">
@@ -221,31 +263,34 @@ export default function ProviderSchedulePage() {
                   <span style={{ color: p.color || '#888' }}>●</span> {p.name}
                 </td>
                 {weekDays.map(d => {
-                  const shift = shifts.find(s => s.date === d && s.providerId === p.id)
+                  const dayShifts = shiftByDay.get(`${d}|${p.id}`)
                   return (
                     <td key={d} className="p-1 text-center border-l"
                       onClick={(e) => handleCellClick(e, d, p.id)}
                       onDoubleClick={(e) => handleCellDoubleClick(e, d, p.id)}
-                      onContextMenu={(e) => shift && handleCellContextMenu(e, shift)}
+                      onContextMenu={(e) => dayShifts?.[0] && handleCellContextMenu(e, dayShifts[0])}
                       style={{ cursor: 'pointer', minHeight: 48 }}
                     >
-                      {shift ? (
-                        <div className={`p-1 rounded text-xs ${canSchedule ? 'hover:ring-2 ring-offset-1 ring-primary/50' : ''}`}
-                          style={{
-                            background: (p.color || '#888') + '22',
-                            borderLeft: `3px solid ${p.color || '#888'}`,
-                          }}
-                        >
-                          <div>{fmtTime(shift.startTime)} - {fmtTime(shift.endTime)}</div>
-                          {shift.note && <div className="text-muted-foreground mt-0.5">{shift.note}</div>}
-                          {canSchedule && (
-                            <button className="absolute top-1 right-1 text-muted-foreground hover:text-foreground"
-                              onClick={(e) => { e.stopPropagation(); handleDeleteShift(shift.id) }}
-                              style={{ position: 'relative' }}
+                      {dayShifts && dayShifts.length > 0 ? (
+                        <div>
+                          {dayShifts.map(sh => (
+                            <div key={sh.id} className={`p-1 rounded text-xs mb-0.5 ${canSchedule ? 'hover:ring-2 ring-offset-1 ring-primary/50' : ''}`}
+                              style={{
+                                background: (p.color || '#888') + '22',
+                                borderLeft: `3px solid ${p.color || '#888'}`,
+                              }}
                             >
-                              <X className="w-3 h-3" />
-                            </button>
-                          )}
+                              <div>{fmtTime(sh.startTime)} - {fmtTime(sh.endTime)}</div>
+                              {sh.note && <div className="text-muted-foreground mt-0.5">{sh.note}</div>}
+                              {canSchedule && (
+                                <button className="mt-0.5 text-muted-foreground hover:text-foreground"
+                                  onClick={(e) => { e.stopPropagation(); handleDeleteShift(sh.id) }}
+                                >
+                                  <X className="w-3 h-3 inline" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       ) : (
                         <div className="h-12 flex items-center justify-center text-muted-foreground/30 text-[10px]">+</div>
@@ -263,16 +308,14 @@ export default function ProviderSchedulePage() {
               </td>
               {weekDays.map(d => (
                 <td key={d} className="p-1 text-center bg-muted/10">
-                  {(() => {
-                    const dayEmps = employees.filter(emp => {
-                      // Simplified view — just show count
-                      // TODO: cross-reference with employee shifts
-                      return true
-                    })
-                    return dayEmps.length > 0 ? (
-                      <div className="text-muted-foreground text-[10px]">{dayEmps.length} 人</div>
-                    ) : <div className="text-muted-foreground/30 text-[10px]">—</div>
-                  })()}
+                  {staffError
+                    ? <div className="text-muted-foreground text-[10px]">載入失敗</div>
+                    : (() => {
+                        const n = staffByDate.get(d)?.size ?? 0
+                        return n > 0
+                          ? <div className="text-muted-foreground text-[10px]">{n} 人</div>
+                          : <div className="text-muted-foreground/30 text-[10px]">—</div>
+                      })()}
                 </td>
               ))}
             </tr>
@@ -308,7 +351,7 @@ export default function ProviderSchedulePage() {
                     <select value={en.clinicId} onChange={e => {
                       const next = [...modalEntries]; next[i].clinicId = e.target.value; setModalEntries(next)
                     }} className="w-full border rounded px-2 py-1 text-sm">
-                      {clinics.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      {visibleClinics.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </div>
                   <div>
@@ -345,6 +388,9 @@ export default function ProviderSchedulePage() {
                     <option value="overwrite">覆蓋</option>
                   </select>
                 </div>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                ▸ 預覽：將寫入 {modalRepeatWeeks} 條（1 日 × {modalRepeatWeeks} 週）
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">

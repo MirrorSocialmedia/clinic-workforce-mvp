@@ -60,6 +60,19 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       where: { id },
       data: { isActive: false },
     })
+
+    // Audit log for soft delete
+    await prisma.auditLog.create({
+      data: {
+        actorId: auth.session!.userId,
+        action: 'PROVIDER_UPDATE',
+        entity: 'Provider',
+        entityId: id,
+        notes: `停用醫生（DELETE）：${id}`,
+        afterJson: JSON.stringify({ id, isActive: false }),
+      },
+    }).catch(e => console.error('[providers] audit failed', e))
+
     return NextResponse.json({ ok: true })
   } catch (e: any) {
     console.error('[providers] DELETE failed', e)

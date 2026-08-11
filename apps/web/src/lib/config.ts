@@ -106,14 +106,14 @@ export const CONFIG = {
     // ★ 2026-08-08 更表完整性檢查（餵排班頁 coverage 對數 — 同 GET /api/shifts 同受眾）
     'GET /api/schedule-coverage': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
-    // ★ 醫生當值排更（同 scheduling 同受眾）
-    'GET /api/providers': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    // ★ 醫生當值排更（加 KIOSK）
+    'GET /api/providers': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'KIOSK'],
     'POST /api/providers': ['OWNER', 'MANAGER'],
     'PUT /api/providers/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/providers/:id': ['OWNER', 'MANAGER'],
-    'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-    'POST /api/provider-shifts/batch': ['OWNER', 'MANAGER'],
-    'DELETE /api/provider-shifts/:id': ['OWNER', 'MANAGER'],
+    'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'KIOSK'],
+    'POST /api/provider-shifts/batch': ['OWNER', 'MANAGER', 'KIOSK'],
+    'DELETE /api/provider-shifts/:id': ['OWNER', 'MANAGER', 'KIOSK'],
 
     // Shift change request routes
     'GET /api/shift-changes': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -353,14 +353,14 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/schedule-notes': ['scheduling'],
   'PUT /api/schedule-notes': ['scheduling'],
 
-  // —— 醫生當值排更：有 scheduling 權限就等同全權 ——
-  'GET /api/providers': ['scheduling'],
-  'POST /api/providers': ['scheduling'],
-  'PUT /api/providers/:id': ['scheduling'],
-  'DELETE /api/providers/:id': ['scheduling'],
-  'GET /api/provider-shifts': ['scheduling'],
-  'POST /api/provider-shifts/batch': ['scheduling'],
-  'DELETE /api/provider-shifts/:id': ['scheduling'],
+  // —— 醫生當值排更：provider_schedule 或 scheduling 權限都放行（雙 key 相容）——
+  'GET /api/providers': ['provider_schedule', 'scheduling'],
+  'POST /api/providers': ['provider_schedule', 'scheduling'],
+  'PUT /api/providers/:id': ['provider_schedule', 'scheduling'],
+  'DELETE /api/providers/:id': ['provider_schedule', 'scheduling'],
+  'GET /api/provider-shifts': ['provider_schedule', 'scheduling'],
+  'POST /api/provider-shifts/batch': ['provider_schedule', 'scheduling'],
+  'DELETE /api/provider-shifts/:id': ['provider_schedule', 'scheduling'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

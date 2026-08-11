@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm } from '@/lib/require-auth'
 import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
+import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 
 type Entry = { providerId: string; clinicId: string; date: string; start: string; end: string; note?: string }
 
 export async function POST(req: NextRequest) {
-  const auth = await requirePerm(req, 'scheduling')
+  const auth = await requirePerm(req, 'provider_schedule')
   if (auth.error) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
@@ -23,15 +24,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '一次過最多 500 條，請分批' }, { status: 400 })
   }
 
+  // Validate time format
+  for (const e of entries) {
+    if (!/^\d{2}:\d{2}$/.test(e.start) || !/^\d{2}:\d{2}$/.test(e.end)) {
+      return NextResponse.json({ error: `時間格式要 HH:mm：${e.start}-${e.end}` }, { status: 400 })
+    }
+  }
+
+  const scope = await resolveProviderScheduleScope(auth.session!)
+
+  // Validate clinicId for each entry
+  for (const e of entries) {
+    if (!e.clinicId) {
+      return NextResponse.json({ error: 'clinicId 必填' }, { status: 400 })
+    }
+    if (!inScope(scope, e.clinicId)) {
+      return NextResponse.json({ error: `無權為此診所排更：${e.clinicId}` }, { status: 403 })
+    }
+  }
+
   const rows: Array<{
     providerId: string; clinicId: string; date: Date;
     startTime: Date; endTime: Date; note: string | null
   }> = []
 
   for (const e of entries) {
-    if (!/^\d{2}:\d{2}$/.test(e.start) || !/^\d{2}:\d{2}$/.test(e.end)) {
-      return NextResponse.json({ error: `時間格式要 HH:mm：${e.start}-${e.end}` }, { status: 400 })
-    }
     for (let w = 0; w < repeatWeeks; w++) {
       const day = new Date(hkDateStart(e.date).getTime() + w * 7 * 86400000)
       const dStr = toHKDateStr(day)
@@ -49,6 +66,7 @@ export async function POST(req: NextRequest) {
       const existing = await prisma.providerShift.findUnique({ where: key })
       if (existing && onConflict === 'skip') { skipped++; continue }
       if (existing) {
+        if (!inScope(scope, existing.clinicId)) { skipped++; continue }
         await prisma.providerShift.update({
           where: key,
           data: { clinicId: r.clinicId, endTime: r.endTime, note: r.note },
