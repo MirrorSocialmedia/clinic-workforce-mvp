@@ -54,6 +54,14 @@ export default function ProviderSchedulePage() {
   // ★ visibleClinics: filtered by scope
   const visibleClinics = scope === null ? clinics : clinics.filter((c: any) => scope.includes(c.id))
 
+  // ★ Auto-select default clinic once scope + clinics are ready
+  useEffect(() => {
+    if (selectedClinicId) return
+    if (!clinics.length) return
+    const allowed = scope === null ? clinics : clinics.filter((c: any) => scope.includes(c.id))
+    if (allowed.length > 0) setSelectedClinicId(allowed[0].id)
+  }, [scope, clinics, selectedClinicId])
+
   // ★ shiftByDay: Map<"date|providerId", shift[]> — supports multi-shift per cell
   const shiftByDay = useMemo(() => {
     const m = new Map<string, any[]>()
@@ -94,11 +102,15 @@ export default function ProviderSchedulePage() {
     }).finally(() => setLoading(false))
   }, [])
 
-  // Load shifts + staff shifts when date range changes
+  // Load shifts when date range changes
   useEffect(() => {
     loadShifts()
-    loadStaffShifts()
   }, [weekStart, weekEnd, selectedClinicId])
+
+  // Load staff shifts separately — guard: KIOSK role doesn't have /api/shifts access
+  useEffect(() => {
+    if (userRole && userRole !== 'KIOSK') loadStaffShifts()
+  }, [weekStart, weekEnd, selectedClinicId, userRole])
 
   async function loadShifts() {
     try {
@@ -110,12 +122,13 @@ export default function ProviderSchedulePage() {
       const res = await apiFetch<any>(`/api/provider-shifts?${params}`)
       setShifts(res.shifts || [])
       setScope(res.scope ?? null)
-      // ★ Set default clinic from visible scope
-      if (visibleClinics.length > 0 && !selectedClinicId) {
-        setSelectedClinicId(visibleClinics[0].id)
-      }
     } catch (e: any) {
       console.error('[provider-schedule] load shifts failed', e)
+      if (e?.status === 403 && selectedClinicId) {
+        setSelectedClinicId(null) // clear → let scope-based effect re-select
+        setLoadError('已切換至有權限的診所')
+        return
+      }
       setLoadError(e?.message ?? '載入當值記錄失敗')
     }
   }
@@ -301,7 +314,8 @@ export default function ProviderSchedulePage() {
               </tr>
             ))}
 
-            {/* Employee summary row (read-only) */}
+            {/* Employee summary row (read-only) — hidden for KIOSK */}
+            {userRole !== 'KIOSK' && (
             <tr className="border-t-2">
               <td className="sticky left-0 z-10 bg-muted/30 p-2 font-medium text-muted-foreground" style={{ position: 'sticky', left: 0 }}>
                 員工當值
@@ -319,6 +333,7 @@ export default function ProviderSchedulePage() {
                 </td>
               ))}
             </tr>
+            )}
           </tbody>
         </table>
       </Card>
