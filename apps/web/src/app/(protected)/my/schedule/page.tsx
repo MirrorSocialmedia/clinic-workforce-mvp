@@ -347,19 +347,39 @@ export default function MySchedulePage() {
                   <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-0.5">
                     {day}
                   </div>
-                  {dayShiftsList.map(s => (
-                    <div
-                      key={s.id}
-                      className="text-[10px] p-0.5 rounded mb-0.5 truncate"
-                      style={{
-                        background: `${getStatusColor(s.status)}20`,
-                        color: getStatusColor(s.status),
-                      }}
-                      title={`${s.clinic?.name} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`}
-                    >
-                      {fmtTime(s.startTime)}
-                    </div>
-                  ))}
+                  {dayShiftsList.map(s => {
+                    const single = dayShiftsList.length === 1
+                    const isTransfer = !!s.secondaryClinicName
+                    return (
+                      <div key={s.id}
+                        className="text-[10px] p-0.5 rounded mb-0.5 truncate"
+                        style={{
+                          background: isTransfer ? '#fef3c7' : `${getStatusColor(s.status)}20`,
+                          color: isTransfer ? '#92400e' : getStatusColor(s.status),
+                          lineHeight: 1.25,
+                        }}
+                        title={[
+                          s.clinicName,
+                          isTransfer ? `→ ${s.secondaryClinicName}` : '',
+                          s.templateName,
+                          `${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`,
+                        ].filter(Boolean).join(' ')}
+                      >
+                        {single ? (
+                          <>
+                            <div className="truncate" style={{ fontSize: 9 }}>
+                              {isTransfer
+                                ? <>{s.clinicShortName}<span style={{ margin: '0 1px' }}>→</span>{s.secondaryClinicShortName}</>
+                                : <>{s.clinicShortName}{s.templateShortName ? `·${s.templateShortName}` : ''}</>}
+                            </div>
+                            <div className="truncate" style={{ fontSize: 9 }}>{fmtTime(s.startTime)}</div>
+                          </>
+                        ) : (
+                          fmtTime(s.startTime)
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )
             })}

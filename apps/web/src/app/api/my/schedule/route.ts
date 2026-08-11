@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
     where,
     include: {
       clinic: { select: { id: true, name: true, address: true, shortName: true } },
-      template: { select: { id: true, name: true } },
+      template: { select: { id: true, name: true, shortName: true } },
       employee: {
         include: {
           user: { select: { id: true, name: true } },
@@ -172,6 +172,7 @@ export async function GET(req: NextRequest) {
       endTime: s.endTime,
       employeeName: s.employee?.user?.name || '',
       templateName: s.template?.name || '',
+      templateShortName: s.template?.shortName || s.template?.name || '',
       clinicName: s.clinic?.name || '',
       clinicShortName: s.clinic?.shortName || s.clinic?.name || '',
       secondaryClinicName: secClinic?.name || null,
