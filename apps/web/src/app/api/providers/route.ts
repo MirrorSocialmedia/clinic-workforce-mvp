@@ -1,12 +1,12 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requirePerm } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 
 export async function GET(req: NextRequest) {
   const auth = await requirePerm(req, 'provider_schedule')
-  if (auth.error) return auth.error
+  if (isAuthError(auth)) return auth.error
 
   const providers = await prisma.provider.findMany({
     where: { isActive: true },
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const auth = await requirePerm(req, 'scheduling')
-  if (auth.error) return auth.error
+  if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
   const { name, shortName, phone, color, apricotId, companyId, sortOrder } = body

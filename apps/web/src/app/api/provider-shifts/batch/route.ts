@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requirePerm } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
 import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 
@@ -9,7 +9,7 @@ type Entry = { providerId: string; clinicId: string; date: string; start: string
 
 export async function POST(req: NextRequest) {
   const auth = await requirePerm(req, 'provider_schedule')
-  if (auth.error) return auth.error
+  if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
   const entries: Entry[] = body.entries ?? []

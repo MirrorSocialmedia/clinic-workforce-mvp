@@ -1,11 +1,11 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requirePerm } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePerm(req, 'scheduling')
-  if (auth.error) return auth.error
+  if (isAuthError(auth)) return auth.error
 
   const { id } = await params
   const body = await req.json().catch(() => ({} as any))
@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePerm(req, 'scheduling')
-  if (auth.error) return auth.error
+  if (isAuthError(auth)) return auth.error
 
   const { id } = await params
   // Soft delete — 改用 isActive: false

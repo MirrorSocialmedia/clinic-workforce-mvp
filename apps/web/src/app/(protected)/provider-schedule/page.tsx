@@ -31,7 +31,7 @@ export default function ProviderSchedulePage() {
   const [staffError, setStaffError] = useState(false)
 
   const canSchedule = userRole
-    ? hasPermission(userRole, 'provider_schedule' as any, grant, deny)
+    ? hasPermission(userRole, 'provider_schedule', grant, deny)
     : false
 
   // Modal state

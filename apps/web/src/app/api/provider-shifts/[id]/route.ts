@@ -1,12 +1,12 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requirePerm } from '@/lib/require-auth'
+import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePerm(req, 'provider_schedule')
-  if (auth.error) return auth.error
+  if (isAuthError(auth)) return auth.error
 
   const { id } = await params
   const scope = await resolveProviderScheduleScope(auth.session!)
