@@ -4264,11 +4264,18 @@ function getShiftCode(shift: Shift): string {
 
         {/* Shift cards for selected date */}
         {(() => {
-          const dayShifts = shifts.filter(s => toHKDateStr(new Date(s.date)) === mobileSelectedDate)
+          // ★ 2026-08-10: 按揀咗嘅診所篩 —— 主店或調入店任何一邊夾中都要出
+          const dayShifts = shifts.filter(s =>
+            toHKDateStr(new Date(s.date)) === mobileSelectedDate &&
+            (s.clinicId === selectedClinicId || s.secondaryClinicId === selectedClinicId)
+          )
           const dayLeaves = leaveRequests.filter(lr => {
             const lrStart = toHKDateStr(new Date(lr.startDate))
             const lrEnd = toHKDateStr(new Date(lr.endDate))
-            return mobileSelectedDate >= lrStart && mobileSelectedDate <= lrEnd
+            if (!(mobileSelectedDate >= lrStart && mobileSelectedDate <= lrEnd)) return false
+            // ★ 假期冇 clinicId —— 只能按員工主屬診所篩
+            const emp = employees.find(e => e.id === lr.employeeId)
+            return emp?.homeClinicId === selectedClinicId
           })
           const hasClinic = !!selectedClinicId
           return (
@@ -4279,10 +4286,27 @@ function getShiftCode(shift: Shift): string {
                 <div className="text-center py-8 text-sm text-muted-foreground">該日無排班</div>
               ) : (
                 <>
-                  {dayShifts.map(s => (
+                  {dayShifts.map(s => {
+                    const home = (s.employee as any)?.homeClinicId
+                    const isAway = s.clinicId === selectedClinicId && home && home !== selectedClinicId
+                    const isTransOut = s.clinicId === selectedClinicId && !!s.secondaryClinicId
+                    const isTransIn = s.secondaryClinicId === selectedClinicId
+                    const nameOf = (cid?: string | null) => cid ? (clinicById.get(cid)?.name ?? '?') : '?'
+                    return (
                     <div key={s.id} className="rounded-xl border shadow-card p-3">
                       <div className="flex justify-between items-center mb-1">
-                        <span className="font-semibold text-sm">{s.employee?.user?.name || s.employeeId}</span>
+                        <span className="font-semibold text-sm">
+                          {s.employee?.user?.name || s.employeeId}
+                          {isAway && (
+                            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>外援·{nameOf(home)}</span>
+                          )}
+                          {isTransOut && (
+                            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd' }}>下午去 {nameOf(s.secondaryClinicId)}</span>
+                          )}
+                          {isTransIn && (
+                            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd' }}>上午喺 {nameOf(s.clinicId)}</span>
+                          )}
+                        </span>
                         <span className="text-xs text-muted-foreground">{fmtTime(s.startTime)} - {fmtTime(s.endTime)}</span>
                       </div>
                       <div className="flex justify-between items-center">
@@ -4295,7 +4319,8 @@ function getShiftCode(shift: Shift): string {
                         </span>
                       </div>
                     </div>
-                  ))}
+                  )})}
+                  <div className="text-xs text-muted-foreground px-1">假期按員工主屬診所顯示</div>
                   {dayLeaves.map(lr => {
                     // ★ lr.leaveType 是 LeaveType 物件（{id, name, isPaid, color}），唔係 enum 字串。
                     const empName = clinicEmployees.find(e => e.id === lr.employeeId)?.user?.name || '未知'
