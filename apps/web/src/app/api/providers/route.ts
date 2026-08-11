@@ -8,8 +8,9 @@ export async function GET(req: NextRequest) {
   const auth = await requirePerm(req, 'provider_schedule')
   if (isAuthError(auth)) return auth.error
 
+  const includeInactive = req.nextUrl.searchParams.get('includeInactive') === '1'
   const providers = await prisma.provider.findMany({
-    where: { isActive: true },
+    where: includeInactive ? {} : { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     select: {
       id: true, name: true, shortName: true, phone: true,

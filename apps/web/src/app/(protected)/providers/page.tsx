@@ -4,19 +4,20 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { Plus, Edit2, Trash2, Check, X } from 'lucide-react'
+import { Plus, Edit2, EyeOff, Check, X } from 'lucide-react'
 
 export default function ProvidersPage() {
   const [providers, setProviders] = useState<any[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const [form, setForm] = useState<any>({})
   const [loading, setLoading] = useState(true)
+  const [showInactive, setShowInactive] = useState(false)
 
-  useEffect(() => { loadProviders() }, [])
+  useEffect(() => { loadProviders() }, [showInactive])
 
   async function loadProviders() {
     try {
-      const res = await apiFetch<any>('/api/providers')
+      const res = await apiFetch<any>(`/api/providers${showInactive ? '?includeInactive=1' : ''}`)
       setProviders(res.providers || [])
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }
@@ -50,14 +51,23 @@ export default function ProvidersPage() {
     try {
       await apiFetch<any>(`/api/providers/${id}`, { method: 'DELETE' })
       setProviders(prev => prev.filter(p => p.id !== id))
-    } catch (e) { alert('刪除失敗') }
+    } catch (e: any) {
+      console.error('[providers] 停用失敗', e)
+      alert(e?.message || '停用失敗')
+    }
   }
 
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">醫生管理</h1>
-        <Button onClick={startAdd} size="sm"><Plus className="w-4 h-4 mr-1" /> 新增醫生</Button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
+            顯示已停用
+          </label>
+          <Button onClick={startAdd} size="sm"><Plus className="w-4 h-4 mr-1" /> 新增醫生</Button>
+        </div>
       </div>
 
       <Card className="overflow-x-auto">
@@ -75,7 +85,7 @@ export default function ProvidersPage() {
             </tr>
           </thead>
           <tbody>
-            {editing && (
+            {editing === '__new__' && (
               <tr className="bg-yellow-50 border-b">
                 <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
                 <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
@@ -90,7 +100,21 @@ export default function ProvidersPage() {
                 </td>
               </tr>
             )}
-            {!editing && providers.map(p => (
+            {providers.map(p => p.id === editing ? (
+              <tr key={p.id} className="bg-yellow-50 border-b">
+                <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
+                <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
+                <td className="p-2"><Input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="電話" /></td>
+                <td className="p-2"><Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="Apricot 醫生 ID（可留空）" /></td>
+                <td className="p-2"><Input type="color" value={form.color || '#888888'} onChange={e => setForm({ ...form, color: e.target.value })} /></td>
+                <td className="p-2"><Input type="number" value={form.sortOrder ?? 0} onChange={e => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} className="w-20" /></td>
+                <td className="p-2"><input type="checkbox" checked={form.isActive ?? true} onChange={e => setForm({ ...form, isActive: e.target.checked })} /></td>
+                <td className="p-2 text-right">
+                  <Button size="sm" onClick={save} className="mr-1"><Check className="w-4 h-4" /></Button>
+                  <Button size="sm" variant="outline" onClick={() => setEditing(null)}><X className="w-4 h-4" /></Button>
+                </td>
+              </tr>
+            ) : (
               <tr key={p.id} className="border-b hover:bg-muted/30">
                 <td className="p-3 font-medium">{p.name}</td>
                 <td className="p-3">{p.shortName || '—'}</td>
@@ -107,7 +131,7 @@ export default function ProvidersPage() {
                 <td className="p-3">{p.isActive ? '✅ 活躍' : '⛔ 停用'}</td>
                 <td className="p-3 text-right">
                   <Button size="sm" variant="ghost" onClick={() => startEdit(p)} className="mr-1"><Edit2 className="w-4 h-4" /></Button>
-                  {p.isActive && <Button size="sm" variant="ghost" onClick={() => remove(p.id)}><Trash2 className="w-4 h-4 text-red-500" /></Button>}
+                  {p.isActive && <Button size="sm" variant="ghost" onClick={() => remove(p.id)}><EyeOff className="w-4 h-4 text-red-500" /></Button>}
                 </td>
               </tr>
             ))}
