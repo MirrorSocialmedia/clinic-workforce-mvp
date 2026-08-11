@@ -10,6 +10,8 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 
 const DAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
 
+interface StaffCell { id: string; name: string; start: string; end: string; transfer: boolean }
+
 export default function ProviderSchedulePage() {
   const [weekStart, setWeekStart] = useState(() => {
     const t = todayHK()
@@ -78,14 +80,25 @@ export default function ProviderSchedulePage() {
     return m
   }, [shifts])
 
-  // ★ staffByDate: Map<"date", Set<employeeId>>
+  // ★ staffByDate: Map<"date", StaffCell[]>
   const staffByDate = useMemo(() => {
-    const m = new Map<string, Set<string>>()
+    const m = new Map<string, StaffCell[]>()
     for (const s of staffShifts) {
-      if (s.clinicId !== selectedClinicId && s.secondaryClinicId !== selectedClinicId) continue
+      const isHome = s.clinicId === selectedClinicId
+      const isTransfer = s.secondaryClinicId === selectedClinicId
+      if (!isHome && !isTransfer) continue
       const d = toHKDateStr(s.date)
-      if (!m.has(d)) m.set(d, new Set())
-      m.get(d)!.add(s.employeeId)
+      if (!m.has(d)) m.set(d, [])
+      m.get(d)!.push({
+        id: s.employeeId,
+        name: s.employee?.user?.name ?? '—',
+        start: fmtTime(s.startTime),
+        end: fmtTime(s.endTime),
+        transfer: !isHome && isTransfer,
+      })
+    }
+    for (const arr of m.values()) {
+      arr.sort((a, b) => a.start.localeCompare(b.start) || a.name.localeCompare(b.name))
     }
     return m
   }, [staffShifts, selectedClinicId])
@@ -354,14 +367,28 @@ export default function ProviderSchedulePage() {
                 員工當值
               </td>
               {weekDays.map(d => (
-                <td key={d} className="p-1 text-center bg-muted/10">
+                <td key={d} className="p-1 align-top bg-muted/10">
                   {staffError
-                    ? <div className="text-muted-foreground text-[10px]">載入失敗</div>
+                    ? <div className="text-[10px] text-muted-foreground">載入失敗</div>
                     : (() => {
-                        const n = staffByDate.get(d)?.size ?? 0
-                        return n > 0
-                          ? <div className="text-muted-foreground text-[10px]">{n} 人</div>
-                          : <div className="text-muted-foreground/30 text-[10px]">—</div>
+                        const list = staffByDate.get(d) ?? []
+                        if (list.length === 0) return <div className="text-[10px] text-muted-foreground/30 text-center">—</div>
+                        const shown = list.slice(0, 4)
+                        const rest = list.length - shown.length
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            {shown.map((s, i) => (
+                              <div key={`${s.id}-${i}`} className="text-[10px] leading-tight whitespace-nowrap">
+                                <span className={s.transfer ? 'text-amber-700' : ''}>{s.name}</span>
+                                {s.transfer && <span className="ml-0.5 text-amber-600">·調</span>}
+                                <span className="text-muted-foreground ml-1">{s.start}–{s.end}</span>
+                              </div>
+                            ))}
+                            {rest > 0 && (
+                              <div className="text-[10px] text-muted-foreground" title={list.slice(4).map(x => x.name).join('、')}>+{rest} 人</div>
+                            )}
+                          </div>
+                        )
                       })()}
                 </td>
               ))}

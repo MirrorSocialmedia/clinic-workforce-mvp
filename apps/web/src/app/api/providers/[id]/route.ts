@@ -45,6 +45,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch (e: any) {
     console.error('[providers] PUT failed', e)
     if (e?.code === 'P2025') return NextResponse.json({ error: '醫生不存在' }, { status: 404 })
+    if (e?.code === 'P2002') {
+      return NextResponse.json(
+        { error: `Apricot ID「${apricotId}」已經綁咗另一位醫生` },
+        { status: 409 }
+      )
+    }
     return NextResponse.json({ error: '更新失敗' }, { status: 500 })
   }
 }

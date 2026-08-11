@@ -58,6 +58,12 @@ export async function POST(req: NextRequest) {
     return jsonNoStore({ provider })
   } catch (e: any) {
     console.error('[providers] POST failed', e)
+    if (e?.code === 'P2002') {
+      return NextResponse.json(
+        { error: `Apricot ID「${apricotId}」已經綁咗另一位醫生` },
+        { status: 409 }
+      )
+    }
     return NextResponse.json({ error: '建立失敗' }, { status: 500 })
   }
 }
