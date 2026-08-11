@@ -43,6 +43,9 @@ export default function ProviderSchedulePage() {
   const [modalRepeatWeeks, setModalRepeatWeeks] = useState(1)
   const [modalConflict, setModalConflict] = useState<'skip' | 'overwrite'>('skip')
   const [saving, setSaving] = useState(false)
+  const [weekdays, setWeekdays] = useState<number[]>([])
+  const [editingShiftId, setEditingShiftId] = useState<string | null>(null)
+  const [editingStart, setEditingStart] = useState<string>('')
 
   // Prevent double-click race (250ms window)
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -154,6 +157,13 @@ export default function ProviderSchedulePage() {
     clickTimerRef.current = setTimeout(() => {
       setModalCell({ date, providerId })
       const existing = shifts.find(s => toHKDateStr(s.date) === date && s.providerId === providerId)
+      if (existing) {
+        setEditingShiftId(existing.id)
+        setEditingStart(fmtTime(existing.startTime))
+      } else {
+        setEditingShiftId(null)
+        setEditingStart('')
+      }
       setModalEntries([{
         providerId,
         clinicId: selectedClinicId || '',
@@ -161,6 +171,7 @@ export default function ProviderSchedulePage() {
         end: existing?.endTime ? fmtTime(existing.endTime) : '17:00',
         note: existing?.note || '',
       }])
+      setWeekdays([])
       setModalRepeatWeeks(1)
       setModalOpen(true)
     }, 250)
@@ -171,6 +182,8 @@ export default function ProviderSchedulePage() {
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
     e.preventDefault()
     setModalCell({ date, providerId })
+    setEditingShiftId(null)
+    setEditingStart('')
     setModalEntries([{
       providerId,
       clinicId: selectedClinicId || '',
@@ -178,6 +191,7 @@ export default function ProviderSchedulePage() {
       end: '17:00',
       note: '',
     }])
+    setWeekdays([])
     setModalRepeatWeeks(4)
     setModalOpen(true)
   }
@@ -185,14 +199,23 @@ export default function ProviderSchedulePage() {
   async function handleSaveModal() {
     setSaving(true)
     try {
-      const entries = modalEntries
+      // N10: weekday expansion
+      const cellDayOfWeek = new Date(modalCell!.date).getDay()
+      const targetDates = weekdays.length
+        ? [...weekdays].sort().map(wd => addDays(modalCell!.date, wd - cellDayOfWeek))
+        : [modalCell!.date]
+
+      const entries = targetDates
+        .flatMap(date => modalEntries.map(en => ({ ...en, date })))
         .filter(en => en.providerId && en.clinicId && selectedClinicId)
-        .map(en => ({
-          ...en,
-          date: modalCell!.date,
-          clinicId: en.clinicId,
-        }))
+        .map(en => ({ ...en, clinicId: en.clinicId }))
       if (!entries.length) { alert('缺少必要資訊'); setSaving(false); return }
+
+      // N8: DELETE old shift if time changed
+      if (editingShiftId && modalEntries.length > 0 && editingStart !== modalEntries[0].start) {
+        await apiFetch<any>(`/api/provider-shifts/${editingShiftId}`, { method: 'DELETE' }).catch(() => {})
+      }
+
       const res = await apiFetch<any>('/api/provider-shifts/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -202,7 +225,11 @@ export default function ProviderSchedulePage() {
       setModalOpen(false)
       await loadShifts()
     } catch (e: any) {
-      alert(e?.message || '儲存失敗')
+      // N11: honest partial-result error
+      const msg = e?.body?.created != null
+        ? `部分完成：新增 ${e.body.created} / 更新 ${e.body.updated} / 略過 ${e.body.skipped}`
+        : (e?.message || '儲存失敗')
+      alert(msg)
     } finally {
       setSaving(false)
     }
@@ -391,6 +418,19 @@ export default function ProviderSchedulePage() {
               ))}
               <div className="grid grid-cols-2 gap-2">
                 <div>
+                  <label className="text-xs text-muted-foreground">星期（留空=只做當日）</label>
+                  <div className="flex gap-1 mt-1">
+                    {['日','一','二','三','四','五','六'].map((l, i) => (
+                      <button key={i} onClick={() => {
+                        const next = weekdays.includes(i) ? weekdays.filter(w => w !== i) : [...weekdays, i]
+                        setWeekdays(next)
+                      }} className={`px-2 py-0.5 text-xs rounded border ${weekdays.includes(i) ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
                   <label className="text-xs text-muted-foreground">重複（週）</label>
                   <select value={modalRepeatWeeks} onChange={e => setModalRepeatWeeks(Number(e.target.value))} className="w-full border rounded px-2 py-1 text-sm">
                     {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n} 週</option>)}
@@ -405,7 +445,7 @@ export default function ProviderSchedulePage() {
                 </div>
               </div>
               <div className="text-xs text-muted-foreground">
-                ▸ 預覽：將寫入 {modalRepeatWeeks} 條（1 日 × {modalRepeatWeeks} 週）
+                ▸ 預覽：將寫入 {(weekdays.length || 1) * modalRepeatWeeks} 條（{weekdays.length || 1} 日 × {modalRepeatWeeks} 週）
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">

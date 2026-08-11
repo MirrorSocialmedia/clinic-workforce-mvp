@@ -158,7 +158,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/attendance', label: '考勤', icon: ClipboardList, roles: viewRoles, perm: 'attendance_manage' },
     { path: '/scheduling', label: '排班管理', icon: Calendar, roles: mgmtRoles, perm: 'scheduling' },
     { path: '/providers', label: '醫生管理', icon: Stethoscope, roles: mgmtRoles, perm: 'scheduling' },
-    { path: '/provider-schedule', label: '醫生當值表', icon: Stethoscope, roles: mgmtRoles, perm: 'scheduling' },
+    { path: '/provider-schedule', label: '醫生當值表', icon: Stethoscope, roles: mgmtRoles, perm: 'provider_schedule' },
     { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles, perm: ['leave_approve', 'timebank_ops'] },
     { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles, perm: ['payroll_view', 'payroll_generate'] },
     // ★ 員工總覽 —— OWNER + MANAGER（ACCOUNTANT 唔包，佢只需要計糧）
@@ -208,7 +208,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           登出
         </button>
         <Link href="/provider-schedule"
-          className="fixed top-3 right-3 text-xs px-3 py-1.5 border rounded bg-background/80 z-50">
+          className="fixed top-3 right-24 text-xs px-3 py-1.5 border rounded bg-background/80 z-50">
           醫生當值表
         </Link>
         {children}

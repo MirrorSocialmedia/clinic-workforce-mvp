@@ -33,6 +33,16 @@ export async function POST(req: NextRequest) {
 
   const scope = await resolveProviderScheduleScope(auth.session!)
 
+  // Validate providerId: all doctors must exist and be active
+  const providerIds = [...new Set(entries.map(e => e.providerId))]
+  const foundProviders = await prisma.provider.findMany({
+    where: { id: { in: providerIds }, isActive: true },
+    select: { id: true },
+  })
+  if (foundProviders.length !== providerIds.length) {
+    return NextResponse.json({ error: '醫生不存在或已停用' }, { status: 400 })
+  }
+
   // Validate clinicId for each entry
   for (const e of entries) {
     if (!e.clinicId) {
@@ -61,22 +71,33 @@ export async function POST(req: NextRequest) {
 
   let created = 0, updated = 0, skipped = 0
   try {
-    for (const r of rows) {
-      const key = { providerId_date_startTime: { providerId: r.providerId, date: r.date, startTime: r.startTime } }
-      const existing = await prisma.providerShift.findUnique({ where: key })
-      if (existing && onConflict === 'skip') { skipped++; continue }
-      if (existing) {
-        if (!inScope(scope, existing.clinicId)) { skipped++; continue }
-        await prisma.providerShift.update({
-          where: key,
-          data: { clinicId: r.clinicId, endTime: r.endTime, note: r.note },
-        })
-        updated++
-      } else {
-        await prisma.providerShift.create({
-          data: { ...r, createdBy: auth.session!.userId },
-        })
-        created++
+    if (onConflict === 'skip') {
+      // ★ Bulk insert with skipDuplicates — faster than per-row check
+      const rowsWithAuth = rows.map(r => ({ ...r, createdBy: auth.session!.userId }))
+      const r = await prisma.providerShift.createMany({
+        data: rowsWithAuth,
+        skipDuplicates: true,
+      })
+      created = r.count
+      skipped = rows.length - r.count
+    } else {
+      // overwrite mode: per-row check + update
+      for (const r of rows) {
+        const key = { providerId_date_startTime: { providerId: r.providerId, date: r.date, startTime: r.startTime } }
+        const existing = await prisma.providerShift.findUnique({ where: key })
+        if (existing) {
+          if (!inScope(scope, existing.clinicId)) { skipped++; continue }
+          await prisma.providerShift.update({
+            where: key,
+            data: { clinicId: r.clinicId, endTime: r.endTime, note: r.note },
+          })
+          updated++
+        } else {
+          await prisma.providerShift.create({
+            data: { ...r, createdBy: auth.session!.userId },
+          })
+          created++
+        }
       }
     }
   } catch (e) {

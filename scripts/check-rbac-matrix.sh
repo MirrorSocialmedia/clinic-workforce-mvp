@@ -46,3 +46,25 @@ if [ "$MISSING" -eq 1 ]; then
 fi
 
 echo "✅ 所有 requireAuth route 都喺 RBAC matrix 有登記"
+
+# Second loop: routes using requirePerm (these use RBAC_PERM_OVERRIDES instead)
+MISSING2=0
+for f in $(grep -rl "requirePerm" apps/web/src/app/api --include=route.ts); do
+  rel=${f#apps/web/src/app/api/}
+  name=$(echo "$rel" | sed 's|/route\.ts$||' | sed 's|/\[.*\]|/:id|g' | sed 's|/batch$|/batch|')
+  method=$(grep -oE '(GET|POST|PUT|DELETE) ' "$f" | head -1 | tr -d ' ')
+  if [ -z "$method" ]; then method="GET"; fi
+  key="$method /api/$name"
+  if ! grep -q "$key" apps/web/src/lib/config.ts 2>/dev/null; then
+    echo "⚠️ $f：requirePerm 但 config.ts 冇 "$key" key"
+    MISSING2=1
+  fi
+done
+
+if [ "$MISSING2" -eq 1 ]; then
+  echo ""
+  echo "❌ 部分 requirePerm route 未登記 RBAC_PERM_OVERRIDES"
+  exit 1
+fi
+
+echo "✅ 所有 requirePerm route 都喺 RBAC_PERM_OVERRIDES 有登記"

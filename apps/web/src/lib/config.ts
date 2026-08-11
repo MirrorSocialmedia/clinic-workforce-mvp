@@ -107,11 +107,11 @@ export const CONFIG = {
     'GET /api/schedule-coverage': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // ★ 醫生當值排更（加 KIOSK）
-    'GET /api/providers': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'KIOSK'],
+    'GET /api/providers': ['OWNER', 'MANAGER', 'KIOSK'],
     'POST /api/providers': ['OWNER', 'MANAGER'],
     'PUT /api/providers/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/providers/:id': ['OWNER', 'MANAGER'],
-    'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'KIOSK'],
+    'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'KIOSK'],
     'POST /api/provider-shifts/batch': ['OWNER', 'MANAGER', 'KIOSK'],
     'DELETE /api/provider-shifts/:id': ['OWNER', 'MANAGER', 'KIOSK'],
 
@@ -353,7 +353,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/schedule-notes': ['scheduling'],
   'PUT /api/schedule-notes': ['scheduling'],
 
-  // —— 醫生當值排更：provider_schedule 或 scheduling 權限都放行（雙 key 相容）——
+  // —— 醫生當值排更：用 requirePerm，靠 ROLE_DEFAULTS 控制，唔經 override ——
+  //    以下七行係 dead code，保留做文件記錄，改呢度唔會有任何效果
   'GET /api/providers': ['provider_schedule', 'scheduling'],
   'POST /api/providers': ['provider_schedule', 'scheduling'],
   'PUT /api/providers/:id': ['provider_schedule', 'scheduling'],
