@@ -24,6 +24,7 @@ export default function ProviderSchedulePage() {
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
   const [scope, setScope] = useState<string[] | null>(null)
+  const [scopeLoaded, setScopeLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   // Staff shifts for employee summary row
@@ -59,11 +60,12 @@ export default function ProviderSchedulePage() {
 
   // ★ Auto-select default clinic once scope + clinics are ready
   useEffect(() => {
+    if (!scopeLoaded) return // scope 未知，唔好亂揀
     if (selectedClinicId) return
     if (!clinics.length) return
     const allowed = scope === null ? clinics : clinics.filter((c: any) => scope.includes(c.id))
     if (allowed.length > 0) setSelectedClinicId(allowed[0].id)
-  }, [scope, clinics, selectedClinicId])
+  }, [scopeLoaded, scope, clinics, selectedClinicId])
 
   // ★ shiftByDay: Map<"date|providerId", shift[]> — supports multi-shift per cell
   const shiftByDay = useMemo(() => {
@@ -125,6 +127,7 @@ export default function ProviderSchedulePage() {
       const res = await apiFetch<any>(`/api/provider-shifts?${params}`)
       setShifts(res.shifts || [])
       setScope(res.scope ?? null)
+      setScopeLoaded(true)
     } catch (e: any) {
       console.error('[provider-schedule] load shifts failed', e)
       if (e?.status === 403 && selectedClinicId) {
@@ -200,7 +203,7 @@ export default function ProviderSchedulePage() {
     setSaving(true)
     try {
       // N10: weekday expansion
-      const cellDayOfWeek = new Date(modalCell!.date).getDay()
+      const cellDayOfWeek = hkDayOfWeek(modalCell!.date)
       const targetDates = weekdays.length
         ? [...weekdays].sort().map(wd => addDays(modalCell!.date, wd - cellDayOfWeek))
         : [modalCell!.date]
@@ -213,7 +216,14 @@ export default function ProviderSchedulePage() {
 
       // N8: DELETE old shift if time changed
       if (editingShiftId && modalEntries.length > 0 && editingStart !== modalEntries[0].start) {
-        await apiFetch<any>(`/api/provider-shifts/${editingShiftId}`, { method: 'DELETE' }).catch(() => {})
+        try {
+          await apiFetch<any>(`/api/provider-shifts/${editingShiftId}`, { method: 'DELETE' })
+        } catch (e: any) {
+          console.error('[provider-schedule] 刪除舊時段失敗', e)
+          alert(`舊時段刪除失敗（${e?.message ?? '未知錯誤'}），已取消今次修改`)
+          setSaving(false)
+          return
+        }
       }
 
       const res = await apiFetch<any>('/api/provider-shifts/batch', {
@@ -225,11 +235,7 @@ export default function ProviderSchedulePage() {
       setModalOpen(false)
       await loadShifts()
     } catch (e: any) {
-      // N11: honest partial-result error
-      const msg = e?.body?.created != null
-        ? `部分完成：新增 ${e.body.created} / 更新 ${e.body.updated} / 略過 ${e.body.skipped}`
-        : (e?.message || '儲存失敗')
-      alert(msg)
+      alert(e?.message || '儲存失敗')
     } finally {
       setSaving(false)
     }

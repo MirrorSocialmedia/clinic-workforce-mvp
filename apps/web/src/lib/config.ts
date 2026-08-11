@@ -353,8 +353,10 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/schedule-notes': ['scheduling'],
   'PUT /api/schedule-notes': ['scheduling'],
 
-  // —— 醫生當值排更：用 requirePerm，靠 ROLE_DEFAULTS 控制，唔經 override ——
-  //    以下七行係 dead code，保留做文件記錄，改呢度唔會有任何效果
+  // —— 醫生當值排更 ——
+  // ⚠️ 呢啲 route 用 requirePerm，requirePerm 唔讀本表。
+  // 留喺度純粹係 check-rbac-matrix.sh 嘅登記要求 + 文件用途。
+  // 真正把關喺 ROLE_DEFAULTS[role] 同埋各 route 自己嘅 resolveProviderScheduleScope。
   'GET /api/providers': ['provider_schedule', 'scheduling'],
   'POST /api/providers': ['provider_schedule', 'scheduling'],
   'PUT /api/providers/:id': ['provider_schedule', 'scheduling'],
