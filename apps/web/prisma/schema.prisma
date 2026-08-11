@@ -100,6 +100,7 @@ model Company {
   clinics       Clinic[]
   shiftTemplates ShiftTemplate[]
   scheduleNotes  ScheduleNote[]
+  providers      Provider[]
 }
 
 // ★ 2026-08-04: 排班每日備註 —— 按公司，每日一條（上限 20 字）
@@ -143,6 +144,7 @@ model Clinic {
   payrollRuns     PayrollRun[]
   expenseEntries  ExpenseEntry[]
   homeEmployees   Employee[] @relation("HomeClinic")
+  providerShifts  ProviderShift[]
 }
 
 // User entity — system login account
@@ -308,6 +310,46 @@ model Shift {
   @@index([secondaryClinicId])
   @@index([employeeId, startTime])
   @@unique([employeeId, clinicId, startTime], name: "uniq_emp_clinic_start")
+}
+
+// ── 醫生／應診者 ──────────────────────────────────────────
+// 刻意同 Employee 完全分離：醫生唔打卡、唔計糧、唔放假期額度。
+model Provider {
+  id        String   @id @default(cuid())
+  name      String
+  shortName String?
+  phone     String?
+  color     String?
+  apricotId String?  @unique
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shifts ProviderShift[]
+
+  @@index([companyId, isActive])
+}
+
+model ProviderShift {
+  id         String   @id @default(cuid())
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id])
+  date       DateTime
+  startTime  DateTime
+  endTime    DateTime
+  note       String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([providerId, date, startTime])
+  @@index([clinicId, date])
+  @@index([providerId, date])
 }
 
 // Punch record — APPEND ONLY (no UPDATE/DELETE API)

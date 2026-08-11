@@ -106,6 +106,14 @@ export const CONFIG = {
     // ★ 2026-08-08 更表完整性檢查（餵排班頁 coverage 對數 — 同 GET /api/shifts 同受眾）
     'GET /api/schedule-coverage': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
+    // ★ 醫生當值排更（同 scheduling 同受眾）
+    'GET /api/providers': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/providers': ['OWNER', 'MANAGER'],
+    'PUT /api/providers/:id': ['OWNER', 'MANAGER'],
+    'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/provider-shifts/batch': ['OWNER', 'MANAGER'],
+    'DELETE /api/provider-shifts/:id': ['OWNER', 'MANAGER'],
+
     // Shift change request routes
     'GET /api/shift-changes': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/shift-changes': ['OWNER', 'MANAGER', 'EMPLOYEE'],
@@ -343,6 +351,14 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ 2026-08-04: 排班每日備註 —— 有 scheduling 權限可讀/寫
   'GET /api/schedule-notes': ['scheduling'],
   'PUT /api/schedule-notes': ['scheduling'],
+
+  // —— 醫生當值排更：有 scheduling 權限就等同全權 ——
+  'GET /api/providers': ['scheduling'],
+  'POST /api/providers': ['scheduling'],
+  'PUT /api/providers/:id': ['scheduling'],
+  'GET /api/provider-shifts': ['scheduling'],
+  'POST /api/provider-shifts/batch': ['scheduling'],
+  'DELETE /api/provider-shifts/:id': ['scheduling'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

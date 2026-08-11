@@ -49,6 +49,10 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'WAGE_HISTORY_DELETE', label: '刪除工資記錄' },
   { action: 'SHIFT_EDIT_AFTER_PAYROLL', label: '⚠️ 已出糧月份改更次' },
   { action: 'SHIFT_CHANGE_APPROVE', label: '換更審批·自動撤回提早OT' },
+  { action: 'PROVIDER_CREATE', label: '新增醫生' },
+  { action: 'PROVIDER_UPDATE', label: '更新醫生' },
+  { action: 'PROVIDER_SHIFT_BATCH', label: '批量排醫生當值' },
+  { action: 'PROVIDER_SHIFT_DELETE', label: '刪除醫生當值' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([
