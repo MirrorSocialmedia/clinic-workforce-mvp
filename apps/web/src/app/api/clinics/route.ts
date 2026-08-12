@@ -46,9 +46,9 @@ export async function POST(req: NextRequest) {
   }
 
   return runWithAudit(auditCtx, async () => {
-    try {
-      const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color, apricotClinicId } = await req.json()
+    const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color, apricotClinicId } = await req.json()
 
+    try {
       if (!name) {
         return NextResponse.json({ error: 'Name is required' }, { status: 400 })
       }
@@ -78,8 +78,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, clinic }, { status: 201 })
     } catch (error) {
       if ((error as any)?.code === 'P2002') {
+        const target = (error as any)?.meta?.target
+        const isApricot = Array.isArray(target)
+          ? target.includes('apricotClinicId')
+          : String(target ?? '').includes('apricotClinicId')
         return NextResponse.json(
-          { error: `Apricot 診所 ID 已經綁咗另一間診所` },
+          { error: isApricot
+            ? `Apricot 診所 ID「${apricotClinicId}」已經綁咗另一間診所`
+            : '資料重複' },
           { status: 409 }
         )
       }

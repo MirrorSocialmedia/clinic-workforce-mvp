@@ -178,7 +178,7 @@ export default function ClinicsPage() {
     if (newLng === null) return
     const newRadius = prompt('允許打卡半徑(米，留空用全域預設200)：', clinic.geoRadius != null ? String(clinic.geoRadius) : '200')
     if (newRadius === null) return
-    const newApricotId = prompt('Apricot 診所 ID（留空不修改，輸入 null 清空）：', clinic.apricotClinicId || '')
+    const newApricotId = prompt('Apricot 診所 ID（留空 = 清除）：', clinic.apricotClinicId || '')
     if (newApricotId === null) return
     setAutoLat(null) // reset auto location after use
     setAutoLng(null)
@@ -191,8 +191,7 @@ export default function ClinicsPage() {
     body.latitude = newLat?.trim() ? Number(newLat.trim()) : null
     body.longitude = newLng?.trim() ? Number(newLng.trim()) : null
     body.geoRadius = newRadius?.trim() ? Number(newRadius.trim()) : null
-    if (newApricotId.trim() === 'null') body.apricotClinicId = null
-    else if (newApricotId.trim()) body.apricotClinicId = newApricotId.trim()
+    body.apricotClinicId = newApricotId?.trim() || null
 
     const res = await fetch(`/api/clinics/${clinic.id}`, {
       method: 'PUT',

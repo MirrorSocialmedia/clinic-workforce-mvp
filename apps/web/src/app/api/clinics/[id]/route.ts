@@ -72,8 +72,14 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ success: true, clinic })
     } catch (error) {
       if ((error as any)?.code === 'P2002') {
+        const target = (error as any)?.meta?.target
+        const isApricot = Array.isArray(target)
+          ? target.includes('apricotClinicId')
+          : String(target ?? '').includes('apricotClinicId')
         return NextResponse.json(
-          { error: `Apricot 診所 ID「${apricotClinicId}」已經綁咗另一間診所` },
+          { error: isApricot
+            ? `Apricot 診所 ID「${apricotClinicId}」已經綁咗另一間診所`
+            : '資料重複' },
           { status: 409 }
         )
       }
