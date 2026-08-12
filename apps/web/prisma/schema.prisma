@@ -145,6 +145,7 @@ model Clinic {
   expenseEntries  ExpenseEntry[]
   homeEmployees   Employee[] @relation("HomeClinic")
   providerShifts  ProviderShift[]
+  providerClinics ProviderClinic[]
 }
 
 // User entity — system login account
@@ -328,7 +329,10 @@ model Provider {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  shifts ProviderShift[]
+  shifts      ProviderShift[]
+  clinics     ProviderClinic[]
+  leaves      ProviderLeave[]
+  commissions ProviderCommission[]
 
   @@index([companyId, isActive])
 }
@@ -343,6 +347,7 @@ model ProviderShift {
   startTime  DateTime
   endTime    DateTime
   note       String?
+  source     String   @default("MANUAL")
   createdBy  String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -350,6 +355,52 @@ model ProviderShift {
   @@unique([providerId, date, startTime])
   @@index([clinicId, date])
   @@index([providerId, date])
+}
+
+// 醫生 ↔ 診所綁定（篩選用，唔限制排更）
+model ProviderClinic {
+  id         String   @id @default(cuid())
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([providerId, clinicId])
+  @@index([clinicId])
+}
+
+// 醫生休假 — 唔扣假期額度，只喺當值表顯示
+model ProviderLeave {
+  id         String   @id @default(cuid())
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  startDate  DateTime // ★ HK 午夜
+  endDate    DateTime
+  note       String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([providerId, startDate])
+  @@index([startDate, endDate])
+}
+
+// 醫生拆帳設定（append-only：改 % 就開新一條，唔准改舊記錄）
+model ProviderCommission {
+  id             String   @id @default(cuid())
+  providerId     String
+  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  clinicId       String?
+  percent        Decimal  @db.Decimal(5,2)
+  basis          String   // 'GROSS' | 'NET' | 'CONSULT_ONLY'
+  minGuarantee   Decimal? @db.Decimal(12,2)
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+  note           String?
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  @@index([providerId, effectiveFrom])
 }
 
 // Punch record — APPEND ONLY (no UPDATE/DELETE API)
