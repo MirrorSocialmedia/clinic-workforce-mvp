@@ -114,6 +114,13 @@ export const CONFIG = {
     'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'KIOSK'],
     'POST /api/provider-shifts/batch': ['OWNER', 'MANAGER', 'KIOSK'],
     'DELETE /api/provider-shifts/:id': ['OWNER', 'MANAGER', 'KIOSK'],
+    // ★ 醫生休假（同 provider_schedule 權限範圍）
+    'GET /api/provider-leaves': ['OWNER', 'MANAGER'],
+    'POST /api/provider-leaves': ['OWNER', 'MANAGER'],
+    'DELETE /api/provider-leaves/:id': ['OWNER', 'MANAGER'],
+    // ★ 醫生拆帳（OWNER only）
+    'GET /api/provider-commissions': ['OWNER'],
+    'POST /api/provider-commissions': ['OWNER'],
 
     // Shift change request routes
     'GET /api/shift-changes': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -364,6 +371,15 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/provider-shifts': ['provider_schedule', 'scheduling'],
   'POST /api/provider-shifts/batch': ['provider_schedule', 'scheduling'],
   'DELETE /api/provider-shifts/:id': ['provider_schedule', 'scheduling'],
+
+  // —— 醫生休假 ——
+  'GET /api/provider-leaves': ['provider_schedule'],
+  'POST /api/provider-leaves': ['provider_schedule'],
+  'DELETE /api/provider-leaves/:id': ['provider_schedule'],
+
+  // —— 醫生拆帳 —— OWNER only（MANAGER 冇權睇醫生收入）
+  'GET /api/provider-commissions': ['provider_payout'],
+  'POST /api/provider-commissions': ['provider_payout'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

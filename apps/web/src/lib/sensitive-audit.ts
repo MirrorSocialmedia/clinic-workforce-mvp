@@ -53,6 +53,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PROVIDER_UPDATE', label: '更新醫生' },
   { action: 'PROVIDER_SHIFT_BATCH', label: '批量排醫生當值' },
   { action: 'PROVIDER_SHIFT_DELETE', label: '刪除醫生當值' },
+  { action: 'PROVIDER_COMMISSION_SET', label: '新增醫生拆帳設定' },
+  { action: 'PROVIDER_LEAVE_SET', label: '新增醫生休假' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([

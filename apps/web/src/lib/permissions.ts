@@ -12,6 +12,7 @@ export const PERMISSIONS = {
   //   EMPLOYEE 攞到呢個權限只睇到【主屬診所】員工
   employee_overview: '員工總覽',
   provider_schedule: '醫生當值排更',
+  provider_payout: '醫生拆帳',
   accounts_manage: '帳號管理',
   clinic_manage: '診所/公司管理',
   audit_view: '審計日誌',
