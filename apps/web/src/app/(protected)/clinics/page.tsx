@@ -16,6 +16,7 @@ interface Clinic {
   latitude: number | null
   longitude: number | null
   geoRadius: number | null
+  apricotClinicId: string | null
   createdAt: string
 }
 
@@ -32,7 +33,7 @@ export default function ClinicsPage() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', address: '', shortName: '', companyId: '', color: '#95a5a6' })
+  const [form, setForm] = useState({ name: '', address: '', shortName: '', companyId: '', color: '#95a5a6', apricotClinicId: '' })
   const [error, setError] = useState('')
   const [editingClinicId, setEditingClinicId] = useState<string | null>(null)
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null)
@@ -119,7 +120,7 @@ export default function ClinicsPage() {
       setError(data.error || '建立失敗')
       return
     }
-    setForm({ name: '', address: '', shortName: '', companyId: '', color: '#95a5a6' })
+    setForm({ name: '', address: '', shortName: '', companyId: '', color: '#95a5a6', apricotClinicId: '' })
     setShowForm(false)
     fetchAll()
   }
@@ -177,6 +178,8 @@ export default function ClinicsPage() {
     if (newLng === null) return
     const newRadius = prompt('允許打卡半徑(米，留空用全域預設200)：', clinic.geoRadius != null ? String(clinic.geoRadius) : '200')
     if (newRadius === null) return
+    const newApricotId = prompt('Apricot 診所 ID（留空不修改，輸入 null 清空）：', clinic.apricotClinicId || '')
+    if (newApricotId === null) return
     setAutoLat(null) // reset auto location after use
     setAutoLng(null)
 
@@ -188,6 +191,8 @@ export default function ClinicsPage() {
     body.latitude = newLat?.trim() ? Number(newLat.trim()) : null
     body.longitude = newLng?.trim() ? Number(newLng.trim()) : null
     body.geoRadius = newRadius?.trim() ? Number(newRadius.trim()) : null
+    if (newApricotId.trim() === 'null') body.apricotClinicId = null
+    else if (newApricotId.trim()) body.apricotClinicId = newApricotId.trim()
 
     const res = await fetch(`/api/clinics/${clinic.id}`, {
       method: 'PUT',
@@ -399,6 +404,14 @@ export default function ClinicsPage() {
               </div>
             </div>
             <div className="form-group">
+              <label>Apricot 診所 ID（選填）</label>
+              <input
+                value={form.apricotClinicId}
+                onChange={e => setForm({ ...form, apricotClinicId: e.target.value.trim() })}
+                placeholder="Apricot 系統的診所 ID"
+              />
+            </div>
+            <div className="form-group">
               <label>地址</label>
               <input
                 value={form.address}
@@ -432,6 +445,7 @@ export default function ClinicsPage() {
                   <th>公司</th>
                   <th>名稱</th>
                   <th>簡稱</th>
+                  <th>Apricot ID</th>
                   <th>顏色</th>
                   <th>地址</th>
                   <th>建立時間</th>
@@ -444,6 +458,11 @@ export default function ClinicsPage() {
                     <td className="text-sm">{clinic.company?.name || '—'}</td>
                     <td style={{ fontWeight: 500 }}>{clinic.name}</td>
                     <td className="text-muted">{clinic.shortName || '—'}</td>
+                    <td>
+                      {clinic.apricotClinicId
+                        ? <code className="text-xs">{clinic.apricotClinicId}</code>
+                        : <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">未綁定</span>}
+                    </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{

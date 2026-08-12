@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
   return runWithAudit(auditCtx, async () => {
     try {
-      const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color } = await req.json()
+      const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color, apricotClinicId } = await req.json()
 
       if (!name) {
         return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -71,11 +71,18 @@ export async function POST(req: NextRequest) {
           geoRadius: geoRadius != null ? Number(geoRadius) : null,
           config: config ? JSON.stringify(config) : null,
           companyId,
+          ...(apricotClinicId !== undefined && { apricotClinicId: apricotClinicId?.trim() || null }),
         },
       })
 
       return NextResponse.json({ success: true, clinic }, { status: 201 })
     } catch (error) {
+      if ((error as any)?.code === 'P2002') {
+        return NextResponse.json(
+          { error: `Apricot 診所 ID 已經綁咗另一間診所` },
+          { status: 409 }
+        )
+      }
       console.error('Create clinic error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }

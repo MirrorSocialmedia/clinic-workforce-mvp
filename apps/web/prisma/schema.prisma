@@ -128,6 +128,7 @@ model Clinic {
   latitude  Float?   // 店舖緯度
   longitude Float?   // 店舖經度
   geoRadius Int?     // 允許半徑(米),null = 用全局預設 200
+  apricotClinicId String? @unique // ★ Apricot 嘅 clinicId
   config    String?  // JSON string for SQLite compat
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
