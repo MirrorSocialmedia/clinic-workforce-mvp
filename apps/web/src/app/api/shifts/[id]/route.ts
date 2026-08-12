@@ -10,6 +10,8 @@ import { writeAuditLog } from '@/lib/prisma'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
+import { describeShiftChange, buildNotification, shiftDeletedMsg } from '@/lib/notification-messages'
+import { createNotification } from '@/lib/notification'
 
 // PUT /api/shifts/[id] — edit shift
 export async function PUT(
@@ -32,6 +34,10 @@ export async function PUT(
 
     const existing = await prisma.shift.findUnique({ where: { id } })
     if (!existing) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
+
+    // ★ Prepare clinic name map for notification messages
+    const clinics = await prisma.clinic.findMany({ select: { id: true, name: true } })
+    const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
 
     // ★ MANAGER 只可以動自己店嘅更
     // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
@@ -124,6 +130,14 @@ export async function PUT(
       )
     }
 
+    // ★ Capture before-update snapshot for notification
+    const wasConfirmed = existing.status === 'CONFIRMED'
+    const beforeSnapshot = {
+      date: existing.date, startTime: existing.startTime,
+      endTime: existing.endTime, clinicId: existing.clinicId,
+      secondaryClinicId: existing.secondaryClinicId,
+    }
+
     const shift = await prisma.shift.update({
       where: { id },
       data: updateData,
@@ -144,6 +158,12 @@ export async function PUT(
     })
 
     if (shift instanceof NextResponse) return shift
+
+    // ★ Notify employee if shift was CONFIRMED and changed
+    if (wasConfirmed) {
+      const msg = describeShiftChange(beforeSnapshot, shift, (cid) => clinicNameMap.get(cid) ?? '')
+      await createNotification(buildNotification(shift.employeeId, [msg], shift.id))
+    }
 
     // ★ 排班變更影響遲到／早退／OT 判斷 → 新舊日期都要失效（改期會影響兩個月）
     try {
@@ -236,8 +256,19 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const beforeJson = JSON.stringify(existing)
+    const wasConfirmed = existing.status === 'CONFIRMED'
     await prisma.shift.delete({ where: { id } })
+
+    // ★ Notify employee if deleted shift was CONFIRMED
+    if (wasConfirmed) {
+      const clinics = await prisma.clinic.findMany({ select: { id: true, name: true } })
+      const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
+      await createNotification(buildNotification(
+        existing.employeeId,
+        [shiftDeletedMsg(existing, (cid) => clinicNameMap.get(cid) ?? '')],
+        // relatedId = undefined — 更次已刪，冇關聯 ID
+      ))
+    }
 
     // ★ 已出糧警告：檢查被刪更嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單（§四.E）
     const { start: pm } = getMonthRange(existing.date)

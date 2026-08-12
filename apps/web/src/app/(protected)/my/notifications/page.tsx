@@ -23,6 +23,7 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const fetchData = useCallback(async () => {
     setError('')
@@ -141,6 +142,30 @@ export default function NotificationsPage() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, color: '#333' }}>{n.content}</div>
+                  {n.details && (() => {
+                    let items: string[] = []
+                    try { items = JSON.parse(n.details) } catch { return null }
+                    if (items.length === 0) return null
+                    const open = expanded.has(n.id)
+                    return (
+                      <div style={{ marginTop: 4 }}>
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            setExpanded(s => { const n2 = new Set(s); n2.has(n.id) ? n2.delete(n.id) : n2.add(n.id); return n2 })
+                          }}
+                          style={{ fontSize: 12, color: '#2196F3', background: 'none', border: 'none', padding: 0 }}
+                        >
+                          {open ? '收起明細 ▲' : `查看 ${items.length} 項明細 ▼`}
+                        </button>
+                        {open && (
+                          <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12, color: '#666', lineHeight: 1.6 }}>
+                            {items.map((it, i) => <li key={i}>{it}</li>)}
+                          </ul>
+                        )}
+                      </div>
+                    )
+                  })()}
                   <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
                     {fmtDateTime(n.createdAt)}
                   </div>

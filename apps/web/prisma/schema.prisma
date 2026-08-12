@@ -642,6 +642,7 @@ model Notification {
   content        String
   relatedEntity  String?  // LeaveRequest, Shift, PunchCorrection
   relatedId      String?
+  details        String?  // JSON array of strings — 合併通知嘅逐項明細
   isRead         Boolean  @default(false)
   createdAt      DateTime @default(now())
 

@@ -3,6 +3,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { shiftDeletedMsg, buildNotification } from '@/lib/notification-messages'
+import { createNotification } from '@/lib/notification'
 
 export async function POST(
   req: NextRequest,
@@ -84,6 +86,20 @@ export async function POST(
 
   // ★ 取消未來更次／假期會改變應出勤日 → 清時間帳戶快取（2026-08-10）
   const cutoffDate = cutoff ?? new Date()
+
+  // ★ Notify employee about cancelled future shifts
+  const cancelled = await prisma.shift.findMany({
+    where: { employeeId: empId, date: { gt: cutoffDate }, status: 'CANCELLED' },
+    select: { date: true, startTime: true, endTime: true, clinicId: true },
+    orderBy: { date: 'asc' },
+  })
+  if (cancelled.length > 0) {
+    const clinics = await prisma.clinic.findMany({ select: { id: true, name: true } })
+    const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
+    const items = cancelled.map(s => shiftDeletedMsg(s, (cid) => clinicNameMap.get(cid) ?? ''))
+    await createNotification(buildNotification(empId, items))
+  }
+
   try {
     await invalidateTimeBankFrom(empId, cutoffDate, prisma)
   } catch (e) {

@@ -10,6 +10,8 @@ import { resolveClinicScope } from '@/lib/scope-helpers'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
+import { shiftReplacedMsg, buildNotification } from '@/lib/notification-messages'
+import { createNotification } from '@/lib/notification'
 import { balanceYearFor } from '@/lib/leave-types'
 
 // ============================================================
@@ -309,17 +311,18 @@ export async function POST(req: NextRequest) {
 
         // ★ Atomic transaction: replace old shifts/leaves then create new shift
         let replacedShiftDates: string[] = []
+        let victims: any[] = []
         const created = await prisma.$transaction(async (tx) => {
           // ① Replace old shifts — verify ownership + scope (prevent IDOR)
           if (replaceShiftIds?.length) {
-            const victims = await tx.shift.findMany({
+            victims = await tx.shift.findMany({
               where: {
                 id: { in: replaceShiftIds },
                 employeeId,
                 date: times.date, // ★ Shift.date is HK midnight, exact match is precise
                 ...(actorVisibleClinicIds ? { clinicId: { in: actorVisibleClinicIds } } : {}),
               },
-              select: { id: true, date: true },
+              select: { id: true, date: true, status: true, startTime: true, endTime: true, clinicId: true },
             })
             if (victims.length !== replaceShiftIds.length) {
               throw new Error('replace target mismatch: shift ownership or scope check failed')
@@ -433,6 +436,18 @@ export async function POST(req: NextRequest) {
             await invalidateTimeBankFrom(employeeId, earliest, prisma)
           } catch (e) {
             console.error(`[timebank-cache] invalidate failed for replaced shifts`, e)
+          }
+
+          // ★ Notify employee if replaced shifts were CONFIRMED
+          if (victims.length > 0) {
+            const clinics = await prisma.clinic.findMany({ select: { id: true, name: true } })
+            const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
+            const confirmedItems = victims
+              .filter(v => v.status === 'CONFIRMED')
+              .map(v => shiftReplacedMsg(v, (cid) => clinicNameMap.get(cid) ?? ''))
+            if (confirmedItems.length > 0) {
+              await createNotification(buildNotification(employeeId, confirmedItems, created.id))
+            }
           }
         }
       }

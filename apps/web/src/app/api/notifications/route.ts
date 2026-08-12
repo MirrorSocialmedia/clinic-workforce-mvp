@@ -16,7 +16,8 @@ export async function GET(req: NextRequest) {
     where: { userId: session.userId },
   })
 
-  if (!employee) return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
+  // ★ 冇 Employee 記錄（純 admin 帳號）唔係錯誤 —— 回空清單
+  if (!employee) return NextResponse.json({ notifications: [], unreadCount: 0 })
 
   const where: any = { employeeId: employee.id }
 

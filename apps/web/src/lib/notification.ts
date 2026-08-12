@@ -1,29 +1,38 @@
-import { prisma } from './prisma'
+import { PrismaClient } from '@prisma/client'
 
-/**
- * Create a notification for an employee (uses a fresh client to avoid recursion)
- */
+// ★ 唔經 lib/prisma.ts —— 避開 audit extension 造成遞迴
+// 但要 singleton，唔可以每次 new（會打爆 connection pool）
+const g = globalThis as any
+const rawClient: PrismaClient = g.__notificationPrisma ?? new PrismaClient()
+if (process.env.NODE_ENV !== 'production') g.__notificationPrisma = rawClient
+
 export async function createNotification(data: {
-  employeeId: string
-  type: string
-  content: string
-  relatedEntity?: string | null
-  relatedId?: string | null
+  employeeId: string; type: string; content: string;
+  relatedEntity?: string | null; relatedId?: string | null; details?: string | null;
 }): Promise<void> {
   try {
-    const freshClient = new (require('@prisma/client').PrismaClient)()
-    await freshClient.notification.create({
-      data: {
-        employeeId: data.employeeId,
-        type: data.type,
-        content: data.content,
-        relatedEntity: data.relatedEntity ?? null,
-        relatedId: data.relatedId ?? null,
-      },
-    })
-    await freshClient.$disconnect()
+    await rawClient.notification.create({ data: { ...data } })
   } catch (err) {
     console.error('⚠️ Failed to create notification:', err)
+  }
+}
+
+// ★ 批次版：一條 SQL 插晒
+export async function createNotifications(rows: Array<{
+  employeeId: string; type: string; content: string;
+  relatedEntity?: string | null; relatedId?: string | null; details?: string | null;
+}>): Promise<void> {
+  if (rows.length === 0) return
+  try {
+    await rawClient.notification.createMany({
+      data: rows.map(r => ({
+        employeeId: r.employeeId, type: r.type, content: r.content,
+        relatedEntity: r.relatedEntity ?? null, relatedId: r.relatedId ?? null,
+        details: r.details ?? null,
+      })),
+    })
+  } catch (err) {
+    console.error('⚠️ Failed to create notifications (batch):', err)
   }
 }
 
@@ -32,11 +41,8 @@ export async function createNotification(data: {
  */
 export async function getUnreadCount(employeeId: string): Promise<number> {
   try {
-    return await prisma.notification.count({
-      where: {
-        employeeId,
-        isRead: false,
-      },
+    return await rawClient.notification.count({
+      where: { employeeId, isRead: false },
     })
   } catch {
     return 0
