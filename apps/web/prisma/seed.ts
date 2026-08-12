@@ -380,16 +380,27 @@ async function main() {
 
   // Create leave balances for test employees
   const currentYear = new Date().getFullYear()
+  // ★ Seed LeaveBalance — 每個員工 REST_DAY + ANNUAL_LEAVE
+  //   cleanup (line 23) 已刪除舊 LeaveBalance，唔使改。
   for (const emp of allEmps) {
-    // Annual leave balance (using system ANNUAL_LEAVE type)
+    await prisma.leaveBalance.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: restDayTypeId,
+        year: 2026,
+        entitled: 8,
+        used: 0,
+        remaining: 8,
+      },
+    })
     await prisma.leaveBalance.create({
       data: {
         employeeId: emp.id,
         leaveTypeId: annualLeaveTypeId,
-        year: currentYear,
-        entitled: 12,
+        year: 2026,
+        entitled: 7,
         used: 0,
-        remaining: 12,
+        remaining: 7,
       },
     })
   }

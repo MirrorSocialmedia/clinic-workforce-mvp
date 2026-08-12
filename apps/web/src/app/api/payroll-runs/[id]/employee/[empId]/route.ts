@@ -82,7 +82,7 @@ export async function GET(
       employeeId: params.empId, status: 'APPROVED',
       startDate: { lte: periodEnd }, endDate: { gte: periodStart },
     },
-    include: { leaveType: { select: { name: true, isPaid: true } } },
+    include: { leaveType: { select: { name: true, isPaid: true, systemKey: true } } },
   })
 
   const corrections = await prisma.punchCorrection.findMany({

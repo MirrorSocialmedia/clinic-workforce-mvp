@@ -356,8 +356,10 @@ export default function EmployeePayrollDetailPage() {
                   <th className="text-left p-2">日期</th>
                   <th className="text-left p-2">上班</th>
                   <th className="text-left p-2">下班</th>
+                  <th className="text-right p-2">午休</th>
                   <th className="text-right p-2">有效分鐘</th>
                   <th className="text-right p-2">金額</th>
+                  <th className="text-left p-2">備註</th>
                 </tr>
               </thead>
               <tbody>
@@ -379,8 +381,17 @@ export default function EmployeePayrollDetailPage() {
                       )}
                     </td>
                     <td className="p-2">{d.note ? '' : fmtTime24(d.out)}</td>
+                    <td className="text-right p-2">
+                      {d.lunchDeduct != null ? `${d.lunchDeduct} 分` : '—'}
+                    </td>
                     <td className="text-right p-2">{d.minutes} 分</td>
                     <td className="text-right p-2 font-medium">${d.amount.toFixed(2)}</td>
+                    <td className="text-xs p-2">
+                      {d.lunchOt ? <span style={{ color: '#059669' }}>少休 +{d.lunchOt} 分（已計薪）</span> : null}
+                      {d.lunchLate ? <span style={{ color: '#dc2626' }}>超休 −{d.lunchLate} 分</span> : null}
+                      {d.filledFromShift ? <span style={{ color: '#d97706' }}>⚠️ 缺下班卡，按更次收工計</span> : null}
+                      {d.noShift ? <span style={{ color: '#d97706' }}>⚠️ 冇排更次，全日照計薪</span> : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -400,6 +411,11 @@ export default function EmployeePayrollDetailPage() {
                     <div className="text-xs space-y-0.5">
                       <div>上班: {fmtTime24(d.in)}{d.clamped && <span className="text-muted-foreground ml-1">(早到, 從排班{fmtTime24(d.shiftStart)}起計)</span>}</div>
                       <div>下班: {fmtTime24(d.out)} · 有效: {d.minutes} 分</div>
+                      {d.lunchDeduct != null && <div>午休: {d.lunchDeduct} 分</div>}
+                      {d.lunchOt && <div style={{ color: '#059669' }}>少休 +{d.lunchOt} 分（已計薪）</div>}
+                      {d.lunchLate && <div style={{ color: '#dc2626' }}>超休 −{d.lunchLate} 分</div>}
+                      {d.filledFromShift && <div style={{ color: '#d97706' }}>⚠️ 缺下班卡，按更次收工計</div>}
+                      {d.noShift && <div style={{ color: '#d97706' }}>⚠️ 冇排更次，全日照計薪</div>}
                     </div>
                   )}
                 </div>
@@ -440,9 +456,9 @@ export default function EmployeePayrollDetailPage() {
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">已批假期</div>
               <div className="text-lg font-bold mt-1">{leaveDays}</div>
-              {leaves.length > 0 && leaves.length !== leaveDays && (
+              {leaves.length > 0 && (
                 <div className="text-xs text-muted-foreground mt-1">
-                  排班 {leaves.length} 天，實際消耗 {leaveDays} 天（{leaves.length - leaveDays} 天為週末休息，不計假期）
+                  {leaves.length} 筆申請
                 </div>
               )}
             </div>
@@ -812,6 +828,7 @@ export default function EmployeePayrollDetailPage() {
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">假期餘額</div>
+                <div style={{ fontSize: 9, color: '#9ca3af' }}>年假／休息日／OT 補假累積</div>
                 <div className="text-lg font-bold mt-1">{totalLeaveBalance.toFixed(1)} 天</div>
                 <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                   {/* ★ 用 != null 唔用 > 0 —— 餘額啱啱用晒（0）都要顯示，
@@ -1131,7 +1148,7 @@ export default function EmployeePayrollDetailPage() {
                     <td className="py-2 px-2 text-right">{l.days}</td>
                     <td className="py-2 px-2">
                       <span className={l.leaveType.isPaid ? 'text-green-600' : 'text-red-500'}>
-                        {l.leaveType.isPaid ? '有薪' : '無薪'}
+                        {(() => { const k = l.leaveType?.systemKey; if (k === 'SICK') return '4/5 薪（需連續 4 日）'; if (k === 'MATERNITY' || k === 'PATERNITY') return '4/5 薪'; return l.leaveType.isPaid ? '有薪' : '無薪'; })()}
                       </span>
                     </td>
                   </tr>
