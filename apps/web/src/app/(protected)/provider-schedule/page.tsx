@@ -127,18 +127,13 @@ export default function ProviderSchedulePage() {
   const leaveByDay = useMemo(() => {
     const m = new Map<string, any>()
     for (const l of leaves) {
-      const startStr = toHKDateStr(l.startDate)
-      const key = `${startStr}|${l.providerId}`
-      m.set(key, l)
-      // Multi-day: iterate from startDate to endDate
-      const start = new Date(l.startDate)
+      let cur = new Date(l.startDate)
       const end = new Date(l.endDate)
-      let cur = new Date(start)
       while (cur <= end) {
         const curStr = toHKDateStr(cur)
         const dk = `${curStr}|${l.providerId}`
         if (!m.has(dk)) m.set(dk, l)
-        cur = new Date(cur.getTime() + 86400000) // +1 day
+        cur = new Date(cur.getTime() + 86400000)
       }
     }
     return m
