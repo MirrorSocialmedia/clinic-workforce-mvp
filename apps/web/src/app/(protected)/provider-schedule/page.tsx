@@ -6,7 +6,7 @@ import { todayHK, addDays, fmtTime, hkDayOfWeek, toHKDateStr } from '@/lib/hk-da
 import { hasPermission } from '@/lib/permissions'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X, CalendarDays } from 'lucide-react'
 
 const DAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -32,6 +32,15 @@ export default function ProviderSchedulePage() {
   // Staff shifts for employee summary row
   const [staffShifts, setStaffShifts] = useState<any[]>([])
   const [staffError, setStaffError] = useState(false)
+
+  // ★ Provider filter: show all or filter by clinic binding
+  const [showAllProviders, setShowAllProviders] = useState(false)
+
+  // ★ Provider leave state
+  const [leaves, setLeaves] = useState<any[]>([])
+  const [leaveModalOpen, setLeaveModalOpen] = useState(false)
+  const [leaveForm, setLeaveForm] = useState({ providerId: '', startDate: '', endDate: '', note: '' })
+  const [savingLeave, setSavingLeave] = useState(false)
 
   const canSchedule = userRole
     ? hasPermission(userRole, 'provider_schedule', grant, deny)
@@ -103,6 +112,38 @@ export default function ProviderSchedulePage() {
     return m
   }, [staffShifts, selectedClinicId])
 
+  // ★ visibleProviders: filtered by clinic binding (未綁店嘅照顯示)
+  const visibleProviders = useMemo(() =>
+    providers.filter(p => {
+      if (!p.isActive) return false
+      if (showAllProviders) return true
+      if (!p.clinicIds?.length) return true // ★ IRON RULE: 未綁店嘅照顯示
+      return p.clinicIds.includes(selectedClinicId)
+    }),
+    [providers, selectedClinicId, showAllProviders]
+  )
+
+  // ★ leaveByDay: Map<"date|providerId", leave>
+  const leaveByDay = useMemo(() => {
+    const m = new Map<string, any>()
+    for (const l of leaves) {
+      const startStr = toHKDateStr(l.startDate)
+      const key = `${startStr}|${l.providerId}`
+      m.set(key, l)
+      // Multi-day: iterate from startDate to endDate
+      const start = new Date(l.startDate)
+      const end = new Date(l.endDate)
+      let cur = new Date(start)
+      while (cur < end) {
+        const curStr = toHKDateStr(cur.toISOString())
+        const dk = `${curStr}|${l.providerId}`
+        if (!m.has(dk)) m.set(dk, l)
+        cur = new Date(cur.getTime() + 86400000) // +1 day
+      }
+    }
+    return m
+  }, [leaves])
+
   // Load providers, clinics, and user role
   useEffect(() => {
     Promise.all([
@@ -129,6 +170,19 @@ export default function ProviderSchedulePage() {
   useEffect(() => {
     if (userRole && userRole !== 'KIOSK') loadStaffShifts()
   }, [weekStart, weekEnd, selectedClinicId, userRole])
+
+  // ★ Load provider leaves for the week
+  useEffect(() => {
+    if (canSchedule) loadLeaves()
+  }, [weekStart, weekEnd, canSchedule])
+
+  async function loadLeaves() {
+    try {
+      const params = new URLSearchParams({ startDate: weekStart, endDate: weekEnd })
+      const res = await apiFetch<any>(`/api/provider-leaves?${params}`)
+      setLeaves(res.leaves || [])
+    } catch (e) { console.error('[provider-schedule] load leaves failed', e) }
+  }
 
   async function loadShifts() {
     try {
@@ -267,6 +321,34 @@ export default function ProviderSchedulePage() {
     if (confirm('刪除呢個當值？')) handleDeleteShift(shift.id)
   }
 
+  // ★ Leave management
+  async function handleSaveLeave() {
+    if (!leaveForm.providerId || !leaveForm.startDate || !leaveForm.endDate) {
+      alert('醫生、開始日、結束日必填')
+      return
+    }
+    setSavingLeave(true)
+    try {
+      await apiFetch<any>('/api/provider-leaves', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(leaveForm),
+      })
+      alert('休假已新增')
+      setLeaveModalOpen(false)
+      await loadLeaves()
+    } catch (e: any) { alert(e?.message || '儲存失敗') }
+    finally { setSavingLeave(false) }
+  }
+
+  async function handleDeleteLeave(leaveId: string) {
+    if (!confirm('確定刪除呢個休假？')) return
+    try {
+      await apiFetch<any>(`/api/provider-leaves/${leaveId}`, { method: 'DELETE' })
+      await loadLeaves()
+    } catch (e: any) { alert(e?.message || '刪除失敗') }
+  }
+
   function prevWeek() { setWeekStart(addDays(weekStart, -7)) }
   function nextWeek() { setWeekStart(addDays(weekStart, 7)) }
   function goToday() { const t = todayHK(); setWeekStart(addDays(t, -hkDayOfWeek(t))) }
@@ -276,9 +358,21 @@ export default function ProviderSchedulePage() {
   return (
     <div className="space-y-4 p-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-lg font-bold">醫生當值表</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {canSchedule && (
+            <button onClick={() => { setLeaveModalOpen(true); setLeaveForm({ providerId: '', startDate: '', endDate: '', note: '' }) }}
+              className="text-xs px-2 py-1 border rounded hover:bg-muted flex items-center gap-1">
+              <CalendarDays className="w-3 h-3" /> 醫生休假
+            </button>
+          )}
+          {visibleClinics.length > 1 && !showAllProviders && (
+            <label className="flex items-center gap-1 text-xs cursor-pointer">
+              <input type="checkbox" checked={showAllProviders} onChange={e => setShowAllProviders(e.target.checked)} />
+              顯示全部醫生
+            </label>
+          )}
           {visibleClinics.length === 1
             ? <span className="text-sm font-medium">{visibleClinics[0].name}</span>
             : <select value={selectedClinicId || ''} onChange={e => setSelectedClinicId(e.target.value)} className="border rounded px-2 py-1 text-sm">
@@ -316,13 +410,14 @@ export default function ProviderSchedulePage() {
           </thead>
           <tbody>
             {/* Provider rows */}
-            {providers.map(p => (
+            {visibleProviders.map(p => (
               <tr key={p.id} className="border-t">
                 <td className="sticky left-0 z-10 bg-background p-2 font-medium" style={{ position: 'sticky', left: 0, borderRight: '2px solid #e5e7eb' }}>
                   <span style={{ color: p.color || '#888' }}>●</span> {p.name}
                 </td>
                 {weekDays.map(d => {
                   const dayShifts = shiftByDay.get(`${d}|${p.id}`)
+                  const leave = leaveByDay.get(`${d}|${p.id}`)
                   return (
                     <td key={d} className="p-1 text-center border-l"
                       onClick={(e) => handleCellClick(e, d, p.id)}
@@ -330,6 +425,11 @@ export default function ProviderSchedulePage() {
                       onContextMenu={(e) => dayShifts?.[0] && handleCellContextMenu(e, dayShifts[0])}
                       style={{ cursor: 'pointer', minHeight: 48 }}
                     >
+                      {leave && (
+                        <div className="bg-amber-100 text-amber-700 rounded px-1 text-[10px] mb-0.5">
+                          休假{leave.note ? `·${leave.note}` : ''}
+                        </div>
+                      )}
                       {dayShifts && dayShifts.length > 0 ? (
                         <div>
                           {dayShifts.map(sh => (
@@ -354,6 +454,9 @@ export default function ProviderSchedulePage() {
                       ) : (
                         <div className="h-12 flex items-center justify-center text-muted-foreground/30 text-[10px]">+</div>
                       )}
+                      {leave && dayShifts && dayShifts.length > 0 && (
+                        <div className="text-[9px] text-amber-600">⚠ 休假日有當值</div>
+                      )}
                     </td>
                   )
                 })}
@@ -373,20 +476,15 @@ export default function ProviderSchedulePage() {
                     : (() => {
                         const list = staffByDate.get(d) ?? []
                         if (list.length === 0) return <div className="text-[10px] text-muted-foreground/30 text-center">—</div>
-                        const shown = list.slice(0, 4)
-                        const rest = list.length - shown.length
                         return (
                           <div className="flex flex-col gap-0.5">
-                            {shown.map((s, i) => (
+                            {list.map((s, i) => (
                               <div key={`${s.id}-${i}`} className="text-[10px] leading-tight whitespace-nowrap">
                                 <span className={s.transfer ? 'text-amber-700' : ''}>{s.name}</span>
                                 {s.transfer && <span className="ml-0.5 text-amber-600">·調</span>}
                                 <span className="text-muted-foreground ml-1">{s.start}–{s.end}</span>
                               </div>
                             ))}
-                            {rest > 0 && (
-                              <div className="text-[10px] text-muted-foreground" title={list.slice(4).map(x => x.name).join('、')}>+{rest} 人</div>
-                            )}
                           </div>
                         )
                       })()}
@@ -485,6 +583,52 @@ export default function ProviderSchedulePage() {
               <button onClick={() => setModalOpen(false)} className="px-3 py-1.5 text-sm border rounded hover:bg-muted">取消</button>
               <button onClick={handleSaveModal} disabled={saving} className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50">
                 {saving ? '儲存中...' : '儲存'}
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ★ Leave Modal */}
+      {leaveModalOpen && canSchedule && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setLeaveModalOpen(false)}>
+          <Card className="w-full max-w-md p-4 m-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold">新增醫生休假</h3>
+              <button onClick={() => setLeaveModalOpen(false)}><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">醫生</label>
+                <select value={leaveForm.providerId} onChange={e => setLeaveForm({ ...leaveForm, providerId: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-sm">
+                  <option value="">選擇醫生...</option>
+                  {visibleProviders.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-muted-foreground">開始日</label>
+                  <input type="date" value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })}
+                    className="w-full border rounded px-2 py-1 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">結束日</label>
+                  <input type="date" value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })}
+                    className="w-full border rounded px-2 py-1 text-sm" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">備註（可選）</label>
+                <input value={leaveForm.note} onChange={e => setLeaveForm({ ...leaveForm, note: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-sm" placeholder="病假 / 外出等" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setLeaveModalOpen(false)} className="px-3 py-1.5 text-sm border rounded hover:bg-muted">取消</button>
+              <button onClick={handleSaveLeave} disabled={savingLeave}
+                className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50">
+                {savingLeave ? '儲存中...' : '儲存'}
               </button>
             </div>
           </Card>
