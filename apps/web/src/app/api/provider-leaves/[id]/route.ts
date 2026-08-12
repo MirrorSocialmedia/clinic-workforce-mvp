@@ -20,8 +20,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: '休假記錄不存在' }, { status: 404 })
     }
 
-    // ★ Scope guard: OWNER can delete any; others limited by clinic scope
-    if (auth.session!.role !== 'OWNER') {
+    if (auth.session!.role !== 'OWNER') { // ROLE-OK: OWNER 全權刪除；其他角色落 scope 檢查，唔係權限 gate
       const scope = await resolveProviderScheduleScope(auth.session!)
       const bound = leave.provider.clinics.map(c => c.clinicId)
       if (scope !== null && bound.length > 0 && !bound.some(c => scope.includes(c))) {
