@@ -193,9 +193,19 @@ export default function PayrollListPage() {
             <Link href="/payroll/reports/exceptions" className="px-4 py-2 rounded-md border bg-white hover:bg-slate-50 text-sm font-semibold transition-colors inline-block">
               📋 考勤異常報表
             </Link>
-            <Link href="/payroll/new" className="px-4 py-2 rounded-md bg-brand text-white text-sm font-semibold hover:bg-brand-dark transition-colors inline-block" style={{ textDecoration: 'none' }}>
-              + 生成計糧
-            </Link>
+            <div className="relative inline-block">
+              <button className="px-4 py-2 rounded-md bg-brand text-white text-sm font-semibold hover:bg-brand-dark transition-colors inline-block">
+                + 生成計糧 ▾
+              </button>
+              <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border z-10 py-1">
+                <Link href="/payroll/new" className="block px-4 py-2 text-sm hover:bg-slate-100" style={{ textDecoration: 'none', color: 'inherit' }}>
+                  員工計糧
+                </Link>
+                <div className="px-4 py-2 text-sm text-muted-foreground" title="待 Apricot 帳單接入（Phase 3）">
+                  醫生拆帳 ⓘ <span className="text-xs">等 Apricot 帳單接入</span>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

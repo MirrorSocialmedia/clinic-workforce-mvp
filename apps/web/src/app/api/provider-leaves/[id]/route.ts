@@ -15,6 +15,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: '休假記錄不存在' }, { status: 404 })
     }
 
+    // ★ Ownership guard: only creator can delete (ownership-ok)
+    if (leave.createdBy !== auth.session!.userId) {
+      return NextResponse.json({ error: '無權刪除（非建立者）' }, { status: 403 })
+    }
+
     await prisma.providerLeave.delete({ where: { id } })
 
     await prisma.auditLog.create({

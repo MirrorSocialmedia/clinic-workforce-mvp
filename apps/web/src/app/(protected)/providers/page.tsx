@@ -4,7 +4,8 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { Plus, Edit2, EyeOff, Check, X } from 'lucide-react'
+import { Plus, Edit2, EyeOff, Check, X, Wallet } from 'lucide-react'
+import { hasPermission } from '@/lib/permissions'
 
 interface Clinic { id: string; name: string; shortName?: string | null }
 
@@ -16,7 +17,61 @@ export default function ProvidersPage() {
   const [loading, setLoading] = useState(true)
   const [showInactive, setShowInactive] = useState(false)
 
-  useEffect(() => { loadProviders(); loadClinics() }, [showInactive])
+  // ★ Commission panel state
+  const [commissionPanel, setCommissionPanel] = useState<string | null>(null)
+  const [commissions, setCommissions] = useState<any[]>([])
+  const [commissionForm, setCommissionForm] = useState({ percent: '', basis: 'NET', minGuarantee: '', effectiveFrom: '', effectiveTo: '', note: '', clinicId: '' })
+  const [savingCommission, setSavingCommission] = useState(false)
+  const [userRole, setUserRole] = useState('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
+  const canPayout = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
+
+  useEffect(() => { loadProviders(); loadClinics(); loadMe() }, [showInactive])
+
+  async function loadMe() {
+    try {
+      const res = await apiFetch<any>('/api/me')
+      setUserRole(res.user?.role || '')
+      setGrant(res.user?.grant || [])
+      setDeny(res.user?.deny || [])
+    } catch {}
+  }
+
+  async function loadCommissions(providerId: string) {
+    try {
+      const res = await apiFetch<any>(`/api/provider-commissions?providerId=${providerId}`)
+      setCommissions(res.commissions || [])
+    } catch {}
+  }
+
+  async function saveCommission() {
+    if (!commissionForm.percent || !commissionForm.effectiveFrom) {
+      alert('比例和生效日期必填')
+      return
+    }
+    setSavingCommission(true)
+    try {
+      await apiFetch<any>('/api/provider-commissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerId: commissionPanel,
+          percent: parseFloat(commissionForm.percent),
+          basis: commissionForm.basis,
+          minGuarantee: commissionForm.minGuarantee ? parseFloat(commissionForm.minGuarantee) : undefined,
+          effectiveFrom: commissionForm.effectiveFrom,
+          effectiveTo: commissionForm.effectiveTo || undefined,
+          note: commissionForm.note || undefined,
+          clinicId: commissionForm.clinicId || undefined,
+        }),
+      })
+      alert('拆帳設定已新增')
+      setCommissionForm({ percent: '', basis: 'NET', minGuarantee: '', effectiveFrom: '', effectiveTo: '', note: '', clinicId: '' })
+      if (commissionPanel) loadCommissions(commissionPanel)
+    } catch (e: any) { alert(e?.message || '儲存失敗') }
+    finally { setSavingCommission(false) }
+  }
 
   async function loadProviders() {
     try {
@@ -179,6 +234,7 @@ export default function ProvidersPage() {
                 <td className="p-3">{p.isActive ? '✅ 活躍' : '⛔ 停用'}</td>
                 <td className="p-3 text-right">
                   <Button size="sm" variant="ghost" onClick={() => startEdit(p)} className="mr-1"><Edit2 className="w-4 h-4" /></Button>
+                  {canPayout && <Button size="sm" variant="ghost" onClick={() => { setCommissionPanel(p.id); loadCommissions(p.id) }} className="mr-1"><Wallet className="w-4 h-4" /></Button>}
                   {p.isActive && <Button size="sm" variant="ghost" onClick={() => remove(p.id)}><EyeOff className="w-4 h-4 text-red-500" /></Button>}
                 </td>
               </tr>
@@ -189,6 +245,83 @@ export default function ProvidersPage() {
           </tbody>
         </table>
       </Card>
+
+      {/* ★ Commission Panel (slide-in) */}
+      {canPayout && commissionPanel && (
+        <Card className="mt-4 p-4" style={{ border: '2px solid #fbbf24' }}>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-base font-bold">拆帳設定 — {providers.find(p => p.id === commissionPanel)?.name}</h3>
+            <button onClick={() => setCommissionPanel(null)}><X className="w-4 h-4" /></button>
+          </div>
+
+          {/* History list */}
+          <div className="mb-4">
+            <div className="text-xs font-medium mb-2">歷史記錄（append-only，新 % 開新一條）</div>
+            {commissions.length === 0 ? (
+              <div className="text-xs text-muted-foreground">暫無拆帳設定</div>
+            ) : (
+              <div className="space-y-1">
+                {commissions.map(c => (
+                  <div key={c.id} className="text-xs p-2 rounded bg-muted/30">
+                    <span className="font-medium">{c.percent}% {c.basis}</span>
+                    {c.minGuarantee && <span className="text-muted-foreground ml-2">保底 ${c.minGuarantee}</span>}
+                    <span className="text-muted-foreground ml-2">生效 {new Date(c.effectiveFrom).toISOString().slice(0, 10)}</span>
+                    {c.effectiveTo && <span className="text-muted-foreground">– {new Date(c.effectiveTo).toISOString().slice(0, 10)}</span>}
+                    {c.note && <span className="ml-2 text-amber-700">·{c.note}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add new */}
+          <div className="border-t pt-3">
+            <div className="text-xs font-medium mb-2">新增拆帳設定</div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground">比例 (%)</label>
+                <input type="number" step="0.01" value={commissionForm.percent} onChange={e => setCommissionForm({ ...commissionForm, percent: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-xs" placeholder="40" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">計費基準</label>
+                <select value={commissionForm.basis} onChange={e => setCommissionForm({ ...commissionForm, basis: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-xs">
+                  <option value="GROSS">總營業額 (GROSS)</option>
+                  <option value="NET">淨收入 (NET)</option>
+                  <option value="CONSULT_ONLY">診金 Only</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">保底 (可選)</label>
+                <input type="number" step="0.01" value={commissionForm.minGuarantee} onChange={e => setCommissionForm({ ...commissionForm, minGuarantee: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-xs" placeholder="HK$" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">生效日期 *</label>
+                <input type="date" value={commissionForm.effectiveFrom} onChange={e => setCommissionForm({ ...commissionForm, effectiveFrom: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">到期日（可選）</label>
+                <input type="date" value={commissionForm.effectiveTo} onChange={e => setCommissionForm({ ...commissionForm, effectiveTo: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">備註</label>
+                <input value={commissionForm.note} onChange={e => setCommissionForm({ ...commissionForm, note: e.target.value })}
+                  className="w-full border rounded px-2 py-1 text-xs" placeholder="可選" />
+              </div>
+            </div>
+            <div className="flex justify-end mt-2">
+              <button onClick={saveCommission} disabled={savingCommission}
+                className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50">
+                {savingCommission ? '儲存中...' : '新增'}
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
     </div>
   )
 }
