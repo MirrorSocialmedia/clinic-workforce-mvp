@@ -3433,7 +3433,7 @@ function getShiftCode(shift: Shift): string {
           if (e.key === 'Escape') setEditingNote(null)
         }}
         style={{ width: '100%', fontSize: fs, textAlign: 'center',
-                 border: '1.5px solid #378ADD', borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '2px 3px' : '3px 5px', outline: 'none' }}
+                 border: '1.5px solid #378ADD', borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '3px 3px' : '5px 5px', minHeight: opts.compact ? 32 : 40, boxSizing: 'border-box', outline: 'none' }}
       />
     ) : (
       <div onClick={() => canManage && setEditingNote(dateStr)}
@@ -3442,10 +3442,16 @@ function getShiftCode(shift: Shift): string {
           fontSize: fs, textAlign: 'center',
           color: note ? '#374151' : (opts.compact ? '#e5e7eb' : '#d1d5db'),
           background: note ? '#f9fafb' : 'transparent',
-          borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '2px 3px' : '3px 5px',
-          minHeight: opts.compact ? 16 : 20,
+          borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '3px 3px' : '5px 5px',
+          minHeight: opts.compact ? 32 : 40,
           cursor: canManage ? 'pointer' : 'default',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          whiteSpace: 'normal',
+          wordBreak: 'break-all',
+          display: '-webkit-box',
+          WebkitBoxOrient: 'vertical',
+          WebkitLineClamp: 2,
+          lineHeight: 1.3,
           ...(opts.compact ? {} : { border: note ? '1px solid #e5e7eb' : '1px dashed #e5e7eb' }),
         }}
       >{note || (canManage ? (opts.compact ? '·' : '＋') : '')}</div>
