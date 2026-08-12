@@ -134,8 +134,8 @@ export default function ProviderSchedulePage() {
       const start = new Date(l.startDate)
       const end = new Date(l.endDate)
       let cur = new Date(start)
-      while (cur < end) {
-        const curStr = toHKDateStr(cur.toISOString())
+      while (cur <= end) {
+        const curStr = toHKDateStr(cur)
         const dk = `${curStr}|${l.providerId}`
         if (!m.has(dk)) m.set(dk, l)
         cur = new Date(cur.getTime() + 86400000) // +1 day

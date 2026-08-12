@@ -27,17 +27,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           apricotId: apricotId || null,
           companyId: companyId || null,
           sortOrder: sortOrder ?? 0,
-          isActive: isActive !== undefined ? isActive : true,
+          ...(isActive !== undefined && { isActive }),
         },
       })
 
-      // Set semantics: delete old bindings, create new ones
-      await tx.providerClinic.deleteMany({ where: { providerId: id } })
-      if (Array.isArray(clinicIds) && clinicIds.length) {
-        await tx.providerClinic.createMany({
-          data: clinicIds.map((cid: string) => ({ providerId: id, clinicId: cid })),
-          skipDuplicates: true,
-        })
+      // Set semantics: only update clinic bindings when clinicIds is explicitly provided
+      if (clinicIds !== undefined) {
+        await tx.providerClinic.deleteMany({ where: { providerId: id } })
+        if (Array.isArray(clinicIds) && clinicIds.length) {
+          await tx.providerClinic.createMany({
+            data: clinicIds.map((cid: string) => ({ providerId: id, clinicId: cid })),
+            skipDuplicates: true,
+          })
+        }
       }
 
       return p

@@ -3,14 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-
-// ★ HK date helpers — midnight
-function hkDateStart(dateStr: string): Date {
-  return new Date(`${dateStr}T00:00:00+08:00`)
-}
-function hkDateEnd(dateStr: string): Date {
-  return new Date(`${dateStr}T23:59:59+08:00`)
-}
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { resolveProviderScheduleScope } from '@/lib/provider-scope'
 
 export async function GET(req: NextRequest) {
   const auth = await requirePerm(req, 'provider_schedule')
@@ -23,11 +17,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'startDate & endDate required' }, { status: 400 })
   }
 
+  // ★ Scope guard: filter by clinic scope for non-OWNER
+  const scope = await resolveProviderScheduleScope(auth.session!)
+  const where: any = {
+    startDate: { lte: hkDateEnd(endDate) },
+    endDate: { gte: hkDateStart(startDate) },
+  }
+  if (scope !== null) {
+    where.provider = {
+      OR: [
+        { clinics: { some: { clinicId: { in: scope } } } },
+        { clinics: { none: {} } }, // ★ 未綁店的照顯示
+      ],
+    }
+  }
+
   const leaves = await prisma.providerLeave.findMany({
-    where: {
-      startDate: { lte: hkDateEnd(endDate) },
-      endDate: { gte: hkDateStart(startDate) },
-    },
+    where,
     orderBy: [{ startDate: 'asc' }, { providerId: 'asc' }],
     include: { provider: { select: { id: true, name: true, shortName: true } } },
   })

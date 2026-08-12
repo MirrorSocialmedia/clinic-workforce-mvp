@@ -2,6 +2,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { resolveProviderScheduleScope } from '@/lib/provider-scope'
+import { toHKDateStr } from '@/lib/hk-date'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePerm(req, 'provider_schedule')
@@ -10,14 +12,21 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params
 
   try {
-    const leave = await prisma.providerLeave.findUnique({ where: { id } })
+    const leave = await prisma.providerLeave.findUnique({
+      where: { id },
+      include: { provider: { select: { name: true, clinics: { select: { clinicId: true } } } } },
+    })
     if (!leave) {
       return NextResponse.json({ error: '休假記錄不存在' }, { status: 404 })
     }
 
-    // ★ Ownership guard: only creator can delete (ownership-ok)
-    if (leave.createdBy !== auth.session!.userId) {
-      return NextResponse.json({ error: '無權刪除（非建立者）' }, { status: 403 })
+    // ★ Scope guard: OWNER can delete any; others limited by clinic scope
+    if (auth.session!.role !== 'OWNER') {
+      const scope = await resolveProviderScheduleScope(auth.session!)
+      const bound = leave.provider.clinics.map(c => c.clinicId)
+      if (scope !== null && bound.length > 0 && !bound.some(c => scope.includes(c))) {
+        return NextResponse.json({ error: '無權刪除此醫生的休假' }, { status: 403 })
+      }
     }
 
     await prisma.providerLeave.delete({ where: { id } })
@@ -25,10 +34,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     await prisma.auditLog.create({
       data: {
         actorId: auth.session!.userId,
-        action: 'DELETE',
+        action: 'PROVIDER_LEAVE_DELETE',
         entity: 'ProviderLeave',
         entityId: id,
-        notes: `刪除醫生休假：${id}`,
+        notes: `刪除醫生休假：${leave.provider.name} ${toHKDateStr(leave.startDate)}–${toHKDateStr(leave.endDate)}${leave.note ? `（${leave.note}）` : ''}`,
+        beforeJson: JSON.stringify(leave),
       },
     }).catch(e => console.error('[provider-leaves] audit failed', e))
 

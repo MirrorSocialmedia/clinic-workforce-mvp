@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   const commissions = await prisma.providerCommission.findMany({
     where,
-    orderBy: { effectiveFrom: 'desc' },
+    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
     include: { provider: { select: { id: true, name: true } } },
   })
 
