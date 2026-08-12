@@ -12,13 +12,18 @@ export async function GET(req: NextRequest) {
   const providers = await prisma.provider.findMany({
     where: includeInactive ? {} : { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-    select: {
-      id: true, name: true, shortName: true, phone: true,
-      color: true, apricotId: true, companyId: true,
-      isActive: true, sortOrder: true, createdAt: true, updatedAt: true,
+    include: {
+      clinics: { select: { clinicId: true } },
     },
   })
-  return jsonNoStore({ providers })
+  // Map to flat clinicIds for frontend
+  const result = providers.map(p => ({
+    ...p,
+    clinicIds: p.clinics.map(c => c.clinicId),
+  }))
+  // Remove nested clinics from output
+  const output = result.map(({ clinics, ...rest }) => rest)
+  return jsonNoStore({ providers: output })
 }
 
 export async function POST(req: NextRequest) {
@@ -26,23 +31,34 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
-  const { name, shortName, phone, color, apricotId, companyId, sortOrder } = body
+  const { name, shortName, phone, color, apricotId, companyId, sortOrder, clinicIds } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
   }
 
   try {
-    const provider = await prisma.provider.create({
-      data: {
-        name: name.trim(),
-        shortName: shortName?.trim() || null,
-        phone: phone?.trim() || null,
-        color,
-        apricotId: apricotId || null,
-        companyId: companyId || null,
-        sortOrder: sortOrder ?? 0,
-      },
+    const provider = await prisma.$transaction(async (tx) => {
+      const p = await tx.provider.create({
+        data: {
+          name: name.trim(),
+          shortName: shortName?.trim() || null,
+          phone: phone?.trim() || null,
+          color,
+          apricotId: apricotId || null,
+          companyId: companyId || null,
+          sortOrder: sortOrder ?? 0,
+        },
+      })
+
+      if (Array.isArray(clinicIds) && clinicIds.length) {
+        await tx.providerClinic.createMany({
+          data: clinicIds.map((cid: string) => ({ providerId: p.id, clinicId: cid })),
+          skipDuplicates: true,
+        })
+      }
+
+      return p
     })
 
     await prisma.auditLog.create({
@@ -56,7 +72,12 @@ export async function POST(req: NextRequest) {
       },
     }).catch(e => console.error('[providers] audit failed', e))
 
-    return jsonNoStore({ provider })
+    // Return with clinicIds
+    const withClinics = await prisma.provider.findUnique({
+      where: { id: provider.id },
+      include: { clinics: { select: { clinicId: true } } },
+    })
+    return jsonNoStore({ provider: { ...withClinics!, clinicIds: withClinics!.clinics.map(c => c.clinicId) } })
   } catch (e: any) {
     console.error('[providers] POST failed', e)
     if (e?.code === 'P2002') {

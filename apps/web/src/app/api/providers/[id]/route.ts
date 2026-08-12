@@ -9,25 +9,38 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params
   const body = await req.json().catch(() => ({} as any))
-  const { name, shortName, phone, color, apricotId, companyId, sortOrder, isActive } = body
+  const { name, shortName, phone, color, apricotId, companyId, sortOrder, isActive, clinicIds } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
   }
 
   try {
-    const provider = await prisma.provider.update({
-      where: { id },
-      data: {
-        name: name.trim(),
-        shortName: shortName?.trim() || null,
-        phone: phone?.trim() || null,
-        color,
-        apricotId: apricotId || null,
-        companyId: companyId || null,
-        sortOrder: sortOrder ?? 0,
-        isActive: isActive !== undefined ? isActive : true,
-      },
+    const provider = await prisma.$transaction(async (tx) => {
+      const p = await tx.provider.update({
+        where: { id },
+        data: {
+          name: name.trim(),
+          shortName: shortName?.trim() || null,
+          phone: phone?.trim() || null,
+          color,
+          apricotId: apricotId || null,
+          companyId: companyId || null,
+          sortOrder: sortOrder ?? 0,
+          isActive: isActive !== undefined ? isActive : true,
+        },
+      })
+
+      // Set semantics: delete old bindings, create new ones
+      await tx.providerClinic.deleteMany({ where: { providerId: id } })
+      if (Array.isArray(clinicIds) && clinicIds.length) {
+        await tx.providerClinic.createMany({
+          data: clinicIds.map((cid: string) => ({ providerId: id, clinicId: cid })),
+          skipDuplicates: true,
+        })
+      }
+
+      return p
     })
 
     await prisma.auditLog.create({
@@ -41,7 +54,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     }).catch(e => console.error('[providers] audit failed', e))
 
-    return NextResponse.json({ provider })
+    // Return with clinicIds
+    const withClinics = await prisma.provider.findUnique({
+      where: { id },
+      include: { clinics: { select: { clinicId: true } } },
+    })
+    return NextResponse.json({ provider: { ...withClinics!, clinicIds: withClinics!.clinics.map(c => c.clinicId) } })
   } catch (e: any) {
     console.error('[providers] PUT failed', e)
     if (e?.code === 'P2025') return NextResponse.json({ error: '醫生不存在' }, { status: 404 })

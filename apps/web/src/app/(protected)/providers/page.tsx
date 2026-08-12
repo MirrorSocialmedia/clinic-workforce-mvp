@@ -6,14 +6,17 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Plus, Edit2, EyeOff, Check, X } from 'lucide-react'
 
+interface Clinic { id: string; name: string; shortName?: string | null }
+
 export default function ProvidersPage() {
   const [providers, setProviders] = useState<any[]>([])
+  const [clinics, setClinics] = useState<Clinic[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const [form, setForm] = useState<any>({})
   const [loading, setLoading] = useState(true)
   const [showInactive, setShowInactive] = useState(false)
 
-  useEffect(() => { loadProviders() }, [showInactive])
+  useEffect(() => { loadProviders(); loadClinics() }, [showInactive])
 
   async function loadProviders() {
     try {
@@ -22,14 +25,28 @@ export default function ProvidersPage() {
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }
 
+  async function loadClinics() {
+    try {
+      const res = await apiFetch<any>('/api/clinics')
+      setClinics(res.clinics || [])
+    } catch (e) { console.error(e) }
+  }
+
   function startAdd() {
     setEditing('__new__')
-    setForm({ name: '', shortName: '', phone: '', apricotId: '', color: '', isActive: true, sortOrder: 0 })
+    setForm({ name: '', shortName: '', phone: '', apricotId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [] })
   }
 
   function startEdit(p: any) {
     setEditing(p.id)
-    setForm({ ...p })
+    setForm({ ...p, clinicIds: p.clinicIds || [] })
+  }
+
+  function toggleClinic(cid: string) {
+    const ids = form.clinicIds?.includes(cid)
+      ? (form.clinicIds || []).filter((id: string) => id !== cid)
+      : [...(form.clinicIds || []), cid]
+    setForm({ ...form, clinicIds: ids })
   }
 
   async function save() {
@@ -80,6 +97,7 @@ export default function ProvidersPage() {
               <th className="text-left p-3">Apricot ID</th>
               <th className="text-left p-3">顏色</th>
               <th className="text-left p-3">排序</th>
+              <th className="text-left p-3">應診診所</th>
               <th className="text-left p-3">狀態</th>
               <th className="text-right p-3">操作</th>
             </tr>
@@ -93,6 +111,16 @@ export default function ProvidersPage() {
                 <td className="p-2"><Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="Apricot 醫生 ID（可留空）" /></td>
                 <td className="p-2"><Input type="color" value={form.color || '#888888'} onChange={e => setForm({ ...form, color: e.target.value })} /></td>
                 <td className="p-2"><Input type="number" value={form.sortOrder ?? 0} onChange={e => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} className="w-20" /></td>
+                <td className="p-2">
+                  <div className="flex flex-wrap gap-1">
+                    {clinics.map(c => (
+                      <label key={c.id} className="flex items-center gap-0.5 text-xs cursor-pointer">
+                        <input type="checkbox" checked={(form.clinicIds || []).includes(c.id)} onChange={() => toggleClinic(c.id)} />
+                        {c.shortName || c.name}
+                      </label>
+                    ))}
+                  </div>
+                </td>
                 <td className="p-2"><input type="checkbox" checked={form.isActive ?? true} onChange={e => setForm({ ...form, isActive: e.target.checked })} /></td>
                 <td className="p-2 text-right">
                   <Button size="sm" onClick={save} className="mr-1"><Check className="w-4 h-4" /></Button>
@@ -108,6 +136,16 @@ export default function ProvidersPage() {
                 <td className="p-2"><Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="Apricot 醫生 ID（可留空）" /></td>
                 <td className="p-2"><Input type="color" value={form.color || '#888888'} onChange={e => setForm({ ...form, color: e.target.value })} /></td>
                 <td className="p-2"><Input type="number" value={form.sortOrder ?? 0} onChange={e => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} className="w-20" /></td>
+                <td className="p-2">
+                  <div className="flex flex-wrap gap-1">
+                    {clinics.map(c => (
+                      <label key={c.id} className="flex items-center gap-0.5 text-xs cursor-pointer">
+                        <input type="checkbox" checked={(form.clinicIds || []).includes(c.id)} onChange={() => toggleClinic(c.id)} />
+                        {c.shortName || c.name}
+                      </label>
+                    ))}
+                  </div>
+                </td>
                 <td className="p-2"><input type="checkbox" checked={form.isActive ?? true} onChange={e => setForm({ ...form, isActive: e.target.checked })} /></td>
                 <td className="p-2 text-right">
                   <Button size="sm" onClick={save} className="mr-1"><Check className="w-4 h-4" /></Button>
@@ -128,6 +166,16 @@ export default function ProvidersPage() {
                   {p.color ? <span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: 4, background: p.color, border: '1px solid #ccc' }} /> : '—'}
                 </td>
                 <td className="p-3">{p.sortOrder ?? 0}</td>
+                <td className="p-3">
+                  {(p.clinicIds || []).length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {(p.clinicIds || []).map((cid: string) => {
+                        const clinic = clinics.find(c => c.id === cid)
+                        return <span key={cid} className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">{clinic?.shortName || clinic?.name || cid}</span>
+                      })}
+                    </div>
+                  ) : <span className="text-xs text-muted-foreground">—</span>}
+                </td>
                 <td className="p-3">{p.isActive ? '✅ 活躍' : '⛔ 停用'}</td>
                 <td className="p-3 text-right">
                   <Button size="sm" variant="ghost" onClick={() => startEdit(p)} className="mr-1"><Edit2 className="w-4 h-4" /></Button>
@@ -136,7 +184,7 @@ export default function ProvidersPage() {
               </tr>
             ))}
             {!loading && providers.length === 0 && (
-              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
             )}
           </tbody>
         </table>
