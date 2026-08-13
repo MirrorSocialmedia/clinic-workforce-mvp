@@ -166,7 +166,7 @@ export default function ProvidersPage() {
             <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
             顯示已停用
           </label>
-          <Button onClick={exportCSV} size="sm" variant="outline"><Download className="w-4 h-4 mr-1" /> 匯出</Button>
+          {canExport && <Button onClick={exportCSV} size="sm" variant="outline"><Download className="w-4 h-4 mr-1" /> 匯出</Button>}
           <Button onClick={startAdd} size="sm"><Plus className="w-4 h-4 mr-1" /> 新增醫生</Button>
         </div>
       </div>
