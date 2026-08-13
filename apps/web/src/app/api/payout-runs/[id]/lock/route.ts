@@ -1,5 +1,6 @@
 /**
  * POST /api/payout-runs/[id]/lock — Lock a payout run (OWNER / provider_payout)
+ * // ownership-ok: PayoutRun 冇 clinic/employee 歸屬；route 已 requirePerm('provider_payout') = OWNER only
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'

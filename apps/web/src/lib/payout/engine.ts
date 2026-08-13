@@ -7,6 +7,7 @@
 
 import { Prisma, PaymentAllocation } from '@prisma/client'
 import { prisma, basePrisma } from '@/lib/prisma'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -40,6 +41,16 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+/** Get month range [1st 00:00 HK, last day 23:59:59.999 HK] — safe for all months */
+function monthRange(periodMonth: string): [Date, Date] {
+  const [y, m] = periodMonth.split('-').map(Number)
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  return [
+    hkDateStart(`${periodMonth}-01`),
+    hkDateEnd(`${periodMonth}-${String(lastDay).padStart(2, '0')}`),
+  ]
+}
+
 // ─── Commission Picker ──────────────────────────────────────────────────────
 
 /**
@@ -52,8 +63,7 @@ export async function pickCommission(
   providerId: string,
   periodMonth: string,
 ): Promise<any | null> {
-  const monthEnd = new Date(`${periodMonth}-31T23:59:59`)
-  const monthStart = new Date(`${periodMonth}-01T00:00:00`)
+  const [monthStart, monthEnd] = monthRange(periodMonth)
 
   const commission = await prisma.providerCommission.findFirst({
     where: {
@@ -435,14 +445,8 @@ export async function unlockPayoutRun(
  * Auto-detect 2-person SP subsidy opportunities from Apricot bill items.
  * Returns candidates (source='AUTO', confirmedBy=null) for manual confirmation.
  */
-export async function scanSpSubsidies(
-  periodMonth: string,
-  splitPercent: number = 50,
-): Promise<any[]> {
-  const [monthStart, monthEnd] = [
-    new Date(`${periodMonth}-01T00:00:00`),
-    new Date(`${periodMonth}-31T23:59:59`),
-  ]
+export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
+  const [monthStart, monthEnd] = monthRange(periodMonth)
 
   const spItems = await prisma.apricotBillItem.findMany({
     where: {
@@ -467,6 +471,14 @@ export async function scanSpSubsidies(
 
     if (!provider) continue
 
+    // F5: Fetch per-provider split% from commission instead of hardcoded 50
+    const commission = await pickCommission(provider.id, periodMonth)
+    const pct = commission ? Number(commission.percent) : null
+    if (pct == null) {
+      console.warn('[sp] 醫生未設拆帳%，跳過', provider.id)
+      continue
+    }
+
     const unitPrice = Number(item.unitPrice)
     const qty = item.qty || 1
     const ttlDisc = Number(item.ttlDisc)
@@ -474,7 +486,7 @@ export async function scanSpSubsidies(
     const actualPrice = round2(unitPrice - ttlDisc / qty)
     const headcount = qty
     const amount = round2(
-      (listPrice - actualPrice) * (splitPercent / 100) * headcount,
+      (listPrice - actualPrice) * (pct / 100) * headcount,
     )
 
     // Upsert: get or create
@@ -492,7 +504,7 @@ export async function scanSpSubsidies(
           listPrice: new Prisma.Decimal(String(listPrice)),
           actualPrice: new Prisma.Decimal(String(actualPrice)),
           headcount,
-          splitPercent: new Prisma.Decimal(String(splitPercent)),
+          splitPercent: new Prisma.Decimal(String(pct)),
           amount: new Prisma.Decimal(String(amount)),
           source: 'AUTO',
           confirmedBy: null,
@@ -509,7 +521,7 @@ export async function scanSpSubsidies(
           listPrice: new Prisma.Decimal(String(listPrice)),
           actualPrice: new Prisma.Decimal(String(actualPrice)),
           headcount,
-          splitPercent: new Prisma.Decimal(String(splitPercent)),
+          splitPercent: new Prisma.Decimal(String(pct)),
           amount: new Prisma.Decimal(String(amount)),
           source: 'AUTO',
           confirmedBy: null,
@@ -524,7 +536,7 @@ export async function scanSpSubsidies(
       listPrice,
       actualPrice,
       headcount,
-      splitPercent,
+      splitPercent: pct,
       amount,
       source: 'AUTO',
       confirmedBy: null,

@@ -3,6 +3,7 @@
  * POST /api/provider-referrals — Create provider referral (OWNER / provider_payout)
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { jsonNoStore } from '@/lib/api-response'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  return NextResponse.json({
+  return jsonNoStore({
     referrals: referrals.map(r => ({
       ...r,
       unitPrice: Number(r.unitPrice),

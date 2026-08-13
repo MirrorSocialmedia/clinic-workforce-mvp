@@ -3,6 +3,7 @@
  * POST /api/payout-runs — Generate & lock payout run (OWNER / provider_payout)
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { jsonNoStore } from '@/lib/api-response'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { runGates, computePayout, lockPayoutRun } from '@/lib/payout/engine'
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
   })
   const providerMap = new Map(providers.map(p => [p.id, p]))
 
-  return NextResponse.json({
+  return jsonNoStore({
     runs: runs.map(r => ({
       ...r,
       provider: providerMap.get(r.providerId) || null,
