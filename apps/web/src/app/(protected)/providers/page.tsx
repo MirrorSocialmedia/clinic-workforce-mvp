@@ -4,7 +4,7 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { Plus, Edit2, EyeOff, Check, X, Wallet } from 'lucide-react'
+import { Plus, Edit2, EyeOff, Check, X, Wallet, Download } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 interface Clinic { id: string; name: string; shortName?: string | null }
@@ -26,6 +26,7 @@ export default function ProvidersPage() {
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
   const canPayout = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
+  const canExport = userRole ? ['OWNER', 'MANAGER'].includes(userRole) : false
 
   useEffect(() => { loadProviders(); loadClinics(); loadMe() }, [showInactive])
 
@@ -129,6 +130,33 @@ export default function ProvidersPage() {
     }
   }
 
+  // ★ D10: CSV Export
+  function exportCSV() {
+    const headers = ['名稱', '簡稱', '電話', 'Apricot ID', '應診診所', '狀態']
+    const rows = providers.map(p => {
+      const clinicNames = (p.clinicIds || []).map((cid: string) => {
+        const clinic = clinics.find(c => c.id === cid)
+        return clinic?.shortName || clinic?.name || cid
+      }).join('、')
+      return [
+        p.name || '',
+        p.shortName || '',
+        p.phone || '',
+        p.apricotId || '',
+        clinicNames || '—',
+        p.isActive ? '活躍' : '停用',
+      ].map((field: string) => `"${field.replace(/"/g, '""')}"`).join(',')
+    })
+    const csvContent = '\ufeff' + [headers.join(','), ...rows].join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `providers_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
@@ -138,6 +166,7 @@ export default function ProvidersPage() {
             <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
             顯示已停用
           </label>
+          <Button onClick={exportCSV} size="sm" variant="outline"><Download className="w-4 h-4 mr-1" /> 匯出</Button>
           <Button onClick={startAdd} size="sm"><Plus className="w-4 h-4 mr-1" /> 新增醫生</Button>
         </div>
       </div>
@@ -291,6 +320,11 @@ export default function ProvidersPage() {
                   <option value="NET">淨收入 (NET)</option>
                   <option value="CONSULT_ONLY">診金 Only</option>
                 </select>
+                <div className="text-[9px] text-muted-foreground mt-0.5">
+                  {commissionForm.basis === 'GROSS' && '按當月實際總收入（含花紅、津貼等）計算'}
+                  {commissionForm.basis === 'NET' && '按合約基本薪酬 + 固定津貼計算'}
+                  {commissionForm.basis === 'CONSULT_ONLY' && '只按合約基本薪酬計算拆帳比例'}
+                </div>
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground">保底 (可選)</label>
