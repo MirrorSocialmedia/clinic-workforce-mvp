@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
         minGuarantee: minGuarantee != null ? new Prisma.Decimal(String(minGuarantee)) : null,
         effectiveFrom: new Date(effectiveFrom),
         effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+        isActive: true,
         note: note || null,
         createdBy: auth.session!.userId,
       },

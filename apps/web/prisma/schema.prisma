@@ -397,6 +397,7 @@ model ProviderCommission {
   minGuarantee   Decimal? @db.Decimal(12,2)
   effectiveFrom  DateTime
   effectiveTo    DateTime?
+  isActive       Boolean  @default(true)
   note           String?
   createdBy      String
   createdAt      DateTime @default(now())
@@ -1103,4 +1104,99 @@ model PaymentMethodRule {
   createdBy     String
 
   @@index([method, effectiveFrom])
+}
+
+// ============================================================
+// MD-D: Payout Engine — Provider commission / split settlement
+// ============================================================
+
+// ★ 獨立引擎，唔准 import payroll-engine / calculateTimeBank / prisma.employee
+
+// 轉介記錄 — 醫生 A 轉病人去醫生 B，A 收 2%
+model ProviderReferral {
+  id             String   @id @default(cuid())
+  fromProviderId String   // 轉介出去嘅醫生（收 2% 嗰個）
+  toProviderId   String?  // 接手嘅醫生
+  billExtId      String
+  billCode       String
+  billItemEleId  String   // 揀咗邊個項目
+  itemDes        String   // 快照：'IMPLANT'
+  unitPrice      Decimal  @db.Decimal(12,2)
+  qty            Int      // ★ 員工可改（部分轉介）
+  refPercent     Decimal  @db.Decimal(5,2) @default(2)
+  amount         Decimal  @db.Decimal(12,2) // unitPrice × qty × refPercent%
+  periodMonth    String
+  note           String?
+  lockedByRunId  String?
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  @@unique([billItemEleId, fromProviderId])
+  @@index([fromProviderId, periodMonth])
+}
+
+// 2人 SP 補貼記錄 — 原價 vs 優惠價之差 × 拆帳% × 人數
+model SpSubsidy {
+  id           String   @id @default(cuid())
+  providerId   String
+  billExtId    String
+  billItemEleId String
+  itemDes      String   // 'SCALING & POLISHING'
+  listPrice    Decimal  @db.Decimal(12,2) // 原價 580
+  actualPrice  Decimal  @db.Decimal(12,2) // 優惠價 500
+  headcount    Int      @default(1)
+  splitPercent Decimal  @db.Decimal(5,2) // 快照：50
+  amount       Decimal  @db.Decimal(12,2) // (listPrice − actualPrice) × splitPercent% × headcount
+  source       String   @default("AUTO") // AUTO | MANUAL
+  confirmedBy  String?  // ★ AUTO 要人確認先入數
+  periodMonth  String
+  lockedByRunId String?
+
+  @@unique([billItemEleId])
+  @@index([providerId, periodMonth])
+}
+
+// 月結單 — 锁定後不可改
+model PayoutRun {
+  id             String   @id @default(cuid())
+  providerId     String
+  periodMonth    String
+  grossAmount    Decimal  @db.Decimal(12,2) // 扣手續費後
+  rawAmount      Decimal  @db.Decimal(12,2) // 扣手續費前（對數用）
+  labCost        Decimal  @db.Decimal(12,2)
+  implantCost    Decimal  @db.Decimal(12,2)
+  invisalignCost Decimal  @db.Decimal(12,2)
+  profitAmount   Decimal  @db.Decimal(12,2)
+  percentUsed    Decimal  @db.Decimal(5,2) // ★ 快照
+  salaryAmount   Decimal  @db.Decimal(12,2)
+  spSubsidy      Decimal  @db.Decimal(12,2)
+  refAmount      Decimal  @db.Decimal(12,2)
+  adjustAmount   Decimal  @db.Decimal(12,2) @default(0)
+  totalAmount    Decimal  @db.Decimal(12,2)
+  breakdownJson  Json     // 逐方式 / 逐成本項快照
+  status         String   @default("DRAFT") // DRAFT | LOCKED
+  lockedAt       DateTime?
+  createdBy      String
+
+  adjustments    PayoutAdjustment[]
+
+  @@unique([providerId, periodMonth])
+}
+
+// 上期調整 — void 回沖 / 手動調整
+model PayoutAdjustment {
+  id           String   @id @default(cuid())
+  runId        String?  // 落喺邊個 run（null = 未指派）
+  run          PayoutRun? @relation(fields: [runId], references: [id])
+  providerId   String
+  periodMonth  String   // 落喺邊個月
+  sourceMonth  String   // 原本屬邊個月
+  reason       String   // 'VOID' | 'REFUND' | 'MANUAL'
+  refCode      String?  // 202607050007
+  amount       Decimal  @db.Decimal(12,2) // ★ 可負
+  note         String
+  createdBy    String
+  createdAt    DateTime @default(now())
+
+  @@index([providerId, periodMonth])
 }
