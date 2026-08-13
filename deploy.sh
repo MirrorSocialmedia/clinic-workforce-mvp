@@ -18,7 +18,8 @@ git reset --hard origin/main
 echo "== 預部署靜態檢查 =="
 CHECKS="check-rbac-matrix.sh check-role-hardcode.sh check-role-hardcode-api.sh \
  check-ownership.sh check-sensitive-coverage.sh check-audit-coverage.sh \
- check-duplicate-calc.sh check-get-no-store.sh check-balance-year.sh"
+ check-duplicate-calc.sh check-get-no-store.sh check-balance-year.sh \
+ check-apricot-boundary.sh"
 for script in $CHECKS; do
   if [ ! -f "scripts/$script" ]; then
     echo "❌ scripts/$script 不存在"

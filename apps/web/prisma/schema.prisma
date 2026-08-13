@@ -876,3 +876,20 @@ model WageHistory {
   @@unique([employeeId, periodMonth])
   @@index([employeeId, periodMonth])
 }
+
+// ============================================================
+// External Credential — encrypted 3rd-party API tokens
+// ============================================================
+
+model ExternalCredential {
+  id            String    @id @default(cuid())
+  provider      String    @unique // 'APRICOT'
+  cipherText    String    // AES-256-GCM: base64(iv || tag || ct)
+  // 明文 = { accessToken, refreshToken, iat }
+  refreshExpiry DateTime? // 由 Set-Cookie 個 Expires 解出
+  lastOkAt      DateTime?
+  lastError     String?
+  callCount     Int       @default(0)
+  rotationCount Int       @default(0)
+  updatedAt     DateTime  @updatedAt
+}
