@@ -193,9 +193,15 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
     })
 
     // C6: 載入所有可能生效的 rules（一次性，避免 N+1）
+    const from = new Date(fromISO)
+    const to = new Date(toISO)
     const allRules = await prisma.paymentMethodRule.findMany({
       where: {
-        effectiveTo: { gte: new Date(fromISO) },
+        effectiveFrom: { lte: to },
+        OR: [
+          { effectiveTo: null },
+          { effectiveTo: { gte: from } },
+        ],
       },
     })
 
@@ -225,9 +231,7 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
       if (!refs.length) continue
 
       const rows = await allocatePayment(p, methods, refs, billCache, clinicExtId, globalRefs, allRules)
-      for (const row of rows) {
-        await upsertAllocations([row])
-      }
+      await upsertAllocations(rows.map(r => ({ ...r, isVoid: !!p.isVoid })))
       allocRows += rows.length
     }
 

@@ -17,6 +17,7 @@ interface PaymentAllocationRow {
   countAsIncome: boolean
   allocationMode: 'DIRECT' | 'RECON' | 'PRORATA'
   needsReview: boolean
+  isVoid?: boolean
 }
 
 interface RuleResult {
@@ -313,7 +314,7 @@ export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
         countAsIncome: a.countAsIncome,
         allocationMode: a.allocationMode,
         needsReview: a.needsReview,
-        isVoid: false,
+        isVoid: a.isVoid ?? false,
         isSuperseded: false,
         computedAt: new Date(),
       },
@@ -331,7 +332,7 @@ export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
         countAsIncome: a.countAsIncome,
         allocationMode: a.allocationMode,
         needsReview: a.needsReview,
-        isVoid: false,
+        isVoid: a.isVoid ?? false,
         isSuperseded: false,
       },
     })
