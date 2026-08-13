@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { toHKDateStr } from '@/lib/hk-date'
 import { prisma } from '@/lib/prisma'
 
 // ============================================================
@@ -32,8 +33,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Derive periodMonth from orderedAt
-  const orderedDate = new Date(orderedAt)
-  const periodMonth = `${orderedDate.getFullYear()}-${String(orderedDate.getMonth() + 1).padStart(2, '0')}`
+  const periodMonth = toHKDateStr(orderedAt).slice(0, 7)
 
   // ★ B1: Resolve material prices by name + orderedAt
   const orderedAtDate = new Date(orderedAt)

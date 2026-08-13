@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -121,8 +122,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Derive periodMonth from orderedAt
-  const orderedDate = new Date(orderedAt)
-  const periodMonth = `${orderedDate.getFullYear()}-${String(orderedDate.getMonth() + 1).padStart(2, '0')}`
+  const periodMonth = toHKDateStr(orderedAt).slice(0, 7)
 
   // Compute finalCost
   const baseCostNum = baseCost != null ? Number(baseCost) : null
