@@ -1,0 +1,3 @@
+-- B6: Lab timestamps
+ALTER TABLE "Lab" ADD COLUMN "createdAt" TIMESTAMP NOT NULL DEFAULT now();
+ALTER TABLE "Lab" ADD COLUMN "updatedAt" TIMESTAMP NOT NULL DEFAULT now();

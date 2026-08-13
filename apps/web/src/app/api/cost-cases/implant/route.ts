@@ -8,7 +8,8 @@ import { prisma } from '@/lib/prisma'
 // Body: { providerId, clinicId, patientCode, patientName?,
 //         orderedAt, itemType?, dsaName?,
 //         receivedAt?, appointmentAt?,
-//         materials: [{ materialItemId, qty }] }
+//         materials: [{ materialName, qty }] }
+// ★ B1: 材料單價按 name + orderedAt resolve（唔係按 id）
 // ============================================================
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -34,22 +35,34 @@ export async function POST(req: NextRequest) {
   const orderedDate = new Date(orderedAt)
   const periodMonth = `${orderedDate.getFullYear()}-${String(orderedDate.getMonth() + 1).padStart(2, '0')}`
 
-  // Resolve material prices: effectiveFrom DESC, id DESC (tiebreaker)
-  const materialItemIds = materials.map((m: any) => m.materialItemId)
-  const materialItems = await prisma.materialItem.findMany({
+  // ★ B1: Resolve material prices by name + orderedAt
+  const orderedAtDate = new Date(orderedAt)
+  const names = materials.map((m: any) => m.materialName)
+  const rows = await prisma.materialItem.findMany({
     where: {
-      id: { in: materialItemIds },
+      name: { in: names },
       isActive: true,
+      effectiveFrom: { lte: orderedAtDate },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: orderedAtDate } }],
     },
     orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
-    select: { id: true, unitPrice: true },
   })
 
-  // Group by materialItemId, take the first (most recent)
-  const priceMap = new Map<string, number>()
-  for (const item of materialItems) {
-    if (!priceMap.has(item.id)) {
-      priceMap.set(item.id, Number(item.unitPrice))
+  const priceMap = new Map<string, { id: string; price: number }>()
+  for (const r of rows) {
+    if (!priceMap.has(r.name)) {
+      priceMap.set(r.name, { id: r.id, price: Number(r.unitPrice) })
+    }
+  }
+
+  // Check all materials have a resolved price
+  for (const mat of materials) {
+    const resolved = priceMap.get(mat.materialName)
+    if (!resolved) {
+      return NextResponse.json(
+        { error: `材料「${mat.materialName}」喺 ${orderedAt} 冇生效價格` },
+        { status: 400 }
+      )
     }
   }
 
@@ -58,18 +71,13 @@ export async function POST(req: NextRequest) {
   const materialData: any[] = []
 
   for (const mat of materials) {
-    const unitPriceUsed = priceMap.get(mat.materialItemId)
-    if (unitPriceUsed == null) {
-      return NextResponse.json(
-        { error: `Material ${mat.materialItemId} not found or inactive` },
-        { status: 400 }
-      )
-    }
+    const resolved = priceMap.get(mat.materialName)!
+    const unitPriceUsed = resolved.price
     const qty = mat.qty || 1
     const subtotal = Number((unitPriceUsed * qty).toFixed(2))
     totalBaseCost += subtotal
     materialData.push({
-      materialItemId: mat.materialItemId,
+      materialItemId: resolved.id, // ★ store resolved id, not user-selected
       qty,
       unitPriceUsed,
       subtotal,

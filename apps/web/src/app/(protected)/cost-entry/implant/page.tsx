@@ -2,11 +2,12 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { hasPermission } from '@/lib/permissions'
+import { todayHK } from '@/lib/hk-date'
 import { Card } from '@/components/ui/card'
 import { Plus, Loader2, Trash2 } from 'lucide-react'
 
 interface MaterialLine {
-  materialItemId: string
+  materialName: string
   qty: number
   unitPrice: number
   subtotal: number
@@ -25,7 +26,7 @@ export default function ImplantEntryPage() {
   // Form state
   const [form, setForm] = useState({
     providerId: '', clinicId: '', patientCode: '', patientName: '',
-    orderedAt: new Date().toISOString().slice(0, 10),
+    orderedAt: todayHK(),
     itemType: '', dsaName: '', receivedAt: '', appointmentAt: '',
   })
   const [materialLines, setMaterialLines] = useState<MaterialLine[]>([])
@@ -82,7 +83,7 @@ export default function ImplantEntryPage() {
   }, [loadAuth, loadAll])
 
   const addMaterialLine = () => {
-    setMaterialLines([...materialLines, { materialItemId: '', qty: 1, unitPrice: 0, subtotal: 0 }])
+    setMaterialLines([...materialLines, { materialName: '', qty: 1, unitPrice: 0, subtotal: 0 }])
   }
 
   const removeMaterialLine = (idx: number) => {
@@ -91,11 +92,11 @@ export default function ImplantEntryPage() {
 
   const updateMaterialLine = (idx: number, field: keyof MaterialLine, value: any) => {
     const updated = [...materialLines]
-    if (field === 'materialItemId') {
-      const selected = materials.find(m => m.id === value)
+    if (field === 'materialName') {
+      const selected = materials.find(m => m.name === value)
       updated[idx] = {
         ...updated[idx],
-        materialItemId: value,
+        materialName: value,
         unitPrice: selected ? Number(selected.unitPrice) : 0,
         subtotal: 0,
       }
@@ -115,7 +116,7 @@ export default function ImplantEntryPage() {
       alert('醫生、診所、病人編號、落單日為必填')
       return
     }
-    if (materialLines.length === 0 || materialLines.some(l => !l.materialItemId)) {
+    if (materialLines.length === 0 || materialLines.some(l => !l.materialName)) {
       alert('請至少添加一行有效材料')
       return
     }
@@ -131,7 +132,7 @@ export default function ImplantEntryPage() {
         dsaName: form.dsaName || null,
         receivedAt: form.receivedAt || null,
         appointmentAt: form.appointmentAt || null,
-        materials: materialLines.map(l => ({ materialItemId: l.materialItemId, qty: l.qty })),
+        materials: materialLines.map(l => ({ materialName: l.materialName, qty: l.qty })),
       }
 
       const res = await fetch('/api/cost-cases/implant', {
@@ -146,7 +147,7 @@ export default function ImplantEntryPage() {
         // Reset form
         setForm({
           providerId: '', clinicId: '', patientCode: '', patientName: '',
-          orderedAt: new Date().toISOString().slice(0, 10),
+          orderedAt: todayHK(),
           itemType: '', dsaName: '', receivedAt: '', appointmentAt: '',
         })
         setMaterialLines([])
@@ -244,13 +245,13 @@ export default function ImplantEntryPage() {
               {materialLines.map((line, idx) => (
                 <div key={idx} className="flex items-center gap-2">
                   <select
-                    value={line.materialItemId}
-                    onChange={e => updateMaterialLine(idx, 'materialItemId', e.target.value)}
+                    value={line.materialName}
+                    onChange={e => updateMaterialLine(idx, 'materialName', e.target.value)}
                     className="flex-1 border rounded px-2 py-1.5 text-sm"
                   >
                     <option value="">選擇材料</option>
                     {materials.map(m => (
-                      <option key={m.id} value={m.id}>
+                      <option key={m.id} value={m.name}>
                         {m.name} — ${Number(m.unitPrice).toFixed(2)}
                       </option>
                     ))}

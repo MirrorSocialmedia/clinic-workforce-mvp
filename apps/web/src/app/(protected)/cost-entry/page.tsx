@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { hasPermission } from '@/lib/permissions'
+import { todayHK } from '@/lib/hk-date'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Plus, RefreshCw, Loader2, AlertTriangle } from 'lucide-react'
@@ -52,12 +53,13 @@ export default function CostEntryPage() {
   const [providers, setProviders] = useState<any[]>([])
   const [clinics, setClinics] = useState<any[]>([])
   const [summary, setSummary] = useState<any>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Filters
   const [filterProviderId, setFilterProviderId] = useState('')
   const [filterPeriodMonth, setFilterPeriodMonth] = useState(() => {
-    const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    const d = todayHK()
+    return d.slice(0, 7) // YYYY-MM
   })
   const [filterCategory, setFilterCategory] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
@@ -92,7 +94,10 @@ export default function CostEntryPage() {
         const data: any = await res.json()
         setProviders(data.providers || [])
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('[cost-entry] load providers failed', e)
+      setLoadError('載入醫生列表失敗')
+    }
   }, [])
 
   const loadClinics = useCallback(async () => {
@@ -102,7 +107,10 @@ export default function CostEntryPage() {
         const data: any = await res.json()
         setClinics(data.clinics || [])
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('[cost-entry] load clinics failed', e)
+      setLoadError('載入診所列表失敗')
+    }
   }, [])
 
   const loadCases = useCallback(async () => {
@@ -142,7 +150,10 @@ export default function CostEntryPage() {
           setDeny(parsed.deny || [])
         }
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('[cost-entry] load auth failed', e)
+      setLoadError('載入用戶資訊失敗')
+    }
   }, [])
 
   useEffect(() => {
@@ -158,7 +169,7 @@ export default function CostEntryPage() {
   const resetForm = () => {
     setForm({
       providerId: '', clinicId: '', category: modalCategory,
-      patientCode: '', patientName: '', orderedAt: new Date().toISOString().slice(0, 10),
+      patientCode: '', patientName: '', orderedAt: todayHK(),
       itemType: '', labId: '', labOrderNo: '', dsaName: '',
       baseCost: '', discountPct: '', receivedAt: '', appointmentAt: '',
     })
@@ -235,6 +246,14 @@ export default function CostEntryPage() {
 
   return (
     <div className="p-6 space-y-4">
+      {/* B4: Load error alert */}
+      {loadError && (
+        <Card className="p-3 bg-red-50 text-red-700 text-sm flex items-center gap-2">
+          <AlertTriangle size={14} /> {loadError}
+          <button onClick={() => setLoadError(null)} className="ml-auto text-red-400 hover:text-red-600">✕</button>
+        </Card>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">成本錄入</h1>

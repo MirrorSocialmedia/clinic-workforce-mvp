@@ -17,24 +17,26 @@ export async function GET(req: NextRequest) {
   const name = searchParams.get('name')
   const isActive = searchParams.get('isActive')
 
-  const where: any = {}
-  if (name) where.name = { contains: name, mode: 'insensitive' }
-  if (isActive !== null && isActive !== undefined) {
-    where.isActive = isActive === 'true'
+  // ★ B3: 只回當前生效嘅材料
+  const activeWhere: any = {
+    isActive: true,
+    effectiveFrom: { lte: new Date() },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
   }
+  if (name) activeWhere.name = { contains: name, mode: 'insensitive' }
 
   // Get all items with their latest price
   const items = await prisma.materialItem.findMany({
-    where,
+    where: activeWhere,
     orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
   })
 
-  // Deduplicate: keep only the latest effective price per unique name
+  // ★ B3: 去重 key 只用 name（同名唔同生效日會去重）
   const seen = new Set<string>()
   const uniqueItems: typeof items = []
 
   for (const item of items) {
-    const key = `${item.name}_${item.effectiveFrom.toISOString()}`
+    const key = item.name
     if (!seen.has(key)) {
       seen.add(key)
       uniqueItems.push(item)

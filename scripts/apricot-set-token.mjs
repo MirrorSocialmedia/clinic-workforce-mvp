@@ -55,7 +55,7 @@ await prisma.externalCredential.upsert({
     cipherText,
     lastOkAt: new Date(),
     lastError: null,
-    rotationCount: { increment: 1 },
+    rotationCount: 0,
   },
   create: {
     provider: 'APRICOT',
