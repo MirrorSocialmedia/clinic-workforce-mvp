@@ -8,7 +8,7 @@ import { getMonthRange } from '@/lib/hk-date'
 // ============================================================
 // PATCH /api/expense-entries/[id] — 經理審批雜項報銷
 // Roles: OWNER, MANAGER, ACCOUNTANT
-// Body: { action: 'APPROVE' | 'REJECT', rejectReason?: string }
+// Body: { decision: 'APPROVE' | 'REJECT', rejectReason?: string }
 // ============================================================
 export async function PATCH(
   req: NextRequest,
@@ -19,9 +19,9 @@ export async function PATCH(
   const { session } = permCheck
 
   const body = await req.json()
-  const { action, rejectReason } = body
-  if (!['APPROVE', 'REJECT'].includes(action)) {
-    return jsonNoStore({ error: 'action 必須係 APPROVE 或 REJECT' }, { status: 400 })
+  const { decision, rejectReason } = body
+  if (!['APPROVE', 'REJECT'].includes(decision)) {
+    return jsonNoStore({ error: 'decision 必須係 APPROVE 或 REJECT' }, { status: 400 })
   }
 
   const { id } = await params
@@ -56,19 +56,19 @@ export async function PATCH(
   const updated = await prisma.expenseEntry.update({
     where: { id },
     data: {
-      status: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+      status: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
       reviewedBy: session.userId,
       reviewedAt: new Date(),
-      rejectReason: action === 'REJECT' ? (rejectReason ?? null) : null,
+      rejectReason: decision === 'REJECT' ? (rejectReason ?? null) : null,
     },
   })
 
   // 通知員工
   await createNotification({
     employeeId: entry.employeeId,
-    type: action === 'APPROVE' ? 'EXPENSE_APPROVED' : 'EXPENSE_REJECTED',
+    type: decision === 'APPROVE' ? 'EXPENSE_APPROVED' : 'EXPENSE_REJECTED',
     content:
-      action === 'APPROVE'
+      decision === 'APPROVE'
         ? `雜項報銷已批准：${entry.description} $${entry.amount}`
         : `雜項報銷已拒絕：${entry.description} $${entry.amount}${rejectReason ? `（${rejectReason}）` : ''}`,
     relatedEntity: 'ExpenseEntry',

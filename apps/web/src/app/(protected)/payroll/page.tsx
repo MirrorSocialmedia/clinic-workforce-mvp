@@ -157,7 +157,7 @@ export default function PayrollListPage() {
     const r = await fetch(`/api/expense-entries/${id}`, {
       method: 'PATCH', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'APPROVE' }),
+      body: JSON.stringify({ decision: 'APPROVE' }),
     })
     if (r.ok) { await loadExpenses() }
     else { const err = await r.json().catch(() => ({})); alert(err.error || '批准失敗') }
@@ -172,7 +172,7 @@ export default function PayrollListPage() {
     const r = await fetch(`/api/expense-entries/${rejectModal.id}`, {
       method: 'PATCH', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'REJECT', rejectReason: rejectModal.reason || null }),
+      body: JSON.stringify({ decision: 'REJECT', rejectReason: rejectModal.reason || null }),
     })
     if (r.ok) { setRejectModal(null); await loadExpenses() }
     else { const err = await r.json().catch(() => ({})); alert(err.error || '拒絕失敗') }

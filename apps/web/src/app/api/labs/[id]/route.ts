@@ -1,3 +1,5 @@
+// ownership-ok: Lab 係全公司共用主檔，冇 clinic/employee 歸屬；
+// route 已經 requirePerm('provider_payout') = OWNER only
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
