@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client'
+import { Prisma, PaymentMethodRule } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { toHKDateStr } from '@/lib/hk-date'
 import { normalizeMethod } from './normalize'
@@ -19,23 +19,29 @@ interface PaymentAllocationRow {
   needsReview: boolean
 }
 
-/** 解決 PaymentMethodRule — 按 method + paidAt resolve */
-async function resolveMethodRule(methodNorm: string, paidAt: Date) {
-  const rule = await prisma.paymentMethodRule.findFirst({
-    where: {
-      method: methodNorm,
-      effectiveFrom: { lte: paidAt },
-      OR: [
-        { effectiveTo: null },
-        { effectiveTo: { gte: paidAt } },
-      ],
-    },
-    orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
-  })
+interface RuleResult {
+  feePercent: number
+  countAsIncome: boolean
+  needsReview: boolean
+}
 
-  if (!rule) {
+/** 解決 PaymentMethodRule — 按 method + paidAt resolve (pure function, rules from cache) */
+function resolveMethodRule(methodNorm: string, paidAt: Date, allRules: PaymentMethodRule[]): RuleResult {
+  const applicable = allRules
+    .filter(r =>
+      r.method === methodNorm &&
+      r.effectiveFrom <= paidAt &&
+      (!r.effectiveTo || r.effectiveTo >= paidAt)
+    )
+    .sort((a, b) =>
+      b.effectiveFrom.getTime() - a.effectiveFrom.getTime() ||
+      b.id.localeCompare(a.id)
+    )
+
+  if (applicable.length === 0) {
     return { feePercent: 0, countAsIncome: true, needsReview: true }
   }
+  const rule = applicable[0]
   return {
     feePercent: Number(rule.feePercent),
     countAsIncome: rule.countAsIncome,
@@ -43,8 +49,13 @@ async function resolveMethodRule(methodNorm: string, paidAt: Date) {
   }
 }
 
+/** 計算 netAmount = amount * (1 - feePercent / 100) */
+function computeNet(amount: number, feePercent: number): number {
+  return Math.round(amount * (1 - feePercent / 100) * 100) / 100
+}
+
 /** 四捨五入補平 — 最後一行補差，保證 Σ(amount) === totalAmt */
-function roundWithAdjustment(allocations: PaymentAllocationRow[], totalAmt: number): PaymentAllocationRow[] {
+function roundWithAdjustment(allocations: PaymentAllocationRow[], totalAmt: number, paymentExtId: string): PaymentAllocationRow[] {
   let sum = 0
   const rounded = allocations.map(a => {
     const amt = Math.round(a.amount * 100) / 100
@@ -55,17 +66,19 @@ function roundWithAdjustment(allocations: PaymentAllocationRow[], totalAmt: numb
   const total = Math.round(totalAmt * 100) / 100
   const diff = Math.round((total - sum) * 100) / 100
   if (diff !== 0 && rounded.length > 0) {
-    rounded[rounded.length - 1].amount += diff
+    const last = rounded[rounded.length - 1]
+    last.amount = Math.round((last.amount + diff) * 100) / 100
+    // C4: 補平後重算 netAmount
+    last.netAmount = computeNet(last.amount, last.feePercentUsed)
+
+    // C2: 安全網 — 補平差額 > $1 標 needsReview
+    if (Math.abs(diff) > 1) {
+      console.error('[apricot] 補平差額異常', { paymentExtId, diff, sum, total })
+      rounded.forEach(r => { r.needsReview = true })
+    }
   }
 
   return rounded
-}
-
-/**
- * 計算 netAmount = amount * (1 - feePercentUsed / 100)
- */
-function computeNet(amount: number, feePercent: number): number {
-  return Math.round(amount * (1 - feePercent / 100) * 100) / 100
 }
 
 /** 檢查一個 billExtId 喺全部 PaymentRef 入面只出現過一次 */
@@ -78,7 +91,10 @@ function isBillUniqueInRefs(billExtId: string, allRefs: Array<{ billExtId: strin
  * @param payment 已 sanitize 嘅 payment 資料
  * @param methods normalized payment methods
  * @param refs payment refs (bill references)
- * @param bills bill cache (Map<billExtId, bill>)
+ * @param bills bill cache (Map<billExtId, bill>) — DB Prisma shape
+ * @param clinicExtId clinic external ID
+ * @param allRefs 全歷史 refs（用於 RECON 判斷）— C3: 無 default
+ * @param allRules 所有 payment method rules（用於 resolve）
  */
 export async function allocatePayment(
   payment: any,
@@ -86,7 +102,8 @@ export async function allocatePayment(
   refs: Array<{ billExtId: string; billCode: string; amount: Prisma.Decimal | number }>,
   bills: Map<string, any>,
   clinicExtId: string,
-  allRefs: Array<{ billExtId: string }> = refs.map(r => ({ billExtId: r.billExtId })),
+  allRefs: Array<{ billExtId: string }>, // ★ C3: 無 default，逼 caller 傳
+  allRules: PaymentMethodRule[],
 ): Promise<PaymentAllocationRow[]> {
   const allocations: PaymentAllocationRow[] = []
   const paidAt = new Date(payment.paymentTime)
@@ -101,12 +118,12 @@ export async function allocatePayment(
   if (methods.length === 1 && refs.length === 1) {
     const bill = bills.get(refs[0].billExtId)
     const methodNorm = methods[0].methodNorm
-    const rule = await resolveMethodRule(methodNorm, paidAt)
+    const rule = resolveMethodRule(methodNorm, paidAt, allRules)
 
     allocations.push({
       paymentExtId: payment.id,
       billExtId: refs[0].billExtId,
-      providerExtId: bill?.practitioner?.id ?? null,
+      providerExtId: bill?.providerExtId ?? null, // C1: DB shape
       clinicExtId: clinicExtId,
       paidAt,
       periodMonth,
@@ -126,11 +143,17 @@ export async function allocatePayment(
       const bill = bills.get(ref.billExtId)
       if (!bill) continue
 
-      const billDetails = bill.billDetails || []
-      const reconDetails = billDetails.flatMap((d: any) => (d.reconPaymentDetails || []).map((r: any) => ({
-        des: r.des || '',
-        amt: Number(r.amt ?? 0),
-      })))
+      // C1: DB shape — bill.items + JSON.parse(item.reconJson)
+      const billItems = bill.items || []
+      const reconDetails = billItems.flatMap((item: any) => {
+        const reconData = item.reconJson
+        if (!reconData) return []
+        const parsed = typeof reconData === 'string' ? JSON.parse(reconData) : reconData
+        return (Array.isArray(parsed) ? parsed : []).map((r: any) => ({
+          des: r.des || '',
+          amt: Number(r.amt ?? 0),
+        }))
+      })
 
       if (reconDetails.length > 0) {
         // Group recon by method description
@@ -140,13 +163,44 @@ export async function allocatePayment(
           reconByMethod.set(norm, (reconByMethod.get(norm) ?? 0) + rd.amt)
         }
 
+        // C2: 驗證 recon 總額是否等於 ref 金額
+        const reconTotal = [...reconByMethod.values()].reduce((s, v) => s + v, 0)
+        const refAmt = Number(ref.amount ?? 0)
+        if (Math.abs(reconTotal - refAmt) > 0.01) {
+          // 對唔上 → 走 PRORATA
+          // push PRORATA 行
+          for (const method of methods) {
+            const methodNorm = method.methodNorm
+            const rule = resolveMethodRule(methodNorm, paidAt, allRules)
+            const proportion = Number(method.amount ?? 0) / totalAmt
+            const allocAmt = totalAmt === 0 ? 0 : refAmt * proportion
+
+            allocations.push({
+              paymentExtId: payment.id,
+              billExtId: ref.billExtId,
+              providerExtId: bill.providerExtId ?? null, // C1: DB shape
+              clinicExtId: clinicExtId,
+              paidAt,
+              periodMonth,
+              methodNorm,
+              amount: allocAmt,
+              feePercentUsed: rule.feePercent,
+              netAmount: computeNet(allocAmt, rule.feePercent),
+              countAsIncome: rule.countAsIncome,
+              allocationMode: 'PRORATA',
+              needsReview: rule.needsReview,
+            })
+          }
+          continue
+        }
+
         for (const [norm, reconAmt] of reconByMethod.entries()) {
           if (reconAmt <= 0) continue
-          const rule = await resolveMethodRule(norm, paidAt)
+          const rule = resolveMethodRule(norm, paidAt, allRules)
           allocations.push({
             paymentExtId: payment.id,
             billExtId: ref.billExtId,
-            providerExtId: bill.practitioner?.id ?? null,
+            providerExtId: bill.providerExtId ?? null, // C1: DB shape
             clinicExtId: clinicExtId,
             paidAt,
             periodMonth,
@@ -164,7 +218,7 @@ export async function allocatePayment(
         const refAmt = Number(ref.amount ?? 0)
         for (const method of methods) {
           const methodNorm = method.methodNorm
-          const rule = await resolveMethodRule(methodNorm, paidAt)
+          const rule = resolveMethodRule(methodNorm, paidAt, allRules)
           // Split ref amount proportionally by method
           const proportion = Number(method.amount ?? 0) / totalAmt
           const allocAmt = totalAmt === 0 ? 0 : refAmt * proportion
@@ -172,7 +226,7 @@ export async function allocatePayment(
           allocations.push({
             paymentExtId: payment.id,
             billExtId: ref.billExtId,
-            providerExtId: bill.practitioner?.id ?? null,
+            providerExtId: bill.providerExtId ?? null, // C1: DB shape
             clinicExtId: clinicExtId,
             paidAt,
             periodMonth,
@@ -193,7 +247,7 @@ export async function allocatePayment(
     for (const method of methods) {
       const methodNorm = method.methodNorm
       const methodAmt = Number(method.amount ?? 0)
-      const rule = await resolveMethodRule(methodNorm, paidAt)
+      const rule = resolveMethodRule(methodNorm, paidAt, allRules)
       const proportion = totalAmt === 0 ? 1 / methods.length : methodAmt / totalAmt
 
       for (const ref of refs) {
@@ -206,7 +260,7 @@ export async function allocatePayment(
         allocations.push({
           paymentExtId: payment.id,
           billExtId: ref.billExtId,
-          providerExtId: bill?.practitioner?.id ?? null,
+          providerExtId: bill?.providerExtId ?? null, // C1: DB shape
           clinicExtId: clinicExtId,
           paidAt,
           periodMonth,
@@ -223,19 +277,19 @@ export async function allocatePayment(
   }
 
   // 四捨五入補平
-  return roundWithAdjustment(allocations, totalAmt)
+  return roundWithAdjustment(allocations, totalAmt, payment.id)
 }
 
 /** 批量寫入 PaymentAllocation（upsert by unique key） */
 export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
   if (allocations.length === 0) return
 
-  // Delete existing allocations for same paymentExtId to avoid conflicts
+  // Mark existing allocations for same paymentExtId as superseded (C5)
   const paymentExtIds = [...new Set(allocations.map(a => a.paymentExtId))]
   for (const pid of paymentExtIds) {
     await prisma.paymentAllocation.updateMany({
-      where: { paymentExtId: pid, isVoid: false },
-      data: { isVoid: true },
+      where: { paymentExtId: pid },
+      data: { isSuperseded: true },
     })
   }
 
@@ -260,6 +314,7 @@ export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
         allocationMode: a.allocationMode,
         needsReview: a.needsReview,
         isVoid: false,
+        isSuperseded: false,
         computedAt: new Date(),
       },
       create: {
@@ -277,6 +332,7 @@ export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
         allocationMode: a.allocationMode,
         needsReview: a.needsReview,
         isVoid: false,
+        isSuperseded: false,
       },
     })
   }

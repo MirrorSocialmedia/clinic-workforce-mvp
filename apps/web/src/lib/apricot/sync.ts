@@ -4,6 +4,7 @@ import { apricotCall } from './client'
 import { withApricotLock } from './lock'
 import { sanitizePayment, sanitizeBill, assertNoPii } from './sanitize'
 import { normalizeMethod } from './normalize'
+import { allocatePayment, upsertAllocations } from './allocate'
 
 /** 判斷 dateTime 是否為 HK 當月 */
 function isCurrentMonth(dt: Date | string): boolean {
@@ -181,6 +182,55 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
       }
     }
 
-    return { paymentsSynced: allPayments.length, billsChecked: billIds.length }
+    // 4) 重算 allocation
+    const billIdsTouched = [...new Set(allPayments.flatMap((p: any) =>
+      (p.refList || []).map((r: any) => r.billId)))]
+
+    // 查全歷史 refs（用於 RECON 判斷）— C3
+    const globalRefs = await prisma.apricotPaymentRef.findMany({
+      where: { billExtId: { in: billIdsTouched } },
+      select: { billExtId: true },
+    })
+
+    // C6: 載入所有可能生效的 rules（一次性，避免 N+1）
+    const allRules = await prisma.paymentMethodRule.findMany({
+      where: {
+        effectiveTo: { gte: new Date(fromISO) },
+      },
+    })
+
+    // billCache — 由 DB 讀（Prisma shape: providerExtId + items[].reconJson）
+    const billCache = new Map<string, any>()
+    for (const bid of billIdsTouched) {
+      const b = await prisma.apricotBill.findUnique({
+        where: { extId: bid },
+        include: { items: true },
+      })
+      if (b) billCache.set(bid, b)
+    }
+
+    let allocRows = 0
+    for (const p of allPayments) {
+      const methods = (p.paymentMethods || []).map((m: any) => ({
+        methodRaw: m.des ?? '',
+        methodNorm: normalizeMethod(m.des ?? ''),
+        amount: m.amt ?? 0,
+        payType: m.payType ?? '',
+      }))
+      const refs = (p.refList || []).map((r: any) => ({
+        billExtId: r.billId,
+        billCode: r.billCode,
+        amount: r.amt ?? 0,
+      }))
+      if (!refs.length) continue
+
+      const rows = await allocatePayment(p, methods, refs, billCache, clinicExtId, globalRefs, allRules)
+      for (const row of rows) {
+        await upsertAllocations([row])
+      }
+      allocRows += rows.length
+    }
+
+    return { paymentsSynced: allPayments.length, billsChecked: billIds.length, allocRows }
   })
 }
