@@ -100,6 +100,9 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
   const rows = run.items.map((item: any) => {
     const clinics = item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
     const payType = item.employee.payRules[0]?.payType || 'N/A'
+    // ★ Parse detailJson safely — old records may have invalid JSON
+    let detail: any = {}
+    try { detail = JSON.parse(item.detailJson ?? '{}') } catch { /* fallback to empty */ }
     return {
       '員工姓名': item.employee.user.name,
       '全名': item.employee.user.fullName || '',
@@ -114,6 +117,12 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
       '加班費': (item.otPay ?? 0).toFixed(2),
       '拆帳': (item.splitPay ?? 0).toFixed(2),
       '扣款': (item.deduction ?? 0).toFixed(2),
+      '病假扣減': (detail.sickDeduction ?? 0).toFixed(2),
+      '勤工獎': (detail.attendanceBonus ?? 0).toFixed(2),
+      '津貼': (detail.totalAllowances ?? 0).toFixed(2),
+      '產假/侍產假': ((item.maternityPay ?? 0) + (item.paternityPay ?? 0)).toFixed(2),
+      'ADW調整': (detail.adwAdjustment ?? 0).toFixed(2),
+      'MPF': (detail.mpf ?? 0).toFixed(2),
       '雜項': (item.miscAmount ?? 0).toFixed(2),
       '店舖獎金': (item.storeBonus ?? 0).toFixed(2),
       '應付總額（含雜項）': (item.totalPayable ?? 0).toFixed(2),
@@ -125,7 +134,9 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
   ws['!cols'] = [
     { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 },
     { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 },
+    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+    { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
+    { wch: 8 }, { wch: 12 },
   ]
   XLSX.utils.book_append_sheet(wb, ws, '糧單')
 
@@ -141,6 +152,12 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     { '項目': '總拆帳', '值': visibleItems.reduce((s: number, i: any) => s + (i.splitPay ?? 0), 0).toFixed(2) },
     { '項目': '總店舖獎金', '值': visibleItems.reduce((s: number, i: any) => s + (i.storeBonus ?? 0), 0).toFixed(2) },
     { '項目': '總扣款', '值': visibleItems.reduce((s: number, i: any) => s + (i.deduction ?? 0), 0).toFixed(2) },
+    { '項目': '總病假扣減', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').sickDeduction ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
+    { '項目': '總勤工獎', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').attendanceBonus ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
+    { '項目': '總津貼', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').totalAllowances ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
+    { '項目': '總產假/侍產假', '值': visibleItems.reduce((s: number, i: any) => s + (i.maternityPay ?? 0) + (i.paternityPay ?? 0), 0).toFixed(2) },
+    { '項目': '總ADW調整', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').adwAdjustment ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
+    { '項目': '總MPF', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').mpf ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
     { '項目': '總雜項', '值': visibleItems.reduce((s: number, i: any) => s + (i.miscAmount ?? 0), 0).toFixed(2) },
     { '項目': '應付總額（含雜項）', '值': visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
   ]

@@ -665,9 +665,11 @@ export default function EmployeePayrollDetailPage() {
 
             {/* ★ 對帳 guard (dev only) —— 防止將來再有隱藏項目 */}
             {process.env.NODE_ENV !== 'production' && (() => {
+              // ★ 此公式應與 payroll-engine.ts 的 grossPay 公式一致
               const shown = item.basePay + (attendanceBonus ?? 0) + (detail?.adwAdjustment ?? 0)
                 + (storeBonus ?? 0) + (item.splitPay ?? 0) + (item.otPay ?? 0)
                 - (sickDeduction ?? 0) - (item.deduction ?? 0) + (allowances ?? 0)
+                + (maternityPay ?? 0) + (paternityPay ?? 0)
               const diff = Math.abs(shown - (grossPay ?? 0))
               return diff > 0.05
                 ? <div className="text-xs text-red-600 mt-1">⚠️ 明細對不上 Gross，差 ${diff.toFixed(2)}</div>
