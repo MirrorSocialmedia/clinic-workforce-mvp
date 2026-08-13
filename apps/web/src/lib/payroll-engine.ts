@@ -3297,13 +3297,12 @@ export async function calculatePayrollWithRules(
   const mpf = calcMPF(grossPay, mpfConfig)
   const netPay = Math.max(0, grossPay - mpf)
 
-  result.totalPayable = netPay
-
-  // ★ 雜項報銷 — MPF 扣除後加回
+  // ★ 雜項報銷 —— 報銷唔屬於 EO「工資」，唔計 MPF，喺 netPay 之後最後加
   const miscEntries = await prisma.expenseEntry.findMany({
-    where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7) },
+    where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7), status: 'APPROVED' },
   })
   const miscTotal = miscEntries.reduce((sum: number, e: any) => sum + e.amount, 0)
+  result.totalPayable = netPay + miscTotal
   result.detail = {
     ...result.detail,
     storeBonus,

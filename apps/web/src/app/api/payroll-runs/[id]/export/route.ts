@@ -116,7 +116,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
       '扣款': (item.deduction ?? 0).toFixed(2),
       '雜項': (item.miscAmount ?? 0).toFixed(2),
       '店舖獎金': (item.storeBonus ?? 0).toFixed(2),
-      '應付總額': (item.totalPayable ?? 0).toFixed(2),
+      '應付總額（含雜項）': (item.totalPayable ?? 0).toFixed(2),
     }
   })
 
@@ -142,7 +142,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     { '項目': '總店舖獎金', '值': visibleItems.reduce((s: number, i: any) => s + (i.storeBonus ?? 0), 0).toFixed(2) },
     { '項目': '總扣款', '值': visibleItems.reduce((s: number, i: any) => s + (i.deduction ?? 0), 0).toFixed(2) },
     { '項目': '總雜項', '值': visibleItems.reduce((s: number, i: any) => s + (i.miscAmount ?? 0), 0).toFixed(2) },
-    { '項目': '應付總額', '值': visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
+    { '項目': '應付總額（含雜項）', '值': visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
   ]
   const ws2 = XLSX.utils.json_to_sheet(summary)
   ws2['!cols'] = [{ wch: 15 }, { wch: 20 }]
@@ -238,7 +238,7 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string): NextRes
   doc.setFontSize(10)
 
   const totalPayable = run.items.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0)
-  const prefix = hasChineseFont ? '應付總額: HK$' : 'Total: HK$'
+  const prefix = hasChineseFont ? '應付總額（含雜項）: HK$' : 'Total: HK$'
   doc.text(`${prefix}${totalPayable.toFixed(2)}`, 14, finalY)
 
   const empLabel = hasChineseFont ? `員工數: ${run.items.length}` : `Employees: ${run.items.length}`
