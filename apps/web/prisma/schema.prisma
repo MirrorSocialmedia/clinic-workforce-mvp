@@ -981,3 +981,125 @@ model CostCaseMaterial {
 
   @@index([costCaseId])
 }
+
+// ============================================================
+// MD-C: Apricot Data Layer — Payment / Bill Sync
+// ============================================================
+
+model ApricotPayment {
+  id          String           @id @default(cuid())
+  extId       String           @unique
+  code        String
+  clinicExtId String
+  paidAt      DateTime
+  totalAmt    Decimal          @db.Decimal(12,2)
+  isVoid      Boolean          @default(false)
+  payerType   String
+  syncedAt    DateTime         @default(now())
+
+  methods     ApricotPaymentMethod[]
+  refs        ApricotPaymentRef[]
+
+  @@index([clinicExtId, paidAt])
+  @@index([paidAt])
+}
+
+model ApricotPaymentMethod {
+  id         String         @id @default(cuid())
+  paymentId  String
+  payment    ApricotPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  methodRaw  String
+  methodNorm String
+  amount     Decimal        @db.Decimal(12,2)
+  payType    String
+  @@index([paymentId])
+}
+
+model ApricotPaymentRef {
+  id        String         @id @default(cuid())
+  paymentId String
+  payment   ApricotPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  billExtId String
+  billCode  String
+  amount    Decimal        @db.Decimal(12,2)
+  @@index([paymentId])
+  @@index([billExtId])
+}
+
+model ApricotBill {
+  id            String           @id @default(cuid())
+  extId         String           @unique
+  code          String
+  billTime      DateTime
+  providerExtId String?
+  clinicExtId   String
+  amt           Decimal          @db.Decimal(12,2)
+  ttlAmt        Decimal          @db.Decimal(12,2)
+  paidAmt       Decimal          @db.Decimal(12,2)
+  osAmt         Decimal          @db.Decimal(12,2)
+  isVoid        Boolean          @default(false)
+  isRefunded    Boolean          @default(false)
+  refundRefId   String?
+  syncedAt      DateTime         @default(now())
+
+  items         ApricotBillItem[]
+
+  @@index([providerExtId, billTime])
+  @@index([clinicExtId, billTime])
+}
+
+model ApricotBillItem {
+  id          String      @id @default(cuid())
+  billId      String
+  bill        ApricotBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+  eleId       String
+  feeItemCode String
+  feeItemDes  String
+  qty         Int
+  unitPrice   Decimal    @db.Decimal(12,2)
+  discPer     Decimal    @db.Decimal(5,2)
+  discAmt     Decimal    @db.Decimal(12,2)
+  ttlDisc     Decimal    @db.Decimal(12,2)
+  amt         Decimal    @db.Decimal(12,2)
+  ttlAmt      Decimal    @db.Decimal(12,2)
+  reconJson   Json
+
+  @@unique([billId, eleId])
+  @@index([feeItemDes])
+}
+
+model PaymentAllocation {
+  id             String   @id @default(cuid())
+  paymentExtId   String
+  billExtId      String
+  providerExtId  String?
+  clinicExtId    String
+  paidAt         DateTime
+  periodMonth    String
+  methodNorm     String
+  amount         Decimal  @db.Decimal(12,2)
+  feePercentUsed Decimal  @db.Decimal(5,3)
+  netAmount      Decimal  @db.Decimal(12,2)
+  countAsIncome  Boolean
+  allocationMode String
+  needsReview    Boolean  @default(false)
+  isVoid         Boolean  @default(false)
+  computedAt     DateTime @default(now())
+
+  @@unique([paymentExtId, billExtId, methodNorm])
+  @@index([providerExtId, periodMonth])
+  @@index([needsReview])
+}
+
+model PaymentMethodRule {
+  id            String   @id @default(cuid())
+  method        String
+  label         String
+  feePercent    Decimal  @db.Decimal(5,3) @default(0)
+  countAsIncome Boolean  @default(true)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  createdBy     String
+
+  @@index([method, effectiveFrom])
+}

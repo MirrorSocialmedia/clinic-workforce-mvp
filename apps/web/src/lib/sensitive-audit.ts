@@ -64,6 +64,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_DISCOUNT_SET', label: '設定 Lab 月度折扣' },
   { action: 'MATERIAL_ITEM_CREATE', label: '新增材料項目' },
   { action: 'PATIENT_NAME_PURGE', label: 'PII 清理 — 清除病人姓名' },
+  // ★ MD-C: Apricot Data Layer
+  { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },
+  { action: 'PAYMENT_METHOD_RULE_CREATE', label: '新增付款方式規則' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([

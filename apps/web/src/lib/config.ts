@@ -297,6 +297,13 @@ export const CONFIG = {
     // Lab 月度折扣
     'GET /api/lab-discounts': ['OWNER', 'MANAGER'],
     'POST /api/lab-discounts': ['OWNER'],
+    // ★ MD-C: Apricot Payment / Bill Sync
+    'POST /api/apricot/sync': ['OWNER'],
+    'POST /api/apricot/sync/cron': ['OWNER'], // ★ cron 專用，實際用 x-cron-key 認證
+    'GET /api/apricot/status': ['OWNER', 'MANAGER'],
+    'GET /api/payment-method-rules': ['OWNER', 'MANAGER'],
+    'POST /api/payment-method-rules': ['OWNER'],
+
     // 材料主檔
     'GET /api/material-items': ['OWNER', 'MANAGER'],
     'POST /api/material-items': ['OWNER'],
@@ -418,6 +425,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'PUT /api/labs/:id': ['provider_payout'],
   'POST /api/lab-discounts': ['provider_payout'],
   'POST /api/material-items': ['provider_payout'],
+
+  // —— MD-C: Apricot Data Layer ——
+  'POST /api/apricot/sync': ['provider_payout'],
+  'GET /api/apricot/status': ['provider_payout'],
+  'GET /api/payment-method-rules': ['provider_payout'],
+  'POST /api/payment-method-rules': ['provider_payout'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

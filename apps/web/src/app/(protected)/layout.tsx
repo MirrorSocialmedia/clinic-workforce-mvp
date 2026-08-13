@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
-import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope } from 'lucide-react'
+import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
 
@@ -170,6 +170,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER'] },
     { path: '/face-review', label: '臉部覆核', icon: FileText, roles: ['OWNER', 'MANAGER'] },
     { path: '/hash', label: '完整性驗證', icon: ShieldCheck, roles: ['OWNER'] },
+    { path: '/apricot-sync', label: 'Apricot 同步', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
   ]
 
   const visibleNav = navItems.filter(item => {
