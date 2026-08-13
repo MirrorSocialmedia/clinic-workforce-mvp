@@ -13,6 +13,7 @@ export const PERMISSIONS = {
   employee_overview: '員工總覽',
   provider_schedule: '醫生當值排更',
   provider_payout: '醫生拆帳',
+  cost_entry: '成本錄入（Lab / Implant / Invisalign）',
   accounts_manage: '帳號管理',
   clinic_manage: '診所/公司管理',
   audit_view: '審計日誌',
@@ -25,7 +26,7 @@ export const MGMT_PERMS = ['scheduling', 'attendance_manage', 'payroll_view', 'p
 
 export const ROLE_DEFAULTS: Record<string, PermKey[]> = {
   OWNER: Object.keys(PERMISSIONS) as PermKey[],
-  MANAGER: ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops', 'employee_overview', 'provider_schedule'],
+  MANAGER: ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops', 'employee_overview', 'provider_schedule', 'cost_entry'],
   ACCOUNTANT: ['payroll_view'],
   EMPLOYEE: [],
   KIOSK: ['provider_schedule'],

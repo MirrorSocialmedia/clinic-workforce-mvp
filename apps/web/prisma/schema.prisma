@@ -893,3 +893,89 @@ model ExternalCredential {
   rotationCount Int       @default(0)
   updatedAt     DateTime  @updatedAt
 }
+
+// ============================================================
+// MD-B: Cost Entry — Lab / Implant / Invisalign
+// ============================================================
+
+// Lab 主檔
+model Lab {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+  cases     CostCase[]
+  discounts LabMonthlyDiscount[]
+}
+
+// Universal 月度折扣
+model LabMonthlyDiscount {
+  id          String   @id @default(cuid())
+  labId       String
+  lab         Lab      @relation(fields: [labId], references: [id], onDelete: Cascade)
+  periodMonth String   // '2026-07'
+  discountPct Decimal  @db.Decimal(5,2) // 8.50 = 8.5%
+  note        String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+
+  @@unique([labId, periodMonth])
+}
+
+// 材料主檔
+model MaterialItem {
+  id          String   @id @default(cuid())
+  name        String
+  unitPrice   Decimal  @db.Decimal(12,2)
+  effectiveFrom DateTime
+  effectiveTo DateTime?
+  isActive    Boolean  @default(true)
+
+  @@index([name, effectiveFrom])
+}
+
+// 成本 case
+model CostCase {
+  id            String   @id @default(cuid())
+  providerId    String
+  clinicId      String
+  category      String   // 'LAB' | 'IMPLANT' | 'INVISALIGN'
+  patientCode   String
+  patientName   String?
+  orderedAt     DateTime
+  itemType      String?  // Crown / Bridge / …
+  labId         String?
+  lab           Lab?     @relation(fields: [labId], references: [id])
+  labOrderNo    String?
+  dsaName       String?
+  baseCost      Decimal? @db.Decimal(12,2) // ★ nullable = 未有價
+  discountPct   Decimal? @db.Decimal(5,2) // 快照
+  finalCost     Decimal? @db.Decimal(12,2) // ★ 引擎實際用呢個
+  receivedAt    DateTime?
+  appointmentAt DateTime?
+  status        String   @default("PENDING") // PENDING | PRICED | DONE | VOID
+  periodMonth   String
+  lockedByRunId String?
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  materials CostCaseMaterial[]
+
+  @@index([providerId, periodMonth])
+  @@index([status])
+  @@index([patientCode])
+}
+
+// IMPLANT 材料明細
+model CostCaseMaterial {
+  id             String   @id @default(cuid())
+  costCaseId     String
+  costCase       CostCase @relation(fields: [costCaseId], references: [id], onDelete: Cascade)
+  materialItemId String
+  qty            Int
+  unitPriceUsed  Decimal  @db.Decimal(12,2) // ★ 快照
+  subtotal       Decimal  @db.Decimal(12,2)
+
+  @@index([costCaseId])
+}

@@ -282,6 +282,24 @@ export const CONFIG = {
     // ★ 2026-08-04: 排班每日備註
     'GET /api/schedule-notes': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'PUT /api/schedule-notes': ['OWNER', 'MANAGER'],
+
+    // ★ MD-B: Cost Entry — 成本錄入（Lab / Implant / Invisalign）
+    'GET /api/cost-cases': ['OWNER', 'MANAGER'],
+    'POST /api/cost-cases': ['OWNER', 'MANAGER'],
+    'POST /api/cost-cases/implant': ['OWNER', 'MANAGER'],
+    'PUT /api/cost-cases/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/cost-cases/:id': ['OWNER', 'MANAGER'],
+    'POST /api/cost-cases/recompute': ['OWNER'],
+    // Lab 主檔
+    'GET /api/labs': ['OWNER', 'MANAGER'],
+    'POST /api/labs': ['OWNER'],
+    'PUT /api/labs/:id': ['OWNER'],
+    // Lab 月度折扣
+    'GET /api/lab-discounts': ['OWNER', 'MANAGER'],
+    'POST /api/lab-discounts': ['OWNER'],
+    // 材料主檔
+    'GET /api/material-items': ['OWNER', 'MANAGER'],
+    'POST /api/material-items': ['OWNER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
@@ -386,6 +404,20 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— 醫生拆帳 —— OWNER only（MANAGER 冇權睇醫生收入）
   'GET /api/provider-commissions': ['provider_payout'],
   'POST /api/provider-commissions': ['provider_payout'],
+
+  // —— MD-B: Cost Entry ——
+  //   cost_entry 權限：MANAGER 可以錄入成本
+  'GET /api/cost-cases': ['cost_entry'],
+  'POST /api/cost-cases': ['cost_entry'],
+  'POST /api/cost-cases/implant': ['cost_entry'],
+  'PUT /api/cost-cases/:id': ['cost_entry'],
+  'DELETE /api/cost-cases/:id': ['cost_entry'],
+  //   provider_payout 權限：折扣設定 / 材料單價（只 OWNER）
+  'POST /api/cost-cases/recompute': ['provider_payout'],
+  'POST /api/labs': ['provider_payout'],
+  'PUT /api/labs/:id': ['provider_payout'],
+  'POST /api/lab-discounts': ['provider_payout'],
+  'POST /api/material-items': ['provider_payout'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

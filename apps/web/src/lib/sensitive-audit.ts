@@ -56,6 +56,14 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PROVIDER_COMMISSION_SET', label: '新增醫生拆帳設定' },
   { action: 'PROVIDER_LEAVE_SET', label: '新增醫生休假' },
   { action: 'PROVIDER_LEAVE_DELETE', label: '刪除醫生休假' },
+  // ★ MD-B: Cost Entry audit actions
+  { action: 'COST_CASE_CREATE', label: '新增成本記錄' },
+  { action: 'COST_CASE_UPDATE', label: '更新成本記錄' },
+  { action: 'COST_CASE_VOID', label: '作廢成本記錄' },
+  { action: 'COST_RECOMPUTE', label: '折扣重算' },
+  { action: 'LAB_DISCOUNT_SET', label: '設定 Lab 月度折扣' },
+  { action: 'MATERIAL_ITEM_CREATE', label: '新增材料項目' },
+  { action: 'PATIENT_NAME_PURGE', label: 'PII 清理 — 清除病人姓名' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([
