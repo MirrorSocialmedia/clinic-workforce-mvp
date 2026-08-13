@@ -613,6 +613,34 @@ export default function ProviderSchedulePage() {
                     className="w-full border rounded px-2 py-1 text-sm" />
                 </div>
               </div>
+              {/* ★ D11: Quick date presets */}
+              <div className="flex gap-1 flex-wrap">
+                <button type="button" onClick={() => {
+                  const t = toHKDateStr(todayHK())
+                  setLeaveForm({ ...leaveForm, startDate: t, endDate: t })
+                }} className="text-[10px] px-2 py-0.5 border rounded hover:bg-muted">今日</button>
+                <button type="button" onClick={() => {
+                  const t = todayHK()
+                  const mon = addDays(t, -hkDayOfWeek(t))
+                  const fri = addDays(mon, 4)
+                  setLeaveForm({ ...leaveForm, startDate: toHKDateStr(mon), endDate: toHKDateStr(fri) })
+                }} className="text-[10px] px-2 py-0.5 border rounded hover:bg-muted">本週 (一–五)</button>
+                <button type="button" onClick={() => {
+                  const t = todayHK()
+                  const ymd = t.split('-')
+                  const first = `${ymd[0]}-${ymd[1]}-01`
+                  const last = new Date(parseInt(ymd[0]), parseInt(ymd[1]), 0)
+                  setLeaveForm({ ...leaveForm, startDate: first, endDate: toHKDateStr(last) })
+                }} className="text-[10px] px-2 py-0.5 border rounded hover:bg-muted">本月</button>
+                <button type="button" onClick={() => {
+                  const t = todayHK()
+                  const ymd = t.split('-')
+                  const nextMonth = new Date(parseInt(ymd[0]), parseInt(ymd[1]), 1)
+                  const nextFirst = toHKDateStr(nextMonth)
+                  const nextLast = new Date(parseInt(ymd[0]), parseInt(ymd[1]) + 1, 0)
+                  setLeaveForm({ ...leaveForm, startDate: nextFirst, endDate: toHKDateStr(nextLast) })
+                }} className="text-[10px] px-2 py-0.5 border rounded hover:bg-muted">下月</button>
+              </div>
               <div>
                 <label className="text-xs text-muted-foreground">備註（可選）</label>
                 <input value={leaveForm.note} onChange={e => setLeaveForm({ ...leaveForm, note: e.target.value })}
