@@ -3302,7 +3302,7 @@ export async function calculatePayrollWithRules(
     where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7), status: 'APPROVED' },
   })
   const miscTotal = miscEntries.reduce((sum: number, e: any) => sum + e.amount, 0)
-  result.totalPayable = netPay + miscTotal
+  result.totalPayable = netPay
   result.detail = {
     ...result.detail,
     storeBonus,
@@ -3481,7 +3481,9 @@ export async function calculatePayrollWithRules(
     },
   }
 
-  // ★ 雜項統一在最後加（防 OT/假期重算覆蓋）
+  // ★ 雜項唯一加入點 —— 前面只設 netPay，唔可以喺嗰度加 miscTotal。
+  // 擺喺最尾係為咗防止中間有新邏輯覆寫 totalPayable。
+  // ⚠️ 改動呢行之前先 grep "totalPayable =" 確認冇第二處加 miscTotal。
   result.totalPayable = Math.max(0, result.totalPayable + miscTotal)
 
   // ★ EO「工資」總額（供 ADW 用）
