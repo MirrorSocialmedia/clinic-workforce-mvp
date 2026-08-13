@@ -277,64 +277,79 @@ export async function allocatePayment(
     }
   }
 
+  // ★ E1：按 (billExtId, methodNorm) 合併，防止 unique key 撞覆蓋
+  const merged = new Map<string, PaymentAllocationRow>()
+  for (const a of allocations) {
+    const k = `${a.billExtId}|${a.methodNorm}`
+    const ex = merged.get(k)
+    if (ex) {
+      ex.amount += a.amount
+      ex.netAmount = computeNet(ex.amount, ex.feePercentUsed)
+    } else {
+      merged.set(k, { ...a })
+    }
+  }
+
   // 四捨五入補平
-  return roundWithAdjustment(allocations, totalAmt, payment.id)
+  return roundWithAdjustment([...merged.values()], totalAmt, payment.id)
 }
 
 /** 批量寫入 PaymentAllocation（upsert by unique key） */
 export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
   if (allocations.length === 0) return
 
-  // Mark existing allocations for same paymentExtId as superseded (C5)
+  // ★ E2：updateMany + upsert 包入 $transaction，防止中斷後所有行永久 isSuperseded=true
   const paymentExtIds = [...new Set(allocations.map(a => a.paymentExtId))]
   for (const pid of paymentExtIds) {
-    await prisma.paymentAllocation.updateMany({
-      where: { paymentExtId: pid },
-      data: { isSuperseded: true },
-    })
-  }
+    await prisma.$transaction(async tx => {
+      await tx.paymentAllocation.updateMany({
+        where: { paymentExtId: pid },
+        data: { isSuperseded: true },
+      })
 
-  for (const a of allocations) {
-    await prisma.paymentAllocation.upsert({
-      where: {
-        paymentExtId_billExtId_methodNorm: {
-          paymentExtId: a.paymentExtId,
-          billExtId: a.billExtId,
-          methodNorm: a.methodNorm,
-        },
-      },
-      update: {
-        providerExtId: a.providerExtId,
-        clinicExtId: a.clinicExtId,
-        paidAt: a.paidAt,
-        periodMonth: a.periodMonth,
-        amount: new Prisma.Decimal(String(a.amount)),
-        feePercentUsed: new Prisma.Decimal(String(a.feePercentUsed)),
-        netAmount: new Prisma.Decimal(String(a.netAmount)),
-        countAsIncome: a.countAsIncome,
-        allocationMode: a.allocationMode,
-        needsReview: a.needsReview,
-        isVoid: a.isVoid ?? false,
-        isSuperseded: false,
-        computedAt: new Date(),
-      },
-      create: {
-        paymentExtId: a.paymentExtId,
-        billExtId: a.billExtId,
-        providerExtId: a.providerExtId,
-        clinicExtId: a.clinicExtId,
-        paidAt: a.paidAt,
-        periodMonth: a.periodMonth,
-        methodNorm: a.methodNorm,
-        amount: new Prisma.Decimal(String(a.amount)),
-        feePercentUsed: new Prisma.Decimal(String(a.feePercentUsed)),
-        netAmount: new Prisma.Decimal(String(a.netAmount)),
-        countAsIncome: a.countAsIncome,
-        allocationMode: a.allocationMode,
-        needsReview: a.needsReview,
-        isVoid: a.isVoid ?? false,
-        isSuperseded: false,
-      },
+      for (const a of allocations.filter(x => x.paymentExtId === pid)) {
+        await tx.paymentAllocation.upsert({
+          where: {
+            paymentExtId_billExtId_methodNorm: {
+              paymentExtId: a.paymentExtId,
+              billExtId: a.billExtId,
+              methodNorm: a.methodNorm,
+            },
+          },
+          update: {
+            providerExtId: a.providerExtId,
+            clinicExtId: a.clinicExtId,
+            paidAt: a.paidAt,
+            periodMonth: a.periodMonth,
+            amount: new Prisma.Decimal(String(a.amount)),
+            feePercentUsed: new Prisma.Decimal(String(a.feePercentUsed)),
+            netAmount: new Prisma.Decimal(String(a.netAmount)),
+            countAsIncome: a.countAsIncome,
+            allocationMode: a.allocationMode,
+            needsReview: a.needsReview,
+            isVoid: a.isVoid ?? false,
+            isSuperseded: false,
+            computedAt: new Date(),
+          },
+          create: {
+            paymentExtId: a.paymentExtId,
+            billExtId: a.billExtId,
+            providerExtId: a.providerExtId,
+            clinicExtId: a.clinicExtId,
+            paidAt: a.paidAt,
+            periodMonth: a.periodMonth,
+            methodNorm: a.methodNorm,
+            amount: new Prisma.Decimal(String(a.amount)),
+            feePercentUsed: new Prisma.Decimal(String(a.feePercentUsed)),
+            netAmount: new Prisma.Decimal(String(a.netAmount)),
+            countAsIncome: a.countAsIncome,
+            allocationMode: a.allocationMode,
+            needsReview: a.needsReview,
+            isVoid: a.isVoid ?? false,
+            isSuperseded: false,
+          },
+        })
+      }
     })
   }
 }
