@@ -46,6 +46,9 @@ export default function PayrollListPage() {
   const [monthHasRun, setMonthHasRun] = useState(false)
   const [expEmployees, setExpEmployees] = useState<any[]>([])
   const [expLoading, setExpLoading] = useState(false)
+  // ★ 雜項審批狀態
+  const [expStatusFilter, setExpStatusFilter] = useState<string>('') // '' = all, 'PENDING', 'APPROVED'
+  const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null)
 
   const fetchRuns = useCallback(async () => {
     setLoading(true)
@@ -148,6 +151,33 @@ export default function PayrollListPage() {
     else alert('取消失敗')
   }
 
+  // ★ 雜項審批 handler
+  const approveExpense = async (id: string) => {
+    if (!confirm('確定批准此筆雜項報銷？')) return
+    const r = await fetch(`/api/expense-entries/${id}`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'APPROVE' }),
+    })
+    if (r.ok) { await loadExpenses() }
+    else { const err = await r.json().catch(() => ({})); alert(err.error || '批准失敗') }
+  }
+
+  const startRejectExpense = (id: string) => {
+    setRejectModal({ id, reason: '' })
+  }
+
+  const confirmRejectExpense = async () => {
+    if (!rejectModal) return
+    const r = await fetch(`/api/expense-entries/${rejectModal.id}`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'REJECT', rejectReason: rejectModal.reason || null }),
+    })
+    if (r.ok) { setRejectModal(null); await loadExpenses() }
+    else { const err = await r.json().catch(() => ({})); alert(err.error || '拒絕失敗') }
+  }
+
   const deleteRun = async (runId: string) => {
     if (!confirm('確定刪除這次計糧？此操作無法復原。')) return
     try {
@@ -217,6 +247,14 @@ export default function PayrollListPage() {
           <div className="flex items-center gap-2">
             <input type="month" value={expMonth} onChange={e => setExpMonth(e.target.value)}
               className="rounded border px-2 py-1 text-sm" />
+            {/* ★ 審批狀態 filter */}
+            <select value={expStatusFilter} onChange={e => setExpStatusFilter(e.target.value)}
+              className="rounded border px-2 py-1 text-sm">
+              <option value="">全部</option>
+              <option value="PENDING">待審批</option>
+              <option value="APPROVED">已批准</option>
+              <option value="REJECTED">已拒絕</option>
+            </select>
             {canGenerate && (
               <button onClick={() => setAddingExpense(!addingExpense)}
                 className="px-3 py-1 rounded bg-brand text-white text-sm">
@@ -259,10 +297,27 @@ export default function PayrollListPage() {
             <div className="text-sm text-muted-foreground text-center py-4">該月尚無雜項記錄</div>
           ) : (
             <>
+              {/* ★ Reject modal inline */}
+              {rejectModal && (
+                <div className="mb-3 p-3 rounded border bg-amber-50 flex flex-col gap-2">
+                  <div className="text-sm font-medium">拒絕原因（選填）：</div>
+                  <textarea
+                    value={rejectModal.reason}
+                    onChange={e => setRejectModal({ ...rejectModal, reason: e.target.value })}
+                    placeholder="請說明拒絕原因..."
+                    className="rounded border px-2 py-1 text-sm min-h-[60px]"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setRejectModal(null)} className="px-3 py-1 rounded border text-sm">取消</button>
+                    <button onClick={confirmRejectExpense} className="px-3 py-1 rounded bg-red-500 text-white text-sm">確認拒絕</button>
+                  </div>
+                </div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-muted-foreground border-b">
+                      <th className="text-left py-1.5">狀態</th>
                       <th className="text-left py-1.5">員工</th>
                       <th className="text-right py-1.5">金額</th>
                       <th className="text-left py-1.5 pl-3">說明</th>
@@ -271,31 +326,54 @@ export default function PayrollListPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {expenses.map((e: any) => (
-                      <tr key={e.id} className="border-b last:border-0">
-                        <td className="py-1.5">
-                          {e.employee?.user?.name || '未知'}
-                          <span className="text-xs text-muted-foreground ml-1">
-                            · {e.employee?.homeClinic?.shortName || e.clinic?.shortName || ''}
-                          </span>
-                        </td>
-                        <td className="py-1.5 text-right text-emerald-600">+{e.amount.toLocaleString()}</td>
-                        <td className="py-1.5 pl-3">{e.description}</td>
-                        <td className="py-1.5 text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}</td>
-                        <td className="py-1.5 text-right">
-                          {canGenerate && (
-                            <button onClick={() => delExpense(e.id, e.employee?.user?.name, e.amount)}
-                              className="text-destructive text-xs hover:underline">取消</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {expenses
+                      .filter((e: any) => !expStatusFilter || e.status === expStatusFilter)
+                      .map((e: any) => {
+                        const statusLabel: Record<string, string> = { PENDING: '待審批', APPROVED: '已批准', REJECTED: '已拒絕' }
+                        const statusColor: Record<string, string> = { PENDING: 'text-amber-600 bg-amber-50', APPROVED: 'text-emerald-600 bg-emerald-50', REJECTED: 'text-gray-500 bg-gray-100' }
+                        const sc = statusColor[e.status] || statusColor.PENDING
+                        return (
+                          <tr key={e.id} className="border-b last:border-0">
+                            <td className="py-1.5">
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${sc}`}>{statusLabel[e.status] || e.status}</span>
+                            </td>
+                            <td className="py-1.5">
+                              {e.employee?.user?.name || '未知'}
+                              <span className="text-xs text-muted-foreground ml-1">
+                                · {e.employee?.homeClinic?.shortName || e.clinic?.shortName || ''}
+                              </span>
+                            </td>
+                            <td className={`py-1.5 text-right ${e.status === 'APPROVED' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
+                              {e.status === 'APPROVED' ? '+' : ''}{e.amount.toLocaleString()}
+                            </td>
+                            <td className="py-1.5 pl-3">
+                              {e.description}
+                              {e.rejectReason && <div className="text-xs text-red-500 mt-0.5">拒絕原因：{e.rejectReason}</div>}
+                            </td>
+                            <td className="py-1.5 text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}</td>
+                            <td className="py-1.5 text-right">
+                              {canGenerate && e.status === 'PENDING' && (
+                                <div className="flex gap-1 justify-end">
+                                  <button onClick={() => approveExpense(e.id)}
+                                    className="text-emerald-600 text-xs hover:underline">批准</button>
+                                  <button onClick={() => startRejectExpense(e.id)}
+                                    className="text-red-500 text-xs hover:underline">拒絕</button>
+                                </div>
+                              )}
+                              {canGenerate && e.status !== 'PENDING' && (
+                                <button onClick={() => delExpense(e.id, e.employee?.user?.name, e.amount)}
+                                  className="text-destructive text-xs hover:underline">取消</button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
                     <tr className="font-medium">
-                      <td className="py-1.5">合計</td>
+                      <td className="py-1.5" colSpan={2}>合計（已批准）</td>
                       <td className="py-1.5 text-right text-emerald-600">
-                        +{expenses.reduce((s: number, e: any) => s + e.amount, 0).toLocaleString()}
+                        +{expenses.filter((e: any) => e.status === 'APPROVED').reduce((s: number, e: any) => s + e.amount, 0).toLocaleString()}
                       </td>
-                      <td colSpan={3}></td>
+                      <td colSpan={4}></td>
                     </tr>
                   </tbody>
                 </table>

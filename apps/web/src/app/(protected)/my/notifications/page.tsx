@@ -9,6 +9,8 @@ const TYPE_ICONS: Record<string, string> = {
   SHIFT_CHANGED: '📅',
   CORRECTION_APPROVED: '📋',
   SHIFT_CANCELLED: '🚫',
+  EXPENSE_APPROVED: '💰',
+  EXPENSE_REJECTED: '💸',
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -17,6 +19,8 @@ const TYPE_COLORS: Record<string, string> = {
   SHIFT_CHANGED: '#2196F3',
   CORRECTION_APPROVED: '#FF9800',
   SHIFT_CANCELLED: '#888',
+  EXPENSE_APPROVED: '#22c55e',
+  EXPENSE_REJECTED: '#ef4444',
 }
 
 export default function NotificationsPage() {

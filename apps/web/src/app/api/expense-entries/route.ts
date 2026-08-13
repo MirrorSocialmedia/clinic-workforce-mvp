@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
       description,
       createdBy: session.userId,
       clinicId,
+      status: 'APPROVED', // 經理直接創建 = 自動已批
     },
   })
 

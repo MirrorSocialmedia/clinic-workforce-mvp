@@ -24,7 +24,7 @@ TABLES="User Employee Shift PunchRecord PayrollItem \
 LeaveRequest LeaveBalance LeaveType \
 TimeBank TimeBankEntry PayRule WageHistory \
 PunchCorrection PunchVoid AuditLog \
-Clinic Company ShiftTemplate"
+Clinic Company ShiftTemplate ExpenseEntry HKPublicHoliday"
 
 echo "🔧 [$(date)] Starting backup..."
 

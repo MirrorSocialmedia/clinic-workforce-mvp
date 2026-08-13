@@ -263,6 +263,12 @@ export const CONFIG = {
     'GET /api/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'DELETE /api/expense-entries/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'PATCH /api/expense-entries/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
+    // 員工自助雜項申請
+    'POST /api/my/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/my/expense-entries': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'DELETE /api/my/expense-entries/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Wage history routes (ADW compliance)
     'GET /api/wage-history': ['OWNER', 'ACCOUNTANT'],

@@ -736,11 +736,20 @@ model ExpenseEntry {
   createdBy    String   // 記錄人 userId
   createdAt    DateTime @default(now())
 
+  // ★ 審批流程欄位
+  status       String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  submittedBy  String?
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  rejectReason String?
+  receiptUrl   String?  // 留位，第一版唔做上載
+
   employee     Employee @relation(fields: [employeeId], references: [id])
   clinic       Clinic?  @relation(fields: [clinicId], references: [id])
 
   @@index([employeeId, periodMonth])
   @@index([periodMonth, clinicId])
+  @@index([status, periodMonth])
 }
 
 // ============================================================

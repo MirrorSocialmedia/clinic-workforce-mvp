@@ -5,6 +5,7 @@ import Link from 'next/link'
 const MENU = [
   { href: '/my/leave', label: '假期', icon: '🏖', desc: '申請假期、查看餘額' },
   { href: '/my/punches', label: '打卡記錄', icon: '📋', desc: '查看我的打卡歷史' },
+  { href: '/my/expenses', label: '雜項報銷', icon: '💰', desc: '申請雜項報銷、查看記錄' },
   { href: '/my/face-enroll', label: '人臉登記', icon: '📸', desc: '登記/更新人臉' },
   { href: '/my/notifications', label: '通知', icon: '🔔', desc: '查看通知' },
 ]
