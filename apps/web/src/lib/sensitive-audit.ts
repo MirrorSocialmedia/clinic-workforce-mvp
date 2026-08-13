@@ -67,6 +67,13 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   // ★ MD-C: Apricot Data Layer
   { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },
   { action: 'PAYMENT_METHOD_RULE_CREATE', label: '新增付款方式規則' },
+  // ★ MD-D: Payout Engine
+  { action: 'PAYOUT_RUN_LOCK', label: '鎖定月結單' },
+  { action: 'PAYOUT_RUN_UNLOCK', label: '⚠️ 解鎖月結單' },
+  { action: 'REFERRAL_CREATE', label: '新增轉介記錄' },
+  { action: 'REFERRAL_DELETE', label: '刪除轉介記錄' },
+  { action: 'SP_SUBSIDY_CONFIRM', label: '確認 SP 補貼' },
+  { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([

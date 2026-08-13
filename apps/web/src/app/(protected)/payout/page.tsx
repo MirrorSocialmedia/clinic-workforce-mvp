@@ -1,0 +1,266 @@
+'use client'
+
+/**
+ * MD-D: Payout Runs List — 月結單列表
+ * OWNER / provider_payout 權限
+ */
+import { useEffect, useState } from 'react'
+import { apiFetch } from '@/lib/api-client'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Plus, Eye, Lock, FileText } from 'lucide-react'
+import { hasPermission } from '@/lib/permissions'
+
+interface PayoutRun {
+  id: string
+  providerId: string
+  periodMonth: string
+  status: string
+  totalAmount: number
+  provider: { name: string; shortName?: string | null }
+}
+
+export default function PayoutRunsPage() {
+  const [runs, setRuns] = useState<PayoutRun[]>([])
+  const [loading, setLoading] = useState(true)
+  const [providers, setProviders] = useState<{ id: string; name: string }[]>([])
+  const [selectedProvider, setSelectedProvider] = useState('')
+  const [selectedMonth, setSelectedMonth] = useState('')
+  const [userRole, setUserRole] = useState('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
+  const canPayout = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
+
+  // Preview modal
+  const [showPreview, setShowPreview] = useState(false)
+  const [previewData, setPreviewData] = useState<any>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [generating, setGenerating] = useState(false)
+
+  useEffect(() => {
+    loadRuns()
+    loadProviders()
+    loadMe()
+  }, [])
+
+  async function loadMe() {
+    try {
+      const res = await apiFetch<any>('/api/me')
+      setUserRole(res.user?.role || '')
+      setGrant(res.user?.grant || [])
+      setDeny(res.user?.deny || [])
+    } catch (e) {
+      console.error('Failed to load user info', e)
+    }
+  }
+
+  async function loadRuns() {
+    try {
+      const res = await apiFetch<{ runs: PayoutRun[] }>('/api/payout-runs')
+      setRuns(res.runs || [])
+    } catch (e) {
+      console.error('Failed to load payout runs', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadProviders() {
+    try {
+      const res = await apiFetch<any>('/api/providers')
+      setProviders(res.providers || [])
+    } catch (e) {
+      console.error('Failed to load providers', e)
+    }
+  }
+
+  async function handlePreview() {
+    if (!selectedProvider || !selectedMonth) {
+      alert('請選擇醫生和月份')
+      return
+    }
+    setPreviewLoading(true)
+    try {
+      const res = await apiFetch<any>('/api/payout-runs/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerId: selectedProvider,
+          periodMonth: selectedMonth,
+        }),
+      })
+      setPreviewData(res)
+      setShowPreview(true)
+    } catch (e: any) {
+      if (e.status === 400) {
+        const msgs = (e.message || '未知錯誤')
+        alert(`無法預覽:\n${msgs}`)
+      } else {
+        alert(`預覽失敗: ${e.message}`)
+      }
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  async function handleGenerate() {
+    if (!selectedProvider || !selectedMonth) {
+      alert('請選擇醫生和月份')
+      return
+    }
+    if (!confirm(`確定為 ${selectedMonth} 生成月結單？`)) return
+    setGenerating(true)
+    try {
+      const res = await apiFetch<any>('/api/payout-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerId: selectedProvider,
+          periodMonth: selectedMonth,
+        }),
+      })
+      alert(`月結單已生成 (總額: $${res.run.totalAmount})`)
+      setShowPreview(false)
+      loadRuns()
+    } catch (e: any) {
+      if (e.status === 409) {
+        alert(`月結單已存在`)
+      } else if (e.status === 400) {
+        alert(`生成失敗: ${e.message}`)
+      } else {
+        alert(`生成失敗: ${e.message}`)
+      }
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  if (loading) return <div className="p-6">載入中...</div>
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6">醫生月結單</h1>
+
+      {/* Generate section */}
+      {canPayout && (
+        <Card className="p-4 mb-6">
+          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+            <Plus className="w-4 h-4" /> 生成月結單
+          </h2>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">醫生</label>
+              <select
+                className="border rounded px-3 py-2 w-48"
+                value={selectedProvider}
+                onChange={e => setSelectedProvider(e.target.value)}
+              >
+                <option value="">選擇醫生</option>
+                {providers.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">月份</label>
+              <Input
+                type="month"
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+                className="w-44"
+              />
+            </div>
+            <Button
+              onClick={handlePreview}
+              disabled={previewLoading || !selectedProvider || !selectedMonth}
+              variant="outline"
+            >
+              預覽
+            </Button>
+            <Button
+              onClick={handleGenerate}
+              disabled={generating || !selectedProvider || !selectedMonth}
+            >
+              {generating ? '生成中...' : '生成並鎖定'}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* Preview modal */}
+      {showPreview && previewData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="p-6 max-w-2xl w-full max-h-[90vh] overflow-auto">
+            <h2 className="text-xl font-bold mb-4">月結單預覽</h2>
+            {previewData.errors && previewData.errors.length > 0 && (
+              <div className="bg-red-50 text-red-700 p-3 rounded mb-4">
+                {previewData.errors.map((e: string, i: number) => (
+                  <div key={i}>{e}</div>
+                ))}
+              </div>
+            )}
+            {previewData.preview && (
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span>原始收入</span><span>${previewData.preview.rawAmount?.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>收入（扣手續費後）</span><span>${previewData.preview.grossAmount?.toFixed(2)}</span></div>
+                <div className="flex justify-between text-red-600"><span>Lab 成本</span><span>-${previewData.preview.labCost?.toFixed(2)}</span></div>
+                <div className="flex justify-between text-red-600"><span>Implant 成本</span><span>-${previewData.preview.implantCost?.toFixed(2)}</span></div>
+                <div className="flex justify-between text-red-600"><span>Invisalign 成本</span><span>-${previewData.preview.invisalignCost?.toFixed(2)}</span></div>
+                <div className="flex justify-between font-semibold"><span>利潤</span><span>${previewData.preview.profitAmount?.toFixed(2)}</span></div>
+                <div className="flex justify-between text-blue-600"><span>拆帳 ({previewData.preview.percentUsed}%)</span><span>${previewData.preview.salaryAmount?.toFixed(2)}</span></div>
+                <div className="flex justify-between text-green-600"><span>SP 補貼</span><span>+$ {previewData.preview.spSubsidy?.toFixed(2)}</span></div>
+                <div className="flex justify-between text-green-600"><span>轉介</span><span>+$ {previewData.preview.refAmount?.toFixed(2)}</span></div>
+                <div className="flex justify-between text-green-600"><span>上期調整</span><span>+$ {previewData.preview.adjustAmount?.toFixed(2)}</span></div>
+                <hr />
+                <div className="flex justify-between font-bold text-lg">
+                  <span>總額</span><span>${previewData.preview.totalAmount?.toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+            {previewData.warnings && previewData.warnings.length > 0 && (
+              <div className="bg-yellow-50 text-yellow-700 p-3 rounded mt-4">
+                {previewData.warnings.map((w: string, i: number) => (
+                  <div key={i}>⚠ {w}</div>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setShowPreview(false)}>關閉</Button>
+              <Button onClick={handleGenerate} disabled={generating}>
+                {generating ? '生成中...' : '確認並鎖定'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Runs list */}
+      <div className="space-y-2">
+        {runs.length === 0 && <p className="text-gray-500">暫無月結單</p>}
+        {runs.map(run => (
+          <Card key={run.id} className="p-4 flex justify-between items-center">
+            <div>
+              <div className="font-semibold">
+                {run.provider?.shortName || run.provider?.name} — {run.periodMonth}
+              </div>
+              <div className="text-sm text-gray-500">
+                總額: ${run.totalAmount.toFixed(2)}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-1 rounded text-xs font-medium ${
+                run.status === 'LOCKED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+              }`}>
+                {run.status === 'LOCKED' ? <><Lock className="w-3 h-3 inline mr-1" />已鎖定</> : '草稿'}
+              </span>
+              <a href={`/payout/${run.id}`}>
+                <Button variant="ghost" size="sm"><Eye className="w-4 h-4" /></Button>
+              </a>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}

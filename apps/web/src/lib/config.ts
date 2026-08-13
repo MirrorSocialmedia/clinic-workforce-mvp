@@ -307,6 +307,21 @@ export const CONFIG = {
     // 材料主檔
     'GET /api/material-items': ['OWNER', 'MANAGER'],
     'POST /api/material-items': ['OWNER'],
+
+    // ★ MD-D: Payout Engine — 醫生拆帳（OWNER only）
+    'GET /api/payout-runs': ['OWNER'],
+    'POST /api/payout-runs': ['OWNER'],
+    'POST /api/payout-runs/preview': ['OWNER'],
+    'GET /api/payout-runs/:id': ['OWNER'],
+    'POST /api/payout-runs/:id/lock': ['OWNER'],
+    'POST /api/payout-runs/:id/unlock': ['OWNER'],
+    'GET /api/provider-referrals': ['OWNER'],
+    'POST /api/provider-referrals': ['OWNER'],
+    'PUT /api/provider-referrals/:id': ['OWNER'],
+    'DELETE /api/provider-referrals/:id': ['OWNER'],
+    'GET /api/sp-subsidies': ['OWNER'],
+    'POST /api/sp-subsidies/scan': ['OWNER'],
+    'POST /api/sp-subsidies/:id/confirm': ['OWNER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
@@ -431,6 +446,21 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/apricot/status': ['provider_payout'],
   'GET /api/payment-method-rules': ['provider_payout'],
   'POST /api/payment-method-rules': ['provider_payout'],
+
+  // —— MD-D: Payout Engine ——
+  'GET /api/payout-runs': ['provider_payout'],
+  'POST /api/payout-runs': ['provider_payout'],
+  'POST /api/payout-runs/preview': ['provider_payout'],
+  'GET /api/payout-runs/:id': ['provider_payout'],
+  'POST /api/payout-runs/:id/lock': ['provider_payout'],
+  'POST /api/payout-runs/:id/unlock': ['provider_payout'],
+  'GET /api/provider-referrals': ['provider_payout'],
+  'POST /api/provider-referrals': ['provider_payout'],
+  'PUT /api/provider-referrals/:id': ['provider_payout'],
+  'DELETE /api/provider-referrals/:id': ['provider_payout'],
+  'GET /api/sp-subsidies': ['provider_payout'],
+  'POST /api/sp-subsidies/scan': ['provider_payout'],
+  'POST /api/sp-subsidies/:id/confirm': ['provider_payout'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]
