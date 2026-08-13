@@ -1083,11 +1083,12 @@ model PaymentAllocation {
   countAsIncome  Boolean
   allocationMode String
   needsReview    Boolean  @default(false)
-  isVoid         Boolean  @default(false)
+  isVoid         Boolean  @default(false) // ★ Apricot 作廢（引擎排除）
+  isSuperseded   Boolean  @default(false) // ★ 重算後過時（引擎排除）
   computedAt     DateTime @default(now())
 
   @@unique([paymentExtId, billExtId, methodNorm])
-  @@index([providerExtId, periodMonth])
+  @@index([providerExtId, periodMonth, isVoid, isSuperseded])
   @@index([needsReview])
 }
 
