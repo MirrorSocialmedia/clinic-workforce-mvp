@@ -15,6 +15,22 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
   }
 
+  // ★ D4: Validate clinicIds exist before updating
+  if (clinicIds !== undefined && Array.isArray(clinicIds) && clinicIds.length) {
+    const existingClinics = await prisma.clinic.findMany({
+      where: { id: { in: clinicIds } },
+      select: { id: true },
+    })
+    const validIds = new Set(existingClinics.map((c: any) => c.id))
+    const invalidIds = clinicIds.filter((cid: string) => !validIds.has(cid))
+    if (invalidIds.length) {
+      return NextResponse.json(
+        { error: `無效的診所 ID：${invalidIds.join(', ')}` },
+        { status: 400 }
+      )
+    }
+  }
+
   try {
     const provider = await prisma.$transaction(async (tx) => {
       const p = await tx.provider.update({
