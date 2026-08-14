@@ -163,3 +163,25 @@ export function estimateScheduledHours(
   }
   return out
 }
+
+/**
+ * ★ 2026-08-14: 編更跨度工時 —— 只供「應返工時 vs 已編班」對比用。
+ * 同 estimateScheduledHours 嘅分別：
+ * · 唔扣午飯（合約 9 小時 = 09:00-18:00 跨度）
+ * · 剔走「當日已經係假期」嘅更次（避免同「應返」重複減）
+ * ⚠️ 唔可以攞去計糧 —— 計糧用返 estimateScheduledHours。
+ */
+export function rosterSpanHours(
+  shifts: Array<{ employeeId: string; date: Date; startTime: Date; endTime: Date; status: string }>,
+  leaveDateSet: Set<string>, // 格式：`${employeeId}:${HK日}`
+): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const s of shifts) {
+    if (s.status === 'CANCELLED') continue
+    const day = toHKDateStr(s.date)
+    if (leaveDateSet.has(`${s.employeeId}:${day}`)) continue // ★ 假期日唔計
+    const mins = Math.max(0, (s.endTime.getTime() - s.startTime.getTime()) / 60000)
+    out.set(s.employeeId, (out.get(s.employeeId) ?? 0) + mins)
+  }
+  return out
+}

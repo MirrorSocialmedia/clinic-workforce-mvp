@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
-import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
+import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
+import { rosterSpanHours } from '@/lib/shift-punch-match'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
 export async function GET(
@@ -93,22 +94,33 @@ export async function GET(
     orderBy: { correctedTime: 'asc' },
   })
 
-  // ★ 編更差額資料：查詢該月所有非 CANCELLED 更，計算 total roster minutes
+  // ★ 2026-08-14: 編更差額資料（用 rosterSpanHours + 實際假期日數）
   const shifts = await prisma.shift.findMany({
     where: { employeeId: params.empId, date: { gte: periodStart, lte: periodEnd }, status: { not: 'CANCELLED' } },
-    select: { startTime: true, endTime: true },
+    select: { employeeId: true, date: true, startTime: true, endTime: true, status: true },
   })
-  const rosterSpanMinutes = Math.round(shifts.reduce((s, sh) => s + (new Date(sh.endTime).getTime() - new Date(sh.startTime).getTime()) / 60000, 0))
 
-  // 預計工時：從 pay rules config 讀取 expectedMonthlyMinutes
-  let expectedMinutes = 0
-  try {
-    const payRule = item.employee.payRules[0]
-    if (payRule?.configJson) {
-      const cfg = typeof payRule.configJson === 'string' ? JSON.parse(payRule.configJson) : payRule.configJson
-      expectedMinutes = cfg?.expectedMonthlyMinutes ?? 0
+  // 取 APPROVED 假期（去重）
+  const periodStartStr = toHKDateStr(periodStart)
+  const periodEndStr = toHKDateStr(periodEnd)
+  const leaveDates = new Set<string>()
+  for (const lr of leaves) {
+    let d = toHKDateStr(lr.startDate)
+    const end = toHKDateStr(lr.endDate)
+    while (d <= end) {
+      if (d >= periodStartStr && d <= periodEndStr) leaveDates.add(d)
+      d = addDaysStr(d, 1)
     }
-  } catch { /* ignore */ }
+  }
+
+  const daysInMonth = hkDaysInMonth(periodStart)
+  const expectedMinutes = (daysInMonth - leaveDates.size) * 9 * 60 // 9h default
+
+  const leaveDateSet = new Set(
+    Array.from(leaveDates).map(d => `${params.empId}:${d}`)
+  )
+  const rosterMap = rosterSpanHours(shifts as any, leaveDateSet)
+  const rosterSpanMinutes = rosterMap.get(params.empId) ?? 0
 
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
   const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]

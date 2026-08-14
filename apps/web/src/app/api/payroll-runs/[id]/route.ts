@@ -5,7 +5,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
+import { rosterSpanHours } from '@/lib/shift-punch-match'
 
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
@@ -180,20 +181,42 @@ export async function PUT(
           if (!payRule || payRule.payType !== 'MONTHLY') continue // ★ 時薪唔做
           const empId = item.employee.id
 
-          // 查詢該月所有非 CANCELLED 更，計算 total roster minutes
+          // ★ 2026-08-14: 計算應返工時（用實際假期日數，去重）
           const monthStart = new Date(`${pm}-01T00:00:00+08:00`)
+          const monthStartStr = toHKDateStr(monthStart)
+          const monthEndStr = toHKDateStr(monthEndDate)
+
+          // 取 APPROVED 假期（去重）
+          const approvedLeaves = await tx.leaveRequest.findMany({
+            where: {
+              employeeId: empId,
+              status: 'APPROVED',
+              startDate: { lte: new Date(`${pmNum === 12 ? `${py + 1}-01` : `${py}-${String(pmNum + 1).padStart(2, '0')}-01T00:00:00+08:00` as any}`) },
+              endDate: { gte: monthStart },
+            },
+          })
+          const leaveDates = new Set<string>()
+          for (const lr of approvedLeaves) {
+            let d = toHKDateStr(lr.startDate)
+            const end = toHKDateStr(lr.endDate)
+            while (d <= end) {
+              if (d >= monthStartStr && d <= monthEndStr) leaveDates.add(d)
+              d = addDaysStr(d, 1)
+            }
+          }
+          const daysInMonth = hkDaysInMonth(monthStart)
+          const expectedMinutes = (daysInMonth - leaveDates.size) * 9 * 60 // 9h default
+
+          // 計算已編班工時（用 rosterSpanHours）
           const shifts = await tx.shift.findMany({
             where: { employeeId: empId, date: { gte: monthStart, lte: monthEndDate }, status: { not: 'CANCELLED' } },
-            select: { startTime: true, endTime: true },
+            select: { employeeId: true, date: true, startTime: true, endTime: true, status: true },
           })
-          const rosterSpanMinutes = Math.round(shifts.reduce((s, sh) => s + (new Date(sh.endTime).getTime() - new Date(sh.startTime).getTime()) / 60000, 0))
-
-          // 預計工時：月薪員工用合約標準（config 有 expectedMonthlyMinutes 就用，否則 0）
-          let expectedMinutes = 0
-          try {
-            const cfg = payRule.configJson ? (typeof payRule.configJson === 'string' ? JSON.parse(payRule.configJson) : payRule.configJson) : {}
-            expectedMinutes = cfg?.expectedMonthlyMinutes ?? 0
-          } catch { /* ignore */ }
+          const leaveDateSet = new Set(
+            Array.from(leaveDates).map(d => `${empId}:${d}`)
+          )
+          const rosterMap = rosterSpanHours(shifts as any, leaveDateSet)
+          const rosterSpanMinutes = rosterMap.get(empId) ?? 0
 
           const diff = Math.round(rosterSpanMinutes - expectedMinutes)
           if (diff === 0) continue
