@@ -156,6 +156,10 @@ export async function PUT(
         include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
       })
 
+      // ★ periodKey helper — 寫入同退回用同一個 helper，確保格式一致（2026-08-15）
+      const periodKey = (v: string | Date) =>
+        typeof v === 'string' ? v.slice(0, 7) : toHKDateStr(v).slice(0, 7)
+
       // ★★ DRAFT → FINALIZED: auto-snapshot wage records for ADW
       if (status === 'FINALIZED' && run.status === 'DRAFT') {
         await snapshotWagesForADW(tx, params.id, auditCtx.actorId)
@@ -172,31 +176,51 @@ export async function PUT(
             },
           },
         })
-        const pm = typeof run.periodMonth === 'string' ? run.periodMonth : toHKDateStr(run.periodMonth).slice(0, 7)
+        const pm = periodKey(run.periodMonth)
         const [py, pmNum] = pm.split('-').map(Number)
         const monthEndDate = new Date(`${py}-${String(pmNum >= 12 ? 1 : pmNum + 1).padStart(2, '0')}-01T00:00:00+08:00`)
+        const nextMonthStart = new Date(
+          pmNum === 12
+            ? `${py + 1}-01-01T00:00:00+08:00`
+            : `${py}-${String(pmNum + 1).padStart(2, '0')}-01T00:00:00+08:00`
+        )
+        const monthStart = new Date(`${pm}-01T00:00:00+08:00`)
+        const monthStartStr = toHKDateStr(monthStart)
+        const monthEndStr = toHKDateStr(monthEndDate)
+
+        // ★ 提到迴圈外 — 防止 N+1 query 撞 transaction timeout（2026-08-15）
+        const empIds = items
+          .filter(i => i.employee.payRules[0]?.payType === 'MONTHLY')
+          .map(i => i.employee.id)
+
+        const allLeaves = await tx.leaveRequest.findMany({
+          where: {
+            employeeId: { in: empIds },
+            status: 'APPROVED',
+            startDate: { lte: nextMonthStart },
+            endDate: { gte: monthStart },
+          },
+        })
+
+        const allShifts = await tx.shift.findMany({
+          where: {
+            employeeId: { in: empIds },
+            date: { gte: monthStart, lte: monthEndDate },
+            status: { not: 'CANCELLED' },
+          },
+          select: { employeeId: true, date: true, startTime: true, endTime: true, status: true },
+        })
 
         for (const item of items) {
           const payRule = item.employee.payRules[0]
-          if (!payRule || payRule.payType !== 'MONTHLY') continue // ★ 時薪唔做
+          if (!payRule || payRule.payType !== 'MONTHLY') continue
           const empId = item.employee.id
 
           // ★ 2026-08-14: 計算應返工時（用實際假期日數，去重）
-          const monthStart = new Date(`${pm}-01T00:00:00+08:00`)
-          const monthStartStr = toHKDateStr(monthStart)
-          const monthEndStr = toHKDateStr(monthEndDate)
-
-          // 取 APPROVED 假期（去重）
-          const approvedLeaves = await tx.leaveRequest.findMany({
-            where: {
-              employeeId: empId,
-              status: 'APPROVED',
-              startDate: { lte: new Date(`${pmNum === 12 ? `${py + 1}-01` : `${py}-${String(pmNum + 1).padStart(2, '0')}-01T00:00:00+08:00` as any}`) },
-              endDate: { gte: monthStart },
-            },
-          })
+          // 取 APPROVED 假期（由 batch query 按 employeeId 過濾）
+          const employeeLeaves = allLeaves.filter(lr => lr.employeeId === empId)
           const leaveDates = new Set<string>()
-          for (const lr of approvedLeaves) {
+          for (const lr of employeeLeaves) {
             let d = toHKDateStr(lr.startDate)
             const end = toHKDateStr(lr.endDate)
             while (d <= end) {
@@ -205,22 +229,20 @@ export async function PUT(
             }
           }
           const daysInMonth = hkDaysInMonth(monthStart)
-          const expectedMinutes = (daysInMonth - leaveDates.size) * 9 * 60 // 9h default
+          const expectedMinutes = (daysInMonth - leaveDates.size) * 9 * 60 // ★ 合約固定 9 小時／日（2026-08-14 拍板，唔由 config 讀）
 
-          // 計算已編班工時（用 rosterSpanHours）
-          const shifts = await tx.shift.findMany({
-            where: { employeeId: empId, date: { gte: monthStart, lte: monthEndDate }, status: { not: 'CANCELLED' } },
-            select: { employeeId: true, date: true, startTime: true, endTime: true, status: true },
-          })
+          // 計算已編班工時（用 rosterSpanHours）— 由 batch query 按 employeeId 過濾
+          const employeeShifts = allShifts.filter(s => s.employeeId === empId)
           const leaveDateSet = new Set(
             Array.from(leaveDates).map(d => `${empId}:${d}`)
           )
-          const rosterMap = rosterSpanHours(shifts as any, leaveDateSet)
+          const rosterMap = rosterSpanHours(employeeShifts as any, leaveDateSet)
           const rosterSpanMinutes = rosterMap.get(empId) ?? 0
 
           const diff = Math.round(rosterSpanMinutes - expectedMinutes)
           if (diff === 0) continue
 
+          // ★ monthEndDate 用日結 timestamp；TimeBankEntry 無 unique constraint，唔會撞
           await tx.timeBankEntry.create({
             data: {
               employeeId: empId,
@@ -237,7 +259,7 @@ export async function PUT(
       // ★ 退回草稿：獨立 action，方便日後追查
       if (status === 'DRAFT' && run.status === 'FINALIZED') {
         // ★ 退回時刪除 ROSTER_DIFF 入帳
-        const pmRevert = typeof run.periodMonth === 'string' ? run.periodMonth : toHKDateStr(run.periodMonth).slice(0, 7)
+        const pk = periodKey(run.periodMonth)
         const itemsRevert = await tx.payrollItem.findMany({
           where: { runId: params.id },
           select: { employeeId: true },
@@ -247,7 +269,7 @@ export async function PUT(
           where: {
             employeeId: { in: itemsRevert.map(i => i.employeeId) },
             type: 'ROSTER_DIFF',
-            note: { contains: `編更差額 ${pmRevert}` },
+            note: { contains: `編更差額 ${pk}` },
           },
         })
         console.log(`[payroll-revert] 刪咗 ${deleted.count} 筆 ROSTER_DIFF`)
