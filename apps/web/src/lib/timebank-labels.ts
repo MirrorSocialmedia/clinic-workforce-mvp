@@ -5,6 +5,8 @@ export const TIMEBANK_TYPE_LABEL: Record<string, string> = {
   MAKEUP: '補鐘',
   LEAVE_CONVERT: '換假',
   LEAVE_SWAP_BACK: '換回',
+  ROSTER_DIFF: '編更差額',
+  REST_TO_ACCOUNT: '休息日轉帳戶',
 }
 
 export const TIMEBANK_TARGET_LABEL: Record<string, string> = {

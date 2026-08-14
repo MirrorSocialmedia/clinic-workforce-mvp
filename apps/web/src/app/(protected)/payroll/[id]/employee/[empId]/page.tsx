@@ -145,6 +145,11 @@ export default function EmployeePayrollDetailPage() {
   const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const fmtTimeLocal = fmtDateTime
 
+  // ★ 編更差額資料
+  const rosterSpanMinutes = data.rosterSpanMinutes ?? 0
+  const expectedMinutes = data.expectedMinutes ?? 0
+  const rosterDiffMinutes = data.rosterDiffMinutes ?? 0
+
   // Company logo from API
   const companyLogo = data?.item?.run?.clinic?.company?.logoData || null
 
@@ -464,6 +469,20 @@ export default function EmployeePayrollDetailPage() {
               )}
             </div>
           </div>
+          {/* ★ 編更差額 */}
+          {payType === 'MONTHLY' && expectedMinutes > 0 && (
+            <div className="mt-3 text-sm p-3 rounded-lg border" style={{ backgroundColor: '#f8fafc' }}>
+              <span className="font-semibold">📋 編更差額：</span>
+              本月應返工時 {(expectedMinutes / 60).toFixed(1)}h
+              {' ／ '}
+              已編班總工時 {(rosterSpanMinutes / 60).toFixed(1)}h
+              {' ／ '}
+              <span style={{ color: rosterDiffMinutes >= 0 ? '#16a34a' : '#dc2626' }}>
+                差額 {rosterDiffMinutes >= 0 ? '+' : ''}{(rosterDiffMinutes / 60).toFixed(1)}h
+              </span>
+            </div>
+          )}
+
           {lateDays > 0 && (
             <div className="mt-2 text-sm text-amber-600">
               ⚠️ 遲到 {lateDays} 天

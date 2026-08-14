@@ -1752,7 +1752,8 @@ export async function calculateTimeBank(
   let convertedMinutes = 0
   try {
     // ★ 2026-08-08: EARLY_IN_OT 唔入 ADJUST_TYPES（物理隔離，唔好同錢線撞）
-    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT']
+    // ★ ROSTER_DIFF：編更差額，計糧生成時寫入、退回時刪除
+    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF']
     const convertEntries = await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
     })

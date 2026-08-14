@@ -42,5 +42,10 @@ export async function GET(req: NextRequest) {
       minutes: e.minutes,
       note: e.note,
     })),
+    // ★ 考勤 OT —— 由打卡即時計算，未入 TimeBankEntry
+    attendanceOt: {
+      otMinutes: tb.otMinutes, // 午休 OT + 收工 OT
+      lateMinutes: tb.netLateMinutes,
+    },
   })
 }

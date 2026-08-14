@@ -93,6 +93,23 @@ export async function GET(
     orderBy: { correctedTime: 'asc' },
   })
 
+  // ★ 編更差額資料：查詢該月所有非 CANCELLED 更，計算 total roster minutes
+  const shifts = await prisma.shift.findMany({
+    where: { employeeId: params.empId, date: { gte: periodStart, lte: periodEnd }, status: { not: 'CANCELLED' } },
+    select: { startTime: true, endTime: true },
+  })
+  const rosterSpanMinutes = Math.round(shifts.reduce((s, sh) => s + (new Date(sh.endTime).getTime() - new Date(sh.startTime).getTime()) / 60000, 0))
+
+  // 預計工時：從 pay rules config 讀取 expectedMonthlyMinutes
+  let expectedMinutes = 0
+  try {
+    const payRule = item.employee.payRules[0]
+    if (payRule?.configJson) {
+      const cfg = typeof payRule.configJson === 'string' ? JSON.parse(payRule.configJson) : payRule.configJson
+      expectedMinutes = cfg?.expectedMonthlyMinutes ?? 0
+    }
+  } catch { /* ignore */ }
+
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
   const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]
   const clinicsMap = new Map<string, { name: string; shortName: string | null }>()
@@ -108,6 +125,10 @@ export async function GET(
     item, detail, punches, leaves, corrections,
     clinicsMap: Object.fromEntries(clinicsMap),
     periodMonth: periodMonthKey(item.run.periodMonth),
+    // ★ 編更差額
+    rosterSpanMinutes,
+    expectedMinutes,
+    rosterDiffMinutes: rosterSpanMinutes - expectedMinutes,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })

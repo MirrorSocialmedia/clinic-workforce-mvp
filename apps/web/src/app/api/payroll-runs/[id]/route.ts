@@ -5,6 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
+import { toHKDateStr } from '@/lib/hk-date'
 
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
@@ -157,10 +158,77 @@ export async function PUT(
       // ★★ DRAFT → FINALIZED: auto-snapshot wage records for ADW
       if (status === 'FINALIZED' && run.status === 'DRAFT') {
         await snapshotWagesForADW(tx, params.id, auditCtx.actorId)
+
+        // ★ 編更差額入帳（每個月薪員工一筆）
+        const items = await tx.payrollItem.findMany({
+          where: { runId: params.id },
+          include: {
+            employee: {
+              select: {
+                id: true,
+                payRules: { where: { isActive: true }, take: 1, select: { payType: true, configJson: true } },
+              },
+            },
+          },
+        })
+        const pm = typeof run.periodMonth === 'string' ? run.periodMonth : toHKDateStr(run.periodMonth).slice(0, 7)
+        const [py, pmNum] = pm.split('-').map(Number)
+        const monthEndDate = new Date(`${py}-${String(pmNum >= 12 ? 1 : pmNum + 1).padStart(2, '0')}-01T00:00:00+08:00`)
+
+        for (const item of items) {
+          const payRule = item.employee.payRules[0]
+          if (!payRule || payRule.payType !== 'MONTHLY') continue // ★ 時薪唔做
+          const empId = item.employee.id
+
+          // 查詢該月所有非 CANCELLED 更，計算 total roster minutes
+          const monthStart = new Date(`${pm}-01T00:00:00+08:00`)
+          const shifts = await tx.shift.findMany({
+            where: { employeeId: empId, date: { gte: monthStart, lte: monthEndDate }, status: { not: 'CANCELLED' } },
+            select: { startTime: true, endTime: true },
+          })
+          const rosterSpanMinutes = Math.round(shifts.reduce((s, sh) => s + (new Date(sh.endTime).getTime() - new Date(sh.startTime).getTime()) / 60000, 0))
+
+          // 預計工時：月薪員工用合約標準（config 有 expectedMonthlyMinutes 就用，否則 0）
+          let expectedMinutes = 0
+          try {
+            const cfg = payRule.configJson ? (typeof payRule.configJson === 'string' ? JSON.parse(payRule.configJson) : payRule.configJson) : {}
+            expectedMinutes = cfg?.expectedMonthlyMinutes ?? 0
+          } catch { /* ignore */ }
+
+          const diff = Math.round(rosterSpanMinutes - expectedMinutes)
+          if (diff === 0) continue
+
+          await tx.timeBankEntry.create({
+            data: {
+              employeeId: empId,
+              date: monthEndDate,
+              type: 'ROSTER_DIFF',
+              minutes: diff,
+              note: `編更差額 ${pm}：已編班 ${(rosterSpanMinutes / 60).toFixed(1)}h − 應返 ${(expectedMinutes / 60).toFixed(1)}h`,
+              createdBy: session.userId,
+            },
+          })
+        }
       }
 
       // ★ 退回草稿：獨立 action，方便日後追查
       if (status === 'DRAFT' && run.status === 'FINALIZED') {
+        // ★ 退回時刪除 ROSTER_DIFF 入帳
+        const pmRevert = typeof run.periodMonth === 'string' ? run.periodMonth : toHKDateStr(run.periodMonth).slice(0, 7)
+        const itemsRevert = await tx.payrollItem.findMany({
+          where: { runId: params.id },
+          select: { employeeId: true },
+        })
+        // ⚠️ 靠 note 識月份——改咗上邊個文案要先改呢度！
+        const deleted = await tx.timeBankEntry.deleteMany({
+          where: {
+            employeeId: { in: itemsRevert.map(i => i.employeeId) },
+            type: 'ROSTER_DIFF',
+            note: { contains: `編更差額 ${pmRevert}` },
+          },
+        })
+        console.log(`[payroll-revert] 刪咗 ${deleted.count} 筆 ROSTER_DIFF`)
+
         await tx.auditLog.create({
           data: {
             actorId: auditCtx.actorId,

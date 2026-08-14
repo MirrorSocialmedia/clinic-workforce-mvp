@@ -38,6 +38,7 @@ export default function MyDashboardPage() {
   // ★ Time bank entries — lazy load on expand
   const [tbOpen, setTbOpen] = useState(false)
   const [tbEntries, setTbEntries] = useState<any[] | null>(null)
+  const [attendanceOt, setAttendanceOt] = useState<{ otMinutes: number; lateMinutes: number } | null>(null)
   const loadEntries = async () => {
     if (tbEntries !== null) return
     try {
@@ -45,6 +46,7 @@ export default function MyDashboardPage() {
       if (r.ok) {
         const d = await r.json()
         setTbEntries(d.entries ?? [])
+        setAttendanceOt(d.attendanceOt ?? null)
       }
     } catch {
       setTbEntries([])
@@ -279,37 +281,61 @@ export default function MyDashboardPage() {
                     <div className="mt-2 border-t pt-2">
                       {tbEntries === null ? (
                         <div className="text-xs text-muted-foreground py-2 text-center">載入中…</div>
-                      ) : tbEntries.length === 0 ? (
-                        <div className="text-xs text-muted-foreground py-2 text-center">呢兩個月冇記錄</div>
                       ) : (
                         <>
-                          <div className="text-[10px] text-muted-foreground mb-1">
-                            本月 + 上月 · 共 {tbEntries.length} 筆
+                          {/* ★ 已入帳（TimeBankEntry） */}
+                          <div className="text-[10px] text-muted-foreground mb-1 font-semibold">
+                            ── 已入帳（TimeBankEntry）
                           </div>
-                          <div style={{ maxHeight: 190, overflowY: 'auto' }}>
-                            {tbEntries.map(e => (
-                              <div key={e.id} title={e.note || undefined}
-                                className="flex justify-between items-center py-1.5 border-b text-xs last:border-0">
-                                <span className="truncate">
-                                  <span className="text-muted-foreground mr-1.5">{e.date.slice(5)}</span>
-                                  {timebankLabel(e.type, e.targetType)}
-                                </span>
-                                <span style={{
-                                  fontVariantNumeric: 'tabular-nums',
-                                  color: e.minutes > 0 ? '#059669' : e.minutes < 0 ? '#dc2626' : '#9ca3af',
-                                }}>
-                                  {e.minutes > 0 ? '+' : e.minutes < 0 ? '−' : ''}{Math.abs(e.minutes)}
-                                </span>
+                          {tbEntries.length === 0 ? (
+                            <div className="text-xs text-muted-foreground py-1 text-center">近兩月冇入帳記錄</div>
+                          ) : (
+                            <div style={{ maxHeight: 150, overflowY: 'auto' }}>
+                              {tbEntries.map(e => (
+                                <div key={e.id} title={e.note || undefined}
+                                  className="flex justify-between items-center py-1.5 border-b text-xs last:border-0">
+                                  <span className="truncate">
+                                    <span className="text-muted-foreground mr-1.5">{e.date.slice(5)}</span>
+                                    {timebankLabel(e.type, e.targetType)}
+                                  </span>
+                                  <span style={{
+                                    fontVariantNumeric: 'tabular-nums',
+                                    color: e.minutes > 0 ? '#059669' : e.minutes < 0 ? '#dc2626' : '#9ca3af',
+                                  }}>
+                                    {e.minutes > 0 ? '+' : e.minutes < 0 ? '−' : ''}{Math.abs(e.minutes)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* ★ 本月考勤（未入帳） */}
+                          {attendanceOt && (
+                            <>
+                              <div className="text-[10px] text-muted-foreground mb-1 font-semibold mt-2">
+                                ── 本月考勤（未入帳）
                               </div>
-                            ))}
-                          </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="text-center p-2 rounded-lg" style={{ backgroundColor: '#f0fdf4' }}>
+                                  <div className="text-base font-bold text-emerald-600">{attendanceOt.otMinutes ?? 0}</div>
+                                  <div className="text-[10px] text-muted-foreground">OT（分鐘）</div>
+                                </div>
+                                <div className="text-center p-2 rounded-lg" style={{ backgroundColor: '#fff7ed' }}>
+                                  <div className="text-base font-bold" style={{ color: (attendanceOt.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
+                                    {attendanceOt.lateMinutes ?? 0}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground">淨遲到（分鐘）</div>
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
                     </div>
                   )}
 
                   <div className="text-[10px] text-muted-foreground mt-1">
-                    明細只顯示本月及上月；上面嘅結餘係累積總數
+                    上面嘅結餘 = 累積結轉 ＋ 本月考勤 ＋ 已入帳調整
                   </div>
                 </div>
               )
