@@ -34,6 +34,12 @@ interface Provider {
   shortName: string | null
 }
 
+/** H1b: Parse preview result */
+interface ParsePreview {
+  meta: { practitioner: string; clinic: string; month: string }
+  rowCount: number
+}
+
 export default function ReconciliationPage() {
   const [records, setRecords] = useState<ReconciliationRecord[]>([])
   const [providers, setProviders] = useState<Provider[]>([])
@@ -43,6 +49,11 @@ export default function ReconciliationPage() {
   const [dragOver, setDragOver] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+
+  // H1b: Parse preview state
+  const [parsePreview, setParsePreview] = useState<ParsePreview | null>(null)
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('')
+  const [previewFile, setPreviewFile] = useState<File | null>(null)
 
   useEffect(() => {
     loadProviders()
@@ -72,12 +83,51 @@ export default function ReconciliationPage() {
     }
   }
 
-  const handleFile = useCallback(async (file: File) => {
+  // H1b: Parse preview step
+  const handleFileSelect = useCallback(async (file: File) => {
+    setUploading(true)
+    setUploadError(null)
+    setParsePreview(null)
+    setPreviewFile(file)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res: ParsePreview = await apiFetch('/api/reconciliation/parse', {
+        method: 'POST',
+        body: formData,
+      })
+      setParsePreview(res)
+
+      // Auto-select provider by matching shortName from "(CODE)" in practitioner name
+      const code = res.meta.practitioner.match(/\(([^)]+)\)\s*$/)?.[1]?.trim()
+      if (code) {
+        const matched = providers.find((p) => p.shortName === code)
+        if (matched) {
+          setSelectedProviderId(matched.id)
+          return
+        }
+      }
+      // No auto-match found — user must select manually
+      setSelectedProviderId('')
+    } catch (e: any) {
+      const msg = e.message || '解析失敗'
+      setUploadError(msg)
+      setParsePreview(null)
+      setPreviewFile(null)
+    } finally {
+      setUploading(false)
+    }
+  }, [providers])
+
+  // H1b: Submit upload with providerId
+  const handleUpload = useCallback(async () => {
+    if (!previewFile || !selectedProviderId) return
     setUploading(true)
     setUploadError(null)
     try {
       const formData = new FormData()
-      formData.append('file', file)
+      formData.append('file', previewFile)
+      formData.append('providerId', selectedProviderId)
       const res: { success: boolean; status: string; difference: number } = await apiFetch('/api/reconciliation/upload', {
         method: 'POST',
         body: formData,
@@ -94,7 +144,17 @@ export default function ReconciliationPage() {
       alert(`上載失敗: ${msg}`)
     } finally {
       setUploading(false)
+      setParsePreview(null)
+      setPreviewFile(null)
+      setSelectedProviderId('')
     }
+  }, [previewFile, selectedProviderId])
+
+  const handleCancelPreview = useCallback(() => {
+    setParsePreview(null)
+    setPreviewFile(null)
+    setSelectedProviderId('')
+    setUploadError(null)
   }, [])
 
   const handleDrop = useCallback(
@@ -102,24 +162,23 @@ export default function ReconciliationPage() {
       e.preventDefault()
       setDragOver(false)
       const file = e.dataTransfer.files[0]
-      if (file) handleFile(file)
+      if (file) handleFileSelect(file)
     },
-    [handleFile],
+    [handleFileSelect],
   )
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
-      if (file) handleFile(file)
+      if (file) handleFileSelect(file)
     },
-    [handleFile],
+    [handleFileSelect],
   )
 
   const handleBackfill = useCallback(
     async (date: string) => {
       if (!confirm(`確定要重新同步 ${date} 嘅 Apricot 數據？`)) return
       try {
-        // Find a clinic ID (use first available)
         const clinicRes = await apiFetch<{ clinics: { id: string }[] }>('/api/clinics')
         if (!clinicRes.clinics?.length) {
           alert('搵唔到診所')
@@ -148,7 +207,7 @@ export default function ReconciliationPage() {
     <div className="p-6 max-w-5xl mx-auto">
       <h1 className="text-2xl font-bold mb-4">月報對數</h1>
 
-      {/* Month selector + Upload */}
+      {/* Month selector + Upload / Preview */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
         <Input
           type="month"
@@ -157,32 +216,81 @@ export default function ReconciliationPage() {
           className="w-44"
         />
 
-        <label
-          className={`relative flex items-center gap-2 px-4 py-2 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-            dragOver
-              ? 'border-blue-500 bg-blue-50'
-              : 'border-gray-300 hover:border-blue-400'
-          } ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <Upload className="w-4 h-4" />
-          <span className="text-sm">上載報表 ⬆</span>
-          <Input
-            type="file"
-            accept=".xlsx"
-            onChange={handleInputChange}
-            className="absolute inset-0 opacity-0 cursor-pointer"
-            disabled={uploading}
-          />
-        </label>
+        {!parsePreview ? (
+          <>
+            <label
+              className={`relative flex items-center gap-2 px-4 py-2 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                dragOver
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-300 hover:border-blue-400'
+              } ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+            >
+              <Upload className="w-4 h-4" />
+              <span className="text-sm">上載報表 ⬆</span>
+              <Input
+                type="file"
+                accept=".xlsx"
+                onChange={handleInputChange}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+                disabled={uploading}
+              />
+            </label>
 
-        {uploading && <span className="text-sm text-gray-500">上載中...</span>}
-        {uploadError && (
-          <span className="text-sm text-red-600 flex items-center gap-1">
-            <RotateCcw className="w-3 h-3" /> {uploadError}
-          </span>
+            {uploading && <span className="text-sm text-gray-500">解析中...</span>}
+            {uploadError && (
+              <span className="text-sm text-red-600 flex items-center gap-1">
+                <RotateCcw className="w-3 h-3" /> {uploadError}
+              </span>
+            )}
+          </>
+        ) : (
+          /* H1b: Parse preview — show practitioner + provider select */
+          <div className="flex flex-wrap items-center gap-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
+            <div className="text-sm">
+              <span className="text-gray-500">報表醫生：</span>
+              <strong>{parsePreview.meta.practitioner}</strong>
+              <span className="text-gray-400 ml-2">（{parsePreview.meta.month}，{parsePreview.rowCount} 筆）</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="provider-select" className="text-sm text-gray-600">揀醫生：</label>
+              <select
+                id="provider-select"
+                value={selectedProviderId}
+                onChange={(e) => setSelectedProviderId(e.target.value)}
+                className="border rounded px-2 py-1 text-sm bg-white"
+                disabled={uploading}
+              >
+                <option value="">— 請揀醫生 —</option>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.shortName ? ` (${p.shortName})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={handleUpload}
+                disabled={uploading || !selectedProviderId}
+                className="text-xs"
+              >
+                {uploading ? '上載中...' : '確認上載'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCancelPreview}
+                disabled={uploading}
+                className="text-xs"
+              >
+                取消
+              </Button>
+            </div>
+          </div>
         )}
       </div>
 

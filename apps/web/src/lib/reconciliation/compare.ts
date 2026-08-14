@@ -2,6 +2,7 @@
 // 容差 $1。MISMATCH 唔擋生成月結，只警告。
 
 import { prisma } from '@/lib/prisma'
+import { toHKDateStr } from '@/lib/hk-date'
 import { ParsedRow } from './parsePaymentReport'
 
 // ★ Re-export ACTIVE_ALLOCATION filter (same as payout engine)
@@ -72,7 +73,7 @@ export async function compareReport(
 	const reportByDay = groupBy(rows, (r) => r.date)
 	const systemByDay = groupBy(
 		allocs,
-		(a) => a.paidAt.toISOString().split('T')[0],
+		(a) => toHKDateStr(a.paidAt),
 	)
 
 	const allDates = new Set([

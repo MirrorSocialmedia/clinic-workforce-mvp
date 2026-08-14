@@ -41,6 +41,8 @@ services:
       FACE_SERVICE_URL: http://face:8000
       FACE_THRESHOLD: ${FACE_THRESHOLD}
       FACE_MODE: shadow
+      APRICOT_ENC_KEY: ${APRICOT_ENC_KEY}
+      APRICOT_CRON_KEY: ${APRICOT_CRON_KEY}
     networks: [clinic_net]
     deploy:
       resources:

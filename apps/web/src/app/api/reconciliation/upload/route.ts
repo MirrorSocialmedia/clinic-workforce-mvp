@@ -1,4 +1,5 @@
 // ★ MD-E: POST /api/reconciliation/upload — Upload monthly payment report xlsx
+// ★ GET /api/reconciliation/upload/parse — Parse-only preview (returns meta)
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest) {
 
 	const formData = await req.formData()
 	const file = formData.get('file') as File | null
+	const providerId = formData.get('providerId') as string | null
 
 	if (!file) {
 		return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
@@ -33,13 +35,7 @@ export async function POST(req: NextRequest) {
 		const { meta, rows } = parsePaymentReport(buf)
 
 		// 搵 provider（由 meta.practitioner 配對 Provider.name）
-		const provider = await resolveProvider(meta.practitioner)
-		if (!provider) {
-			return NextResponse.json(
-				{ error: `搵唔到醫生: ${meta.practitioner}` },
-				{ status: 404 },
-			)
-		}
+		const provider = await resolveProvider(meta.practitioner, providerId || undefined)
 
 		// 比對
 		const result = await compareReport(provider.id, meta.month, rows)
@@ -87,37 +83,37 @@ export async function POST(req: NextRequest) {
 			systemTotal: result.systemTotal,
 		})
 	} catch (e: any) {
-		console.error('[reconciliation/upload] 失敗', e)
-		const msg = e.message || 'upload failed'
-		return NextResponse.json({ error: msg }, { status: 500 })
+		const msg = e?.message ?? 'upload failed'
+		const isUserError = /^REPORT_/.test(msg)
+		if (!isUserError) console.error('[reconciliation/upload] 失敗', e)
+		return NextResponse.json({ error: msg }, { status: isUserError ? 422 : 500 })
 	}
 }
 
 // 由 Practitioner 名稱配對 Provider
-async function resolveProvider(practitionerName: string): Promise<
-	| { id: string; apricotId: string | null }
-	| null
-> {
-	if (!practitionerName) return null
-
-	// 嘗試由全名配對
-	let provider = await prisma.provider.findFirst({
-		where: { name: { contains: practitionerName } },
-		select: { id: true, apricotId: true },
-	})
-
-	// 如果唔到，嘗試由醫生姓名中嘅簡寫配對
-	if (!provider && practitionerName.includes('(')) {
-		const shortName = practitionerName.match(/\(([^)]+)\)/)?.[1]?.trim()
-		if (shortName) {
-			provider = await prisma.provider.findFirst({
-				where: { shortName },
-				select: { id: true, apricotId: true },
-			})
-		}
+async function resolveProvider(practitionerName: string, hintProviderId?: string) {
+	// ① UI 有畀 providerId 就直接用（最可靠）
+	if (hintProviderId) {
+		const p = await prisma.provider.findUnique({
+			where: { id: hintProviderId },
+			select: { id: true, apricotId: true, shortName: true },
+		})
+		if (p) return p
 	}
 
-	return provider
+	// ② 由 "(TSE)" 抽 code
+	const code = practitionerName.match(/\(([^)]+)\)\s*$/)?.[1]?.trim()
+	if (!code) throw new Error(`REPORT_PRACTITIONER_UNPARSEABLE: ${practitionerName}`)
+
+	const matches = await prisma.provider.findMany({
+		where: { shortName: code },
+		select: { id: true, apricotId: true, shortName: true },
+		orderBy: { id: 'asc' }, // ★ 唯一 tiebreaker
+	})
+
+	if (matches.length === 0) throw new Error(`REPORT_PROVIDER_NOT_FOUND: ${code}`)
+	if (matches.length > 1) throw new Error(`REPORT_PROVIDER_AMBIGUOUS: ${code} 對到 ${matches.length} 個醫生`)
+	return matches[0]
 }
 
 function buildDetail(result: {
