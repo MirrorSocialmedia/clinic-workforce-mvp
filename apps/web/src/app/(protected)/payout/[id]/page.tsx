@@ -34,12 +34,22 @@ interface PayoutRun {
   adjustments: any[]
 }
 
+interface ReconciliationStatus {
+  id: string
+  providerId: string
+  status: string
+  difference: number
+  reportTotal: number
+  systemTotal: number
+}
+
 export default function PayoutRunDetailPage({ params }: { params: { id: string } }) {
   const [run, setRun] = useState<PayoutRun | null>(null)
   const [loading, setLoading] = useState(true)
   const [unlocking, setUnlocking] = useState(false)
   const [unlockReason, setUnlockReason] = useState('')
   const [showUnlock, setShowUnlock] = useState(false)
+  const [reconciliation, setReconciliation] = useState<ReconciliationStatus | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -50,10 +60,25 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
     try {
       const res = await apiFetch<{ run: PayoutRun }>(`/api/payout-runs/${params.id}`)
       setRun(res.run)
+      // Fetch reconciliation status for this provider + month
+      loadReconciliation(res.run.providerId, res.run.periodMonth)
     } catch (e: any) {
       alert(`載入失敗: ${e.message}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadReconciliation(providerId: string, periodMonth: string) {
+    try {
+      const res = await apiFetch<{ imports: ReconciliationStatus[] }>(
+        `/api/reconciliation?month=${encodeURIComponent(periodMonth)}`,
+      )
+      const match = res.imports.find((r) => r.providerId === providerId)
+      setReconciliation(match || null)
+    } catch {
+      // Reconciliation data optional — don't block page load
+      setReconciliation(null)
     }
   }
 
@@ -103,6 +128,24 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
             </span>
             {run.lockedAt && ` (鎖定時間: ${new Date(run.lockedAt).toLocaleString('zh-HK')})`}
           </p>
+          {/* ★ MD-E: Reconciliation status badge */}
+          <div className="mt-1">
+            {reconciliation?.status === 'MATCH' && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                ✅ 月報對數吻合
+              </span>
+            )}
+            {reconciliation?.status === 'MISMATCH' && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                🔴 月報對數差異: ${Math.abs(reconciliation.difference).toFixed(2)}
+              </span>
+            )}
+            {!reconciliation && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+                ⚪ 未上載月報
+              </span>
+            )}
+          </div>
         </div>
         {run.status === 'LOCKED' && (
           <Button variant="outline" onClick={() => setShowUnlock(true)}>

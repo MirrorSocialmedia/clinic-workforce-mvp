@@ -322,6 +322,9 @@ export const CONFIG = {
     'GET /api/sp-subsidies': ['OWNER'],
     'POST /api/sp-subsidies/scan': ['OWNER'],
     'POST /api/sp-subsidies/:id/confirm': ['OWNER'],
+    // ★ MD-E: 月報對數
+    'GET /api/reconciliation': ['OWNER'],
+    'POST /api/reconciliation/upload': ['OWNER'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
@@ -461,6 +464,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/sp-subsidies': ['provider_payout'],
   'POST /api/sp-subsidies/scan': ['provider_payout'],
   'POST /api/sp-subsidies/:id/confirm': ['provider_payout'],
+  // ★ MD-E: 月報對數
+  'GET /api/reconciliation': ['provider_payout'],
+  'POST /api/reconciliation/upload': ['provider_payout'],
 }
 
 export type Role = typeof CONFIG.ROLES[keyof typeof CONFIG.ROLES]

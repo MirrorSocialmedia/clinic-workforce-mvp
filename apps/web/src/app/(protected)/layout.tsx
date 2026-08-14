@@ -171,6 +171,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/face-review', label: '臉部覆核', icon: FileText, roles: ['OWNER', 'MANAGER'] },
     { path: '/hash', label: '完整性驗證', icon: ShieldCheck, roles: ['OWNER'] },
     { path: '/apricot-sync', label: 'Apricot 同步', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
+    // ★ MD-E: 月報對數
+    { path: '/reconciliation', label: '月報對數', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
   ]
 
   const visibleNav = navItems.filter(item => {
