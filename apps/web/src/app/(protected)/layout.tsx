@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
-import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard } from 'lucide-react'
+import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard, Receipt } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
 
@@ -173,6 +173,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/apricot-sync', label: 'Apricot 同步', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
     // ★ MD-E: 月報對數
     { path: '/reconciliation', label: '月報對數', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
+    // ★ P3-deploy: 成本錄入 (MANAGER + OWNER) + 醫生月結 (OWNER only)
+    { path: '/cost-entry', label: '成本錄入', icon: FileText, roles: ['OWNER', 'MANAGER'], perm: 'cost_entry' },
+    { path: '/payout', label: '醫生月結', icon: Receipt, roles: ['OWNER'], perm: 'provider_payout' },
   ]
 
   const visibleNav = navItems.filter(item => {

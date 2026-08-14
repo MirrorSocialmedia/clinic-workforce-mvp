@@ -7,12 +7,22 @@ FAIL=0
 echo "=== check-dates.sh ==="
 
 # 已知 pre-existing 問題（唔屬於呢個 task 嘅範圍）
-SKIP_FILES=(
+PREEXISTING=(
   "employees/[id]/overview/route.ts"
   "employees/[id]/overview/history/route.ts"
-  "lib/reconciliation/parsePaymentReport.ts"
   "lib/sick-leave-quota.ts"
 )
+
+# 有意義豁免：Excel serial number 轉換本身就係 UTC 基準，唔涉 HK 時區
+# parsePaymentReport.ts 將 Excel 嘅 serial date (1900-era) 轉為 JS Date，
+# 呢個轉換過程必然涉及 UTC，但佢處理嘅係數值而非「HK 時區日期」，
+# 因此屬有意義豁免，唔同 pre-existing 問題混在一起。
+INTENTIONAL_EXEMPT=(
+  "lib/reconciliation/parsePaymentReport.ts"
+)
+
+# 合併做 SKIP_FILES
+SKIP_FILES=("${PREEXISTING[@]}" "${INTENTIONAL_EXEMPT[@]}")
 
 should_skip() {
   local f="$1"

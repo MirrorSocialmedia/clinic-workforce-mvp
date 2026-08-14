@@ -13,7 +13,19 @@ export async function POST(req: NextRequest) {
 		return Response.json({ error: 'Missing required fields' }, { status: 400 })
 	}
 	const amt = Number(amount)
-	await createVoidAdjustment(
+	// ★ P3-deploy J4: 金額守衛
+	if (!Number.isFinite(amt)) {
+		return Response.json({ error: '金額異常' }, { status: 400 })
+	}
+	if (Math.abs(amt) > 1_000_000) {
+		return Response.json({ error: '金額異常' }, { status: 400 })
+	}
+	if (reason === 'VOID' && amt > 0) {
+		return Response.json({ error: '作廢回沖金額必須係負數' }, { status: 400 })
+	}
+
+	// ★ P3-deploy J2: 接返 return value，填 entityId
+	const adj = await createVoidAdjustment(
 		providerId,
 		sourceMonth || periodMonth,
 		periodMonth,
@@ -29,8 +41,8 @@ export async function POST(req: NextRequest) {
 			actorId: session.userId,
 			action: 'PAYOUT_ADJUST_CREATE',
 			entity: 'PayoutAdjustment',
-			entityId: '',
-			notes: `新增調整記錄: ${periodMonth} — ${reason}`,
+			entityId: adj.id,
+			notes: `新增調整記錄: ${periodMonth} — ${reason}${amt > 0 ? ' +' : ''}${amt}${refCode ? ` (${refCode})` : ''}`,
 			afterJson: JSON.stringify({ providerId, periodMonth, amount: amt, reason }),
 		},
 	})

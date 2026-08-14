@@ -15,6 +15,7 @@ import {
   Wallet,
   ShieldCheck,
   UserCircle,
+  Receipt,
 } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
@@ -101,6 +102,20 @@ export default function MobileMorePage() {
       href: '/hash',
       icon: ShieldCheck,
       roles: ['OWNER'],
+    },
+    {
+      label: '成本錄入',
+      href: '/cost-entry',
+      icon: FileText,
+      roles: ['OWNER', 'MANAGER'],
+      perm: 'cost_entry',
+    },
+    {
+      label: '醫生月結',
+      href: '/payout',
+      icon: Receipt,
+      roles: ['OWNER'],
+      perm: 'provider_payout',
     },
   ]
 
