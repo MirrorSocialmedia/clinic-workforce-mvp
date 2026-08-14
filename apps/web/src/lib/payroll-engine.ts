@@ -1161,6 +1161,7 @@ interface WorkData {
   approvedLeaveDays: number
   paidLeaveDays: number
   publicHolidayDays: number
+  publicHolidayCount: number // ★ 2026-08-14: deduplicated (PH on rest day excluded)
   workingDays: number
   restDays: number
   totalDaysInMonth: number
@@ -1916,20 +1917,24 @@ export function countMonthlyLeaveDays(
   year: number,
   month: number, // 0-indexed
   restDays: number[] = [],
-  publicHolidaySet?: Set<string>, // ★ 新增：由呼叫者傳入（已由 DB 讀好）
-): { restDayCount: number; publicHolidayCount: number; total: number } {
+  publicHolidaySet?: Set<string>, // ★ 由呼叫者傳入（已由 DB 讀好）
+): { restDayCount: number; publicHolidayCount: number; total: number; workingDays: number } {
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
   let restDayCount = 0, publicHolidayCount = 0
 
   for (let d = 1; d <= daysInMonth; d++) {
     const dow = new Date(Date.UTC(year, month, d)).getUTCDay()
-    if (restDays.includes(dow)) restDayCount++
-    // ★ 唔再用硬編碼 isPublicHoliday —— 嗰個 2026 有 13 處錯。
-    //   統一由 HKPublicHoliday 表提供，同 monthlyWorkingDays 用同一來源。
-    if (publicHolidaySet?.has(toHKDateStr(new Date(Date.UTC(year, month, d))))) publicHolidayCount++
+    const isRest = restDays.includes(dow)
+    const isPH = !!publicHolidaySet?.has(toHKDateStr(new Date(Date.UTC(year, month, d))))
+
+    // ★ 2026-08-14: 公眾假期落喺休息日 → 唔再雙重計
+    if (isRest) { restDayCount++; continue }
+    if (isPH) publicHolidayCount++
   }
 
-  return { restDayCount, publicHolidayCount, total: restDayCount + publicHolidayCount }
+  const total = restDayCount + publicHolidayCount
+  // ★ workingDays 由同一次迴圈導出 —— 唔好喺 caller 度自己減，會再分家
+  return { restDayCount, publicHolidayCount, total, workingDays: daysInMonth - total }
 }
 
 // ------------------------------------------------------------------
@@ -2320,12 +2325,11 @@ async function collectWorkData(
     }
   }
 
-  // Dynamic rest days: default [6, 0] (Sat+Sun); will be overridden by config at calc time
-  const restDays = countRestDaysInMonth(year, month, [6, 0])
-  // Total calendar days in month minus rest days minus public holidays (UTC-safe)
-  const monthlyWorkingDays = hkDaysInMonth(monthDate) - restDays - publicHolidayDays
-  // ★ 2026-08-02: countMonthlyLeaveDays 改用 DB 來源，同 monthlyWorkingDays 一致
+  // ★ 2026-08-14: countMonthlyLeaveDays 已去重 Sat/Sun 公眾假期，
+  //   取代手動 countRestDaysInMonth + 減 publicHolidayDays（會雙重計）
   const monthlyLeaveDaysInfo = countMonthlyLeaveDays(year, month, [6, 0], publicHolidaySet)
+  const restDays = monthlyLeaveDaysInfo.restDayCount
+  const monthlyWorkingDays = monthlyLeaveDaysInfo.workingDays
   // Fallback to old countWorkingDays for backward compat
   const workingDays = countWorkingDays(year, month)
 
@@ -2506,6 +2510,7 @@ async function collectWorkData(
     approvedLeaveDays,
     paidLeaveDays,
     publicHolidayDays,
+    publicHolidayCount: monthlyLeaveDaysInfo.publicHolidayCount,
     workingDays,
     restDays,
     totalDaysInMonth: hkDaysInMonth(monthDate),
@@ -2562,7 +2567,8 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
 
   // ★ 恆等式自檢 —— 曆日 = 工作日 + 休息日 + 公眾假期
   //   ⚠️ 唔好放入 detail —— detail 會存入 detailJson，debug flag 唔應該入業務資料
-  assertMonthlyIdentity(monthDate, workData.monthlyWorkingDays, workData.restDays, workData.publicHolidayDays, employeeId);
+  // ★ 2026-08-14: identity assertion 改用 deduplicated PH count
+  assertMonthlyIdentity(monthDate, workData.monthlyWorkingDays, workData.restDays, workData.publicHolidayCount, employeeId);
 
   return {
     basePay,
@@ -3043,12 +3049,16 @@ export async function calculatePayrollWithRules(
   const restDayCfg = (config as any)?.modifiers?.rest_days?.days
     ?? (config as any)?.rest_days
     ?? [6, 0]
-  const actualRestDays = countRestDaysInMonth(year, month, restDayCfg)
-  workData.restDays = actualRestDays
-  workData.monthlyWorkingDays = hkDaysInMonth(monthDate) - actualRestDays - workData.publicHolidayDays
-  // ★ workingDays 亦要覆盖 —— countWorkingDays 硬编码周六日，
-  //   诊所若唔系放周末，expectedWorkDays 个 fallback 会错
+  // ★ 2026-08-14: 改用 countMonthlyLeaveDays（PH 去重 Sat/Sun），同 Caller A 一致
+  const _phCallerB = await getPublicHolidayDays(monthStart, monthEnd)
+  const _phSetCallerB = new Set(_phCallerB.map(d => toHKDateStr(d)))
+  const leaveInfo = countMonthlyLeaveDays(year, month, restDayCfg, _phSetCallerB)
+  const actualRestDays = leaveInfo.restDayCount
+  workData.monthlyWorkingDays = leaveInfo.workingDays
+  // ★ workData.workingDays 維持 — 佢係「曆日 − 休息日」，特登唔減公眾假期
   workData.workingDays = hkDaysInMonth(monthDate) - actualRestDays
+  workData.restDays = actualRestDays
+  workData.publicHolidayCount = leaveInfo.publicHolidayCount
 
   // 2. Run base module
   const baseResult = runBaseModule(config, workData, monthDate, employeeId)
