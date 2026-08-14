@@ -77,6 +77,15 @@ const isBalanceExempt = (lt: any): boolean =>
     lt.systemKey === 'SICK'
   )
 
+// ★ 2026-08-14: 病假撞佔額度假期標紅（純顯示層，不影響金額）
+const QUOTA_LEAVE_KEYS = ['ANNUAL_LEAVE', 'BIRTHDAY_LEAVE', 'OT_LEAVE']
+function sickQuotaConflict(leaves: any[]): { sick: any; quota: any } | null {
+  const sick = leaves.find(lr => lr.leaveType?.systemKey === 'SICK')
+  if (!sick) return null
+  const quota = leaves.find(lr => QUOTA_LEAVE_KEYS.includes(lr.leaveType?.systemKey ?? ''))
+  return quota ? { sick, quota } : null
+}
+
 // ============================================================
 // Types
 // ============================================================
@@ -329,6 +338,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
           props.onDoubleClick = () => onCellDblClick?.(emp.id, d)
         }
 
+        const conflict = sickQuotaConflict(ls)
         const sickLeave = ls.find(lr => lr.leaveType?.systemKey === 'SICK')
         const dimmed = !!sickLeave && !forExport
 
@@ -352,11 +362,13 @@ const ScheduleRow = React.memo(function ScheduleRow({
           })
           ls.filter(lr => lr.leaveType?.systemKey !== 'SICK').forEach((lr, li) => {
             const lc = lr.leaveType?.color ?? '#9ca3af'
+            const isQuota = QUOTA_LEAVE_KEYS.includes(lr.leaveType?.systemKey ?? '')
             parts.push(<div key={'l' + li} style={{
               display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
               fontSize: 10, background: lc + '26', color: '#1f2937',
               borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap',
-              opacity: dimmed ? 0.45 : 1,
+              opacity: (dimmed && !isQuota) ? 0.45 : 1,
+              ...(isQuota && conflict ? { border: '1px solid #dc2626' } : {}),
             }}>{lr.leaveType?.name}</div>)
           })
           sickLeave && parts.push(<div key={'sick'} style={{
@@ -366,6 +378,16 @@ const ScheduleRow = React.memo(function ScheduleRow({
             opacity: 1,
           }}>{sickLeave.leaveType?.name}</div>)
           content = parts
+        }
+
+        if (conflict && !forExport) {
+          props.style = {
+            ...props.style,
+            outline: '2px solid #dc2626',
+            outlineOffset: '-2px',
+            background: '#fef2f2',
+          }
+          props.title = `⚠️ 病假同${conflict.quota.leaveType?.name}重疊 —— 請按實際情況人手處理`
         }
 
         return <td {...props}>{content}</td>
@@ -1271,6 +1293,8 @@ function getShiftCode(shift: Shift): string {
     const empShiftsOnDay = weekShiftsByKey.get(`${empId}|${dateStr}`) ?? EMPTY
     const empLeavesOnDay = weekLeavesByKey.get(`${empId}|${dateStr}`) ?? EMPTY
     const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
+    // ★ 2026-08-14: 病假撞佔額度假期標紅
+    const conflict = sickQuotaConflict(empLeavesOnDay)
 
     if (empShiftsOnDay.length > 0) {
       // ★ 調鋪日可能有多張更，桌面版用 .map 全部顯示，手機版之前只取 [0] 睇唔到第二間店
@@ -1292,6 +1316,7 @@ function getShiftCode(shift: Shift): string {
           bg: sickLeave.leaveType?.color ?? '#fca5a5',
           detail: `病假（原排 ${parts.join(' / ')}）`,
           isSick: true,
+          conflict,
         }
       }
 
@@ -1299,6 +1324,7 @@ function getShiftCode(shift: Shift): string {
         label: parts.length > 1 ? `${parts[0]}+${parts.length - 1}` : parts[0],
         bg: shiftColor(s0),
         detail: parts.join(' / '),
+        conflict,
       }
     }
     if (empLeavesOnDay.length > 0) {
@@ -1310,9 +1336,10 @@ function getShiftCode(shift: Shift): string {
         label,
         bg: lr.leaveType?.color ?? '#fef3c7',
         detail: name,
+        conflict,
       }
     }
-    return { label: '—', bg: 'transparent', detail: '' }
+    return { label: '—', bg: 'transparent', detail: '', conflict }
   }, [weekShiftsByKey, weekLeavesByKey, shiftColor])
 
   // Mobile week label: "M/D–M/D"
@@ -2590,8 +2617,17 @@ function getShiftCode(shift: Shift): string {
         const ls = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
         // ★ 2026-08-02：病假覆蓋更次 —— 病假日有更次時合併顯示
         const sickLeave = ls.find(lr => lr.leaveType?.systemKey === 'SICK')
+        // ★ 2026-08-14: 病假撞佔額度假期標紅
+        const conflict = sickQuotaConflict(ls)
+        const cellStyle: React.CSSProperties = conflict ? {
+          padding: 4, textAlign: 'center' as const, verticalAlign: 'middle' as const,
+          outline: '2px solid #dc2626', outlineOffset: '-2px', background: '#fef2f2',
+        } : { padding: 4, textAlign: 'center' as const, verticalAlign: 'middle' as const }
         return (
-          <td key={i} style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle' }}>
+          <td key={i}
+            style={cellStyle}
+            title={conflict ? `⚠️ 病假同${conflict.quota.leaveType?.name}重疊 —— 請按實際情況人手處理` : undefined}
+          >
             {ss.length > 0 && sickLeave ? (
               // ★ 病假疊層：顯示病·更次，斜紋底
               (() => {
@@ -4416,7 +4452,8 @@ function getShiftCode(shift: Shift): string {
                             ? 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)'
                             : undefined,
                           fontSize: 9,
-                        }}>{cell.label}</td>
+                          ...(cell.conflict ? { outline: '2px solid #dc2626', outlineOffset: '-2px' } : {}),
+                        }} title={cell.conflict ? `⚠️ 病假同${cell.conflict.quota.leaveType?.name}重疊 —— 請按實際情況人手處理` : undefined}>{cell.label}</td>
                       })}
                     </tr>
                   ))}
@@ -4470,7 +4507,8 @@ function getShiftCode(shift: Shift): string {
                             ? 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)'
                             : undefined,
                           fontSize: 12,
-                        }}>{cell.detail ?? cell.label}</td>
+                          ...(cell.conflict ? { outline: '2px solid #dc2626', outlineOffset: '-2px' } : {}),
+                        }} title={cell.conflict ? `⚠️ 病假同${cell.conflict.quota.leaveType?.name}重疊 —— 請按實際情況人手處理` : undefined}>{cell.detail ?? cell.label}</td>
                     })}
                   </tr>
                 ))}
@@ -5836,6 +5874,7 @@ function getShiftCode(shift: Shift): string {
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f57c00' }}></span> 草稿</span>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#388e3c' }}></span> 已完成</span>
         <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc3545' }}></span> 已取消</span>
+        <span className="flex items-center gap-1"><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, outline: '2px solid #dc2626', background: '#fef2f2' }}></span> 紅框 = 病假同佔額度假期重疊，需人手處理</span>
       </div>
 
       {/* ============================================================ */}

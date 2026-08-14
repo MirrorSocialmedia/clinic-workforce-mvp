@@ -591,14 +591,14 @@ export default function EmployeePayrollDetailPage() {
                         {ep.totalDays >= 4 ? '（連續≥4，付4/5）' : '（連續<4，無薪）'}
                       </div>
                       <div style={{ color: '#9ca3af' }}>
-                        · 本月 {ep.daysInMonth} 天，其中 <strong>{ep.deductDays ?? ep.daysInMonth} 天為工作日</strong>
+                        · 本月 {ep.daysInMonth} 天：{ep.deductDays ?? ep.daysInMonth} 天月薪已付（需扣回差額）
                         {ep.daysInMonth > (ep.deductDays ?? ep.daysInMonth) &&
-                          `（${ep.daysInMonth - (ep.deductDays ?? ep.daysInMonth)} 天為休息日，不扣）`}
+                          `、${ep.daysInMonth - (ep.deductDays ?? ep.daysInMonth)} 天休息日（不扣）`}
                       </div>
                       {ep.totalDays >= 4 ? (
                         <>
                           <div style={{ color: '#9ca3af' }}>
-                            · 月薪已付 {fmtCurrency(ep.dailyDeduct)} × {ep.deductDays ?? ep.daysInMonth} = {fmtCurrency(ep.alreadyInBase ?? 0)}
+                            · 月薪已付 {fmtCurrency(ep.dailyDeduct)}/日（÷{monthlyWorkingDays} 工作日）× {ep.deductDays ?? ep.daysInMonth} 天 = {fmtCurrency(ep.alreadyInBase ?? 0)}
                           </div>
                           <div style={{ color: '#9ca3af' }}>
                             · 疾病津貼 {fmtCurrency((ep.adw ?? 0) * 0.8)} × {ep.daysInMonth} = {fmtCurrency(ep.sicknessAllowance ?? 0)}
@@ -647,12 +647,12 @@ export default function EmployeePayrollDetailPage() {
                       </span>
                       {ep.deductDays != null && (
                         <div style={{ fontSize: 11, color: '#9ca3af' }}>
-                          · 其中 {ep.deductDays} 天為工作日（{ep.daysInMonth - ep.deductDays} 天為休息日，不扣）
+                          · 其中 {ep.deductDays} 天月薪已付（需扣回差額）{ep.daysInMonth - ep.deductDays > 0 && `、${ep.daysInMonth - ep.deductDays} 天休息日（不扣）`}
                         </div>
                       )}
                     </div>
                     <span className="text-muted-foreground text-xs">
-                      {ep.adw ? `ADW $${ep.adw.toFixed(2)}` : ''}
+                      {ep.adw ? `ADW $${ep.adw.toFixed(2)} / 日（過去 12 個月平均）` : ''}
                     </span>
                   </div>
                 ))}
@@ -783,7 +783,7 @@ export default function EmployeePayrollDetailPage() {
             {item.adwUsed && (
               <div className="text-xs text-muted-foreground border-t pt-2 mt-2">
                 本期假期薪酬按《僱傭條例》12個月平均工資計算：
-                ADW = ${item.adwUsed.toFixed(2)}/天
+                ADW = ${item.adwUsed.toFixed(2)}/天（過去 12 個月平均）
                 {detail?.adwSource === 'fallback' && (
                   <span style={{ color: '#c2410c', marginLeft: 6 }}>
                     （推算值：歷史工資不足，以月薪 × 12 ÷ 365 計）
@@ -793,13 +793,14 @@ export default function EmployeePayrollDetailPage() {
                 法定假日 / 年假 = ADW × 100% | 病假 / 產假 / 侍產假 = ADW × 80%
                 {detail?.adwPolicyApplied === 'floor' && (
                   <div className="text-xs text-green-700 mt-1">
-                    ℹ️ 已按公司特優政策以現時月薪為基準計算
+                    ℹ️ 已按公司特優政策以現時月薪為基準計算（Effective ADW = ${detail.adwUsed?.toFixed(2)}/日）
                     （條例計算值 ${detail.adwRaw?.toFixed(2)}，實用 ${detail.adwUsed?.toFixed(2)}）
                   </div>
                 )}
                 {detail?.adwPolicyApplied === 'cap' && (
                   <div className="text-xs text-orange-700 mt-1">
-                    ⚠️ 已套用 ADW 上限（條例計算值 ${detail.adwRaw?.toFixed(2)}，
+                    ⚠️ 已套用 ADW 上限（Effective ADW = ${detail.adwUsed?.toFixed(2)}/日）
+                    條例計算值 ${detail.adwRaw?.toFixed(2)}，
                     實用 ${detail.adwUsed?.toFixed(2)}，
                     差額約 ${(((detail.adwRaw ?? 0) - (detail.adwUsed ?? 0)) * 0.8).toFixed(2)}/日）
                   </div>
