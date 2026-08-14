@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { todayHK } from '@/lib/hk-date'
 import { Card } from '@/components/ui/card'
@@ -18,6 +19,7 @@ export default function ImplantEntryPage() {
   const [clinics, setClinics] = useState<any[]>([])
   const [materials, setMaterials] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
@@ -37,25 +39,17 @@ export default function ImplantEntryPage() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [providersRes, clinicsRes, materialsRes] = await Promise.all([
-        fetch('/api/providers', { credentials: 'include' }),
-        fetch('/api/clinics', { credentials: 'include' }),
-        fetch('/api/material-items', { credentials: 'include' }),
+      const [providersData, clinicsData, materialsData] = await Promise.all([
+        apiFetch('/api/providers'),
+        apiFetch('/api/clinics'),
+        apiFetch('/api/material-items'),
       ])
-      if (providersRes.ok) {
-        const d: any = await providersRes.json()
-        setProviders(d.providers || [])
-      }
-      if (clinicsRes.ok) {
-        const d: any = await clinicsRes.json()
-        setClinics(d.clinics || [])
-      }
-      if (materialsRes.ok) {
-        const d: any = await materialsRes.json()
-        setMaterials(d.items || [])
-      }
+      setProviders((providersData as any).providers || [])
+      setClinics((clinicsData as any).clinics || [])
+      setMaterials((materialsData as any).items || [])
     } catch (e) {
-      console.error('Failed to load:', e)
+      console.error('[implant] load all failed', e)
+      setLoadError('資料載入失敗')
     } finally {
       setLoading(false)
     }
@@ -63,18 +57,18 @@ export default function ImplantEntryPage() {
 
   const loadAuth = useCallback(async () => {
     try {
-      const res = await fetch('/api/me', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setUserRole(data.user?.role || '')
-        const perms = data.user?.permissionsJson
-        if (perms) {
-          const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
-          setGrant(parsed.grant || [])
-          setDeny(parsed.deny || [])
-        }
+      const data: any = await apiFetch('/api/me')
+      setUserRole(data.user?.role || '')
+      const perms = data.user?.permissionsJson
+      if (perms) {
+        const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
+        setGrant(parsed.grant || [])
+        setDeny(parsed.deny || [])
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('[implant] load auth failed', e)
+      setLoadError('權限載入失敗')
+    }
   }, [])
 
   useEffect(() => {
@@ -135,28 +129,22 @@ export default function ImplantEntryPage() {
         materials: materialLines.map(l => ({ materialName: l.materialName, qty: l.qty })),
       }
 
-      const res = await fetch('/api/cost-cases/implant', {
-        credentials: 'include',
+      await apiFetch('/api/cost-cases/implant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
-      if (res.ok) {
-        alert('建立成功！')
-        // Reset form
-        setForm({
-          providerId: '', clinicId: '', patientCode: '', patientName: '',
-          orderedAt: todayHK(),
-          itemType: '', dsaName: '', receivedAt: '', appointmentAt: '',
-        })
-        setMaterialLines([])
-      } else {
-        const err: any = await res.json()
-        alert(`建立失敗: ${err.error}`)
-      }
-    } catch (e) {
-      alert(`建立失敗: ${e}`)
+      alert('建立成功！')
+      // Reset form
+      setForm({
+        providerId: '', clinicId: '', patientCode: '', patientName: '',
+        orderedAt: todayHK(),
+        itemType: '', dsaName: '', receivedAt: '', appointmentAt: '',
+      })
+      setMaterialLines([])
+    } catch (e: any) {
+      alert(`建立失敗: ${e.message}`)
     } finally {
       setSaving(false)
     }
@@ -168,6 +156,9 @@ export default function ImplantEntryPage() {
 
   return (
     <div className="p-6 space-y-4">
+      {loadError && (
+        <div className="text-red-500 text-sm p-2 bg-red-50 rounded">{loadError}</div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Implant 成本錄入</h1>
         <a href="/cost-entry" className="text-sm text-blue-600 hover:underline">← 返回成本錄入</a>

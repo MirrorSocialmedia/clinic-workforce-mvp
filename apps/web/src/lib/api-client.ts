@@ -10,6 +10,7 @@ export interface ApiError extends Error {
 export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     credentials: 'include',
+    cache: 'no-store',
     ...options,
   })
 

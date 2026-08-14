@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { Card } from '@/components/ui/card'
 import { Plus, Loader2 } from 'lucide-react'
@@ -8,6 +9,7 @@ import { Plus, Loader2 } from 'lucide-react'
 export default function MaterialsPage() {
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
@@ -23,13 +25,11 @@ export default function MaterialsPage() {
   const loadItems = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/material-items', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setItems(data.items || [])
-      }
+      const data: any = await apiFetch('/api/material-items')
+      setItems(data.items || [])
     } catch (e) {
-      console.error('Failed to load materials:', e)
+      console.error('[materials] load materials failed', e)
+      setLoadError('材料清單載入失敗')
     } finally {
       setLoading(false)
     }
@@ -37,18 +37,18 @@ export default function MaterialsPage() {
 
   const loadAuth = useCallback(async () => {
     try {
-      const res = await fetch('/api/me', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setUserRole(data.user?.role || '')
-        const perms = data.user?.permissionsJson
-        if (perms) {
-          const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
-          setGrant(parsed.grant || [])
-          setDeny(parsed.deny || [])
-        }
+      const data: any = await apiFetch('/api/me')
+      setUserRole(data.user?.role || '')
+      const perms = data.user?.permissionsJson
+      if (perms) {
+        const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
+        setGrant(parsed.grant || [])
+        setDeny(parsed.deny || [])
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('[materials] load auth failed', e)
+      setLoadError('權限載入失敗')
+    }
   }, [])
 
   useEffect(() => {
@@ -63,8 +63,7 @@ export default function MaterialsPage() {
     }
     setSaving(true)
     try {
-      const res = await fetch('/api/material-items', {
-        credentials: 'include',
+      await apiFetch('/api/material-items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -74,16 +73,11 @@ export default function MaterialsPage() {
         }),
       })
 
-      if (res.ok) {
-        setModalOpen(false)
-        setForm({ name: '', unitPrice: '', effectiveFrom: new Date().toISOString().slice(0, 10) })
-        loadItems()
-      } else {
-        const err: any = await res.json()
-        alert(`新增失敗: ${err.error}`)
-      }
-    } catch (e) {
-      alert(`新增失敗: ${e}`)
+      setModalOpen(false)
+      setForm({ name: '', unitPrice: '', effectiveFrom: new Date().toISOString().slice(0, 10) })
+      loadItems()
+    } catch (e: any) {
+      alert(`新增失敗: ${e.message}`)
     } finally {
       setSaving(false)
     }
@@ -95,6 +89,9 @@ export default function MaterialsPage() {
 
   return (
     <div className="p-6 space-y-4">
+      {loadError && (
+        <div className="text-red-500 text-sm p-2 bg-red-50 rounded">{loadError}</div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">材料主檔</h1>
         <div className="flex items-center gap-2">

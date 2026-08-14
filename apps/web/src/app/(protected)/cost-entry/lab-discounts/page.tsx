@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { Card } from '@/components/ui/card'
 import { Loader2, AlertTriangle } from 'lucide-react'
@@ -9,6 +10,7 @@ export default function LabDiscountsPage() {
   const [labs, setLabs] = useState<any[]>([])
   const [discounts, setDiscounts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
@@ -28,38 +30,38 @@ export default function LabDiscountsPage() {
 
   const loadLabs = useCallback(async () => {
     try {
-      const res = await fetch('/api/labs', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setLabs(data.labs || [])
-      }
-    } catch { /* ignore */ }
+      const data: any = await apiFetch('/api/labs')
+      setLabs(data.labs || [])
+    } catch (e) {
+      console.error('[lab-discounts] load labs failed', e)
+      setLoadError('Lab 名單載入失敗')
+    }
   }, [])
 
   const loadDiscounts = useCallback(async () => {
     try {
-      const res = await fetch('/api/lab-discounts', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setDiscounts(data.discounts || [])
-      }
-    } catch { /* ignore */ }
+      const data: any = await apiFetch('/api/lab-discounts')
+      setDiscounts(data.discounts || [])
+    } catch (e) {
+      console.error('[lab-discounts] load discounts failed', e)
+      setLoadError('折扣資料載入失敗')
+    }
   }, [])
 
   const loadAuth = useCallback(async () => {
     try {
-      const res = await fetch('/api/me', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setUserRole(data.user?.role || '')
-        const perms = data.user?.permissionsJson
-        if (perms) {
-          const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
-          setGrant(parsed.grant || [])
-          setDeny(parsed.deny || [])
-        }
+      const data: any = await apiFetch('/api/me')
+      setUserRole(data.user?.role || '')
+      const perms = data.user?.permissionsJson
+      if (perms) {
+        const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
+        setGrant(parsed.grant || [])
+        setDeny(parsed.deny || [])
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.error('[lab-discounts] load auth failed', e)
+      setLoadError('權限載入失敗')
+    }
   }, [])
 
   useEffect(() => {
@@ -101,8 +103,7 @@ export default function LabDiscountsPage() {
     }
     setSaving(true)
     try {
-      const res = await fetch('/api/lab-discounts', {
-        credentials: 'include',
+      const res = await apiFetch('/api/lab-discounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -113,18 +114,13 @@ export default function LabDiscountsPage() {
         }),
       })
 
-      if (res.ok) {
-        const data: any = await res.json()
-        setAffectedCount(data.affectedCount || 0)
-        setEditOpen(false)
-        setConfirmOpen(false)
-        loadDiscounts()
-      } else {
-        const err: any = await res.json()
-        alert(`儲存失敗: ${err.error}`)
-      }
-    } catch (e) {
-      alert(`儲存失敗: ${e}`)
+      const data: any = res
+      setAffectedCount(data.affectedCount || 0)
+      setEditOpen(false)
+      setConfirmOpen(false)
+      loadDiscounts()
+    } catch (e: any) {
+      alert(`儲存失敗: ${e.message}`)
     } finally {
       setSaving(false)
     }
@@ -136,6 +132,9 @@ export default function LabDiscountsPage() {
 
   return (
     <div className="p-6 space-y-4">
+      {loadError && (
+        <div className="text-red-500 text-sm p-2 bg-red-50 rounded">{loadError}</div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Lab 折扣設定</h1>
         <a href="/cost-entry" className="text-sm text-blue-600 hover:underline">← 返回成本錄入</a>

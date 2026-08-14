@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { todayHK } from '@/lib/hk-date'
 import { Card } from '@/components/ui/card'
@@ -89,11 +90,8 @@ export default function CostEntryPage() {
 
   const loadProviders = useCallback(async () => {
     try {
-      const res = await fetch('/api/providers', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setProviders(data.providers || [])
-      }
+      const data: any = await apiFetch('/api/providers')
+      setProviders(data.providers || [])
     } catch (e) {
       console.error('[cost-entry] load providers failed', e)
       setLoadError('載入醫生列表失敗')
@@ -102,11 +100,8 @@ export default function CostEntryPage() {
 
   const loadClinics = useCallback(async () => {
     try {
-      const res = await fetch('/api/clinics', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setClinics(data.clinics || [])
-      }
+      const data: any = await apiFetch('/api/clinics')
+      setClinics(data.clinics || [])
     } catch (e) {
       console.error('[cost-entry] load clinics failed', e)
       setLoadError('載入診所列表失敗')
@@ -123,12 +118,9 @@ export default function CostEntryPage() {
       if (filterStatus) params.set('status', filterStatus)
       if (filterClinicId) params.set('clinicId', filterClinicId)
 
-      const res = await fetch(`/api/cost-cases?${params}`, { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setCases(data.cases || [])
-        setSummary(data.summary || null)
-      }
+      const data: any = await apiFetch(`/api/cost-cases?${params}`)
+      setCases(data.cases || [])
+      setSummary(data.summary || null)
     } catch (e) {
       console.error('Failed to load cases:', e)
     } finally {
@@ -138,17 +130,14 @@ export default function CostEntryPage() {
 
   const loadAuth = useCallback(async () => {
     try {
-      const res = await fetch('/api/me', { credentials: 'include' })
-      if (res.ok) {
-        const data: any = await res.json()
-        setUserRole(data.user?.role || '')
-        setUserId(data.user?.id || '')
-        const perms = data.user?.permissionsJson
-        if (perms) {
-          const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
-          setGrant(parsed.grant || [])
-          setDeny(parsed.deny || [])
-        }
+      const data: any = await apiFetch('/api/me')
+      setUserRole(data.user?.role || '')
+      setUserId(data.user?.id || '')
+      const perms = data.user?.permissionsJson
+      if (perms) {
+        const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
+        setGrant(parsed.grant || [])
+        setDeny(parsed.deny || [])
       }
     } catch (e) {
       console.error('[cost-entry] load auth failed', e)
@@ -206,20 +195,14 @@ export default function CostEntryPage() {
         appointmentAt: form.appointmentAt || null,
       }
 
-      const res = await fetch('/api/cost-cases', {
-        credentials: 'include',
+      await apiFetch('/api/cost-cases', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
-      if (res.ok) {
-        setModalOpen(false)
-        loadCases()
-      } else {
-        const err: any = await res.json()
-        alert(`建立失敗: ${err.error}`)
-      }
+      setModalOpen(false)
+      loadCases()
     } catch (e) {
       alert(`建立失敗: ${e}`)
     } finally {
@@ -230,15 +213,10 @@ export default function CostEntryPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('確定要作廢呢筆記錄？')) return
     try {
-      const res = await fetch(`/api/cost-cases/${id}`, { credentials: 'include', method: 'DELETE' })
-      if (res.ok) {
-        loadCases()
-      } else {
-        const err: any = await res.json()
-        alert(`作廢失敗: ${err.error}`)
-      }
-    } catch (e) {
-      alert(`作廢失敗: ${e}`)
+      await apiFetch(`/api/cost-cases/${id}`, { method: 'DELETE' })
+      loadCases()
+    } catch (e: any) {
+      alert(`作廢失敗: ${e.message}`)
     }
   }
 
