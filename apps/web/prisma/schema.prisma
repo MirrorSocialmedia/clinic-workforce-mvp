@@ -334,6 +334,7 @@ model Provider {
   clinics     ProviderClinic[]
   leaves      ProviderLeave[]
   commissions ProviderCommission[]
+  reconciliations ReconciliationImport[]
 
   @@index([companyId, isActive])
 }
@@ -1197,6 +1198,26 @@ model PayoutAdjustment {
   note         String
   createdBy    String
   createdAt    DateTime @default(now())
+
+  @@index([providerId, periodMonth])
+}
+
+// ★ MD-E: Monthly Payment Report Reconciliation (月報對數)
+// 月報 xlsx → Apricot 官方嘅數（裁判） vs 你系統嘅數（主資料）
+model ReconciliationImport {
+  id           String   @id @default(cuid())
+  providerId   String
+  provider     Provider @relation(fields: [providerId], references: [id])
+  periodMonth  String
+  fileName     String
+  rowCount     Int
+  reportTotal  Decimal  @db.Decimal(12,2) // 報表加總
+  systemTotal  Decimal  @db.Decimal(12,2) // 系統 rawAmount
+  difference   Decimal  @db.Decimal(12,2)
+  status       String   // MATCH | MISMATCH | ERROR
+  detailJson   Json     // 逐日 / 逐方式 對比
+  uploadedBy   String
+  uploadedAt   DateTime @default(now())
 
   @@index([providerId, periodMonth])
 }
