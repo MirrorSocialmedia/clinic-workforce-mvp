@@ -20,11 +20,11 @@ DB_CONTAINER="${DB_CONTAINER:-clinic-prod-db}"
 DB_NAME="${DB_NAME:-clinic_prod}"
 DB_USER="${DB_USER:-clinic}"
 
-TABLES="User Employee Shift PunchRecord PayrollItem \
-LeaveRequest LeaveBalance LeaveType \
-TimeBank TimeBankEntry PayRule WageHistory \
-PunchCorrection PunchVoid AuditLog \
-Clinic Company ShiftTemplate ExpenseEntry HKPublicHoliday"
+# ★ TABLES 由 schema.prisma 自動生成（項目冇用 @@map，model 名 = table 名）
+SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TABLES=$(grep -oP '^model \K\w+' "${SCRIPT_ROOT}/apps/web/prisma/schema.prisma" | tr '\n' ' ')
+TABLE_COUNT=$(echo ${TABLES} | wc -w)
+echo "📋 由 schema.prisma 載入 ${TABLE_COUNT} 個 table 名"
 
 echo "🔧 [$(date)] Starting backup..."
 
@@ -87,7 +87,6 @@ count_copy() {
 
 VERIFY_FAIL=0
 : > "${BACKUP_FILE}.rows"
-TABLE_COUNT=$(echo ${TABLES} | wc -w)
 echo "🔍 驗證備份內容（${TABLE_COUNT} 張表）..."
 for TBL in ${TABLES}; do
  LIVE_N="$(docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" \
@@ -131,6 +130,8 @@ find "${BACKUP_DIR}" -maxdepth 1 -name ".tmp_*.sql" -mtime +1 -delete
 find "${BACKUP_DIR}" -maxdepth 1 -name ".err_*.log" -mtime +30 -delete
 echo "🧹 Old backups cleaned (retention: ${RETENTION_DAYS} days)"
 
+echo "★ 提醒：.env 需要另外備份至 offsite（含 APRICOT_ENC_KEY，冇咗解唔到 Apricot token）"
+echo ""
 echo "🎉 [$(date)] Backup complete"
 echo ""
 echo "📋 要 copy 落本地嘅【三個】檔案："

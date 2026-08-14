@@ -148,7 +148,10 @@ docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" -c \
    (SELECT count(*) FROM "Employee")    AS employees,
    (SELECT count(*) FROM "Shift")       AS shifts,
    (SELECT count(*) FROM "PunchRecord") AS punches,
-   (SELECT max("punchTime") FROM "PunchRecord") AS latest_punch;'
+   (SELECT max("punchTime") FROM "PunchRecord") AS latest_punch,
+   (CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '"'"'PaymentAllocation'"'"' AND table_schema = '"'"'public'"'"') THEN (SELECT count(*) FROM "PaymentAllocation") ELSE 0 END) AS allocs,
+   (CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '"'"'PayoutRun'"'"' AND table_schema = '"'"'public'"'"') THEN (SELECT count(*) FROM "PayoutRun") ELSE 0 END) AS payouts,
+   (CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '"'"'CostCase'"'"' AND table_schema = '"'"'public'"'"') THEN (SELECT count(*) FROM "CostCase") ELSE 0 END) AS costs;'
 
 # ★ 自動對比備份的 row counts
 ROWS_FILE="${BACKUP_FILE}.rows"
