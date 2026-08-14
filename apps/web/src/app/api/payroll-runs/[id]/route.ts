@@ -178,12 +178,14 @@ export async function PUT(
         })
         const pm = periodKey(run.periodMonth)
         const [py, pmNum] = pm.split('-').map(Number)
-        const monthEndDate = new Date(`${py}-${String(pmNum >= 12 ? 1 : pmNum + 1).padStart(2, '0')}-01T00:00:00+08:00`)
+        // ★ nextMonthStart 已處理跳年 —— 統一用它導出 monthEndDate
         const nextMonthStart = new Date(
           pmNum === 12
             ? `${py + 1}-01-01T00:00:00+08:00`
             : `${py}-${String(pmNum + 1).padStart(2, '0')}-01T00:00:00+08:00`
         )
+        // 月尾 = 下月 1 號減 1 毫秒（同 hk-date.ts getMonthRange 一致）
+        const monthEndDate = new Date(nextMonthStart.getTime() - 1)
         const monthStart = new Date(`${pm}-01T00:00:00+08:00`)
         const monthStartStr = toHKDateStr(monthStart)
         const monthEndStr = toHKDateStr(monthEndDate)
