@@ -3,7 +3,7 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { PrismaClient } from '@prisma/client'
 import { toHKDateStr } from '@/lib/hk-date'
-import { computeRosterHours } from '@/lib/roster-hours'
+import { computeRosterHours, rosterDiffNoteFilter } from '@/lib/roster-hours'
 
 export const dynamic = 'force-dynamic'
 const prisma = new PrismaClient()
@@ -26,13 +26,32 @@ export async function GET(req: NextRequest) {
   })
 
   const map = await computeRosterHours(employees.map(e => e.id), month, prisma)
+
+  // ★ 出咗糧就用已入帳嗰筆 —— 同 api/my/roster-hours 口徑一致
+  const settledRows = await prisma.timeBankEntry.findMany({
+    where: {
+      employeeId: { in: employees.map(e => e.id) },
+      type: 'ROSTER_DIFF',
+      note: rosterDiffNoteFilter(month),
+    },
+    select: { employeeId: true, minutes: true },
+  })
+  const settledMap = new Map(settledRows.map(s => [s.employeeId, s.minutes]))
+
   return jsonNoStore({
     month,
-    rows: employees.map(e => ({
-      employeeId: e.id,
-      name: e.user?.name ?? '—',
-      ...(map.get(e.id) ?? { expectedMinutes: 0, rosterMinutes: 0, diffMinutes: 0, unscheduled: false }),
-    })).sort((a, b) => {
+    rows: employees.map(e => {
+      const r = map.get(e.id) ?? { expectedMinutes: 0, rosterMinutes: 0, diffMinutes: 0, unscheduled: false }
+      const settled = settledMap.get(e.id)
+      return {
+        employeeId: e.id,
+        name: e.user?.name ?? '—',
+        ...r,
+        diffMinutes: settled != null ? settled : r.diffMinutes,
+        settled: settled != null,
+        unscheduled: settled != null ? false : r.unscheduled,
+      }
+    }).sort((a, b) => {
       if (a.unscheduled !== b.unscheduled) return a.unscheduled ? 1 : -1
       return b.diffMinutes - a.diffMinutes
     }),

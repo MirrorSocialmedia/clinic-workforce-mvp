@@ -1,6 +1,10 @@
 import { toHKDateStr, hkDaysInMonth, addDaysStr } from './hk-date'
 import { estimateScheduledHours } from './shift-punch-match'
 
+/** 編更差額 note 字串 + Prisma 過濾器 */
+export const rosterDiffNote = (month: string) => `編更差額 ${month}`
+export const rosterDiffNoteFilter = (month: string) => ({ contains: rosterDiffNote(month) })
+
 /** 應返 = (曆日 − 當月全部假期日數，按日期去重) × 9；已編班 = 更次跨度（剔走假期日） */
 export async function computeRosterHours(
   employeeIds: string[],

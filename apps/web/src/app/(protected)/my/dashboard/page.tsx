@@ -387,7 +387,7 @@ export default function MyDashboardPage() {
       )}
 
       {/* Leave Balances */}
-      {rh && (
+      {rh?.applicable && (
         rh.unscheduled ? (
           <div className="rounded-xl border p-3 mt-3">
             <div className="text-xs text-muted-foreground mb-2">本月工時</div>
@@ -411,6 +411,11 @@ export default function MyDashboardPage() {
                 {(Math.abs(rh.diffMinutes) / 60).toFixed(1)} h
               </span>
             </div>
+            {rh.settled && (
+              <div className="text-[10px] text-muted-foreground mt-1">
+                已出糧鎖定；之後改更表唔會影響呢個數
+              </div>
+            )}
             <div className="text-[10px] text-muted-foreground mt-2">
               {rh.settled ? '已出糧，數字已入時間帳戶' : '更表未定，出糧時以實際為準'}
             </div>

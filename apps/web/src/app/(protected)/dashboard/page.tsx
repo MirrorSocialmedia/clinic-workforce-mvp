@@ -43,7 +43,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<{
     role: Role
     clinics: ClinicData[]
-    workHours?: Array<{ employeeId: string; name: string; clinicId: string | null; clinicName: string; weekHours: number; monthHours: number; weekOvertime: boolean; expectedMinutes: number | null; rosterDiffMinutes: number | null }>
+    workHours?: Array<{ employeeId: string; name: string; clinicId: string | null; clinicName: string; weekHours: number; monthHours: number; weekOvertime: boolean; expectedMinutes: number | null; rosterDiffMinutes: number | null; settled: boolean; unscheduled: boolean }>
     whClinics?: Array<{ clinicId: string; clinicName: string }>
   } | null>(null)
   const [loading, setLoading] = useState(true)
@@ -287,6 +287,7 @@ export default function DashboardPage() {
                               {w.rosterDiffMinutes === 0 ? '0'
                                 : `${w.rosterDiffMinutes > 0 ? '+' : '−'}${(Math.abs(w.rosterDiffMinutes) / 60).toFixed(1)}h`}
                             </span>
+                            {w.settled && <span className="text-[10px] text-muted-foreground">（已入帳）</span>}
                           </>
                     )}
                   </div>

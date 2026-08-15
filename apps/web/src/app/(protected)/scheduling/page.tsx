@@ -5172,6 +5172,7 @@ function getShiftCode(shift: Shift): string {
                       <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0,
                         color: r.unscheduled ? '#9ca3af' : h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
                         {r.unscheduled ? '未排更' : h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
+                        {r.settled && <span style={{ fontSize: 9, color: '#6b7280', marginLeft: 2 }}>（已入帳）</span>}
                       </span>
                     </div>
                     <div style={{ fontSize: 9, color: '#9ca3af' }}>

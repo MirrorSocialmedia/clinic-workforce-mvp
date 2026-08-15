@@ -6,7 +6,7 @@ import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
 import { toHKDateStr } from '@/lib/hk-date'
-import { computeRosterHours } from '@/lib/roster-hours'
+import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
 
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
@@ -210,7 +210,7 @@ export async function PUT(
               date: monthEndDate,
               type: 'ROSTER_DIFF',
               minutes: diff,
-              note: `編更差額 ${pm}：已編班 ${((rh?.rosterMinutes ?? 0) / 60).toFixed(1)}h − 應返 ${((rh?.expectedMinutes ?? 0) / 60).toFixed(1)}h`,
+              note: `${rosterDiffNote(pm)}：已編班 ${((rh?.rosterMinutes ?? 0) / 60).toFixed(1)}h − 應返 ${((rh?.expectedMinutes ?? 0) / 60).toFixed(1)}h`,
               createdBy: session.userId,
             },
           })
@@ -230,7 +230,7 @@ export async function PUT(
           where: {
             employeeId: { in: itemsRevert.map(i => i.employeeId) },
             type: 'ROSTER_DIFF',
-            note: { contains: `編更差額 ${pk}` },
+            note: rosterDiffNoteFilter(pk),
           },
         })
         console.log(`[payroll-revert] 刪咗 ${deleted.count} 筆 ROSTER_DIFF`)
