@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const {
     providerId, clinicId, category, patientCode, patientName,
-    orderedAt, itemType, labId, labOrderNo, dsaName,
+    orderedAt, itemType, itemTypeOther, labId, labOrderNo, dsaName,
     baseCost, discountPct, receivedAt, appointmentAt,
     billExtId, billCode, billItemEleId, // ★ MD-F
   } = body
@@ -147,6 +147,7 @@ export async function POST(req: NextRequest) {
       patientName: patientName || null,
       orderedAt: new Date(orderedAt),
       itemType: itemType || null,
+      itemTypeOther: itemTypeOther || null,
       labId: labId || null,
       labOrderNo: labOrderNo || null,
       dsaName: dsaName || null,

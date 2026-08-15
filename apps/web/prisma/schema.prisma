@@ -949,6 +949,7 @@ model CostCase {
   patientName   String?
   orderedAt     DateTime
   itemType      String?  // Crown / Bridge / …
+  itemTypeOther String?  // Others 時嘅自由輸入
   labId         String?
   lab           Lab?     @relation(fields: [labId], references: [id])
   labOrderNo    String?

@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { todayHK } from '@/lib/hk-date'
+import { ITEM_TYPES } from '@/lib/payout/constants'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X } from 'lucide-react'
@@ -19,6 +20,7 @@ interface CostCase {
   patientName: string | null
   orderedAt: string
   itemType: string | null
+  itemTypeOther: string | null
   labId: string | null
   labOrderNo: string | null
   dsaName: string | null
@@ -92,10 +94,16 @@ function suggestCategoryFromBill(bill: SearchBill): string {
 }
 
 function suggestItemTypeFromBill(bill: SearchBill): string {
-  if (bill.billDetails.length === 1) {
-    return bill.billDetails[0].feeItem?.des ?? ''
+  const desAll = bill.billDetails.map(d => (d.feeItem?.des ?? '').toUpperCase()).join(' ')
+  if (desAll.includes('IMPLANT') || desAll.includes('DENTURE')) {
+    if (desAll.includes('IMPLANT') && desAll.includes('DENTURE')) return 'Implant Denture'
+    if (desAll.includes('IMPLANT')) return 'Implant'
+    return 'Denture'
   }
-  return bill.billDetails.map(d => d.feeItem?.des ?? '').filter(Boolean).slice(0, 3).join(' / ')
+  if (desAll.includes('NIGHTGUARD')) return 'Nightguard'
+  if (desAll.includes('RETAINER')) return 'Retainer'
+  if (desAll.includes('CROWN') || desAll.includes('BRIDGE') || desAll.includes('VENER')) return 'CR&BR&Venner'
+  return 'Others'
 }
 
 // ── Main Component ─────────────────────────────────────────────
@@ -106,6 +114,7 @@ export default function CostEntryPage() {
   const [loading, setLoading] = useState(true)
   const [providers, setProviders] = useState<any[]>([])
   const [clinics, setClinics] = useState<any[]>([])
+  const [labs, setLabs] = useState<any[]>([])
   const [summary, setSummary] = useState<any>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -143,7 +152,6 @@ export default function CostEntryPage() {
   const [searchingPatients, setSearchingPatients] = useState(false)
   const [patients, setPatients] = useState<CleanPatient[]>([])
   const [apricotBusy, setApricotBusy] = useState(false)
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Step 1: bill search
   const [selectedPatient, setSelectedPatient] = useState<CleanPatient | null>(null)
@@ -159,6 +167,7 @@ export default function CostEntryPage() {
   const [costForm, setCostForm] = useState({
     category: 'LAB' as string,
     itemType: '',
+    itemTypeOther: '',
     orderedAt: '',
     dsaName: '',
     baseCost: '',
@@ -191,6 +200,15 @@ export default function CostEntryPage() {
     } catch (e) {
       console.error('[cost-entry] load clinics failed', e)
       setLoadError('載入診所列表失敗')
+    }
+  }, [])
+
+  const loadLabs = useCallback(async () => {
+    try {
+      const data: any = await apiFetch('/api/labs')
+      setLabs(data.labs || [])
+    } catch (e) {
+      console.error('[cost-entry] load labs failed', e)
     }
   }, [])
 
@@ -235,7 +253,8 @@ export default function CostEntryPage() {
     loadAuth()
     loadProviders()
     loadClinics()
-  }, [loadAuth, loadProviders, loadClinics])
+    loadLabs()
+  }, [loadAuth, loadProviders, loadClinics, loadLabs])
 
   useEffect(() => {
     loadCases()
@@ -325,7 +344,7 @@ export default function CostEntryPage() {
     setSelectedProviderInternalId('')
     setDsaEmployees([])
     setCostForm({
-      category: 'LAB', itemType: '', orderedAt: todayHK(),
+      category: 'LAB', itemType: '', itemTypeOther: '', orderedAt: todayHK(),
       dsaName: '', baseCost: '', discountPct: '',
       receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '',
     })
@@ -337,18 +356,23 @@ export default function CostEntryPage() {
     setApricotBusy(false)
   }
 
-  // Step 0: debounce search patients
+  // Step 0: search patients (button / Enter trigger)
   const handleSearchChange = (val: string) => {
     setSearchKeyword(val)
     setApricotBusy(false)
-    if (searchTimer.current) clearTimeout(searchTimer.current)
-    if (val.length < 6) {
-      setPatients([])
-      return
+    setPatients([]) // clear old results on input change
+  }
+
+  const handleSearchSubmit = () => {
+    if (searchKeyword.trim().length < 6) return
+    searchPatientsApi(searchKeyword.trim())
+  }
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSearchSubmit()
     }
-    searchTimer.current = setTimeout(() => {
-      searchPatientsApi(val)
-    }, 500)
   }
 
   const searchPatientsApi = async (keyword: string) => {
@@ -412,6 +436,7 @@ export default function CostEntryPage() {
     setCostForm({
       category,
       itemType,
+      itemTypeOther: '',
       orderedAt: todayHK(),
       dsaName: '',
       baseCost: '',
@@ -457,7 +482,8 @@ export default function CostEntryPage() {
         patientCode: selectedPatient?.code || '',
         patientName: selectedPatient?.fullName || null,
         orderedAt: costForm.orderedAt || todayHK(),
-        itemType: costForm.itemType || null,
+        itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther || null) : (costForm.itemType || null),
+        itemTypeOther: costForm.itemType === 'Others' ? costForm.itemTypeOther || null : null,
         labId: costForm.labId || null,
         labOrderNo: costForm.labOrderNo || null,
         dsaName: costForm.dsaName || null,
@@ -668,15 +694,26 @@ export default function CostEntryPage() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">病人編號 / 姓名</label>
-                  <div className="relative">
-                    <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
-                    <input
-                      value={searchKeyword}
-                      onChange={e => handleSearchChange(e.target.value)}
-                      className="w-full border rounded pl-9 pr-4 py-2 text-sm"
-                      placeholder="輸入 6 字元以上自動搜尋…"
-                      autoFocus
-                    />
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
+                      <input
+                        value={searchKeyword}
+                        onChange={e => handleSearchChange(e.target.value)}
+                        onKeyDown={handleSearchKeyDown}
+                        className="w-full border rounded pl-9 pr-4 py-2 text-sm"
+                        placeholder="輸入 6 字元以上，按 Enter 或搜尋按鈕…"
+                        autoFocus
+                      />
+                    </div>
+                    <button
+                      onClick={handleSearchSubmit}
+                      disabled={searchingPatients || searchKeyword.trim().length < 6}
+                      className="px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                      {searchingPatients ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                      搜尋
+                    </button>
                   </div>
                   {searchKeyword.length > 0 && searchKeyword.length < 6 && (
                     <p className="text-xs text-gray-400 mt-1">最少輸入 6 字元</p>
@@ -815,13 +852,34 @@ export default function CostEntryPage() {
                     <div>
                       <label className="block text-xs text-gray-400">醫生</label>
                       <div className="py-1">
-                        {providers.find(p => p.id === selectedProviderInternalId)?.name || providers.find(p => p.id === selectedProviderInternalId)?.shortName || '⚠️ 無法匹配'}
+                        {selectedProviderInternalId ? (
+                          <span>{providers.find(p => p.id === selectedProviderInternalId)?.name}</span>
+                        ) : (
+                          <div className="text-sm">
+                            <div className="text-amber-700">⚠️ 醫生未對應</div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Apricot 醫生：<code>{selectedBill?.practitioner?.id ?? '—'}</code>
+                            </div>
+                            <div className="text-xs mt-1">
+                              請去 <a href="/providers" className="underline">醫生管理</a> 將呢個 ID 填入對應醫生嘅「Apricot ID」
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div>
                       <label className="block text-xs text-gray-400">診所</label>
                       <div className="py-1">
-                        {clinics.find(c => c.id === selectedClinicInternalId)?.shortName || clinics.find(c => c.id === selectedClinicInternalId)?.name || '⚠️ 無法匹配'}
+                        {selectedClinicInternalId ? (
+                          <span>{clinics.find(c => c.id === selectedClinicInternalId)?.shortName || clinics.find(c => c.id === selectedClinicInternalId)?.name}</span>
+                        ) : (
+                          <div className="text-sm">
+                            <div className="text-amber-700">⚠️ 診所未對應</div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Apricot 診所：<code>{selectedBill?.clinic?.id ?? '—'}</code>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div>
@@ -848,12 +906,21 @@ export default function CostEntryPage() {
                   </div>
                   <div>
                     <label className="block text-sm mb-1">項目 <span className="text-xs text-gray-400">（可改）</span></label>
-                    <input
+                    <select
                       value={costForm.itemType}
-                      onChange={e => setCostForm({ ...costForm, itemType: e.target.value })}
+                      onChange={e => setCostForm({ ...costForm, itemType: e.target.value, itemTypeOther: e.target.value === 'Others' ? costForm.itemTypeOther : '' })}
                       className="w-full border rounded px-2 py-1.5 text-sm"
-                      placeholder="項目名稱"
-                    />
+                    >
+                      {ITEM_TYPES.map(t => (<option key={t} value={t}>{t}</option>))}
+                    </select>
+                    {costForm.itemType === 'Others' && (
+                      <input
+                        value={costForm.itemTypeOther}
+                        onChange={e => setCostForm({ ...costForm, itemTypeOther: e.target.value })}
+                        className="w-full border rounded px-2 py-1.5 text-sm mt-1"
+                        placeholder="輸入具體項目名稱"
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm mb-1">落單日</label>
@@ -925,12 +992,16 @@ export default function CostEntryPage() {
                   </div>
                   <div>
                     <label className="block text-sm mb-1">Lab</label>
-                    <input
+                    <select
                       value={costForm.labId}
                       onChange={e => setCostForm({ ...costForm, labId: e.target.value })}
                       className="w-full border rounded px-2 py-1.5 text-sm"
-                      placeholder="Lab ID"
-                    />
+                    >
+                      <option value="">（不選）</option>
+                      {labs.map((lab: any) => (
+                        <option key={lab.id} value={lab.id}>{lab.name}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm mb-1">Lab 單號</label>
