@@ -227,6 +227,7 @@ export const CONFIG = {
 
     // My timebank
     'GET /api/my/timebank': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/my/roster-hours': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Leave balance refresh
     'POST /api/leave-balance/refresh': ['OWNER', 'MANAGER'],

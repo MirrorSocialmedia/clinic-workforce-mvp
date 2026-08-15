@@ -33,7 +33,14 @@ export async function GET(req: NextRequest) {
   })
 
   return NextResponse.json({
-    ...tb,
+    timeAccountMinutes: tb.timeAccountMinutes,
+    balance: tb.balance,
+    otMinutes: tb.otMinutes,
+    lateMinutes: tb.lateMinutes,
+    netLateMinutes: tb.netLateMinutes,
+    earlyLeaveMinutes: tb.earlyLeaveMinutes,
+    netEarlyMinutes: tb.netEarlyMinutes,
+    carriedFrom: tb.carriedFrom,
     entries: entries.map(e => ({
       id: e.id,
       date: toHKDateStr(e.date),
@@ -47,5 +54,9 @@ export async function GET(req: NextRequest) {
       otMinutes: tb.otMinutes, // 午休 OT + 收工 OT
       lateMinutes: tb.netLateMinutes,
     },
+    // ★ 逐日考勤明細（calculateTimeBank 一直有計，之前冇回）
+    attendanceDays: (tb.timeAccountDetail ?? [])
+      .slice()
+      .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date))),
   })
 }

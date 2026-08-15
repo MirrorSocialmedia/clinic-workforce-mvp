@@ -39,6 +39,10 @@ export default function MyDashboardPage() {
   const [tbOpen, setTbOpen] = useState(false)
   const [tbEntries, setTbEntries] = useState<any[] | null>(null)
   const [attendanceOt, setAttendanceOt] = useState<{ otMinutes: number; lateMinutes: number } | null>(null)
+  const [attDays, setAttDays] = useState<any[]>([])
+  const [lateMinutes, setLateMinutes] = useState<number | null>(null)
+  const [netLateMinutes, setNetLateMinutes] = useState<number | null>(null)
+  const [rh, setRh] = useState<any>(null)
   const loadEntries = async () => {
     if (tbEntries !== null) return
     try {
@@ -47,6 +51,9 @@ export default function MyDashboardPage() {
         const d = await r.json()
         setTbEntries(d.entries ?? [])
         setAttendanceOt(d.attendanceOt ?? null)
+        setAttDays(d.attendanceDays ?? [])
+        setLateMinutes(d.lateMinutes ?? null)
+        setNetLateMinutes(d.netLateMinutes ?? null)
       }
     } catch {
       setTbEntries([])
@@ -99,6 +106,13 @@ export default function MyDashboardPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  useEffect(() => {
+    fetch('/api/my/roster-hours', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setRh(d))
+      .catch(() => setRh(null))
+  }, [])
 
   if (loading) return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
   if (error === 'Employee profile not found' || error?.includes('not allowed')) {
@@ -321,11 +335,39 @@ export default function MyDashboardPage() {
                                   <div className="text-[10px] text-muted-foreground">OT（分鐘）</div>
                                 </div>
                                 <div className="text-center p-2 rounded-lg" style={{ backgroundColor: '#fff7ed' }}>
-                                  <div className="text-base font-bold" style={{ color: (attendanceOt.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
-                                    {attendanceOt.lateMinutes ?? 0}
+                                  <div className="text-base font-bold" style={{ color: (lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
+                                    {lateMinutes ?? 0}
                                   </div>
-                                  <div className="text-[10px] text-muted-foreground">淨遲到（分鐘）</div>
+                                  <div className="text-[10px] text-muted-foreground">遲到（分鐘）</div>
+                                  {/* 補鐘抵扣說明 */}
+                                  {(lateMinutes ?? 0) !== (netLateMinutes ?? 0) && (
+                                    <div className="text-[10px] text-muted-foreground mt-1 text-right">
+                                      補鐘抵扣 {(lateMinutes ?? 0) - (netLateMinutes ?? 0)} 分 → 淨遲到 {netLateMinutes} 分
+                                    </div>
+                                  )}
                                 </div>
+                              </div>
+
+                              {/* ★ 逐日考勤明細 */}
+                              {attDays.length > 0 && (
+                                <div style={{ maxHeight: 190, overflowY: 'auto', marginTop: 6 }}>
+                                  {attDays.map((d: any) => (
+                                    <div key={d.date} className="flex justify-between items-start py-1.5 border-b text-xs last:border-0">
+                                      <span className="text-muted-foreground">{String(d.date).slice(5)}</span>
+                                      <span className="flex flex-wrap gap-x-2 justify-end">
+                                        {d.clockOutOt ? <span style={{ color: '#059669' }}>OT {d.clockOutOt} 分</span> : null}
+                                        {d.lunchOt ? <span style={{ color: '#059669' }}>少休 {d.lunchOt} 分</span> : null}
+                                        {d.lateMinutes ? <span style={{ color: '#d97706' }}>遲到 {d.lateMinutes} 分</span> : null}
+                                        {d.lunchLate ? <span style={{ color: '#d97706' }}>超休 {d.lunchLate} 分</span> : null}
+                                        {d.earlyMinutes ? <span style={{ color: '#dc2626' }}>早退 {d.earlyMinutes} 分</span> : null}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div className="text-[10px] text-muted-foreground mt-1">
+                                已入帳明細：本月及上月 · 考勤明細：本月
                               </div>
                             </>
                           )}
@@ -345,6 +387,29 @@ export default function MyDashboardPage() {
       )}
 
       {/* Leave Balances */}
+      {rh && (
+        <div className="rounded-xl border p-3 mt-3">
+          <div className="text-xs text-muted-foreground mb-2">本月工時</div>
+          <div className="flex justify-between text-sm py-1">
+            <span className="text-muted-foreground">應返</span>
+            <span>{(rh.expectedMinutes / 60).toFixed(1)} h</span>
+          </div>
+          <div className="flex justify-between text-sm py-1">
+            <span className="text-muted-foreground">已編班</span>
+            <span>{(rh.rosterMinutes / 60).toFixed(1)} h</span>
+          </div>
+          <div className="flex justify-between text-sm pt-2 border-t font-medium">
+            <span>{rh.settled ? '編更差額（已入帳）' : '預計 OT'}</span>
+            <span style={{ color: rh.diffMinutes > 0 ? '#059669' : rh.diffMinutes < 0 ? '#dc2626' : '#6b7280' }}>
+              {rh.diffMinutes > 0 ? '+' : rh.diffMinutes < 0 ? '−' : ''}
+              {(Math.abs(rh.diffMinutes) / 60).toFixed(1)} h
+            </span>
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-2">
+            {rh.settled ? '已出糧，數字已入時間帳戶' : '更表未定，出糧時以實際為準'}
+          </div>
+        </div>
+      )}
       {leaveBalances.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
