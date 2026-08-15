@@ -832,6 +832,10 @@ export async function GET(req: NextRequest) {
         makeupMinutes: isHourly ? null : (tb ? tb.makeupMinutes : null),
         earlyLeaveCount: mine.filter(e => e.type === 'EARLY_LEAVE').length,
         netEarlyMinutes: isHourly ? null : (tb ? tb.netEarlyMinutes : null),
+        // ★ 2026-08-15: 補齊三個隱形數字
+        carriedFrom: isHourly ? null : (tb ? tb.carriedFrom : null),
+        netOtThisMonth: isHourly ? null : (tb ? tb.netOtThisMonth : null),
+        convertedMinutes: isHourly ? null : (tb ? tb.convertedMinutes : null),
         earlyLeaveMinutes: mine
           .filter(e => e.type === 'EARLY_LEAVE')
           .reduce((s, e) => s + (e.earlyMinutes || 0), 0),

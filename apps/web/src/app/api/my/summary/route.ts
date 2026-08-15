@@ -90,6 +90,11 @@ export async function GET(req: NextRequest) {
       lateMinutes: tb.netLateMinutes, // 已扣補鐘
       earlyLeaveMinutes: tb.netEarlyMinutes,
       otMinutes: tb.otMinutes,
+      earlyInOtMinutes: tb.earlyInOtMinutes,
+      netLateMinutes: tb.netLateMinutes,
+      netEarlyMinutes: tb.netEarlyMinutes,
+      makeupMinutes: tb.makeupMinutes,
+      netOtThisMonth: tb.netOtThisMonth,
       timeAccountMinutes: tb.timeAccountMinutes,
       leaveRequests: leaveRequests.map(r => ({
         type: r.leaveType.name,

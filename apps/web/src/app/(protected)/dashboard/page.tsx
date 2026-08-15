@@ -498,6 +498,9 @@ export default function DashboardPage() {
                     <TableHead>早退時間</TableHead>
                     <TableHead>OT次數</TableHead>
                     <TableHead>本月OT</TableHead>
+                    <TableHead>提早上班OT</TableHead>
+                    <TableHead>上月結轉</TableHead>
+                    <TableHead>本月實得</TableHead>
                     <TableHead>時間帳戶</TableHead>
                     <TableHead>可換假</TableHead>
                     <TableHead>休息日餘</TableHead>
@@ -524,7 +527,24 @@ export default function DashboardPage() {
                       </TableCell>
                       <TableCell>{emp.otCount ?? 0} 次</TableCell>
                       <TableCell className="text-emerald-600">{emp.otMinutes ?? 0} 分鐘</TableCell>
+                      {/* 提早上班OT */}
+                      <TableCell className="text-emerald-600">
+                        {(emp.earlyInOtMinutes ?? 0) > 0 ? `${emp.earlyInOtMinutes} 分鐘` : '—'}
+                      </TableCell>
+                      {/* 上月結轉 */}
+                      <TableCell style={{ color: (emp.carriedFrom ?? 0) !== 0 ? '#6b7280' : 'inherit' }}>
+                        {emp.carriedFrom == null ? '—'
+                          : emp.carriedFrom === 0 ? '0'
+                          : `${emp.carriedFrom > 0 ? '+' : '−'}${Math.abs(emp.carriedFrom)} 分`}
+                      </TableCell>
+                      {/* 本月實得 */}
+                      <TableCell style={{ fontWeight: 600,
+                        color: (emp.netOtThisMonth ?? 0) >= 0 ? '#059669' : '#dc2626' }}>
+                        {emp.netOtThisMonth == null ? '—'
+                          : `${emp.netOtThisMonth >= 0 ? '+' : '−'}${Math.abs(emp.netOtThisMonth)} 分`}
+                      </TableCell>
                       <TableCell>
+                        <span title={`上月結轉 ${emp.carriedFrom ?? 0} + 本月實得 ${emp.netOtThisMonth ?? 0} + 調整 ${emp.convertedMinutes ?? 0}`}>
                         {emp.timeAccountMinutes == null ? '—' : (
                           <span style={{
                             fontWeight: 700,
@@ -534,6 +554,7 @@ export default function DashboardPage() {
                             {emp.timeAccountMinutes < 0 && <span className="text-xs text-red-600 ml-1">（約 {(Math.abs(emp.timeAccountMinutes) / 540).toFixed(1)} 日）</span>}
                           </span>
                         )}
+                        </span>
                       </TableCell>
                       <TableCell>
                         {emp.convertibleLeaveDays == null ? '—' : `${(emp.convertibleLeaveDays).toFixed(1)} 天`}
@@ -606,6 +627,11 @@ export default function DashboardPage() {
               </div>
             </>
           )}
+          {/* ★ 2026-08-15: 表底說明行 */}
+          <div className="text-xs text-muted-foreground mt-2 px-4 pb-2">
+            本月實得 = 本月OT + 提早上班OT − 補鐘 − 淨遲到 − 淨早退 ·
+            時間帳戶 = 上月結轉 + 本月實得 + 調整項（初始／發休息日／換假）
+          </div>
         </CardContent>
       </Card>
     </div>

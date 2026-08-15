@@ -269,19 +269,43 @@ export default function MyDashboardPage() {
                     </>}
                     {timeAccount === 0 && '兩清'}
                   </div>
-                  {/* 參考明細 */}
-                  <div className="grid grid-cols-2 gap-3 mt-4 text-left">
+                  {/* ★ 2026-08-15: 參考明細 — 四格 + 本月實得 */}
+                  <div className="grid grid-cols-2 gap-2 mt-4">
                     <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold text-emerald-600">{summary.otMinutes ?? 0}</div>
+                      <div className="text-lg font-bold">{summary.otMinutes ?? 0}</div>
                       <div className="text-xs text-muted-foreground">本月 OT</div>
                     </div>
                     <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold" style={{ color: (summary.lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
-                        {summary.lateMinutes ?? 0}
-                      </div>
-                      <div className="text-xs text-muted-foreground">本月遲到</div>
+                      <div className="text-lg font-bold">{summary.earlyInOtMinutes ?? 0}</div>
+                      <div className="text-xs text-muted-foreground">提早上班 OT</div>
+                    </div>
+                    <div className="text-center p-2 rounded-lg bg-white/60">
+                      <div className="text-lg font-bold">{summary.netLateMinutes ?? 0}</div>
+                      <div className="text-xs text-muted-foreground">淨遲到</div>
+                    </div>
+                    <div className="text-center p-2 rounded-lg bg-white/60">
+                      <div className="text-lg font-bold">{summary.netEarlyMinutes ?? 0}</div>
+                      <div className="text-xs text-muted-foreground">淨早退</div>
                     </div>
                   </div>
+                  {(() => {
+                    const netOt = summary.netOtThisMonth ?? 0
+                    return (
+                      <>
+                        <div className="flex justify-between items-center mt-2 pt-2 border-t">
+                          <span className="text-xs text-muted-foreground">本月實得</span>
+                          <span className="font-bold" style={{ color: netOt >= 0 ? '#059669' : '#dc2626' }}>
+                            {netOt >= 0 ? '+' : '−'}{Math.abs(netOt)} 分
+                          </span>
+                        </div>
+                        {(summary.makeupMinutes ?? 0) > 0 && (
+                          <div className="text-[10px] text-muted-foreground text-right mt-1">
+                            已用補鐘 {summary.makeupMinutes} 分抵銷
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
 
                   {/* ★ 摺疊明細 */}
                   <button

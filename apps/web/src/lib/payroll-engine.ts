@@ -1484,6 +1484,9 @@ export async function calculateTimeBank(
   timeAccountDetail: Array<any>
   dailyLate: Array<{ date: string; minutes: number }>
   dailyEarly: Array<{ date: string; minutes: number }>
+  // ★ 2026-08-15: 補齊三個隱形數字
+  netOtThisMonth: number
+  convertedMinutes: number
 }> {
   // TZ-safe month range
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
@@ -1815,6 +1818,9 @@ export async function calculateTimeBank(
     timeAccountDetail,
     dailyLate,
     dailyEarly,
+    // ★ 2026-08-15: 補齊三個隱形數字，令時間帳戶「加得埋」
+    netOtThisMonth,
+    convertedMinutes,
   }
 }
 
