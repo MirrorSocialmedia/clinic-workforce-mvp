@@ -56,3 +56,42 @@ export async function apricotCall(path: string, init?: RequestInit): Promise<any
   if (!res.ok) throw new Error(`APRICOT_HTTP_${res.status}`)
   return res.json()
 }
+
+// ★ MD-F: Retry wrapper for interactive queries (lock/conflict)
+export async function withApricotLockRetry<T>(fn: () => Promise<T>, tries = 3, delayMs = 700): Promise<T> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn()
+    } catch (e: any) {
+      const msg = e.message || ''
+      if ((msg.includes('lock') || msg.includes('LOCK') || msg.includes('busy') || msg.includes('BUSY')) && i < tries - 1) {
+        await new Promise(r => setTimeout(r, delayMs))
+        continue
+      }
+      if (msg === 'APRICOT_HTTP_503' && i < tries - 1) {
+        await new Promise(r => setTimeout(r, delayMs))
+        continue
+      }
+      throw new Error('APRICOT_BUSY')
+    }
+  }
+  throw new Error('APRICOT_BUSY')
+}
+
+// ★ MD-F: Search patients by keyword
+export async function searchPatients(keyword: string): Promise<any[]> {
+  const data = await apricotCall(`/services/aepsmsope/api/clinic-patients?keyword=${encodeURIComponent(keyword)}`)
+  return Array.isArray(data) ? data : (data?.list ?? data?.results ?? [])
+}
+
+// ★ MD-F: Search bills by patient extId
+export async function searchBillsByPatient(patientExtId: string, months: number): Promise<any[]> {
+  const data = await apricotCall(
+    `/services/aepsmsbill/api/bills/search`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ patientId: patientExtId, months }),
+    },
+  )
+  return Array.isArray(data) ? data : (data?.list ?? data?.results ?? [])
+}

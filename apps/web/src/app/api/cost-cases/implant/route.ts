@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
       receivedAt: receivedAt ? new Date(receivedAt) : null,
       appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
       status: 'PRICED',
+      source: 'MANUAL',
       periodMonth,
       createdBy: session.userId,
       materials: {

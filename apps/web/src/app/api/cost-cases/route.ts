@@ -154,6 +154,7 @@ export async function POST(req: NextRequest) {
       finalCost: finalCostNum != null ? finalCostNum : null,
       receivedAt: receivedAt ? new Date(receivedAt) : null,
       appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
+      source: 'MANUAL',
       status,
       periodMonth,
       createdBy: session.userId,

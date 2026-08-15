@@ -60,6 +60,18 @@ export function sanitizeBill(raw: any): any {
   }
 }
 
+// ★ MD-F: Clean patient list (PII whitelist: extId, code, fullName only)
+export type CleanPatient = { extId: string; code: string; fullName: string }
+
+export function toCleanPatients(raw: any): CleanPatient[] {
+  const arr = Array.isArray(raw) ? raw : []
+  return arr.slice(0, 20).map((p: any) => ({
+    extId: String(p.id ?? ''),
+    code: String(p.code ?? ''),
+    fullName: String(p.fullName ?? p.chiFullName ?? ''),
+  })).filter(p => p.extId && p.code)
+}
+
 // PII leak 測試 — 每次 sync 後跑
 export function assertNoPii(obj: any): void {
   const json = JSON.stringify(obj)

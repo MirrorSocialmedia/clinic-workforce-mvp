@@ -964,11 +964,17 @@ model CostCase {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  billExtId     String? // ★ MD-F: 連連 Apricot bill
+  billCode      String? // ★ MD-F: bill 編號
+  billItemEleId String? // ★ MD-F: 帳單項目 eleId
+  source        String   @default("BILL_LINKED") // MANUAL | BILL_LINKED
+
   materials CostCaseMaterial[]
 
   @@index([providerId, periodMonth])
   @@index([status])
   @@index([patientCode])
+  @@index([billExtId])
 }
 
 // IMPLANT 材料明細
