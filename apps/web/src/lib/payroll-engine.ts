@@ -1489,6 +1489,9 @@ export async function calculateTimeBank(
   // ★ 2026-08-15: 補齊三個隱形數字
   netOtThisMonth: number
   convertedMinutes: number
+  // ★ 2026-08-16: 午休超時/少休拆解
+  lunchLateMinutes: number
+  lunchOtMinutes: number
 }> {
   // TZ-safe month range
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
@@ -1547,6 +1550,8 @@ export async function calculateTimeBank(
   let otMinutes = 0
   let lateMinutes = 0
   let earlyLeaveMinutes = 0
+  let lunchLateTotal = 0 // ★ Lunch overtime breakdown —含在 lateMinutes 入面
+  let lunchOtTotal = 0 // ★ Lunch OT breakdown — 含在 otMinutes 入面
   let totalLunchDeductMinutes = 0 // ★ Accumulate lunch deduction across all shift days
 
   // ★ Time account detail: per-day breakdown
@@ -1674,6 +1679,8 @@ export async function calculateTimeBank(
     earlyLeaveMinutes += dayEarly
     otMinutes += dayClockOutOt + dayLunchOt
     lateMinutes += dayLunchLate
+    lunchLateTotal += dayLunchLate
+    lunchOtTotal += dayLunchOt
   }
 
   // ★ 2026-08-06 假期返工 OT：
@@ -1809,6 +1816,8 @@ export async function calculateTimeBank(
     lateMinutes, netLateMinutes, netEarlyMinutes, earlyLeaveMinutes, makeupMinutes,
     makeupLateMinutes,
     makeupEarlyMinutes,
+    lunchLateMinutes: lunchLateTotal, // ★ 含喺 lateMinutes 入面嘅午休超時
+    lunchOtMinutes: lunchOtTotal, // ★ 含喺 otMinutes 入面嘅午休少休
     makeupAbsentMinutes,
     netDeficitMinutes,
     carriedFrom,

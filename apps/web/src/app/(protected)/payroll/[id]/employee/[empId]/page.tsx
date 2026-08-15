@@ -221,7 +221,7 @@ export default function EmployeePayrollDetailPage() {
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
   const miscAmount = (item as any).miscAmount ?? 0
-  const grossPay = salaryDetail.grossPay ?? (basePay - deduction + otPay + ((item.splitPay || 0)) + attendanceBonus + storeBonus + allowances + maternityPay + paternityPay) + miscAmount
+  const grossPay = salaryDetail.grossPay ?? '—'
   const mpf = salaryDetail.mpf ?? 0
   const netPay = item.totalPayable
 
@@ -904,11 +904,14 @@ export default function EmployeePayrollDetailPage() {
               <div className="rounded-lg border p-3" style={tb.lateCount > 0 ? { borderLeft: '3px solid #f59e0b' } : {}}>
                 <div className="text-xs text-muted-foreground">本月遲到</div>
                 <div className="text-lg font-bold mt-1" style={{ color: tb.lateCount > 0 ? '#d97706' : 'inherit' }}>
-                  {tb.lateCount} 次 / 淨 {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘
+                  {tb.lateCount} 次 / 淨 {tb.netLateMinutes ?? '—'} 分鐘
                 </div>
-                {(tb.makeupLateMinutes ?? 0) > 0 && (
+                {(tb.makeupLateMinutes ?? 0) > 0 || (tb.lunchLateMinutes ?? 0) > 0 && (
                   <div className="text-[10px] text-muted-foreground mt-1">
-                    原始 {tb.lateMinutes ?? 0} 分 − 補鐘 {tb.makeupLateMinutes} 分
+                    原始 {tb.lateMinutes ?? 0} 分
+                    {(tb.lunchLateMinutes ?? 0) > 0 &&
+                     `（遲到 ${(tb.lateMinutes ?? 0) - (tb.lunchLateMinutes ?? 0)} ＋ 午休超時 {tb.lunchLateMinutes}）`}
+                    {(tb.makeupLateMinutes ?? 0) > 0 && `− 補鐘 {tb.makeupLateMinutes} 分`}
                   </div>
                 )}
               </div>
@@ -930,10 +933,23 @@ export default function EmployeePayrollDetailPage() {
                 <div className="text-lg font-bold mt-1" style={{ color: '#16a34a' }}>
                   {(tb.otMinutes ?? 0)} 分鐘
                 </div>
+                {(tb.lunchOtMinutes ?? 0) > 0 && (
+                  <div className="text-[10px] text-muted-foreground mt-1">
+                    收工 OT {(tb.otMinutes ?? 0) - (tb.lunchOtMinutes ?? 0)} ＋ 午休少休 {tb.lunchOtMinutes}
+                  </div>
+                )}
               </div>
               {/* 時間帳戶 — 取代 OT剩餘+拖欠 兩卡 */}
               {(() => {
-                const timeAccount = tb.timeAccountMinutes ?? (tb.balance ?? (tb.availableMinutes ?? 0) - (tb.owedMinutes ?? 0))
+                const timeAccount = tb.timeAccountMinutes ?? '—'
+                if (typeof timeAccount !== 'number') {
+                  return (
+                    <div className="rounded-lg border p-3">
+                      <div className="text-xs text-muted-foreground">時間帳戶</div>
+                      <div className="text-xl font-bold mt-1">—</div>
+                    </div>
+                  )
+                }
                 return (
                   <div className="rounded-lg border p-3" style={{
                     borderColor: timeAccount >= 0 ? '#10b981' : '#dc2626',
@@ -955,8 +971,8 @@ export default function EmployeePayrollDetailPage() {
                     <div className="text-[10px] text-muted-foreground mt-1" style={{ lineHeight: 1.5 }}>
                       本月實得 = OT {tb.otMinutes ?? 0} + 提早上班OT {tb.earlyInOtMinutes ?? 0}
                       {' − '}補鐘 {tb.makeupMinutes ?? 0}{' − '}淨遲到 {tb.netLateMinutes ?? 0}{' − '}淨早退 {tb.netEarlyMinutes ?? 0}
-                      {' = '}{tb.netOtThisMonth ?? (tb.otMinutes ?? 0) + (tb.earlyInOtMinutes ?? 0) - (tb.makeupMinutes ?? 0) - (tb.netLateMinutes ?? 0) - (tb.netEarlyMinutes ?? 0)}
-                      {(tb.carriedFrom ?? 0) !== 0 && <><br/>上月結轉 {tb.carriedFrom} + 本月實得 {tb.netOtThisMonth ?? (tb.otMinutes ?? 0) + (tb.earlyInOtMinutes ?? 0) - (tb.makeupMinutes ?? 0) - (tb.netLateMinutes ?? 0) - (tb.netEarlyMinutes ?? 0)}
+                      {' = '}{tb.netOtThisMonth ?? '—'}
+                      {(tb.carriedFrom ?? 0) !== 0 && <><br/>上月結轉 {tb.carriedFrom} + 本月實得 {tb.netOtThisMonth ?? '—'}
                       {(tb.convertedMinutes ?? 0) !== 0 && ` + 調整 ${tb.convertedMinutes}`} = {timeAccount}</>}
                     </div>
                   </div>
@@ -980,9 +996,14 @@ export default function EmployeePayrollDetailPage() {
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">淨遲到時數</div>
-              <div className="text-lg font-bold mt-1" style={{ color: (tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))) > 0 ? '#f59e0b' : 'inherit' }}>
-                {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘（{(((tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))) / 60)).toFixed(1)}h）
-              </div>
+              {(() => {
+                const val = tb.netLateMinutes ?? '—'
+                return (
+                  <div className="text-lg font-bold mt-1" style={{ color: typeof val === 'number' && val > 0 ? '#f59e0b' : 'inherit' }}>
+                    {val === '—' ? '—' : `${val} 分鐘（${(val / 60).toFixed(1)}h）`}
+                  </div>
+                )
+              })()}
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">缺勤日數</div>
