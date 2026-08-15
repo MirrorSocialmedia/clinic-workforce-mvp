@@ -108,10 +108,21 @@ export async function GET(req: NextRequest) {
       startTime: { gte: weekStart, lt: weekEnd },
     },
     include: {
-      clinic: { select: { id: true, name: true } },
-      template: { select: { id: true, name: true } },
+      clinic: { select: { id: true, name: true, shortName: true } },
+      template: { select: { id: true, name: true, shortName: true } },
     },
   })
+
+  // ★ 調鋪嘅第二診所名（同 my/schedule/route.ts 一致）
+  const secIds = [...new Set(shifts.map(s => s.secondaryClinicId).filter((v): v is string => !!v))]
+  const secMap = new Map<string, { name: string; shortName: string | null }>()
+  if (secIds.length > 0) {
+    const secs = await prisma.clinic.findMany({
+      where: { id: { in: secIds } },
+      select: { id: true, name: true, shortName: true },
+    })
+    for (const c of secs) secMap.set(c.id, { name: c.name, shortName: c.shortName })
+  }
 
   // 5. Get approved leave requests for the week
   const leaveRequests = await prisma.leaveRequest.findMany({
@@ -186,13 +197,21 @@ export async function GET(req: NextRequest) {
 
         return {
           date: dateKey,
-          shifts: shiftsForDay.map(s => ({
-            id: s.id,
-            startTime: fmtTime(s.startTime),
-            endTime: fmtTime(s.endTime),
-            templateName: s.template?.name || '',
-            clinicName: s.clinic?.name || '',
-          })),
+          shifts: shiftsForDay.map(s => {
+            const sec = s.secondaryClinicId ? secMap.get(s.secondaryClinicId) : null
+            return {
+              id: s.id,
+              startTime: fmtTime(s.startTime),
+              endTime: fmtTime(s.endTime),
+              templateName: s.template?.name || '',
+              templateShortName: s.template?.shortName || s.template?.name || '',
+              clinicName: s.clinic?.name || '',
+              clinicShortName: s.clinic?.shortName || s.clinic?.name || '',
+              secondaryClinicName: sec?.name ?? null,
+              secondaryClinicShortName: sec?.shortName || sec?.name || null,
+              isTransfer: !!s.secondaryClinicId,
+            }
+          }),
           leaves: leaveForDay.map(l => l.name),
         }
       }),

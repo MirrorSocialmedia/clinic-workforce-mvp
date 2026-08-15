@@ -78,14 +78,30 @@ function CompanyOverviewTable({
                               <span
                                 key={s.id}
                                 style={{
-                                  display: 'block', maxWidth: '100%', overflow: 'hidden',
-                                  textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'top',
-                                  background: '#e0f2fe', color: '#0369a1',
-                                  borderRadius: 4, padding: '1px 4px', fontSize: 10,
+                                  display: 'block', maxWidth: '100%', verticalAlign: 'top',
+                                  borderRadius: 4, padding: '2px 4px', fontSize: 10, lineHeight: 1.35,
+                                  background: s.isTransfer ? '#fef3c7' : '#e0f2fe',
+                                  color: s.isTransfer ? '#92400e' : '#0369a1',
+                                  border: s.isTransfer ? '0.5px solid #fcd34d' : 'none',
                                 }}
-                                title={`${s.clinicName} ${s.startTime}-${s.endTime}`}
+                                title={[
+                                  s.clinicName,
+                                  s.isTransfer && s.secondaryClinicName ? `→ ${s.secondaryClinicName}` : '',
+                                  s.templateName,
+                                  `${s.startTime}-${s.endTime}`,
+                                ].filter(Boolean).join(' ')}
                               >
-                                {s.clinicName} {s.startTime}-{s.endTime}
+                                <span style={{ display: 'block', fontSize: 10, fontWeight: 500,
+                                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {s.clinicShortName}
+                                  {s.isTransfer && s.secondaryClinicShortName && (
+                                    <><span style={{ margin: '0 1px' }}>→</span>{s.secondaryClinicShortName}</>
+                                  )}
+                                </span>
+                                <span style={{ display: 'block', fontSize: 9, opacity: 0.8,
+                                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {s.templateShortName ? `${s.templateShortName} · ` : ''}{s.startTime}-{s.endTime}
+                                </span>
                               </span>
                             ))}
                             {ds.leaves?.map((l: string, li: number) => (
