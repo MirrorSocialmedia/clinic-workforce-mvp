@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { todayHK, hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
 import { matchPunchesToShifts, estimateScheduledHours } from '@/lib/shift-punch-match'
+import { computeRosterHours } from '@/lib/roster-hours'
 
 /** Get start/end of today in HK (UTC+8) */
 function hkTodayBounds() {
@@ -192,6 +193,15 @@ export async function GET(req: NextRequest) {
 
   const estimated = estimateScheduledHours(monthShifts, (empId) => lunchMinutesMap.get(empId) ?? 60)
 
+  // ★ 應返工時（只計月薪員工）— 傳入已有 shifts + lunchMinutes 避免重複查詢
+  const monthlyEmpIds = activeEmployees
+    .filter(e => e.payRules?.[0]?.payType === 'MONTHLY')
+    .map(e => e.id)
+  const rh = await computeRosterHours(monthlyEmpIds, toHKDateStr(new Date()).slice(0, 7), prisma, {
+    shifts: monthShifts,
+    lunchMinutes: lunchMinutesMap,
+  })
+
   const workHours = activeEmployees.map(emp => {
     const empDays = estimated.get(emp.id) ?? []
     let weekH = 0
@@ -201,6 +211,7 @@ export async function GET(req: NextRequest) {
       monthH += d.hours
       if (dt >= weekStart && dt < weekEnd) weekH += d.hours
     }
+    const r = rh.get(emp.id)
     return {
       employeeId: emp.id,
       name: emp.user?.name ?? '?',
@@ -209,6 +220,8 @@ export async function GET(req: NextRequest) {
       weekHours: Math.round(weekH * 10) / 10,
       monthHours: Math.round(monthH * 10) / 10,
       weekOvertime: weekH > 45,
+      expectedMinutes: r?.expectedMinutes ?? null,
+      rosterDiffMinutes: r?.diffMinutes ?? null,
     }
   }).sort((a, b) => b.weekHours - a.weekHours)
 

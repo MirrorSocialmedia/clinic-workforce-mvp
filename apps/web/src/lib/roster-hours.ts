@@ -6,6 +6,7 @@ export async function computeRosterHours(
   employeeIds: string[],
   periodMonth: string, // 'YYYY-MM'
   db: any,
+  opts?: { shifts?: any[]; lunchMinutes?: Map<string, number> },
 ): Promise<Map<string, { expectedMinutes: number; rosterMinutes: number; diffMinutes: number }>> {
   const [py, pmNum] = periodMonth.split('-').map(Number)
   const monthStart = new Date(`${periodMonth}-01T00:00:00+08:00`)
@@ -22,6 +23,7 @@ export async function computeRosterHours(
   const out = new Map<string, { expectedMinutes: number; rosterMinutes: number; diffMinutes: number }>()
   if (employeeIds.length === 0) return out
 
+  // ★ 如果有 opts.shifts 就用，否則自己查
   const [allLeaves, allShifts, allPayRules] = await Promise.all([
     db.leaveRequest.findMany({
       where: {
@@ -32,14 +34,15 @@ export async function computeRosterHours(
       },
       select: { employeeId: true, startDate: true, endDate: true },
     }),
-    db.shift.findMany({
+    // ★ opts.shifts 優先
+    (opts?.shifts ?? db.shift.findMany({
       where: {
         employeeId: { in: employeeIds },
         date: { gte: monthStart, lte: monthEnd },
         status: { not: 'CANCELLED' },
       },
       select: { employeeId: true, date: true, startTime: true, endTime: true, status: true, template: { select: { deductLunch: true } } },
-    }),
+    })),
     db.payRule.findMany({
       where: { employeeId: { in: employeeIds }, isActive: true },
       select: { employeeId: true, configJson: true },
@@ -64,13 +67,19 @@ export async function computeRosterHours(
 
   // ★ 2026-08-15：合約 9 小時係【淨工時】唔係跨度 —— 一定要扣午飯，
   // 否則每個工作日多算一個飯鐘（每人每月約 +21h 假 OT）。
-  const lunchMinutesMap = new Map<string, number>()
-  for (const r of allPayRules) {
-    try {
-      const cfg = JSON.parse(r.configJson || '{}')
-      lunchMinutesMap.set(r.employeeId, cfg?.modifiers?.lunch_break?.defaultMinutes ?? 60)
-    } catch {
-      lunchMinutesMap.set(r.employeeId, 60)
+  // ★ 如果有 opts.lunchMinutes 就用，否則自己查
+  let lunchMinutesMap: Map<string, number>
+  if (opts?.lunchMinutes) {
+    lunchMinutesMap = opts.lunchMinutes
+  } else {
+    lunchMinutesMap = new Map<string, number>()
+    for (const r of allPayRules) {
+      try {
+        const cfg = JSON.parse(r.configJson || '{}')
+        lunchMinutesMap.set(r.employeeId, cfg?.modifiers?.lunch_break?.defaultMinutes ?? 60)
+      } catch {
+        lunchMinutesMap.set(r.employeeId, 60)
+      }
     }
   }
 

@@ -106,6 +106,9 @@ export const CONFIG = {
     // ★ 2026-08-08 更表完整性檢查（餵排班頁 coverage 對數 — 同 GET /api/shifts 同受眾）
     'GET /api/schedule-coverage': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
+    // ★ 2026-08-15 應返工時（排班主管 + 會計需查看月薪員工編班工時）
+    'GET /api/roster-hours': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
     // ★ 醫生當值排更（加 KIOSK）
     'GET /api/providers': ['OWNER', 'MANAGER', 'KIOSK'],
     'POST /api/providers': ['OWNER', 'MANAGER'],
@@ -412,6 +415,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ 2026-08-04: 排班每日備註 —— 有 scheduling 權限可讀/寫
   'GET /api/schedule-notes': ['scheduling'],
   'PUT /api/schedule-notes': ['scheduling'],
+
+  // ★ 2026-08-15: 應返工時 —— 排班主管需要查看
+  'GET /api/roster-hours': ['scheduling'],
 
   // —— 醫生當值排更 ——
   // ⚠️ 呢啲 route 用 requirePerm，requirePerm 唔讀本表。

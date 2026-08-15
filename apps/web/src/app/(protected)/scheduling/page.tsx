@@ -694,6 +694,16 @@ export default function SchedulingPage() {
   const monthExportRef = useRef<HTMLDivElement>(null)
   const [ovMonth, setOvMonth] = useState(() => toHKDateStr(new Date()).slice(0, 7))
 
+  // ★ 應返工時卡片數據
+  const [rhRows, setRhRows] = useState<any[]>([])
+  useEffect(() => {
+    if (!currentCompanyId) { setRhRows([]); return }
+    getJSON(`/api/roster-hours?month=${ovMonth}&companyId=${currentCompanyId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setRhRows(d?.rows ?? []))
+      .catch(() => setRhRows([]))
+  }, [currentCompanyId, ovMonth])
+
   // ★ Sync ovMonth with currentDate in ALL view modes (cross-month week fix)
   useEffect(() => {
     const ym = toHKDateStr(currentDate).slice(0, 7)
@@ -5135,6 +5145,38 @@ function getShiftCode(shift: Shift): string {
                       color: h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
                       {h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
                     </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ★ 應返工時卡片 — OT 卡片下面 */}
+        {canSchedule && currentCompanyId && rhRows.length > 0 && (
+          <div style={{ width: 100, flexShrink: 0, background: '#fafbfc',
+            border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden',
+            display: 'flex', flexDirection: 'column', marginTop: 8 }}>
+            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e5e7eb', background: '#fff', flexShrink: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 600 }}>應返工時</div>
+              <div style={{ fontSize: 9, color: '#9ca3af' }}>{currentCompanyName} · {ovMonth}</div>
+            </div>
+            <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
+              {rhRows.map(r => {
+                const h = r.diffMinutes / 60
+                return (
+                  <div key={r.employeeId} title={r.name}
+                    style={{ padding: '4px 8px', borderBottom: '0.5px solid #eee' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, fontSize: 11 }}>
+                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+                        color: h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
+                        {h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                      應 {(r.expectedMinutes / 60).toFixed(0)} / 編 {(r.rosterMinutes / 60).toFixed(0)}
+                    </div>
                   </div>
                 )
               })}

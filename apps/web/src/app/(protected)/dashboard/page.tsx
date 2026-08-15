@@ -43,7 +43,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<{
     role: Role
     clinics: ClinicData[]
-    workHours?: Array<{ employeeId: string; name: string; clinicId: string | null; clinicName: string; weekHours: number; monthHours: number; weekOvertime: boolean }>
+    workHours?: Array<{ employeeId: string; name: string; clinicId: string | null; clinicName: string; weekHours: number; monthHours: number; weekOvertime: boolean; expectedMinutes: number | null; rosterDiffMinutes: number | null }>
     whClinics?: Array<{ clinicId: string; clinicName: string }>
   } | null>(null)
   const [loading, setLoading] = useState(true)
@@ -276,6 +276,17 @@ export default function DashboardPage() {
                       {w.weekOvertime && '🔴 '}本週 {w.weekHours}h
                     </span>
                     <span className="text-muted-foreground">本月 {w.monthHours}h</span>
+                    {w.expectedMinutes != null && (
+                      <>
+                        <span className="text-xs text-muted-foreground hidden sm:inline">應 {(w.expectedMinutes / 60).toFixed(0)}h</span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 44, textAlign: 'right',
+                          color: w.rosterDiffMinutes > 0 ? '#059669'
+                            : w.rosterDiffMinutes < 0 ? '#dc2626' : '#9ca3af' }}>
+                          {w.rosterDiffMinutes === 0 ? '0'
+                            : `${w.rosterDiffMinutes > 0 ? '+' : '−'}${(Math.abs(w.rosterDiffMinutes) / 60).toFixed(1)}h`}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
