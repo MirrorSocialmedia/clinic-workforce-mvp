@@ -1,4 +1,5 @@
 import { loadCreds, saveCreds, markError, type ApricotCreds } from './token'
+import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 
 const BASE = 'https://apricotvita.com'
 
@@ -83,14 +84,27 @@ export async function searchPatients(keyword: string): Promise<any[]> {
   return Array.isArray(data) ? data : (data?.list ?? data?.results ?? [])
 }
 
-// ★ MD-F: Search bills by patient extId
+// ★ MD-F: Search bills by patient extId — params[] body format (實測)
 export async function searchBillsByPatient(patientExtId: string, months: number): Promise<any[]> {
-  const data = await apricotCall(
-    `/services/aepsmsbill/api/bills/search`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ patientId: patientExtId, months }),
-    },
-  )
-  return Array.isArray(data) ? data : (data?.list ?? data?.results ?? [])
+  const now = new Date()
+  const endStr = toHKDateStr(now)
+  const from = new Date(now)
+  from.setUTCMonth(from.getUTCMonth() - months)
+  const startStr = toHKDateStr(from)
+
+  const qs = new URLSearchParams({
+    page: '0', size: '50', sort: 'desc', keyword: '', sortBy: 'billTime',
+  })
+  const data = await apricotCall(`/services/aepsmsbill/api/bills/search?${qs}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      params: [
+        { key: 'startDate', value: hkDateStart(startStr).toISOString() },
+        { key: 'endDate', value: hkDateEnd(endStr).toISOString() },
+        { key: 'patientCustomerType', value: 'patient' },
+        { key: 'patients', details: [patientExtId] }, // ★ details 唔係 value
+      ],
+    }),
+  })
+  return Array.isArray(data) ? data : (data?.content ?? data?.list ?? [])
 }

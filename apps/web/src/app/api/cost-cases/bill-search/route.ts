@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     if (billExtIds.length > 0) {
       const counts = await prisma.costCase.groupBy({
         by: ['billExtId'],
-        where: { billExtId: { in: billExtIds } },
+        where: { billExtId: { in: billExtIds }, status: { not: 'VOID' } },
         _count: true,
       })
       for (const c of counts) {

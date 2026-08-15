@@ -73,10 +73,27 @@ export function toCleanPatients(raw: any): CleanPatient[] {
 }
 
 // PII leak 測試 — 每次 sync 後跑
+// 通用（payments / bills）— fullName 亦算 PII
+const PII_KEYS_STRICT = [
+  'clinicPatient', 'personalIdentifier', 'medicalHistory',
+  'drugHistory', 'phoneNum', 'phoneList', 'dateOfBirth', 'diagnosis',
+  'address', 'email', 'fullName', 'emergencyContact', 'bloodType', 'occupation',
+]
+
+// 病人搜尋 — fullName 刻意保留（income report 要用）
+const PII_KEYS_PATIENT = PII_KEYS_STRICT.filter(k => k !== 'fullName')
+
 export function assertNoPii(obj: any): void {
   const json = JSON.stringify(obj)
-  for (const leak of ['clinicPatient', 'personalIdentifier', 'medicalHistory',
-    'phoneNum', 'dateOfBirth', 'diagnosis', 'address', 'fullName']) {
+  for (const leak of PII_KEYS_STRICT) {
+    if (json.includes(leak)) throw new Error(`PII 洩漏：${leak}`)
+  }
+}
+
+// ★ MD-F: Patient-search 專用 — 容許 fullName
+export function assertNoPiiPatient(obj: any): void {
+  const json = JSON.stringify(obj)
+  for (const leak of PII_KEYS_PATIENT) {
     if (json.includes(leak)) throw new Error(`PII 洩漏：${leak}`)
   }
 }

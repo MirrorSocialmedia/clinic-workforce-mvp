@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { withApricotLockRetry, searchPatients } from '@/lib/apricot/client'
-import { toCleanPatients, type CleanPatient } from '@/lib/apricot/sanitize'
+import { toCleanPatients, assertNoPiiPatient, type CleanPatient } from '@/lib/apricot/sanitize'
 
 // ============================================================
 // GET /api/cost-cases/patient-search — Search Apricot patients
@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
   try {
     const raw = await withApricotLockRetry(() => searchPatients(keyword))
     const patients: CleanPatient[] = toCleanPatients(raw)
+    assertNoPiiPatient(patients)
     return jsonNoStore({ patients })
   } catch (e: any) {
     const msg = e.message || ''
