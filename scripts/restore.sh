@@ -140,18 +140,27 @@ if ! gunzip -c "${BACKUP_FILE}" | docker exec -i "${DB_CONTAINER}" psql \
 fi
 echo "✅ 資料灌入完成"
 
-# ★ Post-restore data summary
+# ★ Post-restore data summary — 核心表（一定存在）
 echo "📊 還原後資料摘要："
 docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" -c \
 'SELECT
-   (SELECT count(*) FROM "User")        AS users,
-   (SELECT count(*) FROM "Employee")    AS employees,
-   (SELECT count(*) FROM "Shift")       AS shifts,
-   (SELECT count(*) FROM "PunchRecord") AS punches,
-   (SELECT max("punchTime") FROM "PunchRecord") AS latest_punch,
-   (CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '"'"'PaymentAllocation'"'"' AND table_schema = '"'"'public'"'"') THEN (SELECT count(*) FROM "PaymentAllocation") ELSE 0 END) AS allocs,
-   (CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '"'"'PayoutRun'"'"' AND table_schema = '"'"'public'"'"') THEN (SELECT count(*) FROM "PayoutRun") ELSE 0 END) AS payouts,
-   (CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '"'"'CostCase'"'"' AND table_schema = '"'"'public'"'"') THEN (SELECT count(*) FROM "CostCase") ELSE 0 END) AS costs;'
+ (SELECT count(*) FROM "User") AS users,
+ (SELECT count(*) FROM "Employee") AS employees,
+ (SELECT count(*) FROM "Shift") AS shifts,
+ (SELECT count(*) FROM "PunchRecord") AS punches,
+ (SELECT max("punchTime") FROM "PunchRecord") AS latest_punch;'
+
+# ★ P1-P3 摘要 — 獨立一句：表未存在時整句 fail，唔可以中止還原
+echo "📊 P1-P3 資料摘要："
+docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${DB_NAME}" -c \
+'SELECT
+ (SELECT count(*) FROM "Provider") AS providers,
+ (SELECT count(*) FROM "ProviderShift") AS provider_shifts,
+ (SELECT count(*) FROM "CostCase") AS cost_cases,
+ (SELECT count(*) FROM "PaymentAllocation") AS allocations,
+ (SELECT count(*) FROM "PayoutRun") AS payout_runs,
+ (SELECT count(*) FROM "ExternalCredential") AS ext_creds;' \
+ 2>/dev/null || echo " ⚠️ P3 表未存在（還原緊 P3 之前嘅備份）—— 正常，繼續"
 
 # ★ 自動對比備份的 row counts
 ROWS_FILE="${BACKUP_FILE}.rows"
@@ -180,6 +189,11 @@ if [ -f "${ROWS_FILE}" ]; then
     exit 1
   fi
   echo "✅ ${CHECKED} 張表 row count 全部一致"
+  if [ "${CHECKED}" -lt 40 ]; then
+   echo " ⚠️ 只對咗 ${CHECKED} 張表 — 呢個備份係舊版 backup.sh 出嘅"
+   echo " （新版由 schema 生成，應該有 50+ 張）"
+   echo " ★ P1-P3 嘅表未經自動對數，請人手睇上面嘅 P3 摘要"
+  fi
 else
   echo "⚠️ 冇 .rows 檔（這個備份多數係 deploy.sh 出的）—— 跳過自動對數"
   echo " ★ 請人手確認上面的摘要合不合理"

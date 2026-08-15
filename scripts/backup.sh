@@ -22,9 +22,26 @@ DB_USER="${DB_USER:-clinic}"
 
 # ★ TABLES 由 schema.prisma 自動生成（項目冇用 @@map，model 名 = table 名）
 SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TABLES=$(grep -oP '^model \K\w+' "${SCRIPT_ROOT}/apps/web/prisma/schema.prisma" | tr '\n' ' ')
+SCHEMA_FILE="${SCRIPT_ROOT}/apps/web/prisma/schema.prisma"
+
+# ★ 驗證覆蓋率係 nice-to-have，備份本身係 critical — 讀唔到 schema 唔可以中止
+if [ -f "${SCHEMA_FILE}" ]; then
+ TABLES=$(grep -oP '^model \K\w+' "${SCHEMA_FILE}" 2>/dev/null | tr '\n' ' ') || TABLES=""
+fi
+
+if [ -z "${TABLES:-}" ]; then
+ echo "⚠️ 讀唔到 ${SCHEMA_FILE} 或者解析唔到 model — 改用寫死清單"
+ echo " （備份照做，只係驗證覆蓋率較低）"
+ TABLES="User Employee Shift PunchRecord PayrollItem \\
+LeaveRequest LeaveBalance LeaveType TimeBank TimeBankEntry \\
+PayRule WageHistory PunchCorrection PunchVoid AuditLog \\
+Clinic Company ShiftTemplate ExpenseEntry HKPublicHoliday \\
+Provider ProviderShift ProviderClinic ProviderCommission \\
+CostCase PaymentAllocation PayoutRun ExternalCredential"
+fi
+
 TABLE_COUNT=$(echo ${TABLES} | wc -w)
-echo "📋 由 schema.prisma 載入 ${TABLE_COUNT} 個 table 名"
+echo "📋 載入 ${TABLE_COUNT} 個 table 名"
 
 echo "🔧 [$(date)] Starting backup..."
 
