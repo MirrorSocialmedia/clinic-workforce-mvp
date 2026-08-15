@@ -294,6 +294,9 @@ export const CONFIG = {
     'PUT /api/cost-cases/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/cost-cases/:id': ['OWNER', 'MANAGER'],
     'POST /api/cost-cases/recompute': ['OWNER'],
+    // ★ MD-F: Cost Entry bill picker
+    'GET /api/cost-cases/patient-search': ['OWNER', 'MANAGER'],
+    'GET /api/cost-cases/bill-search': ['OWNER', 'MANAGER'],
     // Lab 主檔
     'GET /api/labs': ['OWNER', 'MANAGER'],
     'POST /api/labs': ['OWNER'],
@@ -447,6 +450,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/cost-cases/implant': ['cost_entry'],
   'PUT /api/cost-cases/:id': ['cost_entry'],
   'DELETE /api/cost-cases/:id': ['cost_entry'],
+  // ★ MD-F: bill picker routes
+  'GET /api/cost-cases/patient-search': ['cost_entry'],
+  'GET /api/cost-cases/bill-search': ['cost_entry'],
   //   provider_payout 權限：折扣設定 / 材料單價（只 OWNER）
   'POST /api/cost-cases/recompute': ['provider_payout'],
   'POST /api/labs': ['provider_payout'],
