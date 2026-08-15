@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { diffMinutes } from '@/lib/shift-punch-match'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
@@ -85,14 +86,14 @@ export async function POST(req: NextRequest) {
           .filter((ep: any) => ep.punchType === 'CLOCK_IN')
           .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
         if (clockIn && clockIn.effectiveTime.getTime() > new Date(shift.startTime).getTime()) { // CALC-OK: makeup validation, not general calculation
-          actualMinutes = Math.ceil((clockIn.effectiveTime.getTime() - new Date(shift.startTime).getTime()) / 60000)
+          actualMinutes = diffMinutes(clockIn.effectiveTime, new Date(shift.startTime))
         }
       } else {
         const clockOut = dayPunches
           .filter((ep: any) => ep.punchType === 'CLOCK_OUT')
           .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
         if (clockOut && clockOut.effectiveTime.getTime() < new Date(shift.endTime).getTime()) {
-          actualMinutes = Math.ceil((new Date(shift.endTime).getTime() - clockOut.effectiveTime.getTime()) / 60000)
+          actualMinutes = -diffMinutes(clockOut.effectiveTime, new Date(shift.endTime))
         }
       }
 

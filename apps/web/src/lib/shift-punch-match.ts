@@ -1,13 +1,29 @@
 import { toHKDateStr } from './hk-date'
 
+/**
+ * ★ 打卡時間截到分鐘 —— 秒數一律唔計（2026-08-15 拍板）
+ * 早退 19:30:40 → 19:30（差 60 分，唔係 59）
+ * OT 19:37:47 → 19:37（差 7 分，唔係 8）
+ *
+ * ⚠️ 全系統任何「打卡 vs 更次」嘅分鐘計算都要經呢個 helper。
+ * 直接寫 Math.floor(diff/60000) 或 Math.ceil 都係錯。
+ */
+export const truncToMinute = (d: Date): number =>
+  Math.floor(d.getTime() / 60000) * 60000
+
+/** 兩個時刻相差幾多分鐘（兩邊都先截秒，結果必為整數） */
+export const diffMinutes = (later: Date, earlier: Date): number =>
+  (truncToMinute(later) - truncToMinute(earlier)) / 60000
+
 export type MatchedDay = {
   date: string // HK YYYY-MM-DD
   shiftId: string
   clinicId: string
-  lateMinutes: number // floor，未計午休超時
-  earlyMinutes: number // ★ ceil（收工打卡，2026-08-15）
-  otMinutes: number // ★ ceil（收工打卡）；未過門檻／未套 otRoundMinutes 嘅原始值
-  earlyInMinutes: number // ★ floor（提早上班，clockIn < shiftStart 嘅原始分鐘）
+  // ★ 四個欄一律「截秒後相減」—— 見 diffMinutes（2026-08-15）
+  lateMinutes: number // 未計午休超時
+  earlyMinutes: number
+  otMinutes: number // 未過門檻／未套 otRoundMinutes 嘅原始值
+  earlyInMinutes: number
   hasClockIn: boolean
   hasClockOut: boolean
   isPartial: boolean // 有 IN 冇 OUT
@@ -43,11 +59,9 @@ export function matchPunchesToShifts(
 ): MatchedDay[] {
   const out: MatchedDay[] = []
 
-  // ★ 取整規則（2026-08-15 拍板）：
-  // 收工打卡（早退 / OT）= ceil —— 唔夠一分鐘都當一分鐘
-  // 上班打卡（遲到 / 提早上班）= floor
-  // 理由：收工一刻嘅秒數一律當足一分鐘，兩邊各有一次著數／唔著數。
-  // ⚠️ 唔係手民之誤 —— 改之前先問老闆。
+  // ★ 取整規則（2026-08-15 拍板 B2）：一律截秒後相減（diffMinutes）
+  // 秒數唔計 —— 打卡 19:30:40 = 19:30，更次 19:30:00 = 19:30，差 0 分。
+  // 詳見 truncToMinute / diffMinutes helper。
 
   for (const shift of shifts) {
     if (shift.status === 'CANCELLED') continue
@@ -106,20 +120,15 @@ export function matchPunchesToShifts(
     let otMinutes = 0
     let earlyInMinutes = 0
 
-    if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
-      lateMinutes = Math.floor((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
-    } else if (clockIn && clockIn.effectiveTime.getTime() < shiftStart.getTime()) {
-      earlyInMinutes = Math.floor((shiftStart.getTime() - clockIn.effectiveTime.getTime()) / 60000)
+    if (clockIn) {
+      const d = diffMinutes(clockIn.effectiveTime, shiftStart)
+      if (d > 0) lateMinutes = d
+      else if (d < 0) earlyInMinutes = -d
     }
-    if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
-      // ★ 2026-08-15 拍板 B1：早退向上取整 —— 唔夠一分鐘都當一分鐘。
-      // 只有【收工】呢一項用 ceil；遲到／提早上班維持 floor。
-      // ⚠️ 呢條公式喺 exceptions/route.ts 有第二份 —— 改呢度要一齊改
-      earlyMinutes = Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
-    }
-    if (clockOut && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
-      // ★ 2026-08-15 拍板 B1：收工 OT 向上取整（同早退一致）
-      otMinutes = Math.ceil((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
+    if (clockOut) {
+      const d = diffMinutes(clockOut.effectiveTime, shiftEnd)
+      if (d > 0) otMinutes = d
+      else if (d < 0) earlyMinutes = -d
     }
 
     out.push({

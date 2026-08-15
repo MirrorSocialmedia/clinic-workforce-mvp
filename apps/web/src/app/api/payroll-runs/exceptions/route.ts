@@ -8,6 +8,7 @@ import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
 import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
 import { matchPunchesToShifts } from '@/lib/shift-punch-match'
+import { diffMinutes } from '@/lib/shift-punch-match'
 import { computeEarlyInOt, readEarlyInOtCfg } from '@/lib/early-in-ot'
 
 // GET /api/payroll-runs/exceptions — Attendance exceptions report + timebank summaries
@@ -310,7 +311,7 @@ export async function GET(req: NextRequest) {
     if (matchingShift) {
       const shiftStart = new Date(matchingShift.startTime)
       if (ep.effectiveTime.getTime() > shiftStart.getTime()) {
-        const lateMins = Math.floor((ep.effectiveTime.getTime() - shiftStart.getTime()) / 60000)
+        const lateMins = diffMinutes(ep.effectiveTime, shiftStart)
         if (lateMins > 0) {
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
@@ -340,8 +341,7 @@ export async function GET(req: NextRequest) {
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
       if (ep.effectiveTime.getTime() < shiftEnd.getTime()) {
-        // ★ 要同 shift-punch-match.ts:109 一致 —— 改一邊唔改另一邊就會「顯示 X 扣 Y」
-        const earlyMins = Math.ceil((shiftEnd.getTime() - ep.effectiveTime.getTime()) / 60000)
+        const earlyMins = -diffMinutes(ep.effectiveTime, shiftEnd)
         if (earlyMins > 0) {
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
@@ -457,8 +457,7 @@ export async function GET(req: NextRequest) {
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
       if (ep.effectiveTime.getTime() > shiftEnd.getTime()) {
-        // ★ 要同 shift-punch-match.ts 一致 —— 收工 OT 向上取整
-        const otMins = Math.ceil((ep.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
+        const otMins = diffMinutes(ep.effectiveTime, shiftEnd)
         const minReq = otMinByEmp.get(ep.raw.employeeId) ?? 0
         const roundReq = otRoundByEmp.get(ep.raw.employeeId) ?? 0
         if (otMins > 0 && otMins >= minReq) {

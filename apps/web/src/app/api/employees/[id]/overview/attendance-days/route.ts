@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
+import { diffMinutes } from '@/lib/shift-punch-match'
 
 // GET /api/employees/[id]/overview/attendance-days
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=20
@@ -132,17 +133,17 @@ export async function GET(
         if (matchingShift) {
           const sStart = new Date(matchingShift.startTime)
           const sEnd = new Date(matchingShift.endTime)
-          // Late (floor)
+          // Late
           if (d.firstIn && d.firstIn.getTime() > sStart.getTime()) {
-            lateMin = Math.floor((d.firstIn.getTime() - sStart.getTime()) / 60000)
+            lateMin = diffMinutes(d.firstIn, sStart)
           }
-          // Early leave (ceil)
+          // Early leave
           if (d.lastOut && d.lastOut.getTime() < sEnd.getTime()) {
-            earlyMin = Math.ceil((sEnd.getTime() - d.lastOut.getTime()) / 60000)
+            earlyMin = -diffMinutes(d.lastOut, sEnd)
           }
-          // OT (ceil)
+          // OT
           if (d.lastOut && d.lastOut.getTime() > sEnd.getTime()) {
-            otMin = Math.ceil((d.lastOut.getTime() - sEnd.getTime()) / 60000)
+            otMin = diffMinutes(d.lastOut, sEnd)
           }
         }
       }

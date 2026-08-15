@@ -11,7 +11,7 @@ import { prisma, basePrisma } from './prisma'
 import { QUOTA_LEAVE_KEYS } from './leave-types'
 import { getEffectivePunches } from './punch-query'
 import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts, leaveCoversDate } from './hk-date'
-import { matchPunchesToShifts } from './shift-punch-match'
+import { matchPunchesToShifts, diffMinutes } from './shift-punch-match'
 import type { PayType, RunStatus } from '@prisma/client'
 import { getEffectiveADW } from './adw'
 import type { ADWResult, AdwPolicyResult } from './adw'
@@ -2426,8 +2426,8 @@ async function collectWorkData(
       if (!makeupLateDates.has(shiftDateStr)) {
         lateRecords.push({
           date: shiftDateStr,
-          // ★ QA24: Math.floor（同 calculateTimeBank 一致，夠足 1 分鐘先計）
-          minutes: Math.floor((clockIn.effectiveTime.getTime() - shiftStart.getTime()) / 60000),
+          // ★ QA24: 截秒後相減（diffMinutes，2026-08-15 B2）
+          minutes: diffMinutes(clockIn.effectiveTime, shiftStart),
         })
       }
     }
@@ -2439,8 +2439,8 @@ async function collectWorkData(
     const shiftEnd = new Date(shift.endTime)
     if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
       if (!makeupEarlyDates.has(shiftDateStr)) {
-        // ★ QA24: Math.floor（同 calculateTimeBank 一致）
-        const minutes = Math.floor((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
+        // ★ QA24: 截秒後相減（diffMinutes，2026-08-15 B2）
+        const minutes = -diffMinutes(clockOut.effectiveTime, shiftEnd)
         if (minutes > 0) {
           earlyLeaveRecords.push({ date: shiftDateStr, minutes })
         }
