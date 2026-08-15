@@ -210,10 +210,13 @@ function EarlyInOtCell({ row, canManageAttendance }: {
         // Stale state
         <span className="inline-flex items-center gap-2">
           <span className="px-2 py-1 text-xs rounded bg-red-50 text-red-700 border border-red-200">
-            ⚠️ 打卡已改，需重新批准
+            ⚠️ 數字有變（{row.earlyOtMinutes} → 重算），需重新批准
           </span>
           {canManageAttendance && (
-            <button onClick={handleApproveEarlyIn} className="text-xs text-blue-600 underline">重新批准</button>
+            <>
+              <button onClick={handleApproveEarlyIn} className="text-xs text-blue-600 underline">重新批准</button>
+              <button onClick={cancelEarlyIn} className="text-xs text-red-600 underline">取消</button>
+            </>
           )}
         </span>
       ) : canManageAttendance ? (

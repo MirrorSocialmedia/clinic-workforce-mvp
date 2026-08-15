@@ -33,17 +33,7 @@ export async function POST(req: NextRequest) {
     const dayStart = hkDateStart(date)
     const dayEnd = hkDateEnd(date)
 
-    // 驗證①：防重複
-    const existing = await prisma.timeBankEntry.findFirst({
-      where: {
-        employeeId,
-        type: 'EARLY_IN_OT',
-        date: { gte: dayStart, lte: dayEnd },
-      },
-    })
-    if (existing) return NextResponse.json({ error: '該日已批准提早上班OT' }, { status: 400 })
-
-    // 驗證②：攞當日 shift + effective punches → matchPunchesToShifts → earlyInMinutes
+    // 驗證①：攞當日 shift + effective punches → matchPunchesToShifts → earlyInMinutes
     const shifts = await prisma.shift.findMany({
       where: {
         employeeId,
@@ -104,6 +94,19 @@ export async function POST(req: NextRequest) {
       } catch { /* ignore */ }
     }
 
+    // ★ 2026-08-15：重複檢查搬到 finalMinutes 之後 —— 要有 finalMinutes 先分得清
+    // 「真重複」（分鐘一樣）同「stale 重批」（分鐘唔同）
+    const existing = await prisma.timeBankEntry.findFirst({
+      where: {
+        employeeId,
+        type: 'EARLY_IN_OT',
+        date: { gte: dayStart, lte: dayEnd },
+      },
+    })
+    if (existing && existing.minutes === finalMinutes) {
+      return NextResponse.json({ error: '該日已批准提早上班OT' }, { status: 400 })
+    }
+
     // 計算 balance 變化
     const beforeBalance = await tbBalance(employeeId)
 
@@ -113,8 +116,26 @@ export async function POST(req: NextRequest) {
       .filter(p => p.punchType === 'CLOCK_IN')
       .sort((a, b) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
 
-    // Transaction
+    // Transaction: 刪舊（stale 重批）+ 建新
     await prisma.$transaction(async (tx) => {
+      // 刪舊 entry（分鐘唔同 = stale 重批）
+      if (existing) {
+        await tx.timeBankEntry.delete({ where: { id: existing.id } })
+        await tx.auditLog.create({
+          data: {
+            actorId: auth.session.userId,
+            action: 'EARLY_OT_AUTO_REVOKE',
+            entity: 'TimeBankEntry',
+            entityId: existing.id,
+            targetEmployeeId: employeeId,
+            beforeJson: JSON.stringify({ minutes: existing.minutes, date }),
+            afterJson: JSON.stringify({ trigger: 'stale-reapprove', newFinalMinutes: finalMinutes, rawEarly }),
+            notes: `重新批准提早OT：${date} ${existing.minutes} → ${finalMinutes} 分`,
+          },
+        } as any)
+      }
+
+      // 建新 entry
       await tx.timeBankEntry.create({
         data: {
           employeeId,
