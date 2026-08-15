@@ -340,7 +340,8 @@ export async function GET(req: NextRequest) {
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
       if (ep.effectiveTime.getTime() < shiftEnd.getTime()) {
-        const earlyMins = Math.floor((shiftEnd.getTime() - ep.effectiveTime.getTime()) / 60000)
+        // ★ 要同 shift-punch-match.ts:109 一致 —— 改一邊唔改另一邊就會「顯示 X 扣 Y」
+        const earlyMins = Math.ceil((shiftEnd.getTime() - ep.effectiveTime.getTime()) / 60000)
         if (earlyMins > 0) {
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
@@ -456,7 +457,8 @@ export async function GET(req: NextRequest) {
     if (matchingShift) {
       const shiftEnd = new Date(matchingShift.endTime)
       if (ep.effectiveTime.getTime() > shiftEnd.getTime()) {
-        const otMins = Math.floor((ep.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
+        // ★ 要同 shift-punch-match.ts 一致 —— 收工 OT 向上取整
+        const otMins = Math.ceil((ep.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
         const minReq = otMinByEmp.get(ep.raw.employeeId) ?? 0
         const roundReq = otRoundByEmp.get(ep.raw.employeeId) ?? 0
         if (otMins > 0 && otMins >= minReq) {

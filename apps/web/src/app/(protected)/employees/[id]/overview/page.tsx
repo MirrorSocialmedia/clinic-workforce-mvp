@@ -612,8 +612,14 @@ function AttendanceDetail({ empId }: { empId: string }) {
                 <td style={{ textAlign: 'center', padding: '4px 6px' }}>{r.lastOut ?? '—'}</td>
                 <td style={{ textAlign: 'right', padding: '4px 6px' }}>{r.workedMinutes != null ? (r.workedMinutes / 60).toFixed(1) + 'h' : '—'}</td>
                 <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                  {r.flags?.includes('MISSING_OUT') ? '缺下班卡'
-                    : r.lateMin > 0 ? `遲到 ${r.lateMin} 分` : '✓'}
+                  {(() => {
+                    const tags: string[] = []
+                    if (r.flags?.includes('MISSING_OUT')) tags.push('缺下班卡')
+                    if (r.lateMin > 0) tags.push(`遲到 ${r.lateMin} 分`)
+                    if (r.earlyMin > 0) tags.push(`早退 ${r.earlyMin} 分`)
+                    if (r.otMin > 0) tags.push(`OT ${r.otMin} 分`)
+                    return tags.length ? tags.join('・') : '✓'
+                  })()}
                 </td>
               </tr>
             ))}</tbody>

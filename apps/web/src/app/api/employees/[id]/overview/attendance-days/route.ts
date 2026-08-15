@@ -56,6 +56,26 @@ export async function GET(
     },
   })
 
+  // ★ B1: Fetch shifts for late/early/OT computation
+  const shifts = await prisma.shift.findMany({
+    where: {
+      employeeId: emp.id,
+      status: { not: 'CANCELLED' },
+      date: {
+        gte: dateFrom,
+        lte: dateTo,
+      },
+    },
+    select: {
+      id: true,
+      date: true,
+      startTime: true,
+      endTime: true,
+      clinicId: true,
+      secondaryClinicId: true,
+    },
+  })
+
   // Group by HK date, pair in/out
   const dayMap = new Map<string, any>()
   for (const p of punches) {
@@ -82,23 +102,63 @@ export async function GET(
     }
   }
 
+  // ★ B1: Build shift lookup by date for late/early/OT computation
+  const shiftByDate = new Map<string, typeof shifts>()
+  for (const s of shifts) {
+    const day = toHKDateStr(new Date(s.date))
+    if (!shiftByDate.has(day)) shiftByDate.set(day, [])
+    shiftByDate.get(day)!.push(s)
+  }
+
   const days = Array.from(dayMap.values())
     .map(d => {
       let workedMinutes = null
+      let lateMin = 0
+      let earlyMin = 0
+      let otMin = 0
+
       if (d.firstIn && d.lastOut) {
         workedMinutes = Math.round((d.lastOut - d.firstIn) / 60000)
       }
+
+      // ★ B1: Match against shift for late/early/OT
+      const dayShifts = shiftByDate.get(d.date)
+      if (dayShifts) {
+        // Find the shift that matches this day's clinic
+        const clinicPunch = punches.find(p => toHKDateStr(p.punchTime) === d.date)
+        const matchingShift = dayShifts.find(s =>
+          s.clinicId === clinicPunch?.clinicId || s.secondaryClinicId === clinicPunch?.clinicId
+        ) || dayShifts[0]
+        if (matchingShift) {
+          const sStart = new Date(matchingShift.startTime)
+          const sEnd = new Date(matchingShift.endTime)
+          // Late (floor)
+          if (d.firstIn && d.firstIn.getTime() > sStart.getTime()) {
+            lateMin = Math.floor((d.firstIn.getTime() - sStart.getTime()) / 60000)
+          }
+          // Early leave (ceil)
+          if (d.lastOut && d.lastOut.getTime() < sEnd.getTime()) {
+            earlyMin = Math.ceil((sEnd.getTime() - d.lastOut.getTime()) / 60000)
+          }
+          // OT (ceil)
+          if (d.lastOut && d.lastOut.getTime() > sEnd.getTime()) {
+            otMin = Math.ceil((d.lastOut.getTime() - sEnd.getTime()) / 60000)
+          }
+        }
+      }
+
       const flags: string[] = []
       if (!d.lastOut && d.firstIn) flags.push('MISSING_OUT')
-      // Check late against shift
-      // (shift check can be added later)
+
       return {
         date: d.date,
         clinicName: d.clinicName,
         firstIn: d.firstIn ? d.firstIn.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Hong_Kong' }) : null,
         lastOut: d.lastOut ? d.lastOut.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Hong_Kong' }) : null,
         workedMinutes,
-        lateMin: 0,
+        lateMin,
+        earlyMin,
+        otMin,
         flags,
       }
     })

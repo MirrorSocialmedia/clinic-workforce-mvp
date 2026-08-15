@@ -5,8 +5,8 @@ export type MatchedDay = {
   shiftId: string
   clinicId: string
   lateMinutes: number // floor，未計午休超時
-  earlyMinutes: number // floor
-  otMinutes: number // 未過門檻／未取整嘅原始值
+  earlyMinutes: number // ★ ceil（收工打卡，2026-08-15）
+  otMinutes: number // ★ ceil（收工打卡）；未過門檻／未套 otRoundMinutes 嘅原始值
   earlyInMinutes: number // ★ floor（提早上班，clockIn < shiftStart 嘅原始分鐘）
   hasClockIn: boolean
   hasClockOut: boolean
@@ -22,7 +22,7 @@ export type MatchedDay = {
  * 修正咗嘅四樣：
  * ① clinicId 過濾含 secondaryClinicId（調鋪）
  * ② 同店多張更時用時間窗切開（分更朝晚更）
- * ③ 取整一律 floor（決定 4：足 1 分鐘先計）
+ * ③ 取整規則見下方註釋（2026-08-15 拍板）
  * ④ 揀最早 CLOCK_IN / 最晚 CLOCK_OUT
  */
 export function matchPunchesToShifts(
@@ -42,6 +42,12 @@ export function matchPunchesToShifts(
   }>,
 ): MatchedDay[] {
   const out: MatchedDay[] = []
+
+  // ★ 取整規則（2026-08-15 拍板）：
+  // 收工打卡（早退 / OT）= ceil —— 唔夠一分鐘都當一分鐘
+  // 上班打卡（遲到 / 提早上班）= floor
+  // 理由：收工一刻嘅秒數一律當足一分鐘，兩邊各有一次著數／唔著數。
+  // ⚠️ 唔係手民之誤 —— 改之前先問老闆。
 
   for (const shift of shifts) {
     if (shift.status === 'CANCELLED') continue
@@ -106,10 +112,14 @@ export function matchPunchesToShifts(
       earlyInMinutes = Math.floor((shiftStart.getTime() - clockIn.effectiveTime.getTime()) / 60000)
     }
     if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
-      earlyMinutes = Math.floor((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
+      // ★ 2026-08-15 拍板 B1：早退向上取整 —— 唔夠一分鐘都當一分鐘。
+      // 只有【收工】呢一項用 ceil；遲到／提早上班維持 floor。
+      // ⚠️ 呢條公式喺 exceptions/route.ts 有第二份 —— 改呢度要一齊改
+      earlyMinutes = Math.ceil((shiftEnd.getTime() - clockOut.effectiveTime.getTime()) / 60000)
     }
     if (clockOut && clockOut.effectiveTime.getTime() > shiftEnd.getTime()) {
-      otMinutes = Math.floor((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
+      // ★ 2026-08-15 拍板 B1：收工 OT 向上取整（同早退一致）
+      otMinutes = Math.ceil((clockOut.effectiveTime.getTime() - shiftEnd.getTime()) / 60000)
     }
 
     out.push({
