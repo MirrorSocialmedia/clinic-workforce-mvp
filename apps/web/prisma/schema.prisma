@@ -322,8 +322,9 @@ model Provider {
   shortName String?
   phone     String?
   color     String?
-  apricotId String?  @unique
-  companyId String?
+  apricotId     String?  @unique
+  apricotUserId String?  // Apricot 登入帳號 id，參考用
+  companyId     String?
   company   Company? @relation(fields: [companyId], references: [id])
   isActive  Boolean  @default(true)
   sortOrder Int      @default(0)

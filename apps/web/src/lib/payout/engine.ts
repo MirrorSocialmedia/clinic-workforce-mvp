@@ -105,6 +105,21 @@ export async function runGates(
   })
   if (!provider?.apricotId) {
     errors.push(`PAYOUT_PROVIDER_NOT_MAPPED: 醫生 ${providerId} 未綁定 Apricot ID`)
+  } else {
+    // Gate 1b: apricotId 必須對到至少一筆付款
+    const hit = await prisma.paymentAllocation.count({
+      where: {
+        ...ACTIVE_ALLOCATION,
+        providerExtId: provider.apricotId,
+        periodMonth,
+      },
+    })
+    if (hit === 0) {
+      errors.push(
+        `醫生「${provider.name}」喺 ${periodMonth} 一筆付款都對唔到。` +
+        `請確認 Apricot ID (${provider.apricotId}) 係 practitioner.id 而唔係 userId`
+      )
+    }
   }
 
   // Gate 2: Must have an active commission for the period
