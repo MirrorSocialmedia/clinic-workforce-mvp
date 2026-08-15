@@ -704,6 +704,48 @@ export default function SchedulingPage() {
       .catch(() => setRhRows([]))
   }, [currentCompanyId, ovMonth])
 
+  // ★ 小時格式化 helpers
+  const fmtH = (mins: number) => {
+    const h = mins / 60
+    return Number.isInteger(h) ? String(h) : h.toFixed(1)
+  }
+  const fmtDiffH = (mins: number) => {
+    if (mins === 0) return '0'
+    const h = Math.abs(mins) / 60
+    const s = Number.isInteger(h) ? String(h) : h.toFixed(1)
+    return `${mins > 0 ? '+' : '−'}${s}h`
+  }
+
+  // ★ 合併工時概覽 — otCardRows + rhRows → single merged list
+  const mergedHoursRows = useMemo(() => {
+    const byId = new Map<string, any>()
+    for (const r of otCardRows) {
+      byId.set(r.employeeId, {
+        employeeId: r.employeeId,
+        name: r.employeeName,
+        otMinutes: r.timeAccountMinutes ?? null,
+      })
+    }
+    for (const r of rhRows) {
+      const prev = byId.get(r.employeeId) ?? { employeeId: r.employeeId, name: r.name, otMinutes: null }
+      byId.set(r.employeeId, {
+        ...prev,
+        name: prev.name || r.name,
+        expectedMinutes: r.expectedMinutes,
+        rosterMinutes: r.rosterMinutes,
+        diffMinutes: r.diffMinutes,
+        unscheduled: r.unscheduled,
+        settled: r.settled,
+      })
+    }
+    return [...byId.values()].sort((a, b) => {
+      const aNo = a.diffMinutes == null, bNo = b.diffMinutes == null
+      if (aNo !== bNo) return aNo ? 1 : -1
+      if (!!a.unscheduled !== !!b.unscheduled) return a.unscheduled ? 1 : -1
+      return (b.diffMinutes ?? 0) - (a.diffMinutes ?? 0)
+    })
+  }, [otCardRows, rhRows])
+
   // ★ Sync ovMonth with currentDate in ALL view modes (cross-month week fix)
   useEffect(() => {
     const ym = toHKDateStr(currentDate).slice(0, 7)
@@ -2077,7 +2119,7 @@ function getShiftCode(shift: Shift): string {
             : `✅ 已為 ${empName} 建立 ${dateStr.slice(5)} 更次（${tc.primaryClinicShort}）`,
         }])
       }
-      setTcEmployeeId(null)
+      // ★ 拍板 2026-08-15：拖完【保留成組】—— 同一個人／同一組合可以連續排幾日
       return
     }
 
@@ -4736,11 +4778,18 @@ function getShiftCode(shift: Shift): string {
                     userSelect: 'none', textAlign: 'center',
                     lineHeight: 1.35, marginBottom: 6,
                     overflowWrap: 'anywhere',
+                    ...(tcEmployeeId ? { boxShadow: '0 0 0 2px #f59e0b' } : {}),
                   }}
                 >
                   {clinicShortById.get(tcPrimaryClinicId) ?? '?'}
                   {secondaryClinicId ? `→${clinicShortById.get(secondaryClinicId) ?? '?'}` : ''} {tcTemplateOptions.find(t => t.id === (tcTemplateId ?? ''))?.name ?? ''}
                   {tcEmployeeId && <><br/>{employees.find(e => e.id === tcEmployeeId)?.user?.name ?? ''}</>}
+                </div>
+              )}
+              {tcEmployeeId && (
+                <div style={{ fontSize: 9, color: '#b45309', marginTop: 4 }}>
+                  🔒 鎖定緊 {employees.find(e => e.id === tcEmployeeId)?.user?.name}
+                  —— 拖去任何一格都會開俾佢
                 </div>
               )}
               <button
@@ -5119,70 +5168,69 @@ function getShiftCode(shift: Shift): string {
           </div>
         </div>
 
-        {/* ★ OT 時間卡片 — 獨立第五欄 */}
-        {canSchedule && currentCompanyId && (
+        {/* ★ 工時概覽 — 合併 OT + 編更 */}
+        {canSchedule && currentCompanyId && mergedHoursRows.length > 0 && (
           <div style={{
-            ...stickyPanel, width: 100, flexShrink: 0,
-            background: '#fafbfc', border: '1px solid #e5e7eb',
-            borderRadius: 8, padding: 0, overflow: 'hidden',
+            ...stickyPanel, width: 118, flexShrink: 0, background: '#fafbfc',
+            border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden',
             display: 'flex', flexDirection: 'column',
           }}>
             <div style={{ padding: '6px 8px', borderBottom: '1px solid #e5e7eb', background: '#fff', flexShrink: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600 }}>OT 時間</div>
-              <div style={{ fontSize: 9, color: '#9ca3af' }}>{currentCompanyName} · {otCardRows.length} 人</div>
+              <div style={{ fontSize: 11, fontWeight: 600 }}>工時概覽</div>
+              <div style={{ fontSize: 9, color: '#9ca3af' }}>
+                {currentCompanyName} · {ovMonth} · {mergedHoursRows.length} 人
+              </div>
             </div>
-            <div style={{ overflowY: 'auto', minHeight: 0 }}>
-              {otCardRows.map(r => {
-                const h = (r.timeAccountMinutes ?? 0) / 60
-                return (
-                  <div key={r.employeeId} title={r.employeeName}
-                    style={{ display: 'flex', justifyContent: 'space-between', gap: 4,
-                      padding: '4px 8px', borderBottom: '0.5px solid #eee', fontSize: 11 }}>
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {r.employeeName}
-                    </span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-                      color: h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
-                      {h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
 
-        {/* ★ 應返工時卡片 — OT 卡片下面 */}
-        {canSchedule && currentCompanyId && rhRows.length > 0 && (
-          <div style={{ width: 100, flexShrink: 0, background: '#fafbfc',
-            border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden',
-            display: 'flex', flexDirection: 'column', marginTop: 8 }}>
-            <div style={{ padding: '6px 8px', borderBottom: '1px solid #e5e7eb', background: '#fff', flexShrink: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600 }}>應返工時</div>
-              <div style={{ fontSize: 9, color: '#9ca3af' }}>{currentCompanyName} · {ovMonth}</div>
+            {/* 圖例 */}
+            <div style={{ padding: '3px 8px 4px', borderBottom: '0.5px solid #e5e7eb',
+              display: 'flex', gap: 8, fontSize: 8, color: '#9ca3af', flexShrink: 0 }}>
+              <span><i style={{ display:'inline-block', width:6, height:6, borderRadius:2, background:'#0891b2', marginRight:3 }} />打卡 OT</span>
+              <span><i style={{ display:'inline-block', width:6, height:6, borderRadius:2, background:'#7c3aed', marginRight:3 }} />編更差額</span>
             </div>
-            <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
-              {rhRows.map(r => {
-                const h = r.diffMinutes / 60
-                return (
-                  <div key={r.employeeId} title={r.name}
-                    style={{ padding: '4px 8px', borderBottom: '0.5px solid #eee' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, fontSize: 11 }}>
-                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
-                      <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-                        color: r.unscheduled ? '#9ca3af' : h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
-                        {r.unscheduled ? '未排更' : h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
-                        {r.settled && <span style={{ fontSize: 9, color: '#6b7280', marginLeft: 2 }}>（已入帳）</span>}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 9, color: '#9ca3af' }}>
-                      {r.unscheduled
-                        ? `應 ${(r.expectedMinutes / 60).toFixed(0)}h · 未排班`
-                        : `應 ${(r.expectedMinutes / 60).toFixed(0)} / 編 ${(r.rosterMinutes / 60).toFixed(0)}`}
-                    </div>
+
+            <div style={{ overflowY: 'auto', minHeight: 0 }}>
+              {mergedHoursRows.map(r => (
+                <div key={r.employeeId} style={{ padding: '5px 8px', borderBottom: '0.5px solid #eee' }}>
+                  <div title={r.name} style={{ fontSize: 11, fontWeight: 500, marginBottom: 2,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.name}
                   </div>
-                )
-              })}
+
+                  {/* 打卡 OT */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                    <span style={{ color: '#0891b2' }}>OT</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums',
+                      color: r.otMinutes == null ? '#9ca3af'
+                      : r.otMinutes > 0 ? '#059669' : r.otMinutes < 0 ? '#dc2626' : '#9ca3af' }}>
+                      {r.otMinutes == null ? '—' : fmtDiffH(r.otMinutes)}
+                    </span>
+                  </div>
+
+                  {/* 編更差額 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                    <span style={{ color: '#7c3aed' }}>編更</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums',
+                      color: r.diffMinutes == null || r.unscheduled ? '#9ca3af'
+                      : r.diffMinutes > 0 ? '#059669' : r.diffMinutes < 0 ? '#dc2626' : '#9ca3af' }}>
+                      {r.diffMinutes == null ? '—' : r.unscheduled ? '未排更' : fmtDiffH(r.diffMinutes)}
+                      {r.settled && <span style={{ fontSize: 8, color: '#9ca3af' }}> ⏻</span>}
+                    </span>
+                  </div>
+
+                  {/* 應 / 編 明細 */}
+                  {r.expectedMinutes != null && !r.unscheduled && (
+                    <div style={{ fontSize: 8, color: '#9ca3af', textAlign: 'right' }}>
+                      應 {fmtH(r.expectedMinutes)} / 編 {fmtH(r.rosterMinutes)}
+                    </div>
+                  )}
+                  {r.unscheduled && r.expectedMinutes != null && (
+                    <div style={{ fontSize: 8, color: '#9ca3af', textAlign: 'right' }}>
+                      應 {fmtH(r.expectedMinutes)}h · 未排班
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}
