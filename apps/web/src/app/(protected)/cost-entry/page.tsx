@@ -482,7 +482,7 @@ export default function CostEntryPage() {
         patientCode: selectedPatient?.code || '',
         patientName: selectedPatient?.fullName || null,
         orderedAt: costForm.orderedAt || todayHK(),
-        itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther || null) : (costForm.itemType || null),
+        itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther?.trim() || 'Others') : (costForm.itemType || null),
         itemTypeOther: costForm.itemType === 'Others' ? costForm.itemTypeOther || null : null,
         labId: costForm.labId || null,
         labOrderNo: costForm.labOrderNo || null,

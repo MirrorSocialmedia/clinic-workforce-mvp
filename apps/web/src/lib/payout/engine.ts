@@ -106,19 +106,28 @@ export async function runGates(
   if (!provider?.apricotId) {
     errors.push(`PAYOUT_PROVIDER_NOT_MAPPED: 醫生 ${providerId} 未綁定 Apricot ID`)
   } else {
-    // Gate 1b: apricotId 必須對到至少一筆付款
-    const hit = await prisma.paymentAllocation.count({
-      where: {
-        ...ACTIVE_ALLOCATION,
-        providerExtId: provider.apricotId,
-        periodMonth,
-      },
+    // Gate 1b①: 全歷史有冇對到 —— 答「ID 啱唔啱」
+    const everHit = await prisma.paymentAllocation.count({
+      where: { providerExtId: provider.apricotId },
     })
-    if (hit === 0) {
+    if (everHit === 0) {
       errors.push(
-        `醫生「${provider.name}」喺 ${periodMonth} 一筆付款都對唔到。` +
-        `請確認 Apricot ID (${provider.apricotId}) 係 practitioner.id 而唔係 userId`
+        `醫生「${provider.name}」嘅 Apricot ID (${provider.apricotId}) ` +
+        `喺所有已同步嘅付款入面一次都冇出現過。` +
+        `請確認佢係 practitioner.id 而唔係 userId。`
       )
+    } else {
+      // Gate 1b②: 該月有冇 —— 答「今個月有冇收入」
+      const monthHit = await prisma.paymentAllocation.count({
+        where: {
+          ...ACTIVE_ALLOCATION,
+          providerExtId: provider.apricotId,
+          periodMonth,
+        },
+      })
+      if (monthHit === 0) {
+        warnings.push(`醫生「${provider.name}」喺 ${periodMonth} 冇任何付款記錄，Gross 將會係 $0`)
+      }
     }
   }
 

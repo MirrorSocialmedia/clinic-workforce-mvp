@@ -90,7 +90,7 @@ export default function ProvidersPage() {
 
   function startAdd() {
     setEditing('__new__')
-    setForm({ name: '', shortName: '', phone: '', apricotId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [] })
+    setForm({ name: '', shortName: '', phone: '', apricotId: '', apricotUserId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [] })
   }
 
   function startEdit(p: any) {
@@ -179,6 +179,7 @@ export default function ProvidersPage() {
               <th className="text-left p-3">簡稱</th>
               <th className="text-left p-3">電話</th>
               <th className="text-left p-3">Apricot ID</th>
+              <th className="text-left p-3">Apricot UserID</th>
               <th className="text-left p-3">顏色</th>
               <th className="text-left p-3">排序</th>
               <th className="text-left p-3">應診診所</th>
@@ -192,7 +193,13 @@ export default function ProvidersPage() {
                 <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
                 <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
                 <td className="p-2"><Input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="電話" /></td>
-                <td className="p-2"><Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="Apricot 醫生 ID（可留空）" /></td>
+                <td className="p-2">
+                  <Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="practitioner.id（帳單／預約用）" />
+                  <p className="text-xs text-muted-foreground">★ 由 Apricot 帳單 JSON 嘅 practitioner.id 抄，唔係下面幾行嗰個 userId</p>
+                </td>
+                <td className="p-2">
+                  <Input value={form.apricotUserId || ''} onChange={e => setForm({ ...form, apricotUserId: e.target.value.trim() })} placeholder="userId（參考用，唔影響計算）" />
+                </td>
                 <td className="p-2"><Input type="color" value={form.color || '#888888'} onChange={e => setForm({ ...form, color: e.target.value })} /></td>
                 <td className="p-2"><Input type="number" value={form.sortOrder ?? 0} onChange={e => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} className="w-20" /></td>
                 <td className="p-2">
@@ -217,7 +224,13 @@ export default function ProvidersPage() {
                 <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
                 <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
                 <td className="p-2"><Input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="電話" /></td>
-                <td className="p-2"><Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="Apricot 醫生 ID（可留空）" /></td>
+                <td className="p-2">
+                  <Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="practitioner.id（帳單／預約用）" />
+                  <p className="text-xs text-muted-foreground">★ 由 Apricot 帳單 JSON 嘅 practitioner.id 抄，唔係下面幾行嗰個 userId</p>
+                </td>
+                <td className="p-2">
+                  <Input value={form.apricotUserId || ''} onChange={e => setForm({ ...form, apricotUserId: e.target.value.trim() })} placeholder="userId（參考用，唔影響計算）" />
+                </td>
                 <td className="p-2"><Input type="color" value={form.color || '#888888'} onChange={e => setForm({ ...form, color: e.target.value })} /></td>
                 <td className="p-2"><Input type="number" value={form.sortOrder ?? 0} onChange={e => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} className="w-20" /></td>
                 <td className="p-2">
@@ -247,6 +260,11 @@ export default function ProvidersPage() {
                     : <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">未綁定</span>}
                 </td>
                 <td className="p-3">
+                  {p.apricotUserId
+                    ? <code className="text-xs">{p.apricotUserId}</code>
+                    : <span className="text-xs text-muted-foreground">—</span>}
+                </td>
+                <td className="p-3">
                   {p.color ? <span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: 4, background: p.color, border: '1px solid #ccc' }} /> : '—'}
                 </td>
                 <td className="p-3">{p.sortOrder ?? 0}</td>
@@ -269,7 +287,7 @@ export default function ProvidersPage() {
               </tr>
             ))}
             {!loading && providers.length === 0 && (
-              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
+              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
             )}
           </tbody>
         </table>
