@@ -108,6 +108,7 @@ export async function POST(req: NextRequest) {
     providerId, clinicId, category, patientCode, patientName,
     orderedAt, itemType, labId, labOrderNo, dsaName,
     baseCost, discountPct, receivedAt, appointmentAt,
+    billExtId, billCode, billItemEleId, // ★ MD-F
   } = body
 
   if (!providerId || !clinicId || !category || !patientCode || !orderedAt) {
@@ -154,7 +155,10 @@ export async function POST(req: NextRequest) {
       finalCost: finalCostNum != null ? finalCostNum : null,
       receivedAt: receivedAt ? new Date(receivedAt) : null,
       appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
-      source: 'MANUAL',
+      billExtId: billExtId || null,
+      billCode: billCode || null,
+      billItemEleId: billItemEleId || null,
+      source: billExtId ? 'BILL_LINKED' : 'MANUAL',
       status,
       periodMonth,
       createdBy: session.userId,

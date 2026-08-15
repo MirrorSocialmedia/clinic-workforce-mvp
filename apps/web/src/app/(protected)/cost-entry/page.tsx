@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { todayHK } from '@/lib/hk-date'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Plus, RefreshCw, Loader2, AlertTriangle } from 'lucide-react'
+import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X } from 'lucide-react'
+
+// ── Types ──────────────────────────────────────────────────────
 
 interface CostCase {
   id: string
@@ -32,6 +34,39 @@ interface CostCase {
   materials?: any[]
 }
 
+interface CleanPatient {
+  extId: string
+  code: string
+  fullName: string
+}
+
+interface BillItem {
+  eleId: string
+  feeItem: { id: string; code: string; des: string } | null
+  qty: number
+  up: number
+  amt: number
+  ttlAmt: number
+}
+
+interface SearchBill {
+  id: string
+  code: string
+  billTime: string
+  amt: number
+  ttlAmt: number
+  paidAmt: number
+  osAmt: number
+  isVoid: boolean
+  isRefunded: boolean
+  practitioner: { id: string } | null
+  clinic: { id: string } | null
+  billDetails: BillItem[]
+  existingCostCount: number
+}
+
+// ── Constants ──────────────────────────────────────────────────
+
 const CATEGORIES = ['LAB', 'IMPLANT', 'INVISALIGN'] as const
 const STATUSES = ['PENDING', 'PRICED', 'DONE'] as const
 
@@ -48,7 +83,25 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   VOID: { label: '已作廢', color: 'gray' },
 }
 
+// ── Helper: suggest category from bill items ──────────────────
+function suggestCategoryFromBill(bill: SearchBill): string {
+  const desAll = bill.billDetails.map(d => (d.feeItem?.des ?? '').toUpperCase()).join(' ')
+  if (desAll.includes('INVIS') || desAll.includes('CLEAR ALIGNER') || desAll.includes('透明')) return 'INVISALIGN'
+  if (desAll.includes('IMPLANT') || desAll.includes('植入')) return 'IMPLANT'
+  return 'LAB'
+}
+
+function suggestItemTypeFromBill(bill: SearchBill): string {
+  if (bill.billDetails.length === 1) {
+    return bill.billDetails[0].feeItem?.des ?? ''
+  }
+  return bill.billDetails.map(d => d.feeItem?.des ?? '').filter(Boolean).slice(0, 3).join(' / ')
+}
+
+// ── Main Component ─────────────────────────────────────────────
+
 export default function CostEntryPage() {
+  // ── Existing state (table + manual entry) ──────────────
   const [cases, setCases] = useState<CostCase[]>([])
   const [loading, setLoading] = useState(true)
   const [providers, setProviders] = useState<any[]>([])
@@ -56,23 +109,20 @@ export default function CostEntryPage() {
   const [summary, setSummary] = useState<any>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  // Filters
   const [filterProviderId, setFilterProviderId] = useState('')
   const [filterPeriodMonth, setFilterPeriodMonth] = useState(() => {
     const d = todayHK()
-    return d.slice(0, 7) // YYYY-MM
+    return d.slice(0, 7)
   })
   const [filterCategory, setFilterCategory] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [filterClinicId, setFilterClinicId] = useState('')
 
-  // Auth
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
   const [userId, setUserId] = useState('')
 
-  // Modal
   const [modalOpen, setModalOpen] = useState(false)
   const [modalCategory, setModalCategory] = useState<'LAB' | 'INVISALIGN'>('LAB')
   const [saving, setSaving] = useState(false)
@@ -82,11 +132,47 @@ export default function CostEntryPage() {
     itemType: '', labId: '', labOrderNo: '', dsaName: '',
     baseCost: '', discountPct: '', receivedAt: '', appointmentAt: '',
   })
-
-  // Delete confirmation
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
+  // ── ★ MD-F: Picker state ───────────────────────────────
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerStep, setPickerStep] = useState(0) // 0=patient, 1=bill, 2=cost
+
+  // Step 0: patient search
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchingPatients, setSearchingPatients] = useState(false)
+  const [patients, setPatients] = useState<CleanPatient[]>([])
+  const [apricotBusy, setApricotBusy] = useState(false)
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Step 1: bill search
+  const [selectedPatient, setSelectedPatient] = useState<CleanPatient | null>(null)
+  const [searchingBills, setSearchingBills] = useState(false)
+  const [bills, setBills] = useState<SearchBill[]>([])
+  const [selectedBill, setSelectedBill] = useState<SearchBill | null>(null)
+
+  // Step 2: cost form
+  const [selectedClinicInternalId, setSelectedClinicInternalId] = useState('')
+  const [selectedProviderInternalId, setSelectedProviderInternalId] = useState('')
+  const [dsaEmployees, setDsaEmployees] = useState<any[]>([])
+  const [loadingDsa, setLoadingDsa] = useState(false)
+  const [costForm, setCostForm] = useState({
+    category: 'LAB' as string,
+    itemType: '',
+    orderedAt: '',
+    dsaName: '',
+    baseCost: '',
+    discountPct: '',
+    receivedAt: '',
+    appointmentAt: '',
+    labId: '',
+    labOrderNo: '',
+  })
+  const [savingCost, setSavingCost] = useState(false)
+
   const canCreate = userRole ? hasPermission(userRole, 'cost_entry', grant, deny) : false
+
+  // ── Existing load functions ──────────────────────────────
 
   const loadProviders = useCallback(async () => {
     try {
@@ -155,6 +241,8 @@ export default function CostEntryPage() {
     loadCases()
   }, [loadCases])
 
+  // ── Existing modal helpers ───────────────────────────────
+
   const resetForm = () => {
     setForm({
       providerId: '', clinicId: '', category: modalCategory,
@@ -222,9 +310,191 @@ export default function CostEntryPage() {
 
   const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString('zh-HK') : '—'
 
+  // ── ★ MD-F: Picker logic ────────────────────────────────
+
+  const openPicker = () => {
+    // Reset all picker state
+    setPickerStep(0)
+    setSearchKeyword('')
+    setPatients([])
+    setApricotBusy(false)
+    setSelectedPatient(null)
+    setBills([])
+    setSelectedBill(null)
+    setSelectedClinicInternalId('')
+    setSelectedProviderInternalId('')
+    setDsaEmployees([])
+    setCostForm({
+      category: 'LAB', itemType: '', orderedAt: todayHK(),
+      dsaName: '', baseCost: '', discountPct: '',
+      receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '',
+    })
+    setPickerOpen(true)
+  }
+
+  const closePicker = () => {
+    setPickerOpen(false)
+    setApricotBusy(false)
+  }
+
+  // Step 0: debounce search patients
+  const handleSearchChange = (val: string) => {
+    setSearchKeyword(val)
+    setApricotBusy(false)
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    if (val.length < 6) {
+      setPatients([])
+      return
+    }
+    searchTimer.current = setTimeout(() => {
+      searchPatientsApi(val)
+    }, 500)
+  }
+
+  const searchPatientsApi = async (keyword: string) => {
+    setSearchingPatients(true)
+    setPatients([])
+    setApricotBusy(false)
+    try {
+      const data: any = await apiFetch(`/api/cost-cases/patient-search?keyword=${encodeURIComponent(keyword)}`)
+      setPatients(data.patients || [])
+    } catch (e: any) {
+      if (e?.status === 503) {
+        setApricotBusy(true)
+      }
+    } finally {
+      setSearchingPatients(false)
+    }
+  }
+
+  // Step 0 → 1: select patient, search bills
+  const selectPatient = (patient: CleanPatient) => {
+    setSelectedPatient(patient)
+    setPickerStep(1)
+    loadBills(patient.extId)
+  }
+
+  const loadBills = async (patientExtId: string) => {
+    setSearchingBills(true)
+    setBills([])
+    setApricotBusy(false)
+    try {
+      const data: any = await apiFetch(`/api/cost-cases/bill-search?patientExtId=${encodeURIComponent(patientExtId)}&months=12`)
+      setBills(data.bills || [])
+    } catch (e: any) {
+      if (e?.status === 503) {
+        setApricotBusy(true)
+      }
+    } finally {
+      setSearchingBills(false)
+    }
+  }
+
+  // Step 1 → 2: select bill, auto-fill form
+  const selectBillForCost = (bill: SearchBill) => {
+    setSelectedBill(bill)
+
+    // Match clinic extId to internal clinic
+    const clinic = clinics.find(c => c.apricotClinicId === bill.clinic?.id)
+    const clinicId = clinic?.id || ''
+    setSelectedClinicInternalId(clinicId)
+
+    // Match provider extId to internal provider
+    // bill.practitioner?.id → Provider.apricotId
+    const provider = providers.find(p => p.apricotId === bill.practitioner?.id)
+    const providerId = provider?.id || ''
+    setSelectedProviderInternalId(providerId)
+
+    // Suggest category + itemType from bill items
+    const category = suggestCategoryFromBill(bill)
+    const itemType = suggestItemTypeFromBill(bill)
+
+    setCostForm({
+      category,
+      itemType,
+      orderedAt: todayHK(),
+      dsaName: '',
+      baseCost: '',
+      discountPct: '',
+      receivedAt: '',
+      appointmentAt: '',
+      labId: '',
+      labOrderNo: '',
+    })
+
+    // Load DSA employees
+    if (clinicId) {
+      loadDsaEmployees(clinicId)
+    }
+
+    setPickerStep(2)
+  }
+
+  const loadDsaEmployees = async (clinicId: string) => {
+    setLoadingDsa(true)
+    try {
+      const data: any = await apiFetch(`/api/employees?clinicId=${encodeURIComponent(clinicId)}&status=ACTIVE&all=1`)
+      setDsaEmployees(data.employees || data || [])
+    } catch {
+      setDsaEmployees([])
+    } finally {
+      setLoadingDsa(false)
+    }
+  }
+
+  // Step 2: submit cost
+  const submitCost = async () => {
+    if (!selectedProviderInternalId || !selectedClinicInternalId) {
+      alert('醫生或診所未能自動匹配，請用手動輸入')
+      return
+    }
+    setSavingCost(true)
+    try {
+      const body: any = {
+        providerId: selectedProviderInternalId,
+        clinicId: selectedClinicInternalId,
+        category: costForm.category,
+        patientCode: selectedPatient?.code || '',
+        patientName: selectedPatient?.fullName || null,
+        orderedAt: costForm.orderedAt || todayHK(),
+        itemType: costForm.itemType || null,
+        labId: costForm.labId || null,
+        labOrderNo: costForm.labOrderNo || null,
+        dsaName: costForm.dsaName || null,
+        baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
+        discountPct: costForm.discountPct ? Number(costForm.discountPct) : null,
+        receivedAt: costForm.receivedAt || null,
+        appointmentAt: costForm.appointmentAt || null,
+        // ★ MD-F: bill linking
+        billExtId: selectedBill?.id || null,
+        billCode: selectedBill?.code || null,
+        billItemEleId: selectedBill?.billDetails?.[0]?.eleId || null,
+      }
+
+      await apiFetch('/api/cost-cases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      closePicker()
+      loadCases()
+    } catch (e) {
+      alert(`建立失敗: ${e}`)
+    } finally {
+      setSavingCost(false)
+    }
+  }
+
+  // ── Picker Step Labels ──────────────────────────────────
+  const stepLabels = ['揀病人', '揀帳單', '填成本']
+  const stepIcons = [Search, Search, Check]
+
+  // ── Render ───────────────────────────────────────────────
+
   return (
     <div className="p-6 space-y-4">
-      {/* B4: Load error alert */}
+      {/* Load error */}
       {loadError && (
         <Card className="p-3 bg-red-50 text-red-700 text-sm flex items-center gap-2">
           <AlertTriangle size={14} /> {loadError}
@@ -239,23 +509,21 @@ export default function CostEntryPage() {
           {canCreate && (
             <>
               <button
-                onClick={() => openCreateModal('LAB')}
+                onClick={openPicker}
                 className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 flex items-center gap-1"
               >
-                <Plus size={14} /> 新增 LAB
+                <Plus size={14} /> 新增成本（揀單）
               </button>
-              <button
-                onClick={() => openCreateModal('INVISALIGN')}
-                className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 flex items-center gap-1"
-              >
-                <Plus size={14} /> 新增 Invisalign
-              </button>
-              <a
-                href="/cost-entry/implant"
-                className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 flex items-center gap-1"
-              >
-                <Plus size={14} /> 新增 Implant
-              </a>
+              <div className="relative group">
+                <button className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300">
+                  手動輸入 ▾
+                </button>
+                <div className="absolute right-0 top-full mt-1 bg-white border rounded shadow-lg hidden group-hover:block z-10 min-w-[140px]">
+                  <button onClick={() => openCreateModal('LAB')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100">新增 LAB</button>
+                  <button onClick={() => openCreateModal('INVISALIGN')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100">新增 Invisalign</button>
+                  <a href="/cost-entry/implant" className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100">新增 Implant</a>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -264,51 +532,22 @@ export default function CostEntryPage() {
       {/* Filters */}
       <Card className="p-4">
         <div className="grid grid-cols-5 gap-3">
-          <select
-            value={filterProviderId}
-            onChange={e => setFilterProviderId(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          >
+          <select value={filterProviderId} onChange={e => setFilterProviderId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部醫生</option>
-            {providers.map(p => (
-              <option key={p.id} value={p.id}>{p.name || p.shortName}</option>
-            ))}
+            {providers.map(p => (<option key={p.id} value={p.id}>{p.name || p.shortName}</option>))}
           </select>
-          <input
-            type="month"
-            value={filterPeriodMonth}
-            onChange={e => setFilterPeriodMonth(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          />
-          <select
-            value={filterClinicId}
-            onChange={e => setFilterClinicId(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          >
+          <input type="month" value={filterPeriodMonth} onChange={e => setFilterPeriodMonth(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+          <select value={filterClinicId} onChange={e => setFilterClinicId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部診所</option>
-            {clinics.map(c => (
-              <option key={c.id} value={c.id}>{c.shortName || c.name}</option>
-            ))}
+            {clinics.map(c => (<option key={c.id} value={c.id}>{c.shortName || c.name}</option>))}
           </select>
-          <select
-            value={filterCategory}
-            onChange={e => setFilterCategory(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          >
+          <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部類別</option>
-            {CATEGORIES.map(c => (
-              <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
-            ))}
+            {CATEGORIES.map(c => (<option key={c} value={c}>{CATEGORY_LABELS[c]}</option>))}
           </select>
-          <select
-            value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          >
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部狀態</option>
-            {STATUSES.map(s => (
-              <option key={s} value={s}>{STATUS_CONFIG[s]?.label}</option>
-            ))}
+            {STATUSES.map(s => (<option key={s} value={s}>{STATUS_CONFIG[s]?.label}</option>))}
           </select>
         </div>
       </Card>
@@ -316,9 +555,7 @@ export default function CostEntryPage() {
       {/* Table */}
       <Card className="overflow-auto">
         {loading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="animate-spin" size={24} />
-          </div>
+          <div className="flex justify-center py-8"><Loader2 className="animate-spin" size={24} /></div>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -357,7 +594,7 @@ export default function CostEntryPage() {
                   <td className="p-2">{fmtDate(c.receivedAt)}</td>
                   <td className="p-2">{fmtDate(c.appointmentAt)}</td>
                   <td className="p-2">
-                    <Badge variant={STATUS_CONFIG[c.status]?.color === 'green' ? 'default' : STATUS_CONFIG[c.status]?.color === 'yellow' ? 'secondary' : 'secondary'}>
+                    <Badge variant={STATUS_CONFIG[c.status]?.color === 'green' ? 'default' : 'secondary'}>
                       {STATUS_CONFIG[c.status]?.label || c.status}
                     </Badge>
                   </td>
@@ -374,7 +611,7 @@ export default function CostEntryPage() {
         )}
       </Card>
 
-      {/* Summary Bar */}
+      {/* Summary */}
       {summary && (
         <Card className="p-3">
           <div className="flex items-center gap-4 text-sm">
@@ -401,7 +638,350 @@ export default function CostEntryPage() {
         </Card>
       )}
 
-      {/* Create Modal */}
+      {/* ── ★ MD-F: 3-Step Picker Modal ─────────────────── */}
+      {pickerOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="p-6 w-full max-w-2xl max-h-[90vh] overflow-auto">
+            {/* Step indicator */}
+            <div className="flex items-center justify-center gap-0 mb-6">
+              {stepLabels.map((label, i) => {
+                const Icon = stepIcons[i]
+                const isActive = i === pickerStep
+                const isDone = i < pickerStep
+                return (
+                  <div key={label} className="flex items-center">
+                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm ${
+                      isActive ? 'bg-blue-600 text-white' : isDone ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+                    }`}>
+                      <Icon size={14} />
+                      <span>{label}</span>
+                      {isDone && <Check size={12} />}
+                    </div>
+                    {i < 2 && <div className={`w-8 h-px ${isDone ? 'bg-green-300' : 'bg-gray-200'}`} />}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* ── Step 0: Search Patient ─────────────────── */}
+            {pickerStep === 0 && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">病人編號 / 姓名</label>
+                  <div className="relative">
+                    <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
+                    <input
+                      value={searchKeyword}
+                      onChange={e => handleSearchChange(e.target.value)}
+                      className="w-full border rounded pl-9 pr-4 py-2 text-sm"
+                      placeholder="輸入 6 字元以上自動搜尋…"
+                      autoFocus
+                    />
+                  </div>
+                  {searchKeyword.length > 0 && searchKeyword.length < 6 && (
+                    <p className="text-xs text-gray-400 mt-1">最少輸入 6 字元</p>
+                  )}
+                </div>
+
+                {/* Three states: searching / no results / apricot busy */}
+                {searchingPatients && (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+                    <Loader2 size={16} className="animate-spin" /> 搜尋中…
+                  </div>
+                )}
+
+                {apricotBusy && (
+                  <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded">
+                    <AlertTriangle size={16} /> Apricot 忙碌，請稍後重試
+                  </div>
+                )}
+
+                {!searchingPatients && !apricotBusy && patients.length === 0 && searchKeyword.length >= 6 && (
+                  <div className="text-sm text-gray-400 py-4 text-center">冇搵到病人</div>
+                )}
+
+                {/* Results */}
+                <div className="space-y-1 max-h-60 overflow-auto">
+                  {patients.map(p => (
+                    <button
+                      key={p.extId}
+                      onClick={() => selectPatient(p)}
+                      className="w-full text-left px-3 py-2 rounded hover:bg-blue-50 text-sm flex items-center justify-between border border-transparent hover:border-blue-200"
+                    >
+                      <span>
+                        <span className="font-mono font-medium">{p.code}</span>
+                        <span className="ml-2 text-gray-600">{p.fullName}</span>
+                      </span>
+                      <span className="text-xs text-gray-400">{p.extId.slice(0, 8)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 1: Search Bills ───────────────────── */}
+            {pickerStep === 1 && selectedPatient && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <button onClick={() => setPickerStep(0)} className="text-blue-600 hover:underline flex items-center gap-1">
+                    <ArrowLeft size={14} /> 返回
+                  </button>
+                  <span className="font-mono font-medium">{selectedPatient.code}</span>
+                  <span className="text-gray-600">{selectedPatient.fullName}</span>
+                </div>
+
+                {searchingBills && (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+                    <Loader2 size={16} className="animate-spin" /> 載入帳單…
+                  </div>
+                )}
+
+                {apricotBusy && (
+                  <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded">
+                    <AlertTriangle size={16} /> Apricot 忙碌，請稍後重試
+                  </div>
+                )}
+
+                {!searchingBills && !apricotBusy && bills.length === 0 && (
+                  <div className="text-sm text-gray-400 py-4 text-center">近 12 個月冇帳單</div>
+                )}
+
+                {/* Bill list */}
+                <div className="space-y-2 max-h-80 overflow-auto">
+                  {bills.map(b => (
+                    <button
+                      key={b.id}
+                      onClick={() => !b.isVoid && selectBillForCost(b)}
+                      disabled={b.isVoid}
+                      className={`w-full text-left border rounded p-3 text-sm ${
+                        b.isVoid
+                          ? 'opacity-40 cursor-not-allowed bg-gray-50'
+                          : 'hover:bg-blue-50 hover:border-blue-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-medium">{b.code}</span>
+                          <span className="text-gray-400">{new Date(b.billTime).toLocaleDateString('zh-HK')}</span>
+                          {b.isVoid && <Badge variant="secondary" className="text-xs bg-gray-100">已作廢</Badge>}
+                          {b.isRefunded && <Badge variant="secondary" className="text-xs bg-orange-50 text-orange-600">已退款</Badge>}
+                          {b.existingCostCount > 0 && (
+                            <Badge variant="secondary" className="text-xs bg-yellow-50 text-yellow-700">
+                              已錄 {b.existingCostCount} 筆
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <span className="font-medium">HK${Number(b.ttlAmt).toFixed(2)}</span>
+                          {b.osAmt && Number(b.osAmt) > 0 && (
+                            <span className="text-xs text-gray-400 ml-2">欠 ${Number(b.osAmt).toFixed(0)}</span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Bill items (compact) */}
+                      {b.billDetails.length > 0 && (
+                        <div className="mt-1 pt-1 border-t text-xs text-gray-500 space-y-0.5">
+                          {b.billDetails.slice(0, 3).map((item, i) => (
+                            <div key={i} className="flex justify-between">
+                              <span>{item.feeItem?.des || item.eleId}</span>
+                              <span>x{item.qty} × ${Number(item.up).toFixed(0)}</span>
+                            </div>
+                          ))}
+                          {b.billDetails.length > 3 && (
+                            <div className="text-gray-400">… 等共 {b.billDetails.length} 項</div>
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 2: Fill Cost ──────────────────────── */}
+            {pickerStep === 2 && selectedBill && selectedPatient && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <button onClick={() => setPickerStep(1)} className="text-blue-600 hover:underline flex items-center gap-1">
+                    <ArrowLeft size={14} /> 返回
+                  </button>
+                  <span className="text-gray-500">帳單 {selectedBill.code}</span>
+                </div>
+
+                {/* Read-only section: doctor / clinic / patient */}
+                <Card className="p-3 bg-gray-50 space-y-2">
+                  <div className="text-xs font-medium text-gray-500 mb-1">自動帶入（唯讀）</div>
+                  <div className="grid grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <label className="block text-xs text-gray-400">醫生</label>
+                      <div className="py-1">
+                        {providers.find(p => p.id === selectedProviderInternalId)?.name || providers.find(p => p.id === selectedProviderInternalId)?.shortName || '⚠️ 無法匹配'}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400">診所</label>
+                      <div className="py-1">
+                        {clinics.find(c => c.id === selectedClinicInternalId)?.shortName || clinics.find(c => c.id === selectedClinicInternalId)?.name || '⚠️ 無法匹配'}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400">病人</label>
+                      <div className="py-1">
+                        <span className="font-mono">{selectedPatient.code}</span>
+                        <span className="ml-1 text-gray-500">{selectedPatient.fullName}</span>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Editable form */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm mb-1">類別 <span className="text-xs text-gray-400">（自動建議）</span></label>
+                    <select
+                      value={costForm.category}
+                      onChange={e => setCostForm({ ...costForm, category: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                    >
+                      {CATEGORIES.map(c => (<option key={c} value={c}>{CATEGORY_LABELS[c]}</option>))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">項目 <span className="text-xs text-gray-400">（可改）</span></label>
+                    <input
+                      value={costForm.itemType}
+                      onChange={e => setCostForm({ ...costForm, itemType: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                      placeholder="項目名稱"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">落單日</label>
+                    <input
+                      type="date"
+                      value={costForm.orderedAt}
+                      onChange={e => setCostForm({ ...costForm, orderedAt: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">DSA</label>
+                    {loadingDsa ? (
+                      <div className="py-1.5 text-sm text-gray-400"><Loader2 size={14} className="animate-spin inline" /> 載入中…</div>
+                    ) : (
+                      <select
+                        value={costForm.dsaName}
+                        onChange={e => setCostForm({ ...costForm, dsaName: e.target.value })}
+                        className="w-full border rounded px-2 py-1.5 text-sm"
+                      >
+                        <option value="">不選</option>
+                        {dsaEmployees.map((emp: any) => (
+                          <option key={emp.id} value={emp.user?.name || emp.id}>
+                            {emp.user?.name || emp.id}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">成本 <span className="text-xs text-gray-400">（留空 = 未有價）</span></label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={costForm.baseCost}
+                      onChange={e => setCostForm({ ...costForm, baseCost: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                      placeholder="成本金額"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">折扣 %</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={costForm.discountPct}
+                      onChange={e => setCostForm({ ...costForm, discountPct: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                      placeholder="e.g. 8.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">到貨日</label>
+                    <input
+                      type="date"
+                      value={costForm.receivedAt}
+                      onChange={e => setCostForm({ ...costForm, receivedAt: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">覆診日</label>
+                    <input
+                      type="date"
+                      value={costForm.appointmentAt}
+                      onChange={e => setCostForm({ ...costForm, appointmentAt: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Lab</label>
+                    <input
+                      value={costForm.labId}
+                      onChange={e => setCostForm({ ...costForm, labId: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                      placeholder="Lab ID"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Lab 單號</label>
+                    <input
+                      value={costForm.labOrderNo}
+                      onChange={e => setCostForm({ ...costForm, labOrderNo: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm"
+                      placeholder="Lab 單號"
+                    />
+                  </div>
+                </div>
+
+                {/* Bill items reference */}
+                <div className="text-xs text-gray-400 border-t pt-2">
+                  <div className="font-medium mb-1">帳單項目參考：</div>
+                  <div className="space-y-0.5">
+                    {selectedBill.billDetails.slice(0, 5).map((item, i) => (
+                      <div key={i} className="flex justify-between">
+                        <span>{item.feeItem?.des || item.eleId}</span>
+                        <span>${Number(item.ttlAmt).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Footer actions */}
+            <div className="flex justify-between mt-4 pt-3 border-t">
+              {pickerStep === 0 ? (
+                <button onClick={closePicker} className="px-4 py-1.5 border rounded text-sm">取消</button>
+              ) : (
+                <button onClick={() => pickerStep === 1 ? setPickerStep(0) : setPickerStep(1)} className="px-4 py-1.5 border rounded text-sm flex items-center gap-1">
+                  <ArrowLeft size={14} /> 上一步
+                </button>
+              )}
+              {pickerStep === 2 && (
+                <button
+                  onClick={submitCost}
+                  disabled={savingCost || !selectedProviderInternalId || !selectedClinicInternalId}
+                  className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {savingCost && <Loader2 size={14} className="animate-spin" />} 確定錄入
+                </button>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Existing Manual Entry Modal ─────────────────── */}
       {modalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <Card className="p-6 w-full max-w-lg max-h-[90vh] overflow-auto">
