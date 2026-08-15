@@ -89,6 +89,7 @@ export async function searchBillsByPatient(patientExtId: string, months: number)
   const now = new Date()
   const endStr = toHKDateStr(now)
   const from = new Date(now)
+  from.setUTCDate(1)
   from.setUTCMonth(from.getUTCMonth() - months)
   const startStr = toHKDateStr(from)
 
