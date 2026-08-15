@@ -906,6 +906,11 @@ export default function EmployeePayrollDetailPage() {
                 <div className="text-lg font-bold mt-1" style={{ color: tb.lateCount > 0 ? '#d97706' : 'inherit' }}>
                   {tb.lateCount} 次 / 淨 {tb.netLateMinutes ?? Math.max(0, (tb.lateMinutes ?? 0) - (tb.makeupMinutes ?? 0))} 分鐘
                 </div>
+                {(tb.makeupLateMinutes ?? 0) > 0 && (
+                  <div className="text-[10px] text-muted-foreground mt-1">
+                    原始 {tb.lateMinutes ?? 0} 分 − 補鐘 {tb.makeupLateMinutes} 分
+                  </div>
+                )}
               </div>
               {/* 本月早退 */}
               <div className="rounded-lg border p-3" style={(tb.earlyLeaveCount ?? 0) > 0 ? { borderLeft: '3px solid #dc2626' } : {}}>
@@ -913,6 +918,11 @@ export default function EmployeePayrollDetailPage() {
                 <div className="text-lg font-bold mt-1" style={{ color: (tb.netEarlyMinutes ?? 0) > 0 ? '#dc2626' : 'inherit' }}>
                   {tb.earlyLeaveCount ?? 0} 次 / 淨 {tb.netEarlyMinutes ?? 0} 分鐘
                 </div>
+                {(tb.makeupEarlyMinutes ?? 0) > 0 && (
+                  <div className="text-[10px] text-muted-foreground mt-1">
+                    原始 {tb.earlyLeaveMinutes ?? 0} 分 − 補鐘 {tb.makeupEarlyMinutes} 分
+                  </div>
+                )}
               </div>
               {/* 本月 OT */}
               <div className="rounded-lg border p-3" style={{ borderLeft: '3px solid #16a34a' }}>
@@ -941,6 +951,13 @@ export default function EmployeePayrollDetailPage() {
                         <span className="text-red-600" style={{ fontSize: 12 }}>拖欠 {Math.abs(timeAccount)} 分鐘（約 {(Math.abs(timeAccount) / 540).toFixed(1)} 日）</span>
                       </>}
                       {timeAccount === 0 && '兩清'}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1" style={{ lineHeight: 1.5 }}>
+                      本月實得 = OT {tb.otMinutes ?? 0} + 提早上班OT {tb.earlyInOtMinutes ?? 0}
+                      {' − '}補鐘 {tb.makeupMinutes ?? 0}{' − '}淨遲到 {tb.netLateMinutes ?? 0}{' − '}淨早退 {tb.netEarlyMinutes ?? 0}
+                      {' = '}{tb.netOtThisMonth ?? (tb.otMinutes ?? 0) + (tb.earlyInOtMinutes ?? 0) - (tb.makeupMinutes ?? 0) - (tb.netLateMinutes ?? 0) - (tb.netEarlyMinutes ?? 0)}
+                      {(tb.carriedFrom ?? 0) !== 0 && <><br/>上月結轉 {tb.carriedFrom} + 本月實得 {tb.netOtThisMonth ?? (tb.otMinutes ?? 0) + (tb.earlyInOtMinutes ?? 0) - (tb.makeupMinutes ?? 0) - (tb.netLateMinutes ?? 0) - (tb.netEarlyMinutes ?? 0)}
+                      {(tb.convertedMinutes ?? 0) !== 0 && ` + 調整 ${tb.convertedMinutes}`} = {timeAccount}</>}
                     </div>
                   </div>
                 )

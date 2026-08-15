@@ -1472,6 +1472,8 @@ export async function calculateTimeBank(
   netDeficitMinutes: number
   earlyLeaveMinutes: number
   makeupMinutes: number
+  makeupLateMinutes: number
+  makeupEarlyMinutes: number
   makeupAbsentMinutes: number
   carriedFrom: number
   timeAccountMinutes: number
@@ -1805,6 +1807,8 @@ export async function calculateTimeBank(
   return {
     otMinutes, earlyInOtMinutes, otMinutesForAccount,
     lateMinutes, netLateMinutes, netEarlyMinutes, earlyLeaveMinutes, makeupMinutes,
+    makeupLateMinutes,
+    makeupEarlyMinutes,
     makeupAbsentMinutes,
     netDeficitMinutes,
     carriedFrom,
@@ -2428,13 +2432,10 @@ async function collectWorkData(
       .filter(p => p.punchType === 'CLOCK_IN')
       .sort((a, b) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
     const shiftStart = new Date(shift.startTime)
-    if (clockIn && clockIn.effectiveTime.getTime() > shiftStart.getTime()) {
-      if (!makeupLateDates.has(shiftDateStr)) {
-        lateRecords.push({
-          date: shiftDateStr,
-          // ★ QA24: 截秒後相減（diffMinutes，2026-08-15 B2）
-          minutes: diffMinutes(clockIn.effectiveTime, shiftStart),
-        })
+    if (clockIn) {
+      const lateMin = diffMinutes(clockIn.effectiveTime, shiftStart)
+      if (lateMin > 0 && !makeupLateDates.has(shiftDateStr)) {
+        lateRecords.push({ date: shiftDateStr, minutes: lateMin })
       }
     }
 
@@ -2443,13 +2444,10 @@ async function collectWorkData(
       .filter(p => p.punchType === 'CLOCK_OUT')
       .sort((a, b) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
     const shiftEnd = new Date(shift.endTime)
-    if (clockOut && clockOut.effectiveTime.getTime() < shiftEnd.getTime()) {
-      if (!makeupEarlyDates.has(shiftDateStr)) {
-        // ★ QA24: 截秒後相減（diffMinutes，2026-08-15 B2）
-        const minutes = -diffMinutes(clockOut.effectiveTime, shiftEnd)
-        if (minutes > 0) {
-          earlyLeaveRecords.push({ date: shiftDateStr, minutes })
-        }
+    if (clockOut) {
+      const earlyMin = -diffMinutes(clockOut.effectiveTime, shiftEnd)
+      if (earlyMin > 0 && !makeupEarlyDates.has(shiftDateStr)) {
+        earlyLeaveRecords.push({ date: shiftDateStr, minutes: earlyMin })
       }
     }
   }
