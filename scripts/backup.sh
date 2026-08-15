@@ -32,12 +32,12 @@ fi
 if [ -z "${TABLES:-}" ]; then
  echo "⚠️ 讀唔到 ${SCHEMA_FILE} 或者解析唔到 model — 改用寫死清單"
  echo " （備份照做，只係驗證覆蓋率較低）"
- TABLES="User Employee Shift PunchRecord PayrollItem \\
-LeaveRequest LeaveBalance LeaveType TimeBank TimeBankEntry \\
-PayRule WageHistory PunchCorrection PunchVoid AuditLog \\
-Clinic Company ShiftTemplate ExpenseEntry HKPublicHoliday \\
-Provider ProviderShift ProviderClinic ProviderCommission \\
-CostCase PaymentAllocation PayoutRun ExternalCredential"
+ TABLES="User Employee Shift PunchRecord PayrollItem \
+ LeaveRequest LeaveBalance LeaveType TimeBank TimeBankEntry \
+ PayRule WageHistory PunchCorrection PunchVoid AuditLog \
+ Clinic Company ShiftTemplate ExpenseEntry HKPublicHoliday \
+ Provider ProviderShift ProviderClinic ProviderCommission \
+ CostCase PaymentAllocation PayoutRun ExternalCredential"
 fi
 
 TABLE_COUNT=$(echo ${TABLES} | wc -w)
