@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   })
 
   const map = await computeRosterHours([employee.id], month, prisma)
-  const r = map.get(employee.id) ?? { expectedMinutes: 0, rosterMinutes: 0, diffMinutes: 0 }
+  const r = map.get(employee.id) ?? { expectedMinutes: 0, rosterMinutes: 0, diffMinutes: 0, unscheduled: false }
 
   return jsonNoStore({
     month,
@@ -39,5 +39,6 @@ export async function GET(req: NextRequest) {
     rosterMinutes: r.rosterMinutes,
     diffMinutes: settled ? settled.minutes : r.diffMinutes,
     settled: !!settled,
+    unscheduled: !!r.unscheduled,
   })
 }

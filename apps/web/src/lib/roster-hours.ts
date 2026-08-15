@@ -7,7 +7,7 @@ export async function computeRosterHours(
   periodMonth: string, // 'YYYY-MM'
   db: any,
   opts?: { shifts?: any[]; lunchMinutes?: Map<string, number> },
-): Promise<Map<string, { expectedMinutes: number; rosterMinutes: number; diffMinutes: number }>> {
+): Promise<Map<string, { expectedMinutes: number; rosterMinutes: number; diffMinutes: number; unscheduled: boolean }>> {
   const [py, pmNum] = periodMonth.split('-').map(Number)
   const monthStart = new Date(`${periodMonth}-01T00:00:00+08:00`)
   const nextMonthStart = new Date(
@@ -20,8 +20,21 @@ export async function computeRosterHours(
   const monthEndStr = toHKDateStr(monthEnd)
   const daysInMonth = hkDaysInMonth(monthStart)
 
-  const out = new Map<string, { expectedMinutes: number; rosterMinutes: number; diffMinutes: number }>()
+  const out = new Map<string, { expectedMinutes: number; rosterMinutes: number; diffMinutes: number; unscheduled: boolean }>()
   if (employeeIds.length === 0) return out
+
+  // ★ 在職期間 —— 月中入職／離職唔應該計足一個月
+  const emps = await db.employee.findMany({
+    where: { id: { in: employeeIds } },
+    select: { id: true, joinDate: true, resignedAt: true },
+  })
+  const empMeta = new Map<string, { joinStr: string; resignStr: string | null }>()
+  for (const e of emps) {
+    empMeta.set(e.id, {
+      joinStr: toHKDateStr(e.joinDate),
+      resignStr: e.resignedAt ? toHKDateStr(e.resignedAt) : null,
+    })
+  }
 
   // ★ 如果有 opts.shifts 就用，否則自己查
   const [allLeaves, allShifts, allPayRules] = await Promise.all([
@@ -95,10 +108,38 @@ export async function computeRosterHours(
   }
 
   for (const empId of employeeIds) {
-    const leaveDays = leaveByEmp.get(empId)?.size ?? 0
-    const expectedMinutes = (daysInMonth - leaveDays) * 9 * 60
+    const meta = empMeta.get(empId)
+    // 在職區間 ∩ 當月
+    const effStart = meta && meta.joinStr > monthStartStr ? meta.joinStr : monthStartStr
+    const effEnd = meta?.resignStr && meta.resignStr < monthEndStr ? meta.resignStr : monthEndStr
+
+    // 整個月都唔在職 → 全部 0
+    if (effStart > effEnd) {
+      out.set(empId, { expectedMinutes: 0, rosterMinutes: 0, diffMinutes: 0, unscheduled: false })
+      continue
+    }
+
+    let inServiceDays = 0
+    for (let d = effStart; d <= effEnd; d = addDaysStr(d, 1)) inServiceDays++
+
+    // ★ 假期日亦只計在職區間 —— 兩個數要同一個範圍，否則會互相污染
+    const leaveDays = [...(leaveByEmp.get(empId) ?? [])]
+      .filter(d => d >= effStart && d <= effEnd).length
+
+    const expectedMinutes = (inServiceDays - leaveDays) * 9 * 60
     const rosterMinutes = rosterMap.get(empId) ?? 0
-    out.set(empId, { expectedMinutes, rosterMinutes, diffMinutes: rosterMinutes - expectedMinutes })
+
+    // ★ 完全冇排更又冇假 → 「未排更」唔係「欠鐘」
+    if (rosterMinutes === 0 && leaveDays === 0) {
+      out.set(empId, { expectedMinutes, rosterMinutes: 0, diffMinutes: 0, unscheduled: true })
+      continue
+    }
+
+    out.set(empId, {
+      expectedMinutes, rosterMinutes,
+      diffMinutes: rosterMinutes - expectedMinutes,
+      unscheduled: false,
+    })
   }
   return out
 }

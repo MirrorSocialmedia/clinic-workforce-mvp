@@ -5170,12 +5170,14 @@ function getShiftCode(shift: Shift): string {
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, fontSize: 11 }}>
                       <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
                       <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-                        color: h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
-                        {h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
+                        color: r.unscheduled ? '#9ca3af' : h > 0 ? '#059669' : h < 0 ? '#dc2626' : '#9ca3af' }}>
+                        {r.unscheduled ? '未排更' : h === 0 ? '0' : `${h > 0 ? '+' : '−'}${Math.abs(h).toFixed(1)}h`}
                       </span>
                     </div>
                     <div style={{ fontSize: 9, color: '#9ca3af' }}>
-                      應 {(r.expectedMinutes / 60).toFixed(0)} / 編 {(r.rosterMinutes / 60).toFixed(0)}
+                      {r.unscheduled
+                        ? `應 ${(r.expectedMinutes / 60).toFixed(0)}h · 未排班`
+                        : `應 ${(r.expectedMinutes / 60).toFixed(0)} / 編 ${(r.rosterMinutes / 60).toFixed(0)}`}
                     </div>
                   </div>
                 )

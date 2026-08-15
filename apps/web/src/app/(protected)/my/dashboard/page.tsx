@@ -388,27 +388,34 @@ export default function MyDashboardPage() {
 
       {/* Leave Balances */}
       {rh && (
-        <div className="rounded-xl border p-3 mt-3">
-          <div className="text-xs text-muted-foreground mb-2">本月工時</div>
-          <div className="flex justify-between text-sm py-1">
-            <span className="text-muted-foreground">應返</span>
-            <span>{(rh.expectedMinutes / 60).toFixed(1)} h</span>
+        rh.unscheduled ? (
+          <div className="rounded-xl border p-3 mt-3">
+            <div className="text-xs text-muted-foreground mb-2">本月工時</div>
+            <div className="text-xs text-muted-foreground py-2 text-center">本月未排更</div>
           </div>
-          <div className="flex justify-between text-sm py-1">
-            <span className="text-muted-foreground">已編班</span>
-            <span>{(rh.rosterMinutes / 60).toFixed(1)} h</span>
+        ) : (
+          <div className="rounded-xl border p-3 mt-3">
+            <div className="text-xs text-muted-foreground mb-2">本月工時</div>
+            <div className="flex justify-between text-sm py-1">
+              <span className="text-muted-foreground">應返</span>
+              <span>{(rh.expectedMinutes / 60).toFixed(1)} h</span>
+            </div>
+            <div className="flex justify-between text-sm py-1">
+              <span className="text-muted-foreground">已編班</span>
+              <span>{(rh.rosterMinutes / 60).toFixed(1)} h</span>
+            </div>
+            <div className="flex justify-between text-sm pt-2 border-t font-medium">
+              <span>{rh.settled ? '編更差額（已入帳）' : '預計 OT'}</span>
+              <span style={{ color: rh.diffMinutes > 0 ? '#059669' : rh.diffMinutes < 0 ? '#dc2626' : '#6b7280' }}>
+                {rh.diffMinutes > 0 ? '+' : rh.diffMinutes < 0 ? '−' : ''}
+                {(Math.abs(rh.diffMinutes) / 60).toFixed(1)} h
+              </span>
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-2">
+              {rh.settled ? '已出糧，數字已入時間帳戶' : '更表未定，出糧時以實際為準'}
+            </div>
           </div>
-          <div className="flex justify-between text-sm pt-2 border-t font-medium">
-            <span>{rh.settled ? '編更差額（已入帳）' : '預計 OT'}</span>
-            <span style={{ color: rh.diffMinutes > 0 ? '#059669' : rh.diffMinutes < 0 ? '#dc2626' : '#6b7280' }}>
-              {rh.diffMinutes > 0 ? '+' : rh.diffMinutes < 0 ? '−' : ''}
-              {(Math.abs(rh.diffMinutes) / 60).toFixed(1)} h
-            </span>
-          </div>
-          <div className="text-[10px] text-muted-foreground mt-2">
-            {rh.settled ? '已出糧，數字已入時間帳戶' : '更表未定，出糧時以實際為準'}
-          </div>
-        </div>
+        )
       )}
       {leaveBalances.length > 0 && (
         <Card>

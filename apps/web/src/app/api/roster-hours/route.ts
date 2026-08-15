@@ -31,7 +31,10 @@ export async function GET(req: NextRequest) {
     rows: employees.map(e => ({
       employeeId: e.id,
       name: e.user?.name ?? '—',
-      ...(map.get(e.id) ?? { expectedMinutes: 0, rosterMinutes: 0, diffMinutes: 0 }),
-    })).sort((a, b) => b.diffMinutes - a.diffMinutes),
+      ...(map.get(e.id) ?? { expectedMinutes: 0, rosterMinutes: 0, diffMinutes: 0, unscheduled: false }),
+    })).sort((a, b) => {
+      if (a.unscheduled !== b.unscheduled) return a.unscheduled ? 1 : -1
+      return b.diffMinutes - a.diffMinutes
+    }),
   })
 }

@@ -277,15 +277,17 @@ export default function DashboardPage() {
                     </span>
                     <span className="text-muted-foreground">本月 {w.monthHours}h</span>
                     {w.expectedMinutes != null && (
-                      <>
-                        <span className="text-xs text-muted-foreground hidden sm:inline">應 {(w.expectedMinutes / 60).toFixed(0)}h</span>
-                        <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 44, textAlign: 'right',
-                          color: w.rosterDiffMinutes > 0 ? '#059669'
-                            : w.rosterDiffMinutes < 0 ? '#dc2626' : '#9ca3af' }}>
-                          {w.rosterDiffMinutes === 0 ? '0'
-                            : `${w.rosterDiffMinutes > 0 ? '+' : '−'}${(Math.abs(w.rosterDiffMinutes) / 60).toFixed(1)}h`}
-                        </span>
-                      </>
+                      w.unscheduled
+                        ? <span className="text-xs text-muted-foreground">未排更</span>
+                        : <>
+                            <span className="text-xs text-muted-foreground hidden sm:inline">應 {(w.expectedMinutes / 60).toFixed(0)}h</span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 44, textAlign: 'right',
+                              color: w.rosterDiffMinutes > 0 ? '#059669'
+                                : w.rosterDiffMinutes < 0 ? '#dc2626' : '#9ca3af' }}>
+                              {w.rosterDiffMinutes === 0 ? '0'
+                                : `${w.rosterDiffMinutes > 0 ? '+' : '−'}${(Math.abs(w.rosterDiffMinutes) / 60).toFixed(1)}h`}
+                            </span>
+                          </>
                     )}
                   </div>
                 </div>

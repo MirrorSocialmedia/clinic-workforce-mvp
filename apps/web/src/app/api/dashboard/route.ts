@@ -176,7 +176,8 @@ export async function GET(req: NextRequest) {
     where: { status: { not: 'CANCELLED' }, date: { gte: monthStart, lt: monthEnd } },
     select: {
       employeeId: true, startTime: true, endTime: true, date: true,
-      template: { select: { deductLunch: true } },  // ★ 唔加呢行，dashboard 永遠 flat 60
+      template: { select: { deductLunch: true } },
+      status: true, // ★ estimateScheduledHours 會 check s.status === 'CANCELLED'
     },
   })
 
@@ -222,6 +223,7 @@ export async function GET(req: NextRequest) {
       weekOvertime: weekH > 45,
       expectedMinutes: r?.expectedMinutes ?? null,
       rosterDiffMinutes: r?.diffMinutes ?? null,
+      unscheduled: r?.unscheduled ?? false,
     }
   }).sort((a, b) => b.weekHours - a.weekHours)
 
