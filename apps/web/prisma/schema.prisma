@@ -1175,6 +1175,8 @@ model SpSubsidy {
   splitPercent Decimal  @db.Decimal(5,2) // 快照：50
   amount       Decimal  @db.Decimal(12,2) // (listPrice − actualPrice) × splitPercent% × headcount
   source       String   @default("AUTO") // AUTO | MANUAL
+  status       String   @default("PENDING") // PENDING | CONFIRMED | SKIPPED
+  hasMarker    Boolean  @default(true) // true = 有 2P1K 標記，false = 只靠金額吻合
   confirmedBy  String?  // ★ AUTO 要人確認先入數
   needsReview  Boolean  @default(false) // ★ MD-K: 三態 review flag
   periodMonth  String
