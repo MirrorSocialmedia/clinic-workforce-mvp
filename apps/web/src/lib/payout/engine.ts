@@ -9,6 +9,7 @@
 import { Prisma, PaymentAllocation } from '@prisma/client'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { SP_2P1K_PER_PERSON } from '@/lib/payout/constants'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -615,8 +616,8 @@ async function pickListPrice(feeItemCode: string, billTime: Date): Promise<any |
  * Returns candidates (source='AUTO', confirmedBy=null) for manual confirmation.
  *
  * 三態 needsReview:
- *   - listPrice ✅ + commission ✅ + unitPrice === 500 → 正常候選
- *   - listPrice ✅ + commission ✅ + unitPrice !== 500 → needsReview（金額對唔上）
+ *   - listPrice ✅ + commission ✅ + actualUnit ≈ SP_2P1K_PER_PERSON → 正常候選
+ *   - listPrice ✅ + commission ✅ + actualUnit ≠ SP_2P1K_PER_PERSON → needsReview（金額對唔上）
  *   - listPrice 揾唔到 → needsReview（唔出負數，amount=0）
  */
 export async function scanSpSubsidies(
@@ -677,13 +678,14 @@ export async function scanSpSubsidies(
     const listPriceRow = await pickListPrice(item.feeItemCode, bill.billTime)
     const listPriceNum = listPriceRow ? Number(listPriceRow.listPrice) : null
 
-    const unitPrice = Number(item.unitPrice)
     const qty = item.qty || 1
+    // 折後實收單價（直接填 500 或 580 打折扣都出 500）
+    const actualUnit = round2(Number(item.ttlAmt) / qty)
 
     // 三態 needsReview logic
     const hasListPrice = listPriceNum != null
     const hasCommission = pct != null
-    const priceMatches = unitPrice === 500
+    const priceMatches = Math.abs(actualUnit - SP_2P1K_PER_PERSON) < 0.01
 
     let amount: number
     let needsReview: boolean = false
@@ -698,16 +700,16 @@ export async function scanSpSubsidies(
       needsReview = true
     } else if (!priceMatches) {
       // 金額對唔上 → 產生候選 + needsReview
-      const raw = (listPriceNum - unitPrice) * (pct / 100) * qty
+      const raw = (listPriceNum - actualUnit) * (pct / 100) * qty
       amount = round2(Math.max(0, raw)) // ★ 唔准負
       needsReview = needsReview || raw < 0
     } else {
       // 正常候選
-      amount = round2((listPriceNum - unitPrice) * (pct / 100) * qty)
+      amount = round2((listPriceNum - actualUnit) * (pct / 100) * qty)
       needsReview = false
     }
 
-    const actualPrice = round2(unitPrice)
+    const actualPrice = actualUnit
     const listPriceUsed = hasListPrice ? listPriceNum : actualPrice
 
     // Upsert: get or create

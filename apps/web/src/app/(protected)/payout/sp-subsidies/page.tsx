@@ -3,20 +3,58 @@
 /**
  * MD-D: SP Subsidies — 2人SP補貼確認
  * OWNER / provider_payout 權限
+ * MD-R: R2 needsReview 琥珀邊框 + R3 前端篩選
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Check, X, Search } from 'lucide-react'
+import { SP_2P1K_PER_PERSON } from '@/lib/payout/constants'
+
+interface SpSubsidy {
+  id: string
+  itemDes: string
+  listPrice: number | null
+  actualPrice: number | null
+  headcount: number
+  splitPercent: number
+  amount: number
+  needsReview: boolean
+  source: string
+  confirmedBy: string | null
+  periodMonth: string
+  providerName: string | null
+  clinicName: string | null
+  billCode: string | null
+  billTime: string | null
+}
+
+function spReviewReason(s: SpSubsidy): string {
+  if (s.listPrice == null || Number(s.listPrice) === Number(s.actualPrice)) {
+    return '揾唔到標準價，請去項目標準價設定'
+  }
+  if (Number(s.splitPercent) === 0) {
+    return '該醫生未設拆帳 %，請去醫生管理'
+  }
+  return `實收 $${Number(s.actualPrice)} 唔係預期嘅 $${SP_2P1K_PER_PERSON}，請核對帳單`
+}
 
 export default function SpSubsidiesPage() {
-  const [subsidies, setSubsidies] = useState<any[]>([])
+  const [subsidies, setSubsidies] = useState<SpSubsidy[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [scanningMonth, setScanningMonth] = useState('')
   const [confirming, setConfirming] = useState<string | null>(null)
+
+  // R3: 篩選 state
+  const [month, setMonth] = useState('')
+  const [filterProvider, setFilterProvider] = useState('')
+  const [filterClinic, setFilterClinic] = useState('')
+  const [onlyWithAmount, setOnlyWithAmount] = useState(false)
+  const [onlyReview, setOnlyReview] = useState(false)
+  const [q, setQ] = useState('')
 
   useEffect(() => {
     loadSubsidies()
@@ -70,37 +108,76 @@ export default function SpSubsidiesPage() {
 
   async function handleSkip(id: string) {
     if (!confirm('跳過此補貼？跳過後不會計入月結單。')) return
-    // Remove from list (or mark as skipped)
     setSubsidies(subsidies.filter(s => s.id !== id))
   }
 
+  // R3: 篩選邏輯
+  const filtered = useMemo(() => subsidies.filter(s => {
+    if (month && s.periodMonth !== month) return false
+    if (filterProvider && s.providerName !== filterProvider) return false
+    if (filterClinic && s.clinicName !== filterClinic) return false
+    if (onlyWithAmount && Number(s.amount) === 0) return false
+    if (onlyReview && !s.needsReview) return false
+    if (q && !s.billCode?.includes(q)) return false
+    return true
+  }), [subsidies, month, filterProvider, filterClinic, onlyWithAmount, onlyReview, q])
+
+  // 選項由資料導出
+  const providerOptions = useMemo(() => [...new Set(subsidies.map(s => s.providerName).filter(Boolean))] as string[], [subsidies])
+  const clinicOptions = useMemo(() => [...new Set(subsidies.map(s => s.clinicName).filter(Boolean))] as string[], [subsidies])
+
   if (loading) return <div className="p-6">載入中...</div>
 
-  const unconfirmed = subsidies.filter(s => !s.confirmedBy)
-  const confirmed = subsidies.filter(s => s.confirmedBy)
-  const totalCandidates = subsidies.length
-  const withSubsidy = subsidies.filter(s => s.amount > 0)
-  const totalSubsidyAmount = withSubsidy.reduce((sum, s) => sum + s.amount, 0)
-  const zeroAmount = totalCandidates - withSubsidy.length
+  // R3: 摘要跟住篩選變
+  const filteredUnconfirmed = filtered.filter(s => !s.confirmedBy)
+  const filteredConfirmed = filtered.filter(s => s.confirmedBy)
+  const filteredWithSubsidy = filtered.filter(s => Number(s.amount) > 0)
+  const filteredTotalSubsidy = filteredWithSubsidy.reduce((sum, s) => sum + Number(s.amount), 0)
+  const filteredNeedsReview = filtered.filter(s => s.needsReview)
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">2人SP補貼確認</h1>
 
-      {/* Summary bar */}
-      {totalCandidates > 0 && (
+      {/* R3: 篩選區 */}
+      <Card className="p-4 mb-4">
+        <div className="flex gap-3 flex-wrap items-end">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">月份</label>
+            <input type="month" value={month} onChange={e => setMonth(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">醫生</label>
+            <select value={filterProvider} onChange={e => setFilterProvider(e.target.value)}>
+              <option value="">全部</option>
+              {providerOptions.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">診所</label>
+            <select value={filterClinic} onChange={e => setFilterClinic(e.target.value)}>
+              <option value="">全部</option>
+              {clinicOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <label className="flex items-center gap-1 text-sm">
+            <input type="checkbox" checked={onlyWithAmount} onChange={e => setOnlyWithAmount(e.target.checked)} />
+            只顯示有補貼
+          </label>
+          <label className="flex items-center gap-1 text-sm">
+            <input type="checkbox" checked={onlyReview} onChange={e => setOnlyReview(e.target.checked)} />
+            只顯示需覆核
+          </label>
+          <input placeholder="帳單編號" value={q} onChange={e => setQ(e.target.value)} className="w-40" />
+        </div>
+      </Card>
+
+      {/* Summary bar — R3: 跟住篩選變 */}
+      {filtered.length > 0 && (
         <div className="text-sm text-gray-600 mb-4">
-          {totalCandidates} 筆候選
-          {withSubsidy.length > 0 && (
-            <>
-              {' · '}{withSubsidy.length} 筆有補貼（合共 ${totalSubsidyAmount})
-            </>
-          )}
-          {zeroAmount > 0 && (
-            <>
-              {' · '}{zeroAmount} 筆 $0
-            </>
-          )}
+          {filtered.length} / {subsidies.length} 筆
+          {' · '}{filteredWithSubsidy.length} 筆有補貼（合共 ${filteredTotalSubsidy}）
+          {' · '}{filteredNeedsReview.length} 筆需覆核
         </div>
       )}
 
@@ -128,15 +205,15 @@ export default function SpSubsidiesPage() {
         </p>
       </Card>
 
-      {/* Unconfirmed list */}
+      {/* Unconfirmed list — R2: needsReview 琥珀邊框 */}
       <Card className="p-4 mb-6">
-        <h2 className="font-semibold mb-3 text-orange-700">待確認 ({unconfirmed.length})</h2>
-        {unconfirmed.length === 0 && (
+        <h2 className="font-semibold mb-3 text-orange-700">待確認 ({filteredUnconfirmed.length})</h2>
+        {filteredUnconfirmed.length === 0 && (
           <p className="text-gray-500 text-sm">暫無待確認補貼</p>
         )}
         <div className="space-y-2">
-          {unconfirmed.map(s => (
-            <div key={s.id} className="flex justify-between items-center border rounded p-3">
+          {filteredUnconfirmed.map(s => (
+            <div key={s.id} className={`flex justify-between items-center border rounded p-3 ${s.needsReview ? 'border-amber-400 border-2' : ''}`}>
               <div className="text-sm">
                 <div className="font-medium">
                   {s.itemDes}
@@ -152,6 +229,12 @@ export default function SpSubsidiesPage() {
                   原價 ${s.listPrice} → 優惠價 ${s.actualPrice} × {s.headcount}人 ({s.splitPercent}%)
                 </div>
                 <div className="text-gray-500">月份: {s.periodMonth} | 來源: {s.source}</div>
+                {/* R2: needsReview 原因 */}
+                {s.needsReview && (
+                  <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                    ⚠️ 需要覆核：{spReviewReason(s)}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-bold text-green-700">${s.amount}</span>
@@ -175,17 +258,24 @@ export default function SpSubsidiesPage() {
         </div>
       </Card>
 
-      {/* Confirmed list */}
+      {/* Confirmed list — R3: 跟住篩選變 */}
       <Card className="p-4">
-        <h2 className="font-semibold mb-3 text-green-700">已確認 ({confirmed.length})</h2>
-        {confirmed.length === 0 && (
+        <h2 className="font-semibold mb-3 text-green-700">已確認 ({filteredConfirmed.length})</h2>
+        {filteredConfirmed.length === 0 && (
           <p className="text-gray-500 text-sm">暫無已確認補貼</p>
         )}
         <div className="space-y-1 text-sm">
-          {confirmed.map(s => (
-            <div key={s.id} className="flex justify-between py-1 border-b last:border-0">
+          {filteredConfirmed.map(s => (
+            <div key={s.id} className={`flex justify-between py-1 border-b last:border-0 ${s.needsReview ? 'border-amber-400 border-2 rounded mb-1' : ''}`}>
               <span>{s.itemDes} ({s.periodMonth})</span>
-              <span className="text-green-700 font-medium">${s.amount}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-green-700 font-medium">${s.amount}</span>
+                {s.needsReview && (
+                  <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5">
+                    ⚠️ {spReviewReason(s)}
+                  </span>
+                )}
+              </div>
             </div>
           ))}
         </div>

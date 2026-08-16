@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
   const subsidies = await prisma.spSubsidy.findMany({
     where,
-    orderBy: [{ amount: 'desc' }, { periodMonth: 'desc' }],
+    orderBy: [{ needsReview: 'desc' }, { amount: 'desc' }, { periodMonth: 'desc' }],
   })
 
   // 批量補齊關聯（Promise.all + Map）
