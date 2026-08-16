@@ -73,9 +73,10 @@ export async function GET(req: NextRequest) {
     take: 50,
   })
 
-  // 補 billCode + provider/clinic name（批量查詢）
+  // 補 billCode + provider/clinic name + methodRaw（批量查詢）
   const reviewBillExtIds = [...new Set(reviewDetails.map(r => r.billExtId))]
-  const [reviewBills, reviewProviders, reviewClinics] = await Promise.all([
+  const reviewPaymentExtIds = [...new Set(reviewDetails.map(r => r.paymentExtId))]
+  const [reviewBills, reviewProviders, reviewClinics, reviewPayments] = await Promise.all([
     prisma.apricotBill.findMany({
       where: { extId: { in: reviewBillExtIds } },
       select: { extId: true, code: true, billTime: true },
@@ -88,11 +89,23 @@ export async function GET(req: NextRequest) {
       where: { apricotClinicId: { in: reviewDetails.map(r => r.clinicExtId).filter(Boolean) as string[] } },
       select: { apricotClinicId: true, name: true },
     }),
+    // ★ 透過 paymentExtId → ApricotPayment → methods 取得 methodRaw
+    prisma.apricotPayment.findMany({
+      where: { extId: { in: reviewPaymentExtIds } },
+      select: { extId: true, methods: { select: { methodNorm: true, methodRaw: true } } },
+    }),
   ])
 
   const reviewBillMap = new Map(reviewBills.map(b => [b.extId, b]))
   const reviewProviderMap = new Map(reviewProviders.map(p => [p.apricotId, p.name]))
   const reviewClinicMap = new Map(reviewClinics.map(c => [c.apricotClinicId, c.name]))
+  // ★ methodRaw lookup: key = paymentExtId + '|' + methodNorm
+  const reviewMethodRawMap = new Map<string, string>()
+  for (const p of reviewPayments) {
+    for (const m of p.methods) {
+      reviewMethodRawMap.set(`${p.extId}|${m.methodNorm}`, m.methodRaw)
+    }
+  }
 
   const reviewDetailsEnriched = reviewDetails.map(r => ({
     paymentExtId: r.paymentExtId,
@@ -102,6 +115,7 @@ export async function GET(req: NextRequest) {
     paidAt: r.paidAt,
     methodNorm: r.methodNorm,
     amount: Number(r.amount),
+    methodRaw: reviewMethodRawMap.get(`${r.paymentExtId}|${r.methodNorm}`) ?? null,
     billCode: reviewBillMap.get(r.billExtId)?.code ?? null,
     billTime: reviewBillMap.get(r.billExtId)?.billTime ?? null,
     providerName: r.providerExtId ? (reviewProviderMap.get(r.providerExtId) ?? null) : null,

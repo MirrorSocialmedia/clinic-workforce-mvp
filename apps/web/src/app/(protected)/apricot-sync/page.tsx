@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { RefreshCw, AlertTriangle, Database, Loader2, Square, CheckCircle2, XCircle } from 'lucide-react'
+import { RefreshCw, Database, Loader2, Square, CheckCircle2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface PerClinicStatus {
@@ -15,10 +15,22 @@ interface PerClinicStatus {
   latestPaidAt: string | null
 }
 
+interface ReviewDetail {
+  paymentExtId: string
+  billCode: string | null
+  providerName: string | null
+  clinicName: string | null
+  paidAt: string
+  methodNorm: string
+  methodRaw: string | null
+  amount: number
+}
+
 interface SyncStatus {
   lastSyncedAt: string | null
   unknownMethods: string[]
   needsReviewCount: number
+  reviewDetails: ReviewDetail[]
   totalPayments: number
   totalBills: number
   perClinic: PerClinicStatus[]
@@ -49,6 +61,7 @@ export default function ApricotSyncPage() {
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [showReview, setShowReview] = useState(false)
 
   // ★ MD-Q: Job progress state
   const [activeJob, setActiveJob] = useState<SyncJob | null>(null)
@@ -309,24 +322,55 @@ export default function ApricotSyncPage() {
         </Card>
       )}
 
-      {/* Unknown Methods */}
-      {status && status.unknownMethods.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-gray-500 flex items-center gap-2">
-              <AlertTriangle size={14} className="text-yellow-500" />
-              未知付款方式（needsReview）
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-2">
+      {/* Needs Review Details + Unknown Methods */}
+      {status && status.needsReviewCount > 0 && (
+        <Card className="p-4 mb-4 border-amber-300 bg-amber-50">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-amber-800">
+              ⚠️ {status.needsReviewCount} 筆付款方式未設定費率
               {status.unknownMethods.map(m => (
-                <Badge key={m} variant="outline" className="text-yellow-700 border-yellow-300 bg-yellow-50">
-                  {m}
-                </Badge>
+                <span key={m} className="ml-1 px-2 py-0.5 border border-amber-400 rounded text-xs">{m}</span>
               ))}
             </div>
-          </CardContent>
+            <button onClick={() => setShowReview(v => !v)} className="text-sm text-blue-600 underline">
+              {showReview ? '收起' : `展開明細 (${status.reviewDetails.length})`}
+            </button>
+          </div>
+
+          {showReview && (
+            <table className="w-full text-xs mt-3">
+              <thead>
+                <tr className="text-gray-500">
+                  <th className="text-left py-1">日期</th>
+                  <th className="text-left py-1">醫生</th>
+                  <th className="text-left py-1">診所</th>
+                  <th className="text-left py-1">帳單</th>
+                  <th className="text-left py-1">方式</th>
+                  <th className="text-right py-1">金額</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.reviewDetails.map(d => (
+                  <tr key={`${d.paymentExtId}-${d.methodNorm}`} className="border-t border-amber-200">
+                    <td className="py-1">{new Date(d.paidAt).toLocaleDateString('zh-HK')}</td>
+                    <td className="py-1">{d.providerName ?? '—'}</td>
+                    <td className="py-1">{d.clinicName ?? '—'}</td>
+                    <td className="py-1 font-mono">{d.billCode ?? '—'}</td>
+                    <td className="py-1">
+                      {d.methodNorm}
+                      {d.methodRaw && <span className="text-gray-400">（{d.methodRaw}）</span>}
+                    </td>
+                    <td className="py-1 text-right">${d.amount.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <div className="text-xs text-amber-700 mt-2">
+            處理方法：去 <a href="/apricot-sync/payment-methods" className="underline">付款方式規則設定</a>
+            加返呢啲方式嘅費率，然後 <strong>重跑同步</strong>（費率係快照，唔會自動重算）
+          </div>
         </Card>
       )}
 
