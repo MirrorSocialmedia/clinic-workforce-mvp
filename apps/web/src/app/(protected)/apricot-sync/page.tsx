@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { RefreshCw, AlertTriangle, Database, Loader2 } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Database, Loader2, ChevronDown, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface PerClinicStatus {
@@ -15,10 +15,25 @@ interface PerClinicStatus {
   latestPaidAt: string | null
 }
 
+interface ReviewDetail {
+  paymentExtId: string
+  billExtId: string
+  providerExtId: string | null
+  clinicExtId: string
+  paidAt: string
+  methodNorm: string
+  amount: number
+  billCode: string | null
+  billTime: string | null
+  providerName: string | null
+  clinicName: string | null
+}
+
 interface SyncStatus {
   lastSyncedAt: string | null
   unknownMethods: string[]
   needsReviewCount: number
+  reviewDetails: ReviewDetail[]
   totalPayments: number
   totalBills: number
   perClinic: PerClinicStatus[]
@@ -33,6 +48,7 @@ export default function ApricotSyncPage() {
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [reviewExpanded, setReviewExpanded] = useState(false)
 
   // ★ H3: Load clinics for dropdown
   useEffect(() => {
@@ -43,7 +59,8 @@ export default function ApricotSyncPage() {
   }, [])
 
   const syncable = clinics.filter(c => c.apricotClinicId)
-  const unboundCount = clinics.length - syncable.length
+  const unboundClinics = clinics.filter(c => !c.apricotClinicId)
+  const unboundCount = unboundClinics.length
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -159,6 +176,14 @@ export default function ApricotSyncPage() {
         </Card>
       </div>
 
+      {/* Unbound Clinic Warning */}
+      {clinics.length > 0 && unboundClinics.length > 0 && (
+        <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3 mb-4">
+          ⚠️ {unboundClinics.map(c => c.name).join('、')} 未綁 Apricot ID，
+          唔會同步、亦唔會出月結單
+        </div>
+      )}
+
       {/* Per-Clinic Status (I3) */}
       {status && status.perClinic && status.perClinic.length > 0 && (
         <Card>
@@ -204,7 +229,7 @@ export default function ApricotSyncPage() {
         </Card>
       )}
 
-      {/* Unknown Methods */}
+      {/* Unknown Methods + needsReview 明細 */}
       {status && status.unknownMethods.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
@@ -214,13 +239,41 @@ export default function ApricotSyncPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 mb-3">
               {status.unknownMethods.map(m => (
                 <Badge key={m} variant="outline" className="text-yellow-700 border-yellow-300 bg-yellow-50">
                   {m}
                 </Badge>
               ))}
             </div>
+
+            {/* Expandable review details */}
+            {status.reviewDetails && status.reviewDetails.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setReviewExpanded(!reviewExpanded)}
+                  className="flex items-center gap-1 text-sm text-yellow-700 hover:text-yellow-900 font-medium"
+                >
+                  {reviewExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  {status.reviewDetails.length} 筆明細
+                </button>
+                {reviewExpanded && (
+                  <div className="mt-2 space-y-1 text-sm">
+                    {status.reviewDetails.map((r, i) => (
+                      <div key={`${r.billExtId}-${i}`} className="text-gray-700 py-1 border-b last:border-0">
+                        {r.paidAt ? new Date(r.paidAt).toLocaleDateString('zh-HK') : '—'}
+                        {' · '}{r.providerName ?? '—'}
+                        {' · '}{r.clinicName ?? '—'}
+                        {' · 帳單 '}{r.billCode ?? '—'}
+                        {' · '}{r.methodNorm}
+                        {' · $'}{r.amount.toLocaleString()}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

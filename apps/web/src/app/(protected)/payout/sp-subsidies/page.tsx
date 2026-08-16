@@ -78,10 +78,31 @@ export default function SpSubsidiesPage() {
 
   const unconfirmed = subsidies.filter(s => !s.confirmedBy)
   const confirmed = subsidies.filter(s => s.confirmedBy)
+  const totalCandidates = subsidies.length
+  const withSubsidy = subsidies.filter(s => s.amount > 0)
+  const totalSubsidyAmount = withSubsidy.reduce((sum, s) => sum + s.amount, 0)
+  const zeroAmount = totalCandidates - withSubsidy.length
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">2人SP補貼確認</h1>
+
+      {/* Summary bar */}
+      {totalCandidates > 0 && (
+        <div className="text-sm text-gray-600 mb-4">
+          {totalCandidates} 筆候選
+          {withSubsidy.length > 0 && (
+            <>
+              {' · '}{withSubsidy.length} 筆有補貼（合共 ${totalSubsidyAmount})
+            </>
+          )}
+          {zeroAmount > 0 && (
+            <>
+              {' · '}{zeroAmount} 筆 $0
+            </>
+          )}
+        </div>
+      )}
 
       {/* Scan section */}
       <Card className="p-4 mb-6">
@@ -117,10 +138,18 @@ export default function SpSubsidiesPage() {
           {unconfirmed.map(s => (
             <div key={s.id} className="flex justify-between items-center border rounded p-3">
               <div className="text-sm">
-                <div className="font-medium">{s.itemDes}</div>
+                <div className="font-medium">
+                  {s.itemDes}
+                  {s.providerName && <> · {s.providerName}</>}
+                  {s.clinicName && <> · {s.clinicName}</>}
+                </div>
+                {(s.billCode || s.billTime) && (
+                  <div className="text-gray-500">
+                    帳單 {s.billCode ?? '—'} · {s.billTime ? new Date(s.billTime).toLocaleDateString('zh-HK') : '—'}
+                  </div>
+                )}
                 <div className="text-gray-500">
-                  原價 ${s.listPrice} → 優惠價 ${s.actualPrice} × {s.headcount}人
-                  {' '} ({s.splitPercent}%)
+                  原價 ${s.listPrice} → 優惠價 ${s.actualPrice} × {s.headcount}人 ({s.splitPercent}%)
                 </div>
                 <div className="text-gray-500">月份: {s.periodMonth} | 來源: {s.source}</div>
               </div>

@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
     where: {
       needsReview: true,
       isVoid: false,
+      isSuperseded: false,
     },
     select: { methodNorm: true },
     distinct: ['methodNorm'],
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   // 3) needsReview 數
   const needsReviewCount = await prisma.paymentAllocation.count({
-    where: { needsReview: true, isVoid: false },
+    where: { needsReview: true, isVoid: false, isSuperseded: false },
   })
 
   // 4) 總 payment 數
@@ -61,10 +62,57 @@ export async function GET(req: NextRequest) {
     }
   }))
 
+  // 7) needsReview 明細
+  const reviewDetails = await prisma.paymentAllocation.findMany({
+    where: { needsReview: true, isVoid: false, isSuperseded: false },
+    select: {
+      paymentExtId: true, billExtId: true, providerExtId: true,
+      clinicExtId: true, paidAt: true, methodNorm: true, amount: true,
+    },
+    orderBy: { paidAt: 'desc' },
+    take: 50,
+  })
+
+  // 補 billCode + provider/clinic name（批量查詢）
+  const reviewBillExtIds = [...new Set(reviewDetails.map(r => r.billExtId))]
+  const [reviewBills, reviewProviders, reviewClinics] = await Promise.all([
+    prisma.apricotBill.findMany({
+      where: { extId: { in: reviewBillExtIds } },
+      select: { extId: true, code: true, billTime: true },
+    }),
+    prisma.provider.findMany({
+      where: { apricotId: { in: reviewDetails.map(r => r.providerExtId).filter(Boolean) as string[] } },
+      select: { apricotId: true, name: true },
+    }),
+    prisma.clinic.findMany({
+      where: { apricotClinicId: { in: reviewDetails.map(r => r.clinicExtId).filter(Boolean) as string[] } },
+      select: { apricotClinicId: true, name: true },
+    }),
+  ])
+
+  const reviewBillMap = new Map(reviewBills.map(b => [b.extId, b]))
+  const reviewProviderMap = new Map(reviewProviders.map(p => [p.apricotId, p.name]))
+  const reviewClinicMap = new Map(reviewClinics.map(c => [c.apricotClinicId, c.name]))
+
+  const reviewDetailsEnriched = reviewDetails.map(r => ({
+    paymentExtId: r.paymentExtId,
+    billExtId: r.billExtId,
+    providerExtId: r.providerExtId,
+    clinicExtId: r.clinicExtId,
+    paidAt: r.paidAt,
+    methodNorm: r.methodNorm,
+    amount: Number(r.amount),
+    billCode: reviewBillMap.get(r.billExtId)?.code ?? null,
+    billTime: reviewBillMap.get(r.billExtId)?.billTime ?? null,
+    providerName: r.providerExtId ? (reviewProviderMap.get(r.providerExtId) ?? null) : null,
+    clinicName: reviewClinicMap.get(r.clinicExtId) ?? null,
+  }))
+
   return jsonNoStore({
     lastSyncedAt: latestPayment?.syncedAt || null,
     unknownMethods: unknownMethods.map(m => m.methodNorm),
     needsReviewCount,
+    reviewDetails: reviewDetailsEnriched,
     totalPayments,
     totalBills,
     perClinic,
