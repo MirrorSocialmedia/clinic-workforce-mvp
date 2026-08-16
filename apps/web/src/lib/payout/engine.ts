@@ -122,12 +122,10 @@ export async function runGates(
   const warnings: string[] = []
 
   // Gate 0: 診所未對應 Apricot ID
-  if (clinicId) {
-    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
-    if (!clinic?.apricotClinicId) {
-      errors.push(`診所「${clinic?.name ?? clinicId}」未對應 Apricot ID，無法生成月結`)
-      return { errors, warnings }
-    }
+  const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
+  if (!clinic?.apricotClinicId) {
+    errors.push(`診所「${clinic?.name ?? clinicId}」未對應 Apricot ID，無法生成月結`)
+    return { errors, warnings }
   }
 
   // Gate 1: Provider must have apricotId mapped
@@ -154,11 +152,8 @@ export async function runGates(
         providerExtId: provider.apricotId,
         periodMonth,
       }
-      if (clinicId) {
-        const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
-        if (clinic?.apricotClinicId) {
-          monthHitWhere.clinicExtId = clinic.apricotClinicId
-        }
+      if (clinic?.apricotClinicId) {
+        monthHitWhere.clinicExtId = clinic.apricotClinicId
       }
       const monthHit = await prisma.paymentAllocation.count({ where: monthHitWhere })
       if (monthHit === 0) {
@@ -180,11 +175,8 @@ export async function runGates(
     periodMonth,
     needsReview: true,
   }
-  if (clinicId) {
-    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
-    if (clinic?.apricotClinicId) {
-      gate3Where.clinicExtId = clinic.apricotClinicId
-    }
+  if (clinic?.apricotClinicId) {
+    gate3Where.clinicExtId = clinic.apricotClinicId
   }
   const needsReviewCount = await prisma.paymentAllocation.count({ where: gate3Where })
   if (needsReviewCount > 0) {
@@ -291,13 +283,10 @@ export async function computePayout(
   const warnings: string[] = []
 
   // Resolve clinic Ext ID for PaymentAllocation
-  let apricotClinicId: string | null = null
-  if (clinicId) {
-    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
-    apricotClinicId = clinic?.apricotClinicId ?? null
-    if (!apricotClinicId) {
-      throw new Error(`診所「${clinic?.name ?? clinicId}」未對應 Apricot ID`)
-    }
+  const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
+  const apricotClinicId = clinic?.apricotClinicId ?? null
+  if (!apricotClinicId) {
+    throw new Error(`診所「${clinic?.name ?? clinicId}」未對應 Apricot ID`)
   }
 
   // ─── ① Gross from PaymentAllocation ─────────────────────────────────
