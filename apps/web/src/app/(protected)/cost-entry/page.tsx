@@ -7,9 +7,9 @@ import { todayHK } from '@/lib/hk-date'
 import { ITEM_TYPES } from '@/lib/payout/constants'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X } from 'lucide-react'
+import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X, Trash2 } from 'lucide-react'
 
-// ── Types ──────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────
 
 interface CostCase {
   id: string
@@ -69,7 +69,16 @@ interface SearchBill {
   existingCostCount: number
 }
 
-// ── Constants ──────────────────────────────────────────────────
+interface MaterialLine {
+  materialName: string
+  qty: number
+  unitPrice: number
+  masterPrice: number | null
+  isPriceOverridden: boolean
+  subtotal: number
+}
+
+// ── Constants ──────────────────────────────────────────
 
 const CATEGORIES = ['LAB', 'IMPLANT', 'INVISALIGN'] as const
 const STATUSES = ['PENDING', 'PRICED', 'DONE'] as const
@@ -87,7 +96,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   VOID: { label: '已作廢', color: 'gray' },
 }
 
-// ── Helper: suggest category from bill items ──────────────────
+// ── Helper: suggest category from bill items ──────────
 function suggestCategoryFromBill(bill: SearchBill): string {
   const desAll = bill.billDetails.map(d => (d.feeItem?.des ?? '').toUpperCase()).join(' ')
   if (desAll.includes('INVIS') || desAll.includes('CLEAR ALIGNER') || desAll.includes('透明')) return 'INVISALIGN'
@@ -108,15 +117,16 @@ function suggestItemTypeFromBill(bill: SearchBill): string {
   return 'Others'
 }
 
-// ── Main Component ─────────────────────────────────────────────
+// ── Main Component ─────────────────────────────────────
 
 export default function CostEntryPage() {
-  // ── Existing state (table + manual entry) ──────────────
+  // ── Table state ──────────────────────────────────────
   const [cases, setCases] = useState<CostCase[]>([])
   const [loading, setLoading] = useState(true)
   const [providers, setProviders] = useState<any[]>([])
   const [clinics, setClinics] = useState<any[]>([])
   const [labs, setLabs] = useState<any[]>([])
+  const [materials, setMaterials] = useState<any[]>([]) // ★ MD-K: implant materials
   const [summary, setSummary] = useState<any>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -135,7 +145,7 @@ export default function CostEntryPage() {
   const [userId, setUserId] = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
-  const [modalCategory, setModalCategory] = useState<'LAB' | 'INVISALIGN'>('LAB')
+  const [modalCategory, setModalCategory] = useState<'LAB' | 'INVISALIGN' | 'IMPLANT'>('LAB')
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     providerId: '', clinicId: '', category: 'LAB' as string,
@@ -143,12 +153,14 @@ export default function CostEntryPage() {
     itemType: '', labId: '', labOrderNo: '', dsaName: '',
     baseCost: '', discountPct: '', receivedAt: '', appointmentAt: '',
   })
-  const [deleteId, setDeleteId] = useState<string | null>(null)
 
-  // ── ★ MD-F: Picker state ───────────────────────────────
+  const canCreate = userRole ? hasPermission(userRole, 'cost_entry', grant, deny) : false
+
+  // ── ★ MD-K: Unified CostCaseForm (picker/manual) state ──
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [pickerStep, setPickerStep] = useState(0) // 0=patient, 1=bill, 2=cost
-
+  const [pickerMode, setPickerMode] = useState<'bill' | 'manual'>('bill') // ★ MD-K: 雙入口
+  const [pickerStep, setPickerStep] = useState(0) // 0=patient, 1=bill, 2=cost (bill mode)
+  
   // Step 0: patient search
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchingPatients, setSearchingPatients] = useState(false)
@@ -179,16 +191,20 @@ export default function CostEntryPage() {
     labId: '',
     labOrderNo: '',
     labOther: '',
+    // ★ MD-K: manual mode fields
+    patientCode: '',
+    patientName: '',
   })
   const [savingCost, setSavingCost] = useState(false)
 
-  // ★ Q2: Discount from LabMonthlyDiscount table (read-only)
+  // ★ MD-K: Implant material lines
+  const [materialLines, setMaterialLines] = useState<MaterialLine[]>([])
+
+  // ★ Q2: Discount from LabMonthlyDiscount table
   const [labDiscountPct, setLabDiscountPct] = useState<number | null>(null)
   const [labDiscountPeriodMonth, setLabDiscountPeriodMonth] = useState<string>('')
 
-  const canCreate = userRole ? hasPermission(userRole, 'cost_entry', grant, deny) : false
-
-  // ── Existing load functions ──────────────────────────────
+  // ── Load functions ──────────────────────────────────
 
   const loadProviders = useCallback(async () => {
     try {
@@ -216,6 +232,15 @@ export default function CostEntryPage() {
       setLabs(data.labs || [])
     } catch (e) {
       console.error('[cost-entry] load labs failed', e)
+    }
+  }, [])
+
+  const loadMaterials = useCallback(async () => {
+    try {
+      const data: any = await apiFetch('/api/material-items')
+      setMaterials(data.items || [])
+    } catch (e) {
+      console.error('[cost-entry] load materials failed', e)
     }
   }, [])
 
@@ -261,15 +286,21 @@ export default function CostEntryPage() {
     loadProviders()
     loadClinics()
     loadLabs()
-  }, [loadAuth, loadProviders, loadClinics, loadLabs])
+    loadMaterials()
+  }, [loadAuth, loadProviders, loadClinics, loadLabs, loadMaterials])
 
   useEffect(() => {
     loadCases()
   }, [loadCases])
 
-  // ★ Q2: Fetch discount from LabMonthlyDiscount when lab + orderedAt change
+  // ★ Q2: Fetch discount from LabMonthlyDiscount
   useEffect(() => {
-    if (pickerStep !== 2) return
+    if (pickerMode !== 'bill' || pickerStep !== 2) return
+    if (costForm.category === 'IMPLANT') {
+      setLabDiscountPct(null)
+      setLabDiscountPeriodMonth('')
+      return
+    }
     const effectiveLabId = costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId
     if (!effectiveLabId || !costForm.orderedAt) {
       setLabDiscountPct(null)
@@ -288,9 +319,9 @@ export default function CostEntryPage() {
       }
     }
     fetchDiscount()
-  }, [costForm.labId, costForm.orderedAt, pickerStep])
+  }, [costForm.labId, costForm.orderedAt, pickerMode, pickerStep, costForm.category])
 
-  // ── Existing modal helpers ───────────────────────────────
+  // ── Manual modal helpers ─────────────────────────────
 
   const resetForm = () => {
     setForm({
@@ -301,7 +332,7 @@ export default function CostEntryPage() {
     })
   }
 
-  const openCreateModal = (category: 'LAB' | 'INVISALIGN') => {
+  const openCreateModal = (category: 'LAB' | 'INVISALIGN' | 'IMPLANT') => {
     setModalCategory(category)
     resetForm()
     setForm(prev => ({ ...prev, category }))
@@ -315,6 +346,12 @@ export default function CostEntryPage() {
     }
     setSaving(true)
     try {
+      if (form.category === 'IMPLANT') {
+        // ★ MD-K: IMPLANT manual → redirect message
+        alert('Implant 材料請使用 implant 專用表單')
+        setModalOpen(false)
+        return
+      }
       const body: any = {
         providerId: form.providerId,
         clinicId: form.clinicId,
@@ -327,7 +364,6 @@ export default function CostEntryPage() {
         labOrderNo: form.labOrderNo || null,
         dsaName: form.dsaName || null,
         baseCost: form.baseCost ? Number(form.baseCost) : null,
-        // ★ Q2: discountPct removed — backend queries LabMonthlyDiscount table
         receivedAt: form.receivedAt || null,
         appointmentAt: form.appointmentAt || null,
       }
@@ -359,11 +395,12 @@ export default function CostEntryPage() {
 
   const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString('zh-HK') : '—'
 
-  // ── ★ MD-F: Picker logic ────────────────────────────────
+  // ── ★ MD-K: Unified CostCaseForm Picker ──────────────
 
-  const openPicker = () => {
+  const openPicker = (mode: 'bill' | 'manual' = 'bill') => {
+    setPickerMode(mode)
     // Reset all picker state
-    setPickerStep(0)
+    setPickerStep(mode === 'manual' ? 2 : 0) // manual skips to step 2
     setSearchKeyword('')
     setPatients([])
     setApricotBusy(false)
@@ -377,7 +414,9 @@ export default function CostEntryPage() {
       category: 'LAB', itemType: '', itemTypeOther: '', orderedAt: todayHK(),
       dsaName: '', baseCost: '', discountPct: '',
       receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '', labOther: '',
+      patientCode: '', patientName: '',
     })
+    setMaterialLines([])
     setLabDiscountPct(null)
     setLabDiscountPeriodMonth('')
     setPickerOpen(true)
@@ -388,11 +427,11 @@ export default function CostEntryPage() {
     setApricotBusy(false)
   }
 
-  // Step 0: search patients (button / Enter trigger)
+  // Step 0: search patients
   const handleSearchChange = (val: string) => {
     setSearchKeyword(val)
     setApricotBusy(false)
-    setPatients([]) // clear old results on input change
+    setPatients([])
   }
 
   const handleSearchSubmit = () => {
@@ -401,10 +440,7 @@ export default function CostEntryPage() {
   }
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      handleSearchSubmit()
-    }
+    if (e.key === 'Enter') { e.preventDefault(); handleSearchSubmit() }
   }
 
   const searchPatientsApi = async (keyword: string) => {
@@ -415,15 +451,12 @@ export default function CostEntryPage() {
       const data: any = await apiFetch(`/api/cost-cases/patient-search?keyword=${encodeURIComponent(keyword)}`)
       setPatients(data.patients || [])
     } catch (e: any) {
-      if (e?.status === 503) {
-        setApricotBusy(true)
-      }
+      if (e?.status === 503) setApricotBusy(true)
     } finally {
       setSearchingPatients(false)
     }
   }
 
-  // Step 0 → 1: select patient, search bills
   const selectPatient = (patient: CleanPatient) => {
     setSelectedPatient(patient)
     setPickerStep(1)
@@ -438,53 +471,34 @@ export default function CostEntryPage() {
       const data: any = await apiFetch(`/api/cost-cases/bill-search?patientExtId=${encodeURIComponent(patientExtId)}&months=12`)
       setBills(data.bills || [])
     } catch (e: any) {
-      if (e?.status === 503) {
-        setApricotBusy(true)
-      }
+      if (e?.status === 503) setApricotBusy(true)
     } finally {
       setSearchingBills(false)
     }
   }
 
-  // Step 1 → 2: select bill, auto-fill form
+  // Step 1 → 2: select bill
   const selectBillForCost = (bill: SearchBill) => {
     setSelectedBill(bill)
-
-    // Match clinic extId to internal clinic
     const clinic = clinics.find(c => c.apricotClinicId === bill.clinic?.id)
     const clinicId = clinic?.id || ''
     setSelectedClinicInternalId(clinicId)
-
-    // Match provider extId to internal provider
-    // bill.practitioner?.id → Provider.apricotId
     const provider = providers.find(p => p.apricotId === bill.practitioner?.id)
     const providerId = provider?.id || ''
     setSelectedProviderInternalId(providerId)
 
-    // Suggest category + itemType from bill items
     const category = suggestCategoryFromBill(bill)
     const itemType = suggestItemTypeFromBill(bill)
 
     setCostForm({
-      category,
-      itemType,
-      itemTypeOther: '',
-      orderedAt: todayHK(),
-      dsaName: '',
-      baseCost: '',
-      discountPct: '',
-      receivedAt: '',
-      appointmentAt: '',
-      labId: '',
-      labOrderNo: '',
-      labOther: '',
+      category, itemType, itemTypeOther: '', orderedAt: todayHK(),
+      dsaName: '', baseCost: '', discountPct: '',
+      receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '', labOther: '',
+      patientCode: '', patientName: '',
     })
+    setMaterialLines([])
 
-    // Load DSA employees
-    if (clinicId) {
-      loadDsaEmployees(clinicId)
-    }
-
+    if (clinicId) loadDsaEmployees(clinicId)
     setPickerStep(2)
   }
 
@@ -500,61 +514,155 @@ export default function CostEntryPage() {
     }
   }
 
+  // ★ MD-K: Material line helpers
+  const addMaterialLine = () => {
+    setMaterialLines(prev => [...prev, { materialName: '', qty: 1, unitPrice: 0, masterPrice: null, isPriceOverridden: false, subtotal: 0 }])
+  }
+
+  const removeMaterialLine = (idx: number) => {
+    setMaterialLines(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const updateMaterialLine = (idx: number, field: keyof MaterialLine, value: any) => {
+    setMaterialLines(prev => {
+      const updated = [...prev]
+      const line = { ...updated[idx] }
+      if (field === 'materialName') {
+        const selected = materials.find(m => m.name === value)
+        const masterPrice = selected ? (selected.unitPrice != null ? Number(selected.unitPrice) : null) : null
+        line.materialName = value
+        line.masterPrice = masterPrice
+        line.unitPrice = masterPrice ?? 0
+        line.isPriceOverridden = false
+        line.subtotal = Number((line.unitPrice * line.qty).toFixed(2))
+      } else if (field === 'qty') {
+        const newQty = Number(value)
+        if (!Number.isInteger(newQty) || newQty < 1) return prev
+        line.qty = newQty
+        line.subtotal = Number((line.unitPrice * line.qty).toFixed(2))
+      } else if (field === 'unitPrice') {
+        const newPrice = Number(value)
+        line.unitPrice = newPrice
+        line.isPriceOverridden = line.masterPrice != null && newPrice !== line.masterPrice
+        line.subtotal = Number((line.unitPrice * line.qty).toFixed(2))
+      }
+      updated[idx] = line
+      return updated
+    })
+  }
+
+  const totalMaterialCost = materialLines.reduce((sum, l) => sum + l.subtotal, 0)
+
   // Step 2: submit cost
   const submitCost = async () => {
-    if (!selectedProviderInternalId || !selectedClinicInternalId) {
-      alert('醫生或診所未能自動匹配，請用手動輸入')
+    const isImplant = costForm.category === 'IMPLANT'
+    const providerId = pickerMode === 'manual' ? (costForm as any)._providerId || selectedProviderInternalId : selectedProviderInternalId
+    const clinicId = pickerMode === 'manual' ? (costForm as any)._clinicId || selectedClinicInternalId : selectedClinicInternalId
+
+    if (!providerId || !clinicId) {
+      alert(pickerMode === 'manual' ? '醫生和診所為必填' : '醫生或診所未能自動匹配，請用手動輸入')
       return
     }
+
+    if (isImplant) {
+      if (materialLines.length === 0 || materialLines.some(l => !l.materialName)) {
+        alert('請至少添加一行有效材料')
+        return
+      }
+      if (materialLines.some(l => !Number.isInteger(l.qty) || l.qty < 1)) {
+        alert('材料數量必須為正整數')
+        return
+      }
+      for (const line of materialLines) {
+        if (line.masterPrice === null && !line.unitPrice && line.unitPrice !== 0) {
+          alert(`材料「${line.materialName}」主檔未有價，請手動填寫單價`)
+          return
+        }
+      }
+    }
+
     setSavingCost(true)
     try {
-      const body: any = {
-        providerId: selectedProviderInternalId,
-        clinicId: selectedClinicInternalId,
-        category: costForm.category,
-        patientCode: selectedPatient?.code || '',
-        patientName: selectedPatient?.fullName || null,
-        orderedAt: costForm.orderedAt || todayHK(),
-        itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther?.trim() || 'Others') : (costForm.itemType || null),
-        itemTypeOther: costForm.itemType === 'Others' ? costForm.itemTypeOther || null : null,
-        labId: costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId,
-        labOther: costForm.labId === '__OTHERS__' ? (costForm.labOther.trim() || null) : null,
-        labOrderNo: costForm.labOrderNo || null,
-        dsaName: costForm.dsaName || null,
-        baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
-        // ★ Q2: discountPct removed — backend queries LabMonthlyDiscount table
-        receivedAt: costForm.receivedAt || null,
-        appointmentAt: costForm.appointmentAt || null,
-        // ★ MD-F: bill linking
-        billExtId: selectedBill?.id || null,
-        billCode: selectedBill?.code || null,
-        billItemEleId: selectedBill?.billDetails?.[0]?.eleId || null,
+      if (isImplant) {
+        // ★ MD-K: IMPLANT → use /api/cost-cases/implant
+        const body: any = {
+          providerId,
+          clinicId,
+          patientCode: pickerMode === 'bill' ? (selectedPatient?.code || '') : (costForm.patientCode || ''),
+          patientName: pickerMode === 'bill' ? (selectedPatient?.fullName || null) : (costForm.patientName || null),
+          orderedAt: costForm.orderedAt || todayHK(),
+          itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther?.trim() || 'Others') : (costForm.itemType || null),
+          dsaName: costForm.dsaName || null,
+          receivedAt: costForm.receivedAt || null,
+          appointmentAt: costForm.appointmentAt || null,
+          materials: materialLines.map(l => ({
+            materialName: l.materialName,
+            qty: l.qty,
+            unitPrice: l.isPriceOverridden || l.masterPrice === null ? l.unitPrice : undefined,
+          })),
+          ...(pickerMode === 'bill' && selectedBill ? {
+            billExtId: selectedBill.id,
+            billCode: selectedBill.code,
+            billItemEleId: selectedBill.billDetails?.[0]?.eleId || null,
+          } : { source: 'MANUAL' }),
+        }
+        await apiFetch('/api/cost-cases/implant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      } else {
+        // LAB / INVISALIGN
+        const body: any = {
+          providerId,
+          clinicId,
+          category: costForm.category,
+          patientCode: pickerMode === 'bill' ? (selectedPatient?.code || '') : (costForm.patientCode || ''),
+          patientName: pickerMode === 'bill' ? (selectedPatient?.fullName || null) : (costForm.patientName || null),
+          orderedAt: costForm.orderedAt || todayHK(),
+          itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther?.trim() || 'Others') : (costForm.itemType || null),
+          itemTypeOther: costForm.itemType === 'Others' ? costForm.itemTypeOther || null : null,
+          labId: costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId,
+          labOther: costForm.labId === '__OTHERS__' ? (costForm.labOther.trim() || null) : null,
+          labOrderNo: costForm.labOrderNo || null,
+          dsaName: costForm.dsaName || null,
+          baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
+          receivedAt: costForm.receivedAt || null,
+          appointmentAt: costForm.appointmentAt || null,
+          ...(pickerMode === 'bill' && selectedBill ? {
+            billExtId: selectedBill.id,
+            billCode: selectedBill.code,
+            billItemEleId: selectedBill.billDetails?.[0]?.eleId || null,
+          } : { source: 'MANUAL' }),
+        }
+        await apiFetch('/api/cost-cases', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
       }
-
-      await apiFetch('/api/cost-cases', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-
       closePicker()
       loadCases()
-    } catch (e) {
-      alert(`建立失敗: ${e}`)
+    } catch (e: any) {
+      alert(`建立失敗: ${e.message || e}`)
     } finally {
       setSavingCost(false)
     }
   }
 
-  // ── Picker Step Labels ──────────────────────────────────
-  const stepLabels = ['揀病人', '揀帳單', '填成本']
-  const stepIcons = [Search, Search, Check]
+  // ── Step Labels ──────────────────────────────────────
+  const stepLabels = pickerMode === 'manual'
+    ? ['填成本']
+    : ['揀病人', '揀帳單', '填成本']
+  const stepIcons = pickerMode === 'manual'
+    ? [Check]
+    : [Search, Search, Check]
+  const currentStepIdx = pickerMode === 'manual' ? 0 : pickerStep
 
-  // ── Render ───────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────
 
   return (
     <div className="p-6 space-y-4">
-      {/* Load error */}
       {loadError && (
         <Card className="p-3 bg-red-50 text-red-700 text-sm flex items-center gap-2">
           <AlertTriangle size={14} /> {loadError}
@@ -569,10 +677,16 @@ export default function CostEntryPage() {
           {canCreate && (
             <>
               <button
-                onClick={openPicker}
+                onClick={() => openPicker('bill')}
                 className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 flex items-center gap-1"
               >
-                <Plus size={14} /> 新增成本（揀單）
+                <Plus size={14} /> 由帳單新增
+              </button>
+              <button
+                onClick={() => openPicker('manual')}
+                className="px-3 py-1.5 bg-gray-600 text-white rounded text-sm hover:bg-gray-700 flex items-center gap-1"
+              >
+                <Plus size={14} /> 手動新增
               </button>
               <div className="relative group">
                 <button className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300">
@@ -698,33 +812,39 @@ export default function CostEntryPage() {
         </Card>
       )}
 
-      {/* ── ★ MD-F: 3-Step Picker Modal ─────────────────── */}
+      {/* ── ★ MD-K: Unified CostCaseForm Modal ───────── */}
       {pickerOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <Card className="p-6 w-full max-w-2xl max-h-[90vh] overflow-auto">
-            {/* Step indicator */}
-            <div className="flex items-center justify-center gap-0 mb-6">
-              {stepLabels.map((label, i) => {
-                const Icon = stepIcons[i]
-                const isActive = i === pickerStep
-                const isDone = i < pickerStep
-                return (
-                  <div key={label} className="flex items-center">
-                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm ${
-                      isActive ? 'bg-blue-600 text-white' : isDone ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
-                    }`}>
-                      <Icon size={14} />
-                      <span>{label}</span>
-                      {isDone && <Check size={12} />}
+            {/* Step indicator (bill mode only) */}
+            {pickerMode === 'bill' && (
+              <div className="flex items-center justify-center gap-0 mb-6">
+                {stepLabels.map((label, i) => {
+                  const Icon = stepIcons[i]
+                  const isActive = i === pickerStep
+                  const isDone = i < pickerStep
+                  return (
+                    <div key={label} className="flex items-center">
+                      <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm ${
+                        isActive ? 'bg-blue-600 text-white' : isDone ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+                      }`}>
+                        <Icon size={14} />
+                        <span>{label}</span>
+                        {isDone && <Check size={12} />}
+                      </div>
+                      {i < 2 && <div className={`w-8 h-px ${isDone ? 'bg-green-300' : 'bg-gray-200'}`} />}
                     </div>
-                    {i < 2 && <div className={`w-8 h-px ${isDone ? 'bg-green-300' : 'bg-gray-200'}`} />}
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+            )}
 
-            {/* ── Step 0: Search Patient ─────────────────── */}
-            {pickerStep === 0 && (
+            {pickerMode === 'manual' && (
+              <h2 className="text-lg font-bold mb-4 text-center">手動新增成本</h2>
+            )}
+
+            {/* ── Step 0: Search Patient (bill mode only) ── */}
+            {pickerMode === 'bill' && pickerStep === 0 && (
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">病人編號 / 姓名</label>
@@ -749,40 +869,17 @@ export default function CostEntryPage() {
                       搜尋
                     </button>
                   </div>
-                  {searchKeyword.length > 0 && searchKeyword.length < 6 && (
-                    <p className="text-xs text-gray-400 mt-1">最少輸入 6 字元</p>
-                  )}
                 </div>
 
-                {/* Three states: searching / no results / apricot busy */}
-                {searchingPatients && (
-                  <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
-                    <Loader2 size={16} className="animate-spin" /> 搜尋中…
-                  </div>
-                )}
+                {searchingPatients && <div className="flex items-center gap-2 text-sm text-gray-500 py-4"><Loader2 size={16} className="animate-spin" /> 搜尋中…</div>}
+                {apricotBusy && <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded"><AlertTriangle size={16} /> Apricot 忙碌，請稍後重試</div>}
+                {!searchingPatients && !apricotBusy && patients.length === 0 && searchKeyword.length >= 6 && <div className="text-sm text-gray-400 py-4 text-center">冇搵到病人</div>}
 
-                {apricotBusy && (
-                  <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded">
-                    <AlertTriangle size={16} /> Apricot 忙碌，請稍後重試
-                  </div>
-                )}
-
-                {!searchingPatients && !apricotBusy && patients.length === 0 && searchKeyword.length >= 6 && (
-                  <div className="text-sm text-gray-400 py-4 text-center">冇搵到病人</div>
-                )}
-
-                {/* Results */}
                 <div className="space-y-1 max-h-60 overflow-auto">
                   {patients.map(p => (
-                    <button
-                      key={p.extId}
-                      onClick={() => selectPatient(p)}
-                      className="w-full text-left px-3 py-2 rounded hover:bg-blue-50 text-sm flex items-center justify-between border border-transparent hover:border-blue-200"
-                    >
-                      <span>
-                        <span className="font-mono font-medium">{p.code}</span>
-                        <span className="ml-2 text-gray-600">{p.fullName}</span>
-                      </span>
+                    <button key={p.extId} onClick={() => selectPatient(p)}
+                      className="w-full text-left px-3 py-2 rounded hover:bg-blue-50 text-sm flex items-center justify-between border border-transparent hover:border-blue-200">
+                      <span><span className="font-mono font-medium">{p.code}</span><span className="ml-2 text-gray-600">{p.fullName}</span></span>
                       <span className="text-xs text-gray-400">{p.extId.slice(0, 8)}</span>
                     </button>
                   ))}
@@ -790,66 +887,36 @@ export default function CostEntryPage() {
               </div>
             )}
 
-            {/* ── Step 1: Search Bills ───────────────────── */}
-            {pickerStep === 1 && selectedPatient && (
+            {/* ── Step 1: Search Bills (bill mode only) ── */}
+            {pickerMode === 'bill' && pickerStep === 1 && selectedPatient && (
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-sm">
-                  <button onClick={() => setPickerStep(0)} className="text-blue-600 hover:underline flex items-center gap-1">
-                    <ArrowLeft size={14} /> 返回
-                  </button>
+                  <button onClick={() => setPickerStep(0)} className="text-blue-600 hover:underline flex items-center gap-1"><ArrowLeft size={14} /> 返回</button>
                   <span className="font-mono font-medium">{selectedPatient.code}</span>
                   <span className="text-gray-600">{selectedPatient.fullName}</span>
                 </div>
 
-                {searchingBills && (
-                  <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
-                    <Loader2 size={16} className="animate-spin" /> 載入帳單…
-                  </div>
-                )}
+                {searchingBills && <div className="flex items-center gap-2 text-sm text-gray-500 py-4"><Loader2 size={16} className="animate-spin" /> 載入帳單…</div>}
+                {apricotBusy && <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded"><AlertTriangle size={16} /> Apricot 忙碌，請稍後重試</div>}
+                {!searchingBills && !apricotBusy && bills.length === 0 && <div className="text-sm text-gray-400 py-4 text-center">近 12 個月冇帳單</div>}
 
-                {apricotBusy && (
-                  <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded">
-                    <AlertTriangle size={16} /> Apricot 忙碌，請稍後重試
-                  </div>
-                )}
-
-                {!searchingBills && !apricotBusy && bills.length === 0 && (
-                  <div className="text-sm text-gray-400 py-4 text-center">近 12 個月冇帳單</div>
-                )}
-
-                {/* Bill list */}
                 <div className="space-y-2 max-h-80 overflow-auto">
                   {bills.map(b => (
-                    <button
-                      key={b.id}
-                      onClick={() => !b.isVoid && selectBillForCost(b)}
-                      disabled={b.isVoid}
-                      className={`w-full text-left border rounded p-3 text-sm ${
-                        b.isVoid
-                          ? 'opacity-40 cursor-not-allowed bg-gray-50'
-                          : 'hover:bg-blue-50 hover:border-blue-200'
-                      }`}
-                    >
+                    <button key={b.id} onClick={() => !b.isVoid && selectBillForCost(b)} disabled={b.isVoid}
+                      className={`w-full text-left border rounded p-3 text-sm ${b.isVoid ? 'opacity-40 cursor-not-allowed bg-gray-50' : 'hover:bg-blue-50 hover:border-blue-200'}`}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-medium">{b.code}</span>
                           <span className="text-gray-400">{new Date(b.billTime).toLocaleDateString('zh-HK')}</span>
                           {b.isVoid && <Badge variant="secondary" className="text-xs bg-gray-100">已作廢</Badge>}
                           {b.isRefunded && <Badge variant="secondary" className="text-xs bg-orange-50 text-orange-600">已退款</Badge>}
-                          {b.existingCostCount > 0 && (
-                            <Badge variant="secondary" className="text-xs bg-yellow-50 text-yellow-700">
-                              已錄 {b.existingCostCount} 筆
-                            </Badge>
-                          )}
+                          {b.existingCostCount > 0 && <Badge variant="secondary" className="text-xs bg-yellow-50 text-yellow-700">已錄 {b.existingCostCount} 筆</Badge>}
                         </div>
                         <div className="text-right">
                           <span className="font-medium">HK${Number(b.ttlAmt).toFixed(2)}</span>
-                          {b.osAmt && Number(b.osAmt) > 0 && (
-                            <span className="text-xs text-gray-400 ml-2">欠 ${Number(b.osAmt).toFixed(0)}</span>
-                          )}
+                          {b.osAmt && Number(b.osAmt) > 0 && <span className="text-xs text-gray-400 ml-2">欠 ${Number(b.osAmt).toFixed(0)}</span>}
                         </div>
                       </div>
-                      {/* Bill items (compact) */}
                       {b.billDetails.length > 0 && (
                         <div className="mt-1 pt-1 border-t text-xs text-gray-500 space-y-0.5">
                           {b.billDetails.slice(0, 3).map((item, i) => (
@@ -858,9 +925,7 @@ export default function CostEntryPage() {
                               <span>x{item.qty} × ${Number(item.up).toFixed(0)}</span>
                             </div>
                           ))}
-                          {b.billDetails.length > 3 && (
-                            <div className="text-gray-400">… 等共 {b.billDetails.length} 項</div>
-                          )}
+                          {b.billDetails.length > 3 && <div className="text-gray-400">… 等共 {b.billDetails.length} 項</div>}
                         </div>
                       )}
                     </button>
@@ -869,237 +934,274 @@ export default function CostEntryPage() {
               </div>
             )}
 
-            {/* ── Step 2: Fill Cost ──────────────────────── */}
-            {pickerStep === 2 && selectedBill && selectedPatient && (
+            {/* ── Step 2: Fill Cost (shared by bill/manual) ── */}
+            {(pickerMode === 'bill' && pickerStep === 2) || (pickerMode === 'manual') ? (
               <div className="space-y-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <button onClick={() => setPickerStep(1)} className="text-blue-600 hover:underline flex items-center gap-1">
-                    <ArrowLeft size={14} /> 返回
-                  </button>
-                  <span className="text-gray-500">帳單 {selectedBill.code}</span>
-                </div>
+                {pickerMode === 'bill' && selectedBill && selectedPatient && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      <button onClick={() => setPickerStep(1)} className="text-blue-600 hover:underline flex items-center gap-1"><ArrowLeft size={14} /> 返回</button>
+                      <span className="text-gray-500">帳單 {selectedBill.code}</span>
+                    </div>
 
-                {/* Read-only section: doctor / clinic / patient */}
-                <Card className="p-3 bg-gray-50 space-y-2">
-                  <div className="text-xs font-medium text-gray-500 mb-1">自動帶入（唯讀）</div>
-                  <div className="grid grid-cols-3 gap-3 text-sm">
-                    <div>
-                      <label className="block text-xs text-gray-400">醫生</label>
-                      <div className="py-1">
-                        {selectedProviderInternalId ? (
-                          <span>{providers.find(p => p.id === selectedProviderInternalId)?.name}</span>
-                        ) : (
-                          <div className="text-sm">
-                            <div className="text-amber-700">⚠️ 醫生未對應</div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              Apricot 醫生：<code>{selectedBill?.practitioner?.id ?? '—'}</code>
-                            </div>
-                            <div className="text-xs mt-1">
-                              請去 <a href="/providers" className="underline">醫生管理</a> 將呢個 ID 填入對應醫生嘅「Apricot ID」
-                            </div>
+                    {/* Read-only section */}
+                    <Card className="p-3 bg-gray-50 space-y-2">
+                      <div className="text-xs font-medium text-gray-500 mb-1">自動帶入（唯讀）</div>
+                      <div className="grid grid-cols-3 gap-3 text-sm">
+                        <div>
+                          <label className="block text-xs text-gray-400">醫生</label>
+                          <div className="py-1">
+                            {selectedProviderInternalId ? (
+                              <span>{providers.find(p => p.id === selectedProviderInternalId)?.name}</span>
+                            ) : (
+                              <div className="text-sm"><div className="text-amber-700">⚠️ 醫生未對應</div><div className="text-xs text-muted-foreground mt-1">Apricot 醫生：<code>{selectedBill?.practitioner?.id ?? '—'}</code></div></div>
+                            )}
                           </div>
-                        )}
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400">診所</label>
+                          <div className="py-1">
+                            {selectedClinicInternalId ? (
+                              <span>{clinics.find(c => c.id === selectedClinicInternalId)?.shortName || clinics.find(c => c.id === selectedClinicInternalId)?.name}</span>
+                            ) : (
+                              <div className="text-sm"><div className="text-amber-700">⚠️ 診所未對應</div><div className="text-xs text-muted-foreground mt-1">Apricot 診所：<code>{selectedBill?.clinic?.id ?? '—'}</code></div></div>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400">病人</label>
+                          <div className="py-1">
+                            <span className="font-mono">{selectedPatient.code}</span>
+                            <span className="ml-1 text-gray-500">{selectedPatient.fullName}</span>
+                          </div>
+                        </div>
                       </div>
+                    </Card>
+                  </div>
+                )}
+
+                {/* ★ MD-K: Manual mode → provider + clinic + patient selection */}
+                {pickerMode === 'manual' && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-sm mb-1">醫生 *</label>
+                      <select value={selectedProviderInternalId} onChange={e => setSelectedProviderInternalId(e.target.value)}
+                        className="w-full border rounded px-2 py-1.5 text-sm" autoFocus>
+                        <option value="">請選擇</option>
+                        {providers.map(p => <option key={p.id} value={p.id}>{p.name || p.shortName}</option>)}
+                      </select>
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-400">診所</label>
-                      <div className="py-1">
-                        {selectedClinicInternalId ? (
-                          <span>{clinics.find(c => c.id === selectedClinicInternalId)?.shortName || clinics.find(c => c.id === selectedClinicInternalId)?.name}</span>
-                        ) : (
-                          <div className="text-sm">
-                            <div className="text-amber-700">⚠️ 診所未對應</div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              Apricot 診所：<code>{selectedBill?.clinic?.id ?? '—'}</code>
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                      <label className="block text-sm mb-1">診所 *</label>
+                      <select value={selectedClinicInternalId} onChange={e => setSelectedClinicInternalId(e.target.value)}
+                        className="w-full border rounded px-2 py-1.5 text-sm">
+                        <option value="">請選擇</option>
+                        {clinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
+                      </select>
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-400">病人</label>
-                      <div className="py-1">
-                        <span className="font-mono">{selectedPatient.code}</span>
-                        <span className="ml-1 text-gray-500">{selectedPatient.fullName}</span>
-                      </div>
+                      <label className="block text-sm mb-1">病人編號</label>
+                      <input value={costForm.patientCode || ''} onChange={e => setCostForm(prev => ({ ...prev, patientCode: e.target.value }))}
+                        className="w-full border rounded px-2 py-1.5 text-sm" placeholder="無格式驗證" />
+                    </div>
+                    <div className="col-span-3">
+                      <label className="block text-sm mb-1">病人姓名</label>
+                      <input value={costForm.patientName || ''} onChange={e => setCostForm(prev => ({ ...prev, patientName: e.target.value }))}
+                        className="w-full border rounded px-2 py-1.5 text-sm" placeholder="病人姓名" />
                     </div>
                   </div>
-                </Card>
+                )}
 
                 {/* Editable form */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm mb-1">類別 <span className="text-xs text-gray-400">（自動建議）</span></label>
-                    <select
-                      value={costForm.category}
-                      onChange={e => setCostForm({ ...costForm, category: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                    >
+                    <label className="block text-sm mb-1">類別 {pickerMode === 'bill' && <span className="text-xs text-gray-400">（自動建議）</span>}</label>
+                    <select value={costForm.category} onChange={e => setCostForm({ ...costForm, category: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm">
                       {CATEGORIES.map(c => (<option key={c} value={c}>{CATEGORY_LABELS[c]}</option>))}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm mb-1">項目 <span className="text-xs text-gray-400">（可改）</span></label>
-                    <select
-                      value={costForm.itemType}
-                      onChange={e => setCostForm({ ...costForm, itemType: e.target.value, itemTypeOther: e.target.value === 'Others' ? costForm.itemTypeOther : '' })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                    >
+                    <label className="block text-sm mb-1">項目</label>
+                    <select value={costForm.itemType} onChange={e => setCostForm({ ...costForm, itemType: e.target.value, itemTypeOther: e.target.value === 'Others' ? costForm.itemTypeOther : '' })}
+                      className="w-full border rounded px-2 py-1.5 text-sm">
                       {ITEM_TYPES.map(t => (<option key={t} value={t}>{t}</option>))}
                     </select>
                     {costForm.itemType === 'Others' && (
-                      <input
-                        value={costForm.itemTypeOther}
-                        onChange={e => setCostForm({ ...costForm, itemTypeOther: e.target.value })}
-                        className="w-full border rounded px-2 py-1.5 text-sm mt-1"
-                        placeholder="輸入具體項目名稱"
-                      />
+                      <input value={costForm.itemTypeOther} onChange={e => setCostForm({ ...costForm, itemTypeOther: e.target.value })}
+                        className="w-full border rounded px-2 py-1.5 text-sm mt-1" placeholder="輸入具體項目名稱" />
                     )}
                   </div>
                   <div>
                     <label className="block text-sm mb-1">落單日</label>
-                    <input
-                      type="date"
-                      value={costForm.orderedAt}
-                      onChange={e => setCostForm({ ...costForm, orderedAt: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                    />
+                    <input type="date" value={costForm.orderedAt} onChange={e => setCostForm({ ...costForm, orderedAt: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm" />
                   </div>
                   <div>
                     <label className="block text-sm mb-1">DSA</label>
                     {loadingDsa ? (
                       <div className="py-1.5 text-sm text-gray-400"><Loader2 size={14} className="animate-spin inline" /> 載入中…</div>
                     ) : (
-                      <select
-                        value={costForm.dsaName}
-                        onChange={e => setCostForm({ ...costForm, dsaName: e.target.value })}
-                        className="w-full border rounded px-2 py-1.5 text-sm"
-                      >
+                      <select value={costForm.dsaName} onChange={e => setCostForm({ ...costForm, dsaName: e.target.value })}
+                        className="w-full border rounded px-2 py-1.5 text-sm">
                         <option value="">不選</option>
                         {dsaEmployees.map((emp: any) => (
-                          <option key={emp.id} value={emp.user?.name || emp.id}>
-                            {emp.user?.name || emp.id}
-                          </option>
+                          <option key={emp.id} value={emp.user?.name || emp.id}>{emp.user?.name || emp.id}</option>
                         ))}
                       </select>
                     )}
                   </div>
-                  <div>
-                    <label className="block text-sm mb-1">成本 <span className="text-xs text-gray-400">（留空 = 未有價）</span></label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={costForm.baseCost}
-                      onChange={e => setCostForm({ ...costForm, baseCost: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                      placeholder="成本金額"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
-                    <div className="px-3 py-2 border rounded bg-muted text-sm">
-                      {labDiscountPct != null
-                        ? `${labDiscountPct}%（${labs.find(l => l.id === costForm.labId)?.name ?? '—'} · ${labDiscountPeriodMonth}）`
-                        : '—（該工場今個月冇折扣設定）'}
+
+                  {/* ★ MD-K: Implant materials section */}
+                  {costForm.category === 'IMPLANT' ? (
+                    <div className="col-span-2">
+                      <div className="border-t pt-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-semibold text-sm">材料明細</h4>
+                          <button onClick={addMaterialLine} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 flex items-center gap-1">
+                            <Plus size={12} /> 加一行
+                          </button>
+                        </div>
+                        {materialLines.length === 0 ? (
+                          <p className="text-gray-400 text-xs text-center py-2">點擊「加一行」添加材料</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {materialLines.map((line, idx) => {
+                              const hasMasterPrice = line.masterPrice != null
+                              const showOverride = hasMasterPrice && line.isPriceOverridden
+                              const showNoPrice = !hasMasterPrice && line.materialName
+                              return (
+                                <div key={idx} className="flex items-center gap-2">
+                                  <select value={line.materialName} onChange={e => updateMaterialLine(idx, 'materialName', e.target.value)}
+                                    className="flex-1 border rounded px-2 py-1 text-xs">
+                                    <option value="">選擇材料</option>
+                                    {materials.map(m => (
+                                      <option key={m.id} value={m.name}>{m.name} — {m.unitPrice != null ? `$${Number(m.unitPrice).toFixed(2)}` : '(冇定價)'}</option>
+                                    ))}
+                                  </select>
+                                  <input type="number" min="1" step="1" value={line.qty} onChange={e => updateMaterialLine(idx, 'qty', e.target.value)}
+                                    className="w-14 border rounded px-1 py-1 text-xs text-center" placeholder="數量" />
+                                  <div className="relative">
+                                    <input type="number" step="0.01" value={line.unitPrice || ''} onChange={e => updateMaterialLine(idx, 'unitPrice', e.target.value)}
+                                      className={`w-20 border rounded px-1 py-1 text-xs text-right ${showNoPrice ? 'border-red-300 bg-red-50' : ''}`}
+                                      placeholder={showNoPrice ? '必填' : ''} />
+                                    {showOverride && <span className="absolute -top-1 -right-1 text-[10px]" title={`已覆寫（主檔 $${line.masterPrice!.toFixed(2)}）`}>✏️</span>}
+                                    {showNoPrice && <span className="absolute -top-1 -right-1 text-[10px]" title="主檔未有價">⚠️</span>}
+                                  </div>
+                                  <span className="w-16 text-xs text-right font-medium">${line.subtotal.toFixed(2)}</span>
+                                  <button onClick={() => removeMaterialLine(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
+                                </div>
+                              )
+                            })}
+                            <div className="flex justify-between pt-1 border-t text-xs">
+                              <span className="text-gray-400">—（植體材料唔經工場折扣）</span>
+                              <span className="font-bold">合計 ${totalMaterialCost.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-sm mb-1">成本 <span className="text-xs text-gray-400">（留空 = 未有價）</span></label>
+                        <input type="number" step="0.01" value={costForm.baseCost} onChange={e => setCostForm({ ...costForm, baseCost: e.target.value })}
+                          className="w-full border rounded px-2 py-1.5 text-sm" placeholder="成本金額" />
+                      </div>
+                      <div>
+                        <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
+                        <div className="px-3 py-2 border rounded bg-muted text-sm">
+                          {labDiscountPct != null
+                            ? `${labDiscountPct}%（${labs.find(l => l.id === costForm.labId)?.name ?? '—'} · ${labDiscountPeriodMonth}）`
+                            : '—（該工場今個月冇折扣設定）'}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm mb-1">Lab</label>
+                        <select value={costForm.labId} onChange={e => {
+                          const val = e.target.value
+                          setCostForm({ ...costForm, labId: val, labOther: val === '__OTHERS__' ? costForm.labOther : '' })
+                        }} className="w-full border rounded px-2 py-1.5 text-sm">
+                          <option value="">（不選）</option>
+                          {labs.map((lab: any) => (<option key={lab.id} value={lab.id}>{lab.name}</option>))}
+                          <option value="__OTHERS__">其他（自行輸入）</option>
+                        </select>
+                        {costForm.labId === '__OTHERS__' && (
+                          <input value={costForm.labOther} onChange={e => setCostForm({ ...costForm, labOther: e.target.value })}
+                            className="w-full border rounded px-2 py-1.5 text-sm mt-1" placeholder="工場名稱" />
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-sm mb-1">Lab 單號</label>
+                        <input value={costForm.labOrderNo} onChange={e => setCostForm({ ...costForm, labOrderNo: e.target.value })}
+                          className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm mb-1">到貨日</label>
-                    <input
-                      type="date"
-                      value={costForm.receivedAt}
-                      onChange={e => setCostForm({ ...costForm, receivedAt: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                    />
+                    <input type="date" value={costForm.receivedAt} onChange={e => setCostForm({ ...costForm, receivedAt: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm" />
                   </div>
                   <div>
                     <label className="block text-sm mb-1">覆診日</label>
-                    <input
-                      type="date"
-                      value={costForm.appointmentAt}
-                      onChange={e => setCostForm({ ...costForm, appointmentAt: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm mb-1">Lab</label>
-                    <select
-                      value={costForm.labId}
-                      onChange={e => {
-                        const val = e.target.value
-                        setCostForm({ ...costForm, labId: val, labOther: val === '__OTHERS__' ? costForm.labOther : '' })
-                      }}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                    >
-                      <option value="">（不選）</option>
-                      {labs.map((lab: any) => (
-                        <option key={lab.id} value={lab.id}>{lab.name}</option>
-                      ))}
-                      <option value="__OTHERS__">其他（自行輸入）</option>
-                    </select>
-                    {costForm.labId === '__OTHERS__' && (
-                      <input
-                        value={costForm.labOther}
-                        onChange={e => setCostForm({ ...costForm, labOther: e.target.value })}
-                        className="w-full border rounded px-2 py-1.5 text-sm mt-1"
-                        placeholder="工場名稱"
-                      />
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-sm mb-1">Lab 單號</label>
-                    <input
-                      value={costForm.labOrderNo}
-                      onChange={e => setCostForm({ ...costForm, labOrderNo: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                      placeholder="Lab 單號"
-                    />
+                    <input type="date" value={costForm.appointmentAt} onChange={e => setCostForm({ ...costForm, appointmentAt: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm" />
                   </div>
                 </div>
 
-                {/* Bill items reference */}
-                <div className="text-xs text-gray-400 border-t pt-2">
-                  <div className="font-medium mb-1">帳單項目參考：</div>
-                  <div className="space-y-0.5">
-                    {selectedBill.billDetails.slice(0, 5).map((item, i) => (
-                      <div key={i} className="flex justify-between">
-                        <span>{item.feeItem?.des || item.eleId}</span>
-                        <span>${Number(item.ttlAmt).toFixed(2)}</span>
-                      </div>
-                    ))}
+                {/* Bill items reference (bill mode only) */}
+                {pickerMode === 'bill' && selectedBill && (
+                  <div className="text-xs text-gray-400 border-t pt-2">
+                    <div className="font-medium mb-1">帳單項目參考：</div>
+                    <div className="space-y-0.5">
+                      {selectedBill.billDetails.slice(0, 5).map((item, i) => (
+                        <div key={i} className="flex justify-between">
+                          <span>{item.feeItem?.des || item.eleId}</span>
+                          <span>${Number(item.ttlAmt).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
-            )}
+            ) : null}
 
             {/* Footer actions */}
             <div className="flex justify-between mt-4 pt-3 border-t">
-              {pickerStep === 0 ? (
+              {pickerMode === 'bill' && pickerStep === 0 ? (
                 <button onClick={closePicker} className="px-4 py-1.5 border rounded text-sm">取消</button>
               ) : (
-                <button onClick={() => pickerStep === 1 ? setPickerStep(0) : setPickerStep(1)} className="px-4 py-1.5 border rounded text-sm flex items-center gap-1">
-                  <ArrowLeft size={14} /> 上一步
+                <button onClick={() => pickerMode === 'manual' ? closePicker() : (pickerStep === 1 ? setPickerStep(0) : setPickerStep(1))}
+                  className="px-4 py-1.5 border rounded text-sm flex items-center gap-1">
+                  <ArrowLeft size={14} /> {pickerMode === 'manual' ? '取消' : '上一步'}
                 </button>
               )}
-              {pickerStep === 2 && (
-                <button
-                  onClick={submitCost}
-                  disabled={savingCost || !selectedProviderInternalId || !selectedClinicInternalId}
-                  className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
-                >
+              {(pickerMode === 'bill' && pickerStep === 2) || pickerMode === 'manual' ? (
+                <button onClick={submitCost}
+                  disabled={savingCost || (!selectedProviderInternalId && pickerMode === 'bill') || (!selectedClinicInternalId && pickerMode === 'bill')}
+                  className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">
                   {savingCost && <Loader2 size={14} className="animate-spin" />} 確定錄入
                 </button>
-              )}
+              ) : null}
             </div>
           </Card>
         </div>
       )}
 
-      {/* ── Existing Manual Entry Modal ─────────────────── */}
+      {/* ── Existing Manual Entry Modal (legacy) ───────── */}
       {modalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <Card className="p-6 w-full max-w-lg max-h-[90vh] overflow-auto">
             <h2 className="text-lg font-bold mb-4">新增 {CATEGORY_LABELS[modalCategory] || modalCategory} 成本</h2>
+            {modalCategory === 'IMPLANT' && (
+              <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded">
+                Implant 材料請使用 <a href="/cost-entry/implant" className="underline font-medium">專用表單</a>，支援材料明細 + 單價覆寫
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm mb-1">醫生 *</label>
@@ -1137,30 +1239,44 @@ export default function CostEntryPage() {
                 <input value={form.itemType} onChange={e => setForm({ ...form, itemType: e.target.value })}
                   className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Crown / Bridge / ..." />
               </div>
-              <div>
-                <label className="block text-sm mb-1">Lab</label>
-                <input value={form.labId} onChange={e => setForm({ ...form, labId: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab ID" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">Lab 單號</label>
-                <input value={form.labOrderNo} onChange={e => setForm({ ...form, labOrderNo: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
-              </div>
+              {form.category !== 'IMPLANT' && (
+                <>
+                  <div>
+                    <label className="block text-sm mb-1">Lab</label>
+                    <input value={form.labId} onChange={e => setForm({ ...form, labId: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab ID" />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Lab 單號</label>
+                    <input value={form.labOrderNo} onChange={e => setForm({ ...form, labOrderNo: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
+                  </div>
+                </>
+              )}
               <div>
                 <label className="block text-sm mb-1">DSA</label>
                 <input value={form.dsaName} onChange={e => setForm({ ...form, dsaName: e.target.value })}
                   className="w-full border rounded px-2 py-1.5 text-sm" placeholder="DSA 名稱" />
               </div>
-              <div>
-                <label className="block text-sm mb-1">成本</label>
-                <input type="number" step="0.01" value={form.baseCost} onChange={e => setForm({ ...form, baseCost: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="留空 = 未有價" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
-                <div className="px-3 py-2 border rounded bg-muted text-sm">—（提交時由 LabMonthlyDiscount 查表）</div>
-              </div>
+              {form.category !== 'IMPLANT' && (
+                <>
+                  <div>
+                    <label className="block text-sm mb-1">成本</label>
+                    <input type="number" step="0.01" value={form.baseCost} onChange={e => setForm({ ...form, baseCost: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm" placeholder="留空 = 未有價" />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
+                    <div className="px-3 py-2 border rounded bg-muted text-sm">—（提交時由 LabMonthlyDiscount 查表）</div>
+                  </div>
+                </>
+              )}
+              {form.category === 'IMPLANT' && (
+                <div className="col-span-2">
+                  <label className="block text-sm mb-1">折扣 %</label>
+                  <div className="px-3 py-2 border rounded bg-muted text-sm">—（植體材料唔經工場折扣）</div>
+                </div>
+              )}
               <div>
                 <label className="block text-sm mb-1">到貨日</label>
                 <input type="date" value={form.receivedAt} onChange={e => setForm({ ...form, receivedAt: e.target.value })}
