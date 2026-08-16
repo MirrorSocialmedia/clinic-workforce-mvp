@@ -9,7 +9,7 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft } from 'lucide-react'
 
 export default function ReferralsPage() {
   const [referrals, setReferrals] = useState<any[]>([])
@@ -103,6 +103,9 @@ export default function ReferralsPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      <a href="/payout" className="text-sm text-blue-600 hover:underline flex items-center gap-1 mb-4">
+        <ArrowLeft size={14} /> 返回醫生月結單
+      </a>
       <h1 className="text-2xl font-bold mb-6">轉介錄入</h1>
 
       {/* Form */}

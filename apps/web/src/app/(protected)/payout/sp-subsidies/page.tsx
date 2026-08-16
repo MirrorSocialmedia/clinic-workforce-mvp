@@ -4,13 +4,16 @@
  * MD-D: SP Subsidies — 2人SP補貼確認
  * OWNER / provider_payout 權限
  * MD-R: R2 needsReview 琥珀邊框 + R3 前端篩選
+ * S1: hasMarker 顯示 + S2: await loadSubsidies + S3: skip API
+ * S4: reset 掣 + S5: 已確認完整資訊 + §七: 按醫生×診所分組
+ * S6: 返回連結 + S8: 排序選擇
  */
 import { useEffect, useState, useMemo } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Check, X, Search } from 'lucide-react'
+import { Check, X, Search, ArrowLeft } from 'lucide-react'
 import { SP_2P1K_PER_PERSON } from '@/lib/payout/constants'
 
 interface SpSubsidy {
@@ -23,6 +26,8 @@ interface SpSubsidy {
   amount: number
   needsReview: boolean
   source: string
+  status: string // PENDING | CONFIRMED | SKIPPED
+  hasMarker: boolean
   confirmedBy: string | null
   periodMonth: string
   providerName: string | null
@@ -32,6 +37,8 @@ interface SpSubsidy {
 }
 
 function spReviewReason(s: SpSubsidy): string {
+  // S1: hasMarker 放最前
+  if (!s.hasMarker) return '冇 2P1K 備註，只係實收啱 $500，請核對係咪 2 人同行'
   if (s.listPrice == null || Number(s.listPrice) === Number(s.actualPrice)) {
     return '揾唔到標準價，請去項目標準價設定'
   }
@@ -55,6 +62,9 @@ export default function SpSubsidiesPage() {
   const [onlyWithAmount, setOnlyWithAmount] = useState(false)
   const [onlyReview, setOnlyReview] = useState(false)
   const [q, setQ] = useState('')
+
+  // S8: 排序 state
+  const [sortBy, setSortBy] = useState<'review' | 'date' | 'amount'>('review')
 
   useEffect(() => {
     loadSubsidies()
@@ -84,7 +94,7 @@ export default function SpSubsidiesPage() {
         body: JSON.stringify({ periodMonth: scanningMonth }),
       })
       alert(`掃描完成，發現 ${(res as any).count} 筆候選`)
-      loadSubsidies()
+      await loadSubsidies()
     } catch (e: any) {
       alert(`掃描失敗: ${e.message}`)
     } finally {
@@ -92,13 +102,14 @@ export default function SpSubsidiesPage() {
     }
   }
 
+  // S2: await loadSubsidies()
   async function handleConfirm(id: string) {
     setConfirming(id)
     try {
       await apiFetch(`/api/sp-subsidies/${id}/confirm`, {
         method: 'POST',
       })
-      loadSubsidies()
+      await loadSubsidies() // ★ await
     } catch (e: any) {
       alert(`確認失敗: ${e.message}`)
     } finally {
@@ -106,9 +117,26 @@ export default function SpSubsidiesPage() {
     }
   }
 
+  // S3: skip 打 API
   async function handleSkip(id: string) {
-    if (!confirm('跳過此補貼？跳過後不會計入月結單。')) return
-    setSubsidies(subsidies.filter(s => s.id !== id))
+    if (!confirm('跳過此補貼？')) return
+    try {
+      await apiFetch(`/api/sp-subsidies/${id}/skip`, { method: 'POST' })
+      await loadSubsidies()
+    } catch (e: any) {
+      alert(`跳過失敗: ${e.message}`)
+    }
+  }
+
+  // S4: reset 打 API
+  async function handleReset(id: string) {
+    if (!confirm('取消此操作？')) return
+    try {
+      await apiFetch(`/api/sp-subsidies/${id}/reset`, { method: 'POST' })
+      await loadSubsidies()
+    } catch (e: any) {
+      alert(`取消失敗: ${e.message}`)
+    }
   }
 
   // R3: 篩選邏輯
@@ -122,6 +150,34 @@ export default function SpSubsidiesPage() {
     return true
   }), [subsidies, month, filterProvider, filterClinic, onlyWithAmount, onlyReview, q])
 
+  // S8: 排序邏輯 — 用戶揀咗排序 → needsReview 唔強制排最前
+  const sorted = useMemo(() => {
+    const arr = [...filtered]
+    switch (sortBy) {
+      case 'date':
+        arr.sort((a, b) => {
+          const ta = a.billTime ? new Date(a.billTime).getTime() : 0
+          const tb = b.billTime ? new Date(b.billTime).getTime() : 0
+          return ta - tb
+        })
+        break
+      case 'amount':
+        arr.sort((a, b) => Number(b.amount) - Number(a.amount))
+        break
+      case 'review':
+      default:
+        // needsReview 強制排最前
+        arr.sort((a, b) => {
+          if (a.needsReview !== b.needsReview) return a.needsReview ? -1 : 1
+          const ta = a.billTime ? new Date(a.billTime).getTime() : 0
+          const tb = b.billTime ? new Date(b.billTime).getTime() : 0
+          if (ta !== tb) return ta - tb
+          return (a.billCode ?? '').localeCompare(b.billCode ?? '')
+        })
+    }
+    return arr
+  }, [filtered, sortBy])
+
   // 選項由資料導出
   const providerOptions = useMemo(() => [...new Set(subsidies.map(s => s.providerName).filter(Boolean))] as string[], [subsidies])
   const clinicOptions = useMemo(() => [...new Set(subsidies.map(s => s.clinicName).filter(Boolean))] as string[], [subsidies])
@@ -129,14 +185,36 @@ export default function SpSubsidiesPage() {
   if (loading) return <div className="p-6">載入中...</div>
 
   // R3: 摘要跟住篩選變
-  const filteredUnconfirmed = filtered.filter(s => !s.confirmedBy)
-  const filteredConfirmed = filtered.filter(s => s.confirmedBy)
-  const filteredWithSubsidy = filtered.filter(s => Number(s.amount) > 0)
+  const filteredPending = sorted.filter(s => s.status === 'PENDING')
+  const filteredConfirmed = sorted.filter(s => s.status === 'CONFIRMED')
+  const filteredSkipped = sorted.filter(s => s.status === 'SKIPPED')
+  const filteredWithSubsidy = sorted.filter(s => Number(s.amount) > 0)
   const filteredTotalSubsidy = filteredWithSubsidy.reduce((sum, s) => sum + Number(s.amount), 0)
-  const filteredNeedsReview = filtered.filter(s => s.needsReview)
+  const filteredNeedsReview = sorted.filter(s => s.needsReview)
+
+  // §七: 摘要按醫生 × 診所分組
+  const confirmedGroups = useMemo(() => {
+    const map = new Map<string, { count: number; total: number; key: string }>()
+    for (const s of filteredConfirmed) {
+      const key = `${s.providerName ?? '未知'} · ${s.clinicName ?? '未知'}`
+      const entry = map.get(key)
+      if (entry) {
+        entry.count++
+        entry.total += Number(s.amount)
+      } else {
+        map.set(key, { count: 1, total: Number(s.amount), key })
+      }
+    }
+    return [...map.values()].sort((a, b) => b.total - a.total)
+  }, [filteredConfirmed])
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      {/* S6: 返回連結 */}
+      <a href="/payout" className="text-sm text-blue-600 hover:underline flex items-center gap-1 mb-4">
+        <ArrowLeft size={14} /> 返回醫生月結單
+      </a>
+
       <h1 className="text-2xl font-bold mb-6">2人SP補貼確認</h1>
 
       {/* R3: 篩選區 */}
@@ -169,13 +247,22 @@ export default function SpSubsidiesPage() {
             只顯示需覆核
           </label>
           <input placeholder="帳單編號" value={q} onChange={e => setQ(e.target.value)} className="w-40" />
+          {/* S8: 排序選擇 */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">排序</label>
+            <select value={sortBy} onChange={e => setSortBy(e.target.value as any)}>
+              <option value="review">需覆核優先</option>
+              <option value="date">日期（早→遲）</option>
+              <option value="amount">金額（大→細）</option>
+            </select>
+          </div>
         </div>
       </Card>
 
       {/* Summary bar — R3: 跟住篩選變 */}
-      {filtered.length > 0 && (
+      {sorted.length > 0 && (
         <div className="text-sm text-gray-600 mb-4">
-          {filtered.length} / {subsidies.length} 筆
+          {sorted.length} / {subsidies.length} 筆
           {' · '}{filteredWithSubsidy.length} 筆有補貼（合共 ${filteredTotalSubsidy}）
           {' · '}{filteredNeedsReview.length} 筆需覆核
         </div>
@@ -205,14 +292,14 @@ export default function SpSubsidiesPage() {
         </p>
       </Card>
 
-      {/* Unconfirmed list — R2: needsReview 琥珀邊框 */}
+      {/* Pending list — R2: needsReview 琥珀邊框 */}
       <Card className="p-4 mb-6">
-        <h2 className="font-semibold mb-3 text-orange-700">待確認 ({filteredUnconfirmed.length})</h2>
-        {filteredUnconfirmed.length === 0 && (
+        <h2 className="font-semibold mb-3 text-orange-700">待確認 ({filteredPending.length})</h2>
+        {filteredPending.length === 0 && (
           <p className="text-gray-500 text-sm">暫無待確認補貼</p>
         )}
         <div className="space-y-2">
-          {filteredUnconfirmed.map(s => (
+          {filteredPending.map(s => (
             <div key={s.id} className={`flex justify-between items-center border rounded p-3 ${s.needsReview ? 'border-amber-400 border-2' : ''}`}>
               <div className="text-sm">
                 <div className="font-medium">
@@ -228,7 +315,11 @@ export default function SpSubsidiesPage() {
                 <div className="text-gray-500">
                   原價 ${s.listPrice} → 優惠價 ${s.actualPrice} × {s.headcount}人 ({s.splitPercent}%)
                 </div>
-                <div className="text-gray-500">月份: {s.periodMonth} | 來源: {s.source}</div>
+                <div className="text-gray-500">
+                  月份: {s.periodMonth} | 來源: {s.source}
+                  {/* S1: hasMarker 顯示 */}
+                  {' · '}{s.hasMarker ? '✅ 2P1K 標記' : '⚠️ 冇標記（金額吻合）'}
+                </div>
                 {/* R2: needsReview 原因 */}
                 {s.needsReview && (
                   <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
@@ -258,23 +349,100 @@ export default function SpSubsidiesPage() {
         </div>
       </Card>
 
-      {/* Confirmed list — R3: 跟住篩選變 */}
-      <Card className="p-4">
-        <h2 className="font-semibold mb-3 text-green-700">已確認 ({filteredConfirmed.length})</h2>
+      {/* Confirmed list — S5: 完整資訊 + §七: 按醫生×診所分組 */}
+      <Card className="p-4 mb-6">
+        <h2 className="font-semibold mb-3 text-green-700">
+          已確認 ({filteredConfirmed.length}) · 合共 ${filteredConfirmed.reduce((sum, s) => sum + Number(s.amount), 0)}
+        </h2>
+        {/* §七: 按醫生 × 診所分組摘要 */}
+        {confirmedGroups.length > 0 && (
+          <div className="text-sm text-gray-500 mb-3 space-y-0.5">
+            {confirmedGroups.map(g => (
+              <div key={g.key}> {g.key} {g.count} 筆 ${g.total}</div>
+            ))}
+          </div>
+        )}
         {filteredConfirmed.length === 0 && (
           <p className="text-gray-500 text-sm">暫無已確認補貼</p>
         )}
-        <div className="space-y-1 text-sm">
+        <div className="space-y-2">
           {filteredConfirmed.map(s => (
-            <div key={s.id} className={`flex justify-between py-1 border-b last:border-0 ${s.needsReview ? 'border-amber-400 border-2 rounded mb-1' : ''}`}>
-              <span>{s.itemDes} ({s.periodMonth})</span>
-              <div className="flex items-center gap-2">
-                <span className="text-green-700 font-medium">${s.amount}</span>
-                {s.needsReview && (
-                  <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5">
-                    ⚠️ {spReviewReason(s)}
-                  </span>
+            <div key={s.id} className={`flex justify-between items-center border rounded p-3 ${s.needsReview ? 'border-amber-400 border-2' : ''}`}>
+              <div className="text-sm">
+                <div className="font-medium">
+                  {s.itemDes}
+                  {s.providerName && <> · {s.providerName}</>}
+                  {s.clinicName && <> · {s.clinicName}</>}
+                </div>
+                {(s.billCode || s.billTime) && (
+                  <div className="text-gray-500">
+                    帳單 {s.billCode ?? '—'} · {s.billTime ? new Date(s.billTime).toLocaleDateString('zh-HK') : '—'}
+                  </div>
                 )}
+                <div className="text-gray-500">
+                  原價 ${s.listPrice} → 優惠價 ${s.actualPrice}
+                </div>
+                {s.needsReview && (
+                  <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                    ⚠️ {spReviewReason(s)}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-bold text-green-700">${s.amount}</span>
+                {/* S4: 取消確認 */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleReset(s.id)}
+                >
+                  取消確認
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Skipped list */}
+      <Card className="p-4">
+        <h2 className="font-semibold mb-3 text-gray-500">已跳過 ({filteredSkipped.length})</h2>
+        {filteredSkipped.length === 0 && (
+          <p className="text-gray-500 text-sm">暫無已跳過補貼</p>
+        )}
+        <div className="space-y-2">
+          {filteredSkipped.map(s => (
+            <div key={s.id} className={`flex justify-between items-center border rounded p-3 ${s.needsReview ? 'border-amber-400 border-2' : ''}`}>
+              <div className="text-sm">
+                <div className="font-medium">
+                  {s.itemDes}
+                  {s.providerName && <> · {s.providerName}</>}
+                  {s.clinicName && <> · {s.clinicName}</>}
+                </div>
+                {(s.billCode || s.billTime) && (
+                  <div className="text-gray-500">
+                    帳單 {s.billCode ?? '—'} · {s.billTime ? new Date(s.billTime).toLocaleDateString('zh-HK') : '—'}
+                  </div>
+                )}
+                <div className="text-gray-500">
+                  原價 ${s.listPrice} → 優惠價 ${s.actualPrice}
+                </div>
+                {s.needsReview && (
+                  <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                    ⚠️ {spReviewReason(s)}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-bold text-gray-500">${s.amount}</span>
+                {/* S4: 取消跳過 */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleReset(s.id)}
+                >
+                  取消跳過
+                </Button>
               </div>
             </div>
           ))}

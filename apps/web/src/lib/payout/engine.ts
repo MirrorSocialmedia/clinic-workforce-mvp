@@ -219,7 +219,7 @@ export async function runGates(
       providerId,
       periodMonth,
       clinicId: null,
-      confirmedBy: { not: null },
+      status: 'CONFIRMED',
     },
   })
   if (orphanSp > 0) {
@@ -376,7 +376,7 @@ export async function computePayout(
   const spWhere: any = {
     providerId,
     periodMonth,
-    confirmedBy: { not: null },
+    status: 'CONFIRMED',
   }
   if (clinicId) spWhere.clinicId = clinicId
   const spSubsidyRecords = await prisma.spSubsidy.findMany({ where: spWhere })
@@ -613,7 +613,8 @@ async function pickListPrice(feeItemCode: string, billTime: Date): Promise<any |
  * Auto-detect 2-person SP subsidy opportunities from Apricot bill items.
  * ★ 2026-08-17: 加 clinicId 參數（optional）— 傳就只掃該店，唔傳就全部店。
  * ★ MD-K: Uses isSp2p flag (from remarks pattern 2p1k) + FeeItemListPrice table.
- * Returns candidates (source='AUTO', confirmedBy=null) for manual confirmation.
+ * ★ S1: Two-source detection — isSp2p OR price match from tracked codes.
+ * Returns candidates (source='AUTO', status='PENDING') for manual confirmation.
  *
  * 三態 needsReview:
  *   - listPrice ✅ + commission ✅ + actualUnit ≈ SP_2P1K_PER_PERSON → 正常候選
@@ -640,11 +641,23 @@ export async function scanSpSubsidies(
   }
   if (apricotClinicId) billWhere.clinicExtId = apricotClinicId
 
-  // ★ MD-K: Scan by isSp2p flag instead of feeItemDes + discount match
+  // S1: 該月生效嘅標準價清單
+  const priceRows = await prisma.feeItemListPrice.findMany({
+    where: {
+      effectiveFrom: { lte: monthEnd },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
+    },
+  })
+  const trackedCodes = [...new Set(priceRows.map(p => p.feeItemCode))]
+
+  // S1: 兩個來源 — isSp2p 標記 OR 標準價有記錄
   const items = await prisma.apricotBillItem.findMany({
     where: {
-      isSp2p: true,
       bill: billWhere,
+      OR: [
+        { isSp2p: true }, // A: remarks 有 2P1K
+        { feeItemCode: { in: trackedCodes } }, // B: 標準價有記錄
+      ],
     },
     include: { bill: true },
   })
@@ -682,13 +695,22 @@ export async function scanSpSubsidies(
     // 折後實收單價（直接填 500 或 580 打折扣都出 500）
     const actualUnit = round2(Number(item.ttlAmt) / qty)
 
-    // 三態 needsReview logic
+    // S1: 雙來源篩選
     const hasListPrice = listPriceNum != null
     const hasCommission = pct != null
     const priceMatches = Math.abs(actualUnit - SP_2P1K_PER_PERSON) < 0.01
 
+    // 兩個來源都唔中 → 唔係候選
+    if (!item.isSp2p && !priceMatches) continue
+
+    // S1: hasMarker — 有沒有 2P1K 備註標記
+    const hasMarker = item.isSp2p
+
     let amount: number
     let needsReview: boolean = false
+
+    // 冇標記但金額啱 → needsReview
+    needsReview = needsReview || !hasMarker
 
     if (!hasListPrice) {
       // 標準價揾唔到 → needsReview，唔出負數
@@ -706,7 +728,6 @@ export async function scanSpSubsidies(
     } else {
       // 正常候選
       amount = round2((listPriceNum - actualUnit) * (pct / 100) * qty)
-      needsReview = false
     }
 
     const actualPrice = actualUnit
@@ -733,11 +754,13 @@ export async function scanSpSubsidies(
       amount: new Prisma.Decimal(String(amount)),
       // source：唔好蓋走人手建立嘅
       ...(existing?.source === 'MANUAL' ? {} : { source: 'AUTO' }),
-      // 金額變咗先要重新確認
+      // S3: 金額變咗先要重新設定 PENDING；SKIPPED 唔覆蓋
       ...(existing ? (() => {
         const amountChanged = Number(existing.amount) !== amount
-        return amountChanged ? { confirmedBy: null } : {}
+        return amountChanged ? { status: 'PENDING', confirmedBy: null } : {}
       })() : {}),
+      // S1: hasMarker
+      hasMarker,
       needsReview,
       periodMonth,
     }
@@ -752,6 +775,7 @@ export async function scanSpSubsidies(
         data: {
           ...updateData,
           source: 'AUTO',
+          status: 'PENDING',
           confirmedBy: null,
         },
       })
@@ -767,7 +791,9 @@ export async function scanSpSubsidies(
       splitPercent: pct ?? 0,
       amount,
       needsReview,
+      hasMarker,
       source: 'AUTO',
+      status: existing?.lockedByRunId ? 'PENDING' : (existing ? existing.status : 'PENDING'),
       confirmedBy: null,
       periodMonth,
     })

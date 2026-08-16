@@ -1,5 +1,5 @@
 /**
- * POST /api/sp-subsidies/[id]/confirm — Confirm SP subsidy (OWNER / provider_payout)
+ * POST /api/sp-subsidies/[id]/reset — Reset SP subsidy to PENDING (OWNER / provider_payout)
  * // ownership-ok: provider_payout 權限限制
  */
 import { NextRequest, NextResponse } from 'next/server'
@@ -30,24 +30,24 @@ export async function POST(
 
   const updated = await prisma.spSubsidy.update({
     where: { id: params.id },
-    data: { status: 'CONFIRMED', confirmedBy: auth.session!.userId },
+    data: { status: 'PENDING', confirmedBy: null },
   })
 
   // Audit
   await prisma.auditLog.create({
     data: {
       actorId: auth.session!.userId,
-      action: 'SP_SUBSIDY_CONFIRM',
+      action: 'SP_SUBSIDY_RESET',
       entity: 'SpSubsidy',
       entityId: params.id,
-      notes: `確認 SP 補貼：${updated.itemDes} ${updated.periodMonth} $${Number(updated.amount)}`,
+      notes: `重置 SP 補貼：${updated.itemDes} ${updated.periodMonth} $${Number(updated.amount)}`,
       afterJson: JSON.stringify({
         providerId: updated.providerId,
         periodMonth: updated.periodMonth,
         amount: Number(updated.amount),
       }),
     },
-  }).catch((e: any) => console.error('[sp-subsidies] confirm audit failed', e))
+  }).catch((e: any) => console.error('[sp-subsidies] reset audit failed', e))
 
   return NextResponse.json({
     subsidy: {

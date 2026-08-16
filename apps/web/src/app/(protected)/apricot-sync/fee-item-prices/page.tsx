@@ -12,7 +12,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog'
-import { Loader2, Plus, Edit, AlertTriangle } from 'lucide-react'
+import { Loader2, Plus, Edit, AlertTriangle, ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 
@@ -117,6 +117,9 @@ export default function FeeItemPricesPage() {
 
   return (
     <div className="p-6 space-y-4">
+      <a href="/apricot-sync" className="text-sm text-blue-600 hover:underline flex items-center gap-1 mb-2">
+        <ArrowLeft size={14} /> 返回 Apricot 同步
+      </a>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">標準價目表</h1>

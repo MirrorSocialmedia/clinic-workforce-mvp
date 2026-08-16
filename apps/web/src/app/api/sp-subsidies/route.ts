@@ -21,7 +21,6 @@ export async function GET(req: NextRequest) {
 
   const subsidies = await prisma.spSubsidy.findMany({
     where,
-    orderBy: [{ needsReview: 'desc' }, { amount: 'desc' }, { periodMonth: 'desc' }],
   })
 
   // 批量補齊關聯（Promise.all + Map）
@@ -48,17 +47,26 @@ export async function GET(req: NextRequest) {
   const providerMap = new Map(providers.map(p => [p.id, p.name]))
   const clinicMap = new Map(clinics.map(c => [c.id, c.name]))
 
-  return NextResponse.json({
-    subsidies: subsidies.map(s => ({
-      ...s,
-      listPrice: Number(s.listPrice),
-      actualPrice: Number(s.actualPrice),
-      splitPercent: Number(s.splitPercent),
-      amount: Number(s.amount),
-      providerName: providerMap.get(s.providerId) ?? null,
-      clinicName: s.clinicId ? (clinicMap.get(s.clinicId) ?? null) : null,
-      billCode: s.billExtId ? billMap.get(s.billExtId)?.code ?? null : null,
-      billTime: s.billExtId ? billMap.get(s.billExtId)?.billTime ?? null : null,
-    })),
+  const enriched = subsidies.map(s => ({
+    ...s,
+    listPrice: Number(s.listPrice),
+    actualPrice: Number(s.actualPrice),
+    splitPercent: Number(s.splitPercent),
+    amount: Number(s.amount),
+    providerName: providerMap.get(s.providerId) ?? null,
+    clinicName: s.clinicId ? (clinicMap.get(s.clinicId) ?? null) : null,
+    billCode: s.billExtId ? billMap.get(s.billExtId)?.code ?? null : null,
+    billTime: s.billExtId ? billMap.get(s.billExtId)?.billTime ?? null : null,
+  }))
+
+  // S8: enrich 之後排序 — 預設：需覆核優先 → 日期（早→遲）→ billCode
+  enriched.sort((a, b) => {
+    if (a.needsReview !== b.needsReview) return a.needsReview ? -1 : 1
+    const ta = a.billTime ? new Date(a.billTime).getTime() : 0
+    const tb = b.billTime ? new Date(b.billTime).getTime() : 0
+    if (ta !== tb) return ta - tb
+    return (a.billCode ?? '').localeCompare(b.billCode ?? '')
   })
+
+  return NextResponse.json({ subsidies: enriched })
 }

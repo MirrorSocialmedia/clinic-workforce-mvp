@@ -338,6 +338,8 @@ export const CONFIG = {
     'GET /api/sp-subsidies': ['OWNER'],
     'POST /api/sp-subsidies/scan': ['OWNER'],
     'POST /api/sp-subsidies/:id/confirm': ['OWNER'],
+    'POST /api/sp-subsidies/:id/skip': ['OWNER'],
+    'POST /api/sp-subsidies/:id/reset': ['OWNER'],
     // ★ MD-E: 月報對數
     'GET /api/reconciliation': ['OWNER'],
     'POST /api/reconciliation/upload': ['OWNER'],
@@ -496,6 +498,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/sp-subsidies': ['provider_payout'],
   'POST /api/sp-subsidies/scan': ['provider_payout'],
   'POST /api/sp-subsidies/:id/confirm': ['provider_payout'],
+  'POST /api/sp-subsidies/:id/skip': ['provider_payout'],
+  'POST /api/sp-subsidies/:id/reset': ['provider_payout'],
   // ★ MD-E: 月報對數
   'GET /api/reconciliation': ['provider_payout'],
   'POST /api/reconciliation/upload': ['provider_payout'],

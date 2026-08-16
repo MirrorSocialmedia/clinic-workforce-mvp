@@ -12,7 +12,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog'
-import { Loader2, Plus, Edit, Save, X } from 'lucide-react'
+import { Loader2, Plus, Edit, Save, X, ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface Rule {
@@ -128,6 +128,9 @@ export default function PaymentMethodsPage() {
 
   return (
     <div className="space-y-6">
+      <a href="/apricot-sync" className="text-sm text-blue-600 hover:underline flex items-center gap-1 mb-2">
+        <ArrowLeft size={14} /> 返回 Apricot 同步
+      </a>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">付款方式規則</h1>
