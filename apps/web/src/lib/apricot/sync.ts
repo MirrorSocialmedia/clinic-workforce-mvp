@@ -203,9 +203,12 @@ export async function syncClinicForJob(
     return { cancelled: true, paymentsSynced: allPayments.length, billsChecked: 0, allocRows: 0 }
   }
 
-  // 2) upsert Payments
-  for (const p of allPayments) {
-    await upsertPayment(p, clinicExtId)
+  // 2) upsert Payments — ★ V4: 每 10 筆檢查 cancel
+  for (let idx = 0; idx < allPayments.length; idx++) {
+    if (idx % 10 === 0 && jobId && (await shouldCancel(jobId))) {
+      return { cancelled: true, paymentsSynced: allPayments.length, billsChecked: 0, allocRows: 0 }
+    }
+    await upsertPayment(allPayments[idx], clinicExtId)
   }
 
   // 3) 收集 billIds，cache check
@@ -222,8 +225,8 @@ export async function syncClinicForJob(
       isCurrentMonth(billTime)
 
     if (shouldFetch) {
-      // ★ MD-Q: 每張 bill 檢查 cancel
-      if (jobId && (await shouldCancel(jobId))) {
+      // ★ V4: 每 10 張 bill 檢查 cancel（唔好每張都 query DB）
+      if (billsChecked % 10 === 0 && jobId && (await shouldCancel(jobId))) {
         return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows: 0 }
       }
 
@@ -275,11 +278,12 @@ export async function syncClinicForJob(
   }
 
   let allocRows = 0
-  for (const p of allPayments) {
-    // ★ MD-Q: 每筆付款檢查 cancel
-    if (jobId && (await shouldCancel(jobId))) {
+  for (let idx = 0; idx < allPayments.length; idx++) {
+    // ★ V4: 每 10 筆付款檢查 cancel（唔好每筆都 query DB）
+    if (idx % 10 === 0 && jobId && (await shouldCancel(jobId))) {
       return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows }
     }
+    const p = allPayments[idx]
 
     const methods = (p.paymentMethods || []).map((m: any) => ({
       methodRaw: m.des ?? '',

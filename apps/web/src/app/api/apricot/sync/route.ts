@@ -156,8 +156,19 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  // 5) 背景執行 — 唔等完成
-  void runSyncInBackground(job.id, targets, fromISO, toISO)
+  // 5) 背景執行 — 唔等完成；加 .catch() 防止未預期錯誤令 job 永遠 RUNNING
+  void runSyncInBackground(job.id, targets, fromISO, toISO).catch(async (e: any) => {
+    console.error('[apricot/sync-bg] 未預期錯誤', e)
+    await prisma.apricotSyncJob.update({
+      where: { id: job.id },
+      data: {
+        status: 'FAILED',
+        errorMessage: String(e?.message ?? e).slice(0, 500),
+        currentStep: '未預期錯誤',
+        endedAt: new Date(),
+      },
+    }).catch(() => { /* job 都寫唔到就算 */ })
+  })
 
   // 6) 即刻回 jobId
   return NextResponse.json({ jobId: job.id })

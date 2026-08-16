@@ -85,7 +85,7 @@ export default function ApricotSyncPage() {
   // ★ MD-Q: Poll job progress
   const pollJob = useCallback(async (jobId: string) => {
     try {
-      const res = await fetch(`/api/apricot/sync/jobs/${jobId}`, { credentials: 'include' })
+      const res = await fetch(`/api/apricot/sync/jobs/${jobId}`, { credentials: 'include', cache: 'no-store' })
       if (!res.ok) return
       const data = await res.json()
       if (data.job) {
@@ -175,6 +175,7 @@ export default function ApricotSyncPage() {
       const res = await fetch(`/api/apricot/sync/jobs/${activeJob.id}`, {
         method: 'POST',
         credentials: 'include',
+        cache: 'no-store',
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
