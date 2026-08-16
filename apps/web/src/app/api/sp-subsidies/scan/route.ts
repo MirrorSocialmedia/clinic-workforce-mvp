@@ -10,13 +10,13 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({}))
-  const { periodMonth } = body
+  const { periodMonth, clinicId } = body
 
   if (!periodMonth) {
     return NextResponse.json({ error: 'periodMonth required' }, { status: 400 })
   }
 
-  const result = await scanSpSubsidies(periodMonth)
+  const result = await scanSpSubsidies(periodMonth, clinicId)
 
   return NextResponse.json({ candidates: result.candidates, count: result.candidates.length, skippedLocked: result.skippedLocked })
 }

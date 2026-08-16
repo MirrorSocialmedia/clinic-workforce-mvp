@@ -1142,6 +1142,7 @@ model ProviderReferral {
   id             String   @id @default(cuid())
   fromProviderId String   // 轉介出去嘅醫生（收 2% 嗰個）
   toProviderId   String?  // 接手嘅醫生
+  clinicId       String?  // ★ 診所快照（由被轉介張單解出）
   billExtId      String
   billCode       String
   billItemEleId  String   // 揀咗邊個項目
@@ -1164,6 +1165,7 @@ model ProviderReferral {
 model SpSubsidy {
   id           String   @id @default(cuid())
   providerId   String
+  clinicId     String?  // ★ 診所快照（由 bill 解出）
   billExtId    String
   billItemEleId String
   itemDes      String   // 'SCALING & POLISHING'
@@ -1182,10 +1184,11 @@ model SpSubsidy {
   @@index([providerId, periodMonth])
 }
 
-// 月結單 — 锁定後不可改
+// 月結單 — 鎖定後不可改；★ 粒度：醫生 × 診所 × 月
 model PayoutRun {
   id             String   @id @default(cuid())
   providerId     String
+  clinicId       String   // ★ 診所粒度
   periodMonth    String
   grossAmount    Decimal  @db.Decimal(12,2) // 扣手續費後
   rawAmount      Decimal  @db.Decimal(12,2) // 扣手續費前（對數用）
@@ -1206,7 +1209,8 @@ model PayoutRun {
 
   adjustments    PayoutAdjustment[]
 
-  @@unique([providerId, periodMonth])
+  @@unique([providerId, clinicId, periodMonth])
+  @@index([clinicId, periodMonth])
 }
 
 // 上期調整 — void 回沖 / 手動調整
@@ -1215,6 +1219,7 @@ model PayoutAdjustment {
   runId        String?  // 落喺邊個 run（null = 未指派）
   run          PayoutRun? @relation(fields: [runId], references: [id])
   providerId   String
+  clinicId     String?  // ★ 診所快照
   periodMonth  String   // 落喺邊個月
   sourceMonth  String   // 原本屬邊個月
   reason       String   // 'VOID' | 'REFUND' | 'MANUAL'
@@ -1233,6 +1238,7 @@ model ReconciliationImport {
   id           String   @id @default(cuid())
   providerId   String
   provider     Provider @relation(fields: [providerId], references: [id])
+  clinicId     String?  // ★ 診所粒度
   periodMonth  String
   fileName     String
   rowCount     Int

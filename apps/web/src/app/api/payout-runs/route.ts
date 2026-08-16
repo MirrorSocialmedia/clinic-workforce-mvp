@@ -15,10 +15,12 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const providerId = searchParams.get('providerId')
   const periodMonth = searchParams.get('periodMonth')
+  const clinicId = searchParams.get('clinicId')
 
   const where: any = {}
   if (providerId) where.providerId = providerId
   if (periodMonth) where.periodMonth = periodMonth
+  if (clinicId) where.clinicId = clinicId
 
   const runs = await prisma.payoutRun.findMany({
     where,
@@ -33,10 +35,19 @@ export async function GET(req: NextRequest) {
   })
   const providerMap = new Map(providers.map(p => [p.id, p]))
 
+  // ★ Fetch clinics for inclusion
+  const clinicIds = [...new Set(runs.map(r => r.clinicId).filter(Boolean))]
+  const clinics = await prisma.clinic.findMany({
+    where: { id: { in: clinicIds } },
+    select: { id: true, name: true, shortName: true },
+  })
+  const clinicMap = new Map(clinics.map(c => [c.id, c]))
+
   return jsonNoStore({
     runs: runs.map(r => ({
       ...r,
       provider: providerMap.get(r.providerId) || null,
+      clinic: clinicMap.get(r.clinicId) || null,
       grossAmount: Number(r.grossAmount),
       rawAmount: Number(r.rawAmount),
       labCost: Number(r.labCost),
@@ -58,16 +69,16 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({}))
-  const { providerId, periodMonth } = body
+  const { providerId, periodMonth, clinicId } = body
 
   if (!providerId || !periodMonth) {
     return NextResponse.json({ error: 'providerId and periodMonth required' }, { status: 400 })
   }
 
-  // Check if run already exists
-  const existing = await prisma.payoutRun.findUnique({
-    where: { providerId_periodMonth: { providerId, periodMonth } },
-  })
+  // ★ Check if run already exists (ternary key)
+  const whereKey: any = { providerId, periodMonth }
+  if (clinicId) whereKey.clinicId = clinicId
+  const existing = await prisma.payoutRun.findFirst({ where: whereKey })
   if (existing) {
     return NextResponse.json(
       { error: `月結單已存在 (${existing.status})` },
@@ -76,7 +87,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Run gates
-  const { errors, warnings } = await runGates(providerId, periodMonth)
+  const { errors, warnings } = await runGates(providerId, periodMonth, clinicId)
   if (errors.length > 0) {
     return NextResponse.json(
       { error: errors.join('\n'), errors, warnings },
@@ -87,7 +98,7 @@ export async function POST(req: NextRequest) {
   // Compute payout
   let payout: any
   try {
-    payout = await computePayout(providerId, periodMonth)
+    payout = await computePayout(providerId, periodMonth, clinicId)
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 400 })
   }
@@ -98,6 +109,7 @@ export async function POST(req: NextRequest) {
     periodMonth,
     payout,
     auth.session!.userId,
+    clinicId,
   )
 
   return NextResponse.json({

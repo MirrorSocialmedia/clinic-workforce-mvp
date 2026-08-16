@@ -10,14 +10,14 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({}))
-  const { providerId, periodMonth } = body
+  const { providerId, periodMonth, clinicId } = body
 
   if (!providerId || !periodMonth) {
     return NextResponse.json({ error: 'providerId and periodMonth required' }, { status: 400 })
   }
 
   // Run gates
-  const { errors, warnings } = await runGates(providerId, periodMonth)
+  const { errors, warnings } = await runGates(providerId, periodMonth, clinicId)
   if (errors.length > 0) {
     return NextResponse.json(
       { error: errors.join('\n'), errors, warnings },
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   // Compute
   let payout: any
   try {
-    payout = await computePayout(providerId, periodMonth)
+    payout = await computePayout(providerId, periodMonth, clinicId)
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 400 })
   }

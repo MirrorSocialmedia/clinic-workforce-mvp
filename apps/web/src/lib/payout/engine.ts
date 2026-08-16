@@ -3,6 +3,7 @@
  *
  * ★ 獨立模組，唔准 import payroll / timebank / prisma.employee
  * check-payout-boundary.sh 會攔
+ * ★ 2026-08-17: 粒度改為「醫生 × 診所 × 月」
  */
 
 import { Prisma, PaymentAllocation } from '@prisma/client'
@@ -55,6 +56,7 @@ function monthRange(periodMonth: string): [Date, Date] {
 
 /**
  * Pick the most applicable ProviderCommission for a given period.
+ * ★ 2026-08-17: 加 clinic 優先 — clinic 專屬 > null（通用）
  *
  * Rule: effectiveFrom <= month-end, AND (effectiveTo IS NULL OR effectiveTo >= month-start)
  * Tiebreaker: { id: 'desc' } 必須有
@@ -62,6 +64,7 @@ function monthRange(periodMonth: string): [Date, Date] {
 export async function pickCommission(
   providerId: string,
   periodMonth: string,
+  clinicId?: string,
 ): Promise<any | null> {
   const [monthStart, monthEnd] = monthRange(periodMonth)
 
@@ -74,8 +77,14 @@ export async function pickCommission(
         { effectiveTo: null },
         { effectiveTo: { gte: monthStart } },
       ],
+      ...(clinicId ? { clinicId: { in: [clinicId, null] } } : {}),
     },
-    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+    orderBy: [
+      ...(clinicId ? [{ clinicId: { sort: 'desc' as const, nulls: 'last' } as const }] : []),
+      { effectiveFrom: 'desc' },
+      { createdAt: 'desc' },
+      { id: 'desc' },
+    ],
   })
 
   return commission
@@ -89,15 +98,26 @@ interface GateErrors {
 }
 
 /**
- * Run 4 gates before payout computation.
+ * Run gates before payout computation.
+ * ★ 2026-08-17: 加 clinicId 參數，所有 gate 都收窄到該診所。
  * Throws on fatal errors; returns warnings for non-fatal issues.
  */
 export async function runGates(
   providerId: string,
   periodMonth: string,
+  clinicId?: string,
 ): Promise<GateErrors> {
   const errors: string[] = []
   const warnings: string[] = []
+
+  // Gate 0: 診所未對應 Apricot ID
+  if (clinicId) {
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
+    if (!clinic?.apricotClinicId) {
+      errors.push(`診所「${clinic?.name ?? clinicId}」未對應 Apricot ID，無法生成月結`)
+      return { errors, warnings }
+    }
+  }
 
   // Gate 1: Provider must have apricotId mapped
   const provider = await prisma.provider.findUnique({
@@ -118,13 +138,18 @@ export async function runGates(
       )
     } else {
       // Gate 1b②: 該月有冇 —— 答「今個月有冇收入」
-      const monthHit = await prisma.paymentAllocation.count({
-        where: {
-          ...ACTIVE_ALLOCATION,
-          providerExtId: provider.apricotId,
-          periodMonth,
-        },
-      })
+      const monthHitWhere: any = {
+        ...ACTIVE_ALLOCATION,
+        providerExtId: provider.apricotId,
+        periodMonth,
+      }
+      if (clinicId) {
+        const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
+        if (clinic?.apricotClinicId) {
+          monthHitWhere.clinicExtId = clinic.apricotClinicId
+        }
+      }
+      const monthHit = await prisma.paymentAllocation.count({ where: monthHitWhere })
       if (monthHit === 0) {
         warnings.push(`醫生「${provider.name}」喺 ${periodMonth} 冇任何付款記錄，Gross 將會係 $0`)
       }
@@ -132,48 +157,53 @@ export async function runGates(
   }
 
   // Gate 2: Must have an active commission for the period
-  const commission = await pickCommission(providerId, periodMonth)
+  const commission = await pickCommission(providerId, periodMonth, clinicId)
   if (!commission) {
     errors.push(`PAYOUT_NO_COMMISSION: 醫生 ${providerId} 喺 ${periodMonth} 無有效拆帳%設定`)
   }
 
   // Gate 3: No needsReview allocations allowed
-  const needsReviewCount = await prisma.paymentAllocation.count({
-    where: {
-      ...ACTIVE_ALLOCATION,
-      providerExtId: provider?.apricotId || '',
-      periodMonth,
-      needsReview: true,
-    },
-  })
+  const gate3Where: any = {
+    ...ACTIVE_ALLOCATION,
+    providerExtId: provider?.apricotId || '',
+    periodMonth,
+    needsReview: true,
+  }
+  if (clinicId) {
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
+    if (clinic?.apricotClinicId) {
+      gate3Where.clinicExtId = clinic.apricotClinicId
+    }
+  }
+  const needsReviewCount = await prisma.paymentAllocation.count({ where: gate3Where })
   if (needsReviewCount > 0) {
     errors.push(`有 ${needsReviewCount} 筆付款方式未設定費率，無法生成月結單`)
   }
 
   // Gate 4: Cost cases without baseCost (warning, not fatal)
-  const unpricedCount = await prisma.costCase.count({
-    where: {
-      providerId,
-      periodMonth,
-      status: { not: 'VOID' },
-      baseCost: null,
-    },
-  })
+  const gate4Where: any = {
+    providerId,
+    periodMonth,
+    status: { not: 'VOID' },
+    baseCost: null,
+  }
+  if (clinicId) gate4Where.clinicId = clinicId
+  const unpricedCount = await prisma.costCase.count({ where: gate4Where })
   if (unpricedCount > 0) {
     warnings.push(`${unpricedCount} 筆成本記錄未有報價，可覆寫但月結單會標註`)
   }
 
   // R5: 材料單價經人手覆寫的計數
-  const overriddenCount = await prisma.costCaseMaterial.count({
-    where: {
-      costCase: {
-        providerId,
-        periodMonth,
-        status: { not: 'VOID' },
-      },
-      isPriceOverridden: true,
+  const gate5Where: any = {
+    costCase: {
+      providerId,
+      periodMonth,
+      status: { not: 'VOID' },
     },
-  })
+    isPriceOverridden: true,
+  }
+  if (clinicId) gate5Where.costCase.clinicId = clinicId
+  const overriddenCount = await prisma.costCaseMaterial.count({ where: gate5Where })
   if (overriddenCount > 0) {
     warnings.push(`${overriddenCount} 筆材料單價經人手覆寫，請確認`)
   }
@@ -210,6 +240,7 @@ interface PayoutResult {
 
 /**
  * Compute the full payout for a provider in a given month.
+ * ★ 2026-08-17: 加 clinicId — 所有資料源收窄到該診所。
  *
  * Formula:
  *   ① Gross = Σ(PaymentAllocation.netAmount) excluding isVoid / isSuperseded / countAsIncome=false
@@ -224,6 +255,7 @@ interface PayoutResult {
 export async function computePayout(
   providerId: string,
   periodMonth: string,
+  clinicId?: string,
 ): Promise<PayoutResult> {
   const provider = await prisma.provider.findUnique({
     where: { id: providerId },
@@ -234,39 +266,53 @@ export async function computePayout(
 
   const warnings: string[] = []
 
+  // Resolve clinic Ext ID for PaymentAllocation
+  let apricotClinicId: string | null = null
+  if (clinicId) {
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
+    apricotClinicId = clinic?.apricotClinicId ?? null
+    if (!apricotClinicId) {
+      throw new Error(`診所「${clinic?.name ?? clinicId}」未對應 Apricot ID`)
+    }
+  }
+
   // ─── ① Gross from PaymentAllocation ─────────────────────────────────
-  const allocs = await prisma.paymentAllocation.findMany({
-    where: {
-      ...ACTIVE_ALLOCATION,
-      providerExtId: provider.apricotId,
-      periodMonth,
-      countAsIncome: true,
-    },
-  })
+  const allocWhere: any = {
+    ...ACTIVE_ALLOCATION,
+    providerExtId: provider.apricotId,
+    periodMonth,
+    countAsIncome: true,
+  }
+  if (apricotClinicId) allocWhere.clinicExtId = apricotClinicId
+
+  const allocs = await prisma.paymentAllocation.findMany({ where: allocWhere })
 
   const rawAmount = round2(sum(allocs.map((a: PaymentAllocation) => Number(a.amount))))
   const grossAmount = round2(sum(allocs.map((a: PaymentAllocation) => Number(a.netAmount))))
 
   // ─── ② Costs (three categories) ──────────────────────────────────────
+  const costWhere: any = {
+    providerId,
+    periodMonth,
+    status: { not: 'VOID' },
+    finalCost: { not: null },
+  }
+  if (clinicId) costWhere.clinicId = clinicId
+
   const costs = await prisma.costCase.findMany({
-    where: {
-      providerId,
-      periodMonth,
-      status: { not: 'VOID' },
-      finalCost: { not: null },
-    },
+    where: costWhere,
     include: { materials: true },
   })
 
   // Check for unpriced cases (warning)
-  const unpricedCount = await prisma.costCase.count({
-    where: {
-      providerId,
-      periodMonth,
-      status: { not: 'VOID' },
-      baseCost: null,
-    },
-  })
+  const unpricedWhere: any = {
+    providerId,
+    periodMonth,
+    status: { not: 'VOID' },
+    baseCost: null,
+  }
+  if (clinicId) unpricedWhere.clinicId = clinicId
+  const unpricedCount = await prisma.costCase.count({ where: unpricedWhere })
   if (unpricedCount > 0) {
     warnings.push(`${unpricedCount} 筆成本記錄未有報價`)
   }
@@ -279,7 +325,7 @@ export async function computePayout(
   const profitAmount = round2(grossAmount - labCost - implantCost - invisalignCost)
 
   // ─── ④ Salary = Profit × 拆帳% ───────────────────────────────────────
-  const commission = await pickCommission(providerId, periodMonth)
+  const commission = await pickCommission(providerId, periodMonth, clinicId)
   if (!commission) {
     throw new Error('PAYOUT_NO_COMMISSION')
   }
@@ -287,32 +333,32 @@ export async function computePayout(
   const salaryAmount = round2(profitAmount * percentUsed / 100)
 
   // ─── ⑤ SP Subsidy (confirmed only, after ×%, full amount) ────────────
-  const spSubsidyRecords = await prisma.spSubsidy.findMany({
-    where: {
-      providerId,
-      periodMonth,
-      confirmedBy: { not: null },
-    },
-  })
+  const spWhere: any = {
+    providerId,
+    periodMonth,
+    confirmedBy: { not: null },
+  }
+  if (clinicId) spWhere.clinicId = clinicId
+  const spSubsidyRecords = await prisma.spSubsidy.findMany({ where: spWhere })
   const spSubsidy = round2(sum(spSubsidyRecords.map((x: any) => Number(x.amount))))
 
   // ─── ⑥ Referral (full amount) ────────────────────────────────────────
-  const refRecords = await prisma.providerReferral.findMany({
-    where: {
-      fromProviderId: providerId,
-      periodMonth,
-    },
-  })
+  const refWhere: any = {
+    fromProviderId: providerId,
+    periodMonth,
+  }
+  if (clinicId) refWhere.clinicId = clinicId
+  const refRecords = await prisma.providerReferral.findMany({ where: refWhere })
   const refAmount = round2(sum(refRecords.map((x: any) => Number(x.amount))))
 
   // ─── ⑦ Adjustments (unassigned only) ─────────────────────────────────
-  const adjustments = await prisma.payoutAdjustment.findMany({
-    where: {
-      providerId,
-      periodMonth,
-      runId: null,
-    },
-  })
+  const adjustWhere: any = {
+    providerId,
+    periodMonth,
+    runId: null,
+  }
+  if (clinicId) adjustWhere.clinicId = clinicId
+  const adjustments = await prisma.payoutAdjustment.findMany({ where: adjustWhere })
   const adjustAmount = round2(sum(adjustments.map((x: any) => Number(x.amount))))
 
   // ─── Total ────────────────────────────────────────────────────────────
@@ -349,18 +395,21 @@ export async function computePayout(
 
 /**
  * Lock a payout run: creates PayoutRun + locks related records.
+ * ★ 2026-08-17: 加 clinicId 參數。
  */
 export async function lockPayoutRun(
   providerId: string,
   periodMonth: string,
   payout: PayoutResult,
   createdBy: string,
+  clinicId?: string,
 ): Promise<any> {
   return await basePrisma.$transaction(async (tx: any) => {
     // a. Create PayoutRun with LOCKED status
     const run = await tx.payoutRun.create({
       data: {
         providerId,
+        clinicId: clinicId || '',
         periodMonth,
         grossAmount: new Prisma.Decimal(String(payout.grossAmount)),
         rawAmount: new Prisma.Decimal(String(payout.rawAmount)),
@@ -382,26 +431,51 @@ export async function lockPayoutRun(
     })
 
     // b. Lock CostCase
+    const lockCostWhere: any = {
+      providerId,
+      periodMonth,
+      status: { not: 'VOID' },
+      lockedByRunId: null,
+    }
+    if (clinicId) lockCostWhere.clinicId = clinicId
     await tx.costCase.updateMany({
-      where: { providerId, periodMonth, status: { not: 'VOID' }, lockedByRunId: null },
+      where: lockCostWhere,
       data: { lockedByRunId: run.id },
     })
 
     // c. Lock ProviderReferral
+    const lockRefWhere: any = {
+      fromProviderId: providerId,
+      periodMonth,
+      lockedByRunId: null,
+    }
+    if (clinicId) lockRefWhere.clinicId = clinicId
     await tx.providerReferral.updateMany({
-      where: { fromProviderId: providerId, periodMonth, lockedByRunId: null },
+      where: lockRefWhere,
       data: { lockedByRunId: run.id },
     })
 
     // d. Lock SpSubsidy
+    const lockSpWhere: any = {
+      providerId,
+      periodMonth,
+      lockedByRunId: null,
+    }
+    if (clinicId) lockSpWhere.clinicId = clinicId
     await tx.spSubsidy.updateMany({
-      where: { providerId, periodMonth, lockedByRunId: null },
+      where: lockSpWhere,
       data: { lockedByRunId: run.id },
     })
 
     // e. Assign unassigned PayoutAdjustment
+    const lockAdjWhere: any = {
+      providerId,
+      periodMonth,
+      runId: null,
+    }
+    if (clinicId) lockAdjWhere.clinicId = clinicId
     await tx.payoutAdjustment.updateMany({
-      where: { providerId, periodMonth, runId: null },
+      where: lockAdjWhere,
       data: { runId: run.id },
     })
 
@@ -412,9 +486,10 @@ export async function lockPayoutRun(
         action: 'PAYOUT_RUN_LOCK',
         entity: 'PayoutRun',
         entityId: run.id,
-        notes: `鎖定月結單：${periodMonth}`,
+        notes: `鎖定月結單：${periodMonth}${clinicId ? ` · 診所 ${clinicId}` : ''}`,
         afterJson: JSON.stringify({
           providerId,
+          clinicId,
           periodMonth,
           totalAmount: payout.totalAmount,
         }),
@@ -496,6 +571,7 @@ async function pickListPrice(feeItemCode: string, billTime: Date): Promise<any |
 
 /**
  * Auto-detect 2-person SP subsidy opportunities from Apricot bill items.
+ * ★ 2026-08-17: 加 clinicId 參數（optional）— 傳就只掃該店，唔傳就全部店。
  * ★ MD-K: Uses isSp2p flag (from remarks pattern 2p1k) + FeeItemListPrice table.
  * Returns candidates (source='AUTO', confirmedBy=null) for manual confirmation.
  *
@@ -504,17 +580,31 @@ async function pickListPrice(feeItemCode: string, billTime: Date): Promise<any |
  *   - listPrice ✅ + commission ✅ + unitPrice !== 500 → needsReview（金額對唔上）
  *   - listPrice 揾唔到 → needsReview（唔出負數，amount=0）
  */
-export async function scanSpSubsidies(periodMonth: string): Promise<{ candidates: any[]; skippedLocked: number }> {
+export async function scanSpSubsidies(
+  periodMonth: string,
+  clinicId?: string,
+): Promise<{ candidates: any[]; skippedLocked: number }> {
   const [monthStart, monthEnd] = monthRange(periodMonth)
+
+  // Resolve clinic Ext ID if clinicId is provided
+  let apricotClinicId: string | null = null
+  if (clinicId) {
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
+    apricotClinicId = clinic?.apricotClinicId ?? null
+  }
+
+  // Build bill where clause
+  const billWhere: any = {
+    billTime: { gte: monthStart, lte: monthEnd },
+    isVoid: false,
+  }
+  if (apricotClinicId) billWhere.clinicExtId = apricotClinicId
 
   // ★ MD-K: Scan by isSp2p flag instead of feeItemDes + discount match
   const items = await prisma.apricotBillItem.findMany({
     where: {
       isSp2p: true,
-      bill: {
-        billTime: { gte: monthStart, lte: monthEnd },
-        isVoid: false,
-      },
+      bill: billWhere,
     },
     include: { bill: true },
   })
@@ -531,8 +621,17 @@ export async function scanSpSubsidies(periodMonth: string): Promise<{ candidates
 
     if (!provider) continue
 
+    // Resolve clinic from bill's clinicExtId
+    const billClinic = apricotClinicId
+      ? null // already filtered
+      : bill.clinicExtId
+        ? await prisma.clinic.findFirst({
+            where: { apricotClinicId: bill.clinicExtId },
+          })
+        : null
+
     // F5: Fetch per-provider split% from commission
-    const commission = await pickCommission(provider.id, periodMonth)
+    const commission = await pickCommission(provider.id, periodMonth, billClinic?.id)
     const pct = commission ? Number(commission.percent) : null
 
     // ★ MD-K: Pick list price from FeeItemListPrice table
@@ -580,50 +679,46 @@ export async function scanSpSubsidies(periodMonth: string): Promise<{ candidates
     // R4: 已出月結，唔准動
     if (existing?.lockedByRunId) { skippedLocked++; continue }
 
+    // Build update data
+    const updateData: any = {
+      providerId: provider.id,
+      clinicId: billClinic?.id || null,
+      billExtId: bill.extId,
+      itemDes: item.feeItemDes,
+      listPrice: new Prisma.Decimal(String(listPriceUsed)),
+      actualPrice: new Prisma.Decimal(String(actualPrice)),
+      headcount: qty,
+      splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
+      amount: new Prisma.Decimal(String(amount)),
+      // source：唔好蓋走人手建立嘅
+      ...(existing?.source === 'MANUAL' ? {} : { source: 'AUTO' }),
+      // 金額變咗先要重新確認
+      ...(existing ? (() => {
+        const amountChanged = Number(existing.amount) !== amount
+        return amountChanged ? { confirmedBy: null } : {}
+      })() : {}),
+      needsReview,
+      periodMonth,
+    }
+
     if (existing) {
-      // R2: 金額冇變就保留確認；MANUAL source 唔好蓋成 AUTO
-      const amountChanged = Number(existing.amount) !== amount
       await prisma.spSubsidy.update({
         where: { billItemEleId: item.eleId },
-        data: {
-          providerId: provider.id,
-          billExtId: bill.extId,
-          itemDes: item.feeItemDes,
-          listPrice: new Prisma.Decimal(String(listPriceUsed)),
-          actualPrice: new Prisma.Decimal(String(actualPrice)),
-          headcount: qty,
-          splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
-          amount: new Prisma.Decimal(String(amount)),
-          // source：唔好蓋走人手建立嘅
-          ...(existing.source === 'MANUAL' ? {} : { source: 'AUTO' }),
-          // 金額變咗先要重新確認
-          ...(amountChanged ? { confirmedBy: null } : {}),
-          needsReview,
-          periodMonth,
-        },
+        data: updateData,
       })
     } else {
       await prisma.spSubsidy.create({
         data: {
-          providerId: provider.id,
-          billExtId: bill.extId,
-          billItemEleId: item.eleId,
-          itemDes: item.feeItemDes,
-          listPrice: new Prisma.Decimal(String(listPriceUsed)),
-          actualPrice: new Prisma.Decimal(String(actualPrice)),
-          headcount: qty,
-          splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
-          amount: new Prisma.Decimal(String(amount)),
+          ...updateData,
           source: 'AUTO',
           confirmedBy: null,
-          needsReview,
-          periodMonth,
         },
       })
     }
 
     candidates.push({
       providerId: provider.id,
+      clinicId: billClinic?.id || null,
       itemDes: item.feeItemDes,
       listPrice: listPriceUsed,
       actualPrice,
@@ -655,10 +750,12 @@ export async function createVoidAdjustment(
   refCode: string | null,
   note: string,
   createdBy: string,
+  clinicId?: string,
 ): Promise<any> {
   return await prisma.payoutAdjustment.create({
     data: {
       providerId,
+      clinicId: clinicId || null,
       periodMonth: targetMonth,
       sourceMonth: originalMonth,
       reason,

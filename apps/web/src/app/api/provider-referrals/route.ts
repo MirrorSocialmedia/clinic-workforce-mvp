@@ -64,14 +64,32 @@ export async function POST(req: NextRequest) {
   const qtyNum = qty ?? 1
   const amount = Number(((Number(unitPrice) * qtyNum * refPercentNum / 100).toFixed(2)))
 
-  // Check if already locked
-  const existingRun = await prisma.payoutRun.findFirst({
-    where: {
-      providerId: fromProviderId,
-      periodMonth,
-      status: 'LOCKED',
-    },
-  })
+  // ★ Resolve clinicId from bill
+  let clinicId: string | null = null
+  try {
+    const bill = await prisma.apricotBill.findUnique({
+      where: { extId: billExtId },
+      select: { clinicExtId: true },
+    })
+    if (bill?.clinicExtId) {
+      const clinic = await prisma.clinic.findFirst({
+        where: { apricotClinicId: bill.clinicExtId },
+        select: { id: true },
+      })
+      clinicId = clinic?.id || null
+    }
+  } catch (e) {
+    console.error('[provider-referrals] failed to resolve clinic from bill', e)
+  }
+
+  // Check if already locked (ternary key)
+  const whereKey: any = {
+    providerId: fromProviderId,
+    periodMonth,
+    status: 'LOCKED',
+  }
+  if (clinicId) whereKey.clinicId = clinicId
+  const existingRun = await prisma.payoutRun.findFirst({ where: whereKey })
   if (existingRun) {
     return NextResponse.json(
       { error: `該月已出月結 (${existingRun.periodMonth})，無法新增轉介` },
@@ -83,6 +101,7 @@ export async function POST(req: NextRequest) {
     data: {
       fromProviderId,
       toProviderId: toProviderId || null,
+      clinicId,
       billExtId,
       billCode: billCode || '',
       billItemEleId,

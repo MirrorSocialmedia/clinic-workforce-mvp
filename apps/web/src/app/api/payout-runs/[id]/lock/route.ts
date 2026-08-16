@@ -32,43 +32,51 @@ export async function POST(
     })
 
     // Lock CostCase
+    const lockCostWhere: any = {
+      providerId: run.providerId,
+      periodMonth: run.periodMonth,
+      status: { not: 'VOID' },
+      lockedByRunId: null,
+    }
+    if (run.clinicId) lockCostWhere.clinicId = run.clinicId
     await tx.costCase.updateMany({
-      where: {
-        providerId: run.providerId,
-        periodMonth: run.periodMonth,
-        status: { not: 'VOID' },
-        lockedByRunId: null,
-      },
+      where: lockCostWhere,
       data: { lockedByRunId: updated.id },
     })
 
     // Lock ProviderReferral
+    const lockRefWhere: any = {
+      fromProviderId: run.providerId,
+      periodMonth: run.periodMonth,
+      lockedByRunId: null,
+    }
+    if (run.clinicId) lockRefWhere.clinicId = run.clinicId
     await tx.providerReferral.updateMany({
-      where: {
-        fromProviderId: run.providerId,
-        periodMonth: run.periodMonth,
-        lockedByRunId: null,
-      },
+      where: lockRefWhere,
       data: { lockedByRunId: updated.id },
     })
 
     // Lock SpSubsidy
+    const lockSpWhere: any = {
+      providerId: run.providerId,
+      periodMonth: run.periodMonth,
+      lockedByRunId: null,
+    }
+    if (run.clinicId) lockSpWhere.clinicId = run.clinicId
     await tx.spSubsidy.updateMany({
-      where: {
-        providerId: run.providerId,
-        periodMonth: run.periodMonth,
-        lockedByRunId: null,
-      },
+      where: lockSpWhere,
       data: { lockedByRunId: updated.id },
     })
 
     // Assign unassigned adjustments
+    const lockAdjWhere: any = {
+      providerId: run.providerId,
+      periodMonth: run.periodMonth,
+      runId: null,
+    }
+    if (run.clinicId) lockAdjWhere.clinicId = run.clinicId
     await tx.payoutAdjustment.updateMany({
-      where: {
-        providerId: run.providerId,
-        periodMonth: run.periodMonth,
-        runId: null,
-      },
+      where: lockAdjWhere,
       data: { runId: updated.id },
     })
 

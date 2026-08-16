@@ -26,18 +26,22 @@ export async function GET(
     select: { id: true, name: true, shortName: true },
   })
 
+  const clinic = run.clinicId
+    ? await prisma.clinic.findUnique({
+        where: { id: run.clinicId },
+        select: { id: true, name: true, shortName: true },
+      })
+    : null
+
   const adjustments = await prisma.payoutAdjustment.findMany({
     where: { runId: params.id },
   })
-
-  if (!run) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
 
   return NextResponse.json({
     run: {
       ...run,
       provider,
+      clinic,
       grossAmount: Number(run.grossAmount),
       rawAmount: Number(run.rawAmount),
       labCost: Number(run.labCost),
