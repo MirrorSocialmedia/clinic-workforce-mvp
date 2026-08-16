@@ -22,6 +22,7 @@ interface CostCase {
   itemType: string | null
   itemTypeOther: string | null
   labId: string | null
+  labOther: string | null
   labOrderNo: string | null
   dsaName: string | null
   baseCost: number | null
@@ -176,6 +177,7 @@ export default function CostEntryPage() {
     appointmentAt: '',
     labId: '',
     labOrderNo: '',
+    labOther: '',
   })
   const [savingCost, setSavingCost] = useState(false)
 
@@ -346,7 +348,7 @@ export default function CostEntryPage() {
     setCostForm({
       category: 'LAB', itemType: '', itemTypeOther: '', orderedAt: todayHK(),
       dsaName: '', baseCost: '', discountPct: '',
-      receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '',
+      receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '', labOther: '',
     })
     setPickerOpen(true)
   }
@@ -445,6 +447,7 @@ export default function CostEntryPage() {
       appointmentAt: '',
       labId: '',
       labOrderNo: '',
+      labOther: '',
     })
 
     // Load DSA employees
@@ -484,7 +487,8 @@ export default function CostEntryPage() {
         orderedAt: costForm.orderedAt || todayHK(),
         itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther?.trim() || 'Others') : (costForm.itemType || null),
         itemTypeOther: costForm.itemType === 'Others' ? costForm.itemTypeOther || null : null,
-        labId: costForm.labId || null,
+        labId: costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId,
+        labOther: costForm.labId === '__OTHERS__' ? (costForm.labOther.trim() || null) : null,
         labOrderNo: costForm.labOrderNo || null,
         dsaName: costForm.dsaName || null,
         baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
@@ -994,14 +998,26 @@ export default function CostEntryPage() {
                     <label className="block text-sm mb-1">Lab</label>
                     <select
                       value={costForm.labId}
-                      onChange={e => setCostForm({ ...costForm, labId: e.target.value })}
+                      onChange={e => {
+                        const val = e.target.value
+                        setCostForm({ ...costForm, labId: val, labOther: val === '__OTHERS__' ? costForm.labOther : '' })
+                      }}
                       className="w-full border rounded px-2 py-1.5 text-sm"
                     >
                       <option value="">（不選）</option>
                       {labs.map((lab: any) => (
                         <option key={lab.id} value={lab.id}>{lab.name}</option>
                       ))}
+                      <option value="__OTHERS__">其他（自行輸入）</option>
                     </select>
+                    {costForm.labId === '__OTHERS__' && (
+                      <input
+                        value={costForm.labOther}
+                        onChange={e => setCostForm({ ...costForm, labOther: e.target.value })}
+                        className="w-full border rounded px-2 py-1.5 text-sm mt-1"
+                        placeholder="工場名稱"
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm mb-1">Lab 單號</label>

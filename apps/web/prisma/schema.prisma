@@ -952,6 +952,7 @@ model CostCase {
   itemTypeOther String?  // Others 時嘅自由輸入
   labId         String?
   lab           Lab?     @relation(fields: [labId], references: [id])
+  labOther      String?  // ★ H5: 揀 Others 時嘅自由輸入
   labOrderNo    String?
   dsaName       String?
   baseCost      Decimal? @db.Decimal(12,2) // ★ nullable = 未有價

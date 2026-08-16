@@ -57,13 +57,19 @@ export async function GET(req: NextRequest) {
   // Group by lab
   const labGroups: Record<string, { count: number; total: number }> = {}
   for (const c of cases) {
+    let key: string | null = null
     if (c.lab) {
-      const key = c.lab.name
-      if (!labGroups[key]) labGroups[key] = { count: 0, total: 0 }
-      labGroups[key].count++
-      const fc = c.finalCost ? Number(c.finalCost) : 0
-      labGroups[key].total += fc
+      key = c.lab.name
+    } else if (c.labOther) {
+      key = `other:${c.labOther}`
+    } else if (c.labId === null) {
+      // skip — no lab selected
     }
+    if (!key) continue
+    if (!labGroups[key]) labGroups[key] = { count: 0, total: 0 }
+    labGroups[key].count++
+    const fc = c.finalCost ? Number(c.finalCost) : 0
+    labGroups[key].total += fc
   }
 
   // Serialize Decimal fields for JSON
@@ -106,7 +112,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const {
     providerId, clinicId, category, patientCode, patientName,
-    orderedAt, itemType, itemTypeOther, labId, labOrderNo, dsaName,
+    orderedAt, itemType, itemTypeOther, labId, labOther, labOrderNo, dsaName,
     baseCost, discountPct, receivedAt, appointmentAt,
     billExtId, billCode, billItemEleId, // ★ MD-F
   } = body
@@ -149,6 +155,7 @@ export async function POST(req: NextRequest) {
       itemType: itemType || null,
       itemTypeOther: itemTypeOther || null,
       labId: labId || null,
+      labOther: labOther || null,
       labOrderNo: labOrderNo || null,
       dsaName: dsaName || null,
       baseCost: baseCostNum != null ? baseCostNum : null,

@@ -22,6 +22,19 @@ export default function ApricotSyncPage() {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [clinicId, setClinicId] = useState('')
+  const [clinics, setClinics] = useState<any[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  // ★ H3: Load clinics for dropdown
+  useEffect(() => {
+    fetch('/api/clinics', { credentials: 'include' })
+      .then(r => r.json())
+      .then((d: any) => setClinics(d.clinics || []))
+      .catch(e => { console.error('[apricot-sync] load clinics failed', e); setLoadError('診所名單載入失敗') })
+  }, [])
+
+  const syncable = clinics.filter(c => c.apricotClinicId)
+  const unboundCount = clinics.length - syncable.length
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -41,8 +54,8 @@ export default function ApricotSyncPage() {
   }, [fetchStatus])
 
   const handleSync = async () => {
-    if (!clinicId || !fromDate || !toDate) {
-      toast.error('請填齊 clinicId、起始日期、結束日期')
+    if (!fromDate || !toDate) {
+      toast.error('請填齊起始日期、結束日期')
       return
     }
 
@@ -53,7 +66,7 @@ export default function ApricotSyncPage() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          clinicId,
+          clinicId: clinicId || null,
           from: `${fromDate}T00:00:00+08:00`,
           to: `${toDate}T23:59:59+08:00`,
         }),
@@ -63,7 +76,11 @@ export default function ApricotSyncPage() {
         throw new Error(data.error || `HTTP ${res.status}`)
       }
       const data = await res.json()
-      toast.success(`同步完成：${data.paymentsSynced} payments, ${data.billsChecked} bills`)
+      if (data.clinics != null) {
+        toast.success(`同步完成：${data.clinics} 間診所，共 ${data.results?.length ?? 0} 筆結果`)
+      } else {
+        toast.success(`同步完成：${data.paymentsSynced} payments, ${data.billsChecked} bills`)
+      }
       fetchStatus()
     } catch (e: any) {
       toast.error(`同步失敗: ${e.message}`)
@@ -165,14 +182,22 @@ export default function ApricotSyncPage() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Clinic ID</label>
-              <input
-                type="text"
+              <label className="block text-sm text-gray-500 mb-1">診所</label>
+              <select
                 value={clinicId}
                 onChange={e => setClinicId(e.target.value)}
                 className="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Apricot clinic ID"
-              />
+              >
+                <option value="">全部診所（{syncable.length} 間）</option>
+                {syncable.map(c => (
+                  <option key={c.id} value={c.apricotClinicId}>{c.name}</option>
+                ))}
+              </select>
+              {unboundCount > 0 && (
+                <p className="text-xs text-amber-700 mt-1">
+                  ⚠️ {unboundCount} 間診所未綁 Apricot ID，唔會同步
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm text-gray-500 mb-1">起始日期</label>
