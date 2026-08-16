@@ -3,29 +3,41 @@
 /**
  * MD-D: Payout Runs List — 月結單列表
  * OWNER / provider_payout 權限
+ * ★ 2026-08-17: 粒度改為「醫生 × 診所 × 月」
  */
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Eye, Lock, FileText, Users, Share2 } from 'lucide-react'
+import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 interface PayoutRun {
   id: string
   providerId: string
+  clinicId: string
   periodMonth: string
   status: string
   totalAmount: number
   provider: { name: string; shortName?: string | null }
+  clinic: { name: string; shortName?: string | null } | null
+}
+
+interface ClinicOption {
+  id: string
+  name: string
+  shortName?: string | null
+  source: 'PROVIDER_CLINIC' | 'ALLOCATION' | 'REFERRAL'
 }
 
 export default function PayoutRunsPage() {
   const [runs, setRuns] = useState<PayoutRun[]>([])
   const [loading, setLoading] = useState(true)
-  const [providers, setProviders] = useState<{ id: string; name: string }[]>([])
+  const [providers, setProviders] = useState<{ id: string; name: string; apricotId?: string | null }[]>([])
   const [selectedProvider, setSelectedProvider] = useState('')
+  const [selectedClinic, setSelectedClinic] = useState('')
+  const [availableClinics, setAvailableClinics] = useState<ClinicOption[]>([])
   const [selectedMonth, setSelectedMonth] = useState('')
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
@@ -39,11 +51,24 @@ export default function PayoutRunsPage() {
   const [generating, setGenerating] = useState(false)
   const [previewWarnings, setPreviewWarnings] = useState<string[]>([])
 
+  // 「有收入但未生成」提示
+  const [uncoveredClinics, setUncoveredClinics] = useState<ClinicOption[]>([])
+
   useEffect(() => {
     loadRuns()
     loadProviders()
     loadMe()
   }, [])
+
+  useEffect(() => {
+    if (selectedProvider && selectedMonth) {
+      loadAvailableClinics(selectedProvider, selectedMonth)
+    } else {
+      setAvailableClinics([])
+      setSelectedClinic('')
+      setUncoveredClinics([])
+    }
+  }, [selectedProvider, selectedMonth])
 
   async function loadMe() {
     try {
@@ -76,6 +101,30 @@ export default function PayoutRunsPage() {
     }
   }
 
+  /** 載入某醫生在某月可用的診所列表 + 未覆蓋診所 */
+  async function loadAvailableClinics(providerId: string, periodMonth: string) {
+    try {
+      const res = await apiFetch<any>('/api/payout-runs/clinics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId, periodMonth }),
+      })
+      setAvailableClinics(res.clinics || [])
+      setUncoveredClinics(res.uncoveredClinics || [])
+      // 如果有選中的診所且還在列表中，保留；否則清空
+      if (selectedClinic && res.clinics?.some((c: ClinicOption) => c.id === selectedClinic)) {
+        // keep
+      } else if (res.clinics?.length > 0 && !selectedClinic) {
+        setSelectedClinic(res.clinics[0].id)
+      } else {
+        setSelectedClinic('')
+      }
+    } catch (e) {
+      console.error('Failed to load clinics', e)
+      setAvailableClinics([])
+    }
+  }
+
   async function handlePreview() {
     if (!selectedProvider || !selectedMonth) {
       alert('請選擇醫生和月份')
@@ -89,6 +138,7 @@ export default function PayoutRunsPage() {
         body: JSON.stringify({
           providerId: selectedProvider,
           periodMonth: selectedMonth,
+          clinicId: selectedClinic || undefined,
         }),
       })
       setPreviewData(res)
@@ -120,11 +170,16 @@ export default function PayoutRunsPage() {
         body: JSON.stringify({
           providerId: selectedProvider,
           periodMonth: selectedMonth,
+          clinicId: selectedClinic || undefined,
         }),
       })
       alert(`月結單已生成 (總額: $${res.run.totalAmount})`)
       setShowPreview(false)
       loadRuns()
+      // 重新載入診所列表
+      if (selectedProvider && selectedMonth) {
+        loadAvailableClinics(selectedProvider, selectedMonth)
+      }
     } catch (e: any) {
       if (e.status === 409) {
         alert(`月結單已存在`)
@@ -136,6 +191,11 @@ export default function PayoutRunsPage() {
     } finally {
       setGenerating(false)
     }
+  }
+
+  // Group runs by provider+month for the "uncovered" display
+  function getRunsByProviderMonth(providerId: string, month: string): PayoutRun[] {
+    return runs.filter(r => r.providerId === providerId && r.periodMonth === month)
   }
 
   if (loading) return <div className="p-6">載入中...</div>
@@ -183,6 +243,23 @@ export default function PayoutRunsPage() {
               </select>
             </div>
             <div>
+              <label className="block text-sm text-gray-600 mb-1">診所</label>
+              <select
+                className="border rounded px-3 py-2 w-48"
+                value={selectedClinic}
+                onChange={e => setSelectedClinic(e.target.value)}
+                disabled={!selectedProvider || !selectedMonth || availableClinics.length === 0}
+              >
+                <option value="">選擇診所</option>
+                {availableClinics.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.shortName || c.name}
+                    {c.source === 'ALLOCATION' ? ' (付款)' : c.source === 'REFERRAL' ? ' (轉介)' : ' (綁定)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="block text-sm text-gray-600 mb-1">月份</label>
               <Input
                 type="month"
@@ -205,6 +282,39 @@ export default function PayoutRunsPage() {
               {generating ? '生成中...' : '生成並鎖定'}
             </Button>
           </div>
+
+          {/* 「有收入但未生成」提示 */}
+          {selectedProvider && selectedMonth && uncoveredClinics.length > 0 && (
+            <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+              <div className="font-semibold mb-1">
+                {selectedMonth} · {providers.find(p => p.id === selectedProvider)?.name}
+              </div>
+              {(() => {
+                const coveredClinicIds = new Set(
+                  getRunsByProviderMonth(selectedProvider, selectedMonth).map(r => r.clinicId)
+                )
+                const covered = uncoveredClinics.filter(c => coveredClinicIds.has(c.id))
+                const notCovered = uncoveredClinics.filter(c => !coveredClinicIds.has(c.id))
+                if (covered.length === 0 && notCovered.length === 0) return null
+                return (
+                  <div className="mt-1 space-y-0.5">
+                    {covered.map(c => (
+                      <div key={c.id} className="flex items-center gap-1 text-green-700">
+                        <CheckCircle2 size={12} />
+                        <span>{c.shortName || c.name} — 已鎖定</span>
+                      </div>
+                    ))}
+                    {notCovered.map(c => (
+                      <div key={c.id} className="flex items-center gap-1 text-amber-700">
+                        <AlertTriangle size={12} />
+                        <span>{c.shortName || c.name} — 有收入但未生成月結</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          )}
         </Card>
       )}
 
@@ -262,7 +372,9 @@ export default function PayoutRunsPage() {
           <Card key={run.id} className="p-4 flex justify-between items-center">
             <div>
               <div className="font-semibold">
-                {run.provider?.shortName || run.provider?.name} — {run.periodMonth}
+                {run.provider?.shortName || run.provider?.name}
+                {run.clinic ? ` · ${run.clinic.shortName || run.clinic.name}` : ''}
+                {' · '}{run.periodMonth}
               </div>
               <div className="text-sm text-gray-500">
                 總額: ${run.totalAmount.toFixed(2)}
