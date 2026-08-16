@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { RefreshCw, AlertTriangle, Database, Loader2, ChevronDown, ChevronRight } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Database, Loader2, Square, CheckCircle2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface PerClinicStatus {
@@ -15,28 +15,29 @@ interface PerClinicStatus {
   latestPaidAt: string | null
 }
 
-interface ReviewDetail {
-  paymentExtId: string
-  billExtId: string
-  providerExtId: string | null
-  clinicExtId: string
-  paidAt: string
-  methodNorm: string
-  amount: number
-  billCode: string | null
-  billTime: string | null
-  providerName: string | null
-  clinicName: string | null
-}
-
 interface SyncStatus {
   lastSyncedAt: string | null
   unknownMethods: string[]
   needsReviewCount: number
-  reviewDetails: ReviewDetail[]
   totalPayments: number
   totalBills: number
   perClinic: PerClinicStatus[]
+}
+
+interface SyncJob {
+  id: string
+  status: string
+  totalClinics: number
+  doneClinics: number
+  paymentsSynced: number
+  billsChecked: number
+  allocRows: number
+  currentStep: string | null
+  cancelRequested: boolean
+  errorMessage: string | null
+  startedAt: string
+  endedAt: string | null
+  createdBy: string
 }
 
 export default function ApricotSyncPage() {
@@ -48,7 +49,10 @@ export default function ApricotSyncPage() {
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [reviewExpanded, setReviewExpanded] = useState(false)
+
+  // ★ MD-Q: Job progress state
+  const [activeJob, setActiveJob] = useState<SyncJob | null>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ★ H3: Load clinics for dropdown
   useEffect(() => {
@@ -59,8 +63,7 @@ export default function ApricotSyncPage() {
   }, [])
 
   const syncable = clinics.filter(c => c.apricotClinicId)
-  const unboundClinics = clinics.filter(c => !c.apricotClinicId)
-  const unboundCount = unboundClinics.length
+  const unboundCount = clinics.length - syncable.length
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -78,6 +81,48 @@ export default function ApricotSyncPage() {
   useEffect(() => {
     fetchStatus()
   }, [fetchStatus])
+
+  // ★ MD-Q: Poll job progress
+  const pollJob = useCallback(async (jobId: string) => {
+    try {
+      const res = await fetch(`/api/apricot/sync/jobs/${jobId}`, { credentials: 'include' })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.job) {
+        setActiveJob(data.job)
+
+        // Terminal states: stop polling
+        if (['DONE', 'FAILED', 'CANCELLED'].includes(data.job.status)) {
+          setSyncing(false)
+          if (pollTimerRef.current) {
+            clearInterval(pollTimerRef.current)
+            pollTimerRef.current = null
+          }
+
+          if (data.job.status === 'DONE') {
+            toast.success('同步完成')
+            fetchStatus()
+          } else if (data.job.status === 'FAILED') {
+            toast.error(`同步失敗: ${data.job.errorMessage || '未知錯誤'}`)
+          } else if (data.job.status === 'CANCELLED') {
+            toast.info('同步已停止')
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[apricot-sync] poll job failed', e)
+    }
+  }, [fetchStatus])
+
+  // ★ MD-Q: Stop polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+    }
+  }, [])
 
   const handleSync = async () => {
     if (!fromDate || !toDate) {
@@ -97,23 +142,65 @@ export default function ApricotSyncPage() {
           to: `${toDate}T23:59:59+08:00`,
         }),
       })
+
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
+        if (res.status === 409 && data.jobId) {
+          // 已有 job 進行中，直接開始 poll
+          setActiveJob(null)
+          pollJob(data.jobId)
+          pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
+          toast.info('已有同步任務進行中，顯示進度...')
+          return
+        }
         throw new Error(data.error || `HTTP ${res.status}`)
       }
+
       const data = await res.json()
-      if (data.clinics != null) {
-        toast.success(`同步完成：${data.clinics} 間診所，共 ${data.results?.length ?? 0} 筆結果`)
-      } else {
-        toast.success(`同步完成：${data.paymentsSynced} payments, ${data.billsChecked} bills`)
+      if (data.jobId) {
+        // ★ MD-Q: 即刻開始 poll
+        pollJob(data.jobId)
+        pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
+        toast.info('同步已開始，請留意進度...')
       }
-      fetchStatus()
     } catch (e: any) {
       toast.error(`同步失敗: ${e.message}`)
-    } finally {
       setSyncing(false)
     }
   }
+
+  const handleCancel = async () => {
+    if (!activeJob) return
+    try {
+      const res = await fetch(`/api/apricot/sync/jobs/${activeJob.id}`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || '取消失敗')
+      }
+      toast.info('已發送停止指令...')
+    } catch (e: any) {
+      toast.error(`取消失敗: ${e.message}`)
+    }
+  }
+
+  // ★ MD-Q: 計算用時
+  const formatDuration = (startedAt: string, endedAt: string | null) => {
+    const start = new Date(startedAt).getTime()
+    const end = endedAt ? new Date(endedAt).getTime() : Date.now()
+    const seconds = Math.floor((end - start) / 1000)
+    if (seconds < 60) return `${seconds} 秒`
+    const minutes = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return secs > 0 ? `${minutes} 分鐘 ${secs} 秒` : `${minutes} 分鐘`
+  }
+
+  // ★ MD-Q: 進度條寬度
+  const progressPercent = activeJob
+    ? activeJob.totalClinics > 0 ? Math.round((activeJob.doneClinics / activeJob.totalClinics) * 100) : 0
+    : 0
 
   if (loading) {
     return (
@@ -176,14 +263,6 @@ export default function ApricotSyncPage() {
         </Card>
       </div>
 
-      {/* Unbound Clinic Warning */}
-      {clinics.length > 0 && unboundClinics.length > 0 && (
-        <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3 mb-4">
-          ⚠️ {unboundClinics.map(c => c.name).join('、')} 未綁 Apricot ID，
-          唔會同步、亦唔會出月結單
-        </div>
-      )}
-
       {/* Per-Clinic Status (I3) */}
       {status && status.perClinic && status.perClinic.length > 0 && (
         <Card>
@@ -229,7 +308,7 @@ export default function ApricotSyncPage() {
         </Card>
       )}
 
-      {/* Unknown Methods + needsReview 明細 */}
+      {/* Unknown Methods */}
       {status && status.unknownMethods.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
@@ -239,39 +318,114 @@ export default function ApricotSyncPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap gap-2 mb-3">
+            <div className="flex flex-wrap gap-2">
               {status.unknownMethods.map(m => (
                 <Badge key={m} variant="outline" className="text-yellow-700 border-yellow-300 bg-yellow-50">
                   {m}
                 </Badge>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
 
-            {/* Expandable review details */}
-            {status.reviewDetails && status.reviewDetails.length > 0 && (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setReviewExpanded(!reviewExpanded)}
-                  className="flex items-center gap-1 text-sm text-yellow-700 hover:text-yellow-900 font-medium"
-                >
-                  {reviewExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  {status.reviewDetails.length} 筆明細
-                </button>
-                {reviewExpanded && (
-                  <div className="mt-2 space-y-1 text-sm">
-                    {status.reviewDetails.map((r, i) => (
-                      <div key={`${r.billExtId}-${i}`} className="text-gray-700 py-1 border-b last:border-0">
-                        {r.paidAt ? new Date(r.paidAt).toLocaleDateString('zh-HK') : '—'}
-                        {' · '}{r.providerName ?? '—'}
-                        {' · '}{r.clinicName ?? '—'}
-                        {' · 帳單 '}{r.billCode ?? '—'}
-                        {' · '}{r.methodNorm}
-                        {' · $'}{r.amount.toLocaleString()}
-                      </div>
-                    ))}
+      {/* ★ MD-Q: Progress Card */}
+      {activeJob && (
+        <Card className={
+          activeJob.status === 'DONE' ? 'border-green-300 bg-green-50' :
+          activeJob.status === 'FAILED' ? 'border-red-300 bg-red-50' :
+          activeJob.status === 'CANCELLED' ? 'border-amber-300 bg-amber-50' :
+          'border-blue-300 bg-blue-50'
+        }>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              {activeJob.status === 'RUNNING' && <Loader2 size={16} className="animate-spin text-blue-500" />}
+              {activeJob.status === 'DONE' && <CheckCircle2 size={16} className="text-green-500" />}
+              {activeJob.status === 'FAILED' && <XCircle size={16} className="text-red-500" />}
+              {activeJob.status === 'CANCELLED' && <Square size={16} className="text-amber-500" />}
+
+              {activeJob.status === 'RUNNING' && '同步進行中'}
+              {activeJob.status === 'DONE' && '同步完成'}
+              {activeJob.status === 'FAILED' && '同步失敗'}
+              {activeJob.status === 'CANCELLED' && '已停止'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {activeJob.status === 'RUNNING' && (
+              <div className="space-y-3">
+                {/* Clinic progress */}
+                <div className="text-sm font-medium">
+                  診所 {activeJob.doneClinics} / {activeJob.totalClinics}
+                </div>
+
+                {/* Progress bar */}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                  <span className="text-sm font-mono text-gray-600 w-12 text-right">{progressPercent}%</span>
+                </div>
+
+                {/* Current step */}
+                {activeJob.currentStep && (
+                  <div className="text-sm text-gray-600">
+                    目前：{activeJob.currentStep}
                   </div>
                 )}
+
+                {/* Synced counts */}
+                <div className="text-sm text-gray-700">
+                  已同步 付款 {activeJob.paymentsSynced.toLocaleString()} · 帳單 {activeJob.billsChecked.toLocaleString()} · 分配 {activeJob.allocRows.toLocaleString()}
+                </div>
+
+                {/* Cancel button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCancel}
+                  className="gap-2 text-amber-700 border-amber-300 hover:bg-amber-100"
+                >
+                  <Square size={14} />
+                  停止同步（已同步嘅資料會保留）
+                </Button>
+              </div>
+            )}
+
+            {activeJob.status === 'DONE' && (
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-green-700">
+                  ✅ 同步完成 · {activeJob.doneClinics} 間診所 · 用時 {formatDuration(activeJob.startedAt, activeJob.endedAt)}
+                </div>
+                <div className="text-sm text-green-600">
+                  付款 {activeJob.paymentsSynced.toLocaleString()} · 帳單 {activeJob.billsChecked.toLocaleString()} · 分配 {activeJob.allocRows.toLocaleString()}
+                </div>
+              </div>
+            )}
+
+            {activeJob.status === 'FAILED' && (
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-red-700">
+                  ❌ 同步失敗 · 完成 {activeJob.doneClinics} / {activeJob.totalClinics} 間
+                </div>
+                {activeJob.errorMessage && (
+                  <div className="text-sm text-red-600">{activeJob.errorMessage}</div>
+                )}
+                <div className="text-xs text-red-500">★ 已同步嘅資料會保留</div>
+              </div>
+            )}
+
+            {activeJob.status === 'CANCELLED' && (
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-amber-700">
+                  ⚠️ 已停止 · 完成 {activeJob.doneClinics} / {activeJob.totalClinics} 間
+                </div>
+                <div className="text-sm text-amber-600">
+                  付款 {activeJob.paymentsSynced.toLocaleString()} · 帳單 {activeJob.billsChecked.toLocaleString()} · 分配 {activeJob.allocRows.toLocaleString()}
+                </div>
+                <div className="text-xs text-amber-500">★ 已同步嘅資料會保留</div>
               </div>
             )}
           </CardContent>
@@ -293,7 +447,8 @@ export default function ApricotSyncPage() {
               <select
                 value={clinicId}
                 onChange={e => setClinicId(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={syncing}
+                className="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 <option value="">全部診所（{syncable.length} 間）</option>
                 {syncable.map(c => (
@@ -312,7 +467,8 @@ export default function ApricotSyncPage() {
                 type="date"
                 value={fromDate}
                 onChange={e => setFromDate(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={syncing}
+                className="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               />
             </div>
             <div>
@@ -321,7 +477,8 @@ export default function ApricotSyncPage() {
                 type="date"
                 value={toDate}
                 onChange={e => setToDate(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={syncing}
+                className="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               />
             </div>
             <Button

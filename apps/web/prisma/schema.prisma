@@ -1232,6 +1232,28 @@ model PayoutAdjustment {
   @@index([providerId, periodMonth])
 }
 
+// ★ MD-Q: Apricot Sync Job — async sync progress tracking
+model ApricotSyncJob {
+  id              String   @id @default(cuid())
+  clinicExtId     String?  // null = 全部診所
+  fromDate        DateTime
+  toDate          DateTime
+  status          String   @default("RUNNING") // RUNNING | DONE | FAILED | CANCELLED
+  totalClinics    Int      @default(1)
+  doneClinics     Int      @default(0)
+  paymentsSynced  Int      @default(0)
+  billsChecked    Int      @default(0)
+  allocRows       Int      @default(0)
+  currentStep     String?  // '拉付款 第 3 頁' / '拉帳單 45/120'
+  cancelRequested Boolean  @default(false)
+  errorMessage    String?
+  startedAt       DateTime @default(now())
+  endedAt         DateTime?
+  createdBy       String
+
+  @@index([status])
+}
+
 // ★ MD-E: Monthly Payment Report Reconciliation (月報對數)
 // 月報 xlsx → Apricot 官方嘅數（裁判） vs 你系統嘅數（主資料）
 model ReconciliationImport {

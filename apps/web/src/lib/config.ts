@@ -312,6 +312,9 @@ export const CONFIG = {
     // ★ MD-C: Apricot Payment / Bill Sync
     'POST /api/apricot/sync': ['OWNER'],
     'POST /api/apricot/sync/cron': ['OWNER'], // ★ cron 專用，實際用 x-cron-key 認證
+    'GET /api/apricot/sync/jobs': ['OWNER', 'MANAGER'],
+    'GET /api/apricot/sync/jobs/:id': ['OWNER', 'MANAGER'],
+    'POST /api/apricot/sync/jobs/:id': ['OWNER'],
     'GET /api/apricot/status': ['OWNER', 'MANAGER'],
     'GET /api/payment-method-rules': ['OWNER', 'MANAGER'],
     'POST /api/payment-method-rules': ['OWNER'],

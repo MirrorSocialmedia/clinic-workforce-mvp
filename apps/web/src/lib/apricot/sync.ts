@@ -6,6 +6,22 @@ import { sanitizePayment, sanitizeBill, assertNoPii } from './sanitize'
 import { normalizeMethod } from './normalize'
 import { allocatePayment, upsertAllocations } from './allocate'
 
+// ─── MD-Q: Job helpers ─────────────────────────────────────────────
+
+export async function shouldCancel(jobId: string): Promise<boolean> {
+  const job = await prisma.apricotSyncJob.findUnique({
+    where: { id: jobId },
+    select: { cancelRequested: true },
+  })
+  return !!job?.cancelRequested
+}
+
+export async function updateJob(jobId: string, data: Partial<any>) {
+  await prisma.apricotSyncJob.update({ where: { id: jobId }, data })
+}
+
+// ─── Core helpers (unchanged) ──────────────────────────────────────
+
 /** 判斷 dateTime 是否為 HK 當月 */
 function isCurrentMonth(dt: Date | string): boolean {
   const d = typeof dt === 'string' ? new Date(dt) : dt
@@ -129,7 +145,164 @@ async function upsertBill(b: any) {
   })
 }
 
-/** 主同步入口 — 被 withApricotLock 包起 */
+// ─── Sync for a single clinic (used by background job) ─────────────
+
+/** 同步一間診所，支援 shouldCancel 檢查。傳入 jobId 用於追蹤進度。 */
+export async function syncClinicForJob(
+  clinicExtId: string,
+  fromISO: string,
+  toISO: string,
+  jobId?: string,
+) {
+  const startUtc = new Date(fromISO)
+  const endUtc = new Date(toISO)
+  if (isNaN(+startUtc) || isNaN(+endUtc)) {
+    throw new Error(`APRICOT_BAD_DATE_RANGE: from=${fromISO} to=${toISO}`)
+  }
+  const startValue = startUtc.toISOString()
+  const endValue = endUtc.toISOString()
+
+  // 1) 分頁拉 payments
+  let page = 0
+  const allPayments: any[] = []
+
+  do {
+    // ★ MD-Q: 每頁檢查 cancel
+    if (jobId && (await shouldCancel(jobId))) {
+      return { cancelled: true, paymentsSynced: allPayments.length, billsChecked: 0, allocRows: 0 }
+    }
+
+    if (jobId) {
+      await updateJob(jobId, { currentStep: `拉付款 第 ${page + 1} 頁` })
+    }
+
+    const list: any[] = await apricotCall(
+      `/services/aepsmsbill/api/payments/search?page=${page}&size=100&sort=desc&keyword=&clinicId=${clinicExtId}&sortBy=paymentTime`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          params: [
+            { key: 'startDate', value: startValue },
+            { key: 'endDate', value: endValue },
+          ],
+        }),
+      },
+    )
+
+    const sanitized = (list || []).map(sanitizePayment)
+    sanitized.forEach(p => assertNoPii(p))
+    allPayments.push(...sanitized)
+
+    if ((list || []).length < 100) break
+    page++
+    if (page > 50) { console.error('[apricot] 分頁過多，中止'); break }
+  } while (true)
+
+  // ★ MD-Q: 拉完付款檢查 cancel
+  if (jobId && (await shouldCancel(jobId))) {
+    return { cancelled: true, paymentsSynced: allPayments.length, billsChecked: 0, allocRows: 0 }
+  }
+
+  // 2) upsert Payments
+  for (const p of allPayments) {
+    await upsertPayment(p, clinicExtId)
+  }
+
+  // 3) 收集 billIds，cache check
+  const billIds = collectBillIds(allPayments)
+  let billsChecked = 0
+
+  for (const billId of billIds) {
+    const existing = await prisma.apricotBill.findUnique({ where: { extId: billId } })
+    const billTime = existing?.billTime || new Date()
+    const shouldFetch =
+      !existing ||
+      !existing.syncedAt ||
+      (new Date().getTime() - existing.syncedAt.getTime()) > 7 * 24 * 3600 * 1000 ||
+      isCurrentMonth(billTime)
+
+    if (shouldFetch) {
+      // ★ MD-Q: 每張 bill 檢查 cancel
+      if (jobId && (await shouldCancel(jobId))) {
+        return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows: 0 }
+      }
+
+      if (jobId) {
+        await updateJob(jobId, { currentStep: `拉帳單 ${billsChecked + 1}/${billIds.length}` })
+      }
+
+      const rawBill = await apricotCall(`/services/aepsmsbill/api/bills/${billId}`)
+      const sanitized = sanitizeBill(rawBill)
+      assertNoPii(sanitized)
+      await upsertBill(sanitized)
+    }
+    billsChecked++
+  }
+
+  // ★ MD-Q: 拉完 bill 檢查 cancel
+  if (jobId && (await shouldCancel(jobId))) {
+    return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows: 0 }
+  }
+
+  // 4) 重算 allocation
+  const billIdsTouched = [...new Set(allPayments.flatMap((p: any) =>
+    (p.refList || []).map((r: any) => r.billId)))]
+
+  const globalRefs = await prisma.apricotPaymentRef.findMany({
+    where: { billExtId: { in: billIdsTouched } },
+    select: { billExtId: true },
+  })
+
+  const from = new Date(startValue)
+  const to = new Date(endValue)
+  const allRules = await prisma.paymentMethodRule.findMany({
+    where: {
+      effectiveFrom: { lte: to },
+      OR: [
+        { effectiveTo: null },
+        { effectiveTo: { gte: from } },
+      ],
+    },
+  })
+
+  const billCache = new Map<string, any>()
+  for (const bid of billIdsTouched) {
+    const b = await prisma.apricotBill.findUnique({
+      where: { extId: bid },
+      include: { items: true },
+    })
+    if (b) billCache.set(bid, b)
+  }
+
+  let allocRows = 0
+  for (const p of allPayments) {
+    // ★ MD-Q: 每筆付款檢查 cancel
+    if (jobId && (await shouldCancel(jobId))) {
+      return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows }
+    }
+
+    const methods = (p.paymentMethods || []).map((m: any) => ({
+      methodRaw: m.des ?? '',
+      methodNorm: normalizeMethod(m.des ?? ''),
+      amount: m.amt ?? 0,
+      payType: m.payType ?? '',
+    }))
+    const refs = (p.refList || []).map((r: any) => ({
+      billExtId: r.billId,
+      billCode: r.billCode,
+      amount: r.amt ?? 0,
+    }))
+    if (!refs.length) continue
+
+    const rows = await allocatePayment(p, methods, refs, billCache, clinicExtId, globalRefs, allRules)
+    await upsertAllocations(rows.map(r => ({ ...r, isVoid: !!p.isVoid })))
+    allocRows += rows.length
+  }
+
+  return { cancelled: false, paymentsSynced: allPayments.length, billsChecked, allocRows }
+}
+
+/** 舊版入口 — 被 withApricotLock 包起，保持原有同步行為 */
 export async function syncPayments(clinicExtId: string, fromISO: string, toISO: string) {
   // ★ H1: 唔理 caller 送咩格式（+08:00 / 裸日期 / Z），一律轉成 Apricot 收嘅 UTC Z
   const startUtc = new Date(fromISO)

@@ -2,9 +2,99 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { syncPayments } from '@/lib/apricot/sync'
+import { syncClinicForJob, shouldCancel, updateJob } from '@/lib/apricot/sync'
+import { withApricotLock } from '@/lib/apricot/lock'
 
-/** POST /api/apricot/sync — 手動觸發同步（OWNER only） */
+/** 清理殭屍 job：RUNNING + 超過 1 小時 → FAILED */
+async function cleanZombieJobs() {
+  await prisma.apricotSyncJob.updateMany({
+    where: {
+      status: 'RUNNING',
+      startedAt: { lt: new Date(Date.now() - 60 * 60 * 1000) },
+    },
+    data: { status: 'FAILED', errorMessage: '逾時或程序中斷', endedAt: new Date() },
+  })
+}
+
+/** 背景執行同步 — 被 withApricotLock 包起，支援 cancel */
+async function runSyncInBackground(
+  jobId: string,
+  targets: string[],
+  fromISO: string,
+  toISO: string,
+) {
+  // 順序執行，唔准 Promise.all — 每次 call 可能 rotate token
+  let totalPayments = 0
+  let totalBills = 0
+  let totalAllocs = 0
+
+  await withApricotLock(async () => {
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i]
+
+      // 檢查 cancel
+      if (await shouldCancel(jobId)) {
+        await updateJob(jobId, {
+          status: 'CANCELLED',
+          doneClinics: i,
+          paymentsSynced: totalPayments,
+          billsChecked: totalBills,
+          allocRows: totalAllocs,
+          currentStep: '已停止',
+          endedAt: new Date(),
+        })
+        return
+      }
+
+      await updateJob(jobId, {
+        currentStep: `診所 ${i + 1}/${targets.length}：${t}`,
+      })
+
+      try {
+        const r = await syncClinicForJob(t, fromISO, toISO, jobId)
+        if (r.cancelled) {
+          return // shouldCancel 已經處理咗 job status
+        }
+        totalPayments += r.paymentsSynced
+        totalBills += r.billsChecked
+        totalAllocs += r.allocRows
+
+        await updateJob(jobId, {
+          doneClinics: i + 1,
+          paymentsSynced: totalPayments,
+          billsChecked: totalBills,
+          allocRows: totalAllocs,
+        })
+      } catch (e: any) {
+        console.error(`[apricot/sync-bg] 診所 ${t} 失敗`, e)
+        await updateJob(jobId, {
+          status: 'FAILED',
+          doneClinics: i,
+          paymentsSynced: totalPayments,
+          billsChecked: totalBills,
+          allocRows: totalAllocs,
+          errorMessage: e.message || 'sync failed',
+          currentStep: `診所 ${t} 失敗`,
+          endedAt: new Date(),
+        })
+        return
+      }
+    }
+
+    // All done
+    await updateJob(jobId, {
+      status: 'DONE',
+      doneClinics: targets.length,
+      paymentsSynced: totalPayments,
+      billsChecked: totalBills,
+      allocRows: totalAllocs,
+      currentStep: '完成',
+      endedAt: new Date(),
+    })
+  })
+}
+
+/** POST /api/apricot/sync — 建立 job + 背景執行（OWNER only） */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, req.method, req.url)
   if (isAuthError(auth)) return auth.error
@@ -16,10 +106,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'from, to required' }, { status: 400 })
   }
 
-  // ★ H4: 留空 = 全部有綁 apricotClinicId 的診所
+  // 1) Clean zombie jobs
+  await cleanZombieJobs()
+
+  // 2) 檢查是否有 RUNNING job
+  const runningJob = await prisma.apricotSyncJob.findFirst({
+    where: { status: 'RUNNING' },
+    orderBy: { startedAt: 'desc' },
+  })
+  if (runningJob) {
+    return NextResponse.json(
+      { error: '已有同步任務進行中', jobId: runningJob.id },
+      { status: 409 },
+    )
+  }
+
+  // 3) 解析 target clinics
+  const userId = auth.session.userId
+  const fromISO = from
+  const toISO = to
+
   let targets: string[]
+  let clinicExtId: string | null = null
+
   if (clinicId) {
     targets = [clinicId]
+    clinicExtId = clinicId
   } else {
     const cs = await prisma.clinic.findMany({
       where: { apricotClinicId: { not: null } },
@@ -32,25 +144,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const results: any[] = []
-  try {
-    // ★ 順序執行，唔准 Promise.all — 每次 call 可能 rotate token
-    for (const t of targets) {
-      const r = await syncPayments(t, from, to)
-      if (r === null) {
-        return NextResponse.json(
-          { error: '同步被鎖定（已有 call 進行中）', partial: results },
-          { status: 409 },
-        )
-      }
-      results.push({ clinicExtId: t, ...r })
-    }
-    return NextResponse.json({ success: true, clinics: results.length, results })
-  } catch (e: any) {
-    console.error('[apricot/sync] 失敗', e)
-    return NextResponse.json(
-      { error: e.message || 'sync failed', done: results.length, partial: results },
-      { status: 500 },
-    )
-  }
+  // 4) 建 job 記錄
+  const job = await prisma.apricotSyncJob.create({
+    data: {
+      clinicExtId,
+      fromDate: new Date(fromISO),
+      toDate: new Date(toISO),
+      totalClinics: targets.length,
+      createdBy: userId,
+      currentStep: '準備中',
+    },
+  })
+
+  // 5) 背景執行 — 唔等完成
+  void runSyncInBackground(job.id, targets, fromISO, toISO)
+
+  // 6) 即刻回 jobId
+  return NextResponse.json({ jobId: job.id })
 }
