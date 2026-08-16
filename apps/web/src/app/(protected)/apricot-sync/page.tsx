@@ -293,10 +293,14 @@ export default function ApricotSyncPage() {
       </Card>
 
       {/* Links */}
-      <div className="flex gap-4">
+      <div className="flex gap-4 flex-wrap">
         <a href="/apricot-sync/payment-methods" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
           <Database size={14} />
           付款方式規則設定
+        </a>
+        <a href="/apricot-sync/fee-item-prices" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+          <Database size={14} />
+          項目標準價設定
         </a>
       </div>
     </div>

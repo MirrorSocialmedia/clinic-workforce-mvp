@@ -9,7 +9,7 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Eye, Lock, FileText } from 'lucide-react'
+import { Plus, Eye, Lock, FileText, Users, Share2 } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 interface PayoutRun {
@@ -37,6 +37,7 @@ export default function PayoutRunsPage() {
   const [previewData, setPreviewData] = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [previewWarnings, setPreviewWarnings] = useState<string[]>([])
 
   useEffect(() => {
     loadRuns()
@@ -91,6 +92,7 @@ export default function PayoutRunsPage() {
         }),
       })
       setPreviewData(res)
+      setPreviewWarnings(res.warnings || [])
       setShowPreview(true)
     } catch (e: any) {
       if (e.status === 400) {
@@ -142,9 +144,27 @@ export default function PayoutRunsPage() {
     <div className="p-6 max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">醫生月結單</h1>
 
+      {/* Entry links */}
+      <div className="flex gap-4 flex-wrap mb-4">
+        <a href="/payout/sp-subsidies" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+          <Users size={14} /> 2人SP 補貼確認
+        </a>
+        <a href="/payout/referrals" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+          <Share2 size={14} /> 醫生轉介（REF）
+        </a>
+      </div>
+
       {/* Generate section */}
       {canPayout && (
         <Card className="p-4 mb-6">
+          {previewWarnings.length > 0 && (
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3">
+              預覽提示 — 建議確認：
+              <ul className="list-disc ml-4 mt-1">
+                {previewWarnings.map((w, i) => (<li key={i}>{w}</li>))}
+              </ul>
+            </div>
+          )}
           <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
             <Plus className="w-4 h-4" /> 生成月結單
           </h2>
