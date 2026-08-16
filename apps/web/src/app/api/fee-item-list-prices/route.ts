@@ -49,49 +49,14 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  await prisma.auditLog.create({ data: {
+    actorId: auth.session.userId,
+    action: 'FEE_ITEM_LIST_PRICE_SET',
+    entity: 'FeeItemListPrice',
+    entityId: item.id,
+    notes: `新增標準價：${item.label}（${item.feeItemCode}）$${Number(item.listPrice)}`,
+    afterJson: JSON.stringify(item),
+  }})
+
   return NextResponse.json({ item }, { status: 201 })
-}
-
-// ============================================================
-// PATCH /api/fee-item-list-prices/:id — Update
-// ============================================================
-export async function PATCH(req: NextRequest) {
-  const auth = await requireAuth(req, 'PATCH', req.url)
-  if (isAuthError(auth)) return auth.error
-
-  // Extract id from URL path
-  const url = new URL(req.url)
-  const id = url.pathname.split('/').pop()
-  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
-
-  const body = await req.json()
-  const { label, listPrice, effectiveFrom, effectiveTo } = body
-
-  const item = await prisma.feeItemListPrice.update({
-    where: { id },
-    data: {
-      ...(label != null && { label }),
-      ...(listPrice != null && { listPrice: Number(listPrice) }),
-      ...(effectiveFrom != null && { effectiveFrom: new Date(effectiveFrom) }),
-      ...(effectiveTo != null && { effectiveTo: new Date(effectiveTo) }),
-    },
-  })
-
-  return NextResponse.json({ item })
-}
-
-// ============================================================
-// DELETE /api/fee-item-list-prices/:id — Delete
-// ============================================================
-export async function DELETE(req: NextRequest) {
-  const auth = await requireAuth(req, 'DELETE', req.url)
-  if (isAuthError(auth)) return auth.error
-
-  const url = new URL(req.url)
-  const id = url.pathname.split('/').pop()
-  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
-
-  await prisma.feeItemListPrice.delete({ where: { id } })
-
-  return NextResponse.json({ success: true })
 }

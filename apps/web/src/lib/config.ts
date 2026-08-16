@@ -127,8 +127,8 @@ export const CONFIG = {
     // ★ 收費項目標準價
     'GET /api/fee-item-list-prices': ['OWNER'],
     'POST /api/fee-item-list-prices': ['OWNER'],
-    'PATCH /api/fee-item-list-prices': ['OWNER'],
-    'DELETE /api/fee-item-list-prices': ['OWNER'],
+    'PATCH /api/fee-item-list-prices/:id': ['OWNER'],
+    'DELETE /api/fee-item-list-prices/:id': ['OWNER'],
 
     // Shift change request routes
     'GET /api/shift-changes': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -451,8 +451,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— 收費項目標準價 ——
   'GET /api/fee-item-list-prices': ['provider_payout'],
   'POST /api/fee-item-list-prices': ['provider_payout'],
-  'PATCH /api/fee-item-list-prices': ['provider_payout'],
-  'DELETE /api/fee-item-list-prices': ['provider_payout'],
+  'PATCH /api/fee-item-list-prices/:id': ['provider_payout'],
+  'DELETE /api/fee-item-list-prices/:id': ['provider_payout'],
 
   // —— MD-B: Cost Entry ——
   //   cost_entry 權限：MANAGER 可以錄入成本

@@ -76,6 +76,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },
+  { action: 'FEE_ITEM_LIST_PRICE_SET', label: '設定項目標準價' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([

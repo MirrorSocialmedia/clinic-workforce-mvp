@@ -12,7 +12,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog'
-import { Loader2, Plus, Edit, Trash2, AlertTriangle } from 'lucide-react'
+import { Loader2, Plus, Edit, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 
@@ -113,17 +113,6 @@ export default function FeeItemPricesPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('確定刪除？')) return
-    try {
-      await apiFetch(`/api/fee-item-list-prices/${id}`, { method: 'DELETE' })
-      toast.success('已刪除')
-      fetchItems()
-    } catch (e: any) {
-      toast.error(`刪除失敗: ${e.message}`)
-    }
-  }
-
   const hasSpSeed = items.some(i => /sp580/i.test(i.feeItemCode))
 
   return (
@@ -187,9 +176,6 @@ export default function FeeItemPricesPage() {
                     <div className="flex items-center gap-2">
                       <Button variant="ghost" size="sm" onClick={() => openEdit(item)}>
                         <Edit size={14} />
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(item.id)} className="text-red-500">
-                        <Trash2 size={14} />
                       </Button>
                     </div>
                   </TableCell>
