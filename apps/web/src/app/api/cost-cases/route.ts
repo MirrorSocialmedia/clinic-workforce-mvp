@@ -131,9 +131,20 @@ export async function POST(req: NextRequest) {
   // Derive periodMonth from orderedAt
   const periodMonth = toHKDateStr(orderedAt).slice(0, 7)
 
+  // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
+  const effectiveLabId = labId || null
+  let discountPctNum: number | null = null
+  if (effectiveLabId) {
+    const d = await prisma.labMonthlyDiscount.findUnique({
+      where: { labId_periodMonth: { labId: effectiveLabId, periodMonth } },
+      select: { discountPct: true },
+    })
+    discountPctNum = d ? Number(d.discountPct) : null
+  }
+  // ★ labOther（Others）冇折扣 —— 要折扣就正式建一個 Lab
+
   // Compute finalCost
   const baseCostNum = baseCost != null ? Number(baseCost) : null
-  const discountPctNum = discountPct != null ? Number(discountPct) : null
   let finalCostNum: number | null = null
   if (baseCostNum != null && discountPctNum != null) {
     finalCostNum = Number((baseCostNum * (100 - discountPctNum) / 100).toFixed(2))

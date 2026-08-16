@@ -31,6 +31,12 @@ export async function GET(req: NextRequest) {
     if (msg === 'APRICOT_BUSY') {
       return jsonNoStore({ error: 'Apricot 忙碌，請稍後重試' }, { status: 503 })
     }
+    if (msg.startsWith('APRICOT_HTTP_')) {
+      return jsonNoStore({ error: msg }, { status: 502 })
+    }
+    if (msg === 'APRICOT_AUTH_EXPIRED') {
+      return jsonNoStore({ error: 'Apricot 憑證失效，需要重新授權' }, { status: 401 })
+    }
     return jsonNoStore({ error: '搜尋失敗' }, { status: 500 })
   }
 }

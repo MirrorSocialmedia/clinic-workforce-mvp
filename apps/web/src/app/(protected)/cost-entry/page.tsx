@@ -181,6 +181,10 @@ export default function CostEntryPage() {
   })
   const [savingCost, setSavingCost] = useState(false)
 
+  // ★ Q2: Discount from LabMonthlyDiscount table (read-only)
+  const [labDiscountPct, setLabDiscountPct] = useState<number | null>(null)
+  const [labDiscountPeriodMonth, setLabDiscountPeriodMonth] = useState<string>('')
+
   const canCreate = userRole ? hasPermission(userRole, 'cost_entry', grant, deny) : false
 
   // ── Existing load functions ──────────────────────────────
@@ -262,6 +266,29 @@ export default function CostEntryPage() {
     loadCases()
   }, [loadCases])
 
+  // ★ Q2: Fetch discount from LabMonthlyDiscount when lab + orderedAt change
+  useEffect(() => {
+    if (pickerStep !== 2) return
+    const effectiveLabId = costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId
+    if (!effectiveLabId || !costForm.orderedAt) {
+      setLabDiscountPct(null)
+      setLabDiscountPeriodMonth('')
+      return
+    }
+    const pm = costForm.orderedAt.slice(0, 7)
+    setLabDiscountPeriodMonth(pm)
+    const fetchDiscount = async () => {
+      try {
+        const data: any = await apiFetch(`/api/lab-discounts?labId=${encodeURIComponent(effectiveLabId)}&periodMonth=${encodeURIComponent(pm)}`)
+        const list = data.discounts || []
+        setLabDiscountPct(list.length > 0 ? Number(list[0].discountPct) : null)
+      } catch {
+        setLabDiscountPct(null)
+      }
+    }
+    fetchDiscount()
+  }, [costForm.labId, costForm.orderedAt, pickerStep])
+
   // ── Existing modal helpers ───────────────────────────────
 
   const resetForm = () => {
@@ -299,7 +326,7 @@ export default function CostEntryPage() {
         labOrderNo: form.labOrderNo || null,
         dsaName: form.dsaName || null,
         baseCost: form.baseCost ? Number(form.baseCost) : null,
-        discountPct: form.discountPct ? Number(form.discountPct) : null,
+        // ★ Q2: discountPct removed — backend queries LabMonthlyDiscount table
         receivedAt: form.receivedAt || null,
         appointmentAt: form.appointmentAt || null,
       }
@@ -350,6 +377,8 @@ export default function CostEntryPage() {
       dsaName: '', baseCost: '', discountPct: '',
       receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '', labOther: '',
     })
+    setLabDiscountPct(null)
+    setLabDiscountPeriodMonth('')
     setPickerOpen(true)
   }
 
@@ -492,7 +521,7 @@ export default function CostEntryPage() {
         labOrderNo: costForm.labOrderNo || null,
         dsaName: costForm.dsaName || null,
         baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
-        discountPct: costForm.discountPct ? Number(costForm.discountPct) : null,
+        // ★ Q2: discountPct removed — backend queries LabMonthlyDiscount table
         receivedAt: costForm.receivedAt || null,
         appointmentAt: costForm.appointmentAt || null,
         // ★ MD-F: bill linking
@@ -966,15 +995,12 @@ export default function CostEntryPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm mb-1">折扣 %</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={costForm.discountPct}
-                      onChange={e => setCostForm({ ...costForm, discountPct: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                      placeholder="e.g. 8.5"
-                    />
+                    <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
+                    <div className="px-3 py-2 border rounded bg-muted text-sm">
+                      {labDiscountPct != null
+                        ? `${labDiscountPct}%（${labs.find(l => l.id === costForm.labId)?.name ?? '—'} · ${labDiscountPeriodMonth}）`
+                        : '—（該工場今個月冇折扣設定）'}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm mb-1">到貨日</label>
@@ -1131,9 +1157,8 @@ export default function CostEntryPage() {
                   className="w-full border rounded px-2 py-1.5 text-sm" placeholder="留空 = 未有價" />
               </div>
               <div>
-                <label className="block text-sm mb-1">折扣 %</label>
-                <input type="number" step="0.1" value={form.discountPct} onChange={e => setForm({ ...form, discountPct: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="e.g. 8.5" />
+                <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
+                <div className="px-3 py-2 border rounded bg-muted text-sm">—（提交時由 LabMonthlyDiscount 查表）</div>
               </div>
               <div>
                 <label className="block text-sm mb-1">到貨日</label>

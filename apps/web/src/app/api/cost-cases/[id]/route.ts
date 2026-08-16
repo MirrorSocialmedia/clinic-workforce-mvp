@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
+import { toHKDateStr } from '@/lib/hk-date'
 
 // ============================================================
 // PUT /api/cost-cases/:id — Update a cost case
@@ -32,18 +33,31 @@ export async function PUT(
   const {
     patientCode, patientName, orderedAt, itemType,
     labId, labOrderNo, dsaName,
-    baseCost, discountPct, receivedAt, appointmentAt, status,
+    baseCost, receivedAt, appointmentAt, status,
   } = body
 
-  // Compute finalCost if baseCost or discountPct changed
+  // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
+  const effectiveLabId = labId !== undefined ? (labId || null) : existing.labId
+  const effectivePeriodMonth = orderedAt !== undefined
+    ? toHKDateStr(orderedAt).slice(0, 7)
+    : existing.periodMonth
+  let discountPctNum: number | null = null
+  if (effectiveLabId) {
+    const d = await prisma.labMonthlyDiscount.findUnique({
+      where: { labId_periodMonth: { labId: effectiveLabId, periodMonth: effectivePeriodMonth } },
+      select: { discountPct: true },
+    })
+    discountPctNum = d ? Number(d.discountPct) : null
+  }
+
+  // Compute finalCost if baseCost or labId changed
   let finalCost: number | null = existing.finalCost ? Number(existing.finalCost) : null
 
-  if (baseCost != null || discountPct != null) {
+  if (baseCost != null || labId !== undefined) {
     const bc = baseCost != null ? Number(baseCost) : (existing.baseCost ? Number(existing.baseCost) : null)
-    const dp = discountPct != null ? Number(discountPct) : (existing.discountPct ? Number(existing.discountPct) : null)
 
-    if (bc != null && dp != null) {
-      finalCost = Number((bc * (100 - dp) / 100).toFixed(2))
+    if (bc != null && discountPctNum != null) {
+      finalCost = Number((bc * (100 - discountPctNum) / 100).toFixed(2))
     } else if (bc != null) {
       finalCost = bc
     }
@@ -58,7 +72,8 @@ export async function PUT(
   if (labOrderNo !== undefined) data.labOrderNo = labOrderNo
   if (dsaName !== undefined) data.dsaName = dsaName
   if (baseCost !== undefined) data.baseCost = baseCost != null ? Number(baseCost) : null
-  if (discountPct !== undefined) data.discountPct = discountPct != null ? Number(discountPct) : null
+  // ★ Q2: discountPct now from table, not body
+  if (discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
   if (finalCost !== existing.finalCost?.toNumber()) data.finalCost = finalCost != null ? finalCost : null
   if (receivedAt !== undefined) data.receivedAt = receivedAt ? new Date(receivedAt) : null
   if (appointmentAt !== undefined) data.appointmentAt = appointmentAt ? new Date(appointmentAt) : null
