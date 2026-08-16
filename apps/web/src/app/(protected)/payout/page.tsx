@@ -126,8 +126,8 @@ export default function PayoutRunsPage() {
   }
 
   async function handlePreview() {
-    if (!selectedProvider || !selectedMonth) {
-      alert('請選擇醫生和月份')
+    if (!selectedProvider || !selectedMonth || !selectedClinic) {
+      alert('請選擇醫生、診所和月份')
       return
     }
     setPreviewLoading(true)
@@ -157,8 +157,8 @@ export default function PayoutRunsPage() {
   }
 
   async function handleGenerate() {
-    if (!selectedProvider || !selectedMonth) {
-      alert('請選擇醫生和月份')
+    if (!selectedProvider || !selectedMonth || !selectedClinic) {
+      alert('請選擇醫生、診所和月份')
       return
     }
     if (!confirm(`確定為 ${selectedMonth} 生成月結單？`)) return
@@ -270,14 +270,14 @@ export default function PayoutRunsPage() {
             </div>
             <Button
               onClick={handlePreview}
-              disabled={previewLoading || !selectedProvider || !selectedMonth}
+              disabled={previewLoading || !selectedProvider || !selectedMonth || !selectedClinic}
               variant="outline"
             >
               預覽
             </Button>
             <Button
               onClick={handleGenerate}
-              disabled={generating || !selectedProvider || !selectedMonth}
+              disabled={generating || !selectedProvider || !selectedMonth || !selectedClinic}
             >
               {generating ? '生成中...' : '生成並鎖定'}
             </Button>

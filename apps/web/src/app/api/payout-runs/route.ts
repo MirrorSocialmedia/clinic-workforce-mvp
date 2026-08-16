@@ -71,14 +71,14 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const { providerId, periodMonth, clinicId } = body
 
-  if (!providerId || !periodMonth) {
-    return NextResponse.json({ error: 'providerId and periodMonth required' }, { status: 400 })
+  if (!providerId || !periodMonth || !clinicId) {
+    return NextResponse.json({ error: 'providerId, periodMonth, clinicId 都係必填' }, { status: 400 })
   }
 
-  // ★ Check if run already exists (ternary key)
-  const whereKey: any = { providerId, periodMonth }
-  if (clinicId) whereKey.clinicId = clinicId
-  const existing = await prisma.payoutRun.findFirst({ where: whereKey })
+  // Check if run already exists (unique ternary key)
+  const existing = await prisma.payoutRun.findUnique({
+    where: { providerId_clinicId_periodMonth: { providerId, clinicId, periodMonth } },
+  })
   if (existing) {
     return NextResponse.json(
       { error: `月結單已存在 (${existing.status})` },

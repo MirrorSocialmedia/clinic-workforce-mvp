@@ -68,23 +68,34 @@ export async function pickCommission(
 ): Promise<any | null> {
   const [monthStart, monthEnd] = monthRange(periodMonth)
 
-  const commission = await prisma.providerCommission.findFirst({
-    where: {
-      providerId,
-      isActive: true,
-      effectiveFrom: { lte: monthEnd },
-      OR: [
-        { effectiveTo: null },
-        { effectiveTo: { gte: monthStart } },
-      ],
-      ...(clinicId ? { clinicId: { in: [clinicId, null] } } : {}),
-    },
-    orderBy: [
-      ...(clinicId ? [{ clinicId: { sort: 'desc' as const, nulls: 'last' } as const }] : []),
-      { effectiveFrom: 'desc' },
-      { createdAt: 'desc' },
-      { id: 'desc' },
+  const baseConditions = {
+    providerId,
+    isActive: true,
+    effectiveFrom: { lte: monthEnd },
+    OR: [
+      { effectiveTo: null },
+      { effectiveTo: { gte: monthStart } },
     ],
+  } as any
+
+  const where: any = clinicId
+    ? {
+        AND: [
+          { ...baseConditions },
+          { OR: [{ clinicId }, { clinicId: null }] },
+        ],
+      }
+    : baseConditions
+
+  const orderBy: any[] = []
+  if (clinicId) {
+    orderBy.push({ clinicId: { sort: 'desc' as const, nulls: 'last' } as const })
+  }
+  orderBy.push({ effectiveFrom: 'desc' }, { createdAt: 'desc' }, { id: 'desc' })
+
+  const commission = await prisma.providerCommission.findFirst({
+    where,
+    orderBy,
   })
 
   return commission
@@ -105,7 +116,7 @@ interface GateErrors {
 export async function runGates(
   providerId: string,
   periodMonth: string,
-  clinicId?: string,
+  clinicId: string,
 ): Promise<GateErrors> {
   const errors: string[] = []
   const warnings: string[] = []
@@ -208,6 +219,19 @@ export async function runGates(
     warnings.push(`${overriddenCount} 筆材料單價經人手覆寫，請確認`)
   }
 
+
+  // Orphan SP warning: confirmed SP subsidies without clinic data
+  const orphanSp = await prisma.spSubsidy.count({
+    where: {
+      providerId,
+      periodMonth,
+      clinicId: null,
+      confirmedBy: { not: null },
+    },
+  })
+  if (orphanSp > 0) {
+    warnings.push(`${orphanSp} 筆已確認嘅 SP 補貼冇診所資料，唔會計入任何月結單`)
+  }
   return { errors, warnings }
 }
 
@@ -255,7 +279,7 @@ interface PayoutResult {
 export async function computePayout(
   providerId: string,
   periodMonth: string,
-  clinicId?: string,
+  clinicId: string,
 ): Promise<PayoutResult> {
   const provider = await prisma.provider.findUnique({
     where: { id: providerId },
@@ -402,14 +426,14 @@ export async function lockPayoutRun(
   periodMonth: string,
   payout: PayoutResult,
   createdBy: string,
-  clinicId?: string,
+  clinicId: string,
 ): Promise<any> {
   return await basePrisma.$transaction(async (tx: any) => {
     // a. Create PayoutRun with LOCKED status
     const run = await tx.payoutRun.create({
       data: {
         providerId,
-        clinicId: clinicId || '',
+        clinicId,
         periodMonth,
         grossAmount: new Prisma.Decimal(String(payout.grossAmount)),
         rawAmount: new Prisma.Decimal(String(payout.rawAmount)),

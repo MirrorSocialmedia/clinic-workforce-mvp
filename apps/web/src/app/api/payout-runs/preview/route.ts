@@ -12,8 +12,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const { providerId, periodMonth, clinicId } = body
 
-  if (!providerId || !periodMonth) {
-    return NextResponse.json({ error: 'providerId and periodMonth required' }, { status: 400 })
+  if (!providerId || !periodMonth || !clinicId) {
+    return NextResponse.json({ error: 'providerId, periodMonth, clinicId 都係必填' }, { status: 400 })
   }
 
   // Run gates
