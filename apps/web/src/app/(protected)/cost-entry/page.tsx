@@ -985,17 +985,17 @@ export default function CostEntryPage() {
                   {/* ★ MD-K: Implant materials section */}
                   {costForm.category === 'IMPLANT' ? (
                     <div className="col-span-2">
-                      <div className="border-t pt-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-semibold text-sm">材料明細</h4>
-                          <button onClick={addMaterialLine} className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 flex items-center gap-1">
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b">
+                          <h4 className="font-semibold text-sm">材料明細 <span className="ml-2 text-xs font-normal text-gray-400">單價按落單日自動帶入</span></h4>
+                          <button onClick={addMaterialLine} type="button" className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 flex items-center gap-1">
                             <Plus size={12} /> 加一行
                           </button>
                         </div>
                         {materialLines.length === 0 ? (
                           <p className="text-gray-400 text-xs text-center py-2">點擊「加一行」添加材料</p>
                         ) : (
-                          <div>
+                          <>
                             <table className="w-full text-xs">
                               <thead>
                                 <tr className="text-gray-500">
@@ -1024,7 +1024,7 @@ export default function CostEntryPage() {
                                       </td>
                                       <td className="px-2 py-1">
                                         <input type="number" min="1" step="1" value={line.qty} onChange={e => updateMaterialLine(idx, 'qty', e.target.value)}
-                                          className="w-full border rounded px-1 py-1 text-xs text-center" placeholder="數量" />
+                                          className="w-full border rounded px-1 py-1 text-xs text-right" placeholder="數量" />
                                       </td>
                                       <td className="px-2 py-1">
                                         <input type="number" step="0.01" value={line.unitPrice || ''} onChange={e => updateMaterialLine(idx, 'unitPrice', e.target.value)}
@@ -1049,10 +1049,10 @@ export default function CostEntryPage() {
                                 </tr>
                               </tbody>
                             </table>
-                            <div className="text-gray-400 text-xs mt-1">—（植體材料唔經工場折扣）</div>
-                          </div>
+                          </>
                         )}
                       </div>
+                      <div className="text-xs text-gray-400 mt-1">—（植體材料唔經工場折扣）</div>
                     </div>
                   ) : (
                     <>
