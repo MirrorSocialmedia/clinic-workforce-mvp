@@ -36,11 +36,37 @@ export async function GET(req: NextRequest) {
   // 5) 總 bill 數
   const totalBills = await prisma.apricotBill.count()
 
+  // 6) 逐診所摘要 (I3)
+  const clinics = await prisma.clinic.findMany({
+    where: { apricotClinicId: { not: null } },
+    select: { id: true, name: true, apricotClinicId: true },
+    orderBy: { id: 'asc' },
+  })
+
+  const perClinic = await Promise.all(clinics.map(async (c) => {
+    const [cnt, latest] = await Promise.all([
+      prisma.apricotPayment.count({ where: { clinicExtId: c.apricotClinicId! } }),
+      prisma.apricotPayment.findFirst({
+        where: { clinicExtId: c.apricotClinicId! },
+        orderBy: { syncedAt: 'desc' },
+        select: { syncedAt: true, paidAt: true },
+      }),
+    ])
+    return {
+      clinicId: c.id,
+      name: c.name,
+      payments: cnt,
+      lastSyncedAt: latest?.syncedAt ?? null,
+      latestPaidAt: latest?.paidAt ?? null,
+    }
+  }))
+
   return jsonNoStore({
     lastSyncedAt: latestPayment?.syncedAt || null,
     unknownMethods: unknownMethods.map(m => m.methodNorm),
     needsReviewCount,
     totalPayments,
     totalBills,
+    perClinic,
   })
 }

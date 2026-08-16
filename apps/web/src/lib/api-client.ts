@@ -5,6 +5,7 @@
 
 export interface ApiError extends Error {
   status?: number
+  body?: any
 }
 
 export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
@@ -17,9 +18,10 @@ export async function apiFetch<T>(url: string, options?: RequestInit): Promise<T
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     const error = new Error(
-      body.error || `${url} 失敗 (${res.status})`,
+      body.error || body.errors?.join('；') || `${url} 失敗 (${res.status})`,
     ) as ApiError
     error.status = res.status
+    error.body = body
     throw error
   }
 

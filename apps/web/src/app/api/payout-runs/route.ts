@@ -78,7 +78,10 @@ export async function POST(req: NextRequest) {
   // Run gates
   const { errors, warnings } = await runGates(providerId, periodMonth)
   if (errors.length > 0) {
-    return NextResponse.json({ errors, warnings }, { status: 400 })
+    return NextResponse.json(
+      { error: errors.join('\n'), errors, warnings },
+      { status: 400 },
+    )
   }
 
   // Compute payout

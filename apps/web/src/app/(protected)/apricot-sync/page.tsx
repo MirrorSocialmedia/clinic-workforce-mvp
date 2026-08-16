@@ -4,8 +4,16 @@ import { useEffect, useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { RefreshCw, AlertTriangle, Database, FileText, Loader2 } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Database, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
+
+interface PerClinicStatus {
+  clinicId: string
+  name: string
+  payments: number
+  lastSyncedAt: string | null
+  latestPaidAt: string | null
+}
 
 interface SyncStatus {
   lastSyncedAt: string | null
@@ -13,6 +21,7 @@ interface SyncStatus {
   needsReviewCount: number
   totalPayments: number
   totalBills: number
+  perClinic: PerClinicStatus[]
 }
 
 export default function ApricotSyncPage() {
@@ -150,6 +159,51 @@ export default function ApricotSyncPage() {
         </Card>
       </div>
 
+      {/* Per-Clinic Status (I3) */}
+      {status && status.perClinic && status.perClinic.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-gray-500">逐診所同步狀態</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-gray-500">
+                    <th className="py-2 pr-4">診所</th>
+                    <th className="py-2 pr-4">付款數</th>
+                    <th className="py-2 pr-4">最後同步</th>
+                    <th className="py-2">最新付款日期</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {status.perClinic.map((c) => (
+                    <tr key={c.clinicId} className="border-b last:border-0">
+                      <td className="py-2 pr-4 font-medium">{c.name}</td>
+                      <td className="py-2 pr-4">{c.payments}</td>
+                      <td className="py-2 pr-4">
+                        {c.lastSyncedAt ? (
+                          new Date(c.lastSyncedAt).toLocaleString('zh-HK')
+                        ) : (
+                          <span className="text-amber-600">⚠️ 未同步過</span>
+                        )}
+                      </td>
+                      <td className="py-2">
+                        {c.latestPaidAt ? (
+                          new Date(c.latestPaidAt).toLocaleDateString('zh-HK')
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Unknown Methods */}
       {status && status.unknownMethods.length > 0 && (
         <Card>
@@ -243,10 +297,6 @@ export default function ApricotSyncPage() {
         <a href="/apricot-sync/payment-methods" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
           <Database size={14} />
           付款方式規則設定
-        </a>
-        <a href="/apricot-sync" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
-          <FileText size={14} />
-          同步日誌
         </a>
       </div>
     </div>
