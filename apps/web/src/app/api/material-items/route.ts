@@ -56,11 +56,11 @@ export async function GET(req: NextRequest) {
   return jsonNoStore({
     items: latestItems.map(i => ({
       ...i,
-      unitPrice: Number(i.unitPrice),
+      unitPrice: i.unitPrice != null ? Number(i.unitPrice) : null,
     })),
     allRecords: items.map(i => ({
       ...i,
-      unitPrice: Number(i.unitPrice),
+      unitPrice: i.unitPrice != null ? Number(i.unitPrice) : null,
     })),
   })
 }
@@ -79,8 +79,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const { name, unitPrice, effectiveFrom, effectiveTo, isActive } = body
 
-  if (!name || unitPrice == null || !effectiveFrom) {
-    return NextResponse.json({ error: 'name, unitPrice, effectiveFrom are required' }, { status: 400 })
+  if (!name || !effectiveFrom) {
+    return NextResponse.json({ error: 'name, effectiveFrom are required' }, { status: 400 })
   }
 
   // If there's an active item with the same name, auto-set its effectiveTo
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
   const item = await prisma.materialItem.create({
     data: {
       name,
-      unitPrice: Number(unitPrice),
+      unitPrice: unitPrice != null ? Number(unitPrice) : null,
       effectiveFrom: new Date(effectiveFrom),
       effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
       isActive: isActive ?? true,
@@ -115,12 +115,12 @@ export async function POST(req: NextRequest) {
       entity: 'MaterialItem',
       entityId: item.id,
       beforeJson: null,
-      afterJson: JSON.stringify({ name, unitPrice: Number(unitPrice), effectiveFrom }),
-      notes: `新增材料項目: ${name} $${Number(unitPrice)}`,
+      afterJson: JSON.stringify({ name, unitPrice: unitPrice != null ? Number(unitPrice) : null, effectiveFrom }),
+      notes: `新增材料項目: ${name}${unitPrice != null ? ' $' + Number(unitPrice) : ' (冇定價)'}`,
     },
   } as any)
 
   return NextResponse.json({
-    item: { ...item, unitPrice: Number(item.unitPrice) },
+    item: { ...item, unitPrice: item.unitPrice != null ? Number(item.unitPrice) : null },
   }, { status: 201 })
 }

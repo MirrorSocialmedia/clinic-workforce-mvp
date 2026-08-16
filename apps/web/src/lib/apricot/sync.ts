@@ -84,6 +84,7 @@ async function upsertBill(b: any) {
     ttlDisc: new Prisma.Decimal(String(d.ttlDisc ?? 0)),
     amt: new Prisma.Decimal(String(d.amt ?? 0)),
     ttlAmt: new Prisma.Decimal(String(d.ttlAmt ?? 0)),
+    isSp2p: !!d.isSp2p, // ★ MD-K: 2人SP 偵測（remarks 含 2p1k）
     reconJson: (d.reconPaymentDetails || []).map((r: any) => ({
       des: r.des || '',
       amt: Number(r.amt ?? 0),

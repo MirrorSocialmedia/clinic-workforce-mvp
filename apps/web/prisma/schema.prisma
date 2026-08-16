@@ -931,7 +931,7 @@ model LabMonthlyDiscount {
 model MaterialItem {
   id          String   @id @default(cuid())
   name        String
-  unitPrice   Decimal  @db.Decimal(12,2)
+  unitPrice   Decimal? @db.Decimal(12,2) // ★ nullable: 部分材料冇定價（如 collon plug）
   effectiveFrom DateTime
   effectiveTo DateTime?
   isActive    Boolean  @default(true)
@@ -982,13 +982,14 @@ model CostCase {
 
 // IMPLANT 材料明細
 model CostCaseMaterial {
-  id             String   @id @default(cuid())
-  costCaseId     String
-  costCase       CostCase @relation(fields: [costCaseId], references: [id], onDelete: Cascade)
-  materialItemId String
-  qty            Int
-  unitPriceUsed  Decimal  @db.Decimal(12,2) // ★ 快照
-  subtotal       Decimal  @db.Decimal(12,2)
+  id                String   @id @default(cuid())
+  costCaseId        String
+  costCase          CostCase @relation(fields: [costCaseId], references: [id], onDelete: Cascade)
+  materialItemId    String
+  qty               Int
+  unitPriceUsed     Decimal  @db.Decimal(12,2) // ★ 快照
+  isPriceOverridden Boolean  @default(false) // ★ MD-K: 用戶改過單價
+  subtotal          Decimal  @db.Decimal(12,2)
 
   @@index([costCaseId])
 }
@@ -1074,9 +1075,23 @@ model ApricotBillItem {
   amt         Decimal    @db.Decimal(12,2)
   ttlAmt      Decimal    @db.Decimal(12,2)
   reconJson   Json
+  isSp2p      Boolean    @default(false) // ★ MD-K: 2人SP 偵測（remarks 含 2p1k）
 
   @@unique([billId, eleId])
-  @@index([feeItemDes])
+  @@index([feeItemDes, isSp2p])
+}
+
+// ★ MD-K: 標準價目表（SP 補貼用）
+model FeeItemListPrice {
+  id          String   @id @default(cuid())
+  feeItemCode String
+  label       String
+  listPrice   Decimal  @db.Decimal(12,2)
+  effectiveFrom DateTime
+  effectiveTo DateTime?
+  createdBy   String
+
+  @@index([feeItemCode, effectiveFrom])
 }
 
 model PaymentAllocation {
@@ -1159,6 +1174,7 @@ model SpSubsidy {
   amount       Decimal  @db.Decimal(12,2) // (listPrice − actualPrice) × splitPercent% × headcount
   source       String   @default("AUTO") // AUTO | MANUAL
   confirmedBy  String?  // ★ AUTO 要人確認先入數
+  needsReview  Boolean  @default(false) // ★ MD-K: 三態 review flag
   periodMonth  String
   lockedByRunId String?
 

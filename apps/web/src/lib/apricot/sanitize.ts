@@ -52,6 +52,8 @@ export function sanitizeBill(raw: any): any {
       ttlDisc: d.ttlDisc,
       amt: d.amt,
       ttlAmt: d.ttlAmt,
+      // ★ MD-K: isSp2p 從 remarks 解析，remarks 原文唔出現喺 output
+      isSp2p: /^\s*2p1k/i.test(String(d.remarks ?? '')),
       reconPaymentDetails: (d.reconPaymentDetails || []).map((r: any) => ({
         des: r.paymentMethod?.des,
         amt: r.amt,
@@ -74,10 +76,12 @@ export function toCleanPatients(raw: any): CleanPatient[] {
 
 // PII leak 測試 — 每次 sync 後跑
 // 通用（payments / bills）— fullName 亦算 PII
+// ★ MD-K: remarks 加入 PII_KEYS_STRICT（只存 boolean isSp2p，原文唔出）
 const PII_KEYS_STRICT = [
   'clinicPatient', 'personalIdentifier', 'medicalHistory',
   'drugHistory', 'phoneNum', 'phoneList', 'dateOfBirth', 'diagnosis',
   'address', 'email', 'fullName', 'emergencyContact', 'bloodType', 'occupation',
+  'remarks',
 ]
 
 // 病人搜尋 — fullName 刻意保留（income report 要用）

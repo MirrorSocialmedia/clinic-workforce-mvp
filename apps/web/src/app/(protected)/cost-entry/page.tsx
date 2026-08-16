@@ -50,6 +50,7 @@ interface BillItem {
   up: number
   amt: number
   ttlAmt: number
+  isSp2p: boolean
 }
 
 interface SearchBill {

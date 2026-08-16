@@ -466,16 +466,36 @@ export async function unlockPayoutRun(
 // ─── SP Subsidy Auto-Detection ──────────────────────────────────────────────
 
 /**
+ * ★ MD-K: Pick the most applicable FeeItemListPrice for a given fee item code + bill time.
+ */
+async function pickListPrice(feeItemCode: string, billTime: Date): Promise<any | null> {
+  return prisma.feeItemListPrice.findFirst({
+    where: {
+      feeItemCode,
+      effectiveFrom: { lte: billTime },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: billTime } }],
+    },
+    orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
+  })
+}
+
+/**
  * Auto-detect 2-person SP subsidy opportunities from Apricot bill items.
+ * ★ MD-K: Uses isSp2p flag (from remarks pattern 2p1k) + FeeItemListPrice table.
  * Returns candidates (source='AUTO', confirmedBy=null) for manual confirmation.
+ *
+ * 三態 needsReview:
+ *   - listPrice ✅ + commission ✅ + unitPrice === 500 → 正常候選
+ *   - listPrice ✅ + commission ✅ + unitPrice !== 500 → needsReview（金額對唔上）
+ *   - listPrice 揾唔到 → needsReview（唔出負數，amount=0）
  */
 export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
   const [monthStart, monthEnd] = monthRange(periodMonth)
 
-  const spItems = await prisma.apricotBillItem.findMany({
+  // ★ MD-K: Scan by isSp2p flag instead of feeItemDes + discount match
+  const items = await prisma.apricotBillItem.findMany({
     where: {
-      feeItemDes: { in: SP_ITEM_NAMES_MUTABLE },
-      OR: [{ discAmt: { gt: 0 } }, { discPer: { gt: 0 } }],
+      isSp2p: true,
       bill: {
         billTime: { gte: monthStart, lte: monthEnd },
         isVoid: false,
@@ -485,7 +505,7 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
   })
 
   const candidates: any[] = []
-  for (const item of spItems) {
+  for (const item of items) {
     const bill: any = (item as any).bill
     const provider = bill.providerExtId
       ? await prisma.provider.findUnique({
@@ -495,23 +515,45 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
 
     if (!provider) continue
 
-    // F5: Fetch per-provider split% from commission instead of hardcoded 50
+    // F5: Fetch per-provider split% from commission
     const commission = await pickCommission(provider.id, periodMonth)
     const pct = commission ? Number(commission.percent) : null
-    if (pct == null) {
-      console.warn('[sp] 醫生未設拆帳%，跳過', provider.id)
-      continue
-    }
+
+    // ★ MD-K: Pick list price from FeeItemListPrice table
+    const listPriceRow = await pickListPrice(item.feeItemCode, bill.billTime)
+    const listPriceNum = listPriceRow ? Number(listPriceRow.listPrice) : null
 
     const unitPrice = Number(item.unitPrice)
     const qty = item.qty || 1
-    const ttlDisc = Number(item.ttlDisc)
-    const listPrice = unitPrice
-    const actualPrice = round2(unitPrice - ttlDisc / qty)
-    const headcount = qty
-    const amount = round2(
-      (listPrice - actualPrice) * (pct / 100) * headcount,
-    )
+
+    // 三態 needsReview logic
+    const hasListPrice = listPriceNum != null
+    const hasCommission = pct != null
+    const priceMatches = unitPrice === 500
+
+    let amount: number
+    let needsReview: boolean
+
+    if (!hasListPrice) {
+      // 標準價揾唔到 → needsReview，唔出負數
+      amount = 0
+      needsReview = true
+    } else if (!hasCommission) {
+      // 拆帳%冇設定 → needsReview
+      amount = 0
+      needsReview = true
+    } else if (!priceMatches) {
+      // 金額對唔上 → 產生候選 + needsReview
+      amount = round2((listPriceNum - unitPrice) * (pct / 100) * qty)
+      needsReview = true
+    } else {
+      // 正常候選
+      amount = round2((listPriceNum - unitPrice) * (pct / 100) * qty)
+      needsReview = false
+    }
+
+    const actualPrice = round2(unitPrice)
+    const listPriceUsed = hasListPrice ? listPriceNum : actualPrice
 
     // Upsert: get or create
     const existing = await prisma.spSubsidy.findUnique({
@@ -525,13 +567,14 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
           providerId: provider.id,
           billExtId: bill.extId,
           itemDes: item.feeItemDes,
-          listPrice: new Prisma.Decimal(String(listPrice)),
+          listPrice: new Prisma.Decimal(String(listPriceUsed)),
           actualPrice: new Prisma.Decimal(String(actualPrice)),
-          headcount,
-          splitPercent: new Prisma.Decimal(String(pct)),
+          headcount: qty,
+          splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
           amount: new Prisma.Decimal(String(amount)),
           source: 'AUTO',
           confirmedBy: null,
+          needsReview,
           periodMonth,
         },
       })
@@ -542,13 +585,14 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
           billExtId: bill.extId,
           billItemEleId: item.eleId,
           itemDes: item.feeItemDes,
-          listPrice: new Prisma.Decimal(String(listPrice)),
+          listPrice: new Prisma.Decimal(String(listPriceUsed)),
           actualPrice: new Prisma.Decimal(String(actualPrice)),
-          headcount,
-          splitPercent: new Prisma.Decimal(String(pct)),
+          headcount: qty,
+          splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
           amount: new Prisma.Decimal(String(amount)),
           source: 'AUTO',
           confirmedBy: null,
+          needsReview,
           periodMonth,
         },
       })
@@ -557,11 +601,12 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
     candidates.push({
       providerId: provider.id,
       itemDes: item.feeItemDes,
-      listPrice,
+      listPrice: listPriceUsed,
       actualPrice,
-      headcount,
-      splitPercent: pct,
+      headcount: qty,
+      splitPercent: pct ?? 0,
       amount,
+      needsReview,
       source: 'AUTO',
       confirmedBy: null,
       periodMonth,

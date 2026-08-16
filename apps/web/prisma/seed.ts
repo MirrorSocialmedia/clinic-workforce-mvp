@@ -1,5 +1,5 @@
 // Prisma Seed Script — 6 clinics + 4 test users
-import { PrismaClient, UserRole, UserStatus, EmployeeStatus, PayType } from '@prisma/client'
+import { Prisma, PrismaClient, UserRole, UserStatus, EmployeeStatus, PayType } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
@@ -476,6 +476,58 @@ async function main() {
     })
   }
   console.log(`  ✅ Created ${uniqueHolidays.size} HK public holidays`)
+
+  // ★ MD-K: Seed FeeItemListPrice — SP 580 標準價
+  console.log('💲 Seeding FeeItemListPrice...')
+  const existingSpPrice = await prisma.feeItemListPrice.findFirst({
+    where: { feeItemCode: 'SP580' },
+  })
+  if (!existingSpPrice) {
+    await prisma.feeItemListPrice.create({
+      data: {
+        id: 'seed-sp580',
+        feeItemCode: 'SP580',
+        label: 'SCALING & POLISHING',
+        listPrice: new Prisma.Decimal('580.00'),
+        effectiveFrom: new Date('2026-01-01'),
+        effectiveTo: null,
+        createdBy: 'system',
+      },
+    })
+  }
+  console.log('  ✅ SP580 標準價 $580.00')
+
+  // ★ MD-K: Seed Implant Materials
+  console.log('🦷 Seeding Implant Materials...')
+  const implantMaterials = [
+    { name: 'NH', unitPrice: '575.40' },
+    { name: 'SA', unitPrice: '543.00' },
+    { name: 'AOSS', unitPrice: '1087.36' },
+    { name: 'AOSS collagen', unitPrice: '1526.00' },
+    { name: 'ossguide', unitPrice: '1050.00' },
+    { name: 'collon plug', unitPrice: null },
+    { name: 'NP cast', unitPrice: null },
+  ]
+
+  for (const mat of implantMaterials) {
+    const seedId = 'seed-' + mat.name.toLowerCase().replace(/\s+/g, '-')
+    const existing = await prisma.materialItem.findFirst({
+      where: { name: mat.name, isActive: true },
+    })
+    if (!existing) {
+      await prisma.materialItem.create({
+        data: {
+          id: seedId,
+          name: mat.name,
+          unitPrice: mat.unitPrice != null ? new Prisma.Decimal(mat.unitPrice) : null,
+          effectiveFrom: new Date('2026-01-01'),
+          effectiveTo: null,
+          isActive: true,
+        },
+      })
+    }
+  }
+  console.log(`  ✅ ${implantMaterials.length} implant materials seeded`)
 
   // Create audit log entry to prove it works
   await prisma.auditLog.create({
