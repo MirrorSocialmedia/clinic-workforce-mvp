@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'periodMonth required' }, { status: 400 })
   }
 
-  const candidates = await scanSpSubsidies(periodMonth)
+  const result = await scanSpSubsidies(periodMonth)
 
-  return NextResponse.json({ candidates, count: candidates.length })
+  return NextResponse.json({ candidates: result.candidates, count: result.candidates.length, skippedLocked: result.skippedLocked })
 }

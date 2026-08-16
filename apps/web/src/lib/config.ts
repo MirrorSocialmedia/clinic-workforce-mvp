@@ -124,6 +124,11 @@ export const CONFIG = {
     // ★ 醫生拆帳（OWNER only）
     'GET /api/provider-commissions': ['OWNER'],
     'POST /api/provider-commissions': ['OWNER'],
+    // ★ 收費項目標準價
+    'GET /api/fee-item-list-prices': ['OWNER'],
+    'POST /api/fee-item-list-prices': ['OWNER'],
+    'PATCH /api/fee-item-list-prices': ['OWNER'],
+    'DELETE /api/fee-item-list-prices': ['OWNER'],
 
     // Shift change request routes
     'GET /api/shift-changes': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -442,6 +447,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— 醫生拆帳 —— OWNER only（MANAGER 冇權睇醫生收入）
   'GET /api/provider-commissions': ['provider_payout'],
   'POST /api/provider-commissions': ['provider_payout'],
+
+  // —— 收費項目標準價 ——
+  'GET /api/fee-item-list-prices': ['provider_payout'],
+  'POST /api/fee-item-list-prices': ['provider_payout'],
+  'PATCH /api/fee-item-list-prices': ['provider_payout'],
+  'DELETE /api/fee-item-list-prices': ['provider_payout'],
 
   // —— MD-B: Cost Entry ——
   //   cost_entry 權限：MANAGER 可以錄入成本

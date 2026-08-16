@@ -163,6 +163,21 @@ export async function runGates(
     warnings.push(`${unpricedCount} 筆成本記錄未有報價，可覆寫但月結單會標註`)
   }
 
+  // R5: 材料單價經人手覆寫的計數
+  const overriddenCount = await prisma.costCaseMaterial.count({
+    where: {
+      costCase: {
+        providerId,
+        periodMonth,
+        status: { not: 'VOID' },
+      },
+      isPriceOverridden: true,
+    },
+  })
+  if (overriddenCount > 0) {
+    warnings.push(`${overriddenCount} 筆材料單價經人手覆寫，請確認`)
+  }
+
   return { errors, warnings }
 }
 
@@ -489,7 +504,7 @@ async function pickListPrice(feeItemCode: string, billTime: Date): Promise<any |
  *   - listPrice ✅ + commission ✅ + unitPrice !== 500 → needsReview（金額對唔上）
  *   - listPrice 揾唔到 → needsReview（唔出負數，amount=0）
  */
-export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
+export async function scanSpSubsidies(periodMonth: string): Promise<{ candidates: any[]; skippedLocked: number }> {
   const [monthStart, monthEnd] = monthRange(periodMonth)
 
   // ★ MD-K: Scan by isSp2p flag instead of feeItemDes + discount match
@@ -505,6 +520,7 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
   })
 
   const candidates: any[] = []
+  let skippedLocked = 0
   for (const item of items) {
     const bill: any = (item as any).bill
     const provider = bill.providerExtId
@@ -532,7 +548,7 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
     const priceMatches = unitPrice === 500
 
     let amount: number
-    let needsReview: boolean
+    let needsReview: boolean = false
 
     if (!hasListPrice) {
       // 標準價揾唔到 → needsReview，唔出負數
@@ -544,8 +560,9 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
       needsReview = true
     } else if (!priceMatches) {
       // 金額對唔上 → 產生候選 + needsReview
-      amount = round2((listPriceNum - unitPrice) * (pct / 100) * qty)
-      needsReview = true
+      const raw = (listPriceNum - unitPrice) * (pct / 100) * qty
+      amount = round2(Math.max(0, raw)) // ★ 唔准負
+      needsReview = needsReview || raw < 0
     } else {
       // 正常候選
       amount = round2((listPriceNum - unitPrice) * (pct / 100) * qty)
@@ -560,7 +577,12 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
       where: { billItemEleId: item.eleId },
     }).catch(() => null)
 
+    // R4: 已出月結，唔准動
+    if (existing?.lockedByRunId) { skippedLocked++; continue }
+
     if (existing) {
+      // R2: 金額冇變就保留確認；MANUAL source 唔好蓋成 AUTO
+      const amountChanged = Number(existing.amount) !== amount
       await prisma.spSubsidy.update({
         where: { billItemEleId: item.eleId },
         data: {
@@ -572,8 +594,10 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
           headcount: qty,
           splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
           amount: new Prisma.Decimal(String(amount)),
-          source: 'AUTO',
-          confirmedBy: null,
+          // source：唔好蓋走人手建立嘅
+          ...(existing.source === 'MANUAL' ? {} : { source: 'AUTO' }),
+          // 金額變咗先要重新確認
+          ...(amountChanged ? { confirmedBy: null } : {}),
           needsReview,
           periodMonth,
         },
@@ -613,7 +637,7 @@ export async function scanSpSubsidies(periodMonth: string): Promise<any[]> {
     })
   }
 
-  return candidates
+  return { candidates, skippedLocked }
 }
 
 // ─── Void/Refund Adjustment Creation ────────────────────────────────────────
