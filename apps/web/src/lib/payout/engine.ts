@@ -238,6 +238,18 @@ export async function runGates(
     warnings.push(`${orphanAdj} 筆調整記錄冇診所資料，唔會計入任何月結單`)
   }
 
+  // Orphan referral warning: referrals without clinic data
+  const orphanRef = await prisma.providerReferral.count({
+    where: {
+      fromProviderId: providerId,
+      periodMonth,
+      clinicId: null,
+    },
+  })
+  if (orphanRef > 0) {
+    warnings.push(`${orphanRef} 筆轉介記錄冇診所資料，唔會計入任何月結單`)
+  }
+
   return { errors, warnings }
 }
 
