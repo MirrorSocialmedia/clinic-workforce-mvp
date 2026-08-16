@@ -53,8 +53,13 @@ export async function apricotCall(path: string, init?: RequestInit): Promise<any
     await markError('rate limited 429')
     throw new Error('APRICOT_RATE_LIMITED') // ★ 唔重試
   }
-  if (res.status >= 500) throw new Error(`APRICOT_HTTP_${res.status}`)
-  if (!res.ok) throw new Error(`APRICOT_HTTP_${res.status}`)
+  if (!res.ok) {
+    // ★ H2: 保留錯誤 body（成功 response 有病人資料，唔准 log）
+    let detail = ''
+    try { detail = (await res.text()).slice(0, 300) } catch { /* 讀唔到就算 */ }
+    console.error('[apricot] HTTP error', { status: res.status, path, detail })
+    throw new Error(`APRICOT_HTTP_${res.status}${detail ? `: ${detail}` : ''}`)
+  }
   return res.json()
 }
 
@@ -68,7 +73,7 @@ export async function withApricotLockRetry<T>(fn: () => Promise<T>, tries = 3, d
       const msg = e.message || ''
       // Pass through non-retryable errors
       if (msg === 'APRICOT_AUTH_EXPIRED' || msg === 'APRICOT_RATE_LIMITED') throw e
-      if ((msg.includes('lock') || msg.includes('LOCK') || msg.includes('busy') || msg.includes('BUSY') || msg === 'APRICOT_HTTP_503') && i < tries - 1) {
+      if ((msg.includes('lock') || msg.includes('LOCK') || msg.includes('busy') || msg.includes('BUSY') || msg.startsWith('APRICOT_HTTP_503')) && i < tries - 1) {
         await new Promise(r => setTimeout(r, delayMs))
         continue
       }

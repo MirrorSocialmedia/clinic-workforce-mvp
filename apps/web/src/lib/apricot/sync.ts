@@ -130,6 +130,15 @@ async function upsertBill(b: any) {
 
 /** 主同步入口 — 被 withApricotLock 包起 */
 export async function syncPayments(clinicExtId: string, fromISO: string, toISO: string) {
+  // ★ H1: 唔理 caller 送咩格式（+08:00 / 裸日期 / Z），一律轉成 Apricot 收嘅 UTC Z
+  const startUtc = new Date(fromISO)
+  const endUtc = new Date(toISO)
+  if (isNaN(+startUtc) || isNaN(+endUtc)) {
+    throw new Error(`APRICOT_BAD_DATE_RANGE: from=${fromISO} to=${toISO}`)
+  }
+  const startValue = startUtc.toISOString()
+  const endValue = endUtc.toISOString()
+
   return withApricotLock(async () => {
     // 1) 分頁拉 payments
     let page = 0
@@ -142,8 +151,8 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
           method: 'POST',
           body: JSON.stringify({
             params: [
-              { key: 'startDate', value: fromISO },
-              { key: 'endDate', value: toISO },
+              { key: 'startDate', value: startValue },
+              { key: 'endDate', value: endValue },
             ],
           }),
         },
@@ -193,8 +202,8 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
     })
 
     // C6: 載入所有可能生效的 rules（一次性，避免 N+1）
-    const from = new Date(fromISO)
-    const to = new Date(toISO)
+    const from = new Date(startValue)
+    const to = new Date(endValue)
     const allRules = await prisma.paymentMethodRule.findMany({
       where: {
         effectiveFrom: { lte: to },
