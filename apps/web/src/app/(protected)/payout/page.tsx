@@ -10,7 +10,7 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 interface PayoutRun {
@@ -206,6 +206,9 @@ export default function PayoutRunsPage() {
 
       {/* Entry links */}
       <div className="flex gap-4 flex-wrap mb-4">
+        <a href="/payout/adjustments" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+          <SlidersHorizontal size={14} /> 手動調整錄入
+        </a>
         <a href="/payout/sp-subsidies" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
           <Users size={14} /> 2人SP 補貼確認
         </a>

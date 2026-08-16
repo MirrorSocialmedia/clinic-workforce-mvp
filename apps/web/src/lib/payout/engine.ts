@@ -224,6 +224,20 @@ export async function runGates(
   if (orphanSp > 0) {
     warnings.push(`${orphanSp} 筆已確認嘅 SP 補貼冇診所資料，唔會計入任何月結單`)
   }
+
+  // Orphan adjustment warning: adjustments without clinic data
+  const orphanAdj = await prisma.payoutAdjustment.count({
+    where: {
+      providerId,
+      periodMonth,
+      clinicId: null,
+      runId: null,
+    },
+  })
+  if (orphanAdj > 0) {
+    warnings.push(`${orphanAdj} 筆調整記錄冇診所資料，唔會計入任何月結單`)
+  }
+
   return { errors, warnings }
 }
 
@@ -763,12 +777,12 @@ export async function createVoidAdjustment(
   refCode: string | null,
   note: string,
   createdBy: string,
-  clinicId?: string,
+  clinicId: string,
 ): Promise<any> {
   return await prisma.payoutAdjustment.create({
     data: {
       providerId,
-      clinicId: clinicId || null,
+      clinicId,
       periodMonth: targetMonth,
       sourceMonth: originalMonth,
       reason,

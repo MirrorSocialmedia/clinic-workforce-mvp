@@ -8,9 +8,9 @@ export async function POST(req: NextRequest) {
 	if (isAuthError(auth)) return auth.error
 	const { session } = auth
 	const body = await req.json()
-	const { providerId, periodMonth, sourceMonth, reason, refCode, amount, note } = body
-	if (!providerId || !periodMonth || !reason || amount == null) {
-		return Response.json({ error: 'Missing required fields' }, { status: 400 })
+	const { providerId, clinicId, periodMonth, sourceMonth, reason, refCode, amount, note } = body
+	if (!providerId || !clinicId || !periodMonth || !reason || amount == null) {
+		return Response.json({ error: 'providerId, clinicId, periodMonth, reason, amount 都係必填' }, { status: 400 })
 	}
 	const amt = Number(amount)
 	// ★ P3-deploy J4: 金額守衛
@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
 		refCode || null,
 		note || '',
 		session.userId,
+		clinicId,
 	)
 	// Audit log
 	await prisma.auditLog.create({
