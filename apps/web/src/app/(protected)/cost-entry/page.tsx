@@ -144,16 +144,6 @@ export default function CostEntryPage() {
   const [deny, setDeny] = useState<string[]>([])
   const [userId, setUserId] = useState('')
 
-  const [modalOpen, setModalOpen] = useState(false)
-  const [modalCategory, setModalCategory] = useState<'LAB' | 'INVISALIGN' | 'IMPLANT'>('LAB')
-  const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({
-    providerId: '', clinicId: '', category: 'LAB' as string,
-    patientCode: '', patientName: '', orderedAt: '',
-    itemType: '', labId: '', labOrderNo: '', dsaName: '',
-    baseCost: '', discountPct: '', receivedAt: '', appointmentAt: '',
-  })
-
   const canCreate = userRole ? hasPermission(userRole, 'cost_entry', grant, deny) : false
 
   // ── ★ MD-K: Unified CostCaseForm (picker/manual) state ──
@@ -320,68 +310,6 @@ export default function CostEntryPage() {
     }
     fetchDiscount()
   }, [costForm.labId, costForm.orderedAt, pickerMode, pickerStep, costForm.category])
-
-  // ── Manual modal helpers ─────────────────────────────
-
-  const resetForm = () => {
-    setForm({
-      providerId: '', clinicId: '', category: modalCategory,
-      patientCode: '', patientName: '', orderedAt: todayHK(),
-      itemType: '', labId: '', labOrderNo: '', dsaName: '',
-      baseCost: '', discountPct: '', receivedAt: '', appointmentAt: '',
-    })
-  }
-
-  const openCreateModal = (category: 'LAB' | 'INVISALIGN' | 'IMPLANT') => {
-    setModalCategory(category)
-    resetForm()
-    setForm(prev => ({ ...prev, category }))
-    setModalOpen(true)
-  }
-
-  const handleSubmit = async () => {
-    if (!form.providerId || !form.clinicId || !form.patientCode || !form.orderedAt) {
-      alert('醫生、診所、病人編號、落單日為必填')
-      return
-    }
-    setSaving(true)
-    try {
-      if (form.category === 'IMPLANT') {
-        // ★ MD-K: IMPLANT manual → redirect message
-        alert('Implant 材料請使用 implant 專用表單')
-        setModalOpen(false)
-        return
-      }
-      const body: any = {
-        providerId: form.providerId,
-        clinicId: form.clinicId,
-        category: form.category,
-        patientCode: form.patientCode,
-        patientName: form.patientName || null,
-        orderedAt: form.orderedAt,
-        itemType: form.itemType || null,
-        labId: form.labId || null,
-        labOrderNo: form.labOrderNo || null,
-        dsaName: form.dsaName || null,
-        baseCost: form.baseCost ? Number(form.baseCost) : null,
-        receivedAt: form.receivedAt || null,
-        appointmentAt: form.appointmentAt || null,
-      }
-
-      await apiFetch('/api/cost-cases', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-
-      setModalOpen(false)
-      loadCases()
-    } catch (e) {
-      alert(`建立失敗: ${e}`)
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const handleDelete = async (id: string) => {
     if (!confirm('確定要作廢呢筆記錄？')) return
@@ -688,16 +616,6 @@ export default function CostEntryPage() {
               >
                 <Plus size={14} /> 手動新增
               </button>
-              <div className="relative group">
-                <button className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300">
-                  手動輸入 ▾
-                </button>
-                <div className="absolute right-0 top-full mt-1 bg-white border rounded shadow-lg hidden group-hover:block z-10 min-w-[140px]">
-                  <button onClick={() => openCreateModal('LAB')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100">新增 LAB</button>
-                  <button onClick={() => openCreateModal('INVISALIGN')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100">新增 Invisalign</button>
-                  <a href="/cost-entry/implant" className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-100">新增 Implant</a>
-                </div>
-              </div>
             </>
           )}
         </div>
@@ -815,7 +733,7 @@ export default function CostEntryPage() {
       {/* ── ★ MD-K: Unified CostCaseForm Modal ───────── */}
       {pickerOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="p-6 w-full max-w-2xl max-h-[90vh] overflow-auto">
+          <Card className="p-6 w-full max-w-4xl max-h-[90vh] overflow-auto">
             {/* Step indicator (bill mode only) */}
             {pickerMode === 'bill' && (
               <div className="flex items-center justify-center gap-0 mb-6">
@@ -945,37 +863,41 @@ export default function CostEntryPage() {
                     </div>
 
                     {/* Read-only section */}
-                    <Card className="p-3 bg-gray-50 space-y-2">
-                      <div className="text-xs font-medium text-gray-500 mb-1">自動帶入（唯讀）</div>
-                      <div className="grid grid-cols-3 gap-3 text-sm">
+                    <Card className="p-3 bg-gray-50">
+                      <div className="text-xs font-medium text-gray-500 mb-2">
+                        自動帶入（唯讀）
+                        {selectedBill?.code && <span className="ml-2 font-mono">· 帳單 {selectedBill.code}</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
                         <div>
-                          <label className="block text-xs text-gray-400">醫生</label>
-                          <div className="py-1">
-                            {selectedProviderInternalId ? (
-                              <span>{providers.find(p => p.id === selectedProviderInternalId)?.name}</span>
-                            ) : (
-                              <div className="text-sm"><div className="text-amber-700">⚠️ 醫生未對應</div><div className="text-xs text-muted-foreground mt-1">Apricot 醫生：<code>{selectedBill?.practitioner?.id ?? '—'}</code></div></div>
-                            )}
-                          </div>
+                          <span className="text-xs text-gray-400">醫生 </span>
+                          {selectedProviderInternalId ? (
+                            <span>{providers.find(p => p.id === selectedProviderInternalId)?.name}</span>
+                          ) : (
+                            <span className="text-amber-700">⚠️ 醫生未對應</span>
+                          )}
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-400">診所</label>
-                          <div className="py-1">
-                            {selectedClinicInternalId ? (
-                              <span>{clinics.find(c => c.id === selectedClinicInternalId)?.shortName || clinics.find(c => c.id === selectedClinicInternalId)?.name}</span>
-                            ) : (
-                              <div className="text-sm"><div className="text-amber-700">⚠️ 診所未對應</div><div className="text-xs text-muted-foreground mt-1">Apricot 診所：<code>{selectedBill?.clinic?.id ?? '—'}</code></div></div>
-                            )}
-                          </div>
+                          <span className="text-xs text-gray-400">診所 </span>
+                          {selectedClinicInternalId ? (
+                            <span>{clinics.find(c => c.id === selectedClinicInternalId)?.shortName || clinics.find(c => c.id === selectedClinicInternalId)?.name}</span>
+                          ) : (
+                            <span className="text-amber-700">⚠️ 診所未對應</span>
+                          )}
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-400">病人</label>
-                          <div className="py-1">
-                            <span className="font-mono">{selectedPatient.code}</span>
-                            <span className="ml-1 text-gray-500">{selectedPatient.fullName}</span>
-                          </div>
+                          <span className="text-xs text-gray-400">病人 </span>
+                          <span className="font-mono">{selectedPatient.code}</span>
+                          <span className="ml-1 text-gray-500">{selectedPatient.fullName}</span>
                         </div>
                       </div>
+                      {(!selectedProviderInternalId || !selectedClinicInternalId) && (
+                        <div className="mt-2 text-xs text-gray-400">
+                          {!selectedProviderInternalId && <span>Apricot 醫生：<code>{selectedBill?.practitioner?.id ?? '—'}</code></span>}
+                          {(!selectedProviderInternalId && !selectedClinicInternalId) && <span className="mx-1">|</span>}
+                          {!selectedClinicInternalId && <span>Apricot 診所：<code>{selectedBill?.clinic?.id ?? '—'}</code></span>}
+                        </div>
+                      )}
                     </Card>
                   </div>
                 )}
@@ -1016,10 +938,18 @@ export default function CostEntryPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm mb-1">類別 {pickerMode === 'bill' && <span className="text-xs text-gray-400">（自動建議）</span>}</label>
-                    <select value={costForm.category} onChange={e => setCostForm({ ...costForm, category: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm">
-                      {CATEGORIES.map(c => (<option key={c} value={c}>{CATEGORY_LABELS[c]}</option>))}
-                    </select>
+                    <div className="flex gap-1">
+                      {CATEGORIES.map(c => (
+                        <button key={c} type="button"
+                          onClick={() => setCostForm({ ...costForm, category: c })}
+                          className={`px-3 py-1.5 text-sm rounded border ${
+                            costForm.category === c ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                          }`}>
+                          {CATEGORY_LABELS[c]}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm mb-1">項目</label>
@@ -1065,38 +995,61 @@ export default function CostEntryPage() {
                         {materialLines.length === 0 ? (
                           <p className="text-gray-400 text-xs text-center py-2">點擊「加一行」添加材料</p>
                         ) : (
-                          <div className="space-y-1.5">
-                            {materialLines.map((line, idx) => {
-                              const hasMasterPrice = line.masterPrice != null
-                              const showOverride = hasMasterPrice && line.isPriceOverridden
-                              const showNoPrice = !hasMasterPrice && line.materialName
-                              return (
-                                <div key={idx} className="flex items-center gap-2">
-                                  <select value={line.materialName} onChange={e => updateMaterialLine(idx, 'materialName', e.target.value)}
-                                    className="flex-1 border rounded px-2 py-1 text-xs">
-                                    <option value="">選擇材料</option>
-                                    {materials.map(m => (
-                                      <option key={m.id} value={m.name}>{m.name} — {m.unitPrice != null ? `$${Number(m.unitPrice).toFixed(2)}` : '(冇定價)'}</option>
-                                    ))}
-                                  </select>
-                                  <input type="number" min="1" step="1" value={line.qty} onChange={e => updateMaterialLine(idx, 'qty', e.target.value)}
-                                    className="w-14 border rounded px-1 py-1 text-xs text-center" placeholder="數量" />
-                                  <div className="relative">
-                                    <input type="number" step="0.01" value={line.unitPrice || ''} onChange={e => updateMaterialLine(idx, 'unitPrice', e.target.value)}
-                                      className={`w-20 border rounded px-1 py-1 text-xs text-right ${showNoPrice ? 'border-red-300 bg-red-50' : ''}`}
-                                      placeholder={showNoPrice ? '必填' : ''} />
-                                    {showOverride && <span className="absolute -top-1 -right-1 text-[10px]" title={`已覆寫（主檔 $${line.masterPrice!.toFixed(2)}）`}>✏️</span>}
-                                    {showNoPrice && <span className="absolute -top-1 -right-1 text-[10px]" title="主檔未有價">⚠️</span>}
-                                  </div>
-                                  <span className="w-16 text-xs text-right font-medium">${line.subtotal.toFixed(2)}</span>
-                                  <button onClick={() => removeMaterialLine(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
-                                </div>
-                              )
-                            })}
-                            <div className="flex justify-between pt-1 border-t text-xs">
-                              <span className="text-gray-400">—（植體材料唔經工場折扣）</span>
-                              <span className="font-bold">合計 ${totalMaterialCost.toFixed(2)}</span>
-                            </div>
+                          <div>
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="text-gray-500">
+                                  <th className="text-left px-3 py-1.5 font-medium">材料</th>
+                                  <th className="text-right px-2 py-1.5 font-medium w-16">數量</th>
+                                  <th className="text-right px-2 py-1.5 font-medium w-24">單價</th>
+                                  <th className="text-right px-3 py-1.5 font-medium w-24">小計</th>
+                                  <th className="w-10"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {materialLines.map((line, idx) => {
+                                  const hasMasterPrice = line.masterPrice != null
+                                  const showOverride = hasMasterPrice && line.isPriceOverridden
+                                  const showNoPrice = !hasMasterPrice && line.materialName
+                                  return (
+                                    <tr key={idx} className="border-b">
+                                      <td className="px-3 py-1">
+                                        <select value={line.materialName} onChange={e => updateMaterialLine(idx, 'materialName', e.target.value)}
+                                          className="w-full border rounded px-2 py-1 text-xs">
+                                          <option value="">選擇材料</option>
+                                          {materials.map(m => (
+                                            <option key={m.id} value={m.name}>{m.name} — {m.unitPrice != null ? `$${Number(m.unitPrice).toFixed(2)}` : '(冇定價)'}</option>
+                                          ))}
+                                        </select>
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <input type="number" min="1" step="1" value={line.qty} onChange={e => updateMaterialLine(idx, 'qty', e.target.value)}
+                                          className="w-full border rounded px-1 py-1 text-xs text-center" placeholder="數量" />
+                                      </td>
+                                      <td className="px-2 py-1">
+                                        <input type="number" step="0.01" value={line.unitPrice || ''} onChange={e => updateMaterialLine(idx, 'unitPrice', e.target.value)}
+                                          className={`w-full border rounded px-1 py-1 text-xs text-right ${showNoPrice ? 'border-amber-300 bg-amber-50' : ''}`}
+                                          placeholder={showNoPrice ? '必填' : ''} />
+                                        <div className="text-[10px] mt-0.5">
+                                          {showOverride && <span className="text-gray-400">✏️ 已覆寫（主檔 ${line.masterPrice!.toFixed(2)}）</span>}
+                                          {showNoPrice && <span className="text-amber-600">⚠️ 主檔未有價，請手動填寫</span>}
+                                        </div>
+                                      </td>
+                                      <td className="px-3 py-1 text-right font-medium">${line.subtotal.toFixed(2)}</td>
+                                      <td className="py-1">
+                                        <button onClick={() => removeMaterialLine(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                                <tr className="bg-gray-50 border-t-2">
+                                  <td colSpan={3} className="px-3 py-2 font-medium">合計</td>
+                                  <td className="px-3 py-2 text-right font-bold">${totalMaterialCost.toFixed(2)}</td>
+                                  <td></td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            <div className="text-gray-400 text-xs mt-1">—（植體材料唔經工場折扣）</div>
                           </div>
                         )}
                       </div>
@@ -1192,112 +1145,6 @@ export default function CostEntryPage() {
         </div>
       )}
 
-      {/* ── Existing Manual Entry Modal (legacy) ───────── */}
-      {modalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="p-6 w-full max-w-lg max-h-[90vh] overflow-auto">
-            <h2 className="text-lg font-bold mb-4">新增 {CATEGORY_LABELS[modalCategory] || modalCategory} 成本</h2>
-            {modalCategory === 'IMPLANT' && (
-              <div className="mb-4 p-3 bg-blue-50 text-blue-700 text-sm rounded">
-                Implant 材料請使用 <a href="/cost-entry/implant" className="underline font-medium">專用表單</a>，支援材料明細 + 單價覆寫
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm mb-1">醫生 *</label>
-                <select value={form.providerId} onChange={e => setForm({ ...form, providerId: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm">
-                  <option value="">請選擇</option>
-                  {providers.map(p => <option key={p.id} value={p.id}>{p.name || p.shortName}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm mb-1">診所 *</label>
-                <select value={form.clinicId} onChange={e => setForm({ ...form, clinicId: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm">
-                  <option value="">請選擇</option>
-                  {clinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm mb-1">病人編號 *</label>
-                <input value={form.patientCode} onChange={e => setForm({ ...form, patientCode: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="病人編號" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">病人姓名</label>
-                <input value={form.patientName} onChange={e => setForm({ ...form, patientName: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="病人姓名" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">落單日 *</label>
-                <input type="date" value={form.orderedAt} onChange={e => setForm({ ...form, orderedAt: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">項目</label>
-                <input value={form.itemType} onChange={e => setForm({ ...form, itemType: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Crown / Bridge / ..." />
-              </div>
-              {form.category !== 'IMPLANT' && (
-                <>
-                  <div>
-                    <label className="block text-sm mb-1">Lab</label>
-                    <input value={form.labId} onChange={e => setForm({ ...form, labId: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab ID" />
-                  </div>
-                  <div>
-                    <label className="block text-sm mb-1">Lab 單號</label>
-                    <input value={form.labOrderNo} onChange={e => setForm({ ...form, labOrderNo: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
-                  </div>
-                </>
-              )}
-              <div>
-                <label className="block text-sm mb-1">DSA</label>
-                <input value={form.dsaName} onChange={e => setForm({ ...form, dsaName: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" placeholder="DSA 名稱" />
-              </div>
-              {form.category !== 'IMPLANT' && (
-                <>
-                  <div>
-                    <label className="block text-sm mb-1">成本</label>
-                    <input type="number" step="0.01" value={form.baseCost} onChange={e => setForm({ ...form, baseCost: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm" placeholder="留空 = 未有價" />
-                  </div>
-                  <div>
-                    <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
-                    <div className="px-3 py-2 border rounded bg-muted text-sm">—（提交時由 LabMonthlyDiscount 查表）</div>
-                  </div>
-                </>
-              )}
-              {form.category === 'IMPLANT' && (
-                <div className="col-span-2">
-                  <label className="block text-sm mb-1">折扣 %</label>
-                  <div className="px-3 py-2 border rounded bg-muted text-sm">—（植體材料唔經工場折扣）</div>
-                </div>
-              )}
-              <div>
-                <label className="block text-sm mb-1">到貨日</label>
-                <input type="date" value={form.receivedAt} onChange={e => setForm({ ...form, receivedAt: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">覆診日</label>
-                <input type="date" value={form.appointmentAt} onChange={e => setForm({ ...form, appointmentAt: e.target.value })}
-                  className="w-full border rounded px-2 py-1.5 text-sm" />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setModalOpen(false)} className="px-4 py-1.5 border rounded text-sm">取消</button>
-              <button onClick={handleSubmit} disabled={saving}
-                className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">
-                {saving && <Loader2 size={14} className="animate-spin" />} 確定
-              </button>
-            </div>
-          </Card>
-        </div>
-      )}
     </div>
   )
 }
