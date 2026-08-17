@@ -1,17 +1,17 @@
 import { NextRequest } from 'next/server'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { withApricotLockRetry, searchPatients } from '@/lib/apricot/client'
 import { toCleanPatients, assertNoPiiPatient, type CleanPatient } from '@/lib/apricot/sanitize'
 
 // ============================================================
 // GET /api/cost-cases/patient-search — Search Apricot patients
-// Perm: cost_entry
+// Perms: cost_entry | provider_payout (Y4)
 // Query: ?keyword=
 // ★ keyword min 6 chars; max 20 results; PII whitelist only
 // ============================================================
 export async function GET(req: NextRequest) {
-  const auth = await requirePerm(req, 'cost_entry')
+  const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
 
   const { searchParams } = new URL(req.url)

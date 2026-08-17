@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge'
 import {
   Plus, Trash2, ArrowLeft, Search, Check, RotateCcw, FileText, ClipboardList,
   ChevronDown, ChevronRight, Users,
+  Loader2, AlertCircle,
 } from 'lucide-react'
 
 /** W1: Draft reference for completing a draft with bill data */
@@ -36,6 +37,7 @@ interface ConfirmedRef {
   fromProviderName?: string
   clinicName: string | null | '__DELETED_CLINIC__'
   billCode: string | null
+  billExtId: string | null
   billTime: string | null
   itemDes: string | null
   unitPrice: number | null
@@ -66,6 +68,18 @@ export default function ReferralsPage() {
   const [filterDoctor, setFilterDoctor] = useState('')
   const [filterClinic, setFilterClinic] = useState('')
   const [filterBillCode, setFilterBillCode] = useState('')
+
+  // Y4: Patient search mode
+  type SearchMode = 'billCode' | 'patient'
+  const [searchMode, setSearchMode] = useState<SearchMode>('billCode')
+  const [patientSearch, setPatientSearch] = useState('')
+  const [patientResults, setPatientResults] = useState<any[] | null>(null)
+  const [patientSearching, setPatientSearching] = useState(false)
+  const [patientSearchError, setPatientSearchError] = useState<string | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<any | null>(null)
+  const [billSearchResults, setBillSearchResults] = useState<any[] | null>(null)
+  const [billSearching, setBillSearching] = useState(false)
+  const [billSearchError, setBillSearchError] = useState<string | null>(null)
 
   // ─── Bill lookup state ─────────────────────────────────────────
   const [searchCode, setSearchCode] = useState('')
@@ -125,6 +139,78 @@ export default function ReferralsPage() {
       alert(`查找失敗: ${e.message || '帳單未找到'}`)
       setBillData(null)
     }
+  }
+
+  // Y4: Patient search handlers
+  async function searchPatients() {
+    if (!patientSearch.trim() || patientSearch.trim().length < 6) {
+      if (patientSearch.trim().length > 0 && patientSearch.trim().length < 6) {
+        setPatientSearchError('病人編號最少 6 字元')
+      }
+      return
+    }
+    setPatientSearching(true)
+    setPatientSearchError(null)
+    setPatientResults(null)
+    try {
+      const res = await apiFetch<any>(`/api/cost-cases/patient-search?keyword=${encodeURIComponent(patientSearch.trim())}`)
+      if ((res as any).error) {
+        setPatientSearchError((res as any).error)
+        setPatientResults([])
+      } else {
+        setPatientResults(res.patients || [])
+        if (res.patients?.length === 0) {
+          setPatientSearchError(`揾唔到病人編號 ${patientSearch.trim()}`)
+        }
+      }
+    } catch (e: any) {
+      setPatientSearchError(`Apricot 連線失敗（或系統同步中）`)
+      setPatientResults(null)
+    } finally {
+      setPatientSearching(false)
+    }
+  }
+
+  async function selectPatient(patient: any) {
+    setSelectedPatient(patient)
+    setBillSearchResults(null)
+    setBillSearching(true)
+    setBillSearchError(null)
+    try {
+      const res = await apiFetch<any>(`/api/cost-cases/bill-search?patientExtId=${patient.id}&months=12`)
+      if ((res as any).error) {
+        setBillSearchError((res as any).error)
+        setBillSearchResults([])
+      } else {
+        // Count existing referrals per bill
+        const billsWithReferralCount = (res.bills || []).map((b: any) => {
+          const referralCount = confirmedRefs.filter(r => r.billExtId === b.id).length
+          return { ...b, referralCount }
+        })
+        setBillSearchResults(billsWithReferralCount)
+      }
+    } catch (e: any) {
+      setBillSearchError(`Apricot 連線失敗（或系統同步中）`)
+      setBillSearchResults(null)
+    } finally {
+      setBillSearching(false)
+    }
+  }
+
+  async function selectBillFromPatient(bill: any) {
+    // bill-search doesn't return items; fetch via bill-lookup
+    try {
+      const res = await apiFetch<any>(`/api/provider-referrals/bill-lookup?code=${encodeURIComponent(bill.code)}`)
+      setBillData(res)
+      setSelectedItems([])
+      if (res.providerId && !completingDraft) {
+        setFromProviderId(res.providerId)
+      }
+    } catch (e: any) {
+      alert(`載入帳單項目失敗: ${e.message || '未知錯誤'}`)
+      return
+    }
+    document.getElementById('bill-referral-section')?.scrollIntoView({ behavior: 'smooth' })
   }
 
   const toggleItem = (eleId: string) => {
@@ -724,17 +810,158 @@ export default function ReferralsPage() {
               </select>
             </div>
           </div>
-          <div className="flex gap-2">
-          <Input
-            value={searchCode}
-            onChange={e => setSearchCode(e.target.value)}
-            placeholder="輸入帳單編號（如 202607050007）"
-            onKeyDown={e => e.key === 'Enter' && lookupBill()}
-          />
-          <Button onClick={lookupBill}>
-            <Search className="w-4 h-4 mr-1" /> 搜尋
-          </Button>
+
+          {/* Y4: Search mode toggle */}
+          <div className="flex gap-4 text-sm">
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                name="searchMode"
+                checked={searchMode === 'billCode'}
+                onChange={() => setSearchMode('billCode')}
+              />
+              直接打帳單編號
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                name="searchMode"
+                checked={searchMode === 'patient'}
+                onChange={() => setSearchMode('patient')}
+              />
+              用病人編號揾
+            </label>
           </div>
+
+          {/* Y4: Patient search flow */}
+          {searchMode === 'patient' ? (
+            <div className="space-y-3">
+              {/* Step 1: Patient search input */}
+              <div className="flex gap-2">
+                <Input
+                  value={patientSearch}
+                  onChange={e => { setPatientSearch(e.target.value); setPatientSearchError(null); setPatientResults(null); setSelectedPatient(null); setBillSearchResults(null) }}
+                  placeholder="輸入病人編號（最少 6 字元）"
+                  onKeyDown={e => e.key === 'Enter' && searchPatients()}
+                />
+                <Button onClick={searchPatients} disabled={patientSearching}>
+                  {patientSearching ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
+                  搜尋
+                </Button>
+              </div>
+
+              {/* Patient search error */}
+              {patientSearchError && (
+                <div className="flex items-center gap-2 text-sm text-red-600">
+                  <AlertCircle className="w-4 h-4" />
+                  {patientSearchError}
+                </div>
+              )}
+
+              {/* Step 1: Patient results */}
+              {patientResults !== null && patientResults.length > 0 && !selectedPatient && (
+                <div className="border rounded overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left bg-gray-50 border-b">
+                        <th className="py-2 px-3">病人編號</th>
+                        <th className="py-2 px-3">姓名</th>
+                        <th className="py-2 px-3">性別</th>
+                        <th className="py-2 px-3">出生日期</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {patientResults.map((p: any) => (
+                        <tr
+                          key={p.id}
+                          className="border-b last:border-0 hover:bg-blue-50 cursor-pointer"
+                          onClick={() => selectPatient(p)}
+                        >
+                          <td className="py-2 px-3 font-mono text-xs">{p.externalId || p.id}</td>
+                          <td className="py-2 px-3">{p.fullName || '—'}</td>
+                          <td className="py-2 px-3">{p.gender || '—'}</td>
+                          <td className="py-2 px-3">{p.birthDate || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Step 2: Bill results (after selecting patient) */}
+              {selectedPatient && (
+                <div className="space-y-2">
+                  <div className="text-sm text-gray-600 flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    已選：{selectedPatient.fullName || selectedPatient.externalId || selectedPatient.id}
+                    <button onClick={() => { setSelectedPatient(null); setBillSearchResults(null) }} className="text-blue-600 underline text-xs ml-2">重新選擇</button>
+                  </div>
+
+                  {billSearching && (
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <Loader2 className="w-4 h-4 animate-spin" /> 載入帳單中...
+                    </div>
+                  )}
+
+                  {billSearchError && (
+                    <div className="flex items-center gap-2 text-sm text-red-600">
+                      <AlertCircle className="w-4 h-4" />
+                      {billSearchError}
+                    </div>
+                  )}
+
+                  {billSearchResults !== null && billSearchResults.length > 0 && (
+                    <div className="border rounded overflow-hidden max-h-64 overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0">
+                          <tr className="text-left bg-gray-50 border-b">
+                            <th className="py-2 px-3">帳單編號</th>
+                            <th className="py-2 px-3">日期</th>
+                            <th className="py-2 px-3 text-right">金額</th>
+                            <th className="py-2 px-3">狀態</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {billSearchResults.map((b: any) => (
+                            <tr
+                              key={b.id}
+                              className={`border-b last:border-0 hover:bg-blue-50 cursor-pointer ${b.isVoid ? 'opacity-50' : ''}`}
+                              onClick={() => !b.isVoid && selectBillFromPatient(b)}
+                            >
+                              <td className="py-2 px-3 font-mono text-xs">{b.code || b.id}</td>
+                              <td className="py-2 px-3">{b.billTime ? new Date(b.billTime).toLocaleDateString('zh-HK') : '—'}</td>
+                              <td className="py-2 px-3 text-right">${(b.amt ?? 0).toFixed(2)}</td>
+                              <td className="py-2 px-3">
+                                {b.isVoid && <Badge variant="secondary" className="text-xs">已取消</Badge>}
+                                {b.referralCount > 0 && <span className="text-amber-600 text-xs">⚠️ 已有 {b.referralCount} 筆轉介</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {billSearchResults !== null && billSearchResults.length === 0 && (
+                    <div className="text-sm text-gray-500 text-center py-4">該病人近 12 個月冇帳單</div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Bill code search (original) */
+            <div className="flex gap-2">
+              <Input
+                value={searchCode}
+                onChange={e => setSearchCode(e.target.value)}
+                placeholder="輸入帳單編號（如 202607050007）"
+                onKeyDown={e => e.key === 'Enter' && lookupBill()}
+              />
+              <Button onClick={lookupBill}>
+                <Search className="w-4 h-4 mr-1" /> 搜尋
+              </Button>
+            </div>
+          )}
         </div>
 
         {billData && (

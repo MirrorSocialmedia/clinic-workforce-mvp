@@ -472,8 +472,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'PUT /api/cost-cases/:id': ['cost_entry'],
   'DELETE /api/cost-cases/:id': ['cost_entry'],
   // ★ MD-F: bill picker routes
-  'GET /api/cost-cases/patient-search': ['cost_entry'],
-  'GET /api/cost-cases/bill-search': ['cost_entry'],
+  // ★ Y4: provider_payout 也可以用病人/帳單搜尋
+  'GET /api/cost-cases/patient-search': ['cost_entry', 'provider_payout'],
+  'GET /api/cost-cases/bill-search': ['cost_entry', 'provider_payout'],
   //   provider_payout 權限：折扣設定 / 材料單價（只 OWNER）
   'POST /api/cost-cases/recompute': ['provider_payout'],
   'POST /api/labs': ['provider_payout'],
