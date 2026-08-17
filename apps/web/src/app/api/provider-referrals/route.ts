@@ -1,6 +1,7 @@
 /**
  * GET /api/provider-referrals — List provider referrals (OWNER / provider_payout)
  * POST /api/provider-referrals — Create provider referral (OWNER / provider_payout)
+ * MD-U: Supports draft referrals (status=DRAFT) without bill data
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { jsonNoStore } from '@/lib/api-response'
@@ -14,22 +15,38 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const fromProviderId = searchParams.get('fromProviderId')
   const periodMonth = searchParams.get('periodMonth')
+  const status = searchParams.get('status') // 'DRAFT' | 'CONFIRMED' | null
 
   const where: any = {}
   if (fromProviderId) where.fromProviderId = fromProviderId
   if (periodMonth) where.periodMonth = periodMonth
+  if (status) where.status = status
 
   const referrals = await prisma.providerReferral.findMany({
     where,
     orderBy: { createdAt: 'desc' },
   })
 
+  // Load provider names
+  const providerIds = new Set<string>()
+  referrals.forEach(r => {
+    providerIds.add(r.fromProviderId)
+    if (r.toProviderId) providerIds.add(r.toProviderId)
+  })
+  const providers = await prisma.provider.findMany({
+    where: { id: { in: [...providerIds] } },
+    select: { id: true, name: true },
+  })
+  const providerMap = new Map(providers.map(p => [p.id, p.name]))
+
   return jsonNoStore({
     referrals: referrals.map(r => ({
       ...r,
-      unitPrice: Number(r.unitPrice),
+      unitPrice: r.unitPrice != null ? Number(r.unitPrice) : null,
       refPercent: Number(r.refPercent),
-      amount: Number(r.amount),
+      amount: r.amount != null ? Number(r.amount) : null,
+      fromProviderName: providerMap.get(r.fromProviderId) ?? null,
+      toProviderName: r.toProviderId ? (providerMap.get(r.toProviderId) ?? null) : null,
     })),
   })
 }
@@ -51,56 +68,76 @@ export async function POST(req: NextRequest) {
     refPercent,
     periodMonth,
     note,
+    patientNote,
+    status,
   } = body
 
-  if (!fromProviderId || !billExtId || !billItemEleId || !itemDes || !unitPrice || !periodMonth) {
+  // MD-U: Draft referrals don't need bill data
+  const isDraft = status === 'DRAFT'
+
+  if (!fromProviderId) {
     return NextResponse.json(
-      { error: 'fromProviderId, billExtId, billItemEleId, itemDes, unitPrice, periodMonth required' },
+      { error: 'fromProviderId required' },
+      { status: 400 },
+    )
+  }
+
+  if (!isDraft && (!billExtId || !billItemEleId || !itemDes || !unitPrice || !periodMonth)) {
+    return NextResponse.json(
+      { error: 'billExtId, billItemEleId, itemDes, unitPrice, periodMonth required for CONFIRMED referrals' },
+      { status: 400 },
+    )
+  }
+
+  // For drafts, require periodMonth at minimum
+  if (isDraft && !periodMonth) {
+    return NextResponse.json(
+      { error: 'periodMonth required' },
       { status: 400 },
     )
   }
 
   const refPercentNum = refPercent ?? 2
   const qtyNum = qty ?? 1
-  const amount = Number(((Number(unitPrice) * qtyNum * refPercentNum / 100).toFixed(2)))
 
-  // ★ Resolve clinicId from bill — hard gate: 解唔到就 400
-  const bill = await prisma.apricotBill.findUnique({
-    where: { extId: billExtId },
-    select: { clinicExtId: true },
-  })
-  if (!bill) {
-    return NextResponse.json(
-      { error: '帳單未同步落本地，請先同步該月份' },
-      { status: 400 },
-    )
+  // Calculate amount only for confirmed referrals
+  let amount: number | null = null
+  if (!isDraft) {
+    amount = Number(((Number(unitPrice) * qtyNum * refPercentNum / 100).toFixed(2)))
   }
-  const clinic = await prisma.clinic.findFirst({
-    where: { apricotClinicId: bill.clinicExtId },
-    select: { id: true, name: true },
-  })
-  if (!clinic) {
-    return NextResponse.json(
-      { error: `帳單所屬診所（Apricot ID ${bill.clinicExtId}）未對應，請去診所管理設定` },
-      { status: 400 },
-    )
-  }
-  const clinicId = clinic.id
 
-  // Check if already locked — clinicId is guaranteed non-null by hard gate above
-  const existingRun = await prisma.payoutRun.findFirst({
-    where: {
-      providerId: fromProviderId,
-      clinicId,
-      periodMonth,
-      status: 'LOCKED',
-    },
-  })
-  if (existingRun) {
-    return NextResponse.json(
-      { error: `該月已出月結 (${existingRun.periodMonth})，無法新增轉介` },
-      { status: 409 },
-    )
+  // Resolve clinicId from bill (for confirmed referrals only)
+  let clinicId: string | null = null
+  if (!isDraft && billExtId) {
+    const bill = await prisma.apricotBill.findUnique({
+      where: { extId: billExtId },
+      select: { clinicExtId: true },
+    })
+    if (bill) {
+      const clinic = await prisma.clinic.findFirst({
+        where: { apricotClinicId: bill.clinicExtId },
+        select: { id: true },
+      })
+      if (clinic) clinicId = clinic.id
+    }
+  }
+
+  // Check if month is locked (for confirmed referrals)
+  if (!isDraft && clinicId && periodMonth) {
+    const existingRun = await prisma.payoutRun.findFirst({
+      where: {
+        providerId: fromProviderId,
+        clinicId,
+        periodMonth,
+        status: 'LOCKED',
+      },
+    })
+    if (existingRun) {
+      return NextResponse.json(
+        { error: `該月已出月結 (${existingRun.periodMonth})，無法新增轉介` },
+        { status: 409 },
+      )
+    }
   }
 
   const referral = await prisma.providerReferral.create({
@@ -108,38 +145,45 @@ export async function POST(req: NextRequest) {
       fromProviderId,
       toProviderId: toProviderId || null,
       clinicId,
-      billExtId,
-      billCode: billCode || '',
-      billItemEleId,
-      itemDes,
-      unitPrice: Number(unitPrice),
+      billExtId: billExtId || null,
+      billCode: billCode || null,
+      billItemEleId: billItemEleId || null,
+      itemDes: itemDes || null,
+      unitPrice: !isDraft ? Number(unitPrice) : null,
       qty: qtyNum,
       refPercent: refPercentNum,
-      amount,
+      amount: amount != null ? amount : null,
       periodMonth,
       note: note || null,
+      patientNote: patientNote || null,
+      status: status || 'CONFIRMED',
       createdBy: auth.session!.userId,
     },
   })
 
   // Audit
+  const actionLabel = isDraft ? 'DRAFT_REFERRAL_CREATE' : 'REFERRAL_CREATE'
+  const auditNote = isDraft
+    ? `新增草稿轉介：${patientNote || '未填寫'} ${periodMonth}`
+    : `新增轉介：${itemDes} ${periodMonth} $${amount}`
+
   await prisma.auditLog.create({
     data: {
       actorId: auth.session!.userId,
-      action: 'REFERRAL_CREATE',
+      action: actionLabel,
       entity: 'ProviderReferral',
       entityId: referral.id,
-      notes: `新增轉介：${itemDes} ${periodMonth} $${amount}`,
-      afterJson: JSON.stringify({ fromProviderId, itemDes, periodMonth, amount }),
+      notes: auditNote,
+      afterJson: JSON.stringify({ fromProviderId, itemDes: itemDes || patientNote, periodMonth, amount }),
     },
   }).catch((e: any) => console.error('[provider-referrals] audit failed', e))
 
   return NextResponse.json({
     referral: {
       ...referral,
-      unitPrice: Number(referral.unitPrice),
+      unitPrice: referral.unitPrice != null ? Number(referral.unitPrice) : null,
       refPercent: Number(referral.refPercent),
-      amount: Number(referral.amount),
+      amount: referral.amount != null ? Number(referral.amount) : null,
     },
   }, { status: 201 })
 }
