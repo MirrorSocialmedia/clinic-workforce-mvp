@@ -1692,7 +1692,7 @@ function getShiftCode(shift: Shift): string {
 
   const createShift = useCallback(async (
     employeeId: string, date: string, template: ShiftTemplate,
-    opts?: { clinicIdOverride?: string | null; replaceShiftIds?: string[]; replaceLeaveIds?: string[]; onConflict?: (c: { kind: 'shift' | 'leave', existing: Array<{ id: string; label: string }> }) => void }
+    opts?: { clinicIdOverride?: string | null; replaceShiftIds?: string[]; replaceLeaveIds?: string[]; onConflict?: (c: { kind: 'shift' | 'leave', existing: Array<{ id: string; label: string }> }) => void; keepTransferCombo?: boolean }
   ): Promise<boolean> => {
     const targetClinicId = opts?.clinicIdOverride ?? selectedClinicId
     if (!targetClinicId) {
@@ -1787,8 +1787,8 @@ function getShiftCode(shift: Shift): string {
           const newShift = { ...data.shifts[0], hasPunch: false }
           setShifts(prev => [...prev, newShift])
         }
-        // ★ 調鋪係逐張更嘅屬性，用完即清 —— 唔清嘅話之後每張更都會被標成調鋪
-        setSecondaryClinicId(null)
+        // ★ 2026-08-16: 調鋪膠囊拖出嚟嘅要保留成組；普通拖更次仍然要清
+        if (!opts?.keepTransferCombo) setSecondaryClinicId(null)
         // ★ payrollLocked warning — append, 唔沖走之前清咗嘅 validation
         if (data?.payrollLocked) {
           setValidationIssues(prev => [...prev, { type: 'warning', rule: 'payroll',
@@ -2099,6 +2099,7 @@ function getShiftCode(shift: Shift): string {
       const r = rect || { x: 0, y: 0, width: 0, height: 0 }
       const ok = await createShift(targetEmpId, dateStr, tpl, {
         clinicIdOverride: tc.primaryClinicId,
+        keepTransferCombo: true,
         onConflict: (c) => setCellMenu({
           empId: targetEmpId, dateStr,
           x: r.x + r.width, y: r.y,
