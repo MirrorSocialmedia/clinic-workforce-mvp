@@ -184,8 +184,9 @@ export default function PayrollDetailPage() {
         setShowPreflight(false)
         await fetchRun()
       } else {
-        const err = await res.json()
-        alert(err.error || '確認失敗')
+        let msg = '確認失敗'
+        try { msg = (await res.json())?.error ?? msg } catch { /* 空 body */ }
+        alert(msg)
       }
     } catch (err) {
       console.error('Confirm failed:', err)
@@ -204,8 +205,9 @@ export default function PayrollDetailPage() {
       if (res.ok) {
         router.push('/payroll')
       } else {
-        const err = await res.json()
-        alert(err.error || '刪除失敗')
+        let msg = '刪除失敗'
+        try { msg = (await res.json())?.error ?? msg } catch { /* 空 body */ }
+        alert(msg)
       }
     } catch (err) {
       console.error('Failed to delete:', err)
