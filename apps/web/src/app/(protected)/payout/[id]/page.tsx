@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { ArrowLeft, Lock, Unlock, FileDown, Trash2, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Lock, Unlock, FileDown, Trash2, RotateCcw, Download } from 'lucide-react'
 
 interface PayoutRun {
   id: string
@@ -190,14 +190,12 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
             )}
           </div>
         </div>
-        {run.status === 'LOCKED' && (
-          <Button variant="outline" onClick={() => setShowUnlock(true)}>
-            <Unlock className="w-4 h-4 mr-1" /> 解鎖
-          </Button>
-        )}
         {/* AA4: 草稿狀態顯示重新生成/刪除按鈕 */}
         {isDraft && (
           <div className="flex gap-2">
+            <a href={`/api/payout-runs/${run.id}/export`} className="inline-flex items-center gap-1 px-3 py-2 border rounded text-sm hover:bg-gray-50">
+              <Download size={14} /> 匯出 Excel
+            </a>
             <Button
               size="sm"
               onClick={handleRegenerate}
@@ -214,6 +212,16 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
             >
               <Trash2 className="w-4 h-4 mr-1" />
               {deleting ? '刪除中...' : '刪除草稿'}
+            </Button>
+          </div>
+        )}
+        {run.status === 'LOCKED' && (
+          <div className="flex items-center gap-2">
+            <a href={`/api/payout-runs/${run.id}/export`} className="inline-flex items-center gap-1 px-3 py-2 border rounded text-sm hover:bg-gray-50">
+              <Download size={14} /> 匯出 Excel
+            </a>
+            <Button variant="outline" onClick={() => setShowUnlock(true)}>
+              <Unlock className="w-4 h-4 mr-1" /> 解鎖
             </Button>
           </div>
         )}

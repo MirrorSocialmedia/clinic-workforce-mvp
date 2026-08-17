@@ -164,12 +164,11 @@ export async function GET(
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' })
 
   // 檔名：Dr.Lau_MF_2026-07_月結單.xlsx（唔帶病人資料）
-  const filename = `${providerLabel}_${run.periodMonth}_月結單.xlsx`
-
+  const name = `Dr.${providerLabel}_${run.periodMonth}_月結單.xlsx`
   return new Response(buf, {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
+      'Content-Disposition': `attachment; filename="payout_${run.periodMonth}.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`,
     },
   })
 }

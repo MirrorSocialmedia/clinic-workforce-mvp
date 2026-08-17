@@ -10,7 +10,7 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal } from 'lucide-react'
+import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 interface PayoutRun {
@@ -389,6 +389,9 @@ export default function PayoutRunsPage() {
               }`}>
                 {run.status === 'LOCKED' ? <><Lock className="w-3 h-3 inline mr-1" />已鎖定</> : '草稿'}
               </span>
+              <a href={`/api/payout-runs/${run.id}/export`} title="匯出 Excel" onClick={e => e.stopPropagation()} className="text-gray-400 hover:text-gray-700 px-2">
+                <Download size={14} />
+              </a>
               <a href={`/payout/${run.id}`}>
                 <Button variant="ghost" size="sm"><Eye className="w-4 h-4" /></Button>
               </a>
