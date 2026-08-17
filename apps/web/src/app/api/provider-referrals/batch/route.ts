@@ -69,15 +69,30 @@ export async function POST(req: NextRequest) {
     const periodMonth = `${billDate.getFullYear()}-${String(billDate.getMonth() + 1).padStart(2, '0')}`
 
     // Transaction — 全入或全唔入
-    const referrals = await prisma.$transaction(
-      items.map((item: any) => {
+    // ★ 改用 function-based transaction，入面可加重複檢查
+    const referrals = await prisma.$transaction(async (tx) => {
+      const results = []
+      for (const item of items) {
+        // ★ 重複檢查：同一 billItemEleId + fromProviderId 已經 CONFIRMED 過
+        const dup = await tx.providerReferral.findFirst({
+          where: {
+            fromProviderId,
+            billItemEleId: item.eleId,
+            status: 'CONFIRMED',
+          },
+          select: { id: true },
+        })
+        if (dup) {
+          throw new Error(`項目「${item.itemDes}」已經轉介過，唔可以重複`)
+        }
+
         const unitPrice = Number(item.unitPrice)
         const qty = Number(item.qty)
         const refPct = Number(refPercent) ?? 2
         const amt = unitPrice * qty
         const amount = Math.round(amt * refPct / 100 / 100) * 100
 
-        return prisma.providerReferral.create({
+        const ref = await tx.providerReferral.create({
           data: {
             fromProviderId,
             toProviderId: toProviderId || null,
@@ -95,8 +110,10 @@ export async function POST(req: NextRequest) {
             createdBy: auth.session!.userId,
           },
         })
-      }),
-    )
+        results.push(ref)
+      }
+      return results
+    })
 
     // Audit log
     await prisma.auditLog.create({

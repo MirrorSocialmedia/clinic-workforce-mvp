@@ -1161,6 +1161,10 @@ model ProviderReferral {
 
   @@index([fromProviderId, periodMonth])
   @@index([status])
+  // ★ partial unique index 喺 migration 手寫：
+  // UNIQUE(billItemEleId, fromProviderId) WHERE status='CONFIRMED' AND billItemEleId IS NOT NULL
+  // Prisma schema 表達唔到，唔好用 @@unique（會擋住草稿）
+  @@index([billItemEleId, fromProviderId])
 }
 
 // 2人 SP 補貼記錄 — 原價 vs 優惠價之差 × 拆帳% × 人數
