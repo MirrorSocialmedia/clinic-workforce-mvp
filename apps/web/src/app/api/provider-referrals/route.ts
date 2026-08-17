@@ -27,7 +27,23 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  // Load provider names
+  // ★ Y1: Bulk query clinics + bills for clinicName & billTime
+  const clinicIds = [...new Set(referrals.map(r => r.clinicId).filter(Boolean))] as string[]
+  const billExtIds = [...new Set(referrals.map(r => r.billExtId).filter(Boolean))] as string[]
+
+  const [clinics, bills] = await Promise.all([
+    clinicIds.length > 0
+      ? prisma.clinic.findMany({ where: { id: { in: clinicIds } }, select: { id: true, name: true } })
+      : [],
+    billExtIds.length > 0
+      ? prisma.apricotBill.findMany({ where: { extId: { in: billExtIds } }, select: { extId: true, billTime: true } })
+      : [],
+  ])
+
+  const clinicMap = new Map(clinics.map(c => [c.id, c.name]))
+  const billTimeMap = new Map(bills.map(b => [b.extId, b.billTime]))
+
+  // Build provider map
   const providerIds = new Set<string>()
   referrals.forEach(r => {
     providerIds.add(r.fromProviderId)
@@ -47,6 +63,11 @@ export async function GET(req: NextRequest) {
       amount: r.amount != null ? Number(r.amount) : null,
       fromProviderName: providerMap.get(r.fromProviderId) ?? null,
       toProviderName: r.toProviderId ? (providerMap.get(r.toProviderId) ?? null) : null,
+      // ★ Y1: clinicName + billTime
+      clinicName: r.clinicId
+        ? (clinicMap.has(r.clinicId) ? clinicMap.get(r.clinicId) : '__DELETED_CLINIC__')
+        : null,
+      billTime: r.billExtId ? (billTimeMap.get(r.billExtId) ?? null) : null,
     })),
   })
 }
