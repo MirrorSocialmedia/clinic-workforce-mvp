@@ -60,6 +60,8 @@ export async function POST(req: NextRequest) {
 				difference: result.difference,
 				status: result.status,
 				detailJson: buildDetail(result),
+				reportCharges: result.reportCharges,
+				chargesVsPaid: result.chargesVsPaid,
 				uploadedBy: session.userId,
 			},
 		})

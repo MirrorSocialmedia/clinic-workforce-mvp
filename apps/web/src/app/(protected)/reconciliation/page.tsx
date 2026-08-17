@@ -21,8 +21,10 @@ interface ReconciliationRecord {
   fileName: string
   rowCount: number
   reportTotal: number
+  reportCharges: number | null
   systemTotal: number
   difference: number
+  chargesVsPaid: number | null
   status: string
   uploadedAt: string
   detailJson: any
@@ -330,6 +332,11 @@ export default function ReconciliationPage() {
                       <td className={`p-3 text-right tabular-nums font-medium ${isMismatch ? 'text-red-600' : 'text-green-600'}`}>
                         {r.difference >= 0 ? '+' : '−'}{fmt(r.difference)}
                       </td>
+                      {r.chargesVsPaid != null && Number(r.chargesVsPaid) !== 0 && (
+                        <td className="p-3 text-xs text-gray-500">
+                          收費 {fmt(r.reportCharges ?? 0)}，未收清 {fmt(r.chargesVsPaid)}
+                        </td>
+                      )}
                       <td className="p-3 text-center">
                         {isMatch && <span className="text-green-600">✅ 吻合</span>}
                         {isMismatch && <span className="text-red-600">🔴 差異</span>}

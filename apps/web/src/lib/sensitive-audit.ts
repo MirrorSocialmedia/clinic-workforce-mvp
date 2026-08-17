@@ -62,6 +62,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'COST_CASE_VOID', label: '作廢成本記錄' },
   { action: 'COST_RECOMPUTE', label: '折扣重算' },
   { action: 'LAB_DISCOUNT_SET', label: '設定 Lab 月度折扣' },
+  { action: 'LAB_UPDATE', label: 'Lab 改名/停用' },
+  { action: 'LAB_DELETE', label: 'Lab 刪除' },
   { action: 'MATERIAL_ITEM_CREATE', label: '新增材料項目' },
   { action: 'PATIENT_NAME_PURGE', label: 'PII 清理 — 清除病人姓名' },
   // ★ MD-C: Apricot Data Layer

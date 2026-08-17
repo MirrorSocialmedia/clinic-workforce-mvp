@@ -7,7 +7,7 @@ import { todayHK } from '@/lib/hk-date'
 import { ITEM_TYPES } from '@/lib/payout/constants'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X, Trash2 } from 'lucide-react'
+import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X, Trash2, Package, Percent } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────
 
@@ -597,6 +597,16 @@ export default function CostEntryPage() {
           <button onClick={() => setLoadError(null)} className="ml-auto text-red-400 hover:text-red-600">✕</button>
         </Card>
       )}
+
+      {/* Entry links to sub-pages */}
+      <div className="flex gap-4 flex-wrap mb-0">
+        <a href="/cost-entry/materials" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+          <Package size={14} /> 材料主檔
+        </a>
+        <a href="/cost-entry/lab-discounts" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+          <Percent size={14} /> Lab 月度折扣
+        </a>
+      </div>
 
       {/* Header */}
       <div className="flex items-center justify-between">

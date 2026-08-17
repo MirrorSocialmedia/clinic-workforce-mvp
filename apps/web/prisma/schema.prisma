@@ -1278,8 +1278,8 @@ model ReconciliationImport {
   difference   Decimal  @db.Decimal(12,2)
   status       String   // MATCH | MISMATCH | ERROR
   detailJson   Json     // 逐日 / 逐方式 對比
-  reportCharges Decimal @db.Decimal(12,2)? // ★ 新增：收費（Total Charges）
-  chargesVsPaid Decimal @db.Decimal(12,2)? // ★ 新增：收費 − 實收
+  reportCharges Decimal? @db.Decimal(12,2) // ★ 新增：收費（Total Charges）
+  chargesVsPaid Decimal? @db.Decimal(12,2) // ★ 新增：收費 − 實收
   uploadedBy   String
   uploadedAt   DateTime @default(now())
 

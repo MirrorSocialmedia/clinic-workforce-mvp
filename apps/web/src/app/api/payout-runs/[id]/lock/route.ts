@@ -1,5 +1,8 @@
 /**
  * POST /api/payout-runs/[id]/lock — Lock a payout run (OWNER / provider_payout)
+ * ⚠️ 而家冇 UI caller：POST /api/payout-runs 生成時已經直接鎖定。
+ * 保留係為咗將來「生成草稿 → 對數 → 鎖定」兩步流程。
+ * 如果半年後仍然冇用，剷咗。
  * // ownership-ok: PayoutRun 冇 clinic/employee 歸屬；route 已 requirePerm('provider_payout') = OWNER only
  */
 import { NextRequest, NextResponse } from 'next/server'

@@ -306,6 +306,8 @@ export const CONFIG = {
     'GET /api/labs': ['OWNER', 'MANAGER'],
     'POST /api/labs': ['OWNER'],
     'PUT /api/labs/:id': ['OWNER'],
+    'PATCH /api/labs': ['OWNER'],
+    'DELETE /api/labs': ['OWNER'],
     // Lab 月度折扣
     'GET /api/lab-discounts': ['OWNER', 'MANAGER'],
     'POST /api/lab-discounts': ['OWNER'],
@@ -481,6 +483,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/cost-cases/recompute': ['provider_payout'],
   'POST /api/labs': ['provider_payout'],
   'PUT /api/labs/:id': ['provider_payout'],
+  'PATCH /api/labs': ['provider_payout'],
+  'DELETE /api/labs': ['provider_payout'],
   'POST /api/lab-discounts': ['provider_payout'],
   'POST /api/material-items': ['provider_payout'],
 

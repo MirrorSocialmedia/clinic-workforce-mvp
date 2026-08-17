@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { Card } from '@/components/ui/card'
-import { Loader2, AlertTriangle } from 'lucide-react'
+import { Loader2, AlertTriangle, Edit3, Power, Trash2 } from 'lucide-react'
 
 export default function LabDiscountsPage() {
   const [labs, setLabs] = useState<any[]>([])
@@ -23,8 +23,6 @@ export default function LabDiscountsPage() {
   const [editDiscount, setEditDiscount] = useState('')
   const [editNote, setEditNote] = useState('')
   const [saving, setSaving] = useState(false)
-  const [affectedCount, setAffectedCount] = useState(0)
-  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const canEdit = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
 
@@ -87,6 +85,50 @@ export default function LabDiscountsPage() {
     return result
   })()
 
+  const openRename = async (labId: string, currentName: string) => {
+    const newName = prompt('改名：', currentName)
+    if (newName && newName.trim() && newName.trim() !== currentName) {
+      try {
+        await apiFetch(`/api/labs?id=${labId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName.trim() }),
+        })
+        alert('改名成功')
+        loadLabs()
+      } catch (e: any) {
+        alert(`改名失敗: ${e.message}`)
+      }
+    }
+  }
+
+  const toggleActive = async (labId: string, currentActive: boolean) => {
+    const action = currentActive ? '停用' : '啟用'
+    if (!confirm(`確定要${action}呢個工場？`)) return
+    try {
+      await apiFetch(`/api/labs?id=${labId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !currentActive }),
+      })
+      alert(`${action}成功`)
+      loadLabs()
+    } catch (e: any) {
+      alert(`${action}失敗: ${e.message}`)
+    }
+  }
+
+  const handleDeleteLab = async (labId: string, labName: string) => {
+    if (!confirm(`確定要刪除工場「${labName}」？此操作不可逆。`)) return
+    try {
+      await apiFetch(`/api/labs?id=${labId}`, { method: 'DELETE' })
+      alert('刪除成功')
+      loadLabs()
+    } catch (e: any) {
+      alert(`刪除失敗: ${e.message}`)
+    }
+  }
+
   const openEdit = (labId: string, month: string) => {
     setEditLabId(labId)
     setEditMonth(month)
@@ -114,10 +156,25 @@ export default function LabDiscountsPage() {
         }),
       })
 
-      const data: any = res
-      setAffectedCount(data.affectedCount || 0)
       setEditOpen(false)
-      setConfirmOpen(false)
+
+      // AB4: Ask user if they want to recompute unlocked cost cases
+      try {
+        const affected = await apiFetch<any>(`/api/cost-cases?labId=${editLabId}&periodMonth=${editMonth}&unlocked=1`)
+        const n = affected?.cases?.length ?? 0
+        if (n > 0 && confirm(`已儲存。該月有 ${n} 筆未鎖定成本記錄，要用新折扣重算？`)) {
+          const r = await apiFetch<any>('/api/cost-cases/recompute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ labId: editLabId, periodMonth: editMonth }),
+          })
+          alert(`重算咗 ${r.recomputedCount} 筆，總成本差異 ±$${r.totalDiff}`)
+        }
+      } catch (recomputeErr: any) {
+        console.warn('[lab-discounts] recompute check failed', recomputeErr)
+        // Don't block — just a nice-to-have
+      }
+
       loadDiscounts()
     } catch (e: any) {
       alert(`儲存失敗: ${e.message}`)
@@ -140,6 +197,10 @@ export default function LabDiscountsPage() {
         <a href="/cost-entry" className="text-sm text-blue-600 hover:underline">← 返回成本錄入</a>
       </div>
 
+      <Card className="p-3 bg-blue-50 text-blue-700 text-sm">
+        💡 取消折扣要設 0%，唔好刪記錄。
+      </Card>
+
       {!canEdit && (
         <Card className="p-3 bg-yellow-50 text-yellow-700 text-sm">
           ⚠️ 設定折扣需要 OWNER 權限
@@ -158,7 +219,9 @@ export default function LabDiscountsPage() {
           <tbody>
             {labs.map(lab => (
               <tr key={lab.id} className="border-b hover:bg-gray-50">
-                <td className="p-2 font-medium">{lab.name}</td>
+                <td className="p-2 font-medium">
+                  <span className={lab.isActive == false ? 'line-through text-gray-400' : ''}>{lab.name}</span>
+                </td>
                 {months.map(month => {
                   const val = discountMap.get(lab.id)?.get(month)
                   return (
@@ -173,12 +236,23 @@ export default function LabDiscountsPage() {
                 })}
                 <td className="p-2 text-right">
                   {canEdit && (
-                    <button
-                      onClick={() => openEdit(lab.id, months[0])}
-                      className="text-blue-600 text-xs hover:underline"
-                    >
-                      編輯
-                    </button>
+                    <div className="flex items-center gap-3 justify-end">
+                      <button onClick={() => openRename(lab.id, lab.name)} className="text-blue-600 text-xs hover:underline" title="改名">
+                        <Edit3 size={12} />
+                      </button>
+                      <button onClick={() => toggleActive(lab.id, lab.isActive ?? true)} className="text-amber-600 text-xs hover:underline" title={lab.isActive == false ? '啟用' : '停用'}>
+                        <Power size={12} />
+                      </button>
+                      <button onClick={() => handleDeleteLab(lab.id, lab.name)} className="text-red-500 text-xs hover:underline" title="刪除">
+                        <Trash2 size={12} />
+                      </button>
+                      <button
+                        onClick={() => openEdit(lab.id, months[0])}
+                        className="text-blue-600 text-xs hover:underline"
+                      >
+                        編輯
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>

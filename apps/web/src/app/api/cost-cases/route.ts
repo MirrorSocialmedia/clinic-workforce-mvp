@@ -20,6 +20,8 @@ export async function GET(req: NextRequest) {
   const category = searchParams.get('category')
   const status = searchParams.get('status')
   const clinicId = searchParams.get('clinicId')
+  const labId = searchParams.get('labId')
+  const unlocked = searchParams.get('unlocked')
 
   const where: any = {}
   if (providerId) where.providerId = providerId
@@ -27,6 +29,8 @@ export async function GET(req: NextRequest) {
   if (category) where.category = category
   if (status) where.status = status
   if (clinicId) where.clinicId = clinicId
+  if (labId) where.labId = labId
+  if (unlocked === '1') where.lockedByRunId = null
 
   // MANAGER scope: only see their clinics
   if (scope === 'my-clinics' && session.clinics && session.clinics.length > 0) {
