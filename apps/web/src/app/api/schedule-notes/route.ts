@@ -56,7 +56,7 @@ export async function PUT(req: NextRequest) {
 
   // ★ Empty = delete, don't leave empty string rows
   if (!clean) {
-    await prisma.scheduleNote.deleteMany({ where: { companyId_date_row: { companyId, date, row } } })
+    await prisma.scheduleNote.deleteMany({ where: { companyId, date, row } })
     return NextResponse.json({ ok: true, deleted: true }, { headers: { 'Cache-Control': 'no-store' } })
   }
 
