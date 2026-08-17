@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
 	const formData = await req.formData()
 	const file = formData.get('file') as File | null
 	const providerId = formData.get('providerId') as string | null
+	const periodMonth = formData.get('periodMonth') as string | null
 
 	if (!file) {
 		return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
@@ -33,6 +34,13 @@ export async function POST(req: NextRequest) {
 		// 解析
 		const buf = Buffer.from(await file.arrayBuffer())
 		const { meta, rows } = parsePaymentReport(buf)
+
+		// 月份驗證：UI 傳入嘅月份要同報表一致
+		if (periodMonth && meta.month !== periodMonth) {
+			return NextResponse.json({
+				error: `報表月份（${meta.month}）同你揀嘅月份（${periodMonth}）唔同，請確認上載咗正確嘅檔案`,
+			}, { status: 422 })
+		}
 
 		// 搵 provider（由 meta.practitioner 配對 Provider.name）
 		const provider = await resolveProvider(meta.practitioner, providerId || undefined)
@@ -80,6 +88,8 @@ export async function POST(req: NextRequest) {
 			status: result.status,
 			difference: result.difference,
 			reportTotal: result.reportTotal,
+			reportCharges: result.reportCharges,
+			chargesVsPaid: result.chargesVsPaid,
 			systemTotal: result.systemTotal,
 		})
 	} catch (e: any) {
@@ -118,16 +128,20 @@ async function resolveProvider(practitionerName: string, hintProviderId?: string
 
 function buildDetail(result: {
 	reportTotal: number
+	reportCharges: number
 	systemTotal: number
 	difference: number
+	chargesVsPaid: number
 	status: string
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
 	byMethod: Array<{ method: string; amount: number }>
 }): Record<string, any> {
 	return {
 		reportTotal: result.reportTotal,
+		reportCharges: result.reportCharges,
 		systemTotal: result.systemTotal,
 		difference: result.difference,
+		chargesVsPaid: result.chargesVsPaid,
 		status: result.status,
 		byDay: result.byDay,
 		byMethod: result.byMethod,

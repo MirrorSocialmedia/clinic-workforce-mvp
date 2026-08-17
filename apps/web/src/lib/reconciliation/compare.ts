@@ -28,8 +28,10 @@ function groupBy<T>(items: T[], fn: (item: T) => string): Record<string, T[]> {
 
 interface CompareResult {
 	reportTotal: number
+	reportCharges: number // ★ AA2: Total Charges
 	systemTotal: number
 	difference: number
+	chargesVsPaid: number // ★ AA2: charges - paid 差額
 	status: 'MATCH' | 'MISMATCH'
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
 	byMethod: Array<{ method: string; amount: number }>
@@ -65,11 +67,17 @@ export async function compareReport(
 	})
 
 	const systemTotal = round2(sum(allocs.map((a) => Number(a.amount))))
-	const reportTotal = round2(sum(rows.map((r) => r.amount)))
+
+	// ★ AA2: 對數用 Total Paid（實收）做主
+	const totalPaid = round2(sum(rows.map((r) => r.paid ?? r.charges ?? r.amount ?? 0)))
+	const totalCharges = round2(sum(rows.map((r) => r.charges ?? r.paid ?? r.amount ?? 0)))
+	const reportTotal = totalPaid // ★ 對數用實收
+	const chargesVsPaid = round2(totalCharges - totalPaid)
+
 	const difference = round2(reportTotal - systemTotal)
 	const status = Math.abs(difference) <= 1 ? 'MATCH' : 'MISMATCH'
 
-	// 3) 逐日對比
+	// 3) 逐日對比（用 paid 欄）
 	const reportByDay = groupBy(rows, (r) => r.date)
 	const systemByDay = groupBy(
 		allocs,
@@ -83,7 +91,7 @@ export async function compareReport(
 	const byDay: Array<{ date: string; report: number; system: number; diff: number }> = []
 	for (const date of allDates) {
 		const reportSum = round2(
-			sum((reportByDay[date] || []).map((r) => r.amount)),
+			sum((reportByDay[date] || []).map((r) => r.paid ?? r.charges ?? r.amount ?? 0)),
 		)
 		const systemSum = round2(
 			sum((systemByDay[date] || []).map((a) => Number(a.amount))),
@@ -100,5 +108,5 @@ export async function compareReport(
 	}
 	byMethod.sort((a, b) => b.amount - a.amount)
 
-	return { reportTotal, systemTotal, difference, status, byDay, byMethod }
+	return { reportTotal, reportCharges: totalCharges, systemTotal, difference, chargesVsPaid, status, byDay, byMethod }
 }

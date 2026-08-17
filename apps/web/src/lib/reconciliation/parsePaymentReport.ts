@@ -7,6 +7,8 @@ export interface ParsedRow {
 	date: string // YYYY-MM-DD
 	code: string
 	amount: number
+	charges: number | null // ★ AA2: Total Charges
+	paid: number | null // ★ AA2: Total Paid
 }
 
 export interface ParsedReport {
@@ -43,6 +45,9 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 			date: parseHKDate(r[cols.date]),
 			code: String(r[cols.code]).trim(),
 			amount: parseAmount(r[cols.amount]),
+			// ★ AA2: 兩個金額欄都讀
+			charges: cols.charges !== undefined ? parseAmount(r[cols.charges]) : null,
+			paid: cols.paid !== undefined ? parseAmount(r[cols.paid]) : null,
 		})
 	}
 
@@ -83,37 +88,62 @@ function parseHKDate(v: any): string {
 function extractMeta(
 	raw: any[],
 ): { practitioner: string; clinic: string; month: string } {
-	let practitioner = ''
-	let clinic = ''
-	let month = ''
+	let practitioner = '', clinic = '', month = ''
+
+	const readLabelled = (row: any[], idx: number, label: string): string => {
+		const s = String(row[idx] ?? '').trim()
+		// 同一 cell 入面有值（inline）
+		const inline = s.replace(new RegExp(`^${label}\\s*:?\\s*`, 'i'), '').trim()
+		if (inline) return inline
+		// 同一行往右搵第一個非空 cell（雙 cell 格式：A="Month:" B="2026-07"）
+		for (let j = idx + 1; j < row.length; j++) {
+			const v = String(row[j] ?? '').trim()
+			if (v) return v
+		}
+		return ''
+	}
+
 	for (let i = 0; i < Math.min(10, raw.length); i++) {
-		const row = raw[i]
-		for (const cell of row || []) {
-			const s = String(cell).trim()
-			if (s.startsWith('Practitioner:'))
-				practitioner = s.replace(/^Practitioner:\s*/i, '').trim()
-			if (s.startsWith('Clinic:'))
-				clinic = s.replace(/^Clinic:\s*/i, '').trim()
-			if (s.startsWith('Month:'))
-				month = s.replace(/^Month:\s*/i, '').trim()
+		const row = raw[i] || []
+		for (let j = 0; j < row.length; j++) {
+			const s = String(row[j] ?? '').trim()
+			if (/^practitioner\s*:/i.test(s)) practitioner = readLabelled(row, j, 'Practitioner')
+			if (/^clinic\s*:/i.test(s)) clinic = readLabelled(row, j, 'Clinic')
+			if (/^month\s*:/i.test(s)) month = readLabelled(row, j, 'Month')
 		}
 	}
+
 	if (!month) {
-		throw new Error('REPORT_META_MISSING: 搵唔到 Month')
+		throw new Error(
+			'REPORT_META_MISSING: 搵唔到 Month。' +
+			'請確認上載嘅係 Apricot「Practitioner Payment Report」xlsx，' +
+			'而且頭幾行有 Practitioner / Clinic / Month'
+		)
 	}
 	return { practitioner, clinic, month }
 }
 
-function mapColumns(headerRow: any[]): { date: number; code: number; amount: number } {
-	const cols: { date?: number; code?: number; amount?: number } = {}
+function mapColumns(headerRow: any[]): { date: number; code: number; amount: number; charges?: number; paid?: number } {
+	const cols: { date?: number; code?: number; amount?: number; charges?: number; paid?: number } = {}
 	headerRow.forEach((c: any, i: number) => {
 		const s = String(c).trim()
 		if (s === 'Date') cols.date = i
 		if (s === 'Transaction Code') cols.code = i
-		if (s === 'Total Charges') cols.amount = i
+		if (s === 'Total Charges') {
+			cols.charges = i
+			//  backwards compat: amount 仍然指向 charges
+			cols.amount = i
+		}
+		if (s === 'Total Paid') cols.paid = i
 	})
-	if (cols.date === undefined || cols.code === undefined || cols.amount === undefined) {
-		throw new Error('REPORT_FORMAT_CHANGED: 缺少必要欄位')
+	if (cols.date === undefined || cols.code === undefined) {
+		throw new Error('REPORT_FORMAT_CHANGED: 缺少 Date 或 Transaction Code 欄')
 	}
-	return cols as { date: number; code: number; amount: number }
+	if (cols.charges === undefined && cols.paid === undefined) {
+		throw new Error('REPORT_FORMAT_CHANGED: 搵唔到 Total Charges 或 Total Paid 欄')
+	}
+	if (cols.amount === undefined && cols.charges !== undefined) {
+		cols.amount = cols.charges
+	}
+	return cols as { date: number; code: number; amount: number; charges?: number; paid?: number }
 }
