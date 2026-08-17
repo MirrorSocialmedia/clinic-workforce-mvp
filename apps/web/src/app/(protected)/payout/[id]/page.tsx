@@ -132,7 +132,7 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
     try {
       await apiFetch(`/api/payout-runs/${params.id}`, { method: 'DELETE' })
       const clinicId = run.clinicId || ''
-      const res = await apiFetch('/api/payout-runs', {
+      const res: { run: { id: string } } = await apiFetch('/api/payout-runs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providerId: run.providerId, periodMonth: run.periodMonth, clinicId }),

@@ -278,6 +278,10 @@ interface PayoutBreakdownItem {
   feePercentUsed: number
   netAmount: number
   countAsIncome: boolean
+  // ★ AA3: 付款明細加欄
+  paidAt: Date | null
+  billCode: string | null
+  paymentExtId: string
 }
 
 interface PayoutResult {
@@ -422,12 +426,24 @@ export async function computePayout(
   const totalAmount = round2(salaryAmount + spSubsidy + refAmount + adjustAmount)
 
   // ─── Breakdown ────────────────────────────────────────────────────────
+  // ★ AA3: 加入 paidAt, billCode, paymentExtId
+  const billExtIds = [...new Set(allocs.map((a: PaymentAllocation) => a.billExtId))]
+  const bills = await prisma.apricotBill.findMany({
+    where: { extId: { in: billExtIds } },
+    select: { extId: true, code: true },
+  })
+  const billCodeMap = new Map(bills.map((b: any) => [b.extId, b.code]))
+
   const breakdown: PayoutBreakdownItem[] = allocs.map((a: PaymentAllocation) => ({
     method: a.methodNorm,
     rawAmount: Number(a.amount),
     feePercentUsed: Number(a.feePercentUsed),
     netAmount: Number(a.netAmount),
     countAsIncome: a.countAsIncome,
+    // ★ AA3: 新增欄位
+    paidAt: a.paidAt,
+    billCode: billCodeMap.get(a.billExtId) ?? null,
+    paymentExtId: a.paymentExtId,
   }))
 
   return {
