@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
     // Count existing CostCase records per bill
     const billExtIds = bills.map(b => b.id).filter(Boolean)
     let costCounts: Record<string, number> = {}
+    let refCounts: Record<string, number> = {}
     if (billExtIds.length > 0) {
       const counts = await prisma.costCase.groupBy({
         by: ['billExtId'],
@@ -43,12 +44,23 @@ export async function GET(req: NextRequest) {
       for (const c of counts) {
         if (c.billExtId) costCounts[c.billExtId] = c._count
       }
+
+      // Count confirmed ProviderReferral records per bill
+      const refCountRows = await prisma.providerReferral.groupBy({
+        by: ['billExtId'],
+        where: { billExtId: { in: billExtIds }, status: 'CONFIRMED' },
+        _count: true,
+      })
+      for (const r of refCountRows) {
+        if (r.billExtId) refCounts[r.billExtId] = r._count
+      }
     }
 
-    // Attach existingCostCount to each bill
+    // Attach existingCostCount + referralCount to each bill
     const billsWithCount = bills.map(b => ({
       ...b,
       existingCostCount: costCounts[b.id] ?? 0,
+      referralCount: refCounts[b.id] ?? 0,
     }))
 
     return jsonNoStore({ bills: billsWithCount })

@@ -182,12 +182,8 @@ export default function ReferralsPage() {
         setBillSearchError((res as any).error)
         setBillSearchResults([])
       } else {
-        // Count existing referrals per bill
-        const billsWithReferralCount = (res.bills || []).map((b: any) => {
-          const referralCount = confirmedRefs.filter(r => r.billExtId === b.id).length
-          return { ...b, referralCount }
-        })
-        setBillSearchResults(billsWithReferralCount)
+        // referralCount now computed on backend (bill-search route)
+        setBillSearchResults(res.bills || [])
       }
     } catch (e: any) {
       setBillSearchError(`Apricot 連線失敗（或系統同步中）`)
@@ -391,8 +387,7 @@ export default function ReferralsPage() {
   const filteredConfirmed = useMemo(() => {
     return confirmedRefs.filter(r => {
       if (filterDoctor && r.fromProviderId !== filterDoctor) return false
-      if (filterClinic && r.clinicName !== '__DELETED_CLINIC__' && r.clinicName !== filterClinic) return false
-      if (filterClinic && r.clinicName === '__DELETED_CLINIC__') return false
+      if (filterClinic && r.clinicName !== filterClinic) return false
       if (filterBillCode && r.billCode !== filterBillCode) return false
       return true
     })
