@@ -17,6 +17,15 @@ import {
   Plus, Trash2, ArrowLeft, Search, Check, RotateCcw, FileText, ClipboardList,
 } from 'lucide-react'
 
+/** W1: Draft reference for completing a draft with bill data */
+interface DraftRef {
+  id: string
+  fromProviderId: string
+  fromProviderName?: string
+  patientNote: string | null
+  periodMonth: string
+}
+
 export default function ReferralsPage() {
   // ─── Data ───────────────────────────────────────────────────────
   const [referrals, setReferrals] = useState<any[]>([])
@@ -30,6 +39,9 @@ export default function ReferralsPage() {
   const [refPercent, setRefPercent] = useState('2')
   const [batchLoading, setBatchLoading] = useState(false)
 
+  // W1: completingDraft state
+  const [completingDraft, setCompletingDraft] = useState<DraftRef | null>(null)
+
   // ─── Draft form state ──────────────────────────────────────────
   const [showDraftForm, setShowDraftForm] = useState(false)
   const [draftForm, setDraftForm] = useState({
@@ -39,6 +51,9 @@ export default function ReferralsPage() {
     periodMonth: new Date().toISOString().slice(0, 7),
   })
   const [draftSaving, setDraftSaving] = useState(false)
+
+  // W1: fromProviderId for bill-referral-section (pre-filled from draft or bill)
+  const [fromProviderId, setFromProviderId] = useState('')
 
   // ─── Effects ───────────────────────────────────────────────────
   useEffect(() => { loadAll() }, [])
@@ -65,6 +80,10 @@ export default function ReferralsPage() {
       const res = await apiFetch<any>(`/api/provider-referrals/bill-lookup?code=${encodeURIComponent(searchCode.trim())}`)
       setBillData(res)
       setSelectedItems([])
+      // Pre-fill fromProviderId from bill if not already set (e.g. from draft)
+      if (!completingDraft && res.providerId) {
+        setFromProviderId(res.providerId)
+      }
     } catch (e: any) {
       alert(`查找失敗: ${e.message || '帳單未找到'}`)
       setBillData(null)
@@ -82,7 +101,48 @@ export default function ReferralsPage() {
 
   const refAmount = selectedTotal * (Number(refPercent) || 0) / 100
 
-  async function handleBatchReferral() {
+  // W1: handleSubmit — dual path (completingDraft → PUT / new → batch POST)
+  async function handleSubmit() {
+    if (completingDraft) {
+      // 補草稿：只准一個項目
+      if (selectedItems.length !== 1) {
+        alert('補上帳單時只可以揀一個項目。如果要入多個，請取消後用新增。')
+        return
+      }
+      if (!billData) { alert('請先搜尋帳單'); return }
+      const it = billData.items.find((i: any) => i.eleId === selectedItems[0])
+      if (!it) { alert('找不到選定項目'); return }
+      setBatchLoading(true)
+      try {
+        await apiFetch(`/api/provider-referrals/${completingDraft.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            billExtId: billData.billExtId,
+            billCode: billData.billCode,
+            billItemEleId: it.eleId,
+            itemDes: it.feeItemDes,
+            unitPrice: it.unitPrice,
+            qty: it.qty,
+            refPercent,
+            status: 'CONFIRMED',
+          }),
+        })
+        setCompletingDraft(null)
+        setFromProviderId('')
+        setBillData(null)
+        setSelectedItems([])
+        setSearchCode('')
+        await loadAll()
+      } catch (e: any) {
+        alert(`補上帳單失敗：${e.message}`)
+      } finally {
+        setBatchLoading(false)
+      }
+      return
+    }
+
+    // Batch new referral path
     if (selectedItems.length === 0) { alert('請勾選項目'); return }
     if (!billData) return
     setBatchLoading(true)
@@ -92,7 +152,7 @@ export default function ReferralsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fromProviderId: billData.providerId,
+          fromProviderId,
           billExtId: billData.billExtId,
           refPercent: Number(refPercent),
           items: items.map((i: any) => ({
@@ -136,6 +196,7 @@ export default function ReferralsPage() {
         fromProviderId: '', toProviderId: '', patientNote: '',
         periodMonth: new Date().toISOString().slice(0, 7),
       })
+      setFromProviderId('')
       setShowDraftForm(false)
       loadAll()
     } catch (e: any) {
@@ -155,8 +216,13 @@ export default function ReferralsPage() {
     }
   }
 
-  // Navigate to bill referral section to complete a draft
-  function goToBillReferral() {
+  // W1: Navigate to bill referral section to complete a draft
+  function goToBillReferral(draft: DraftRef) {
+    setCompletingDraft(draft)
+    setFromProviderId(draft.fromProviderId)
+    setSearchCode('')
+    setBillData(null)
+    setSelectedItems([])
     document.getElementById('bill-referral-section')?.scrollIntoView({ behavior: 'smooth' })
   }
 
@@ -293,7 +359,13 @@ export default function ReferralsPage() {
                       variant="outline"
                       size="sm"
                       className="text-blue-600 text-xs"
-                      onClick={goToBillReferral}
+                      onClick={() => goToBillReferral({
+                        id: d.id,
+                        fromProviderId: d.fromProviderId,
+                        fromProviderName: d.fromProviderName,
+                        patientNote: d.patientNote,
+                        periodMonth: d.periodMonth,
+                      })}
                     >
                       <FileText className="w-3.5 h-3.5 mr-1" />
                       補上帳單
@@ -385,7 +457,50 @@ export default function ReferralsPage() {
           <Search className="w-4 h-4" /> 帳單轉介
         </h2>
 
-        <div className="flex gap-2 mb-4">
+        {/* W1: Status bar when completing a draft */}
+        {completingDraft && (
+          <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3 flex justify-between items-center">
+            <div className="text-sm">
+              <span className="font-medium text-blue-800">補上帳單中</span>
+              <span className="ml-2 text-gray-700">
+                {completingDraft.fromProviderName ?? completingDraft.fromProviderId}
+                {completingDraft.patientNote && ` · ${completingDraft.patientNote}`}
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setCompletingDraft(null)
+                setFromProviderId('')
+                setBillData(null)
+                setSelectedItems([])
+                setSearchCode('')
+              }}
+              className="text-sm text-blue-600 underline"
+            >
+              取消
+            </button>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3 mb-4">
+          {/* W1: fromProviderId select - disabled when completing draft */}
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="block text-sm text-gray-600 mb-1">轉介醫生</label>
+              <select
+                className="w-full border rounded px-3 py-2"
+                value={fromProviderId}
+                disabled={!!completingDraft}
+                onChange={e => setFromProviderId(e.target.value)}
+              >
+                <option value="">選擇醫生</option>
+                {providers.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2">
           <Input
             value={searchCode}
             onChange={e => setSearchCode(e.target.value)}
@@ -484,9 +599,9 @@ export default function ReferralsPage() {
                   轉介金額: <strong className="text-blue-700">${refAmount.toFixed(2)}</strong>
                 </div>
                 <div className="flex-1" />
-                <Button onClick={handleBatchReferral} disabled={batchLoading}>
+                <Button onClick={handleSubmit} disabled={batchLoading}>
                   <Plus className="w-4 h-4 mr-1" />
-                  {batchLoading ? '提交中...' : `批次轉介 (${selectedItems.length} 項)`}
+                  {batchLoading ? '提交中...' : completingDraft ? '確認補上帳單' : `批次轉介 (${selectedItems.length} 項)`}
                 </Button>
               </div>
             )}

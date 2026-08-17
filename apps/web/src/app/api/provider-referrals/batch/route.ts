@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { toHKDateStr } from '@/lib/hk-date'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -64,9 +65,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Derive periodMonth from bill time
-    const billDate = new Date(bill.billTime)
-    const periodMonth = `${billDate.getFullYear()}-${String(billDate.getMonth() + 1).padStart(2, '0')}`
+    // Derive periodMonth from bill time (HK timezone)
+    const periodMonth = toHKDateStr(bill.billTime).slice(0, 7)
 
     // Transaction — 全入或全唔入
     // ★ 改用 function-based transaction，入面可加重複檢查

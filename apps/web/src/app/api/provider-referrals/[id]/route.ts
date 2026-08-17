@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { toHKDateStr } from '@/lib/hk-date'
 
 export async function PUT(
   req: NextRequest,
@@ -68,8 +69,7 @@ export async function PUT(
       where: { extId: billExtId },
     })
     if (bill) {
-      const billDate = new Date(bill.billTime)
-      finalPeriodMonth = `${billDate.getFullYear()}-${String(billDate.getMonth() + 1).padStart(2, '0')}`
+      finalPeriodMonth = toHKDateStr(bill.billTime).slice(0, 7)
     }
   }
 
