@@ -251,6 +251,22 @@ export async function runGates(
     warnings.push(`${orphanRef} 筆轉介記錄冇診所資料，唔會計入任何月結單`)
   }
 
+  // ★ 草稿轉介提示
+  // ⚠️ 唔加 clinicId 條件 —— 草稿未揀單，clinicId 係 null，
+  // 加咗就永遠數唔到
+  const draftRefs = await prisma.providerReferral.count({
+    where: {
+      fromProviderId: providerId,
+      periodMonth,
+      status: 'DRAFT',
+    },
+  })
+  if (draftRefs > 0) {
+    warnings.push(
+      `${draftRefs} 筆轉介仲係草稿（未補帳單），唔會計入月結單 —— 呢個數唔分診所`
+    )
+  }
+
   return { errors, warnings }
 }
 
