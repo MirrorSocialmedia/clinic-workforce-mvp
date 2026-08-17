@@ -1253,7 +1253,7 @@ model ApricotSyncJob {
   endedAt         DateTime?
   createdBy       String
 
-  @@index([status])
+  @@index([status, startedAt])
 }
 
 // ★ MD-E: Monthly Payment Report Reconciliation (月報對數)

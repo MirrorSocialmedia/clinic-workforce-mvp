@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { handleRoute } from '@/lib/api-guard'
 import { toHKDateStr } from '@/lib/hk-date'
 import { prisma } from '@/lib/prisma'
 
@@ -16,7 +17,9 @@ import { prisma } from '@/lib/prisma'
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session } = auth
+
+  return handleRoute('cost-cases/implant', async () => {
+    const { session } = auth
 
   const body = await req.json()
   const {
@@ -204,4 +207,5 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ case: result }, { status: 201 })
+  })
 }

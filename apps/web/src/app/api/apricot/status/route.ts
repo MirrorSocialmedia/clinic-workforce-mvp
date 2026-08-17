@@ -1,13 +1,16 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { handleRoute } from '@/lib/api-guard'
 import { jsonNoStore } from '@/lib/api-response'
+import { prisma } from '@/lib/prisma'
 
 /** GET /api/apricot/status — 最後同步時間 / 未知方式 / needsReview 數 */
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, req.method, req.url)
   if (isAuthError(auth)) return auth.error
+
+  return handleRoute('apricot/status', async () => {
 
   // 1) 最後同步時間
   const latestPayment = await prisma.apricotPayment.findFirst({
@@ -130,5 +133,6 @@ export async function GET(req: NextRequest) {
     totalPayments,
     totalBills,
     perClinic,
+  })
   })
 }

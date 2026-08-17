@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { handleRoute } from '@/lib/api-guard'
+import { prisma } from '@/lib/prisma'
 import { syncClinicForJob, shouldCancel, updateJob } from '@/lib/apricot/sync'
 import { withApricotLock } from '@/lib/apricot/lock'
 
@@ -99,77 +100,79 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, req.method, req.url)
   if (isAuthError(auth)) return auth.error
 
-  const body = await req.json().catch(() => ({} as any))
-  const { clinicId, from, to } = body
+  return handleRoute('apricot/sync', async () => {
+    const body = await req.json().catch(() => ({} as any))
+    const { clinicId, from, to } = body
 
-  if (!from || !to) {
-    return NextResponse.json({ error: 'from, to required' }, { status: 400 })
-  }
-
-  // 1) Clean zombie jobs
-  await cleanZombieJobs()
-
-  // 2) 檢查是否有 RUNNING job
-  const runningJob = await prisma.apricotSyncJob.findFirst({
-    where: { status: 'RUNNING' },
-    orderBy: { startedAt: 'desc' },
-  })
-  if (runningJob) {
-    return NextResponse.json(
-      { error: '已有同步任務進行中', jobId: runningJob.id },
-      { status: 409 },
-    )
-  }
-
-  // 3) 解析 target clinics
-  const userId = auth.session.userId
-  const fromISO = from
-  const toISO = to
-
-  let targets: string[]
-  let clinicExtId: string | null = null
-
-  if (clinicId) {
-    targets = [clinicId]
-    clinicExtId = clinicId
-  } else {
-    const cs = await prisma.clinic.findMany({
-      where: { apricotClinicId: { not: null } },
-      select: { apricotClinicId: true },
-      orderBy: { id: 'asc' },
-    })
-    targets = cs.map(c => c.apricotClinicId!).filter(Boolean)
-    if (targets.length === 0) {
-      return NextResponse.json({ error: '冇任何診所綁咗 Apricot ID' }, { status: 400 })
+    if (!from || !to) {
+      return NextResponse.json({ error: 'from, to required' }, { status: 400 })
     }
-  }
 
-  // 4) 建 job 記錄
-  const job = await prisma.apricotSyncJob.create({
-    data: {
-      clinicExtId,
-      fromDate: new Date(fromISO),
-      toDate: new Date(toISO),
-      totalClinics: targets.length,
-      createdBy: userId,
-      currentStep: '準備中',
-    },
-  })
+    // 1) Clean zombie jobs
+    await cleanZombieJobs()
 
-  // 5) 背景執行 — 唔等完成；加 .catch() 防止未預期錯誤令 job 永遠 RUNNING
-  void runSyncInBackground(job.id, targets, fromISO, toISO).catch(async (e: any) => {
-    console.error('[apricot/sync-bg] 未預期錯誤', e)
-    await prisma.apricotSyncJob.update({
-      where: { id: job.id },
+    // 2) 檢查是否有 RUNNING job
+    const runningJob = await prisma.apricotSyncJob.findFirst({
+      where: { status: 'RUNNING' },
+      orderBy: { startedAt: 'desc' },
+    })
+    if (runningJob) {
+      return NextResponse.json(
+        { error: '已有同步任務進行中', jobId: runningJob.id },
+        { status: 409 },
+      )
+    }
+
+    // 3) 解析 target clinics
+    const userId = auth.session.userId
+    const fromISO = from
+    const toISO = to
+
+    let targets: string[]
+    let clinicExtId: string | null = null
+
+    if (clinicId) {
+      targets = [clinicId]
+      clinicExtId = clinicId
+    } else {
+      const cs = await prisma.clinic.findMany({
+        where: { apricotClinicId: { not: null } },
+        select: { apricotClinicId: true },
+        orderBy: { id: 'asc' },
+      })
+      targets = cs.map(c => c.apricotClinicId!).filter(Boolean)
+      if (targets.length === 0) {
+        return NextResponse.json({ error: '冇任何診所綁咗 Apricot ID' }, { status: 400 })
+      }
+    }
+
+    // 4) 建 job 記錄
+    const job = await prisma.apricotSyncJob.create({
       data: {
-        status: 'FAILED',
-        errorMessage: String(e?.message ?? e).slice(0, 500),
-        currentStep: '未預期錯誤',
-        endedAt: new Date(),
+        clinicExtId,
+        fromDate: new Date(fromISO),
+        toDate: new Date(toISO),
+        totalClinics: targets.length,
+        createdBy: userId,
+        currentStep: '準備中',
       },
-    }).catch(() => { /* job 都寫唔到就算 */ })
-  })
+    })
 
-  // 6) 即刻回 jobId
-  return NextResponse.json({ jobId: job.id })
+    // 5) 背景執行 — 唔等完成；加 .catch() 防止未預期錯誤令 job 永遠 RUNNING
+    void runSyncInBackground(job.id, targets, fromISO, toISO).catch(async (e: any) => {
+      console.error('[apricot/sync-bg] 未預期錯誤', e)
+      await prisma.apricotSyncJob.update({
+        where: { id: job.id },
+        data: {
+          status: 'FAILED',
+          errorMessage: String(e?.message ?? e).slice(0, 500),
+          currentStep: '未預期錯誤',
+          endedAt: new Date(),
+        },
+      }).catch(() => { /* job 都寫唔到就算 */ })
+    })
+
+    // 6) 即刻回 jobId
+    return NextResponse.json({ jobId: job.id })
+  })
 }

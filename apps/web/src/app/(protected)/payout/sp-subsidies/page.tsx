@@ -56,7 +56,8 @@ export default function SpSubsidiesPage() {
   const [confirming, setConfirming] = useState<string | null>(null)
 
   // R3: 篩選 state
-  const [month, setMonth] = useState('')
+  const currentMonth = new Date().toISOString().slice(0, 7) // '2026-08'
+  const [month, setMonth] = useState(currentMonth)
   const [filterProvider, setFilterProvider] = useState('')
   const [filterClinic, setFilterClinic] = useState('')
   const [onlyWithAmount, setOnlyWithAmount] = useState(false)
@@ -68,11 +69,11 @@ export default function SpSubsidiesPage() {
 
   useEffect(() => {
     loadSubsidies()
-  }, [])
+  }, [month])
 
   async function loadSubsidies() {
     try {
-      const res = await apiFetch<any>('/api/sp-subsidies')
+      const res = await apiFetch<any>(`/api/sp-subsidies?periodMonth=${month}`)
       setSubsidies((res as any).subsidies || [])
     } catch (e) {
       console.error('Failed to load SP subsidies', e)

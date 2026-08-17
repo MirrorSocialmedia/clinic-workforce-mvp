@@ -624,7 +624,7 @@ async function pickListPrice(feeItemCode: string, billTime: Date): Promise<any |
 export async function scanSpSubsidies(
   periodMonth: string,
   clinicId?: string,
-): Promise<{ candidates: any[]; skippedLocked: number }> {
+): Promise<{ candidates: any[]; skippedLocked: number; created: number; updated: number; failed: { eleId: string; error: string }[] }> {
   const [monthStart, monthEnd] = monthRange(periodMonth)
 
   // Resolve clinic Ext ID if clinicId is provided
