@@ -94,7 +94,14 @@ export default function SpSubsidiesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ periodMonth: scanningMonth }),
       })
-      alert(`掃描完成，發現 ${(res as any).count} 筆候選`)
+      const r = res as any
+      let msg = `掃描完成：新增 ${r.created ?? 0} · 更新 ${r.updated ?? 0}`
+      if (r.skippedLocked > 0) msg += ` · 已鎖定跳過 ${r.skippedLocked}`
+      if (r.failed?.length > 0) {
+       msg += `\n⚠️ ${r.failed.length} 筆失敗：\n`
+       msg += r.failed.slice(0, 5).map((f: any) => ` ${f.eleId}: ${f.error}`).join('\n')
+      }
+      alert(msg)
       await loadSubsidies()
     } catch (e: any) {
       alert(`掃描失敗: ${e.message}`)

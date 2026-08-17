@@ -19,7 +19,12 @@ export async function handleRoute<T>(
     const msg = String(e?.message ?? e)
     // User input error → 422; server error → 500
     const isUser = /^[A-Z_]+:/.test(msg) || msg.includes('必填') || msg.includes('未對應')
-    if (!isUser) console.error(`[${tag}] 失敗`, e)
+    if (!isUser) {
+     console.error(`[${tag}] 失敗`, {
+      message: msg.slice(0, 300),
+      stack: String(e?.stack ?? '').split('\n').slice(0, 5).join('\n'),
+     })
+    }
     return NextResponse.json(
       { error: msg.slice(0, 300) },
       { status: isUser ? 422 : 500 },
