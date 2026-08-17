@@ -70,6 +70,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   // ★ MD-D: Payout Engine
   { action: 'PAYOUT_RUN_LOCK', label: '鎖定月結單' },
   { action: 'PAYOUT_RUN_UNLOCK', label: '⚠️ 解鎖月結單' },
+  { action: 'PAYOUT_RUN_DELETE', label: '⚠️ 刪除月結單草稿' },
+  { action: 'PAYOUT_EXPORT', label: '匯出月結單' },
   { action: 'REFERRAL_CREATE', label: '新增轉介記錄' },
   { action: 'REFERRAL_DELETE', label: '刪除轉介記錄' },
   { action: 'REFERRAL_BATCH_CREATE', label: '批次新增轉介' },

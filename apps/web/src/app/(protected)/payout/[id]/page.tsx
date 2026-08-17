@@ -9,11 +9,12 @@ import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { ArrowLeft, Lock, Unlock, FileDown } from 'lucide-react'
+import { ArrowLeft, Lock, Unlock, FileDown, Trash2, RotateCcw } from 'lucide-react'
 
 interface PayoutRun {
   id: string
   providerId: string
+  clinicId: string | null
   periodMonth: string
   status: string
   lockedAt: string | null
@@ -50,6 +51,9 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
   const [unlockReason, setUnlockReason] = useState('')
   const [showUnlock, setShowUnlock] = useState(false)
   const [reconciliation, setReconciliation] = useState<ReconciliationStatus | null>(null)
+  // AA4: delete/regenerate states
+  const [deleting, setDeleting] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -104,11 +108,50 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
     }
   }
 
+  // AA4: 刪除草稿
+  async function handleDelete() {
+    if (!run) return
+    if (!confirm(`刪除 ${run.periodMonth} 草稿月結單？成本/補貼/轉介記錄會解除鎖定（唔會刪），可以重新生成。`)) return
+    setDeleting(true)
+    try {
+      await apiFetch(`/api/payout-runs/${params.id}`, { method: 'DELETE' })
+      alert('已刪除草稿')
+      router.push('/payout')
+    } catch (e: any) {
+      alert(`刪除失敗: ${e.message}`)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // AA4: 重新生成（DELETE + POST）
+  async function handleRegenerate() {
+    if (!run) return
+    if (!confirm(`重新生成 ${run.periodMonth} 月結單？會先刪除舊草稿再重新計算。`)) return
+    setRegenerating(true)
+    try {
+      await apiFetch(`/api/payout-runs/${params.id}`, { method: 'DELETE' })
+      const clinicId = run.clinicId || ''
+      const res = await apiFetch('/api/payout-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId: run.providerId, periodMonth: run.periodMonth, clinicId }),
+      })
+      alert('重新生成成功')
+      router.push(`/payout/${res.run.id}`)
+    } catch (e: any) {
+      alert(`重新生成失敗: ${e.message}`)
+    } finally {
+      setRegenerating(false)
+    }
+  }
+
   if (loading) return <div className="p-6">載入中...</div>
   if (!run) return <div className="p-6">搵唔到月結單</div>
 
   const { provider, periodMonth } = run
   const name = provider?.shortName || provider?.name || '未知醫生'
+  const isDraft = run.status !== 'LOCKED'
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -151,6 +194,28 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
           <Button variant="outline" onClick={() => setShowUnlock(true)}>
             <Unlock className="w-4 h-4 mr-1" /> 解鎖
           </Button>
+        )}
+        {/* AA4: 草稿狀態顯示重新生成/刪除按鈕 */}
+        {isDraft && (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={handleRegenerate}
+              disabled={regenerating}
+            >
+              <RotateCcw className="w-4 h-4 mr-1" />
+              {regenerating ? '生成中...' : '重新生成'}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              <Trash2 className="w-4 h-4 mr-1" />
+              {deleting ? '刪除中...' : '刪除草稿'}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -233,13 +298,15 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
         </Card>
       )}
 
-      {/* Breakdown */}
+      {/* Breakdown — AA3: 付款明細表 */}
       {run.breakdownJson && run.breakdownJson.length > 0 && (
         <Card className="p-4 mb-4">
-          <h2 className="font-semibold mb-3">付款方式明細</h2>
+          <h2 className="font-semibold mb-3">付款明細</h2>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left border-b">
+                <th className="py-1">日期</th>
+                <th className="py-1">帳單編號</th>
                 <th className="py-1">方式</th>
                 <th className="py-1 text-right">原始</th>
                 <th className="py-1 text-right">費率</th>
@@ -249,12 +316,20 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
             <tbody>
               {run.breakdownJson.map((b: any, i: number) => (
                 <tr key={i} className="border-b last:border-0">
+                  <td className="py-1">{b.paidAt ? new Date(b.paidAt).toLocaleDateString('zh-HK') : '—'}</td>
+                  <td className="py-1">{b.billCode || '—'}</td>
                   <td className="py-1">{b.method}</td>
                   <td className="py-1 text-right">${b.rawAmount?.toFixed(2)}</td>
                   <td className="py-1 text-right">{b.feePercentUsed}%</td>
                   <td className="py-1 text-right">${b.netAmount?.toFixed(2)}</td>
                 </tr>
               ))}
+              <tr className="border-b font-semibold bg-gray-50">
+                <td className="py-1" colSpan={3}>小計</td>
+                <td className="py-1 text-right">${run.rawAmount.toFixed(2)}</td>
+                <td className="py-1"></td>
+                <td className="py-1 text-right">${run.grossAmount.toFixed(2)}</td>
+              </tr>
             </tbody>
           </table>
         </Card>

@@ -330,6 +330,8 @@ export const CONFIG = {
     'GET /api/payout-runs/:id': ['OWNER'],
     'POST /api/payout-runs/:id/lock': ['OWNER'],
     'POST /api/payout-runs/:id/unlock': ['OWNER'],
+    'DELETE /api/payout-runs/:id': ['OWNER'], // ★ AA4: 刪除草稿月結單
+    'GET /api/payout-runs/:id/export': ['OWNER'], // ★ AA3: Excel 匯出
     'POST /api/payout-runs/clinics': ['OWNER'],
     'GET /api/provider-referrals': ['OWNER'],
     'POST /api/provider-referrals': ['OWNER'],
@@ -495,6 +497,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/payout-runs/:id': ['provider_payout'],
   'POST /api/payout-runs/:id/lock': ['provider_payout'],
   'POST /api/payout-runs/:id/unlock': ['provider_payout'],
+  'DELETE /api/payout-runs/:id': ['provider_payout'], // ★ AA4
+  'GET /api/payout-runs/:id/export': ['provider_payout'], // ★ AA3
   'POST /api/payout-runs/clinics': ['provider_payout'],
   'GET /api/provider-referrals': ['provider_payout'],
   'POST /api/provider-referrals': ['provider_payout'],
