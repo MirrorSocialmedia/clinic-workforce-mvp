@@ -73,6 +73,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'REFERRAL_CREATE', label: '新增轉介記錄' },
   { action: 'REFERRAL_DELETE', label: '刪除轉介記錄' },
   { action: 'SP_SUBSIDY_CONFIRM', label: '確認 SP 補貼' },
+  { action: 'SP_SUBSIDY_SKIP', label: '跳過 SP 補貼' },
+  { action: 'SP_SUBSIDY_RESET', label: '取消確認 SP 補貼' },
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },
