@@ -99,33 +99,33 @@ export default function ReferralsPage() {
     return items.reduce((sum: number, i: any) => sum + i.unitPrice * i.qty, 0)
   }, [billData, selectedItems])
 
-  const refAmount = selectedTotal * (Number(refPercent) || 0) / 100
+  const totalRef = useMemo(() => {
+    return selectedItems.reduce((sum: number, eleId: string) => {
+      const it = billData?.items.find((i: any) => i.eleId === eleId)
+      if (!it) return sum
+      return sum + Math.round(Number(it.unitPrice) * Number(it.qty) * (Number(refPercent) || 0) / 100 * 100) / 100
+    }, 0)
+  }, [billData, selectedItems, refPercent])
 
-  // W1: handleSubmit — dual path (completingDraft → PUT / new → batch POST)
+  // W1: handleSubmit — dual path (completingDraft → POST /complete / new → batch POST)
   async function handleSubmit() {
     if (completingDraft) {
-      // 補草稿：只准一個項目
-      if (selectedItems.length !== 1) {
-        alert('補上帳單時只可以揀一個項目。如果要入多個，請取消後用新增。')
-        return
-      }
+      if (selectedItems.length === 0) { alert('請至少揀一個項目'); return }
       if (!billData) { alert('請先搜尋帳單'); return }
-      const it = billData.items.find((i: any) => i.eleId === selectedItems[0])
-      if (!it) { alert('找不到選定項目'); return }
+      const items = selectedItems.map(eleId => {
+        const it = billData!.items.find((i: any) => i.eleId === eleId)!
+        return { eleId, itemDes: it.feeItemDes, unitPrice: it.unitPrice, qty: it.qty }
+      })
       setBatchLoading(true)
       try {
-        await apiFetch(`/api/provider-referrals/${completingDraft.id}`, {
-          method: 'PUT',
+        await apiFetch(`/api/provider-referrals/${completingDraft.id}/complete`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             billExtId: billData.billExtId,
             billCode: billData.billCode,
-            billItemEleId: it.eleId,
-            itemDes: it.feeItemDes,
-            unitPrice: it.unitPrice,
-            qty: it.qty,
             refPercent,
-            status: 'CONFIRMED',
+            items,
           }),
         })
         setCompletingDraft(null)
@@ -529,17 +529,24 @@ export default function ReferralsPage() {
                 <thead>
                   <tr className="text-left border-b bg-gray-50">
                     <th className="py-2 px-2 w-8">
-                      <input
-                        type="checkbox"
-                        checked={billData.items.length > 0 && selectedItems.length === billData.items.filter((i: any) => !i.alreadyReferred).length}
-                        onChange={e => {
-                          if (e.target.checked) {
-                            setSelectedItems(billData.items.filter((i: any) => !i.alreadyReferred).map((i: any) => i.eleId))
-                          } else {
-                            setSelectedItems([])
-                          }
-                        }}
-                      />
+                      {(() => {
+                        const selectableItems = billData.items.filter(
+                          (i: any) => Number(i.unitPrice) >= 0 && !i.alreadyReferred
+                        )
+                        return (
+                          <input
+                            type="checkbox"
+                            checked={selectableItems.length > 0 && selectedItems.length === selectableItems.length}
+                            onChange={e => {
+                              if (e.target.checked) {
+                                setSelectedItems(selectableItems.map((i: any) => i.eleId))
+                              } else {
+                                setSelectedItems([])
+                              }
+                            }}
+                          />
+                        )
+                      })()}
                     </th>
                     <th className="py-2 px-2">項目</th>
                     <th className="py-2 px-2 text-right">單價</th>
@@ -559,8 +566,11 @@ export default function ReferralsPage() {
                           type="checkbox"
                           checked={selectedItems.includes(item.eleId)}
                           onChange={() => toggleItem(item.eleId)}
-                          disabled={item.alreadyReferred}
+                          disabled={item.alreadyReferred || Number(item.unitPrice) < 0}
                         />
+                        {Number(item.unitPrice) < 0 && (
+                          <span className="ml-2 text-xs text-gray-400">（負數項目，唔可以轉介）</span>
+                        )}
                       </td>
                       <td className="py-2 px-2">{item.feeItemDes}</td>
                       <td className="py-2 px-2 text-right">${item.unitPrice.toFixed(2)}</td>
@@ -597,7 +607,7 @@ export default function ReferralsPage() {
                   />
                 </div>
                 <div className="text-sm">
-                  轉介金額: <strong className="text-blue-700">${refAmount.toFixed(2)}</strong>
+                  轉介金額: <strong className="text-blue-700">${totalRef.toFixed(2)}</strong>
                 </div>
                 <div className="flex-1" />
                 <Button onClick={handleSubmit} disabled={batchLoading}>

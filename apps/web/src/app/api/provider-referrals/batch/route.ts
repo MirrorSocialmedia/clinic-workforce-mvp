@@ -63,6 +63,28 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         )
       }
+      if (Number(billItem.unitPrice) < 0) {
+        return NextResponse.json(
+          { error: `「${billItem.feeItemDes}」係負數項目，唔可以轉介` },
+          { status: 400 },
+        )
+      }
+    }
+
+    // Duplicate check — list all dups (not return on first)
+    const dups = await prisma.providerReferral.findMany({
+      where: {
+        fromProviderId,
+        billItemEleId: { in: items.map((i: any) => i.eleId) },
+        status: 'CONFIRMED',
+      },
+      select: { itemDes: true, billCode: true },
+    })
+    if (dups.length) {
+      return NextResponse.json(
+        { error: `以下項目已經轉介過：${dups.map(d => `${d.itemDes}（${d.billCode}）`).join('、')}` },
+        { status: 400 },
+      )
     }
 
     // Derive periodMonth from bill time (HK timezone)
@@ -73,19 +95,6 @@ export async function POST(req: NextRequest) {
     const referrals = await prisma.$transaction(async (tx) => {
       const results = []
       for (const item of items) {
-        // ★ 重複檢查：同一 billItemEleId + fromProviderId 已經 CONFIRMED 過
-        const dup = await tx.providerReferral.findFirst({
-          where: {
-            fromProviderId,
-            billItemEleId: item.eleId,
-            status: 'CONFIRMED',
-          },
-          select: { id: true },
-        })
-        if (dup) {
-          throw new Error(`項目「${item.itemDes}」已經轉介過，唔可以重複`)
-        }
-
         const unitPrice = Number(item.unitPrice)
         const qty = Number(item.qty)
         const refPct = Number(refPercent) ?? 2
