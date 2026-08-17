@@ -1,6 +1,7 @@
 /**
  * PUT /api/provider-referrals/[id] — Update referral (OWNER / provider_payout)
  * DELETE /api/provider-referrals/[id] — Delete referral (OWNER / provider_payout)
+ * // ownership-ok: provider_payout 權限限制
  * MD-U: Supports completing DRAFT → CONFIRMED with bill data
  */
 import { NextRequest, NextResponse } from 'next/server'

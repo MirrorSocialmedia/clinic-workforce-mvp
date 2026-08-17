@@ -1,5 +1,6 @@
 /**
  * POST /api/provider-referrals/[id]/reset — Reset referral to DRAFT (OWNER / provider_payout)
+ * // ownership-ok: provider_payout 權限限制
  * Reverts a CONFIRMED referral back to DRAFT status (MD-U)
  */
 import { NextRequest, NextResponse } from 'next/server'

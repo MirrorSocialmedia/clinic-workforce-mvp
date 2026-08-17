@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({}))
-  const { fromProviderId, billExtId, refPercent, items, toProviderId } = body
+  const { fromProviderId, billExtId, refPercent, items, toProviderId } = body as any
 
   if (!fromProviderId || !billExtId || !items?.length) {
     return NextResponse.json(
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
 
     // Transaction — 全入或全唔入
     const referrals = await prisma.$transaction(
-      items.map(item => {
+      items.map((item: any) => {
         const unitPrice = Number(item.unitPrice)
         const qty = Number(item.qty)
         const refPct = Number(refPercent) ?? 2
