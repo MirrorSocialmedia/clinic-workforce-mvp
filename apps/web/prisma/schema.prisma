@@ -1143,22 +1143,24 @@ model ProviderReferral {
   fromProviderId String   // 轉介出去嘅醫生（收 2% 嗰個）
   toProviderId   String?  // 接手嘅醫生
   clinicId       String?  // ★ 診所快照（由被轉介張單解出）
-  billExtId      String
-  billCode       String
-  billItemEleId  String   // 揀咗邊個項目
-  itemDes        String   // 快照：'IMPLANT'
-  unitPrice      Decimal  @db.Decimal(12,2)
-  qty            Int      // ★ 員工可改（部分轉介）
+  billExtId      String?  // ★ MD-U: nullable — 草稿可以冇 bill
+  billCode       String?  // ★ MD-U: nullable
+  billItemEleId  String?  // ★ MD-U: nullable — 草稿未揀 bill item
+  itemDes        String?  // ★ MD-U: nullable
+  unitPrice      Decimal? @db.Decimal(12,2) // ★ MD-U: nullable
+  qty            Int      @default(1)
   refPercent     Decimal  @db.Decimal(5,2) @default(2)
-  amount         Decimal  @db.Decimal(12,2) // unitPrice × qty × refPercent%
+  amount         Decimal? @db.Decimal(12,2) // ★ MD-U: nullable — 草稿可以冇金額
   periodMonth    String
   note           String?
+  status         String?  @default("CONFIRMED") // ★ MD-U: DRAFT | CONFIRMED
+  patientNote    String?  // ★ MD-U: 草稿時記低係邊個病人
   lockedByRunId  String?
   createdBy      String
   createdAt      DateTime @default(now())
 
-  @@unique([billItemEleId, fromProviderId])
   @@index([fromProviderId, periodMonth])
+  @@index([status])
 }
 
 // 2人 SP 補貼記錄 — 原價 vs 優惠價之差 × 拆帳% × 人數

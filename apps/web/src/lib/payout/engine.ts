@@ -386,10 +386,11 @@ export async function computePayout(
   const refWhere: any = {
     fromProviderId: providerId,
     periodMonth,
+    status: 'CONFIRMED', // ★ MD-U: 草稿唔計錢
   }
   if (clinicId) refWhere.clinicId = clinicId
   const refRecords = await prisma.providerReferral.findMany({ where: refWhere })
-  const refAmount = round2(sum(refRecords.map((x: any) => Number(x.amount))))
+  const refAmount = round2(sum(refRecords.map((x: any) => Number(x.amount ?? 0))))
 
   // ─── ⑦ Adjustments (unassigned only) ─────────────────────────────────
   const adjustWhere: any = {
