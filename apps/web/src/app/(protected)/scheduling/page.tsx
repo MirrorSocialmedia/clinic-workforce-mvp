@@ -3506,23 +3506,26 @@ function getShiftCode(shift: Shift): string {
     const fs = opts.compact ? 9 : 10
     const noteKey = `${dateStr}|${opts.row ?? 0}`
 
+    // ★ 2026-08-16: textStyle 共用 — forExport / overflowRight / 預設
+    const textStyle: React.CSSProperties = opts.forExport
+      ? { whiteSpace: 'normal', wordBreak: 'break-all', overflow: 'visible', position: 'static' }
+      : opts.overflowRight
+      ? {
+          whiteSpace: 'nowrap', overflow: 'visible',
+          position: 'absolute', left: 2, top: 2, zIndex: 5,
+          background: note ? '#f9fafb' : 'transparent',
+          paddingRight: 4,
+        }
+      : {
+          overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-all',
+          display: '-webkit-box', WebkitBoxOrient: 'vertical' as any, WebkitLineClamp: 2,
+        }
+
     if (!opts.editable) {
       return (
         <div title={note || undefined} style={{
           fontSize: fs, lineHeight: 1.6, textAlign: 'center', color: '#374151',
-          ...(opts.forExport
-            ? { whiteSpace: 'normal', wordBreak: 'break-all', overflow: 'visible', position: 'static' }
-            : opts.overflowRight
-            ? {
-                whiteSpace: 'nowrap',
-                overflow: 'visible',
-                position: 'absolute',
-                left: 2, top: 2,
-                zIndex: 5,
-                background: note ? '#f9fafb' : 'transparent',
-                paddingRight: 4,
-              }
-            : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }),
+          ...textStyle,
         }}>{note}</div>
       )
     }
@@ -3544,17 +3547,13 @@ function getShiftCode(shift: Shift): string {
         style={{
           fontSize: fs, textAlign: 'center',
           color: note ? '#374151' : (opts.compact ? '#e5e7eb' : '#d1d5db'),
-          background: note ? '#f9fafb' : 'transparent',
-          borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '3px 3px' : '5px 5px',
-          minHeight: opts.compact ? 32 : 40,
+          borderRadius: opts.compact ? 3 : 4,
+          padding: opts.compact ? '3px 3px' : '5px 5px',
+          // ★ overflowRight 時唔可以有 minHeight —— absolute 之後會撐高蓋落下面行
+          ...(opts.overflowRight ? {} : { minHeight: opts.compact ? 32 : 40, background: note ? '#f9fafb' : 'transparent' }),
           cursor: canManage ? 'pointer' : 'default',
-          overflow: 'hidden',
-          whiteSpace: 'normal',
-          wordBreak: 'break-all',
-          display: '-webkit-box',
-          WebkitBoxOrient: 'vertical',
-          WebkitLineClamp: 2,
           lineHeight: 1.3,
+          ...textStyle,
           ...(opts.compact ? {} : { border: note ? '1px solid #e5e7eb' : '1px dashed #e5e7eb' }),
         }}
       >{note || (canManage ? (opts.compact ? '·' : '＋') : '')}</div>
