@@ -29,6 +29,10 @@ for script in $CHECKS; do
   bash "scripts/$script" || { echo "❌ $script failed, aborting deploy"; exit 1; }
 done
 
+# Wiring check — info only, does not block deploy
+echo "▶ check-wiring.sh"
+bash "scripts/check-wiring.sh" || true
+
 # Legacy aliases — skip if missing (backwards compat)
 for script in check-rbac-api.sh check-dates.sh; do
   if [ -f "scripts/$script" ]; then
