@@ -664,142 +664,159 @@ export async function scanSpSubsidies(
 
   const candidates: any[] = []
   let skippedLocked = 0
+  let created = 0
+  let updated = 0
+  const failed: { eleId: string; error: string }[] = []
+
   for (const item of items) {
-    const bill: any = (item as any).bill
-    const provider = bill.providerExtId
-      ? await prisma.provider.findUnique({
-          where: { apricotId: bill.providerExtId! },
-        })
-      : null
-
-    if (!provider) continue
-
-    // Resolve clinic from bill's clinicExtId
-    const billClinic = apricotClinicId
-      ? null // already filtered
-      : bill.clinicExtId
-        ? await prisma.clinic.findFirst({
-            where: { apricotClinicId: bill.clinicExtId },
+    try {
+      const bill: any = (item as any).bill
+      const provider = bill.providerExtId
+        ? await prisma.provider.findUnique({
+            where: { apricotId: bill.providerExtId! },
           })
         : null
 
-    // F5: Fetch per-provider split% from commission
-    const commission = await pickCommission(provider.id, periodMonth, billClinic?.id)
-    const pct = commission ? Number(commission.percent) : null
+      if (!provider) continue
 
-    // ★ MD-K: Pick list price from FeeItemListPrice table
-    const listPriceRow = await pickListPrice(item.feeItemCode, bill.billTime)
-    const listPriceNum = listPriceRow ? Number(listPriceRow.listPrice) : null
+      // Resolve clinic from bill's clinicExtId
+      const billClinic = apricotClinicId
+        ? null // already filtered
+        : bill.clinicExtId
+          ? await prisma.clinic.findFirst({
+              where: { apricotClinicId: bill.clinicExtId },
+            })
+          : null
 
-    const qty = item.qty || 1
-    // 折後實收單價（直接填 500 或 580 打折扣都出 500）
-    const actualUnit = round2(Number(item.ttlAmt) / qty)
+      // F5: Fetch per-provider split% from commission
+      const commission = await pickCommission(provider.id, periodMonth, billClinic?.id)
+      const pct = commission ? Number(commission.percent) : null
 
-    // S1: 雙來源篩選
-    const hasListPrice = listPriceNum != null
-    const hasCommission = pct != null
-    const priceMatches = Math.abs(actualUnit - SP_2P1K_PER_PERSON) < 0.01
+      // ★ MD-K: Pick list price from FeeItemListPrice table
+      const listPriceRow = await pickListPrice(item.feeItemCode, bill.billTime)
+      const listPriceNum = listPriceRow ? Number(listPriceRow.listPrice) : null
 
-    // 兩個來源都唔中 → 唔係候選
-    if (!item.isSp2p && !priceMatches) continue
+      const qty = item.qty || 1
+      // 折後實收單價（直接填 500 或 580 打折扣都出 500）
+      const actualUnit = round2(Number(item.ttlAmt) / qty)
 
-    // S1: hasMarker — 有沒有 2P1K 備註標記
-    const hasMarker = item.isSp2p
+      // S1: 雙來源篩選
+      const hasListPrice = listPriceNum != null
+      const hasCommission = pct != null
+      const priceMatches = Math.abs(actualUnit - SP_2P1K_PER_PERSON) < 0.01
 
-    let amount: number
-    let needsReview: boolean = false
+      // 兩個來源都唔中 → 唔係候選
+      if (!item.isSp2p && !priceMatches) continue
 
-    // 冇標記但金額啱 → needsReview
-    needsReview = needsReview || !hasMarker
+      // S1: hasMarker — 有沒有 2P1K 備註標記
+      const hasMarker = item.isSp2p
 
-    if (!hasListPrice) {
-      // 標準價揾唔到 → needsReview，唔出負數
-      amount = 0
-      needsReview = true
-    } else if (!hasCommission) {
-      // 拆帳%冇設定 → needsReview
-      amount = 0
-      needsReview = true
-    } else if (!priceMatches) {
-      // 金額對唔上 → 產生候選 + needsReview
-      const raw = (listPriceNum - actualUnit) * (pct / 100) * qty
-      amount = round2(Math.max(0, raw)) // ★ 唔准負
-      needsReview = needsReview || raw < 0
-    } else {
-      // 正常候選
-      amount = round2((listPriceNum - actualUnit) * (pct / 100) * qty)
-    }
+      let amount: number
+      let needsReview: boolean = false
 
-    const actualPrice = actualUnit
-    const listPriceUsed = hasListPrice ? listPriceNum : actualPrice
+      // 冇標記但金額啱 → needsReview
+      needsReview = needsReview || !hasMarker
 
-    // Upsert: get or create
-    const existing = await prisma.spSubsidy.findUnique({
-      where: { billItemEleId: item.eleId },
-    }).catch(() => null)
+      if (!hasListPrice) {
+        // 標準價揾唔到 → needsReview，唔出負數
+        amount = 0
+        needsReview = true
+      } else if (!hasCommission) {
+        // 拆帳%冇設定 → needsReview
+        amount = 0
+        needsReview = true
+      } else if (!priceMatches) {
+        // 金額對唔上 → 產生候選 + needsReview
+        const raw = (listPriceNum - actualUnit) * (pct / 100) * qty
+        amount = round2(Math.max(0, raw)) // ★ 唔准負
+        needsReview = needsReview || raw < 0
+      } else {
+        // 正常候選
+        amount = round2((listPriceNum - actualUnit) * (pct / 100) * qty)
+      }
 
-    // R4: 已出月結，唔准動
-    if (existing?.lockedByRunId) { skippedLocked++; continue }
+      const actualPrice = actualUnit
+      const listPriceUsed = hasListPrice ? listPriceNum : actualPrice
 
-    // Build update data
-    const updateData: any = {
-      providerId: provider.id,
-      clinicId: billClinic?.id || null,
-      billExtId: bill.extId,
-      itemDes: item.feeItemDes,
-      listPrice: new Prisma.Decimal(String(listPriceUsed)),
-      actualPrice: new Prisma.Decimal(String(actualPrice)),
-      headcount: qty,
-      splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
-      amount: new Prisma.Decimal(String(amount)),
-      // source：唔好蓋走人手建立嘅
-      ...(existing?.source === 'MANUAL' ? {} : { source: 'AUTO' }),
-      // S3: 金額變咗先要重新設定 PENDING；SKIPPED 唔覆蓋
-      ...(existing ? (() => {
-        const amountChanged = Number(existing.amount) !== amount
-        return amountChanged ? { status: 'PENDING', confirmedBy: null } : {}
-      })() : {}),
-      // S1: hasMarker
-      hasMarker,
-      needsReview,
-      periodMonth,
-    }
-
-    if (existing) {
-      await prisma.spSubsidy.update({
+      // Upsert: get or create
+      const existing = await prisma.spSubsidy.findUnique({
         where: { billItemEleId: item.eleId },
-        data: updateData,
-      })
-    } else {
-      await prisma.spSubsidy.create({
-        data: {
-          ...updateData,
-          source: 'AUTO',
-          status: 'PENDING',
-          confirmedBy: null,
-        },
-      })
-    }
+      }).catch(() => null)
 
-    candidates.push({
-      providerId: provider.id,
-      clinicId: billClinic?.id || null,
-      itemDes: item.feeItemDes,
-      listPrice: listPriceUsed,
-      actualPrice,
-      headcount: qty,
-      splitPercent: pct ?? 0,
-      amount,
-      needsReview,
-      hasMarker,
-      source: 'AUTO',
-      status: existing?.lockedByRunId ? 'PENDING' : (existing ? existing.status : 'PENDING'),
-      confirmedBy: null,
-      periodMonth,
-    })
+      // R4: 已出月結，唔准動
+      if (existing?.lockedByRunId) { skippedLocked++; continue }
+
+      // Build update data — T1: billItemEleId must be included for create
+      const updateData: any = {
+        billItemEleId: item.eleId, // ★ T1: required for create
+        providerId: provider.id,
+        clinicId: billClinic?.id || null,
+        billExtId: bill.extId,
+        itemDes: item.feeItemDes,
+        listPrice: new Prisma.Decimal(String(listPriceUsed)),
+        actualPrice: new Prisma.Decimal(String(actualPrice)),
+        headcount: qty,
+        splitPercent: pct != null ? new Prisma.Decimal(String(pct)) : new Prisma.Decimal('0'),
+        amount: new Prisma.Decimal(String(amount)),
+        // source：唔好蓋走人手建立嘅
+        ...(existing?.source === 'MANUAL' ? {} : { source: 'AUTO' }),
+        // S3: 金額變咗先要重新設定 PENDING；SKIPPED 唔覆蓋
+        ...(existing ? (() => {
+          const amountChanged = Number(existing.amount) !== amount
+          return amountChanged ? { status: 'PENDING', confirmedBy: null } : {}
+        })() : {}),
+        // S1: hasMarker
+        hasMarker,
+        needsReview,
+        periodMonth,
+      }
+
+      // assertRequired: check all required fields before create
+      const REQUIRED_SP = ['providerId', 'billExtId', 'billItemEleId', 'itemDes', 'listPrice', 'actualPrice', 'splitPercent', 'amount', 'periodMonth']
+      const missing = REQUIRED_SP.filter(k => (updateData as any)[k] == null)
+      if (missing.length) throw new Error(`SpSubsidy 缺必填欄：${missing.join(', ')}`)
+
+      if (existing) {
+        await prisma.spSubsidy.update({
+          where: { billItemEleId: item.eleId },
+          data: updateData,
+        })
+        updated++
+      } else {
+        await prisma.spSubsidy.create({
+          data: {
+            ...updateData,
+            source: 'AUTO',
+            status: 'PENDING',
+            confirmedBy: null,
+          },
+        })
+        created++
+      }
+
+      candidates.push({
+        providerId: provider.id,
+        clinicId: billClinic?.id || null,
+        itemDes: item.feeItemDes,
+        listPrice: listPriceUsed,
+        actualPrice,
+        headcount: qty,
+        splitPercent: pct ?? 0,
+        amount,
+        needsReview,
+        hasMarker,
+        source: 'AUTO',
+        status: existing?.lockedByRunId ? 'PENDING' : (existing ? existing.status : 'PENDING'),
+        confirmedBy: null,
+        periodMonth,
+      })
+    } catch (e: any) {
+      console.error('[scan] item 失敗', item.eleId, e?.message)
+      failed.push({ eleId: item.eleId, error: String(e?.message).slice(0, 200) })
+    }
   }
 
-  return { candidates, skippedLocked }
+  return { candidates, skippedLocked, created, updated, failed }
 }
 
 // ─── Void/Refund Adjustment Creation ────────────────────────────────────────

@@ -18,5 +18,12 @@ export async function POST(req: NextRequest) {
 
   const result = await scanSpSubsidies(periodMonth, clinicId)
 
-  return NextResponse.json({ candidates: result.candidates, count: result.candidates.length, skippedLocked: result.skippedLocked })
+  return NextResponse.json({
+    candidates: result.candidates,
+    count: result.candidates.length,
+    skippedLocked: result.skippedLocked,
+    created: result.created,
+    updated: result.updated,
+    failed: result.failed,
+  })
 }
