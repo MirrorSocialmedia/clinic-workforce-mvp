@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const patientExtId = searchParams.get('patientExtId')
   const monthsRaw = searchParams.get('months')
 
-  if (!patientExtId) {
+  if (!patientExtId || patientExtId === 'undefined' || patientExtId === 'null') {
     return jsonNoStore({ error: 'patientExtId required' }, { status: 400 })
   }
 

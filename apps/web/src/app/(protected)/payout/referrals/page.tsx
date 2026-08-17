@@ -172,12 +172,17 @@ export default function ReferralsPage() {
   }
 
   async function selectPatient(patient: any) {
+    if (!patient?.extId) {
+      setBillSearchError('病人資料異常（缺 extId），請重新搜尋')
+      console.error('[referrals] patient missing extId', Object.keys(patient ?? {}))
+      return
+    }
     setSelectedPatient(patient)
     setBillSearchResults(null)
     setBillSearching(true)
     setBillSearchError(null)
     try {
-      const res = await apiFetch<any>(`/api/cost-cases/bill-search?patientExtId=${patient.id}&months=12`)
+      const res = await apiFetch<any>(`/api/cost-cases/bill-search?patientExtId=${patient.extId}&months=12`)
       if ((res as any).error) {
         setBillSearchError((res as any).error)
         setBillSearchResults([])
@@ -861,21 +866,17 @@ export default function ReferralsPage() {
                       <tr className="text-left bg-gray-50 border-b">
                         <th className="py-2 px-3">病人編號</th>
                         <th className="py-2 px-3">姓名</th>
-                        <th className="py-2 px-3">性別</th>
-                        <th className="py-2 px-3">出生日期</th>
                       </tr>
                     </thead>
                     <tbody>
                       {patientResults.map((p: any) => (
                         <tr
-                          key={p.id}
+                          key={p.extId}
                           className="border-b last:border-0 hover:bg-blue-50 cursor-pointer"
                           onClick={() => selectPatient(p)}
                         >
-                          <td className="py-2 px-3 font-mono text-xs">{p.externalId || p.id}</td>
+                          <td className="py-2 px-3 font-mono text-xs">{p.code}</td>
                           <td className="py-2 px-3">{p.fullName || '—'}</td>
-                          <td className="py-2 px-3">{p.gender || '—'}</td>
-                          <td className="py-2 px-3">{p.birthDate || '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -888,7 +889,7 @@ export default function ReferralsPage() {
                 <div className="space-y-2">
                   <div className="text-sm text-gray-600 flex items-center gap-2">
                     <Users className="w-4 h-4" />
-                    已選：{selectedPatient.fullName || selectedPatient.externalId || selectedPatient.id}
+                    已選：{selectedPatient.fullName || selectedPatient.code || selectedPatient.extId}
                     <button onClick={() => { setSelectedPatient(null); setBillSearchResults(null) }} className="text-blue-600 underline text-xs ml-2">重新選擇</button>
                   </div>
 

@@ -65,6 +65,9 @@ export function sanitizeBill(raw: any): any {
 // ★ MD-F: Clean patient list (PII whitelist: extId, code, fullName only)
 export type CleanPatient = { extId: string; code: string; fullName: string }
 
+// ★ 只准三個欄。clinic-patients response 有 medicalHistory / personalIdentifier /
+// address / phoneNum / dateOfBirth / gender / bloodType —— 全部唔准出。
+// 前端唔好加「性別」「出生日期」呢類欄位（見 MD-Z）。
 export function toCleanPatients(raw: any): CleanPatient[] {
   const arr = Array.isArray(raw) ? raw : []
   return arr.slice(0, 20).map((p: any) => ({
