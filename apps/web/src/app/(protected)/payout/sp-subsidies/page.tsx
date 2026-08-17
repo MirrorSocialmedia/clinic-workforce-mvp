@@ -182,8 +182,6 @@ export default function SpSubsidiesPage() {
   const providerOptions = useMemo(() => [...new Set(subsidies.map(s => s.providerName).filter(Boolean))] as string[], [subsidies])
   const clinicOptions = useMemo(() => [...new Set(subsidies.map(s => s.clinicName).filter(Boolean))] as string[], [subsidies])
 
-  if (loading) return <div className="p-6">載入中...</div>
-
   // R3: 摘要跟住篩選變
   const filteredPending = sorted.filter(s => s.status === 'PENDING')
   const filteredConfirmed = sorted.filter(s => s.status === 'CONFIRMED')
@@ -207,6 +205,8 @@ export default function SpSubsidiesPage() {
     }
     return [...map.values()].sort((a, b) => b.total - a.total)
   }, [filteredConfirmed])
+
+  if (loading) return <div className="p-6">載入中...</div>
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
