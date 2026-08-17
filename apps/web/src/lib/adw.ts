@@ -281,6 +281,7 @@ export async function snapshotWagesForADW(
           eoWage: true,
           excludedDays: true,
           excludedWage: true,
+          detailJson: true,
         },
       },
     },
