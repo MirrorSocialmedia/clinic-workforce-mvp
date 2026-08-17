@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
@@ -152,12 +153,23 @@ export default function PayrollDetailPage() {
     await fetchRun()
   }
 
-  // ★ C2: 確認前檢查
+  // ★ C2: 確認前檢查 (加 try/catch + Array.isArray fallback 防止白畫面)
   const handleConfirmClick = async () => {
-    const res = await api(`/api/payroll-runs/${runId}/preflight`)
-    if (!res.ok) { alert('檢查失敗，請重試'); return }
-    setPreflight(await res.json())
-    setShowPreflight(true)
+    try {
+      const res = await api(`/api/payroll-runs/${runId}/preflight`)
+      if (!res.ok) { alert('檢查失敗，請重試'); return }
+      const d = await res.json()
+      setPreflight({
+        periodMonth: d.periodMonth ?? '',
+        itemCount: d.itemCount ?? 0,
+        blockers: Array.isArray(d.blockers) ? d.blockers : [],
+        warnings: Array.isArray(d.warnings) ? d.warnings : [],
+      })
+      setShowPreflight(true)
+    } catch (e) {
+      console.error('[preflight]', e)
+      alert(`檢查失敗：${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   const doConfirm = async () => {
@@ -643,73 +655,75 @@ export default function PayrollDetailPage() {
             </div>
           )
         })}
-      {/* ★ C2: Preflight Modal */}
-      {showPreflight && preflight && (
+    {/* ★ C2: Preflight Modal — 改用 portal render 到 document.body，
+            避開 md:hidden 父層 display:none 導致桌面版彈窗消失 */}
+    {showPreflight && preflight && typeof document !== 'undefined' && createPortal(
+      <div
+        style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+        }}
+        onClick={() => setShowPreflight(false)}
+      >
         <div
           style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.5)', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+            background: '#fff', borderRadius: 12, padding: 24,
+            width: '520px', maxWidth: '90vw', maxHeight: '80vh',
+            overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
           }}
-          onClick={() => setShowPreflight(false)}
+          onClick={e => e.stopPropagation()}
         >
-          <div
-            style={{
-              background: '#fff', borderRadius: 12, padding: 24,
-              width: '520px', maxWidth: '90vw', maxHeight: '80vh',
-              overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-            }}
-            onClick={e => e.stopPropagation()}
-          >
-            <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>確認計糧前檢查 —— {preflight.periodMonth}</h3>
-            <p style={{ fontSize: 14, color: '#6b7280', margin: '0 0 12px' }}>共 {preflight.itemCount} 位員工</p>
+          <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>確認計糧前檢查 —— {preflight.periodMonth}</h3>
+          <p style={{ fontSize: 14, color: '#6b7280', margin: '0 0 12px' }}>共 {preflight.itemCount} 位員工</p>
 
-            {preflight.blockers.length > 0 && (
-              <div style={{ background: '#fee2e2', padding: 12, borderRadius: 8, marginTop: 12 }}>
-                <strong style={{ color: '#b91c1c' }}>必須先處理</strong>
-                <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
-                  {preflight.blockers.map((b: string) => <li key={b}>{b}</li>)}
-                </ul>
-              </div>
-            )}
-
-            {preflight.warnings.length > 0 && (
-              <div style={{ background: '#fef3c7', padding: 12, borderRadius: 8, marginTop: 12 }}>
-                <strong style={{ color: '#b45309' }}>請確認</strong>
-                <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
-                  {preflight.warnings.map((w: string) => <li key={w}>{w}</li>)}
-                </ul>
-              </div>
-            )}
-
-            <p style={{ fontSize: 13, color: '#6b7280', marginTop: 16 }}>
-              確認之後計糧單會鎖定，工資記錄會用於日後 ADW 計算。
-              如需修改，OWNER 可以「退回草稿」（會記入審計日誌）。
-            </p>
-
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button onClick={() => setShowPreflight(false)}
-                style={{ flex: 1, padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd', background: '#f5f5f5', cursor: 'pointer', fontSize: 14 }}>
-                取消
-              </button>
-              <button
-                onClick={doConfirm}
-                disabled={preflight.blockers.length > 0 || confirming}
-                title={preflight.blockers.length > 0 ? '請先處理上面紅色項目' : ''}
-                style={{
-                  flex: 1, padding: '8px 16px', borderRadius: 6, border: 'none',
-                  background: preflight.blockers.length > 0 ? '#9ca3af' : '#2563eb',
-                  color: '#fff', cursor: preflight.blockers.length > 0 ? 'not-allowed' : 'pointer',
-                  fontSize: 14, fontWeight: 600,
-                  opacity: preflight.blockers.length > 0 ? 0.7 : 1,
-                }}
-              >
-                {confirming ? '處理中…' : preflight.blockers.length > 0 ? '有項目未處理' : '確認計糧'}
-              </button>
+          {preflight.blockers.length > 0 && (
+            <div style={{ background: '#fee2e2', padding: 12, borderRadius: 8, marginTop: 12 }}>
+              <strong style={{ color: '#b91c1c' }}>必須先處理</strong>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                {preflight.blockers.map((b: string) => <li key={b}>{b}</li>)}
+              </ul>
             </div>
+          )}
+
+          {preflight.warnings.length > 0 && (
+            <div style={{ background: '#fef3c7', padding: 12, borderRadius: 8, marginTop: 12 }}>
+              <strong style={{ color: '#b45309' }}>請確認</strong>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 20 }}>
+                {preflight.warnings.map((w: string) => <li key={w}>{w}</li>)}
+              </ul>
+            </div>
+          )}
+
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 16 }}>
+            確認之後計糧單會鎖定，工資記錄會用於日後 ADW 計算。
+            如需修改，OWNER 可以「退回草稿」（會記入審計日誌）。
+          </p>
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <button onClick={() => setShowPreflight(false)}
+              style={{ flex: 1, padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd', background: '#f5f5f5', cursor: 'pointer', fontSize: 14 }}>
+              取消
+            </button>
+            <button
+              onClick={doConfirm}
+              disabled={preflight.blockers.length > 0 || confirming}
+              title={preflight.blockers.length > 0 ? '請先處理上面紅色項目' : ''}
+              style={{
+                flex: 1, padding: '8px 16px', borderRadius: 6, border: 'none',
+                background: preflight.blockers.length > 0 ? '#9ca3af' : '#2563eb',
+                color: '#fff', cursor: preflight.blockers.length > 0 ? 'not-allowed' : 'pointer',
+                fontSize: 14, fontWeight: 600,
+                opacity: preflight.blockers.length > 0 ? 0.7 : 1,
+              }}
+            >
+              {confirming ? '處理中…' : preflight.blockers.length > 0 ? '有項目未處理' : '確認計糧'}
+            </button>
           </div>
         </div>
-      )}
+      </div>,
+      document.body,
+    )}
     </div>
     </div>
   )
