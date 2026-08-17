@@ -1,13 +1,16 @@
 'use client'
 
 /**
- * MD-U: Provider Referrals — 轉介錄入（改版 V1）
+ * MD-U: Provider Referrals — 轉介錄入（改版 V2）
  * - U2: 帳單搜尋 + 勾選項目 + 批次轉介
  * - U3: 草稿系統（DRAFT/CONFIRMED）+ 取消確認
  * - V1: 分三區直排（草稿最前 → 已確認 → 帳單轉介）
+ * - Y2: 按 billCode 分組摺疊
+ * - Y3: 月份過濾（草稿不分月）
+ * - Y4: 病人編號搜尋
  * OWNER / provider_payout 權限
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -15,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   Plus, Trash2, ArrowLeft, Search, Check, RotateCcw, FileText, ClipboardList,
+  ChevronDown, ChevronRight, Users,
 } from 'lucide-react'
 
 /** W1: Draft reference for completing a draft with bill data */
@@ -26,11 +30,42 @@ interface DraftRef {
   periodMonth: string
 }
 
+interface ConfirmedRef {
+  id: string
+  fromProviderId: string
+  fromProviderName?: string
+  clinicName: string | null | '__DELETED_CLINIC__'
+  billCode: string | null
+  billTime: string | null
+  itemDes: string | null
+  unitPrice: number | null
+  qty: number
+  refPercent: number
+  amount: number | null
+  lockedByRunId: string | null
+  periodMonth: string
+}
+
 export default function ReferralsPage() {
   // ─── Data ───────────────────────────────────────────────────────
-  const [referrals, setReferrals] = useState<any[]>([])
+  const [confirmedRefs, setConfirmedRefs] = useState<ConfirmedRef[]>([])
+  const [draftRefs, setDraftRefs] = useState<any[]>([])
   const [providers, setProviders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Y3: Month filter
+  const [month, setMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+
+  // Y2: Collapse state
+  const [expandedBills, setExpandedBills] = useState<Set<string>>(new Set())
+
+  // Y2: Filter by doctor / clinic / billCode
+  const [filterDoctor, setFilterDoctor] = useState('')
+  const [filterClinic, setFilterClinic] = useState('')
+  const [filterBillCode, setFilterBillCode] = useState('')
 
   // ─── Bill lookup state ─────────────────────────────────────────
   const [searchCode, setSearchCode] = useState('')
@@ -56,15 +91,18 @@ export default function ReferralsPage() {
   const [fromProviderId, setFromProviderId] = useState('')
 
   // ─── Effects ───────────────────────────────────────────────────
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => { loadAll() }, [month])
 
   async function loadAll() {
     try {
-      const [refRes, provRes] = await Promise.all([
-        apiFetch<any>('/api/provider-referrals'),
+      // Y3: Confirmed = with month filter; Draft = no month filter
+      const [refConfirmedRes, refDraftRes, provRes] = await Promise.all([
+        apiFetch<any>(`/api/provider-referrals?periodMonth=${month}&status=CONFIRMED`),
+        apiFetch<any>(`/api/provider-referrals?status=DRAFT`),
         apiFetch<any>('/api/providers'),
       ])
-      setReferrals((refRes as any).referrals || [])
+      setConfirmedRefs((refConfirmedRes as any).referrals || [])
+      setDraftRefs((refDraftRes as any).referrals || [])
       setProviders((provRes as any).providers || [])
     } catch (e) {
       console.error('Failed to load data', e)
@@ -80,7 +118,6 @@ export default function ReferralsPage() {
       const res = await apiFetch<any>(`/api/provider-referrals/bill-lookup?code=${encodeURIComponent(searchCode.trim())}`)
       setBillData(res)
       setSelectedItems([])
-      // Pre-fill fromProviderId from bill if not already set (e.g. from draft)
       if (!completingDraft && res.providerId) {
         setFromProviderId(res.providerId)
       }
@@ -216,7 +253,6 @@ export default function ReferralsPage() {
     }
   }
 
-  // W1: Navigate to bill referral section to complete a draft
   function goToBillReferral(draft: DraftRef) {
     setCompletingDraft(draft)
     setFromProviderId(draft.fromProviderId)
@@ -247,9 +283,74 @@ export default function ReferralsPage() {
     }
   }
 
-  // ─── Derived data ──────────────────────────────────────────────
-  const drafts = referrals.filter(r => r.status !== 'CONFIRMED')
-  const confirmed = referrals.filter(r => r.status === 'CONFIRMED')
+  // Y2: Reset entire bill group — skip locked items
+  const resetBillGroup = useCallback(async (billCode: string, group: ConfirmedRef[]) => {
+    const resettable = group.filter(r => !r.lockedByRunId)
+    if (resettable.length === 0) {
+      alert('該帳單全部轉介已鎖定')
+      return
+    }
+    if (resettable.length < group.length) {
+      if (!confirm(`${group.length} 項中有 ${group.length - resettable.length} 項已鎖定，只會取消 ${resettable.length} 項。繼續？`)) {
+        return
+      }
+    }
+    for (const r of resettable) {
+      await apiFetch(`/api/provider-referrals/${r.id}/reset`, { method: 'POST' })
+    }
+    await loadAll()
+  }, [])
+
+  // Y3: Filter confirmed by doctor / clinic / billCode
+  const filteredConfirmed = useMemo(() => {
+    return confirmedRefs.filter(r => {
+      if (filterDoctor && r.fromProviderId !== filterDoctor) return false
+      if (filterClinic && r.clinicName !== '__DELETED_CLINIC__' && r.clinicName !== filterClinic) return false
+      if (filterClinic && r.clinicName === '__DELETED_CLINIC__') return false
+      if (filterBillCode && r.billCode !== filterBillCode) return false
+      return true
+    })
+  }, [confirmedRefs, filterDoctor, filterClinic, filterBillCode])
+
+  // Y2: Group confirmed by billCode
+  const groupedConfirmed = useMemo(() => {
+    const map = new Map<string, ConfirmedRef[]>()
+    for (const r of filteredConfirmed) {
+      const key = r.billCode ?? '(無帳單)'
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(r)
+    }
+    // Sort by billTime desc, then billCode desc
+    return [...map.entries()].sort((a, b) => {
+      const ta = a[1][0].billTime ? new Date(a[1][0].billTime).getTime() : 0
+      const tb = b[1][0].billTime ? new Date(b[1][0].billTime).getTime() : 0
+      if (tb !== ta) return tb - ta
+      return b[0].localeCompare(a[0])
+    })
+  }, [filteredConfirmed])
+
+  // Unique clinics for filter dropdown
+  const clinicNames = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of confirmedRefs) {
+      if (r.clinicName && r.clinicName !== '__DELETED_CLINIC__') set.add(r.clinicName)
+    }
+    return [...set]
+  }, [confirmedRefs])
+
+  const toggleBillExpand = (key: string) => {
+    setExpandedBills(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  // Y3: Summary stats
+  const confirmedTotal = useMemo(() => {
+    return confirmedRefs.reduce((sum, r) => sum + (r.amount ?? 0), 0)
+  }, [confirmedRefs])
 
   if (loading) return <div className="p-6">載入中...</div>
 
@@ -267,7 +368,7 @@ export default function ReferralsPage() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold flex items-center gap-2">
             <FileText className="w-4 h-4" />
-            草稿（{drafts.length}）
+            草稿（{draftRefs.length} 筆，不分月份）
           </h2>
           <Button size="sm" onClick={() => setShowDraftForm(v => !v)}>
             <Plus className="w-3.5 h-3.5 mr-1" />
@@ -336,7 +437,7 @@ export default function ReferralsPage() {
         )}
 
         {/* Draft list */}
-        {drafts.length === 0 ? (
+        {draftRefs.length === 0 ? (
           <p className="text-gray-500 text-sm text-center py-4">暫無草稿</p>
         ) : (
           <table className="w-full text-sm">
@@ -349,7 +450,7 @@ export default function ReferralsPage() {
               </tr>
             </thead>
             <tbody>
-              {drafts.map((d: any) => (
+              {draftRefs.map((d: any) => (
                 <tr key={d.id} className="border-b last:border-0 hover:bg-gray-50">
                   <td className="py-2 px-2">{d.fromProviderName || d.fromProviderId}</td>
                   <td className="py-2 px-2">{d.patientNote || '—'}</td>
@@ -386,66 +487,189 @@ export default function ReferralsPage() {
       </Card>
 
       {/* ═══════════════════════════════════════════════════════
-          SECTION 2: Confirmed referrals
+          SECTION 2: Confirmed referrals (Y2: 摺疊分組 + Y3: 月份過濾)
           ═══════════════════════════════════════════════════════ */}
       <Card className="p-4">
         <h2 className="font-semibold mb-3 flex items-center gap-2">
           <Check className="w-4 h-4" />
-          已確認（{confirmed.length}）
+          已確認（{filteredConfirmed.length} 筆 · 合共 ${confirmedTotal.toFixed(2)}）
         </h2>
 
-        {confirmed.length === 0 ? (
+        {/* Y3: Filter bar */}
+        <div className="flex flex-wrap gap-3 mb-4 p-3 bg-gray-50 rounded">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">月份</label>
+            <Input
+              type="month"
+              value={month}
+              onChange={e => setMonth(e.target.value)}
+              className="w-36"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">醫生</label>
+            <select
+              className="border rounded px-2 py-2 text-sm w-32"
+              value={filterDoctor}
+              onChange={e => setFilterDoctor(e.target.value)}
+            >
+              <option value="">全部</option>
+              {providers.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">診所</label>
+            <select
+              className="border rounded px-2 py-2 text-sm w-32"
+              value={filterClinic}
+              onChange={e => setFilterClinic(e.target.value)}
+            >
+              <option value="">全部</option>
+              {clinicNames.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">帳單編號</label>
+            <Input
+              value={filterBillCode}
+              onChange={e => setFilterBillCode(e.target.value)}
+              placeholder="帳單編號____"
+              className="w-44"
+            />
+          </div>
+        </div>
+
+        {filteredConfirmed.length === 0 ? (
           <p className="text-gray-500 text-sm text-center py-4">暫無已確認轉介</p>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left border-b bg-gray-50">
-                <th className="py-2 px-2">轉介醫生</th>
-                <th className="py-2 px-2">診所</th>
-                <th className="py-2 px-2">帳單編號</th>
-                <th className="py-2 px-2">項目</th>
-                <th className="py-2 px-2 text-right">單價</th>
-                <th className="py-2 px-2 text-right">數量</th>
-                <th className="py-2 px-2 text-right">轉介%</th>
-                <th className="py-2 px-2 text-right">金額</th>
-                <th className="py-2 px-2 text-center">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {confirmed.map((r: any) => (
-                <tr key={r.id} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="py-2 px-2">{r.fromProviderName || r.fromProviderId}</td>
-                  <td className="py-2 px-2">{r.clinicName || '—'}</td>
-                  <td className="py-2 px-2">{r.billCode || '—'}</td>
-                  <td className="py-2 px-2">{r.itemDes || '—'}</td>
-                  <td className="py-2 px-2 text-right">
-                    {r.unitPrice != null ? `$${r.unitPrice.toFixed(2)}` : '—'}
-                  </td>
-                  <td className="py-2 px-2 text-right">{r.qty}</td>
-                  <td className="py-2 px-2 text-right">{r.refPercent}%</td>
-                  <td className="py-2 px-2 text-right font-medium">
-                    {r.amount != null ? `$${r.amount.toFixed(2)}` : '—'}
-                  </td>
-                  <td className="py-2 px-2 text-center space-x-1">
+          <div className="space-y-1">
+            {/* Y2: Grouped confirmed by billCode */}
+            {groupedConfirmed.map(([billCode, items]) => {
+              const isSingle = items.length === 1
+              const isExpanded = expandedBills.has(billCode) || isSingle
+              const groupTotal = items.reduce((s, r) => s + (r.amount ?? 0), 0)
+              const firstItem = items[0]
+              const billDate = firstItem.billTime
+                ? new Date(firstItem.billTime).toLocaleDateString('zh-HK')
+                : '—'
+
+              return (
+                <div key={billCode} className="border rounded mb-1">
+                  {/* Collapse header */}
+                  {!isSingle && (
                     <button
-                      onClick={() => handleReset(r.id)}
-                      className="text-xs text-amber-600 underline hover:text-amber-800 flex items-center gap-1"
+                      onClick={() => toggleBillExpand(billCode)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm bg-gray-50 hover:bg-gray-100 rounded cursor-pointer text-left"
                     >
-                      <RotateCcw className="w-3 h-3" />
-                      取消確認
+                      {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
+                      <span className="font-mono font-medium">{billCode}</span>
+                      <span className="text-gray-400">·</span>
+                      <span className="text-gray-600">{firstItem.fromProviderName || '—'}</span>
+                      <span className="text-gray-400">·</span>
+                      <span className="text-gray-600">
+                        {firstItem.clinicName === '__DELETED_CLINIC__'
+                          ? '⚠️ 診所已刪除'
+                          : (firstItem.clinicName || '—')}
+                      </span>
+                      <span className="text-gray-400">·</span>
+                      <span className="text-gray-600">{billDate}</span>
+                      <span className="text-gray-400">·</span>
+                      <span className="text-gray-600">{items.length} 個項目</span>
+                      <span className="font-medium ml-1">${groupTotal.toFixed(2)}</span>
                     </button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(r.id)}
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  )}
+
+                  {/* Items table */}
+                  {(isExpanded || isSingle) && (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left border-b bg-gray-50">
+                          <th className="py-2 px-2">帳單編號</th>
+                          <th className="py-2 px-2">轉介醫生</th>
+                          <th className="py-2 px-2">診所</th>
+                          <th className="py-2 px-2">項目</th>
+                          <th className="py-2 px-2 text-right">單價</th>
+                          <th className="py-2 px-2 text-right">數量</th>
+                          <th className="py-2 px-2 text-right">轉介%</th>
+                          <th className="py-2 px-2 text-right">金額</th>
+                          <th className="py-2 px-2 text-center">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((r: ConfirmedRef) => (
+                          <tr key={r.id} className="border-b last:border-0 hover:bg-gray-50">
+                            <td className="py-2 px-2 font-mono text-xs">{r.billCode || '—'}</td>
+                            <td className="py-2 px-2">{r.fromProviderName || r.fromProviderId}</td>
+                            <td className="py-2 px-2">
+                              {r.clinicName === '__DELETED_CLINIC__'
+                                ? <span className="text-amber-600 text-xs">⚠️ 診所已刪除</span>
+                                : (r.clinicName || '—')}
+                            </td>
+                            <td className="py-2 px-2">{r.itemDes || '—'}</td>
+                            <td className="py-2 px-2 text-right">
+                              {r.unitPrice != null ? `$${r.unitPrice.toFixed(2)}` : '—'}
+                            </td>
+                            <td className="py-2 px-2 text-right">{r.qty}</td>
+                            <td className="py-2 px-2 text-right">{r.refPercent}%</td>
+                            <td className="py-2 px-2 text-right font-medium">
+                              {r.amount != null ? `$${r.amount.toFixed(2)}` : '—'}
+                            </td>
+                            <td className="py-2 px-2 text-center space-x-1">
+                              {r.lockedByRunId ? (
+                                <Badge variant="secondary" className="text-xs">已鎖定</Badge>
+                              ) : (
+                                <button
+                                  onClick={() => handleReset(r.id)}
+                                  className="text-xs text-amber-600 underline hover:text-amber-800 flex items-center gap-1"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  取消確認
+                                </button>
+                              )}
+                              {!r.lockedByRunId && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDelete(r.id)}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {/* Reset all for group */}
+                  {!isSingle && isExpanded && (
+                    <div className="px-3 py-2 border-t border-gray-100 flex justify-between items-center">
+                      <span className="text-xs text-gray-500">
+                        合共 {items.length} 項 · ${groupTotal.toFixed(2)}
+                        {items.some(r => r.lockedByRunId) && (
+                          <span className="text-amber-600 ml-2">
+                            （{items.filter(r => r.lockedByRunId).length} 項已鎖定）
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        onClick={() => resetBillGroup(billCode, items)}
+                        className="text-xs text-amber-600 underline hover:text-amber-800 flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        全部取消確認
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         )}
       </Card>
 
