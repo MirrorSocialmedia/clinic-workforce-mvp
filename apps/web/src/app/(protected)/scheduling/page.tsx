@@ -3460,7 +3460,7 @@ function getShiftCode(shift: Shift): string {
       if (r.ok) {
         const d = await r.json()
         const map: Record<string, string> = {}
-        ;(d.notes || []).forEach((n: any) => { map[n.date] = n.text })
+        ;(d.notes || []).forEach((n: any) => { map[`${n.date}|${n.row ?? 0}`] = n.text })
         setScheduleNotes(map)
       }
     } catch { /* ignore */ }
@@ -3468,19 +3468,20 @@ function getShiftCode(shift: Shift): string {
 
   useEffect(() => { loadScheduleNotes() }, [loadScheduleNotes])
 
-  const saveScheduleNote = async (date: string, text: string) => {
+  const saveScheduleNote = async (date: string, text: string, row: number = 0) => {
     if (!currentCompanyId) return
+    const key = `${date}|${row}`
     setScheduleNotes(prev => {
       const next = { ...prev }
-      if (text.trim()) next[date] = text.trim()
-      else delete next[date]
+      if (text.trim()) next[key] = text.trim()
+      else delete next[key]
       return next
     })
     try {
       const r = await fetch('/api/schedule-notes', {
         method: 'PUT', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId: currentCompanyId, date, text }),
+        body: JSON.stringify({ companyId: currentCompanyId, date, text, row }),
       })
       if (!r.ok) {
         const err = await r.json().catch(() => ({}))
@@ -3498,25 +3499,38 @@ function getShiftCode(shift: Shift): string {
     editable: boolean
     compact?: boolean
     forExport?: boolean
+    row?: number
+    overflowRight?: boolean
   }) => {
-    const note = scheduleNotes[dateStr] ?? ''
+    const note = scheduleNotes[`${dateStr}|${opts.row ?? 0}`] ?? ''
     const fs = opts.compact ? 9 : 10
+    const noteKey = `${dateStr}|${opts.row ?? 0}`
 
     if (!opts.editable) {
       return (
         <div title={note || undefined} style={{
           fontSize: fs, lineHeight: 1.6, textAlign: 'center', color: '#374151',
           ...(opts.forExport
-            ? { whiteSpace: 'normal', wordBreak: 'break-all' }
+            ? { whiteSpace: 'normal', wordBreak: 'break-all', overflow: 'visible', position: 'static' }
+            : opts.overflowRight
+            ? {
+                whiteSpace: 'nowrap',
+                overflow: 'visible',
+                position: 'absolute',
+                left: 2, top: 2,
+                zIndex: 5,
+                background: note ? '#f9fafb' : 'transparent',
+                paddingRight: 4,
+              }
             : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }),
         }}>{note}</div>
       )
     }
 
-    const isEditing = editingNote === dateStr
+    const isEditing = editingNote === noteKey
     return isEditing ? (
       <input autoFocus defaultValue={note} maxLength={20}
-        onBlur={e => { saveScheduleNote(dateStr, e.target.value); setEditingNote(null) }}
+        onBlur={e => { saveScheduleNote(dateStr, e.target.value, opts.row ?? 0); setEditingNote(null) }}
         onKeyDown={e => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           if (e.key === 'Escape') setEditingNote(null)
@@ -3525,7 +3539,7 @@ function getShiftCode(shift: Shift): string {
                  border: '1.5px solid #378ADD', borderRadius: opts.compact ? 3 : 4, padding: opts.compact ? '3px 3px' : '5px 5px', minHeight: opts.compact ? 32 : 40, boxSizing: 'border-box', outline: 'none' }}
       />
     ) : (
-      <div onClick={() => canManage && setEditingNote(dateStr)}
+      <div onClick={() => canManage && setEditingNote(noteKey)}
         title={note || undefined}
         style={{
           fontSize: fs, textAlign: 'center',
@@ -5498,6 +5512,27 @@ function getShiftCode(shift: Shift): string {
                       )
                     })}
                   </tbody>
+                  <tfoot>
+                    {[1, 2, 3, 4, 5].map(rowNo => (
+                      <tr key={`note-row-${rowNo}`}>
+                        <th style={{
+                          position: 'sticky', left: 0, zIndex: 2, background: '#fff',
+                          width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
+                          padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'center',
+                        }}>
+                          備註{rowNo}
+                        </th>
+                        {monthDays.map(d => (
+                          <td key={`nf-${rowNo}-${d}`} style={{
+                            width: 56, minWidth: 56, padding: 2, fontWeight: 400,
+                            overflow: 'visible', position: 'relative', height: 22,
+                          }}>
+                            {renderNoteCell(d, { editable: true, compact: true, row: rowNo, overflowRight: true })}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tfoot>
                 </table>
               </div>
             </div>
@@ -5701,6 +5736,25 @@ function getShiftCode(shift: Shift): string {
                     )
                   })}
                 </tbody>
+                <tfoot>
+                  {[1, 2, 3, 4, 5].map(rowNo => (
+                    <tr key={`mnf-${rowNo}`}>
+                      <th style={{
+                        width: 80, padding: '2px 8px', fontSize: 9, fontWeight: 400,
+                        color: '#9ca3af', textAlign: 'left',
+                        borderBottom: '1px solid #e5e7eb',
+                      }}>備註{rowNo}</th>
+                      {monthDays.map(d => (
+                        <td key={`mnf-${rowNo}-${d}`} style={{
+                          width: 58, padding: '2px 2px', fontSize: 9, fontWeight: 400,
+                          borderBottom: '1px solid #e5e7eb',
+                        }}>
+                          {renderNoteCell(d, { editable: false, compact: true, forExport: true, row: rowNo })}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tfoot>
               </table>
             </div>
           )}
