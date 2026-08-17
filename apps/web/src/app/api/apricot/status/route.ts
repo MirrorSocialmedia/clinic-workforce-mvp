@@ -48,20 +48,19 @@ export async function GET(req: NextRequest) {
   })
 
   const perClinic = await Promise.all(clinics.map(async (c) => {
-    const [cnt, latest] = await Promise.all([
-      prisma.apricotPayment.count({ where: { clinicExtId: c.apricotClinicId! } }),
-      prisma.apricotPayment.findFirst({
-        where: { clinicExtId: c.apricotClinicId! },
-        orderBy: { syncedAt: 'desc' },
-        select: { syncedAt: true, paidAt: true },
-      }),
-    ])
+    const agg = await prisma.apricotPayment.aggregate({
+      where: { clinicExtId: c.apricotClinicId! },
+      _max: { paidAt: true, syncedAt: true },
+      _min: { paidAt: true },
+      _count: { _all: true },
+    })
     return {
       clinicId: c.id,
       name: c.name,
-      payments: cnt,
-      lastSyncedAt: latest?.syncedAt ?? null,
-      latestPaidAt: latest?.paidAt ?? null,
+      payments: agg._count._all,
+      lastSyncedAt: agg._max.syncedAt ?? null,
+      latestPaidAt: agg._max.paidAt ?? null,
+      earliestPaidAt: agg._min.paidAt ?? null, // ★ 新增：睇 backfill 範圍
     }
   }))
 

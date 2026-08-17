@@ -13,6 +13,7 @@ interface PerClinicStatus {
   payments: number
   lastSyncedAt: string | null
   latestPaidAt: string | null
+  earliestPaidAt: string | null
 }
 
 interface ReviewDetail {
@@ -291,7 +292,7 @@ export default function ApricotSyncPage() {
                     <th className="py-2 pr-4">診所</th>
                     <th className="py-2 pr-4">付款數</th>
                     <th className="py-2 pr-4">最後同步</th>
-                    <th className="py-2">最新付款日期</th>
+                    <th className="py-2">付款日期範圍</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -308,7 +309,11 @@ export default function ApricotSyncPage() {
                       </td>
                       <td className="py-2">
                         {c.latestPaidAt ? (
-                          new Date(c.latestPaidAt).toLocaleDateString('zh-HK')
+                          <span className="text-xs">
+                            {c.earliestPaidAt
+                              ? `${new Date(c.earliestPaidAt).toLocaleDateString('zh-HK')} → ${new Date(c.latestPaidAt).toLocaleDateString('zh-HK')}`
+                              : new Date(c.latestPaidAt).toLocaleDateString('zh-HK')}
+                          </span>
                         ) : (
                           <span className="text-gray-400">—</span>
                         )}
