@@ -510,6 +510,7 @@ export default function ReferralsPage() {
           <Button onClick={lookupBill}>
             <Search className="w-4 h-4 mr-1" /> 搜尋
           </Button>
+          </div>
         </div>
 
         {billData && (

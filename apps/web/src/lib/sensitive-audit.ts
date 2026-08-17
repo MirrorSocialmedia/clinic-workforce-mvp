@@ -74,6 +74,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'REFERRAL_DELETE', label: '刪除轉介記錄' },
   { action: 'REFERRAL_BATCH_CREATE', label: '批次新增轉介' },
   { action: 'DRAFT_REFERRAL_CREATE', label: '新增轉介草稿' },
+  { action: 'REFERRAL_COMPLETE', label: '轉介草稿補上帳單' },
+  { action: 'REFERRAL_UPDATE', label: '更新轉介' },
   { action: 'SP_SUBSIDY_CONFIRM', label: '確認 SP 補貼' },
   { action: 'SP_SUBSIDY_SKIP', label: '跳過 SP 補貼' },
   { action: 'SP_SUBSIDY_RESET', label: '取消確認 SP 補貼' },

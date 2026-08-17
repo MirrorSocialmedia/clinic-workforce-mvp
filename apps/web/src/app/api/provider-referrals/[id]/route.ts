@@ -88,10 +88,45 @@ export async function PUT(
   if (patientNote != null) updateData.patientNote = patientNote
   if (finalPeriodMonth && finalPeriodMonth !== referral.periodMonth) updateData.periodMonth = finalPeriodMonth
 
+  // W2: Duplicate check — prevent same billItemEleId for same provider
+  if (billItemEleId && (status === 'CONFIRMED' || referral.status === 'CONFIRMED')) {
+    const dup = await prisma.providerReferral.findFirst({
+      where: {
+        fromProviderId: referral.fromProviderId,
+        billItemEleId,
+        status: 'CONFIRMED',
+        id: { not: params.id },
+      },
+      select: { id: true, billCode: true, itemDes: true },
+    })
+    if (dup) {
+      return NextResponse.json(
+        { error: `項目「${dup.itemDes}」（帳單 ${dup.billCode}）已經轉介過，唔可以重複` },
+        { status: 400 },
+      )
+    }
+  }
+
   const updated = await prisma.providerReferral.update({
     where: { id: params.id },
     data: updateData,
   })
+
+  // W4: Audit log
+  await prisma.auditLog.create({
+    data: {
+      actorId: auth.session!.userId,
+      action: referral.status === 'DRAFT' && status === 'CONFIRMED'
+        ? 'REFERRAL_COMPLETE' : 'REFERRAL_UPDATE',
+      entity: 'ProviderReferral',
+      entityId: updated.id,
+      notes: referral.status === 'DRAFT' && status === 'CONFIRMED'
+        ? `草稿補上帳單：${updated.billCode} · ${updated.itemDes} · $${Number(updated.amount)}`
+        : `更新轉介：${updated.billCode ?? '草稿'} · $${Number(updated.amount ?? 0)}`,
+      beforeJson: JSON.stringify(referral),
+      afterJson: JSON.stringify(updated),
+    },
+  }).catch((e: any) => console.error('[provider-referrals] update audit failed', e))
 
   return NextResponse.json({
     referral: {
