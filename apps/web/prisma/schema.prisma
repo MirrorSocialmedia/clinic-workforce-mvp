@@ -109,12 +109,13 @@ model ScheduleNote {
   companyId String
   company   Company  @relation(fields: [companyId], references: [id])
   date      String   // ★ HK date string YYYY-MM-DD, not DateTime
+  row       Int      @default(0)   // 0 = 表頭原有嗰行；1-5 = 底部五行
   text      String   // max 20 chars
   createdBy String
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 
-  @@unique([companyId, date])
+  @@unique([companyId, date, row])
   @@index([companyId, date])
 }
 
