@@ -39,6 +39,9 @@ next-env.d.ts
 # prisma
 apps/web/prisma/dev.db
 
+# local-only dev secrets (external API keys etc.)
+apps/web/.dev/
+
 # IDE
 .vscode/
 .idea/

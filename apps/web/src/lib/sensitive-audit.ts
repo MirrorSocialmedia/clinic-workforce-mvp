@@ -94,4 +94,6 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   'FACE_VERIFY', 'FACE_FRAME_VIEW', 'FACE_REF_VIEW',
   'WAGE_SNAPSHOT', 'MUTATE', 'UPSERT',
   'FACE_ENROLL', 'FACE_ENROLL_CODE_ISSUED', // routine face enrollment steps
+  // ★ 2026-08-19: External duty-roster API（wa-inbox 專用）— metadata-only audit，冇員工 PII
+  'EXTERNAL_DUTY_ROSTER_READ', 'EXTERNAL_DUTY_ROSTER_AUTH_FAIL',
 ])
