@@ -31,7 +31,9 @@ export async function POST(req: NextRequest) {
 			skipped, // ★ MD-AC1: 跳過行數回報
 		})
 	} catch (e: any) {
-		console.error('[reconciliation/parse] 失敗', e)
-		return NextResponse.json({ error: e?.message ?? 'parse failed' }, { status: 500 })
+		const msg = e?.message ?? 'parse failed'
+		const isUserError = /^REPORT_/.test(msg) // 格式問題 = 用戶錯誤，唔好當 server error
+		if (!isUserError) console.error('[reconciliation/parse] 失敗', e)
+		return NextResponse.json({ error: msg }, { status: isUserError ? 422 : 500 })
 	}
 }
