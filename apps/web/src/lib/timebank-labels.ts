@@ -3,6 +3,7 @@ export const TIMEBANK_TYPE_LABEL: Record<string, string> = {
   LATE: '遲到',
   EARLY: '早退',
   MAKEUP: '補鐘',
+  EARLY_IN_OT: '提早上班OT', // ★ 2026-08-19: 補充 — 之前缺 label 會顯示 raw enum
   LEAVE_CONVERT: '換假',
   LEAVE_SWAP_BACK: '換回',
   ROSTER_DIFF: '編更差額',
