@@ -781,6 +781,11 @@ function aggregateDailyHours(punchDays: Awaited<ReturnType<typeof calculateWorke
 // Calculation Functions
 // ------------------------------------------------------------------
 
+// ★ 2026-08-19 dead code check：全 repo 冇 caller（grep "calculateHourly(" 只有呢個
+//   定義本身）。生產時薪路徑係 calculatePayrollWithRules → calculateSimpleHourlyPay。
+//   下面 detail（payType: 'HOURLY'）同樣冇 eoWage / excludedDays / excludedWage ——
+//   将来如果重新啟用呢條路，必須一齊補返三欄，否則 adw.ts:300 會判時薪計糧
+//   「未計算」而永遠 finalize 唔到。故保留此註釋，唔好刪呢個函數（留低冇害）。
 function calculateHourly(
   config: PayRuleConfig,
   dailyEntries: DailyHoursEntry[],
@@ -3027,6 +3032,18 @@ async function calculateSimpleHourlyPay(
       hourlyRate: rate,
       totalMinutes,
       days,
+      // ★ 2026-08-19: 時薪 bypass 咗全部 modifier 邏輯（見 calculatePayrollWithRules
+      //   頂部 base_type === 'hourly' 嘅 early return），所以永遠唔會行到月薪路徑
+      //   嗰度（eoWage = finalGrossPay 寫入 detail 嘅位置）。
+      //   但 adw.ts:300 用 `eoWage === undefined` 判斷「引擎有冇計過」——
+      //   唔寫呢個欄，任何含時薪員工嘅計糧單都永遠 finalize 唔到（生產阻塞）。
+      //   EO「工資」＝ 實際支付嘅工資；時薪冇 storeBonus（唯一要剔除嘅項），
+      //   所以 eoWage = totalPay（唔好用 basePay —— 語義上「實付總額」先正確）。
+      eoWage: Math.round(totalPay * 100) / 100,
+      // 時薪冇「剔除天數／剔除工資」概念（月薪先有無薪假／病假扣減），恆為 0。
+      // 補上係因為 adw.ts 個 select 有攞呢兩欄，保持 detail 結構一致。
+      excludedDays: 0,
+      excludedWage: 0,
     },
   }
 }

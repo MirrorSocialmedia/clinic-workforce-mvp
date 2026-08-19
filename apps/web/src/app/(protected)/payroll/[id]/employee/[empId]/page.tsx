@@ -1197,7 +1197,9 @@ export default function EmployeePayrollDetailPage() {
                   <th className="text-left py-2 px-2">開始</th>
                   <th className="text-left py-2 px-2">結束</th>
                   <th className="text-right py-2 px-2">天數</th>
-                  <th className="text-left py-2 px-2">有薪</th>
+                  {/* ★ 2026-08-19：「有薪」欄已剷（五欄→四欄）。病假 4/5 薪資訊唔會冇晒——
+                      同一頁嘅「病假扣減」段仍然會顯示「共 X 天（連續≥4，付 4/5）」。
+                      註：API select 仍帶住 leaveType.isPaid / systemKey（留住冇壞，之後有需要先清）。 */}
                 </tr>
               </thead>
               <tbody>
@@ -1207,11 +1209,6 @@ export default function EmployeePayrollDetailPage() {
                     <td className="py-2 px-2">{fmtDate(l.startDate)}</td>
                     <td className="py-2 px-2">{fmtDate(l.endDate)}</td>
                     <td className="py-2 px-2 text-right">{l.days}</td>
-                    <td className="py-2 px-2">
-                      <span className={l.leaveType.isPaid ? 'text-green-600' : 'text-red-500'}>
-                        {(() => { const k = l.leaveType?.systemKey; if (k === 'SICK') return '4/5 薪（需連續 4 日）'; if (k === 'MATERNITY' || k === 'PATERNITY') return '4/5 薪'; return l.leaveType.isPaid ? '有薪' : '無薪'; })()}
-                      </span>
-                    </td>
                   </tr>
                 ))}
               </tbody>
