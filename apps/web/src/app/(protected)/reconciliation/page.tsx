@@ -40,6 +40,8 @@ interface Provider {
 interface ParsePreview {
   meta: { practitioner: string; clinic: string; month: string }
   rowCount: number
+  // ★ MD-AC1: 日期解析唔到嘅跳過行數
+  skipped: number
 }
 
 export default function ReconciliationPage() {
@@ -130,13 +132,13 @@ export default function ReconciliationPage() {
       const formData = new FormData()
       formData.append('file', previewFile)
       formData.append('providerId', selectedProviderId)
-      const res: { success: boolean; status: string; difference: number } = await apiFetch('/api/reconciliation/upload', {
+      const res: { success: boolean; status: string; difference: number; skipped?: number } = await apiFetch('/api/reconciliation/upload', {
         method: 'POST',
         body: formData,
       })
       if (res.success) {
         alert(
-          `上載成功！狀態: ${res.status}，差異: $${Math.abs(res.difference).toFixed(2)}`,
+          `上載成功！狀態: ${res.status}，差異: $${Math.abs(res.difference).toFixed(2)}${(res.skipped ?? 0) > 0 ? `，⚠️ 跳過 ${res.skipped} 行（日期解析唔到）` : ''}`,
         )
         loadRecords()
       }
@@ -254,7 +256,7 @@ export default function ReconciliationPage() {
             <div className="text-sm">
               <span className="text-gray-500">報表醫生：</span>
               <strong>{parsePreview.meta.practitioner}</strong>
-              <span className="text-gray-400 ml-2">（{parsePreview.meta.month}，{parsePreview.rowCount} 筆）</span>
+              <span className="text-gray-400 ml-2">（{parsePreview.meta.month}，{parsePreview.rowCount} 筆{parsePreview.skipped > 0 ? `，⚠️ 跳過 ${parsePreview.skipped} 行（日期解析唔到）` : ''}）</span>
             </div>
             <div className="flex items-center gap-2">
               <label htmlFor="provider-select" className="text-sm text-gray-600">揀醫生：</label>

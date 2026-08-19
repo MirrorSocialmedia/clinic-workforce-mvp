@@ -14,6 +14,8 @@ export interface ParsedRow {
 export interface ParsedReport {
 	meta: { practitioner: string; clinic: string; month: string }
 	rows: ParsedRow[]
+	// ★ MD-AC1: 日期解析唔到嘅行數 — 必須回報，唔好靜靜跳過
+	skipped: number
 }
 
 export function parsePaymentReport(buf: Buffer): ParsedReport {
@@ -35,14 +37,37 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 	const cols = mapColumns(raw[headerRow]) // { date, code, amount }
 
 	// 3) 讀資料行，跳過小計 / 空行
+	// ★ MD-AC1：同一個 Transaction Code 會出多行（一筆付款拆幾個付款方式），
+	//   第二行只有金額、Date 格係空 → 承接上一行日期（lastDate）。
 	const rows: ParsedRow[] = []
+	let lastDate: string | null = null
+	let skipped = 0
 	for (let i = headerRow + 1; i < raw.length; i++) {
 		const r = raw[i]
 		if (!r || !r[cols.code]) continue
 		const dateStr = String(r[cols.date] ?? '').trim()
 		if (/total|小計|合計/i.test(dateStr)) continue
+
+		let date: string
+		if (dateStr) {
+			const parsed = parseHKDate(r[cols.date])
+			if (!parsed) {
+				// ★ 一行爛資料唔應該毀晒成個上載 — 跳過呢行，但一定要計數回報
+				skipped++
+				continue
+			}
+			date = parsed
+			lastDate = parsed
+		} else if (lastDate) {
+			date = lastDate // ★ 空日期 = 上一筆付款嘅分拆行
+		} else {
+			// 第一行就冇日期 → 冇得承接
+			skipped++
+			continue
+		}
+
 		rows.push({
-			date: parseHKDate(r[cols.date]),
+			date,
 			code: String(r[cols.code]).trim(),
 			amount: parseAmount(r[cols.amount]),
 			// ★ AA2: 兩個金額欄都讀
@@ -52,11 +77,12 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 	}
 
 	// 4) CONTRACT_BROKEN 檢查：有資料行但零行解析成功
+	// ★ MD-AC1：守衛保留 — 零行解析成功 = 格式徹底變咗，唔好靜靜返 $0
 	if (raw.length > headerRow + 3 && rows.length === 0) {
 		throw new Error('REPORT_CONTRACT_BROKEN: 有資料行但零行解析成功')
 	}
 
-	return { meta, rows }
+	return { meta, rows, skipped }
 }
 
 // parseAmount: 處理千分位逗號、$ 符號、括號負數、空白、/
@@ -69,11 +95,13 @@ function parseAmount(v: any): number {
 }
 
 // parseHKDate: 處理 Apricot 日期格式（可能係 Excel serial, DD/MM/YYYY, 等）
-function parseHKDate(v: any): string {
+// ★ MD-AC1: 解析唔到回 null，唔好 throw —— 一行爛資料唔應該毀晒成個上載
+function parseHKDate(v: any): string | null {
+	if (v == null || v === '') return null
 	// 處理 Excel serial number
 	if (typeof v === 'number') {
-		const date = new Date((v - 25569) * 86400 * 1000)
-		return date.toISOString().split('T')[0]
+		const d = new Date((v - 25569) * 86400 * 1000)
+		return isNaN(+d) ? null : d.toISOString().split('T')[0]
 	}
 	const s = String(v).trim()
 	// DD/MM/YYYY
@@ -82,7 +110,7 @@ function parseHKDate(v: any): string {
 	// YYYY-MM-DD
 	const m2 = s.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/)
 	if (m2) return `${m2[1]}-${m2[2].padStart(2, '0')}-${m2[3].padStart(2, '0')}`
-	throw new Error(`Cannot parse date: ${v}`)
+	return null
 }
 
 function extractMeta(

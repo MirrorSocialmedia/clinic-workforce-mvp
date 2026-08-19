@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
 	try {
 		// 解析
 		const buf = Buffer.from(await file.arrayBuffer())
-		const { meta, rows } = parsePaymentReport(buf)
+		const { meta, rows, skipped } = parsePaymentReport(buf)
 
 		// 月份驗證：UI 傳入嘅月份要同報表一致
 		if (periodMonth && meta.month !== periodMonth) {
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
 				systemTotal: result.systemTotal,
 				difference: result.difference,
 				status: result.status,
-				detailJson: buildDetail(result),
+				detailJson: buildDetail(result, skipped), // ★ MD-AC1: 跳過行數入 detailJson（唔改 schema）
 				reportCharges: result.reportCharges,
 				chargesVsPaid: result.chargesVsPaid,
 				uploadedBy: session.userId,
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
 				action: 'RECONCILIATION_IMPORT',
 				entity: 'ReconciliationImport',
 				entityId: record.id,
-				notes: `上載月報對數: ${meta.month} — ${result.status}`,
+				notes: `上載月報對數: ${meta.month} — ${result.status}${skipped > 0 ? `（跳過 ${skipped} 行）` : ''}`,
 				afterJson: JSON.stringify({
 					providerId: provider.id,
 					periodMonth: meta.month,
@@ -88,6 +88,7 @@ export async function POST(req: NextRequest) {
 		return NextResponse.json({
 			success: true,
 			status: result.status,
+			skipped, // ★ MD-AC1: UI 顯示「跳過 N 行」
 			difference: result.difference,
 			reportTotal: result.reportTotal,
 			reportCharges: result.reportCharges,
@@ -137,7 +138,7 @@ function buildDetail(result: {
 	status: string
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
 	byMethod: Array<{ method: string; amount: number }>
-}): Record<string, any> {
+}, skipped = 0): Record<string, any> {
 	return {
 		reportTotal: result.reportTotal,
 		reportCharges: result.reportCharges,
@@ -147,5 +148,6 @@ function buildDetail(result: {
 		status: result.status,
 		byDay: result.byDay,
 		byMethod: result.byMethod,
+		skipped, // ★ MD-AC1
 	}
 }

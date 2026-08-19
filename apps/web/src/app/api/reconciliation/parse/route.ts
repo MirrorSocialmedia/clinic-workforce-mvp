@@ -24,10 +24,11 @@ export async function POST(req: NextRequest) {
 
 	try {
 		const buf = Buffer.from(await file.arrayBuffer())
-		const { meta, rows } = parsePaymentReport(buf)
+		const { meta, rows, skipped } = parsePaymentReport(buf)
 		return NextResponse.json({
 			meta,
 			rowCount: rows.length,
+			skipped, // ★ MD-AC1: 跳過行數回報
 		})
 	} catch (e: any) {
 		console.error('[reconciliation/parse] 失敗', e)
