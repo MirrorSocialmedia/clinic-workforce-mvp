@@ -36,12 +36,18 @@ export async function GET(req: NextRequest) {
     timeAccountMinutes: tb.timeAccountMinutes,
     balance: tb.balance,
     otMinutes: tb.otMinutes,
+    // ★ 2026-08-19: 四格新增欄 — ② 午休 OT（已含喺 otMinutes 入面，前端要減走先）
+    lunchOtMinutes: tb.lunchOtMinutes,
     earlyInOtMinutes: tb.earlyInOtMinutes,
     lateMinutes: tb.lateMinutes,
     netLateMinutes: tb.netLateMinutes,
     earlyLeaveMinutes: tb.earlyLeaveMinutes,
     netEarlyMinutes: tb.netEarlyMinutes,
+    // ★ 2026-08-19: 補鐘細項 — makeupMinutes = late + early + absent（全部計入第③格）
     makeupMinutes: tb.makeupMinutes,
+    makeupLateMinutes: tb.makeupLateMinutes,
+    makeupEarlyMinutes: tb.makeupEarlyMinutes,
+    makeupAbsentMinutes: tb.makeupAbsentMinutes,
     carriedFrom: tb.carriedFrom,
     netOtThisMonth: tb.netOtThisMonth,
     entries: entries.map(e => ({
@@ -52,14 +58,5 @@ export async function GET(req: NextRequest) {
       minutes: e.minutes,
       note: e.note,
     })),
-    // ★ 考勤 OT —— 由打卡即時計算，未入 TimeBankEntry
-    attendanceOt: {
-      otMinutes: tb.otMinutes, // 午休 OT + 收工 OT
-      lateMinutes: tb.netLateMinutes,
-    },
-    // ★ 逐日考勤明細（calculateTimeBank 一直有計，之前冇回）
-    attendanceDays: (tb.timeAccountDetail ?? [])
-      .slice()
-      .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date))),
   })
 }

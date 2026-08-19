@@ -38,10 +38,6 @@ export default function MyDashboardPage() {
   // ★ Time bank entries — lazy load on expand
   const [tbOpen, setTbOpen] = useState(false)
   const [tbEntries, setTbEntries] = useState<any[] | null>(null)
-  const [attendanceOt, setAttendanceOt] = useState<{ otMinutes: number; lateMinutes: number } | null>(null)
-  const [attDays, setAttDays] = useState<any[]>([])
-  const [lateMinutes, setLateMinutes] = useState<number | null>(null)
-  const [netLateMinutes, setNetLateMinutes] = useState<number | null>(null)
   const [rh, setRh] = useState<any>(null)
   const loadEntries = async () => {
     if (tbEntries !== null) return
@@ -50,10 +46,6 @@ export default function MyDashboardPage() {
       if (r.ok) {
         const d = await r.json()
         setTbEntries(d.entries ?? [])
-        setAttendanceOt(d.attendanceOt ?? null)
-        setAttDays(d.attendanceDays ?? [])
-        setLateMinutes(d.lateMinutes ?? null)
-        setNetLateMinutes(d.netLateMinutes ?? null)
       }
     } catch {
       setTbEntries([])
@@ -269,40 +261,52 @@ export default function MyDashboardPage() {
                     </>}
                     {timeAccount === 0 && '兩清'}
                   </div>
-                  {/* ★ 2026-08-15: 參考明細 — 四格 + 本月實得 */}
-                  <div className="grid grid-cols-2 gap-2 mt-4">
-                    <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold">{summary.otMinutes ?? 0}</div>
-                      <div className="text-xs text-muted-foreground">本月 OT</div>
-                    </div>
-                    <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold">{summary.earlyInOtMinutes ?? 0}</div>
-                      <div className="text-xs text-muted-foreground">提早上班 OT</div>
-                    </div>
-                    <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold">{summary.netLateMinutes ?? 0}</div>
-                      <div className="text-xs text-muted-foreground">淨遲到</div>
-                    </div>
-                    <div className="text-center p-2 rounded-lg bg-white/60">
-                      <div className="text-lg font-bold">{summary.netEarlyMinutes ?? 0}</div>
-                      <div className="text-xs text-muted-foreground">淨早退</div>
-                    </div>
-                  </div>
+                  {/* ★ 2026-08-19: OT 四格 —— ①OT（含提早上班）②午休OT ③遲到/早退/補鐘 ④本月實收 OT */}
+                  {/*   ①+②+③ = netOtThisMonth（同 payroll-engine 一致，算式行寫出嚟防「加唔埋」） */}
                   {(() => {
-                    const netOt = summary.netOtThisMonth ?? 0
+                    // ★ 陷阱①：otMinutes 已含 lunchOt —— 第①格一定減走先，否則同第②格重複計
+                    const c1 = (summary.otMinutes ?? 0) - (summary.lunchOtMinutes ?? 0) + (summary.earlyInOtMinutes ?? 0)
+                    const c2 = summary.lunchOtMinutes ?? 0
+                    // ★ 陷阱②：makeupMinutes（= late + early + absent）全部計入第③格，唔計三格加唔埋
+                    const c3 = -((summary.netLateMinutes ?? 0) + (summary.netEarlyMinutes ?? 0) + (summary.makeupMinutes ?? 0))
+                    const c4 = summary.netOtThisMonth ?? null
                     return (
                       <>
-                        <div className="flex justify-between items-center mt-2 pt-2 border-t">
-                          <span className="text-xs text-muted-foreground">本月實得</span>
-                          <span className="font-bold" style={{ color: netOt >= 0 ? '#059669' : '#dc2626' }}>
-                            {netOt >= 0 ? '+' : '−'}{Math.abs(netOt)} 分
-                          </span>
-                        </div>
-                        {(summary.makeupMinutes ?? 0) > 0 && (
-                          <div className="text-[10px] text-muted-foreground text-right mt-1">
-                            已用補鐘 {summary.makeupMinutes} 分抵銷
+                        <div className="grid grid-cols-2 gap-2 mt-4">
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">OT（含提早上班）</div>
+                            <div className="text-base font-semibold" style={{ color: c1 >= 0 ? '#059669' : '#dc2626' }}>
+                              {c1 >= 0 ? '+' : '−'}{Math.abs(c1)}
+                            </div>
                           </div>
-                        )}
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">午休 OT</div>
+                            <div className="text-base font-semibold" style={{ color: '#059669' }}>+{c2}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">遲到／早退／補鐘</div>
+                            <div className="text-base font-semibold" style={{ color: c3 < 0 ? '#dc2626' : '#9ca3af' }}>
+                              {c3 === 0 ? '0' : c3}
+                            </div>
+                            {/* ★ 拍板③(a)：用淨值，但補鐘要睇得到 */}
+                            {(summary.makeupMinutes ?? 0) > 0 && (
+                              <div className="text-[9px] text-muted-foreground">
+                                含補鐘 {summary.makeupMinutes} 分
+                                {(summary.makeupAbsentMinutes ?? 0) > 0 && `（缺勤 ${summary.makeupAbsentMinutes}）`}
+                              </div>
+                            )}
+                          </div>
+                          <div className="rounded" style={{ background: '#f0fdf4', padding: 4 }}>
+                            <div className="text-[10px] text-muted-foreground font-medium">本月實收 OT</div>
+                            <div className="text-base font-bold" style={{ color: c4 === null ? '#9ca3af' : c4 >= 0 ? '#059669' : '#dc2626' }}>
+                              {c4 === null ? '—' : `${c4 >= 0 ? '+' : '−'}${Math.abs(c4)}`}
+                            </div>
+                          </div>
+                        </div>
+                        {/* ★ 算式直接寫出嚟 —— 最直接嘅防線 */}
+                        <div className="text-[9px] text-muted-foreground mt-1">
+                          {c1} {c2 >= 0 ? '+' : '−'} {Math.abs(c2)} {c3 >= 0 ? '+' : '−'} {Math.abs(c3)} = {c4 === null ? '—' : c4}
+                        </div>
                       </>
                     )
                   })()}
@@ -321,12 +325,12 @@ export default function MyDashboardPage() {
                         <div className="text-xs text-muted-foreground py-2 text-center">載入中…</div>
                       ) : (
                         <>
-                          {/* ★ 已入帳（TimeBankEntry） */}
+                          {/* ★ 2026-08-19: 時間加減記錄（TimeBankEntry）— 範圍：本月及上月 */}
                           <div className="text-[10px] text-muted-foreground mb-1 font-semibold">
-                            ── 已入帳（TimeBankEntry）
+                            時間加減記錄 · 本月及上月
                           </div>
                           {tbEntries.length === 0 ? (
-                            <div className="text-xs text-muted-foreground py-1 text-center">近兩月冇入帳記錄</div>
+                            <div className="text-xs text-muted-foreground py-1 text-center">近兩月冇記錄</div>
                           ) : (
                             <div style={{ maxHeight: 150, overflowY: 'auto' }}>
                               {tbEntries.map(e => (
@@ -345,55 +349,6 @@ export default function MyDashboardPage() {
                                 </div>
                               ))}
                             </div>
-                          )}
-
-                          {/* ★ 本月考勤（未入帳） */}
-                          {attendanceOt && (
-                            <>
-                              <div className="text-[10px] text-muted-foreground mb-1 font-semibold mt-2">
-                                ── 本月考勤（未入帳）
-                              </div>
-                              <div className="grid grid-cols-2 gap-2">
-                                <div className="text-center p-2 rounded-lg" style={{ backgroundColor: '#f0fdf4' }}>
-                                  <div className="text-base font-bold text-emerald-600">{attendanceOt.otMinutes ?? 0}</div>
-                                  <div className="text-[10px] text-muted-foreground">OT（分鐘）</div>
-                                </div>
-                                <div className="text-center p-2 rounded-lg" style={{ backgroundColor: '#fff7ed' }}>
-                                  <div className="text-base font-bold" style={{ color: (lateMinutes ?? 0) > 0 ? '#d97706' : 'inherit' }}>
-                                    {lateMinutes ?? 0}
-                                  </div>
-                                  <div className="text-[10px] text-muted-foreground">遲到（分鐘）</div>
-                                  {/* 補鐘抵扣說明 */}
-                                  {(lateMinutes ?? 0) !== (netLateMinutes ?? 0) && (
-                                    <div className="text-[10px] text-muted-foreground mt-1 text-right">
-                                      補鐘抵扣 {(lateMinutes ?? 0) - (netLateMinutes ?? 0)} 分 → 淨遲到 {netLateMinutes} 分
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* ★ 逐日考勤明細 */}
-                              {attDays.length > 0 && (
-                                <div style={{ maxHeight: 190, overflowY: 'auto', marginTop: 6 }}>
-                                  {attDays.map((d: any) => (
-                                    <div key={d.date} className="flex justify-between items-start py-1.5 border-b text-xs last:border-0">
-                                      <span className="text-muted-foreground">{String(d.date).slice(5)}</span>
-                                      <span className="flex flex-wrap gap-x-2 justify-end">
-                                        {d.clockOutOt ? <span style={{ color: '#059669' }}>OT {d.clockOutOt} 分</span> : null}
-                                        {d.lunchOt ? <span style={{ color: '#059669' }}>少休 {d.lunchOt} 分</span> : null}
-                                        {d.lateMinutes ? <span style={{ color: '#d97706' }}>遲到 {d.lateMinutes} 分</span> : null}
-                                        {d.lunchLate ? <span style={{ color: '#d97706' }}>超休 {d.lunchLate} 分</span> : null}
-                                        {d.earlyMinutes ? <span style={{ color: '#dc2626' }}>早退 {d.earlyMinutes} 分</span> : null}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              <div className="text-[10px] text-muted-foreground mt-1">
-                                已入帳明細：本月及上月 · 考勤明細：本月
-                              </div>
-                            </>
                           )}
                         </>
                       )}

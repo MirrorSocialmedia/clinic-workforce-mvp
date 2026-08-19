@@ -90,10 +90,14 @@ export async function GET(req: NextRequest) {
       lateMinutes: tb.netLateMinutes, // 已扣補鐘
       earlyLeaveMinutes: tb.netEarlyMinutes,
       otMinutes: tb.otMinutes,
+      // ★ 2026-08-19: 四格要喺首載就有準確數 — lunchOt 已含喺 otMinutes 入面
+      lunchOtMinutes: tb.lunchOtMinutes,
       earlyInOtMinutes: tb.earlyInOtMinutes,
       netLateMinutes: tb.netLateMinutes,
       netEarlyMinutes: tb.netEarlyMinutes,
       makeupMinutes: tb.makeupMinutes,
+      // ★ 2026-08-19: 缺勤補鐘副注（「（缺勤 N）」）
+      makeupAbsentMinutes: tb.makeupAbsentMinutes,
       netOtThisMonth: tb.netOtThisMonth,
       timeAccountMinutes: tb.timeAccountMinutes,
       leaveRequests: leaveRequests.map(r => ({
