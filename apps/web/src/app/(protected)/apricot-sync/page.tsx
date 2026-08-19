@@ -53,6 +53,33 @@ interface SyncJob {
   createdBy: string
 }
 
+// ★ MD-AC3: 店鋪營收卡片
+type ClinicRevenueItem = {
+  clinicId: string
+  name: string
+  shortName: string | null
+  apricotClinicId: string | null
+  bound: boolean
+  revenue: number
+  allocationRowCount: number
+  paymentCount: number
+  firstPaidAt: string | null
+  lastPaidAt: string | null
+  lastSyncedAt: string | null
+  providerCount: number
+  payoutRunCount: number
+  hasData: boolean
+}
+
+interface ClinicRevenueData {
+  periodMonth: string
+  totalRevenue: number
+  totalPayments: number
+  unsyncedCount: number
+  unboundClinics: { id: string; name: string }[]
+  clinics: ClinicRevenueItem[]
+}
+
 export default function ApricotSyncPage() {
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -95,6 +122,45 @@ export default function ApricotSyncPage() {
   useEffect(() => {
     fetchStatus()
   }, [fetchStatus])
+
+  // ★ MD-AC3: 店鋪營收（換月 → 數字跟住變）
+  const [revenueMonth, setRevenueMonth] = useState(() =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit' }).format(new Date())
+  )
+  const [revenue, setRevenue] = useState<ClinicRevenueData | null>(null)
+  const [revenueLoading, setRevenueLoading] = useState(true)
+  const syncFormRef = useRef<HTMLDivElement | null>(null)
+
+  const fetchRevenue = useCallback(async (month: string) => {
+    try {
+      const res = await fetch(`/api/apricot/clinic-revenue?periodMonth=${month}`, {
+        credentials: 'include',
+        cache: 'no-store',
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setRevenue(await res.json())
+    } catch (e: any) {
+      toast.error(`載入店鋪營收失敗: ${e.message}`)
+    } finally {
+      setRevenueLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    setRevenueLoading(true)
+    fetchRevenue(revenueMonth)
+  }, [revenueMonth, fetchRevenue])
+
+  // 「同步 YYYY-MM」掣 — 填好下方手動同步表單（日期 + 診所），唔會自動開始同步
+  const handleSyncMonth = (c: ClinicRevenueItem) => {
+    const [y, m] = revenueMonth.split('-').map(Number)
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
+    setFromDate(`${revenueMonth}-01`)
+    setToDate(`${revenueMonth}-${String(lastDay).padStart(2, '0')}`)
+    if (c.apricotClinicId) setClinicId(c.apricotClinicId) // ★ 表單 select 用 apricotClinicId 做 value
+    syncFormRef.current?.scrollIntoView({ behavior: 'smooth' })
+    toast.info(`已為 ${c.name} 填好 ${revenueMonth} 日期範圍，撳「開始同步」`)
+  }
 
   // ★ MD-Q: Poll job progress
   const pollJob = useCallback(async (jobId: string) => {
@@ -276,6 +342,69 @@ export default function ApricotSyncPage() {
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      {/* ★ MD-AC3: 店鋪營收卡片 — 喺逐診所同步狀態表之上（營收比同步狀態重要） */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-lg font-semibold flex items-center gap-2">
+            <Database size={18} />
+            店鋪營收
+          </div>
+          <input
+            type="month"
+            value={revenueMonth}
+            onChange={e => e.target.value && setRevenueMonth(e.target.value)}
+            className="border rounded px-2 py-1 text-sm bg-white"
+          />
+        </div>
+
+        {/* 頂部合計 — ★ 唔顯示手續費 */}
+        {revenue && (
+          <div className="text-sm text-gray-600">
+            {revenue.clinics.filter(c => c.bound).length} 間合計{' '}
+            <strong className="text-gray-900">${revenue.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
+            <span className="mx-1">·</span>
+            付款 {revenue.totalPayments.toLocaleString()} 筆
+            {revenue.unsyncedCount > 0 && (
+              <>
+                <span className="mx-1">·</span>
+                <span className="text-amber-600">⚠️ {revenue.unsyncedCount} 間未同步呢個月</span>
+              </>
+            )}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {revenueLoading && (
+            <div className="flex items-center justify-center py-8 text-gray-400 text-sm">
+              <Loader2 size={16} className="animate-spin mr-2" />
+              載入中...
+            </div>
+          )}
+          {revenue && revenue.clinics.filter(c => c.bound).map(c => (
+            <ClinicRevenueCard
+              key={c.clinicId}
+              c={c}
+              periodMonth={revenueMonth}
+              totalRevenue={revenue.totalRevenue}
+              onSyncMonth={handleSyncMonth}
+            />
+          ))}
+          {/* ★ 未綁 Apricot ID：虛線卡，唔好隱藏（隱藏就唔知佢存在） */}
+          {revenue && revenue.unboundClinics.map(u => (
+            <div key={u.id} className="rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 p-4">
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-gray-500">{u.name}</span>
+              </div>
+              <div className="text-sm text-gray-400 mt-2">未綁 Apricot ID</div>
+              <div className="text-sm text-gray-500 mt-1">唔會同步、亦唔會出月結單</div>
+              <a href="/clinics" className="inline-block text-sm text-blue-600 underline mt-2">
+                去診所管理 →
+              </a>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Per-Clinic Status (I3) */}
@@ -483,7 +612,7 @@ export default function ApricotSyncPage() {
       )}
 
       {/* Sync Form */}
-      <Card>
+      <Card ref={syncFormRef}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <RefreshCw size={18} />
@@ -562,6 +691,119 @@ export default function ApricotSyncPage() {
           <Database size={14} />
           項目標準價設定
         </a>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// ★ MD-AC3: 店鋪營收卡片
+// ============================================================
+
+const HK = { timeZone: 'Asia/Hong_Kong' } as const
+
+/** $1,234,567.89 格式 */
+function fmtMoney(n: number): string {
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+/** 1/7 格式（day/month） */
+function fmtDM(iso: string): string {
+  return new Date(iso).toLocaleDateString('zh-HK', { day: 'numeric', month: 'numeric', ...HK })
+}
+
+/** 17/8 11:13 格式 */
+function fmtSyncTime(iso: string): string {
+  const d = new Date(iso)
+  const date = d.toLocaleDateString('zh-HK', { day: 'numeric', month: 'numeric', ...HK })
+  const time = d.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', ...HK })
+  return `${date} ${time}`
+}
+
+function ClinicRevenueCard({
+  c,
+  periodMonth,
+  totalRevenue,
+  onSyncMonth,
+}: {
+  c: ClinicRevenueItem
+  periodMonth: string
+  totalRevenue: number
+  onSyncMonth: (c: ClinicRevenueItem) => void
+}) {
+  // ★ 付款日期範圍少過 80% 月份長度 → 標紅（backfill 只做到一半就唔可以當成真實營收）
+  const [y, m] = periodMonth.split('-').map(Number)
+  const monthDays = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const daysCovered = c.firstPaidAt && c.lastPaidAt
+    ? Math.round((+new Date(c.lastPaidAt) - +new Date(c.firstPaidAt)) / 86400000) + 1
+    : 0
+  const rangeIncomplete = c.hasData && daysCovered < monthDays * 0.8
+
+  // 進度條 = 該店營收佔合計比例
+  const pct = totalRevenue > 0 ? Math.round((c.revenue / totalRevenue) * 100) : 0
+
+  // 該月未同步（有綁但呢個月冇任何數據）
+  if (!c.hasData) {
+    return (
+      <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+        <div className="flex items-center justify-between">
+          <span className="font-medium">{c.name}</span>
+          {c.shortName && <span className="text-xs text-gray-400">{c.shortName}</span>}
+        </div>
+        <div className="text-sm text-amber-700 mt-2">⚠️ 呢個月未同步</div>
+        <div className="text-xs text-gray-500 mt-1">
+          最後同步：{c.lastSyncedAt ? fmtSyncTime(c.lastSyncedAt) : '無紀錄'}
+        </div>
+        <button
+          onClick={() => onSyncMonth(c)}
+          className="mt-3 text-sm px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+        >
+          同步 {periodMonth}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <span className="font-medium">{c.name}</span>
+        {c.shortName && <span className="text-xs text-gray-400">{c.shortName}</span>}
+      </div>
+
+      {/* 營收 — ★ 原始金額，唔扣手續費 */}
+      <div className="text-xl font-semibold mt-2">{fmtMoney(c.revenue)}</div>
+
+      <div className="text-sm text-gray-600 mt-1">
+        付款 {c.paymentCount.toLocaleString()} 筆
+      </div>
+
+      {/* ★ 付款日期範圍唔可以慳 */}
+      <div className={`text-sm mt-1 ${rangeIncomplete ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+        {c.firstPaidAt && c.lastPaidAt
+          ? `${fmtDM(c.firstPaidAt)} – ${fmtDM(c.lastPaidAt)}`
+          : '—'}
+        {c.lastSyncedAt && (
+          <span className={rangeIncomplete ? 'text-red-400' : 'text-gray-400'}>
+            {' '}· 同步 {fmtSyncTime(c.lastSyncedAt)}
+          </span>
+        )}
+      </div>
+
+      {/* ★ 只有呢一行做連結去 /payout（卡片本身唔做連結） */}
+      <a
+        href={`/payout?clinicId=${c.clinicId}&month=${periodMonth}`}
+        className="block text-sm text-blue-600 hover:underline mt-1"
+      >
+        醫生 {c.providerCount} 位 · 已出月結 {c.payoutRunCount} / {c.providerCount}
+      </a>
+
+      {/* 營收佔比 */}
+      <div className="flex items-center gap-2 mt-2">
+        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
+        </div>
+        <span className="text-xs text-gray-400 w-8 text-right">{pct}%</span>
       </div>
     </div>
   )

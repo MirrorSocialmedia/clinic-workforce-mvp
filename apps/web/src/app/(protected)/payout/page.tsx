@@ -5,7 +5,8 @@
  * OWNER / provider_payout 權限
  * ★ 2026-08-17: 粒度改為「醫生 × 診所 × 月」
  */
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -32,13 +33,32 @@ interface ClinicOption {
 }
 
 export default function PayoutRunsPage() {
+  // ★ MD-AC3: useSearchParams 喺 Next 14 需要 Suspense boundary（build 時 prerender）
+  return (
+    <Suspense fallback={<div className="p-6">載入中...</div>}>
+      <PayoutRunsPageInner />
+    </Suspense>
+  )
+}
+
+function PayoutRunsPageInner() {
+  const sp = useSearchParams()
+  const currentMonth = (() => {
+    // ★ HK 視角月份（同 hk-date.ts 慣例），唔靠瀏覽器本機時區
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit' }).format(new Date())
+  })()
+  // ★ useSearchParams 喺 Next 14 型別係 SearchParams | null，要守衛
+  const urlClinic = sp?.get('clinicId') ?? ''
+  const urlMonth = sp?.get('month') ?? ''
+
   const [runs, setRuns] = useState<PayoutRun[]>([])
   const [loading, setLoading] = useState(true)
   const [providers, setProviders] = useState<{ id: string; name: string; apricotId?: string | null }[]>([])
   const [selectedProvider, setSelectedProvider] = useState('')
-  const [selectedClinic, setSelectedClinic] = useState('')
+  // ★ MD-AC3: 支援 /payout?clinicId=...&month=...（由店鋪營收卡片連結入嚟預先揀好）
+  const [selectedClinic, setSelectedClinic] = useState(urlClinic)
   const [availableClinics, setAvailableClinics] = useState<ClinicOption[]>([])
-  const [selectedMonth, setSelectedMonth] = useState('')
+  const [selectedMonth, setSelectedMonth] = useState(urlMonth || currentMonth)
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
@@ -60,12 +80,19 @@ export default function PayoutRunsPage() {
     loadMe()
   }, [])
 
+  // ★ MD-AC3: URL 連結預先揀好嘅診所 — 用戶未動過選擇之前，
+  //   effect 唔可以清空佢（否則進頁面即失去預選）
+  const userTouched = useRef(false)
+
   useEffect(() => {
     if (selectedProvider && selectedMonth) {
       loadAvailableClinics(selectedProvider, selectedMonth)
-    } else {
+    } else if (userTouched.current) {
       setAvailableClinics([])
       setSelectedClinic('')
+      setUncoveredClinics([])
+    } else {
+      setAvailableClinics([])
       setUncoveredClinics([])
     }
   }, [selectedProvider, selectedMonth])
@@ -237,7 +264,7 @@ export default function PayoutRunsPage() {
               <select
                 className="border rounded px-3 py-2 w-48"
                 value={selectedProvider}
-                onChange={e => setSelectedProvider(e.target.value)}
+                onChange={e => { userTouched.current = true; setSelectedProvider(e.target.value) }}
               >
                 <option value="">選擇醫生</option>
                 {providers.map(p => (
@@ -267,7 +294,7 @@ export default function PayoutRunsPage() {
               <Input
                 type="month"
                 value={selectedMonth}
-                onChange={e => setSelectedMonth(e.target.value)}
+                onChange={e => { userTouched.current = true; setSelectedMonth(e.target.value) }}
                 className="w-44"
               />
             </div>

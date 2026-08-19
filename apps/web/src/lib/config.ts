@@ -321,6 +321,8 @@ export const CONFIG = {
     'GET /api/apricot/sync/jobs/:id': ['OWNER', 'MANAGER'],
     'POST /api/apricot/sync/jobs/:id': ['OWNER'],
     'GET /api/apricot/status': ['OWNER', 'MANAGER'],
+    // ★ MD-AC3: 店鋪營收卡片 — OWNER 預設，provider_payout 權限可放行
+    'GET /api/apricot/clinic-revenue': ['OWNER'],
     'GET /api/payment-method-rules': ['OWNER', 'MANAGER'],
     'POST /api/payment-method-rules': ['OWNER'],
 
@@ -494,6 +496,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— MD-C: Apricot Data Layer ——
   'POST /api/apricot/sync': ['provider_payout'],
   'GET /api/apricot/status': ['provider_payout'],
+  // ★ MD-AC3: 店鋪營收卡片
+  'GET /api/apricot/clinic-revenue': ['provider_payout'],
   'GET /api/payment-method-rules': ['provider_payout'],
   'POST /api/payment-method-rules': ['provider_payout'],
 
