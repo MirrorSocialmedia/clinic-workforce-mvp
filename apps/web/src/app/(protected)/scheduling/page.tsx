@@ -3500,34 +3500,78 @@ function getShiftCode(shift: Shift): string {
     compact?: boolean
     forExport?: boolean
     row?: number
-    overflowRight?: boolean
+    tall?: boolean
   }) => {
     const note = scheduleNotes[`${dateStr}|${opts.row ?? 0}`] ?? ''
     const fs = opts.compact ? 9 : 10
     const noteKey = `${dateStr}|${opts.row ?? 0}`
 
-    // ★ 2026-08-16: textStyle 共用 — forExport / overflowRight / 預設
-    const textStyle: React.CSSProperties = opts.forExport
-      ? { whiteSpace: 'normal', wordBreak: 'break-all', overflow: 'visible', position: 'static' }
-      : opts.overflowRight
-      ? {
-          whiteSpace: 'nowrap', overflow: 'visible',
-          position: 'absolute', left: 2, top: 2, zIndex: 5,
-          background: note ? '#f9fafb' : 'transparent',
-          paddingRight: 4,
-        }
-      : {
-          overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-all',
-          display: '-webkit-box', WebkitBoxOrient: 'vertical' as any, WebkitLineClamp: 2,
-        }
-
-    if (!opts.editable) {
+    // ★ 2026-08-19: 截圖版維持原本分支 —— forExport 一定要排喺 tall 之前 check，
+    //   否則截圖會走 hover/pointer 邏輯。
+    if (opts.forExport) {
       return (
         <div title={note || undefined} style={{
           fontSize: fs, lineHeight: 1.6, textAlign: 'center', color: '#374151',
-          ...textStyle,
+          whiteSpace: 'normal', wordBreak: 'break-all', overflow: 'visible', position: 'static',
         }}>{note}</div>
       )
+    }
+
+    // ★ 2026-08-19: tall = 底部備註行（3 倍高 66px，textarea 編輯，格內換行）
+    if (opts.tall) {
+      if (editingNote === noteKey) {
+        return (
+          <textarea
+            autoFocus
+            defaultValue={note}
+            maxLength={120}  // ★ 一格過，唔再限 20
+            onBlur={e => { saveScheduleNote(dateStr, e.target.value, 1); setEditingNote(null) }}
+            onKeyDown={e => {
+              if (e.key === 'Escape') { setEditingNote(null); return }
+              // ★ Enter 換行（textarea 唔可以用 Enter 送出）、Ctrl/Cmd+Enter 儲存
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                (e.target as HTMLTextAreaElement).blur()
+              }
+            }}
+            style={{
+              width: '100%', height: '100%', boxSizing: 'border-box',
+              fontSize: 9, lineHeight: 1.4, textAlign: 'left',
+              border: '1.5px solid #378ADD', borderRadius: 3,
+              padding: '2px 3px', outline: 'none', resize: 'none',
+              fontFamily: 'inherit',
+            }}
+          />
+        )
+      }
+      return (
+        <div
+          onClick={() => canManage && setEditingNote(noteKey)}
+          title={note || undefined}
+          style={{
+            // ★ width/height 100% —— 命中區 = 整格（<td> padding 0）
+            width: '100%', height: '100%', boxSizing: 'border-box',
+            padding: '2px 3px', fontSize: 9, lineHeight: 1.4,
+            textAlign: 'left', color: note ? '#374151' : '#cbd5e1',
+            cursor: canManage ? 'pointer' : 'default',
+            whiteSpace: 'pre-wrap',  // ★ 保留用戶打嘅換行
+            wordBreak: 'break-all',
+            overflow: 'hidden',
+            display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3,
+            background: 'transparent',
+            transition: 'background 0.12s',
+          }}
+          // ★ hover 淺灰用 inline handler —— 呢個檔冇 CSS module，:hover 寫唔到 inline style
+          onMouseEnter={e => { if (canManage) e.currentTarget.style.background = '#f1f5f9' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+        >
+          {note}
+        </div>
+      )
+    }
+
+    const textStyle: React.CSSProperties = {
+      overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-all',
+      display: '-webkit-box', WebkitBoxOrient: 'vertical' as any, WebkitLineClamp: 2,
     }
 
     const isEditing = editingNote === noteKey
@@ -3549,8 +3593,7 @@ function getShiftCode(shift: Shift): string {
           color: note ? '#374151' : (opts.compact ? '#e5e7eb' : '#d1d5db'),
           borderRadius: opts.compact ? 3 : 4,
           padding: opts.compact ? '3px 3px' : '5px 5px',
-          // ★ overflowRight 時唔可以有 minHeight —— absolute 之後會撐高蓋落下面行
-          ...(opts.overflowRight ? {} : { minHeight: opts.compact ? 32 : 40, background: note ? '#f9fafb' : 'transparent' }),
+          minHeight: opts.compact ? 32 : 40, background: note ? '#f9fafb' : 'transparent',
           cursor: canManage ? 'pointer' : 'default',
           lineHeight: 1.3,
           ...textStyle,
@@ -5512,25 +5555,25 @@ function getShiftCode(shift: Shift): string {
                     })}
                   </tbody>
                   <tfoot>
-                    {[1, 2, 3, 4, 5].map(rowNo => (
-                      <tr key={`note-row-${rowNo}`}>
-                        <th style={{
-                          position: 'sticky', left: 0, zIndex: 2, background: '#fff',
-                          width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
-                          padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'center',
+                    {/* ★ 2026-08-19: 備註五行合一（3 倍高 66px）—— row 2-5 已清走，只留 row 1 */}
+                    <tr>
+                      <th style={{
+                        position: 'sticky', left: 0, zIndex: 2, background: '#fff',
+                        width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
+                        padding: '3px 6px', fontSize: 10, fontWeight: 400,
+                        color: '#9ca3af', textAlign: 'center', verticalAlign: 'middle',
+                      }}>備註</th>
+                      {monthDays.map(d => (
+                        <td key={`nf-${d}`} style={{
+                          width: 56, minWidth: 56, padding: 0, fontWeight: 400,
+                          height: 66,  // ★ 3 倍（原本 22）
+                          verticalAlign: 'top',
+                          // ★ overflow / position 唔再需要 —— 文字喺格內換行
                         }}>
-                          備註{rowNo}
-                        </th>
-                        {monthDays.map(d => (
-                          <td key={`nf-${rowNo}-${d}`} style={{
-                            width: 56, minWidth: 56, padding: 2, fontWeight: 400,
-                            overflow: 'visible', position: 'relative', height: 22,
-                          }}>
-                            {renderNoteCell(d, { editable: true, compact: true, row: rowNo, overflowRight: true })}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                          {renderNoteCell(d, { editable: true, compact: true, row: 1, tall: true })}
+                        </td>
+                      ))}
+                    </tr>
                   </tfoot>
                 </table>
               </div>
@@ -5736,23 +5779,22 @@ function getShiftCode(shift: Shift): string {
                   })}
                 </tbody>
                 <tfoot>
-                  {[1, 2, 3, 4, 5].map(rowNo => (
-                    <tr key={`mnf-${rowNo}`}>
-                      <th style={{
-                        width: 80, padding: '2px 8px', fontSize: 9, fontWeight: 400,
-                        color: '#9ca3af', textAlign: 'left',
-                        borderBottom: '1px solid #e5e7eb',
-                      }}>備註{rowNo}</th>
-                      {monthDays.map(d => (
-                        <td key={`mnf-${rowNo}-${d}`} style={{
-                          width: 58, padding: '2px 2px', fontSize: 9, fontWeight: 400,
-                          borderBottom: '1px solid #e5e7eb',
-                        }}>
-                          {renderNoteCell(d, { editable: false, compact: true, forExport: true, row: rowNo })}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {/* ★ 2026-08-19: 截圖版備註同主表一致 —— 五行合一（3 倍高） */}
+                  <tr>
+                    <th style={{
+                      width: 80, padding: '2px 8px', fontSize: 9, fontWeight: 400,
+                      color: '#9ca3af', textAlign: 'left',
+                      borderBottom: '1px solid #e5e7eb', verticalAlign: 'top',
+                    }}>備註</th>
+                    {monthDays.map(d => (
+                      <td key={`mnf-${d}`} style={{
+                        width: 58, padding: '2px 2px', fontSize: 9, fontWeight: 400,
+                        borderBottom: '1px solid #e5e7eb', height: 66, verticalAlign: 'top',
+                      }}>
+                        {renderNoteCell(d, { editable: false, compact: true, forExport: true, row: 1, tall: true })}
+                      </td>
+                    ))}
+                  </tr>
                 </tfoot>
               </table>
             </div>
