@@ -159,6 +159,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/scheduling', label: '排班管理', icon: Calendar, roles: mgmtRoles, perm: 'scheduling' },
     { path: '/providers', label: '醫生管理', icon: Stethoscope, roles: mgmtRoles, perm: 'scheduling' },
     { path: '/provider-schedule', label: '醫生當值表', icon: Stethoscope, roles: mgmtRoles, perm: 'provider_schedule' },
+    // ★ cw-pa P4: 醫生時間表（Apricot 實際開診/預約）—— 同上面「醫生當值表」（人手排更）係兩樣嘢（spec §6.4）
+    { path: '/provider-availability', label: '醫生時間表（Apricot）', icon: Stethoscope, roles: mgmtRoles, perm: 'scheduling' },
     { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles, perm: ['leave_approve', 'timebank_ops'] },
     { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles, perm: ['payroll_view', 'payroll_generate'] },
     // ★ 員工總覽 —— OWNER + MANAGER（ACCOUNTANT 唔包，佢只需要計糧）

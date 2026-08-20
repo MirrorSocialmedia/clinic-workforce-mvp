@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   UserCircle,
   Receipt,
+  Stethoscope,
 } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
@@ -72,6 +73,14 @@ export default function MobileMorePage() {
       roles: ['OWNER', 'MANAGER'],
       description: '整週規劃請在電腦端操作',
       warning: true,
+    },
+    {
+      // ★ cw-pa P4: 醫生時間表（Apricot 實際開診/預約時段）— spec §6.4
+      label: '醫生時間表（Apricot）',
+      href: '/provider-availability',
+      icon: Stethoscope,
+      roles: ['OWNER', 'MANAGER'],
+      perm: 'scheduling',
     },
     {
       label: '假期管理',
