@@ -41,7 +41,10 @@ function scanRoutes(dir: string): string[] {
           if (content.includes(`export async function ${method}`)) {
             const key = `${method} ${fullApiPath}`
             const isPublic = /auth\/(login|forgot|reset)/.test(apiPath)
-            if (!rbacLines[key] && !isPublic) {
+            // ★ /api/internal/* = shared-secret internal endpoint（X-Internal-Token，
+            //   唔經 session RBAC —— spec §4「唔經 RBAC，冇 fallback 預設值」）→ 豁免
+            const isInternal = fullApiPath.startsWith('/api/internal/')
+            if (!rbacLines[key] && !isPublic && !isInternal) {
               misses.push(`${key} (file: ${full.replace('src/', '')})`)
             }
           }

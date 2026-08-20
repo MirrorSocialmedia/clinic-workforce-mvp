@@ -140,6 +140,21 @@ docker compose exec web npx prisma migrate deploy
 
 詳細部署指南請參考 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
+## 排程（cron）— Apricot 醫生時間表 sync
+
+日間每 10 分鐘 + 夜間每小時，POST `/api/internal/sync-availability`（shared secret `INTERNAL_SYNC_TOKEN`；token 未設 app 回 503、唔啱回 403）：
+
+```bash
+# crontab -e（生產機）
+INTERNAL_SYNC_TOKEN=<同 .env 同一個值>
+*/10 8-20     * * * /opt/clinic-workforce/apps/web/scripts/cron-availability-sync.sh
+0    21-23,0-7 * * * /opt/clinic-workforce/apps/web/scripts/cron-availability-sync.sh
+```
+
+- `apps/web/scripts/cron-availability-sync.sh`：`flock -n` 防重疊（Apricot token 共用，嚴格序列化寫）+ `curl -sS --max-time 180` + log 落 `/tmp/availability-sync.log`
+- 上次未跑完 → 自動跳過（exit 0）；request 量約 89 次/日 × 5 間接通店（一次 call 返滾動 7 日）
+- 規格詳情：[docs/specs/PROVIDER_AVAILABILITY_SPEC.md](docs/specs/PROVIDER_AVAILABILITY_SPEC.md) §4
+
 ## 階段狀態
 
 | 階段 | 內容 | 狀態 |
