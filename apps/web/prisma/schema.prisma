@@ -148,6 +148,8 @@ model Clinic {
   homeEmployees   Employee[] @relation("HomeClinic")
   providerShifts  ProviderShift[]
   providerClinics ProviderClinic[]
+  availabilities  ProviderAvailability[]
+  bookings        ProviderBooking[]
 }
 
 // User entity — system login account
@@ -337,6 +339,8 @@ model Provider {
   leaves      ProviderLeave[]
   commissions ProviderCommission[]
   reconciliations ReconciliationImport[]
+  availabilities ProviderAvailability[]
+  bookings       ProviderBooking[]
 
   @@index([companyId, isActive])
 }
@@ -1284,4 +1288,41 @@ model ReconciliationImport {
   uploadedAt   DateTime @default(now())
 
   @@index([providerId, periodMonth])
+}
+
+// ★ cw-pa: Apricot 醫生時間表（P1 資料層）
+// 兩張表刻意分開：開診 = 每日一兩段（純顯示，'HH:mm' 字串）；
+// 預約 = 每日十幾筆可重疊（Int 分鐘數，要 overlap 合併）。
+/// Apricot 開診時段（零 PII）
+model ProviderAvailability {
+  id          String   @id @default(cuid())
+  clinicId    String
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  providerId  String
+  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  date        String   // 'YYYY-MM-DD'（HK）
+  startTime   String   // 'HH:mm'
+  endTime     String   // 'HH:mm'
+  syncedAt    DateTime @default(now())
+
+  @@unique([clinicId, providerId, date, startTime])
+  @@index([clinicId, date])
+}
+
+/// Apricot 預約時段（🔴 零病人資料 —— 只有時間同狀態）
+/// ⚠️ 呢張表【永遠】唔准加病人／病情／員工姓名任何欄
+model ProviderBooking {
+  id          String   @id @default(cuid())
+  clinicId    String
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  providerId  String
+  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  date        String   // 'YYYY-MM-DD'（HK）
+  startMin    Int      // 由 00:00 起嘅分鐘數（09:30 → 570）
+  endMin      Int
+  status      Int      // Apricot bookingStatus；實見 0（已約）/ 4（已完成）
+  syncedAt    DateTime @default(now())
+
+  @@index([clinicId, date])
+  @@index([providerId, date])
 }
