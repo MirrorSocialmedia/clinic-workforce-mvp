@@ -1,0 +1,305 @@
+{
+  "2026-08-19": {
+    "appointments": {
+      "695e6e511e430c48022a7690": {
+        "practitioner": {
+          "id": "695e6e511e430c48022a7690",
+          "code": "LAU",
+          "fullName": "Dr. Lau Ho Yin, Samson",
+          "nickname": "Dr. Lau"
+        },
+        "practitionerOpenSchs": {
+          "day": "WED",
+          "timeSlots": [{ "startTime": 900, "endTime": 1800 }]
+        },
+        "bookingDetail": [
+          {
+            "id": "bk-001",
+            "code": "AP202608190001",
+            "cpId": "cp-sample-1",
+            "patientId": 90001,
+            "bookingTime": "2026-08-19T01:30:00Z",
+            "bookingEndTime": "2026-08-19T02:00:00Z",
+            "bookingStatus": 0,
+            "isRemoved": false,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "PAIN" }],
+            "remarkByDoctor": "after mos & implant pain",
+            "clinicPatient": {
+              "id": 90001,
+              "code": "PT0001",
+              "fullName": "陳大文",
+              "personalIdentifier": "A123456(7)",
+              "address": "12 Fake Street, Mei Foo",
+              "phoneNum": "91234567",
+              "email": "patient@example.com",
+              "dateOfBirth": "1975-04-01",
+              "bloodType": "A+",
+              "gender": "M",
+              "occupation": "Engineer",
+              "medicalHistory": "其他，請註明: 高血壓",
+              "drugHistory": { "historyDes": "其他，請註明: 阿士匹靈" },
+              "emergencyContact": { "name": "Chan Tai Man", "phone": "98765432", "relation": "母子" },
+              "phoneList": [{ "number": "91234567" }],
+              "billOsAmt": 1234.5
+            }
+          },
+          {
+            "id": "bk-002",
+            "code": "AP202608190002",
+            "cpId": "cp-sample-2",
+            "patientId": 90002,
+            "bookingTime": "2026-08-19T03:15:00Z",
+            "bookingEndTime": "2026-08-19T03:45:00Z",
+            "bookingStatus": 0,
+            "isRemoved": false,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "RV" }],
+            "remarkByDoctor": "",
+            "clinicPatient": {
+              "id": 90002,
+              "code": "PT0002",
+              "fullName": "李細妹",
+              "personalIdentifier": "B765432(1)",
+              "address": "34 Sample Road, Wong Tai Sin",
+              "phoneNum": "92345678",
+              "email": "patient2@example.com",
+              "dateOfBirth": "1982-09-15",
+              "bloodType": "O-",
+              "gender": "F",
+              "occupation": "Teacher",
+              "medicalHistory": "沒有 None",
+              "drugHistory": { "historyDes": "其他，請註明: —" },
+              "emergencyContact": { "name": "Lee Chi Keung", "phone": "93456789", "relation": "夫婦" },
+              "phoneList": [{ "number": "92345678" }],
+              "billOsAmt": 0
+            }
+          },
+          {
+            "id": "bk-003",
+            "code": "AP202608190003",
+            "cpId": "cp-sample-3",
+            "patientId": 90003,
+            "bookingTime": "2026-08-19T03:15:00Z",
+            "bookingEndTime": "2026-08-19T03:45:00Z",
+            "bookingStatus": 0,
+            "isRemoved": false,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "PAIN" }],
+            "remarkByDoctor": "recheck",
+            "clinicPatient": {
+              "id": 90003,
+              "code": "PT0003",
+              "fullName": "王大明",
+              "personalIdentifier": "C654321(8)",
+              "address": "56 Test Avenue, Sham Shui Po",
+              "phoneNum": "93456780",
+              "email": "patient3@example.com",
+              "dateOfBirth": "1969-02-28",
+              "bloodType": "B+",
+              "gender": "M",
+              "occupation": "Clerk",
+              "medicalHistory": "其他，請註明: 糖尿病",
+              "drugHistory": { "historyDes": "其他，請註明: 二甲双胍" },
+              "emergencyContact": { "name": "Wong Mei Ling", "phone": "94567890", "relation": "父女" },
+              "phoneList": [{ "number": "93456780" }],
+              "billOsAmt": 45.0
+            }
+          },
+          {
+            "id": "bk-004",
+            "code": "AP202608190004",
+            "cpId": "cp-sample-4",
+            "patientId": 90004,
+            "bookingTime": "2026-08-19T03:15:00Z",
+            "bookingEndTime": "2026-08-19T03:45:00Z",
+            "bookingStatus": 4,
+            "isRemoved": false,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "RV" }],
+            "remarkByDoctor": "",
+            "clinicPatient": {
+              "id": 90004,
+              "code": "PT0004",
+              "fullName": "張小芳",
+              "personalIdentifier": "D543210(3)",
+              "address": "78 Dummy Lane, Tseung Kwan O",
+              "phoneNum": "94567891",
+              "email": "patient4@example.com",
+              "dateOfBirth": "1990-12-01",
+              "bloodType": "AB+",
+              "gender": "F",
+              "occupation": "Designer",
+              "medicalHistory": "沒有 None",
+              "drugHistory": { "historyDes": "其他，請註明: —" },
+              "emergencyContact": { "name": "Cheung Kar Fun", "phone": "95678901", "relation": "本人" },
+              "phoneList": [{ "number": "94567891" }],
+              "billOsAmt": 0
+            }
+          },
+          {
+            "id": "bk-005",
+            "code": "AP202608190005",
+            "cpId": "cp-sample-5",
+            "patientId": 90005,
+            "bookingTime": "2026-08-19T03:15:00Z",
+            "bookingEndTime": "2026-08-19T03:45:00Z",
+            "bookingStatus": 0,
+            "isRemoved": false,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "PAIN" }],
+            "remarkByDoctor": "",
+            "clinicPatient": {
+              "id": 90005,
+              "code": "PT0005",
+              "fullName": "趙國雄",
+              "personalIdentifier": "E432109(6)",
+              "address": "90 Sample Street, Yau Ma Tai",
+              "phoneNum": "95678902",
+              "email": "patient5@example.com",
+              "dateOfBirth": "1958-06-30",
+              "bloodType": "A-",
+              "gender": "M",
+              "occupation": "Retired",
+              "medicalHistory": "其他，請註明: 冠心病",
+              "drugHistory": { "historyDes": "其他，請註明: 硝酸甘油" },
+              "emergencyContact": { "name": "Chiu Hoi Wing", "phone": "96789012", "relation": "子女" },
+              "phoneList": [{ "number": "95678902" }],
+              "billOsAmt": 210.0
+            }
+          },
+          {
+            "id": "bk-006",
+            "code": "AP202608190006",
+            "cpId": "cp-sample-6",
+            "patientId": 90006,
+            "bookingTime": "2026-08-19T04:00:00Z",
+            "bookingEndTime": "2026-08-19T04:30:00Z",
+            "bookingStatus": 0,
+            "isRemoved": true,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "PAIN" }],
+            "remarkByDoctor": "cancelled",
+            "clinicPatient": {
+              "id": 90006,
+              "code": "PT0006",
+              "fullName": "孫麗娜",
+              "personalIdentifier": "F321098(0)",
+              "address": "11 Sample Road, Tsuen Wan",
+              "phoneNum": "96789013",
+              "email": "patient6@example.com",
+              "dateOfBirth": "1985-03-11",
+              "bloodType": "B-",
+              "gender": "F",
+              "occupation": "Nurse",
+              "medicalHistory": "沒有 None",
+              "drugHistory": { "historyDes": "其他，請註明: —" },
+              "emergencyContact": { "name": "Sun Lok Na", "phone": "97890123", "relation": "本人" },
+              "phoneList": [{ "number": "96789013" }],
+              "billOsAmt": 0
+            }
+          },
+          {
+            "id": "bk-007",
+            "code": "AP202608190007",
+            "cpId": "cp-sample-7",
+            "patientId": 90007,
+            "bookingTime": "2026-08-19T07:00:00Z",
+            "bookingEndTime": "2026-08-19T07:30:00Z",
+            "bookingStatus": 4,
+            "isRemoved": false,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "RV" }],
+            "remarkByDoctor": "",
+            "clinicPatient": {
+              "id": 90007,
+              "code": "PT0007",
+              "fullName": "周文斌",
+              "personalIdentifier": "G210987(4)",
+              "address": "22 Test Avenue, Kwun Tong",
+              "phoneNum": "97890124",
+              "email": "patient7@example.com",
+              "dateOfBirth": "1977-08-19",
+              "bloodType": "O+",
+              "gender": "M",
+              "occupation": "Driver",
+              "medicalHistory": "其他，請註明: 哮喘",
+              "drugHistory": { "historyDes": "其他，請註明: 沙丁胺醇" },
+              "emergencyContact": { "name": "Chau Man Pan", "phone": "98901234", "relation": "本人" },
+              "phoneList": [{ "number": "97890124" }],
+              "billOsAmt": 0
+            }
+          }
+        ]
+      },
+      "696604810fb31f000937a8c4": {
+        "practitioner": {
+          "id": "696604810fb31f000937a8c4",
+          "code": "002",
+          "fullName": "MF Clinic",
+          "firstName": "MF Clinic"
+        },
+        "practitionerOpenSchs": {
+          "day": "WED",
+          "timeSlots": [{ "startTime": 900, "endTime": 1800 }]
+        },
+        "bookingDetail": [
+          {
+            "id": "bk-101",
+            "code": "AP202608190101",
+            "cpId": "cp-sample-8",
+            "patientId": 90008,
+            "bookingTime": "2026-08-19T05:00:00Z",
+            "bookingEndTime": "2026-08-19T05:30:00Z",
+            "bookingStatus": 0,
+            "isRemoved": false,
+            "createdBy": "JOAN NURSE",
+            "lastModifiedBy": "JOAN NURSE",
+            "visitReasons": [{ "code": "RV", "des": "RV" }],
+            "remarkByDoctor": "",
+            "clinicPatient": {
+              "id": 90008,
+              "code": "PT0008",
+              "fullName": "吳嘉欣",
+              "personalIdentifier": "H109876(2)",
+              "address": "33 Dummy Lane, Mei Foo",
+              "phoneNum": "98901235",
+              "email": "patient8@example.com",
+              "dateOfBirth": "1995-07-04",
+              "bloodType": "A+",
+              "gender": "F",
+              "occupation": "Student",
+              "medicalHistory": "沒有 None",
+              "drugHistory": { "historyDes": "其他，請註明: —" },
+              "emergencyContact": { "name": "Ng Ka Yan", "phone": "99012345", "relation": "本人" },
+              "phoneList": [{ "number": "98901235" }],
+              "billOsAmt": 0
+            }
+          }
+        ]
+      },
+      "695ff0c999883d05d0582401": {
+        "practitioner": {
+          "id": "695ff0c999883d05d0582401",
+          "code": "TONG",
+          "fullName": "Dr. Tong Kar Wai",
+          "nickname": "Dr. Tong"
+        },
+        "practitionerOpenSchs": {
+          "day": "WED",
+          "timeSlots": [{ "startTime": 900, "endTime": 1300 }]
+        },
+        "bookingDetail": []
+      }
+    },
+    "blocks": [],
+    "groupClasses": []
+  }
+}
