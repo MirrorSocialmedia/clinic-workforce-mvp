@@ -8,6 +8,11 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin, { Draggable } from '@fullcalendar/interaction'
 import zhcn from '@fullcalendar/core/locales/zh-cn'
+// ★ cw-pa P4 build fix: @fullcalendar/react@6.1.21 d.ts（class 形式）同現行
+//   TS 5.9 / @types/react 18.3 組合唔兼容（TS2607/TS2786，pre-existing ——
+//   舊 tsbuildinfo 一直掩住，next build 先暴露）。type-level alias，零 runtime 影響。
+import type { DatesSetArg, EventContentArg, EventMountArg } from '@fullcalendar/core'
+const FullCalendarCmp = FullCalendar as unknown as React.ComponentType<any>
 import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK, addDaysStr } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { textOn, shiftShade } from '@/lib/color'
@@ -5828,7 +5833,7 @@ function getShiftCode(shift: Shift): string {
             <div className="card rounded-xl g border p-4 shadow-card">
           <div ref={calendarContainerRef}>
 
-            <FullCalendar
+            <FullCalendarCmp
               ref={calendarRef}
               plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
               initialView={viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth'}
@@ -5838,7 +5843,7 @@ function getShiftCode(shift: Shift): string {
                 center: '',
                 right: 'timeGridWeek,dayGridMonth',
               }}
-              datesSet={(dateInfo) => {
+              datesSet={(dateInfo: DatesSetArg) => {
                 if (!SHOW_LEGACY_CALENDAR) return
                 // Sync viewMode from FC view type
                 const viewType = dateInfo.view.type
@@ -5865,7 +5870,7 @@ function getShiftCode(shift: Shift): string {
               }}
               events={fcEvents}
               droppable={canManage && !isTouch}
-              eventReceive={async (info) => {
+              eventReceive={async (info: any) => {
                 console.log('🔬E: eventReceive fired', info.event.extendedProps)
                 info.event.remove()
                 const props = info.event.extendedProps
@@ -6001,7 +6006,7 @@ function getShiftCode(shift: Shift): string {
               snapDuration="00:30:00"
               eventConstraint={{ startTime: '06:00:00', endTime: '23:00:00' }}
               eventDurationEditable={false}
-              eventContent={(eventInfo) => {
+              eventContent={(eventInfo: EventContentArg) => {
                 const shift = eventInfo.event.extendedProps.shift
                 return (
                   <div style={{
@@ -6023,7 +6028,7 @@ function getShiftCode(shift: Shift): string {
               height="auto"
               slotMinTime="06:00:00"
               slotMaxTime="23:00:00"
-              eventDidMount={(info) => {
+              eventDidMount={(info: EventMountArg) => {
                 info.el.style.borderRadius = '6px'
               }}
               expandRows={true}

@@ -13,10 +13,9 @@ import { execSync } from 'child_process'
 import { PrismaClient } from '@prisma/client'
 import { NextRequest } from 'next/server'
 import { createToken } from '../src/lib/auth'
-import {
-  POST as internalPost,
-  __setTestCallFn,
-} from '../src/app/api/internal/sync-availability/route'
+import { POST as internalPost } from '../src/app/api/internal/sync-availability/route'
+// ★ P4: __setTestCallFn 移去 ./test-call-fn（route.ts 唔准 export 非 HTTP symbol，next build 會 fail）
+import { __setTestCallFn } from '../src/app/api/internal/sync-availability/test-call-fn'
 import { GET as paGet } from '../src/app/api/provider-availability/route'
 import { mergeBookings } from '../src/lib/apricot/merge-bookings'
 import { mockCall, addDays } from '../testdata/mock-apricot'

@@ -3,8 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import {
   runAvailabilitySync,
-  type ApricotCallFn,
 } from '@/lib/apricot/sync-availability'
+import { getTestCallFn } from './test-call-fn'
 
 // ============================================================
 // POST /api/internal/sync-availability — cron 觸發嘅 internal sync
@@ -20,10 +20,8 @@ import {
 // ─── 測試注入（acceptance only）────────────────────────────────────
 // p3-acceptance.ts 注入 mock callFn 做離線 200 路徑驗證。
 // 生產永遠 null → runAvailabilitySync 用預設（真 Apricot API）。
-let testCallFn: ApricotCallFn | null = null
-export function __setTestCallFn(fn: ApricotCallFn | null): void {
-  testCallFn = fn
-}
+// ★ 注入點移咗去 ./test-call-fn（Next.js 14 唔允許 route.ts export 非 HTTP
+//   symbol —— 直接 export 會令 next build fail；cw-pa P4 修復，行為零改變）。
 
 /**
  * timing-safe token 比較。
@@ -49,6 +47,7 @@ export async function POST(req: NextRequest) {
   }
 
   const t0 = Date.now()
-  const outcome = await runAvailabilitySync(testCallFn ? { callFn: testCallFn } : {})
+  const hook = getTestCallFn()
+  const outcome = await runAvailabilitySync(hook ? { callFn: hook } : {})
   return NextResponse.json({ ...outcome, durationMs: Date.now() - t0 })
 }

@@ -148,7 +148,8 @@ export default function EmployeeOverviewPage() {
   return (
     <div className="employee-overview" style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
       {/* Print Styles */}
-      <style jsx global>{`
+      {/* ★ cw-pa P4 build fix: styled-jsx 嘅 jsx/global 屬性無 type augmentation（pre-existing TS2322）— spread cast，零 runtime 影響 */}
+      <style {...({ jsx: true, global: true } as any)}>{`
         @media print {
           .no-print { display: none !important; }
           .overview-section { page-break-inside: avoid; }
