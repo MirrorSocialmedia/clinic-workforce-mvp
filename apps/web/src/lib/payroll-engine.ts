@@ -2817,16 +2817,39 @@ async function applyAttendanceBonusModifier(
   attendanceBonusOverride?: 'FORCE_ON' | 'FORCE_OFF' | null,  // ★ 三態覆蓋
 ): Promise<PayrollResult> {
 
-  // ★ QA24: 勤工獎必須用 calculateTimeBank 的遲到/早退結果
-  //   collectWorkData 的 lateRecords/earlyLeaveRecords 已修正 clinic 過濾，
-  //   但 calculateTimeBank 是唯一經過調鋪/分更/floor/補鐘修正的單一事實來源。
-  //   dailyLate/dailyEarly 支持 late_is_cumulative 兩種模式（累計 sum / 單次 max）。
+  // ★ 2026-08-20 修復（勤工獎攞錯欄）：舊實作撈 tb.dailyLate / tb.dailyEarly，
+  //   但佢哋由頭到尾都係【原始值】—— 補鐘抵扣只係喺 netLate / netEarly 先做，
+  //   所以「補鐘豁免勤工」從來冇兌現（帳戶扣得啱，勤工獎照取消）。
+  // ★ 2026-08-20：勤工獎改用【已扣補鐘】嘅遲到/早退 ＋ 加返午休超時（逐日合併，拍板 b）
+  //   · workData.lateRecords / earlyLeaveRecords 已用 makeupLateDates / makeupEarlyDates
+  //     剔走有補鐘嘅日（＝規則②豁免勤工；注意係「逐日整日豁免」，非按分鐘）
+  //   · 但佢哋唔包午休超時，而 tb.dailyLate 包（dayLate + dayLunchLate）
+  //     → 由 tb.timeAccountDetail 逐日撈返 lunchLate 併埋（拍板 b）
+  //   · 午休超時冇補鐘機制（makeupLateDates 只 cover LATE/EARLY_LEAVE）→ 永遠計入
+  //   ⚠️ 一定要【逐日】併，唔可以加一個 lump sum ——
+  //      late_is_cumulative=false 係取「最大單次」，lump sum 會爆錶
+  //   ⚠️ 早退唔加 lunchLate（語義上「返遲咗」唔係「走早咗」；tb.dailyEarly 本來都冇）
   const tbConfig = { negative_carry: (config as any)?.negative_carry ?? 'reset' }
   const tb = await calculateTimeBank(employeeId, monthDate, tbConfig, prisma)
 
+  const lunchLateByDate = new Map<string, number>()
+  for (const d of (tb.timeAccountDetail ?? []) as any[]) {
+    if (d?.lunchLate > 0) lunchLateByDate.set(String(d.date), Number(d.lunchLate))
+  }
+  const lateDates = new Set<string>([
+    ...workData.lateRecords.map(r => r.date),
+    ...lunchLateByDate.keys(),
+  ])
+  const lateForBonus = [...lateDates]
+    .map(date => ({
+      minutes: (workData.lateRecords.find(r => r.date === date)?.minutes ?? 0)
+             + (lunchLateByDate.get(date) ?? 0),
+    }))
+    .filter(r => r.minutes > 0)
+
   const bonus = evaluateAttendanceBonus(modConfig, {
-    lateRecords: tb.dailyLate.map(r => ({ minutes: r.minutes })),
-    earlyRecords: tb.dailyEarly.map(r => ({ minutes: r.minutes })),
+    lateRecords: lateForBonus,
+    earlyRecords: workData.earlyLeaveRecords.map(r => ({ minutes: r.minutes })),
     leaveRecords: workData.leaveRecords,
     absentDays: workData.absentDays,
   })
