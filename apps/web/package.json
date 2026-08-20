@@ -16,7 +16,8 @@
     "check:dates": "bash scripts/check-dates.sh",
     "test:tz": "TZ=UTC npx tsx test-payroll.ts",
     "dev:db": "npx tsx scripts/dev-db.ts",
-    "dev:db:stop": "pkill -f 'tsx scripts/dev-db.ts' || true"
+    "dev:db:stop": "pkill -f 'tsx scripts/dev-db.ts' || true",
+    "test": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.21",
