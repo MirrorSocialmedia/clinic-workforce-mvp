@@ -458,6 +458,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/provider-shifts/batch': ['provider_schedule', 'scheduling'],
   'DELETE /api/provider-shifts/:id': ['provider_schedule', 'scheduling'],
 
+  // —— 醫生時間表（Apricot availability）——
+  // ⚠️ 呢 route 用 requirePerm('scheduling')，requirePerm 唔讀本表。
+  // 留喺度純粹係 check-rbac-matrix.sh 嘅登記要求 + 文件用途。
+  // 真正把關喺 requirePerm('scheduling') + resolveProviderScheduleScope。
+  'GET /api/provider-availability': ['scheduling'],
+
   // —— 醫生休假 ——
   'GET /api/provider-leaves': ['provider_schedule'],
   'POST /api/provider-leaves': ['provider_schedule'],
