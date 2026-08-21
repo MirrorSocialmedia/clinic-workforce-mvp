@@ -20,7 +20,7 @@
  *   icon 用 text glyph ‹ › ⚠️（§6.2 #2，唔用 lucide-react）
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   buildDays,
   computeAxis,
@@ -30,6 +30,7 @@ import {
   freeGaps,
   hkTodayStr,
   isWeekEmpty,
+  layoutBookings,
   providerColor,
   soft,
   syncChip,
@@ -38,6 +39,7 @@ import {
   WEEKDAY,
   type AvailabilityResp,
   type ClinicOpt,
+  type DayProvider,
   type ScheduleDay,
 } from '@/lib/provider-availability-view'
 import { buildStaffByDate, shouldLoadStaffShifts, type StaffCell } from '@/lib/staff-by-date'
@@ -61,6 +63,13 @@ export default function ProviderAvailabilityPage() {
   const [staffError, setStaffError] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [cooldownLeft, setCooldownLeft] = useState(0)
+
+  // ★ cw-lanes-20260821-a3 §2.1/§2.2 醫生篩選 chip：預設只顯示「該週有預約」嘅醫生。
+  // shown=null = 未初始化（首次渲染全顯示，effect 落定先 filter）。
+  // ★#9：只初始化一次 —— data 每 5 分鐘 refetch 唔可以覆蓋用戶選擇（守衛 shown !== null）；
+  //   用 useEffect 唔好用 useMemo（useMemo 會每次 data 變就重置）。
+  const [shown, setShown] = useState<Set<string> | null>(null)
+  const [showIdle, setShowIdle] = useState(false) // 零預約醫生摺埋，撳「+N 位只開診冇預約」展開
 
   // 診所清單（現有 /api/clinics；只載一次 — clinicId 唔好入 deps，會無限 loop）
   useEffect(() => {
@@ -107,6 +116,16 @@ export default function ProviderAvailabilityPage() {
   }, [clinicId, from])
 
   useEffect(() => { void load() }, [load])
+
+  // ★ 篩選初始化：只跑一次（#9 refetch 唔重置）；換診所時由 select onChange 將 shown 設返 null 觸發重初始化（#10）
+  useEffect(() => {
+    if (!data || shown !== null) return      // ★ 只初始化一次
+    const withBookings = new Set<string>()
+    for (const p of data.providers) {
+      if ((p.weekBookings ?? 0) > 0) withBookings.add(p.id)
+    }
+    setShown(withBookings)
+  }, [data, shown])
 
   // ★ 5 分鐘 auto refetch（離 page clear，§6.2 #7）—— 拍板⑤：唔加「重新載入」掣
   useEffect(() => {
@@ -196,14 +215,76 @@ export default function ProviderAvailabilityPage() {
   const pctH = (s: number, e: number) => `${(((e - s) / span) * 100).toFixed(2)}%`
 
   const today = hkTodayStr()
-  const axisLabels = useMemo(() => {
-    const out: number[] = []
-    for (let m = axisMin; m <= axisMax; m += 120) out.push(m)
+  // ★ cw-lanes-20260821-a3 §四：30 分鐘一刻度；整點（m%60===0）先出字，半點只出線（#19 #20）
+  const ticks = useMemo(() => {
+    const out: { m: number; label: boolean }[] = []
+    for (let m = axisMin; m <= axisMax; m += 30) out.push({ m, label: m % 60 === 0 })
     return out
   }, [axisMin, axisMax])
+  const hourTicks = useMemo(() => ticks.filter(t => t.label), [ticks])
+
+  // ★ 篩選後嘅 7 日（chip toggle 即時生效，#8）；shown=null（未初始化）→ 全顯示
+  const visibleDays = useMemo(() => {
+    if (shown === null) return days
+    return days.map(d => ({ ...d, providers: d.providers.filter(p => shown.has(p.providerId)) }))
+  }, [days, shown])
 
   const cur = clinics.find(c => c.id === clinicId)
-  const zoomDay = zoomDate ? days.find(d => d.date === zoomDate) ?? null : null
+  const zoomDay = zoomDate ? visibleDays.find(d => d.date === zoomDate) ?? null : null
+
+  // ─── 預約塊（cw-lanes-20260821-a3 §3.3/§3.4/§五）───
+  // mini（手機週概覽）：唔分 lane、全闊色條疊住、冇文字、minHeight 3（§五，拍板①理由）。
+  // 非 mini（桌面週視圖 + 手機放大單日）：layoutBookings 橫向分欄，上限 3 lane（拍板①）。
+  function renderBookings(pr: DayProvider, c: string, mini: boolean) {
+    if (mini) {
+      return pr.busy.map((b, i) => (
+        <div key={`b${i}`} style={{ position: 'absolute', left: 1, right: 1, zIndex: 2,
+          top: pct(b.s), height: pctH(b.s, b.e), minHeight: 3,
+          background: c, opacity: 0.85, borderRadius: 2 }} />
+      ))
+    }
+    const laid = layoutBookings(pr.busy.map(b => ({
+      s: b.s, e: b.e, status: b.status ?? 0,
+      providerId: pr.providerId, name: pr.name, color: c,
+    })))
+    return laid.map((b, i) => {
+      const w = 100 / b.lanes
+      const tooShort = (b.e - b.s) < 20   // ★ 少過 20 分鐘 → 只顯示醫生名（#15 #16）
+      return (
+        <Fragment key={`b${i}`}>
+          {/* calc(% ± px)：純 % 會令相鄰塊貼死冇縫；minHeight 18 → 15 分鐘塊唔變一條線 */}
+          <div title={`${b.name} ${fmtMin(b.s)}–${fmtMin(b.e)}`}
+            style={{ position: 'absolute', zIndex: 2,
+              left: `calc(${b.lane * w}% + 2px)`,
+              width: `calc(${w}% - 4px)`,
+              top: pct(b.s), height: pctH(b.s, b.e),
+              minHeight: 18, background: b.color, borderRadius: 3,
+              padding: '2px 3px', boxSizing: 'border-box', overflow: 'hidden' }}>
+            <span style={{ fontSize: 6.5, color: '#fff', fontWeight: 600, display: 'block',
+                           lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden',
+                           textOverflow: 'ellipsis' }}>{b.name}</span>
+            {!tooShort && (
+              <span style={{ fontSize: 6, color: '#ffffffcc', display: 'block', lineHeight: 1.25 }}>
+                {fmtMin(b.s)}–{fmtMin(b.e)}
+              </span>
+            )}
+          </div>
+          {/* ★ §3.4 overflow：cluster 超過 3 個重疊，右邊 14px 窄條「+N」。
+              條件 overflow>0 && lane===0 —— cluster 每個 item 都帶同一個 overflow，
+              唔加 lane 條件會畫多次（#13）。 */}
+          {b.overflow > 0 && b.lane === 0 && (
+            <div title={`仲有 ${b.overflow} 個預約`}
+              style={{ position: 'absolute', zIndex: 3, right: 0, top: pct(b.s),
+                       height: pctH(b.s, b.e), width: 14, minHeight: 18,
+                       background: '#475569', borderRadius: '3px 0 0 3px',
+                       display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: 6, color: '#fff', writingMode: 'vertical-rl' }}>+{b.overflow}</span>
+            </div>
+          )}
+        </Fragment>
+      )
+    })
+  }
 
   // ─── 一條日 column（桌面 + 手機放大共用；mini = 手機週概覽縮版）───
   function DayColumn({ day, mini }: { day: ScheduleDay; mini: boolean }) {
@@ -221,6 +302,23 @@ export default function ProviderAvailabilityPage() {
     return (
       <div style={{ position: 'relative', height: '100%', borderRadius: 6,
                     background: '#f1f5f9', overflow: 'hidden' }}>
+        {/* ★ §四 30 分鐘橫線：repeating-linear-gradient 一次過畫（唔逐條 div）。
+            週期 = 1 小時（100%/n60，% 由瀏覽器解析成【實際像素高度】→ rowH 唔寫死 px，
+            同 pct() 軸文字同一條公式 → ★#21 橫線同軸文字對齊，resize 都唔會漂移）。
+            整點深（#d1d5db 1px）、半點淺（#e5e7eb 0.5px）（#19）。mini 唔畫（§五矮版）。 */}
+        {!mini && (() => {
+          const n60 = (axisMax - axisMin) / 60
+          return (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+              background: `repeating-linear-gradient(to bottom,
+                #d1d5db 0, #d1d5db 1px,
+                transparent 1px,
+                transparent calc(100% / ${n60} - 0.25px),
+                #e5e7eb calc(100% / ${n60} - 0.25px), #e5e7eb calc(100% / ${n60} + 0.25px),
+                transparent calc(100% / ${n60} + 0.25px),
+                transparent calc(100% / ${n60}))` }} />
+          )
+        })()}
         {day.providers.map(pr => {
           const c = providerColor(pr.providerId, pr.color)
           const gaps = mini ? [] : freeGaps(pr.open, pr.busy)
@@ -246,20 +344,7 @@ export default function ProviderAvailabilityPage() {
                   )}
                 </div>
               ))}
-              {pr.busy.map((b, i) => (
-                <div key={`b${i}`}
-                  title={`${fmtMin(b.s)}–${fmtMin(b.e)}`}
-                  style={{ position: 'absolute', left: mini ? 1 : 4, right: mini ? 1 : 4, zIndex: 2,
-                           borderRadius: 3, background: c, top: pct(b.s), height: pctH(b.s, b.e) }}>
-                  {!mini && (
-                    <span style={{ fontSize: 9, color: '#fff', padding: '0 4px',
-                                   lineHeight: 1.2, display: 'block', overflow: 'hidden',
-                                   textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      已約
-                    </span>
-                  )}
-                </div>
-              ))}
+              {renderBookings(pr, c, mini)}
               {gaps.map((g, i) => (
                 <div key={`g${i}`} style={{ position: 'absolute', left: 4, right: 4, borderRadius: 3, zIndex: 2,
                        border: '1px dashed #cbd5e1', background: 'rgba(255,255,255,.7)',
@@ -333,7 +418,7 @@ export default function ProviderAvailabilityPage() {
         <span style={{ fontSize: 15, fontWeight: 600 }}>醫生時間表</span>
 
         <select value={clinicId}
-          onChange={e => { setClinicId(e.target.value); setZoomDate(null) }}
+          onChange={e => { setClinicId(e.target.value); setZoomDate(null); setShown(null); setShowIdle(false) }}
           style={{ fontSize: 12, borderRadius: 999, background: '#eff6ff', color: '#1d4ed8',
                    border: 0, padding: '4px 10px' }}>
           {clinics.map(c => (
@@ -436,17 +521,18 @@ export default function ProviderAvailabilityPage() {
                 ) : (
                   <>
                     {/* ═══ 桌面：時間軸 × 七日 ═══ */}
-                    <div className="hidden md:flex" style={{ gap: 4, height: '100%', minHeight: 420 }}>
+                    {/* ★ §四：minHeight 420→620（09:00–20:00 = 22 格 × 28px，一屏睇晒；#22）—— 手機唔跟（維持矮版） */}
+                    <div className="hidden md:flex" style={{ gap: 4, height: '100%', minHeight: 620 }}>
                       <div style={{ width: 44, flexShrink: 0, position: 'relative', marginTop: 24 }}>
-                        {axisLabels.map(m => (
-                          <span key={m} style={{ position: 'absolute', right: 6, transform: 'translateY(-50%)',
-                                                 fontSize: 10, color: '#94a3b8', top: pct(m) }}>
-                            {fmtMin(m)}
+                        {hourTicks.map(t => (
+                          <span key={t.m} style={{ position: 'absolute', right: 6, transform: 'translateY(-50%)',
+                                                 fontSize: 10, color: '#94a3b8', top: pct(t.m) }}>
+                            {fmtMin(t.m)}
                           </span>
                         ))}
                       </div>
                       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 6 }}>
-                        {days.map(day => (
+                        {visibleDays.map(day => (
                           <div key={day.date} style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                             <div style={{ height: 24, textAlign: 'center', fontSize: 11 }}>
                               <DayHead date={day.date} mini={false} />
@@ -492,10 +578,10 @@ export default function ProviderAvailabilityPage() {
                           </div>
                           <div style={{ display: 'flex', gap: 8, flex: 1, minHeight: 0 }}>
                             <div style={{ width: 44, flexShrink: 0, position: 'relative' }}>
-                              {axisLabels.map(m => (
-                                <span key={m} style={{ position: 'absolute', right: 4, transform: 'translateY(-50%)',
-                                                       fontSize: 9, color: '#94a3b8', top: pct(m) }}>
-                                  {fmtMin(m)}
+                              {hourTicks.map(t => (
+                                <span key={t.m} style={{ position: 'absolute', right: 4, transform: 'translateY(-50%)',
+                                                       fontSize: 9, color: '#94a3b8', top: pct(t.m) }}>
+                                  {fmtMin(t.m)}
                                 </span>
                               ))}
                             </div>
@@ -515,15 +601,15 @@ export default function ProviderAvailabilityPage() {
                       ) : (
                         <div style={{ display: 'flex', gap: 6, height: '100%' }}>
                           <div style={{ width: 32, flexShrink: 0, position: 'relative', marginTop: 28 }}>
-                            {axisLabels.map(m => (
-                              <span key={m} style={{ position: 'absolute', right: 2, transform: 'translateY(-50%)',
-                                                     fontSize: 8, color: '#94a3b8', top: pct(m) }}>
-                                {fmtMin(m).slice(0, 2)}
+                            {hourTicks.map(t => (
+                              <span key={t.m} style={{ position: 'absolute', right: 2, transform: 'translateY(-50%)',
+                                                     fontSize: 8, color: '#94a3b8', top: pct(t.m) }}>
+                                {fmtMin(t.m).slice(0, 2)}
                               </span>
                             ))}
                           </div>
                           <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 4 }}>
-                            {days.map(day => (
+                            {visibleDays.map(day => (
                               <button key={day.date} onClick={() => setZoomDate(day.date)}
                                 style={{ display: 'flex', flexDirection: 'column', minHeight: 0,
                                          textAlign: 'left', background: 'none', border: 'none', padding: 0 }}>
@@ -544,22 +630,42 @@ export default function ProviderAvailabilityPage() {
                       )}
                     </div>
 
-                    {/* 醫生圖例：無 data 醫生 → 列名 + 「無數據」空狀態 */}
-                    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6,
-                                  fontSize: 11, color: '#475569' }}>
+                    {/* ★ cw-lanes-20260821-a3 §2.2 篩選 chip（legend 改造）：
+                        有預約預設顯示（§2.1 初始化）、零預約摺埋「+ N 位只開診冇預約」toggle、逐個可 toggle。
+                        顯示 {name} {weekBookings}；冇數據嘅醫生保留「（無數據）」標記。 */}
+                    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                       {data.providers.map(p => {
+                        const idle = (p.weekBookings ?? 0) === 0
+                        if (idle && !showIdle) return null
+                        const on = shown?.has(p.id) ?? false
                         const c = providerColor(p.id, p.color)
                         const hasData = weekProviderIds.has(p.id)
                         return (
-                          <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
-                                                    background: '#fff', border: '1px solid #e5e7eb',
-                                                    borderRadius: 999, padding: '2px 8px' }}>
-                            <i style={{ width: 8, height: 8, borderRadius: 2, background: c,
-                                        display: 'inline-block' }} />
-                            {p.name}{hasData ? '' : '（無數據）'}
-                          </span>
+                          <button key={p.id}
+                            aria-pressed={on}
+                            onClick={() => setShown(prev => {
+                              const next = new Set(prev ?? [])
+                              if (next.has(p.id)) next.delete(p.id); else next.add(p.id)
+                              return next
+                            })}
+                            style={{
+                              fontSize: 9, padding: '2px 8px', borderRadius: 999,
+                              border: on ? 'none' : '0.5px solid #e5e7eb',
+                              background: on ? c : '#fff', color: on ? '#fff' : '#9ca3af',
+                              cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>
+                            {on ? '✓ ' : ''}{p.name}{p.weekBookings ? ` ${p.weekBookings}` : ''}{!hasData ? '（無數據）' : ''}
+                          </button>
                         )
                       })}
+                      {data.providers.filter(p => (p.weekBookings ?? 0) === 0).length > 0 && (
+                        <button onClick={() => setShowIdle(v => !v)}
+                          style={{ fontSize: 9, padding: '2px 8px', borderRadius: 999,
+                                   background: '#fff', color: '#9ca3af', border: '0.5px solid #e5e7eb',
+                                   cursor: 'pointer' }}>
+                          {showIdle ? '收起' : `+ ${data.providers.filter(p => (p.weekBookings ?? 0) === 0).length} 位只開診冇預約`}
+                        </button>
+                      )}
                     </div>
 
                     {/* legend */}
