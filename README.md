@@ -142,16 +142,16 @@ docker compose exec web npx prisma migrate deploy
 
 ## 排程（cron）— Apricot 醫生時間表 sync
 
-日間每 10 分鐘 + 夜間每小時，POST `/api/internal/sync-availability`（shared secret `INTERNAL_SYNC_TOKEN`；token 未設 app 回 503、唔啱回 403）：
+日間每 10 分鐘 + 夜間每小時，POST `/api/internal/sync-availability`（shared secret `APRICOT_CRON_KEY`，經 `x-cron-key` header 傳入；key 未設 app 回 503、唔啱回 403）：
 
 ```bash
-# crontab -e（生產機）
-INTERNAL_SYNC_TOKEN=<同 .env 同一個值>
-*/10 8-20     * * * /opt/clinic-workforce/apps/web/scripts/cron-availability-sync.sh
-0    21-23,0-7 * * * /opt/clinic-workforce/apps/web/scripts/cron-availability-sync.sh
+# crontab -e（喺生產【host】跑；script 喺 repo root）
+*/10 8-20     * * * /opt/clinic-workforce/scripts/sync-availability.sh
+0    21-23,0-7 * * * /opt/clinic-workforce/scripts/sync-availability.sh
 ```
 
-- `apps/web/scripts/cron-availability-sync.sh`：`flock -n` 防重疊（Apricot token 共用，嚴格序列化寫）+ `curl -sS --max-time 180` + log 落 `/tmp/availability-sync.log`
+- `scripts/sync-availability.sh`（host 跑）：`flock -n` 防重疊（Apricot token 共用，嚴格序列化寫）+ `docker exec clinic-prod-app node -e fetch(...)` 入 container 內部打 API（生產 host→app `localhost:3000` 無 port map，host 直接 curl 唔通）+ log 落 `/tmp/availability-sync.log`
+- key 由 container env 讀（`APRICOT_CRON_KEY`，compose 已注入）——host 唔使讀 `.env` 攞 key，少一個 secret 暴露面
 - 上次未跑完 → 自動跳過（exit 0）；request 量約 89 次/日 × 5 間接通店（一次 call 返滾動 7 日）
 - 規格詳情：[docs/specs/PROVIDER_AVAILABILITY_SPEC.md](docs/specs/PROVIDER_AVAILABILITY_SPEC.md) §4
 
