@@ -121,7 +121,7 @@ after(() => {
 })
 
 const config = () => ({
-  base_type: 'monthly',
+  base_type: 'monthly' as const,
   monthly_salary: SALARY,
   deduction_rate: 1,
   modifiers: {
