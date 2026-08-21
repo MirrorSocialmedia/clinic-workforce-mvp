@@ -423,12 +423,14 @@ export default function ProviderAvailabilityPage() {
 
             {data && !loading && !error && (
               <>
-                {/* ★ GET 200 但全空 → 「未接通 Apricot」（唔好寫「未開診」） */}
+                {/* ★ GET 200 但全空 → 「未有資料」（cur.connected 已喺上面擋咗真未接通；行到呢度一定接通咗） */}
                 {weekEmpty ? (
                   <div style={{ textAlign: 'center', padding: '48px 0' }}>
-                    <div style={{ fontSize: 14, color: '#b45309', marginBottom: 6 }}>未接通 Apricot</div>
+                    <div style={{ fontSize: 14, color: '#b45309', marginBottom: 6 }}>未有資料</div>
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>
-                      或未同步 — 填好 Apricot 診所 ID 並完成首次同步後，醫生開診時段就會出現
+                      {data?.sync?.lastSyncAt
+                        ? '已同步但呢一週冇開診時段 — 撳「↻ 立即同步」再試，或者確認 Apricot 嗰邊有排開診'
+                        : '仲未同步過 — 撳右上角「↻ 立即同步」拉第一次資料'}
                     </div>
                   </div>
                 ) : (

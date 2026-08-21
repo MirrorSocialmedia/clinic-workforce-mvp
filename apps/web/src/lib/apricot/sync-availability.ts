@@ -97,8 +97,25 @@ export async function syncAvailability(
   const qs = new URLSearchParams()
   qs.set('startDate', start)
   qs.set('endDate', end)
+  // ★ 2026-08-21：clinicIds 係【必填】—— 唔傳 Apricot 直接回 400：
+  //   "Required request parameter 'clinicIds' for method parameter type List is not present"
+  //   （Spring List 參數）。同 openSchClinicId 唔同嘢：
+  //     clinicIds       = 篩預約屬邊間店（List，可多值 —— 未試）
+  //     openSchClinicId = 攞開診時段（單數，逐間店）
+  //   兩個都要傳，唔可以二選一。
+  qs.append('clinicIds', clinic.apricotClinicId)
   qs.set('openSchClinicId', clinic.apricotClinicId) // ★ 單數
   for (const p of providers) qs.append('doctorIds', p.apricotId!) // ★ 逐個列
+
+  // ★ 必填參數自檢 —— 漏一個 Apricot 就回 400，而 log 唔開頁冇人睇
+  const REQUIRED = ['startDate', 'endDate', 'clinicIds', 'openSchClinicId'] as const
+  const missing = REQUIRED.filter(k => !qs.get(k))
+  if (missing.length > 0) {
+    throw new Error(`[availability] query 缺必填參數：${missing.join(', ')}`)
+  }
+  if (qs.getAll('doctorIds').length === 0) {
+    throw new Error('[availability] 冇任何 provider 有 apricotId —— 補齊先再 sync')
+  }
 
   // ★ 只 call —— retry 處理 503/busy；lock 由外層負責
   const raw = await callFn(`${APPOINTMENTS_PATH}?${qs.toString()}`)
