@@ -2,7 +2,6 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
-import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -18,7 +17,6 @@ import { jsonNoStore } from '@/lib/api-response'
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const permCheck = await requirePerm(req, 'scheduling')
   if (isAuthError(permCheck)) return permCheck.error
-  const { session } = permCheck
 
   const { id } = params
   const body = await req.json().catch(() => ({}))
@@ -29,10 +27,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     where: { id },
     select: {
       id: true,
-      clinicId: true,
       isEmployeeRequested: true,
       leaveType: { select: { systemKey: true } },
-      employee: { select: { homeClinicId: true } },
     },
   })
   if (!lr) return NextResponse.json({ error: '搵唔到假期記錄' }, { status: 404 })
@@ -42,12 +38,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'PL 只可以標喺休息日' }, { status: 400 })
   }
 
-  // ★ 診所 scope（照排班頁現有做法）—— lr.clinicId 可能 null（舊資料），fallback employee.homeClinicId
-  const scope = await resolveProviderScheduleScope(session)
-  const targetClinic = lr.clinicId ?? lr.employee?.homeClinicId
-  if (targetClinic && !inScope(scope, targetClinic)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+  // ★ 2026-08-21 拍板①：PL 純標示、零下游影響 —— 唔限診所。
+  //   排班頁本身可以跨店排更，標記冇理由比排更更嚴。
+  //   權限仍然靠 requirePerm('scheduling')（上面已經行咗）。
 
   const updated = await prisma.leaveRequest.update({
     where: { id },

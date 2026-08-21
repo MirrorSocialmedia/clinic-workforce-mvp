@@ -3,13 +3,13 @@
  * 跑法: npx tsx --test src/lib/pl-mark-route.test.ts
  * （Node 22 內建 test runner）
  *
- * 覆蓋 MD §五 驗收：
+ * 覆蓋 MD §四 驗收：
  *   - 401 無 session
  *   - 403 冇 scheduling 權限（拍板④：scheduling 權限 gate）
  *   - 400 非 REST_DAY（拍板②：server 擋，防繞過前端直接 call API）
- *   - 403 跨店（resolveProviderScheduleScope + inScope）
+ *   - 200 跨店（2026-08-21 拍板①：PL 唔限診所 —— 原本 403 改 200）
  *   - 404 搵唔到記錄
- *   - 200 正常 toggle（明文 value，唔係 client toggle）
+ *   - 200 正常標記（明文 value，唔係 client toggle）
  *   - 400/403/404 一律唔會調 update（零下游影響 —— DB 層面前無副作用）
  */
 import { describe, it, before, after } from 'node:test'
@@ -37,8 +37,6 @@ let updateCalls: Any[] = []
 
 const fakes: Record<string, Any> = {
   user: { findUnique: async (args: Any) => users[args?.where?.id] ?? null },
-  // MANAGER 主屬店 = c1（resolveProviderScheduleScope → [homeClinicId]）
-  employee: { findUnique: async () => ({ homeClinicId: 'c1' }) },
   leaveRequest: {
     findUnique: async () => currentLr,
     update: async (args: Any) => {
@@ -80,7 +78,6 @@ const restDayLr = (clinicId: string, isEmployeeRequested = false) => ({
   clinicId,
   isEmployeeRequested,
   leaveType: { systemKey: 'REST_DAY' },
-  employee: { homeClinicId: 'c1' },
 })
 
 const sickLr = () => ({
@@ -88,7 +85,6 @@ const sickLr = () => ({
   clinicId: 'c1',
   isEmployeeRequested: false,
   leaveType: { systemKey: 'SICK' },
-  employee: { homeClinicId: 'c1' },
 })
 
 describe('pl-mark route（2026-08-21）', () => {
@@ -123,12 +119,12 @@ describe('pl-mark route（2026-08-21）', () => {
     assert.equal(updateCalls.length, 0, '400 唔可以調 update')
   })
 
-  it('403 跨店（MANAGER 主屬店 c1，假期喺 c2）', async () => {
+  it('200 跨店（2026-08-21 拍板①：PL 唔限診所 —— 原本 403 改成功）', async () => {
     updateCalls = []
     currentLr = restDayLr('c2')
     const res = await PATCH(makeReq(token('u-manager', 'MANAGER'), true), { params: { id: 'lr-test' } })
-    assert.equal(res.status, 403)
-    assert.equal(updateCalls.length, 0, '403 唔可以調 update')
+    assert.equal(res.status, 200)
+    assert.equal(updateCalls.length, 1, '跨店都照標（權限已喺 requirePerm 過咗）')
   })
 
   it('200 正常標記（value=true）', async () => {
