@@ -313,9 +313,9 @@ export default function ProviderAvailabilityPage() {
               background: `repeating-linear-gradient(to bottom,
                 #d1d5db 0, #d1d5db 1px,
                 transparent 1px,
-                transparent calc(100% / ${n60} - 0.25px),
-                #e5e7eb calc(100% / ${n60} - 0.25px), #e5e7eb calc(100% / ${n60} + 0.25px),
-                transparent calc(100% / ${n60} + 0.25px),
+                transparent calc(100% / ${n60} / 2 - 0.25px),
+                #e5e7eb calc(100% / ${n60} / 2 - 0.25px), #e5e7eb calc(100% / ${n60} / 2 + 0.25px),
+                transparent calc(100% / ${n60} / 2 + 0.25px),
                 transparent calc(100% / ${n60}))` }} />
           )
         })()}
