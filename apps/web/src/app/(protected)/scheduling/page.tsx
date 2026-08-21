@@ -5877,20 +5877,21 @@ function getShiftCode(shift: Shift): string {
                                       <span style={{ color: '#b45309', fontSize: 9 }}>⚠️ 少過配額 {r.restQuota}</span>
                                     )}
                                   </td>
-                                  <td style={{ padding: '4px 5px', borderLeft: '2px solid #60a5fa', lineHeight: 1.6 }}>
-                                    <span style={{ color: '#94a3b8' }}>{r.syStart} ～ {r.syEnd}</span>
-                                    {'　'}<strong>{r.entitled} 天</strong>
-                                    {'　'}<span style={{ color: '#059669' }}>已放 {r.usedDays}</span>
-                                    {'　'}<span style={{ color: '#2563eb' }}>餘 {r.remainThisYear}</span>
-                                    {r.balanceRemaining !== r.remainThisYear && (
-                                      <span style={{ color: '#94a3b8' }}>（連結轉 {r.balanceRemaining}）</span>
-                                    )}
-                                    {r.underOneYear && <span style={{ color: '#b45309', fontSize: 8 }}>{'　'}⚠️ 未滿一年</span>}
-                                    {r.inProbation && <span style={{ color: '#b45309', fontSize: 8 }}>{'　'}⚠️ 試用期</span>}
-                                    <br />
-                                    <span style={{ color: '#94a3b8', fontSize: 8 }}>
-                                      放咗：{r.takenDates || '—'}
-                                    </span>
+                                  <td style={{ padding: '4px 5px', borderLeft: '2px solid #60a5fa' }}>
+                                    {/* ★ 2026-08-22 §6.4：兩行結構（舊三行）。
+                                         第 1 行：區間 ＋ 應得 ＋ 已放 ＋ 餘（實際）＋ 警示。
+                                         「（實際 X）」＝ LeaveBalance.remaining（累積制含結轉）—— 常顯，
+                                         取代舊條件式「連結轉」span。 */}
+                                    <div style={{ lineHeight: 1.5 }}>
+                                      <span style={{ color: '#94a3b8' }}>{r.syStart}～{r.syEnd}</span>
+                                      {'　'}<strong>{r.entitled} 天</strong>
+                                      {'　'}<span style={{ color: '#059669' }}>已放 {r.usedDays}</span>
+                                      {'　'}<span style={{ color: '#2563eb' }}>餘 {r.remainThisYear}（實際 {r.balanceRemaining}）</span>
+                                      {r.underOneYear && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}⚠️ 未滿一年</span>}
+                                      {r.inProbation && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}· 試用期</span>}
+                                    </div>
+                                    {/* 第 2 行：放咗邊日（fontSize 8→10、#94a3b8→#64748b —— 舊嘅「幾乎睇唔到」） */}
+                                    <div style={{ color: '#64748b', fontSize: 10, lineHeight: 1.5 }}>放咗：{r.takenDates || '—'}</div>
                                   </td>
                                 </tr>
                               ))}

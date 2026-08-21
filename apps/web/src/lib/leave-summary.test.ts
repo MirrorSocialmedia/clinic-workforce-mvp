@@ -6,6 +6,7 @@
  *   - #21 年假區間由 joinDate 推服務年度（唔係曆年）
  *   - #22 週年當日切換新年度
  *   - #23/#24/#25 應得 = PayRule table（法定底 / 自訂取大）
+ *   - §6.1（2026-08-22）應得 = 全年額表查詢、唔再 prorata：#35 #36
  *   - #27 連續兩日年假（兩張申請）合併顯示
  *   - #19/#20 R/PL/R+PL 相加、PL 係 R 子集
  *   - 鐵律 6：2 月 29 日入職非閏年週年 roll 去 3/1
@@ -58,33 +59,39 @@ describe('serviceYearRange（服務年度區間）', () => {
   })
 })
 
-describe('entitledForServiceYear（應得年假）', () => {
-  it('完整年度 → 表內原數（法定底，#24）', () => {
-    // 2024-09-01 入職，第 1 年度（index 0）喺 2025-09-01 完結 → 比例 1
-    assert.equal(entitledForServiceYear(D('2024-09-01'), 0, D('2026-08-21')), STATUTORY_LEAVE_TABLE[0])
+describe('entitledForServiceYear（應得年假）—— ★ 2026-08-22 §6.1：全年額表查詢（唔再 prorata）', () => {
+  it('index 0 → 法定第 1 格 7（法定底，#24）', () => {
+    assert.equal(entitledForServiceYear(0), STATUTORY_LEAVE_TABLE[0])
   })
 
-  it('進行中年度 → prorata 到 asOf', () => {
-    // 2025-09-01 入職，index 0，asOf 2026-08-21：354 日 / 365
-    const v = entitledForServiceYear(D('2025-09-01'), 0, D('2026-08-21'))
-    assert.ok(Math.abs(v - STATUTORY_LEAVE_TABLE[0] * 354 / 365) < 0.001, `got ${v}`)
+  it('#35 Ceci（2025-10-01 入職），index=0 → 應得 7 全額（唔係 6.x）', () => {
+    // §6.1 前用 leaveForServiceYear 會出 7 × 325/365 ≈ 6.23（實測「6.2 天」）
+    const asOf = D('2026-08-21')
+    const sy = serviceYearRange(D('2025-10-01'), asOf)
+    assert.equal(sy.index, 0)
+    assert.equal(entitledForServiceYear(sy.index), 7)
+  })
+
+  it('#36 payRule 自訂 table 第一格 6（低過法定）→ 仍然 7（resolveLeaveTable 取大）', () => {
+    const table = resolveLeaveTable([6, 7, 8, 9, 10, 11, 12, 13, 14])
+    assert.equal(table[0], 7) // resolveLeaveTable 內部 Math.max(自訂, 法定)
+    assert.equal(entitledForServiceYear(0, table), 7)
   })
 
   it('自訂 table 高過法定 → 用自訂（#23）', () => {
-    assert.equal(entitledForServiceYear(D('2024-09-01'), 0, D('2026-08-21'), [8, 9, 10]), 8)
+    assert.equal(entitledForServiceYear(0, [8, 9, 10]), 8)
   })
 
-  it('自訂低過法定 → 仍出法定（#25：resolveLeaveTable 取大）', () => {
-    const table = resolveLeaveTable([5, 6, 7, 8, 9, 10, 11, 12, 13])
-    assert.deepEqual(table, [...STATUTORY_LEAVE_TABLE])
-    assert.equal(entitledForServiceYear(D('2024-09-01'), 0, D('2026-08-21'), table), STATUTORY_LEAVE_TABLE[0])
+  it('9 年+ → 最後一格（index 夾死喺 8）', () => {
+    assert.equal(entitledForServiceYear(8), STATUTORY_LEAVE_TABLE[8])
+    assert.equal(entitledForServiceYear(12), STATUTORY_LEAVE_TABLE[8])
   })
 
-  it('2/29 入職 + 非閏年週年 → 唔係 NaN（fallback 生效）', () => {
-    // 2024-02-29 入職，index 2 → 年度 2026-03-01 ～ 2027-02-28；asOf 2026-08-21 = 173 日
-    const v = entitledForServiceYear(D('2024-02-29'), 2, D('2026-08-21'))
-    assert.ok(Number.isFinite(v), 'expected finite, got NaN')
-    assert.ok(Math.abs(v - STATUTORY_LEAVE_TABLE[2] * 173 / 365) < 0.001, `got ${v}`)
+  it('2/29 入職 → 無日期計算、唔係 NaN（舊 fallback 已移除）', () => {
+    // 2024-02-29 入職，2026-08-21 → index 2 → 全年額 8
+    const sy = serviceYearRange(D('2024-02-29'), D('2026-08-21'))
+    assert.equal(sy.index, 2)
+    assert.equal(entitledForServiceYear(sy.index), STATUTORY_LEAVE_TABLE[2])
   })
 })
 

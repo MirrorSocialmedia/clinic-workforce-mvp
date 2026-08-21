@@ -36,7 +36,7 @@ import {
 
 const PERIOD_MONTH_RE = /^\d{4}-\d{2}$/
 
-/** 一位小數 —— prorata 應得會係碎數（7 × 232/365），唔好出長 float 尾數 */
+/** 一位小數 —— usedDays / balanceRemaining 會係碎數（半日假等），唔好出長 float 尾數（應得喺 §6.1 後係整數） */
 const r1 = (n: number) => Math.round(n * 10) / 10
 
 function parseConfig(json: string | null | undefined): any {
@@ -133,7 +133,8 @@ export async function GET(req: NextRequest) {
     // ★ resolveLeaveTable 內建「自訂 vs 法定取大」—— 唔好自己再比較一次
     const table = resolveLeaveTable(cfg?.modifiers?.annual_leave?.table ?? null)
     const sy = ranges[i]
-    const entitled = entitledForServiceYear(emp.joinDate, sy.index, now, table)
+    // ★ 2026-08-22 §6.1：本年度應得「全額」（annualLeaveEntitlement 表查詢，唔再 prorata）
+    const entitled = entitledForServiceYear(sy.index, table)
 
     const taken = annual.filter(lr => lr.employeeId === emp.id && overlapsRange(lr, sy.start, sy.end))
     // ⚠️ 跨服務年度嘅假期：全部 days 落當前年度（罕見，第一版唔按日切分，已記低）

@@ -6,8 +6,8 @@
 //       時間基準：R/PL = 曆月、年假 = 服務年度（唔係曆年）
 // ============================================================
 
-import { toHKDateStr, addDaysStr, hkParts } from './hk-date'
-import { leaveForServiceYear, STATUTORY_LEAVE_TABLE } from './leave-calculation'
+import { toHKDateStr, addDaysStr } from './hk-date'
+import { annualLeaveEntitlement } from './leave-calculation'
 
 /** UTC Date → 'YYYY-MM-DD'（純日期欄位，唔經 Intl） */
 function toUTCDateStr(d: Date): string {
@@ -20,8 +20,8 @@ function toUTCDateStr(d: Date): string {
  * - 邊界 = 週年日；週年當日就切新年度（asOf === anniv → 新年度）。
  * - ★ 2 月 29 日入職：非閏年週年用 `Date.UTC(y, m-1, 29)` 自動 roll 去 3/1
  *   （跟 repo 一致嘅建構方式；唔好直接用字串 '02-29' —— 非閏年係 Invalid Date）。
- * - index = 第幾個服務年度（0-based）。★ 直接餵 leaveForServiceYear，
- *   唔好自己 serviceYears() 再算一次 —— 兩個結果喺週年當日會差一。
+ * - index = 第幾個服務年度（0-based）。★ 直接餵 entitledForServiceYear，
+ *   唔好自己 serviceYears() 再算一次。
  */
 export function serviceYearRange(joinDate: Date, asOf: Date): { start: string; end: string; index: number } {
   const j = toHKDateStr(joinDate)
@@ -40,26 +40,19 @@ export function serviceYearRange(joinDate: Date, asOf: Date): { start: string; e
 }
 
 /**
- * 某服務年度嘅「應得」年假（prorata 到 asOf）。
+ * 某服務年度嘅「應得」年假 —— 該年度**全額**（唔係「截至今日累積」）。
  *
- * 正常情況直接重用 leaveForServiceYear（法定/自訂階梯邏輯唔另寫）。
- * ★ Edge：2 月 29 日入職 + 非閏年週年 —— leaveForServiceYear 內部用
- *   `new Date("2026-02-29T00:00:00+08:00")` 字串建日期會得 Invalid Date → NaN。
- *   呢度 fallback 用 Date.UTC 建構（自動 roll 3/1），公式照原有 prorata 邏輯。
+ * ★ 2026-08-22 §6.1：月視圖總覽要「本年度應得全額」。
+ *   舊實現重用 leaveForServiceYear —— 佢係「截至今日累積」（× 已過日數/365），
+ *   為離職結算按比例而寫（年中會出 6.2 天，實測 bug）。
+ *   改用 annualLeaveEntitlement（純表查詢、無日期計算）→
+ *   2/29 入職 fallback 一併移除（唔再經字串建日期，NaN 問題唔存在）。
+ * ★ serviceYearIndex = serviceYearRange().index（0-based）。
+ *   ★ 注意：annualLeaveEntitlement 個參數係 1-based「第幾年」（內部 idx = 參數 − 1，
+ *   第 1 年傳 1），所以呢度傳 serviceYearIndex + 1 先取得到表入面 [index] 嗰格。
  */
-export function entitledForServiceYear(joinDate: Date, serviceYearIndex: number, asOf: Date, table?: number[]): number {
-  const v = leaveForServiceYear(joinDate, serviceYearIndex, asOf, table)
-  if (Number.isFinite(v)) return v
-
-  const t = table ?? STATUTORY_LEAVE_TABLE
-  const j = hkParts(joinDate)
-  const yearStart = new Date(Date.UTC(j.y + serviceYearIndex, j.m - 1, j.day))
-  const yearEnd = new Date(Date.UTC(j.y + serviceYearIndex + 1, j.m - 1, j.day))
-  const periodEnd = asOf < yearEnd ? asOf : yearEnd
-  if (periodEnd <= yearStart) return 0
-  const daysInThisYear = Math.floor((periodEnd.getTime() - yearStart.getTime()) / 86400000)
-  const ratio = Math.min(1, daysInThisYear / 365)
-  return t[Math.min(serviceYearIndex, t.length - 1)] * ratio
+export function entitledForServiceYear(serviceYearIndex: number, table?: number[]): number {
+  return annualLeaveEntitlement(serviceYearIndex + 1, table)
 }
 
 /**
