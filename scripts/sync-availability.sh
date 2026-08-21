@@ -22,6 +22,12 @@
 # ============================================================
 set -euo pipefail
 
+# ★ 2026-08-21：cron 嘅 PATH 只有 /usr/bin:/bin —— 呢部機 docker 喺 user-local bin
+export PATH="/home/clinicapp/bin:/usr/local/bin:/usr/bin:/bin"
+command -v docker >/dev/null || {
+  echo "$(date '+%F %T') ❌ 搵唔到 docker（PATH=$PATH）"; exit 1;
+}
+
 LOG=/tmp/availability-sync.log
 
 # ★ 防重疊：攞唔到 lock = 上次未完 → 記 log 後 exit 0（唔算錯誤）
