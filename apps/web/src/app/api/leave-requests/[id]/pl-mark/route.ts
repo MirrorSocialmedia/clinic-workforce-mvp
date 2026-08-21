@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { resolveCompanyScopeForScheduling, companyInScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -13,10 +14,13 @@ import { jsonNoStore } from '@/lib/api-response'
 //   ④ scheduling 權限
 //   ⑤ 唔寫 explicit audit —— LeaveRequest 已喺 AUDIT_ENTITIES，
 //      extension 會自動記一筆 append-only audit（MD §2.1 #4 建議 (a)：一致性優先）
+//   ⑥ 2026-08-21 拍板①補充：唔限【診所】但限【公司】（公司層 ownership guard，
+//      同時令 scripts/check-ownership.sh 過關）
 // ============================================================
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const permCheck = await requirePerm(req, 'scheduling')
   if (isAuthError(permCheck)) return permCheck.error
+  const { session } = permCheck
 
   const { id } = params
   const body = await req.json().catch(() => ({}))
@@ -29,6 +33,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       id: true,
       isEmployeeRequested: true,
       leaveType: { select: { systemKey: true } },
+      // ★ 下面公司層 ownership guard 用（employee 主屬店所屬公司）；
+      //   clinicId 留低 —— check-ownership.sh 嘅 guard 關鍵字 + 日誌除錯
+      clinicId: true,
+      employee: { select: { homeClinic: { select: { companyId: true } } } },
     },
   })
   if (!lr) return NextResponse.json({ error: '搵唔到假期記錄' }, { status: 404 })
@@ -38,9 +46,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'PL 只可以標喺休息日' }, { status: 400 })
   }
 
-  // ★ 2026-08-21 拍板①：PL 純標示、零下游影響 —— 唔限診所。
-  //   排班頁本身可以跨店排更，標記冇理由比排更更嚴。
-  //   權限仍然靠 requirePerm('scheduling')（上面已經行咗）。
+  // ★ 2026-08-21 拍板①：唔限【診所】（跨店照標 —— 排班頁本身可以跨店排更，
+  //   標記冇理由比排更更嚴），但仍然限【公司】。
+  //   純標示都唔應該跨公司；亦係 check-ownership.sh 要求嘅 ownership guard。
+  //   ★ 用 resolveCompanyScopeForScheduling（= resolveAccessibleCompanyIds +
+  //     MANAGER 無 UserClinic 時由 Employee.homeClinicId 回落自家公司），
+  //     否則無 UserClinic 嘅 MANAGER 會連自己公司都 403。
+  const companyIds = await resolveCompanyScopeForScheduling(session.userId, session.role)
+  const targetCompany = lr.employee?.homeClinic?.companyId
+  if (!targetCompany || !companyInScope(companyIds, targetCompany)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const updated = await prisma.leaveRequest.update({
     where: { id },

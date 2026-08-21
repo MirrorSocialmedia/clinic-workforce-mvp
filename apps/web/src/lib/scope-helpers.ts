@@ -90,6 +90,37 @@ export function companyInScope(companyIds: string[] | null, companyId: string): 
 }
 
 /**
+ * 排班相關公司級寫入嘅公司範圍（pl-mark / scheduling-memo 共用）。
+ *
+ * ★ = resolveAccessibleCompanyIds + MANAGER fallback：
+ *   resolveAccessibleCompanyIds 只睇 UserClinic，而 MANAGER 可能只係有
+ *   Employee.homeClinicId（無 UserClinic row）→ 空陣列 → companyInScope
+ *   永遠 false → 連自己公司都 403（症狀似「權限設定錯」，好難聯想到
+ *   UserClinic 缺失 —— 2026-08-21 拍板要加 fallback）。
+ *   有 UserClinic 嘅人 fallback 唔會觸發（length>0），無害。
+ *
+ * @returns null = 全部公司（OWNER）；string[] = 可寫公司（[] = fail-closed）
+ */
+export async function resolveCompanyScopeForScheduling(
+  userId: string,
+  role: string,
+): Promise<string[] | null> {
+  const companyIds = await resolveAccessibleCompanyIds(userId, role)
+  // ★ 必須 check !== null —— OWNER 回 null（全部公司），唔可以行 fallback
+  if (companyIds !== null && companyIds.length === 0) {
+    const homeClinicId = await getOwnHomeClinicId(userId)
+    if (homeClinicId) {
+      const c = await prisma.clinic.findUnique({
+        where: { id: homeClinicId },
+        select: { companyId: true },
+      })
+      if (c?.companyId) return [c.companyId]
+    }
+  }
+  return companyIds
+}
+
+/**
  * 保密員工可見範圍（畀列表過濾用，避免逐個 await）。
  *
  * @returns null = 全部可見（OWNER）；string[] = 只可見呢啲診所嘅保密員工

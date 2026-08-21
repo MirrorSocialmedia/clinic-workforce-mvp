@@ -7,6 +7,8 @@
  *   - 401 無 session（GET/PUT）
  *   - 403 冇 scheduling 權限（EMPLOYEE 預設無）
  *   - 403 跨公司（MANAGER 只可以寫自己被指派診所所屬公司）
+ *   - 200 無 UserClinic MANAGER fallback 自己公司（2026-08-21 補充：homeClinic → companyId）
+ *   - 403 無 UserClinic 又無 employee record（fail-closed）
  *   - 400 periodMonth 格式唔係 YYYY-MM / 缺 companyId
  *   - 500 字上限（600 字入 → 只存 500）
  *   - 空白 = deleteMany（唔留空字串 row）
@@ -35,13 +37,36 @@ const users: Record<string, Any> = {
     tokenVersion: 1, status: 'ACTIVE', ipAllowlist: null, permissionsJson: null,
     clinics: [{ clinicId: 'c1' }],
   },
+  // ★ MANAGER 無 UserClinic，但有 employee.homeClinicId=c1（fallback 場景）
+  'u-manager-nou': {
+    tokenVersion: 1, status: 'ACTIVE', ipAllowlist: null, permissionsJson: null,
+    clinics: [],
+  },
+  // ★ MANAGER 無 UserClinic 又無 employee record（fail-closed 場景）
+  'u-manager-nou-nemp': {
+    tokenVersion: 1, status: 'ACTIVE', ipAllowlist: null, permissionsJson: null,
+    clinics: [],
+  },
 }
 
-// ★ MANAGER 被指派嘅診所 → 全部屬 compA（跨公司 = compB 應該 403）
+// ★ MANAGER 被指派嘅診所 → 全部屬 compA（跨公司 = compB 應該 403）；
+//   無 UserClinic 嘅 MANAGER 回 []（fallback 場景）
 const clinicLinksByUser: Record<string, Any[]> = {
   'u-owner': [],
   'u-manager': [{ clinic: { companyId: 'compA' } }],
   'u-employee': [{ clinic: { companyId: 'compA' } }],
+  'u-manager-nou': [],
+  'u-manager-nou-nemp': [],
+}
+
+// ★ Employee.homeClinicId（fallback 用）＋ Clinic → companyId
+const employeesByUser: Record<string, Any> = {
+  'u-manager': { homeClinicId: 'c1' },
+  'u-manager-nou': { homeClinicId: 'c1' },
+  // u-manager-nou-nemp：無 employee record → null
+}
+const clinicsById: Record<string, Any> = {
+  c1: { companyId: 'compA' },
 }
 
 const memos: Record<string, Any> = {}
@@ -53,6 +78,12 @@ const fakes: Record<string, Any> = {
   user: { findUnique: async (args: Any) => users[args?.where?.id] ?? null },
   userClinic: {
     findMany: async (args: Any) => clinicLinksByUser[args?.where?.userId] ?? [],
+  },
+  employee: {
+    findUnique: async (args: Any) => employeesByUser[args?.where?.userId] ?? null,
+  },
+  clinic: {
+    findUnique: async (args: Any) => clinicsById[args?.where?.id] ?? null,
   },
   schedulingMemo: {
     findUnique: async (args: Any) => {
@@ -141,6 +172,35 @@ describe('scheduling-memo route（2026-08-21）', () => {
   it('GET 403 跨公司（MANAGER 讀 compB）', async () => {
     const res = await GET(makeReq(token('u-manager', 'MANAGER'), 'GET', undefined, 'companyId=compB&periodMonth=2026-08') as any)
     assert.equal(res.status, 403)
+  })
+
+  it('PUT 200 無 UserClinic MANAGER fallback 自己公司（2026-08-21：homeClinic → companyId）', async () => {
+    upsertCalls.length = 0
+    const res = await PUT(makeReq(token('u-manager-nou', 'MANAGER'), 'PUT', { companyId: 'compA', periodMonth: '2026-11', text: 'fallback 備註' }) as any)
+    assert.equal(res.status, 200)
+    assert.equal(upsertCalls.length, 1, 'fallback 之後照寫自己公司')
+  })
+
+  it('GET 200 無 UserClinic MANAGER fallback 讀自己公司', async () => {
+    memos[key('compA', '2026-11')] = { text: 'fallback 備註', updatedAt: new Date() }
+    const res = await GET(makeReq(token('u-manager-nou', 'MANAGER'), 'GET', undefined, 'companyId=compA&periodMonth=2026-11') as any)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.text, 'fallback 備註')
+  })
+
+  it('PUT 403 無 UserClinic MANAGER 跨公司（fallback 只救自己公司）', async () => {
+    upsertCalls.length = 0
+    const res = await PUT(makeReq(token('u-manager-nou', 'MANAGER'), 'PUT', { companyId: 'compB', periodMonth: '2026-11', text: 'x' }) as any)
+    assert.equal(res.status, 403)
+    assert.equal(upsertCalls.length, 0)
+  })
+
+  it('PUT 403 無 UserClinic 又無 employee record（fail-closed）', async () => {
+    upsertCalls.length = 0
+    const res = await PUT(makeReq(token('u-manager-nou-nemp', 'MANAGER'), 'PUT', { companyId: 'compA', periodMonth: '2026-11', text: 'x' }) as any)
+    assert.equal(res.status, 403)
+    assert.equal(upsertCalls.length, 0)
   })
 
   it('PUT 400 periodMonth 格式唔啱', async () => {

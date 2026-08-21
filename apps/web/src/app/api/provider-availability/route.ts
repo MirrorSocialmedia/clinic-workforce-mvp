@@ -107,6 +107,11 @@ export async function GET(req: NextRequest) {
   }
   const bookByProvider = new Map<string, typeof bookRows>()
   for (const b of bookRows) {
+    // ★ -6 = 取消（2026-08-20 實測）—— 唔應該畫成 busy 塊，「N 約」都唔計佢。
+    //   只改顯示層：DB（ProviderBooking）同 sync 繼續存原始 -6，
+    //   日後知多幾個 status 值就唔使重 sync。
+    //   喺呢一個位 filter → booked 陣列同 weekBookings 兩邊自然一致。
+    if (b.status === -6) continue
     const arr = bookByProvider.get(b.providerId) ?? []
     arr.push(b)
     bookByProvider.set(b.providerId, arr)

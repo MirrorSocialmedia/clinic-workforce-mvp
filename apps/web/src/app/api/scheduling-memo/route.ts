@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
-import { resolveAccessibleCompanyIds, companyInScope } from '@/lib/scope-helpers'
+import { resolveCompanyScopeForScheduling, companyInScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -15,6 +15,9 @@ import { jsonNoStore } from '@/lib/api-response'
 // 權限：scheduling（RBAC 雙表登記）。
 // 公司 scope：OWNER 全公司；其他角色只可以寫自己被指派診所所屬嘅公司
 //   （拍板：MANAGER 唔可以寫其他公司 → 403）
+// ★ 2026-08-21 補充：用 resolveCompanyScopeForScheduling（帶 MANAGER 無 UserClinic
+//   嘅 homeClinic fallback）—— 純 resolveAccessibleCompanyIds 只睇 UserClinic，
+//   無 UserClinic 嘅 MANAGER 會空陣列 → 連自己公司都 403。
 // ============================================================
 
 const MAX_LEN = 500
@@ -34,8 +37,8 @@ export async function GET(req: NextRequest) {
     return jsonNoStore({ text: '', updatedAt: null })
   }
 
-  // ★ 公司 scope —— MANAGER 唔可以讀其他公司
-  const scope = await resolveAccessibleCompanyIds(session.userId, session.role)
+  // ★ 公司 scope —— MANAGER 唔可以讀其他公司（帶 homeClinic fallback）
+  const scope = await resolveCompanyScopeForScheduling(session.userId, session.role)
   if (!companyInScope(scope, companyId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
@@ -64,8 +67,8 @@ export async function PUT(req: NextRequest) {
   // ★ 上限 —— 純文字欄唔可以無上限（防貼成篇嘢入去）
   const clean = String(text ?? '').slice(0, MAX_LEN)
 
-  // ★ 公司 scope —— MANAGER 唔可以寫其他公司（拍板 2026-08-21）
-  const scope = await resolveAccessibleCompanyIds(session.userId, session.role)
+  // ★ 公司 scope —— MANAGER 唔可以寫其他公司（拍板 2026-08-21；帶 homeClinic fallback）
+  const scope = await resolveCompanyScopeForScheduling(session.userId, session.role)
   if (!companyInScope(scope, companyId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
