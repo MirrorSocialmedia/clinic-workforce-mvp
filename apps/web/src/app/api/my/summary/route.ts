@@ -100,6 +100,8 @@ export async function GET(req: NextRequest) {
       makeupAbsentMinutes: tb.makeupAbsentMinutes,
       netOtThisMonth: tb.netOtThisMonth,
       timeAccountMinutes: tb.timeAccountMinutes,
+      // ★ 2026-08-21: 四格預測「上月 OT」—— balance 已含 carriedFrom，此欄純供展示拆解
+      carriedFrom: tb.carriedFrom,
       leaveRequests: leaveRequests.map(r => ({
         type: r.leaveType.name,
         days: r.days,

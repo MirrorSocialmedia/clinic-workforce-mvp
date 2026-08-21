@@ -6,7 +6,6 @@ import { Hand, Smartphone, Calendar, Palmtree, Bell } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { toHKDateStr, fmtTime, fmtDate, fmtDateTime } from '@/lib/hk-date'
-import { timebankLabel } from '@/lib/timebank-labels'
 
 /** Tremor-style Stat Card */
 function StatCard({ value, title, color = 'blue' }: { value: number; title: string; color?: 'blue' | 'emerald' | 'amber' | 'violet' | 'cyan' }) {
@@ -35,20 +34,23 @@ export default function MyDashboardPage() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState<any[]>([])
 
-  // ★ Time bank entries — lazy load on expand
+  // ★ 逐日考勤明細 —— lazy load on expand（拍板 2026-08-21：加返逐日、剷 TimeBankEntry 清單）
   const [tbOpen, setTbOpen] = useState(false)
-  const [tbEntries, setTbEntries] = useState<any[] | null>(null)
+  const [attDays, setAttDays] = useState<any[]>([])
+  const [attDaysLoaded, setAttDaysLoaded] = useState(false)
   const [rh, setRh] = useState<any>(null)
   const loadEntries = async () => {
-    if (tbEntries !== null) return
+    if (attDaysLoaded) return
     try {
       const r = await fetch('/api/my/timebank', { credentials: 'include' })
       if (r.ok) {
         const d = await r.json()
-        setTbEntries(d.entries ?? [])
+        setAttDays(d.attendanceDays ?? [])
       }
     } catch {
-      setTbEntries([])
+      setAttDays([])
+    } finally {
+      setAttDaysLoaded(true)
     }
   }
 
@@ -280,7 +282,7 @@ export default function MyDashboardPage() {
                             </div>
                           </div>
                           <div>
-                            <div className="text-[10px] text-muted-foreground">午休 OT</div>
+                            <div className="text-[10px] text-muted-foreground">午飯OT</div>
                             <div className="text-base font-semibold" style={{ color: '#059669' }}>+{c2}</div>
                           </div>
                           <div>
@@ -307,6 +309,40 @@ export default function MyDashboardPage() {
                         <div className="text-[9px] text-muted-foreground mt-1">
                           {c1} {c2 >= 0 ? '+' : '−'} {Math.abs(c2)} {c3 >= 0 ? '+' : '−'} {Math.abs(c3)} = {c4 === null ? '—' : c4}
                         </div>
+
+                        {/* ★ 本月預測（四格）—— 拍板 2026-08-21
+                            ⚠️★ 第四格 = timeAccountMinutes + rh.diffMinutes，絕對唔好用頭三格相加：
+                               timeAccountMinutes(=balance) 已含 carriedFrom+netOtThisMonth+convertedMinutes，
+                               相加會漏 convertedMinutes（RESTDAY_GRANT）→「加唔埋」bug 重現。
+                            ⚠️ 時薪（applicable=false）／未排更（unscheduled=true）→ 整組唔顯示，同應返卡一致 */}
+                        {rh?.applicable && !rh.unscheduled && (
+                          <div className="mt-2 pt-2" style={{ borderTop: '1.5px solid #6ee7b7', background: '#fffbeb',
+                                                              margin: '8px -10px 0', padding: '6px 10px' }}>
+                            <div className="text-[10px] font-semibold" style={{ color: '#92400e', marginBottom: 3 }}>
+                              本月預測
+                            </div>
+                            <div className="grid grid-cols-4 gap-1">
+                              {[
+                                { label: '上月 OT',  v: summary?.carriedFrom ?? 0,      hi: false },
+                                { label: '本月實收', v: summary?.netOtThisMonth ?? 0,   hi: false },
+                                { label: '預計 OT',  v: rh?.diffMinutes ?? 0,           hi: false },
+                                { label: '預計月底', v: (summary?.timeAccountMinutes ?? 0) + (rh?.diffMinutes ?? 0), hi: true },
+                              ].map(x => (
+                                <div key={x.label} className="text-center"
+                                  style={x.hi ? { background: '#fef3c7', borderRadius: 4, padding: '3px 0' } : undefined}>
+                                  <div className="text-[9px]" style={{ color: x.hi ? '#92400e' : '#9ca3af' }}>{x.label}</div>
+                                  <div className="text-[11px] font-semibold"
+                                    style={{ color: x.hi ? '#92400e' : x.v > 0 ? '#059669' : x.v < 0 ? '#dc2626' : '#6b7280' }}>
+                                    {x.v > 0 ? '+' : x.v < 0 ? '−' : ''}{Math.abs(x.v)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="text-[9px] mt-1" style={{ color: '#a16207' }}>
+                              ＝ 上面結餘 {summary?.timeAccountMinutes ?? 0} ＋ 預計 OT {rh?.diffMinutes ?? 0}
+                            </div>
+                          </div>
+                        )}
                       </>
                     )
                   })()}
@@ -321,30 +357,38 @@ export default function MyDashboardPage() {
 
                   {tbOpen && (
                     <div className="mt-2 border-t pt-2">
-                      {tbEntries === null ? (
+                      {!attDaysLoaded ? (
                         <div className="text-xs text-muted-foreground py-2 text-center">載入中…</div>
                       ) : (
                         <>
-                          {/* ★ 2026-08-19: 時間加減記錄（TimeBankEntry）— 範圍：本月及上月 */}
-                          <div className="text-[10px] text-muted-foreground mb-1 font-semibold">
-                            時間加減記錄 · 本月及上月
+                          {/* ── 本月考勤（未入帳）*/}
+                          <div className="text-[10px] text-muted-foreground font-semibold mt-2 mb-1">
+                            ── 本月考勤（未入帳）
                           </div>
-                          {tbEntries.length === 0 ? (
-                            <div className="text-xs text-muted-foreground py-1 text-center">近兩月冇記錄</div>
+                          <div className="grid grid-cols-2 gap-2 mb-2">
+                            <div className="text-center">
+                              <div className="text-base font-semibold text-emerald-600">{summary?.otMinutes ?? 0}</div>
+                              <div className="text-[10px] text-muted-foreground">OT（分鐘）</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-base font-semibold">{summary?.netLateMinutes ?? 0}</div>
+                              <div className="text-[10px] text-muted-foreground">遲到（分鐘）</div>
+                            </div>
+                          </div>
+                          {attDays.length === 0 ? (
+                            <div className="text-xs text-muted-foreground py-2 text-center">本月未有考勤記錄</div>
                           ) : (
-                            <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-                              {tbEntries.map(e => (
-                                <div key={e.id} title={e.note || undefined}
-                                  className="flex justify-between items-center py-1.5 border-b text-xs last:border-0">
-                                  <span className="truncate">
-                                    <span className="text-muted-foreground mr-1.5">{e.date.slice(5)}</span>
-                                    {timebankLabel(e.type, e.targetType)}
-                                  </span>
-                                  <span style={{
-                                    fontVariantNumeric: 'tabular-nums',
-                                    color: e.minutes > 0 ? '#059669' : e.minutes < 0 ? '#dc2626' : '#9ca3af',
-                                  }}>
-                                    {e.minutes > 0 ? '+' : e.minutes < 0 ? '−' : ''}{Math.abs(e.minutes)}
+                            <div style={{ maxHeight: 190, overflowY: 'auto' }}>
+                              {attDays.map((d: any) => (
+                                <div key={d.date}
+                                  className="flex justify-between items-start py-1.5 border-b text-xs last:border-0">
+                                  <span className="text-muted-foreground">{String(d.date).slice(5)}</span>
+                                  <span className="flex flex-wrap gap-x-2 justify-end">
+                                    {d.clockOutOt   ? <span style={{ color: '#059669' }}>OT {d.clockOutOt} 分</span> : null}
+                                    {d.lunchOt      ? <span style={{ color: '#059669' }}>午飯OT {d.lunchOt} 分</span> : null}
+                                    {d.lateMinutes  ? <span style={{ color: '#d97706' }}>遲到 {d.lateMinutes} 分</span> : null}
+                                    {d.lunchLate    ? <span style={{ color: '#d97706' }}>午飯超時 {d.lunchLate} 分</span> : null}
+                                    {d.earlyMinutes ? <span style={{ color: '#dc2626' }}>早退 {d.earlyMinutes} 分</span> : null}
                                   </span>
                                 </div>
                               ))}
@@ -356,7 +400,8 @@ export default function MyDashboardPage() {
                   )}
 
                   <div className="text-[10px] text-muted-foreground mt-1">
-                    上面嘅結餘 = 累積結轉 ＋ 本月考勤 ＋ 已入帳調整
+                    上面嘅結餘 = 累積結轉 ＋ 本月考勤 ＋ 調整項（初始／發休息日）
+                    <br />· 逐日「遲到」係原始值，未扣補鐘
                   </div>
                 </div>
               )
@@ -377,17 +422,17 @@ export default function MyDashboardPage() {
             <div className="text-xs text-muted-foreground mb-2">本月工時</div>
             <div className="flex justify-between text-sm py-1">
               <span className="text-muted-foreground">應返</span>
-              <span>{(rh.expectedMinutes / 60).toFixed(1)} h</span>
+              <span>{rh.expectedMinutes} 分</span>
             </div>
             <div className="flex justify-between text-sm py-1">
               <span className="text-muted-foreground">已編班</span>
-              <span>{(rh.rosterMinutes / 60).toFixed(1)} h</span>
+              <span>{rh.rosterMinutes} 分</span>
             </div>
             <div className="flex justify-between text-sm pt-2 border-t font-medium">
               <span>{rh.settled ? '編更差額（已入帳）' : '預計 OT'}</span>
               <span style={{ color: rh.diffMinutes > 0 ? '#059669' : rh.diffMinutes < 0 ? '#dc2626' : '#6b7280' }}>
                 {rh.diffMinutes > 0 ? '+' : rh.diffMinutes < 0 ? '−' : ''}
-                {(Math.abs(rh.diffMinutes) / 60).toFixed(1)} h
+                {Math.abs(rh.diffMinutes)} 分
               </span>
             </div>
             {rh.settled && (
