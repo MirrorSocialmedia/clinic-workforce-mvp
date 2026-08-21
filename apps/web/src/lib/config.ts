@@ -169,6 +169,8 @@ export const CONFIG = {
     'PUT /api/leave-requests/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/leave-requests/:id': ['OWNER', 'MANAGER'],
     'PATCH /api/leave-requests/:id': ['OWNER', 'MANAGER'],
+    // ★ PL 標記（2026-08-21）：員工自請休息日，純顯示 —— 另有 RBAC_PERM_OVERRIDES 開 scheduling 權限
+    'PATCH /api/leave-requests/:id/pl-mark': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Leave balance routes
     'GET /api/leave-balance': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
@@ -409,6 +411,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'PUT /api/leave-requests/:id': ['scheduling', 'leave_approve'],
   'DELETE /api/leave-requests/:id': ['scheduling', 'leave_approve'],
   'PATCH /api/leave-requests/:id': ['scheduling', 'leave_approve'],
+  // ★ PL 標記：排班權限（拍板 2026-08-21 ④）
+  'PATCH /api/leave-requests/:id/pl-mark': ['scheduling'],
 
   // —— 假期額度管理：有 leave_approve 權限可以更新/初始化假期餘額 ——
   'PATCH /api/leave-balance': ['leave_approve'],

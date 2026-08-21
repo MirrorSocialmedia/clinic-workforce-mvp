@@ -63,7 +63,9 @@ export async function GET(req: NextRequest) {
   const requests = await prisma.leaveRequest.findMany({
     where,
     include: {
-      leaveType: { select: { id: true, name: true, isPaid: true, color: true } },
+      // ★ PL 標記（2026-08-21）：isEmployeeRequested 係 scalar，include 自動帶上；
+      //   leaveType 補 systemKey —— 排班頁 PL/病假/額度判斷全部依賴佢（MD §4 ⚠️★★★）
+      leaveType: { select: { id: true, name: true, isPaid: true, color: true, systemKey: true } },
       employee: {
         include: {
           user: { select: { id: true, name: true } },

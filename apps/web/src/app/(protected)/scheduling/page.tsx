@@ -223,7 +223,7 @@ const ScheduleRow = React.memo(function ScheduleRow({
   variant, selectedEmployeeId, scopeClinicIds, scopeCompanyId,
   clinicShortById, clinicCompanyById, labelParts, templateById,
   canManage, onCellClick, onCellDblClick, draggingTemplate, draggingLeave, draggingTransfer,
-  justDroppedRef, onDrop, homeLabel, selectedClinicId, forExport,
+  justDroppedRef, onDrop, homeLabel, selectedClinicId, forExport, plMode,
 }: {
   emp: any
   days: string[]
@@ -240,6 +240,8 @@ const ScheduleRow = React.memo(function ScheduleRow({
   labelParts: string[]
   templateById: Map<string, any>
   canManage: boolean
+  // ★ PL 標記模式：開咗之後撳休息日格會 forward click（即使格有假期）
+  plMode: boolean
   onCellClick?: (empId: string, dateStr: string, rect: DOMRect) => void
   onCellDblClick?: (empId: string, dateStr: string) => void
   draggingTemplate: React.MutableRefObject<{ templateId: string; employeeId: string } | null>
@@ -297,13 +299,17 @@ const ScheduleRow = React.memo(function ScheduleRow({
         const hasShift = ss.length > 0
         const hasLeave = ls.length > 0
         const cellIsEmpty = !hasShift && !hasLeave
+        // ★ PL 模式：休息日格要 pointer cursor + forward click（借調行唔俾標 —— API scope 會 403）
+        const hasRestDay = ls.some((lr: any) => lr.leaveType?.systemKey === 'REST_DAY')
+        const plTargetable = plMode && hasRestDay && !isBorrowed
+        const cursorForCell = plTargetable ? 'pointer' : (canManage && !hasShift && !hasLeave ? 'pointer' : 'default')
 
         let style: React.CSSProperties = { ...tdBaseStyle }
 
         if (isBorrowed) {
-          style.cursor = canManage && !hasShift && !hasLeave ? 'pointer' : 'default'
+          style.cursor = cursorForCell
         } else {
-          style.cursor = canManage && !hasShift && !hasLeave ? 'pointer' : 'default'
+          style.cursor = cursorForCell
           style.background = (rowIsTransfer && cellIsEmpty)
             ? '#6b7280'
             : (hasShift ? '' : (hasLeave ? '#4a4a4a10' : 'transparent'))
@@ -334,12 +340,17 @@ const ScheduleRow = React.memo(function ScheduleRow({
           }
         }
 
-        const shouldClick = canManage && !hasShift && !hasLeave && !justDroppedRef.current
+        // ★ PL 模式（2026-08-21）：格有假期（REST_DAY）都要 forward click ——
+        //   handler 只認休息日，其餘靜靜 return；非 PL 模式維持原行為（只空白格 respond）
+        const shouldClick = canManage && !justDroppedRef.current && (
+          plMode ? plTargetable : (!hasShift && !hasLeave)
+        )
         if (shouldClick) {
           props.onClick = (e: React.MouseEvent) => onCellClick?.(emp.id, d, (e.currentTarget as HTMLElement).getBoundingClientRect())
         }
         // ★ 雙擊刪更要喺「有更次」嘅格先有用 —— 唔可以綁喺 shouldClick 入面
-        if (canManage) {
+        // ★ PL 模式下停用雙擊刪除 —— 標記流程中防止誤刪假期
+        if (canManage && !plMode) {
           props.onDoubleClick = () => onCellDblClick?.(emp.id, d)
         }
 
@@ -368,13 +379,18 @@ const ScheduleRow = React.memo(function ScheduleRow({
           ls.filter(lr => lr.leaveType?.systemKey !== 'SICK').forEach((lr, li) => {
             const lc = lr.leaveType?.color ?? '#9ca3af'
             const isQuota = QUOTA_LEAVE_KEYS.includes(lr.leaveType?.systemKey ?? '')
+            // ★ PL 標記（2026-08-21）：三重訊號（底色+邊框+「· PL」文字），文字係唯一可靠嗰個
+            const isPl = lr.leaveType?.systemKey === 'REST_DAY' && lr.isEmployeeRequested === true
             parts.push(<div key={'l' + li} style={{
               display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
-              fontSize: 10, background: lc + '26', color: '#1f2937',
-              borderLeft: `2px solid ${lc}`, whiteSpace: 'nowrap',
+              fontSize: 10, whiteSpace: 'nowrap',
+              background: isPl ? '#fef3c7' : lc + '26',
+              color: isPl ? '#92400e' : '#1f2937',
               opacity: (dimmed && !isQuota) ? 0.45 : 1,
-              ...(isQuota && conflict ? { border: '1px solid #dc2626' } : {}),
-            }}>{lr.leaveType?.name}</div>)
+              ...(isPl
+                ? { border: '1px solid #f59e0b', fontWeight: 600 }
+                : { borderLeft: `2px solid ${lc}`, ...(isQuota && conflict ? { border: '1px solid #dc2626' } : {}) }),
+            }}>{lr.leaveType?.name}{isPl ? ' · PL' : ''}</div>)
           })
           sickLeave && parts.push(<div key={'sick'} style={{
             display: 'inline-block', padding: '2px 5px', borderRadius: 3, margin: 1,
@@ -549,6 +565,8 @@ export default function SchedulingPage() {
   }, [])
   const [leaveTypes, setLeaveTypes] = useState<any[]>([])
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
+  // ★ PL 標記模式（2026-08-21 拍板①）—— 開咗之後撳休息日格 toggle PL 標記
+  const [plMode, setPlMode] = useState(false)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('')
   const [empScope, setEmpScope] = useState<'clinic' | 'all'>('clinic')
 
@@ -1373,6 +1391,7 @@ function getShiftCode(shift: Shift): string {
           bg: sickLeave.leaveType?.color ?? '#fca5a5',
           detail: `病假（原排 ${parts.join(' / ')}）`,
           isSick: true,
+          pl: false,
           conflict,
         }
       }
@@ -1381,6 +1400,7 @@ function getShiftCode(shift: Shift): string {
         label: parts.length > 1 ? `${parts[0]}+${parts.length - 1}` : parts[0],
         bg: shiftColor(s0),
         detail: parts.join(' / '),
+        pl: false,
         conflict,
       }
     }
@@ -1389,14 +1409,17 @@ function getShiftCode(shift: Shift): string {
       // ★ 用 DB 的 LeaveType.name / color，唔好用寫死的 enum map
       const name = lr.leaveType?.name ?? '假'
       const label = name.length > 2 ? name.slice(0, 2) : name
+      // ★ PL 標記（2026-08-21）：三重訊號（底色+邊框+「· PL」文字）
+      const isPl = lr.leaveType?.systemKey === 'REST_DAY' && lr.isEmployeeRequested === true
       return {
-        label,
-        bg: lr.leaveType?.color ?? '#fef3c7',
-        detail: name,
+        label: isPl ? `${label}·PL` : label,
+        bg: isPl ? '#fef3c7' : (lr.leaveType?.color ?? '#fef3c7'),
+        detail: isPl ? `${name} · PL` : name,
+        pl: isPl,
         conflict,
       }
     }
-    return { label: '—', bg: 'transparent', detail: '', conflict }
+    return { label: '—', bg: 'transparent', detail: '', pl: false, conflict }
   }, [weekShiftsByKey, weekLeavesByKey, shiftColor])
 
   // Mobile week label: "M/D–M/D"
@@ -2543,11 +2566,52 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // Overview cell click / double-click handlers
   // ============================================================
+  // ============================================================
+  // ★ PL 標記（2026-08-21）—— optimistic + 失敗 revert + 警告
+  //   星期（leaveRequests）同月份（monthLeaveRequests）兩個 array 都要 patch：
+  //   邊個視圖嘅格就喺邊個 array；id 相同，map 唔中嘅 array 係 no-op。
+  // ============================================================
+  const togglePl = useCallback(async (leaveId: string, value: boolean) => {
+    const patch = (prev: any[]) => prev.map((lr: any) =>
+      lr.id === leaveId ? { ...lr, isEmployeeRequested: value } : lr)
+    setLeaveRequests(patch)
+    setMonthLeaveRequests(patch)
+    try {
+      const r = await fetch(`/api/leave-requests/${leaveId}/pl-mark`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      })
+      if (!r.ok) throw new Error(String(r.status))
+    } catch {
+      const revert = (prev: any[]) => prev.map((lr: any) =>
+        lr.id === leaveId ? { ...lr, isEmployeeRequested: !value } : lr)
+      setLeaveRequests(revert)
+      setMonthLeaveRequests(revert)
+      setValidationIssues(prev => [...prev,
+        { type: 'warning', rule: 'leave', message: '⚠️ PL 標記失敗，已還原' }])
+    }
+  }, [])
+
   const handleOverviewCellClick = useCallback(async (
     empId: string,
     dateStr: string,
     anchor?: DOMRect,
   ) => {
+    // ★ PL 模式：只認休息日，其餘一律唔理（拍板②）
+    //   撳中休息日 → 即刻 toggle PL 標記（無 250ms debounce，可以連續標多格）；
+    //   其餘（更次／其他假期／空白）→ 靜靜 return，唔彈 alert，唔開 cellMenu。
+    if (plMode) {
+      if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
+      const activeLeaves = viewMode === 'month' ? monthLeaveRequests : leaveRequests
+      const rest = activeLeaves.find(lr =>
+        lr.employeeId === empId &&
+        lr.leaveType?.systemKey === 'REST_DAY' &&
+        leaveCoversDate(lr, dateStr))
+      if (!rest) return
+      await togglePl(rest.id, !rest.isEmployeeRequested)
+      return
+    }
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
     clickTimerRef.current = setTimeout(async () => {
       if (!canManage) return
@@ -2592,10 +2656,12 @@ function getShiftCode(shift: Shift): string {
         y: anchor?.bottom ?? 0,
       })
     }, 250)
-  }, [canManage, selectedClinicId, leaveRequests, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
+  }, [plMode, viewMode, monthLeaveRequests, leaveRequests, togglePl, canManage, selectedClinicId, createLeaveOnCell, createShift, setValidationIssues, refreshAll, setSelectedEmployeeId, setCellMenu, tcReady, tcTemplateId, tcPrimaryClinicId, templateById, setSecondaryClinicId])
 
   const handleOverviewCellDblClick = useCallback(async (empId: string, dateStr: string) => {
     if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null }
+    // ★ PL 模式下停用雙擊刪除 —— 標記流程中防止誤刪假期
+    if (plMode) return
     if (!canManage) return
 
     // B-04④: 雙擊刪假期 — 對齊更次做法，同日有多筆就 prompt 問刪邊筆
@@ -2656,7 +2722,7 @@ function getShiftCode(shift: Shift): string {
       await deleteShift(shiftTarget.id)
       await refreshAll()
     }
-  }, [canManage, leaveRequests, shifts, employees, deleteLeave, deleteShift, refreshAll, clinicById])
+  }, [canManage, plMode, leaveRequests, shifts, employees, deleteLeave, deleteShift, refreshAll, clinicById])
 
   // ============================================================
   // 📷 Screenshot capture helpers
@@ -2730,13 +2796,18 @@ function getShiftCode(shift: Shift): string {
                 {/* ★ 非病假嘅假期正常顯示；病假同更次疊層時唔再單獨顯示 */}
                 {ls.filter(lr => lr.leaveType?.systemKey !== 'SICK').map((lr, li) => {
                   const lc = lr.leaveType?.color ?? '#9ca3af'
+                  const isPl = lr.leaveType?.systemKey === 'REST_DAY' && lr.isEmployeeRequested === true
                   return (
                     <div key={'l' + li} style={{
                       display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
-                      fontSize: 14, background: lc + '26', color: '#1f2937',
-                      borderLeft: `3px solid ${lc}`, whiteSpace: 'nowrap',
+                      fontSize: 14, whiteSpace: 'nowrap',
+                      background: isPl ? '#fef3c7' : lc + '26',
+                      color: isPl ? '#92400e' : '#1f2937',
+                      ...(isPl
+                        ? { border: '1px solid #f59e0b', fontWeight: 600 }
+                        : { borderLeft: `3px solid ${lc}` }),
                     }}>
-                      {lr.leaveType?.name}
+                      {lr.leaveType?.name}{isPl ? ' · PL' : ''}
                     </div>
                   )
                 })}
@@ -2844,13 +2915,18 @@ function getShiftCode(shift: Shift): string {
     })
     ls.forEach((lr, li) => {
       const lc = lr.leaveType?.color ?? '#9ca3af'
+      const isPl = lr.leaveType?.systemKey === 'REST_DAY' && lr.isEmployeeRequested === true
       parts.push(
         <div key={'l' + li} style={{
           display: 'inline-block', padding: '3px 8px', borderRadius: 4, margin: 1,
-          fontSize: 14, background: lc + '26', color: '#1f2937',
-          borderLeft: `3px solid ${lc}`, whiteSpace: 'nowrap',
+          fontSize: 14, whiteSpace: 'nowrap',
+          background: isPl ? '#fef3c7' : lc + '26',
+          color: isPl ? '#92400e' : '#1f2937',
+          ...(isPl
+            ? { border: '1px solid #f59e0b', fontWeight: 600 }
+            : { borderLeft: `3px solid ${lc}` }),
         }}>
-          {lr.leaveType?.name}
+          {lr.leaveType?.name}{isPl ? ' · PL' : ''}
         </div>
       )
     })
@@ -3065,22 +3141,24 @@ function getShiftCode(shift: Shift): string {
                         {/* ★ 非病假假期正常顯示；病假同更次疊層時唔再單獨顯示 */}
                         {empLeavesOnDay.filter(lr => lr.leaveType?.systemKey !== 'SICK' || empShiftsOnDay.length === 0).map((lr, li) => {
                           const leaveColor = lr.leaveType?.color ?? '#9ca3af'
-                          const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
-                          const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
+                          const isPl = lr.leaveType?.systemKey === 'REST_DAY' && lr.isEmployeeRequested === true
+                          const leaveLabel = isPl
+                            ? `${lr.leaveType?.name} · PL·${lr.employee?.user?.name?.slice(0, 2)}`
+                            : `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
+                          const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}${isPl ? '（PL 標記）' : ''}`
                           return (
                             <div key={'l' + li} className="ov-capsule" title={leaveTitle}
-                              style={{
-                                background: (leaveColor || '#9ca3af') + '26',
-                                color: '#1f2937',
-                                borderLeft: `3px solid ${leaveColor}`,
-                                touchAction: 'none',
-                                userSelect: 'none',
-                              }}
-                              onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
+                            style={{
+                              background: isPl ? '#fef3c7' : (leaveColor || '#9ca3af') + '26',
+                              color: isPl ? '#92400e' : '#1f2937',
+                              ...(isPl ? { border: '1px solid #f59e0b', fontWeight: 600 } : { borderLeft: `3px solid ${leaveColor}` }),
+                              touchAction: 'none', userSelect: 'none',
+                            }}
+                            onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
                             >
-                              {leaveLabel}
+                            {leaveLabel}
                             </div>
-                          )
+                            )
                         })}
                         {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
                           <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
@@ -3223,22 +3301,24 @@ function getShiftCode(shift: Shift): string {
                         })}
                         {empLeavesOnDay.filter(lr => lr.leaveType?.systemKey !== 'SICK' || empShiftsOnDay.length === 0).map((lr, li) => {
                           const leaveColor = lr.leaveType?.color ?? '#9ca3af'
-                          const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
-                          const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
+                          const isPl = lr.leaveType?.systemKey === 'REST_DAY' && lr.isEmployeeRequested === true
+                          const leaveLabel = isPl
+                            ? `${lr.leaveType?.name} · PL·${lr.employee?.user?.name?.slice(0, 2)}`
+                            : `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
+                          const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}${isPl ? '（PL 標記）' : ''}`
                           return (
                             <div key={'l' + li} className="ov-capsule" title={leaveTitle}
-                              style={{
-                                background: (leaveColor || '#9ca3af') + '26',
-                                color: '#1f2937',
-                                borderLeft: `3px solid ${leaveColor}`,
-                                touchAction: 'none',
-                                userSelect: 'none',
-                              }}
-                              onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
+                            style={{
+                              background: isPl ? '#fef3c7' : (leaveColor || '#9ca3af') + '26',
+                              color: isPl ? '#92400e' : '#1f2937',
+                              ...(isPl ? { border: '1px solid #f59e0b', fontWeight: 600 } : { borderLeft: `3px solid ${leaveColor}` }),
+                              touchAction: 'none', userSelect: 'none',
+                            }}
+                            onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
                             >
-                              {leaveLabel}
+                            {leaveLabel}
                             </div>
-                          )
+                            )
                         })}
                         {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
                           <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
@@ -3379,21 +3459,24 @@ function getShiftCode(shift: Shift): string {
                             })}
                             {empLeavesOnDay.filter(lr => lr.leaveType?.systemKey !== 'SICK' || empShiftsOnDay.length === 0).map((lr, li) => {
                               const leaveColor = lr.leaveType?.color ?? '#9ca3af'
-                              const leaveLabel = `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
-                              const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}`
+                              const isPl = lr.leaveType?.systemKey === 'REST_DAY' && lr.isEmployeeRequested === true
+                              const leaveLabel = isPl
+                                ? `${lr.leaveType?.name} · PL·${lr.employee?.user?.name?.slice(0, 2)}`
+                                : `${lr.leaveType?.name}·${lr.employee?.user?.name?.slice(0, 2)}`
+                              const leaveTitle = `${lr.employee?.user?.name} ${lr.leaveType?.name}${isPl ? '（PL 標記）' : ''}`
                               return (
                                 <div key={'l' + li} className="ov-capsule" title={leaveTitle}
-                                  style={{
-                                    background: (leaveColor || '#9ca3af') + '26',
-                                    color: '#1f2937',
-                                    borderLeft: `3px solid ${leaveColor}`,
-                                    touchAction: 'none', userSelect: 'none',
-                                  }}
-                                  onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
+                                style={{
+                                  background: isPl ? '#fef3c7' : (leaveColor || '#9ca3af') + '26',
+                                  color: isPl ? '#92400e' : '#1f2937',
+                                  ...(isPl ? { border: '1px solid #f59e0b', fontWeight: 600 } : { borderLeft: `3px solid ${leaveColor}` }),
+                                  touchAction: 'none', userSelect: 'none',
+                                }}
+                                onPointerDown={(e) => leaveDragOutStart(e, lr.id, leaveLabel, () => Promise.resolve())}
                                 >
-                                  {leaveLabel}
+                                {leaveLabel}
                                 </div>
-                              )
+                                )
                             })}
                             {(!hasShift || draggingLeave.current?.systemKey === 'SICK') && !hasLeave && (
                               <span style={{ fontSize: 10, color: 'var(--text-muted, #b0b0b0)', fontWeight: 400 }}>—</span>
@@ -4566,6 +4649,7 @@ function getShiftCode(shift: Shift): string {
                             ? 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)'
                             : undefined,
                           fontSize: 9,
+                          ...(cell.pl ? { border: '1px solid #f59e0b', color: '#92400e', fontWeight: 600 } : {}),
                           ...(cell.conflict ? { outline: '2px solid #dc2626', outlineOffset: '-2px' } : {}),
                         }} title={cell.conflict ? `⚠️ 病假同${cell.conflict.quota.leaveType?.name}重疊 —— 請按實際情況人手處理` : undefined}>{cell.label}</td>
                       })}
@@ -4621,6 +4705,7 @@ function getShiftCode(shift: Shift): string {
                             ? 'repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px)'
                             : undefined,
                           fontSize: 12,
+                          ...(cell.pl ? { border: '1px solid #f59e0b', color: '#92400e', fontWeight: 600 } : {}),
                           ...(cell.conflict ? { outline: '2px solid #dc2626', outlineOffset: '-2px' } : {}),
                         }} title={cell.conflict ? `⚠️ 病假同${cell.conflict.quota.leaveType?.name}重疊 —— 請按實際情況人手處理` : undefined}>{cell.detail ?? cell.label}</td>
                     })}
@@ -5215,6 +5300,30 @@ function getShiftCode(shift: Shift): string {
               })}
               </>
             )}
+
+            {/* ★ PL 標記掣（2026-08-21 拍板①）—— 撳一下開；只可以標休息日（server 都會擋） */}
+            {canManage && (
+              <div style={{ borderTop: '1px solid #555', marginTop: 6, paddingTop: 6 }}>
+                <div style={{ fontSize: 9, color: '#888', marginBottom: 3, textAlign: 'center' }}>標記</div>
+                <div
+                  onClick={() => setPlMode(v => !v)}
+                  title={plMode ? '撳一下關閉 PL 模式' : '開啟後撳休息日格即標記'}
+                  style={{
+                    padding: '6px 4px', margin: '3px 0', borderRadius: 6,
+                    background: plMode ? '#f59e0b' : '#4a4a4a',
+                    color: '#fff', fontSize: 12, fontWeight: 700, textAlign: 'center',
+                    cursor: 'pointer', userSelect: 'none',
+                    outline: plMode ? '2px solid #fbbf24' : 'none',
+                    outlineOffset: plMode ? '2px' : undefined,
+                  }}
+                >PL</div>
+                {plMode && (
+                  <div style={{ fontSize: 8, color: '#fbbf24', marginTop: 3, textAlign: 'center', lineHeight: 1.4 }}>
+                    撳休息日格<br />開／關標記
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Week navigation buttons */}
@@ -5495,7 +5604,7 @@ function getShiftCode(shift: Shift): string {
                         clinicShortById={clinicShortById} clinicCompanyById={clinicCompanyById}
                         labelParts={labelParts} templateById={templateById}
                         canManage={canManage} onCellClick={handleOverviewCellClick}
-                        onCellDblClick={handleOverviewCellDblClick}
+                        onCellDblClick={handleOverviewCellDblClick} plMode={plMode}
                         draggingTemplate={draggingTemplate} draggingLeave={draggingLeave} draggingTransfer={draggingTransfer}
                         justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
                       />
@@ -5522,7 +5631,7 @@ function getShiftCode(shift: Shift): string {
                         clinicShortById={clinicShortById} clinicCompanyById={clinicCompanyById}
                         labelParts={labelParts} templateById={templateById}
                         canManage={canManage} onCellClick={handleOverviewCellClick}
-                        onCellDblClick={handleOverviewCellDblClick}
+                        onCellDblClick={handleOverviewCellDblClick} plMode={plMode}
                         draggingTemplate={draggingTemplate} draggingLeave={draggingLeave} draggingTransfer={draggingTransfer}
                         justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
                       />
@@ -5552,7 +5661,7 @@ function getShiftCode(shift: Shift): string {
                           clinicShortById={clinicShortById} clinicCompanyById={clinicCompanyById}
                           labelParts={labelParts} templateById={templateById}
                           canManage={canManage} onCellClick={handleOverviewCellClick}
-                          onCellDblClick={handleOverviewCellDblClick}
+                          onCellDblClick={handleOverviewCellDblClick} plMode={plMode}
                           draggingTemplate={draggingTemplate} draggingLeave={draggingLeave} draggingTransfer={draggingTransfer}
                           justDroppedRef={justDroppedRef} onDrop={handleOverviewDrop}
                         />
