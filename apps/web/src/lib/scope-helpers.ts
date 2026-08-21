@@ -58,6 +58,38 @@ export async function resolveClinicScope(
 }
 
 /**
+ * 公司範圍 —— 用戶管嘅 companyId 集合。
+ *
+ * ★ 2026-08-21: SchedulingMemo 係公司級備註（拍板：MANAGER 唔可以寫其他公司）。
+ *   現有 resolveClinicScope 回嘅係【診所】ID，唔可以直接用於公司級寫入檢查，
+ *   所以另設呢個 company 級 helper：
+ * · OWNER → null（全部公司）
+ * · 其他角色 → 佢被指派診所（UserClinic）所屬 companyId 嘅並集；
+ *   冇任何診所 / 診所冇關公司 → 空集（fail-closed）。
+ */
+export async function resolveAccessibleCompanyIds(
+  userId: string,
+  role: string,
+): Promise<string[] | null> {
+  // ROLE-OK: OWNER 全公司，刻意用 role
+  if (role === 'OWNER') return null
+  const links = await prisma.userClinic.findMany({
+    where: { userId },
+    include: { clinic: { select: { companyId: true } } },
+  })
+  return [...new Set(links.map(l => l.clinic.companyId).filter((c): c is string => !!c))]
+}
+
+/**
+ * 某個公司喺唔喺用戶嘅公司範圍內。
+ * @param companyIds resolveAccessibleCompanyIds 嘅回傳值（null = OWNER 全部公司）
+ */
+export function companyInScope(companyIds: string[] | null, companyId: string): boolean {
+  if (companyIds === null) return true
+  return companyIds.includes(companyId)
+}
+
+/**
  * 保密員工可見範圍（畀列表過濾用，避免逐個 await）。
  *
  * @returns null = 全部可見（OWNER）；string[] = 只可見呢啲診所嘅保密員工

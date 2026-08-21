@@ -294,6 +294,10 @@ export const CONFIG = {
     'GET /api/schedule-notes': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'PUT /api/schedule-notes': ['OWNER', 'MANAGER'],
 
+    // ★ 2026-08-21: 排班頁月備註（SchedulingMemo，按公司）—— 另有 RBAC_PERM_OVERRIDES 開 scheduling 權限
+    'GET /api/scheduling-memo': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'PUT /api/scheduling-memo': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+
     // ★ MD-B: Cost Entry — 成本錄入（Lab / Implant / Invisalign）
     'GET /api/cost-cases': ['OWNER', 'MANAGER'],
     'POST /api/cost-cases': ['OWNER', 'MANAGER'],
@@ -450,6 +454,10 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ 2026-08-04: 排班每日備註 —— 有 scheduling 權限可讀/寫
   'GET /api/schedule-notes': ['scheduling'],
   'PUT /api/schedule-notes': ['scheduling'],
+
+  // ★ 2026-08-21: 排班頁月備註 —— 有 scheduling 權限可讀/寫
+  'GET /api/scheduling-memo': ['scheduling'],
+  'PUT /api/scheduling-memo': ['scheduling'],
 
   // ★ 2026-08-15: 應返工時 —— 排班主管需要查看
   'GET /api/roster-hours': ['scheduling'],

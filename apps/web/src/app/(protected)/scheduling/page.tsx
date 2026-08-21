@@ -727,6 +727,35 @@ export default function SchedulingPage() {
       .catch(() => setRhRows([]))
   }, [currentCompanyId, ovMonth])
 
+  // ★ 月備註貼（拍板 2026-08-21：按公司 + 按月；純記事，零下游影響）
+  const [memo, setMemo] = useState('')
+  const [memoEditing, setMemoEditing] = useState(false)
+  const [memoSaved, setMemoSaved] = useState(false)
+
+  // ★ 跟 currentCompanyId + ovMonth 走（轉月換另一張）。
+  //   dep 只係 [currentCompanyId, ovMonth] —— 同公司內換診所【唔會重拉】（備註按公司）。
+  //   ovMonth 喺週/月兩視圖都有值（上面 effect 會跟 currentDate 同步），週視圖唔會空。
+  useEffect(() => {
+    if (!currentCompanyId) { setMemo(''); return }
+    getJSON(`/api/scheduling-memo?companyId=${currentCompanyId}&periodMonth=${ovMonth}`)
+      .then(r => r.ok ? r.json() : { text: '' })
+      .then(d => setMemo(d?.text ?? ''))
+      .catch(() => setMemo(''))
+  }, [currentCompanyId, ovMonth])
+
+  const saveMemo = useCallback(async (v: string) => {
+    if (!currentCompanyId) return
+    try {
+      await fetch('/api/scheduling-memo', {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: currentCompanyId, periodMonth: ovMonth, text: v }),
+      })
+      setMemoSaved(true)
+      setTimeout(() => setMemoSaved(false), 1500)
+    } catch { /* 靜默 —— 純備註 */ }
+  }, [currentCompanyId, ovMonth])
+
   // ★ 小時格式化 helpers
   const fmtH = (mins: number) => {
     const h = mins / 60
@@ -4946,6 +4975,35 @@ function getShiftCode(shift: Shift): string {
                 清除
               </button>
             </div>
+            </div>
+          )}
+
+          {/* ★ 月備註貼（拍板 2026-08-21：按公司＋按月；純記事，零下游影響）
+              坑位照 spec §6.4：pre-wrap 保換行 / resize none＋fontFamily inherit /
+              blur 存＋Escape 取消（冇「儲存」掣）/ Enter 唔送出（純靠 blur） */}
+          {canManage && currentCompanyId && (
+            <div style={{ marginTop: 8, background: '#fef9c3', border: '1px solid #fde047',
+                          borderRadius: 6, padding: 7, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between',
+                            alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ fontSize: 9, color: '#854d0e', fontWeight: 600 }}>📌 {ovMonth}</span>
+                {memoSaved && <span style={{ fontSize: 8, color: '#a16207' }}>已儲存</span>}
+              </div>
+              {memoEditing ? (
+                <textarea autoFocus defaultValue={memo} maxLength={500}
+                  onBlur={e => { setMemo(e.target.value); setMemoEditing(false); void saveMemo(e.target.value) }}
+                  onKeyDown={e => { if (e.key === 'Escape') setMemoEditing(false) }}
+                  style={{ width: '100%', minHeight: 56, boxSizing: 'border-box', fontSize: 9,
+                           lineHeight: 1.6, border: 'none', outline: 'none', resize: 'none',
+                           background: 'transparent', fontFamily: 'inherit', color: '#422006' }} />
+              ) : (
+                <div onClick={() => setMemoEditing(true)}
+                  style={{ fontSize: 9, lineHeight: 1.6, minHeight: 52, cursor: 'pointer',
+                           color: memo ? '#422006' : '#a16207', whiteSpace: 'pre-wrap',
+                           wordBreak: 'break-all' }}>
+                  {memo || '撳一下寫備註…'}
+                </div>
+              )}
             </div>
           )}
         </div>
