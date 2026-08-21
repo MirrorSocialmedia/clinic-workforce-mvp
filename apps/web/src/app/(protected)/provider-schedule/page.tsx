@@ -4,13 +4,13 @@ import { useEffect, useState, useRef, useMemo } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { todayHK, addDays, fmtTime, hkDayOfWeek, toHKDateStr } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
+// ★ cw-pta §5：員工當值 mapping 抽咗入 lib（同 provider-availability 共用，唔寫第二份）
+import { buildStaffByDate, shouldLoadStaffShifts } from '@/lib/staff-by-date'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ChevronLeft, ChevronRight, X, CalendarDays } from 'lucide-react'
 
 const DAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
-
-interface StaffCell { id: string; name: string; start: string; end: string; transfer: boolean }
 
 export default function ProviderSchedulePage() {
   const [weekStart, setWeekStart] = useState(() => {
@@ -89,28 +89,11 @@ export default function ProviderSchedulePage() {
     return m
   }, [shifts])
 
-  // ★ staffByDate: Map<"date", StaffCell[]>
-  const staffByDate = useMemo(() => {
-    const m = new Map<string, StaffCell[]>()
-    for (const s of staffShifts) {
-      const isHome = s.clinicId === selectedClinicId
-      const isTransfer = s.secondaryClinicId === selectedClinicId
-      if (!isHome && !isTransfer) continue
-      const d = toHKDateStr(s.date)
-      if (!m.has(d)) m.set(d, [])
-      m.get(d)!.push({
-        id: s.employeeId,
-        name: s.employee?.user?.name ?? '—',
-        start: fmtTime(s.startTime),
-        end: fmtTime(s.endTime),
-        transfer: !isHome && isTransfer,
-      })
-    }
-    for (const arr of m.values()) {
-      arr.sort((a, b) => a.start.localeCompare(b.start) || a.name.localeCompare(b.name))
-    }
-    return m
-  }, [staffShifts, selectedClinicId])
+  // ★ staffByDate: Map<"date", StaffCell[]>（cw-pta §5：共用 lib，同 provider-availability 同一份 mapping）
+  const staffByDate = useMemo(
+    () => buildStaffByDate(staffShifts, selectedClinicId),
+    [staffShifts, selectedClinicId],
+  )
 
   // ★ visibleProviders: filtered by clinic binding (未綁店嘅照顯示)
   const visibleProviders = useMemo(() =>
@@ -163,7 +146,7 @@ export default function ProviderSchedulePage() {
 
   // Load staff shifts separately — guard: KIOSK role doesn't have /api/shifts access
   useEffect(() => {
-    if (userRole && userRole !== 'KIOSK') loadStaffShifts()
+    if (shouldLoadStaffShifts(userRole)) loadStaffShifts()
   }, [weekStart, weekEnd, selectedClinicId, userRole])
 
   // ★ Load provider leaves for the week

@@ -40,8 +40,10 @@ import {
   type ClinicOpt,
   type ScheduleDay,
 } from '@/lib/provider-availability-view'
+import { buildStaffByDate, shouldLoadStaffShifts, type StaffCell } from '@/lib/staff-by-date'
 
 const REFRESH_MS = 5 * 60 * 1000 // ★ 後端 10 分鐘 sync 一次 → 前端 5 分鐘 refetch（§6.2 #7）
+const SYNC_COOLDOWN_MS = 60_000 // ★ 同後端一致（拍板②）；正常情況由 429 retryAfterMs 為準
 
 export default function ProviderAvailabilityPage() {
   const [clinics, setClinics] = useState<ClinicOpt[]>([])
@@ -52,6 +54,13 @@ export default function ProviderAvailabilityPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [zoomDate, setZoomDate] = useState<string | null>(null)
+
+  // ★ cw-pta：「立即同步」掣（拍板②③）+ 員工當值列（拍板④）
+  const [userRole, setUserRole] = useState<string>('')
+  const [staffShifts, setStaffShifts] = useState<any[]>([])
+  const [staffError, setStaffError] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [cooldownLeft, setCooldownLeft] = useState(0)
 
   // 診所清單（現有 /api/clinics；只載一次 — clinicId 唔好入 deps，會無限 loop）
   useEffect(() => {
@@ -99,11 +108,77 @@ export default function ProviderAvailabilityPage() {
 
   useEffect(() => { void load() }, [load])
 
-  // ★ 5 分鐘 auto refetch（離 page clear，§6.2 #7）
+  // ★ 5 分鐘 auto refetch（離 page clear，§6.2 #7）—— 拍板⑤：唔加「重新載入」掣
   useEffect(() => {
     const t = setInterval(() => { void load() }, REFRESH_MS)
     return () => clearInterval(t)
   }, [load])
+
+  // ★ 員工當值列（cw-pta §5）：角色 + /api/shifts（同 provider-schedule 同一條 API，唔寫第二份）
+  useEffect(() => {
+    let live = true
+    fetch('/api/me', { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : { user: { role: '' } }))
+      .then(d => { if (live) setUserRole(d?.user?.role ?? '') })
+      .catch(() => { if (live) setUserRole('') })
+    return () => { live = false }
+  }, [])
+
+  const loadStaffShifts = useCallback(async () => {
+    // KIOSK（打卡機）唔送 request — 員工姓名唔應該喺打卡機顯示（§5.1 #2）
+    if (!shouldLoadStaffShifts(userRole)) return
+    try {
+      const r = await fetch(
+        `/api/shifts?startDate=${from}&endDate=${addDays(from, 6)}&pageSize=1000`,
+        { credentials: 'include', cache: 'no-store' },
+      )
+      if (!r.ok) throw new Error(String(r.status))
+      const d = await r.json()
+      setStaffShifts(d.shifts ?? [])
+      setStaffError(false)
+    } catch {
+      setStaffShifts([])
+      setStaffError(true)
+    }
+  }, [userRole, from])
+
+  useEffect(() => { void loadStaffShifts() }, [loadStaffShifts])
+
+  const staffByDate = useMemo(
+    () => buildStaffByDate(staffShifts, clinicId || null),
+    [staffShifts, clinicId],
+  )
+  const showStaffRow = shouldLoadStaffShifts(userRole)
+
+  // ★ 「立即同步」掣（拍板②③）：60s cooldown 倒數 + 429 retryAfterMs
+  useEffect(() => {
+    if (cooldownLeft <= 0) return
+    const t = setInterval(() => setCooldownLeft(v => Math.max(0, v - 1000)), 1000)
+    return () => clearInterval(t)
+  }, [cooldownLeft])
+
+  const doSync = useCallback(async () => {
+    // ★ disabled 要包 syncing + cooldownLeft —— 淨係其中一個都會俾人狂撳（§3.2）
+    if (syncing || cooldownLeft > 0) return
+    setSyncing(true)
+    try {
+      const r = await fetch('/api/provider-availability/sync', {
+        method: 'POST', credentials: 'include',
+      })
+      if (r.status === 429) {
+        const d = await r.json().catch(() => ({}))
+        setCooldownLeft(d?.retryAfterMs ?? SYNC_COOLDOWN_MS)
+        return
+      }
+      if (!r.ok) throw new Error(String(r.status))
+      setCooldownLeft(SYNC_COOLDOWN_MS)
+      await load() // ★ sync 完即刻 refetch
+    } catch {
+      setError('同步失敗 — 撳重試')
+    } finally {
+      setSyncing(false)
+    }
+  }, [syncing, cooldownLeft, load])
 
   // flat providers[] → 7 日渲染 shape（純邏輯，已測試）
   const days = useMemo(() => (data ? buildDays(data) : []), [data])
@@ -151,8 +226,17 @@ export default function ProviderAvailabilityPage() {
           const gaps = mini ? [] : freeGaps(pr.open, pr.busy)
           return (
             <div key={pr.providerId} style={{ position: 'absolute', inset: 0 }}>
+              {/* ★ 休假斜紋做【底】—— zIndex 最低，開診/預約照樣畫喺上面（拍板①；cw-pta §4.3） */}
+              {pr.onLeave && (
+                <div style={{
+                  position: 'absolute', inset: 0, zIndex: 0,
+                  background: 'repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 5px,#f1f5f9 5px,#f1f5f9 10px)',
+                  // 衝突紅框用 inset boxShadow 唔用 border（border 會令 div 尺寸變、同 inset:0 打交）
+                  ...(pr.leaveConflict ? { boxShadow: 'inset 0 0 0 2px #dc2626' } : {}),
+                }} />
+              )}
               {pr.open.map((o, i) => (
-                <div key={`o${i}`} style={{ position: 'absolute', left: 0, right: 0,
+                <div key={`o${i}`} style={{ position: 'absolute', left: 0, right: 0, zIndex: 1,
                        background: soft(c), top: pct(o.s), height: pctH(o.s, o.e) }}>
                   {!mini && i === 0 && (
                     <span style={{ position: 'absolute', top: 2, left: 4, fontSize: 10,
@@ -165,7 +249,7 @@ export default function ProviderAvailabilityPage() {
               {pr.busy.map((b, i) => (
                 <div key={`b${i}`}
                   title={`${fmtMin(b.s)}–${fmtMin(b.e)} · ${b.count ?? 1} 個預約`}
-                  style={{ position: 'absolute', left: mini ? 1 : 4, right: mini ? 1 : 4,
+                  style={{ position: 'absolute', left: mini ? 1 : 4, right: mini ? 1 : 4, zIndex: 2,
                            borderRadius: 3, background: c, top: pct(b.s), height: pctH(b.s, b.e) }}>
                   {!mini && (
                     <span style={{ fontSize: 9, color: '#fff', padding: '0 4px',
@@ -177,7 +261,7 @@ export default function ProviderAvailabilityPage() {
                 </div>
               ))}
               {gaps.map((g, i) => (
-                <div key={`g${i}`} style={{ position: 'absolute', left: 4, right: 4, borderRadius: 3,
+                <div key={`g${i}`} style={{ position: 'absolute', left: 4, right: 4, borderRadius: 3, zIndex: 2,
                        border: '1px dashed #cbd5e1', background: 'rgba(255,255,255,.7)',
                        display: 'flex', alignItems: 'center', padding: '0 4px',
                        top: pct(g.s), height: pctH(g.s, g.e) }}>
@@ -187,6 +271,14 @@ export default function ProviderAvailabilityPage() {
                   </span>
                 </div>
               ))}
+              {/* ★ 休假 label（底部）；衝突 → 紅 + 警告（拍板①） */}
+              {pr.onLeave && (
+                <span style={{ position: 'absolute', bottom: 2, left: 3, zIndex: 3,
+                               fontSize: 8, fontWeight: 600,
+                               color: pr.leaveConflict ? '#dc2626' : '#64748b' }}>
+                  {pr.leaveConflict ? '⚠️ 休假但有開診' : '休假'}
+                </span>
+              )}
             </div>
           )
         })}
@@ -205,6 +297,18 @@ export default function ProviderAvailabilityPage() {
         {mini ? `${dow}\n${Number(date.slice(8))}` : `${dow} ${Number(date.slice(8))}`}
       </span>
     )
+  }
+
+  // ─── 員工當值 cell（桌面七欄 / 手機單日放大共用；cw-pta §5，拍板④）───
+  function renderStaffList(list: StaffCell[]) {
+    if (list.length === 0) return <span style={{ color: '#cbd5e1' }}>—</span>
+    return list.map((s, i) => (
+      <div key={`${s.id}-${i}`} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <span style={s.transfer ? { color: '#b45309' } : undefined}>{s.name}</span>
+        {s.transfer && <span style={{ color: '#d97706' }}>·調</span>}
+        <span style={{ color: '#94a3b8', marginLeft: 3 }}>{s.start}–{s.end}</span>
+      </div>
+    ))
   }
 
   const chip = data ? syncChip(data.sync) : null
@@ -257,6 +361,17 @@ export default function ProviderAvailabilityPage() {
         </button>
 
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* ★ 「立即同步」（拍板②③）：disabled 包 syncing + cooldown 倒數；唔加「重新載入」（拍板⑤） */}
+          <button onClick={() => void doSync()} disabled={syncing || cooldownLeft > 0}
+            aria-label="立即同步" title="打 Apricot 同步所有已接通診所（同 cron 同一條鏈）"
+            style={{
+              fontSize: 11, padding: '4px 10px', borderRadius: 6, border: 'none',
+              background: (syncing || cooldownLeft > 0) ? '#cbd5e1' : '#2563eb',
+              color: '#fff', cursor: (syncing || cooldownLeft > 0) ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+            }}>
+            {syncing ? '同步中…' : cooldownLeft > 0 ? `↻ ${Math.ceil(cooldownLeft / 1000)}s` : '↻ 立即同步'}
+          </button>
           {chip && (
             <span title={chip.tone === 'warn' ? '上次同步超過 30 分鐘' : undefined}
               style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap',
@@ -344,6 +459,28 @@ export default function ProviderAvailabilityPage() {
                       </div>
                     </div>
 
+                    {/* ★ 員工當值（表底；cw-pta §5 拍板④）—— 同 provider-schedule 同一條 /api/shifts，
+                        KIOSK 收起（showStaffRow），provider-schedule 原有嗰行保留（§5.1 #4） */}
+                    {showStaffRow && (
+                      <div className="hidden md:flex" style={{ gap: 4, marginTop: 8 }}>
+                        <div style={{ width: 44, flexShrink: 0, padding: '6px 4px', fontSize: 9,
+                                      color: '#94a3b8', textAlign: 'right', lineHeight: 1.3 }}>
+                          員工<br />當值
+                        </div>
+                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 6,
+                                       padding: '5px 0', borderTop: '1.5px solid #e5e7eb',
+                                       background: '#fafbfc', borderRadius: 6 }}>
+                          {days.map(day => (
+                            <div key={`staff-${day.date}`} style={{ fontSize: 9, lineHeight: 1.6, padding: '0 3px' }}>
+                              {staffError
+                                ? <span style={{ color: '#94a3b8' }}>載入失敗</span>
+                                : renderStaffList(staffByDate.get(day.date) ?? [])}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* ═══ 手機：週概覽 / 單日放大 ═══ */}
                     <div className="md:hidden" style={{ height: '100%', minHeight: 380 }}>
                       {zoomDay ? (
@@ -362,6 +499,16 @@ export default function ProviderAvailabilityPage() {
                             </div>
                             <div style={{ flex: 1 }}><DayColumn day={zoomDay} mini={false} /></div>
                           </div>
+                          {/* ★ 員工當值 —— 手機只喺放大單日時顯示（§5.1 #3，七欄擠唔低） */}
+                          {showStaffRow && (
+                            <div style={{ flexShrink: 0, borderTop: '1.5px solid #e5e7eb', background: '#fafbfc',
+                                           marginTop: 6, padding: '5px 6px', fontSize: 9, borderRadius: 6 }}>
+                              <div style={{ color: '#94a3b8', marginBottom: 2 }}>員工當值</div>
+                              {staffError
+                                ? <span style={{ color: '#94a3b8' }}>載入失敗</span>
+                                : renderStaffList(staffByDate.get(zoomDay.date) ?? [])}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div style={{ display: 'flex', gap: 6, height: '100%' }}>
@@ -424,6 +571,9 @@ export default function ProviderAvailabilityPage() {
                                         background: '#6366f1', marginRight: 4 }} />已約</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
                                         border: '1px dashed #cbd5e1', marginRight: 4 }} />可約空隙</span>
+                      <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
+                                        background: 'repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 3px,#f1f5f9 3px,#f1f5f9 6px)',
+                                        marginRight: 4 }} />醫生休假</span>
                       <span className="md:hidden" style={{ marginLeft: 'auto', color: '#64748b' }}>撳日子放大</span>
                     </div>
                   </>

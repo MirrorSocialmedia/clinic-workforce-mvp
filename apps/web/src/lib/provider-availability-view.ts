@@ -21,6 +21,8 @@ export interface ProviderAvail {
   openSch: AvailSlot[]
   /** 掃描線合併後 segment；count = 段內總預約筆數（唔係同時人數） */
   booked: BookedSeg[]
+  /** 窗口內有假嘅 HK 日 YYYY-MM-DD（cw-pta spec §4；可能空） */
+  leaveDates: string[]
 }
 export interface AvailabilityResp {
   clinic: { id: string; name: string }
@@ -41,6 +43,10 @@ export interface DayProvider {
   busy: Range[]
   /** 當日該醫生預約總筆數（busy segments 嘅 count 總和）— §6.3 醫生名旁顯示 */
   total: number
+  /** ★ cw-pta spec §4：當日有冇假（ProviderLeave 跨店生效） */
+  onLeave: boolean
+  /** 拍板①：有假但該日仲有開診/預約 = 矛盾，UI 要標紅 */
+  leaveConflict: boolean
 }
 export interface ScheduleDay { date: string; providers: DayProvider[] }
 export interface ClinicOpt { id: string; name: string; connected: boolean }
@@ -139,8 +145,10 @@ export function freeGaps(open: Range[], busy: Range[], minGapMin = 30): Range[] 
 
 /**
  * flat providers[]（date-in-entry）→ 7 日 ScheduleDay[]（from..from+6）。
- * - 每日只保留「該日有 open 或 booked」嘅醫生（無 data 醫生喺該日唔出現，
+ * - 每日保留「該日有 open / booked / 有假」嘅醫生（純無 data 無假嘅醫生喺該日唔出現，
  *   由 page 層嘅「醫生圖例」統一顯示 + 標「無數據」）。
+ * - ★ cw-pta spec §4（★#15）：放假但 Apricot 完全無開診嘅醫生都要出現（onLeave、
+ *   open/busy 空）—— 唔好令佢消失。
  * - 'HH:mm' 解析失敗 / end<=start 嘅 entry 直接 drop（唔會 throw）。
  */
 export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
@@ -165,7 +173,9 @@ export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
         if (s === null || e === null || e <= s) continue
         busy.push({ s, e, count: b.count })
       }
-      if (open.length > 0 || busy.length > 0) {
+      const onLeave = (p.leaveDates ?? []).includes(date)
+      // ★ 有假嘅日子就算無 open/booked 都保留（§4.2 ★#15）
+      if (open.length > 0 || busy.length > 0 || onLeave) {
         providers.push({
           providerId: p.id,
           name: p.name,
@@ -173,6 +183,8 @@ export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
           open,
           busy,
           total: busy.reduce((t, b) => t + (b.count ?? 0), 0),
+          onLeave,
+          leaveConflict: onLeave && (open.length > 0 || busy.length > 0),
         })
       }
     }
@@ -181,9 +193,11 @@ export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
   return days
 }
 
-/** 成個 7 日窗口全空（所有醫生都無 openSch 同 booked）→ true */
+/** 成個 7 日窗口全空（所有醫生都無 openSch、booked 同 leaveDates）→ true */
 export function isWeekEmpty(resp: AvailabilityResp): boolean {
-  return resp.providers.every(p => p.openSch.length === 0 && p.booked.length === 0)
+  return resp.providers.every(
+    p => p.openSch.length === 0 && p.booked.length === 0 && (p.leaveDates?.length ?? 0) === 0,
+  )
 }
 
 // ─── 時間軸範圍（跟資料 floor/ceil 到整點；fallback 08:00–21:00，§6.2 #9）───

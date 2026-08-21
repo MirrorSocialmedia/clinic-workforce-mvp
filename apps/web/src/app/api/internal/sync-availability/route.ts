@@ -10,8 +10,10 @@ import { getTestCallFn } from './test-call-fn'
 // POST /api/internal/sync-availability — cron 觸發嘅 internal sync
 // Spec: docs/specs/PROVIDER_AVAILABILITY_SPEC.md §4（排程）
 //
-// ★ 唔經 RBAC/session —— shared secret（X-Internal-Token header）。
-//   冇 fallback 預設值：INTERNAL_SYNC_TOKEN 未設 = 503（fail closed）。
+// ★ 唔經 RBAC/session —— shared secret（x-cron-key header）。
+//   ★ 2026-08-21（cw-pta）：改用現成 APRICOT_CRON_KEY（同 /api/apricot/sync/cron
+//   同一個 key）—— 唔開第二個 secret。compose 已經有 APRICOT_CRON_KEY env。
+//   冇 fallback 預設值：APRICOT_CRON_KEY 未設 = 503（fail closed）。
 // ★ 同步引擎 runAvailabilitySync 本身已包外層 advisory lock（776001，攞唔到
 //   → { ok:false, skipped } 唔會 crash）+ 逐間 try/catch（一間失敗唔中斷其餘）。
 // ★ 🔴 只回傳結構統計（open/bookings/unknown/error + 行數）—— 零病人資料。
@@ -37,12 +39,13 @@ function safeTokenEqual(header: string | null, expected: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const expected = process.env.INTERNAL_SYNC_TOKEN
+  // ★ 同 /api/apricot/sync/cron 用同一個 key —— 唔好開第二個 secret（cw-pta spec §1.3）
+  const expected = process.env.APRICOT_CRON_KEY
   if (!expected) {
-    console.error('[sync-availability] INTERNAL_SYNC_TOKEN 未設')
-    return NextResponse.json({ error: 'sync token not configured' }, { status: 503 })
+    console.error('[sync-availability] APRICOT_CRON_KEY 未設')
+    return NextResponse.json({ error: 'cron key not configured' }, { status: 503 })
   }
-  if (!safeTokenEqual(req.headers.get('x-internal-token'), expected)) {
+  if (!safeTokenEqual(req.headers.get('x-cron-key'), expected)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

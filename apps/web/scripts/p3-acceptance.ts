@@ -132,19 +132,23 @@ async function main() {
   // ═══════════════ A. Internal sync API ═══════════════
   console.log(`\n========== A. POST /api/internal/sync-availability ══════════`)
 
-  // A1: token 未設 → 503
-  delete process.env.INTERNAL_SYNC_TOKEN
-  const r503 = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'X-Internal-Token': 'whatever' } }))
+  // ★ cw-pta（2026-08-21）：改用以 APRICOT_CRON_KEY + x-cron-key（同 /api/apricot/sync/cron 同一個 key）。
+  // 先攞原本環境值，最後還原（唔好污染 dev shell 嘅 .env 已載入值）。
+  const prevCronKey = process.env.APRICOT_CRON_KEY
+
+  // A1: key 未設 → 503
+  delete process.env.APRICOT_CRON_KEY
+  const r503 = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'x-cron-key': 'whatever' } }))
   const b503 = await r503.json()
-  check('I-503', r503.status === 503 && b503.error === 'sync token not configured', `status=${r503.status} body=${JSON.stringify(b503)}`)
+  check('I-503', r503.status === 503 && b503.error === 'cron key not configured', `status=${r503.status} body=${JSON.stringify(b503)}`)
 
   // A2: 錯 token（同長）→ 403
-  process.env.INTERNAL_SYNC_TOKEN = MOCK_TOKEN
-  const r403a = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'X-Internal-Token': 'dev-p3-mock-token-0123456788' } }))
+  process.env.APRICOT_CRON_KEY = MOCK_TOKEN
+  const r403a = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'x-cron-key': 'dev-p3-mock-token-0123456788' } }))
   check('I-403-wrong', r403a.status === 403, `status=${r403a.status}`)
 
   // A3: 長短唔同 → 403（timingSafeEqual length mismatch = fail）
-  const r403b = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'X-Internal-Token': 'short' } }))
+  const r403b = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'x-cron-key': 'short' } }))
   check('I-403-len', r403b.status === 403, `status=${r403b.status}`)
 
   // A4: 冇 header → 403
@@ -153,7 +157,7 @@ async function main() {
 
   // A5: 啱 token + mock callFn → 200 + sync 真執行
   __setTestCallFn(mockFn)
-  const r200 = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'X-Internal-Token': MOCK_TOKEN } }))
+  const r200 = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'x-cron-key': MOCK_TOKEN } }))
   const b200 = await r200.json()
   check('I-200', r200.status === 200 && b200.ok === true && b200.skippedClinics === 1 && b200.results.length === 5
     && b200.results.every((r: any) => !('error' in r) && typeof r.open === 'number' && typeof r.bookings === 'number' && typeof r.unknown === 'number')
@@ -259,7 +263,7 @@ async function main() {
     update: {},
     create: { id: 'syn-prov-lau', name: 'Dr. Lau', shortName: 'LAU', apricotId: '695e6e511e430c48022a7690', color: '#00bcd4', isActive: true, sortOrder: 9 },
   })
-  const r200e = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'X-Internal-Token': MOCK_TOKEN } }))
+  const r200e = await internalPost(mkReq('/api/internal/sync-availability', { method: 'POST', headers: { 'x-cron-key': MOCK_TOKEN } }))
   const b200e = await r200e.json()
   const tE = await totals()
   check('E-resync', r200e.status === 200 && b200e.ok === true && tE.avail === 145 && tE.book === 65,
@@ -352,7 +356,8 @@ async function main() {
 
   // 還原：清測試痕跡 + 重新 seed base（P4 接手狀態）
   __setTestCallFn(null)
-  delete process.env.INTERNAL_SYNC_TOKEN
+  if (prevCronKey === undefined) delete process.env.APRICOT_CRON_KEY
+  else process.env.APRICOT_CRON_KEY = prevCronKey
   await cleanAll()
   seedBase()
   const tClean = await totals()

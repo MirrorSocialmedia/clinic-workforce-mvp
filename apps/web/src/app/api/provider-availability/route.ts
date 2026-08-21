@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { addDaysStr } from '@/lib/apricot/sync-availability'
 import { mergeBookings } from '@/lib/apricot/merge-bookings'
 import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
+import { expandLeavesToSet } from '@/lib/provider-leave'
 
 // ============================================================
 // GET /api/provider-availability?clinicId=<Clinic.id>&from=YYYY-MM-DD
@@ -83,6 +84,21 @@ export async function GET(req: NextRequest) {
   const stale =
     lastSyncAt === null || Date.now() - new Date(lastSyncAt).getTime() > STALE_MS
 
+  // ★ 醫生休假（cw-pta spec §4）：ProviderLeave 冇 clinicId = 跨店生效，唔使按診所過濾。
+  // 窗口內有重疊嘅假先撈（同 provider-leaves GET 嘅 window 判斷一致）。
+  const leaves = await prisma.providerLeave.findMany({
+    where: {
+      providerId: { in: providers.map(p => p.id) },
+      startDate: { lte: hkDateEnd(to) },
+      endDate: { gte: hkDateStart(from) },
+    },
+    select: { providerId: true, startDate: true, endDate: true },
+  })
+  // 展開成 `${providerId}:${YYYY-MM-DD}`（HK 日）Set（start..end 兩端包入）
+  const leaveSet = expandLeavesToSet(leaves)
+  const windowDates: string[] = []
+  for (let i = 0; i < 7; i++) windowDates.push(addDaysStr(from, i))
+
   const availByProvider = new Map<string, typeof availRows>()
   for (const a of availRows) {
     const arr = availByProvider.get(a.providerId) ?? []
@@ -117,7 +133,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return { id: p.id, name: p.name, color: p.color, openSch, booked }
+    return {
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      openSch,
+      booked,
+      // ★ 當日窗口內有假嘅 HK 日（可能空）；
+      //   onLeave/leaveConflict 由前端 buildDays 按日算（衝突 = 有假 + 該日有開診/預約）。
+      //   providers 本來就列出全部 active provider（無 Apricot row 都喺）→
+      //   放假但完全無開診嘅醫生唔會消失（spec §4.2 ★#15）。
+      leaveDates: windowDates.filter(d => leaveSet.has(`${p.id}:${d}`)),
+    }
   })
 
   return jsonNoStore({

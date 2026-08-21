@@ -359,6 +359,10 @@ export const CONFIG = {
     'POST /api/reconciliation/parse': ['OWNER'],
     // ★ D2: Payout adjustments
     'POST /api/payout-adjustments': ['OWNER'],
+    // —— 醫生時間表「立即同步」（cw-pta 2026-08-21）——
+    // route 行 requirePerm('scheduling')（真正把關）；呢度係角色白名單登記。
+    // 冇 scheduling 嘅角色（純 ACCOUNTANT / EMPLOYEE / KIOSK）要 grant 先入得去。
+    'POST /api/provider-availability/sync': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
   } as Record<string, string[]>,
 
   // Roles that can view all clinics (no data isolation)
@@ -463,6 +467,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // 留喺度純粹係 check-rbac-matrix.sh 嘅登記要求 + 文件用途。
   // 真正把關喺 requirePerm('scheduling') + resolveProviderScheduleScope。
   'GET /api/provider-availability': ['scheduling'],
+  // ★ 2026-08-21 cw-pta：「立即同步」掣 —— 同 GET 同一個 scheduling 權限
+  'POST /api/provider-availability/sync': ['scheduling'],
 
   // —— 醫生休假 ——
   'GET /api/provider-leaves': ['provider_schedule'],
