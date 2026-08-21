@@ -613,6 +613,9 @@ model LeaveRequest {
   approverId  String?
   approvedAt  DateTime?
   isPlanned   Boolean        @default(true) // false=臨時/當天假 → 影響勤工
+  /// ★ PL 標記 —— 員工自己申請嘅休息日（純顯示，唔影響計糧／額度／時間帳戶）
+  /// ⚠️ 只會喺 leaveType.systemKey === 'REST_DAY' 嘅 row 出現
+  isEmployeeRequested Boolean @default(false)
   clinicId    String?        // 新增：在哪個店排的假（排班跨店過濾）
   createdAt   DateTime       @default(now())
 
