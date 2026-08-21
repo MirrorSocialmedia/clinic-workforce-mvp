@@ -27,13 +27,13 @@ import {
   dayEmptyText,
   defaultClinicId,
   fmtMin,
-  freeGaps,
   hkTodayStr,
   isWeekEmpty,
   layoutBookings,
   providerColor,
   soft,
   syncChip,
+  buildShortNames,
   addDays,
   weekdayOf,
   WEEKDAY,
@@ -229,6 +229,15 @@ export default function ProviderAvailabilityPage() {
     return days.map(d => ({ ...d, providers: d.providers.filter(p => shown.has(p.providerId)) }))
   }, [days, shown])
 
+  // ★ §6.5：grid 內緊窄顯示位用簡稱（Dr + 姓；同姓 ≥2 自動兩字）。
+  // 用完整醫生列表（data.providers，唔係 filter 後）→ 簡稱同 chip 篩選狀態無關、穩定。
+  // 篩選 chip / legend 保持全名（下方渲染位唔查呢個 map）。
+  const docShortNames = useMemo(
+    () => buildShortNames(data ? data.providers.map(p => p.name) : []),
+    [data],
+  )
+  const shortName = (full: string) => docShortNames.get(full) ?? full
+
   const cur = clinics.find(c => c.id === clinicId)
   const zoomDay = zoomDate ? visibleDays.find(d => d.date === zoomDate) ?? null : null
 
@@ -253,18 +262,19 @@ export default function ProviderAvailabilityPage() {
       return (
         <Fragment key={`b${i}`}>
           {/* calc(% ± px)：純 % 會令相鄰塊貼死冇縫；minHeight 18 → 15 分鐘塊唔變一條線 */}
-          <div title={`${b.name} ${fmtMin(b.s)}–${fmtMin(b.e)}`}
+          {/* ★ §6.5：title（hover 提示）保留全名；塊內緊窄顯示用簡稱；字 6.5/6 → 9/8 */}
+          <div title={`${pr.name} ${fmtMin(b.s)}–${fmtMin(b.e)}`}
             style={{ position: 'absolute', zIndex: 2,
               left: `calc(${b.lane * w}% + 2px)`,
               width: `calc(${w}% - 4px)`,
               top: pct(b.s), height: pctH(b.s, b.e),
               minHeight: 18, background: b.color, borderRadius: 3,
               padding: '2px 3px', boxSizing: 'border-box', overflow: 'hidden' }}>
-            <span style={{ fontSize: 6.5, color: '#fff', fontWeight: 600, display: 'block',
+            <span style={{ fontSize: 9, color: '#fff', fontWeight: 600, display: 'block',
                            lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden',
-                           textOverflow: 'ellipsis' }}>{b.name}</span>
+                           textOverflow: 'ellipsis' }}>{shortName(pr.name)}</span>
             {!tooShort && (
-              <span style={{ fontSize: 6, color: '#ffffffcc', display: 'block', lineHeight: 1.25 }}>
+              <span style={{ fontSize: 8, color: '#ffffffcc', display: 'block', lineHeight: 1.25 }}>
                 {fmtMin(b.s)}–{fmtMin(b.e)}
               </span>
             )}
@@ -278,7 +288,7 @@ export default function ProviderAvailabilityPage() {
                        height: pctH(b.s, b.e), width: 14, minHeight: 18,
                        background: '#475569', borderRadius: '3px 0 0 3px',
                        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 6, color: '#fff', writingMode: 'vertical-rl' }}>+{b.overflow}</span>
+              <span style={{ fontSize: 8, color: '#fff', writingMode: 'vertical-rl' }}>+{b.overflow}</span>
             </div>
           )}
         </Fragment>
@@ -321,7 +331,6 @@ export default function ProviderAvailabilityPage() {
         })()}
         {day.providers.map(pr => {
           const c = providerColor(pr.providerId, pr.color)
-          const gaps = mini ? [] : freeGaps(pr.open, pr.busy)
           return (
             <div key={pr.providerId} style={{ position: 'absolute', inset: 0 }}>
               {/* ★ 休假斜紋做【底】—— zIndex 最低，開診/預約照樣畫喺上面（拍板①；cw-pta §4.3） */}
@@ -339,23 +348,12 @@ export default function ProviderAvailabilityPage() {
                   {!mini && i === 0 && (
                     <span style={{ position: 'absolute', top: 2, left: 4, fontSize: 10,
                                    fontWeight: 600, color: c }}>
-                      {pr.name}{pr.total > 0 ? ` · ${pr.total}` : ''}
+                      {shortName(pr.name)}{pr.total > 0 ? ` · ${pr.total}` : ''}
                     </span>
                   )}
                 </div>
               ))}
               {renderBookings(pr, c, mini)}
-              {gaps.map((g, i) => (
-                <div key={`g${i}`} style={{ position: 'absolute', left: 4, right: 4, borderRadius: 3, zIndex: 2,
-                       border: '1px dashed #cbd5e1', background: 'rgba(255,255,255,.7)',
-                       display: 'flex', alignItems: 'center', padding: '0 4px',
-                       top: pct(g.s), height: pctH(g.s, g.e) }}>
-                  <span style={{ fontSize: 9, color: '#64748b', overflow: 'hidden',
-                                 textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    空閒 {fmtMin(g.s)}–{fmtMin(g.e)}
-                  </span>
-                </div>
-              ))}
               {/* ★ 休假 label（底部）；衝突 → 紅 + 警告（拍板①） */}
               {pr.onLeave && (
                 <span style={{ position: 'absolute', bottom: 2, left: 3, zIndex: 3,
@@ -521,8 +519,9 @@ export default function ProviderAvailabilityPage() {
                 ) : (
                   <>
                     {/* ═══ 桌面：時間軸 × 七日 ═══ */}
-                    {/* ★ §四：minHeight 420→620（09:00–20:00 = 22 格 × 28px，一屏睇晒；#22）—— 手機唔跟（維持矮版） */}
-                    <div className="hidden md:flex" style={{ gap: 4, height: '100%', minHeight: 620 }}>
+                    {/* ★ §6.5（2026-08-21 拍板③）：fixed height 1085（唔係 minHeight — 要滾動就要固定高）；
+                        超高時由 body（overflowY: auto）出 scrollbar；手機唔跟（維持矮版） */}
+                    <div className="hidden md:flex" style={{ gap: 4, height: 1085 }}>
                       <div style={{ width: 44, flexShrink: 0, position: 'relative', marginTop: 24 }}>
                         {hourTicks.map(t => (
                           <span key={t.m} style={{ position: 'absolute', right: 6, transform: 'translateY(-50%)',
@@ -580,7 +579,7 @@ export default function ProviderAvailabilityPage() {
                             <div style={{ width: 44, flexShrink: 0, position: 'relative' }}>
                               {hourTicks.map(t => (
                                 <span key={t.m} style={{ position: 'absolute', right: 4, transform: 'translateY(-50%)',
-                                                       fontSize: 9, color: '#94a3b8', top: pct(t.m) }}>
+                                                       fontSize: 10, color: '#94a3b8', top: pct(t.m) }}>
                                   {fmtMin(t.m)}
                                 </span>
                               ))}
@@ -603,7 +602,7 @@ export default function ProviderAvailabilityPage() {
                           <div style={{ width: 32, flexShrink: 0, position: 'relative', marginTop: 28 }}>
                             {hourTicks.map(t => (
                               <span key={t.m} style={{ position: 'absolute', right: 2, transform: 'translateY(-50%)',
-                                                     fontSize: 8, color: '#94a3b8', top: pct(t.m) }}>
+                                                     fontSize: 10, color: '#94a3b8', top: pct(t.m) }}>
                                 {fmtMin(t.m).slice(0, 2)}
                               </span>
                             ))}
@@ -677,8 +676,6 @@ export default function ProviderAvailabilityPage() {
                                         background: soft('#6366f1'), marginRight: 4 }} />開診（色按醫生）</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
                                         background: '#6366f1', marginRight: 4 }} />已約</span>
-                      <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
-                                        border: '1px dashed #cbd5e1', marginRight: 4 }} />可約空隙</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
                                         background: 'repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 3px,#f1f5f9 3px,#f1f5f9 6px)',
                                         marginRight: 4 }} />醫生休假</span>

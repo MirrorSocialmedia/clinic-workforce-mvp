@@ -38,6 +38,7 @@ export interface AvailabilityResp {
 /** 時間軸上的一段（分鐘，00:00 起）；busy 段帶 status（0=已約/4=已完成） */
 export interface Range { s: number; e: number; status?: number }
 
+
 export interface DayProvider {
   providerId: string
   name: string
@@ -45,7 +46,6 @@ export interface DayProvider {
   open: Range[]
   /** ★ 2026-08-21 拍板⑤：逐筆（1 busy = 1 預約），重疊由 layoutBookings 分 lane */
   busy: Range[]
-  /** 當日該醫生預約總筆數（busy segments 嘅 count 總和）— §6.3 醫生名旁顯示 */
   /** 當日該醫生預約總筆數（= busy 筆數，逐筆回）— §6.3 醫生名旁顯示 */
   total: number
   /** ★ 2026-08-21 拍板②：該週預約總筆數（承傳 ProviderAvail.weekBookings） */
@@ -133,19 +133,41 @@ export function weekdayOf(dateStr: string): string {
   return WEEKDAY[new Date(`${dateStr}T00:00:00Z`).getUTCDay()]
 }
 
-// ─── 空閒 gap（§6.1：open − busy，>=30 分鐘先顯示，太碎冇意義）───
+// ─── 醫生簡稱（§6.5 2026-08-21 拍板③：Dr + 姓，動態同姓防撞）───
 
-export function freeGaps(open: Range[], busy: Range[], minGapMin = 30): Range[] {
-  const gaps: Range[] = []
-  for (const o of open) {
-    let cur = o.s
-    for (const b of busy.filter(b => b.s < o.e && b.e > o.s).sort((a, b2) => a.s - b2.s)) {
-      if (b.s - cur >= minGapMin) gaps.push({ s: cur, e: b.s })
-      cur = Math.max(cur, b.e)
+const CJK_RE = /^[\u4e00-\u9fa5]/
+
+/** 「譚家杰醫生」→「Dr 譚」；英文名原樣 */
+export function shortDoctor(name: string): string {
+  const s = name.replace(/醫生$/, '').trim()
+  return CJK_RE.test(s) ? `Dr ${s.charAt(0)}` : s
+}
+
+/**
+ * ★ 動態防撞（老細拍板）：同一醫生集合入面，某中文姓（第一字）出現 ≥2 次
+ * → 嗰啲醫生改用兩字（Dr 譚家）；英文名完全唔變。
+ * 傳入【完整醫生列表】（page 用 data.providers，唔用 filter 後嘅）→ 簡稱同篩選狀態無關、穩定。
+ * 回傳 Map<原全名, 顯示名>；查唔到 key 時顯示位 fallback 原全名。
+ * 已知限制：複姓（歐陽／司徒）會出「Dr 歐」；兩個同複姓醫生 → 兩字都係「Dr 歐陽」仍然撞
+ *（MD §6.5 ⚠️：要白名單先處理，呢度唔做，靠老細跑同姓 SQL 兜底）。
+ */
+export function buildShortNames(names: string[]): Map<string, string> {
+  const stripped = names.map(n => n.replace(/醫生$/, '').trim())
+  const surnameCount = new Map<string, number>()
+  for (const s of stripped) {
+    if (CJK_RE.test(s)) {
+      const sn = s.charAt(0)
+      surnameCount.set(sn, (surnameCount.get(sn) ?? 0) + 1)
     }
-    if (o.e - cur >= minGapMin) gaps.push({ s: cur, e: o.e })
   }
-  return gaps
+  const out = new Map<string, string>()
+  stripped.forEach((s, i) => {
+    const cjk = CJK_RE.test(s)
+    out.set(names[i], cjk && (surnameCount.get(s.charAt(0)) ?? 0) >= 2
+      ? `Dr ${s.slice(0, 2)}`
+      : shortDoctor(names[i]))
+  })
+  return out
 }
 
 // ─── API shape → 渲染 shape（P3 flat providers[] → 7 日 DayProvider[]）───

@@ -16,7 +16,8 @@ import {
   hkTodayStr,
   addDays,
   weekdayOf,
-  freeGaps,
+  shortDoctor,
+  buildShortNames,
   buildDays,
   isWeekEmpty,
   computeAxis,
@@ -198,30 +199,61 @@ describe('addDays / weekdayOf / hkTodayStr', () => {
   })
 })
 
-// ─── freeGaps ───
+// ─── 醫生簡稱（§6.5 2026-08-21 拍板③：Dr + 姓 + 動態同姓防撞）───
 
-const R = (s: number, e: number, status?: number): Range => ({ s, e, ...(status !== undefined ? { status } : {}) })
+describe('shortDoctor — Dr + 姓', () => {
+  it('中文名 → Dr + 姓（「譚家杰醫生」→「Dr 譚」）', () => {
+    assert.equal(shortDoctor('譚家杰醫生'), 'Dr 譚')
+    assert.equal(shortDoctor('譚家杰'), 'Dr 譚')   // 無「醫生」後綴都成立
+    assert.equal(shortDoctor('李医生'), 'Dr 李')   // 簡體姓（「李」U+674E 喺 \u4e00-\u9fa5 範圍內）
+  })
+  it('英文名原樣（包括已有 Dr 前綴）', () => {
+    assert.equal(shortDoctor('Dr A'), 'Dr A')
+    assert.equal(shortDoctor('John Smith'), 'John Smith')
+    assert.equal(shortDoctor('A'), 'A')
+  })
+})
 
-describe('freeGaps — open − busy（>=30 分鐘先顯示）', () => {
-  it('中間一段 busy → 兩邊 gap', () => {
-    const gaps = freeGaps([R(540, 1080)], [R(600, 660)])
-    assert.deepEqual(gaps, [R(540, 600), R(660, 1080)])
+describe('buildShortNames — 動態同姓防撞', () => {
+  it('單姓（各唯一）→ 一字', () => {
+    const m = buildShortNames(['譚家杰醫生', '陳大文醫生'])
+    assert.equal(m.get('譚家杰醫生'), 'Dr 譚')
+    assert.equal(m.get('陳大文醫生'), 'Dr 陳')
   })
-  it('相鄰 busy → 之間無 gap', () => {
-    const gaps = freeGaps([R(540, 1080)], [R(600, 660), R(660, 720)])
-    assert.deepEqual(gaps, [R(540, 600), R(720, 1080)])
+  it('同姓 ≥2 → 嗰啲醫生用兩字（Dr 譚家），其他姓不受影響', () => {
+    const m = buildShortNames(['陳大文醫生', '陳小文醫生', '李医生', 'Dr A'])
+    assert.equal(m.get('陳大文醫生'), 'Dr 陳大')
+    assert.equal(m.get('陳小文醫生'), 'Dr 陳小')
+    assert.equal(m.get('李医生'), 'Dr 李')   // 李姓只 1 個 → 照返一字
+    assert.equal(m.get('Dr A'), 'Dr A')      // 英文名完全唔變
   })
-  it('<30 分鐘碎 gap 過濾', () => {
-    const gaps = freeGaps([R(540, 1080)], [R(555, 570), R(585, 600)])
-    assert.deepEqual(gaps, [R(600, 1080)])
+  it('同姓 ≥3 → 全部兩字', () => {
+    const m = buildShortNames(['陳一醫生', '陳二醫生', '陳三醫生'])
+    assert.equal(m.get('陳一醫生'), 'Dr 陳一')
+    assert.equal(m.get('陳二醫生'), 'Dr 陳二')
+    assert.equal(m.get('陳三醫生'), 'Dr 陳三')
   })
-  it('busy 完全蓋住 open → 無 gap', () => {
-    const gaps = freeGaps([R(540, 720), R(900, 1080)], [R(540, 1080)])
-    assert.deepEqual(gaps, [])
+  it('複姓（歐陽）→「Dr 歐」（已知限制）；兩個同複姓 → 兩字仍然撞（記錄行為）', () => {
+    const m = buildShortNames(['歐陽峰醫生'])
+    assert.equal(m.get('歐陽峰醫生'), 'Dr 歐')
+    const m2 = buildShortNames(['歐陽峰醫生', '歐陽華醫生'])
+    assert.equal(m2.get('歐陽峰醫生'), 'Dr 歐陽')
+    assert.equal(m2.get('歐陽華醫生'), 'Dr 歐陽') // ★ 仍撞 — MD：要白名單先處理，呢度唔做
+  })
+  it('中英混排：英文名唔參與同姓計數', () => {
+    const m = buildShortNames(['陳大文醫生', 'John Smith', '陳小文醫生'])
+    assert.equal(m.get('John Smith'), 'John Smith')
+    assert.equal(m.get('陳大文醫生'), 'Dr 陳大')
+  })
+  it('空列表 → 空 Map', () => {
+    assert.equal(buildShortNames([]).size, 0)
   })
 })
 
 // ─── buildDays（P3 flat shape → 7 日渲染 shape）───
+
+const R = (s: number, e: number, status?: number): Range => ({ s, e, ...(status !== undefined ? { status } : {}) })
+
 
 describe('buildDays — flat providers[] → 7 日', () => {
   const days = buildDays(mkResp())
