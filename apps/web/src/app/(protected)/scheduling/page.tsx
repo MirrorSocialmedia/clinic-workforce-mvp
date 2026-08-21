@@ -756,6 +756,53 @@ export default function SchedulingPage() {
     } catch { /* 靜默 —— 純備註 */ }
   }, [currentCompanyId, ovMonth])
 
+  // ★ 拍板④（2026-08-21）：備註貼改 fixed 可拖動浮貼 —— 位置 localStorage 記（每部機自己記，唔入 DB）
+  const MEMO_POS_KEY = 'clinic.memoPos'
+  const [memoPos, setMemoPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [memoCollapsed, setMemoCollapsed] = useState(false)
+  const memoDrag = useRef<{ dx: number; dy: number } | null>(null)
+
+  // 初始位置：localStorage 讀返；冇就預設右下角（唔好用 0,0 —— 會蓋住 header）。
+  //   window 只喺 effect 入面攞（SSR 冇）。
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(MEMO_POS_KEY)
+      if (raw) {
+        const p = JSON.parse(raw)
+        if (typeof p?.x === 'number' && typeof p?.y === 'number') { setMemoPos({ x: p.x, y: p.y }); return }
+      }
+    } catch { /* 壞資料當冇 */ }
+    setMemoPos({ x: Math.max(12, window.innerWidth - 260), y: Math.max(12, window.innerHeight - 220) })
+  }, [])
+
+  // ★ 視窗縮細守衛 —— 貼出界要拉返入界（localStorage 記住咗舊位置）
+  useEffect(() => {
+    const onResize = () => setMemoPos(p => ({
+      x: Math.min(p.x, window.innerWidth - 60),
+      y: Math.min(p.y, window.innerHeight - 40),
+    }))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const onMemoPointerDown = (e: React.PointerEvent) => {
+    memoDrag.current = { dx: e.clientX - memoPos.x, dy: e.clientY - memoPos.y }
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  }
+  const onMemoPointerMove = (e: React.PointerEvent) => {
+    if (!memoDrag.current) return
+    // ★ 夾喺視窗內 —— 拖出界就再搵唔返
+    const x = Math.min(Math.max(0, e.clientX - memoDrag.current.dx), window.innerWidth - 60)
+    const y = Math.min(Math.max(0, e.clientY - memoDrag.current.dy), window.innerHeight - 40)
+    setMemoPos({ x, y })
+  }
+  const onMemoPointerUp = () => {
+    if (!memoDrag.current) return
+    memoDrag.current = null
+    // ★ 放手先存 localStorage —— 拖動途中每格都存會寫爆
+    try { localStorage.setItem(MEMO_POS_KEY, JSON.stringify(memoPos)) } catch { /* ignore */ }
+  }
+
   // ★ 小時格式化 helpers
   const fmtH = (mins: number) => {
     const h = mins / 60
@@ -3804,6 +3851,49 @@ function getShiftCode(shift: Shift): string {
 
   return (
     <div className="w-full" style={{ maxWidth: '100%', padding: '0 16px' }}>
+      {/* ★ 拍板④（2026-08-21）：月備註浮貼 —— fixed 可拖動，位置 localStorage 記。
+           zIndex 60：高過側欄（z-50），低過 preflight modal（9999）。 */}
+      {canManage && currentCompanyId && (
+        <div style={{
+          position: 'fixed', left: memoPos.x, top: memoPos.y, zIndex: 60,
+          width: memoCollapsed ? 'auto' : 240,
+          background: '#fef9c3', border: '1px solid #fde047', borderRadius: 8,
+          boxShadow: '0 4px 14px rgba(0,0,0,.16)',
+        }}>
+          {/* 拖動手柄 */}
+          <div onPointerDown={onMemoPointerDown} onPointerMove={onMemoPointerMove}
+               onPointerUp={onMemoPointerUp} onPointerCancel={onMemoPointerUp}
+               style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 8px',
+                        borderBottom: memoCollapsed ? 'none' : '0.5px solid #fde047',
+                        cursor: 'move', touchAction: 'none', userSelect: 'none' }}>
+            <span style={{ fontSize: 11, color: '#854d0e' }}>⠿</span>
+            <span style={{ fontSize: 11, color: '#854d0e', fontWeight: 600 }}>📌 {ovMonth}</span>
+            {memoSaved && <span style={{ fontSize: 9, color: '#a16207' }}>已存</span>}
+            <button onClick={() => setMemoCollapsed(v => !v)}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none',
+                       fontSize: 13, lineHeight: 1, color: '#a16207', cursor: 'pointer' }}>
+              {memoCollapsed ? '▣' : '−'}
+            </button>
+          </div>
+          {!memoCollapsed && (
+            memoEditing ? (
+              <textarea autoFocus defaultValue={memo} maxLength={500}
+                onBlur={e => { setMemo(e.target.value); setMemoEditing(false); void saveMemo(e.target.value) }}
+                onKeyDown={e => { if (e.key === 'Escape') setMemoEditing(false) }}
+                style={{ display: 'block', width: '100%', boxSizing: 'border-box', minHeight: 110,
+                         fontSize: 11, lineHeight: 1.6, border: 'none', outline: 'none', resize: 'none',
+                         background: 'transparent', fontFamily: 'inherit', color: '#422006', padding: '6px 8px' }} />
+            ) : (
+              <div onClick={() => setMemoEditing(true)}
+                style={{ fontSize: 11, lineHeight: 1.6, minHeight: 110, cursor: 'pointer',
+                         color: memo ? '#422006' : '#a16207', whiteSpace: 'pre-wrap',
+                         wordBreak: 'break-all', padding: '6px 8px' }}>
+                {memo || '撳一下寫備註…'}
+              </div>
+            )
+          )}
+        </div>
+      )}
       {/* Overview capsule styles */}
       <style>{`
         .overview-table {
@@ -4978,34 +5068,6 @@ function getShiftCode(shift: Shift): string {
             </div>
           )}
 
-          {/* ★ 月備註貼（拍板 2026-08-21：按公司＋按月；純記事，零下游影響）
-              坑位照 spec §6.4：pre-wrap 保換行 / resize none＋fontFamily inherit /
-              blur 存＋Escape 取消（冇「儲存」掣）/ Enter 唔送出（純靠 blur） */}
-          {canManage && currentCompanyId && (
-            <div style={{ marginTop: 8, background: '#fef9c3', border: '1px solid #fde047',
-                          borderRadius: 6, padding: 7, boxShadow: '0 1px 3px rgba(0,0,0,.08)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between',
-                            alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 9, color: '#854d0e', fontWeight: 600 }}>📌 {ovMonth}</span>
-                {memoSaved && <span style={{ fontSize: 8, color: '#a16207' }}>已儲存</span>}
-              </div>
-              {memoEditing ? (
-                <textarea autoFocus defaultValue={memo} maxLength={500}
-                  onBlur={e => { setMemo(e.target.value); setMemoEditing(false); void saveMemo(e.target.value) }}
-                  onKeyDown={e => { if (e.key === 'Escape') setMemoEditing(false) }}
-                  style={{ width: '100%', minHeight: 56, boxSizing: 'border-box', fontSize: 9,
-                           lineHeight: 1.6, border: 'none', outline: 'none', resize: 'none',
-                           background: 'transparent', fontFamily: 'inherit', color: '#422006' }} />
-              ) : (
-                <div onClick={() => setMemoEditing(true)}
-                  style={{ fontSize: 9, lineHeight: 1.6, minHeight: 52, cursor: 'pointer',
-                           color: memo ? '#422006' : '#a16207', whiteSpace: 'pre-wrap',
-                           wordBreak: 'break-all' }}>
-                  {memo || '撳一下寫備註…'}
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* COLUMN 2: Employees split by pay type */}
