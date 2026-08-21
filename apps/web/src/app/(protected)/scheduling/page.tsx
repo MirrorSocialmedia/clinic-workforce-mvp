@@ -14,6 +14,7 @@ import zhcn from '@fullcalendar/core/locales/zh-cn'
 import type { DatesSetArg, EventContentArg, EventMountArg } from '@fullcalendar/core'
 const FullCalendarCmp = FullCalendar as unknown as React.ComponentType<any>
 import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK, addDaysStr } from '@/lib/hk-date'
+import { aggregateRestPl } from '@/lib/leave-summary'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { textOn, shiftShade } from '@/lib/color'
 import type { ShiftRuleConfig } from '@/lib/shift-rule-config'
@@ -803,6 +804,16 @@ export default function SchedulingPage() {
     try { localStorage.setItem(MEMO_POS_KEY, JSON.stringify(memoPos)) } catch { /* ignore */ }
   }
 
+  // ★ 2026-08-21：月視圖底部假期總覽 —— 一條 API 一次過回（員工＋服務年度年假＋餘額＋restQuota）
+  const [leaveSummary, setLeaveSummary] = useState<any[] | null>(null)
+  useEffect(() => {
+    if (!currentCompanyId) { setLeaveSummary([]); return }
+    getJSON(`/api/scheduling-leave-summary?companyId=${currentCompanyId}&periodMonth=${ovMonth}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setLeaveSummary(d?.rows ?? []))
+      .catch(() => setLeaveSummary([]))
+  }, [currentCompanyId, ovMonth])
+
   // ★ 小時格式化 helpers
   const fmtH = (mins: number) => {
     const h = mins / 60
@@ -912,6 +923,15 @@ export default function SchedulingPage() {
     }
     return m
   }, [monthLeaveRequests])
+
+  // ★ 2026-08-21：R/PL 前端 aggregate（拍板②a：PL 係 R 子集）——
+  //   R = 本月 REST_DAY 而 isEmployeeRequested=false；PL = true；total = R+PL
+  const restPlByEmp = useMemo(
+    () => monthDays.length > 0
+      ? aggregateRestPl(monthLeaveRequests, monthDays[0], monthDays[monthDays.length - 1])
+      : {},
+    [monthLeaveRequests, monthDays],
+  )
 
   // Load month shifts via pagination (extracted so refreshAll can call it)
   const loadOvMonth = useCallback(async () => {
@@ -2472,6 +2492,23 @@ function getShiftCode(shift: Shift): string {
     if (borrowedIds.size === 0) return []
     return employees.filter(e => borrowedIds.has(e.id))
   }, [shifts, selectedClinicId, trueLocalEmployeeIds, employees])
+
+  // ★ 2026-08-21：總覽行 = API rows × 前端 R/PL —— 只顯示視圖入面嘅員工（同主表 scope 一致），
+  //   順序跟主表（ovEmployees.ordered → borrowedEmployees）
+  const summaryRows = useMemo(() => {
+    if (!leaveSummary || leaveSummary.length === 0) return []
+    const byId = new Map(leaveSummary.map(r => [r.employeeId, r]))
+    const seen = new Set<string>()
+    const out: any[] = []
+    for (const emp of [...ovEmployees.ordered, ...borrowedEmployees]) {
+      const r = byId.get(emp.id)
+      if (!r || seen.has(emp.id)) continue
+      seen.add(emp.id)
+      const rp = restPlByEmp[emp.id] ?? { restOnly: 0, pl: 0, total: 0 }
+      out.push({ ...r, ...rp })
+    }
+    return out
+  }, [leaveSummary, ovEmployees.ordered, borrowedEmployees, restPlByEmp])
 
   // Monthly work hours per employee (browsed month/week, current clinic)
   const monthlyWorkHours = useMemo(() => {
@@ -5808,6 +5845,60 @@ function getShiftCode(shift: Shift): string {
                         </td>
                       ))}
                     </tr>
+                    {/* ★ 2026-08-21：月視圖底部假期總覽（拍板②③ + 年假服務年度）—— 備註行之後。
+                         拍板：唔要「合計」行。截圖用獨立離屏節點（exporting），唔會影到呢度（拍板⑤）。 */}
+                    {summaryRows.length > 0 && (
+                      <tr>
+                        <td colSpan={monthDays.length + 1} style={{ padding: 0, borderTop: '2px solid #cbd5e1' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
+                            <thead>
+                              <tr style={{ background: '#eff6ff', color: '#1d4ed8' }}>
+                                <th style={{ width: 64, padding: '5px', textAlign: 'left' }}>員工</th>
+                                <th style={{ width: 36, padding: '5px', background: '#dbeafe' }}>R</th>
+                                <th style={{ width: 32, padding: '5px', background: '#dbeafe' }}>PL</th>
+                                <th style={{ width: 44, padding: '5px', background: '#93c5fd', color: '#1e3a8a' }}>R+PL</th>
+                                {/* ★ 粗分隔線 + 唔同底色：提醒呢一欄係【服務年度】唔係曆月 */}
+                                <th style={{ padding: '5px', textAlign: 'left',
+                                             borderLeft: '2px solid #60a5fa', background: '#e0f2fe' }}>
+                                  年假（服務年度）
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {summaryRows.map(r => (
+                                <tr key={r.employeeId} style={{ borderBottom: '0.5px solid #e5e7eb' }}>
+                                  <td style={{ padding: '5px' }}>{r.name}</td>
+                                  <td style={{ padding: '5px', textAlign: 'center' }}>{r.restOnly}</td>
+                                  <td style={{ padding: '5px', textAlign: 'center', color: '#b45309', fontWeight: 600 }}>{r.pl}</td>
+                                  <td style={{ padding: '5px', textAlign: 'center', fontWeight: 600,
+                                               color: r.total < r.restQuota ? '#dc2626' : undefined }}>
+                                    {r.total}
+                                    {r.total < r.restQuota && (
+                                      <span style={{ color: '#b45309', fontSize: 9 }}>⚠️ 少過配額 {r.restQuota}</span>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: '4px 5px', borderLeft: '2px solid #60a5fa', lineHeight: 1.6 }}>
+                                    <span style={{ color: '#94a3b8' }}>{r.syStart} ～ {r.syEnd}</span>
+                                    {'　'}<strong>{r.entitled} 天</strong>
+                                    {'　'}<span style={{ color: '#059669' }}>已放 {r.usedDays}</span>
+                                    {'　'}<span style={{ color: '#2563eb' }}>餘 {r.remainThisYear}</span>
+                                    {r.balanceRemaining !== r.remainThisYear && (
+                                      <span style={{ color: '#94a3b8' }}>（連結轉 {r.balanceRemaining}）</span>
+                                    )}
+                                    {r.underOneYear && <span style={{ color: '#b45309', fontSize: 8 }}>{'　'}⚠️ 未滿一年</span>}
+                                    {r.inProbation && <span style={{ color: '#b45309', fontSize: 8 }}>{'　'}⚠️ 試用期</span>}
+                                    <br />
+                                    <span style={{ color: '#94a3b8', fontSize: 8 }}>
+                                      放咗：{r.takenDates || '—'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
                   </tfoot>
                 </table>
               </div>
