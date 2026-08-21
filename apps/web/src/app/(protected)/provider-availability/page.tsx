@@ -248,14 +248,14 @@ export default function ProviderAvailabilityPage() {
               ))}
               {pr.busy.map((b, i) => (
                 <div key={`b${i}`}
-                  title={`${fmtMin(b.s)}–${fmtMin(b.e)} · ${b.count ?? 1} 個預約`}
+                  title={`${fmtMin(b.s)}–${fmtMin(b.e)}`}
                   style={{ position: 'absolute', left: mini ? 1 : 4, right: mini ? 1 : 4, zIndex: 2,
                            borderRadius: 3, background: c, top: pct(b.s), height: pctH(b.s, b.e) }}>
                   {!mini && (
                     <span style={{ fontSize: 9, color: '#fff', padding: '0 4px',
                                    lineHeight: 1.2, display: 'block', overflow: 'hidden',
                                    textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      已約{b.count ? ` ·${b.count}` : ''}
+                      已約
                     </span>
                   )}
                 </div>

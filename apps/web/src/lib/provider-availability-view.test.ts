@@ -52,19 +52,26 @@ function mkResp(over: Partial<AvailabilityResp> = {}): AvailabilityResp {
           { date: D0, start: '09:00', end: '18:00' },
           { date: D1, start: '09:30', end: '12:00' },
         ],
+        // ★ 2026-08-21 拍板⑤：逐筆（11:15–11:45 ×4 + 14:00–15:00 ×2）
         booked: [
-          { date: D0, start: '11:15', end: '11:45', count: 4 },
-          { date: D0, start: '14:00', end: '15:00', count: 2 },
+          { date: D0, start: '11:15', end: '11:45', status: 0 },
+          { date: D0, start: '11:15', end: '11:45', status: 0 },
+          { date: D0, start: '11:15', end: '11:45', status: 0 },
+          { date: D0, start: '11:15', end: '11:45', status: 4 },
+          { date: D0, start: '14:00', end: '15:00', status: 0 },
+          { date: D0, start: '14:00', end: '15:00', status: 0 },
         ],
+        weekBookings: 6,
         leaveDates: [],
       },
-      { id: 'pb', name: 'Dr B', color: null, openSch: [], booked: [], leaveDates: [] },
+      { id: 'pb', name: 'Dr B', color: null, openSch: [], booked: [], weekBookings: 0, leaveDates: [] },
       {
         id: 'pc',
         name: 'Dr C',
         color: null,
         openSch: [{ date: D2, start: '08:30', end: '10:00' }],
         booked: [],
+        weekBookings: 0,
         leaveDates: [],
       },
       {
@@ -75,7 +82,8 @@ function mkResp(over: Partial<AvailabilityResp> = {}): AvailabilityResp {
           { date: D0, start: '9:00', end: '18:00' }, // ★ 格式錯 → drop
           { date: D3, start: '13:00', end: '17:00' },
         ],
-        booked: [{ date: D0, start: '10:00', end: '09:00', count: 3 }], // ★ end<=start → drop
+        booked: [{ date: D0, start: '10:00', end: '09:00', status: 3 }], // ★ end<=start → drop
+        weekBookings: 1,
         leaveDates: [],
       },
     ],
@@ -192,7 +200,7 @@ describe('addDays / weekdayOf / hkTodayStr', () => {
 
 // ─── freeGaps ───
 
-const R = (s: number, e: number, count?: number): Range => ({ s, e, ...(count !== undefined ? { count } : {}) })
+const R = (s: number, e: number, status?: number): Range => ({ s, e, ...(status !== undefined ? { status } : {}) })
 
 describe('freeGaps — open − busy（>=30 分鐘先顯示）', () => {
   it('中間一段 busy → 兩邊 gap', () => {
@@ -237,17 +245,22 @@ describe('buildDays — flat providers[] → 7 日', () => {
     for (const d of days) assert.ok(!d.providers.some(p => p.providerId === 'pb'))
   })
 
-  it('HH:mm → s/e 分鐘 + count 保留 + total = 當日預約總數', () => {
+  it('HH:mm → s/e 分鐘 + status 保留 + total = 當日預約筆數（逐筆回）', () => {
     const a0 = days[0].providers[0]
     assert.deepEqual(a0.open, [R(540, 1080)])
-    assert.deepEqual(a0.busy, [R(675, 705, 4), R(840, 900, 2)])
+    assert.deepEqual(a0.busy, [
+      R(675, 705, 0), R(675, 705, 0), R(675, 705, 0), R(675, 705, 4),
+      R(840, 900, 0), R(840, 900, 0),
+    ])
     assert.equal(a0.total, 6)
+    assert.equal(a0.weekBookings, 6)
     assert.equal(a0.name, 'Dr A')
     assert.equal(a0.color, '#FF0000')
     const a1 = days[1].providers[0]
     assert.deepEqual(a1.open, [R(570, 720)])
     assert.deepEqual(a1.busy, [])
     assert.equal(a1.total, 0)
+    assert.equal(a1.weekBookings, 6) // 承傳同 ProviderAvail（逐日 total 先係當日）
   })
 
   it('格式錯 / end<=start entry 被 drop；同醫生其他有效 entry 照收', () => {
@@ -263,19 +276,19 @@ describe('buildDays — flat providers[] → 7 日', () => {
   it('isWeekEmpty — 全空 / 有 open / 有 booked / 有休假', () => {
     assert.equal(isWeekEmpty(mkResp()), false)
     assert.equal(
-      isWeekEmpty(mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [], leaveDates: [] }] })),
+      isWeekEmpty(mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [], weekBookings: 0, leaveDates: [] }] })),
       true,
     )
     assert.equal(
       isWeekEmpty(
-        mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [{ date: D0, start: '09:00', end: '09:30', count: 1 }], leaveDates: [] }] }),
+        mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [{ date: D0, start: '09:00', end: '09:30', status: 0 }], weekBookings: 1, leaveDates: [] }] }),
       ),
       false,
     )
     // ★ cw-pta：全週只有休假（無 open/booked）→ 唔算空（要畫斜紋，唔好寫「未接通」）
     assert.equal(
       isWeekEmpty(
-        mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [], leaveDates: [D0, D1] }] }),
+        mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [], weekBookings: 0, leaveDates: [D0, D1] }] }),
       ),
       false,
     )
@@ -289,13 +302,13 @@ describe('buildDays — 休假（onLeave / leaveConflict / #15 唔消失）', ()
   const respLeave = mkResp({
     providers: [
       // #15：放假但 Apricot 完全無開診 → 都要出現（唔好令佢消失）
-      { id: 'pl', name: 'Dr Leave', color: null, openSch: [], booked: [], leaveDates: [D1, D2, D3] },
+      { id: 'pl', name: 'Dr Leave', color: null, openSch: [], booked: [], weekBookings: 0, leaveDates: [D1, D2, D3] },
       // 衝突：放假 + 該日有開診
-      { id: 'pc1', name: 'Dr Conflict', color: null, openSch: [{ date: D0, start: '09:00', end: '12:00' }], booked: [], leaveDates: [D0] },
+      { id: 'pc1', name: 'Dr Conflict', color: null, openSch: [{ date: D0, start: '09:00', end: '12:00' }], booked: [], weekBookings: 0, leaveDates: [D0] },
       // 衝突：放假 + 該日只有預約（無開診時段）
-      { id: 'pb1', name: 'Dr BookedOnly', color: null, openSch: [], booked: [{ date: D4, start: '10:00', end: '10:30', count: 1 }], leaveDates: [D4] },
+      { id: 'pb1', name: 'Dr BookedOnly', color: null, openSch: [], booked: [{ date: D4, start: '10:00', end: '10:30', status: 0 }], weekBookings: 1, leaveDates: [D4] },
       // 正常：無假
-      { id: 'pnl', name: 'Dr Normal', color: null, openSch: [{ date: D0, start: '09:00', end: '18:00' }], booked: [], leaveDates: [] },
+      { id: 'pnl', name: 'Dr Normal', color: null, openSch: [{ date: D0, start: '09:00', end: '18:00' }], booked: [], weekBookings: 0, leaveDates: [] },
     ],
   })
   const days = buildDays(respLeave)
@@ -359,13 +372,13 @@ describe('computeAxis — floor/ceil 整點，fallback 08:00–21:00', () => {
   })
   it('只有 busy（無 open）→ fallback', () => {
     const days = buildDays(
-      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [{ date: D0, start: '09:00', end: '09:30', count: 1 }], leaveDates: [] }] }),
+      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [{ date: D0, start: '09:00', end: '09:30', status: 0 }], weekBookings: 1, leaveDates: [] }] }),
     )
     assert.deepEqual(computeAxis(days), [480, 1260])
   })
   it('非整點 open → floor/ceil', () => {
     const days = buildDays(
-      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [{ date: D0, start: '09:30', end: '18:15' }], booked: [], leaveDates: [] }] }),
+      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [{ date: D0, start: '09:30', end: '18:15' }], booked: [], weekBookings: 0, leaveDates: [] }] }),
     )
     assert.deepEqual(computeAxis(days), [540, 1140])
   })

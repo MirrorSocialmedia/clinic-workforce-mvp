@@ -7,7 +7,8 @@
  *        （dev DB 15532 還原「seed base 留低」狀態俾 P4）。
  *
  * 跑法: cd apps/web && set -a && . ./.env.development && set +a && npx tsx scripts/p3-acceptance.ts
- * 預期：PASS=34 FAIL=0（32 項 check + 2 項 PII 掃描）。
+ * 預期：PASS=30 FAIL=0（28 項 check + 2 項 PII 掃描）。
+ * ★ 2026-08-21（cw-lanes-20260821-a2 拍板⑤）：booked 改逐筆回（status）—— 剷咗舊掃描線合併 unit（連 lib 一齊刪）。
  */
 import { execSync } from 'child_process'
 import { PrismaClient } from '@prisma/client'
@@ -17,7 +18,6 @@ import { POST as internalPost } from '../src/app/api/internal/sync-availability/
 // ★ P4: __setTestCallFn 移去 ./test-call-fn（route.ts 唔准 export 非 HTTP symbol，next build 會 fail）
 import { __setTestCallFn } from '../src/app/api/internal/sync-availability/test-call-fn'
 import { GET as paGet } from '../src/app/api/provider-availability/route'
-import { mergeBookings } from '../src/lib/apricot/merge-bookings'
 import { mockCall, addDays } from '../testdata/mock-apricot'
 
 const prisma = new PrismaClient()
@@ -210,7 +210,7 @@ async function main() {
     && b200g.providers.every((p: any) => typeof p.id === 'string' && typeof p.name === 'string'
       && Array.isArray(p.openSch) && Array.isArray(p.booked)
       && p.openSch.every((o: any) => o.date >= today && o.date <= to && /^\d{2}:\d{2}$/.test(o.start) && /^\d{2}:\d{2}$/.test(o.end))
-      && p.booked.every((bk: any) => bk.date >= today && bk.date <= to && /^\d{2}:\d{2}$/.test(bk.start) && /^\d{2}:\d{2}$/.test(bk.end) && bk.count >= 1)),
+      && p.booked.every((bk: any) => bk.date >= today && bk.date <= to && /^\d{2}:\d{2}$/.test(bk.start) && /^\d{2}:\d{2}$/.test(bk.end) && typeof bk.status === 'number')),
     `status=${r200g.status} clinic=${JSON.stringify(b200g.clinic)} from=${b200g.from} to=${b200g.to} providers=${b200g.providers?.length}（6 base providers 全列出）`)
 
   piiCheck('get-response', JSON.stringify(b200g))
@@ -220,44 +220,8 @@ async function main() {
   const bDef: any = await rDef.json()
   check('G-200-defaultfrom', rDef.status === 200 && bDef.from === today && bDef.to === to, `from=${bDef.from} to=${bDef.to}`)
 
-  // ═══════════════ D. mergeBookings unit ═══════════════
-  console.log(`\n========== D. 掃描線合併 unit ══════════`)
-
-  // D1: 重疊併（P2 mock LAU day0 同型：570-600 + 675-705×4 + 900-930）
-  const m1 = mergeBookings([
-    { startMin: 570, endMin: 600 },
-    { startMin: 675, endMin: 705 },
-    { startMin: 675, endMin: 705 },
-    { startMin: 675, endMin: 705 },
-    { startMin: 675, endMin: 705 },
-    { startMin: 900, endMin: 930 },
-  ])
-  check('M-overlap', JSON.stringify(m1) === JSON.stringify([
-    { s: 570, e: 600, count: 1 },
-    { s: 675, e: 705, count: 4 },
-    { s: 900, e: 930, count: 1 },
-  ]), JSON.stringify(m1))
-
-  // D2: 相鄰併（09:00-10:00 + 10:00-10:30）
-  const m2 = mergeBookings([{ startMin: 540, endMin: 600 }, { startMin: 600, endMin: 630 }])
-  check('M-adjacent', JSON.stringify(m2) === JSON.stringify([{ s: 540, e: 630, count: 2 }]), JSON.stringify(m2))
-
-  // D3: 分離唔併
-  const m3 = mergeBookings([{ startMin: 540, endMin: 570 }, { startMin: 660, endMin: 690 }])
-  check('M-separated', JSON.stringify(m3) === JSON.stringify([
-    { s: 540, e: 570, count: 1 },
-    { s: 660, e: 690, count: 1 },
-  ]), JSON.stringify(m3))
-
-  // D4: 包含關係
-  const m4 = mergeBookings([{ startMin: 570, endMin: 600 }, { startMin: 540, endMin: 660 }])
-  check('M-contained', JSON.stringify(m4) === JSON.stringify([{ s: 540, e: 660, count: 2 }]), JSON.stringify(m4))
-
-  // D5: 空
-  check('M-empty', JSON.stringify(mergeBookings([])) === '[]', '[] → []')
-
-  // ═══════════════ E. merge e2e（+LAU resync → GET）═══════════════
-  console.log(`\n========== E. 合併 e2e（+LAU resync）════════════`)
+  // ═══════════════ E. 逐筆回 e2e（+LAU resync → GET）═══════════════
+  console.log(`\n========== E. 逐筆回 e2e（+LAU resync）════════════`)
   await prisma.provider.upsert({
     where: { id: 'syn-prov-lau' },
     update: {},
@@ -273,11 +237,18 @@ async function main() {
   const bE: any = await rE.json()
   const lau = bE.providers.find((p: any) => p.id === 'syn-prov-lau')
   const lauDay0 = (lau?.booked ?? []).filter((bk: any) => bk.date === today)
+  // ★ 2026-08-21 拍板⑤：逐筆回 —— 11:15–11:45 四筆原樣逐筆出（唔再合併），sort 由 startMin
   check('E-lau-booked', JSON.stringify(lauDay0) === JSON.stringify([
-    { date: today, start: '09:30', end: '10:00', count: 1 },
-    { date: today, start: '11:15', end: '11:45', count: 4 },
-    { date: today, start: '15:00', end: '15:30', count: 1 },
+    { date: today, start: '09:30', end: '10:00', status: 0 },
+    { date: today, start: '11:15', end: '11:45', status: 0 },
+    { date: today, start: '11:15', end: '11:45', status: 0 },
+    { date: today, start: '11:15', end: '11:45', status: 0 },
+    { date: today, start: '11:15', end: '11:45', status: 0 },
+    { date: today, start: '15:00', end: '15:30', status: 4 },
   ]), JSON.stringify(lauDay0))
+
+  // ★ 2026-08-21 拍板②：weekBookings = 該週（from..to 窗口）預約總筆數（LAU：day0 6 筆 + day1 1 筆）
+  check('E-lau-weekbookings', lau?.weekBookings === 7, `weekBookings=${lau?.weekBookings}（預期 7）`)
 
   const lauOpen = (lau?.openSch ?? []).filter((o: any) => o.date === today)
   const ho = bE.providers.find((p: any) => p.id === 'syn-prov-ho')

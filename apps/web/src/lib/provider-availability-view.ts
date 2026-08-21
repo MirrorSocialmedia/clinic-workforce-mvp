@@ -13,7 +13,8 @@
 // ─── 類型（mirror GET /api/provider-availability response）───
 
 export interface AvailSlot { date: string; start: string; end: string }
-export interface BookedSeg { date: string; start: string; end: string; count: number }
+/** ★ 2026-08-21 拍板⑤：逐筆回（唔再合併）；status = Apricot bookingStatus（0=已約/4=已完成） */
+export interface BookedSeg { date: string; start: string; end: string; status: number }
 export interface ProviderAvail {
   id: string
   name: string
@@ -21,6 +22,8 @@ export interface ProviderAvail {
   openSch: AvailSlot[]
   /** 掃描線合併後 segment；count = 段內總預約筆數（唔係同時人數） */
   booked: BookedSeg[]
+  /** ★ 2026-08-21 拍板②：該週（from..to 窗口）預約總筆數 —— 預設只顯示有預約醫生 */
+  weekBookings: number
   /** 窗口內有假嘅 HK 日 YYYY-MM-DD（cw-pta spec §4；可能空） */
   leaveDates: string[]
 }
@@ -32,17 +35,21 @@ export interface AvailabilityResp {
   providers: ProviderAvail[]
 }
 
-/** 時間軸上的一段（分鐘，00:00 起） */
-export interface Range { s: number; e: number; count?: number }
+/** 時間軸上的一段（分鐘，00:00 起）；busy 段帶 status（0=已約/4=已完成） */
+export interface Range { s: number; e: number; status?: number }
 
 export interface DayProvider {
   providerId: string
   name: string
   color: string | null
   open: Range[]
+  /** ★ 2026-08-21 拍板⑤：逐筆（1 busy = 1 預約），重疊由 layoutBookings 分 lane */
   busy: Range[]
   /** 當日該醫生預約總筆數（busy segments 嘅 count 總和）— §6.3 醫生名旁顯示 */
+  /** 當日該醫生預約總筆數（= busy 筆數，逐筆回）— §6.3 醫生名旁顯示 */
   total: number
+  /** ★ 2026-08-21 拍板②：該週預約總筆數（承傳 ProviderAvail.weekBookings） */
+  weekBookings: number
   /** ★ cw-pta spec §4：當日有冇假（ProviderLeave 跨店生效） */
   onLeave: boolean
   /** 拍板①：有假但該日仲有開診/預約 = 矛盾，UI 要標紅 */
@@ -171,7 +178,7 @@ export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
         const s = parseHHmm(b.start)
         const e = parseHHmm(b.end)
         if (s === null || e === null || e <= s) continue
-        busy.push({ s, e, count: b.count })
+        busy.push({ s, e, status: b.status })
       }
       const onLeave = (p.leaveDates ?? []).includes(date)
       // ★ 有假嘅日子就算無 open/booked 都保留（§4.2 ★#15）
@@ -182,7 +189,8 @@ export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
           color: p.color,
           open,
           busy,
-          total: busy.reduce((t, b) => t + (b.count ?? 0), 0),
+          total: busy.length, // ★ 逐筆回 → 1 busy = 1 預約
+          weekBookings: p.weekBookings,
           onLeave,
           leaveConflict: onLeave && (open.length > 0 || busy.length > 0),
         })
@@ -251,4 +259,64 @@ export function defaultClinicId(list: ClinicOpt[]): string {
 /** 某日無任何醫生有 data 時嘅空狀態文字（§6.1 DayColumn） */
 export function dayEmptyText(lastSyncAt: string | null): string {
   return lastSyncAt ? '休診' : '未同步'
+}
+
+// ─── 重疊預約橫向分欄（2026-08-21 拍板①⑤；spec MD §3.2）───
+
+/** layoutBookings 輸出：逐筆預約 + lane 位置 */
+export interface Positioned { s: number; e: number; status: number
+  providerId: string; name: string; color: string
+  lane: number; lanes: number; overflow: number }
+
+/**
+ * 重疊嘅預約橫向分欄（同 Google Calendar / Apricot 一樣）。
+ * ★ 上限 3 lane（拍板①）—— 手機一格得 ~40px，多過 3 條就一個字都放唔落。
+ *   第 4 個開始唔畫，計入 cluster 個 overflow，用「+N」窄條顯示。
+ *
+ * ★★ cluster 掃描用 `sorted[j].s < clusterEnd`（**`<` 唔係 `<=`**）：
+ *   19:00–19:30 同 19:30–20:00 係連續唔係重疊，用 `<=` 會夾埋做一個 cluster，
+ *   令兩個唔重疊嘅預約無端端各佔半闊（驗收 #14）。
+ * ★ lane 重用 `laneEnd.findIndex(end => end <= it.s)` 用 `<=`：
+ *   上一個啱啱完，可以重用同一條 lane。
+ * ★ `overflow` 係整個 cluster 共用 —— 每個 placed item 都帶住同一個數，
+ *   前端只需喺 cluster 第一個塊旁邊畫一次「+N」。
+ */
+const MAX_LANES = 3
+
+export function layoutBookings(
+  items: { s: number; e: number; status: number; providerId: string; name: string; color: string }[],
+): Positioned[] {
+  const sorted = [...items].sort((a, b) => a.s - b.s || a.e - b.e)
+  const out: Positioned[] = []
+  let i = 0
+  while (i < sorted.length) {
+    // ① 掃出一個 cluster（連續重疊）
+    const cluster = [sorted[i]]
+    let clusterEnd = sorted[i].e
+    let j = i + 1
+    while (j < sorted.length && sorted[j].s < clusterEnd) {
+      cluster.push(sorted[j])
+      clusterEnd = Math.max(clusterEnd, sorted[j].e)
+      j++
+    }
+    // ② cluster 內分 lane
+    const laneEnd: number[] = []
+    const placed: { item: typeof cluster[0]; lane: number }[] = []
+    let overflow = 0
+    for (const it of cluster) {
+      let lane = laneEnd.findIndex(end => end <= it.s)
+      if (lane === -1) {
+        if (laneEnd.length >= MAX_LANES) { overflow++; continue }   // ★ 上限
+        lane = laneEnd.length
+      }
+      laneEnd[lane] = it.e
+      placed.push({ item: it, lane })
+    }
+    const lanes = Math.max(1, laneEnd.length)
+    for (const { item, lane } of placed) {
+      out.push({ ...item, lane, lanes, overflow })
+    }
+    i = j
+  }
+  return out
 }

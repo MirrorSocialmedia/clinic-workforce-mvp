@@ -5,7 +5,6 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { addDaysStr } from '@/lib/apricot/sync-availability'
-import { mergeBookings } from '@/lib/apricot/merge-bookings'
 import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 import { expandLeavesToSet } from '@/lib/provider-leave'
 
@@ -16,7 +15,8 @@ import { expandLeavesToSet } from '@/lib/provider-leave'
 // 滾動 7 日（from..from+6；拍板③ —— 參數叫 `from` 唔叫 weekStart）。
 // ★ 權限：requirePerm('scheduling')（照 repo 現有 auth 模式）。
 // ★ 診所 scope：照 provider-scope（MANAGER 收窄到主屬店，唔可以跨公司）。
-// ★ booked 用掃描線合併（§5.2）—— count = 段內總預約筆數，唔係同時人數。
+// ★ booked 逐筆回（2026-08-21 拍板⑤）—— 唔再掃描線合併；重疊由前端 layoutBookings 分 lane。
+// ★ weekBookings = 該週（from..to 窗口）預約總筆數 —— 前端「預設只顯示有預約醫生」用。
 // ★ 🔴 只回傳時間/狀態 —— 零病人資料（ProviderBooking 表本身就冇病人欄）。
 // ============================================================
 
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
     }),
     prisma.providerBooking.findMany({
       where: { clinicId: clinic.id, date: { gte: from, lte: to } },
-      select: { providerId: true, date: true, startMin: true, endMin: true, syncedAt: true },
+      select: { providerId: true, date: true, startMin: true, endMin: true, status: true, syncedAt: true },
     }),
   ])
 
@@ -119,17 +119,19 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
       .map((a) => ({ date: a.date, start: a.startTime, end: a.endTime }))
 
-    // 預約：逐日掃描線合併（§5.2）
-    const byDate = new Map<string, { startMin: number; endMin: number }[]>()
+    // 預約：★ 2026-08-21 拍板⑤ —— 逐筆回（唔再掃描線合併）。
+    // 重疊嘅預約原樣逐筆出，由前端 layoutBookings 分 lane（MAX_LANES=3 + overflow）。
+    // 逐日 sort（startMin → endMin）→ 確定性輸出（Prisma 無 orderBy）。
+    const byDate = new Map<string, { startMin: number; endMin: number; status: number }[]>()
     for (const b of bookByProvider.get(p.id) ?? []) {
       const arr = byDate.get(b.date) ?? []
-      arr.push({ startMin: b.startMin, endMin: b.endMin })
+      arr.push({ startMin: b.startMin, endMin: b.endMin, status: b.status })
       byDate.set(b.date, arr)
     }
-    const booked: { date: string; start: string; end: string; count: number }[] = []
+    const booked: { date: string; start: string; end: string; status: number }[] = []
     for (const [date, rows] of [...byDate.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
-      for (const seg of mergeBookings(rows)) {
-        booked.push({ date, start: minToHHMM(seg.s), end: minToHHMM(seg.e), count: seg.count })
+      for (const b of rows.sort((a, z) => a.startMin - z.startMin || a.endMin - z.endMin)) {
+        booked.push({ date, start: minToHHMM(b.startMin), end: minToHHMM(b.endMin), status: b.status })
       }
     }
 
@@ -139,6 +141,9 @@ export async function GET(req: NextRequest) {
       color: p.color,
       openSch,
       booked,
+      // ★ 2026-08-21 拍板②：該週（from..to 窗口）預約總筆數 ——
+      //   真正「呢個醫生喺呢間店」嘅信號（practitionerOpenSch 係公司層設定，人人都有）。
+      weekBookings: (bookByProvider.get(p.id) ?? []).length,
       // ★ 當日窗口內有假嘅 HK 日（可能空）；
       //   onLeave/leaveConflict 由前端 buildDays 按日算（衝突 = 有假 + 該日有開診/預約）。
       //   providers 本來就列出全部 active provider（無 Apricot row 都喺）→
