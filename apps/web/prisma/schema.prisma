@@ -228,6 +228,7 @@ model Employee {
   changeRequestsAsApprover ShiftChangeRequest[] @relation("ChangeApprover")
   leaveRequests LeaveRequest[]
   leaveBalances LeaveBalance[]
+  leaveBalanceSnapshots LeaveBalanceSnapshot[]
   timeBankRecords TimeBank[]
   timeBankEntries TimeBankEntry[]
   payrollItems    PayrollItem[]
@@ -612,6 +613,8 @@ model LeaveType {
 
   requests     LeaveRequest[]
   balances     LeaveBalance[]
+  // ★ 2026-08-22 §6.2：Prisma 強制反向 relation（LeaveBalanceSnapshot.leaveType）
+  balanceSnapshots LeaveBalanceSnapshot[]
 }
 
 // Leave request — employee applies for leave
@@ -659,6 +662,25 @@ model LeaveBalance {
 
   @@unique([employeeId, leaveTypeId, year])
   @@index([employeeId, year])
+}
+
+// ★ 2026-08-22 §6.2：假期餘額月結快照 —— 計糧 FINALIZED 嗰刻影低。
+//   下個月排班月視圖「上月剩」欄靠佢（§6.2.3 lastMonthRestRemaining）。
+// ⚠️ 退回 DRAFT 必須刪（payroll-runs/[id] revert hook），否則下個月會攞到過期數。
+// ★ REST_DAY／OT補假係每曆年一行（see LeaveBalance.year 註解）—— snapshot 時按
+//   (employee, leaveType) 加總 remaining 合併成一行，配合下面個 unique constraint。
+model LeaveBalanceSnapshot {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+  /// 計糧期（periodKey 格式 "YYYY-MM"）— finalize 嗰個月
+  periodMonth String
+  remaining   Float
+  createdAt   DateTime  @default(now())
+
+  @@unique([employeeId, leaveTypeId, periodMonth])
 }
 
 // Notification — in-app notifications

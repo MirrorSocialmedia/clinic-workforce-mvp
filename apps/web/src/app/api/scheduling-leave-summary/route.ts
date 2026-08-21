@@ -20,7 +20,8 @@ import {
 // ?companyId=&periodMonth=YYYY-MM →
 //   { periodMonth, rows: [{ employeeId, name, syStart, syEnd, entitled, usedDays,
 //                           remainThisYear, balanceRemaining, inProbation,
-//                           underOneYear, takenDates, restQuota }] }
+//                           underOneYear, takenDates, restQuota,
+//                           restBalanceRemaining, lastMonthRestRemaining }] }
 //
 // 一條 API 一次過回（MD §3.3 —— 唔好前端逐樣拼）：
 //   ① 全部 ACTIVE 員工（homeClinic 屬該公司）+ joinDate + PayRule table
@@ -114,6 +115,32 @@ export async function GET(req: NextRequest) {
     balanceByEmp.set(b.employeeId, (balanceByEmp.get(b.employeeId) ?? 0) + b.remaining)
   }
 
+  // ★ 2026-08-22 §6.2.3：REST_DAY 剩餘（「剩餘」欄 —— 拍板 (c) 即時值）
+  //   REST_DAY 每曆年一行（每月發放／請假都扣當曆年 row —— leave-requests route deductYear）。
+  //   ★ 唔加 year filter，按員工加總：上年未用完餘額仍係佢哋嘅休息日，加總先係真「當前剩餘」
+  //   （同上面 ANNUAL_LEAVE 嘅 balanceByEmp 加總語義一致；年假 year=0 累積制每人一行，加總＝原值）。
+  const restBalances = await prisma.leaveBalance.findMany({
+    where: { employeeId: { in: empIds }, leaveType: { systemKey: 'REST_DAY' } },
+    select: { employeeId: true, remaining: true },
+  })
+  const restByEmp = new Map<string, number>()
+  for (const b of restBalances) {
+    restByEmp.set(b.employeeId, (restByEmp.get(b.employeeId) ?? 0) + b.remaining)
+  }
+
+  // ★ 2026-08-22 §6.2.3：lastMonthRestRemaining —— 上月 LeaveBalanceSnapshot（REST_DAY）。
+  //   上月 periodKey 要處理跨年（view "2026-01" → snapshot "2025-12"）。
+  //   ★ 查唔到（上月未 finalize 過）= null → 前端顯「—」；
+  //     絕唔好 fallback 當前值 —— 會令「上月剩」同「剩餘」一模一樣，用戶當真係本月冇用過假。
+  const [spy, spm] = periodMonth.split('-').map(Number)
+  const prevMonthKey = spm === 1 ? `${spy - 1}-12` : `${spy}-${String(spm - 1).padStart(2, '0')}`
+  const prevSnapshots = await prisma.leaveBalanceSnapshot.findMany({
+    where: { periodMonth: prevMonthKey, employeeId: { in: empIds }, leaveType: { systemKey: 'REST_DAY' } },
+    select: { employeeId: true, remaining: true },
+  })
+  const lastMonthRestByEmp = new Map<string, number>()
+  for (const s of prevSnapshots) lastMonthRestByEmp.set(s.employeeId, s.remaining)
+
   // ★ restQuota = countMonthlyLeaveDays(y, m, restDays, 公眾假期).total —— 唔好寫死 10
   //   （2026 年 4/9/12 月 PH 去重後係 8 或 9；restDays 由各自 PayRule 攞，預設週六日）
   const [py, pm] = periodMonth.split('-').map(Number)
@@ -159,6 +186,11 @@ export async function GET(req: NextRequest) {
       underOneYear: serviceMonths(emp.joinDate, now) < 12,
       takenDates: formatTakenDates(taken),
       restQuota,
+      // ★ 2026-08-22 §6.2.4（拍板 (c)）：「剩餘」= 當前 LeaveBalance.remaining（REST_DAY 即時值，
+      //   唔係「上月剩 − R − PL」推導 —— 後者未計本月發放）
+      restBalanceRemaining: r1(restByEmp.get(emp.id) ?? 0),
+      // ★ 上月快照；查唔到 = null（前端顯「—」，零 fallback）
+      lastMonthRestRemaining: lastMonthRestByEmp.has(emp.id) ? r1(lastMonthRestByEmp.get(emp.id)!) : null,
     }
   })
 

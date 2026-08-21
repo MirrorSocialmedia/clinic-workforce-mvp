@@ -216,6 +216,40 @@ export async function PUT(
               },
             })
           }
+
+          // ★ 2026-08-22 §6.2.2：假期餘額月結快照 —— 下個月排班總覽「上月剩」欄靠佢
+          //   範圍：run 內全部員工（複用上面對面攞到嘅 items，唔多發 query）× 佢哋全部
+          //   LeaveBalance 行（全 type 全 year）。
+          //   ★ REST_DAY／OT補假係每曆年一行（LeaveBalance.year）—— 同一 (員工, 假期類型)
+          //     會有多行；呢度按 (employeeId, leaveTypeId) 加總 remaining 合併成一行，
+          //     配合 [employeeId, leaveTypeId, periodMonth] unique（唔合併會撞 constraint）。
+          //     年假／生日假係累積制 year=0，每人一行，加總等於原值。
+          // ★ 先刪後寫：重 FINALIZE（FINALIZED→DRAFT→FINALIZED）idempotent 唔重覆，unique 兜底。
+          const snapEmpIds = items.map(i => i.employee.id)
+          if (snapEmpIds.length > 0) {
+            const snapBalances = await tx.leaveBalance.findMany({
+              where: { employeeId: { in: snapEmpIds } },
+              select: { employeeId: true, leaveTypeId: true, remaining: true },
+            })
+            if (snapBalances.length > 0) {
+              const byEmpType = new Map<string, number>()
+              for (const b of snapBalances) {
+                const k = `${b.employeeId}|${b.leaveTypeId}`
+                byEmpType.set(k, (byEmpType.get(k) ?? 0) + b.remaining)
+              }
+              // ★ #50：periodMonth 用同 revert 端同一個 periodKey helper 導出（pm）——
+              //   兩邊格式唔一致（例如 '2026-08' vs '2026-8'）會令退回刪唔到快照。
+              await tx.leaveBalanceSnapshot.deleteMany({
+                where: { employeeId: { in: snapEmpIds }, periodMonth: pm },
+              })
+              await tx.leaveBalanceSnapshot.createMany({
+                data: [...byEmpType.entries()].map(([k, remaining]) => {
+                  const [employeeId, leaveTypeId] = k.split('|')
+                  return { employeeId, leaveTypeId, remaining, periodMonth: pm }
+                }),
+              })
+            }
+          }
         }
 
         // ★ 退回草稿：獨立 action，方便日後追查
@@ -235,6 +269,14 @@ export async function PUT(
             },
           })
           console.log(`[payroll-revert] 刪咗 ${deleted.count} 筆 ROSTER_DIFF`)
+
+          // ★ 2026-08-22 §6.2.2：退回要刪假期餘額快照 ——
+          //   唔刪嘅話下個月「上月剩」會攞到「已 finalize 但實際退咗」嘅數。
+          // ★ #50：pk 同 finalize 寫入端同一個 periodKey helper 導出，格式保證一致。
+          const snapDeleted = await tx.leaveBalanceSnapshot.deleteMany({
+            where: { employeeId: { in: itemsRevert.map(i => i.employeeId) }, periodMonth: pk },
+          })
+          console.log(`[payroll-revert] 刪咗 ${snapDeleted.count} 筆 LeaveBalanceSnapshot`)
 
           await tx.auditLog.create({
             data: {
