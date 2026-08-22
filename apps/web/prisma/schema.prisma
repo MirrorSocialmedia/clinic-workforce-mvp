@@ -669,6 +669,8 @@ model LeaveBalance {
 // ⚠️ 退回 DRAFT 必須刪（payroll-runs/[id] revert hook），否則下個月會攞到過期數。
 // ★ REST_DAY／OT補假係每曆年一行（see LeaveBalance.year 註解）—— snapshot 時按
 //   (employee, leaveType) 加總 remaining 合併成一行，配合下面個 unique constraint。
+/// ⚠️ 有 employeeId（onDelete 預設 RESTRICT）——
+/// 重寫 accounts purge 嗰陣要一齊刪。2026-08-22 清單：18 張帶 employeeId 嘅表。
 model LeaveBalanceSnapshot {
   id          String    @id @default(cuid())
   employeeId  String

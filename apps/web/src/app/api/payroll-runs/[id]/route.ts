@@ -104,6 +104,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const t0 = Date.now()
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session } = auth
@@ -308,6 +309,7 @@ export async function PUT(
         return result
       })
 
+      console.log('[payroll-run PUT]', { runId: params.id, status, durationMs: Date.now() - t0 })
       return NextResponse.json(updated)
     } catch (e: any) {
       // ★ 2026-08-17: 原本冇 catch，業務守衛的中文訊息變成空白 500
