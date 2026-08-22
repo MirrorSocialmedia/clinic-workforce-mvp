@@ -393,26 +393,66 @@ describe('buildDays — 休假（onLeave / leaveConflict / #15 唔消失）', ()
 
 // ─── computeAxis ───
 
-describe('computeAxis — floor/ceil 整點，fallback 08:00–21:00', () => {
-  it('無 data → [480, 1260]', () => {
-    assert.deepEqual(computeAxis(buildDays(mkResp({ providers: [] }))), [480, 1260])
+describe('computeAxis — 掃 open+busy，保底 09:00–21:00（2026-08-22 §1.1）', () => {
+  // ── 現有 4 條（更新為新語義：busy 一齊掃 + 09:00/21:00 保底，唔係機械改數字）──
+  it('無 data（無 open 無 busy）→ 保底 [540, 1260]', () => {
+    // fallback 由 08:00–21:00 改為 09:00–21:00（診所實際營業範圍）
+    assert.deepEqual(computeAxis(buildDays(mkResp({ providers: [] }))), [540, 1260])
   })
-  it('跟資料 range 對齊整點', () => {
+  it('跟資料 range 對齊整點；hi 被 21:00 保底拉上', () => {
     const days = buildDays(mkResp())
     // Dr A D0: 540–1080；Dr A D1: 570–720；Dr C D2: 510–600；Dr D D3: 780–1020
-    assert.deepEqual(computeAxis(days), [480, 1080])
+    // lo=510（08:30 開診）→ floor 480（早於 09:00 → 保留 480，保底唔係封頂）
+    // hi=1080（18:00）< 21:00 → 保底拉上 1260（軸唔再縮晒貼住資料）
+    assert.deepEqual(computeAxis(days), [480, 1260])
   })
-  it('只有 busy（無 open）→ fallback', () => {
+  it('只有 busy（無 open）→ busy 一齊掃（唔再 fallback），hi 保底 21:00', () => {
     const days = buildDays(
       mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [{ date: D0, start: '09:00', end: '09:30', status: 0 }], weekBookings: 1, leaveDates: [] }] }),
     )
-    assert.deepEqual(computeAxis(days), [480, 1260])
+    // busy 09:00–09:30 = 540–570 → lo floor 540，hi ceil 600 → 保底 [540, 1260]
+    assert.deepEqual(computeAxis(days), [540, 1260])
   })
-  it('非整點 open → floor/ceil', () => {
+  it('非整點 open → floor/ceil，hi 保底 21:00', () => {
     const days = buildDays(
       mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [{ date: D0, start: '09:30', end: '18:15' }], booked: [], weekBookings: 0, leaveDates: [] }] }),
     )
-    assert.deepEqual(computeAxis(days), [540, 1140])
+    // lo=570 → floor 540；hi=1095 → ceil 1140，保底拉上 1260
+    assert.deepEqual(computeAxis(days), [540, 1260])
+  })
+  // ── 新增 5 條（2026-08-22 §1.1：漏預約 bug —— 預約超出開診時段會被軸外切走）──
+  it('預約超開診（open 10:00–20:00 + busy 20:15–20:45）→ hi=1260（21:00），個塊完整畫出', () => {
+    const days = buildDays(
+      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [{ date: D0, start: '10:00', end: '20:00' }], booked: [{ date: D0, start: '20:15', end: '20:45', status: 0 }], weekBookings: 1, leaveDates: [] }] }),
+    )
+    // busy 1245 超出 open 1200 —— 唔掃 busy 軸頂就係 20:00，塊被 overflow 切走
+    // lo=600（10:00）→ 保底拉低 540（軸一定由 09:00 或之前開始）
+    assert.deepEqual(computeAxis(days), [540, 1260])
+  })
+  it('全空（days=[]）→ fallback [540, 1260]', () => {
+    assert.deepEqual(computeAxis([]), [540, 1260])
+  })
+  it('單個 10:00–10:30 預約（無 open）→ 軸仍然 09:00–21:00，唔縮成兩粒鐘', () => {
+    const days = buildDays(
+      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [], booked: [{ date: D0, start: '10:00', end: '10:30', status: 0 }], weekBookings: 1, leaveDates: [] }] }),
+    )
+    // busy 600–630 → lo floor 600 → 保底拉低到 540；hi ceil 660 → 保底拉上 1260
+    assert.deepEqual(computeAxis(days), [540, 1260])
+  })
+  it('有 21:30 預約 → 軸撐到 22:00（保底唔係封頂）', () => {
+    const days = buildDays(
+      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [{ date: D0, start: '10:00', end: '20:00' }], booked: [{ date: D0, start: '21:00', end: '21:30', status: 0 }], weekBookings: 1, leaveDates: [] }] }),
+    )
+    // hi=1290 → ceil 1320（22:00）；21:00 保底係底唔係頂
+    // lo=600（10:00）→ 保底拉低 540
+    assert.deepEqual(computeAxis(days), [540, 1320])
+  })
+  it('有 08:00 開診 → lo=480（保底唔係封頂）', () => {
+    const days = buildDays(
+      mkResp({ providers: [{ id: 'x', name: 'X', color: null, openSch: [{ date: D0, start: '08:00', end: '12:00' }], booked: [], weekBookings: 0, leaveDates: [] }] }),
+    )
+    // lo=480（08:00）< 09:00 → 保留 480；hi=720 → 保底拉上 1260
+    assert.deepEqual(computeAxis(days), [480, 1260])
   })
 })
 

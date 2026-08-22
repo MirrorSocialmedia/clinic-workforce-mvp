@@ -230,19 +230,23 @@ export function isWeekEmpty(resp: AvailabilityResp): boolean {
   )
 }
 
-// ─── 時間軸範圍（跟資料 floor/ceil 到整點；fallback 08:00–21:00，§6.2 #9）───
+// ─── 時間軸範圍（跟資料 floor/ceil 到整點；保底 09:00–21:00，§6.2 #9 + 2026-08-22 §1.1）───
 
 export function computeAxis(days: ScheduleDay[]): [number, number] {
   let lo = Infinity
   let hi = -Infinity
   for (const d of days)
-    for (const p of d.providers)
-      for (const r of p.open) {
-        lo = Math.min(lo, r.s)
-        hi = Math.max(hi, r.e)
-      }
-  if (!isFinite(lo) || !isFinite(hi)) return [8 * 60, 21 * 60]
-  return [Math.floor(lo / 60) * 60, Math.ceil(hi / 60) * 60]
+    for (const p of d.providers) {
+      for (const r of p.open) { lo = Math.min(lo, r.s); hi = Math.max(hi, r.e) }
+      // ★ 2026-08-22：預約可以超出開診時段（實測最晚到 21:00）——
+      //   唔掃 busy 就會令個塊 pct() > 100%，畫喺容器外被 overflow 切走（漏資訊 bug）。
+      for (const b of p.busy) { lo = Math.min(lo, b.s); hi = Math.max(hi, b.e) }
+    }
+  if (!isFinite(lo) || !isFinite(hi)) return [9 * 60, 21 * 60]
+  // ★ 最少 09:00–21:00 —— 診所實際營業範圍，避免某日得一兩個預約時軸縮到得兩粒鐘。
+  //   保底唔係封頂：08:00 開診 → 480；21:30 預約 → 1320，軸照樣撐開。
+  return [Math.min(9 * 60, Math.floor(lo / 60) * 60),
+          Math.max(21 * 60, Math.ceil(hi / 60) * 60)]
 }
 
 // ─── 同步狀態 chip（§7.3 #20 + task brief）───

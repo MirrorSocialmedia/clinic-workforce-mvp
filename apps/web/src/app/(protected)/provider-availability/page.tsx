@@ -258,23 +258,26 @@ export default function ProviderAvailabilityPage() {
     })))
     return laid.map((b, i) => {
       const w = 100 / b.lanes
-      const tooShort = (b.e - b.s) < 20   // ★ 少過 20 分鐘 → 只顯示醫生名（#15 #16）
+      // ★ 字放大之後門檻要跟住升 —— 15 分鐘塊只約 29px（1400/48），放唔落 12px+10px 兩行（≈32px）；少過 30 分鐘只顯示醫生名（#15 #16）
+      const tooShort = (b.e - b.s) < 30
+      // ★ 2026-08-22 MD §2.4：3 lane 時每欄太窄，唔畫時段（只留醫生名；完整時段靠 title tooltip）
+      const tooNarrow = b.lanes >= 3
       return (
         <Fragment key={`b${i}`}>
-          {/* calc(% ± px)：純 % 會令相鄰塊貼死冇縫；minHeight 18 → 15 分鐘塊唔變一條線 */}
-          {/* ★ §6.5：title（hover 提示）保留全名；塊內緊窄顯示用簡稱；字 6.5/6 → 9/8 */}
+          {/* calc(% ± px)：純 % 會令相鄰塊貼死冇縫；minHeight 24 → 15 分鐘塊唔變一條線 */}
+          {/* ★ §6.5：title（hover 提示）保留全名；塊內緊窄顯示用簡稱；字 6.5/6 → 9/8 → 2026-08-22 放大 12/10 */}
           <div title={`${pr.name} ${fmtMin(b.s)}–${fmtMin(b.e)}`}
             style={{ position: 'absolute', zIndex: 2,
               left: `calc(${b.lane * w}% + 2px)`,
               width: `calc(${w}% - 4px)`,
               top: pct(b.s), height: pctH(b.s, b.e),
-              minHeight: 18, background: b.color, borderRadius: 3,
+              minHeight: 24, background: b.color, borderRadius: 3,
               padding: '2px 3px', boxSizing: 'border-box', overflow: 'hidden' }}>
-            <span style={{ fontSize: 9, color: '#fff', fontWeight: 600, display: 'block',
+            <span style={{ fontSize: 12, color: '#fff', fontWeight: 600, display: 'block',
                            lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden',
                            textOverflow: 'ellipsis' }}>{shortName(pr.name)}</span>
-            {!tooShort && (
-              <span style={{ fontSize: 8, color: '#ffffffcc', display: 'block', lineHeight: 1.25 }}>
+            {!tooShort && !tooNarrow && (
+              <span style={{ fontSize: 10, color: '#ffffffcc', display: 'block', lineHeight: 1.25 }}>
                 {fmtMin(b.s)}–{fmtMin(b.e)}
               </span>
             )}
@@ -288,7 +291,7 @@ export default function ProviderAvailabilityPage() {
                        height: pctH(b.s, b.e), width: 14, minHeight: 18,
                        background: '#475569', borderRadius: '3px 0 0 3px',
                        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 8, color: '#fff', writingMode: 'vertical-rl' }}>+{b.overflow}</span>
+              <span style={{ fontSize: 10, color: '#fff', writingMode: 'vertical-rl' }}>+{b.overflow}</span>
             </div>
           )}
         </Fragment>
@@ -346,7 +349,7 @@ export default function ProviderAvailabilityPage() {
                 <div key={`o${i}`} style={{ position: 'absolute', left: 0, right: 0, zIndex: 1,
                        background: soft(c), top: pct(o.s), height: pctH(o.s, o.e) }}>
                   {!mini && i === 0 && (
-                    <span style={{ position: 'absolute', top: 2, left: 4, fontSize: 10,
+                    <span style={{ position: 'absolute', top: 2, left: 4, fontSize: 12,
                                    fontWeight: 600, color: c }}>
                       {shortName(pr.name)}{pr.total > 0 ? ` · ${pr.total}` : ''}
                     </span>
@@ -357,7 +360,7 @@ export default function ProviderAvailabilityPage() {
               {/* ★ 休假 label（底部）；衝突 → 紅 + 警告（拍板①） */}
               {pr.onLeave && (
                 <span style={{ position: 'absolute', bottom: 2, left: 3, zIndex: 3,
-                               fontSize: 8, fontWeight: 600,
+                               fontSize: 10, fontWeight: 600,
                                color: pr.leaveConflict ? '#dc2626' : '#64748b' }}>
                   {pr.leaveConflict ? '⚠️ 休假但有開診' : '休假'}
                 </span>
@@ -519,13 +522,14 @@ export default function ProviderAvailabilityPage() {
                 ) : (
                   <>
                     {/* ═══ 桌面：時間軸 × 七日 ═══ */}
-                    {/* ★ §6.5（2026-08-21 拍板③）：fixed height 1085（唔係 minHeight — 要滾動就要固定高）；
-                        超高時由 body（overflowY: auto）出 scrollbar；手機唔跟（維持矮版） */}
-                    <div className="hidden md:flex" style={{ gap: 4, height: 1085 }}>
+                    {/* ★ §6.5（2026-08-21 拍板③）：fixed height（唔係 minHeight — 要滾動就要固定高）；
+                        超高時由 body（overflowY: auto）出 scrollbar；手機唔跟（維持矮版）。
+                        ★ 2026-08-22：軸 11h → 12h（21:00）＋ 字體放大 — 高度 1085 → 1400（每 30 分鐘格 ≈ 58px） */}
+                    <div className="hidden md:flex" style={{ gap: 4, height: 1400 }}>
                       <div style={{ width: 44, flexShrink: 0, position: 'relative', marginTop: 24 }}>
                         {hourTicks.map(t => (
                           <span key={t.m} style={{ position: 'absolute', right: 6, transform: 'translateY(-50%)',
-                                                 fontSize: 10, color: '#94a3b8', top: pct(t.m) }}>
+                                                 fontSize: 12, color: '#94a3b8', top: pct(t.m) }}>
                             {fmtMin(t.m)}
                           </span>
                         ))}
@@ -533,7 +537,7 @@ export default function ProviderAvailabilityPage() {
                       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 6 }}>
                         {visibleDays.map(day => (
                           <div key={day.date} style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                            <div style={{ height: 24, textAlign: 'center', fontSize: 11 }}>
+                            <div style={{ height: 24, textAlign: 'center', fontSize: 13 }}>
                               <DayHead date={day.date} mini={false} />
                             </div>
                             <div style={{ flex: 1, ...(day.date === today
@@ -572,14 +576,14 @@ export default function ProviderAvailabilityPage() {
                     <div className="md:hidden" style={{ height: '100%', minHeight: 380 }}>
                       {zoomDay ? (
                         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                          <div style={{ textAlign: 'center', fontSize: 12, color: '#334155', marginBottom: 6 }}>
+                          <div style={{ textAlign: 'center', fontSize: 13, color: '#334155', marginBottom: 6 }}>
                             {zoomDay.date}（{weekdayOf(zoomDay.date)}）
                           </div>
                           <div style={{ display: 'flex', gap: 8, flex: 1, minHeight: 0 }}>
                             <div style={{ width: 44, flexShrink: 0, position: 'relative' }}>
                               {hourTicks.map(t => (
                                 <span key={t.m} style={{ position: 'absolute', right: 4, transform: 'translateY(-50%)',
-                                                       fontSize: 10, color: '#94a3b8', top: pct(t.m) }}>
+                                                       fontSize: 12, color: '#94a3b8', top: pct(t.m) }}>
                                   {fmtMin(t.m)}
                                 </span>
                               ))}
@@ -602,7 +606,7 @@ export default function ProviderAvailabilityPage() {
                           <div style={{ width: 32, flexShrink: 0, position: 'relative', marginTop: 28 }}>
                             {hourTicks.map(t => (
                               <span key={t.m} style={{ position: 'absolute', right: 2, transform: 'translateY(-50%)',
-                                                     fontSize: 10, color: '#94a3b8', top: pct(t.m) }}>
+                                                     fontSize: 12, color: '#94a3b8', top: pct(t.m) }}>
                                 {fmtMin(t.m).slice(0, 2)}
                               </span>
                             ))}
@@ -667,9 +671,12 @@ export default function ProviderAvailabilityPage() {
                       )}
                     </div>
 
-                    {/* legend */}
+                    {/* legend
+                        ★ 2026-08-22：PWA 安裝 banner 固定畫面底部 — legend 加底 padding 令
+                        chip+legend 滾到底時唔被遮（§3.2；兩選項揀少改動：唔搬 chip） */}
                     <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12,
-                                  flexWrap: 'wrap', fontSize: 10, color: '#94a3b8' }}>
+                                  flexWrap: 'wrap', fontSize: 10, color: '#94a3b8',
+                                  paddingBottom: 60 }}>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
                                         background: '#f1f5f9', marginRight: 4 }} />冇開診</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
