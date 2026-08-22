@@ -384,9 +384,7 @@ export async function computePayout(
   }
 
   const labCost = round2(sumByCosts(costs, 'LAB'))
-  // ★ 2026-08-22：IMPLANT 已併入 LAB（見 cost-entry CATEGORIES）—
-  //   留住呢個 term 係為咗萬一有漏 migrate 嘅舊資料仍然扣得到，唔好剷。
-  const implantCost = round2(sumByCosts(costs, 'IMPLANT'))
+  const implantCost = round2(sumByCosts(costs, 'IMPLANT')) // ★ IMPLANT 係獨立類別（CATEGORIES = LAB/IMPLANT/INVISALIGN）
   const invisalignCost = round2(sumByCosts(costs, 'INVISALIGN'))
 
   // ─── ③ Profit ────────────────────────────────────────────────────────

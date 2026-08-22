@@ -183,6 +183,10 @@ export default function ProviderAvailabilityPage() {
     try {
       const r = await fetch('/api/provider-availability/sync', {
         method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        // ★ 2026-08-22（cw-patwk）：傳當前睇緊嘅週首日 —— 唔傳就永遠只拉今日起 7 日，
+        //   切去下週會見到「未有資料」但 DB 真係冇嗰一週。
+        body: JSON.stringify({ from }),
       })
       if (r.status === 429) {
         const d = await r.json().catch(() => ({}))
@@ -197,7 +201,7 @@ export default function ProviderAvailabilityPage() {
     } finally {
       setSyncing(false)
     }
-  }, [syncing, cooldownLeft, load])
+  }, [syncing, cooldownLeft, load, from])
 
   // flat providers[] → 7 日渲染 shape（純邏輯，已測試）
   const days = useMemo(() => (data ? buildDays(data) : []), [data])

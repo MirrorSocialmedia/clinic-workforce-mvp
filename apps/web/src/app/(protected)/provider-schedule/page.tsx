@@ -5,7 +5,7 @@ import { apiFetch } from '@/lib/api-client'
 import { todayHK, addDays, fmtTime, hkDayOfWeek, toHKDateStr } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
 // ★ cw-patwl §2：每週固定 pattern（撳格循環 + optimistic update）
-import { resolveSlots } from '@/lib/provider-pattern'
+import { resolveSlots, resolveOnDuty } from '@/lib/provider-pattern'
 // ★ cw-pta §5：員工當值 mapping 抽咗入 lib（同 provider-availability 共用，唔寫第二份）
 import { buildStaffByDate, shouldLoadStaffShifts } from '@/lib/staff-by-date'
 import { Card } from '@/components/ui/card'
@@ -18,6 +18,20 @@ const DAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
 const SLOT_CYCLE = ['', 'FULL', 'AM', 'PM'] as const
 const SLOT_LABEL: Record<string, string> = { FULL: '～', AM: 'AM', PM: 'PM' }
 const PATTERN_WEEKDAYS = [1, 2, 3, 4, 5, 6, 0] // 一…日（DB weekday 0=日 排最後）
+
+/** ★ 2026-08-22（cw-patwk）：leave startDate~endDate 逐日展開（純字串運算，避開 Date 時區陷阱） */
+function expandLeaveDates(lv: { startDate: string; endDate: string }): string[] {
+  const out: string[] = []
+  let cur = toHKDateStr(lv.startDate)
+  const end = toHKDateStr(lv.endDate)
+  let guard = 0
+  while (cur <= end && guard < 400) {
+    out.push(cur)
+    cur = addDays(cur, 1)
+    guard += 1
+  }
+  return out
+}
 
 export default function ProviderSchedulePage() {
   const [weekStart, setWeekStart] = useState(() => {
@@ -80,7 +94,7 @@ export default function ProviderSchedulePage() {
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isDoubleClickRef = useRef(false)
 
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart])
   const weekEnd = weekDays[6]
 
   // ★ visibleClinics: filtered by scope
@@ -138,6 +152,28 @@ export default function ProviderSchedulePage() {
     }
     return m
   }, [leaves])
+
+  // ★ 2026-08-22（cw-patwk）§1.3：本週實況三層疊 —— pattern 展開 → shift 例外覆蓋 → leave 蓋走
+  //   （之前只讀 ProviderShift，pattern 排咗都唔會顯示喺本週實況）
+  //   pattern 係 weekly，對任何週都有效（切下一週照樣展開）。
+  const onDutyByDate = useMemo(() => {
+    const patternRows: Array<{ providerId: string; weekday: number; slot: string }> = []
+    for (const [key, slot] of patternMap) {
+      if (!slot) continue
+      const [providerId, wd] = key.split(':') // cuid 無冒號，split(':') 安全
+      patternRows.push({ providerId, weekday: Number(wd), slot })
+    }
+    const leaveSet = new Set(
+      leaves.flatMap(lv => expandLeaveDates(lv).map(d => `${lv.providerId}:${d}`)),
+    )
+    // ★ ProviderShift.date 係 ISO 字串 —— 照 shiftByDay 嘅正規化做法 toHKDateStr 先傳
+    const normShifts = shifts.map(s => ({ providerId: s.providerId, date: toHKDateStr(s.date), slot: s.slot ?? null }))
+    const out = new Map<string, Map<string, { slot: string; isException: boolean }>>()
+    for (const d of weekDays) {
+      out.set(d, resolveOnDuty(d, patternRows, normShifts, leaveSet))
+    }
+    return out
+  }, [patternMap, shifts, leaves, weekDays])
 
   // Load providers, clinics, and user role
   useEffect(() => {
@@ -475,14 +511,14 @@ export default function ProviderSchedulePage() {
               <tr className="bg-muted/50">
                 <th className="sticky left-0 z-10 bg-muted p-2 text-left min-w-[120px]" style={{ position: 'sticky', left: 0 }}>醫生</th>
                 {PATTERN_WEEKDAYS.map(wd => (
-                  <th key={wd} className="p-2 text-center min-w-[80px]">星期{DAY_LABELS[wd]}</th>
+                  <th key={wd} className="p-2 text-center min-w-[80px]" style={{ fontSize: 13 }}>星期{DAY_LABELS[wd]}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {visibleProviders.map(p => (
                 <tr key={p.id} className="border-t">
-                  <td className="sticky left-0 z-10 bg-background p-2 font-medium" style={{ position: 'sticky', left: 0, borderRight: '2px solid #e5e7eb' }}>
+                  <td className="sticky left-0 z-10 bg-background p-2 font-medium" style={{ position: 'sticky', left: 0, borderRight: '2px solid #e5e7eb', fontSize: 14 }}>
                     <span style={{ color: p.color || '#888' }}>●</span> {p.name}
                   </td>
                   {PATTERN_WEEKDAYS.map(wd => {
@@ -492,19 +528,19 @@ export default function ProviderSchedulePage() {
                         onClick={() => cyclePattern(p.id, wd)}
                         style={{
                           cursor: canManage ? 'pointer' : 'default',
-                          textAlign: 'center', padding: 4, minHeight: 40,
+                          textAlign: 'center', padding: 8, minHeight: 40,
                           background: canManage ? undefined : '#f8fafc', // KIOSK 只讀灰格
                         }}
                       >
                         {slot ? (
                           <span style={{
-                            display: 'inline-block', minWidth: 32, padding: '2px 8px', borderRadius: 4,
-                            fontSize: 11, fontWeight: 600,
+                            display: 'inline-block', minWidth: 40, padding: '2px 8px', borderRadius: 4,
+                            fontSize: 14, fontWeight: 600,
                             background: slot === 'FULL' ? '#dbeafe' : slot === 'AM' ? '#fef3c7' : '#e9d5ff',
                             color: slot === 'FULL' ? '#1d4ed8' : slot === 'AM' ? '#92400e' : '#6b21a8',
                           }}>{SLOT_LABEL[slot]}</span>
                         ) : (
-                          <span style={{ color: '#e5e7eb' }}>·</span>
+                          <span style={{ color: '#e5e7eb', fontSize: 12 }}>·</span>
                         )}
                       </td>
                     )
@@ -522,7 +558,7 @@ export default function ProviderSchedulePage() {
             <tr className="bg-muted/50">
               <th className="sticky left-0 z-10 bg-muted p-2 text-left min-w-[120px]" style={{ position: 'sticky', left: 0 }}>醫生</th>
               {weekDays.map(d => (
-                <th key={d} className="p-2 text-center min-w-[100px]">
+                <th key={d} className="p-2 text-center min-w-[100px]" style={{ fontSize: 13 }}>
                   <div>星期{DAY_LABELS[hkDayOfWeek(d)]}</div>
                   <div className="text-muted-foreground">{d}</div>
                   {d === todayHK() && <Badge variant="secondary" className="mt-1">今日</Badge>}
@@ -534,62 +570,41 @@ export default function ProviderSchedulePage() {
             {/* Provider rows */}
             {visibleProviders.map(p => (
               <tr key={p.id} className="border-t">
-                <td className="sticky left-0 z-10 bg-background p-2 font-medium" style={{ position: 'sticky', left: 0, borderRight: '2px solid #e5e7eb' }}>
+                <td className="sticky left-0 z-10 bg-background p-2 font-medium" style={{ position: 'sticky', left: 0, borderRight: '2px solid #e5e7eb', fontSize: 14 }}>
                   <span style={{ color: p.color || '#888' }}>●</span> {p.name}
                 </td>
                 {weekDays.map(d => {
                   const dayShifts = shiftByDay.get(`${d}|${p.id}`)
                   const leave = leaveByDay.get(`${d}|${p.id}`)
+                  // ★ cw-patwk：三層疊結果（pattern 展開 → shift 覆蓋 → leave 蓋走）
+                  const duty = onDutyByDate.get(d)?.get(p.id)
                   return (
-                    <td key={d} className="p-1 text-center border-l"
+                    <td key={d} className="p-2 text-center border-l"
                       onClick={(e) => handleCellClick(e, d, p.id)}
                       onDoubleClick={(e) => handleCellDoubleClick(e, d, p.id)}
                       onContextMenu={(e) => dayShifts?.[0] && handleCellContextMenu(e, dayShifts[0])}
                       style={{ cursor: 'pointer', minHeight: 48 }}
                     >
-                      {leave && (
-                        <div className="bg-amber-100 text-amber-700 rounded px-1 text-[10px] mb-0.5">
+                      {leave ? (
+                        // ★ leave 蓋走：唔顯示當值（保留原有「休假」標記）
+                        <div className="bg-amber-100 text-amber-700 rounded px-1 text-[11px] mb-0.5">
                           休假{leave.note ? `·${leave.note}` : ''}
                         </div>
-                      )}
-                      {dayShifts && dayShifts.length > 0 ? (
-                        <div>
-                          {dayShifts.map(sh => (
-                            <div key={sh.id} className={`p-1 rounded text-xs mb-0.5 ${canSchedule ? 'hover:ring-2 ring-offset-1 ring-primary/50' : ''}`}
-                              style={{
-                                background: (p.color || '#888') + '22',
-                                borderLeft: `3px solid ${p.color || '#888'}`,
-                              }}
-                            >
-                              <div className="flex items-center gap-1">
-                                <span>{fmtTime(sh.startTime)} - {fmtTime(sh.endTime)}</span>
-                                {/* ★ cw-patwl Q2：slot 標記（OFF = 當日唔返，唔係休假斜紋） */}
-                                {sh.slot && (
-                                  <span className="text-[9px] font-bold px-1 rounded"
-                                    style={{
-                                      background: sh.slot === 'OFF' ? '#fee2e2' : '#dbeafe',
-                                      color: sh.slot === 'OFF' ? '#b91c1c' : '#1d4ed8',
-                                    }}>
-                                    {sh.slot === 'OFF' ? '唔返' : SLOT_LABEL[sh.slot] ?? sh.slot}
-                                  </span>
-                                )}
-                              </div>
-                              {sh.note && <div className="text-muted-foreground mt-0.5">{sh.note}</div>}
-                              {canSchedule && (
-                                <button className="mt-0.5 text-muted-foreground hover:text-foreground"
-                                  onClick={(e) => { e.stopPropagation(); handleDeleteShift(sh.id) }}
-                                >
-                                  <X className="w-3 h-3 inline" />
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                      ) : duty ? (
+                        // ★ 當值 chip（FULL ～藍 / AM 黃 / PM 紫）；
+                        //   例外（來源係 ProviderShift）加 ✎ + 琥珀邊框，同固定表分得開
+                        <span style={{
+                          display: 'inline-block', minWidth: 40, padding: '2px 8px', borderRadius: 4,
+                          fontSize: 14, fontWeight: 600, textAlign: 'center',
+                          background: duty.slot === 'FULL' ? '#dbeafe' : duty.slot === 'AM' ? '#fef3c7' : '#e9d5ff',
+                          color: duty.slot === 'FULL' ? '#1d4ed8' : duty.slot === 'AM' ? '#92400e' : '#6b21a8',
+                          ...(duty.isException ? { border: '1.5px solid #f59e0b' } : {}),
+                        }}>
+                          {SLOT_LABEL[duty.slot] ?? duty.slot}{duty.isException ? ' ✎' : ''}
+                        </span>
                       ) : (
-                        <div className="h-12 flex items-center justify-center text-muted-foreground/30 text-[10px]">+</div>
-                      )}
-                      {leave && dayShifts && dayShifts.length > 0 && (
-                        <div className="text-[9px] text-amber-600">⚠ 休假日有當值</div>
+                        // ★ 冇 pattern 冇 shift →「·」（OFF 例外已被 resolveOnDuty 移除，唔當休假）
+                        <span style={{ color: '#e5e7eb', fontSize: 12 }}>·</span>
                       )}
                     </td>
                   )
@@ -604,16 +619,16 @@ export default function ProviderSchedulePage() {
                 員工當值
               </td>
               {weekDays.map(d => (
-                <td key={d} className="p-1 align-top bg-muted/10">
+                <td key={d} className="p-2 align-top bg-muted/10">
                   {staffError
-                    ? <div className="text-[10px] text-muted-foreground">載入失敗</div>
+                    ? <div className="text-[11px] text-muted-foreground">載入失敗</div>
                     : (() => {
                         const list = staffByDate.get(d) ?? []
-                        if (list.length === 0) return <div className="text-[10px] text-muted-foreground/30 text-center">—</div>
+                        if (list.length === 0) return <div className="text-[11px] text-muted-foreground/30 text-center">—</div>
                         return (
                           <div className="flex flex-col gap-0.5">
                             {list.map((s, i) => (
-                              <div key={`${s.id}-${i}`} className="text-[10px] leading-tight whitespace-nowrap">
+                              <div key={`${s.id}-${i}`} className="text-[11px] leading-tight whitespace-nowrap">
                                 <span className={s.transfer ? 'text-amber-700' : ''}>{s.name}</span>
                                 {s.transfer && <span className="ml-0.5 text-amber-600">·調</span>}
                                 <span className="text-muted-foreground ml-1">{s.start}–{s.end}</span>

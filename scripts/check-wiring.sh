@@ -20,3 +20,8 @@ for f in $(find "$SRC/app/(protected)" -name page.tsx); do
  n=$(grep -rl "\"$p\"\|'$p'\|\`$p\`" $SRC --include=*.tsx 2>/dev/null | wc -l)
  [ "$n" -eq 0 ] && echo " $p"
 done
+
+# ★ 2026-08-22（cw-patwk）：明確 exit 0 —— 上面最後一個 `[ ... ] && echo` 喺
+#   冇 entry 嘅 page 會令 script 意外 exit 1（同 header「唔 exit 1」意圖矛盾，
+#   baseline 5b19e94f 已驗證同一 leak）。純資訊輸出，唔係 gate。
+exit 0

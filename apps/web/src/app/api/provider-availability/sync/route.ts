@@ -2,7 +2,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAnyPerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { runAvailabilitySync } from '@/lib/apricot/sync-availability'
+import { addDaysStr, runAvailabilitySync } from '@/lib/apricot/sync-availability'
+import { todayHK } from '@/lib/hk-date'
 import { checkCooldown } from '@/lib/sync-cooldown'
 
 // ============================================================
@@ -26,6 +27,26 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const userId = auth.session!.userId
+
+  // ★ 2026-08-22（cw-patwk）：body.from = 前端當前顯示週首日（同步嗰一週，唔係永遠今週）。
+  //   驗證喺 cooldown 之前 —— 壞請求唔消耗 60s cooldown，改返再撳唔使等。
+  const body = await req.json().catch(() => ({}))
+  const from = typeof (body as { from?: unknown })?.from === 'string' ? (body as { from: string }).from : undefined
+  if (from !== undefined) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      return NextResponse.json({ error: 'from 格式錯誤（要 YYYY-MM-DD）' }, { status: 400 })
+    }
+    const today = todayHK()
+    // ★ 過去日期：deleteMany 先刪後寫 —— Apricot 未必有舊資料，倒拉 = 淨係刪咗冇寫返
+    if (from < today) {
+      return NextResponse.json({ error: '唔可以同步過去嘅日期' }, { status: 400 })
+    }
+    // ★ 上限：唔准拉超過今日 +60 日（Apricot 排期通常唔會咁遠）
+    if (from > addDaysStr(today, 60)) {
+      return NextResponse.json({ error: '只可以同步未來 60 日內嘅資料' }, { status: 400 })
+    }
+  }
+
   const now = Date.now()
   const decision = checkCooldown(lastSyncAt, userId, now)
   if (!decision.allowed) {
@@ -37,6 +58,6 @@ export async function POST(req: NextRequest) {
   // ★ 記低喺 sync 之前（理由睇上面 header comment）
   lastSyncAt.set(userId, now)
 
-  const outcome = await runAvailabilitySync({})
+  const outcome = await runAvailabilitySync({ from })
   return jsonNoStore(outcome)
 }

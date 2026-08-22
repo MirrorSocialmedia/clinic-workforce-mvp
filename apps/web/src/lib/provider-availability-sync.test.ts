@@ -45,6 +45,36 @@ describe('RBAC 登記 — POST /api/provider-availability/sync（spec §3）', (
   })
 })
 
+describe('sync from 參數（cw-patwk 2026-08-22）— route 來源守門', () => {
+  const p = join(dirname(fileURLToPath(import.meta.url)), '../app/api/provider-availability/sync/route.ts')
+  const src = readFileSync(p, 'utf8')
+
+  it('讀 body.from（json 壞咗 → 空 object fallback）', () => {
+    assert.match(src, /req\.json\(\)\.catch\(\(\) => \(\{\}\)\)/, 'body 必須 json().catch fallback')
+    assert.match(src, /typeof .*\.from === 'string'/, 'from 必須 typeof string 先傳')
+  })
+
+  it('過去日期 → 400「唔可以同步過去嘅日期」（防 deleteMany 倒拉刪走歷史）', () => {
+    assert.match(src, /if \(from < today\)/, '必須驗證 from >= 今日')
+    assert.match(src, /唔可以同步過去嘅日期/)
+  })
+
+  it('超過今日+60 日 → 400「只可以同步未來 60 日內嘅資料」', () => {
+    assert.match(src, /addDaysStr\(today, 60\)/, '必須有 +60 日上限')
+    assert.match(src, /只可以同步未來 60 日內嘅資料/)
+  })
+
+  it('from 傳落 runAvailabilitySync（同步嗰一週）', () => {
+    assert.match(src, /runAvailabilitySync\(\{ from \}\)/)
+  })
+
+  it('sync 引擎：start/end 只由 resolveSyncWindow 算（兩 call site 共用）', () => {
+    const eng = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'apricot/sync-availability.ts'), 'utf8')
+    assert.match(eng, /export function resolveSyncWindow/)
+    assert.equal((eng.match(/resolveSyncWindow\(/g) ?? []).length >= 3, true, '定義 + 兩個 call site')
+  })
+})
+
 describe('cron script — scripts/sync-availability.sh（spec §2.1）', () => {
   // apps/web/src/lib → repo root
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')

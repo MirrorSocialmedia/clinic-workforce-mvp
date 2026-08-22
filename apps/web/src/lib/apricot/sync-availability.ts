@@ -71,23 +71,38 @@ function hkTodayStr(): string {
   return toHKDateStr(new Date())
 }
 
+/**
+ * ★ 2026-08-22（cw-patwk）：sync 窗口 = from 起 7 日（from 為 'YYYY-MM-DD'）。
+ * from 無／格式壞 → fallback 今日（維持 cron「今日起 7 日」舊行為，cron 唔用傳）。
+ *
+ * ★★★ 單一窗口來源：syncAvailability 同 runAvailabilitySync 兩個 call site
+ *   都必須經呢個 function 算 start/end —— 各自算就會出現「deleteMany 刪本週、
+ *   寫入下週」兩邊殘嘅災難（MD §3.2 警告）。
+ */
+export function resolveSyncWindow(from?: string): { start: string; end: string } {
+  const start = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : hkTodayStr()
+  return { start, end: addDaysStr(start, 6) }
+}
+
 // ─── §3.2 單間診所 sync ─────────────────────────────────────────────────
 
 /**
- * 一次 call 拎晒滾動 7 日（HK today ~ +6），寫兩張表。
+ * 一次 call 拎晒 7 日窗口（from 起 ~ +6；from 無 = HK today），寫兩張表。
  *
  * ★★★ 決定性寫：先刪本 shop 窗口內舊 row 再 create（同一個 $transaction）——
  *   兩個 deleteMany 嘅 where 都要有 clinicId（少一個就刪晒其他診所）。
  *   ProviderBooking.createMany 唔加 skipDuplicates（同一時段可以真係有多筆）。
  *
  * 唔喺呢度攞 advisory lock —— lock 由 runAvailabilitySync 外層一次包住（§3.3）。
+ * ★ 2026-08-22（cw-patwk）：opts.from = 前端當前顯示週首日（拉嗰一週）；
+ *   外層 runAvailabilitySync 會傳返自己已算好嘅 start，保證 deleteMany 窗口一致。
  */
 export async function syncAvailability(
   clinic: { id: string; name?: string; apricotClinicId: string },
   callFn: ApricotCallFn = defaultCall,
+  opts: { from?: string } = {},
 ): Promise<AvailabilitySyncResult> {
-  const start = hkTodayStr()
-  const end = addDaysStr(start, 6) // ★ 滾動 7 日
+  const { start, end } = resolveSyncWindow(opts?.from) // ★ 單一窗口來源（唔好再自算）
 
   const providers = await prisma.provider.findMany({
     where: { isActive: true, apricotId: { not: null } },
@@ -180,18 +195,18 @@ export async function syncAvailability(
  *     該店記 error 後 break，caller 見到可報 CEO 重新登入 bot 帳號。
  */
 export async function runAvailabilitySync(
-  opts: { callFn?: ApricotCallFn } = {},
+  opts: { callFn?: ApricotCallFn; from?: string } = {},
 ): Promise<AvailabilityRunOutcome> {
-  const { callFn } = opts
-
+  const { callFn, from } = opts
   // §2.2：冇 apricotClinicId 嘅店（青衣）唔會 sync —— warning 出嚟
   const skippedClinics = await prisma.clinic.count({ where: { apricotClinicId: null } })
   if (skippedClinics > 0) {
     console.warn(`[availability] ${skippedClinics} 間診所冇 apricotClinicId，唔會 sync`)
   }
 
-  const start = hkTodayStr()
-  const end = addDaysStr(start, 6)
+  // ★ 2026-08-22（cw-patwk）：from = 前端當前顯示週首日；無 → 今日（cron 唔傳，行為唔變）。
+  //   傳落 syncAvailability 嘅係已算好嘅 start（regex 必定過），deleteMany 同寫入同一窗口。
+  const { start, end } = resolveSyncWindow(from)
 
   const result = await withApricotLock(async () => {
     const clinics = await prisma.clinic.findMany({
@@ -209,7 +224,8 @@ export async function runAvailabilitySync(
         results.push({
           clinic: c.name,
           clinicId: c.id,
-          ...(callFn ? await syncAvailability(clinicRef, callFn) : await syncAvailability(clinicRef)),
+          // ★ callFn 傳 undefined 行預設（真 Apricot）；from: start 保證窗口同外層一致
+          ...(await syncAvailability(clinicRef, callFn, { from: start })),
         })
       } catch (e: any) {
         const msg = e?.message ?? String(e)
