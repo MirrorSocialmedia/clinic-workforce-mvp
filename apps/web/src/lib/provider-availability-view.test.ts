@@ -25,8 +25,10 @@ import {
   syncChip,
   defaultClinicId,
   dayEmptyText,
+  mergeRuns,
   type AvailabilityResp,
   type Range,
+  type LaidBooking,
 } from './provider-availability-view'
 
 // ─── fixture ───
@@ -495,5 +497,48 @@ describe('dayEmptyText — 某日無任何醫生 data', () => {
   it('有同步過 → 休診；從冇同步 → 未同步', () => {
     assert.equal(dayEmptyText('2026-08-20T00:00:00.000Z'), '休診')
     assert.equal(dayEmptyText(null), '未同步')
+  })
+})
+
+// ─── mergeRuns（2026-08-22 restyle §0.3 #1：layoutBookings 輸出 → 相鄰 run 合併）───
+
+describe('mergeRuns — 相鄰合併（同 lane + 同 lanes + prev.e===next.s + 同 status）', () => {
+  const mk = (over: Partial<LaidBooking> = {}): LaidBooking => ({
+    s: 675, e: 705, status: 0, lane: 0, lanes: 1, overflow: 0,
+    providerId: 'pa', name: 'Dr A', color: '#FF0000', ...over,
+  })
+
+  it('相鄰同 lane 合併：11:15–11:45 + 11:45–12:15 → 一張 run（parts 2 筆）', () => {
+    const runs = mergeRuns([
+      mk({ s: 675, e: 705 }),
+      mk({ s: 705, e: 735 }),
+    ])
+    assert.equal(runs.length, 1)
+    assert.deepEqual(runs[0], {
+      s: 675, e: 735, lane: 0, lanes: 1, overflow: 0, status: 0,
+      parts: [{ s: 675, e: 705 }, { s: 705, e: 735 }],
+    })
+  })
+
+  it('19:00–19:30 + 19:30–20:00 唔同 lane（lane 0 / lane 1）→ 唔合併（lane 行為唔變）', () => {
+    const runs = mergeRuns([
+      mk({ s: 1140, e: 1170, lane: 0, lanes: 2 }),
+      mk({ s: 1170, e: 1200, lane: 1, lanes: 2 }),
+    ])
+    assert.equal(runs.length, 2)
+    assert.equal(runs[0].lane, 0)
+    assert.equal(runs[1].lane, 1)
+    assert.equal(runs[0].parts.length, 1)
+    assert.equal(runs[1].parts.length, 1)
+  })
+
+  it('102（改期）唔同正常合併：同 lane 相鄰都拆兩張卡', () => {
+    const runs = mergeRuns([
+      mk({ s: 675, e: 705, status: 0 }),
+      mk({ s: 705, e: 735, status: 102 }),
+    ])
+    assert.equal(runs.length, 2)
+    assert.equal(runs[0].status, 0)
+    assert.equal(runs[1].status, 102)
   })
 })

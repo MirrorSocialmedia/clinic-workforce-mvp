@@ -121,6 +121,66 @@ export function soft(hex: string): string {
   return `${hex}22`
 }
 
+// ─── 2026-08-22 restyle：色 recipe（§0.1）───
+
+/** 開診帶 tint：base 色 14% alpha（soft() 係 13% 留畀 chips 用，band 深少少先睇得清） */
+export function bandBg(hex: string): string {
+  return `${hex}24`
+}
+
+/** 卡文字：base 色加深 35%（白卡上要深色先讀得到；純色 #RRGGBB 輸入） */
+export function cardText(hex: string): string {
+  const n = parseInt(hex.slice(1), 16)
+  const f = (v: number) => Math.round(v * 0.65)
+  const r = f((n >> 16) & 255), g = f((n >> 8) & 255), b = f(n & 255)
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
+}
+
+/** HK 而家（由 00:00 起分鐘數） */
+export function hkNowMin(now: Date = new Date()): number {
+  const hk = new Date(now.getTime() + 8 * 3600 * 1000)
+  return hk.getUTCHours() * 60 + hk.getUTCMinutes()
+}
+
+// ─── run 合併（§0.3 #1）───
+
+export interface LaidBooking {
+  s: number; e: number; status: number; lane: number; lanes: number; overflow: number
+  providerId: string; name: string; color: string
+}
+
+export interface BookingRun {
+  s: number; e: number; lane: number; lanes: number; overflow: number
+  status: number                 // run 內全部同 status 先合併 → run status 就係佢
+  parts: { s: number; e: number }[]   // 逐筆（髮絲線 + tooltip 用）
+}
+
+/**
+ * layoutBookings 輸出 → 相鄰 run 合併。
+ * 合併條件：同 lane + 同 lanes + prev.e === next.s + 同 status（102 唔好同正常合埋）。
+ * ★ overflow 取 run 內最大值（cluster 標記本身逐 item 帶住）。
+ */
+export function mergeRuns(laid: LaidBooking[]): BookingRun[] {
+  const runs: BookingRun[] = []
+  // laid 已按 cluster 順序；穩陣起見先排 lane→s
+  const sorted = [...laid].sort((a, z) => a.lane - z.lane || a.s - z.s)
+  for (const b of sorted) {
+    const last = runs[runs.length - 1]
+    if (
+      last && last.lane === b.lane && last.lanes === b.lanes &&
+      last.e === b.s && last.status === b.status
+    ) {
+      last.e = b.e
+      last.parts.push({ s: b.s, e: b.e })
+      last.overflow = Math.max(last.overflow, b.overflow)
+    } else {
+      runs.push({ s: b.s, e: b.e, lane: b.lane, lanes: b.lanes,
+                  overflow: b.overflow, status: b.status, parts: [{ s: b.s, e: b.e }] })
+    }
+  }
+  return runs
+}
+
 // ─── 日期 ───
 
 export const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']

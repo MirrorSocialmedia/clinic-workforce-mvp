@@ -22,14 +22,18 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  bandBg,
   buildDays,
+  cardText,
   computeAxis,
   dayEmptyText,
   defaultClinicId,
   fmtMin,
+  hkNowMin,
   hkTodayStr,
   isWeekEmpty,
   layoutBookings,
+  mergeRuns,
   providerColor,
   soft,
   syncChip,
@@ -38,6 +42,7 @@ import {
   weekdayOf,
   WEEKDAY,
   type AvailabilityResp,
+  type BookingRun,
   type ClinicOpt,
   type DayProvider,
   type ScheduleDay,
@@ -56,6 +61,13 @@ export default function ProviderAvailabilityPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [zoomDate, setZoomDate] = useState<string | null>(null)
+
+  // ★ 2026-08-22 restyle §0.3 #3：而家線（今日 column 紅線 + 時間 label，60s interval tick 更新）
+  const [nowMin, setNowMin] = useState(() => hkNowMin())
+  useEffect(() => {
+    const t = setInterval(() => setNowMin(hkNowMin()), 60_000)
+    return () => clearInterval(t)
+  }, [])
 
   // ★ cw-pta：「立即同步」掣（拍板②③）+ 員工當值列（拍板④）
   const [userRole, setUserRole] = useState<string>('')
@@ -252,10 +264,10 @@ export default function ProviderAvailabilityPage() {
   const cur = clinics.find(c => c.id === clinicId)
   const zoomDay = zoomDate ? visibleDays.find(d => d.date === zoomDate) ?? null : null
 
-  // ─── 預約塊（cw-lanes-20260821-a3 §3.3/§3.4/§五）───
-  // mini（手機週概覽）：唔分 lane、全闊色條疊住、冇文字、minHeight 3（§五，拍板①理由）。
-  // 非 mini（桌面週視圖 + 手機放大單日）：layoutBookings 橫向分欄，上限 3 lane（拍板①）。
-  function renderBookings(pr: DayProvider, c: string, mini: boolean) {
+  // ─── 預約塊（2026-08-22 restyle §0.3）：run 卡 + spine + 深字；名唔入塊；102 虛線；過咗淡化 ───
+  // mini（手機週概覽）：唔分 lane、全闊色條疊住、冇文字、minHeight 3（§五，拍板①理由）— 邏輯零改動。
+  // 非 mini（桌面週視圖 + 手機放大單日）：layoutBookings 橫向分欄（上限 3 lane，拍板①）→ mergeRuns 相鄰合併（§0.3 #1）。
+  function renderBookings(pr: DayProvider, c: string, mini: boolean, date: string) {
     if (mini) {
       return pr.busy.map((b, i) => (
         <div key={`b${i}`} style={{ position: 'absolute', left: 1, right: 1, zIndex: 2,
@@ -267,42 +279,61 @@ export default function ProviderAvailabilityPage() {
       s: b.s, e: b.e, status: b.status ?? 0,
       providerId: pr.providerId, name: pr.name, color: c,
     })))
-    return laid.map((b, i) => {
-      const w = 100 / b.lanes
-      // ★ 字放大之後門檻要跟住升 —— 15 分鐘塊只約 29px（1400/48），放唔落 12px+10px 兩行（≈32px）；少過 30 分鐘只顯示醫生名（#15 #16）
-      const tooShort = (b.e - b.s) < 30
-      // ★ 2026-08-22 MD §2.4：3 lane 時每欄太窄，唔畫時段（只留醫生名；完整時段靠 title tooltip）
-      const tooNarrow = b.lanes >= 3
+    const runs = mergeRuns(laid)
+    const txt = cardText(c)
+    // 過咗淡化（§0.3 #4）：date < today，或今日且 run 尾 e <= nowMin；跨住而家嘅 run 唔淡
+    const past = (s: BookingRun) =>
+      date < today || (date === today && s.e <= nowMin)
+
+    return runs.map((r, i) => {
+      const w = 100 / r.lanes
+      const isResch = r.status === 102
+      // 門檻照舊：太矮（<30 分鐘）/ 3 lane 唔印字，齋 tooltip
+      const showText = (r.e - r.s) >= 30 && r.lanes < 3
+      // 多筆 = 「HH:MM–HH:MM · N 個」；單筆 102 = 「HH:MM 改期」；單筆正常 = 「HH:MM–HH:MM」
+      const label = r.parts.length > 1
+        ? `${fmtMin(r.s)}–${fmtMin(r.e)} · ${r.parts.length} 個`
+        : isResch ? `${fmtMin(r.s)} 改期` : `${fmtMin(r.s)}–${fmtMin(r.e)}`
       return (
-        <Fragment key={`b${i}`}>
-          {/* calc(% ± px)：純 % 會令相鄰塊貼死冇縫；minHeight 24 → 15 分鐘塊唔變一條線 */}
-          {/* ★ §6.5：title（hover 提示）保留全名；塊內緊窄顯示用簡稱；字 6.5/6 → 9/8 → 2026-08-22 放大 12/10 */}
-          <div title={`${pr.name} ${fmtMin(b.s)}–${fmtMin(b.e)}`}
+        <Fragment key={`r${i}`}>
+          {/* §0.1：白卡 + 3px spine（醫生色唯一 100% 飽和位）+ 深字 cardText(c)；塊內唔印名（名嘅唯一位置 = 欄頂 chip）。
+              102 = 虛線邊 + 75% 透明；未知 status → 正常卡 + tooltip 帶（status=N）。 */}
+          <div
+            title={`${pr.name} ${fmtMin(r.s)}–${fmtMin(r.e)}${r.parts.length > 1 ? `（${r.parts.length} 個預約）` : ''}${isResch ? '（已改期）' : r.status !== 0 && r.status !== 4 ? `（status=${r.status}）` : ''}`}
             style={{ position: 'absolute', zIndex: 2,
-              left: `calc(${b.lane * w}% + 2px)`,
+              left: `calc(${r.lane * w}% + 2px)`,
               width: `calc(${w}% - 4px)`,
-              top: pct(b.s), height: pctH(b.s, b.e),
-              minHeight: 24, background: b.color, borderRadius: 3,
-              padding: '2px 3px', boxSizing: 'border-box', overflow: 'hidden' }}>
-            <span style={{ fontSize: 12, color: '#fff', fontWeight: 600, display: 'block',
-                           lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden',
-                           textOverflow: 'ellipsis' }}>{shortName(pr.name)}</span>
-            {!tooShort && !tooNarrow && (
-              <span style={{ fontSize: 10, color: '#ffffffcc', display: 'block', lineHeight: 1.25 }}>
-                {fmtMin(b.s)}–{fmtMin(b.e)}
-              </span>
+              top: pct(r.s), height: pctH(r.s, r.e),
+              minHeight: 24, boxSizing: 'border-box', overflow: 'hidden',
+              background: '#ffffff',
+              borderLeft: `3px solid ${c}`,
+              border: isResch ? `1.5px dashed ${c}` : undefined,
+              borderLeftWidth: 3, borderLeftStyle: isResch ? 'dashed' : 'solid', borderLeftColor: c,
+              borderRadius: '0 5px 5px 0',
+              opacity: past(r) ? 0.55 : isResch ? 0.75 : 1,
+              padding: '1px 4px' }}>
+            {showText && (
+              <span style={{ fontSize: 12, color: txt, fontWeight: 600, display: 'block',
+                             lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden',
+                             textOverflow: 'ellipsis' }}>{label}</span>
             )}
+            {/* 內部髮絲線：逐筆邊界（第一筆頂唔畫） */}
+            {r.parts.slice(1).map((p2, j) => (
+              <div key={`hl${j}`} style={{ position: 'absolute', left: 0, right: 0,
+                top: `${(((p2.s - r.s) / (r.e - r.s)) * 100).toFixed(2)}%`,
+                borderTop: '0.5px solid #e5e7eb' }} />
+            ))}
           </div>
-          {/* ★ §3.4 overflow：cluster 超過 3 個重疊，右邊 14px 窄條「+N」。
+          {/* §3.4 overflow：cluster 超過 3 個重疊，右邊 16px 窄條「+N」（restyle：闊 14→16、字 10→11）。
               條件 overflow>0 && lane===0 —— cluster 每個 item 都帶同一個 overflow，
               唔加 lane 條件會畫多次（#13）。 */}
-          {b.overflow > 0 && b.lane === 0 && (
-            <div title={`仲有 ${b.overflow} 個預約`}
-              style={{ position: 'absolute', zIndex: 3, right: 0, top: pct(b.s),
-                       height: pctH(b.s, b.e), width: 14, minHeight: 18,
+          {r.overflow > 0 && r.lane === 0 && (
+            <div title={`仲有 ${r.overflow} 個預約`}
+              style={{ position: 'absolute', zIndex: 3, right: 0, top: pct(r.s),
+                       height: pctH(r.s, r.e), width: 16, minHeight: 18,
                        background: '#475569', borderRadius: '3px 0 0 3px',
                        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 10, color: '#fff', writingMode: 'vertical-rl' }}>+{b.overflow}</span>
+              <span style={{ fontSize: 11, color: '#fff', writingMode: 'vertical-rl' }}>+{r.overflow}</span>
             </div>
           )}
         </Fragment>
@@ -316,7 +347,7 @@ export default function ProviderAvailabilityPage() {
       return (
         <div style={{ position: 'relative', height: '100%', borderRadius: 6, background: '#f1f5f9',
                       display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ color: '#94a3b8', fontSize: mini ? 9 : 12,
+          <span style={{ color: '#94a3b8', fontSize: mini ? 11 : 12,
                          writingMode: mini ? 'vertical-rl' : undefined }}>
             {dayEmptyText(data?.sync.lastSyncAt ?? null)}
           </span>
@@ -326,22 +357,23 @@ export default function ProviderAvailabilityPage() {
     return (
       <div style={{ position: 'relative', height: '100%', borderRadius: 6,
                     background: '#f1f5f9', overflow: 'hidden' }}>
-        {/* ★ 2026-08-22 MD §3.1（#15）：欄頂醫生 chip —— 名唔再喺 band 入面畫（多醫生 band 疊埋會互相蓋）。
-            高度 22、最多 4 個 ＋「+N」、hover title 全名；mini（手機週概覽）唔顯示（太細，#22）。 */}
+        {/* ★ 2026-08-22 MD §3.1（#15）：欄頂醫生 chip —— 名嘅唯一位置（restyle §0.1）；band 唔再畫名。
+            高 26（restyle：22→26）、最多 3 個 ＋「+N」（restyle §0.2：字 8→12，放唔低 4 個）、hover title 全名；
+            mini（手機週概覽）唔顯示（太細，#22）。 */}
         {!mini && (
-          <div style={{ position: 'relative', zIndex: 4, height: 22, display: 'flex', gap: 2,
+          <div style={{ position: 'relative', zIndex: 4, height: 26, display: 'flex', gap: 2,
                         alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', overflow: 'hidden' }}>
-            {day.providers.slice(0, 4).map(p => {
+            {day.providers.slice(0, 3).map(p => {
               const pc = providerColor(p.providerId, p.color)
               return (
                 <span key={p.providerId} title={p.name} style={{
-                  fontSize: 8, borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap',
+                  fontSize: 12, borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap',
                   background: soft(pc), color: pc,
                 }}>{shortSurname(p.name)} {p.total || ''}</span>
               )
             })}
-            {day.providers.length > 4 && (
-              <span style={{ fontSize: 8, color: '#94a3b8' }}>+{day.providers.length - 4}</span>
+            {day.providers.length > 3 && (
+              <span style={{ fontSize: 12, color: '#94a3b8' }}>+{day.providers.length - 3}</span>
             )}
           </div>
         )}
@@ -377,15 +409,15 @@ export default function ProviderAvailabilityPage() {
               )}
               {pr.open.map((o, i) => (
                 <div key={`o${i}`} style={{ position: 'absolute', left: 0, right: 0, zIndex: 1,
-                       background: '#e2e8f055', top: pct(o.s), height: pctH(o.s, o.e) }}>
-                  {/* ★ 2026-08-22 MD §3.1/§3.2：名已經喺欄頂 chip；底色統一淡灰（唔再按醫生色） */}
+                       background: bandBg(c), top: pct(o.s), height: pctH(o.s, o.e) }}>
+                  {/* ★ 2026-08-22 restyle §0.1：醫生淡色 tint（14% alpha）— 空閒一眼睇到；名已喺欄頂 chip */}
                 </div>
               ))}
-              {renderBookings(pr, c, mini)}
+              {renderBookings(pr, c, mini, day.date)}
               {/* ★ 休假 label（底部）；衝突 → 紅 + 警告（拍板①） */}
               {pr.onLeave && (
                 <span style={{ position: 'absolute', bottom: 2, left: 3, zIndex: 3,
-                               fontSize: 10, fontWeight: 600,
+                               fontSize: 12, fontWeight: 600,
                                color: pr.leaveConflict ? '#dc2626' : '#64748b' }}>
                   {pr.leaveConflict ? '⚠️ 休假但有開診' : '休假'}
                 </span>
@@ -393,6 +425,16 @@ export default function ProviderAvailabilityPage() {
             </div>
           )
         })}
+        {/* ★ 2026-08-22 restyle §0.3 #3：而家線 — 今日 column 1.5px 紅橫線 + 右側 11px 時間 label；
+            60s interval 更新（nowMin state）；zIndex 5 喺 chip 之上、pointerEvents none 唔擋 hover */}
+        {!mini && day.date === today && nowMin > axisMin && nowMin < axisMax && (
+          <>
+            <div style={{ position: 'absolute', left: 0, right: 0, zIndex: 5, pointerEvents: 'none',
+                          top: pct(nowMin), borderTop: '1.5px solid #dc2626' }} />
+            <span style={{ position: 'absolute', right: 2, zIndex: 5, fontSize: 11, color: '#dc2626',
+                           top: `calc(${pct(nowMin)} - 13px)` }}>{fmtMin(nowMin)}</span>
+          </>
+        )}
       </div>
     )
   }
@@ -411,8 +453,8 @@ export default function ProviderAvailabilityPage() {
           display: 'flex', flexDirection: 'column', alignItems: 'center',
           justifyContent: 'center', gap: 3,
         }}>
-          <span style={{ fontSize: 11 }}>🚫</span>
-          <span style={{ fontSize: 9, color: '#64748b', fontWeight: 600 }}>冇醫生當值</span>
+          <span style={{ fontSize: 14 }}>🚫</span>
+          <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>冇醫生當值</span>
         </div>
       )
     }
@@ -463,7 +505,7 @@ export default function ProviderAvailabilityPage() {
             ‹ 成週
           </button>
         )}
-        <span style={{ fontSize: 15, fontWeight: 600 }}>醫生時間表</span>
+        <span style={{ fontSize: 16, fontWeight: 600 }}>醫生時間表</span>
 
         <select value={clinicId}
           onChange={e => { setClinicId(e.target.value); setZoomDate(null); setShown(null); setShowIdle(false) }}
@@ -514,6 +556,47 @@ export default function ProviderAvailabilityPage() {
           )}
         </span>
       </div>
+
+      {/* ═══ header 第二行：醫生篩選 chip（2026-08-22 restyle §0.4：由頁底搬上，sticky 跟 header 唔跟 scroll）═══
+          shown/showIdle 邏輯零改動（cw-lanes-20260821-a3 §2.1/§2.2）：只搬位置 + 字 9→12 + 選中 border 1px +「+N 位」dashed ghost */}
+      {cur?.connected && data && (
+        <div style={{ flexShrink: 0, background: '#f8fafc', borderBottom: '1px solid #e5e7eb',
+                      padding: '6px 12px', display: 'flex', alignItems: 'center',
+                      gap: 6, flexWrap: 'wrap' }}>
+          {data.providers.map(p => {
+            const idle = (p.weekBookings ?? 0) === 0
+            if (idle && !showIdle) return null
+            const on = shown?.has(p.id) ?? false
+            const pc = providerColor(p.id, p.color)
+            const hasData = weekProviderIds.has(p.id)
+            return (
+              <button key={p.id}
+                aria-pressed={on}
+                onClick={() => setShown(prev => {
+                  const next = new Set(prev ?? [])
+                  if (next.has(p.id)) next.delete(p.id); else next.add(p.id)
+                  return next
+                })}
+                style={{
+                  fontSize: 12, padding: '2px 8px', borderRadius: 999,
+                  border: on ? `1px solid ${pc}` : '1px solid #e5e7eb',
+                  background: on ? soft(pc) : '#fff', color: on ? pc : '#9ca3af',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                {on ? '✓ ' : ''}{p.name}{p.weekBookings ? ` ${p.weekBookings}` : ''}{!hasData ? '（無數據）' : ''}
+              </button>
+            )
+          })}
+          {data.providers.filter(p => (p.weekBookings ?? 0) === 0).length > 0 && (
+            <button onClick={() => setShowIdle(v => !v)}
+              style={{ fontSize: 12, padding: '2px 8px', borderRadius: 999,
+                       background: '#fff', color: '#9ca3af', border: '1px dashed #cbd5e1',
+                       cursor: 'pointer' }}>
+              {showIdle ? '收起' : `+ ${data.providers.filter(p => (p.weekBookings ?? 0) === 0).length} 位只開診冇預約`}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ═══ body ═══ */}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 12 }}>
@@ -601,7 +684,7 @@ export default function ProviderAvailabilityPage() {
                         KIOSK 收起（showStaffRow），provider-schedule 原有嗰行保留（§5.1 #4） */}
                     {showStaffRow && (
                       <div className="hidden md:flex" style={{ gap: 4, marginTop: 8 }}>
-                        <div style={{ width: 44, flexShrink: 0, padding: '6px 4px', fontSize: 9,
+                        <div style={{ width: 44, flexShrink: 0, padding: '6px 4px', fontSize: 11,
                                       color: '#94a3b8', textAlign: 'right', lineHeight: 1.3 }}>
                           員工<br />當值
                         </div>
@@ -609,7 +692,7 @@ export default function ProviderAvailabilityPage() {
                                        padding: '5px 0', borderTop: '1.5px solid #e5e7eb',
                                        background: '#fafbfc', borderRadius: 6 }}>
                           {days.map(day => (
-                            <div key={`staff-${day.date}`} style={{ fontSize: 9, lineHeight: 1.6, padding: '0 3px' }}>
+                            <div key={`staff-${day.date}`} style={{ fontSize: 11, lineHeight: 1.6, padding: '0 3px' }}>
                               {staffError
                                 ? <span style={{ color: '#94a3b8' }}>載入失敗</span>
                                 : renderStaffList(staffByDate.get(day.date) ?? [])}
@@ -640,7 +723,7 @@ export default function ProviderAvailabilityPage() {
                           {/* ★ 員工當值 —— 手機只喺放大單日時顯示（§5.1 #3，七欄擠唔低） */}
                           {showStaffRow && (
                             <div style={{ flexShrink: 0, borderTop: '1.5px solid #e5e7eb', background: '#fafbfc',
-                                           marginTop: 6, padding: '5px 6px', fontSize: 9, borderRadius: 6 }}>
+                                           marginTop: 6, padding: '5px 6px', fontSize: 11, borderRadius: 6 }}>
                               <div style={{ color: '#94a3b8', marginBottom: 2 }}>員工當值</div>
                               {staffError
                                 ? <span style={{ color: '#94a3b8' }}>載入失敗</span>
@@ -663,7 +746,7 @@ export default function ProviderAvailabilityPage() {
                               <button key={day.date} onClick={() => setZoomDate(day.date)}
                                 style={{ display: 'flex', flexDirection: 'column', minHeight: 0,
                                          textAlign: 'left', background: 'none', border: 'none', padding: 0 }}>
-                                <div style={{ height: 28, textAlign: 'center', fontSize: 9,
+                                <div style={{ height: 28, textAlign: 'center', fontSize: 11,
                                               lineHeight: 1.2, width: '100%' }}>
                                   <DayHead date={day.date} mini />
                                 </div>
@@ -680,60 +763,26 @@ export default function ProviderAvailabilityPage() {
                       )}
                     </div>
 
-                    {/* ★ cw-lanes-20260821-a3 §2.2 篩選 chip（legend 改造）：
-                        有預約預設顯示（§2.1 初始化）、零預約摺埋「+ N 位只開診冇預約」toggle、逐個可 toggle。
-                        顯示 {name} {weekBookings}；冇數據嘅醫生保留「（無數據）」標記。 */}
-                    <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {data.providers.map(p => {
-                        const idle = (p.weekBookings ?? 0) === 0
-                        if (idle && !showIdle) return null
-                        const on = shown?.has(p.id) ?? false
-                        const c = providerColor(p.id, p.color)
-                        const hasData = weekProviderIds.has(p.id)
-                        return (
-                          <button key={p.id}
-                            aria-pressed={on}
-                            onClick={() => setShown(prev => {
-                              const next = new Set(prev ?? [])
-                              if (next.has(p.id)) next.delete(p.id); else next.add(p.id)
-                              return next
-                            })}
-                            style={{
-                              fontSize: 9, padding: '2px 8px', borderRadius: 999,
-                              border: on ? 'none' : '0.5px solid #e5e7eb',
-                              background: on ? c : '#fff', color: on ? '#fff' : '#9ca3af',
-                              cursor: 'pointer', whiteSpace: 'nowrap',
-                            }}>
-                            {on ? '✓ ' : ''}{p.name}{p.weekBookings ? ` ${p.weekBookings}` : ''}{!hasData ? '（無數據）' : ''}
-                          </button>
-                        )
-                      })}
-                      {data.providers.filter(p => (p.weekBookings ?? 0) === 0).length > 0 && (
-                        <button onClick={() => setShowIdle(v => !v)}
-                          style={{ fontSize: 9, padding: '2px 8px', borderRadius: 999,
-                                   background: '#fff', color: '#9ca3af', border: '0.5px solid #e5e7eb',
-                                   cursor: 'pointer' }}>
-                          {showIdle ? '收起' : `+ ${data.providers.filter(p => (p.weekBookings ?? 0) === 0).length} 位只開診冇預約`}
-                        </button>
-                      )}
-                    </div>
-
+                    {/* ★ 2026-08-22 restyle §0.4：篩選 chip 已搬去 header 第二行（見上）；呢度只留 legend */}
                     {/* legend
                         ★ 2026-08-22：PWA 安裝 banner 固定畫面底部 — legend 加底 padding 令
-                        chip+legend 滾到底時唔被遮（§3.2；兩選項揀少改動：唔搬 chip） */}
-                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12,
-                                  flexWrap: 'wrap', fontSize: 10, color: '#94a3b8',
-                                  paddingBottom: 60 }}>
+                        滾到底時唔被遮（§3.2）；restyle §0.4：縮做 micro 一行（11px）*/}
+                    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                                  fontSize: 11, color: '#64748b', paddingBottom: 60 }}>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
-                                        background: '#f1f5f9', marginRight: 4 }} />冇開診</span>
+                                        background: '#6366f124', marginRight: 4 }} />開診＝可約（醫生色）</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
-                                        background: '#e2e8f055', marginRight: 4 }} />開診</span>
+                                        background: '#fff', borderLeft: '3px solid #6366f1',
+                                        boxShadow: '0 0 0 0.5px #e5e7eb', marginRight: 4 }} />已約（· N 個）</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
-                                        background: '#6366f1', marginRight: 4 }} />已約</span>
+                                        border: '1px dashed #94a3b8', marginRight: 4 }} />改期</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
                                         background: 'repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 3px,#f1f5f9 3px,#f1f5f9 6px)',
-                                        marginRight: 4 }} />醫生休假</span>
-                      <span className="md:hidden" style={{ marginLeft: 'auto', color: '#64748b' }}>撳日子放大</span>
+                                        marginRight: 4 }} />休假／冇醫生當值</span>
+                      <span><i style={{ display: 'inline-block', width: 10, borderTop: '1.5px solid #dc2626',
+                                        marginRight: 4, verticalAlign: 'middle' }} />而家</span>
+                      <span>過咗嘅時段自動淡化</span>
+                      <span className="md:hidden" style={{ marginLeft: 'auto' }}>撳日子放大</span>
                     </div>
                   </>
                 )}
