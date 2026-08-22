@@ -11,6 +11,7 @@ import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
 import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard, Receipt } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
+import { MY_NAV } from '@/lib/my-nav'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 
@@ -139,17 +140,29 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const mgmtRoles = ['OWNER', 'MANAGER'] as const
   const viewRoles = ['OWNER', 'MANAGER', 'ACCOUNTANT'] as const
 
+  // ★ 2026-08-22：「我的」清單單一事實來源 = MY_NAV（lib/my-nav.ts）—— 之前三處硬編碼（mobile-more / my/more / 呢度），
+  //   加一頁要改三處（實際漏咗兩次）。加新頁只改 my-nav.ts；icon 由 MY_ICONS 按 href 對照，
+  //   漏一個 → fallback ClipboardList（防 React <undefined /> crash）
+  const MY_ICONS: Record<string, any> = {
+    '/my/dashboard': LayoutDashboard,
+    '/my/schedule': Calendar,
+    '/my/leave': Palmtree,
+    '/my/punches': ClipboardList,
+    '/my/expenses': Receipt,
+    '/my/face-enroll': Palmtree,
+    '/my/notifications': Bell,
+    '/my/change-password': KeyRound,
+  }
+
   const navItems = [
     // My section items (perm: null → visible to all non-OWNER via sidebar filter; perm check allows mgmt-EMPLOYEE)
-    { path: '/my/dashboard', label: '我的首頁', icon: LayoutDashboard, roles: allRoles, perm: null },
-    { path: '/my/schedule', label: '我的班表', icon: Calendar, roles: allRoles, perm: null },
-    { path: '/my/punches', label: '我的考勤', icon: ClipboardList, roles: allRoles, perm: null },
-    { path: '/my/leave', label: '我的假期', icon: Palmtree, roles: allRoles, perm: null },
-    { path: '/my/face-enroll', label: '人臉登記', icon: Palmtree, roles: allRoles, perm: null },
-    { path: '/my/notifications', label: '通知', icon: Bell, roles: allRoles, perm: null },
-    { path: '/my/change-password', label: '修改密碼', icon: KeyRound, roles: allRoles, perm: null },
-    // ★ 2026-08-22：有管理權限嘅 EMPLOYEE 走桌面側欄，側欄原本冇雜費申請 — 補入口（手機走 /my/more）
-    { path: '/my/expenses', label: '雜費申請', icon: Receipt, roles: allRoles, perm: null },
+    ...MY_NAV.map(m => ({
+      path: m.href,
+      label: m.label,
+      icon: MY_ICONS[m.href] ?? ClipboardList,
+      roles: allRoles,
+      perm: null,
+    })),
 
     // Punch (all non-owner)
     { path: '/punch', label: '我要打卡', icon: Smartphone, roles: myRoles },

@@ -19,6 +19,7 @@ import {
   Stethoscope,
 } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
+import { MY_NAV } from '@/lib/my-nav'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -80,7 +81,9 @@ export default function MobileMorePage() {
       href: '/provider-availability',
       icon: Stethoscope,
       roles: ['OWNER', 'MANAGER'],
-      perm: 'scheduling',
+      // ★ 2026-08-22：同 layout.tsx navItems / config.ts override 對齊 —— KIOSK 冇 scheduling（只有 provider_schedule），
+      //   filter 係 roles OR perm、陣列 = 有其中一個就得，KIOSK 經 perm 支線過（roles 唔使郁）
+      perm: ['provider_schedule', 'scheduling'],
     },
     {
       label: '假期管理',
@@ -209,19 +212,11 @@ export default function MobileMorePage() {
         })}
       </div>
 
-      {/* 我的 — perm: null, 人人可見 */}
+      {/* 我的 — perm: null, 人人可見；單一事實來源 MY_NAV（lib/my-nav.ts），加新頁只改 my-nav.ts */}
       <div className="mt-6">
         <div className="text-xs font-semibold text-muted-foreground mb-2">我的</div>
         <div className="divide-y border rounded-lg overflow-hidden">
-          {[
-            { href: '/my/dashboard', label: '我的首頁' },
-            { href: '/my/schedule', label: '我的班表' },
-            { href: '/my/leave', label: '我的假期' },
-            { href: '/my/punches', label: '我的打卡記錄' },
-            { href: '/my/face-enroll', label: '人臉登記' },
-            { href: '/my/notifications', label: '通知' },
-            { href: '/my/change-password', label: '修改密碼' },
-          ].map(x => (
+          {MY_NAV.map(x => (
             <Link key={x.href} href={x.href} className="block px-4 py-3 text-sm hover:bg-muted">
               {x.label}
             </Link>
