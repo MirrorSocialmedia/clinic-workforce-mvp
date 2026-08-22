@@ -5845,80 +5845,83 @@ function getShiftCode(shift: Shift): string {
                         </td>
                       ))}
                     </tr>
-                    {/* ★ 2026-08-21：月視圖底部假期總覽（拍板②③ + 年假服務年度）—— 備註行之後。
-                         拍板：唔要「合計」行。截圖用獨立離屏節點（exporting），唔會影到呢度（拍板⑤）。 */}
-                    {summaryRows.length > 0 && (
-                      <tr>
-                        <td colSpan={monthDays.length + 1} style={{ padding: 0, borderTop: '2px solid #cbd5e1' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
-                            <thead>
-                              <tr style={{ background: '#eff6ff', color: '#1d4ed8' }}>
-                                <th style={{ width: 64, padding: '5px', textAlign: 'left' }}>員工</th>
-                                {/* ★ 2026-08-22 §6.3：上月剩（上月快照）+ 剩餘（即時值）—— 兩欄新加 */}
-                                <th style={{ width: 44, padding: '5px', background: '#dbeafe' }}>上月剩</th>
-                                <th style={{ width: 36, padding: '5px', background: '#dbeafe' }}>R</th>
-                                <th style={{ width: 32, padding: '5px', background: '#dbeafe' }}>PL</th>
-                                <th style={{ width: 44, padding: '5px', background: '#93c5fd', color: '#1e3a8a' }}>R+PL</th>
-                                <th style={{ width: 40, padding: '5px', background: '#dbeafe' }}>剩餘</th>
-                                {/* ★ 粗分隔線 + 唔同底色：提醒呢一欄係【服務年度】唔係曆月 */}
-                                <th style={{ padding: '5px', textAlign: 'left',
-                                             borderLeft: '2px solid #60a5fa', background: '#e0f2fe' }}>
-                                  年假（服務年度）
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {summaryRows.map(r => (
-                                <tr key={r.employeeId} style={{ borderBottom: '0.5px solid #e5e7eb' }}>
-                                  <td style={{ padding: '5px' }}>{r.name}</td>
-                                  {/* ★ 2026-08-22 §6.3：上月剩 —— 上月 snapshot（REST_DAY）；
-                                       冇快照（上月未 finalize）= null → 顯「—」（零 fallback） */}
-                                  <td style={{ padding: '5px', textAlign: 'center',
-                                               color: r.lastMonthRestRemaining == null ? '#cbd5e1' : undefined }}>
-                                    {r.lastMonthRestRemaining == null ? '—' : r.lastMonthRestRemaining}
-                                  </td>
-                                  <td style={{ padding: '5px', textAlign: 'center' }}>{r.restOnly}</td>
-                                  <td style={{ padding: '5px', textAlign: 'center', color: '#b45309', fontWeight: 600 }}>{r.pl}</td>
-                                  <td style={{ padding: '5px', textAlign: 'center', fontWeight: 600,
-                                               color: r.total < r.restQuota ? '#dc2626' : undefined }}>
-                                    {r.total}
-                                    {r.total < r.restQuota && (
-                                      <span style={{ color: '#b45309', fontSize: 9 }}>⚠️ 少過配額 {r.restQuota}</span>
-                                    )}
-                                  </td>
-                                  {/* ★ 2026-08-22 §6.2.4（拍板 (c)）：剩餘 = 當前 LeaveBalance.remaining（即時值）。
-                                       唔係「上月剩 − R − PL」推導（後者未計本月發放），所以加 title 提示。 */}
-                                  <td style={{ padding: '5px', textAlign: 'center', fontWeight: 600 }}
-                                      title="即時值 = 當前 LeaveBalance.remaining（REST_DAY）">
-                                    {r.restBalanceRemaining}
-                                  </td>
-                                  <td style={{ padding: '4px 5px', borderLeft: '2px solid #60a5fa' }}>
-                                    {/* ★ 2026-08-22 §6.4：兩行結構（舊三行）。
-                                         第 1 行：區間 ＋ 應得 ＋ 已放 ＋ 餘（實際）＋ 警示。
-                                         「（實際 X）」＝ LeaveBalance.remaining（累積制含結轉）—— 常顯，
-                                         取代舊條件式「連結轉」span。 */}
-                                    <div style={{ lineHeight: 1.5 }}>
-                                      <span style={{ color: '#94a3b8' }}>{r.syStart}～{r.syEnd}</span>
-                                      {'　'}<strong>{r.entitled} 天</strong>
-                                      {'　'}<span style={{ color: '#059669' }}>已放 {r.usedDays}</span>
-                                      {'　'}<span style={{ color: '#2563eb' }}>餘 {r.remainThisYear}（實際 {r.balanceRemaining}）</span>
-                                      {r.underOneYear && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}⚠️ 未滿一年</span>}
-                                      {r.inProbation && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}· 試用期</span>}
-                                    </div>
-                                    {/* 第 2 行：放咗邊日（fontSize 8→10、#94a3b8→#64748b —— 舊嘅「幾乎睇唔到」） */}
-                                    <div style={{ color: '#64748b', fontSize: 10, lineHeight: 1.5 }}>放咗：{r.takenDates || '—'}</div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </td>
-                      </tr>
-                    )}
                   </tfoot>
                 </table>
               </div>
             </div>
+            {/* ★ 2026-08-22：假期總覽拆出捲軸容器 —— 唔再跟住更表橫滾，
+                 捲軸自然落喺「備註行之後、假期總覽之前」（拍板②）。
+                 唔要 overflowX（拍板①）—— 七欄自適應，年假欄自己換行。 */}
+            {summaryRows.length > 0 && (
+              <div style={{
+                marginTop: 16,                               // ★ 拍板②：同捲軸留空隙
+                border: '1px solid #e5e7eb', borderRadius: 8,
+                background: '#fff', overflow: 'hidden',
+              }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9, tableLayout: 'fixed' }}>
+                  <thead>
+                    <tr style={{ background: '#eff6ff', color: '#1d4ed8' }}>
+                      <th style={{ width: 64, padding: '5px', textAlign: 'left' }}>員工</th>
+                      {/* ★ 2026-08-22 §6.3：上月剩（上月快照）+ 剩餘（即時值）—— 兩欄新加 */}
+                      <th style={{ width: 44, padding: '5px', background: '#dbeafe' }}>上月剩</th>
+                      <th style={{ width: 36, padding: '5px', background: '#dbeafe' }}>R</th>
+                      <th style={{ width: 32, padding: '5px', background: '#dbeafe' }}>PL</th>
+                      <th style={{ width: 44, padding: '5px', background: '#93c5fd', color: '#1e3a8a' }}>R+PL</th>
+                      <th style={{ width: 40, padding: '5px', background: '#dbeafe' }}>剩餘</th>
+                      {/* ★ 粗分隔線 + 唔同底色：提醒呢一欄係【服務年度】唔係曆月 */}
+                      <th style={{ padding: '5px', textAlign: 'left',
+                                   borderLeft: '2px solid #60a5fa', background: '#e0f2fe' }}>
+                        年假（服務年度）
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summaryRows.map(r => (
+                      <tr key={r.employeeId} style={{ borderBottom: '0.5px solid #e5e7eb' }}>
+                        <td style={{ padding: '5px' }}>{r.name}</td>
+                        {/* ★ 2026-08-22 §6.3：上月剩 —— 上月 snapshot（REST_DAY）；
+                             冇快照（上月未 finalize）= null → 顯「—」（零 fallback） */}
+                        <td style={{ padding: '5px', textAlign: 'center',
+                                     color: r.lastMonthRestRemaining == null ? '#cbd5e1' : undefined }}>
+                          {r.lastMonthRestRemaining == null ? '—' : r.lastMonthRestRemaining}
+                        </td>
+                        <td style={{ padding: '5px', textAlign: 'center' }}>{r.restOnly}</td>
+                        <td style={{ padding: '5px', textAlign: 'center', color: '#b45309', fontWeight: 600 }}>{r.pl}</td>
+                        <td style={{ padding: '5px', textAlign: 'center', fontWeight: 600,
+                                     color: r.total < r.restQuota ? '#dc2626' : undefined }}>
+                          {r.total}
+                          {r.total < r.restQuota && (
+                            <span style={{ color: '#b45309', fontSize: 9 }}>⚠️ 少過配額 {r.restQuota}</span>
+                          )}
+                        </td>
+                        {/* ★ 2026-08-22 §6.2.4（拍板 (c)）：剩餘 = 當前 LeaveBalance.remaining（即時值）。
+                             唔係「上月剩 − R − PL」推導（後者未計本月發放），所以加 title 提示。 */}
+                        <td style={{ padding: '5px', textAlign: 'center', fontWeight: 600 }}
+                            title="即時值 = 當前 LeaveBalance.remaining（REST_DAY）">
+                          {r.restBalanceRemaining}
+                        </td>
+                        <td style={{ padding: '4px 5px', borderLeft: '2px solid #60a5fa', wordBreak: 'break-word' }}>
+                          {/* ★ 2026-08-22 §6.4：兩行結構（舊三行）。
+                               第 1 行：區間 ＋ 應得 ＋ 已放 ＋ 餘（實際）＋ 警示。
+                               「（實際 X）」＝ LeaveBalance.remaining（累積制含結轉）—— 常顯，
+                               取代舊條件式「連結轉」span。 */}
+                          <div style={{ lineHeight: 1.5 }}>
+                            <span style={{ color: '#94a3b8' }}>{r.syStart}～{r.syEnd}</span>
+                            {'　'}<strong>{r.entitled} 天</strong>
+                            {'　'}<span style={{ color: '#059669' }}>已放 {r.usedDays}</span>
+                            {'　'}<span style={{ color: '#2563eb' }}>餘 {r.remainThisYear}（實際 {r.balanceRemaining}）</span>
+                            {r.underOneYear && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}⚠️ 未滿一年</span>}
+                            {r.inProbation && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}· 試用期</span>}
+                          </div>
+                          {/* 第 2 行：放咗邊日（fontSize 8→10、#94a3b8→#64748b —— 舊嘅「幾乎睇唔到」） */}
+                          <div style={{ color: '#64748b', fontSize: 10, lineHeight: 1.5 }}>放咗：{r.takenDates || '—'}</div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             </div>
           )}
 
