@@ -170,7 +170,7 @@ export default function AccountsPage() {
         role: form.role, clinicIds: form.clinicIds,
       }
 
-      // KIOSK: no employee data, no permissions
+      // KIOSK: no employee data（但可以有權限 — 2026-08-22 店鋪帳號要成本錄入／醫生月結）
       if (form.role !== 'KIOSK') {
         body.joinDate = form.joinDate || undefined
         // ★ 編輯模式唔送薪酬欄 —— 避免覆蓋薪酬規則面板嘅設定。
@@ -184,12 +184,11 @@ export default function AccountsPage() {
         body.payConfidential = form.payConfidential
         body.fullName = form.fullName
         body.homeClinicId = form.assignEmployee ? form.homeClinicId || null : undefined
+      }
 
-        // Permissions: compute grant/deny diff from ROLE_DEFAULTS
-        if (form.role && form.role !== 'OWNER') {
-          const defaults = ROLE_DEFAULTS[form.role] || []
-          body.permissionsJson = { grant: form.permGrant, deny: form.permDeny }
-        }
+      // ★ 2026-08-22：權限唔再排除 KIOSK（OWNER 除外 — OWNER 全權限無需 grant）
+      if (form.role && form.role !== 'OWNER') {
+        body.permissionsJson = { grant: form.permGrant, deny: form.permDeny }
       }
 
       if (!editingId && form.password) body.password = form.password
@@ -584,9 +583,14 @@ export default function AccountsPage() {
               </div>
 
               {/* Permissions checkboxes (expand after role selection) */}
-              {form.role && form.role !== 'OWNER' && form.role !== 'KIOSK' && (
+              {form.role && form.role !== 'OWNER' && (
                 <div style={{ gridColumn: '1 / -1' }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#555' }}>🔑 角色權限（預設勾選 = 角色默認權限，可手動調整）</div>
+                  {form.role === 'KIOSK' && (
+                    <div style={{ fontSize: 11, color: '#b45309', marginBottom: 6 }}>
+                      ⚠️ 打卡屏帳號通常放喺前台 —— 開權限前確認邊個可以掂到部機
+                    </div>
+                  )}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {Object.entries(PERMISSIONS).map(([key, label]) => {
                       const defaults = ROLE_DEFAULTS[form.role] || []
