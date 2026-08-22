@@ -160,7 +160,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/providers', label: '醫生管理', icon: Stethoscope, roles: mgmtRoles, perm: 'scheduling' },
     { path: '/provider-schedule', label: '醫生當值表', icon: Stethoscope, roles: mgmtRoles, perm: 'provider_schedule' },
     // ★ cw-pa P4: 醫生時間表（Apricot 實際開診/預約）—— 同上面「醫生當值表」（人手排更）係兩樣嘢（spec §6.4）
-    { path: '/provider-availability', label: '醫生時間表（Apricot）', icon: Stethoscope, roles: mgmtRoles, perm: 'scheduling' },
+    // ★ 2026-08-22：KIOSK 冇 scheduling（佢含員工時間帳戶／假期餘額）——用 provider_schedule，同 config.ts:490 override 一致
+    { path: '/provider-availability', label: '醫生時間表（Apricot）', icon: Stethoscope, roles: mgmtRoles, perm: ['provider_schedule', 'scheduling'] },
     { path: '/leave', label: '假期管理', icon: Palmtree, roles: mgmtRoles, perm: ['leave_approve', 'timebank_ops'] },
     { path: '/payroll', label: '計糧管理', icon: Wallet, roles: viewRoles, perm: ['payroll_view', 'payroll_generate'] },
     // ★ 員工總覽 —— OWNER + MANAGER（ACCOUNTANT 唔包，佢只需要計糧）
@@ -172,7 +173,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/audit-logs', label: '審計日志', icon: FileText, roles: ['OWNER'] },
     { path: '/face-review', label: '臉部覆核', icon: FileText, roles: ['OWNER', 'MANAGER'] },
     { path: '/hash', label: '完整性驗證', icon: ShieldCheck, roles: ['OWNER'] },
-    { path: '/apricot-sync', label: 'Apricot 同步', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
+    // ★ 2026-08-22：新開咗 apricot_sync key（permissions.ts:19），同 POST /api/apricot/sync route 一致
+    { path: '/apricot-sync', label: 'Apricot 同步', icon: CreditCard, roles: ['OWNER'], perm: ['apricot_sync', 'provider_payout'] },
     // ★ MD-E: 月報對數
     { path: '/reconciliation', label: '月報對數', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
     // ★ P3-deploy: 成本錄入 (MANAGER + OWNER) + 醫生月結 (OWNER only)
@@ -206,20 +208,49 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   // KIOSK: world is only one page — QR, no navigation
   if (user.role === 'KIOSK') {
     const onQr = pathname?.startsWith('/clinic/qr')
+
+    // ★ 2026-08-22：KIOSK 可 grant 權限（成本錄入／醫生月結／時間表／同步）
+    // 重用 navItems + hasPermission（同一套判斷），唔好另寫清單
+    const KIOSK_PATHS = ['/provider-schedule', '/provider-availability',
+      '/cost-entry', '/payout', '/apricot-sync']
+    const kioskLinks = navItems.filter(item =>
+      KIOSK_PATHS.includes(item.path) &&
+      (Array.isArray(item.perm) ? item.perm : [item.perm])
+        .filter(Boolean)
+        .some(p => hasPermission(user.role, p as any, grant, deny)),
+    )
+
+    // 雙態 bar：QR 全螢幕 = fixed 透明浮層（唔破壞全黑畫面）；其餘 = sticky 自然佔位
+    const barStyle: React.CSSProperties = onQr
+      ? { position: 'fixed', top: 10, right: 10, zIndex: 50 }
+      : { position: 'sticky', top: 0, zIndex: 50,
+          padding: '8px 10px', background: 'rgba(255,255,255,.95)',
+          borderBottom: '1px solid #e5e7eb' }
+
     return (
       <div className="min-h-screen bg-background">
-        <button
-          onClick={() => { if (confirm('確定登出打卡屏？登出後需要管理員重新登入。')) handleLogout() }}
-          style={{ position: 'fixed', top: 12, right: 12, zIndex: 50, fontSize: 12,
-            padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb',
-            background: 'rgba(255,255,255,.9)', color: '#6b7280' }}
-        >
-          登出
-        </button>
-        <Link href={onQr ? '/provider-schedule' : '/clinic/qr'}
-          className="fixed top-3 right-24 text-xs px-3 py-1.5 border rounded bg-background/80 z-50">
-          {onQr ? '醫生當值表' : '← 返回打卡屏'}
-        </Link>
+        <div style={{ ...barStyle, display: 'flex', gap: 6, flexWrap: 'wrap',
+          justifyContent: 'flex-end',
+          maxWidth: onQr ? 'calc(100vw - 20px)' : undefined }}>
+          {!onQr && (
+            <Link href="/clinic/qr"
+              className="text-xs px-3 py-1.5 border rounded bg-background/90 whitespace-nowrap">
+              ← 打卡屏
+            </Link>
+          )}
+          {kioskLinks
+            .filter(l => !pathname?.startsWith(l.path))
+            .map(l => (
+              <Link key={l.path} href={l.path}
+                className="text-xs px-3 py-1.5 border rounded bg-background/90 whitespace-nowrap">
+                {l.label.replace('（Apricot）', '')}
+              </Link>
+            ))}
+          <button
+            onClick={() => { if (confirm('確定登出打卡屏？登出後需要管理員重新登入。')) handleLogout() }}
+            className="text-xs px-3 py-1.5 border rounded bg-background/90 text-gray-500 whitespace-nowrap"
+          >登出</button>
+        </div>
         {children}
       </div>
     )
