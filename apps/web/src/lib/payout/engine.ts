@@ -307,6 +307,7 @@ interface PayoutResult {
  *
  * Formula:
  *   ① Gross = Σ(PaymentAllocation.netAmount) excluding isVoid / isSuperseded / countAsIncome=false
+ *      + FREE_SP（countAsIncome=false 但計醫生收入）★ 2026-08-22
  *   ② Cost = Lab + Implant + Invisalign (three separate categories)
  *   ③ Profit = Gross − Cost
  *   ④ Salary = Profit × 拆帳%
@@ -341,7 +342,12 @@ export async function computePayout(
     ...ACTIVE_ALLOCATION,
     providerExtId: provider.apricotId,
     periodMonth,
-    countAsIncome: true,
+    // ★ 2026-08-22：FREE_SP 唔計店舖營收（countAsIncome=false）但計醫生收入
+    //   methodNorm 存 normalized 值（normalize.ts: 'FREE SP' → 'FREE_SP'），精確 match
+    OR: [
+      { countAsIncome: true },
+      { countAsIncome: false, methodNorm: 'FREE_SP' },
+    ],
   }
   if (apricotClinicId) allocWhere.clinicExtId = apricotClinicId
 
@@ -378,6 +384,8 @@ export async function computePayout(
   }
 
   const labCost = round2(sumByCosts(costs, 'LAB'))
+  // ★ 2026-08-22：IMPLANT 已併入 LAB（見 cost-entry CATEGORIES）—
+  //   留住呢個 term 係為咗萬一有漏 migrate 嘅舊資料仍然扣得到，唔好剷。
   const implantCost = round2(sumByCosts(costs, 'IMPLANT'))
   const invisalignCost = round2(sumByCosts(costs, 'INVISALIGN'))
 

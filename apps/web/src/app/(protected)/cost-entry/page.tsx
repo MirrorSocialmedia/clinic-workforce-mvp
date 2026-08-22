@@ -80,12 +80,12 @@ interface MaterialLine {
 
 // ── Constants ──────────────────────────────────────────
 
-const CATEGORIES = ['LAB', 'IMPLANT', 'INVISALIGN'] as const
+// ★ 2026-08-22：IMPLANT 併入 LAB（lab 本身包含牙醫化驗＋植牙＋其他）— 植牙個案由 itemType 表達（Implant / Implant Denture）
+const CATEGORIES = ['LAB', 'INVISALIGN'] as const
 const STATUSES = ['PENDING', 'PRICED', 'DONE'] as const
 
 const CATEGORY_LABELS: Record<string, string> = {
-  LAB: '牙醫化驗',
-  IMPLANT: '植牙',
+  LAB: 'LAB', // ★ 2026-08-22：IMPLANT 併入 LAB
   INVISALIGN: '隱形矯正',
 }
 
@@ -100,7 +100,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
 function suggestCategoryFromBill(bill: SearchBill): string {
   const desAll = bill.billDetails.map(d => (d.feeItem?.des ?? '').toUpperCase()).join(' ')
   if (desAll.includes('INVIS') || desAll.includes('CLEAR ALIGNER') || desAll.includes('透明')) return 'INVISALIGN'
-  if (desAll.includes('IMPLANT') || desAll.includes('植入')) return 'IMPLANT'
+  // ★ 2026-08-22：合併後一律建議 LAB — 具體係咪植牙由 itemType 表達（suggestItemTypeFromBill 已自動填 Implant / Implant Denture）
+  if (desAll.includes('IMPLANT') || desAll.includes('植入')) return 'LAB'
   return 'LAB'
 }
 
@@ -284,7 +285,8 @@ export default function CostEntryPage() {
   // ★ Q2: Fetch discount from LabMonthlyDiscount
   useEffect(() => {
     if (pickerMode !== 'bill' || pickerStep !== 2) return
-    if (costForm.category === 'IMPLANT') {
+    // ★ 2026-08-22（拍板②）：LAB / INVISALIGN 兩個都材料明細計價（implant route，唔套工場折扣）→ 唔使再 fetch 工場折扣提示
+    if (costForm.category === 'LAB' || costForm.category === 'INVISALIGN') {
       setLabDiscountPct(null)
       setLabDiscountPeriodMonth('')
       return
@@ -481,9 +483,11 @@ export default function CostEntryPage() {
 
   const totalMaterialCost = materialLines.reduce((sum, l) => sum + l.subtotal, 0)
 
+  // ★ 2026-08-22（拍板②）：唔再係「植牙專用」— LAB / INVISALIGN 都要材料明細，材料明細計價
+  const showMaterials = costForm.category === 'LAB' || costForm.category === 'INVISALIGN'
+
   // Step 2: submit cost
   const submitCost = async () => {
-    const isImplant = costForm.category === 'IMPLANT'
     const providerId = pickerMode === 'manual' ? (costForm as any)._providerId || selectedProviderInternalId : selectedProviderInternalId
     const clinicId = pickerMode === 'manual' ? (costForm as any)._clinicId || selectedClinicInternalId : selectedClinicInternalId
 
@@ -492,7 +496,7 @@ export default function CostEntryPage() {
       return
     }
 
-    if (isImplant) {
+    if (showMaterials) {
       if (materialLines.length === 0 || materialLines.some(l => !l.materialName)) {
         alert('請至少添加一行有效材料')
         return
@@ -511,8 +515,8 @@ export default function CostEntryPage() {
 
     setSavingCost(true)
     try {
-      if (isImplant) {
-        // ★ MD-K: IMPLANT → use /api/cost-cases/implant
+      if (showMaterials) {
+        // ★ 2026-08-22（拍板②）：LAB / INVISALIGN 都經 /api/cost-cases/implant（材料明細計價；route 名歷史原因保留）
         const body: any = {
           providerId,
           clinicId,
@@ -521,6 +525,9 @@ export default function CostEntryPage() {
           orderedAt: costForm.orderedAt || todayHK(),
           itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther?.trim() || 'Others') : (costForm.itemType || null),
           dsaName: costForm.dsaName || null,
+          labId: costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId,
+          labOther: costForm.labId === '__OTHERS__' ? (costForm.labOther.trim() || null) : null,
+          labOrderNo: costForm.labOrderNo || null,
           receivedAt: costForm.receivedAt || null,
           appointmentAt: costForm.appointmentAt || null,
           materials: materialLines.map(l => ({
@@ -992,8 +999,8 @@ export default function CostEntryPage() {
                     )}
                   </div>
 
-                  {/* ★ MD-K: Implant materials section */}
-                  {costForm.category === 'IMPLANT' ? (
+                  {/* ★ 2026-08-22（拍板②）：LAB / INVISALIGN 都有材料明細（原植牙專用） */}
+                  {showMaterials ? (
                     <div className="col-span-2">
                       <div className="border rounded-lg overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b">
@@ -1062,45 +1069,30 @@ export default function CostEntryPage() {
                           </>
                         )}
                       </div>
-                      <div className="text-xs text-gray-400 mt-1">—（植體材料唔經工場折扣）</div>
+                      <div className="text-xs text-gray-400 mt-1">—（材料明細計價，唔套工場折扣）</div>
                     </div>
-                  ) : (
-                    <>
-                      <div>
-                        <label className="block text-sm mb-1">成本 <span className="text-xs text-gray-400">（留空 = 未有價）</span></label>
-                        <input type="number" step="0.01" value={costForm.baseCost} onChange={e => setCostForm({ ...costForm, baseCost: e.target.value })}
-                          className="w-full border rounded px-2 py-1.5 text-sm" placeholder="成本金額" />
-                      </div>
-                      <div>
-                        <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
-                        <div className="px-3 py-2 border rounded bg-muted text-sm">
-                          {labDiscountPct != null
-                            ? `${labDiscountPct}%（${labs.find(l => l.id === costForm.labId)?.name ?? '—'} · ${labDiscountPeriodMonth}）`
-                            : '—（該工場今個月冇折扣設定）'}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-sm mb-1">Lab</label>
-                        <select value={costForm.labId} onChange={e => {
-                          const val = e.target.value
-                          setCostForm({ ...costForm, labId: val, labOther: val === '__OTHERS__' ? costForm.labOther : '' })
-                        }} className="w-full border rounded px-2 py-1.5 text-sm">
-                          <option value="">（不選）</option>
-                          {labs.map((lab: any) => (<option key={lab.id} value={lab.id}>{lab.name}</option>))}
-                          <option value="__OTHERS__">其他（自行輸入）</option>
-                        </select>
-                        {costForm.labId === '__OTHERS__' && (
-                          <input value={costForm.labOther} onChange={e => setCostForm({ ...costForm, labOther: e.target.value })}
-                            className="w-full border rounded px-2 py-1.5 text-sm mt-1" placeholder="工場名稱" />
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-sm mb-1">Lab 單號</label>
-                        <input value={costForm.labOrderNo} onChange={e => setCostForm({ ...costForm, labOrderNo: e.target.value })}
-                          className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
-                      </div>
-                    </>
-                  )}
+                  ) : null}
+                  {/* ★ 2026-08-22（拍板②）：成本／折扣 % 欄移除 — 計價統一由材料明細（唔套工場折扣）；Lab／Lab 單號保留（C 區工場欄） */}
+                  <div>
+                    <label className="block text-sm mb-1">Lab</label>
+                    <select value={costForm.labId} onChange={e => {
+                      const val = e.target.value
+                      setCostForm({ ...costForm, labId: val, labOther: val === '__OTHERS__' ? costForm.labOther : '' })
+                    }} className="w-full border rounded px-2 py-1.5 text-sm">
+                      <option value="">（不選）</option>
+                      {labs.map((lab: any) => (<option key={lab.id} value={lab.id}>{lab.name}</option>))}
+                      <option value="__OTHERS__">其他（自行輸入）</option>
+                    </select>
+                    {costForm.labId === '__OTHERS__' && (
+                      <input value={costForm.labOther} onChange={e => setCostForm({ ...costForm, labOther: e.target.value })}
+                        className="w-full border rounded px-2 py-1.5 text-sm mt-1" placeholder="工場名稱" />
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Lab 單號</label>
+                    <input value={costForm.labOrderNo} onChange={e => setCostForm({ ...costForm, labOrderNo: e.target.value })}
+                      className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

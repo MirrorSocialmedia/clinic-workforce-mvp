@@ -91,15 +91,16 @@ export async function GET(
   // ─── 付款逐筆（breakdownJson）→ A 區逐日 + G 區 ─────────────────
   const breakdown: any[] = (run.breakdownJson as any[]) || []
 
-  // ★ 引擎 breakdownJson 只含 countAsIncome=true 嘅行（engine allocWhere 過濾咗），
-  //   但 MD-AC2 ③ 要求 Credit / Free SP 欄要出（標「不計入收入」）——
-  //   所以同範圍內 countAsIncome=false 嘅 allocation 要另外撈返嚟合併入 A/G 區。
+  // ★ 引擎 breakdownJson 含 countAsIncome=true 嘅行 ＋ FREE_SP（★ 2026-08-22：FREE_SP 計醫生收入，
+  //   engine allocWhere 已收埋），CREDIT（countAsIncome=false）唔喺入面 —
+  //   所以 CREDIT 嗰啲 allocation 要另外撈返嚟合併入 A/G 區（FREE_SP 排除防 double count）。
   const extraWhere: any = {
     providerExtId: provider?.apricotId,
     periodMonth: run.periodMonth,
     isVoid: false,
     isSuperseded: false,
     countAsIncome: false,
+    methodNorm: { not: 'FREE_SP' },
   }
   if (clinic?.apricotClinicId) extraWhere.clinicExtId = clinic.apricotClinicId
   const extraAllocs = await prisma.paymentAllocation.findMany({
@@ -275,6 +276,15 @@ export async function GET(
     ['上期調整', money(run.adjustAmount)],
     ['總額', money(run.totalAmount)],
   ]
+  // ★ 2026-08-22：FREE_SP 唔計店舖營收但計醫生收入 —— 單獨列一行（拍板③）
+  //   同 A 區 dayMap 同一來源（allocation netAmount，同 Gross 口徑）；
+  //   已 finalize 舊 run 嘅 Gross 未含 FREE_SP — 至 re-finalize 前「Gross+本行 ≠ 總額」係預期 one-off artifact
+  let freeSpNet = 0
+  for (const dayM of dayMap.values()) {
+    const v = dayM.get('FREE_SP')
+    if (v) freeSpNet += v.net
+  }
+  if (freeSpNet > 0) bRows.push(['Free SP（不計店舖營收，計醫生收入）', money(freeSpNet)])
 
   // ─── C / D 區：成本明細（只准 patientCode，❌ patientName） ─────
   const costWhere: any = {
@@ -294,7 +304,12 @@ export async function GET(
   })
 
   const labCases = costs.filter(c => c.category === 'LAB')
-  const implantCases = costs.filter(c => c.category === 'IMPLANT')
+  // ★ 2026-08-22：IMPLANT 已併入 LAB — 用 itemType 認返植牙個案；
+  //   冇 itemType 嘅舊 implant case 用 materials 存在做 fallback
+  //   （純 itemType 會漏冇 itemType 嘅舊 case；純 materials 會喺拍板②後把普通 LAB 材料 case 拖入 D 區）
+  const implantCases = costs.filter(c =>
+    c.category === 'LAB' &&
+    (/implant/i.test(String(c.itemType ?? c.itemTypeOther ?? '')) || (c.materials?.length ?? 0) > 0))
 
   // 材料名（MaterialItem 冇 relation field，另查）
   const materialIds = [...new Set(implantCases.flatMap(c => c.materials.map(m => m.materialItemId)))]
