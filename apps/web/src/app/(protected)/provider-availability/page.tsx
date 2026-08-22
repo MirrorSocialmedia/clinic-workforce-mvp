@@ -238,6 +238,13 @@ export default function ProviderAvailabilityPage() {
   )
   const shortName = (full: string) => docShortNames.get(full) ?? full
 
+  // ★ 2026-08-22 MD §3.1：欄頂 chip 空間細 —— 單姓（Dr 譚 → 譚；英文名前 3 字）。
+  //   同姓會撞 —— chip 有底色（按醫生）配合預約塊同色可分辨；hover title 有全名。
+  const shortSurname = (name: string): string => {
+    const s = name.replace(/^Dr\s*/i, '').replace(/醫生$/, '').trim()
+    return /^[\u4e00-\u9fa5]/.test(s) ? s.charAt(0) : s.slice(0, 3)
+  }
+
   const cur = clinics.find(c => c.id === clinicId)
   const zoomDay = zoomDate ? visibleDays.find(d => d.date === zoomDate) ?? null : null
 
@@ -315,6 +322,25 @@ export default function ProviderAvailabilityPage() {
     return (
       <div style={{ position: 'relative', height: '100%', borderRadius: 6,
                     background: '#f1f5f9', overflow: 'hidden' }}>
+        {/* ★ 2026-08-22 MD §3.1（#15）：欄頂醫生 chip —— 名唔再喺 band 入面畫（多醫生 band 疊埋會互相蓋）。
+            高度 22、最多 4 個 ＋「+N」、hover title 全名；mini（手機週概覽）唔顯示（太細，#22）。 */}
+        {!mini && (
+          <div style={{ position: 'relative', zIndex: 4, height: 22, display: 'flex', gap: 2,
+                        alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', overflow: 'hidden' }}>
+            {day.providers.slice(0, 4).map(p => {
+              const pc = providerColor(p.providerId, p.color)
+              return (
+                <span key={p.providerId} title={p.name} style={{
+                  fontSize: 8, borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap',
+                  background: soft(pc), color: pc,
+                }}>{shortSurname(p.name)} {p.total || ''}</span>
+              )
+            })}
+            {day.providers.length > 4 && (
+              <span style={{ fontSize: 8, color: '#94a3b8' }}>+{day.providers.length - 4}</span>
+            )}
+          </div>
+        )}
         {/* ★ §四 30 分鐘橫線：repeating-linear-gradient 一次過畫（唔逐條 div）。
             週期 = 1 小時（100%/n60，% 由瀏覽器解析成【實際像素高度】→ rowH 唔寫死 px，
             同 pct() 軸文字同一條公式 → ★#21 橫線同軸文字對齊，resize 都唔會漂移）。
@@ -347,13 +373,8 @@ export default function ProviderAvailabilityPage() {
               )}
               {pr.open.map((o, i) => (
                 <div key={`o${i}`} style={{ position: 'absolute', left: 0, right: 0, zIndex: 1,
-                       background: soft(c), top: pct(o.s), height: pctH(o.s, o.e) }}>
-                  {!mini && i === 0 && (
-                    <span style={{ position: 'absolute', top: 2, left: 4, fontSize: 12,
-                                   fontWeight: 600, color: c }}>
-                      {shortName(pr.name)}{pr.total > 0 ? ` · ${pr.total}` : ''}
-                    </span>
-                  )}
+                       background: '#e2e8f055', top: pct(o.s), height: pctH(o.s, o.e) }}>
+                  {/* ★ 2026-08-22 MD §3.1/§3.2：名已經喺欄頂 chip；底色統一淡灰（唔再按醫生色） */}
                 </div>
               ))}
               {renderBookings(pr, c, mini)}
@@ -370,6 +391,28 @@ export default function ProviderAvailabilityPage() {
         })}
       </div>
     )
+  }
+
+  // ─── 日 column 渲染（含「🚫 冇醫生當值」全灰判斷）───
+  // ★ 2026-08-22 拍板⑤ ＋ #20 鐵律：hasPattern 保護唔可省 ——
+  //   未建 pattern 嘅診所（六間店而家全部）照顯示 Apricot 資料，唔會成週灰晒。
+  // 顯示優先：全灰 > 休假斜紋 > 開診＋預約（全灰係成欄取代）。
+  function renderDay(day: ScheduleDay, mini: boolean) {
+    if (day.hasPattern && day.onDutyCount === 0) {
+      return (
+        <div style={{
+          position: 'relative', height: '100%', borderRadius: 5,
+          border: '0.5px dashed #cbd5e1',
+          background: 'repeating-linear-gradient(45deg,#e9edf2,#e9edf2 6px,#f1f5f9 6px,#f1f5f9 12px)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', gap: 3,
+        }}>
+          <span style={{ fontSize: 11 }}>🚫</span>
+          <span style={{ fontSize: 9, color: '#64748b', fontWeight: 600 }}>冇醫生當值</span>
+        </div>
+      )
+    }
+    return <DayColumn day={day} mini={mini} />
   }
 
   // ─── 日頭（桌面 / 手機共用）───
@@ -543,7 +586,7 @@ export default function ProviderAvailabilityPage() {
                             <div style={{ flex: 1, ...(day.date === today
                               ? { boxShadow: '0 0 0 1px #2563eb', borderRadius: 6 }
                               : {}) }}>
-                              <DayColumn day={day} mini={false} />
+                              {renderDay(day, false)}
                             </div>
                           </div>
                         ))}
@@ -588,7 +631,7 @@ export default function ProviderAvailabilityPage() {
                                 </span>
                               ))}
                             </div>
-                            <div style={{ flex: 1 }}><DayColumn day={zoomDay} mini={false} /></div>
+                            <div style={{ flex: 1 }}>{renderDay(zoomDay, false)}</div>
                           </div>
                           {/* ★ 員工當值 —— 手機只喺放大單日時顯示（§5.1 #3，七欄擠唔低） */}
                           {showStaffRow && (
@@ -624,7 +667,7 @@ export default function ProviderAvailabilityPage() {
                                               ...(day.date === today
                                                 ? { boxShadow: '0 0 0 1px #2563eb', borderRadius: 6 }
                                                 : {}) }}>
-                                  <DayColumn day={day} mini />
+                                  {renderDay(day, true)}
                                 </div>
                               </button>
                             ))}
@@ -680,7 +723,7 @@ export default function ProviderAvailabilityPage() {
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
                                         background: '#f1f5f9', marginRight: 4 }} />冇開診</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
-                                        background: soft('#6366f1'), marginRight: 4 }} />開診（色按醫生）</span>
+                                        background: '#e2e8f055', marginRight: 4 }} />開診</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,
                                         background: '#6366f1', marginRight: 4 }} />已約</span>
                       <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2,

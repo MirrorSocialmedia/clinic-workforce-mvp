@@ -166,6 +166,7 @@ model Clinic {
   providerClinics ProviderClinic[]
   availabilities  ProviderAvailability[]
   bookings        ProviderBooking[]
+  weeklyPatterns  ProviderWeeklyPattern[]
 }
 
 // User entity — system login account
@@ -358,6 +359,7 @@ model Provider {
   reconciliations ReconciliationImport[]
   availabilities ProviderAvailability[]
   bookings       ProviderBooking[]
+  weeklyPatterns ProviderWeeklyPattern[]
 
   @@index([companyId, isActive])
 }
@@ -372,6 +374,9 @@ model ProviderShift {
   startTime  DateTime
   endTime    DateTime
   note       String?
+  // 'FULL'|'AM'|'PM'|'OFF' —— 例外覆蓋 pattern；null = 用 startTime/endTime
+  // ★ slot='OFF' = 當日唔返（調更），唔係休假（唔顯示斜紋）
+  slot       String?
   source     String   @default("MANUAL")
   createdBy  String
   createdAt  DateTime @default(now())
@@ -393,6 +398,24 @@ model ProviderClinic {
 
   @@unique([providerId, clinicId])
   @@index([clinicId])
+}
+
+/// 醫生每週固定當值表（你哋張紙嘅數碼版）
+/// ⚠️ 唔留歷史（拍板④）—— 改咗即刻全期生效，睇返舊月份會用新 pattern。
+///    將來要準確歷史就加 effectiveFrom（照 PayRule 個模式）。
+model ProviderWeeklyPattern {
+  id         String   @id @default(cuid())
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  weekday    Int      // 0=日 … 6=六（同 JS getDay 一致）
+  slot       String   // 'FULL' | 'AM' | 'PM'
+  updatedBy  String
+  updatedAt  DateTime @updatedAt
+
+  @@unique([providerId, clinicId, weekday])
+  @@index([clinicId, weekday])
 }
 
 // 醫生休假 — 唔扣假期額度，只喺當值表顯示

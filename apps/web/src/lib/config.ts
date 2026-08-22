@@ -120,6 +120,9 @@ export const CONFIG = {
     'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'KIOSK'],
     'POST /api/provider-shifts/batch': ['OWNER', 'MANAGER', 'KIOSK'],
     'DELETE /api/provider-shifts/:id': ['OWNER', 'MANAGER', 'KIOSK'],
+    // ★ 每週固定 pattern（cw-patwl）：KIOSK 只准 GET（打卡屏唔應該改當值表）
+    'GET /api/provider-patterns': ['OWNER', 'MANAGER', 'KIOSK'],
+    'PUT /api/provider-patterns': ['OWNER', 'MANAGER'],
     // ★ 醫生休假（同 provider_schedule 權限範圍）
     'GET /api/provider-leaves': ['OWNER', 'MANAGER'],
     'POST /api/provider-leaves': ['OWNER', 'MANAGER'],
@@ -482,6 +485,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/provider-shifts': ['provider_schedule', 'scheduling'],
   'POST /api/provider-shifts/batch': ['provider_schedule', 'scheduling'],
   'DELETE /api/provider-shifts/:id': ['provider_schedule', 'scheduling'],
+  // ★ 每週固定 pattern（cw-patwl）—— 同 provider-shifts 同一組權限
+  'GET /api/provider-patterns': ['provider_schedule', 'scheduling'],
+  'PUT /api/provider-patterns': ['provider_schedule', 'scheduling'],
 
   // —— 醫生時間表（Apricot availability）——
   // ★ 2026-08-22：route 改 requireAnyPerm(['scheduling','provider_schedule']) ——

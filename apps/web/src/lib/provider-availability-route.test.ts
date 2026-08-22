@@ -60,6 +60,9 @@ const fakes: Record<string, Any> = {
     ],
   },
   providerLeave: { findMany: async () => [] },
+  // ★ cw-patwl：三層疊新加載（pattern + 該日 shift 例外）
+  providerWeeklyPattern: { findMany: async () => [] },
+  providerShift: { findMany: async () => [] },
 }
 
 const saved: Record<string, Any> = {}
@@ -129,5 +132,85 @@ describe('provider-availability route — -6 取消預約顯示 filter（2026-08
     assert.equal(r1.status, 400)
     const r2 = await GET(makeReq('clinicId=c1&from=2026-8-20'))
     assert.equal(r2.status, 400)
+  })
+})
+
+// ---- dayFlags：pattern 三層疊（2026-08-22，cw-patwl）----
+// FROM = 2026-08-20 = 四（weekday 4；JS getDay 日=0）；窗口 08-20…08-26
+describe('provider-availability route — dayFlags 三層疊（cw-patwl 2026-08-22）', () => {
+  let savedPattern: Any
+  let savedShift: Any
+  let savedLeave: Any
+  before(() => {
+    savedPattern = fakes.providerWeeklyPattern.findMany
+    savedShift = fakes.providerShift.findMany
+    savedLeave = fakes.providerLeave.findMany
+  })
+  after(() => {
+    fakes.providerWeeklyPattern.findMany = savedPattern
+    fakes.providerShift.findMany = savedShift
+    fakes.providerLeave.findMany = savedLeave
+  })
+
+  it('pattern 空 → 全部 hasPattern=false（★★#20 鐵律：未建 pattern 唔准全灰）', async () => {
+    const res = await GET(makeReq(`clinicId=c1&from=${FROM}`))
+    const body = await res.json()
+    assert.ok(Array.isArray(body.dayFlags) && body.dayFlags.length === 7)
+    assert.ok(body.dayFlags.every((f: Any) => f.hasPattern === false))
+    assert.ok(body.dayFlags.every((f: Any) => f.onDutyCount === 0))
+  })
+
+  it('pattern 命中周四（weekday 4）→ onDutyCount=1，其他日 0', async () => {
+    fakes.providerWeeklyPattern.findMany = async () => [
+      { providerId: 'pa', weekday: 4, slot: 'FULL' }, // 2026-08-20 = 四（JS getDay：日=0…四=4）
+    ]
+    const res = await GET(makeReq(`clinicId=c1&from=${FROM}`))
+    const body = await res.json()
+    const thu = body.dayFlags.find((f: Any) => f.date === '2026-08-20')
+    assert.equal(thu.hasPattern, true)
+    assert.equal(thu.onDutyCount, 1)
+    const fri = body.dayFlags.find((f: Any) => f.date === '2026-08-21')
+    assert.equal(fri.hasPattern, true)
+    assert.equal(fri.onDutyCount, 0)
+  })
+
+  it("shift slot='OFF' 覆蓋 pattern → onDutyCount=0（驗收 #12：OFF 唔計當值）", async () => {
+    fakes.providerWeeklyPattern.findMany = async () => [
+      { providerId: 'pa', weekday: 4, slot: 'FULL' },
+    ]
+    fakes.providerShift.findMany = async () => [
+      { providerId: 'pa', date: new Date('2026-08-20T00:00:00+08:00'), slot: 'OFF' },
+    ]
+    const res = await GET(makeReq(`clinicId=c1&from=${FROM}`))
+    const body = await res.json()
+    const thu = body.dayFlags.find((f: Any) => f.date === '2026-08-20')
+    assert.equal(thu.onDutyCount, 0)
+  })
+
+  it('shift slot=null（用時間）→ 加多一個當值醫生', async () => {
+    fakes.providerWeeklyPattern.findMany = async () => [
+      { providerId: 'pa', weekday: 4, slot: 'FULL' },
+    ]
+    fakes.providerShift.findMany = async () => [
+      { providerId: 'pb', date: new Date('2026-08-20T00:00:00+08:00'), slot: null },
+    ]
+    const res = await GET(makeReq(`clinicId=c1&from=${FROM}`))
+    const body = await res.json()
+    const thu = body.dayFlags.find((f: Any) => f.date === '2026-08-20')
+    assert.equal(thu.onDutyCount, 2)
+  })
+
+  it('leave 蓋走 pattern → onDutyCount=0（驗收 #11）', async () => {
+    fakes.providerWeeklyPattern.findMany = async () => [
+      { providerId: 'pa', weekday: 4, slot: 'FULL' },
+    ]
+    fakes.providerShift.findMany = async () => []
+    fakes.providerLeave.findMany = async () => [
+      { providerId: 'pa', startDate: new Date('2026-08-20T00:00:00+08:00'), endDate: new Date('2026-08-26T00:00:00+08:00') },
+    ]
+    const res = await GET(makeReq(`clinicId=c1&from=${FROM}`))
+    const body = await res.json()
+    const thu = body.dayFlags.find((f: Any) => f.date === '2026-08-20')
+    assert.equal(thu.onDutyCount, 0)
   })
 })

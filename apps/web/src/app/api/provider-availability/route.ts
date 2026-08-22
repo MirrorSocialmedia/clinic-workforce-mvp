@@ -7,6 +7,7 @@ import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { addDaysStr } from '@/lib/apricot/sync-availability'
 import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 import { expandLeavesToSet } from '@/lib/provider-leave'
+import { resolveOnDuty } from '@/lib/provider-pattern'
 
 // ============================================================
 // GET /api/provider-availability?clinicId=<Clinic.id>&from=YYYY-MM-DD
@@ -60,7 +61,8 @@ export async function GET(req: NextRequest) {
   }
 
   // 列出全部 active provider —— 無 row 嘅都列出（openSch/booked = []）
-  const [providers, availRows, bookRows] = await Promise.all([
+  // ★ cw-patwl：加載 pattern（該店全部，weekly）＋ 窗口內 ProviderShift 例外（三層疊用）
+  const [providers, availRows, bookRows, patterns, shiftRows] = await Promise.all([
     prisma.provider.findMany({
       where: { isActive: true },
       select: { id: true, name: true, color: true },
@@ -73,6 +75,15 @@ export async function GET(req: NextRequest) {
     prisma.providerBooking.findMany({
       where: { clinicId: clinic.id, date: { gte: from, lte: to } },
       select: { providerId: true, date: true, startMin: true, endMin: true, status: true, syncedAt: true },
+    }),
+    prisma.providerWeeklyPattern.findMany({
+      where: { clinicId: clinic.id },
+      select: { providerId: true, weekday: true, slot: true },
+    }),
+    prisma.providerShift.findMany({
+      where: { clinicId: clinic.id, date: { gte: hkDateStart(from), lte: hkDateEnd(to) } },
+      select: { providerId: true, date: true, slot: true },
+      orderBy: { id: 'asc' },
     }),
   ])
 
@@ -99,6 +110,22 @@ export async function GET(req: NextRequest) {
   const leaveSet = expandLeavesToSet(leaves)
   const windowDates: string[] = []
   for (let i = 0; i < 7; i++) windowDates.push(addDaysStr(from, i))
+
+  // ★ cw-patwl §3.3：逐日 flag —— 三層疊（pattern → shift → leave）計實際當值醫生數。
+  //   hasPattern = 該店有冇建過 pattern（★★#20 鐵律：冇 pattern 唔准全灰，照顯示 Apricot）。
+  const shiftsByDay = new Map<string, { providerId: string; slot: string | null; date: string }[]>()
+  for (const s of shiftRows) {
+    const d = toHKDateStr(s.date)
+    const arr = shiftsByDay.get(d) ?? []
+    arr.push({ providerId: s.providerId, slot: s.slot, date: d })
+    shiftsByDay.set(d, arr)
+  }
+  const hasPattern = patterns.length > 0
+  const dayFlags = windowDates.map(d => ({
+    date: d,
+    onDutyCount: resolveOnDuty(d, patterns, shiftsByDay.get(d) ?? [], leaveSet).size,
+    hasPattern,
+  }))
 
   const availByProvider = new Map<string, typeof availRows>()
   for (const a of availRows) {
@@ -164,5 +191,7 @@ export async function GET(req: NextRequest) {
     to,
     sync: { lastSyncAt, stale },
     providers: providersOut,
+    // ★ cw-patwl：逐日 onDutyCount/hasPattern（前端「🚫 冇醫生當值」全灰判斷用）
+    dayFlags,
   })
 }

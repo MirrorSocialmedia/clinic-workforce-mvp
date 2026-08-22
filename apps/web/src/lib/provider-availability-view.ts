@@ -33,6 +33,8 @@ export interface AvailabilityResp {
   to: string
   sync: { lastSyncAt: string | null; stale: boolean }
   providers: ProviderAvail[]
+  /** ★ cw-patwl：逐日 onDutyCount（三層疊）＋ hasPattern（該店有冇建過 pattern） */
+  dayFlags?: { date: string; onDutyCount: number; hasPattern: boolean }[]
 }
 
 /** 時間軸上的一段（分鐘，00:00 起）；busy 段帶 status（0=已約/4=已完成） */
@@ -55,7 +57,14 @@ export interface DayProvider {
   /** 拍板①：有假但該日仲有開診/預約 = 矛盾，UI 要標紅 */
   leaveConflict: boolean
 }
-export interface ScheduleDay { date: string; providers: DayProvider[] }
+export interface ScheduleDay {
+  date: string
+  providers: DayProvider[]
+  /** ★ cw-patwl：該日三層疊後實際當值醫生數（pattern → shift → leave） */
+  onDutyCount: number
+  /** ★ cw-patwl：該店有冇建過 pattern（★★#20 鐵律：false 唔准全灰） */
+  hasPattern: boolean
+}
 export interface ClinicOpt { id: string; name: string; connected: boolean }
 
 // ─── 時間解析 ───
@@ -181,6 +190,8 @@ export function buildShortNames(names: string[]): Map<string, string> {
  * - 'HH:mm' 解析失敗 / end<=start 嘅 entry 直接 drop（唔會 throw）。
  */
 export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
+  // ★ cw-patwl：逐日 flag（API 未回時 fallback：hasPattern=false → 唔會全灰，安全）
+  const flagByDate = new Map((resp.dayFlags ?? []).map(f => [f.date, f]))
   const days: ScheduleDay[] = []
   for (let i = 0; i < 7; i++) {
     const date = addDays(resp.from, i)
@@ -218,7 +229,12 @@ export function buildDays(resp: AvailabilityResp): ScheduleDay[] {
         })
       }
     }
-    days.push({ date, providers })
+    days.push({
+      date,
+      providers,
+      onDutyCount: flagByDate.get(date)?.onDutyCount ?? 0,
+      hasPattern: flagByDate.get(date)?.hasPattern ?? false,
+    })
   }
   return days
 }

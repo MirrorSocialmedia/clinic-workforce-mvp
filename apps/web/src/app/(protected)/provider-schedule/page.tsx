@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { todayHK, addDays, fmtTime, hkDayOfWeek, toHKDateStr } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
+// ★ cw-patwl §2：每週固定 pattern（撳格循環 + optimistic update）
+import { resolveSlots } from '@/lib/provider-pattern'
 // ★ cw-pta §5：員工當值 mapping 抽咗入 lib（同 provider-availability 共用，唔寫第二份）
 import { buildStaffByDate, shouldLoadStaffShifts } from '@/lib/staff-by-date'
 import { Card } from '@/components/ui/card'
@@ -11,6 +13,11 @@ import { Badge } from '@/components/ui/badge'
 import { ChevronLeft, ChevronRight, X, CalendarDays } from 'lucide-react'
 
 const DAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
+
+// ★ cw-patwl §2.2：pattern 撳格循環（DB weekday 0=日 → 顯示序 一…日）
+const SLOT_CYCLE = ['', 'FULL', 'AM', 'PM'] as const
+const SLOT_LABEL: Record<string, string> = { FULL: '～', AM: 'AM', PM: 'PM' }
+const PATTERN_WEEKDAYS = [1, 2, 3, 4, 5, 6, 0] // 一…日（DB weekday 0=日 排最後）
 
 export default function ProviderSchedulePage() {
   const [weekStart, setWeekStart] = useState(() => {
@@ -29,6 +36,13 @@ export default function ProviderSchedulePage() {
   const [scopeLoaded, setScopeLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  // ★ cw-patwl §2.1：兩個 tab —— 每週固定表（pattern）/ 本週實況（原有內容）
+  const [mode, setMode] = useState<'pattern' | 'week'>('week')
+  // pattern 狀態：Map<"providerId:weekday", slot>（key 同 MD cyclePattern 一致）
+  const [patternMap, setPatternMap] = useState<Map<string, string>>(new Map())
+  const [patternLoading, setPatternLoading] = useState(false)
+  const [patternError, setPatternError] = useState<string | null>(null)
+
   // Staff shifts for employee summary row
   const [staffShifts, setStaffShifts] = useState<any[]>([])
   const [staffError, setStaffError] = useState(false)
@@ -46,11 +60,14 @@ export default function ProviderSchedulePage() {
     ? hasPermission(userRole, 'provider_schedule', grant, deny)
     : false
 
+  // ★ cw-patwl：pattern 編輯只限 OWNER/MANAGER（KIOSK 有 provider_schedule 但只讀灰格，驗收 #7）
+  const canManage = userRole === 'OWNER' || userRole === 'MANAGER' // ROLE-OK: MD cw-patwl 拍板 —— 當值表只准 OWNER/MANAGER 改
+
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
   const [modalCell, setModalCell] = useState<{ date: string; providerId: string } | null>(null)
   const [modalEntries, setModalEntries] = useState<Array<{
-    providerId: string; clinicId: string; start: string; end: string; note: string
+    providerId: string; clinicId: string; start: string; end: string; note: string; slot: string
   }>>([])
   const [modalRepeatWeeks, setModalRepeatWeeks] = useState(1)
   const [modalConflict, setModalConflict] = useState<'skip' | 'overwrite'>('skip')
@@ -197,6 +214,60 @@ export default function ProviderSchedulePage() {
     }
   }
 
+  // ★ cw-patwl §2.3：載該店 pattern（GET /api/provider-patterns?clinicId=）
+  async function loadPatterns() {
+    if (!selectedClinicId) { setPatternMap(new Map()); return }
+    try {
+      setPatternLoading(true)
+      setPatternError(null)
+      const res = await apiFetch<any>(`/api/provider-patterns?clinicId=${selectedClinicId}`)
+      const m = new Map<string, string>()
+      for (const p of res.patterns || []) m.set(`${p.providerId}:${p.weekday}`, p.slot)
+      setPatternMap(m)
+    } catch (e: any) {
+      console.error('[provider-schedule] load patterns failed', e)
+      setPatternError('載入每週固定表失敗')
+    } finally { setPatternLoading(false) }
+  }
+
+  useEffect(() => {
+    if (canSchedule) loadPatterns()
+  }, [selectedClinicId, canSchedule])
+
+  // ★ cw-patwl §2.2：撳格循環 ''→FULL→AM→PM→''（optimistic update + 失敗 revert）
+  const cyclePattern = useCallback(async (providerId: string, weekday: number) => {
+    if (!selectedClinicId || !canManage) return
+    const cur = patternMap.get(`${providerId}:${weekday}`) ?? ''
+    const next = SLOT_CYCLE[(SLOT_CYCLE.indexOf(cur as any) + 1) % SLOT_CYCLE.length]
+    setPatternMap(prev => new Map(prev).set(`${providerId}:${weekday}`, next))
+    setPatternError(null)
+    try {
+      await apiFetch<any>('/api/provider-patterns', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId, clinicId: selectedClinicId, weekday, slot: next || null }),
+      })
+    } catch {
+      // ★ 失敗還原
+      setPatternMap(prev => new Map(prev).set(`${providerId}:${weekday}`, cur))
+      setPatternError('儲存失敗，已還原')
+    }
+  }, [patternMap, selectedClinicId, canManage])
+
+  // ★ cw-patwl Q2：modal slot —— OFF = 當日唔返 → 自動填該店 FULL 時段時間（startTime/endTime 必填）
+  function changeEntrySlot(i: number, slot: string) {
+    setModalEntries(prev => {
+      const next = [...prev]
+      next[i] = { ...next[i], slot }
+      if (slot === 'OFF') {
+        const c = clinics.find((x: any) => x.id === (next[i].clinicId || selectedClinicId))
+        const slots = resolveSlots((c as any)?.config ?? null)
+        next[i] = { ...next[i], start: slots.FULL.start, end: slots.FULL.end }
+      }
+      return next
+    })
+  }
+
   // Cell handlers
   function handleCellClick(e: React.MouseEvent, date: string, providerId: string) {
     if (isDoubleClickRef.current) { isDoubleClickRef.current = false; return }
@@ -218,6 +289,7 @@ export default function ProviderSchedulePage() {
         start: existing?.startTime ? fmtTime(existing.startTime) : '09:00',
         end: existing?.endTime ? fmtTime(existing.endTime) : '17:00',
         note: existing?.note || '',
+        slot: existing?.slot ?? '', // ★ cw-patwl：載返原有 slot（空=用時間）
       }])
       setWeekdays([])
       setModalRepeatWeeks(1)
@@ -238,6 +310,7 @@ export default function ProviderSchedulePage() {
       start: '09:00',
       end: '17:00',
       note: '',
+      slot: '',
     }])
     setWeekdays([])
     setModalRepeatWeeks(4)
@@ -356,10 +429,23 @@ export default function ProviderSchedulePage() {
             : <select value={selectedClinicId || ''} onChange={e => setSelectedClinicId(e.target.value)} className="border rounded px-2 py-1 text-sm">
                 {visibleClinics.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>}
-          <button onClick={prevWeek} className="p-1 hover:bg-muted rounded"><ChevronLeft className="w-4 h-4" /></button>
-          <button onClick={goToday} className="text-xs px-2 py-1 hover:bg-muted rounded">今日</button>
-          <button onClick={nextWeek} className="p-1 hover:bg-muted rounded"><ChevronRight className="w-4 h-4" /></button>
-          <span className="text-sm font-medium">{weekDays[0]} ~ {weekDays[6]}</span>
+          {/* ★ cw-patwl §2.1：兩 tab —— 本週實況（原有邏輯）/ 每週固定表（pattern） */}
+          <div className="flex border rounded overflow-hidden">
+            <button onClick={() => setMode('pattern')}
+              className={`px-2 py-1 text-xs ${mode === 'pattern' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
+              每週固定表
+            </button>
+            <button onClick={() => setMode('week')}
+              className={`px-2 py-1 text-xs ${mode === 'week' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
+              本週實況
+            </button>
+          </div>
+          {mode === 'week' && (<>
+            <button onClick={prevWeek} className="p-1 hover:bg-muted rounded"><ChevronLeft className="w-4 h-4" /></button>
+            <button onClick={goToday} className="text-xs px-2 py-1 hover:bg-muted rounded">今日</button>
+            <button onClick={nextWeek} className="p-1 hover:bg-muted rounded"><ChevronRight className="w-4 h-4" /></button>
+            <span className="text-sm font-medium">{weekDays[0]} ~ {weekDays[6]}</span>
+          </>)}
         </div>
       </div>
 
@@ -371,7 +457,65 @@ export default function ProviderSchedulePage() {
         </div>
       )}
 
-      {/* Schedule Grid */}
+      {/* ★ cw-patwl：pattern 載入/儲存失敗提示 */}
+      {mode === 'pattern' && patternError && (
+        <div className="px-3 py-2 text-sm rounded bg-destructive/10 text-destructive">{patternError}</div>
+      )}
+
+      {/* ★ cw-patwl §2.2：每週固定表（七欄 一…日 × 該店 providers；撳格循環，KIOSK 只讀灰格） */}
+      {mode === 'pattern' ? (
+        <Card className="overflow-x-auto">
+          <div className="px-3 py-2 text-xs text-muted-foreground border-b">
+            撳格循環：空白 → ～（全日）→ AM → PM；AM/PM/FULL 時間跟診所設定（診所頁「時段設定」，預設 10:00-20:00 / 10:00-13:00 / 14:00-20:00）。
+            {!canManage && '（只讀 —— 每週固定表只准 OWNER/MANAGER 修改）'}
+            {patternLoading && '（載入中...）'}
+          </div>
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-muted/50">
+                <th className="sticky left-0 z-10 bg-muted p-2 text-left min-w-[120px]" style={{ position: 'sticky', left: 0 }}>醫生</th>
+                {PATTERN_WEEKDAYS.map(wd => (
+                  <th key={wd} className="p-2 text-center min-w-[80px]">星期{DAY_LABELS[wd]}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleProviders.map(p => (
+                <tr key={p.id} className="border-t">
+                  <td className="sticky left-0 z-10 bg-background p-2 font-medium" style={{ position: 'sticky', left: 0, borderRight: '2px solid #e5e7eb' }}>
+                    <span style={{ color: p.color || '#888' }}>●</span> {p.name}
+                  </td>
+                  {PATTERN_WEEKDAYS.map(wd => {
+                    const slot = patternMap.get(`${p.id}:${wd}`) ?? ''
+                    return (
+                      <td key={wd}
+                        onClick={() => cyclePattern(p.id, wd)}
+                        style={{
+                          cursor: canManage ? 'pointer' : 'default',
+                          textAlign: 'center', padding: 4, minHeight: 40,
+                          background: canManage ? undefined : '#f8fafc', // KIOSK 只讀灰格
+                        }}
+                      >
+                        {slot ? (
+                          <span style={{
+                            display: 'inline-block', minWidth: 32, padding: '2px 8px', borderRadius: 4,
+                            fontSize: 11, fontWeight: 600,
+                            background: slot === 'FULL' ? '#dbeafe' : slot === 'AM' ? '#fef3c7' : '#e9d5ff',
+                            color: slot === 'FULL' ? '#1d4ed8' : slot === 'AM' ? '#92400e' : '#6b21a8',
+                          }}>{SLOT_LABEL[slot]}</span>
+                        ) : (
+                          <span style={{ color: '#e5e7eb' }}>·</span>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      ) : (
+      /* Schedule Grid（本週實況 —— 原有邏輯） */
       <Card className="overflow-x-auto">
         <table className="w-full text-xs border-collapse">
           <thead>
@@ -417,7 +561,19 @@ export default function ProviderSchedulePage() {
                                 borderLeft: `3px solid ${p.color || '#888'}`,
                               }}
                             >
-                              <div>{fmtTime(sh.startTime)} - {fmtTime(sh.endTime)}</div>
+                              <div className="flex items-center gap-1">
+                                <span>{fmtTime(sh.startTime)} - {fmtTime(sh.endTime)}</span>
+                                {/* ★ cw-patwl Q2：slot 標記（OFF = 當日唔返，唔係休假斜紋） */}
+                                {sh.slot && (
+                                  <span className="text-[9px] font-bold px-1 rounded"
+                                    style={{
+                                      background: sh.slot === 'OFF' ? '#fee2e2' : '#dbeafe',
+                                      color: sh.slot === 'OFF' ? '#b91c1c' : '#1d4ed8',
+                                    }}>
+                                    {sh.slot === 'OFF' ? '唔返' : SLOT_LABEL[sh.slot] ?? sh.slot}
+                                  </span>
+                                )}
+                              </div>
                               {sh.note && <div className="text-muted-foreground mt-0.5">{sh.note}</div>}
                               {canSchedule && (
                                 <button className="mt-0.5 text-muted-foreground hover:text-foreground"
@@ -473,6 +629,7 @@ export default function ProviderSchedulePage() {
           </tbody>
         </table>
       </Card>
+      )}
 
       {/* Batch Modal */}
       {modalOpen && (
@@ -516,6 +673,17 @@ export default function ProviderSchedulePage() {
                     <input type="time" value={en.end} onChange={e => {
                       const next = [...modalEntries]; next[i].end = e.target.value; setModalEntries(next)
                     }} className="w-full border rounded px-2 py-1 text-sm" />
+                  </div>
+                  {/* ★ cw-patwl Q2：可選 slot —— 空=用 startTime/endTime；OFF=當日唔返（自動填 FULL 時段時間） */}
+                  <div className="col-span-2">
+                    <label className="text-xs text-muted-foreground">Slot（空 = 用上面嘅時間；OFF = 當日唔返，唔係休假）</label>
+                    <select value={en.slot} onChange={e => changeEntrySlot(i, e.target.value)} className="w-full border rounded px-2 py-1 text-sm">
+                      <option value="">按時間（start–end）</option>
+                      <option value="FULL">FULL（全日）</option>
+                      <option value="AM">AM（朝早）</option>
+                      <option value="PM">PM（下半日）</option>
+                      <option value="OFF">OFF（當日唔返）</option>
+                    </select>
                   </div>
                   <div className="col-span-2">
                     <label className="text-xs text-muted-foreground">備註</label>

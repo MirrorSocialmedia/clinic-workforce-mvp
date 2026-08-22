@@ -5,6 +5,8 @@ import { fmtDate } from '@/lib/hk-date'
 import { compressToDataUrl } from '@/lib/image'
 import { textOn, shiftShade } from '@/lib/color'
 import { RequireRole } from '@/components/RequireRole'
+// ★ cw-patwl Q1：診所時段設定（預設 fallback 由 resolveSlots 帶出）
+import { resolveSlots, DEFAULT_SLOTS, type SlotMap } from '@/lib/provider-pattern'
 
 interface Clinic {
   id: string
@@ -18,6 +20,8 @@ interface Clinic {
   longitude: number | null
   geoRadius: number | null
   apricotClinicId: string | null
+  // ★ cw-patwl Q1：providerSlots 時段設定（自由 JSON 字串，GET /api/clinics 已返回）
+  config: string | null
   createdAt: string
 }
 
@@ -54,6 +58,11 @@ function ClinicsPageInner() {
   // GPS helper for clinic edit
   const [autoLat, setAutoLat] = useState<number | null>(null)
   const [autoLng, setAutoLng] = useState<number | null>(null)
+
+  // ★ cw-patwl Q1：醫生當值時段設定（Clinic.config.providerSlots）
+  const [slotsModalClinic, setSlotsModalClinic] = useState<Clinic | null>(null)
+  const [slotsForm, setSlotsForm] = useState<SlotMap>(DEFAULT_SLOTS)
+  const [slotsSaving, setSlotsSaving] = useState(false)
 
   const fetchAll = async () => {
     const [clinicsRes, companiesRes] = await Promise.all([
@@ -156,6 +165,43 @@ function ClinicsPageInner() {
       alert('顏色儲存失敗')
       fetchAll()
     }
+  }
+
+  // ★ cw-patwl Q1：時段設定 —— 前端 GET 現有 config → parse → merge providerSlots → PUT 整包
+  //   （PUT /api/clinics/[id] 對 config 係整包 JSON.stringify，唔合併，所以必須 merge 先 PUT）
+  const openSlotsModal = (clinic: Clinic) => {
+    setSlotsForm(resolveSlots(clinic.config ?? null))
+    setSlotsModalClinic(clinic)
+  }
+
+  const saveClinicSlots = async () => {
+    const clinic = slotsModalClinic
+    if (!clinic) return
+    for (const k of ['FULL', 'AM', 'PM'] as const) {
+      if (!slotsForm[k]?.start || !slotsForm[k]?.end) {
+        alert('請填齊所有時段時間')
+        return
+      }
+    }
+    let existing: Record<string, any> = {}
+    try { existing = clinic.config ? JSON.parse(clinic.config) : {} } catch { existing = {} }
+    const merged = { ...existing, providerSlots: slotsForm }
+    setSlotsSaving(true)
+    try {
+      const res = await fetch(`/api/clinics/${clinic.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: merged }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({} as any))
+        alert(d.error || '時段設定儲存失敗')
+        return
+      }
+      setSlotsModalClinic(null)
+      fetchAll()
+    } finally { setSlotsSaving(false) }
   }
 
   const handleEditClinic = async (clinic: Clinic) => {
@@ -488,6 +534,7 @@ function ClinicsPageInner() {
                     <td className="text-sm">{fmtDate(clinic.createdAt)}</td>
                     <td>
                       <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleEditClinic(clinic)}>編輯</button>
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => openSlotsModal(clinic)}>⏰ 時段設定</button>
                       <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => {
                         navigator.geolocation.getCurrentPosition(
                           p => { setAutoLat(p.coords.latitude); setAutoLng(p.coords.longitude); handleEditClinic(clinic) },
@@ -522,6 +569,7 @@ function ClinicsPageInner() {
                   <div className="text-xs text-muted-foreground mb-2">{clinic.address || '—'}</div>
                   <div className="flex gap-2">
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleEditClinic(clinic)}>編輯</button>
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => openSlotsModal(clinic)}>⏰ 時段設定</button>
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => {
                       navigator.geolocation.getCurrentPosition(
                         p => { setAutoLat(p.coords.latitude); setAutoLng(p.coords.longitude); handleEditClinic(clinic) },
@@ -537,6 +585,39 @@ function ClinicsPageInner() {
           </>
         )}
       </div>
+
+      {/* ── ★ cw-patwl Q1：醫生當值時段設定（FULL/AM/PM × start/end）── */}
+      {slotsModalClinic && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSlotsModalClinic(null)}>
+          <div className="card p-4" style={{ width: '100%', maxWidth: 440, margin: 16 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ fontSize: 16, marginBottom: 8 }}>⏰ 當值時段設定 — {slotsModalClinic.name}</h2>
+            <div className="text-xs text-muted-foreground" style={{ marginBottom: 16 }}>
+              醫生當值表「每週固定表」AM/PM/FULL 時段用呢度；改咗即刻生效。
+              預設：FULL 10:00-20:00 / AM 10:00-13:00 / PM 14:00-20:00。
+            </div>
+            {(['FULL', 'AM', 'PM'] as const).map(k => (
+              <div key={k} className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ width: 130, marginBottom: 0 }}>
+                  {k === 'FULL' ? 'FULL（全日）' : k === 'AM' ? 'AM（朝早）' : 'PM（下半日）'}
+                </label>
+                <input type="time" value={slotsForm[k].start}
+                  onChange={e => setSlotsForm({ ...slotsForm, [k]: { ...slotsForm[k], start: e.target.value } })}
+                  style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14 }} />
+                <span style={{ color: '#9ca3af' }}>–</span>
+                <input type="time" value={slotsForm[k].end}
+                  onChange={e => setSlotsForm({ ...slotsForm, [k]: { ...slotsForm[k], end: e.target.value } })}
+                  style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14 }} />
+              </div>
+            ))}
+            <div className="flex justify-end gap-2" style={{ marginTop: 20 }}>
+              <button className="btn" onClick={() => setSlotsModalClinic(null)}>取消</button>
+              <button className="btn btn-primary" disabled={slotsSaving} onClick={saveClinicSlots}>
+                {slotsSaving ? '儲存中...' : '儲存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -5,7 +5,7 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { hkDateStart, toHKDateStr } from '@/lib/hk-date'
 import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 
-type Entry = { providerId: string; clinicId: string; date: string; start: string; end: string; note?: string }
+type Entry = { providerId: string; clinicId: string; date: string; start: string; end: string; note?: string; slot?: string }
 
 export async function POST(req: NextRequest) {
   const auth = await requirePerm(req, 'provider_schedule')
@@ -28,6 +28,15 @@ export async function POST(req: NextRequest) {
   for (const e of entries) {
     if (!/^\d{2}:\d{2}$/.test(e.start) || !/^\d{2}:\d{2}$/.test(e.end)) {
       return NextResponse.json({ error: `時間格式要 HH:mm：${e.start}-${e.end}` }, { status: 400 })
+    }
+  }
+
+  // ★ cw-patwl：可選 slot（'FULL'|'AM'|'PM'|'OFF'；空 = 用 startTime/endTime）
+  //   OFF = 當日唔返（調更）—— startTime/endTime 仍必填（前端填該店 FULL 時段）
+  const SLOT_VALUES = ['FULL', 'AM', 'PM', 'OFF']
+  for (const e of entries) {
+    if (e.slot != null && e.slot !== '' && !SLOT_VALUES.includes(String(e.slot))) {
+      return NextResponse.json({ error: `slot 要 FULL/AM/PM/OFF：${e.slot}` }, { status: 400 })
     }
   }
 
@@ -55,7 +64,7 @@ export async function POST(req: NextRequest) {
 
   const rows: Array<{
     providerId: string; clinicId: string; date: Date;
-    startTime: Date; endTime: Date; note: string | null
+    startTime: Date; endTime: Date; note: string | null; slot: string | null
   }> = []
 
   for (const e of entries) {
@@ -65,7 +74,8 @@ export async function POST(req: NextRequest) {
       const startTime = new Date(`${dStr}T${e.start}:00+08:00`)
       let endTime = new Date(`${dStr}T${e.end}:00+08:00`)
       if (endTime.getTime() <= startTime.getTime()) endTime = new Date(endTime.getTime() + 86400000) // 跨夜
-      rows.push({ providerId: e.providerId, clinicId: e.clinicId, date: day, startTime, endTime, note: e.note ?? null })
+      const slot = e.slot ? String(e.slot) : null
+      rows.push({ providerId: e.providerId, clinicId: e.clinicId, date: day, startTime, endTime, note: e.note ?? null, slot })
     }
   }
 
@@ -89,7 +99,7 @@ export async function POST(req: NextRequest) {
           if (!inScope(scope, existing.clinicId)) { skipped++; continue }
           await prisma.providerShift.update({
             where: key,
-            data: { clinicId: r.clinicId, endTime: r.endTime, note: r.note },
+            data: { clinicId: r.clinicId, endTime: r.endTime, note: r.note, slot: r.slot },
           })
           updated++
         } else {
