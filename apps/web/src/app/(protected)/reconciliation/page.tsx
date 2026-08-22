@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Upload, FileSpreadsheet, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
+import { RequireRole } from '@/components/RequireRole'
 
 interface ReconciliationRecord {
   id: string
@@ -45,6 +46,16 @@ interface ParsePreview {
 }
 
 export default function ReconciliationPage() {
+  // ★ 2026-08-22：頁面層權限 gate（navItems:179 roles:['OWNER'] + provider_payout）
+  //   denied 時 Inner 唔 mount → 零 API request
+  return (
+    <RequireRole roles={['OWNER']} perms={['provider_payout']}>
+      <ReconciliationPageInner />
+    </RequireRole>
+  )
+}
+
+function ReconciliationPageInner() {
   const [records, setRecords] = useState<ReconciliationRecord[]>([])
   const [providers, setProviders] = useState<Provider[]>([])
   const [loading, setLoading] = useState(true)

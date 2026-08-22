@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { fmtDate } from '@/lib/hk-date'
 import { compressToDataUrl } from '@/lib/image'
 import { textOn, shiftShade } from '@/lib/color'
+import { RequireRole } from '@/components/RequireRole'
 
 interface Clinic {
   id: string
@@ -29,6 +30,16 @@ interface Company {
 }
 
 export default function ClinicsPage() {
+  // ★ 2026-08-22：頁面層權限 gate（navItems:172 roles:['OWNER']）
+  //   denied 時 Inner 唔 mount → 零 API request
+  return (
+    <RequireRole roles={['OWNER']}>
+      <ClinicsPageInner />
+    </RequireRole>
+  )
+}
+
+function ClinicsPageInner() {
   const [clinics, setClinics] = useState<Clinic[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)

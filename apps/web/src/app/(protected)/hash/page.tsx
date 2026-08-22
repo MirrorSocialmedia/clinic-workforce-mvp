@@ -3,10 +3,21 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { fmtDate, fmtDateTime } from '@/lib/hk-date'
+import { RequireRole } from '@/components/RequireRole'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
 export default function HashPage() {
+  // ★ 2026-08-22：頁面層權限 gate（navItems:175 roles:['OWNER']）
+  //   denied 時 Inner 唔 mount → 零 API request
+  return (
+    <RequireRole roles={['OWNER']}>
+      <HashPageInner />
+    </RequireRole>
+  )
+}
+
+function HashPageInner() {
   const router = useRouter()
   const [user, setUser] = useState<{ role: Role; clinics: string[] } | null>(null)
   const [loading, setLoading] = useState(true)

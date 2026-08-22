@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { EmptyState } from '@/components/EmptyState'
 import { fmtDateTime } from '@/lib/hk-date'
+import { RequireRole } from '@/components/RequireRole'
 
 /** 審計明細中不顯示的 ID 類欄位 */
 const HIDDEN_KEYS = new Set([
@@ -122,6 +123,16 @@ function tryParseEmployeeId(json: any): string | null {
 }
 
 export default function AuditLogsPage() {
+  // ★ 2026-08-22：頁面層權限 gate（navItems:173 roles:['OWNER'] + audit_view）
+  //   denied 時 Inner 唔 mount → 零 API request
+  return (
+    <RequireRole roles={['OWNER']} perms={['audit_view']}>
+      <AuditLogsPageInner />
+    </RequireRole>
+  )
+}
+
+function AuditLogsPageInner() {
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)

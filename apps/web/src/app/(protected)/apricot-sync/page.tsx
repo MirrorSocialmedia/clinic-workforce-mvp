@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { RefreshCw, Database, Loader2, Square, CheckCircle2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
+import { RequireRole } from '@/components/RequireRole'
 
 interface PerClinicStatus {
   clinicId: string
@@ -81,6 +82,22 @@ interface ClinicRevenueData {
 }
 
 export default function ApricotSyncPage() {
+  // ★ 2026-08-22：頁面層權限 gate（navItems:177 roles:['OWNER'] + apricot_sync/provider_payout）
+  //   denied 時 Inner 唔 mount → 零 API request
+  //   onLoad 攞 role 俾 Inner 做「去診所管理」link gate（唔使頁面再 fetch 第二次 /api/me）
+  const [myRole, setMyRole] = useState('')
+  return (
+    <RequireRole
+      roles={['OWNER']}
+      perms={['apricot_sync', 'provider_payout']}
+      onLoad={u => setMyRole(u.role)}
+    >
+      <ApricotSyncPageInner myRole={myRole} />
+    </RequireRole>
+  )
+}
+
+function ApricotSyncPageInner({ myRole }: { myRole: string }) {
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -399,9 +416,16 @@ export default function ApricotSyncPage() {
               </div>
               <div className="text-sm text-gray-400 mt-2">未綁 Apricot ID</div>
               <div className="text-sm text-gray-500 mt-1">唔會同步、亦唔會出月結單</div>
-              <a href="/clinics" className="inline-block text-sm text-blue-600 underline mt-2">
-                去診所管理 →
-              </a>
+              {/* ★ 2026-08-22：非 OWNER 入唔到 /clinics —— 唔好畀個死 link（fail-closed：role 未攞到都唔出 link） */}
+              {myRole === 'OWNER' ? (
+                <a href="/clinics" className="inline-block text-sm text-blue-600 underline mt-2">
+                  去診所管理 →
+                </a>
+              ) : (
+                <span className="inline-block text-sm text-gray-400 mt-2">
+                  請 OWNER 綁定 Apricot 診所 ID
+                </span>
+              )}
             </div>
           ))}
         </div>
