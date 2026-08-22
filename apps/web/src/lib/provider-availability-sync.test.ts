@@ -24,17 +24,22 @@ describe('RBAC 登記 — POST /api/provider-availability/sync（spec §3）', (
     assert.ok(RBAC_PERM_OVERRIDES[ROUTE]?.includes('scheduling'), 'missing scheduling override')
   })
 
+  it('RBAC_PERM_OVERRIDES 有 provider_schedule（★ 2026-08-22：店鋪帳號 KIOSK 都可以同步）', () => {
+    assert.ok(RBAC_PERM_OVERRIDES[ROUTE]?.includes('provider_schedule'), 'missing provider_schedule override')
+  })
+
   it('EMPLOYEE / KIOSK 唔喺角色白名單（純角色唔入得去，要 grant scheduling 先入）', () => {
     const roles: string[] = CONFIG.RBAC_MATRIX[ROUTE] ?? []
     assert.ok(!roles.includes('EMPLOYEE'), 'EMPLOYEE 唔應該喺白名單')
     assert.ok(!roles.includes('KIOSK'), 'KIOSK 唔應該喺白名單')
   })
 
-  it('route 檔案存在 + 行 requirePerm(scheduling)（403 把關來源）', () => {
+  it('route 檔案存在 + 行 requireAnyPerm(scheduling | provider_schedule)（403 把關來源）', () => {
     const p = join(dirname(fileURLToPath(import.meta.url)), '../app/api/provider-availability/sync/route.ts')
     assert.ok(existsSync(p), `route 檔案唔存在: ${p}`)
     const src = readFileSync(p, 'utf8')
-    assert.match(src, /requirePerm\(req, 'scheduling'\)/, 'route 必須行 requirePerm(scheduling)')
+    // ★ 2026-08-22：把關由 requirePerm(scheduling) 拓寬做 requireAnyPerm(scheduling | provider_schedule)
+    assert.match(src, /requireAnyPerm\(req, \['scheduling', 'provider_schedule'\]\)/, 'route 必須行 requireAnyPerm(scheduling | provider_schedule)')
     assert.match(src, /lastSyncAt\.set/, 'cooldown 記錄必須喺 sync 之前')
     assert.match(src, /retryAfterMs/, '429 必須回 retryAfterMs')
   })

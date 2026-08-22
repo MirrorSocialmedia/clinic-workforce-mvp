@@ -360,6 +360,31 @@ export async function requirePerm(
 }
 
 /**
+ * 多權限檢查（任一持有即過）—— 同一份讀要開俾多類權限持有人。
+ * 順序 trial，回第一個過關（scope 跟跟住過關嗰個權限）；401 直接回（換權限 retry 無意義）。
+ *
+ * ★ 2026-08-22 加入：
+ *   - GET /api/providers —— provider_schedule 或 cost_entry（成本錄入揀醫生）
+ *   - GET/POST /api/provider-availability(/sync) —— scheduling 或 provider_schedule（店鋪帳號）
+ *   注意：requirePerm 唔讀 RBAC_PERM_OVERRIDES，所以 route 層要多權限就必須用呢個。
+ */
+export async function requireAnyPerm(
+  req: NextRequest,
+  perms: PermKey[]
+): Promise<AuthResult> {
+  let last: AuthResult = {
+    error: NextResponse.json({ error: 'Forbidden (missing permission)' }, { status: 403 }),
+  }
+  for (const perm of perms) {
+    const r = await requirePerm(req, perm)
+    if (!isAuthError(r)) return r
+    last = r
+    if (r.error.status === 401) return r
+  }
+  return last
+}
+
+/**
  * Role-based auth check for Next.js App Router routes (Server Components / Route Handlers using cookies).
  * Usage: const session = await requireRole(['OWNER', 'MANAGER'])
  * Throws NextResponse on failure.

@@ -50,12 +50,10 @@ export default function LabDiscountsPage() {
     try {
       const data: any = await apiFetch('/api/me')
       setUserRole(data.user?.role || '')
-      const perms = data.user?.permissionsJson
-      if (perms) {
-        const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
-        setGrant(parsed.grant || [])
-        setDeny(parsed.deny || [])
-      }
+      // ★ 2026-08-22：/api/me 已經 parse 好，直接回 user.grant / user.deny
+      //   （permissionsJson 喺 route.ts:24 被剷走，讀佢永遠 undefined）
+      setGrant(data.user?.grant ?? [])
+      setDeny(data.user?.deny ?? [])
     } catch (e) {
       console.error('[lab-discounts] load auth failed', e)
       setLoadError('權限載入失敗')

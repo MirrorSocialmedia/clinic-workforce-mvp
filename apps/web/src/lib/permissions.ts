@@ -14,6 +14,9 @@ export const PERMISSIONS = {
   provider_schedule: '醫生當值排更',
   provider_payout: '醫生拆帳',
   cost_entry: '成本錄入（Lab / Implant / Invisalign）',
+  // ★ 2026-08-22：Apricot 同步獨立 key —— 讀（睇 job 進度）同寫（發起／取消同步）分開
+  //   唔喺任何 ROLE_DEFAULTS：OWNER 自動有（Object.keys(PERMISSIONS)），其餘人手 grant
+  apricot_sync: 'Apricot 同步（帳單／付款／預約）',
   accounts_manage: '帳號管理',
   clinic_manage: '診所/公司管理',
   audit_view: '審計日誌',

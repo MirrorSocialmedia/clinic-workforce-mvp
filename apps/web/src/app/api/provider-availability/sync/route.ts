@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAnyPerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { runAvailabilitySync } from '@/lib/apricot/sync-availability'
 import { checkCooldown } from '@/lib/sync-cooldown'
@@ -8,7 +8,8 @@ import { checkCooldown } from '@/lib/sync-cooldown'
 // ============================================================
 // POST /api/provider-availability/sync — 前端「立即同步」掣（cw-pta spec §3.1）
 //
-// ★ requirePerm('scheduling') —— 同 GET 時間表同一個權限（行 RBAC，唔經 cron key）。
+// ★ requireAnyPerm(['scheduling','provider_schedule']) —— 同 GET 時間表同一組權限
+//   （★ 2026-08-22：店鋪帳號 KIOSK 都可同步；行 RBAC，唔經 cron key）。
 // ★ 60s cooldown 按 userId（記憶體 Map；單 instance 夠用，多 instance 要改用 DB；
 //   server 重啟清空，可接受）。429 回 { error, retryAfterMs } 俾前端倒數。
 // ★ lastSyncAt.set 喺 sync 之前 —— 防 sync 期間狂撳併發打 Apricot
@@ -21,7 +22,7 @@ import { checkCooldown } from '@/lib/sync-cooldown'
 const lastSyncAt = new Map<string, number>()
 
 export async function POST(req: NextRequest) {
-  const auth = await requirePerm(req, 'scheduling')
+  const auth = await requireAnyPerm(req, ['scheduling', 'provider_schedule'])
   if (isAuthError(auth)) return auth.error
 
   const userId = auth.session!.userId

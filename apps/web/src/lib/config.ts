@@ -65,6 +65,9 @@ export const CONFIG = {
 
     // Employee routes
     'GET /api/employees': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    // ★ 2026-08-22：成本錄入「負責同事」picker 輕量 route（淨返 id + user.name；
+    //   主權限喺 RBAC_PERM_OVERRIDES = cost_entry，唔返薪酬/電話/電郵）
+    'GET /api/employees/dsa-options': ['OWNER'],
     'POST /api/employees': ['OWNER', 'MANAGER'],
     'PUT /api/employees/:id': ['OWNER', 'MANAGER'],
     'DELETE /api/employees/:id': ['OWNER'],
@@ -471,7 +474,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ⚠️ 呢啲 route 用 requirePerm，requirePerm 唔讀本表。
   // 留喺度純粹係 check-rbac-matrix.sh 嘅登記要求 + 文件用途。
   // 真正把關喺 ROLE_DEFAULTS[role] 同埋各 route 自己嘅 resolveProviderScheduleScope。
-  'GET /api/providers': ['provider_schedule', 'scheduling'],
+  // ★ 2026-08-22：成本錄入要揀醫生 —— 加 cost_entry（route 改 requireAnyPerm，providers/route.ts）
+  'GET /api/providers': ['provider_schedule', 'scheduling', 'cost_entry'],
   'POST /api/providers': ['provider_schedule', 'scheduling'],
   'PUT /api/providers/:id': ['provider_schedule', 'scheduling'],
   'DELETE /api/providers/:id': ['provider_schedule', 'scheduling'],
@@ -480,12 +484,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'DELETE /api/provider-shifts/:id': ['provider_schedule', 'scheduling'],
 
   // —— 醫生時間表（Apricot availability）——
-  // ⚠️ 呢 route 用 requirePerm('scheduling')，requirePerm 唔讀本表。
-  // 留喺度純粹係 check-rbac-matrix.sh 嘅登記要求 + 文件用途。
-  // 真正把關喺 requirePerm('scheduling') + resolveProviderScheduleScope。
-  'GET /api/provider-availability': ['scheduling'],
-  // ★ 2026-08-21 cw-pta：「立即同步」掣 —— 同 GET 同一個 scheduling 權限
-  'POST /api/provider-availability/sync': ['scheduling'],
+  // ★ 2026-08-22：route 改 requireAnyPerm(['scheduling','provider_schedule']) ——
+  //   店鋪帳號（KIOSK，provider_schedule）可睇自己店時間表；KIOSK 唔開 scheduling
+  //   （嗰個含員工薪酬相關查看權）。resolveProviderScheduleScope 照常收窄範圍。
+  'GET /api/provider-availability': ['provider_schedule', 'scheduling'],
+  // ★ 2026-08-21 cw-pta：「立即同步」掣 —— 同 GET 時間表同一組權限
+  'POST /api/provider-availability/sync': ['provider_schedule', 'scheduling'],
 
   // —— 醫生休假 ——
   'GET /api/provider-leaves': ['provider_schedule'],
@@ -505,6 +509,13 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // —— MD-B: Cost Entry ——
   //   cost_entry 權限：MANAGER 可以錄入成本
   'GET /api/cost-cases': ['cost_entry'],
+  // ★ 2026-08-22：成本錄入要揀 Lab／材料／折扣 —— GET 只讀
+  //   （寫入端 = provider_payout override + OWNER role 表，一齊都唔放寬）
+  'GET /api/labs': ['cost_entry'],
+  'GET /api/lab-discounts': ['cost_entry'],
+  'GET /api/material-items': ['cost_entry'],
+  // ★ 2026-08-22：成本錄入「負責同事」picker（淨返 id + user.name）
+  'GET /api/employees/dsa-options': ['cost_entry'],
   'POST /api/cost-cases': ['cost_entry'],
   'POST /api/cost-cases/implant': ['cost_entry'],
   'PUT /api/cost-cases/:id': ['cost_entry'],
@@ -523,7 +534,13 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/material-items': ['provider_payout'],
 
   // —— MD-C: Apricot Data Layer ——
-  'POST /api/apricot/sync': ['provider_payout'],
+  // ★ 2026-08-22：Apricot 同步獨立 key（apricot_sync）—— 寫（發起同步）只 apricot_sync；
+  //   讀（job 進度 poll）= apricot_sync / cost_entry / provider_payout
+  'POST /api/apricot/sync': ['apricot_sync'],
+  // ★ 2026-08-22：同步 job 讀寫 —— 讀（睇進度）開放俾攞權限者，寫（取消）只 apricot_sync
+  'GET /api/apricot/sync/jobs': ['apricot_sync', 'cost_entry', 'provider_payout'],
+  'GET /api/apricot/sync/jobs/:id': ['apricot_sync', 'cost_entry', 'provider_payout'],
+  'POST /api/apricot/sync/jobs/:id': ['apricot_sync'],
   'GET /api/apricot/status': ['provider_payout'],
   // ★ MD-AC3: 店鋪營收卡片
   'GET /api/apricot/clinic-revenue': ['provider_payout'],

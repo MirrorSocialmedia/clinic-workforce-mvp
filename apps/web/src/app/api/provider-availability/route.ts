@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAnyPerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { addDaysStr } from '@/lib/apricot/sync-availability'
@@ -13,7 +13,8 @@ import { expandLeavesToSet } from '@/lib/provider-leave'
 // Spec: docs/specs/PROVIDER_AVAILABILITY_SPEC.md §5
 //
 // 滾動 7 日（from..from+6；拍板③ —— 參數叫 `from` 唔叫 weekStart）。
-// ★ 權限：requirePerm('scheduling')（照 repo 現有 auth 模式）。
+// ★ 權限：requireAnyPerm(['scheduling','provider_schedule'])（★ 2026-08-22：店鋪帳號 KIOSK 可睇；
+//   原有 scheduling 行为唔變 —— scheduling 排前）。
 // ★ 診所 scope：照 provider-scope（MANAGER 收窄到主屬店，唔可以跨公司）。
 // ★ booked 逐筆回（2026-08-21 拍板⑤）—— 唔再掃描線合併；重疊由前端 layoutBookings 分 lane。
 // ★ weekBookings = 該週（from..to 窗口）預約總筆數 —— 前端「預設只顯示有預約醫生」用。
@@ -29,7 +30,7 @@ function minToHHMM(m: number): string {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requirePerm(req, 'scheduling')
+  const auth = await requireAnyPerm(req, ['scheduling', 'provider_schedule'])
   if (isAuthError(auth)) return auth.error
 
   const sp = req.nextUrl.searchParams

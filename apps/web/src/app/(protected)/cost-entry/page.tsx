@@ -259,12 +259,10 @@ export default function CostEntryPage() {
       const data: any = await apiFetch('/api/me')
       setUserRole(data.user?.role || '')
       setUserId(data.user?.id || '')
-      const perms = data.user?.permissionsJson
-      if (perms) {
-        const parsed = typeof perms === 'string' ? JSON.parse(perms) : perms
-        setGrant(parsed.grant || [])
-        setDeny(parsed.deny || [])
-      }
+      // ★ 2026-08-22：/api/me 已經 parse 好，直接回 user.grant / user.deny
+      //   （permissionsJson 喺 route.ts:24 被剷走，讀佢永遠 undefined）
+      setGrant(data.user?.grant ?? [])
+      setDeny(data.user?.deny ?? [])
     } catch (e) {
       console.error('[cost-entry] load auth failed', e)
       setLoadError('載入用戶資訊失敗')
@@ -433,7 +431,9 @@ export default function CostEntryPage() {
   const loadDsaEmployees = async (clinicId: string) => {
     setLoadingDsa(true)
     try {
-      const data: any = await apiFetch(`/api/employees?clinicId=${encodeURIComponent(clinicId)}&status=ACTIVE&all=1`)
+      // ★ 2026-08-22：改行輕量 route —— 原 /api/employees 回 payConfidential/phone/email
+      //   等敏感欄，route 級 override 分唔到 query param，唔可以直接開俾 cost_entry
+      const data: any = await apiFetch(`/api/employees/dsa-options?clinicId=${encodeURIComponent(clinicId)}`)
       setDsaEmployees(data.employees || data || [])
     } catch {
       setDsaEmployees([])

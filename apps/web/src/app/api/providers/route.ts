@@ -1,11 +1,13 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requirePerm, requireAnyPerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 
 export async function GET(req: NextRequest) {
-  const auth = await requirePerm(req, 'provider_schedule')
+  // ★ 2026-08-22：cost_entry（成本錄入）要揀醫生 —— 同一份讀開多一個權限
+  //   （provider_schedule 排前：現有使用者 scope 行為完全唔變）
+  const auth = await requireAnyPerm(req, ['provider_schedule', 'cost_entry'])
   if (isAuthError(auth)) return auth.error
 
   const includeInactive = req.nextUrl.searchParams.get('includeInactive') === '1'
