@@ -148,6 +148,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/my/face-enroll', label: '人臉登記', icon: Palmtree, roles: allRoles, perm: null },
     { path: '/my/notifications', label: '通知', icon: Bell, roles: allRoles, perm: null },
     { path: '/my/change-password', label: '修改密碼', icon: KeyRound, roles: allRoles, perm: null },
+    // ★ 2026-08-22：有管理權限嘅 EMPLOYEE 走桌面側欄，側欄原本冇雜費申請 — 補入口（手機走 /my/more）
+    { path: '/my/expenses', label: '雜費申請', icon: Receipt, roles: allRoles, perm: null },
 
     // Punch (all non-owner)
     { path: '/punch', label: '我要打卡', icon: Smartphone, roles: myRoles },

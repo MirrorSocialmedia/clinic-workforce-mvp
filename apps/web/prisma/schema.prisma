@@ -1038,6 +1038,7 @@ model CostCaseMaterial {
   unitPriceUsed     Decimal  @db.Decimal(12,2) // ★ 快照
   isPriceOverridden Boolean  @default(false) // ★ MD-K: 用戶改過單價
   subtotal          Decimal  @db.Decimal(12,2)
+  note              String? // ★ 2026-08-22：揀「Other」時手動填嘅材料名
 
   @@index([costCaseId])
 }

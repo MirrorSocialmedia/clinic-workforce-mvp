@@ -298,18 +298,13 @@ export async function GET(
     where: costWhere,
     include: {
       lab: { select: { name: true } },
-      materials: { select: { materialItemId: true, qty: true, unitPriceUsed: true, subtotal: true } },
+      materials: { select: { materialItemId: true, qty: true, unitPriceUsed: true, subtotal: true, note: true } },
     },
     orderBy: { orderedAt: 'asc' },
   })
 
   const labCases = costs.filter(c => c.category === 'LAB')
-  // ★ 2026-08-22：IMPLANT 已併入 LAB — 用 itemType 認返植牙個案；
-  //   冇 itemType 嘅舊 implant case 用 materials 存在做 fallback
-  //   （純 itemType 會漏冇 itemType 嘅舊 case；純 materials 會喺拍板②後把普通 LAB 材料 case 拖入 D 區）
-  const implantCases = costs.filter(c =>
-    c.category === 'LAB' &&
-    (/implant/i.test(String(c.itemType ?? c.itemTypeOther ?? '')) || (c.materials?.length ?? 0) > 0))
+  const implantCases = costs.filter(c => c.category === 'IMPLANT')
 
   // 材料名（MaterialItem 冇 relation field，另查）
   const materialIds = [...new Set(implantCases.flatMap(c => c.materials.map(m => m.materialItemId)))]
@@ -368,7 +363,7 @@ export async function GET(
           dRows.push([
             ddMM(c.orderedAt),
             patient,
-            materialName.get(mat.materialItemId) || mat.materialItemId,
+            mat.note?.trim() || materialName.get(mat.materialItemId) || mat.materialItemId, // ★ 2026-08-22：Other 材料顯示手動填嘅材料名（note 優先）
             mat.qty,
             money(mat.unitPriceUsed),
             money(mat.subtotal),

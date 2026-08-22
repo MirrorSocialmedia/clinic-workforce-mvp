@@ -529,6 +529,24 @@ async function main() {
   }
   console.log(`  ✅ ${implantMaterials.length} implant materials seeded`)
 
+  // ★ 2026-08-22：Other — 手動輸入材料（冇定價，UI 會要求手動填價＋材料名 note）
+  const otherExisting = await prisma.materialItem.findFirst({
+    where: { name: 'Other', isActive: true },
+  })
+  if (!otherExisting) {
+    await prisma.materialItem.create({
+      data: {
+        id: 'seed-other',
+        name: 'Other',
+        unitPrice: null,
+        effectiveFrom: new Date('2020-01-01'),
+        effectiveTo: null,
+        isActive: true,
+      },
+    })
+  }
+  console.log('  ✅ Other material seeded（冇定價）')
+
   // Create audit log entry to prove it works
   await prisma.auditLog.create({
     data: {

@@ -5,9 +5,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { prisma } from '@/lib/prisma'
 
 // ============================================================
-// POST /api/cost-cases/implant — Create LAB cost case with materials
-// ★ 2026-08-22：路徑名歷史原因（原植牙專用材料錄入）— IMPLANT 併入 LAB 後
-//   LAB / INVISALIGN 都用呢條 route 寫 CostCaseMaterial（計價 = 材料明細總和）
+// POST /api/cost-cases/implant — Create IMPLANT cost case with materials
 // Roles: OWNER, MANAGER
 // Body: { providerId, clinicId, patientCode, patientName?,
 //         orderedAt, itemType?, dsaName?,
@@ -29,7 +27,6 @@ export async function POST(req: NextRequest) {
     orderedAt, itemType, dsaName,
     receivedAt, appointmentAt,
     materials,
-    labId, labOther, labOrderNo, // ★ 2026-08-22（拍板②）：LAB / INVISALIGN 都經呢條 — 保留工場資訊（C 區工場欄）
     billExtId, billCode, billItemEleId, // ★ MD-K: 由帳單新增
   } = body
 
@@ -131,6 +128,7 @@ export async function POST(req: NextRequest) {
       unitPriceUsed,
       isPriceOverridden,
       subtotal,
+      note: mat.note?.trim() || null, // ★ 2026-08-22：Other 材料名（手動輸入）
     })
     
     // ★ MD-K: 收集 audit 記錄
@@ -153,17 +151,14 @@ export async function POST(req: NextRequest) {
     data: {
       providerId,
       clinicId,
-      category: 'LAB', // ★ 2026-08-22：IMPLANT 併入 LAB（植牙個案由 itemType 表達）
+      category: 'IMPLANT',
       patientCode,
       patientName: patientName || null,
       orderedAt: new Date(orderedAt),
       itemType: itemType || null,
       dsaName: dsaName || null,
-      labId: labId || null,
-      labOther: labOther || null,
-      labOrderNo: labOrderNo || null,
       baseCost: totalBaseCost,
-      finalCost: totalBaseCost, // ★ 材料明細計價，唔套工場折扣（2026-08-22 起 LAB/INVISALIGN 通用）
+      finalCost: totalBaseCost, // ★ IMPLANT 唔套工場折扣
       receivedAt: receivedAt ? new Date(receivedAt) : null,
       appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
       billExtId: billExtId || null,
@@ -192,11 +187,11 @@ export async function POST(req: NextRequest) {
       clinicId,
       beforeJson: null,
       afterJson: JSON.stringify({
-        providerId, clinicId, category: 'LAB', patientCode,
+        providerId, clinicId, category: 'IMPLANT', patientCode,
         baseCost: totalBaseCost, materialCount: materialData.length,
         materialAudits: auditRecords,
       }),
-      notes: `新增 LAB 成本記錄（材料計價）: ${patientCode} $${totalBaseCost} (${materialData.length} 項材料)${auditRecords.length > 0 ? ` [${auditRecords.length} 項單價異常]` : ''} (${periodMonth})`,
+      notes: `新增 IMPLANT 成本記錄: ${patientCode} $${totalBaseCost} (${materialData.length} 項材料)${auditRecords.length > 0 ? ` [${auditRecords.length} 項單價異常]` : ''} (${periodMonth})`,
     },
   } as any)
 
