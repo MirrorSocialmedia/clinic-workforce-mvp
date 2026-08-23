@@ -4,6 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import {
   runAvailabilitySync,
 } from '@/lib/apricot/sync-availability'
+import { runAvailabilityCacheSync } from '@/lib/apricot/sync-availability-cache'
 import { getTestCallFn } from './test-call-fn'
 
 // ============================================================
@@ -16,6 +17,9 @@ import { getTestCallFn } from './test-call-fn'
 //   冇 fallback 預設值：APRICOT_CRON_KEY 未設 = 503（fail closed）。
 // ★ 同步引擎 runAvailabilitySync 本身已包外層 advisory lock（776001，攞唔到
 //   → { ok:false, skipped } 唔會 crash）+ 逐間 try/catch（一間失敗唔中斷其餘）。
+// ★ cw-extapi-20260823-a1：同一個 cron 入口順帶跑 runAvailabilityCacheSync
+//   （external API v1 數據源，today → +30 日 slot grid）—— 兩個 engine 各自
+//   withApricotLock 序列化（铁律），一次 cron tick 做晒兩樣。
 // ★ 🔴 只回傳結構統計（open/bookings/unknown/error + 行數）—— 零病人資料。
 // ============================================================
 
@@ -52,5 +56,7 @@ export async function POST(req: NextRequest) {
   const t0 = Date.now()
   const hook = getTestCallFn()
   const outcome = await runAvailabilitySync(hook ? { callFn: hook } : {})
-  return NextResponse.json({ ...outcome, durationMs: Date.now() - t0 })
+  // ★ cw-extapi-20260823-a1：cache sync（external API v1）—— 同一 hook（test 時 mock 共用）
+  const cache = await runAvailabilityCacheSync(hook ? { callFn: hook } : {})
+  return NextResponse.json({ ...outcome, cache, durationMs: Date.now() - t0 })
 }

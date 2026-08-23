@@ -1393,3 +1393,53 @@ model ProviderBooking {
   @@index([clinicId, date])
   @@index([providerId, date])
 }
+
+// ============================================================
+// External API v1（Apricot Gateway）— cw-extapi-20260823-a1
+// MD: clinic-workforce-external-api v1.0 §A.1（A）＋ §B.1（B）
+// clinic-workforce 係全系統唯一 Apricot 整合點，經呢組表供應 wa-clinic-inbox。
+// ============================================================
+
+/// External API key（wa-inbox 等外部系統）。明文 key 只喺生成嗰刻顯示一次，
+/// DB 只存 sha256 hash。零 PII — name 只係系統代號（如 "wa-clinic-inbox"）。
+model ExternalApiKey {
+  id         String    @id @default(cuid())
+  name       String    @unique          // "wa-clinic-inbox"
+  keyHash    String                    // sha256(key) — 明文只喺生成嗰刻顯示一次
+  scopes     String[]                  // ["availability", "duty-roster"]
+  active     Boolean   @default(true)
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+/// External API 審計（零 PII：只記 metadata — keyName/pathname/status/latencyMs）
+/// path 只記 pathname，唔記 query（query 有 clinicCode 冇 PII，但一律唔記慳事）。
+model ExternalApiAudit {
+  id        String   @id @default(cuid())
+  keyName   String
+  path      String
+  status    Int
+  latencyMs Int
+  createdAt DateTime @default(now())
+
+  @@index([keyName, createdAt])
+}
+
+/// Availability slot grid（external API /v1/availability 數據源）。
+/// 🔴 零病人資料 — 只存醫生/時段/開診/預約數量（書寫前經 sanitize 白名單 assert）。
+/// 由 sync-availability-cache.ts 每 15 分鐘 upsert（today → +30 日）。
+model AvailabilityCache {
+  id                String   @id @default(cuid())
+  clinicId          String
+  providerApricotId String
+  providerName      String                        // 快照（Flow 選項要顯示醫生名）
+  date              String                        // YYYY-MM-DD（HK 日界，照現有 hkDateStart/hkDateEnd 邏輯）
+  startTime         String                        // HH:mm
+  endTime           String
+  isOpen            Boolean                       // practitionerOpenSchs 有開診 = true
+  bookedCount       Int
+  syncedAt          DateTime
+
+  @@unique([clinicId, providerApricotId, date, startTime])
+  @@index([clinicId, date])
+}

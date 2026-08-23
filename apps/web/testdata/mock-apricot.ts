@@ -112,7 +112,9 @@ export function mockCall(path: string, ctx: MockCtx): Promise<any> {
   const end = qs.get('endDate')!
   const days: string[] = []
   for (let d = start; d <= end; d = addDays(d, 1)) days.push(d)
-  if (days.length !== 7) throw new Error(`mock: 預期 7 日窗口，得 ${days.length}`)
+  // ★ cw-extapi-20260823-a1：放宽 7 日断言 — cache sync（external API v1）用 31 日窗口
+  //   （today → +30）打同一個 mock；7 日窗口（P2/P3/P4）行為不變。
+  if (days.length < 1 || days.length > 31) throw new Error(`mock: 預期 1–31 日窗口，得 ${days.length}`)
 
   const day0 = days[0], day1 = days[1], day2 = days[2], day3 = days[3]
   const ci = Number(clinicId.slice(-1)) || 0 // per-clinic 變化（#7 隔離驗證）
