@@ -5,6 +5,7 @@ import {
   runAvailabilitySync,
 } from '@/lib/apricot/sync-availability'
 import { runAvailabilityCacheSync } from '@/lib/apricot/sync-availability-cache'
+import { syncDictionaries } from '@/lib/apricot/write-booking'
 import { getTestCallFn } from './test-call-fn'
 
 // ============================================================
@@ -58,5 +59,9 @@ export async function POST(req: NextRequest) {
   const outcome = await runAvailabilitySync(hook ? { callFn: hook } : {})
   // ★ cw-extapi-20260823-a1：cache sync（external API v1）—— 同一 hook（test 時 mock 共用）
   const cache = await runAvailabilityCacheSync(hook ? { callFn: hook } : {})
-  return NextResponse.json({ ...outcome, cache, durationMs: Date.now() - t0 })
+  // ★ cw-apricotwrite-20260823-a1（MD §3）：nightly 字典 sync（VISIT_REASON/BOOKING_TYPE）
+  //   掛現有 tick，無新 cron 項 — syncDictionaries 內部每日 HK 已 sync 過嘅 kind 自動 skip，
+  //   所以實際只喺每日首個 tick 打 Apricot 兩條 GET。fail 唔阻主 sync（返回 skipped）。
+  const dictionaries = await syncDictionaries(hook ? { callFn: hook } : {})
+  return NextResponse.json({ ...outcome, cache, dictionaries, durationMs: Date.now() - t0 })
 }

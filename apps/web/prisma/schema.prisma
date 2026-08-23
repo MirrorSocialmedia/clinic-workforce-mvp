@@ -1425,6 +1425,43 @@ model ExternalApiAudit {
   @@index([keyName, createdAt])
 }
 
+// ============================================================
+// Apricot 寫入功能 — cw-apricotwrite-20260823-a1
+// MD: clinic-workforce-booking-write v2.0 §2（8/8 實測證據 §0）
+// 老細已簽兩 checkbox（白名單 v2 + 自動化寫入同意）；flags 默認 off。
+// ============================================================
+
+/// Apricot 字典快取（VISIT_REASON / BOOKING_TYPE）— nightly sync（掛現有 cron tick）。
+/// 🔴 零病人資料 — 只係代碼表（apricotId/code/des）。/v1/dictionaries 只回 isRemoved=false。
+model ApricotDictionary {
+  id        String   @id @default(cuid())
+  kind      String                       // "VISIT_REASON" | "BOOKING_TYPE"
+  apricotId String   @unique
+  code      String
+  des       String
+  isRemoved Boolean  @default(false)
+  syncedAt  DateTime
+
+  @@index([kind, isRemoved])
+}
+
+/// Apricot 寫入底帳（冪等 + 審計）。
+/// 🔴 零病人資料 — 只記 metadata（action/apricotApptId/status/requestedBy），
+///    病人身份由 consumer 側（wa-inbox）持 patientApricotId 對號，本表唔存。
+/// 冪等鐵律：同 idempotencyKey 重放 → 同 apricotApptId，唔會重複落單。
+/// status 語義：OK（有 apricotApptId）｜SLOT_TAKEN（checkClash 有衝突）
+///   ｜ERROR:check_clash / ERROR:create_rejected（安全可重試）
+///   ｜ERROR:create / ERROR:log / ERROR:create_after_102（殘留態，人手跟，唔自動重試）
+model BookingWriteLog {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  action         String                    // CREATE | STATUS_102 | STATUS_-7 | REMOVE | RESCHEDULE
+  apricotApptId  String?
+  status         String                    // OK | SLOT_TAKEN | ERROR:<step>
+  requestedBy    String                    // external key name
+  createdAt      DateTime @default(now())
+}
+
 /// Availability slot grid（external API /v1/availability 數據源）。
 /// 🔴 零病人資料 — 只存醫生/時段/開診/預約數量（書寫前經 sanitize 白名單 assert）。
 /// 由 sync-availability-cache.ts 每 15 分鐘 upsert（today → +30 日）。

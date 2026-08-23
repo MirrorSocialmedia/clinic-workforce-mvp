@@ -163,15 +163,19 @@ export function buildSlotGrid(openSches: OpenSchRow[], bookings: BookingRow[]): 
  *
  * 🔴 sanitize 白名單：raw 經 extractOpenSch/extractBookings（只抽 primitive）→
  *    slot grid 只有白名單欄位 → assertNoPii 落地前最後兜底（throw = 該店 fail）。
+ *
+ * ★ cw-apricotwrite-20260823-a1（MD §4）：opts.dateOnly = 單日 mode（startDate=endDate=該日，
+ *   決定性重寫只限該店該日）。全範圍 path 邏輯零改動。
  */
 export async function syncAvailabilityCacheForClinic(
   clinic: { id: string; name?: string; apricotClinicId: string },
   callFn: CacheCallFn = defaultCall,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; dateOnly?: string } = {},
 ): Promise<{ rows: number }> {
   const now = opts.now ?? new Date()
-  const start = toHKDateStr(now)
-  const end = addDaysStr(start, WINDOW_DAYS)
+  // 單日 mode：startDate = endDate = 該日；全範圍 mode：today → +30 日（原有邏輯）
+  const start = opts.dateOnly ?? toHKDateStr(now)
+  const end = opts.dateOnly ?? addDaysStr(start, WINDOW_DAYS)
 
   // ★ MD §B.2.1 字面：doctorIds = 全部 Provider.apricotId != null（唔 filter isActive）。
   //   新醫生規則：未入 Provider 表嘅醫生永遠唔會喺空檔資料出現（要 admin 先入表）。
@@ -205,6 +209,7 @@ export async function syncAvailabilityCacheForClinic(
   const gridRows: CacheSlotRow[] = []
   for (const [dateStr, dayNode] of Object.entries(raw ?? {})) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue // 過濾非日期 key（meta 之類）
+    if (opts.dateOnly && dateStr !== opts.dateOnly) continue // 單日 mode：只数該日（防 Apricot 回隔壁日）
     const appts = (dayNode as any)?.appointments
     if (!appts || typeof appts !== 'object') continue
 
@@ -229,11 +234,43 @@ export async function syncAvailabilityCacheForClinic(
   assertNoPii(gridRows)
 
   await prisma.$transaction([
-    prisma.availabilityCache.deleteMany({ where: { clinicId: clinic.id } }), // 決定性：全店重寫（含過期行）
+    // 全範圍 mode：全店重寫（含過期行）；單日 mode：只決定性重寫該店該日（鐵律：唔郁其他日）
+    prisma.availabilityCache.deleteMany({ where: { clinicId: clinic.id, ...(opts.dateOnly ? { date: opts.dateOnly } : {}) } }),
     prisma.availabilityCache.createMany({ data: gridRows, skipDuplicates: true }),
   ])
 
   return { rows: gridRows.length }
+}
+
+// ─── §4 單日即時 sync（cw-apricotwrite-20260823-a1 / MD §4）────────────
+// 落單/改狀態/刪單/改期成功後，喺同一把 withApricotLock 內即行 —
+// API 回 200 嗰刻 cache 已經新鮮，consumer 唔使等 15 分鐘 cron。
+// 15 分鐘全範圍 cron 照舊（追診所端改動）；single-day 只係寫入後嘅即時補丁。
+
+export interface SingleDayResult {
+  dayRefreshed: true
+  syncedAt: string // ISO UTC
+}
+
+/**
+ * 單日 mode：startDate = endDate = 該日 → 一 call → sanitize → 只決定性重寫該店該日。
+ *
+ * 🚫 唔自己攞 lock — caller 必須已經喺 withApricotLock 內（寫入引擎同 sync 共鎖；
+ *    advisory lock 喺 connection pool 下唔保證 reentrant，重攞會攞唔到而靜默 skip）。
+ *    獨立要行用 runAvailabilityCacheSync({ clinicId, dateOnly })（有 lock 版）。
+ */
+export async function syncAvailabilityCacheSingleDay(
+  clinic: { id: string; apricotClinicId: string },
+  dateOnly: string,
+  opts: { callFn?: CacheCallFn; now?: Date } = {},
+): Promise<SingleDayResult> {
+  const syncedAt = opts.now ?? new Date()
+  await syncAvailabilityCacheForClinic(
+    { id: clinic.id, apricotClinicId: clinic.apricotClinicId },
+    opts.callFn ?? defaultCall,
+    { now: syncedAt, dateOnly },
+  )
+  return { dayRefreshed: true, syncedAt: syncedAt.toISOString() }
 }
 
 // ─── 外層：lock 一次包住所有店 ──────────────────────────────────────────
@@ -244,10 +281,40 @@ export async function syncAvailabilityCacheForClinic(
  * ★★★ withApricotLock 攞唔到 lock 回 null（唔係 throw）→ { ok: false, skipped }
  * AUTH_EXPIRED → 剩餘店唔再打（同 runAvailabilitySync 口徑 — 續打只會刷 log）。
  */
+// Overloads（TS）：
+//   單日 mode（MD §4）→ Promise<SingleDayResult>
+//   全範圍 mode → Promise<CacheRunOutcome>（原有回傳型別 — 現有 caller/test 零改動）
+export function runAvailabilityCacheSync(opts: { callFn?: CacheCallFn; now?: Date; clinicId: string; dateOnly: string }): Promise<SingleDayResult>
+export function runAvailabilityCacheSync(opts?: { callFn?: CacheCallFn; now?: Date }): Promise<CacheRunOutcome>
 export async function runAvailabilityCacheSync(
-  opts: { callFn?: CacheCallFn; now?: Date } = {},
-): Promise<CacheRunOutcome> {
+  opts: { callFn?: CacheCallFn; now?: Date; clinicId?: string; dateOnly?: string } = {},
+): Promise<CacheRunOutcome | SingleDayResult> {
   const { callFn, now } = opts
+
+  // ★ MD §4 單日 mode：runAvailabilityCacheSync({ clinicId, dateOnly }) —
+  //   獨立入路（有 lock 版）；寫入引擎唔行呢度（佢哋自己攞 lock，行 no-lock 版）。
+  if (opts.clinicId && opts.dateOnly) {
+    const result = await withApricotLock(async () => {
+      const clinic = await prisma.clinic.findUnique({
+        where: { id: opts.clinicId! },
+        select: { id: true, apricotClinicId: true },
+      })
+      const apricotClinicId = clinic?.apricotClinicId
+      if (!apricotClinicId) {
+        throw new Error(`[availability-cache] clinic ${opts.clinicId} 無 apricotClinicId`)
+      }
+      return await syncAvailabilityCacheSingleDay(
+        { id: opts.clinicId!, apricotClinicId },
+        opts.dateOnly!,
+        { callFn, now },
+      )
+    })
+    if (result === null) {
+      throw new Error('[availability-cache] 單日 sync skip：another apricot call in progress')
+    }
+    return result
+  }
+
   const runStart = toHKDateStr(now ?? new Date())
 
   const result = await withApricotLock(async () => {
