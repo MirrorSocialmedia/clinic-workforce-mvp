@@ -1406,7 +1406,7 @@ model ExternalApiKey {
   id         String    @id @default(cuid())
   name       String    @unique          // "wa-clinic-inbox"
   keyHash    String                    // sha256(key) — 明文只喺生成嗰刻顯示一次
-  scopes     String[]                  // ["availability", "duty-roster"]
+  scopes     String[]                  // ["availability","duty-roster","bookings","patients","appointments"]（cwc-rdchain-20260823-b1: +patients/appointments）
   active     Boolean   @default(true)
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())

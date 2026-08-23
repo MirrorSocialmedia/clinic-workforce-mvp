@@ -1,0 +1,5 @@
+{ "v": 1, "syncedAt": "...", "stale": false, "appointments": [ { "apricotApptId": "...",
+    "clinicCode": "TKW", "providerApricotId": "...", "providerName": "Dr. Lau",
+    "date": "2026-08-28", "start": "14:30", "end": "15:00", "bookingStatus": 0,
+    "patientApricotId": "...", "patientCode": "TKW001991", "patientName": "陳大文",
+    "visitReasons": ["IMPLANT IMPRESSION"], "remarks": "覆診跟進" } ] }
