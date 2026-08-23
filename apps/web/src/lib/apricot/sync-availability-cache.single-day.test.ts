@@ -72,6 +72,10 @@ const fakes = {
     },
     createMany: async ({ data }: Any) => { cacheRows.push(...data); return { count: data.length } },
   },
+  // ★ cwc-rdchain-20260823-a1：index upsert 兜底 fake（本文件嘅 mock booking 無 clinicPatient.id
+  //   → 實際唔會 call；若邏輯改到會 call，fake 接住先至唔會打到真 DB）
+  appointmentIndex: { upsert: async () => ({}) },
+  patientIndex: { upsert: async () => ({}) },
   $transaction: async (arg: Any) => (Array.isArray(arg) ? Promise.all(arg) : arg()),
 }
 

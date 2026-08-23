@@ -1,0 +1,15 @@
+{
+  "key": "6956da5f48daf4cfd910ddb904f246a9bb801dadde14c62f29239be810d32148",
+  "keyType": "fixed 32-byte test key (hex) — NOT the production PHONE_HASH_KEY; 兩 repo 對照用",
+  "canonical": "91234567",
+  "hash": "e6843c368dd1f04d66a76e6d58683b4499ec6f3bdeea4bb8c29a290f97f01a26",
+  "variants": [
+    "+852 9123-4567",
+    "91234567",
+    "85291234567",
+    "852-9123-4567",
+    "+852 9123 4567",
+    "(852) 9123-4567",
+    "852 9123 4567"
+  ]
+}

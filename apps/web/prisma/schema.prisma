@@ -1480,3 +1480,37 @@ model AvailabilityCache {
   @@unique([clinicId, providerApricotId, date, startTime])
   @@index([clinicId, date])
 }
+
+// ★ cwc-rdchain-20260823-a1: Patient Read 鏈 Round A — 兩張索引表（read-chain MD §2 原樣）
+// 白名單 v2：visitReasons/remarks 准入；phoneNum 只准 HMAC hash（phone-hash.ts，同 wa-inbox 一字一樣）
+model AppointmentIndex {
+  id                String   @id @default(cuid())
+  apricotApptId     String   @unique
+  clinicId          String                     // 本系統 Clinic.id
+  providerApricotId String
+  providerName      String
+  date              String                     // YYYY-MM-DD（HK 日界，跟現有 hkDateStart/hkDateEnd）
+  startTime         String                     // HH:mm
+  endTime           String
+  bookingStatus     Int
+  patientApricotId  String
+  patientCode       String
+  patientName       String
+  phoneHash         String
+  visitReasons      String[]                   // 白名單 v2
+  remarks           String?                    // 白名單 v2（A 級待遇）
+  syncedAt          DateTime
+  @@index([phoneHash])
+  @@index([patientApricotId, date])
+  @@index([clinicId, date])
+}
+
+model PatientIndex {
+  id               String   @id @default(cuid())
+  patientApricotId String   @unique
+  patientCode      String
+  patientName      String
+  phoneHash        String
+  lastSeenAt       DateTime
+  @@index([phoneHash])
+}

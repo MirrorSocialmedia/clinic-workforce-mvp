@@ -23,7 +23,8 @@ import { apricotCall, withApricotLockRetry } from './client'
 import { withApricotLock } from './lock'
 import { extractOpenSch, extractBookings } from './availability'
 import type { OpenSchRow, BookingRow } from './availability'
-import { assertNoPii } from './sanitize-availability'
+import { assertNoPii, extractIndexRows } from './sanitize-availability'
+import type { SanitizedIndexRow } from './sanitize-availability'
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ export interface CacheClinicResult {
   clinic: string
   clinicId: string
   rows: number
+  indexRows: number // ★ cwc-rdchain-20260823-a1: AppointmentIndex upsert 行數
 }
 
 export interface CacheRunResult {
@@ -76,6 +78,13 @@ const FAIL_ALERT_THRESHOLD = 3
 const SLOT_STEP_MIN = 30
 
 const PATHNAME = '/api/external/v1/availability' // audit/monitor 識別用（本檔唔寫 audit）
+
+// ★ cwc-rdchain-20260823-a1（read-chain MD §0/§3）：
+// - 佔用規則：bookedCount 只計 bookingStatus ∈ {0, 102}（confirmed/rescheduled）
+//   — 4（完成）/ -6 / -7（取消）一律唔計（吉咗位唔好永遠顯示滿）
+// - 已知狀態碼：{0, 102, 4, -6, -7}；未知值照存 + ALERT unknown_booking_status
+const ACTIVE_BOOKING_STATUSES = new Set([0, 102])
+const KNOWN_BOOKING_STATUSES = new Set([0, 102, 4, -6, -7])
 
 // ─── 連續失敗計數（in-memory，run 級）──────────────────────────────────
 // 現有 repo 無外部警報通道（grep alert/monitor 零命中）→ MD fallback：
@@ -126,6 +135,9 @@ function hhmmToMin(s: string): number {
  * 一個醫生某日嘅 slot grid：openSch 開診時段 × 30 分鐘格。
  *
  * bookedCount = 同該格【重疊】嘅 booking 數（b.start < slotEnd && b.end > slotStart）—
+ *   ★ cwc-rdchain-20260823-a1（MD §0 佔用規則）：只計 bookingStatus ∈ {0, 102}
+ *   （confirmed/rescheduled）；4（完成）同 -6/-7（取消）一律唔計；
+ *   未知狀態碼都唔計（另發 unknown_booking_status alert）。
  *   預約佔住醫生，重疊即唔空。isRemoved/跨日/壞格式筆已經被 extractBookings 剔走。
  * isOpen：格喺 openSch 時段內 → true（開診先有格；冇開診就冇格，唔硬造）。
  */
@@ -138,7 +150,7 @@ export function buildSlotGrid(openSches: OpenSchRow[], bookings: BookingRow[]): 
     for (let cur = s; cur < e; cur += SLOT_STEP_MIN) {
       const slotEnd = Math.min(cur + SLOT_STEP_MIN, e) // 尾格可以短於 30 分鐘
       const bookedCount = bookings.filter(
-        b => b.date === sch.date && b.startMin < slotEnd && b.endMin > cur,
+        b => b.date === sch.date && ACTIVE_BOOKING_STATUSES.has(b.status) && b.startMin < slotEnd && b.endMin > cur,
       ).length
       rows.push({
         date: sch.date,
@@ -166,16 +178,25 @@ export function buildSlotGrid(openSches: OpenSchRow[], bookings: BookingRow[]): 
  *
  * ★ cw-apricotwrite-20260823-a1（MD §4）：opts.dateOnly = 單日 mode（startDate=endDate=該日，
  *   決定性重寫只限該店該日）。全範圍 path 邏輯零改動。
+ *
+ * ★ cwc-rdchain-20260823-a1（read-chain MD §3.1/§3.2）：同一個 response 逐單（sanitize 後）
+ *   加餵兩張索引表：
+ *   - AppointmentIndex upsert 全欄（apricotApptId 唯一鍵；**唔剷歷史行** — 治療摘要來源）
+ *   - PatientIndex upsert（patientApricotId 唯一鍵；lastSeenAt=now）
+ *   - phoneNum → phoneHash() 後即棄 raw（extractIndexRows 白名單 v2 落地）
+ *   - unknown bookingStatus → ALERT unknown_booking_status（§0）
+ *   opts.start/end + indexOnly = 低頻 history mode（-7→昨日）：只 upsert 兩索引表，
+ *   唔寫 AvailabilityCache（見檔尾 runAvailabilityHistorySync 註解 + 報告偏離）。
  */
 export async function syncAvailabilityCacheForClinic(
   clinic: { id: string; name?: string; apricotClinicId: string },
   callFn: CacheCallFn = defaultCall,
-  opts: { now?: Date; dateOnly?: string } = {},
-): Promise<{ rows: number }> {
+  opts: { now?: Date; dateOnly?: string; start?: string; end?: string; indexOnly?: boolean } = {},
+): Promise<{ rows: number; indexRows: number }> {
   const now = opts.now ?? new Date()
-  // 單日 mode：startDate = endDate = 該日；全範圍 mode：today → +30 日（原有邏輯）
-  const start = opts.dateOnly ?? toHKDateStr(now)
-  const end = opts.dateOnly ?? addDaysStr(start, WINDOW_DAYS)
+  // 窗口：單日 mode = 該日；history mode = opts.start/end（-7→昨日）；全範圍 = today → +30 日
+  const start = opts.dateOnly ?? opts.start ?? toHKDateStr(now)
+  const end = opts.dateOnly ?? opts.end ?? addDaysStr(start, WINDOW_DAYS)
 
   // ★ MD §B.2.1 字面：doctorIds = 全部 Provider.apricotId != null（唔 filter isActive）。
   //   新醫生規則：未入 Provider 表嘅醫生永遠唔會喺空檔資料出現（要 admin 先入表）。
@@ -207,9 +228,13 @@ export async function syncAvailabilityCacheForClinic(
   const raw = await callFn(`${APPOINTMENTS_PATH}?${qs.toString()}`)
 
   const gridRows: CacheSlotRow[] = []
+  type IndexedRow = SanitizedIndexRow & { providerApricotId: string; providerName: string }
+  const indexRows: IndexedRow[] = []
+  const unknownStatuses = new Set<number>()
   for (const [dateStr, dayNode] of Object.entries(raw ?? {})) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue // 過濾非日期 key（meta 之類）
     if (opts.dateOnly && dateStr !== opts.dateOnly) continue // 單日 mode：只数該日（防 Apricot 回隔壁日）
+    if (opts.indexOnly && (dateStr < start || dateStr > end)) continue // history mode：只追窗口內日期（防越界）
     const appts = (dayNode as any)?.appointments
     if (!appts || typeof appts !== 'object') continue
 
@@ -218,6 +243,10 @@ export async function syncAvailabilityCacheForClinic(
       if (!providerName) continue // 未對應 Provider 嘅 practitioner 跳過（唔硬造，同 §2.1）
       const openSches = extractOpenSch(dateStr, node)
       const bookings = extractBookings(dateStr, node)
+      // ★ MD §0：未知 bookingStatus → 照存 + alert（呢度攞全集，cover 無 patient 筆）
+      for (const b of bookings) {
+        if (!KNOWN_BOOKING_STATUSES.has(b.status)) unknownStatuses.add(b.status)
+      }
       for (const slot of buildSlotGrid(openSches, bookings)) {
         gridRows.push({
           clinicId: clinic.id,
@@ -227,19 +256,81 @@ export async function syncAvailabilityCacheForClinic(
           ...slot,
         })
       }
+      // ★ 白名單 v2：booking 級 index 行（phoneNum→hash 已喺 extractor 即棄 raw）
+      for (const r of extractIndexRows(dateStr, node)) {
+        indexRows.push({ ...r, providerApricotId: apricotPid, providerName })
+      }
     }
   }
 
-  // 🔴 落地前 PII 白名單 assert（defence in depth — throw 會令該店記 fail）
-  assertNoPii(gridRows)
+  // ★ MD §0/§3.4：unknown bookingStatus alert（每店每 run 每個值一次，唔 spam）
+  for (const v of [...unknownStatuses].sort((a, b) => a - b)) {
+    console.error(
+      `[availability-cache] ⚠️ ALERT unknown_booking_status — value=${v}（clinic=${clinic.name ?? clinic.apricotClinicId}）— 照存唔計入 bookedCount，報 CEO 核對 Apricot 狀態碼`,
+    )
+  }
 
-  await prisma.$transaction([
-    // 全範圍 mode：全店重寫（含過期行）；單日 mode：只決定性重寫該店該日（鐵律：唔郁其他日）
-    prisma.availabilityCache.deleteMany({ where: { clinicId: clinic.id, ...(opts.dateOnly ? { date: opts.dateOnly } : {}) } }),
-    prisma.availabilityCache.createMany({ data: gridRows, skipDuplicates: true }),
-  ])
+  if (!opts.indexOnly) {
+    // 🔴 落地前 PII 白名單 assert（defence in depth — throw 會令該店記 fail）
+    assertNoPii(gridRows)
 
-  return { rows: gridRows.length }
+    await prisma.$transaction([
+      // 全範圍 mode：全店重寫（含過期行）；單日 mode：只決定性重寫該店該日（鐵律：唔郁其他日）
+      prisma.availabilityCache.deleteMany({ where: { clinicId: clinic.id, ...(opts.dateOnly ? { date: opts.dateOnly } : {}) } }),
+      prisma.availabilityCache.createMany({ data: gridRows, skipDuplicates: true }),
+    ])
+  }
+
+  // ★ cwc-rdchain-20260823-a1（§3.1）：兩張索引表 upsert（高頻/單日/history 三 mode 都餵）
+  // 🔴 落地前 PII assert（index 行承載 remarks 自由文字 — assertNoPii 用 key 掃描語義）
+  if (indexRows.length > 0) assertNoPii(indexRows)
+
+  const patientById = new Map<string, { patientApricotId: string; patientCode: string; patientName: string; phoneHash: string }>()
+  for (const r of indexRows) {
+    const full = {
+      clinicId: clinic.id,
+      providerApricotId: r.providerApricotId,
+      providerName: r.providerName,
+      date: r.date,
+      startTime: r.startTime,
+      endTime: r.endTime,
+      bookingStatus: r.bookingStatus,
+      patientApricotId: r.patientApricotId,
+      patientCode: r.patientCode,
+      patientName: r.patientName,
+      phoneHash: r.phoneHash,
+      visitReasons: r.visitReasons,
+      remarks: r.remarks,
+      syncedAt: now,
+    }
+    await prisma.appointmentIndex.upsert({
+      where: { apricotApptId: r.apricotApptId },
+      update: full,
+      create: { apricotApptId: r.apricotApptId, ...full },
+    })
+    // PatientIndex 去重（同一病人多筆 booking 只 upsert 一次）；
+    // phoneHash 合併規則：非空覆蓋空；空唔覆蓋非空（phoneNum 缺失 ≠ 換咗電話）
+    const prev = patientById.get(r.patientApricotId)
+    if (!prev) {
+      patientById.set(r.patientApricotId, {
+        patientApricotId: r.patientApricotId,
+        patientCode: r.patientCode,
+        patientName: r.patientName,
+        phoneHash: r.phoneHash,
+      })
+    } else if (r.phoneHash && !prev.phoneHash) {
+      patientById.set(r.patientApricotId, { ...prev, phoneHash: r.phoneHash })
+    }
+  }
+  for (const p of patientById.values()) {
+    await prisma.patientIndex.upsert({
+      where: { patientApricotId: p.patientApricotId },
+      update: { patientCode: p.patientCode, patientName: p.patientName, phoneHash: p.phoneHash, lastSeenAt: now },
+      create: { ...p, lastSeenAt: now },
+    })
+  }
+
+  return { rows: gridRows.length, indexRows: indexRows.length }
 }
 
 // ─── §4 單日即時 sync（cw-apricotwrite-20260823-a1 / MD §4）────────────
@@ -334,7 +425,7 @@ export async function runAvailabilityCacheSync(
           callFn,
           { now },
         )
-        results.push({ clinic: c.name, clinicId: c.id, rows: r.rows })
+        results.push({ clinic: c.name, clinicId: c.id, rows: r.rows, indexRows: r.indexRows })
       } catch (e: any) {
         runFailed = true
         const msg = e?.message ?? String(e)
@@ -360,4 +451,89 @@ export async function runAvailabilityCacheSync(
   else recordRunOk(PATHNAME)
 
   return { ok: true, start: runStart, end: addDaysStr(runStart, WINDOW_DAYS), results: result.results }
+}
+
+// ─── §3.2 低頻 history 段（cwc-rdchain-20260823-a1 / read-chain MD §3.2/§3.4）──
+// 每晚 03:00（掛現有 cron 機制 — 見 scripts/sync-availability-history.sh + 部署 checklist）：
+//   範圍 -7 → 昨日，同一 engine 行（withApricotLock 照鎖，六店順序唔並發）—
+//   只為追 status 變化（0→4／負數），AppointmentIndex/PatientIndex 同樣 upsert。
+//
+// ★ 偏離（報告已註記）：MD §3.2「三表同樣 upsert」落實為**兩索引表 upsert**，
+//   AvailabilityCache 唔寫歷史日 — 過去 slot grid 無 consumer（availability API 係俾
+//   未來 booking 用），而且 15 分鐘全範圍 run 每次 deleteMany(全店) 都會先剷走歷史 cache 行，
+//   每晚寫入 = 幾分鐘後就清走嘅純 churn。status 追跟目的由兩索引表完整覆蓋。
+//
+// §3.4 監控：低頻 fail 共用現有 alert（同一 consecutiveRunFails 計數器 —
+//   連續 3 次 fail → availability_sync_failed ALERT 行）。
+
+export interface HistoryClinicResult {
+  clinic: string
+  clinicId: string
+  indexRows: number
+}
+
+export interface HistoryRunResult {
+  ok: true
+  start: string // HK 今日 -7（YYYY-MM-DD）
+  end: string   // 昨日（YYYY-MM-DD）
+  results: Array<HistoryClinicResult | { clinic: string; clinicId: string; error: string }>
+}
+
+export type HistoryRunOutcome = HistoryRunResult | CacheRunSkipped
+
+const HISTORY_PATHNAME = '/api/internal/sync-availability-history' // run label（共用 fail 計數器）
+/** MD §3.2：低頻窗口 = -7 → 昨日（7 個日曆日） */
+export const HISTORY_WINDOW_DAYS = 7
+
+export async function runAvailabilityHistorySync(
+  opts: { callFn?: CacheCallFn; now?: Date } = {},
+): Promise<HistoryRunOutcome> {
+  const { callFn, now } = opts
+  const today = toHKDateStr(now ?? new Date())
+  const start = addDaysStr(today, -HISTORY_WINDOW_DAYS)
+  const end = addDaysStr(today, -1)
+
+  const result = await withApricotLock(async () => {
+    const clinics = await prisma.clinic.findMany({
+      where: { apricotClinicId: { not: null } },
+      select: { id: true, name: true, apricotClinicId: true },
+      orderBy: { name: 'asc' },
+    })
+
+    const results: HistoryRunResult['results'] = []
+    let runFailed = false
+    for (const c of clinics) {
+      if (!c.apricotClinicId) continue // where 已 filter；運行時多一層防御
+      try {
+        const r = await syncAvailabilityCacheForClinic(
+          { id: c.id, name: c.name, apricotClinicId: c.apricotClinicId },
+          callFn,
+          { now, start, end, indexOnly: true },
+        )
+        results.push({ clinic: c.name, clinicId: c.id, indexRows: r.indexRows })
+      } catch (e: any) {
+        runFailed = true
+        const msg = e?.message ?? String(e)
+        // 🔴 只 log 錯誤訊息（Apricot error 無病人資料）—— raw response 絕對唔入 log
+        console.error(`[availability-history] ${c.name} 失敗：`, msg)
+        results.push({ clinic: c.name, clinicId: c.id, error: msg })
+        if (msg.includes('AUTH_EXPIRED')) {
+          console.error('[availability-history] Apricot 認證失效 —— 剩餘診所唔再打，bot 帳號要重新登入（報 CEO）')
+          break
+        }
+      }
+      await new Promise(r => setTimeout(r, CLINIC_DELAY_MS))
+    }
+    return { results, runFailed }
+  })
+
+  if (result === null) {
+    return { ok: false, skipped: 'another apricot call in progress' }
+  }
+
+  // §3.4：低頻 fail 共用現有 alert（同一計數器 — 連續 3 次 fail → availability_sync_failed）
+  if (result.runFailed) recordRunFail(HISTORY_PATHNAME)
+  else recordRunOk(HISTORY_PATHNAME)
+
+  return { ok: true, start, end, results: result.results }
 }

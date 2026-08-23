@@ -148,9 +148,13 @@ docker compose exec web npx prisma migrate deploy
 # crontab -e（喺生產【host】跑；script 喺 repo root）
 */10 8-20     * * * /opt/clinic-workforce/scripts/sync-availability.sh
 0    21-23,0-7 * * * /opt/clinic-workforce/scripts/sync-availability.sh
+# ★ cwc-rdchain-20260823-a1（read-chain MD §3.2）：低頻 history sync — 每晚 03:00，
+#   範圍 -7 → 昨日，追 booking status 變化（0→4／負數）→ AppointmentIndex/PatientIndex
+0    3 * * *   /opt/clinic-workforce/scripts/sync-availability-history.sh
 ```
 
 - `scripts/sync-availability.sh`（host 跑）：`flock -n` 防重疊（Apricot token 共用，嚴格序列化寫）+ `docker exec clinic-prod-app node -e fetch(...)` 入 container 內部打 API（生產 host→app `localhost:3000` 無 port map，host 直接 curl 唔通）+ log 落 `/tmp/availability-sync.log`
+- `scripts/sync-availability-history.sh`（host 跑）：同一套機制，入路 `/api/internal/sync-availability-history`，log 落 `/tmp/availability-sync-history.log`（每晚 03:00 一次）
 - key 由 container env 讀（`APRICOT_CRON_KEY`，compose 已注入）——host 唔使讀 `.env` 攞 key，少一個 secret 暴露面
 - 上次未跑完 → 自動跳過（exit 0）；request 量約 89 次/日 × 5 間接通店（一次 call 返滾動 7 日）
 - 規格詳情：[docs/specs/PROVIDER_AVAILABILITY_SPEC.md](docs/specs/PROVIDER_AVAILABILITY_SPEC.md) §4
