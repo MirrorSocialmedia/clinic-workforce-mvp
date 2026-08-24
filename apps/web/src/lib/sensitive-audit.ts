@@ -87,6 +87,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },
   { action: 'FEE_ITEM_LIST_PRICE_SET', label: '設定項目標準價' },
+  // ★ cwi-audit-20260824-s1: Apricot 寫入（write-booking.ts）— 病人預約寫入，必須審計
+  { action: 'REMOVE', label: '刪單（Apricot 寫入）' },
+  { action: 'RESCHEDULE', label: '改期（Apricot 寫入）' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([
