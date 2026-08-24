@@ -12,12 +12,13 @@
 //     只准 whitelist pickup 個別 primitive 欄
 //   - WriteLog 零病人資料（只 metadata + apricotApptId）
 //
-// ⚠️ RECONSTRUCTED endpoints/fields（MD §0/§3 只提供部分 URL，v1.1 probe 腳本唔喺呢台機）：
-//   - CHECK_CLASH_PATH（MD §3 偽碼 `…/checkClash/…/DOCTOR_LOCATION?…&bookingId=`）
-//   - DICTIONARY_PATHS（MD 只講「兩條 GET」）
+// ⚠️ RECONSTRUCTED fields（MD §0/§3 只提供部分 URL，v1.1 probe 腳本唔喺呢台機）：
 //   - create payload 除病人部分外嘅欄名（clinicId/practitionerId/bookingTime/...）
-//   全部集中喺下面常數區 + buildBookingBody；**開 APRICOT_WRITE=1 前必逐項對 v1.1 probe 驗證**
+//   集中喺下面常數區 + buildBookingBody；**開 APRICOT_WRITE=1 前必逐項對 v1.1 probe 驗證**
 //   （部署 checklist 有專項）。
+// ✅ 實錄已核對（pre-pilot-fixes MD v1.0，cwi-prefix-20260824-c1）：
+//   - CHECK_CLASH_PATH（三處修正：service 段 / practitioner+clinic 中段 / startTime+endTime）
+//   - DICTIONARY_PATHS（兩條加 ?size=1024 防預設分頁截斷）
 // ============================================================
 
 import { prisma } from '@/lib/prisma'
@@ -29,33 +30,33 @@ import {
   syncAvailabilityCacheSingleDay,
 } from './sync-availability-cache'
 
-// ─── Endpoint 常數（§0 實測 + RECONSTRUCTED 標記）────────────────────
+// ─── Endpoint 常數（實錄已核對：pre-pilot-fixes MD v1.0；剩餘 RECONSTRUCTED 見檔頭）──
 
 /** §0 實測：落單（舊客 clinicPatient:{id} / 新客 inline 自動開檔；唔傳 bookingType） */
-const BOOKING_CREATE_PATH = '/services/aepsmsope/api/booking-details'
+export const BOOKING_CREATE_PATH = '/services/aepsmsope/api/booking-details'
 /** §0 實測：狀態（通用 endpoint，白名單只准 102 改期標記 / -7 取消） */
-const BOOKING_STATUS_PATH = (apricotApptId: string, status: number) =>
+export const BOOKING_STATUS_PATH = (apricotApptId: string, status: number) =>
   `/services/aepsmsope/api/appointments/${encodeURIComponent(apricotApptId)}/updateStatus?status=${status}`
 /** §0 實測：刪單 — method 係 PUT 唔係 POST，body 係陣列 [id] */
-const BOOKING_REMOVE_PATH = '/services/aepsmsope/api/booking-details/remove?recurApplyType=0'
+export const BOOKING_REMOVE_PATH = '/services/aepsmsope/api/booking-details/remove?recurApplyType=0'
 /**
- * ⚠️ RECONSTRUCTED — MD §3 偽碼 `…/checkClash/…/DOCTOR_LOCATION?…&bookingId=` 重建。
- * 新單 bookingId 傳空。開寫前必須對 v1.1 probe 驗證。
+ * 實錄已核對（pre-pilot-fixes MD v1.0）— service 段 aepsmsope/api/booking-details +
+ * practitioner/{practitionerApricotId}/clinic/{apricotClinicId} 中段 +
+ * query startTime/endTime（UTC ISO，encodeURIComponent）。
+ * 新單 bookingId 傳空。
  */
-const CHECK_CLASH_PATH = (
+export const CHECK_CLASH_PATH = (
   providerApricotId: string,
   apricotClinicId: string,
   sUtc: string,
   eUtc: string,
 ) =>
-  `/services/aepsmsappt/api/appointments/checkClash/${encodeURIComponent(providerApricotId)}/${encodeURIComponent(apricotClinicId)}/DOCTOR_LOCATION?startDate=${sUtc}&endDate=${eUtc}&bookingId=`
+  `/services/aepsmsope/api/booking-details/checkClash/practitioner/${encodeURIComponent(providerApricotId)}/clinic/${encodeURIComponent(apricotClinicId)}/DOCTOR_LOCATION?startTime=${encodeURIComponent(sUtc)}&endTime=${encodeURIComponent(eUtc)}&bookingId=`
 
-/**
- * ⚠️ RECONSTRUCTED — MD 只講「兩條 GET」，具體 path 喺 v1.1 probe。開寫前必須驗證。
- */
-const DICTIONARY_PATHS: Record<DictionaryKind, string> = {
-  VISIT_REASON: '/services/aepsmsope/api/visit-reasons',
-  BOOKING_TYPE: '/services/aepsmsope/api/booking-types',
+/** 實錄已核對（pre-pilot-fixes MD v1.0）— ?size=1024 防字典被預設分頁截斷 */
+export const DICTIONARY_PATHS: Record<DictionaryKind, string> = {
+  VISIT_REASON: '/services/aepsmsope/api/visit-reasons?size=1024',
+  BOOKING_TYPE: '/services/aepsmsope/api/booking-types?size=1024',
 }
 
 // ─── Flags（默認 off — 第一階段）──────────────────────────────────────
