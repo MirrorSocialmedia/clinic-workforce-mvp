@@ -1031,7 +1031,11 @@ model CostCase {
   finalCost     Decimal? @db.Decimal(12,2) // ★ 引擎實際用呢個
   receivedAt    DateTime?
   appointmentAt DateTime?
-  status        String   @default("PENDING") // PENDING | PRICED | DONE | VOID
+  status        String   @default("PENDING") // PENDING | PRICED | DONE | VOID | REDO
+  /// ★ 重做（Lab 做壞要重做）—— 拍板①改原本嗰筆，唔開新 row
+  redoAt        DateTime?
+  /// 重做原因（必填 — 月尾對數要查得返）
+  redoReason    String?
   periodMonth   String
   lockedByRunId String?
   createdBy     String

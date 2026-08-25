@@ -34,6 +34,11 @@ export async function PUT(
     patientCode, patientName, orderedAt, itemType,
     labId, labOrderNo, dsaName,
     baseCost, receivedAt, appointmentAt, status,
+    // ★ 2026-08-25 拍板③：全欄可改 — providerId / clinicId / category
+    //   ⚠️ 呢三個直接改變【拆帳歸屬】同【成本分類】，一定要入 audit
+    providerId, clinicId, category,
+    // ★ 2026-08-25 拍板①：重做（REDO）
+    redoAt, redoReason,
   } = body
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
@@ -41,6 +46,48 @@ export async function PUT(
   const effectivePeriodMonth = orderedAt !== undefined
     ? toHKDateStr(orderedAt).slice(0, 7)
     : existing.periodMonth
+
+  // ★ 2026-08-25 守衛①：改醫生／診所要驗存在性（FK 撞 = 400 唔係 500）
+  if (providerId !== undefined && providerId !== existing.providerId) {
+    const ok = await prisma.provider.count({ where: { id: providerId, isActive: true } })
+    if (!ok) return jsonNoStore({ error: '醫生唔存在或已停用' }, { status: 400 })
+  }
+  if (clinicId !== undefined && clinicId !== existing.clinicId) {
+    const ok = await prisma.clinic.count({ where: { id: clinicId } })
+    if (!ok) return jsonNoStore({ error: '診所唔存在' }, { status: 400 })
+  }
+
+  // ★ 2026-08-25 守衛②：category 只准三個值
+  if (category !== undefined && !['LAB', 'IMPLANT', 'INVISALIGN'].includes(category)) {
+    return jsonNoStore({ error: 'category 唔合法' }, { status: 400 })
+  }
+
+  // ★ 2026-08-25 守衛③：改落單日會換 periodMonth — 目標月份已 LOCKED 唔准改
+  //   ⚠️ PayoutRun status 實值只有 DRAFT | LOCKED（2026-08-25 grep 確認；
+  //      MD 寫嘅 EXPORTED 係 PayrollRun 嘅狀態，唔係 PayoutRun 嘅）
+  if (effectivePeriodMonth !== existing.periodMonth) {
+    const lockedRun = await prisma.payoutRun.findFirst({
+      where: { periodMonth: effectivePeriodMonth, status: 'LOCKED' },
+      select: { id: true },
+    })
+    if (lockedRun) {
+      return jsonNoStore(
+        { error: `${effectivePeriodMonth} 已出月結，唔可以改到嗰個月` }, { status: 409 })
+    }
+  }
+
+  // ★ 2026-08-25 拍板①：REDO 守衛 — 重做日期 + 原因都要有（月尾對數要查得返）
+  const nextStatus = status !== undefined ? status : existing.status
+  const nextRedoAt = redoAt !== undefined ? redoAt : (existing.redoAt ?? null)
+  if (nextStatus === 'REDO') {
+    if (!nextRedoAt) {
+      return jsonNoStore({ error: '重做要填重做日期' }, { status: 400 })
+    }
+    const nextRedoReason = redoReason !== undefined ? redoReason : existing.redoReason
+    if (!nextRedoReason || !String(nextRedoReason).trim()) {
+      return jsonNoStore({ error: '重做要填原因' }, { status: 400 })
+    }
+  }
   let discountPctNum: number | null = null
   if (effectiveLabId) {
     const d = await prisma.labMonthlyDiscount.findUnique({
@@ -67,6 +114,10 @@ export async function PUT(
   if (patientCode !== undefined) data.patientCode = patientCode
   if (patientName !== undefined) data.patientName = patientName
   if (orderedAt !== undefined) data.orderedAt = new Date(orderedAt)
+  // ★ 2026-08-25：改落單日 → periodMonth 跟住變（守衛③已驗證目標月未鎖）
+  if (orderedAt !== undefined && effectivePeriodMonth !== existing.periodMonth) {
+    data.periodMonth = effectivePeriodMonth
+  }
   if (itemType !== undefined) data.itemType = itemType
   if (labId !== undefined) data.labId = labId
   if (labOrderNo !== undefined) data.labOrderNo = labOrderNo
@@ -78,6 +129,11 @@ export async function PUT(
   if (receivedAt !== undefined) data.receivedAt = receivedAt ? new Date(receivedAt) : null
   if (appointmentAt !== undefined) data.appointmentAt = appointmentAt ? new Date(appointmentAt) : null
   if (status !== undefined) data.status = status
+  if (providerId !== undefined) data.providerId = providerId
+  if (clinicId !== undefined) data.clinicId = clinicId
+  if (category !== undefined) data.category = category
+  if (redoAt !== undefined) data.redoAt = redoAt ? new Date(redoAt) : null
+  if (redoReason !== undefined) data.redoReason = redoReason || null
 
   const updated = await prisma.costCase.update({
     where: { id },
@@ -99,11 +155,23 @@ export async function PUT(
         baseCost: existing.baseCost ? Number(existing.baseCost) : null,
         finalCost: existing.finalCost ? Number(existing.finalCost) : null,
         status: existing.status,
+        // ★ 2026-08-25：拆帳歸屬 / 成本分類欄入 audit（拍板③）
+        providerId: existing.providerId,
+        clinicId: existing.clinicId,
+        category: existing.category,
+        // ★ 2026-08-25：重做欄（拍板①）
+        redoAt: existing.redoAt,
+        redoReason: existing.redoReason,
       }),
       afterJson: JSON.stringify({
         baseCost: updated.baseCost ? Number(updated.baseCost) : null,
         finalCost: updated.finalCost ? Number(updated.finalCost) : null,
         status: updated.status,
+        providerId: updated.providerId,
+        clinicId: updated.clinicId,
+        category: updated.category,
+        redoAt: updated.redoAt,
+        redoReason: updated.redoReason,
       }),
       notes: `更新成本記錄: ${existing.category} ${existing.patientCode}`,
     },

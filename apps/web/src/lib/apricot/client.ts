@@ -1,7 +1,8 @@
 import { loadCreds, saveCreds, markError, type ApricotCreds } from './token'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 
-const BASE = 'https://apricotvita.com'
+// ★ 2026-08-25：本地 e2e 可指去 mock Apricot（APRICOT_BASE env）；default 係生產 URL
+const BASE = process.env.APRICOT_BASE || 'https://apricotvita.com'
 
 export async function apricotCall(path: string, init?: RequestInit): Promise<any> {
   const creds = await loadCreds()

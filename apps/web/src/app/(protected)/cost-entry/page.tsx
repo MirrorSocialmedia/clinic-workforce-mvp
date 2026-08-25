@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
-import { todayHK } from '@/lib/hk-date'
+import { todayHK, toHKDateStr } from '@/lib/hk-date'
 import { ITEM_TYPES } from '@/lib/payout/constants'
+import { applyPatientPick } from '@/lib/cost-entry/clinic-prefix'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X, Trash2, Package, Percent } from 'lucide-react'
@@ -35,6 +36,9 @@ interface CostCase {
   lockedByRunId: string | null
   lab?: { id: string; name: string }
   materials?: any[]
+  // ★ 2026-08-25：重做（拍板①）
+  redoAt: string | null
+  redoReason: string | null
 }
 
 interface CleanPatient {
@@ -82,7 +86,7 @@ interface MaterialLine {
 // ── Constants ──────────────────────────────────────────
 
 const CATEGORIES = ['LAB', 'IMPLANT', 'INVISALIGN'] as const
-const STATUSES = ['PENDING', 'PRICED', 'DONE'] as const
+const STATUSES = ['PENDING', 'PRICED', 'DONE', 'REDO'] as const
 
 const CATEGORY_LABELS: Record<string, string> = {
   LAB: 'LAB', // ★ 2026-08-22：改 label（唔再係「牙醫化驗」）
@@ -94,6 +98,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   PENDING: { label: '未有價', color: 'yellow' },
   PRICED: { label: '已定價', color: 'blue' },
   DONE: { label: '已完成', color: 'green' },
+  // ★ 2026-08-25 拍板①：重做（中間狀態，可再轉 DONE）
+  REDO: { label: '重做中', color: 'amber' },
   VOID: { label: '已作廢', color: 'gray' },
 }
 
@@ -194,6 +200,42 @@ export default function CostEntryPage() {
   // ★ Q2: Discount from LabMonthlyDiscount table
   const [labDiscountPct, setLabDiscountPct] = useState<number | null>(null)
   const [labDiscountPeriodMonth, setLabDiscountPeriodMonth] = useState<string>('')
+
+  // ★ 2026-08-25：手動新增模式 — 病人搜尋（同「由帳單新增」同一條 patient-search）
+  const [manualPatientQuery, setManualPatientQuery] = useState('')
+  const [manualPatientSearching, setManualPatientSearching] = useState(false)
+  const [manualPatients, setManualPatients] = useState<CleanPatient[]>([])
+
+  // ★ 2026-08-25：由病人編號前綴推斷診所嘅提示（拍板⑤：建議唔強制）
+  const [clinicGuess, setClinicGuess] = useState<{ prefix: string } | null>(null)
+
+  // ★ 2026-08-25 拍板③：修改模式（重用「手動新增」modal）
+  const [editingCase, setEditingCase] = useState<CostCase | null>(null)
+
+  // ★ 2026-08-25 拍板①：重做 modal
+  const [redoCase, setRedoCase] = useState<CostCase | null>(null)
+  const [redoForm, setRedoForm] = useState({ redoAt: '', redoReason: '' })
+  const [redoSaving, setRedoSaving] = useState(false)
+
+  // ★ 2026-08-25 §2.2：醫生下拉按診所分組 — 屬呢間店嘅排前，其餘摺去「其他診所」。
+  //   ★★ 唔完全隱藏：ProviderClinic 綁定可能漏（青衣就係零資料），
+  //   完全隱藏 = 錄唔到成本。API 唔 filter，改前端分組（§2.1）。
+  const groupedProviders = useMemo(() => {
+    const cid = selectedClinicInternalId
+    if (!cid) return { mine: providers as any[], others: [] as any[] }
+    const mine = providers.filter((p: any) => (p.clinicIds ?? []).includes(cid))
+    const others = providers.filter((p: any) => !mine.includes(p))
+    return { mine, others }
+  }, [providers, selectedClinicInternalId])
+
+  // ★ 2026-08-25 §2.3：篩選列個醫生下拉一樣分組（跟 filterClinicId）
+  const filterGroupedProviders = useMemo(() => {
+    const cid = filterClinicId
+    if (!cid) return { mine: providers as any[], others: [] as any[] }
+    const mine = providers.filter((p: any) => (p.clinicIds ?? []).includes(cid))
+    const others = providers.filter((p: any) => !mine.includes(p))
+    return { mine, others }
+  }, [providers, filterClinicId])
 
   // ── Load functions ──────────────────────────────────
 
@@ -346,6 +388,11 @@ export default function CostEntryPage() {
     setMaterialLines([])
     setLabDiscountPct(null)
     setLabDiscountPeriodMonth('')
+    // ★ 2026-08-25：重置新增 state
+    setManualPatientQuery('')
+    setManualPatients([])
+    setClinicGuess(null)
+    setEditingCase(null)
     setPickerOpen(true)
   }
 
@@ -484,6 +531,194 @@ export default function CostEntryPage() {
   }
 
   const totalMaterialCost = materialLines.reduce((sum, l) => sum + l.subtotal, 0)
+
+  // ── ★ 2026-08-25：手動新增模式 — 病人搜尋 ────────────────────────────
+
+  // ★ 同「由帳單新增」用同一條 /api/cost-cases/patient-search（白名單三欄：code/fullName/extId）
+  const searchManualPatient = async () => {
+    const kw = manualPatientQuery.trim()
+    // ★ #21：API 限 keyword ≥ 6 字元 — 前端先擋，唔好等 400
+    if (kw.length < 6) {
+      setLoadError('關鍵字最少 6 個字元')
+      return
+    }
+    setManualPatientSearching(true)
+    setManualPatients([])
+    setApricotBusy(false)
+    try {
+      const data: any = await apiFetch(`/api/cost-cases/patient-search?keyword=${encodeURIComponent(kw)}`)
+      setManualPatients(data.patients || [])
+    } catch (e: any) {
+      if (e?.status === 503) setApricotBusy(true)
+      else setLoadError(e?.message || '搜尋失敗')
+    } finally {
+      setManualPatientSearching(false)
+    }
+  }
+
+  // ★ 2026-08-25 拍板④⑤：揀病人 → 填編號/姓名 + 診所前綴建議
+  //   ⚠️ 诊所只喺「推到 而且 用戶未揀過」時填 —— 唔覆蓋人手選擇（#18）
+  const pickManualPatient = (p: CleanPatient) => {
+    const r = applyPatientPick({
+      prevClinicId: selectedClinicInternalId,
+      patientCode: p.code,
+      patientName: p.fullName,
+      clinics: clinics.map((c: any) => ({ id: c.id, shortName: c.shortName ?? null })),
+    })
+    setCostForm(prev => ({ ...prev, patientCode: r.patientCode, patientName: r.patientName }))
+    setSelectedClinicInternalId(r.clinicId)
+    setClinicGuess(r.guessed && r.prefix ? { prefix: r.prefix } : null)
+    setManualPatients([])
+  }
+
+  // ── ★ 2026-08-25 拍板③：修改模式（重用 manual modal）─────────────────────
+
+  const openEditModal = (c: CostCase) => {
+    setPickerMode('manual')
+    setPickerStep(2)
+    setEditingCase(c)
+    setSelectedProviderInternalId(c.providerId)
+    setSelectedClinicInternalId(c.clinicId)
+    setSelectedPatient(null)
+    setBills([])
+    setSelectedBill(null)
+    setApricotBusy(false)
+    setDsaEmployees([])
+    // IMPLANT 個案嘅 lab 欄位留空（植牙唔經 lab）
+    const isImplant = c.category === 'IMPLANT'
+    const labId = isImplant ? '' : (c.labId === null ? (c.labOther ? '__OTHERS__' : '') : c.labId)
+    setCostForm({
+      category: c.category,
+      itemType: c.itemType ?? '',
+      itemTypeOther: c.itemTypeOther ?? '',
+      orderedAt: toHKDateStr(c.orderedAt),
+      dsaName: c.dsaName ?? '',
+      baseCost: c.baseCost != null ? String(c.baseCost) : '',
+      discountPct: '',
+      receivedAt: c.receivedAt ? toHKDateStr(c.receivedAt) : '',
+      appointmentAt: c.appointmentAt ? toHKDateStr(c.appointmentAt) : '',
+      labId,
+      labOrderNo: c.labOrderNo ?? '',
+      labOther: c.labOther ?? '',
+      patientCode: c.patientCode,
+      patientName: c.patientName ?? '',
+      // ★ 修改模式新增欄（唔會傳去新增 POST 嘅 body）
+      _status: c.status,
+      _redoAt: c.redoAt ? toHKDateStr(c.redoAt) : '',
+      _redoReason: c.redoReason ?? '',
+    } as any)
+    // ★ 材料明細喺修改 modal 係只讀（PUT 唔改 materials）—— 留空由 render 顯示原明細
+    setMaterialLines([])
+    setManualPatientQuery('')
+    setManualPatients([])
+    setClinicGuess(null)
+    setLabDiscountPct(null)
+    setLabDiscountPeriodMonth('')
+    setPickerOpen(true)
+  }
+
+  const submitEditCost = async () => {
+    const c = editingCase
+    if (!c) return
+    const isImplant = costForm.category === 'IMPLANT'
+    const providerId = selectedProviderInternalId
+    const clinicId = selectedClinicInternalId
+
+    if (!providerId || !clinicId) {
+      alert('醫生和診所為必填')
+      return
+    }
+    // ★ IMPLANT 材料明細唔可以喺修改 modal 改：
+    //   原本係 IMPLANT（有 materials）→ 保持原明細（PUT 唔動 materials/finalCost）
+    //   唔係 IMPLANT 要改去 IMPLANT → 擋（會冇材料明細，錄入先至可以）
+    const hasOriginalMaterials = c.category === 'IMPLANT' && (c.materials?.length ?? 0) > 0
+    if (isImplant && !hasOriginalMaterials) {
+      alert('唔可以喺修改 modal 改去植牙（要材料明細）— 請用新增錄入')
+      return
+    }
+
+    setSavingCost(true)
+    try {
+      const body: any = {
+        providerId,
+        clinicId,
+        category: costForm.category,
+        patientCode: costForm.patientCode || '',
+        patientName: costForm.patientName || null,
+        orderedAt: costForm.orderedAt || toHKDateStr(c.orderedAt),
+        itemType: costForm.itemType === 'Others'
+          ? (costForm.itemTypeOther?.trim() || 'Others')
+          : (costForm.itemType || null),
+        dsaName: costForm.dsaName || null,
+        baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
+        receivedAt: costForm.receivedAt || null,
+        appointmentAt: costForm.appointmentAt || null,
+      }
+      // ★ itemTypeOther 只喺 Others 時傳 — 唔會誤悭其他狀態嘅值
+      if (costForm.itemType === 'Others') {
+        body.itemTypeOther = costForm.itemTypeOther || null
+      }
+      if (!isImplant) {
+        body.labId = costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId
+        body.labOther = costForm.labId === '__OTHERS__' ? (costForm.labOther.trim() || null) : null
+        body.labOrderNo = costForm.labOrderNo || null
+      }
+      // ★ 狀態（包括 REDO → DONE 呢類轉動）— API 端有 REDO 守衛
+      const newStatus = (costForm as any)._status as string | undefined
+      if (newStatus && newStatus !== c.status) {
+        body.status = newStatus
+        if (newStatus === 'REDO') {
+          body.redoAt = (costForm as any)._redoAt || null
+          body.redoReason = (costForm as any)._redoReason || null
+        }
+      }
+      await apiFetch(`/api/cost-cases/${c.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      setEditingCase(null)
+      closePicker()
+      loadCases()
+    } catch (e: any) {
+      alert(`修改失敗: ${e.message || e}`)
+    } finally {
+      setSavingCost(false)
+    }
+  }
+
+  // ── ★ 2026-08-25 拍板①：重做 modal ─────────────────────────────────
+
+  const openRedoModal = (c: CostCase) => {
+    setRedoCase(c)
+    setRedoForm({ redoAt: todayHK(), redoReason: '' })
+  }
+
+  const submitRedo = async () => {
+    const c = redoCase
+    if (!c) return
+    // 前端先擋（API 端都有守衛）
+    if (!redoForm.redoAt) { alert('重做要填重做日期'); return }
+    if (!redoForm.redoReason.trim()) { alert('重做要填原因'); return }
+    setRedoSaving(true)
+    try {
+      await apiFetch(`/api/cost-cases/${c.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'REDO',
+          redoAt: redoForm.redoAt,
+          redoReason: redoForm.redoReason.trim(),
+        }),
+      })
+      setRedoCase(null)
+      loadCases()
+    } catch (e: any) {
+      alert(`重做失敗: ${e.message || e}`)
+    } finally {
+      setRedoSaving(false)
+    }
+  }
 
   // Step 2: submit cost
   const submitCost = async () => {
@@ -646,7 +881,13 @@ export default function CostEntryPage() {
         <div className="grid grid-cols-5 gap-3">
           <select value={filterProviderId} onChange={e => setFilterProviderId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部醫生</option>
-            {providers.map(p => (<option key={p.id} value={p.id}>{p.name || p.shortName}</option>))}
+            {/* ★ 2026-08-25 §2.3：跟 filterClinicId 分組 — 屬呢間店排前，其餘摺去「其他診所」（唔隱藏） */}
+            {filterGroupedProviders.mine.map(p => (<option key={p.id} value={p.id}>{p.name || p.shortName}</option>))}
+            {filterGroupedProviders.others.length > 0 && (
+              <optgroup label="── 其他診所 ──">
+                {filterGroupedProviders.others.map(p => (<option key={p.id} value={p.id}>{p.name || p.shortName}</option>))}
+              </optgroup>
+            )}
           </select>
           <input type="month" value={filterPeriodMonth} onChange={e => setFilterPeriodMonth(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
           <select value={filterClinicId} onChange={e => setFilterClinicId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
@@ -706,15 +947,29 @@ export default function CostEntryPage() {
                   <td className="p-2">{fmtDate(c.receivedAt)}</td>
                   <td className="p-2">{fmtDate(c.appointmentAt)}</td>
                   <td className="p-2">
-                    <Badge variant={STATUS_CONFIG[c.status]?.color === 'green' ? 'default' : 'secondary'}>
+                    {/* ★ 2026-08-25：REDO = 琥珀色（bg #fef3c7 / fg #92400e = tailwind amber-100/800） */}
+                    <Badge
+                      variant={STATUS_CONFIG[c.status]?.color === 'green' ? 'default' : 'secondary'}
+                      className={c.status === 'REDO' ? 'bg-amber-100 text-amber-800' : ''}
+                    >
                       {STATUS_CONFIG[c.status]?.label || c.status}
                     </Badge>
                   </td>
                   <td className="p-2">
-                    {canCreate && c.status !== 'VOID' && !c.lockedByRunId && (
-                      <button onClick={() => handleDelete(c.id)} className="text-red-500 text-xs hover:underline">作廢</button>
+                    {canCreate && !c.lockedByRunId && (
+                      <div className="flex gap-2 whitespace-nowrap">
+                        <button onClick={() => openEditModal(c)} className="text-blue-600 text-xs hover:underline">修改</button>
+                        {c.status !== 'VOID' && c.status !== 'REDO' && (
+                          <button onClick={() => openRedoModal(c)} className="text-amber-600 text-xs hover:underline">重做</button>
+                        )}
+                        {c.status !== 'VOID' && (
+                          <button onClick={() => handleDelete(c.id)} className="text-red-500 text-xs hover:underline">作廢</button>
+                        )}
+                      </div>
                     )}
-                    {c.lockedByRunId && <span className="text-gray-400 text-xs">🔒</span>}
+                    {c.lockedByRunId && (
+                      <span className="text-gray-400 text-xs" title="已出月結 —— 要先退回月結單先至可以改">🔒</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -778,7 +1033,9 @@ export default function CostEntryPage() {
             )}
 
             {pickerMode === 'manual' && (
-              <h2 className="text-lg font-bold mb-4 text-center">手動新增成本</h2>
+              <h2 className="text-lg font-bold mb-4 text-center">
+                {editingCase ? `修改成本 — ${editingCase.patientCode}` : '手動新增成本'}
+              </h2>
             )}
 
             {/* ── Step 0: Search Patient (bill mode only) ── */}
@@ -925,21 +1182,43 @@ export default function CostEntryPage() {
                 {/* ★ MD-K: Manual mode → provider + clinic + patient selection */}
                 {pickerMode === 'manual' && (
                   <div className="grid grid-cols-3 gap-3">
+                    {/* ★ 2026-08-25 拍板③：修改時改咗醫生/診所 → 提醒拆帳歸屬會變 */}
+                    {editingCase && (selectedProviderInternalId !== editingCase.providerId || selectedClinicInternalId !== editingCase.clinicId) && (
+                      <div className="col-span-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                        ⚠️ 改醫生／診所會改變拆帳歸屬（月結歸邊間店邊個醫生），審計會記錄改前改後
+                      </div>
+                    )}
                     <div>
                       <label className="block text-sm mb-1">醫生 *</label>
                       <select value={selectedProviderInternalId} onChange={e => setSelectedProviderInternalId(e.target.value)}
                         className="w-full border rounded px-2 py-1.5 text-sm" autoFocus>
                         <option value="">請選擇</option>
-                        {providers.map(p => <option key={p.id} value={p.id}>{p.name || p.shortName}</option>)}
+                        {/* ★ 2026-08-25 §2.2：醫生按診所分組 — 屬呢間店排前，其餘摺去「其他診所」（★ 唔隱藏） */}
+                        {groupedProviders.mine.map(p => <option key={p.id} value={p.id}>{p.name || p.shortName}</option>)}
+                        {groupedProviders.others.length > 0 && (
+                          <optgroup label="── 其他診所 ──">
+                            {groupedProviders.others.map(p => <option key={p.id} value={p.id}>{p.name || p.shortName}</option>)}
+                          </optgroup>
+                        )}
                       </select>
+                      {/* ★ #10：揀咗但未綁定呢間店嘅醫生（ProviderClinic 漏綁）→ 提示但唔擋 */}
+                      {selectedProviderInternalId && selectedClinicInternalId &&
+                        !groupedProviders.mine.some((p: any) => p.id === selectedProviderInternalId) && (
+                        <div className="text-xs text-amber-600 mt-1">⚠️ 呢位醫生未綁定呢間診所（ProviderClinic 冇記錄）</div>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm mb-1">診所 *</label>
-                      <select value={selectedClinicInternalId} onChange={e => setSelectedClinicInternalId(e.target.value)}
+                      <select value={selectedClinicInternalId}
+                        onChange={e => { setSelectedClinicInternalId(e.target.value); setClinicGuess(null) }}
                         className="w-full border rounded px-2 py-1.5 text-sm">
                         <option value="">請選擇</option>
                         {clinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
                       </select>
+                      {/* ★ 2026-08-25 §3.4：由病人編號前綴推斷嘅提示（建議唔強制，可改） */}
+                      {clinicGuess && selectedClinicInternalId && (
+                        <div className="text-xs text-emerald-600 mt-1">✓ 由病人編號「{clinicGuess.prefix}」推斷，可自行更改</div>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm mb-1">病人編號</label>
@@ -950,6 +1229,43 @@ export default function CostEntryPage() {
                       <label className="block text-sm mb-1">病人姓名</label>
                       <input value={costForm.patientName || ''} onChange={e => setCostForm(prev => ({ ...prev, patientName: e.target.value }))}
                         className="w-full border rounded px-2 py-1.5 text-sm" placeholder="病人姓名" />
+                    </div>
+                    {/* ★ 2026-08-25：病人搜尋（同「由帳單新增」同一條 patient-search，白名單三欄） */}
+                    <div className="col-span-3">
+                      <label className="block text-sm mb-1">
+                        搜尋病人（可揀）
+                        <span className="text-xs text-gray-400"> — 揀咗會自動填編號/姓名，前綴會建議診所</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
+                          <input
+                            value={manualPatientQuery}
+                            onChange={e => setManualPatientQuery(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && searchManualPatient()}
+                            className="w-full border rounded pl-9 pr-4 py-1.5 text-sm"
+                            placeholder="病人編號/姓名，6 字元以上，按 Enter 搜尋…"
+                          />
+                        </div>
+                        <button type="button" onClick={searchManualPatient}
+                          disabled={manualPatientSearching || manualPatientQuery.trim().length < 6}
+                          className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
+                          {manualPatientSearching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                          搜尋
+                        </button>
+                      </div>
+                      {manualPatientSearching && <div className="flex items-center gap-2 text-sm text-gray-500 mt-2"><Loader2 size={14} className="animate-spin" /> 搜尋中…</div>}
+                      {!manualPatientSearching && manualPatients.length > 0 && (
+                        <div className="mt-2 space-y-1 max-h-40 overflow-auto border rounded">
+                          {manualPatients.map(p => (
+                            <button key={p.extId} type="button" onClick={() => pickManualPatient(p)}
+                              className="w-full text-left px-3 py-1.5 rounded hover:bg-blue-50 text-sm flex items-center justify-between border border-transparent hover:border-blue-200">
+                              <span><span className="font-mono font-medium">{p.code}</span><span className="ml-2 text-gray-600">{p.fullName}</span></span>
+                              <span className="text-xs text-gray-400">{p.extId.slice(0, 8)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -971,6 +1287,29 @@ export default function CostEntryPage() {
                       ))}
                     </div>
                   </div>
+                  {/* ★ 2026-08-25：修改模式 — 狀態改動（包括重做完成 REDO → DONE） */}
+                  {editingCase && (
+                    <div>
+                      <label className="block text-sm mb-1">狀態</label>
+                      <select value={(costForm as any)._status || ''}
+                        onChange={e => setCostForm(f => ({ ...f, _status: e.target.value } as any))}
+                        className="w-full border rounded px-2 py-1.5 text-sm">
+                        {['PENDING', 'PRICED', 'DONE', 'REDO'].map(s => (
+                          <option key={s} value={s}>{STATUS_CONFIG[s]?.label}</option>
+                        ))}
+                      </select>
+                      {(costForm as any)._status === 'REDO' && (
+                        <div className="mt-1 space-y-1">
+                          <input type="date" value={(costForm as any)._redoAt || ''}
+                            onChange={e => setCostForm(f => ({ ...f, _redoAt: e.target.value } as any))}
+                            className="w-full border rounded px-2 py-1 text-xs" />
+                          <input value={(costForm as any)._redoReason || ''}
+                            onChange={e => setCostForm(f => ({ ...f, _redoReason: e.target.value } as any))}
+                            className="w-full border rounded px-2 py-1 text-xs" placeholder="重做原因 *" />
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {/* ★ 2026-08-22：植牙唔需要項目（由材料明細表達）— itemType 可以 null */}
                   {costForm.category !== 'IMPLANT' && (
                     <div>
@@ -1006,7 +1345,44 @@ export default function CostEntryPage() {
                   </div>
 
                   {/* ★ MD-K: Implant materials section */}
-                  {costForm.category === 'IMPLANT' ? (
+                  {costForm.category === 'IMPLANT' && editingCase && (editingCase.materials?.length ?? 0) > 0 ? (
+                    /* ★ 2026-08-25：修改模式 — 材料明細唯讀（PUT 唔改 materials/finalCost） */
+                    <div className="col-span-2">
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b">
+                          <h4 className="font-semibold text-sm">材料明細（唯讀）</h4>
+                          <span className="text-xs text-gray-400">材料唔可以喺修改 modal 改</span>
+                        </div>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-gray-500">
+                              <th className="text-left px-3 py-1.5 font-medium">材料</th>
+                              <th className="text-right px-2 py-1.5 font-medium w-16">數量</th>
+                              <th className="text-right px-3 py-1.5 font-medium w-24">單價</th>
+                              <th className="text-right px-3 py-1.5 font-medium w-24">小計</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {editingCase.materials!.map((m: any) => (
+                              <tr key={m.id} className="border-b">
+                                <td className="px-3 py-1">
+                                  {materials.find(x => x.id === m.materialItemId)?.name || m.note || m.materialItemId}
+                                  {m.isPriceOverridden && <span className="ml-1 text-gray-400" title="已覆寫單價">✏️</span>}
+                                </td>
+                                <td className="px-2 py-1 text-right">{m.qty}</td>
+                                <td className="px-3 py-1 text-right">${Number(m.unitPriceUsed).toFixed(2)}</td>
+                                <td className="px-3 py-1 text-right font-medium">${Number(m.subtotal).toFixed(2)}</td>
+                              </tr>
+                            ))}
+                            <tr className="bg-gray-50 border-t-2">
+                              <td colSpan={3} className="px-3 py-2 font-medium">合計</td>
+                              <td className="px-3 py-2 text-right font-bold">${editingCase.materials!.reduce((s: number, m: any) => s + Number(m.subtotal), 0).toFixed(2)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : costForm.category === 'IMPLANT' ? (
                     <div className="col-span-2">
                       <div className="border rounded-lg overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b">
@@ -1161,12 +1537,46 @@ export default function CostEntryPage() {
                 </button>
               )}
               {(pickerMode === 'bill' && pickerStep === 2) || pickerMode === 'manual' ? (
-                <button onClick={submitCost}
+                <button onClick={editingCase ? submitEditCost : submitCost}
                   disabled={savingCost || (!selectedProviderInternalId && pickerMode === 'bill') || (!selectedClinicInternalId && pickerMode === 'bill')}
                   className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">
-                  {savingCost && <Loader2 size={14} className="animate-spin" />} 確定錄入
+                  {savingCost && <Loader2 size={14} className="animate-spin" />} {editingCase ? '保存修改' : '確定錄入'}
                 </button>
               ) : null}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ★ 2026-08-25 拍板①：重做 modal（重做落單日 + 原因，兩項必填） */}
+      {redoCase && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="p-6 w-full max-w-md">
+            <h2 className="text-lg font-bold mb-4">標記重做 — <span className="font-mono">{redoCase.patientCode}</span></h2>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm mb-1">重做落單日 * <span className="text-xs text-gray-400">（唔係到貨日）</span></label>
+                <input type="date" value={redoForm.redoAt}
+                  onChange={e => setRedoForm(f => ({ ...f, redoAt: e.target.value }))}
+                  className="w-full border rounded px-2 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">重做原因 * <span className="text-xs text-gray-400">（例：崩瓷 / 唔啱色）</span></label>
+                <input value={redoForm.redoReason} placeholder="原因（例：崩瓷 / 唔啱色）"
+                  onChange={e => setRedoForm(f => ({ ...f, redoReason: e.target.value }))}
+                  className="w-full border rounded px-2 py-1.5 text-sm" />
+              </div>
+              <p className="text-xs text-gray-400">
+                重做後狀態變「重做中」；finalCost 唔會自動變 — Lab 免費重做就唔使改成本，要再俾錢就之後用「修改」改 baseCost。
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 mt-4 pt-3 border-t">
+              <button onClick={() => setRedoCase(null)} className="px-4 py-1.5 border rounded text-sm">取消</button>
+              <button onClick={submitRedo}
+                disabled={redoSaving || !redoForm.redoAt || !redoForm.redoReason.trim()}
+                className="px-4 py-1.5 bg-amber-600 text-white rounded text-sm hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1">
+                {redoSaving && <Loader2 size={14} className="animate-spin" />} 確認重做
+              </button>
             </div>
           </Card>
         </div>
