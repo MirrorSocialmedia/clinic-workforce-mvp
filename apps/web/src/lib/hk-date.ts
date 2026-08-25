@@ -67,6 +67,15 @@ export function fmtDateTime(dt: string | Date | undefined | null): string {
   return d.toLocaleString('zh-HK', { ...HK, hour12: false })
 }
 
+/** 格式化 D/M/YYYY（例如 31/7/2026，月/日無前導零）—— HK 時區；空值返回 '—'（薪俸結算書用） */
+export function fmtDMY(dt: string | Date | null | undefined): string {
+  if (!dt) return '—'
+  const d = new Date(dt)
+  if (isNaN(d.getTime())) return '—'
+  const [y, m, day] = toHKDateStr(d).split('-').map(Number)
+  return `${day}/${m}/${y}`
+}
+
 /** 假期是否涵蓋某天（HK日期 YYYY-MM-DD） */
 export function leaveCoversDate(lr: { startDate: string | Date; endDate?: string | Date | null }, dateStr: string): boolean {
   const s = toHKDateStr(new Date(lr.startDate))

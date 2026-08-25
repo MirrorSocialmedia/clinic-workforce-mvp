@@ -28,6 +28,7 @@ interface Clinic {
 interface Company {
   id: string
   name: string
+  legalName: string | null
   logoData: string | null
   _count: { clinics: number }
   createdAt: string
@@ -105,6 +106,22 @@ function ClinicsPageInner() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newName.trim(), logoData: currentLogo }),
+      credentials: 'include',
+    })
+    if (res.ok) fetchAll()
+    else alert('修改失敗')
+  }
+
+  // ★ 2026-08-25：法定名稱（薪俸結算書公司印鑑用）— 留空 = 用公司名稱 fallback
+  const handleSetLegalName = async (id: string) => {
+    const current = companies.find(c => c.id === id)
+    if (!current) return
+    const val = prompt('法定名稱（薪俸結算書用；留空 = 用公司名稱）：', current.legalName ?? '')
+    if (val === null) return
+    const res = await fetch(`/api/companies/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: current.name, legalName: val.trim() || null }),
       credentials: 'include',
     })
     if (res.ok) fetchAll()
@@ -333,7 +350,12 @@ function ClinicsPageInner() {
               <tbody>
                 {companies.map(company => (
                   <tr key={company.id}>
-                    <td style={{ fontWeight: 500 }}>{company.name}</td>
+                    <td style={{ fontWeight: 500 }}>
+                      {company.name}
+                      {company.legalName && (
+                        <div className="text-xs text-muted-foreground" style={{ fontWeight: 400 }}>法定：{company.legalName}</div>
+                      )}
+                    </td>
                     <td>
                       {company.logoData ? (
                         <img src={company.logoData} alt="Logo" style={{ height: 28, borderRadius: 4 }} />
@@ -345,6 +367,7 @@ function ClinicsPageInner() {
                     <td className="text-sm">{fmtDate(company.createdAt)}</td>
                     <td>
                       <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleRenameCompany(company.id, company.logoData)}>改名</button>
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleSetLegalName(company.id)}>法定名</button>
                       <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={async () => {
                         const input = document.createElement('input')
                         input.type = 'file'
@@ -386,8 +409,12 @@ function ClinicsPageInner() {
                     <span className="text-xs text-muted-foreground">{company._count?.clinics ?? 0} 間診所</span>
                   </div>
                   <div className="text-xs text-muted-foreground mb-2">建立於 {fmtDate(company.createdAt)}</div>
+                  {company.legalName && (
+                    <div className="text-xs text-muted-foreground mb-2">法定：{company.legalName}</div>
+                  )}
                   <div className="flex gap-2">
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleRenameCompany(company.id, company.logoData)}>改名</button>
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleSetLegalName(company.id)}>法定名</button>
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={async () => {
                       const input = document.createElement('input')
                       input.type = 'file'

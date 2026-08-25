@@ -94,6 +94,8 @@ enum LeaveStatus {
 model Company {
   id        String   @id @default(cuid())
   name      String
+  /// ★ 法定名稱（薪俸結算書公司印鑑用）—— 同 display name 可以唔同
+  legalName String?
   logoData  String?  // data URL (image/png;base64,...)
   createdAt DateTime @default(now())
 
@@ -745,6 +747,8 @@ model PayrollRun {
   clinicId     String?      // null = all clinics (cross-clinic)
   clinic       Clinic?      @relation(fields: [clinicId], references: [id])
   periodMonth  DateTime     // YYYY-MM-01 format
+  /// ★ 發薪日期（薪俸結算書「Pay Date」）—— 人手填，唔自動推算（HK 午夜）
+  payDate      DateTime?
   status       RunStatus    @default(DRAFT)
   generatedAt  DateTime     @default(now())
   notes        String?

@@ -24,7 +24,7 @@ export async function GET(
             select: {
               id: true,
               name: true,
-              company: { select: { logoData: true } },
+              company: { select: { name: true, logoData: true, legalName: true } },
             },
           },
         },

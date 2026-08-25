@@ -5,7 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart } from '@/lib/hk-date'
 import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
 
 
@@ -121,7 +121,12 @@ export async function PUT(
       if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
       const body = await req.json()
-      const { status, notes } = body
+      const { status, notes, payDate } = body
+
+      // ★ 2026-08-25：payDate 只准喺 DRAFT 改（同已鎖定唔准改同一原則）
+      if (payDate !== undefined && run.status !== 'DRAFT') {
+        return NextResponse.json({ error: '已確認計糧，唔可以改發薪日期' }, { status: 409 })
+      }
 
       if (status) {
         const validStatuses = ['DRAFT', 'FINALIZED', 'EXPORTED'] as const
@@ -154,7 +159,12 @@ export async function PUT(
       const updated = await basePrisma.$transaction(async (tx) => {
         const result = await tx.payrollRun.update({
           where: { id: params.id },
-          data: { ...(status && { status }), ...(notes !== undefined && { notes }) },
+          data: {
+            ...(status && { status }),
+            ...(notes !== undefined && { notes }),
+            // ★ payDate 入庫一律 HK 午夜（同 periodMonth 同一原則）；空字串 = 清除
+            ...(payDate !== undefined && { payDate: payDate ? hkDateStart(payDate) : null }),
+          },
           include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
         })
 
@@ -300,7 +310,7 @@ export async function PUT(
             entity: 'PayrollRun',
             entityId: result.id,
             afterJson: JSON.stringify(result),
-            notes: `PayrollRun status changed: ${run.status} → ${status ?? 'unchanged'}`,
+            notes: `PayrollRun status changed: ${run.status} → ${status ?? 'unchanged'}${payDate !== undefined ? `; payDate → ${payDate || null}` : ''}`,
             ipAddress: auditCtx.ip || null,
             userAgent: auditCtx.ua || null,
           },

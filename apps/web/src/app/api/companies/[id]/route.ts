@@ -17,6 +17,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     const data: Record<string, any> = { name: body.name }
     if (body.logoData !== undefined) data.logoData = body.logoData
+    // ★ 2026-08-25：法定名稱（薪俸結算書公司印鑑用）— 留空 = null → PDF 用 name fallback
+    if (body.legalName !== undefined) data.legalName = body.legalName?.trim() || null
     const company = await prisma.company.update({ where: { id }, data })
     return NextResponse.json(company)
   } catch {

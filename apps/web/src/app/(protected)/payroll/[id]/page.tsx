@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
 import { Wallet, Trash2 } from 'lucide-react'
-import { periodMonthKey } from '@/lib/hk-date'
+import { periodMonthKey, toHKDateStr } from '@/lib/hk-date'
 
 // ★ 讀取類 fetch 一律繞過瀏覽器快取。
 // PUT 同 GET 用同一個 URL，唔加就會喺寫入之後攞返舊 response
@@ -45,6 +45,7 @@ interface PayrollRun {
   clinicId: string | null
   periodMonth: string
   status: RunStatus
+  payDate: string | null
   generatedAt: string
   notes: string | null
   clinic: { id: string; name: string } | null
@@ -77,6 +78,34 @@ export default function PayrollDetailPage() {
   const [exporting, setExporting] = useState<string | null>(null)
   const [updateNote, setUpdateNote] = useState('')
   const [statusAction, setStatusAction] = useState<string | null>(null)
+
+  // ★ 2026-08-25：發薪日期（人手填；只准 DRAFT 改，同已鎖定唔准改同一原則）
+  const [payDateInput, setPayDateInput] = useState('')
+  useEffect(() => {
+    setPayDateInput(run?.payDate ? toHKDateStr(run.payDate) : '')
+  }, [run?.id, run?.payDate])
+
+  const handlePayDateChange = async (val: string) => {
+    setPayDateInput(val)
+    if (!run || run.status !== 'DRAFT') return
+    try {
+      const res = await api(`/api/payroll-runs/${runId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payDate: val }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || `保存發薪日期失敗（${res.status}）`)
+        fetchRun() // 回滾輸入框
+      } else {
+        fetchRun()
+      }
+    } catch (err) {
+      console.error('Failed to save payDate:', err)
+      fetchRun()
+    }
+  }
 
   // ★ C2: Preflight modal state
   const [showPreflight, setShowPreflight] = useState(false)
@@ -347,8 +376,16 @@ export default function PayrollDetailPage() {
           <h1 style={{ margin: 0, fontSize: 24 }}>
             <span className="flex items-center gap-2"><Wallet size={20} /> 計糧詳情 — {periodMonth}</span>
           </h1>
-          <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>
-            {run.clinic?.name || '全部診所'} | {statusBadge(run.status)}
+          <div style={{ fontSize: 13, color: '#888', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>{run.clinic?.name || '全部診所'} | {statusBadge(run.status)}</span>
+            {/* ★ 2026-08-25：發薪日期（薪俸結算書 Pay Date；非 DRAFT 鎖住） */}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              發薪日期
+              <input type="date" value={payDateInput} disabled={run.status !== 'DRAFT'}
+                onChange={e => handlePayDateChange(e.target.value)}
+                style={{ fontSize: 12, padding: '2px 4px', border: '1px solid #d1d5db', borderRadius: 4,
+                       background: run.status !== 'DRAFT' ? '#f3f4f6' : '#fff' }} />
+            </span>
           </div>
         </div>
 

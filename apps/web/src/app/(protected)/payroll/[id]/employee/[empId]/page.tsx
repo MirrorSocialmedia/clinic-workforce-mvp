@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { fmtDateTime, fmtDate, fmtTime, toHKDateStr } from '@/lib/hk-date'
+import { fmtDateTime, fmtDate, fmtTime, toHKDateStr, getMonthRange, fmtDMY } from '@/lib/hk-date'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { Card } from '@/components/ui/card'
@@ -32,7 +32,12 @@ interface PayrollItemData {
   paternityPay: number
   run: {
     periodMonth: string
-    clinic: { id: string; name: string } | null
+    payDate?: string | null
+    clinic: {
+      id: string
+      name: string
+      company?: { name?: string | null; logoData?: string | null; legalName?: string | null }
+    } | null
   }
   employee: {
     user: { id: string; name: string; phone: string; fullName?: string | null }
@@ -152,6 +157,14 @@ export default function EmployeePayrollDetailPage() {
 
   // Company logo from API
   const companyLogo = data?.item?.run?.clinic?.company?.logoData || null
+  // ★ 2026-08-25：公司法定名（薪俸結算書）— legalName ?? name fallback
+  const companyLegalName =
+    data?.item?.run?.clinic?.company?.legalName || data?.item?.run?.clinic?.company?.name || ''
+  // ★ Pay Ending = periodMonth 該月最後一日（getMonthRange 全程 HK 時區，唔好自己 new Date）
+  const payEndingDate = item.run?.periodMonth ? getMonthRange(new Date(item.run.periodMonth)).end : null
+  const payEndingDMY = payEndingDate ? fmtDMY(payEndingDate) : '—'
+  // ★ Pay Date = PayrollRun.payDate（人手填，可 null → 顯示 —）
+  const payDateDMY = item.run?.payDate ? fmtDMY(item.run.payDate) : '—'
 
   // PDF export via html2canvas
   const exportPdf = async () => {
@@ -168,14 +181,19 @@ export default function EmployeePayrollDetailPage() {
         },
       })
 
+      // ★ 2026-08-25：留 12mm 邊距 — 原本 x=0 / 闊 210mm 貼死邊界，列印會切到
       const pdf = new jsPDF('p', 'mm', 'a4')
+      const MARGIN = 12
       const pageW = 210, pageH = 297
-      const imgH = (canvas.height * pageW) / canvas.width
+      const contentW = pageW - MARGIN * 2      // 186
+      const contentH = pageH - MARGIN * 2      // 273
+      const imgH = (canvas.height * contentW) / canvas.width
+      const imgData = canvas.toDataURL('image/jpeg', 0.92)   // ★ 提出迴圈外，唔好每頁重新編碼
       let offset = 0
       while (offset < imgH) {
         if (offset > 0) pdf.addPage()
-        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, -offset, pageW, imgH)
-        offset += pageH
+        pdf.addImage(imgData, 'JPEG', MARGIN, MARGIN - offset, contentW, imgH)
+        offset += contentH                     // ★ 用 contentH 唔係 pageH
       }
       pdf.save(`薪資明細_${employeeName}_${periodMonth}.pdf`)
     } finally {
@@ -304,10 +322,32 @@ export default function EmployeePayrollDetailPage() {
 
       {/* Printable area: logo + title + cards */}
       <div ref={printRef} style={{ position: 'relative' }} className="space-y-6">
-        {companyLogo && (
-          <img src={companyLogo} alt="logo"
-            style={{ position: 'absolute', top: 24, right: 32, width: 96, height: 'auto' }} />
-        )}
+        {/* ★ 2026-08-25：PDF 頁首 — logo ＋ 公司名 ＋ 發薪資料 ＋ 標題（取代原本 absolute logo） */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 14 }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingLeft: 40 }}>
+            {companyLogo && (
+              <img src={companyLogo} alt="" style={{ height: 52, objectFit: 'contain' }} />
+            )}
+            {/* ★ 拍板④：logo 下面出公司名文字 */}
+            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4, letterSpacing: 1 }}>
+              {companyLegalName}
+            </div>
+          </div>
+          <div style={{ fontSize: 11, lineHeight: 2, minWidth: 200 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span><b>Pay Ending</b> 發薪截至</span>
+              <span>{payEndingDMY}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span><b>Pay Date</b> 發薪日期</span>
+              <span>{payDateDMY}</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ textAlign: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>Salary Statement</div>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>薪俸結算書</div>
+        </div>
 
         {/* Title + Export button */}
         <div>
@@ -1250,6 +1290,18 @@ export default function EmployeePayrollDetailPage() {
         </Card>
       )}
 
+        {/* ★ 2026-08-25：PDF 頁尾 — 支票號碼（空白人手填）＋ 公司印鑑 */}
+        <div style={{ marginTop: 28, breakInside: 'avoid', pageBreakInside: 'avoid' }}>
+          <div style={{ fontSize: 11, marginBottom: 40 }}>
+            <span style={{ color: '#6b7280' }}>Cheque No. 支票號碼：</span>
+            <span style={{ display: 'inline-block', borderBottom: '1px solid #999',
+                           minWidth: 160, marginLeft: 6 }}>&nbsp;</span>
+          </div>
+          <div style={{ textAlign: 'right', fontSize: 10, lineHeight: 1.9, color: '#374151' }}>
+            <div>公司印鑑</div>
+            <div>{companyLegalName}</div>
+          </div>
+        </div>
       </div>
     </div>
   )
