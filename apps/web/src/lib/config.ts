@@ -329,8 +329,9 @@ export const CONFIG = {
     // ★ MD-C: Apricot Payment / Bill Sync
     'POST /api/apricot/sync': ['OWNER'],
     'POST /api/apricot/sync/cron': ['OWNER'], // ★ cron 專用，實際用 x-cron-key 認證
-    // ★ Phase 4（MD §9.2）：外部當值表狹窄 API — wa-inbox 專用，route 內用 X-Api-Key（timing-safe）+ IP allowlist 認證；
-    //   呢把 key 唔入 JWT/RBAC，過唔到任何現有 auth。此 entry 純聲明用（同 apricot cron 慣例）。
+    // ★ Phase 4（MD §9.2 / §A.2）：外部當值狹窄 API — 舊 path 302 → /api/external/v1/duty-roster；
+    //   v1 守門 = DB ExternalApiKey（sha256 hash、timing-safe）+ scope 檢查 + token bucket 限流（見 @/lib/external-api.ts），無 env key / IP allowlist。
+    //   此 entry 純聲明用（同 apricot cron 慣例）。
     'GET /api/external/duty-roster': ['OWNER'],
     'GET /api/apricot/sync/jobs': ['OWNER', 'MANAGER'],
     'GET /api/apricot/sync/jobs/:id': ['OWNER', 'MANAGER'],
