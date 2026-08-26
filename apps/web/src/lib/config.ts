@@ -355,6 +355,7 @@ export const CONFIG = {
     'POST /api/payout-runs/:id/unlock': ['OWNER'],
     'DELETE /api/payout-runs/:id': ['OWNER'], // ★ AA4: 刪除草稿月結單
     'GET /api/payout-runs/:id/export': ['OWNER'], // ★ AA3: Excel 匯出
+    'GET /api/payout-runs/:id/vendor-summary': ['OWNER'], // ★ 2026-08-26: 工廠總覽（跨醫生）
     'POST /api/payout-runs/clinics': ['OWNER'],
     'GET /api/provider-referrals': ['OWNER'],
     'POST /api/provider-referrals': ['OWNER'],
@@ -563,6 +564,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/payout-runs/:id/unlock': ['provider_payout'],
   'DELETE /api/payout-runs/:id': ['provider_payout'], // ★ AA4
   'GET /api/payout-runs/:id/export': ['provider_payout'], // ★ AA3
+  'GET /api/payout-runs/:id/vendor-summary': ['provider_payout'], // ★ 2026-08-26: 工廠總覽（同月結單同一權限，MD §3.3）
   'POST /api/payout-runs/clinics': ['provider_payout'],
   'GET /api/provider-referrals': ['provider_payout'],
   'POST /api/provider-referrals': ['provider_payout'],

@@ -1,5 +1,5 @@
 /**
- * GET /api/payout-runs/[id]/export — Excel 匯出（單頁月結單，7 個區塊 A/B/C/D/E/G）
+ * GET /api/payout-runs/[id]/export — Excel 匯出（單頁月結單，區塊 A/B/C/D/E/G/H）
  * ★ AA3: 唔帶病人姓名，只帶病人編號（PII 零容忍）
  * ★ MD-AC2: 四個 sheet → 一個 sheet「月結單」
  *   ① 逐日收款全月逐日出（冇收入嗰日留白唔寫 0）
@@ -12,6 +12,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
+import { UNNAMED_VENDOR } from '@/lib/payout/engine'
 
 // ★ MD-AC2 ②：付款方式固定次序（同月結單頁一致），未知方式排最後
 const METHOD_ORDER = ['CASH', 'HCV', 'VISA', 'MASTERCARD', 'OCTOPUS', 'FPS', 'ALIPAY', 'CCF', 'CREDIT', 'FREE_SP']
@@ -89,7 +90,11 @@ export async function GET(
   const title = `${providerName} · ${clinicName} · ${run.periodMonth} 月結單　${statusSuffix}`
 
   // ─── 付款逐筆（breakdownJson）→ A 區逐日 + G 區 ─────────────────
-  const breakdown: any[] = (run.breakdownJson as any[]) || []
+  const breakdown: any[] = (() => {
+    // ★ 2026-08-26：新 breakdownJson = { allocations, vendors }；舊 run 係裸陣列 → normalize
+    const raw: any = run.breakdownJson
+    return Array.isArray(raw) ? raw : (raw?.allocations ?? [])
+  })()
 
   // ★ 引擎 breakdownJson 含 countAsIncome=true 嘅行 ＋ FREE_SP（★ 2026-08-22：FREE_SP 計醫生收入，
   //   engine allocWhere 已收埋），CREDIT（countAsIncome=false）唔喺入面 —
@@ -313,7 +318,8 @@ export async function GET(
     : []
   const materialName = new Map(materialItems.map(mi => [mi.id, mi.name]))
 
-  const vendorOf = (c: any): string => String(c.lab?.name || c.labOther || c.dsaName || '')
+  // ★ 2026-08-25：dsaName 係助護唔係工廠 —— 剔走 fallback
+  const vendorOf = (c: any): string => String(c.lab?.name || c.labOther || '')
   const cRows: Cell[][] = [
     ['C  Lab 成本明細'],
     ['落單日', '病人編號', '項目', '工場', '單號', 'DSA', '原價', '折扣%', '實計'],
@@ -334,7 +340,7 @@ export async function GET(
   // C 小計 — 逐工場
   const labByVendor = new Map<string, number>()
   for (const c of labCases) {
-    const v = vendorOf(c) || '其他'
+    const v = vendorOf(c) || UNNAMED_VENDOR // ★ 2026-08-26：同畫面用同一個字串（拍板③）
     labByVendor.set(v, (labByVendor.get(v) || 0) + num(c.finalCost))
   }
   const labTotal = [...labByVendor.values()].reduce((a, b) => a + b, 0)
@@ -345,9 +351,10 @@ export async function GET(
   cRows.push(cSubtotalRow)
 
   // D 區：植體成本（按病人分組，每組一小計行）
+  // ★ 2026-08-26：加「工場」欄（拍板②b）—— 下游 pivot/VLOOKUP 用戶要通知欄位偏移
   const dRows: Cell[][] = [
     ['D  植體成本明細（按病人分組）'],
-    ['落單日', '病人編號', '材料', '數量', '單價', '小計'],
+    ['落單日', '病人編號', '工場', '材料', '數量', '單價', '小計'],
   ]
   const byPatient = new Map<string, typeof implantCases>()
   for (const c of implantCases) {
@@ -363,6 +370,7 @@ export async function GET(
           dRows.push([
             ddMM(c.orderedAt),
             patient,
+            vendorOf(c) || UNNAMED_VENDOR,
             mat.note?.trim() || materialName.get(mat.materialItemId) || mat.materialItemId, // ★ 2026-08-22：Other 材料顯示手動填嘅材料名（note 優先）
             mat.qty,
             money(mat.unitPriceUsed),
@@ -372,11 +380,11 @@ export async function GET(
         }
       } else {
         // 冇材料行 → 直接出 case 成本
-        dRows.push([ddMM(c.orderedAt), patient, String(c.itemType || c.itemTypeOther || ''), 1, money(c.finalCost), money(c.finalCost)])
+        dRows.push([ddMM(c.orderedAt), patient, vendorOf(c) || UNNAMED_VENDOR, String(c.itemType || c.itemTypeOther || ''), 1, money(c.finalCost), money(c.finalCost)])
         groupTotal += num(c.finalCost)
       }
     }
-    dRows.push([`${patient} 小計`, '', '', '', '', money(groupTotal)])
+    dRows.push([`${patient} 小計`, '', '', '', '', '', money(groupTotal)])
   }
 
   // ─── E 區：2人SP 補貼 ／ 轉介 2% ／ 調整 ────────────────────────
@@ -431,6 +439,44 @@ export async function GET(
   ]
 
   // ─── Build workbook（單 sheet） ─────────────────────────────────
+  // ─── H 區：工廠總覽（跨醫生）───────────────────────────────
+  // ★ 2026-08-26：跟 run.periodMonth + run.clinicId 匯總所有醫生（MD §三）。
+  //   where 唔可以有 providerId；status/finalCost 口徑照 engine（合計＝各醫生成本總和）。
+  const hWhere: any = {
+    periodMonth: run.periodMonth,
+    status: { not: 'VOID' },
+    finalCost: { not: null },
+  }
+  if (run.clinicId) hWhere.clinicId = run.clinicId
+  const hCosts = await prisma.costCase.findMany({
+    where: hWhere,
+    select: { category: true, finalCost: true, labOther: true, lab: { select: { name: true } } },
+  })
+  const hAgg = new Map<string, { lab: number; impl: number; inv: number; count: number }>()
+  for (const c of hCosts) {
+    const v: string = String(c.lab?.name || c.labOther || UNNAMED_VENDOR)
+    const e = hAgg.get(v) ?? { lab: 0, impl: 0, inv: 0, count: 0 }
+    const amt = num(c.finalCost)
+    if (c.category === 'LAB') e.lab += amt
+    else if (c.category === 'IMPLANT') e.impl += amt
+    else if (c.category === 'INVISALIGN') e.inv += amt
+    e.count += 1
+    hAgg.set(v, e)
+  }
+  const hSorted = [...hAgg.entries()]
+    .map(([vendor, e]) => ({ vendor, ...e, total: num(e.lab) + num(e.impl) + num(e.inv) }))
+    .sort((a, b) => b.total - a.total)
+  const hTot = { lab: 0, impl: 0, inv: 0, count: 0 }
+  const hRows: Cell[][] = [
+    ['H  工廠總覽（跨醫生）'],
+    ['工場', 'Lab', 'Implant', 'Invisalign', '合計', '單數'],
+  ]
+  for (const e of hSorted) {
+    hRows.push([e.vendor, money(e.lab), money(e.impl), money(e.inv), money(e.total), e.count])
+    hTot.lab += num(e.lab); hTot.impl += num(e.impl); hTot.inv += num(e.inv); hTot.count += e.count
+  }
+  hRows.push(['合計', money(hTot.lab), money(hTot.impl), money(hTot.inv), money(hTot.lab + hTot.impl + hTot.inv), hTot.count])
+
   const aoa: Cell[][] = [
     [title],
     [],
@@ -445,6 +491,8 @@ export async function GET(
     ...eRows,
     [],
     ...gRows,
+    [],
+    ...hRows,
   ]
   const ws = XLSX.utils.aoa_to_sheet(aoa)
   ws['!cols'] = [

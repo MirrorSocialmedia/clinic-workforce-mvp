@@ -322,25 +322,26 @@ export default function EmployeePayrollDetailPage() {
 
       {/* Printable area: logo + title + cards */}
       <div ref={printRef} style={{ position: 'relative' }} className="space-y-6">
-        {/* ★ 2026-08-25：PDF 頁首 — logo ＋ 公司名 ＋ 發薪資料 ＋ 標題（取代原本 absolute logo） */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 14 }}>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingLeft: 40 }}>
-            {companyLogo && (
-              <img src={companyLogo} alt="" style={{ height: 52, objectFit: 'contain' }} />
-            )}
-            {/* ★ 拍板④：logo 下面出公司名文字 */}
-            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4, letterSpacing: 1 }}>
-              {companyLegalName}
+        {/* ★ 2026-08-25：發薪資料 absolute 右上，令 logo ＋ 公司名可以【成頁】置中
+            （之前兩者係 flex 兄弟，logo 只喺左半邊置中；paddingLeft:40 反而推得更歪）
+            ★ minHeight:96 唔加會俾 absolute 嘅發薪資料蓋住標題 */}
+        <div style={{ position: 'relative', marginBottom: 14, minHeight: 96 }}>
+          <div style={{ position: 'absolute', top: 0, right: 0, fontSize: 11, lineHeight: 2, minWidth: 210 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <span><b>Pay Ending</b> 發薪截至</span><span>{payEndingDMY}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <span><b>Pay Date</b> 發薪日期</span><span>{payDateDMY}</span>
             </div>
           </div>
-          <div style={{ fontSize: 11, lineHeight: 2, minWidth: 200 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span><b>Pay Ending</b> 發薪截至</span>
-              <span>{payEndingDMY}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span><b>Pay Date</b> 發薪日期</span>
-              <span>{payDateDMY}</span>
+          <div style={{ textAlign: 'center', paddingTop: 4 }}>
+            {companyLogo && (
+              <img src={companyLogo} alt=""
+                   style={{ height: 80, objectFit: 'contain', display: 'inline-block' }} />
+            )}
+            {/* ★ 拍板④：logo 下面出公司名文字（inline-block img 先會受 text-align:center 影響）*/}
+            <div style={{ fontSize: 15, fontWeight: 600, marginTop: 5, letterSpacing: 1 }}>
+              {companyLegalName}
             </div>
           </div>
         </div>

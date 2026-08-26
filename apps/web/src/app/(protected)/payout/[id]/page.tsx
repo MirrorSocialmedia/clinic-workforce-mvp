@@ -32,7 +32,18 @@ interface PayoutRun {
   totalAmount: number
   breakdownJson: any
   provider: { name: string; shortName?: string | null }
+  clinic?: { name: string; shortName?: string | null } | null
   adjustments: any[]
+}
+
+// ★ 2026-08-26：工廠總覽 API 回傳行型
+interface VendorSummaryRow {
+  vendor: string
+  labCost: number
+  implantCost: number
+  invisalignCost: number
+  total: number
+  caseCount: number
 }
 
 interface ReconciliationStatus {
@@ -54,6 +65,10 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
   // AA4: delete/regenerate states
   const [deleting, setDeleting] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
+  // ★ 2026-08-26：[ 醫生明細 ] [ 工廠總覽 ] tab
+  const [tab, setTab] = useState<'doctor' | 'vendor'>('doctor')
+  const [vendorSummary, setVendorSummary] = useState<{ vendors: VendorSummaryRow[] } | null>(null)
+  const [vendorLoading, setVendorLoading] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -66,10 +81,24 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
       setRun(res.run)
       // Fetch reconciliation status for this provider + month
       loadReconciliation(res.run.providerId, res.run.periodMonth)
+      // ★ 2026-08-26：工廠總覽（跨醫生）
+      loadVendorSummary(res.run.id)
     } catch (e: any) {
       alert(`載入失敗: ${e.message}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadVendorSummary(runId: string) {
+    setVendorLoading(true)
+    try {
+      const res = await apiFetch<{ vendors: VendorSummaryRow[] }>(`/api/payout-runs/${runId}/vendor-summary`)
+      setVendorSummary({ vendors: res.vendors })
+    } catch {
+      setVendorSummary(null) // 總覽攞唔到唔阻主頁
+    } finally {
+      setVendorLoading(false)
     }
   }
 
@@ -153,6 +182,12 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
   const name = provider?.shortName || provider?.name || '未知醫生'
   const isDraft = run.status !== 'LOCKED'
 
+  // ★ 2026-08-26：breakdownJson 新格式 = { allocations, vendors }；舊 run 係裸陣列 → normalize（#12 唔 crash）
+  const bj: any = run.breakdownJson
+  const allocationRows: any[] = Array.isArray(bj) ? bj : (bj?.allocations ?? [])
+  const vendorMap: Record<string, { vendor: string; amount: number }[]> =
+    Array.isArray(bj) ? {} : (bj?.vendors ?? {})
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <Button variant="ghost" onClick={() => router.back()} className="mb-4">
@@ -227,6 +262,22 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
         )}
       </div>
 
+      {/* ★ 2026-08-26：[ 醫生明細 ] [ 工廠總覽 ] tab（MD §三） */}
+      <div className="flex gap-1 border-b mb-4">
+        <button
+          onClick={() => setTab('doctor')}
+          className={`px-3 py-1.5 text-sm rounded-t ${tab === 'doctor' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+        >
+          醫生明細
+        </button>
+        <button
+          onClick={() => setTab('vendor')}
+          className={`px-3 py-1.5 text-sm rounded-t ${tab === 'vendor' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+        >
+          工廠總覽
+        </button>
+      </div>
+
       {/* Unlock modal */}
       {showUnlock && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -250,6 +301,7 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
         </div>
       )}
 
+      {tab === 'doctor' && (<>
       <Card className="p-4 mb-4">
         <h2 className="font-semibold mb-3">收入明細</h2>
         <div className="space-y-1 text-sm">
@@ -261,9 +313,37 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
       <Card className="p-4 mb-4">
         <h2 className="font-semibold mb-3">成本</h2>
         <div className="space-y-1 text-sm text-red-600">
-          <div className="flex justify-between"><span>Lab 成本</span><span>-${run.labCost.toFixed(2)}</span></div>
-          <div className="flex justify-between"><span>Implant 成本</span><span>-${run.implantCost.toFixed(2)}</span></div>
-          <div className="flex justify-between"><span>Invisalign 成本</span><span>-${run.invisalignCost.toFixed(2)}</span></div>
+          <div className="flex justify-between font-semibold"><span>Lab 成本</span><span>-${run.labCost.toFixed(2)}</span></div>
+          {/* ★ 2026-08-26：按工廠細分（舊 run 冇 vendors → ?? [] 唔出，唔 crash） */}
+          {(vendorMap.LAB ?? []).length > 0 && (
+            <div style={{ paddingLeft: 14, margin: '2px 0 8px', borderLeft: '2px solid #fecaca' }}>
+              {(vendorMap.LAB ?? []).map((v) => (
+                <div key={v.vendor} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280' }}>
+                  <span>{v.vendor}</span><span>−${v.amount.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-between font-semibold"><span>Implant 成本</span><span>-${run.implantCost.toFixed(2)}</span></div>
+          {(vendorMap.IMPLANT ?? []).length > 0 && (
+            <div style={{ paddingLeft: 14, margin: '2px 0 8px', borderLeft: '2px solid #fecaca' }}>
+              {(vendorMap.IMPLANT ?? []).map((v) => (
+                <div key={v.vendor} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280' }}>
+                  <span>{v.vendor}</span><span>−${v.amount.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-between font-semibold"><span>Invisalign 成本</span><span>-${run.invisalignCost.toFixed(2)}</span></div>
+          {(vendorMap.INVISALIGN ?? []).length > 0 && (
+            <div style={{ paddingLeft: 14, margin: '2px 0 8px', borderLeft: '2px solid #fecaca' }}>
+              {(vendorMap.INVISALIGN ?? []).map((v) => (
+                <div key={v.vendor} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280' }}>
+                  <span>{v.vendor}</span><span>−${v.amount.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </Card>
 
@@ -306,8 +386,8 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
         </Card>
       )}
 
-      {/* Breakdown — AA3: 付款明細表 */}
-      {run.breakdownJson && run.breakdownJson.length > 0 && (
+      {/* Breakdown — AA3: 付款明細表（★ 2026-08-26：用 normalize 後 allocationRows，兼容新 { allocations, vendors } 格式） */}
+      {allocationRows.length > 0 && (
         <Card className="p-4 mb-4">
           <h2 className="font-semibold mb-3">付款明細</h2>
           <table className="w-full text-sm">
@@ -322,7 +402,7 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
               </tr>
             </thead>
             <tbody>
-              {run.breakdownJson.map((b: any, i: number) => (
+              {allocationRows.map((b: any, i: number) => (
                 <tr key={i} className="border-b last:border-0">
                   <td className="py-1">{b.paidAt ? new Date(b.paidAt).toLocaleDateString('zh-HK') : '—'}</td>
                   <td className="py-1">{b.billCode || '—'}</td>
@@ -346,6 +426,55 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
       <div className="text-xs text-gray-400 mt-4">
         註：所有金額四捨五入至小數點後兩位，對數容差 $1。
       </div>
+      </>)}
+
+      {/* ★ 2026-08-26：工廠總覽 tab（跨醫生，MD §三） */}
+      {tab === 'vendor' && (
+        <Card className="p-4 mb-4">
+          <h2 className="font-semibold mb-1">工廠總覽（跨醫生）</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            {run.periodMonth} 全店所有醫生成本按工廠匯總{run.clinic ? `（${run.clinic.shortName || run.clinic.name}）` : ''}
+          </p>
+          {vendorLoading ? (
+            <div className="text-sm text-gray-500">載入中...</div>
+          ) : vendorSummary && vendorSummary.vendors.length > 0 ? (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b">
+                  <th className="py-1">工廠</th>
+                  <th className="py-1 text-right">Lab</th>
+                  <th className="py-1 text-right">Implant</th>
+                  <th className="py-1 text-right">Invisalign</th>
+                  <th className="py-1 text-right">合計</th>
+                  <th className="py-1 text-right">單數</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendorSummary.vendors.map((v) => (
+                  <tr key={v.vendor} className="border-b">
+                    <td className="py-1">{v.vendor}</td>
+                    <td className="py-1 text-right">{v.labCost > 0 ? `$${v.labCost.toFixed(2)}` : '—'}</td>
+                    <td className="py-1 text-right">{v.implantCost > 0 ? `$${v.implantCost.toFixed(2)}` : '—'}</td>
+                    <td className="py-1 text-right">{v.invisalignCost > 0 ? `$${v.invisalignCost.toFixed(2)}` : '—'}</td>
+                    <td className="py-1 text-right font-semibold">${v.total.toFixed(2)}</td>
+                    <td className="py-1 text-right">{v.caseCount}</td>
+                  </tr>
+                ))}
+                <tr className="border-b font-semibold bg-gray-50">
+                  <td className="py-1">合計</td>
+                  <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.labCost, 0).toFixed(2)}</td>
+                  <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.implantCost, 0).toFixed(2)}</td>
+                  <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.invisalignCost, 0).toFixed(2)}</td>
+                  <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.total, 0).toFixed(2)}</td>
+                  <td className="py-1 text-right">{vendorSummary.vendors.reduce((a, v) => a + v.caseCount, 0)}</td>
+                </tr>
+              </tbody>
+            </table>
+          ) : (
+            <div className="text-sm text-gray-500">本期暫無成本數據</div>
+          )}
+        </Card>
+      )}
     </div>
   )
 }

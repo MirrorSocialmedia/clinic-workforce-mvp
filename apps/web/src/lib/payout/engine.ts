@@ -39,6 +39,34 @@ function sumByCosts(costs: any[], category: string): number {
   )
 }
 
+// ★ 2026-08-26：labId / labOther 都冇嘅 case 統一顯示字串（畫面/Excel/API 三邊共用）
+export const UNNAMED_VENDOR = '（未指定工廠）'
+
+export interface VendorCost {
+  vendor: string // Lab.name ／ labOther ／ UNNAMED_VENDOR
+  amount: number
+}
+
+/**
+ * 按工廠拆成本（拍板②④：LAB/IMPLANT/INVISALIGN 三個類別都拆）。
+ * ★ 純顯示 —— profitAmount 公式一個字唔改。
+ * ★ filter 條件照 sumByCosts（finalCost != null）—— 分項相加必須＝類別總額。
+ * ★ labId/labOther 都冇 → 歸 UNNAMED_VENDOR（唔好漏，否則分項加起身唔等於總數）。
+ * ★ 唔好用 dsaName fallback —— DSA 係助護唔係工廠。
+ */
+export function breakdownByVendor(costs: any[], category: string): VendorCost[] {
+  const m = new Map<string, number>()
+  for (const c of costs) {
+    if (c.category !== category || c.finalCost == null) continue
+    const v: string = c.lab?.name || c.labOther || UNNAMED_VENDOR
+    m.set(v, round2((m.get(v) ?? 0) + Number(c.finalCost)))
+  }
+  // 金額大到細
+  return [...m.entries()]
+    .map(([vendor, amount]) => ({ vendor, amount }))
+    .sort((a, b) => b.amount - a.amount)
+}
+
 export function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
@@ -290,6 +318,10 @@ interface PayoutResult {
   labCost: number
   implantCost: number
   invisalignCost: number
+  // ★ 2026-08-26：按工廠細分（純顯示快照，入 PayoutRun.breakdownJson.vendors）
+  labVendors: VendorCost[]
+  implantVendors: VendorCost[]
+  invisalignVendors: VendorCost[]
   profitAmount: number
   percentUsed: number
   salaryAmount: number
@@ -367,7 +399,9 @@ export async function computePayout(
 
   const costs = await prisma.costCase.findMany({
     where: costWhere,
-    include: { materials: true },
+    // ★ 2026-08-26：加 include lab —— breakdownByVendor 用 c.lab?.name
+    //   （之前只 include materials → c.lab 永遠 undefined → 工廠名全部 fallback）
+    include: { materials: true, lab: { select: { name: true } } },
   })
 
   // Check for unpriced cases (warning)
@@ -386,6 +420,11 @@ export async function computePayout(
   const labCost = round2(sumByCosts(costs, 'LAB'))
   const implantCost = round2(sumByCosts(costs, 'IMPLANT')) // ★ IMPLANT 係獨立類別（CATEGORIES = LAB/IMPLANT/INVISALIGN）
   const invisalignCost = round2(sumByCosts(costs, 'INVISALIGN'))
+
+  // ★ 2026-08-26：按工廠細分（純顯示，同 sumByCosts 用同一批 costs 同一 filter）
+  const labVendors = breakdownByVendor(costs, 'LAB')
+  const implantVendors = breakdownByVendor(costs, 'IMPLANT')
+  const invisalignVendors = breakdownByVendor(costs, 'INVISALIGN')
 
   // ─── ③ Profit ────────────────────────────────────────────────────────
   const profitAmount = round2(grossAmount - labCost - implantCost - invisalignCost)
@@ -458,6 +497,9 @@ export async function computePayout(
     labCost,
     implantCost,
     invisalignCost,
+    labVendors,
+    implantVendors,
+    invisalignVendors,
     profitAmount,
     percentUsed,
     salaryAmount,
@@ -502,7 +544,17 @@ export async function lockPayoutRun(
         refAmount: new Prisma.Decimal(String(payout.refAmount)),
         adjustAmount: new Prisma.Decimal(String(payout.adjustAmount)),
         totalAmount: new Prisma.Decimal(String(payout.totalAmount)),
-        breakdownJson: payout.breakdown,
+        // ★ 2026-08-26：breakdownJson 升級做 { allocations, vendors } ——
+        //   allocations = 原本逐筆付款快照（消費方已加 Array.isArray 兼容舊陣列格式）
+        //   vendors = 按工廠成本快照（鎖定後歷史可溯，唔使重查可能已改嘅 CostCase）
+        breakdownJson: {
+          allocations: payout.breakdown,
+          vendors: {
+            LAB: payout.labVendors,
+            IMPLANT: payout.implantVendors,
+            INVISALIGN: payout.invisalignVendors,
+          },
+        },
         status: 'LOCKED',
         lockedAt: new Date(),
         createdBy,
