@@ -43,6 +43,8 @@ services:
       FACE_MODE: shadow
       APRICOT_ENC_KEY: ${APRICOT_ENC_KEY}
       APRICOT_CRON_KEY: ${APRICOT_CRON_KEY}
+      EXTERNAL_DUTY_API_KEY: ${EXTERNAL_DUTY_API_KEY}
+      EXTERNAL_API_ALLOWED_IPS: ${EXTERNAL_API_ALLOWED_IPS}
     networks: [clinic_net]
     deploy:
       resources:
