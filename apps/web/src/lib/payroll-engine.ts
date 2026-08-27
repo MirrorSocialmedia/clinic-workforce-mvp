@@ -24,7 +24,7 @@ import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMa
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-const TIMEBANK_ENGINE_VERSION = 3 // v3: 分更時間窗 + floor 取整
+const TIMEBANK_ENGINE_VERSION = 4 // v4: 2026-08-26 跨店打卡 scope 修正（生產舊 TimeBank 快取自動失效）
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -201,6 +201,50 @@ export function deductionDailyRate(
   }
   const days = hkDaysInMonth(monthDate)   // 6月=30、7月=31
   return days > 0 ? monthlySalary / days : monthlySalary / 30
+}
+
+// ------------------------------------------------------------------
+// Clinic Scope Resolution — ★ 2026-08-26 跨店打卡 scope 修正
+// ------------------------------------------------------------------
+
+/**
+ * ★ 2026-08-26：員工「該月實際活動範圍」= EmployeeClinic ∪ 該月排更診所 ∪ 該月打卡診所。
+ *
+ * ⚠️ 點解唔可以淨係用 EmployeeClinic：
+ *   臨時幫手（Suki 去青衣 13 日）唔會綁定 —— 綁咗佢就會見到嗰間店嘅資料。
+ *   但佢喺嗰間店嘅打卡【一定要計入】，否則排更拉到、打卡拉唔到 → 誤判缺勤扣錢。
+ */
+async function resolveActiveClinicIds(
+  db: any, employeeId: string, monthStart: Date, monthEnd: Date,
+  clinicIdFilter?: string | null,
+): Promise<string[]> {
+  const [emp, shiftClinics, punchClinics] = await Promise.all([
+    db.employee.findUnique({
+      where: { id: employeeId },
+      select: { clinics: { select: { clinicId: true } } },
+    }),
+    db.shift.findMany({
+      where: { employeeId, date: { gte: monthStart, lte: monthEnd },
+               status: { not: 'CANCELLED' } },
+      select: { clinicId: true, secondaryClinicId: true },
+      distinct: ['clinicId', 'secondaryClinicId'],
+    }),
+    db.punchRecord.findMany({
+      where: { employeeId, punchTime: { gte: monthStart, lte: monthEnd } },
+      select: { clinicId: true },
+      distinct: ['clinicId'],
+    }),
+  ])
+  const set = new Set<string>()
+  for (const ec of emp?.clinics ?? []) set.add(ec.clinicId)
+  for (const s of shiftClinics) {
+    if (s.clinicId) set.add(s.clinicId)
+    if (s.secondaryClinicId) set.add(s.secondaryClinicId)   // ★ 調鋪都要
+  }
+  for (const p of punchClinics) if (p.clinicId) set.add(p.clinicId)
+
+  const all = [...set]
+  return clinicIdFilter ? all.filter(id => id === clinicIdFilter) : all
 }
 
 // ------------------------------------------------------------------
@@ -711,6 +755,10 @@ async function getEmployeePayData(
     config: PayRuleConfig
   }>
 }> {
+  // ★ 2026-08-26: clinicIds 改由「該月實際活動範圍」推導（見 resolveActiveClinicIds）
+  //   monthDate 可選：冇傳 → 用當月（HK 視角，toHKDateStr 保證）
+  const { start: monthStart, end: monthEnd } = getMonthRange(monthDate ?? new Date())
+
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
     include: {
@@ -729,7 +777,6 @@ async function getEmployeePayData(
           }),
         },
       },
-      clinics: { select: { clinicId: true } },
     },
   })
 
@@ -737,8 +784,8 @@ async function getEmployeePayData(
     throw new Error(`Employee ${employeeId} not found`)
   }
 
-  const clinicIds = employee.clinics.map(ec => ec.clinicId)
-    .filter(id => !clinicIdFilter || id === clinicIdFilter)
+  const clinicIds = await resolveActiveClinicIds(
+    prisma, employeeId, monthStart, monthEnd, clinicIdFilter)
 
   const payRules = employee.payRules.map(pr => ({
     id: pr.id,
@@ -2260,14 +2307,8 @@ async function collectWorkData(
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
   const { y: year, m: month } = hkParts(monthDate)
 
-  // Get employee clinic IDs
-  const employee = await prisma.employee.findUnique({
-    where: { id: employeeId },
-    include: { clinics: { select: { clinicId: true } } },
-  })
-  const clinicIds = employee
-    ? employee.clinics.map((ec: any) => ec.clinicId).filter((id: string) => !clinicId || id === clinicId)
-    : []
+  // ★ 2026-08-26: 刪除死代碼 —— 原喺呢度嘅 employee findUnique + clinicIds 計完冇人用
+  //   （live 路徑傳 null 俾 calculateWorkedHours，唔 filter punch；absentDays 用 per-clinic set）
 
   // Load shifts first so calculateWorkedHours can use shift endTime for partial punches
   const shifts = await prisma.shift.findMany({
