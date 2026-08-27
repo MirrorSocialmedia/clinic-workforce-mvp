@@ -9,7 +9,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params
   const body = await req.json().catch(() => ({} as any))
-  const { name, shortName, phone, color, apricotId, apricotUserId, companyId, sortOrder, isActive, clinicIds } = body
+  const { name, shortName, phone, color, apricotId, apricotUserId, companyId, sortOrder, isActive, clinicIds, showInCostEntry } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
@@ -45,6 +45,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           companyId: companyId || null,
           sortOrder: sortOrder ?? 0,
           ...(isActive !== undefined && { isActive }),
+          // ★ cwm-costentry-20260827 §1：成本錄入顯示開關（唔傳 = 保留原值）
+          ...(showInCostEntry !== undefined && { showInCostEntry: !!showInCostEntry }),
         },
       })
 

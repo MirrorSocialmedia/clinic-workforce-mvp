@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
   const clinicId = searchParams.get('clinicId')
   const labId = searchParams.get('labId')
   const unlocked = searchParams.get('unlocked')
+  // ★ cwm-costentry-20260827 §2：病人搜尋（編號/姓名，insensitive 部分匹配）
+  const q = searchParams.get('q')?.trim()
 
   const where: any = {}
   if (providerId) where.providerId = providerId
@@ -31,6 +33,14 @@ export async function GET(req: NextRequest) {
   if (clinicId) where.clinicId = clinicId
   if (labId) where.labId = labId
   if (unlocked === '1') where.lockedByRunId = null
+  // ★ cwm-costentry-20260827 §2：此 route 原有零 where.OR（grep 核對）→ 直接 where.OR 安全，
+  //   同其他 where key 天然 AND（Prisma top-level keys = AND）
+  if (q) {
+    where.OR = [
+      { patientCode: { contains: q, mode: 'insensitive' } },
+      { patientName: { contains: q, mode: 'insensitive' } },
+    ]
+  }
 
   // MANAGER scope: only see their clinics
   if (scope === 'my-clinics' && session.clinics && session.clinics.length > 0) {

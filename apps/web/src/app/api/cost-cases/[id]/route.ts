@@ -98,13 +98,19 @@ export async function PUT(
   }
 
   // Compute finalCost if baseCost or labId changed
+  // ★ cwm-costentry-20260827 #22：body 唔傳 discountPct（Q2 後本來就忽略 body）；
+  //   labId 未傳（工場未變）時重算用 existing.discountPct（已存 snapshot），
+  //   防止表行缺漏把有折扣嘅單靜靜變零折扣
   let finalCost: number | null = existing.finalCost ? Number(existing.finalCost) : null
 
   if (baseCost != null || labId !== undefined) {
     const bc = baseCost != null ? Number(baseCost) : (existing.baseCost ? Number(existing.baseCost) : null)
+    const dp = labId !== undefined
+      ? discountPctNum
+      : (existing.discountPct ? Number(existing.discountPct) : discountPctNum)
 
-    if (bc != null && discountPctNum != null) {
-      finalCost = Number((bc * (100 - discountPctNum) / 100).toFixed(2))
+    if (bc != null && dp != null) {
+      finalCost = Number((bc * (100 - dp) / 100).toFixed(2))
     } else if (bc != null) {
       finalCost = bc
     }
@@ -124,7 +130,9 @@ export async function PUT(
   if (dsaName !== undefined) data.dsaName = dsaName
   if (baseCost !== undefined) data.baseCost = baseCost != null ? Number(baseCost) : null
   // ★ Q2: discountPct now from table, not body
-  if (discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
+  // ★ cwm-costentry-20260827 #22：只喺 labId 有傳（工場有變）先同步 — 新工场跟新表折扣；
+  //   PUT 唔傳 labId = discountPct 欄保持原值（唔郁）
+  if (labId !== undefined && discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
   if (finalCost !== existing.finalCost?.toNumber()) data.finalCost = finalCost != null ? finalCost : null
   if (receivedAt !== undefined) data.receivedAt = receivedAt ? new Date(receivedAt) : null
   if (appointmentAt !== undefined) data.appointmentAt = appointmentAt ? new Date(appointmentAt) : null

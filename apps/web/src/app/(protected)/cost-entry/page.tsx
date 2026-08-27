@@ -145,6 +145,11 @@ export default function CostEntryPage() {
   const [filterCategory, setFilterCategory] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [filterClinicId, setFilterClinicId] = useState('')
+  // ★ cwm-costentry-20260827 §2：病人搜尋（編號/姓名）
+  const [searchQ, setSearchQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  // ★ cwm-costentry-20260827 §3：作廢行預設收起
+  const [showVoided, setShowVoided] = useState(false)
 
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
@@ -217,25 +222,76 @@ export default function CostEntryPage() {
   const [redoForm, setRedoForm] = useState({ redoAt: '', redoReason: '' })
   const [redoSaving, setRedoSaving] = useState(false)
 
+  // ★ cwm-costentry-20260827 §1.4：成本錄入下拉只顯示 showInCostEntry !== false 嘅醫生
+  //   （列表本身唔 filter — 已錄入個案仍顯示；當值表/時間表/月結零影響）
+  const costEntryProviders = useMemo(
+    () => providers.filter((p: any) => p.showInCostEntry !== false),
+    [providers]
+  )
+
+  // ★ cwm-costentry-20260827 #5：編輯模式 — 個案原醫生唔喺 costEntryProviders → 加返入下拉
+  //   （唔加就靜靜改咗拆帳歸屬）；新增模式 editProviders === costEntryProviders
+  const editProviders = useMemo(() => {
+    if (!editingCase?.providerId) return costEntryProviders
+    return costEntryProviders.some((p: any) => p.id === editingCase.providerId)
+      ? costEntryProviders
+      : [...costEntryProviders, providers.find((p: any) => p.id === editingCase.providerId)].filter(Boolean)
+  }, [costEntryProviders, providers, editingCase])
+
+  // ★ cwm-costentry-20260827 §3：作廢行預設收起（前端 filter，MD 拍板）
+  const visibleCases = useMemo(
+    () => cases.filter(c => showVoided || c.status !== 'VOID'),
+    [cases, showVoided]
+  )
+  // ★ cwm-costentry-20260827 #18：底部統計永遠排除 VOID（無論顯示與否）—
+  //   API summary 含 VOID 且要通用唔改，改前端由 cases 計算
+  const nonVoidCases = useMemo(() => cases.filter(c => c.status !== 'VOID'), [cases])
+  const stats = useMemo(() => {
+    const total = nonVoidCases.length
+    const totalFinalCost = nonVoidCases.reduce((s, c) => s + (c.finalCost ?? 0), 0)
+    const unpricedCount = nonVoidCases.filter(c => c.baseCost == null).length
+    const labGroups: Record<string, { count: number; total: number }> = {}
+    for (const c of nonVoidCases) {
+      let key: string | null = null
+      if (c.lab) key = c.lab.name
+      else if (c.labOther) key = `other:${c.labOther}`
+      if (!key) continue
+      if (!labGroups[key]) labGroups[key] = { count: 0, total: 0 }
+      labGroups[key].count++
+      labGroups[key].total += c.finalCost ?? 0
+    }
+    return { total, totalFinalCost, unpricedCount, labGroups }
+  }, [nonVoidCases])
+
+  // ★ cwm-costentry-20260827 §3：作廢行紅線灰字（line-through 跨瀏覽器穩陣，唔用 absolute td overlay）
+  const voidStyle = {
+    color: '#9ca3af',
+    textDecoration: 'line-through',
+    textDecorationColor: '#dc2626',
+    textDecorationThickness: '1.5px',
+  }
+
   // ★ 2026-08-25 §2.2：醫生下拉按診所分組 — 屬呢間店嘅排前，其餘摺去「其他診所」。
   //   ★★ 唔完全隱藏：ProviderClinic 綁定可能漏（青衣就係零資料），
   //   完全隱藏 = 錄唔到成本。API 唔 filter，改前端分組（§2.1）。
+  //   ★ cwm-costentry-20260827 §1.4：input 改 editProviders（已過濾 + 編輯模式加返原醫生）
   const groupedProviders = useMemo(() => {
     const cid = selectedClinicInternalId
-    if (!cid) return { mine: providers as any[], others: [] as any[] }
-    const mine = providers.filter((p: any) => (p.clinicIds ?? []).includes(cid))
-    const others = providers.filter((p: any) => !mine.includes(p))
+    if (!cid) return { mine: editProviders as any[], others: [] as any[] }
+    const mine = editProviders.filter((p: any) => (p.clinicIds ?? []).includes(cid))
+    const others = editProviders.filter((p: any) => !mine.includes(p))
     return { mine, others }
-  }, [providers, selectedClinicInternalId])
+  }, [editProviders, selectedClinicInternalId])
 
   // ★ 2026-08-25 §2.3：篩選列個醫生下拉一樣分組（跟 filterClinicId）
+  //   ★ cwm-costentry-20260827 §1.4：input 改 costEntryProviders
   const filterGroupedProviders = useMemo(() => {
     const cid = filterClinicId
-    if (!cid) return { mine: providers as any[], others: [] as any[] }
-    const mine = providers.filter((p: any) => (p.clinicIds ?? []).includes(cid))
-    const others = providers.filter((p: any) => !mine.includes(p))
+    if (!cid) return { mine: costEntryProviders as any[], others: [] as any[] }
+    const mine = costEntryProviders.filter((p: any) => (p.clinicIds ?? []).includes(cid))
+    const others = costEntryProviders.filter((p: any) => !mine.includes(p))
     return { mine, others }
-  }, [providers, filterClinicId])
+  }, [costEntryProviders, filterClinicId])
 
   // ── Load functions ──────────────────────────────────
 
@@ -286,6 +342,8 @@ export default function CostEntryPage() {
       if (filterCategory) params.set('category', filterCategory)
       if (filterStatus) params.set('status', filterStatus)
       if (filterClinicId) params.set('clinicId', filterClinicId)
+      // ★ cwm-costentry-20260827 §2：病人搜尋（debouncedQ 已 300ms debounce → 靜止後只一次 request）
+      if (debouncedQ) params.set('q', debouncedQ)
 
       const data: any = await apiFetch(`/api/cost-cases?${params}`)
       setCases(data.cases || [])
@@ -295,7 +353,7 @@ export default function CostEntryPage() {
     } finally {
       setLoading(false)
     }
-  }, [filterProviderId, filterPeriodMonth, filterCategory, filterStatus, filterClinicId])
+  }, [filterProviderId, filterPeriodMonth, filterCategory, filterStatus, filterClinicId, debouncedQ])
 
   const loadAuth = useCallback(async () => {
     try {
@@ -324,7 +382,15 @@ export default function CostEntryPage() {
     loadCases()
   }, [loadCases])
 
+  // ★ cwm-costentry-20260827 §2：300ms debounce — 連續打字只喺靜止後 update 一次
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(searchQ.trim()), 300)
+    return () => clearTimeout(t)
+  }, [searchQ])
+
   // ★ Q2: Fetch discount from LabMonthlyDiscount
+  //   ★ cwm-costentry-20260827 拍板②：自動帶入淨係帳單流程（pickerMode==='bill'）；
+  //   手動新增 labDiscountPct 永遠 null（set 位核對：bill effect + openPicker/openEditModal reset）
   useEffect(() => {
     if (pickerMode !== 'bill' || pickerStep !== 2) return
     if (costForm.category === 'IMPLANT') {
@@ -797,7 +863,11 @@ export default function CostEntryPage() {
           itemTypeOther: costForm.itemType === 'Others' ? costForm.itemTypeOther || null : null,
           labId: costForm.labId === '__OTHERS__' || !costForm.labId ? null : costForm.labId,
           labOther: costForm.labId === '__OTHERS__' ? (costForm.labOther.trim() || null) : null,
-          labOrderNo: costForm.labOrderNo || null,
+          // ★ cwm-costentry-20260827 拍板②：手動新增唔再收 Lab 單號 / 折扣 % —
+          //   明確送 null（DB 欄保留、列表「LAB · 單號」欄同 Excel C 區保留；帳單流程照 costForm 值唔改）。
+          //   日後再開：還原 modal 兩個 input（搜 "cwm-costentry-20260827"），呢度改返 costForm 值。
+          labOrderNo: pickerMode === 'manual' ? null : (costForm.labOrderNo || null),
+          discountPct: null, // ★ 拍板②：server 端 Q2 後本來就忽略 body.discountPct（跟 LabMonthlyDiscount 表）；明確 null 記錄拍板
           dsaName: costForm.dsaName || null,
           baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
           receivedAt: costForm.receivedAt || null,
@@ -877,7 +947,21 @@ export default function CostEntryPage() {
       </div>
 
       {/* Filters */}
-      <Card className="p-4">
+      <Card className="p-4 space-y-3">
+        {/* ★ cwm-costentry-20260827 §2/§3：病人搜尋（300ms debounce）+ 作廢預設收起 */}
+        <div className="flex items-center gap-4 flex-wrap">
+          <input
+            value={searchQ}
+            onChange={e => setSearchQ(e.target.value)}
+            className="border rounded px-2 py-1.5 text-sm"
+            style={{ minWidth: 150 }}
+            placeholder="🔍 病人編號 / 姓名"
+          />
+          <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+            <input type="checkbox" checked={showVoided} onChange={e => setShowVoided(e.target.checked)} />
+            顯示已作廢
+          </label>
+        </div>
         <div className="grid grid-cols-5 gap-3">
           <select value={filterProviderId} onChange={e => setFilterProviderId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部醫生</option>
@@ -927,26 +1011,29 @@ export default function CostEntryPage() {
               </tr>
             </thead>
             <tbody>
-              {cases.map(c => (
+              {visibleCases.map(c => {
+                // ★ cwm-costentry-20260827 §3：作廢行灰字紅線（「操作」欄豁免 — 掣要撳得到）
+                const vStyle = c.status === 'VOID' ? voidStyle : undefined
+                return (
                 <tr key={c.id} className="border-b hover:bg-gray-50">
-                  <td className="p-2">{fmtDate(c.orderedAt)}</td>
-                  <td className="p-2 font-mono">{c.patientCode}</td>
-                  <td className="p-2">{c.patientName || '—'}</td>
-                  <td className="p-2">
+                  <td className="p-2" style={vStyle}>{fmtDate(c.orderedAt)}</td>
+                  <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
+                  <td className="p-2" style={vStyle}>{c.patientName || '—'}</td>
+                  <td className="p-2" style={vStyle}>
                     <Badge variant="secondary" className="text-xs">{CATEGORY_LABELS[c.category] || c.category}</Badge>
                     {c.itemType && <span className="ml-1 text-gray-500">{c.itemType}</span>}
                   </td>
-                  <td className="p-2">
+                  <td className="p-2" style={vStyle}>
                     {c.lab?.name && <span>{c.lab.name}</span>}
                     {c.labOrderNo && <span className="ml-1 text-gray-500">{c.labOrderNo}</span>}
                   </td>
-                  <td className="p-2">{c.dsaName || '—'}</td>
-                  <td className="p-2 text-right">
+                  <td className="p-2" style={vStyle}>{c.dsaName || '—'}</td>
+                  <td className="p-2 text-right" style={vStyle}>
                     {c.finalCost != null ? `$${c.finalCost.toFixed(2)}` : c.baseCost == null ? <span className="text-yellow-600">未有價</span> : '$—'}
                   </td>
-                  <td className="p-2">{fmtDate(c.receivedAt)}</td>
-                  <td className="p-2">{fmtDate(c.appointmentAt)}</td>
-                  <td className="p-2">
+                  <td className="p-2" style={vStyle}>{fmtDate(c.receivedAt)}</td>
+                  <td className="p-2" style={vStyle}>{fmtDate(c.appointmentAt)}</td>
+                  <td className="p-2" style={vStyle}>
                     {/* ★ 2026-08-25：REDO = 琥珀色（bg #fef3c7 / fg #92400e = tailwind amber-100/800） */}
                     <Badge
                       variant={STATUS_CONFIG[c.status]?.color === 'green' ? 'default' : 'secondary'}
@@ -972,32 +1059,34 @@ export default function CostEntryPage() {
                     )}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         )}
       </Card>
 
       {/* Summary */}
+      {/* ★ cwm-costentry-20260827 #18：統計改用前端 stats（由 nonVoidCases 算）— 作廢單永遠唔計，無論顯示與否 */}
       {summary && (
         <Card className="p-3">
           <div className="flex items-center gap-4 text-sm">
-            <span>{filterPeriodMonth} 已入 {summary.total} 筆</span>
+            <span>{filterPeriodMonth} 已入 {stats.total} 筆</span>
             <span>｜</span>
-            <span>已定價 ${summary.totalFinalCost?.toFixed(2) ?? '0.00'}</span>
-            {summary.unpricedCount > 0 && (
+            <span>已定價 ${stats.totalFinalCost.toFixed(2)}</span>
+            {stats.unpricedCount > 0 && (
               <>
                 <span>｜</span>
                 <span className="flex items-center gap-1 text-yellow-600">
-                  <AlertTriangle size={14} /> {summary.unpricedCount} 筆未有價（不會入月結）
+                  <AlertTriangle size={14} /> {stats.unpricedCount} 筆未有價（不會入月結）
                 </span>
               </>
             )}
-            {Object.keys(summary.labGroups || {}).length > 0 && (
+            {Object.keys(stats.labGroups).length > 0 && (
               <>
                 <span>｜</span>
-                <span>按 lab：{Object.entries(summary.labGroups as Record<string, any>)
-                  .map(([name, g]: [string, any]) => `${name} $${g.total?.toFixed(2) ?? '0.00'}`)
+                <span>按 lab：{Object.entries(stats.labGroups)
+                  .map(([name, g]) => `${name} $${g.total.toFixed(2)}`)
                   .join(' · ')}</span>
               </>
             )}
@@ -1464,14 +1553,17 @@ export default function CostEntryPage() {
                         <input type="number" step="0.01" value={costForm.baseCost} onChange={e => setCostForm({ ...costForm, baseCost: e.target.value })}
                           className="w-full border rounded px-2 py-1.5 text-sm" placeholder="成本金額" />
                       </div>
-                      <div>
-                        <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
-                        <div className="px-3 py-2 border rounded bg-muted text-sm">
-                          {labDiscountPct != null
-                            ? `${labDiscountPct}%（${labs.find(l => l.id === costForm.labId)?.name ?? '—'} · ${labDiscountPeriodMonth}）`
-                            : '—（該工場今個月冇折扣設定）'}
+                      {/* ★ cwm-costentry-20260827 拍板②：手動新增唔再顯示折扣 %（disabled 展示位一齊停）— 帳單流程/編輯模式唔改 */}
+                      {!(pickerMode === 'manual' && !editingCase) && (
+                        <div>
+                          <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
+                          <div className="px-3 py-2 border rounded bg-muted text-sm">
+                            {labDiscountPct != null
+                              ? `${labDiscountPct}%（${labs.find(l => l.id === costForm.labId)?.name ?? '—'} · ${labDiscountPeriodMonth}）`
+                              : '—（該工場今個月冇折扣設定）'}
+                          </div>
                         </div>
-                      </div>
+                      )}
                       <div>
                         <label className="block text-sm mb-1">Lab</label>
                         <select value={costForm.labId} onChange={e => {
@@ -1487,11 +1579,14 @@ export default function CostEntryPage() {
                             className="w-full border rounded px-2 py-1.5 text-sm mt-1" placeholder="工場名稱" />
                         )}
                       </div>
-                      <div>
-                        <label className="block text-sm mb-1">Lab 單號</label>
-                        <input value={costForm.labOrderNo} onChange={e => setCostForm({ ...costForm, labOrderNo: e.target.value })}
-                          className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
-                      </div>
+                      {/* ★ cwm-costentry-20260827 拍板②：手動新增唔再收 Lab 單號 — 帳單流程/編輯模式唔改 */}
+                      {!(pickerMode === 'manual' && !editingCase) && (
+                        <div>
+                          <label className="block text-sm mb-1">Lab 單號</label>
+                          <input value={costForm.labOrderNo} onChange={e => setCostForm({ ...costForm, labOrderNo: e.target.value })}
+                            className="w-full border rounded px-2 py-1.5 text-sm" placeholder="Lab 單號" />
+                        </div>
+                      )}
                     </>
                   )}
                 </div>

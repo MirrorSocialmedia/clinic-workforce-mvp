@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
-  const { name, shortName, phone, color, apricotId, apricotUserId, companyId, sortOrder, clinicIds } = body
+  const { name, shortName, phone, color, apricotId, apricotUserId, companyId, sortOrder, clinicIds, showInCostEntry } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
@@ -67,6 +67,8 @@ export async function POST(req: NextRequest) {
           apricotUserId: apricotUserId?.trim() || null,
           companyId: companyId || null,
           sortOrder: sortOrder ?? 0,
+          // ★ cwm-costentry-20260827 §1：成本錄入顯示開關（唔傳 = schema default true）
+          ...(showInCostEntry !== undefined && { showInCostEntry: !!showInCostEntry }),
         },
       })
 

@@ -90,7 +90,7 @@ export default function ProvidersPage() {
 
   function startAdd() {
     setEditing('__new__')
-    setForm({ name: '', shortName: '', phone: '', apricotId: '', apricotUserId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [] })
+    setForm({ name: '', shortName: '', phone: '', apricotId: '', apricotUserId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [], showInCostEntry: true })
   }
 
   function startEdit(p: any) {
@@ -184,6 +184,7 @@ export default function ProvidersPage() {
               <th className="text-left p-3">排序</th>
               <th className="text-left p-3">應診診所</th>
               <th className="text-left p-3">狀態</th>
+              <th className="text-left p-3">成本錄入</th>
               <th className="text-right p-3">操作</th>
             </tr>
           </thead>
@@ -213,6 +214,8 @@ export default function ProvidersPage() {
                   </div>
                 </td>
                 <td className="p-2"><input type="checkbox" checked={form.isActive ?? true} onChange={e => setForm({ ...form, isActive: e.target.checked })} /></td>
+                {/* ★ cwm-costentry-20260827 §1：成本錄入顯示開關（舊資料 undefined 當 true） */}
+                <td className="p-2"><input type="checkbox" checked={form.showInCostEntry !== false} onChange={e => setForm({ ...form, showInCostEntry: e.target.checked })} /></td>
                 <td className="p-2 text-right">
                   <Button size="sm" onClick={save} className="mr-1"><Check className="w-4 h-4" /></Button>
                   <Button size="sm" variant="outline" onClick={() => setEditing(null)}><X className="w-4 h-4" /></Button>
@@ -244,6 +247,8 @@ export default function ProvidersPage() {
                   </div>
                 </td>
                 <td className="p-2"><input type="checkbox" checked={form.isActive ?? true} onChange={e => setForm({ ...form, isActive: e.target.checked })} /></td>
+                {/* ★ cwm-costentry-20260827 §1：成本錄入顯示開關（舊資料 undefined 當 true） */}
+                <td className="p-2"><input type="checkbox" checked={form.showInCostEntry !== false} onChange={e => setForm({ ...form, showInCostEntry: e.target.checked })} /></td>
                 <td className="p-2 text-right">
                   <Button size="sm" onClick={save} className="mr-1"><Check className="w-4 h-4" /></Button>
                   <Button size="sm" variant="outline" onClick={() => setEditing(null)}><X className="w-4 h-4" /></Button>
@@ -279,6 +284,8 @@ export default function ProvidersPage() {
                   ) : <span className="text-xs text-muted-foreground">—</span>}
                 </td>
                 <td className="p-3">{p.isActive ? '✅ 活躍' : '⛔ 停用'}</td>
+                {/* ★ cwm-costentry-20260827 §1：false 顯示 ☐，true/undefined 顯示 ✅ */}
+                <td className="p-3">{p.showInCostEntry === false ? '☐' : '✅'}</td>
                 <td className="p-3 text-right">
                   <Button size="sm" variant="ghost" onClick={() => startEdit(p)} className="mr-1"><Edit2 className="w-4 h-4" /></Button>
                   {canPayout && <Button size="sm" variant="ghost" onClick={() => { setCommissionPanel(p.id); loadCommissions(p.id) }} className="mr-1"><Wallet className="w-4 h-4" /></Button>}
@@ -287,7 +294,7 @@ export default function ProvidersPage() {
               </tr>
             ))}
             {!loading && providers.length === 0 && (
-              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
+              <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
             )}
           </tbody>
         </table>
