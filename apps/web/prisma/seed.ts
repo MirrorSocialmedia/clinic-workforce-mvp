@@ -238,8 +238,7 @@ async function main() {
           attendance_bonus: {
             amount: 800,
             cancel_if: {
-              late_minutes_exceed: 30,
-              late_is_cumulative: true,
+              late_total_exceed: 30, // [cwm-bonusrules-20260827] 舊 late_minutes_exceed:30 + cumulative:true → late_total_exceed
               any_unplanned_leave: true,
               any_absence: true,
             },
@@ -260,8 +259,7 @@ async function main() {
           attendance_bonus: {
             amount: 600,
             cancel_if: {
-              late_minutes_exceed: 30,
-              late_is_cumulative: true,
+              late_total_exceed: 30, // [cwm-bonusrules-20260827]
               any_unplanned_leave: true,
               any_absence: true,
             },
@@ -282,8 +280,7 @@ async function main() {
           attendance_bonus: {
             amount: 500,
             cancel_if: {
-              late_minutes_exceed: 30,
-              late_is_cumulative: true,
+              late_total_exceed: 30, // [cwm-bonusrules-20260827]
               any_unplanned_leave: true,
               any_absence: true,
             },

@@ -621,104 +621,63 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                   />
                 </div>
                 <div style={{ fontSize: 13, color: '#888', marginBottom: 8, fontWeight: 500 }}>
-                  取消條件：
+                  取消條件：<span style={{ color: '#c00' }}>任何一條中就取消</span>（早退併入遲到一齊計）
                 </div>
-                <label style={checkboxLabelStyle}>
-                  <input
-                    type="checkbox"
-                    checked={!!modifiers.attendance_bonus.cancel_if?.late_minutes_exceed}
-                    onChange={(e) => {
-                      setConfig((prev) => ({
-                        ...prev,
-                        modifiers: {
-                          ...prev.modifiers!,
-                          attendance_bonus: {
-                            ...prev.modifiers!.attendance_bonus!,
-                            cancel_if: {
-                              ...prev.modifiers!.attendance_bonus!.cancel_if,
-                              late_minutes_exceed: e.target.checked
-                                ? prev.modifiers!.attendance_bonus!.cancel_if?.late_minutes_exceed || 30
-                                : undefined,
-                            },
-                          },
-                        },
-                      }))
-                    }}
-                  />
-                  遲到超過{' '}
-                  {modifiers.attendance_bonus.cancel_if?.late_minutes_exceed != null && (
-                    <input
-                      type="number"
-                      value={modifiers.attendance_bonus.cancel_if.late_minutes_exceed}
-                      onChange={(e) => {
-                        setConfig((prev) => ({
-                          ...prev,
-                          modifiers: {
-                            ...prev.modifiers!,
-                            attendance_bonus: {
-                              ...prev.modifiers!.attendance_bonus!,
-                              cancel_if: {
-                                ...prev.modifiers!.attendance_bonus!.cancel_if,
-                                late_minutes_exceed: Number(e.target.value),
-                              },
-                            },
-                          },
-                        }))
-                      }}
-                      style={{ width: 60, padding: '2px 6px' }}
-                      min={0}
-                    />
-                  )}{' '}
-                  分鐘
-                </label>
-                <div style={{ paddingLeft: 20, marginTop: 4 }}>
-                  <label style={checkboxLabelStyle}>
-                    <input
-                      type="radio"
-                      name="lateCumulative"
-                      checked={modifiers.attendance_bonus.cancel_if?.late_is_cumulative === true}
-                      onChange={() => {
-                        setConfig((prev) => ({
-                          ...prev,
-                          modifiers: {
-                            ...prev.modifiers!,
-                            attendance_bonus: {
-                              ...prev.modifiers!.attendance_bonus!,
-                              cancel_if: {
-                                ...prev.modifiers!.attendance_bonus!.cancel_if,
-                                late_is_cumulative: true,
-                              },
-                            },
-                          },
-                        }))
-                      }}
-                    />
-                    當月累計
-                  </label>
-                  <label style={{ ...checkboxLabelStyle, marginLeft: 12 }}>
-                    <input
-                      type="radio"
-                      name="lateCumulative"
-                      checked={modifiers.attendance_bonus.cancel_if?.late_is_cumulative === false}
-                      onChange={() => {
-                        setConfig((prev) => ({
-                          ...prev,
-                          modifiers: {
-                            ...prev.modifiers!,
-                            attendance_bonus: {
-                              ...prev.modifiers!.attendance_bonus!,
-                              cancel_if: {
-                                ...prev.modifiers!.attendance_bonus!.cancel_if,
-                                late_is_cumulative: false,
-                              },
-                            },
-                          },
-                        }))
-                      }}
-                    />
-                    單次最大
-                  </label>
-                </div>
+                {([
+                  ['late_single_exceed', '單次遲到/早退 ≥', 15, '分鐘'],
+                  ['late_count_exceed', '遲到/早退次數 ≥', 5, '次'],
+                  ['late_total_exceed', '累計遲到/早退 ≥', 30, '分鐘'],
+                ] as const).map(([ruleKey, label, defaultValue, unit]) => {
+                  const ruleValue = modifiers.attendance_bonus?.cancel_if?.[ruleKey]
+                  return (
+                    <label key={ruleKey} style={{ ...checkboxLabelStyle, marginTop: 4, display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={ruleValue != null}
+                        onChange={(e) => {
+                          setConfig((prev) => {
+                            const ab = prev.modifiers?.attendance_bonus
+                            if (!ab) return prev
+                            const ci = { ...(ab.cancel_if ?? {}) }
+                            // 關 checkbox = key 真刪走（唔留 null — MD setCancelIf 樣本）
+                            if (e.target.checked) ci[ruleKey] = defaultValue
+                            else delete ci[ruleKey]
+                            return {
+                              ...prev,
+                              modifiers: { ...prev.modifiers, attendance_bonus: { ...ab, cancel_if: ci } },
+                            }
+                          })
+                        }}
+                      />
+                      {label}{' '}
+                      {ruleValue != null && (
+                        <input
+                          type="number"
+                          value={ruleValue}
+                          onChange={(e) => {
+                            setConfig((prev) => {
+                              const ab = prev.modifiers?.attendance_bonus
+                              if (!ab) return prev
+                              return {
+                                ...prev,
+                                modifiers: {
+                                  ...prev.modifiers,
+                                  attendance_bonus: {
+                                    ...ab,
+                                    cancel_if: { ...ab.cancel_if, [ruleKey]: Number(e.target.value) },
+                                  },
+                                },
+                              }
+                            })
+                          }}
+                          style={{ width: 60, padding: '2px 6px' }}
+                          min={0}
+                        />
+                      )}{' '}
+                      {unit}
+                    </label>
+                  )
+                })}
                 <label style={{ ...checkboxLabelStyle, marginTop: 4 }}>
                   <input
                     type="checkbox"

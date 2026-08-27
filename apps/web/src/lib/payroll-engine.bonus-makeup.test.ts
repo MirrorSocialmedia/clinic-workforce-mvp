@@ -118,7 +118,11 @@ const config = (cumulative = true): any => ({
     lunch_break: { enabled: true, defaultMinutes: 60, minMinutes: 30 },
     attendance_bonus: {
       amount: BONUS,
-      cancel_if: { late_minutes_exceed: 30, late_is_cumulative: cumulative },
+      // [cwm-bonusrules-20260827] 舊 cumulative flag 映射到新規則：
+      //   cumulative=true → late_total_exceed: 30；cumulative=false → late_single_exceed: 30（單次最大）
+      cancel_if: cumulative
+        ? { late_total_exceed: 30 }
+        : { late_single_exceed: 30 },
     },
   },
 })
@@ -233,7 +237,7 @@ describe('勤工獎補鐘豁免 + 午休超時（拍板 b 逐日合併）', () =
     const r = await run({ days: [3], out: { 3: [12, 30] } })
     assert.equal(r.attendanceBonus, 0)
     assert.equal(r.attendanceBonusCancelled, true)
-    assert.match(r.attendanceBonusReason ?? '', /30分鐘門檻/)
+    assert.match(r.attendanceBonusReason ?? '', /累計遲到\/早退330分鐘 ≥ 30分鐘/)
     const t = await tb({ days: [3], out: { 3: [12, 30] } })
     assert.equal(t.netEarlyMinutes, 330, '帳戶照扣 330')
     assert.equal(t.netOtThisMonth, -330)

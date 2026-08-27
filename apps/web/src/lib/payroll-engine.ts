@@ -24,7 +24,7 @@ import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMa
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-const TIMEBANK_ENGINE_VERSION = 3 // v3: 分更時間窗 + floor 取整
+const TIMEBANK_ENGINE_VERSION = 4 // v4: 勤工獎三條規則 (single/count/total) + >= 門檻 [cwm-bonusrules-20260827]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -1231,8 +1231,12 @@ export interface PayRuleConfigModular {
     attendance_bonus?: {
       amount: number
       cancel_if: {
-        late_minutes_exceed?: number
-        late_is_cumulative?: boolean
+        // ★ 2026-08-27 [cwm-bonusrules-20260827]：三條獨立規則，可同時生效，任何一條命中即取消（>= 門檻，拍板②）
+        //   早退併入遲到一齊計（拍板①，維持現狀；UI label 寫「遲到/早退」）
+        //   舊 keys late_minutes_exceed / late_is_cumulative 唔再讀（§8.4 config migration 已改晒全部 PayRule 行連歷史版本）
+        late_single_exceed?: number   // 單次遲到/早退 ≥ N 分鐘
+        late_count_exceed?: number    // 遲到/早退次數 ≥ N 次
+        late_total_exceed?: number    // 累計遲到/早退 ≥ N 分鐘
         any_unplanned_leave?: boolean
         any_absence?: boolean
       }
@@ -1320,11 +1324,13 @@ export function evaluateAttendanceBonus(
   config: {
     amount: number
     cancel_if?: {
-      late_minutes_exceed?: number
-      late_is_cumulative?: boolean
+      // ★ 2026-08-27 [cwm-bonusrules-20260827]：三條獨立規則，可同時生效，任何一條命中即取消（>= 門檻，拍板②）
+      late_single_exceed?: number   // 單次遲到/早退 ≥ N 分鐘
+      late_count_exceed?: number    // 遲到/早退次數 ≥ N 次
+      late_total_exceed?: number    // 累計遲到/早退 ≥ N 分鐘
       any_unplanned_leave?: boolean
       any_absence?: boolean
-      any_cancels_bonus_leave?: boolean
+      any_cancels_bonus_leave?: boolean  // 舊 type 宣告（全 repo 零消費者，保留兼容）
     }
   },
   workData: {
@@ -1337,19 +1343,35 @@ export function evaluateAttendanceBonus(
   const cancelIf = config.cancel_if || {}
   const bonusAmount = config.amount || 0
 
-  // Late + Early check
-  if (cancelIf.late_minutes_exceed !== undefined) {
-    let lateTotal = 0, earlyTotal = 0
-    if (cancelIf.late_is_cumulative === true) {
-      lateTotal = workData.lateRecords.reduce((s, r) => s + r.minutes, 0)
-      earlyTotal = workData.earlyRecords.reduce((s, r) => s + r.minutes, 0)
-    } else {
-      lateTotal = workData.lateRecords.reduce((m, r) => Math.max(m, r.minutes), 0)
-      earlyTotal = workData.earlyRecords.reduce((m, r) => Math.max(m, r.minutes), 0)
+  // Late + Early check — ★ 2026-08-27 [cwm-bonusrules-20260827]：三條獨立規則，可同時生效，任何一條命中即取消
+  // 拍板① 早退併入遲到一齊計（入參 already 係 caller 逐日合併結果：lateRecords 含 lunchLate、已剔補鐘日；earlyRecords = 早退）
+  // 拍板② 門檻由 > 改 >=（啱啱踩線就取消）
+  // 無任何遲到/早退記錄 → 三條規則全跳過（唔會誤取消）
+  const allMins = [
+    ...workData.lateRecords.map(r => r.minutes),
+    ...workData.earlyRecords.map(r => r.minutes),
+  ]
+  if (allMins.length > 0) {
+    // ① 單次：最大單次 ≥ N 分鐘
+    if (cancelIf.late_single_exceed !== undefined) {
+      const maxMins = Math.max(...allMins)
+      if (maxMins >= cancelIf.late_single_exceed) {
+        return { amount: 0, cancelled: true, reason: `單次遲到/早退${maxMins}分鐘 ≥ ${cancelIf.late_single_exceed}分鐘，取消勤工` }
+      }
     }
-    const total = cancelIf.late_is_cumulative === true ? lateTotal + earlyTotal : Math.max(lateTotal, earlyTotal)
-    if (total > cancelIf.late_minutes_exceed) {
-      return { amount: 0, cancelled: true, reason: `遲到${lateTotal}+早退${earlyTotal}=${total}分鐘，超過${cancelIf.late_minutes_exceed}分鐘門檻` }
+    // ② 次數：次數 ≥ N 次
+    if (cancelIf.late_count_exceed !== undefined) {
+      const count = allMins.length
+      if (count >= cancelIf.late_count_exceed) {
+        return { amount: 0, cancelled: true, reason: `遲到/早退${count}次 ≥ ${cancelIf.late_count_exceed}次，取消勤工` }
+      }
+    }
+    // ③ 累計：總分鐘 ≥ N 分鐘
+    if (cancelIf.late_total_exceed !== undefined) {
+      const total = allMins.reduce((s, m) => s + m, 0)
+      if (total >= cancelIf.late_total_exceed) {
+        return { amount: 0, cancelled: true, reason: `累計遲到/早退${total}分鐘 ≥ ${cancelIf.late_total_exceed}分鐘，取消勤工` }
+      }
     }
   }
 
@@ -2808,7 +2830,7 @@ function calcSplitBase(config: PayRuleConfigModular, workData: WorkData, monthDa
 // ------------------------------------------------------------------
 
 async function applyAttendanceBonusModifier(
-  modConfig: { amount: number; cancel_if: { late_minutes_exceed?: number; late_is_cumulative?: boolean; any_unplanned_leave?: boolean; any_absence?: boolean } },
+  modConfig: { amount: number; cancel_if: { late_single_exceed?: number; late_count_exceed?: number; late_total_exceed?: number; any_unplanned_leave?: boolean; any_absence?: boolean } },
   result: PayrollResult,
   workData: WorkData,
   employeeId: string,
@@ -2827,7 +2849,7 @@ async function applyAttendanceBonusModifier(
   //     → 由 tb.timeAccountDetail 逐日撈返 lunchLate 併埋（拍板 b）
   //   · 午休超時冇補鐘機制（makeupLateDates 只 cover LATE/EARLY_LEAVE）→ 永遠計入
   //   ⚠️ 一定要【逐日】併，唔可以加一個 lump sum ——
-  //      late_is_cumulative=false 係取「最大單次」，lump sum 會爆錶
+  //      late_single_exceed 係取「最大單次」，lump sum 會爆錶
   //   ⚠️ 早退唔加 lunchLate（語義上「返遲咗」唔係「走早咗」；tb.dailyEarly 本來都冇）
   const tbConfig = { negative_carry: (config as any)?.negative_carry ?? 'reset' }
   const tb = await calculateTimeBank(employeeId, monthDate, tbConfig, prisma)

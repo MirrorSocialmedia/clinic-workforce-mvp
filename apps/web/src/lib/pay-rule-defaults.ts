@@ -4,8 +4,10 @@ export const DEFAULT_MODIFIERS = {
   attendance_bonus: {
     amount: 500,
     cancel_if: {
-      late_minutes_exceed: 30,
-      late_is_cumulative: true,
+      // [cwm-bonusrules-20260827] 三條獨立規則（預設 15/5/30），任何一條命中即取消（>= 門檻）
+      late_single_exceed: 15,
+      late_count_exceed: 5,
+      late_total_exceed: 30,
       any_unplanned_leave: true,
       any_absence: true,
     },

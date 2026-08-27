@@ -128,7 +128,7 @@ const config = () => ({
     lunch_break: { enabled: true, defaultMinutes: 60, minMinutes: 30 },
     attendance_bonus: {
       amount: BONUS,
-      cancel_if: { late_minutes_exceed: 30, late_is_cumulative: true },
+      cancel_if: { late_total_exceed: 30 }, // [cwm-bonusrules-20260827] 舊 late_minutes_exceed:30 + cumulative → late_total_exceed
     },
   },
 })

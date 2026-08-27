@@ -160,8 +160,8 @@ async function main() {
     monthly_salary: SCENARIO.monthlySalary,
     modifiers: {
       attendance_bonus: { amount: SCENARIO.rule.attendanceBonus, cancel_if: {
-        late_minutes_exceed: SCENARIO.rule.cancelBonusIfLateOver,
-        late_is_cumulative: true, any_unplanned_leave: true,
+        late_total_exceed: SCENARIO.rule.cancelBonusIfLateOver, // [cwm-bonusrules-20260827]
+        any_unplanned_leave: true,
         any_absence: SCENARIO.rule.cancelBonusIfAbsent } },
       overtime: { mode: 'time_off', hours_per_leave_day: SCENARIO.rule.otHoursPerLeaveDay },
       working_days: { basis: 'scheduled', rest_days: SCENARIO.rule.restDays, count_public_holidays: true },
@@ -360,8 +360,8 @@ async function runS18() {
     monthly_salary: S.monthlySalary,
     modifiers: {
       attendance_bonus: { amount: S.rule.attendanceBonus, cancel_if: {
-        late_minutes_exceed: S.rule.cancelBonusIfLateOver,
-        late_is_cumulative: true, any_unplanned_leave: true,
+        late_total_exceed: S.rule.cancelBonusIfLateOver, // [cwm-bonusrules-20260827]
+        any_unplanned_leave: true,
         any_absence: S.rule.cancelBonusIfAbsent } },
       overtime: { mode: 'time_off', hours_per_leave_day: S.rule.otHoursPerLeaveDay },
       working_days: { basis: 'scheduled', rest_days: S.rule.restDays, count_public_holidays: true },
@@ -431,8 +431,8 @@ async function runS19() {
     monthly_salary: S.monthlySalary,
     modifiers: {
       attendance_bonus: { amount: S.rule.attendanceBonus, cancel_if: {
-        late_minutes_exceed: S.rule.cancelBonusIfLateOver,
-        late_is_cumulative: true, any_unplanned_leave: true,
+        late_total_exceed: S.rule.cancelBonusIfLateOver, // [cwm-bonusrules-20260827]
+        any_unplanned_leave: true,
         any_absence: S.rule.cancelBonusIfAbsent } },
       overtime: { mode: 'time_off', hours_per_leave_day: S.rule.otHoursPerLeaveDay },
       working_days: { basis: 'scheduled', rest_days: S.rule.restDays, count_public_holidays: true },
