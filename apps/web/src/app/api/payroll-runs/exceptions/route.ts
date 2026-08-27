@@ -98,26 +98,13 @@ export async function GET(req: NextRequest) {
   // ★ 打卡按「員工範圍」收窄，唔按打卡地點 —— 調鋪日對面店嘅打卡照拉到
   let scopedEmployeeIds: string[] | undefined = undefined
   if (scopedClinicId || scopedClinicIds !== undefined) {
-    // ★ 2026-08-26：員工範圍要 union「該月喺呢間店有排更／有打卡嘅人」——
-    //   淨係靠 EmployeeClinic 會令臨時幫手嘅打卡撈唔到 → 誤判缺勤。
-    const clinicCond = scopedClinicId ? scopedClinicId : { in: scopedClinicIds! }
-    const [links, shiftEmps, punchEmps] = await Promise.all([
-      prisma.employeeClinic.findMany({ where: { clinicId: clinicCond }, select: { employeeId: true } }),
-      prisma.shift.findMany({
-        where: { date: { gte: monthStart, lte: monthEnd }, status: 'CONFIRMED',
-                 OR: [{ clinicId: clinicCond }, { secondaryClinicId: clinicCond }] },
-        select: { employeeId: true }, distinct: ['employeeId'],
-      }),
-      prisma.punchRecord.findMany({
-        where: { punchTime: { gte: monthStart, lte: monthEnd }, clinicId: clinicCond },
-        select: { employeeId: true }, distinct: ['employeeId'],
-      }),
-    ])
-    scopedEmployeeIds = [...new Set([
-      ...links.map(l => l.employeeId),
-      ...shiftEmps.map(s => s.employeeId),
-      ...punchEmps.map(p => p.employeeId),
-    ])]
+    const links = await prisma.employeeClinic.findMany({
+      where: {
+        clinicId: scopedClinicId ? scopedClinicId : { in: scopedClinicIds! },
+      },
+      select: { employeeId: true },
+    })
+    scopedEmployeeIds = [...new Set(links.map(l => l.employeeId))]
   }
 
   const [activeRules, effectivePunches, rawPunches, corrections, shifts] = await Promise.all([
