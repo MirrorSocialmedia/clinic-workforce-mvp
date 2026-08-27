@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { todayHK, toHKDateStr } from '@/lib/hk-date'
@@ -32,7 +32,7 @@ interface CostCase {
   receivedAt: string | null
   appointmentAt: string | null
   status: string
-  periodMonth: string
+  periodMonth: string | null // ★ 2026-08-27：未到貨 = null（唔入月結）
   lockedByRunId: string | null
   lab?: { id: string; name: string }
   materials?: any[]
@@ -275,6 +275,56 @@ export default function CostEntryPage() {
   //   ★★ 唔完全隱藏：ProviderClinic 綁定可能漏（青衣就係零資料），
   //   完全隱藏 = 錄唔到成本。API 唔 filter，改前端分組（§2.1）。
   //   ★ cwm-costentry-20260827 §1.4：input 改 editProviders（已過濾 + 編輯模式加返原醫生）
+  // ★ 2026-08-27 cwm-costarrival §3：全欄排序（拍板③「整行跟住走」）——
+  //   排整個 object array，每行所有欄自然跟住；null/空值永遠排最後
+  type SortKey = 'orderedAt' | 'patientCode' | 'patientName' | 'category'
+    | 'labName' | 'dsaName' | 'finalCost' | 'receivedAt' | 'appointmentAt' | 'status'
+  const [sortKey, setSortKey] = useState<SortKey>('orderedAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function sortValue(c: CostCase, key: SortKey): any {
+    switch (key) {
+      case 'orderedAt': case 'receivedAt': case 'appointmentAt':
+        return c[key] ? new Date(c[key]).getTime() : null
+      case 'finalCost':
+        return c.finalCost != null ? Number(c.finalCost) : null
+      case 'labName':
+        return c.lab?.name || c.labOther || null
+      default:
+        return c[key] ?? null
+    }
+  }
+
+  const sortedCases = useMemo(() => {
+    const arr = [...visibleCases]
+    const dir = sortDir === 'asc' ? 1 : -1
+    arr.sort((a, b) => {
+      const va = sortValue(a, sortKey)
+      const vb = sortValue(b, sortKey)
+      // ★ null/空值一律排最後（唔理升降序）——「未有價」「未到貨」唔應該搶頭
+      if (va == null && vb == null) return 0
+      if (va == null) return 1
+      if (vb == null) return -1
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+    return arr
+  }, [visibleCases, sortKey, sortDir])
+
+  const SortableTh = ({ k, children, className = 'text-left p-2' }:
+    { k: SortKey; children: ReactNode; className?: string }) => (
+    <th onClick={() => {
+          if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+          else { setSortKey(k); setSortDir('asc') }
+        }}
+        className={`${className} cursor-pointer select-none`}
+    >
+      {children}
+      {sortKey === k && <span className="ml-0.5">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+    </th>
+  )
+
   const groupedProviders = useMemo(() => {
     const cid = selectedClinicInternalId
     if (!cid) return { mine: editProviders as any[], others: [] as any[] }
@@ -997,21 +1047,21 @@ export default function CostEntryPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-gray-50">
-                <th className="text-left p-2">落單日</th>
-                <th className="text-left p-2">病人編號</th>
-                <th className="text-left p-2">病人姓名</th>
-                <th className="text-left p-2">項目</th>
-                <th className="text-left p-2">Lab · 單號</th>
-                <th className="text-left p-2">DSA</th>
-                <th className="text-right p-2">成本</th>
-                <th className="text-left p-2">到貨</th>
-                <th className="text-left p-2">覆診</th>
-                <th className="text-left p-2">狀態</th>
+                <SortableTh k="orderedAt">落單日</SortableTh>
+                <SortableTh k="patientCode">病人編號</SortableTh>
+                <SortableTh k="patientName">病人姓名</SortableTh>
+                <SortableTh k="category">項目</SortableTh>
+                <SortableTh k="labName">Lab · 單號</SortableTh>
+                <SortableTh k="dsaName">DSA</SortableTh>
+                <SortableTh k="finalCost" className="text-right p-2">成本</SortableTh>
+                <SortableTh k="receivedAt">到貨</SortableTh>
+                <SortableTh k="appointmentAt">覆診</SortableTh>
+                <SortableTh k="status">狀態</SortableTh>
                 <th className="text-left p-2">操作</th>
               </tr>
             </thead>
             <tbody>
-              {visibleCases.map(c => {
+              {sortedCases.map(c => {
                 // ★ cwm-costentry-20260827 §3：作廢行灰字紅線（「操作」欄豁免 — 掣要撳得到）
                 const vStyle = c.status === 'VOID' ? voidStyle : undefined
                 return (
@@ -1031,7 +1081,13 @@ export default function CostEntryPage() {
                   <td className="p-2 text-right" style={vStyle}>
                     {c.finalCost != null ? `$${c.finalCost.toFixed(2)}` : c.baseCost == null ? <span className="text-yellow-600">未有價</span> : '$—'}
                   </td>
-                  <td className="p-2" style={vStyle}>{fmtDate(c.receivedAt)}</td>
+                  <td className="p-2" style={vStyle}>
+                    {fmtDate(c.receivedAt)}
+                    {/* ★ 2026-08-27：未到貨（periodMonth null）→ 唔會入任何月結 */}
+                    {c.periodMonth == null && (
+                      <span className="ml-1" style={{ fontSize: 10, color: '#b45309' }} title="未填到貨日，唔會入任何月結">⚠️ 未入月結</span>
+                    )}
+                  </td>
                   <td className="p-2" style={vStyle}>{fmtDate(c.appointmentAt)}</td>
                   <td className="p-2" style={vStyle}>
                     {/* ★ 2026-08-25：REDO = 琥珀色（bg #fef3c7 / fg #92400e = tailwind amber-100/800） */}
@@ -1079,6 +1135,15 @@ export default function CostEntryPage() {
                 <span>｜</span>
                 <span className="flex items-center gap-1 text-yellow-600">
                   <AlertTriangle size={14} /> {stats.unpricedCount} 筆未有價（不會入月結）
+                </span>
+              </>
+            )}
+            {/* ★ 2026-08-27：「未到貨」係第二個唔入月結嘅原因，分開講（原「未有價」提示保留） */}
+            {(summary?.notReceivedCount ?? 0) > 0 && (
+              <>
+                <span>｜</span>
+                <span className="flex items-center gap-1" style={{ color: '#b45309' }}>
+                  <AlertTriangle size={14} /> {summary.notReceivedCount} 筆未到貨（唔入月結）
                 </span>
               </>
             )}

@@ -48,8 +48,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Derive periodMonth from orderedAt
-  const periodMonth = toHKDateStr(orderedAt).slice(0, 7)
+  // ★ 2026-08-27 拍板①：成本按【到貨日】入月結（同 LAB/INVISALIGN POST 一致）；未到貨 = null
+  const periodMonth = receivedAt ? toHKDateStr(receivedAt).slice(0, 7) : null
 
   // ★ B1: Resolve material prices by name + orderedAt
   const orderedAtDate = new Date(orderedAt)

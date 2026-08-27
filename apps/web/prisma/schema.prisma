@@ -1042,7 +1042,8 @@ model CostCase {
   redoAt        DateTime?
   /// 重做原因（必填 — 月尾對數要查得返）
   redoReason    String?
-  periodMonth   String
+  /// ★ 2026-08-27：由 receivedAt 導出；未到貨 = null（唔入月結）
+  periodMonth   String?
   lockedByRunId String?
   createdBy     String
   createdAt     DateTime @default(now())

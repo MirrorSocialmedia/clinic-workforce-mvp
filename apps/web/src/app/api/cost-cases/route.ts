@@ -68,6 +68,15 @@ export async function GET(req: NextRequest) {
     where: { ...where, baseCost: null },
   })
 
+  // ★ 2026-08-27 cwm-costarrival：未到貨（periodMonth NULL，唔入月結）——
+  //   同「未有價」係兩個唔入月結嘅原因，底部統計要分開講。
+  //   按 scope 計數但唔加 periodMonth 過濾（未到貨個案冇月，個月篩選會漏佢哋）
+  const whereNoMonth = { ...where }
+  delete whereNoMonth.periodMonth
+  const notReceived = await prisma.costCase.count({
+    where: { ...whereNoMonth, periodMonth: null, status: { not: 'VOID' } },
+  })
+
   // Group by lab
   const labGroups: Record<string, { count: number; total: number }> = {}
   for (const c of cases) {
@@ -106,6 +115,7 @@ export async function GET(req: NextRequest) {
       totalFinalCost: totals._sum.finalCost ? Number(totals._sum.finalCost) : null,
       totalBaseCost: totals._sum.baseCost ? Number(totals._sum.baseCost) : null,
       unpricedCount: unpriced,
+      notReceivedCount: notReceived,
       labGroups,
     },
   })
@@ -142,13 +152,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'IMPLANT 請用 POST /api/cost-cases/implant' }, { status: 400 })
   }
 
-  // Derive periodMonth from orderedAt
-  const periodMonth = toHKDateStr(orderedAt).slice(0, 7)
+  // ★ 2026-08-27 拍板①：成本按【到貨日】入月結 —— 落單 7/25、到貨 8/5 → 計 8 月。
+  //   ⚠️ 未到貨（receivedAt null）→ periodMonth = null → 唔入任何月結，
+  //      等補咗到貨日先計（拍板① (a)）。
+  const periodMonth = receivedAt ? toHKDateStr(receivedAt).slice(0, 7) : null
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
+  //   ★ 2026-08-27：periodMonth null（未到貨）→ 冇月度折扣，finalCost = baseCost
   const effectiveLabId = labId || null
   let discountPctNum: number | null = null
-  if (effectiveLabId) {
+  if (effectiveLabId && periodMonth) {
     const d = await prisma.labMonthlyDiscount.findUnique({
       where: { labId_periodMonth: { labId: effectiveLabId, periodMonth } },
       select: { discountPct: true },

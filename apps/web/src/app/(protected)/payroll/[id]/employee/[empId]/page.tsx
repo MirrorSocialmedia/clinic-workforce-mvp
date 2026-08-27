@@ -193,6 +193,12 @@ export default function EmployeePayrollDetailPage() {
       while (offset < imgH) {
         if (offset > 0) pdf.addPage()
         pdf.addImage(imgData, 'JPEG', MARGIN, MARGIN - offset, contentW, imgH)
+        // ★ 2026-08-27 cwm-costarrival：jsPDF 唔會 clip —— 圖會畫入上下 margin，令每頁多顯示 24mm
+        //   → 下一頁由 offset 開始就會重複嗰 24mm（分頁重疊）。
+        //   用白矩形遮住上下 margin，令每頁真係只顯示 contentH。（左右唔使遮 — contentW 已限闊）
+        pdf.setFillColor(255, 255, 255)
+        pdf.rect(0, 0, pageW, MARGIN, 'F')
+        pdf.rect(0, pageH - MARGIN, pageW, MARGIN, 'F')
         offset += contentH                     // ★ 用 contentH 唔係 pageH
       }
       pdf.save(`薪資明細_${employeeName}_${periodMonth}.pdf`)
@@ -322,10 +328,9 @@ export default function EmployeePayrollDetailPage() {
 
       {/* Printable area: logo + title + cards */}
       <div ref={printRef} style={{ position: 'relative' }} className="space-y-6">
-        {/* ★ 2026-08-25：發薪資料 absolute 右上，令 logo ＋ 公司名可以【成頁】置中
-            （之前兩者係 flex 兄弟，logo 只喺左半邊置中；paddingLeft:40 反而推得更歪）
-            ★ minHeight:96 唔加會俾 absolute 嘅發薪資料蓋住標題 */}
-        <div style={{ position: 'relative', marginBottom: 14, minHeight: 96 }}>
+        {/* ★ 2026-08-25：發薪資料 absolute 右上，令 logo 可以【成頁】置中
+            ★ minHeight:136 唔加會俾 absolute 嘅發薪資料蓋住標題（logo 80→120 後跟住加大） */}
+        <div style={{ position: 'relative', marginBottom: 14, minHeight: 136 }}>
           <div style={{ position: 'absolute', top: 0, right: 0, fontSize: 11, lineHeight: 2, minWidth: 210 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span><b>Pay Ending</b> 發薪截至</span><span>{payEndingDMY}</span>
@@ -335,14 +340,12 @@ export default function EmployeePayrollDetailPage() {
             </div>
           </div>
           <div style={{ textAlign: 'center', paddingTop: 4 }}>
+            {/* ★ 2026-08-27 拍板④：logo 再大 50%（80 → 120） */}
             {companyLogo && (
               <img src={companyLogo} alt=""
-                   style={{ height: 80, objectFit: 'contain', display: 'inline-block' }} />
+                   style={{ height: 120, objectFit: 'contain', display: 'inline-block' }} />
             )}
-            {/* ★ 拍板④：logo 下面出公司名文字（inline-block img 先會受 text-align:center 影響）*/}
-            <div style={{ fontSize: 15, fontWeight: 600, marginTop: 5, letterSpacing: 1 }}>
-              {companyLegalName}
-            </div>
+            {/* ★ 2026-08-27 拍板④：logo 下面公司名剷走（logo 圖片本身已含公司名）— 頁尾印鑑公司名保留 */}
           </div>
         </div>
         <div style={{ textAlign: 'center', marginBottom: 14 }}>

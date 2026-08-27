@@ -43,9 +43,11 @@ export async function PUT(
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
   const effectiveLabId = labId !== undefined ? (labId || null) : existing.labId
-  const effectivePeriodMonth = orderedAt !== undefined
-    ? toHKDateStr(orderedAt).slice(0, 7)
-    : existing.periodMonth
+  // ★ 2026-08-27 拍板①：periodMonth 跟 receivedAt 唔跟 orderedAt（未到貨 = null）
+  const effectiveReceivedAt = receivedAt !== undefined ? receivedAt : existing.receivedAt
+  const effectivePeriodMonth = effectiveReceivedAt
+    ? toHKDateStr(effectiveReceivedAt).slice(0, 7)
+    : null
 
   // ★ 2026-08-25 守衛①：改醫生／診所要驗存在性（FK 撞 = 400 唔係 500）
   if (providerId !== undefined && providerId !== existing.providerId) {
@@ -66,13 +68,16 @@ export async function PUT(
   //   ⚠️ PayoutRun status 實值只有 DRAFT | LOCKED（2026-08-25 grep 確認；
   //      MD 寫嘅 EXPORTED 係 PayrollRun 嘅狀態，唔係 PayoutRun 嘅）
   if (effectivePeriodMonth !== existing.periodMonth) {
-    const lockedRun = await prisma.payoutRun.findFirst({
-      where: { periodMonth: effectivePeriodMonth, status: 'LOCKED' },
-      select: { id: true },
-    })
-    if (lockedRun) {
-      return jsonNoStore(
-        { error: `${effectivePeriodMonth} 已出月結，唔可以改到嗰個月` }, { status: 409 })
+    // ★ 2026-08-27：null（由有到貨變未到貨）唔使檢查目標月（#13 唔會 409）
+    if (effectivePeriodMonth) {
+      const lockedRun = await prisma.payoutRun.findFirst({
+        where: { periodMonth: effectivePeriodMonth, status: 'LOCKED' },
+        select: { id: true },
+      })
+      if (lockedRun) {
+        return jsonNoStore(
+          { error: `${effectivePeriodMonth} 已出月結，唔可以改到嗰個月` }, { status: 409 })
+      }
     }
   }
 
@@ -89,7 +94,8 @@ export async function PUT(
     }
   }
   let discountPctNum: number | null = null
-  if (effectiveLabId) {
+  // ★ 2026-08-27：periodMonth null（未到貨）→ 冇月度折扣，finalCost = baseCost
+  if (effectiveLabId && effectivePeriodMonth) {
     const d = await prisma.labMonthlyDiscount.findUnique({
       where: { labId_periodMonth: { labId: effectiveLabId, periodMonth: effectivePeriodMonth } },
       select: { discountPct: true },
@@ -103,16 +109,29 @@ export async function PUT(
   //   防止表行缺漏把有折扣嘅單靜靜變零折扣
   let finalCost: number | null = existing.finalCost ? Number(existing.finalCost) : null
 
-  if (baseCost != null || labId !== undefined) {
-    const bc = baseCost != null ? Number(baseCost) : (existing.baseCost ? Number(existing.baseCost) : null)
-    const dp = labId !== undefined
-      ? discountPctNum
-      : (existing.discountPct ? Number(existing.discountPct) : discountPctNum)
+  // ★ 2026-08-27 cwm-costarrival：!= null 令「清空成本」（傳 null）跳過重算 →
+  //   finalCost 保留舊值，畫面「未有價」但月結仍然扣錢。改 !== undefined，同 :131 一致。
+  if (baseCost !== undefined || labId !== undefined) {
+    // ★ baseCost 明確傳 null = 清空；undefined = 冇改動先 fallback
+    const bc = baseCost !== undefined
+      ? (baseCost != null ? Number(baseCost) : null)
+      : (existing.baseCost ? Number(existing.baseCost) : null)
+    // ★ 2026-08-27：periodMonth null（未到貨）→ 冇月度折扣，finalCost = baseCost；
+    //   個案仲喺月份入面先 fallback 去 existing 快照（防表行缺漏靜靜變零折扣）
+    const dp = effectivePeriodMonth
+      ? (labId !== undefined
+        ? discountPctNum
+        : (existing.discountPct ? Number(existing.discountPct) : discountPctNum))
+      : null
 
     if (bc != null && dp != null) {
       finalCost = Number((bc * (100 - dp) / 100).toFixed(2))
     } else if (bc != null) {
       finalCost = bc
+    } else if (baseCost !== undefined) {
+      // ★ 2026-08-27：baseCost 明確傳 null（清空）→ finalCost 一併清 NULL。
+      //   undefined = 冇改動（純改 labId），保持舊值（#6 回歸）。
+      finalCost = null
     }
   }
 
@@ -120,8 +139,8 @@ export async function PUT(
   if (patientCode !== undefined) data.patientCode = patientCode
   if (patientName !== undefined) data.patientName = patientName
   if (orderedAt !== undefined) data.orderedAt = new Date(orderedAt)
-  // ★ 2026-08-25：改落單日 → periodMonth 跟住變（守衛③已驗證目標月未鎖）
-  if (orderedAt !== undefined && effectivePeriodMonth !== existing.periodMonth) {
+  // ★ 2026-08-27：periodMonth 跟 receivedAt（守衛③已驗證目標月未鎖）
+  if (effectivePeriodMonth !== existing.periodMonth) {
     data.periodMonth = effectivePeriodMonth
   }
   if (itemType !== undefined) data.itemType = itemType
