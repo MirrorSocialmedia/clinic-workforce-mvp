@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
   const unlocked = searchParams.get('unlocked')
   // ★ cwm-costentry-20260827 §2：病人搜尋（編號/姓名，insensitive 部分匹配）
   const q = searchParams.get('q')?.trim()
+  // ★ 2026-08-28 cwm-matedit T2 §2：兩個日期模式 — 'ordered'（按落單日，預設，兼容舊行為）/ 'received'（按到貨日 = periodMonth）
+  const dateMode: 'ordered' | 'received' = searchParams.get('dateMode') === 'received' ? 'received' : 'ordered'
 
   // ★ 2026-08-28 cwm-costfix §2.2：統計用 baseWhere（唔含月份條件）分開砌，
   //   列表用 where（由 baseWhere 推導 + 月份條件）—— 唔好由主 where 推導，容易漏。
@@ -51,14 +53,25 @@ export async function GET(req: NextRequest) {
 
   const where: any = { ...baseWhere }
   if (periodMonth) {
-    // ★ 2026-08-28 cwm-costfix：未到貨（periodMonth NULL）唔可以喺列表消失 ——
-    //   佢哋唔入月結，但一定要見到（否則錄咗入去搵唔返、修改後就「不見」）。
-    //   ⚠️★★★ 唔可以直接寫 where.OR：q 嘅搜尋仲有一個 OR，Prisma 只有一個
-    //   top-level OR key，後寫覆蓋前寫（codebase 第三次撞）。兩個 OR 必須 AND 包住。
-    where.AND = [
-      ...(baseWhere.AND ?? []),
-      { OR: [{ periodMonth }, { periodMonth: null }] },
-    ]
+    // ★ 2026-08-28 cwm-matedit T2 §2：兩個日期模式（取代 cwm-costfix 嘅 OR 補丁）
+    if (dateMode === 'received') {
+      // ★#15 按到貨日 — periodMonth 直接 match；未到貨（NULL）自然唔 match
+      where.periodMonth = periodMonth
+    } else {
+      // ★#12 到貨月唔同都照出現（orderedAt 範圍唔睇 periodMonth）
+      // ★#13 落單唔喺該月就唔出現
+      // ⚠️ 頂層 key（唔放 AND 陣列）— 同 baseWhere.AND（q 搜尋）、clinic scope 自然 AND（★#20）
+      // ⚠️ 範圍本身已包含 periodMonth NULL 個案 — cwm-costfix「未到貨唔消失」守則保留
+      const [yy, mm] = periodMonth.split('-').map(Number)
+      const lastDay = new Date(Date.UTC(yy, mm, 0)).getUTCDate()
+      where.orderedAt = {
+        gte: hkDateStart(`${periodMonth}-01`),
+        lte: hkDateEnd(`${periodMonth}-${String(lastDay).padStart(2, '0')}`),
+      }
+    }
+  } else if (dateMode === 'received') {
+    // ★★#21 全部月份 + 按到貨日 → 只出有到貨日嘅（未到貨 NULL 唔出）
+    where.periodMonth = { not: null }
   }
 
   const [cases, totals] = await prisma.$transaction([
@@ -85,14 +98,27 @@ export async function GET(req: NextRequest) {
     where: { ...where, baseCost: null },
   })
 
-  // ★ 2026-08-27 cwm-costarrival：未到貨（periodMonth NULL，唔入月結）——
-  //   同「未有價」係兩個唔入月結嘅原因，底部統計要分開講。
-  //   按 scope 計數但唔加 periodMonth 過濾（未到貨個案冇月，個月篩選會漏佢哋）
-  // ★ 2026-08-28 cwm-costfix：直接由 baseWhere（本來就唔含月份條件）計 ——
-  //   取代舊嘅「copy 主 where 再 delete periodMonth」（main where 已改 AND 包，推導會漏）
-  const notReceived = await prisma.costCase.count({
-    where: { ...baseWhere, periodMonth: null, status: { not: 'VOID' } },
-  })
+  // ★ 2026-08-28 cwm-matedit T2 §2：分模式統計（★#16 到貨日模式總額 = 醫生月結扣嘅成本）
+  //   計數均限縮喺主 where（含月份條件）；⚠️ marker 計數排除 VOID（作廢單唔入月結討論），
+  //   count / pricedTotal 用全量（同舊 total 口徑一致）。
+  const pricedTotal = totals._sum.finalCost ? Number(totals._sum.finalCost) : 0
+  const markerWhere = (extra: any) => ({ ...where, status: { not: 'VOID' }, ...extra })
+  // noPriceCount = 範圍入面 finalCost null（ordered 模式含未到貨；received 模式 = 已到貨未有價）
+  const noPriceCount = await prisma.costCase.count({ where: markerWhere({ finalCost: null }) })
+  let notReceivedCount = 0
+  let receivedOtherMonthCount = 0
+  if (dateMode === 'ordered' && periodMonth) {
+    // ordered + 指定月：notReceivedCount = orderedAt 喺該月但 periodMonth null（未到貨）
+    // ★#17 receivedOtherMonthCount = orderedAt 喺該月但到貨喺**其他月**（「31/7 落單、6/8 到貨」唔入 7 月月結）
+    ;[notReceivedCount, receivedOtherMonthCount] = await prisma.$transaction([
+      prisma.costCase.count({ where: markerWhere({ periodMonth: null }) }),
+      // ⚠️ Prisma `not` = SQL `!=`，NULL row 自然唔 match — 一個 not 已經排除未到貨
+      prisma.costCase.count({ where: markerWhere({ periodMonth: { not: periodMonth } }) }),
+    ])
+  } else if (dateMode === 'ordered') {
+    // 全部月份：未到貨仍然有意義（兼容 cwm-costfix）；「到貨其他月」冇參考月 → 0
+    notReceivedCount = await prisma.costCase.count({ where: markerWhere({ periodMonth: null }) })
+  }
 
   // Group by lab
   const labGroups: Record<string, { count: number; total: number }> = {}
@@ -128,11 +154,18 @@ export async function GET(req: NextRequest) {
   return jsonNoStore({
     cases: serializedCases,
     summary: {
+      // ★ cwm-matedit T2 §2：mode tag + 分模式字段（前端底部標記跟 mode 顯）
+      mode: dateMode,
+      count: totals._count,
+      pricedTotal,
+      noPriceCount,
+      notReceivedCount,
+      receivedOtherMonthCount,
+      // —— 兼容舊字段 ——
       total: totals._count,
       totalFinalCost: totals._sum.finalCost ? Number(totals._sum.finalCost) : null,
       totalBaseCost: totals._sum.baseCost ? Number(totals._sum.baseCost) : null,
       unpricedCount: unpriced,
-      notReceivedCount: notReceived,
       labGroups,
     },
   })

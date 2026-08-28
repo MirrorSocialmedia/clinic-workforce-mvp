@@ -145,6 +145,9 @@ export default function CostEntryPage() {
   const [filterCategory, setFilterCategory] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [filterClinicId, setFilterClinicId] = useState('')
+  // ★ 2026-08-28 cwm-matedit T2 §2：兩個日期模式 — 預設按落單日（★#11）；
+  //   換模式唔重設 sortKey（★#18）— 排序狀態原封不動
+  const [dateMode, setDateMode] = useState<'ordered' | 'received'>('ordered')
   // ★ cwm-costentry-20260827 §2：病人搜尋（編號/姓名）
   const [searchQ, setSearchQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
@@ -392,6 +395,8 @@ export default function CostEntryPage() {
       if (filterCategory) params.set('category', filterCategory)
       if (filterStatus) params.set('status', filterStatus)
       if (filterClinicId) params.set('clinicId', filterClinicId)
+      // ★ 2026-08-28 cwm-matedit T2 §2：日期模式（ordered=預設 / received=按到貨日）
+      params.set('dateMode', dateMode)
       // ★ cwm-costentry-20260827 §2：病人搜尋（debouncedQ 已 300ms debounce → 靜止後只一次 request）
       if (debouncedQ) params.set('q', debouncedQ)
 
@@ -403,7 +408,7 @@ export default function CostEntryPage() {
     } finally {
       setLoading(false)
     }
-  }, [filterProviderId, filterPeriodMonth, filterCategory, filterStatus, filterClinicId, debouncedQ])
+  }, [filterProviderId, filterPeriodMonth, filterCategory, filterStatus, filterClinicId, dateMode, debouncedQ])
 
   const loadAuth = useCallback(async () => {
     try {
@@ -1034,7 +1039,7 @@ export default function CostEntryPage() {
               </optgroup>
             )}
           </select>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <input type="month" value={filterPeriodMonth} disabled={filterPeriodMonth === ''}
               onChange={e => setFilterPeriodMonth(e.target.value)}
               style={{ opacity: filterPeriodMonth === '' ? 0.4 : 1 }}
@@ -1046,6 +1051,19 @@ export default function CostEntryPage() {
                 onChange={e => setFilterPeriodMonth(e.target.checked ? '' : todayHK().slice(0, 7))} />
               全部月份
             </label>
+            {/* ★ 2026-08-28 cwm-matedit T2 §2.3：日期模式切換（inline-flex 邊框款） */}
+            <div className="inline-flex rounded overflow-hidden" style={{ border: '1px solid #d1d5db' }}>
+              <button type="button" onClick={() => setDateMode('ordered')}
+                className="px-2 py-1.5 text-sm whitespace-nowrap"
+                style={dateMode === 'ordered' ? { background: '#2563eb', color: '#fff' } : { background: '#fff', color: '#374151' }}>
+                落單日
+              </button>
+              <button type="button" onClick={() => setDateMode('received')}
+                className="px-2 py-1.5 text-sm whitespace-nowrap"
+                style={{ borderLeft: '1px solid #d1d5db', ...(dateMode === 'received' ? { background: '#2563eb', color: '#fff' } : { background: '#fff', color: '#374151' }) }}>
+                到貨日
+              </button>
+            </div>
           </div>
           <select value={filterClinicId} onChange={e => setFilterClinicId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部診所</option>
@@ -1070,6 +1088,8 @@ export default function CostEntryPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-gray-50">
+                {/* ★ 2026-08-28 cwm-matedit T2 §2.4：第一欄跟模式換（★★#19）— received 模式「到貨」升首欄 */}
+                {dateMode === 'received' && <SortableTh k="receivedAt">到貨</SortableTh>}
                 <SortableTh k="orderedAt">落單日</SortableTh>
                 <SortableTh k="patientCode">病人編號</SortableTh>
                 <SortableTh k="patientName">病人姓名</SortableTh>
@@ -1077,7 +1097,8 @@ export default function CostEntryPage() {
                 <SortableTh k="labName">Lab · 單號</SortableTh>
                 <SortableTh k="dsaName">DSA</SortableTh>
                 <SortableTh k="finalCost" className="text-right p-2">成本</SortableTh>
-                <SortableTh k="receivedAt">到貨</SortableTh>
+                {/* ordered 模式「到貨」留喺現行位置（成本之後）；received 模式已升首欄 */}
+                {dateMode === 'ordered' && <SortableTh k="receivedAt">到貨</SortableTh>}
                 <SortableTh k="appointmentAt">覆診</SortableTh>
                 <SortableTh k="status">狀態</SortableTh>
                 <th className="text-left p-2">操作</th>
@@ -1087,9 +1108,21 @@ export default function CostEntryPage() {
               {sortedCases.map(c => {
                 // ★ cwm-costentry-20260827 §3：作廢行灰字紅線（「操作」欄豁免 — 掣要撳得到）
                 const vStyle = c.status === 'VOID' ? voidStyle : undefined
+                // ★ 2026-08-28 cwm-matedit T2 §2.4：兩個日期欄拆做獨立 cell — <td> 次序跟表頭跟模式換（★★#19）
+                const orderedTd = <td className="p-2" style={vStyle}>{fmtDate(c.orderedAt)}</td>
+                const receivedTd = (
+                  <td className="p-2" style={vStyle}>
+                    {fmtDate(c.receivedAt)}
+                    {/* ★ 2026-08-27：未到貨（periodMonth null）→ 唔會入任何月結 */}
+                    {/* ★ 2026-08-28 cwm-costfix §2.3：badge 加強（拍板 (b) 唔置頂，尊重現有排序） */}
+                    {c.periodMonth == null && (
+                      <span className="ml-1" style={{ fontSize: 10, color: '#b45309', background: '#fef3c7', borderRadius: 3, padding: '1px 5px', fontWeight: 600 }} title="未填到貨日，唔會入任何月結 —— 請補到貨日">⚠️ 未到貨</span>
+                    )}
+                  </td>
+                )
                 return (
                 <tr key={c.id} className="border-b hover:bg-gray-50">
-                  <td className="p-2" style={vStyle}>{fmtDate(c.orderedAt)}</td>
+                  {dateMode === 'received' ? (<>{receivedTd}{orderedTd}</>) : orderedTd}
                   <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
                   <td className="p-2" style={vStyle}>{c.patientName || '—'}</td>
                   <td className="p-2" style={vStyle}>
@@ -1104,14 +1137,7 @@ export default function CostEntryPage() {
                   <td className="p-2 text-right" style={vStyle}>
                     {c.finalCost != null ? `$${c.finalCost.toFixed(2)}` : c.baseCost == null ? <span className="text-yellow-600">未有價</span> : '$—'}
                   </td>
-                  <td className="p-2" style={vStyle}>
-                    {fmtDate(c.receivedAt)}
-                    {/* ★ 2026-08-27：未到貨（periodMonth null）→ 唔會入任何月結 */}
-                    {/* ★ 2026-08-28 cwm-costfix §2.3：badge 加強（拍板 (b) 唔置頂，尊重現有排序） */}
-                    {c.periodMonth == null && (
-                      <span className="ml-1" style={{ fontSize: 10, color: '#b45309', background: '#fef3c7', borderRadius: 3, padding: '1px 5px', fontWeight: 600 }} title="未填到貨日，唔會入任何月結 —— 請補到貨日">⚠️ 未到貨</span>
-                    )}
-                  </td>
+                  {dateMode === 'ordered' && receivedTd}
                   <td className="p-2" style={vStyle}>{fmtDate(c.appointmentAt)}</td>
                   <td className="p-2" style={vStyle}>
                     {/* ★ 2026-08-25：REDO = 琥珀色（bg #fef3c7 / fg #92400e = tailwind amber-100/800） */}
@@ -1154,7 +1180,9 @@ export default function CostEntryPage() {
             <span>{filterPeriodMonth ? `${filterPeriodMonth} ` : '全部月份 '}已入 {stats.total} 筆</span>
             <span>｜</span>
             <span>已定價 ${stats.totalFinalCost.toFixed(2)}</span>
-            {stats.unpricedCount > 0 && (
+            {/* ★ 2026-08-28 cwm-matedit T2 §2.4：底部標記跟 summary.mode 顯 —
+                received 模式用「已到貨未有價」（§2.4），唔同 ordered 模式重複示警 */}
+            {dateMode === 'ordered' && stats.unpricedCount > 0 && (
               <>
                 <span>｜</span>
                 <span className="flex items-center gap-1 text-yellow-600">
@@ -1162,12 +1190,30 @@ export default function CostEntryPage() {
                 </span>
               </>
             )}
-            {/* ★ 2026-08-27：「未到貨」係第二個唔入月結嘅原因，分開講（原「未有價」提示保留） */}
-            {(summary?.notReceivedCount ?? 0) > 0 && (
+            {/* ★ 2026-08-27：「未到貨」係第二個唔入月結嘅原因，分開講（原「未有價」提示保留）— 只喺 ordered 模式有義 */}
+            {dateMode === 'ordered' && (summary?.notReceivedCount ?? 0) > 0 && (
               <>
                 <span>｜</span>
                 <span className="flex items-center gap-1" style={{ color: '#b45309' }}>
                   <AlertTriangle size={14} /> {summary.notReceivedCount} 筆未到貨（補到貨日先入月結）
+                </span>
+              </>
+            )}
+            {/* ★#17 ordered 模式：落單喺該月但到貨喺其他月（「31/7 落單、6/8 到貨」）唔入本月月結 */}
+            {dateMode === 'ordered' && (summary?.receivedOtherMonthCount ?? 0) > 0 && (
+              <>
+                <span>｜</span>
+                <span className="flex items-center gap-1" style={{ color: '#b45309' }}>
+                  <AlertTriangle size={14} /> {summary.receivedOtherMonthCount} 筆到貨喺其他月（唔入本月月結）
+                </span>
+              </>
+            )}
+            {/* ★ cwm-matedit T2 §2.4：received 模式 — 已到貨但 finalCost null（唔入月結） */}
+            {dateMode === 'received' && (summary?.noPriceCount ?? 0) > 0 && (
+              <>
+                <span>｜</span>
+                <span className="flex items-center gap-1" style={{ color: '#b45309' }}>
+                  <AlertTriangle size={14} /> {summary.noPriceCount} 筆已到貨未有價（唔入月結）
                 </span>
               </>
             )}
