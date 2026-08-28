@@ -297,7 +297,12 @@ const ScheduleRow = React.memo(function ScheduleRow({
       {days.map((d, di) => {
         const ss = shiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
         const ls = leavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
-        const hasShift = ss.length > 0
+        // ★ cwm-borrowdisplay-20260828: 借調行只顯示本 scope 更次（clinicId 或 secondaryClinicId 命中本店）；
+        //   主屬行（含跨店更）維持全顯 —— filter 只套借調列
+        const ssVisible = isBorrowed
+          ? ss.filter((s: any) => s.clinicId === selectedClinicId || s.secondaryClinicId === selectedClinicId)
+          : ss
+        const hasShift = ssVisible.length > 0
         const hasLeave = ls.length > 0
         const cellIsEmpty = !hasShift && !hasLeave
         // ★ PL 模式：休息日格要 pointer cursor + forward click（借調行唔俾標 —— API scope 會 403）
@@ -309,6 +314,8 @@ const ScheduleRow = React.memo(function ScheduleRow({
 
         if (isBorrowed) {
           style.cursor = cursorForCell
+          // ★ cwm-borrowdisplay-20260828: 借調行本 scope 無更且無假 → 灰底佔位
+          if (ssVisible.length === 0 && ls.length === 0) style.background = '#6b7280'
         } else {
           style.cursor = cursorForCell
           style.background = (rowIsTransfer && cellIsEmpty)
@@ -360,11 +367,12 @@ const ScheduleRow = React.memo(function ScheduleRow({
         const dimmed = !!sickLeave && !forExport
 
         let content: React.ReactNode
-        if (ss.length === 0 && ls.length === 0) {
-          content = <span style={{ fontSize: 10, color: (rowIsTransfer && cellIsEmpty) ? '#d1d5db' : '#9ca3af' }}>—</span>
+        if (ssVisible.length === 0 && ls.length === 0) {
+          const onGrey = (rowIsTransfer && cellIsEmpty) || (isBorrowed && ssVisible.length === 0 && ls.length === 0)
+          content = <span style={{ fontSize: 10, color: onGrey ? '#d1d5db' : '#9ca3af' }}>—</span>
         } else {
           const parts: React.ReactNode[] = []
-          ss.forEach((s, si) => {
+          ssVisible.forEach((s, si) => {
             const tpl = templateById.get(s.templateId)
             const p: string[] = []
             if (labelParts.includes('clinic')) p.push(getClinicLabelFn(s))
@@ -2850,7 +2858,12 @@ function getShiftCode(shift: Shift): string {
         )}
       </td>
       {weekDays.map((wd, i) => {
-        const ss = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+        const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+        // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope 更次 —— 截圖版要跟畫面週總覽一致
+        const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+        const ss = (!empInScope)
+          ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
+          : _allShiftsOnDay
         const ls = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
         // ★ 2026-08-02：病假覆蓋更次 —— 病假日有更次時合併顯示
         const sickLeave = ls.find(lr => lr.leaveType?.systemKey === 'SICK')
@@ -3005,8 +3018,12 @@ function getShiftCode(shift: Shift): string {
   }
 
   // ★ 共用格內容 —— 週截圖同月總覽都係咁渲染，唔好另寫一套
-  const getExportCell = useCallback((empId: string, dateStr: string, shifts: any[], leaveReqs?: any[], opts?: { borrowed?: boolean }) => {
-    const ss = shifts.filter(s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr)
+  const getExportCell = useCallback((empId: string, dateStr: string, shifts: any[], leaveReqs?: any[], opts?: { borrowed?: boolean; scopeClinicId?: string | null }) => {
+    const _ssRaw = shifts.filter(s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr)
+    // ★ cwm-borrowdisplay-20260828: 借調行只顯示本 scope 更次 —— 截圖版要跟畫面月視圖一致
+    const ss = (opts?.borrowed && opts.scopeClinicId)
+      ? _ssRaw.filter((s: any) => s.clinicId === opts.scopeClinicId || s.secondaryClinicId === opts.scopeClinicId)
+      : _ssRaw
     const ls = (leaveReqs ?? leaveRequests).filter(lr => lr.employeeId === empId && leaveCoversDate(lr, dateStr))
     const parts: React.ReactNode[] = []
     ss.forEach((s, si) => {
@@ -3043,8 +3060,10 @@ function getShiftCode(shift: Shift): string {
         </div>
       )
     })
-    if (parts.length === 0) parts.push(<span key="empty" style={{ fontSize: 14, color: '#9ca3af' }}>—</span>)
-    return <td style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle' }}>{parts}</td>
+    // ★ cwm-borrowdisplay-20260828: 借調行本 scope 無更無假 → 灰底佔位（同畫面月視圖）
+    const _borrowedScopeEmpty = !!(opts?.borrowed && opts.scopeClinicId) && parts.length === 0
+    if (parts.length === 0) parts.push(<span key="empty" style={{ fontSize: 14, color: _borrowedScopeEmpty ? '#d1d5db' : '#9ca3af' }}>—</span>)
+    return <td style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', ...(_borrowedScopeEmpty ? { background: '#6b7280' } : {}) }}>{parts}</td>
   }, [leaveRequests, templates, labelParts, clinics, shiftColor])
 
   // ★ 月截圖 handler —— 離屏節點有明確 width/height，確保截到完整 31 日
@@ -3153,7 +3172,12 @@ function getShiftCode(shift: Shift): string {
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                 {days.map((wd, dayIdx) => {
-                  const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                  const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                  // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope（scopeClinicIds）更次；主屬行維持全顯
+                  const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+                  const empShiftsOnDay = (!empInScope)
+                    ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
+                    : _allShiftsOnDay
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const hasShift = empShiftsOnDay.length > 0
                   const hasLeave = empLeavesOnDay.length > 0
@@ -3315,7 +3339,12 @@ function getShiftCode(shift: Shift): string {
   crossCompany={scopeCompanyId != null && emp.homeClinicId != null &&
     clinicCompanyById.get(emp.homeClinicId) !== scopeCompanyId} /></td>
                 {days.map((wd, dayIdx) => {
-                  const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                  const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                  // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope（scopeClinicIds）更次；主屬行維持全顯
+                  const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+                  const empShiftsOnDay = (!empInScope)
+                    ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
+                    : _allShiftsOnDay
                   const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   const hasShift = empShiftsOnDay.length > 0
                   const hasLeave = empLeavesOnDay.length > 0
@@ -3477,7 +3506,12 @@ function getShiftCode(shift: Shift): string {
                       </span>
                     </td>
                     {days.map((wd, dayIdx) => {
-                      const empShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                      const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
+                      // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope（scopeClinicIds）更次；主屬行維持全顯
+                      const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+                      const empShiftsOnDay = (!empInScope)
+                        ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
+                        : _allShiftsOnDay
                       const empLeavesOnDay = weekLeavesByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                       const hasShift = empShiftsOnDay.length > 0
                       const hasLeave = empLeavesOnDay.length > 0
@@ -6117,7 +6151,7 @@ function getShiftCode(shift: Shift): string {
                           {emp.user?.name ?? '?'}
                           {homeLabel && <span style={{ fontSize: 11, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
                         </td>
-                        {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests, { borrowed: true }))}
+                        {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests, { borrowed: true, scopeClinicId: selectedClinicId }))}
                       </tr>
                     )
                   })}
