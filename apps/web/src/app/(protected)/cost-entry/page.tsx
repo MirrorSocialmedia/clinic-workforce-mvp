@@ -588,23 +588,34 @@ export default function CostEntryPage() {
     })
     setMaterialLines([])
 
-    if (clinicId) loadDsaEmployees(clinicId)
+    // ★ 2026-08-28 cwm-costfix：DSA 載入統一由 selectedClinicInternalId effect 處理
+    //   （見 loadDsaEmployees 下方 effect），呢度唔使再顯式 call
     setPickerStep(2)
   }
 
-  const loadDsaEmployees = async (clinicId: string) => {
+  const loadDsaEmployees = useCallback(async (cid: string) => {
     setLoadingDsa(true)
     try {
       // ★ 2026-08-22：改行輕量 route —— 原 /api/employees 回 payConfidential/phone/email
       //   等敏感欄，route 級 override 分唔到 query param，唔可以直接開俾 cost_entry
-      const data: any = await apiFetch(`/api/employees/dsa-options?clinicId=${encodeURIComponent(clinicId)}`)
+      const data: any = await apiFetch(`/api/employees/dsa-options?clinicId=${encodeURIComponent(cid)}`)
       setDsaEmployees(data.employees || data || [])
     } catch {
       setDsaEmployees([])
     } finally {
       setLoadingDsa(false)
     }
-  }
+  }, [])
+
+  // ★ 2026-08-28 cwm-costfix §8.4.3：DSA 下拉跟 selectedClinicInternalId ——
+  //   統一覆蓋 manual 表單診所 select / 病人編號前綴推斷 / 修改模式三條路徑
+  //   （原本只 bill mode 嘅 selectBillForCost 會 call，manual 揀咗診所都唔會載入
+  //   → 下拉永遠「不選」）
+  useEffect(() => {
+    if (!pickerOpen) return
+    if (selectedClinicInternalId) loadDsaEmployees(selectedClinicInternalId)
+    else setDsaEmployees([])
+  }, [pickerOpen, selectedClinicInternalId, loadDsaEmployees])
 
   // ★ MD-K: Material line helpers
   const addMaterialLine = () => {
@@ -1023,7 +1034,19 @@ export default function CostEntryPage() {
               </optgroup>
             )}
           </select>
-          <input type="month" value={filterPeriodMonth} onChange={e => setFilterPeriodMonth(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+          <div className="flex items-center gap-2">
+            <input type="month" value={filterPeriodMonth} disabled={filterPeriodMonth === ''}
+              onChange={e => setFilterPeriodMonth(e.target.value)}
+              style={{ opacity: filterPeriodMonth === '' ? 0.4 : 1 }}
+              className="border rounded px-2 py-1.5 text-sm" />
+            {/* ★ 2026-08-28 cwm-costfix §7.2.2：月份「全部」—— 勾選 = 全部月份（含未到貨）；
+                取消勾選回到今個月（唔係空白，防卡死喺全部） */}
+            <label className="flex items-center gap-1 text-sm cursor-pointer select-none whitespace-nowrap">
+              <input type="checkbox" checked={filterPeriodMonth === ''}
+                onChange={e => setFilterPeriodMonth(e.target.checked ? '' : todayHK().slice(0, 7))} />
+              全部月份
+            </label>
+          </div>
           <select value={filterClinicId} onChange={e => setFilterClinicId(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部診所</option>
             {clinics.map(c => (<option key={c.id} value={c.id}>{c.shortName || c.name}</option>))}
@@ -1084,8 +1107,9 @@ export default function CostEntryPage() {
                   <td className="p-2" style={vStyle}>
                     {fmtDate(c.receivedAt)}
                     {/* ★ 2026-08-27：未到貨（periodMonth null）→ 唔會入任何月結 */}
+                    {/* ★ 2026-08-28 cwm-costfix §2.3：badge 加強（拍板 (b) 唔置頂，尊重現有排序） */}
                     {c.periodMonth == null && (
-                      <span className="ml-1" style={{ fontSize: 10, color: '#b45309' }} title="未填到貨日，唔會入任何月結">⚠️ 未入月結</span>
+                      <span className="ml-1" style={{ fontSize: 10, color: '#b45309', background: '#fef3c7', borderRadius: 3, padding: '1px 5px', fontWeight: 600 }} title="未填到貨日，唔會入任何月結 —— 請補到貨日">⚠️ 未到貨</span>
                     )}
                   </td>
                   <td className="p-2" style={vStyle}>{fmtDate(c.appointmentAt)}</td>
@@ -1127,7 +1151,7 @@ export default function CostEntryPage() {
       {summary && (
         <Card className="p-3">
           <div className="flex items-center gap-4 text-sm">
-            <span>{filterPeriodMonth} 已入 {stats.total} 筆</span>
+            <span>{filterPeriodMonth ? `${filterPeriodMonth} ` : '全部月份 '}已入 {stats.total} 筆</span>
             <span>｜</span>
             <span>已定價 ${stats.totalFinalCost.toFixed(2)}</span>
             {stats.unpricedCount > 0 && (
@@ -1143,7 +1167,7 @@ export default function CostEntryPage() {
               <>
                 <span>｜</span>
                 <span className="flex items-center gap-1" style={{ color: '#b45309' }}>
-                  <AlertTriangle size={14} /> {summary.notReceivedCount} 筆未到貨（唔入月結）
+                  <AlertTriangle size={14} /> {summary.notReceivedCount} 筆未到貨（補到貨日先入月結）
                 </span>
               </>
             )}
@@ -1154,6 +1178,10 @@ export default function CostEntryPage() {
                   .map(([name, g]) => `${name} $${g.total.toFixed(2)}`)
                   .join(' · ')}</span>
               </>
+            )}
+            {/* ★ 2026-08-28 cwm-costfix §7.2.4：「全部月份」時後端只回最近 500 筆（take: 500） */}
+            {filterPeriodMonth === '' && (
+              <span className="text-gray-400 text-xs">（列表只顯示最近 500 筆）</span>
             )}
           </div>
         </Card>
@@ -1485,7 +1513,10 @@ export default function CostEntryPage() {
                   </div>
                   <div>
                     <label className="block text-sm mb-1">DSA</label>
-                    {loadingDsa ? (
+                    {/* ★ 2026-08-28 cwm-costfix §8.4.3：未揀診所唔使撈全公司員工 */}
+                    {!selectedClinicInternalId ? (
+                      <div className="py-1.5 text-sm text-gray-400">請先揀診所</div>
+                    ) : loadingDsa ? (
                       <div className="py-1.5 text-sm text-gray-400"><Loader2 size={14} className="animate-spin inline" /> 載入中…</div>
                     ) : (
                       <select value={costForm.dsaName} onChange={e => setCostForm({ ...costForm, dsaName: e.target.value })}

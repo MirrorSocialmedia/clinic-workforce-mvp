@@ -31,17 +31,46 @@ export async function GET(req: NextRequest) {
 
   const clinicId = req.nextUrl.searchParams.get('clinicId')
   const where: any = { status: 'ACTIVE' }
-  if (clinicId) where.clinics = { some: { clinicId } }
+
+  const andConds: any[] = []
+  // ★ 2026-08-28 cwm-costfix §8.4.2：EmployeeClinic 綁定唔齊（臨時幫手唔會綁）——
+  //   union「過去 3 個月喺呢間店有排更／打卡嘅人」，同 exceptions API 同一套邏輯。
+  if (clinicId) {
+    const since = new Date()
+    since.setUTCDate(since.getUTCDate() - 90)
+    const [linked, shiftEmps, punchEmps] = await Promise.all([
+      prisma.employeeClinic.findMany({ where: { clinicId }, select: { employeeId: true } }),
+      prisma.shift.findMany({
+        where: { OR: [{ clinicId }, { secondaryClinicId: clinicId }],
+                 status: 'CONFIRMED', date: { gte: since } },
+        select: { employeeId: true }, distinct: ['employeeId'],
+      }),
+      prisma.punchRecord.findMany({
+        where: { clinicId, punchTime: { gte: since } },
+        select: { employeeId: true }, distinct: ['employeeId'],
+      }),
+    ])
+    const ids = [...new Set([
+      ...linked.map(l => l.employeeId),
+      ...shiftEmps.map(s => s.employeeId),
+      ...punchEmps.map(p => p.employeeId),
+    ])]
+    andConds.push({ id: { in: ids } })
+  }
 
   // ★ 同 /api/employees 一致：非管理權限收窄到自己嘅診所
   const canSeeAllEmployees =
     scope === 'all' || MGMT_DATA_PERMS.some(p => (perms ?? []).includes(p))
   if (!canSeeAllEmployees) {
-    where.user = {
-      ...(where.user || {}),
-      clinics: { some: { clinicId: { in: session.clinics ?? [] } } },
-    }
+    // ★ 2026-08-28 cwm-costfix §8.4.1：原本呢度用 User.clinics（UserClinic），
+    //   而 clinic 過濾用 Employee.clinics（EmployeeClinic）—— 兩張唔同表，
+    //   唔保證同步，「兩個條件同時滿足」嘅人可能係零 → DSA 下拉空白。
+    //   統一用 EmployeeClinic。
+    //   ⚠️★★★ 唔可以直接 where.clinics = ：會覆蓋 clinic 條件（Prisma top-level
+    //   key 覆蓋，同 §2.1 個 where.OR 一樣嘅病）—— 兩個條件必須 AND 包住。
+    andConds.push({ clinics: { some: { clinicId: { in: session.clinics ?? [] } } } })
   }
+  if (andConds.length > 0) where.AND = andConds
 
   // ★ 排序同 /api/employees 一致（createdAt desc），下拉順序同改前相同
   const employees = await prisma.employee.findMany({

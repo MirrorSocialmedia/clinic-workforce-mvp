@@ -25,31 +25,48 @@ export async function GET(req: NextRequest) {
   // ★ cwm-costentry-20260827 §2：病人搜尋（編號/姓名，insensitive 部分匹配）
   const q = searchParams.get('q')?.trim()
 
-  const where: any = {}
-  if (providerId) where.providerId = providerId
-  if (periodMonth) where.periodMonth = periodMonth
-  if (category) where.category = category
-  if (status) where.status = status
-  if (clinicId) where.clinicId = clinicId
-  if (labId) where.labId = labId
-  if (unlocked === '1') where.lockedByRunId = null
-  // ★ cwm-costentry-20260827 §2：此 route 原有零 where.OR（grep 核對）→ 直接 where.OR 安全，
-  //   同其他 where key 天然 AND（Prisma top-level keys = AND）
+  // ★ 2026-08-28 cwm-costfix §2.2：統計用 baseWhere（唔含月份條件）分開砌，
+  //   列表用 where（由 baseWhere 推導 + 月份條件）—— 唔好由主 where 推導，容易漏。
+  const baseWhere: any = {}
+  if (providerId) baseWhere.providerId = providerId
+  if (category) baseWhere.category = category
+  if (status) baseWhere.status = status
+  if (clinicId) baseWhere.clinicId = clinicId
+  if (labId) baseWhere.labId = labId
+  if (unlocked === '1') baseWhere.lockedByRunId = null
+  // ★ cwm-costentry-20260827 §2：病人搜尋（編號/姓名，insensitive 部分匹配）
   if (q) {
-    where.OR = [
-      { patientCode: { contains: q, mode: 'insensitive' } },
-      { patientName: { contains: q, mode: 'insensitive' } },
+    baseWhere.AND = [
+      { OR: [
+        { patientCode: { contains: q, mode: 'insensitive' } },
+        { patientName: { contains: q, mode: 'insensitive' } },
+      ] },
     ]
   }
 
   // MANAGER scope: only see their clinics
   if (scope === 'my-clinics' && session.clinics && session.clinics.length > 0) {
-    where.clinicId = { in: session.clinics }
+    baseWhere.clinicId = { in: session.clinics }
+  }
+
+  const where: any = { ...baseWhere }
+  if (periodMonth) {
+    // ★ 2026-08-28 cwm-costfix：未到貨（periodMonth NULL）唔可以喺列表消失 ——
+    //   佢哋唔入月結，但一定要見到（否則錄咗入去搵唔返、修改後就「不見」）。
+    //   ⚠️★★★ 唔可以直接寫 where.OR：q 嘅搜尋仲有一個 OR，Prisma 只有一個
+    //   top-level OR key，後寫覆蓋前寫（codebase 第三次撞）。兩個 OR 必須 AND 包住。
+    where.AND = [
+      ...(baseWhere.AND ?? []),
+      { OR: [{ periodMonth }, { periodMonth: null }] },
+    ]
   }
 
   const [cases, totals] = await prisma.$transaction([
     prisma.costCase.findMany({
       where,
+      // ★ 2026-08-28 cwm-costfix §7.2.4：「全部月份」＝撈晒所有 CostCase ——
+      //   而家幾百筆冇問題，上到幾萬筆前先用 take 上限擋住（summary 仲計全數）
+      take: 500,
       orderBy: { orderedAt: 'desc' },
       include: {
         lab: { select: { id: true, name: true } },
@@ -71,10 +88,10 @@ export async function GET(req: NextRequest) {
   // ★ 2026-08-27 cwm-costarrival：未到貨（periodMonth NULL，唔入月結）——
   //   同「未有價」係兩個唔入月結嘅原因，底部統計要分開講。
   //   按 scope 計數但唔加 periodMonth 過濾（未到貨個案冇月，個月篩選會漏佢哋）
-  const whereNoMonth = { ...where }
-  delete whereNoMonth.periodMonth
+  // ★ 2026-08-28 cwm-costfix：直接由 baseWhere（本來就唔含月份條件）計 ——
+  //   取代舊嘅「copy 主 where 再 delete periodMonth」（main where 已改 AND 包，推導會漏）
   const notReceived = await prisma.costCase.count({
-    where: { ...whereNoMonth, periodMonth: null, status: { not: 'VOID' } },
+    where: { ...baseWhere, periodMonth: null, status: { not: 'VOID' } },
   })
 
   // Group by lab
