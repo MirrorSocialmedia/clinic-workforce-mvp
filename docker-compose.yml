@@ -49,6 +49,7 @@ services:
       FACE_MODE: shadow
       APRICOT_ENC_KEY: ${APRICOT_ENC_KEY}
       APRICOT_CRON_KEY: ${APRICOT_CRON_KEY}
+      PHONE_HASH_KEY: ${PHONE_HASH_KEY}
     networks: [clinic_net]
     # ★ 2026-08-28 cwm-costfix：log 輪轉（同上）
     logging:
