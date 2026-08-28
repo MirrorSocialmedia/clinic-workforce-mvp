@@ -25,3 +25,18 @@
 · 只刪過期 >1 日而且冇人用過嘅 token
 · ⚠️ 有人用過嘅永遠保留（QRTokenUsage cascade）
 · log: /tmp/qr-cleanup.log
+
+## 磁碟用量警報（disk-alert）
+> ⚠️ 呢行 cron 係喺**生產 host** 手動裝（repo 只存文檔，唔會自動部署）。
+
+喺生產伺服器 `crontab -e` 加入：
+
+```
+0 8 * * * PATH=/home/clinicapp/bin:/usr/bin:/bin sh -c 'df -h / | awk "NR==2 && \$5+0>85 {print \"⚠️ 磁碟 \" \$5}"' >> /tmp/disk-alert.log
+```
+
+· 每日 08:00 檢查 root filesystem，用量 >85% 先寫入 log
+· log: /tmp/disk-alert.log（可再加 mail/通知 pipe）
+· 背景：2026-08-28 磁碟接近爆咗 —— docker log 未輪轉 + image 未 prune；
+  配套修正已入 repo：`docker-compose.yml` 4 services 加 json-file 輪轉
+  （max-size 50m × 3），`deploy.sh` build 前 `docker image prune -f`

@@ -41,6 +41,11 @@ for script in check-rbac-api.sh check-dates.sh; do
   fi
 done
 
+echo "== 清理舊 image（備份完成之後、build 之前）=="
+# ★ 2026-08-28 cwm-costfix：build 前先 prune dangling image —— 防多餘 image 堆積
+#   食晒磁碟令 build 失敗。best-effort（失敗唔擋部署）。
+docker image prune -f > /dev/null 2>&1 || true
+
 echo "== 重建 app（migration 檔在映像裡，build 必須在 migrate 之前）=="
 if ! $DC up -d --build app; then
  echo ""

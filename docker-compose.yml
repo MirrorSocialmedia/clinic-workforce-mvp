@@ -16,6 +16,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # ★ 2026-08-28 cwm-costfix：log 輪轉 —— 防 json-file 無限長大食晒磁碟
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -44,6 +50,12 @@ services:
       APRICOT_ENC_KEY: ${APRICOT_ENC_KEY}
       APRICOT_CRON_KEY: ${APRICOT_CRON_KEY}
     networks: [clinic_net]
+    # ★ 2026-08-28 cwm-costfix：log 輪轉（同上）
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -60,6 +72,12 @@ services:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
     depends_on: [app]
     networks: [clinic_net]
+    # ★ 2026-08-28 cwm-costfix：log 輪轉（同上）
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -71,6 +89,12 @@ services:
     build: ./face-service
     restart: unless-stopped
     networks: [clinic_net]
+    # ★ 2026-08-28 cwm-costfix：log 輪轉（同上）
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     volumes:
       - face_models:/root/.insightface
       - face_frames:/data/frames
