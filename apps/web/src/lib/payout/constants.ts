@@ -6,6 +6,8 @@ export const ITEM_TYPES = [
   'Nightguard',
   'Retainer',
   'Implant Denture',
+  // ★ 2026-08-28 cwm-matedit T3 §4 #29/#30：隱形矯正併入 LAB 後， itemType 仍要揀得到
+  'Invisalign',
   'Others',
 ] as const
 

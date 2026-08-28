@@ -85,7 +85,10 @@ interface MaterialLine {
 
 // ── Constants ──────────────────────────────────────────
 
-const CATEGORIES = ['LAB', 'IMPLANT', 'INVISALIGN'] as const
+// ★ 2026-08-28 cwm-matedit T3 §4 #28：新增 modal 類別掣只 LAB/植牙（隱形矯正併入 LAB）
+const CATEGORIES = ['LAB', 'IMPLANT'] as const
+// ★ T3 #32：篩選列保留三個 — 舊 INVISALIGN 資料仍要篩得到/顯示得到
+const ALL_CATEGORIES = ['LAB', 'IMPLANT', 'INVISALIGN'] as const
 const STATUSES = ['PENDING', 'PRICED', 'DONE', 'REDO'] as const
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -106,13 +109,16 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
 // ── Helper: suggest category from bill items ──────────
 function suggestCategoryFromBill(bill: SearchBill): string {
   const desAll = bill.billDetails.map(d => (d.feeItem?.des ?? '').toUpperCase()).join(' ')
-  if (desAll.includes('INVIS') || desAll.includes('CLEAR ALIGNER') || desAll.includes('透明')) return 'INVISALIGN'
+  // ★ T3 #30：INVIS 帳單 → 類別 LAB（隱形矯正併入 LAB；itemType 另建議 Invisalign）
+  if (desAll.includes('INVIS') || desAll.includes('CLEAR ALIGNER') || desAll.includes('透明')) return 'LAB'
   if (desAll.includes('IMPLANT') || desAll.includes('植入')) return 'IMPLANT'
   return 'LAB'
 }
 
 function suggestItemTypeFromBill(bill: SearchBill): string {
   const desAll = bill.billDetails.map(d => (d.feeItem?.des ?? '').toUpperCase()).join(' ')
+  // ★ T3 #30：INVIS 條件同 suggestCategoryFromBill 完全一致（放最前，IMPLANT 判斷之前）
+  if (desAll.includes('INVIS') || desAll.includes('CLEAR ALIGNER') || desAll.includes('透明')) return 'Invisalign'
   if (desAll.includes('IMPLANT') || desAll.includes('DENTURE')) {
     if (desAll.includes('IMPLANT') && desAll.includes('DENTURE')) return 'Implant Denture'
     if (desAll.includes('IMPLANT')) return 'Implant'
@@ -201,6 +207,9 @@ export default function CostEntryPage() {
     patientName: '',
   })
   const [savingCost, setSavingCost] = useState(false)
+  // ★ 2026-08-28 cwm-matedit T3 §3 #22-#26：到貨日人手動過（填/清）→ 改落單日唔再自動同步；
+  //   新增 modal 開時 false；編輯模式載入現有值後 true（已有資料 = 當已人手填過，唔覆蓋）
+  const [receivedAtTouched, setReceivedAtTouched] = useState(false)
 
   // ★ MD-K: Implant material lines
   const [materialLines, setMaterialLines] = useState<MaterialLine[]>([])
@@ -509,6 +518,8 @@ export default function CostEntryPage() {
     setMaterialLines([])
     setLabDiscountPct(null)
     setLabDiscountPeriodMonth('')
+    // ★ T3 #22：新增 modal 開 → 到貨日未人手動過（IMPLANT 落單日自動帶到貨日）
+    setReceivedAtTouched(false)
     // ★ 2026-08-25：重置新增 state
     setManualPatientQuery('')
     setManualPatients([])
@@ -746,6 +757,8 @@ export default function CostEntryPage() {
     setClinicGuess(null)
     setLabDiscountPct(null)
     setLabDiscountPeriodMonth('')
+    // ★ T3 #26：編輯模式載入現有值後 → 當已人手填過，改落單日唔覆蓋已有到貨日
+    setReceivedAtTouched(true)
     setPickerOpen(true)
   }
 
@@ -1071,7 +1084,8 @@ export default function CostEntryPage() {
           </select>
           <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部類別</option>
-            {CATEGORIES.map(c => (<option key={c} value={c}>{CATEGORY_LABELS[c]}</option>))}
+            {/* ★ T3 #32：篩選列保留三個類別（ALL_CATEGORIES）— 舊 INVISALIGN 資料要篩得到 */}
+            {ALL_CATEGORIES.map(c => (<option key={c} value={c}>{CATEGORY_LABELS[c]}</option>))}
           </select>
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
             <option value="">全部狀態</option>
@@ -1505,7 +1519,8 @@ export default function CostEntryPage() {
                     <div className="flex gap-1">
                       {CATEGORIES.map(c => (
                         <button key={c} type="button"
-                          onClick={() => setCostForm(f => ({ ...f, category: c, ...(c === 'IMPLANT' ? { itemType: '', itemTypeOther: '' } : {}) }))}
+                          onClick={() => setCostForm(f => ({ ...f, category: c, ...(c === 'IMPLANT' ? { itemType: '', itemTypeOther: '', // ★ T3 #27：切 IMPLANT 且到貨日空 → 回填落單日（已有值唔覆蓋）
+                            receivedAt: f.receivedAt || f.orderedAt } : {}) }))}
                           className={`px-3 py-1.5 text-sm rounded border ${
                             costForm.category === c ? 'bg-blue-600 text-white border-blue-600'
                             : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
@@ -1554,7 +1569,11 @@ export default function CostEntryPage() {
                   )}
                   <div>
                     <label className="block text-sm mb-1">落單日</label>
-                    <input type="date" value={costForm.orderedAt} onChange={e => setCostForm({ ...costForm, orderedAt: e.target.value })}
+                    <input type="date" value={costForm.orderedAt} onChange={e => {
+                      const v = e.target.value
+                      // ★ T3 #22/#23：IMPLANT 且到貨日未人手動過 → 跟住落單日同步
+                      setCostForm(f => ({ ...f, orderedAt: v, ...(f.category === 'IMPLANT' && !receivedAtTouched ? { receivedAt: v } : {}) }))
+                    }}
                       className="w-full border rounded px-2 py-1.5 text-sm" />
                   </div>
                   <div>
@@ -1736,7 +1755,11 @@ export default function CostEntryPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm mb-1">到貨日</label>
-                    <input type="date" value={costForm.receivedAt} onChange={e => setCostForm({ ...costForm, receivedAt: e.target.value })}
+                    <input type="date" value={costForm.receivedAt} onChange={e => {
+                      // ★ T3 #24：人手動過到貨日（填或清）→ 之後改落單日唔再自動同步
+                      setReceivedAtTouched(true)
+                      setCostForm({ ...costForm, receivedAt: e.target.value })
+                    }}
                       className="w-full border rounded px-2 py-1.5 text-sm" />
                   </div>
                   <div>
