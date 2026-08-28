@@ -345,6 +345,7 @@ export const CONFIG = {
     // 材料主檔
     'GET /api/material-items': ['OWNER', 'MANAGER'],
     'POST /api/material-items': ['OWNER'],
+    'PUT /api/material-items/:id': ['OWNER'], // ★ cwm-matedit-t1: 停用/啟用/封版（淨 isActive/effectiveTo）
 
     // ★ MD-D: Payout Engine — 醫生拆帳（OWNER only）
     'GET /api/payout-runs': ['OWNER'],
@@ -540,6 +541,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'DELETE /api/labs': ['provider_payout'],
   'POST /api/lab-discounts': ['provider_payout'],
   'POST /api/material-items': ['provider_payout'],
+  'PUT /api/material-items/:id': ['provider_payout'], // ★ cwm-matedit-t1: 跟 POST 模式
 
   // —— MD-C: Apricot Data Layer ——
   // ★ 2026-08-22：Apricot 同步獨立 key（apricot_sync）—— 寫（發起同步）只 apricot_sync；
