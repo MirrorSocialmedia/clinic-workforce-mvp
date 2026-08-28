@@ -19,3 +19,9 @@
 - 只清理 FAIL 的 frame（PASS 的 frame 本來就不會落地）
 - 清理後 faceFramePath 設為 NULL，覆核頁不再顯示該紀錄
 - 確認本人（confirm）的 frame 會被立即刪除，不受 30 天限制影響
+
+## QR token 清理
+`0 4 * * * <repo-root>/scripts/cleanup-qr-tokens.sh`
+· 只刪過期 >1 日而且冇人用過嘅 token
+· ⚠️ 有人用過嘅永遠保留（QRTokenUsage cascade）
+· log: /tmp/qr-cleanup.log
