@@ -65,6 +65,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_UPDATE', label: 'Lab 改名/停用' },
   { action: 'LAB_DELETE', label: 'Lab 刪除' },
   { action: 'MATERIAL_ITEM_CREATE', label: '新增材料項目' },
+  { action: 'MATERIAL_ITEM_UPDATE', label: '材料項目停用／改到期日' },
   { action: 'PATIENT_NAME_PURGE', label: 'PII 清理 — 清除病人姓名' },
   // ★ MD-C: Apricot Data Layer
   { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },
