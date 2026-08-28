@@ -385,6 +385,7 @@ export default function MyDashboardPage() {
                                   <span className="text-muted-foreground">{String(d.date).slice(5)}</span>
                                   <span className="flex flex-wrap gap-x-2 justify-end">
                                     {d.clockOutOt   ? <span style={{ color: '#059669' }}>OT {d.clockOutOt} 分</span> : null}
+                                    {d.holidayOt    ? <span style={{ color: '#059669' }}>假期返工OT {d.holidayOt} 分</span> : null}
                                     {d.lunchOt      ? <span style={{ color: '#059669' }}>午飯OT {d.lunchOt} 分</span> : null}
                                     {d.lateMinutes  ? <span style={{ color: '#d97706' }}>遲到 {d.lateMinutes} 分</span> : null}
                                     {d.lunchLate    ? <span style={{ color: '#d97706' }}>午飯超時 {d.lunchLate} 分</span> : null}

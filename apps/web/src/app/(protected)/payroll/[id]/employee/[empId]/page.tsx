@@ -1077,6 +1077,7 @@ export default function EmployeePayrollDetailPage() {
                       if (d.lateMinutes) rows.push({ date: d.date, label: '上班遲到', min: -d.lateMinutes, color: '#dc2626' })
                       if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
                       if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
+                      if (d.holidayOt) rows.push({ date: d.date, label: 'OT', min: d.holidayOt, color: '#059669' })
                       if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
                       if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
                       return rows
@@ -1098,6 +1099,7 @@ export default function EmployeePayrollDetailPage() {
                   if (d.lateMinutes) rows.push({ date: d.date, label: '上班遲到', min: -d.lateMinutes, color: '#dc2626' })
                   if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
                   if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
+                  if (d.holidayOt) rows.push({ date: d.date, label: 'OT', min: d.holidayOt, color: '#059669' })
                   if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
                   if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
                   return rows

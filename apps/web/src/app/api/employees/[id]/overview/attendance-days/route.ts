@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
-import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr, leaveCoversDate } from '@/lib/hk-date'
 import { diffMinutes } from '@/lib/shift-punch-match'
 
 // GET /api/employees/[id]/overview/attendance-days
@@ -77,6 +77,17 @@ export async function GET(
     },
   })
 
+  // ★ 2026-08-28：冇更表日「假期返工 OT」需要核對當日用 APPROVED 假期記錄
+  //   （同 payroll-engine no-shift 分支 hasLeave 一致 —— 淨係漏排更嘅日唔可當 OT）
+  const leaves = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId: emp.id,
+      status: 'APPROVED',
+      ...(dateTo ? { startDate: { lte: dateTo } } : {}),
+      ...(dateFrom ? { endDate: { gte: dateFrom } } : {}),
+    },
+  })
+
   // Group by HK date, pair in/out
   const dayMap = new Map<string, any>()
   for (const p of punches) {
@@ -146,6 +157,11 @@ export async function GET(
             otMin = diffMinutes(d.lastOut, sEnd)
           }
         }
+      } else if (d.firstIn && d.lastOut && leaves.some(lr => leaveCoversDate(lr, d.date))) {
+        // ★ 2026-08-28：冇更表但有完整打卡 = 假期／休息日返工 → 全日當 OT
+        //   ⚠️ 純顯示 —— 唔套 ot_min_minutes / ot_round_minutes（引擎會取整），金額以計糧為準
+        const mins = diffMinutes(d.lastOut, d.firstIn) // ★ diffMinutes(later, earlier)
+        if (mins > 0) otMin = mins
       }
 
       const flags: string[] = []

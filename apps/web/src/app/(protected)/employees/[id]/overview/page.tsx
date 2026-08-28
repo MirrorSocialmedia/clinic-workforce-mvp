@@ -625,6 +625,9 @@ function AttendanceDetail({ empId }: { empId: string }) {
               </tr>
             ))}</tbody>
           </table>
+          {rows.some((r: any) => r.otMin > 0) && (
+            <div style={{ marginTop: 6, fontSize: 11, color: '#9ca3af' }}>※ 冇更表日（假期／休息日返工）按全日打卡顯示 OT，金額以計糧為準</div>
+          )}
           {hasMore && (
             <button onClick={() => { const p = page + 1; setPage(p); load(p, range, true) }}
               style={{ marginTop: 8, fontSize: 13, padding: '2px 12px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>

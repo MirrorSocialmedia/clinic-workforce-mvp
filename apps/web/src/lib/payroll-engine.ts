@@ -24,7 +24,7 @@ import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMa
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-const TIMEBANK_ENGINE_VERSION = 4 // v4: 勤工獎三條規則 (single/count/total) + >= 門檻 [cwm-bonusrules-20260827]
+const TIMEBANK_ENGINE_VERSION = 5 // v5: 假期返工 OT 入逐日明細 [cwm-holidayot-20260828]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -1754,6 +1754,12 @@ export async function calculateTimeBank(
         pairMins = 0
       }
       otMinutes += pairMins
+      // ★ 2026-08-28：假期／休息日返工 OT —— 之前只加總數冇入逐日明細。
+      //   ⚠️ 用新 key holidayOt，唔可以借 clockOutOt（語義唔同：
+      //      clockOutOt = 有更表、收工後嘅 OT；holidayOt = 冇更表、整日返工）
+      if (pairMins > 0) {
+        timeAccountDetail.push({ date: dateStr, holidayOt: pairMins })
+      }
     }
   } catch (e) { console.error('payroll calc error:', e) /* leave table may not exist */ }
 
@@ -1837,6 +1843,9 @@ export async function calculateTimeBank(
         break
     }
   }
+
+  // ★ 2026-08-28：逐日明細降序（新到舊）—— 同 api/my/timebank/route.ts:41 現有排序一致
+  timeAccountDetail.sort((a, b) => String(b.date).localeCompare(String(a.date)))
 
   return {
     otMinutes, earlyInOtMinutes, otMinutesForAccount,
