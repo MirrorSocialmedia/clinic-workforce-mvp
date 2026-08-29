@@ -297,11 +297,21 @@ const ScheduleRow = React.memo(function ScheduleRow({
       {days.map((d, di) => {
         const ss = shiftsByKey.get(`${emp.id}|${d}`) ?? EMPTY
         const ls = leavesByKey.get(`${emp.id}|${d}`) ?? EMPTY
-        // ★ cwm-borrowdisplay-20260828: 借調行只顯示本 scope 更次（clinicId 或 secondaryClinicId 命中本店）；
-        //   主屬行（含跨店更）維持全顯 —— filter 只套借調列
-        const ssVisible = isBorrowed
-          ? ss.filter((s: any) => s.clinicId === selectedClinicId || s.secondaryClinicId === selectedClinicId)
-          : ss
+        // ★ cwm-transferfilter-20260829: 修正 cwm-borrowdisplay-20260828 —— 上次用 isBorrowed（只 cover
+        //   variant="borrowed" 嘅「借調」section），但主名單啲「調入」行係 variant="compact"/無 variant
+        //   → 完全冇 filter。改用 rowIsTransfer（主屬唔喺 scope = 調入，同 HomeTag 同一條式），
+        //   同灰底判斷一致。
+        //   拍板：只要更次同 scope【有關係】就要顯示：
+        //     · A→C 走鋪（clinicId=A, secondaryClinicId=C），揀 C → 顯示
+        //     · C→B 走鋪（clinicId=C, secondaryClinicId=B），揀 C → 顯示
+        //     · A→B（兩邊都唔喺 scope），揀 C → 唔顯示
+        //   scopeClinicIds 係 Set → 揀公司時自然包晒該公司全部診所。
+        //   ★★★ !scopeClinicIds（揀「全部」）必須回 true —— 否則整張表變空（#16 回歸）
+        const inScopeShift = (s: any) =>
+          !scopeClinicIds
+          || scopeClinicIds.has(s.clinicId)
+          || (s.secondaryClinicId != null && scopeClinicIds.has(s.secondaryClinicId))
+        const ssVisible = (rowIsTransfer || isBorrowed) ? ss.filter(inScopeShift) : ss
         const hasShift = ssVisible.length > 0
         const hasLeave = ls.length > 0
         const cellIsEmpty = !hasShift && !hasLeave
@@ -2860,7 +2870,7 @@ function getShiftCode(shift: Shift): string {
       {weekDays.map((wd, i) => {
         const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
         // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope 更次 —— 截圖版要跟畫面週總覽一致
-        const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+        const empInScope = !scopeClinicIds || !emp.homeClinicId || scopeClinicIds.has(emp.homeClinicId)
         const ss = (!empInScope)
           ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
           : _allShiftsOnDay
@@ -3018,12 +3028,18 @@ function getShiftCode(shift: Shift): string {
   }
 
   // ★ 共用格內容 —— 週截圖同月總覽都係咁渲染，唔好另寫一套
-  const getExportCell = useCallback((empId: string, dateStr: string, shifts: any[], leaveReqs?: any[], opts?: { borrowed?: boolean; scopeClinicId?: string | null }) => {
+  const getExportCell = useCallback((empId: string, dateStr: string, shifts: any[], leaveReqs?: any[], opts?: { borrowed?: boolean; scopeClinicIds?: Set<string> | null; homeClinicId?: string | null }) => {
     const _ssRaw = shifts.filter(s => s.employeeId === empId && toHKDateStr(new Date(s.date)) === dateStr)
-    // ★ cwm-borrowdisplay-20260828: 借調行只顯示本 scope 更次 —— 截圖版要跟畫面月視圖一致
-    const ss = (opts?.borrowed && opts.scopeClinicId)
-      ? _ssRaw.filter((s: any) => s.clinicId === opts.scopeClinicId || s.secondaryClinicId === opts.scopeClinicId)
-      : _ssRaw
+    // ★ cwm-transferfilter-20260829: 改收 Set（揀公司時多間店）＋ 加「調入」判斷
+    //   （同畫面 rowIsTransfer 一致）—— 之前只有 borrowed section 有 filter，
+    //   主名單「調入」行喺截圖版完全冇 filter
+    const _rowIsTransfer = !!(opts?.scopeClinicIds && opts?.homeClinicId && !opts.scopeClinicIds.has(opts.homeClinicId))
+    const _needFilter = !!(opts?.scopeClinicIds && (opts?.borrowed || _rowIsTransfer))
+    const inScopeShift = (s: any) =>
+      !opts?.scopeClinicIds
+      || opts.scopeClinicIds.has(s.clinicId)
+      || (s.secondaryClinicId != null && opts.scopeClinicIds.has(s.secondaryClinicId))
+    const ss = _needFilter ? _ssRaw.filter(inScopeShift) : _ssRaw
     const ls = (leaveReqs ?? leaveRequests).filter(lr => lr.employeeId === empId && leaveCoversDate(lr, dateStr))
     const parts: React.ReactNode[] = []
     ss.forEach((s, si) => {
@@ -3060,10 +3076,10 @@ function getShiftCode(shift: Shift): string {
         </div>
       )
     })
-    // ★ cwm-borrowdisplay-20260828: 借調行本 scope 無更無假 → 灰底佔位（同畫面月視圖）
-    const _borrowedScopeEmpty = !!(opts?.borrowed && opts.scopeClinicId) && parts.length === 0
-    if (parts.length === 0) parts.push(<span key="empty" style={{ fontSize: 14, color: _borrowedScopeEmpty ? '#d1d5db' : '#9ca3af' }}>—</span>)
-    return <td style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', ...(_borrowedScopeEmpty ? { background: '#6b7280' } : {}) }}>{parts}</td>
+    // ★ cwm-transferfilter-20260829: filter 後無更無假 → 灰底佔位（同畫面月視圖 rowIsTransfer && cellIsEmpty）
+    const _scopeEmpty = _needFilter && parts.length === 0
+    if (parts.length === 0) parts.push(<span key="empty" style={{ fontSize: 14, color: _scopeEmpty ? '#d1d5db' : '#9ca3af' }}>—</span>)
+    return <td style={{ padding: 4, textAlign: 'center', verticalAlign: 'middle', ...(_scopeEmpty ? { background: '#6b7280' } : {}) }}>{parts}</td>
   }, [leaveRequests, templates, labelParts, clinics, shiftColor])
 
   // ★ 月截圖 handler —— 離屏節點有明確 width/height，確保截到完整 31 日
@@ -3174,7 +3190,7 @@ function getShiftCode(shift: Shift): string {
                 {days.map((wd, dayIdx) => {
                   const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope（scopeClinicIds）更次；主屬行維持全顯
-                  const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+                  const empInScope = !scopeClinicIds || !emp.homeClinicId || scopeClinicIds.has(emp.homeClinicId)
                   const empShiftsOnDay = (!empInScope)
                     ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
                     : _allShiftsOnDay
@@ -3341,7 +3357,7 @@ function getShiftCode(shift: Shift): string {
                 {days.map((wd, dayIdx) => {
                   const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                   // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope（scopeClinicIds）更次；主屬行維持全顯
-                  const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+                  const empInScope = !scopeClinicIds || !emp.homeClinicId || scopeClinicIds.has(emp.homeClinicId)
                   const empShiftsOnDay = (!empInScope)
                     ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
                     : _allShiftsOnDay
@@ -3508,7 +3524,7 @@ function getShiftCode(shift: Shift): string {
                     {days.map((wd, dayIdx) => {
                       const _allShiftsOnDay = weekShiftsByKey.get(`${emp.id}|${wd.dateStr}`) ?? EMPTY
                       // ★ cwm-borrowdisplay-20260828: 外店行只畫本 scope（scopeClinicIds）更次；主屬行維持全顯
-                      const empInScope = !scopeClinicIds || (emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId))
+                      const empInScope = !scopeClinicIds || !emp.homeClinicId || scopeClinicIds.has(emp.homeClinicId)
                       const empShiftsOnDay = (!empInScope)
                         ? _allShiftsOnDay.filter((s: any) => scopeClinicIds!.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds!.has(s.secondaryClinicId)))
                         : _allShiftsOnDay
@@ -6111,7 +6127,7 @@ function getShiftCode(shift: Shift): string {
                       <td style={{ padding: '4px 8px', fontWeight: 500, color: '#111827', whiteSpace: 'nowrap', borderBottom: '1px solid #e5e7eb' }}>
                         {emp.user?.name ?? '?'}
                       </td>
-                      {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests))}
+                      {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests, { scopeClinicIds, homeClinicId: emp.homeClinicId }))}
                     </tr>
                   ))}
                   {/* Part-time group header */}
@@ -6129,7 +6145,7 @@ function getShiftCode(shift: Shift): string {
                       <td style={{ padding: '4px 8px', fontWeight: 500, color: '#111827', whiteSpace: 'nowrap', borderBottom: '1px solid #e5e7eb' }}>
                         {emp.user?.name ?? '?'}
                       </td>
-                      {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests))}
+                      {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests, { scopeClinicIds, homeClinicId: emp.homeClinicId }))}
                     </tr>
                   ))}
                   {/* Borrowed group header */}
@@ -6151,7 +6167,7 @@ function getShiftCode(shift: Shift): string {
                           {emp.user?.name ?? '?'}
                           {homeLabel && <span style={{ fontSize: 11, color: '#2563eb', marginLeft: 4 }}>· {homeLabel}</span>}
                         </td>
-                        {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests, { borrowed: true, scopeClinicId: selectedClinicId }))}
+                        {monthDays.map((d, di) => getExportCell(emp.id, d, ovMonthShifts, monthLeaveRequests, { borrowed: true, scopeClinicIds, homeClinicId: emp.homeClinicId }))}
                       </tr>
                     )
                   })}
