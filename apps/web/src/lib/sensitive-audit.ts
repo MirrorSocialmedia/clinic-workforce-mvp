@@ -91,6 +91,11 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   // ★ cwi-audit-20260824-s1: Apricot 寫入（write-booking.ts）— 病人預約寫入，必須審計
   { action: 'REMOVE', label: '刪單（Apricot 寫入）' },
   { action: 'RESCHEDULE', label: '改期（Apricot 寫入）' },
+  // ★ providerslot-20260830 T1: 可約時段硬保留（ProviderHold）— 病人位佔用，必須審計
+  { action: 'PROVIDER_HOLD_CLAIM', label: '新增硬保留（claim）' },
+  { action: 'PROVIDER_HOLD_COMMIT', label: '硬保留入 Apricot（commit）' },
+  { action: 'PROVIDER_HOLD_RELEASE', label: '放開硬保留（release）' },
+  { action: 'PROVIDER_HOLD_AUTO_RELEASE', label: '硬保留逾時自動放開' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([

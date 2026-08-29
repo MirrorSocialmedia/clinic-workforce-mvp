@@ -151,6 +151,11 @@ model Clinic {
   config    String?  // JSON string for SQLite compat
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  // ★ providerslot-20260830 T1：可約時段（線上預約）設定 — 逐店，全行有 default
+  capacityPerProvider Int @default(3)  // 按醫生同時上限（MD 建議 3；15m 數據 30m 出位）
+  leadTimeMin         Int @default(30) // 最早可約 = now + N 分鐘（老細拍板 30）
+  flowWindowDays      Int @default(30) // Flow 出位窗口（同 BOOKING_WINDOW_DAYS=30）
+  holdTimeoutHours    Int @default(24) // HELD 逾時警報用（12h MEDIUM / 24h HIGH — inbox T3 用）
 
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
@@ -169,6 +174,7 @@ model Clinic {
   availabilities  ProviderAvailability[]
   bookings        ProviderBooking[]
   weeklyPatterns  ProviderWeeklyPattern[]
+  providerHolds   ProviderHold[]
 }
 
 // User entity — system login account
@@ -364,6 +370,7 @@ model Provider {
   availabilities ProviderAvailability[]
   bookings       ProviderBooking[]
   weeklyPatterns ProviderWeeklyPattern[]
+  holds          ProviderHold[]
 
   @@index([companyId, isActive])
 }
@@ -1417,7 +1424,7 @@ model ExternalApiKey {
   id         String    @id @default(cuid())
   name       String    @unique          // "wa-clinic-inbox"
   keyHash    String                    // sha256(key) — 明文只喺生成嗰刻顯示一次
-  scopes     String[]                  // ["availability","duty-roster","bookings","patients","appointments"]（cwc-rdchain-20260823-b1: +patients/appointments）
+  scopes     String[]                  // ["availability","duty-roster","bookings","patients","appointments","bookable-slots"]（cwc-rdchain-20260823-b1: +patients/appointments；providerslot-20260830-T1: +bookable-slots）
   active     Boolean   @default(true)
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -1524,4 +1531,36 @@ model PatientIndex {
   phoneHash        String
   lastSeenAt       DateTime
   @@index([phoneHash])
+}
+
+// ============================================================
+// providerslot-20260830 T1: 可約時段硬保留（hard hold）
+// MD: whatsapp-flow-booking.md §四（一揀即佔位；HELD 即時從可約計算扣除）
+// 🔴 PII 紅線：patientWaId / patientName 只係 workforce 內部用 —
+//    external response / audit / log 零回顯（照 ProviderBooking 鐵律）。
+// status：HELD（線上已佔未入 Apricot）｜IN_APRICOT（已入 Apricot）｜RELEASED（放開）
+// 佔位鎖：partial unique index (providerId, date, startMin)
+//   WHERE status IN ('HELD','IN_APRICOT') — migration 內 raw SQL（Prisma 唔支援
+//   partial index）。RELEASED 行唔鎖位，同 flowToken 可重開（冪等 replay）。
+// ============================================================
+model ProviderHold {
+  id          String    @id @default(cuid())
+  clinicId    String
+  providerId  String
+  date        String    // 'YYYY-MM-DD'（HK）
+  startMin    Int       // 由 00:00 起分鐘數（30 分鐘對齊 :00/:30）
+  endMin      Int
+  patientWaId String    // 🔴 PII — 內部用，external 零回顯
+  patientName String?   // 🔴 PII — 內部用，external 零回顯
+  source      String    // 'whatsapp_flow' | 'staff'
+  status      String    // 'HELD' | 'IN_APRICOT' | 'RELEASED'
+  apricotRef  String?
+  flowToken   String?   @unique // Flow 冪等鍵（Meta 重試 → 同 hold）
+  createdAt   DateTime  @default(now())
+  committedAt DateTime?
+
+  clinic   Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([clinicId, date])
 }

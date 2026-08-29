@@ -16,7 +16,7 @@ import { randomBytes } from 'node:crypto'
 import { createHash } from 'node:crypto'
 import { PrismaClient } from '@prisma/client'
 
-const ALLOWED_SCOPES = ['availability', 'duty-roster', 'bookings', 'patients', 'appointments'] as const
+const ALLOWED_SCOPES = ['availability', 'duty-roster', 'bookings', 'patients', 'appointments', 'bookable-slots'] as const
 
 function main(): void {
   const args = process.argv.slice(2)

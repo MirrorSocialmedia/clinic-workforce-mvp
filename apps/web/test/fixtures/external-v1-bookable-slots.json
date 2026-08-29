@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "unitMin": 30,
+  "capacityPerProvider": 3,
+  "leadTimeMin": 30,
+  "generatedAt": "2026-08-30T10:00:00+08:00",
+  "days": [
+    {
+      "date": "2026-09-01",
+      "closed": false,
+      "offerableCount": 2,
+      "slots": [
+        { "start": "09:30", "end": "10:00", "providerId": "p000000000000000000000001", "providerName": "Dr. Ho", "seatsFree": 2, "slotKey": "c2xvdC1rZXktc2FtcGxlLWJhc2U2NGR1cmctcGFydA.HMAC_part_placeholder" },
+        { "start": "11:00", "end": "11:30", "providerId": "p000000000000000000000002", "providerName": "Dr. Tse", "seatsFree": 3, "slotKey": "c2xvdC1rZXktc2FtcGxlLWJhc2U2NGR1cmctcGFydA.HMAC_part_placeholder" }
+      ]
+    },
+    { "date": "2026-09-02", "closed": true, "offerableCount": 0, "slots": [] }
+  ]
+}
