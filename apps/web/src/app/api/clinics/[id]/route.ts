@@ -45,11 +45,29 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   return runWithAudit(auditCtx, async () => {
     const id = params.id
-    const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color, apricotClinicId } = await req.json()
+    const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color, apricotClinicId,
+      capacityPerProvider, leadTimeMin, flowWindowDays, holdTimeoutHours } = await req.json()
 
     const HEX = /^#[0-9a-fA-F]{6}$/
     if (color !== undefined && color !== null && !HEX.test(String(color))) {
       return NextResponse.json({ error: '顏色格式必須為 #RRGGBB' }, { status: 400 })
+    }
+
+    // ★ providerslot-20260830 T2：可約時段四欄（正整數 + 範圍；undefined = 唔改）
+    const INT_FIELDS: [string, unknown, number, number, string][] = [
+      ['capacityPerProvider', capacityPerProvider, 1, 20, 'capacityPerProvider（按醫生同時上限）'],
+      ['leadTimeMin', leadTimeMin, 0, 1440, 'leadTimeMin（最早可約 lead time，分鐘）'],
+      ['flowWindowDays', flowWindowDays, 1, 365, 'flowWindowDays（Flow 出位窗口，日）'],
+      ['holdTimeoutHours', holdTimeoutHours, 1, 168, 'holdTimeoutHours（HELD 逾時，小時）'],
+    ]
+    const intData: Record<string, number> = {}
+    for (const [field, raw, min, max, label] of INT_FIELDS) {
+      if (raw === undefined) continue
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n < min || n > max) {
+        return NextResponse.json({ error: `${label} 必須係 ${min}–${max} 整數` }, { status: 400 })
+      }
+      intData[field] = n
     }
 
     try {
@@ -66,6 +84,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
           ...(longitude !== undefined && { longitude: longitude != null ? Number(longitude) : null }),
           ...(geoRadius !== undefined && { geoRadius: geoRadius != null ? Number(geoRadius) : null }),
           ...(apricotClinicId !== undefined && { apricotClinicId: apricotClinicId?.trim() || null }),
+          ...intData,
         },
       })
 

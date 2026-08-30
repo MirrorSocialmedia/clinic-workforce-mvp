@@ -20,6 +20,11 @@ interface Clinic {
   longitude: number | null
   geoRadius: number | null
   apricotClinicId: string | null
+  // ★ providerslot-20260830 T2：可約時段四欄（DB default 3/30/30/24）
+  capacityPerProvider: number
+  leadTimeMin: number
+  flowWindowDays: number
+  holdTimeoutHours: number
   // ★ cw-patwl Q1：providerSlots 時段設定（自由 JSON 字串，GET /api/clinics 已返回）
   config: string | null
   createdAt: string
@@ -62,6 +67,11 @@ function ClinicsPageInner() {
 
   // ★ cw-patwl Q1：醫生當值時段設定（Clinic.config.providerSlots）
   const [slotsModalClinic, setSlotsModalClinic] = useState<Clinic | null>(null)
+
+  // ★ providerslot-20260830 T2：可約時段設定（capacityPerProvider/leadTimeMin/flowWindowDays/holdTimeoutHours）
+  const [bookModalClinic, setBookModalClinic] = useState<Clinic | null>(null)
+  const [bookForm, setBookForm] = useState({ capacityPerProvider: '3', leadTimeMin: '30', flowWindowDays: '30', holdTimeoutHours: '24' })
+  const [bookSaving, setBookSaving] = useState(false)
   const [slotsForm, setSlotsForm] = useState<SlotMap>(DEFAULT_SLOTS)
   const [slotsSaving, setSlotsSaving] = useState(false)
 
@@ -219,6 +229,52 @@ function ClinicsPageInner() {
       setSlotsModalClinic(null)
       fetchAll()
     } finally { setSlotsSaving(false) }
+  }
+
+  // ★ providerslot-20260830 T2：可約時段設定 — 4 欄一次過 PUT（PUT 白名單已加；undefined = 唔改，呢度帶晒 4 欄）
+  const openBookModal = (clinic: Clinic) => {
+    setBookForm({
+      capacityPerProvider: String(clinic.capacityPerProvider ?? 3),
+      leadTimeMin: String(clinic.leadTimeMin ?? 30),
+      flowWindowDays: String(clinic.flowWindowDays ?? 30),
+      holdTimeoutHours: String(clinic.holdTimeoutHours ?? 24),
+    })
+    setBookModalClinic(clinic)
+  }
+
+  const saveBookConfig = async () => {
+    const clinic = bookModalClinic
+    if (!clinic) return
+    const body: Record<string, number> = {}
+    for (const [key, label, min, max] of [
+      ['capacityPerProvider', '同時上限', 1, 20],
+      ['leadTimeMin', 'lead time（分鐘）', 0, 1440],
+      ['flowWindowDays', 'Flow 窗口（日）', 1, 365],
+      ['holdTimeoutHours', 'HELD 逾時（小時）', 1, 168],
+    ] as [keyof typeof bookForm, string, number, number][]) {
+      const n = Number(bookForm[key])
+      if (!Number.isInteger(n) || n < min || n > max) {
+        alert(`${label} 必須係 ${min}–${max} 整數`)
+        return
+      }
+      body[key] = n
+    }
+    setBookSaving(true)
+    try {
+      const res = await fetch(`/api/clinics/${clinic.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({} as any))
+        alert(d.error || '可約設定儲存失敗')
+        return
+      }
+      setBookModalClinic(null)
+      fetchAll()
+    } finally { setBookSaving(false) }
   }
 
   const handleEditClinic = async (clinic: Clinic) => {
@@ -562,6 +618,7 @@ function ClinicsPageInner() {
                     <td>
                       <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => handleEditClinic(clinic)}>編輯</button>
                       <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => openSlotsModal(clinic)}>⏰ 時段設定</button>
+                      <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => openBookModal(clinic)}>📅 可約設定</button>
                       <button className="btn btn-sm" style={{ marginRight: 4 }} onClick={() => {
                         navigator.geolocation.getCurrentPosition(
                           p => { setAutoLat(p.coords.latitude); setAutoLng(p.coords.longitude); handleEditClinic(clinic) },
@@ -597,6 +654,7 @@ function ClinicsPageInner() {
                   <div className="flex gap-2">
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => handleEditClinic(clinic)}>編輯</button>
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => openSlotsModal(clinic)}>⏰ 時段設定</button>
+                    <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => openBookModal(clinic)}>📅 可約設定</button>
                     <button className="px-3 py-1.5 rounded-md border text-xs bg-slate-50 hover:bg-slate-100" onClick={() => {
                       navigator.geolocation.getCurrentPosition(
                         p => { setAutoLat(p.coords.latitude); setAutoLng(p.coords.longitude); handleEditClinic(clinic) },
@@ -640,6 +698,43 @@ function ClinicsPageInner() {
               <button className="btn" onClick={() => setSlotsModalClinic(null)}>取消</button>
               <button className="btn btn-primary" disabled={slotsSaving} onClick={saveClinicSlots}>
                 {slotsSaving ? '儲存中...' : '儲存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ★ providerslot-20260830 T2：可約時段設定（四欄）── */}
+      {bookModalClinic && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setBookModalClinic(null)}>
+          <div className="card p-4" style={{ width: '100%', maxWidth: 440, margin: 16 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ fontSize: 16, marginBottom: 8 }}>📅 可約時段設定 — {bookModalClinic.name}</h2>
+            <div className="text-xs text-muted-foreground" style={{ marginBottom: 16 }}>
+              WhatsApp Flow 出位 + 醫生時間表四態格用。預設：同時上限 3 / lead time 30 分鐘 / Flow 窗口 30 日 / HELD 逾時 24 小時。
+            </div>
+            {([
+              ['capacityPerProvider', '同時上限（每位醫生）', '1–20'],
+              ['leadTimeMin', 'lead time（分鐘）', '0–1440'],
+              ['flowWindowDays', 'Flow 出位窗口（日）', '1–365'],
+              ['holdTimeoutHours', 'HELD 逾時（小時）', '1–168'],
+            ] as [keyof typeof bookForm, string, string][]).map(([key, label, range]) => (
+              <div key={key} className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ width: 170, marginBottom: 0 }}>{label}</label>
+                <input
+                  type="number"
+                  min={Number(range.split('–')[0])}
+                  max={Number(range.split('–')[1])}
+                  value={bookForm[key]}
+                  onChange={e => setBookForm({ ...bookForm, [key]: e.target.value })}
+                  style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14, width: 100 }}
+                />
+                <span style={{ color: '#9ca3af', fontSize: 12, whiteSpace: 'nowrap' }}>{range}</span>
+              </div>
+            ))}
+            <div className="flex justify-end gap-2" style={{ marginTop: 20 }}>
+              <button className="btn" onClick={() => setBookModalClinic(null)}>取消</button>
+              <button className="btn btn-primary" disabled={bookSaving} onClick={saveBookConfig}>
+                {bookSaving ? '儲存中...' : '儲存'}
               </button>
             </div>
           </div>

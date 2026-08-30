@@ -422,3 +422,196 @@ export function layoutBookings(
   }
   return out
 }
+
+// ─── ★ providerslot-20260830 T2：四態格（MD §六 / HTML 3a）───
+//
+// 數據源：GET /api/provider-availability/grid（internal；含 fragments + holds）。
+// 每 30 分鐘格分上下兩 15 分鐘小格；四態：
+//   實心綠＝線上可出（offerable）
+//   虛邊綠＝只人手可插（fragment — 30m 位過容量，但 15m 碎片有位）
+//   橙邊　＝HELD / IN_APRICOT 已佔（hold_overlap，或有 active hold 覆蓋）
+//   灰　　＝不可出（on_leave / outside_open / lead_time / over_capacity 無碎片）
+//
+// 呢度係純 function（無 react / 無 fetch / 無 DB），node:test 可以斷言。
+
+/** grid API 返返嘅 hold（零 PII — 只係時段/來源/狀態/時間） */
+export interface GridHold {
+  s: string
+  e: string
+  src: string
+  st: string
+  at: string
+}
+
+/** 單個 30 分鐘格（API 原樣 — view 層映射前） */
+export interface GridSlot {
+  i: number
+  start: string
+  end: string
+  status: 'offerable' | 'on_leave' | 'outside_open' | 'lead_time' | 'over_capacity' | 'held_overlap'
+  seatsFree: number
+  /** 上下兩 15m 小格各佔幾席（精確軌先有；null = 保守軌冇 15m 粒度） */
+  occ: [number, number] | null
+  /** 上下兩 15m 小格係唔係碎片（1 = 係） */
+  frag: [number, number]
+  holds: GridHold[]
+}
+
+export interface GridDay {
+  date: string
+  /** 精確軌（openSch 有）先非 false — 保守軌（grid cache）冇 15m 碎片 */
+  precise: boolean
+  /** 當日預約筆數（chip 顯示用） */
+  bookCount: number
+  slots: GridSlot[]
+}
+
+export interface GridProvider {
+  id: string
+  name: string
+  color: string | null
+  weekBookings: number
+  leaveDates: string[]
+  days: GridDay[]
+}
+
+export interface GridResp {
+  clinic: { id: string; name: string }
+  from: string
+  to: string
+  capacity: number
+  leadTimeMin: number
+  generatedAt: string
+  sync: { lastSyncAt: string | null; stale: boolean }
+  dayFlags: { date: string; onDutyCount: number; hasPattern: boolean }[]
+  providers: GridProvider[]
+}
+
+/** 四態（UI 渲染用） */
+export type GridUiState = 'offerable' | 'fragment' | 'held' | 'closed'
+
+/** 顏色 token（跟 HTML 3a pixel spec；行高 34px） */
+export const GRID_COLORS = {
+  /** 實心綠 — 線上可出 */
+  offerable: '#aebf92',
+  offerableBorder: '#728157',
+  /** 虛邊綠 — 只人手可插（碎片） */
+  fragmentBg: '#f0fae1',
+  fragmentBorder: '#8fa073',
+  /** 橙邊 — HELD/IN_APRICOT 已佔 */
+  heldBg: '#ffe1d0',
+  heldBorder: '#b2622d',
+  /** 灰 — 不可出 */
+  closedBg: '#dcd3c4',
+  closedText: '#645c50',
+  /** 已佔 mini 格 */
+  seatTaken: '#a19786',
+  seatFree: '#56633f',
+  textDark: '#272e1b',
+  textMuted: '#82796a',
+} as const
+
+/**
+ * 單格 → UI 四態 + 文案。
+ *
+ * 判定優先（MD §六 / 3a）：
+ *   1. hold 覆蓋（active holds.length>0 或 status=held_overlap）→ 橙邊
+ *   2. offerable → 實心綠「線上可出 · N 席」
+ *   3. over_capacity 但有 15m 碎片（frag 有 1）→ 虛邊綠「只人手 · N × 15 分」
+ *   4. 其餘（on_leave / outside_open / lead_time / over_capacity 無碎片）→ 灰
+ *
+ * 灰再分文案：on_leave=「休假」/ outside_open=「未開診」/ lead_time=「未開診」
+ *             / over_capacity(無碎片)=「滿」。
+ */
+export function gridCellState(slot: GridSlot): {
+  state: GridUiState
+  /** 主文案（格內） */
+  label: string
+  /** 灰底細分類（tooltip 用） */
+  closedKind: 'on_leave' | 'outside_open' | 'lead_time' | 'full' | null
+  /** 碎片數（15m 小格個數） */
+  fragCount: number
+} {
+  const fragCount = (slot.frag[0] ? 1 : 0) + (slot.frag[1] ? 1 : 0)
+
+  // 1. 橙邊：HELD / IN_APRICOT 已佔（hold 覆蓋）
+  const hasHold = slot.holds.length > 0 || slot.status === 'held_overlap'
+  if (hasHold) {
+    return { state: 'held', label: '線上已佔', closedKind: null, fragCount }
+  }
+  // 2. 實心綠：線上可出
+  if (slot.status === 'offerable') {
+    return { state: 'offerable', label: `線上可出 · ${slot.seatsFree} 席`, closedKind: null, fragCount }
+  }
+  // 3. 虛邊綠：只人手可插（30m 過容量，15m 碎片有位）
+  if (slot.status === 'over_capacity' && fragCount > 0) {
+    return { state: 'fragment', label: `只人手 · ${fragCount} × 15 分`, closedKind: null, fragCount }
+  }
+  // 4. 灰：不可出
+  let closedKind: 'on_leave' | 'outside_open' | 'lead_time' | 'full'
+  if (slot.status === 'on_leave') closedKind = 'on_leave'
+  else if (slot.status === 'lead_time') closedKind = 'lead_time'
+  else if (slot.status === 'over_capacity') closedKind = 'full'
+  else closedKind = 'outside_open'
+
+  const label =
+    closedKind === 'on_leave' ? '休假'
+    : closedKind === 'full' ? '滿'
+    : '未開診'
+  return { state: 'closed', label, closedKind, fragCount }
+}
+
+/** 四態 → 背景 / 邊框 style（inline；3a 行高 34px，radius 11px） */
+export function gridCellStyle(state: GridUiState): {
+  background: string
+  border: string
+  color: string
+} {
+  switch (state) {
+    case 'offerable':
+      return { background: GRID_COLORS.offerable, border: 'none', color: GRID_COLORS.textDark }
+    case 'fragment':
+      return { background: GRID_COLORS.fragmentBg, border: `1.5px dashed ${GRID_COLORS.fragmentBorder}`, color: GRID_COLORS.textDark }
+    case 'held':
+      return { background: GRID_COLORS.heldBg, border: `1.5px solid ${GRID_COLORS.heldBorder}`, color: '#8c491a' }
+    case 'closed':
+    default:
+      return { background: GRID_COLORS.closedBg, border: 'none', color: GRID_COLORS.closedText }
+  }
+}
+
+/** 30 分鐘格 → 48 格索引（HH:mm 起） */
+export function gridSlotIndex(start: string): number {
+  const [h, m] = start.split(':').map(Number)
+  return (h * 60 + m) / 30
+}
+
+/**
+ * ★ T2：四態格週視圖全空判斷 —
+ * 所有醫生日日都無 grid 數據（slots 全空）且無休假 → 顯示「未有資料」（同舊 isWeekEmpty 口徑）。
+ */
+export function gridWeekEmpty(resp: GridResp): boolean {
+  return resp.providers.every(
+    p => p.days.every(d => d.slots.length === 0) && (p.leaveDates?.length ?? 0) === 0,
+  )
+}
+
+/**
+ * ★ T2：grid 時間軸範圍（跟資料 floor/ceil 整點，保底 09:00–21:00 — 同 computeAxis 口徑）。
+ * 「開診中」= status !== 'outside_open'（on_leave/lead/offerable/fragment/held/full 都算開）。
+ */
+export function computeGridAxis(resp: GridResp): [number, number] {
+  let lo = Infinity
+  let hi = -Infinity
+  for (const p of resp.providers)
+    for (const d of p.days)
+      for (const s of d.slots) {
+        if (s.status === 'outside_open') continue
+        const sMin = s.i * 30
+        if (sMin < lo) lo = sMin
+        if (sMin + 30 > hi) hi = sMin + 30
+      }
+  if (!isFinite(lo) || !isFinite(hi)) return [9 * 60, 21 * 60]
+  return [Math.min(9 * 60, Math.floor(lo / 60) * 60),
+          Math.max(21 * 60, Math.ceil(hi / 60) * 60)]
+}
