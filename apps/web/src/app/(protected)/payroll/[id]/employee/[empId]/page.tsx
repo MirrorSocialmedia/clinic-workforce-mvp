@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { fmtDateTime, fmtDate, fmtTime, toHKDateStr, getMonthRange, fmtDMY } from '@/lib/hk-date'
+import { fmtDateTime, fmtDate, fmtTime, toHKDateStr, getMonthRange, fmtDMY, periodMonthKey } from '@/lib/hk-date'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { Card } from '@/components/ui/card'
@@ -80,6 +80,17 @@ export default function EmployeePayrollDetailPage() {
   const printRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
 
+  // ★ 2026-08-31 cwm-leaveasof：該薪資月月底（YYYY-MM-DD，HK）—— 假期餘額「截至」呢日。
+  //   periodMonth 存 HK 午夜 UTC，periodMonthKey 保證 HK 視角取年月（同 payroll-engine 寫入一致）。
+  const periodMonthEnd: string = (() => {
+    const pm = data?.item?.run?.periodMonth
+    if (!pm) return ''
+    const ym = periodMonthKey(pm)
+    const [y, m] = ym.split('-').map(Number)
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
+    return `${ym}-${String(lastDay).padStart(2, '0')}`
+  })()
+
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
@@ -105,15 +116,17 @@ export default function EmployeePayrollDetailPage() {
   // Fetch leave balances from API (authentic source — same as 假期管理)
   // ★ 年假係累積 row (year=0)，唔可以按曆年過濾。
   //   唔傳 year 拎晒，前端按 systemKey 分流。
+  // ★ 2026-08-31 cwm-leaveasof：asOf = 薪資月月底 —— 否則會計入之後月份嘅發放同使用。
+  //   dependency 必加 periodMonthEnd（而家只係 [empId]，唔加就切換月份唔會重新 fetch）。
   useEffect(() => {
-    if (!empId) return
-    fetch(`/api/leave-balance?employeeId=${empId}`, {
+    if (!empId || !periodMonthEnd) return
+    fetch(`/api/leave-balance?employeeId=${empId}&asOf=${periodMonthEnd}`, {
       credentials: 'include', cache: 'no-store',
     })
       .then(r => r.ok ? r.json() : { leaveBalances: [] })
       .then(d => setLeaveBalances(d.leaveBalances || []))
       .catch(() => setLeaveBalances([]))
-  }, [empId])
+  }, [empId, periodMonthEnd])
 
   if (loading) {
     return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
@@ -894,14 +907,21 @@ export default function EmployeePayrollDetailPage() {
                 )}
               </div>
               <div className="rounded-lg border p-3">
-                <div className="text-xs text-muted-foreground">假期餘額</div>
+                <div className="text-xs text-muted-foreground">
+                  假期餘額
+                  {periodMonthEnd && <span className="text-emerald-600 ml-1">截至 {periodMonthEnd.slice(0, 7)}</span>}
+                </div>
                 <div style={{ fontSize: 9, color: '#9ca3af' }}>年假／休息日／OT 補假累積</div>
                 <div className="text-lg font-bold mt-1">{totalLeaveBalance.toFixed(1)} 天</div>
                 <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                   {/* ★ 用 != null 唔用 > 0 —— 餘額啱啱用晒（0）都要顯示，
                         否則用家會以為系統漏咗。同「無薪假扣款」嗰个 bug 同一 pattern。 */}
                   {restDayBalance != null && (
-                    <div>休息日: {restDayRemaining.toFixed(1)} / {restDayEntitled}</div>
+                    <div>
+                      休息日: {restDayRemaining.toFixed(1)} / {restDayEntitled}
+                      {/* ★ 2026-08-31 cwm-leaveasof：「累計已用」而家冇顯示 —— 剩餘/應得中間數睇唔到 */}
+                      <span className="text-muted-foreground">（累計已用 {restDayBalance.used ?? 0}）</span>
+                    </div>
                   )}
                   {annualBalance != null && (
                     <>
