@@ -5,6 +5,10 @@ export type TimeAccountRow = {
   employeeId: string
   employeeName: string
   timeAccountMinutes: number | null   // null = 時薪／兼職，不設時間帳戶
+  // ★ 2026-08-31 (cwm-earlyin)：OT 換假顯示拆分（拍板：員工總覽要顯示）——
+  //   null = 時薪／兼職／計算失敗（同 timeAccountMinutes 口徑）
+  leaveConvertMinutes: number | null
+  leaveSwapBackMinutes: number | null
   status: 'ok' | 'not_applicable' | 'error'  // ★ 三態：正常 / 時薪不適用 / 計算失敗
 }
 
@@ -42,7 +46,7 @@ export async function getTimeAccountSummary(
     try { cfg = JSON.parse(e.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
 
     if (cfg?.base_type === 'hourly') {
-      rows[i] = { employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null, status: 'not_applicable' }
+      rows[i] = { employeeId: e.id, employeeName: e.user?.name ?? '—', timeAccountMinutes: null, leaveConvertMinutes: null, leaveSwapBackMinutes: null, status: 'not_applicable' }
     } else {
       tasks.push({ e, cfg, i })
     }
@@ -57,6 +61,9 @@ export async function getTimeAccountSummary(
           employeeId: t.e.id,
           employeeName: t.e.user?.name ?? '—',
           timeAccountMinutes: tb.timeAccountMinutes ?? null,
+          // ★ 純轉發 calculateTimeBank 已計好嘅值 —— 冇新增 SQL，批量查詢唔會變慢
+          leaveConvertMinutes: tb.leaveConvertMinutes ?? null,
+          leaveSwapBackMinutes: tb.leaveSwapBackMinutes ?? null,
           status: 'ok',
         }
       } catch (err) {
@@ -65,6 +72,8 @@ export async function getTimeAccountSummary(
           employeeId: t.e.id,
           employeeName: t.e.user?.name ?? '—',
           timeAccountMinutes: null,
+          leaveConvertMinutes: null,
+          leaveSwapBackMinutes: null,
           status: 'error',
         }
       }

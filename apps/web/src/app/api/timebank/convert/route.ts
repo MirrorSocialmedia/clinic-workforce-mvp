@@ -5,6 +5,7 @@ import prisma from '@/lib/prisma'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { LEAVE_SYSTEM_KEYS, balanceYearFor } from '@/lib/leave-types'
+import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 
 async function getOtLeaveTypeId() {
   const lt = await prisma.leaveType.findUnique({
@@ -49,7 +50,6 @@ export async function POST(req: NextRequest) {
   }
 
   const { employeeId, direction, days, note } = await req.json()
-  const MINUTES_PER_DAY = 9 * 60
 
   if (!employeeId || !direction || !days) {
     return NextResponse.json({ error: 'employeeId, direction, days 為必填' }, { status: 400 })
@@ -80,8 +80,8 @@ export async function POST(req: NextRequest) {
       where: { id: bal.id },
       data: { used: bal.used + daysInt, remaining: bal.remaining - daysInt },
     })
-    // ② 帳戶進分鐘
-    const minutes = Math.round(daysInt * 540)
+    // ② 帳戶進分鐘（★ 2026-08-31：改用共享常數，同顯示層換算同一個「一日」單位）
+    const minutes = Math.round(daysInt * TIMEBANK_MINUTES_PER_DAY)
     const beforeBalance = await tbBalance(employeeId)
     await prisma.timeBankEntry.create({
       data: {
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
 
   if (direction === 'to_leave') {
     const tb = await calculateTimeBank(employeeId, new Date(), {}, prisma)
-    if ((tb as any).availableMinutes < daysInt * MINUTES_PER_DAY) {
+    if ((tb as any).availableMinutes < daysInt * TIMEBANK_MINUTES_PER_DAY) {
       return NextResponse.json({ error: 'OT 時間不足' }, { status: 400 })
     }
 
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
         employeeId,
         date: new Date(),
         type: 'LEAVE_CONVERT',
-        minutes: -(daysInt * MINUTES_PER_DAY),
+        minutes: -(daysInt * TIMEBANK_MINUTES_PER_DAY),
         note: `換 ${daysInt} 天假`,
         createdBy: auth.session.userId,
       },
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
         targetEmployeeId: employeeId,
         beforeJson: JSON.stringify({ otBalanceMinutes: beforeBalance }),
         afterJson: JSON.stringify({ otBalanceMinutes: afterBalance }),
-        notes: JSON.stringify({ delta: -(daysInt * MINUTES_PER_DAY), days: daysInt, direction, date: new Date().toISOString() }),
+        notes: JSON.stringify({ delta: -(daysInt * TIMEBANK_MINUTES_PER_DAY), days: daysInt, direction, date: new Date().toISOString() }),
       },
     } as any)
   } else {
@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
         employeeId,
         date: new Date(),
         type: 'LEAVE_SWAP_BACK',
-        minutes: daysInt * MINUTES_PER_DAY,
+        minutes: daysInt * TIMEBANK_MINUTES_PER_DAY,
         note: `${daysInt} 天 OT 假換回 OT`,
         createdBy: auth.session.userId,
       },
@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
         targetEmployeeId: employeeId,
         beforeJson: JSON.stringify({ otBalanceMinutes: beforeBalance }),
         afterJson: JSON.stringify({ otBalanceMinutes: afterBalance }),
-        notes: JSON.stringify({ delta: daysInt * MINUTES_PER_DAY, days: daysInt, direction, date: new Date().toISOString() }),
+        notes: JSON.stringify({ delta: daysInt * TIMEBANK_MINUTES_PER_DAY, days: daysInt, direction, date: new Date().toISOString() }),
       },
     } as any)
   }

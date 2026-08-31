@@ -6,6 +6,32 @@ import { Hand, Smartphone, Calendar, Palmtree, Bell } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { toHKDateStr, fmtTime, fmtDate, fmtDateTime } from '@/lib/hk-date'
+import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
+
+// ★ 2026-08-31 (cwm-earlyin)：本月預測逐項加減嘅單行 —— 直式逐行，唔係四格橫排
+function ForecastRow({ label, value, sub, highlight, divider, bold, strong }: {
+  label: string; value: number; sub?: string; highlight?: boolean; divider?: boolean; bold?: boolean; strong?: boolean
+}) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      padding: '2px 4px', fontSize: 11,
+      background: strong ? '#fef3c7' : highlight ? '#fef2f2' : undefined,
+      borderTop: divider ? '1px solid #e5e7eb' : undefined,
+      borderRadius: strong ? 4 : undefined,
+    }}>
+      <span style={{ color: strong ? '#92400e' : '#6b7280' }}>
+        {label}{sub ? <span style={{ fontSize: 9, color: '#9ca3af' }}>（{sub}）</span> : null}
+      </span>
+      <span style={{
+        color: strong ? '#92400e' : value > 0 ? '#059669' : value < 0 ? '#dc2626' : '#6b7280',
+        fontWeight: bold || strong ? 700 : 500,
+      }}>
+        {value > 0 ? '+' : value < 0 ? '−' : ''}{Math.abs(value)}
+      </span>
+    </div>
+  )
+}
 
 /** Tremor-style Stat Card */
 function StatCard({ value, title, color = 'blue' }: { value: number; title: string; color?: 'blue' | 'emerald' | 'amber' | 'violet' | 'cyan' }) {
@@ -310,37 +336,65 @@ export default function MyDashboardPage() {
                           {c1} {c2 >= 0 ? '+' : '−'} {Math.abs(c2)} {c3 >= 0 ? '+' : '−'} {Math.abs(c3)} = {c4 === null ? '—' : c4}
                         </div>
 
-                        {/* ★ 本月預測（四格）—— 拍板 2026-08-21
-                            ⚠️★ 第四格 = timeAccountMinutes + rh.diffMinutes，絕對唔好用頭三格相加：
-                               timeAccountMinutes(=balance) 已含 carriedFrom+netOtThisMonth+convertedMinutes，
-                               相加會漏 convertedMinutes（RESTDAY_GRANT）→「加唔埋」bug 重現。
+                        {/* ★ 2026-08-31 (cwm-earlyin) 拍板③：OT 換假／退回 —— 有值先顯示（分鐘＋天）。
+                            日數換算用共享常數（同寫入側同一個「一日」單位），唔好再砌第三個寫死值。 */}
+                        {((summary?.leaveConvertMinutes ?? 0) !== 0 || (summary?.leaveSwapBackMinutes ?? 0) !== 0) && (
+                          <div className="grid grid-cols-2 gap-px mt-1">
+                            {(summary?.leaveConvertMinutes ?? 0) !== 0 && (
+                              <div className="text-center p-1">
+                                <div className="text-[10px] text-muted-foreground">OT 換假</div>
+                                <div className="text-sm font-semibold text-red-600">{summary.leaveConvertMinutes}</div>
+                                <div className="text-[9px] text-muted-foreground">
+                                  {Math.abs(summary.leaveConvertMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天
+                                </div>
+                              </div>
+                            )}
+                            {(summary?.leaveSwapBackMinutes ?? 0) !== 0 && (
+                              <div className="text-center p-1">
+                                <div className="text-[10px] text-muted-foreground">換假退回</div>
+                                <div className="text-sm font-semibold text-emerald-600">+{summary.leaveSwapBackMinutes}</div>
+                                <div className="text-[9px] text-muted-foreground">
+                                  {(summary.leaveSwapBackMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* ★ 2026-08-31 (cwm-earlyin)：本月預測改直式逐項加減（拍板④⑤）。
+                            原本四格加起身唔等於預計月底（中間差咗 convertedMinutes，完全冇顯示）。
+                            ⚠️★★★ 三個守住嘅點：
+                            ①「目前結餘」直接用 timeAccountMinutes —— 唔好自己加上面幾行；
+                            ②「預計月底」＝ timeAccountMinutes + diffMinutes —— 唔好用逐行加總；
+                            ③「其他調整」用減法（convertedMinutes − 換假 − 換回）—— 表面永遠夾得返，
+                               驗收要逐 type 對數（MD §六 #24），唔可以靠畫面自洽。
                             ⚠️ 時薪（applicable=false）／未排更（unscheduled=true）→ 整組唔顯示，同應返卡一致 */}
                         {rh?.applicable && !rh.unscheduled && (
-                          <div className="mt-2 pt-2" style={{ borderTop: '1.5px solid #6ee7b7', background: '#fffbeb',
-                                                              margin: '8px -10px 0', padding: '6px 10px' }}>
-                            <div className="text-[10px] font-semibold" style={{ color: '#92400e', marginBottom: 3 }}>
+                          <div className="mt-2" style={{ background: '#fffbeb', borderRadius: 6, padding: '8px 10px', marginTop: 8 }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', textAlign: 'center', marginBottom: 6 }}>
                               本月預測
                             </div>
-                            <div className="grid grid-cols-4 gap-1">
-                              {[
-                                { label: '上月 OT',  v: summary?.carriedFrom ?? 0,      hi: false },
-                                { label: '本月實收', v: summary?.netOtThisMonth ?? 0,   hi: false },
-                                { label: '預計 OT',  v: rh?.diffMinutes ?? 0,           hi: false },
-                                { label: '預計月底', v: (summary?.timeAccountMinutes ?? 0) + (rh?.diffMinutes ?? 0), hi: true },
-                              ].map(x => (
-                                <div key={x.label} className="text-center"
-                                  style={x.hi ? { background: '#fef3c7', borderRadius: 4, padding: '3px 0' } : undefined}>
-                                  <div className="text-[9px]" style={{ color: x.hi ? '#92400e' : '#9ca3af' }}>{x.label}</div>
-                                  <div className="text-[11px] font-semibold"
-                                    style={{ color: x.hi ? '#92400e' : x.v > 0 ? '#059669' : x.v < 0 ? '#dc2626' : '#6b7280' }}>
-                                    {x.v > 0 ? '+' : x.v < 0 ? '−' : ''}{Math.abs(x.v)}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="text-[9px] mt-1" style={{ color: '#a16207' }}>
-                              ＝ 上面結餘 {summary?.timeAccountMinutes ?? 0} ＋ 預計 OT {rh?.diffMinutes ?? 0}
-                            </div>
+                            <ForecastRow label="上月結轉" value={summary?.carriedFrom ?? 0} />
+                            <ForecastRow label="本月實收 OT" value={summary?.netOtThisMonth ?? 0} />
+                            {(summary?.leaveConvertMinutes ?? 0) !== 0 && (
+                              <ForecastRow label="OT 換假" sub={`${Math.abs(summary.leaveConvertMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天`}
+                                           value={summary.leaveConvertMinutes} highlight />
+                            )}
+                            {(summary?.leaveSwapBackMinutes ?? 0) !== 0 && (
+                              <ForecastRow label="換假退回" sub={`${(summary.leaveSwapBackMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天`}
+                                           value={summary.leaveSwapBackMinutes} highlight />
+                            )}
+                            {/* ★ 拍板⑤⑥：其他調整一行唔展開；RESTDAY_GRANT 本來就唔喺 convertedMinutes（唔會出現） */}
+                            <ForecastRow label="其他調整" sub="初始調整等"
+                                         value={(summary?.convertedMinutes ?? 0)
+                                                  - (summary?.leaveConvertMinutes ?? 0)
+                                                  - (summary?.leaveSwapBackMinutes ?? 0)} />
+                            <ForecastRow label="目前結餘" value={summary?.timeAccountMinutes ?? 0} divider bold />
+                            {/* ★ 2026-08-31 拍板④：「預計 OT」→「應返時間OT」；settled 保留「（已入帳）」 */}
+                            <ForecastRow label={rh?.settled ? '應返時間OT（已入帳）' : '應返時間OT'} sub="編更差額" value={rh?.diffMinutes ?? 0} />
+                            <ForecastRow label="預計月底"
+                                         value={(summary?.timeAccountMinutes ?? 0) + (rh?.diffMinutes ?? 0)}
+                                         divider strong />
                           </div>
                         )}
                       </>
@@ -367,8 +421,16 @@ export default function MyDashboardPage() {
                           </div>
                           <div className="grid grid-cols-2 gap-2 mb-2">
                             <div className="text-center">
-                              <div className="text-base font-semibold text-emerald-600">{summary?.otMinutes ?? 0}</div>
-                              <div className="text-[10px] text-muted-foreground">OT（分鐘）</div>
+                              {/* ★ 2026-08-31 (cwm-earlyin)：otMinutes 唔含早返（由 TimeBankEntry 嚟）—— 用鐘口徑，
+                                  令逐日加起身 = 呢個數 = 上面 c1 + c2 */}
+                              <div className="text-base font-semibold text-emerald-600">
+                                {summary?.otMinutesForAccount ?? summary?.otMinutes ?? 0}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">OT（含提早・午飯）</div>
+                              <div className="text-[10px] text-emerald-600">
+                                = {(summary?.otMinutes ?? 0) - (summary?.lunchOtMinutes ?? 0) + (summary?.earlyInOtMinutes ?? 0)}
+                                {' + '}{summary?.lunchOtMinutes ?? 0}
+                              </div>
                             </div>
                             <div className="text-center">
                               <div className="text-base font-semibold">{summary?.netLateMinutes ?? 0}</div>
@@ -386,6 +448,8 @@ export default function MyDashboardPage() {
                                   <span className="flex flex-wrap gap-x-2 justify-end">
                                     {d.clockOutOt   ? <span style={{ color: '#059669' }}>OT {d.clockOutOt} 分</span> : null}
                                     {d.holidayOt    ? <span style={{ color: '#059669' }}>假期返工OT {d.holidayOt} 分</span> : null}
+                                    {/* ★ 2026-08-31：早返 OT（TimeBankEntry EARLY_IN_OT）由引擎 merge 入同一日 */}
+                                    {d.earlyInOt    ? <span style={{ color: '#059669' }}>提早上班OT {d.earlyInOt} 分</span> : null}
                                     {d.lunchOt      ? <span style={{ color: '#059669' }}>午飯OT {d.lunchOt} 分</span> : null}
                                     {d.lateMinutes  ? <span style={{ color: '#d97706' }}>遲到 {d.lateMinutes} 分</span> : null}
                                     {d.lunchLate    ? <span style={{ color: '#d97706' }}>午飯超時 {d.lunchLate} 分</span> : null}

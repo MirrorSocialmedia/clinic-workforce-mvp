@@ -3,8 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-
-const MINUTES_PER_DAY = 540
+import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -23,7 +22,7 @@ export async function POST(req: NextRequest) {
     if (!isFinite(d) || d === 0) {
       return NextResponse.json({ error: '需要非零天數或非零分鐘數' }, { status: 400 })
     }
-    totalMinutes = Math.round(d * MINUTES_PER_DAY)
+    totalMinutes = Math.round(d * TIMEBANK_MINUTES_PER_DAY) // ★ 2026-08-31：共享常數（原寫死 540）
   } else {
     return NextResponse.json({ error: '需要員工、非零分鐘數與原因' }, { status: 400 })
   }

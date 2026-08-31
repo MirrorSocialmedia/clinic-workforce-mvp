@@ -145,6 +145,9 @@ export async function GET(
     timeAccount: timeAccount ? {
       minutes: timeAccount.timeAccountMinutes,
       status: timeAccount.status,
+      // ★ 2026-08-31 (cwm-earlyin)：OT 換假／退回（拍板：員工總覽要顯示）
+      leaveConvertMinutes: timeAccount.leaveConvertMinutes ?? 0,
+      leaveSwapBackMinutes: timeAccount.leaveSwapBackMinutes ?? 0,
       compLeaveDayMinutes: dayMin,
       compLeaveDays,
     } : null,

@@ -8,6 +8,7 @@ import { User, Printer, Eye } from 'lucide-react'
 import { fmtDate } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
 import { zeroEntitledHint } from '@/lib/leave-types'
+import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 
 const api = (url: string, init?: RequestInit) =>
   fetch(url, { credentials: 'include', cache: 'no-store', ...init })
@@ -281,6 +282,17 @@ export default function EmployeeOverviewPage() {
                 {timeAccount.compLeaveDays != null && (
                   <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
                     可換假：{timeAccount.compLeaveDays} 天（按每日 {timeAccount.compLeaveDayMinutes} 分鐘）
+                  </div>
+                )}
+                {/* ★ 2026-08-31 (cwm-earlyin) 拍板：員工總覽要顯示 OT 換假／退回（有值先顯示，分鐘＋天） */}
+                {(timeAccount.leaveConvertMinutes ?? 0) !== 0 && (
+                  <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>
+                    OT 換假：{timeAccount.leaveConvertMinutes} 分（{Math.abs(timeAccount.leaveConvertMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天）
+                  </div>
+                )}
+                {(timeAccount.leaveSwapBackMinutes ?? 0) !== 0 && (
+                  <div style={{ fontSize: 12, color: '#198754', marginTop: 4 }}>
+                    換假退回：+{timeAccount.leaveSwapBackMinutes} 分（{(timeAccount.leaveSwapBackMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天）
                   </div>
                 )}
                 {timeAccount.status === 'not_applicable' && (

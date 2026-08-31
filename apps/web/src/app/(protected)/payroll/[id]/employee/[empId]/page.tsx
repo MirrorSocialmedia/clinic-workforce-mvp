@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { fmtDateTime, fmtDate, fmtTime, toHKDateStr, getMonthRange, fmtDMY, periodMonthKey } from '@/lib/hk-date'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
 
@@ -285,9 +286,12 @@ export default function EmployeePayrollDetailPage() {
   const totalLeaveBalance = restDayRemaining + annualRemaining + otRemaining
   // FIX: 統一資料源 — OT/遲到全部從 detail.timebank 取（計糧引擎算好）
   const tb = detail.timebank || {}
-  const otHours = tb.otMinutes != null
-    ? tb.otMinutes / 60
-    : (leaveAndOtDetail.otHours ?? item.otHours)
+  // ★ 2026-08-31 (cwm-earlyin)：改鐘口徑（含早返）—— 同員工端「未入帳 OT」一致。
+  //   ★ §2.4 先 grep 實：呢個 otHours 全頁只係顯示用（本頁冇其他用處），
+  //     唔餵任何金額計算（金額由引擎 detail.salary 出）→ 可以改。
+  const otHours = tb.otMinutesForAccount != null
+    ? tb.otMinutesForAccount / 60
+    : (tb.otMinutes != null ? tb.otMinutes / 60 : (leaveAndOtDetail.otHours ?? item.otHours))
   const otConvertedLeave = leaveAndOtDetail.otConvertedLeave ?? 0
   const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
 
@@ -887,7 +891,9 @@ export default function EmployeePayrollDetailPage() {
         </div>
 
         {/* 🏖️ 假期與 OT 換假 */}
-        {(monthlyLeaveDays > 0 || otConvertedLeave > 0 || totalLeaveBalance > 0) && (
+        {(monthlyLeaveDays > 0 || otConvertedLeave > 0 || totalLeaveBalance > 0
+          // ★ 2026-08-31 (cwm-earlyin)：淨係有換回冇換假時都要出呢個 section
+          || (tb?.leaveSwapBackMinutes ?? 0) !== 0) && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🏖️ 假期與 OT 換假</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
@@ -942,13 +948,33 @@ export default function EmployeePayrollDetailPage() {
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">本月 OT 時數</div>
                 <div className="text-lg font-bold mt-1">
-                  {(tb.otMinutes ?? 0)} 分鐘（{((tb.otMinutes ?? 0) / 60).toFixed(1)}h）
+                  {(tb.otMinutesForAccount ?? 0)} 分鐘（{((tb.otMinutesForAccount ?? 0) / 60).toFixed(1)}h）
                 </div>
+                {/* ★ 2026-08-31 (cwm-earlyin)：鐘口徑（含早返）—— 同員工端一致；副標用同一條式砌 */}
+                {(tb.lunchOtMinutes ?? 0) > 0 || (tb.earlyInOtMinutes ?? 0) > 0 && (
+                  <div className="text-[10px] text-muted-foreground mt-1">
+                    = {(tb.otMinutes ?? 0) - (tb.lunchOtMinutes ?? 0) + (tb.earlyInOtMinutes ?? 0)} ＋ 午休少休 {tb.lunchOtMinutes ?? 0}
+                  </div>
+                )}
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-xs text-muted-foreground">OT 換假</div>
                 <div className="text-lg font-bold mt-1">{otConvertedLeave} 天</div>
+                {/* ★ 2026-08-31 拍板②：分鐘同天都顯示 */}
+                {(tb?.leaveConvertMinutes ?? 0) !== 0 && (
+                  <div className="text-[10px] text-red-600">{tb.leaveConvertMinutes} 分</div>
+                )}
               </div>
+              {/* ★ 2026-08-31 拍板①②：換假退回格 —— 有值先出 */}
+              {(tb?.leaveSwapBackMinutes ?? 0) !== 0 && (
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground">換假退回</div>
+                  <div className="text-lg font-bold mt-1">
+                    {(tb.leaveSwapBackMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天
+                  </div>
+                  <div className="text-[10px] text-emerald-600">+{tb.leaveSwapBackMinutes} 分</div>
+                </div>
+              )}
               {otRemainderMinutes > 0 && (
                 <div className="rounded-lg border p-3">
                   <div className="text-xs text-muted-foreground">OT 餘數</div>
@@ -960,7 +986,7 @@ export default function EmployeePayrollDetailPage() {
         )}
 
         {/* 考勤與時間銀行 */}
-        {tb.otMinutes != null && (
+        {tb.otMinutesForAccount != null && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🕐 考勤與時間銀行</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
@@ -995,11 +1021,12 @@ export default function EmployeePayrollDetailPage() {
               <div className="rounded-lg border p-3" style={{ borderLeft: '3px solid #16a34a' }}>
                 <div className="text-xs text-muted-foreground">本月 OT</div>
                 <div className="text-lg font-bold mt-1" style={{ color: '#16a34a' }}>
-                  {(tb.otMinutes ?? 0)} 分鐘
+                  {(tb.otMinutesForAccount ?? 0)} 分鐘
                 </div>
-                {(tb.lunchOtMinutes ?? 0) > 0 && (
+                {/* ★ 2026-08-31 (cwm-earlyin)：鐘口徑（含早返）＋ 同一條式砌嘅副標（同員工端一致） */}
+                {(tb.lunchOtMinutes ?? 0) > 0 || (tb.earlyInOtMinutes ?? 0) > 0 && (
                   <div className="text-[10px] text-muted-foreground mt-1">
-                    收工 OT {(tb.otMinutes ?? 0) - (tb.lunchOtMinutes ?? 0)} ＋ 午休少休 {tb.lunchOtMinutes}
+                    = {(tb.otMinutes ?? 0) - (tb.lunchOtMinutes ?? 0) + (tb.earlyInOtMinutes ?? 0)} ＋ 午休少休 {tb.lunchOtMinutes ?? 0}
                   </div>
                 )}
               </div>
@@ -1098,6 +1125,7 @@ export default function EmployeePayrollDetailPage() {
                       if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
                       if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
                       if (d.holidayOt) rows.push({ date: d.date, label: 'OT', min: d.holidayOt, color: '#059669' })
+                      if (d.earlyInOt) rows.push({ date: d.date, label: '提早上班OT', min: d.earlyInOt, color: '#059669' })
                       if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
                       if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
                       return rows
@@ -1120,6 +1148,7 @@ export default function EmployeePayrollDetailPage() {
                   if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
                   if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
                   if (d.holidayOt) rows.push({ date: d.date, label: 'OT', min: d.holidayOt, color: '#059669' })
+                  if (d.earlyInOt) rows.push({ date: d.date, label: '提早上班OT', min: d.earlyInOt, color: '#059669' })
                   if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
                   if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
                   return rows

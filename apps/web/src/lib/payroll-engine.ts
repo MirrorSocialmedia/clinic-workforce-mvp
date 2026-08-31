@@ -16,6 +16,7 @@ import type { PayType, RunStatus } from '@prisma/client'
 import { getEffectiveADW } from './adw'
 import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
+import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 
 // ------------------------------------------------------------------
 // TimeBank Engine Version + Cache Key
@@ -24,7 +25,7 @@ import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMa
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-const TIMEBANK_ENGINE_VERSION = 5 // v5: 假期返工 OT 入逐日明細 [cwm-holidayot-20260828]
+const TIMEBANK_ENGINE_VERSION = 6 // v6: 早返 OT 入逐日明細 + OT換假拆分欄 [cwm-earlyin-20260831]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -1516,6 +1517,9 @@ export async function calculateTimeBank(
   // ★ 2026-08-15: 補齊三個隱形數字
   netOtThisMonth: number
   convertedMinutes: number
+  // ★ 2026-08-31: OT 換假顯示拆分（LEAVE_CONVERT 負 / LEAVE_SWAP_BACK 正），純顯示、唔參與 balance 計算
+  leaveConvertMinutes: number
+  leaveSwapBackMinutes: number
   // ★ 2026-08-16: 午休超時/少休拆解
   lunchLateMinutes: number
   lunchOtMinutes: number
@@ -1785,17 +1789,41 @@ export async function calculateTimeBank(
 
   // ★ 2026-08-08: 新增 — 本月已批准嘅早到 OT（獨立欄位，★唔入 ADJUST_TYPES）
   let earlyInOtMinutes = 0
+  let earlyInRows: any[] = [] // ★ 2026-08-31: 提升到外層 scope —— 逐日明細 merge 要用
   try {
-    const earlyInRows = await db.timeBankEntry?.findMany?.({
+    earlyInRows = (await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: 'EARLY_IN_OT', date: { gte: monthStart, lte: monthEnd } },
-    })
-    earlyInOtMinutes = (earlyInRows || []).reduce((s: number, e: any) => s + e.minutes, 0)
+    })) || []
+    earlyInOtMinutes = earlyInRows.reduce((s: number, e: any) => s + e.minutes, 0)
   } catch (e) {
     if (!earlyInOtWarnedSet.has(employeeId)) { earlyInOtWarnedSet.add(employeeId); console.error('[payroll-engine] EARLY_IN_OT read failed', { employeeId, error: e }) }
   }
 
+  // ★ 2026-08-31：早返 OT 由 TimeBankEntry(EARLY_IN_OT) 嚟，唔喺 shifts 迴圈 →
+  //   逐日明細一直冇佢（同假期返工 OT 同一個病，嗰個已修）。
+  //   ⚠️ 同一日可能已經有 dayEntry（收工 OT／午飯 OT／假期返工 OT）
+  //      → 一定要按日期 merge 入現有行，唔好 push 第二行。
+  //   ⚠️ 用 e.date（邊一日嘅早返），唔可以用 e.createdAt；
+  //      呢度喺逐日明細 sort 之前 push，降序自動生效。
+  {
+    const byDate = new Map<string, any>(timeAccountDetail.map((d: any) => [d.date, d]))
+    for (const e of earlyInRows) {
+      if (!(e.minutes > 0)) continue
+      const dk = toHKDateStr(e.date)
+      const cur = byDate.get(dk)
+      if (cur) cur.earlyInOt = (cur.earlyInOt ?? 0) + e.minutes
+      else {
+        const nd = { date: dk, earlyInOt: e.minutes }
+        timeAccountDetail.push(nd)
+        byDate.set(dk, nd)
+      }
+    }
+  }
+
   // 抓換假消耗（LEAVE_CONVERT 負消耗OT，LEAVE_SWAP_BACK 正換回OT，INIT_ADJUST/REST_TO_ACCOUNT 為帳戶調整）
   let convertedMinutes = 0
+  let leaveConvertMinutes = 0      // ★ LEAVE_CONVERT（換假消耗，負數）—— 純顯示拆分
+  let leaveSwapBackMinutes = 0     // ★ LEAVE_SWAP_BACK（換回，正數）—— 純顯示拆分
   try {
     // ★ 2026-08-08: EARLY_IN_OT 唔入 ADJUST_TYPES（物理隔離，唔好同錢線撞）
     // ★ ROSTER_DIFF：編更差額，計糧生成時寫入、退回時刪除
@@ -1804,6 +1832,15 @@ export async function calculateTimeBank(
       where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
     })
     convertedMinutes = convertEntries?.reduce((s: number, e: any) => s + e.minutes, 0) || 0
+    // ★ 2026-08-31：拆出 OT 換假／退回做顯示用（拍板①）。
+    //   ⚠️ convertedMinutes 本身唔可以剔 —— 下面 balance 靠佢。
+    //      呢兩個純粹係【顯示拆分】，唔參與任何計算。
+    leaveConvertMinutes = (convertEntries || [])
+      .filter((e: any) => e.type === 'LEAVE_CONVERT')
+      .reduce((s: number, e: any) => s + e.minutes, 0)
+    leaveSwapBackMinutes = (convertEntries || [])
+      .filter((e: any) => e.type === 'LEAVE_SWAP_BACK')
+      .reduce((s: number, e: any) => s + e.minutes, 0)
   } catch (e) {
     console.error('[payroll-engine] leave convert entries read failed, treated as 0', { employeeId, error: e })
   }
@@ -1823,7 +1860,7 @@ export async function calculateTimeBank(
   // 可用OT餘額 = 上月結轉 + 本月淨OT + 換假消耗（負）
   const balance = carriedFrom + netOtThisMonth + convertedMinutes
   const availableMinutes = Math.max(0, balance)
-  const convertibleLeaveDays = Math.floor(availableMinutes / (9 * 60)) // 9 hours = 1 day
+  const convertibleLeaveDays = Math.floor(availableMinutes / TIMEBANK_MINUTES_PER_DAY) // 9 hours = 1 day
 
   // End-of-month strategy
   let note = ''
@@ -1870,6 +1907,9 @@ export async function calculateTimeBank(
     // ★ 2026-08-15: 補齊三個隱形數字，令時間帳戶「加得埋」
     netOtThisMonth,
     convertedMinutes,
+    // ★ 2026-08-31: OT 換假顯示拆分（純顯示，balance 唔受影響）
+    leaveConvertMinutes,
+    leaveSwapBackMinutes,
   }
 }
 
@@ -3554,6 +3594,10 @@ export async function calculatePayrollWithRules(
         .reduce((s: number, lt: any) => s + lt.days, 0),
       leaveBalance: leaveBalanceRemaining,
       otHours: Math.round(result.otHours * 100) / 100,
+      // ★ 2026-08-31 (cwm-earlyin 盲點修正)：引擎原本冇 set 呢個欄 → 計糧頁
+      //   「OT 換假 N 天」一直顯示 0（page `?? 0` 掩咗）。而家由
+      //   leaveConvertMinutes 換算（同寫入側同一 540 分/日單位，同員工端一致）。
+      otConvertedLeave: +(Math.abs(tb.leaveConvertMinutes ?? 0) / TIMEBANK_MINUTES_PER_DAY).toFixed(1),
       otBalanceMinutes: tb.balance ?? 0,
       timeAccountDetail: tb.timeAccountDetail || [],
     },
@@ -3573,6 +3617,16 @@ export async function calculatePayrollWithRules(
       balance: tb.balance,
       timeAccountMinutes: tb.timeAccountMinutes,
       netDeficitMinutes: tb.netDeficitMinutes,
+      // ★ 2026-08-31：補轉發 —— 計糧明細頁「本月 OT（鐘口徑）／本月實得／OT 換假」顯示要用。
+      //   之前冇轉發，page `?? 0` 掩咗（早返一直顯示 0、午休少休拆解唔出）。
+      //   純轉發引擎已計好嘅值，唔改任何數字。
+      earlyInOtMinutes: tb.earlyInOtMinutes,
+      lunchOtMinutes: tb.lunchOtMinutes,
+      otMinutesForAccount: tb.otMinutesForAccount,
+      netOtThisMonth: tb.netOtThisMonth,
+      convertedMinutes: tb.convertedMinutes,
+      leaveConvertMinutes: tb.leaveConvertMinutes,
+      leaveSwapBackMinutes: tb.leaveSwapBackMinutes,
     },
   }
 

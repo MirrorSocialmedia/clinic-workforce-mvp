@@ -24,6 +24,15 @@ export async function GET(req: NextRequest) {
     // ★ 2026-08-19: 四格新增欄 — ② 午休 OT（已含喺 otMinutes 入面，前端要減走先）
     lunchOtMinutes: tb.lunchOtMinutes,
     earlyInOtMinutes: tb.earlyInOtMinutes,
+    // ★ 2026-08-31 (cwm-earlyin)：鐘口徑（otMinutes + earlyInOt）—— 前端「未入帳 OT」要用佢，
+    //   否則逐日加起身 ≠ 顯示嘅總數（早返唔喺 otMinutes 入面）。
+    //   引擎已經計好（otMinutesForAccount），呢度只係補轉發。
+    otMinutesForAccount: tb.otMinutesForAccount,
+    // ★ 本月預測逐項加減要用（拍板：其他調整 = convertedMinutes − 換假 − 換回）
+    convertedMinutes: tb.convertedMinutes,
+    // ★ OT 換假／退回拆分（拍板①③：有值先顯示，分鐘＋天都顯示）
+    leaveConvertMinutes: tb.leaveConvertMinutes,
+    leaveSwapBackMinutes: tb.leaveSwapBackMinutes,
     lateMinutes: tb.lateMinutes,
     netLateMinutes: tb.netLateMinutes,
     earlyLeaveMinutes: tb.earlyLeaveMinutes,
