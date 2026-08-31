@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { NextRequest } from 'next/server'
 import { prisma, basePrisma } from '../../../../../lib/prisma'
+import { setApricotLockClientFactoryForTest } from '../../../../../lib/apricot/lock'
 import { setTestCallFn } from '../../../../../lib/apricot/write-booking'
 import { todayHK, addDaysStr } from '../../../../../lib/hk-date'
 import { POST } from './route'
@@ -139,6 +140,11 @@ let saved: [Any, string, Any][] = []
 const envSaved: string[] = []
 before(() => {
   setTestCallFn(mockCall)
+  // cwi-refresh-20260831：lock 改用 dedicated pg client — fake 經 test seam inject（dynamic 讀 locked flag）
+  setApricotLockClientFactoryForTest(async () => ({
+    query: async (sql: string) => ({ rows: [{ locked: /try_advisory_lock/.test(sql) ? locked : null }] }),
+    release: () => {},
+  }))
   envSaved.push(process.env.APRICOT_WRITE ?? '', process.env.ALLOW_NEW_PATIENT_WRITE ?? '')
   process.env.APRICOT_WRITE = '1'
   process.env.ALLOW_NEW_PATIENT_WRITE = '0'
@@ -151,6 +157,7 @@ before(() => {
 })
 after(() => {
   setTestCallFn(null)
+  setApricotLockClientFactoryForTest(null)
   ;(process.env as Any).APRICOT_WRITE = envSaved[0]
   ;(process.env as Any).ALLOW_NEW_PATIENT_WRITE = envSaved[1]
   for (const [obj, k, orig] of saved) {

@@ -14,6 +14,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { prisma, basePrisma } from '../prisma'
+import { setApricotLockClientFactoryForTest } from './lock'
 import { addDaysStr } from '../hk-date'
 import { runAppointmentIndexBackfill, monthsBetween } from './backfill-appointments'
 import type { CacheCallFn } from './sync-availability-cache'
@@ -141,6 +142,19 @@ before(() => {
   fakes = makeFakes(state)
   callFn = makeCallFn(state)
   installFakes()
+  // cwi-refresh-20260831：lock 改用 dedicated pg client — fake 經 test seam inject。
+  // try_advisory_lock delegate 返去已安裝嘅 prisma.$queryRaw（test fake 自己）作單一 source of truth，
+  // 咁就唔理 test 用 module `state` 定 local `st` 重新 patch fake，lock 狀態都跟得貼。
+  setApricotLockClientFactoryForTest(async () => ({
+    query: async (sql: string) => {
+      if (/try_advisory_lock/.test(sql)) {
+        const res = await (prisma as Any).$queryRaw`SELECT pg_try_advisory_lock($1) AS locked`
+        return { rows: [res[0]] }
+      }
+      return { rows: [{ locked: null }] }
+    },
+    release: () => {},
+  }))
 })
 after(() => {
   for (const [obj, m] of savedOriginals) {
@@ -149,6 +163,7 @@ after(() => {
     }
   }
   savedOriginals = new Map()
+  setApricotLockClientFactoryForTest(null)
 })
 
 // ── 驗收 ─────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { prisma, basePrisma } from '../prisma'
+import { setApricotLockClientFactoryForTest } from './lock'
 import { toHKDateStr, addDaysStr } from '../hk-date'
 import {
   buildSlotGrid,
@@ -200,11 +201,17 @@ before(() => {
       Object.defineProperty(obj, k, { value: fakes[k], configurable: true, writable: true })
     }
   }
+  // cwi-refresh-20260831：lock 改用 dedicated pg client — fake 經 test seam inject（讀同一個 locked flag）
+  setApricotLockClientFactoryForTest(async () => ({
+    query: async (sql: string) => ({ rows: [{ locked: /try_advisory_lock/.test(sql) ? locked : true }] }),
+    release: () => {},
+  }))
 })
 after(() => {
   for (const [obj, k, orig] of saved) {
     Object.defineProperty(obj, k, { value: orig, configurable: true, writable: true })
   }
+  setApricotLockClientFactoryForTest(null)
   console.log = realLog
   console.error = realErr
 })

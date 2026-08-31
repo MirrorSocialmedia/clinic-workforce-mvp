@@ -105,4 +105,7 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   'FACE_ENROLL', 'FACE_ENROLL_CODE_ISSUED', // routine face enrollment steps
   // ★ 2026-08-19: External duty-roster API（wa-inbox 專用）— metadata-only audit，冇員工 PII
   'EXTERNAL_DUTY_ROSTER_READ', 'EXTERNAL_DUTY_ROSTER_AUTH_FAIL',
+  // ★ cwi-refresh-20260831: External availability/refresh（wa-inbox 專用）—
+  // 只觸發單日 cache re-sync（零 PII 槽格），notes 只記 dates+ok/error code
+  'EXTERNAL_AVAILABILITY_REFRESH',
 ])

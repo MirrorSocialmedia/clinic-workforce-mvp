@@ -16,6 +16,7 @@ import {
   withExternalAudit,
   ExternalApiError,
   resetExternalRateBuckets,
+  takeRefreshToken,
   isValidDateStr,
   dateDiffDays,
 } from './external-api'
@@ -188,5 +189,48 @@ describe('日期參數工具', () => {
     assert.equal(dateDiffDays('2026-08-20', '2026-09-21'), 32)
     assert.equal(dateDiffDays('2026-08-21', '2026-08-20'), -1)
     assert.equal(dateDiffDays('2026-07-31', '2026-08-01'), 1)
+  })
+})
+
+// ── takeRefreshToken（cwi-refresh-20260831 §2）────────────────────────────
+
+describe('takeRefreshToken — refresh 限流（每 clinic 每 60 秒 1 次）', () => {
+  it('首次 ok；60 秒內第二次拒 + retryAfterSec ≈ 60', () => {
+    assert.deepEqual(takeRefreshToken('clinic-a'), { ok: true })
+    const second = takeRefreshToken('clinic-a')
+    assert.equal(second.ok, false)
+    if (!second.ok) {
+      assert.ok(
+        second.retryAfterSec >= 55 && second.retryAfterSec <= 60,
+        `retryAfterSec=${second.retryAfterSec} 應該喺 55–60 範圍`,
+      )
+    }
+  })
+
+  it('唔同 clinic 獨立 bucket（防 code/cuid 別名繞過）', () => {
+    assert.deepEqual(takeRefreshToken('clinic-a'), { ok: true })
+    assert.deepEqual(takeRefreshToken('clinic-b'), { ok: true })
+  })
+
+  it('60 秒後 refill 返 1 token（mock Date tick）', (t) => {
+    t.mock.timers.enable({ apis: ['Date'] })
+    assert.deepEqual(takeRefreshToken('clinic-a'), { ok: true })
+    assert.equal(takeRefreshToken('clinic-a').ok, false)
+    t.mock.timers.tick(61_000)
+    assert.deepEqual(takeRefreshToken('clinic-a'), { ok: true })
+    t.mock.timers.reset()
+  })
+
+  it('retryAfterSec 唔會超過 60（refill 中）', () => {
+    assert.deepEqual(takeRefreshToken('clinic-a'), { ok: true })
+    const s = takeRefreshToken('clinic-a')
+    if (!s.ok) assert.ok(s.retryAfterSec >= 1 && s.retryAfterSec <= 60)
+  })
+
+  it('resetExternalRateBuckets 一併清 refresh bucket', () => {
+    assert.deepEqual(takeRefreshToken('clinic-a'), { ok: true })
+    assert.equal(takeRefreshToken('clinic-a').ok, false)
+    resetExternalRateBuckets()
+    assert.deepEqual(takeRefreshToken('clinic-a'), { ok: true })
   })
 })

@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { NextRequest } from 'next/server'
 import { prisma } from '../prisma'
+import { setApricotLockClientFactoryForTest } from './lock'
 import { createToken } from '../auth'
 import { todayHK, addDaysStr } from '../hk-date'
 import {
@@ -94,11 +95,17 @@ before(() => {
     saved[k] = (prisma as Any)[k]
     Object.defineProperty(prisma, k, { value: fakes[k], configurable: true, writable: true })
   }
+  // cwi-refresh-20260831：lock 改用 dedicated pg client — fake 經 test seam inject
+  setApricotLockClientFactoryForTest(async () => ({
+    query: async (sql: string) => ({ rows: [{ locked: /try_advisory_lock/.test(sql) ? true : null }] }),
+    release: () => {},
+  }))
 })
 after(() => {
   for (const k of Object.keys(saved)) {
     Object.defineProperty(prisma, k, { value: saved[k], configurable: true, writable: true })
   }
+  setApricotLockClientFactoryForTest(null)
 })
 
 // ---- 1. resolveSyncWindow 純函數 ----------------------------------------------

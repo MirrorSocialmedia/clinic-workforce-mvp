@@ -12,6 +12,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../prisma'
+import { setApricotLockClientFactoryForTest } from './lock'
 import {
   syncAvailabilityCacheSingleDay,
   runAvailabilityCacheSync,
@@ -52,6 +53,7 @@ const cacheRows: Any[] = [
 ]
 const deleteManyWheres: Any[] = []
 let queryRawCount = 0
+let lockFactoryCalls = 0
 
 const fakes = {
   $queryRaw: async (strings: Any) => {
@@ -87,11 +89,20 @@ before(() => {
       Object.defineProperty(obj, k, { value: fakes[k], configurable: true, writable: true })
     }
   }
+  // cwi-refresh-20260831：lock 改用 dedicated pg client — fake 經 test seam inject
+  setApricotLockClientFactoryForTest(async () => {
+    lockFactoryCalls += 1
+    return {
+      query: async (sql: string) => ({ rows: [{ locked: /try_advisory_lock/.test(sql) ? true : null }] }),
+      release: () => {},
+    }
+  })
 })
 after(() => {
   for (const [obj, k, orig] of saved) {
     Object.defineProperty(obj, k, { value: orig, configurable: true, writable: true })
   }
+  setApricotLockClientFactoryForTest(null)
 })
 beforeEach(() => {
   calls.length = 0
@@ -99,6 +110,7 @@ beforeEach(() => {
   cacheRows[0] = { clinicId: 'cl-1', providerApricotId: 'prov-1', providerName: 'Dr. T', date: OTHER_DATE, startTime: '10:00', endTime: '10:30', isOpen: true, bookedCount: 0, syncedAt: new Date('2026-08-20T00:00:00Z') }
   deleteManyWheres.length = 0
   queryRawCount = 0
+  lockFactoryCalls = 0
 })
 
 describe('§4 單日即時 sync', () => {
@@ -130,14 +142,14 @@ describe('§4 單日即時 sync', () => {
 
   it('syncAvailabilityCacheSingleDay 唔自己攞 lock（caller 同鎖 — 重攞會 pool deadlock）', async () => {
     await syncAvailabilityCacheSingleDay({ id: 'cl-1', apricotClinicId: 'apr-clinic-1' }, DATE, { callFn: mockCall })
-    assert.equal(queryRawCount, 0, 'no-lock 版唔准打 advisory lock')
+    assert.equal(lockFactoryCalls, 0, 'no-lock 版唔准打 advisory lock')
   })
 
   it('runAvailabilityCacheSync({ clinicId, dateOnly }) = MD §4 字面簽名（有 lock 版）', async () => {
     const r = await runAvailabilityCacheSync({ clinicId: 'cl-1', dateOnly: DATE, callFn: mockCall, now: new Date('2026-08-23T05:00:00Z') })
     assert.equal(r.dayRefreshed, true)
     assert.ok(r.syncedAt)
-    assert.ok(queryRawCount >= 1, '應該攞 lock')
+    assert.ok(lockFactoryCalls >= 1, '應該攞 lock')
     assert.equal(calls.length, 1)
     const qs = new URLSearchParams(calls[0].path.split('?')[1])
     assert.equal(qs.get('startDate'), DATE)

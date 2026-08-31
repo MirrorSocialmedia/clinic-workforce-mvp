@@ -26,6 +26,8 @@ export class ExternalApiError extends Error {
     readonly status: number,
     message: string,
     readonly code: string,
+    /** 額外 response body 欄位（cwi-refresh-20260831：429 retryAfterSec） */
+    readonly extra?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'ExternalApiError'
@@ -74,6 +76,33 @@ function sha256Hex(s: string): string {
 
 interface KeyHeaderSource {
   headers: { get(name: string): string | null }
+}
+
+// cwi-refresh-20260831 §2：availability/refresh 專屬限流 —
+// 每 clinic 每 60 秒 1 次（capacity 1 / refill 1 per 60s）。
+// 同 buckets Map（resetExternalRateBuckets 一併清）；key 用 *resolved clinic id*
+// 而非 caller 傳入字串 — 防 shortName/cuid 兩種寫法繞過 bucket。
+const REFRESH_RATE = { capacity: 1, refillPerSec: 1 / 60 }
+
+export type RefreshTokenResult = { ok: true } | { ok: false; retryAfterSec: number }
+
+/** 取一個 refresh token；攞唔到回 retryAfterSec（ceil，最小 1 秒）。唔排隊。 */
+export function takeRefreshToken(clinicId: string): RefreshTokenResult {
+  const key = `refresh:${clinicId}`
+  const now = Date.now()
+  let b = buckets.get(key)
+  if (!b) {
+    b = { tokens: REFRESH_RATE.capacity, ts: now }
+    buckets.set(key, b)
+  } else {
+    b.tokens = Math.min(REFRESH_RATE.capacity, b.tokens + ((now - b.ts) / 1000) * REFRESH_RATE.refillPerSec)
+    b.ts = now
+  }
+  if (b.tokens >= 1) {
+    b.tokens -= 1
+    return { ok: true }
+  }
+  return { ok: false, retryAfterSec: Math.max(1, Math.ceil((1 - b.tokens) / REFRESH_RATE.refillPerSec)) }
 }
 
 /**
@@ -144,7 +173,7 @@ export async function withExternalAudit(
   } catch (e) {
     if (e instanceof ExternalApiError) {
       status = e.status
-      return jsonNoStore({ error: e.message, code: e.code }, { status: e.status })
+      return jsonNoStore({ error: e.message, code: e.code, ...(e.extra ?? {}) }, { status: e.status })
     }
     console.error(`[external-api] ${path} 未預期錯誤（response 只回 generic）:`, e)
     return jsonNoStore({ error: 'internal error', code: 'INTERNAL' }, { status: 500 })

@@ -16,6 +16,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../prisma'
+import { setApricotLockClientFactoryForTest } from './lock'
 import {
   hkToUtc,
   addMinutesHhmm,
@@ -151,6 +152,11 @@ let saved: [Any, string, Any][] = []
 before(() => {
   tee()
   setTestCallFn(mockCall)
+  // cwi-refresh-20260831：lock 改用 dedicated pg client — fake 經 test seam inject（dynamic 讀 locked flag）
+  setApricotLockClientFactoryForTest(async () => ({
+    query: async (sql: string) => ({ rows: [{ locked: /try_advisory_lock/.test(sql) ? locked : null }] }),
+    release: () => {},
+  }))
   for (const obj of [prisma]) {
     for (const k of Object.keys(fakes) as (keyof typeof fakes)[]) {
       saved.push([obj, k, (obj as Any)[k]])
@@ -160,6 +166,7 @@ before(() => {
 })
 after(() => {
   setTestCallFn(null)
+  setApricotLockClientFactoryForTest(null)
   console.log = realLog
   console.warn = realWarn
   console.error = realErr
