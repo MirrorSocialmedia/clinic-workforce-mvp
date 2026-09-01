@@ -5913,7 +5913,9 @@ function getShiftCode(shift: Shift): string {
                     <tr style={{ background: '#eff6ff', color: '#1d4ed8' }}>
                       <th style={{ width: 64, padding: '5px', textAlign: 'left' }}>員工</th>
                       {/* ★ 2026-08-22 §6.3：上月剩（上月快照）+ 剩餘（即時值）—— 兩欄新加 */}
-                      <th style={{ width: 44, padding: '5px', background: '#dbeafe' }}>上月剩</th>
+                      {/* ★ 2026-09-01 cwm-lmr：休息日截到上月底，年假欄係即時值（混合口徑，拍板②） */}
+                      <th style={{ width: 44, padding: '5px', background: '#dbeafe' }}
+                          title="休息日截至上月底；年假為即時值">上月剩</th>
                       <th style={{ width: 36, padding: '5px', background: '#dbeafe' }}>R</th>
                       <th style={{ width: 32, padding: '5px', background: '#dbeafe' }}>PL</th>
                       <th style={{ width: 44, padding: '5px', background: '#93c5fd', color: '#1e3a8a' }}>R+PL</th>
@@ -5930,10 +5932,17 @@ function getShiftCode(shift: Shift): string {
                       <tr key={r.employeeId} style={{ borderBottom: '0.5px solid #e5e7eb' }}>
                         <td style={{ padding: '5px' }}>{r.name}</td>
                         {/* ★ 2026-08-22 §6.3：上月剩 —— 上月 snapshot（REST_DAY）；
-                             冇快照（上月未 finalize）= null → 顯「—」（零 fallback） */}
+                             ★ 2026-09-01 cwm-lmr：冇 snapshot（上月未 finalize）= 動態算「截至上月底」，
+                             顯 ~ 記號；snapshot = 凍結值（~ 唔顯） */}
                         <td style={{ padding: '5px', textAlign: 'center',
-                                     color: r.lastMonthRestRemaining == null ? '#cbd5e1' : undefined }}>
+                                     color: r.lastMonthRestRemaining == null ? '#cbd5e1' : undefined }}
+                            title={r.lastMonthRestSource === 'computed'
+                              ? '上月未確認計糧 —— 即時計算（截至上月底）'
+                              : '上月計糧確認時嘅凍結值'}>
                           {r.lastMonthRestRemaining == null ? '—' : r.lastMonthRestRemaining}
+                          {r.lastMonthRestSource === 'computed' && (
+                            <span style={{ fontSize: 8, color: '#94a3b8', marginLeft: 2 }}>~</span>
+                          )}
                         </td>
                         <td style={{ padding: '5px', textAlign: 'center' }}>{r.restOnly}</td>
                         <td style={{ padding: '5px', textAlign: 'center', color: '#b45309', fontWeight: 600 }}>{r.pl}</td>

@@ -7,6 +7,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { resolveLeaveTable, isInProbation, serviceMonths } from '@/lib/leave-calculation'
 import { countMonthlyLeaveDays } from '@/lib/payroll-engine'
+import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 import {
   serviceYearRange,
   overlapsRange,
@@ -130,8 +131,9 @@ export async function GET(req: NextRequest) {
 
   // ★ 2026-08-22 §6.2.3：lastMonthRestRemaining —— 上月 LeaveBalanceSnapshot（REST_DAY）。
   //   上月 periodKey 要處理跨年（view "2026-01" → snapshot "2025-12"）。
-  //   ★ 查唔到（上月未 finalize 過）= null → 前端顯「—」；
-  //     絕唔好 fallback 當前值 —— 會令「上月剩」同「剩餘」一模一樣，用戶當真係本月冇用過假。
+  //   ★ 2026-09-01 cwm-lmr 拍板①：冇 snapshot（上月未 finalize）→ 動態算「截至上月底」。
+  //     ⚠️ 唔可以 fallback 當前 LeaveBalance.remaining —— 嗰個含本月已用，
+  //        會令「上月剩」同「剩餘」一模一樣（原 :133 註釋嘅警告仍然成立）。
   const [spy, spm] = periodMonth.split('-').map(Number)
   const prevMonthKey = spm === 1 ? `${spy - 1}-12` : `${spy}-${String(spm - 1).padStart(2, '0')}`
   const prevSnapshots = await prisma.leaveBalanceSnapshot.findMany({
@@ -139,7 +141,23 @@ export async function GET(req: NextRequest) {
     select: { employeeId: true, remaining: true },
   })
   const lastMonthRestByEmp = new Map<string, number>()
-  for (const s of prevSnapshots) lastMonthRestByEmp.set(s.employeeId, s.remaining)
+  const snapshotIds = new Set<string>()
+  for (const s of prevSnapshots) {
+    snapshotIds.add(s.employeeId)
+    lastMonthRestByEmp.set(s.employeeId, (lastMonthRestByEmp.get(s.employeeId) ?? 0) + s.remaining)
+  }
+
+  // ★ 冇 snapshot 嘅員工 → 共用 helper 動態算「截至上月底」（hkDateEnd 日界 + 曆年下界，
+  //   同 /api/leave-balance?asOf= 同一實裝 —— 唔好各寫一次）。
+  //   prevMonthKey 跨年已處理（上面）；一月視圖 asOf='2025-12-31' → yearStart=2025-01-01 ✅
+  const missingIds = empIds.filter(id => !lastMonthRestByEmp.has(id))
+  if (missingIds.length > 0) {
+    const [pvY, pvM] = prevMonthKey.split('-').map(Number)
+    const prevLastDay = new Date(Date.UTC(pvY, pvM, 0)).getUTCDate()
+    const prevMonthEnd = `${prevMonthKey}-${String(prevLastDay).padStart(2, '0')}`
+    const dyn = await restDayBalanceAsOf(prisma, missingIds, prevMonthEnd)
+    for (const [id, v] of dyn) lastMonthRestByEmp.set(id, v.remaining)
+  }
 
   // ★ restQuota = countMonthlyLeaveDays(y, m, restDays, 公眾假期).total —— 唔好寫死 10
   //   （2026 年 4/9/12 月 PH 去重後係 8 或 9；restDays 由各自 PayRule 攞，預設週六日）
@@ -189,8 +207,11 @@ export async function GET(req: NextRequest) {
       // ★ 2026-08-22 §6.2.4（拍板 (c)）：「剩餘」= 當前 LeaveBalance.remaining（REST_DAY 即時值，
       //   唔係「上月剩 − R − PL」推導 —— 後者未計本月發放）
       restBalanceRemaining: r1(restByEmp.get(emp.id) ?? 0),
-      // ★ 上月快照；查唔到 = null（前端顯「—」，零 fallback）
+      // ★ 上月「剩」：有 snapshot = 凍結值；冇 = 動態算（截至上月底）。null 只係兩者都冇數（理論上唔會再發生）
       lastMonthRestRemaining: lastMonthRestByEmp.has(emp.id) ? r1(lastMonthRestByEmp.get(emp.id)!) : null,
+      // ★ 'snapshot' = 上月計糧確認時嘅凍結值；'computed' = 動態算（上月未 finalize）
+      lastMonthRestSource: lastMonthRestByEmp.has(emp.id)
+        ? (snapshotIds.has(emp.id) ? 'snapshot' : 'computed') : null,
     }
   })
 

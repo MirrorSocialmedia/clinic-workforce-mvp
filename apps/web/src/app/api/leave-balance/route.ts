@@ -5,6 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { LEAVE_SYSTEM_KEYS, isAccumulativeLeave } from '@/lib/leave-types'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 
 // ============================================================
 // GET /api/leave-balance — Get leave balance
@@ -117,20 +118,14 @@ export async function GET(req: NextRequest) {
         if (!isAccumulativeLeave(sysKey) && r.startDate.getTime() < yearStart!.getTime()) continue
         asOfUsedByType.set(r.leaveTypeId, (asOfUsedByType.get(r.leaveTypeId) ?? 0) + (r.days ?? 0))
       }
-      const grantWhere: any = {
-        type: 'RESTDAY_GRANT',
-        date: { gte: yearStart!, lte: asOfEnd! },
-      }
-      if (targetEmployeeId) grantWhere.employeeId = targetEmployeeId
-      const restGrants = await prisma.timeBankEntry.findMany({
-        where: grantWhere,
-        select: { employeeId: true, minutes: true },
-      })
-      // ★ minutes / 1440 = 日數（同 payroll-engine 發放時 Math.round(minutes/(24*60)) 一致）
-      restGrantByEmp = new Map()
-      for (const g of restGrants) {
-        restGrantByEmp.set(g.employeeId, (restGrantByEmp.get(g.employeeId) ?? 0) + Math.round(g.minutes / 1440))
-      }
+      // ★ 2026-09-01 cwm-lmr：grants 加總改走共用 helper（MD §0 —— 同
+      //   scheduling-leave-summary fallback 同一實裝，唔好各寫一次）。
+      //   hkDateEnd 日界 / 曆年下界 / Math.round(minutes/1440) 都喺 helper 入面。
+      const grantScope = targetEmployeeId ? [targetEmployeeId] : empIds
+      restGrantByEmp = new Map(
+        [...(await restDayBalanceAsOf(prisma, grantScope, asOf!)).entries()]
+          .map(([id, v]) => [id, v.entitled]),
+      )
     }
 
     return jsonNoStore({
