@@ -25,7 +25,7 @@ import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-const TIMEBANK_ENGINE_VERSION = 6 // v6: 早返 OT 入逐日明細 + OT換假拆分欄 [cwm-earlyin-20260831]
+const TIMEBANK_ENGINE_VERSION = 7 // v7: 時薪路徑 deductLunch gate（不扣飯鐘生效）[cwm-lunchgate-20260902]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -3025,6 +3025,8 @@ async function calculateSimpleHourlyPay(
       date: { gte: monthStart, lte: monthEnd },
       status: { not: 'CANCELLED' },
     },
+    // ★ 2026-09-02: 時薪路徑一直冇攞 template.deductLunch →「不扣飯鐘」失效（Peggy 8月少發 $200）[cwm-lunchgate-20260902]
+    include: { template: { select: { deductLunch: true } } },
   })
 
   // Use effective punches (corrections applied, voided excluded)
@@ -3076,10 +3078,18 @@ async function calculateSimpleHourlyPay(
 
     // ★ 午飯扣減（決定 2）。決定 3：調鋪途中嘅交通時間照計錢，
     // 所以維持「第一個 IN 到最後一個 OUT」嘅跨度，只扣午飯。
-    let lunchDeduct = lunchDefault
+    // ★ 2026-09-02: deductLunch gate —— 同月薪路徑 :1651 同一套邏輯 [cwm-lunchgate-20260902]。
+    //   當日全部更次 deductLunch=false 先跳；有任何一張要扣（或冇 template）→ 照扣。
+    //   ⚠️ 時薪係逐日一張更（同日多更（調鋪）亦要一致判斷），所以用 sameDayShifts 唔係單一 shift。
+    const sameDayShiftsForLunch = shifts.filter((s: any) => toHKDateStr(s.date) === dateStr)
+    const dayDeductsLunch = sameDayShiftsForLunch.length === 0 ||
+      sameDayShiftsForLunch.some((s: any) => s.template?.deductLunch !== false)
+
+    let lunchDeduct = dayDeductsLunch ? lunchDefault : 0
     let lunchOtMinutes = 0
     let lunchLateMinutes = 0
-    if (lunchEnabled) {
+    // ★ 不扣飯鐘嘅日子亦唔應該計午飯 OT／午飯遲到（同 exceptions:414 gate 一致）
+    if (lunchEnabled && dayDeductsLunch) {
       const ls = dayPunches
         .filter((p: any) => p.punchType === 'LUNCH_START')
         .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
