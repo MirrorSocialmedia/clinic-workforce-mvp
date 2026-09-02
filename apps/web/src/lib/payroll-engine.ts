@@ -3410,12 +3410,21 @@ export async function calculatePayrollWithRules(
       holidayDays = payableHolidays
     }
 
-    // ★ ADW × 100% 補足只適用於法定假日、年假等「全薪」假期。
-    //   病假 / 產假 / 侍產假 按 EO 係 ADW × 80%，而且已經分別由
-    //   computeSickDeduction / maternityPay 處理 —— 計入呢度等於重複補足。
-    const EIGHTY_PCT_KEYS = ['SICK', 'MATERNITY', 'PATERNITY']
+    // ★ 2026-09-02：黑名單改【白名單】—— 原本 EIGHTY_PCT_KEYS 只排除 SICK/MATERNITY/PATERNITY，
+    //   令 REST_DAY（isPaid=true）通過 filter → 休息日攞咗 ADW 補足＝多發
+    //   （Suki 2026-08：(1479.72 − 30000/21) × 14 日 = +$716.08）。
+    //
+    //   ADW × 100% 只適用於【法定全薪假期】：
+    //     · 法定假日 EO s.40 —— 由上面 holidayDays 另計，唔喺呢個 list
+    //     · 年假     EO s.41C
+    //   ⚠️ 休息日 s.17 唔喺 ADW 清單（月薪本身已 cover）
+    //   ⚠️ OT 補假 / 生日假係公司福利唔係法定 —— 按正常日薪（老闆 2026-09-02 拍板）
+    //   ⚠️ 病假/產假/侍產假 ADW × 80%，分別由 computeSickDeduction / maternityPay 處理
+    //
+    //   ★ 白名單先安全：將來新增假期類型【預設唔補足】，唔會再靜靜多發。
+    const ADW_TOPUP_KEYS = ['ANNUAL_LEAVE']
     const fullPayLeaveDays = (workData.leaveByType ?? [])
-      .filter((lt: any) => lt.isPaid && !EIGHTY_PCT_KEYS.includes(lt.systemKey))
+      .filter((lt: any) => lt.isPaid && ADW_TOPUP_KEYS.includes(lt.systemKey))
       .reduce((sum: number, lt: any) => sum + lt.days, 0)
 
     const adjustmentDays = holidayDays + fullPayLeaveDays
