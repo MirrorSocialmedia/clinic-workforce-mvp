@@ -1045,6 +1045,8 @@ model CostCase {
   receivedAt    DateTime?
   appointmentAt DateTime?
   status        String   @default("PENDING") // PENDING | PRICED | DONE | VOID | REDO
+  /// ★ 2026-09-02 cwm-costnote：自由備註（例：補做上排、等病人 confirm 色）— 最多 200 字（API validate）
+  note          String?
   /// ★ 重做（Lab 做壞要重做）—— 拍板①改原本嗰筆，唔開新 row
   redoAt        DateTime?
   /// 重做原因（必填 — 月尾對數要查得返）

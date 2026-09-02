@@ -39,6 +39,8 @@ export async function PUT(
     providerId, clinicId, category,
     // ★ 2026-08-25 拍板①：重做（REDO）
     redoAt, redoReason,
+    // ★ 2026-09-02 cwm-costnote：自由備註
+    note,
   } = body
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
@@ -62,6 +64,11 @@ export async function PUT(
   // ★ 2026-08-25 守衛②：category 只准三個值
   if (category !== undefined && !['LAB', 'IMPLANT', 'INVISALIGN'].includes(category)) {
     return jsonNoStore({ error: 'category 唔合法' }, { status: 400 })
+  }
+
+  // ★ 2026-09-02 cwm-costnote：備註最多 200 字（前端 maxLength 繞得過，後端兜底）
+  if (note != null && String(note).length > 200) {
+    return jsonNoStore({ error: '備註最多 200 字' }, { status: 400 })
   }
 
   // ★ 2026-08-25 守衛③：改落單日會換 periodMonth — 目標月份已 LOCKED 唔准改
@@ -161,6 +168,8 @@ export async function PUT(
   if (category !== undefined) data.category = category
   if (redoAt !== undefined) data.redoAt = redoAt ? new Date(redoAt) : null
   if (redoReason !== undefined) data.redoReason = redoReason || null
+  // ★ 2026-09-02 cwm-costnote：備註（undefined = 唔改；null/空字串 → null）
+  if (note !== undefined) data.note = note?.trim() || null
 
   const updated = await prisma.costCase.update({
     where: { id },
@@ -189,6 +198,8 @@ export async function PUT(
         // ★ 2026-08-25：重做欄（拍板①）
         redoAt: existing.redoAt,
         redoReason: existing.redoReason,
+        // ★ 2026-09-02 cwm-costnote：備註
+        note: existing.note,
       }),
       afterJson: JSON.stringify({
         baseCost: updated.baseCost ? Number(updated.baseCost) : null,
@@ -199,6 +210,7 @@ export async function PUT(
         category: updated.category,
         redoAt: updated.redoAt,
         redoReason: updated.redoReason,
+        note: updated.note,
       }),
       notes: `更新成本記錄: ${existing.category} ${existing.patientCode}`,
     },

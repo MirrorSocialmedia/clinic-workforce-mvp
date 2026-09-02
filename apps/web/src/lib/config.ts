@@ -312,6 +312,8 @@ export const CONFIG = {
     'POST /api/cost-cases': ['OWNER', 'MANAGER'],
     'POST /api/cost-cases/implant': ['OWNER', 'MANAGER'],
     'PUT /api/cost-cases/:id': ['OWNER', 'MANAGER'],
+    // ★ 2026-09-02 cwm-costnote：「已完成」綠剔（拍板③：已鎖定都可以標）
+    'PATCH /api/cost-cases/:id/status': ['OWNER', 'MANAGER'],
     'DELETE /api/cost-cases/:id': ['OWNER', 'MANAGER'],
     'POST /api/cost-cases/recompute': ['OWNER'],
     // ★ MD-F: Cost Entry bill picker
@@ -528,6 +530,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/cost-cases': ['cost_entry'],
   'POST /api/cost-cases/implant': ['cost_entry'],
   'PUT /api/cost-cases/:id': ['cost_entry'],
+  // ★ 2026-09-02 cwm-costnote：「已完成」綠剔
+  'PATCH /api/cost-cases/:id/status': ['cost_entry'],
   'DELETE /api/cost-cases/:id': ['cost_entry'],
   // ★ MD-F: bill picker routes
   // ★ Y4: provider_payout 也可以用病人/帳單搜尋

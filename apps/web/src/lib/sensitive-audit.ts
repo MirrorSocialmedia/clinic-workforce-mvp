@@ -66,6 +66,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_DELETE', label: 'Lab 刪除' },
   { action: 'MATERIAL_ITEM_CREATE', label: '新增材料項目' },
   { action: 'MATERIAL_ITEM_UPDATE', label: '材料項目停用／改到期日' },
+  // ★ 2026-09-02 cwm-costnote：「已完成」綠剔狀態變更
+  { action: 'COST_CASE_STATUS', label: '成本個案狀態變更（已完成標記）' },
   { action: 'PATIENT_NAME_PURGE', label: 'PII 清理 — 清除病人姓名' },
   // ★ MD-C: Apricot Data Layer
   { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },

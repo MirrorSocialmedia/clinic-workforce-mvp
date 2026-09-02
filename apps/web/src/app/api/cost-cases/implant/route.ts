@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
     receivedAt, appointmentAt,
     materials,
     billExtId, billCode, billItemEleId, // ★ MD-K: 由帳單新增
+    // ★ 2026-09-02 cwm-costnote：個案備註 — 命名 caseNote 避免同 materials[].note（材料名）混
+    note: caseNote,
   } = body
 
   if (!providerId || !clinicId || !patientCode || !orderedAt || !materials || !Array.isArray(materials)) {
@@ -35,6 +37,11 @@ export async function POST(req: NextRequest) {
       { error: 'providerId, clinicId, patientCode, orderedAt, materials[] are required' },
       { status: 400 }
     )
+  }
+
+  // ★ 2026-09-02 cwm-costnote：備註最多 200 字（前端 maxLength 繞得過，後端兜底）
+  if (caseNote != null && String(caseNote).length > 200) {
+    return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
   }
 
   // Validate material quantities are positive integers
@@ -161,6 +168,8 @@ export async function POST(req: NextRequest) {
       finalCost: totalBaseCost, // ★ IMPLANT 唔套工場折扣
       receivedAt: receivedAt ? new Date(receivedAt) : null,
       appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
+      // ★ 2026-09-02 cwm-costnote：個案備註（共用 modal 同 LAB 一樣有備註欄 — 唔接會靜默食值）
+      note: caseNote?.trim() || null,
       billExtId: billExtId || null,
       billCode: billCode || null,
       billItemEleId: billItemEleId || null,
@@ -190,6 +199,7 @@ export async function POST(req: NextRequest) {
         providerId, clinicId, category: 'IMPLANT', patientCode,
         baseCost: totalBaseCost, materialCount: materialData.length,
         materialAudits: auditRecords,
+        note: caseNote?.trim() || null,
       }),
       notes: `新增 IMPLANT 成本記錄: ${patientCode} $${totalBaseCost} (${materialData.length} 項材料)${auditRecords.length > 0 ? ` [${auditRecords.length} 項單價異常]` : ''} (${periodMonth})`,
     },

@@ -189,6 +189,8 @@ export async function POST(req: NextRequest) {
     orderedAt, itemType, itemTypeOther, labId, labOther, labOrderNo, dsaName,
     baseCost, discountPct, receivedAt, appointmentAt,
     billExtId, billCode, billItemEleId, // ★ MD-F
+    // ★ 2026-09-02 cwm-costnote：自由備註
+    note,
   } = body
 
   if (!providerId || !clinicId || !category || !patientCode || !orderedAt) {
@@ -200,6 +202,11 @@ export async function POST(req: NextRequest) {
 
   if (!['LAB', 'INVISALIGN'].includes(category)) {
     return NextResponse.json({ error: 'IMPLANT 請用 POST /api/cost-cases/implant' }, { status: 400 })
+  }
+
+  // ★ 2026-09-02 cwm-costnote：備註最多 200 字（前端 maxLength 繞得過，後端兜底）
+  if (note != null && String(note).length > 200) {
+    return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
   }
 
   // ★ 2026-08-27 拍板①：成本按【到貨日】入月結 —— 落單 7/25、到貨 8/5 → 計 8 月。
@@ -251,6 +258,8 @@ export async function POST(req: NextRequest) {
       finalCost: finalCostNum != null ? finalCostNum : null,
       receivedAt: receivedAt ? new Date(receivedAt) : null,
       appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
+      // ★ 2026-09-02 cwm-costnote：備註（trim；空字串 → null）
+      note: note?.trim() || null,
       billExtId: billExtId || null,
       billCode: billCode || null,
       billItemEleId: billItemEleId || null,
@@ -277,6 +286,7 @@ export async function POST(req: NextRequest) {
         providerId, clinicId, category, patientCode,
         baseCost: baseCostNum, discountPct: discountPctNum,
         finalCost: finalCostNum, status,
+        note: note?.trim() || null,
       }),
       notes: `新增成本記錄: ${category} ${patientCode} ${baseCostNum != null ? '$' + baseCostNum : '未有價'} (${periodMonth})`,
     },

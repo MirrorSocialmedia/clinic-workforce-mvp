@@ -31,6 +31,8 @@ interface CostCase {
   finalCost: number | null
   receivedAt: string | null
   appointmentAt: string | null
+  // ★ 2026-09-02 cwm-costnote：自由備註（最多 200 字）
+  note: string | null
   status: string
   periodMonth: string | null // ★ 2026-08-27：未到貨 = null（唔入月結）
   lockedByRunId: string | null
@@ -199,6 +201,7 @@ export default function CostEntryPage() {
     discountPct: '',
     receivedAt: '',
     appointmentAt: '',
+    note: '', // ★ 2026-09-02 cwm-costnote：備註（useState 型別 infer 源 — 漏呢度全頁 TS 報錯）
     labId: '',
     labOrderNo: '',
     labOther: '',
@@ -290,7 +293,7 @@ export default function CostEntryPage() {
   // ★ 2026-08-27 cwm-costarrival §3：全欄排序（拍板③「整行跟住走」）——
   //   排整個 object array，每行所有欄自然跟住；null/空值永遠排最後
   type SortKey = 'orderedAt' | 'patientCode' | 'patientName' | 'category'
-    | 'labName' | 'dsaName' | 'finalCost' | 'receivedAt' | 'appointmentAt' | 'status'
+    | 'labName' | 'dsaName' | 'finalCost' | 'receivedAt' | 'appointmentAt' | 'note' | 'status'
   const [sortKey, setSortKey] = useState<SortKey>('orderedAt')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -302,6 +305,9 @@ export default function CostEntryPage() {
         return c.finalCost != null ? Number(c.finalCost) : null
       case 'labName':
         return c.lab?.name || c.labOther || null
+      // ★ 2026-09-02 cwm-costnote：備註排序（空值排最後 — 由下方 null 處理兜住）
+      case 'note':
+        return c.note ?? null
       default:
         return c[key] ?? null
     }
@@ -492,6 +498,29 @@ export default function CostEntryPage() {
     }
   }
 
+  // ── ★ 2026-09-02 cwm-costnote：「已完成」綠剔（confirm 二次確認，拍板①）───────
+  //   DONE 唔影響月結金額（payout/engine 只 filter VOID）；
+  //   拍板③：已鎖定（🔒）都可以標 —— 新 PATCH /status route 特登唔加鎖定守衛。
+  const handleToggleDone = async (c: CostCase) => {
+    const toDone = c.status !== 'DONE'
+    const msg = toDone
+      ? `確定標記為「已完成」？\n\n${c.patientCode} · ${CATEGORY_LABELS[c.category]}${c.itemType ? ' · ' + c.itemType : ''}\n成本：${c.finalCost != null ? '$' + Number(c.finalCost).toFixed(2) : '未有價'}`
+      : `確定取消「已完成」？\n\n會回復為${c.finalCost != null ? '「已定價」' : '「未有價」'}。`
+    if (!confirm(msg)) return
+    // ★ 取消時回復：有 finalCost → PRICED；冇 finalCost → PENDING（MD §4.2：唔可以一律 PENDING）
+    const next = toDone ? 'DONE' : (c.finalCost != null ? 'PRICED' : 'PENDING')
+    try {
+      await apiFetch(`/api/cost-cases/${c.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next }),
+      })
+      loadCases()
+    } catch (e: any) {
+      alert(`更新失敗: ${e.message || e}`)
+    }
+  }
+
   const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString('zh-HK') : '—'
 
   // ── ★ MD-K: Unified CostCaseForm Picker ──────────────
@@ -514,6 +543,8 @@ export default function CostEntryPage() {
       dsaName: '', baseCost: '', discountPct: '',
       receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '', labOther: '',
       patientCode: '', patientName: '',
+      // ★ 2026-09-02 cwm-costnote：備註初始值（漏呢度 = 新增時 costForm.note undefined → 列表崩）
+      note: '',
     })
     setMaterialLines([])
     setLabDiscountPct(null)
@@ -601,6 +632,8 @@ export default function CostEntryPage() {
       dsaName: '', baseCost: '', discountPct: '',
       receivedAt: '', appointmentAt: '', labId: '', labOrderNo: '', labOther: '',
       patientCode: '', patientName: '',
+      // ★ 2026-09-02 cwm-costnote：備註初始值（帳單模式）
+      note: '',
     })
     setMaterialLines([])
 
@@ -745,6 +778,8 @@ export default function CostEntryPage() {
       labOther: c.labOther ?? '',
       patientCode: c.patientCode,
       patientName: c.patientName ?? '',
+      // ★ 2026-09-02 cwm-costnote：備註 — 必須帶返現有值（漏呢度 = #3 編輯時備註被清空）
+      note: c.note ?? '',
       // ★ 修改模式新增欄（唔會傳去新增 POST 嘅 body）
       _status: c.status,
       _redoAt: c.redoAt ? toHKDateStr(c.redoAt) : '',
@@ -798,6 +833,8 @@ export default function CostEntryPage() {
         baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
         receivedAt: costForm.receivedAt || null,
         appointmentAt: costForm.appointmentAt || null,
+        // ★ 2026-09-02 cwm-costnote：備註（undefined = 唔改 → 要明確送，空 = null 清空）
+        note: costForm.note?.trim() || null,
       }
       // ★ itemTypeOther 只喺 Others 時傳 — 唔會誤悭其他狀態嘅值
       if (costForm.itemType === 'Others') {
@@ -912,6 +949,8 @@ export default function CostEntryPage() {
           dsaName: costForm.dsaName || null,
           receivedAt: costForm.receivedAt || null,
           appointmentAt: costForm.appointmentAt || null,
+          // ★ 2026-09-02 cwm-costnote：個案備註
+          note: costForm.note?.trim() || null,
           materials: materialLines.map(l => ({
             materialName: l.materialName,
             qty: l.qty,
@@ -951,6 +990,8 @@ export default function CostEntryPage() {
           baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
           receivedAt: costForm.receivedAt || null,
           appointmentAt: costForm.appointmentAt || null,
+          // ★ 2026-09-02 cwm-costnote：個案備註
+          note: costForm.note?.trim() || null,
           ...(pickerMode === 'bill' && selectedBill ? {
             billExtId: selectedBill.id,
             billCode: selectedBill.code,
@@ -1114,6 +1155,8 @@ export default function CostEntryPage() {
                 {/* ordered 模式「到貨」留喺現行位置（成本之後）；received 模式已升首欄 */}
                 {dateMode === 'ordered' && <SortableTh k="receivedAt">到貨</SortableTh>}
                 <SortableTh k="appointmentAt">覆診</SortableTh>
+                {/* ★ 2026-09-02 cwm-costnote：備註欄（覆診之後） */}
+                <SortableTh k="note">備註</SortableTh>
                 <SortableTh k="status">狀態</SortableTh>
                 <th className="text-left p-2">操作</th>
               </tr>
@@ -1153,6 +1196,15 @@ export default function CostEntryPage() {
                   </td>
                   {dateMode === 'ordered' && receivedTd}
                   <td className="p-2" style={vStyle}>{fmtDate(c.appointmentAt)}</td>
+                  {/* ★ 2026-09-02 cwm-costnote：備註（作廢行跟 voidStyle 刪除線 — 「操作」欄豁免）
+                      truncate 必配 max-w（淨 truncate 冇寬度限制唔生效） */}
+                  <td className="p-2 max-w-[120px]" style={vStyle}>
+                    {c.note ? (
+                      <span className="text-xs text-muted-foreground truncate block" title={c.note}>
+                        {c.note}
+                      </span>
+                    ) : <span className="text-gray-300">—</span>}
+                  </td>
                   <td className="p-2" style={vStyle}>
                     {/* ★ 2026-08-25：REDO = 琥珀色（bg #fef3c7 / fg #92400e = tailwind amber-100/800） */}
                     <Badge
@@ -1163,8 +1215,21 @@ export default function CostEntryPage() {
                     </Badge>
                   </td>
                   <td className="p-2">
-                    {canCreate && !c.lockedByRunId && (
-                      <div className="flex gap-2 whitespace-nowrap">
+                    {canCreate && (
+                      <div className="flex gap-2 whitespace-nowrap items-center">
+                        {/* ★ 2026-09-02 cwm-costnote：「已完成」標記（VOID 冇掣）。
+                            拍板③：已鎖定都可以標 → 掣放喺 !lockedByRunId gate 之外 */}
+                        {c.status !== 'VOID' && (
+                          <button
+                            onClick={() => handleToggleDone(c)}
+                            title={c.status === 'DONE' ? '取消「已完成」' : '標記為已完成'}
+                            className={c.status === 'DONE'
+                              ? 'text-emerald-600 font-bold bg-emerald-50 rounded px-1.5 py-0.5'
+                              : 'text-emerald-600 font-bold px-1.5 py-0.5'}>
+                            ✓
+                          </button>
+                        )}
+                        {!c.lockedByRunId && (<>
                         <button onClick={() => openEditModal(c)} className="text-blue-600 text-xs hover:underline">修改</button>
                         {c.status !== 'VOID' && c.status !== 'REDO' && (
                           <button onClick={() => openRedoModal(c)} className="text-amber-600 text-xs hover:underline">重做</button>
@@ -1172,6 +1237,7 @@ export default function CostEntryPage() {
                         {c.status !== 'VOID' && (
                           <button onClick={() => handleDelete(c.id)} className="text-red-500 text-xs hover:underline">作廢</button>
                         )}
+                        </>)}
                       </div>
                     )}
                     {c.lockedByRunId && (
@@ -1767,6 +1833,17 @@ export default function CostEntryPage() {
                     <input type="date" value={costForm.appointmentAt} onChange={e => setCostForm({ ...costForm, appointmentAt: e.target.value })}
                       className="w-full border rounded px-2 py-1.5 text-sm" />
                   </div>
+                </div>
+
+                {/* ★ 2026-09-02 cwm-costnote：自由備註（例：補做上排、等病人 confirm 色） */}
+                <div className="col-span-2">
+                  <label className="block text-xs text-muted-foreground mb-1">備註</label>
+                  <input
+                    value={costForm.note ?? ''}
+                    onChange={e => setCostForm(f => ({ ...f, note: e.target.value }))}
+                    placeholder="例：補做上排、等病人 confirm 色…"
+                    maxLength={200}
+                    className="w-full border rounded px-2 py-1.5 text-sm" />
                 </div>
 
                 {/* Bill items reference (bill mode only) */}
