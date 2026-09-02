@@ -2051,6 +2051,23 @@ export function calcMPF(
   return Math.round(capped * RATE * 100) / 100
 }
 
+/**
+ * ★ 2026-09-01：MPF config 來源統一（cwm-mpf-20260902）。
+ *
+ * UI（RuleComposerModal）寫【頂層】config.mpf，
+ * 但引擎原本 modifiers 優先 fallback（modifiers.mpf 行先）→
+ * 取消勾選後 config.mpf.enabled=false 被 modifiers.mpf.enabled=true 蓋過，照扣（Heidi）。
+ *
+ * ⚠️ 以 config.mpf 為準；modifiers.mpf 只做【冇頂層時】嘅舊資料 fallback。
+ * ⚠️ 唔可以用 `||` 順序 fallback —— {enabled:false} 係 truthy，
+ *    但 undefined 先應該 fallback，所以一定要 !== undefined 檢查。
+ */
+function resolveMpfConfig(config: any, mods: any) {
+  if (config?.mpf !== undefined) return config.mpf
+  if (mods?.mpf !== undefined) return mods.mpf
+  return { enabled: false }
+}
+
 // ------------------------------------------------------------------
 // NEW: Task 3 & 4 — Leave Banking & OT→Leave Helpers
 // ------------------------------------------------------------------
@@ -3437,9 +3454,13 @@ export async function calculatePayrollWithRules(
   result.splitPay = effectiveSplitPay // 顯示與計算統一
   const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay
 
-  const mpfConfig = mods.mpf || config.mpf || { enabled: false }
+  const mpfConfig = resolveMpfConfig(config, mods)
   const mpf = calcMPF(grossPay, mpfConfig)
   const netPay = Math.max(0, grossPay - mpf)
+  // ★ 2026-09-01 (cwm-mpf-20260902, MD #11)：MPF disabled 時 mpfRate 顯示 0 ——
+  //   config.mpf 可以係 {enabled:false, rate:0.05}（UI 取消勾選喺度寫 rate），
+  //   直接 .rate ?? 0.05 會令「唔扣但顯示 5%」，主管對數會以為系統壞。
+  const mpfRate = mpfConfig.enabled ? (mpfConfig.rate ?? 0.05) : 0
 
   // ★ 雜項報銷 —— 報銷唔屬於 EO「工資」，唔計 MPF，喺 netPay 之後最後加
   const miscEntries = await prisma.expenseEntry.findMany({
@@ -3452,7 +3473,7 @@ export async function calculatePayrollWithRules(
     storeBonus,
     grossPay: Math.round(grossPay * 100) / 100,
     mpf,
-    mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05,
+    mpfRate: mpfRate,
     netPay: Math.round(netPay * 100) / 100,
     sickDeduction: sickDeduction.amount,
     sickEpisodes: sickDeduction.episodes,
@@ -3509,7 +3530,7 @@ export async function calculatePayrollWithRules(
     const grossPayDelta = result.otPay - oldOtPay
     const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus)
     const newGrossPay = oldGrossPay + grossPayDelta
-    const mpfConfig = mods.mpf || config.mpf || { enabled: false }
+    const mpfConfig = resolveMpfConfig(config, mods)
     const newMpf = calcMPF(newGrossPay, mpfConfig)
     const newNetPay = Math.max(0, newGrossPay - newMpf)
     result.totalPayable = newNetPay
@@ -3586,7 +3607,7 @@ export async function calculatePayrollWithRules(
       sickEpisodes: sickDeduction.episodes,
       grossPay: Math.round(finalGrossPay * 100) / 100,
       mpf: Math.round(finalMpf * 100) / 100,
-      mpfRate: (mods.mpf || config.mpf || {}).rate ?? 0.05,
+      mpfRate: mpfRate,
       netPay: Math.round(finalNetPay * 100) / 100,
     },
     // 假期與 OT

@@ -1355,12 +1355,21 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 type="checkbox"
                 checked={!!config.mpf?.enabled}
                 onChange={(e) => {
-                  setConfig((prev) => ({
-                    ...prev,
-                    mpf: e.target.checked
-                      ? { enabled: true, rate: prev.mpf?.rate ?? 0.05, min: prev.mpf?.min ?? 7100, max: prev.mpf?.max ?? 30000 }
-                      : { enabled: false, rate: 0.05, min: 7100, max: 30000 },
-                  }))
+                  setConfig((prev) => {
+                    // ★ 2026-09-01（cwm-mpf-20260902）：取消勾選時順手清走舊 modifiers.mpf，
+                    //   避免同頂層 config.mpf 分歧（Heidi 事件根因；引擎已改 config 優先）。
+                    //   Object.fromEntries 只剔 mpf key，保留其他 modifier。
+                    const nextMods = !e.target.checked && prev.modifiers
+                      ? Object.fromEntries(Object.entries(prev.modifiers).filter(([k]) => k !== 'mpf'))
+                      : prev.modifiers
+                    return {
+                      ...prev,
+                      mpf: e.target.checked
+                        ? { enabled: true, rate: prev.mpf?.rate ?? 0.05, min: prev.mpf?.min ?? 7100, max: prev.mpf?.max ?? 30000 }
+                        : { enabled: false, rate: 0.05, min: 7100, max: 30000 },
+                      modifiers: nextMods,
+                    }
+                  })
                 }}
               />
               啟用強積金扣除
