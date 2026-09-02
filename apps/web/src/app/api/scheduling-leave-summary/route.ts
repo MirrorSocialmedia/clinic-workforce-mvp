@@ -147,9 +147,11 @@ export async function GET(req: NextRequest) {
     lastMonthRestByEmp.set(s.employeeId, (lastMonthRestByEmp.get(s.employeeId) ?? 0) + s.remaining)
   }
 
-  // ★ 冇 snapshot 嘅員工 → 共用 helper 動態算「截至上月底」（hkDateEnd 日界 + 曆年下界，
-  //   同 /api/leave-balance?asOf= 同一實裝 —— 唔好各寫一次）。
-  //   prevMonthKey 跨年已處理（上面）；一月視圖 asOf='2025-12-31' → yearStart=2025-01-01 ✅
+  // ★ 冇 snapshot 嘅員工 → 共用 helper 動態算「截至上月底」（向後扣：LeaveBalance 權威值 −
+  //   (asOf, 該年日終] future 事件，同 /api/leave-balance?asOf= 同一實裝 —— 唔好各寫一次）。
+  //   prevMonthKey 跨年已處理（上面）；一月視圖 asOf='2025-12-31' → 攞 2025 年行 ✅
+  //   ⚠️ 2026-09-02 cwm-lba：冇 LeaveBalance 行嘅員工 helper 唔回 entry → lastMonthRestRemaining
+  //   = null（顯示「—」）—— 唔係 lmr 版嘅「保證 0/0/0」。
   const missingIds = empIds.filter(id => !lastMonthRestByEmp.has(id))
   if (missingIds.length > 0) {
     const [pvY, pvM] = prevMonthKey.split('-').map(Number)
@@ -207,7 +209,8 @@ export async function GET(req: NextRequest) {
       // ★ 2026-08-22 §6.2.4（拍板 (c)）：「剩餘」= 當前 LeaveBalance.remaining（REST_DAY 即時值，
       //   唔係「上月剩 − R − PL」推導 —— 後者未計本月發放）
       restBalanceRemaining: r1(restByEmp.get(emp.id) ?? 0),
-      // ★ 上月「剩」：有 snapshot = 凍結值；冇 = 動態算（截至上月底）。null 只係兩者都冇數（理論上唔會再發生）
+      // ★ 上月「剩」：有 snapshot = 凍結值；冇 = 動態算（截至上月底）。
+      //   null = 兩者都冇數，或者冇 REST_DAY LeaveBalance 行（2026-09-02 cwm-lba 後嘅正常語義，顯示「—」）
       lastMonthRestRemaining: lastMonthRestByEmp.has(emp.id) ? r1(lastMonthRestByEmp.get(emp.id)!) : null,
       // ★ 'snapshot' = 上月計糧確認時嘅凍結值；'computed' = 動態算（上月未 finalize）
       lastMonthRestSource: lastMonthRestByEmp.has(emp.id)
