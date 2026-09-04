@@ -44,7 +44,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const [settled, setSettled] = useState<any>(null) // 已寫入嘅結算（顯示「已確認」）
   const printRef = useRef<HTMLDivElement>(null)
 
-  const isOwner = userRole === 'OWNER'
+  const isOwner = userRole === 'OWNER' // ROLE-OK: 離職／結算寫入薪金，API 側 resign-settle:25 同 resign:16 都係 OWNER-only，前端 gate 只係唔顯示掣（真正防線喺 API）。冇對應 permission key。
   const s = preview?.leaveSettlement ?? null
   const st = preview?.settlement ?? null
   const tb = st?.timebank
