@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile
 RUN npx prisma generate
 ENV DATABASE_URL="postgresql://build:build@build:5432/build" \
  JWT_SECRET="build-time-placeholder-0123456789abcdefghij" \
- NODE_OPTIONS="--max-old-space-size=1024"
+ NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build
 
 # Stage 2: Runner
