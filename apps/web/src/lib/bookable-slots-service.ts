@@ -336,6 +336,10 @@ export interface SlotOut {
   providerId: string
   providerName: string
   seatsFree: number
+  /** cwi-capacity-20260904 B7（F2）：容量口徑 = 每醫生每時段 3 人，
+   *  問診+覆診共享同一池（bookedCount 不分 visit 類型）。
+   *  = capacity − booked（同 seatsFree；独立欄俾 W 候選 filter 讀，缺欄時 W 當 1 向後兼容） */
+  remainingCapacity: number
   slotKey: string
 }
 
@@ -382,6 +386,7 @@ export function buildDays(
           providerId: pid,
           providerName: wd.providerName.get(pid) ?? '',
           seatsFree: s.seatsFree,
+          remainingCapacity: s.seatsFree,
           slotKey: signSlotKey({ clinicCode, date, start, providerId: pid, unitMin: 30 }),
         })
       }

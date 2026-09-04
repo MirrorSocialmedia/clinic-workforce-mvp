@@ -199,6 +199,7 @@ const SlotSchema = z.object({
   providerId: z.string().min(1),
   providerName: z.string(),
   seatsFree: z.number().int().min(1).max(3),
+  remainingCapacity: z.number().int().min(1).max(3),
   slotKey: z.string().min(8),
 }).strict()
 const DaySchema = z.object({
@@ -261,6 +262,10 @@ describe('GET /v1/bookable-slots — 200 契約（MD 3.1）', () => {
     const s1000 = day.slots.find((s: Any) => s.start === '10:00')
     assert.equal(s0930.seatsFree, 2)
     assert.equal(s1000.seatsFree, 3)
+    // B7（F2）：remainingCapacity = capacity − booked（問診+覆診共享池）；同 seatsFree
+    assert.equal(s0930.remainingCapacity, 2)
+    assert.equal(s1000.remainingCapacity, 3)
+    for (const s of day.slots) assert.equal(s.remainingCapacity, s.seatsFree)
     // slotKey 可驗證 + 載體正確（唔准 client 自己拼）
     const parts = verifySlotKey(s1000.slotKey)
     assert.ok(parts, 'slotKey 應該可驗證')
@@ -545,7 +550,7 @@ describe('GET /v1/bookable-slots/held', () => {
 // ── fixture 錨定 ─────────────────────────────────────────────────────
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../../../../test/fixtures/external-v1-bookable-slots.json', import.meta.url))
-const FIXTURE_SHA256 = '97e98957f8a516284aa1ae4229f8dff54560c5cec4c4a35df164ea3f639f01bd'
+const FIXTURE_SHA256 = 'e6e5e855cf3528f2c114eb8f7a9d6ad80ac24a2e1fd58748ccb8e3b974eacbd2'
 
 describe('fixture 契約', () => {
   it('fixture 檔存在 + sha256 錨定（Stage 4 wa-inbox 對照用）', () => {

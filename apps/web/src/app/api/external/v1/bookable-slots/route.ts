@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 //          [&providerId=...]
 //   200 { v:1, unitMin, capacityPerProvider, leadTimeMin, generatedAt,
 //          days:[{ date, closed, offerableCount, slots:[{ start, end,
-//                 providerId, providerName, seatsFree, slotKey }] }] }
+//                 providerId, providerName, seatsFree, remainingCapacity, slotKey }] }] }
 //
 // 規則（MD §一/§三）：
 //   - from < today → 400；to 超 clinic.flowWindowDays → clamp（唔 fail）
