@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
   if (clinicId) where.clinicId = clinicId
   if (employeeId) where.employeeId = employeeId
   if (status) where.status = status
+  else where.status = { not: 'CANCELLED' } // ★ 預設唔回已取消更（離職取消嘅更唔好喺排班總覽顯示）cwm-resigsettle-20260904 §7.2 #7；要睇已取消就顯式帶 status=CANCELLED
 
   if (startDate || endDate) {
     where.date = {}

@@ -933,7 +933,7 @@ export default function EmployeePayrollDetailPage() {
                     <>
                       <div>年假: {annualRemaining.toFixed(1)} / {annualBalance.entitled ?? 0}</div>
                       <div style={{ fontSize: 10, color: '#9ca3af' }}>
-                        按已完成服務年度計 · 進行中年度離職時按比例結算
+                        按月累積（公司政策）· 日常餘額同離職結算同一口徑
                       </div>
                     </>
                   )}

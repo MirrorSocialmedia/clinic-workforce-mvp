@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { balanceYearFor } from '@/lib/leave-types'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { shiftDeletedMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
@@ -42,24 +43,60 @@ export async function POST(
     })
 
     // ③ Cancel future shifts
+    // ★ cwm-resigsettle-20260904：cutoff = 最後工作日翌日 HK 午夜；Shift.date 存工作日 HK 午夜，
+    //   所以用 gte（strict > 會漏咗 date 恰好多 cutoff 嗰更）。
     const shifts = await tx.shift.updateMany({
       where: {
         employeeId: empId,
-        date: { gt: cutoff },
+        date: { gte: cutoff },
         status: { not: 'CANCELLED' },
       },
       data: { status: 'CANCELLED' },
     })
 
     // Cancel future approved leaves
-    const leaves = await tx.leaveRequest.updateMany({
+    // ★ 2026-09-02 cwm-resigsettle-20260904：updateMany 攞唔到每筆 days，冇法還額度 →
+    //   改 findMany 逐筆處理；取消未放已批假期時 LeaveBalance.used 一定要減返
+    //   （同 leave-requests/[id] 撤銷模式一致，否則年假餘額少計 → 尾糧少付）。
+    const leavesToCancel = await tx.leaveRequest.findMany({
       where: {
         employeeId: empId,
-        startDate: { gt: cutoff },
+        startDate: { gte: cutoff },
         status: 'APPROVED',
       },
-      data: { status: 'CANCELLED' },
+      select: {
+        id: true,
+        days: true,
+        leaveTypeId: true,
+        startDate: true,
+        leaveType: { select: { systemKey: true } },
+      },
     })
+    let leavesCancelled = 0
+    for (const lr of leavesToCancel) {
+      await tx.leaveRequest.update({
+        where: { id: lr.id },
+        data: { status: 'CANCELLED' },
+      })
+      // ★ 年假累積制 = year 0；休息日等 = 曆年（照 leave-requests/[id]:207 口徑）
+      const leaveYear = balanceYearFor(lr.leaveType.systemKey, new Date(lr.startDate))
+      const updated = await tx.leaveBalance.updateMany({
+        where: {
+          employeeId: empId,
+          leaveTypeId: lr.leaveTypeId,
+          year: leaveYear,
+        },
+        data: { used: { decrement: lr.days }, remaining: { increment: lr.days } },
+      })
+      // ★ 唔好靜靜吞 —— 還唔到額度係資料錯誤，一定要留痕
+      if (updated.count === 0) {
+        console.error(
+          `[resign] ⛔ 還額度失敗：employeeId=${empId} ` +
+          `leaveTypeId=${lr.leaveTypeId} year=${leaveYear} days=${lr.days} leaveRequestId=${lr.id}`,
+        )
+      }
+      leavesCancelled++
+    }
 
     // ④ Deactivate face templates (soft disable, hard delete later after final payroll)
     await tx.faceTemplate.updateMany({
@@ -75,13 +112,13 @@ export async function POST(
         entity: 'Employee',
         entityId: empId,
         targetEmployeeId: empId,
-        notes: `離職：最後工作日=${lastDay}, 取消班次=${shifts.count}, 取消假期=${leaves.count}`,
+        notes: `離職：最後工作日=${lastDay}, 取消班次=${shifts.count}, 取消假期=${leavesCancelled}`,
         ipAddress: null,
         userAgent: null,
       } as any,
     })
 
-    return { shiftsCancelled: shifts.count, leavesCancelled: leaves.count }
+    return { shiftsCancelled: shifts.count, leavesCancelled }
   })
 
   // ★ 取消未來更次／假期會改變應出勤日 → 清時間帳戶快取（2026-08-10）

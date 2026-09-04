@@ -338,7 +338,10 @@ export async function PUT(
             const months = serviceMonths(empUpdate.joinDate, new Date())
             const entitled = months < PROBATION_MONTHS
               ? 0
-              : totalAccruedLeave(empUpdate.joinDate, new Date(), 'earned')
+              // ★ 2026-09-02 拍板①：統一 prorata —— 同 leave-balance/refresh:94 一致。
+              //   earned 對服務未夠 1 年嘅人回 0（last = years−1 = −1，迴圈唔跑），
+              //   會令帳號管理一儲存就把 refresh 算好嘅 prorata 額度覆蓋成 0（CC2 實例）。
+              : totalAccruedLeave(empUpdate.joinDate, new Date(), 'prorata')
 
             const bal = await prisma.leaveBalance.findUnique({
               where: {
