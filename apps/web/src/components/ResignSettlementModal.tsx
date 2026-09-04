@@ -194,6 +194,23 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
     ? ((st.monthWage?.basePay ?? 0) + st.unusedLeave.payout + (st.notice.pay ?? 0) + tbPositiveCashout)
     : 0) - (tbDeductionVal || 0)
 
+  // ★ cwm-modalfix-20260905：st 未載入（loading / API 失敗）時 footer 嘅 st.xxx 會 throw ——
+  //   body 有 {st && (…)} 包住，但 footer 冇。早退一次過解決。
+  if (!st && !loading) return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-xl w-full mx-4 shadow-2xl flex flex-col"
+        style={{ maxWidth: 560, maxHeight: '85vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-6 py-8">
+          <p style={{ fontSize: 14, color: '#333', margin: '0 0 12px' }}>攞唔到結算資料</p>
+          <button className="px-4 py-2 rounded-md text-sm" style={{ background: '#eee', color: '#333' }} onClick={onClose}>關閉</button>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
       <div
@@ -411,7 +428,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
             <button className="px-4 py-2 rounded-md text-sm" style={{ background: '#7c3aed', color: '#fff' }}
               onClick={handleSettle}
               disabled={settleLoading || !st || settled != null || st.monthWage?.source === 'none'}>
-              {settleLoading ? '處理中…' : st.monthWage?.source === 'none' ? '確認離職結算（缺當月工資）' : '確認離職結算'}
+              {settleLoading ? '處理中…' : st?.monthWage?.source === 'none' ? '確認離職結算（缺當月工資）' : '確認離職結算'}
             </button>
           )}
           {isOwner && (
