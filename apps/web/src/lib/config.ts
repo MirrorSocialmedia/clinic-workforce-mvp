@@ -87,6 +87,8 @@ export const CONFIG = {
     // ★ 2026-09-04 [cwm-resigpay-20260904] 拍板 B：MANAGER 睇得到預覽（寫入 resign-settle 仍 OWNER-only）
     'GET /api/employees/:id/resign-preview': ['OWNER', 'MANAGER'],
     'POST /api/employees/:id/resign': ['OWNER'],
+    // ★ 2026-09-04 [cwm-rbacfix-20260904] resign-settle 補登記（deploy blocker）
+    'POST /api/employees/:id/resign-settle': ['OWNER'],
     'POST /api/employees/:id/rehire': ['OWNER'],
 
     // Shift rule config routes
@@ -422,6 +424,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
 
   // —— 離職結算：有 leave_approve 或 payroll_generate 權限可以觸發 ——
   'POST /api/leave-settlement': ['leave_approve', 'payroll_generate'],
+  'POST /api/employees/:id/resign-settle': ['payroll_generate'],
 
   // —— 發放休息日：有 scheduling 權限就可以發放（grant-restdays route 改用 scheduling 權限） ——
   'POST /api/leave/grant-restdays': ['scheduling'],
