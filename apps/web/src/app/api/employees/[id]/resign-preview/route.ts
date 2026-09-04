@@ -73,6 +73,8 @@ export async function GET(
     const settlement = {
       lastDay: calc.cutoffStr,
       monthlySalary: calc.monthlySalary, // ★ 2026-09-04：離職結算書 PDF 顯示用（實際出糧以計糧單 prorate 為準）
+      // ★ cwm-resigv3：當月工資（讀唔算 — 三段 fallback）；card/PDF 三態顯示 + 確認掣 disabled 用
+      monthWage: calc.monthWage,
       settleByDate: calc.settleByDate,
       adw: { value: calc.adwValue, source: calc.adwSource, warnings: calc.adwWarnings },
       unusedLeave: { days: calc.unusedDays, dailyWage: calc.adwValue, payout: calc.leavePayout },
@@ -90,8 +92,8 @@ export async function GET(
         debtDays: calc.tb.debtDays,
         entries: calc.tb.entries,
         caps: { finalPeriodWage: calc.finalPeriodWage, quarter: calc.quarterCap, half: calc.halfCap },
-        deduction: null, // ★ 空白，人手輸入 —— 系統唔自動填（拍板②）
-        deductionNote: 'EO s.32：單項扣除唔得超過該工資期工資 1/4，扣除總額唔得超過 1/2。金額由人手填寫，系統唔自動填。',
+        deduction: null, // ★ 空白（伺服器唔代填）— 前端預填 min(欠款, 1/4 上限) 仍可改（cwm-resigv3 拍板②）
+        deductionNote: 'EO s.32：單項扣除唔得超過該工資期工資 1/4，扣除總額唔得超過 1/2。預填 min(欠款, 上限)，仍可人手修改。',
       },
       // ★ 休息日（REST_DAY）係法定權利（EO s.17），唔顯示喺結算單、唔換錢（MD §4.3）
       excludedFromSettlement: ['REST_DAY'],

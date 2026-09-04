@@ -256,6 +256,10 @@ export default function EmployeePayrollDetailPage() {
   const paternityPay = item.paternityPay ?? detail.paternityPay ?? 0
   const paternityPayDetail = detail.paternityPayDetail ?? null
   const storeBonus = salaryDetail.storeBonus ?? item.storeBonus ?? 0
+  // ★ 2026-09-05 [cwm-resigv3]：離職結算注入行（月底計糧直讀已確認結算）
+  const resignSettle = detail.resignSettlement ?? null
+  const rsGrossAdd = resignSettle ? (Number(resignSettle.annualLeavePay) || 0) + (Number(resignSettle.noticePay) || 0) : 0
+  const rsTbDed = resignSettle ? Math.max(0, Number(resignSettle.tbDeduction) || 0) : 0
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
   const miscAmount = (item as any).miscAmount ?? 0
@@ -743,13 +747,44 @@ export default function EmployeePayrollDetailPage() {
               </>
             )}
 
+            {/* ★ cwm-resigv3：離職結算（寫入時確認，月底計糧直讀 — 尾糧單一次過見晒） */}
+            {resignSettle && (
+              <div className="mt-1 rounded-md p-2 space-y-1" style={{ background: '#f5f3ff', border: '1px solid #ddd6fe' }}>
+                <div className="text-xs font-medium" style={{ color: '#6d28d9' }}>離職結算（已確認結算直讀）</div>
+                {resignSettle.monthWage?.basePay != null && (
+                  <div className="flex justify-between">
+                    <span className="text-sm">當月工資（{resignSettle.monthWage.source === 'payrollItem' ? '已生成計糧' : '預覽值'}）</span>
+                    <span className="font-mono text-sm">{fmtCurrency(resignSettle.monthWage.basePay)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-sm">年假薪酬</span>
+                  <span className="font-mono font-medium text-green-600">+{fmtCurrency(resignSettle.annualLeavePay)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm">代通知金</span>
+                  <span className="font-mono font-medium text-green-600">+{fmtCurrency(resignSettle.noticePay)}</span>
+                </div>
+                {rsTbDed > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm">時間帳戶扣除（由尾糧扣）</span>
+                    <span className="font-mono font-medium text-red-600">−{fmtCurrency(rsTbDed)}</span>
+                  </div>
+                )}
+                <div className="text-xs" style={{ color: '#6d28d9' }}>
+                  MPF：{resignSettle.includedInMpf ? '結算已計入 relevant earnings' : '結算唔計入 MPF 基數'}
+                </div>
+              </div>
+            )}
+
             {/* ★ 對帳 guard (dev only) —— 防止將來再有隱藏項目 */}
             {process.env.NODE_ENV !== 'production' && (() => {
               // ★ 此公式應與 payroll-engine.ts 的 grossPay 公式一致
+              //   cwm-resigv3：+ rsGrossAdd（離職結算年假薪酬 + 代通知金，引擎已加落 gross）
               const shown = item.basePay + (attendanceBonus ?? 0) + (detail?.adwAdjustment ?? 0)
                 + (storeBonus ?? 0) + (item.splitPay ?? 0) + (item.otPay ?? 0)
                 - (sickDeduction ?? 0) - (item.deduction ?? 0) + (allowances ?? 0)
-                + (maternityPay ?? 0) + (paternityPay ?? 0)
+                + (maternityPay ?? 0) + (paternityPay ?? 0) + rsGrossAdd
               const diff = Math.abs(shown - (grossPay ?? 0))
               return diff > 0.05
                 ? <div className="text-xs text-red-600 mt-1">⚠️ 明細對不上 Gross，差 ${diff.toFixed(2)}</div>

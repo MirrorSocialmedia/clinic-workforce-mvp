@@ -791,7 +791,9 @@ model PayrollItem {
 
   /// ★ 2026-09-04 [cwm-resigpay-20260904]：離職結算書（NULL = 無）
   /// { lastDay, noticeDays, noticePay, annualLeaveDays, annualLeavePay,
-  ///   tbMinutes, tbAmount, tbDeduction, quarterCap, adwUsed, settledAt, settledBy }
+  ///   tbMinutes, tbAmount, tbDeduction, quarterCap, adwUsed,
+  ///   monthWage { source, basePay }  // ★ cwm-resigv3：當月工資快照（讀引擎）
+  ///   settledAt, settledBy }
   resignSettlementJson String?
 
   /// ★ EO 定義的「工資」總額（供 ADW 用；不含雜項報銷、不含 MPF 僱主供款）

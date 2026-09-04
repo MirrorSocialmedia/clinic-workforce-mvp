@@ -3,7 +3,7 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { computeResignSettlement, calcNoticePay, calcTimebankDebtAmount } from '@/lib/resign-settlement'
-import { getMonthRange } from '@/lib/hk-date'
+import { getMonthRange, hkTodayStr } from '@/lib/hk-date'
 
 /**
  * POST /api/employees/[id]/resign-settle — 確認離職結算，寫入 PayrollItem.resignSettlementJson
@@ -13,8 +13,10 @@ import { getMonthRange } from '@/lib/hk-date'
  * - 全部數伺服器側重算（同 resign-preview 同一 lib）—— 前端數字唔可信
  * - EO s.32 上限伺服器側再驗：tbDeduction > 該工資期工資/4 → 400
  *   （前端 disabled 繞得過；非法扣除工資最高罰 10 萬 + 監禁 1 年）
- * - ⚠️ 唔存 monthWage —— 引擎 2026-09-04 起按受僱日數 prorate，
- *   PayrollItem 嘅 salary 本身已係啱嘅數（存兩份會分歧）
+ * - ★ 2026-09-05 [cwm-resigv3]：
+ *   - 時機守衛：lastDay > 今日（HKT）→ 400（當月考勤未齊，當月工資會計少）
+ *   - 結算 JSON 帶 monthWage 快照（讀引擎；source='none' → 400 攔截）
+ *   - 月底計糧讀呢份 JSON 注入（payroll-engine MPF_INCLUDE_SETTLEMENT）
  */
 export async function POST(
   req: NextRequest,
@@ -35,6 +37,14 @@ export async function POST(
   // ── 驗證 ──────────────────────────────────────────────
   if (typeof lastDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(lastDay) || isNaN(Date.parse(`${lastDay}T00:00:00+08:00`))) {
     return NextResponse.json({ error: 'lastDay (YYYY-MM-DD) 必填' }, { status: 400 })
+  }
+  // ★ cwm-resigv3 時機守衛（MD §4.4 #19）：最後工作日未到 → 當月考勤未齊，
+  //   當月工資（讀引擎 prorate）會計少 → 唔可以確認結算。
+  if (lastDay > hkTodayStr()) {
+    return NextResponse.json(
+      { error: `最後工作日 ${lastDay} 未到，當月考勤未齊，唔可以確認結算` },
+      { status: 400 },
+    )
   }
   if (typeof noticeDays !== 'number' || !Number.isFinite(noticeDays) || noticeDays < 0 || noticeDays > 365) {
     return NextResponse.json({ error: 'noticeDays（0-365 整數）必填' }, { status: 400 })
@@ -57,6 +67,14 @@ export async function POST(
   }
 
   const noticePay = calcNoticePay(calc.adwValue, noticeDays)
+
+  // ★ cwm-resigv3：攞唔到當月工資（無該月計糧 + 引擎直算失敗）→ 唔俾寫入冇工資嘅結算
+  if (calc.monthWage.source === 'none') {
+    return NextResponse.json(
+      { error: '攞唔到當月工資 — 請先生成該月計糧' },
+      { status: 400 },
+    )
+  }
 
   // ★★★ EO s.32 上限伺服器側再驗（前端 disabled 繞得過）
   if (tbDeductionVal != null && tbDeductionVal > calc.quarterCap) {
@@ -105,6 +123,8 @@ export async function POST(
     tbDeduction: tbDeductionVal,
     quarterCap: calc.quarterCap,
     adwUsed: calc.adwValue,
+    // ★ cwm-resigv3：當月工資快照（讀引擎 — 月底計糧注入時展示／審計用；金額以快照為準）
+    monthWage: { source: calc.monthWage.source, basePay: calc.monthWage.basePay },
     settledAt: new Date().toISOString(),
     settledBy: auth.session.userId,
   }

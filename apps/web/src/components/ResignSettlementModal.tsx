@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { hkTodayStr, fmtDate } from '@/lib/hk-date'
+import { calcTimebankDebtAmount, prefillTbDeduction } from '@/lib/settlement-utils'
 
 /**
  * 離職結算 Modal（共用元件）— cwm-resigpay-20260904（MD §七）
@@ -35,7 +36,8 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const [lastDay, setLastDay] = useState(hkTodayStr())
   const [noticeSel, setNoticeSel] = useState('') // '' 未揀 | '0' | '7' | '30' | 'custom'
   const [noticeCustom, setNoticeCustom] = useState('')
-  const [tbDeduction, setTbDeduction] = useState('') // 人手輸入（拍板②：唔自動填）
+  const [tbDeduction, setTbDeduction] = useState('') // ★ cwm-resigv3：預填 min(欠款,1/4上限)，仍可改
+  const tbTouchedRef = useRef(false) // 用戶動過掣 → 預填唔好再覆蓋
   const [preview, setPreview] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [resignLoading, setResignLoading] = useState(false)
@@ -64,6 +66,13 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
       if (res.ok) {
         const data = await res.json()
         setPreview({ futureShifts: data.futureShifts, futureApprovedLeaves: data.futureApprovedLeaves, leaveSettlement: data.leaveSettlement ?? null, settlement: data.settlement ?? null })
+        // ★ cwm-resigv3 拍板②：預填 min(欠款, 1/4 上限)（用戶動過掣就唔覆蓋；lib 純函數同一來源）
+        const t = data.settlement?.timebank
+        const adv = data.settlement?.adw?.value ?? 0
+        if (t && t.debtMinutes > 0 && adv > 0 && !tbTouchedRef.current) {
+          const pre = prefillTbDeduction(calcTimebankDebtAmount(t.debtMinutes, adv).tbAmount, t.caps.quarter)
+          setTbDeduction(pre > 0 ? pre.toFixed(2) : '')
+        }
       } else if (res.status !== 404) {
         const err = await res.json().catch(() => ({}))
         if (err.error) alert(err.error)
@@ -104,7 +113,16 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const handleSettle = async () => {
     if (!lastDay) return
     if (noticeDaysVal == null) { alert('請先揀通知期'); return }
-    if (!confirm(`確定為「${employee.name}」確認離職結算？最後工作日：${lastDay}`)) return
+    if (st?.monthWage?.source === 'none') { alert('攞唔到當月工資 — 請先生成該月計糧'); return } // 掣已 disabled，雙重防線
+    // ★ cwm-resigv3 拍板②：預填即實扣 → 二次確認要明文寫「將扣除 $X」
+    const amt = tbDeductionVal ?? 0
+    if (!confirm(
+      `確定為「${employee.name}」確認離職結算？\n\n` +
+      `最後工作日：${lastDay}\n` +
+      `應付：$${estPayable.toFixed(2)}\n` +
+      (amt > 0 ? `⚠️ 將由尾糧扣除 $${amt.toFixed(2)}（時間帳戶欠款）\n` : '') +
+      `寫入之後，月底計糧會直接讀呢份結算。`,
+    )) return
     setSettleLoading(true)
     try {
       const body: any = { lastDay, noticeDays: noticeDaysVal }
@@ -161,8 +179,20 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
 
   const currency = (n: number | null | undefined) => n == null ? '—' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const tbDeductionVal = tbDeduction !== '' && Number.isFinite(Number(tbDeduction)) ? Number(tbDeduction) : null
-  // 預估應付 = 年假薪酬 ＋ 代通知金 − 時間帳戶扣除（月薪以計糧單 prorate 為準，唔喺呢度重算）
-  const estPayable = (st ? (st.unusedLeave.payout + (st.notice.pay ?? 0)) : 0) - (tbDeductionVal || 0)
+  // ★ cwm-resigv3 拍板②：欠款金額 + 預填（min(欠款, 1/4 上限)；正數餘額預填 0）— lib 純函數
+  const tbDebtAmount = tb && tb.debtMinutes > 0 && st && st.adw.value > 0
+    ? calcTimebankDebtAmount(tb.debtMinutes, st.adw.value).tbAmount
+    : 0
+  const suggestedDeduction = (tb && tb.debtMinutes > 0) ? prefillTbDeduction(tbDebtAmount, tb.caps.quarter) : 0
+  // 預估應付 = 當月工資 + 年假薪酬 + 代通知金 + 時間帳戶正數折現 − 扣除
+  //   ★ cwm-resigv3：當月工資「讀唔算」（st.monthWage，none → 0 且確認掣 disabled）；
+  //   正數餘額 = 公司欠員工 → 折現（|分|/540 日 × ADW；ADW 攞唔到 → 0）
+  const tbPositiveCashout = tb && tb.balanceMinutes > 0 && st && st.adw.value > 0
+    ? Math.round((tb.balanceMinutes / 540) * st.adw.value * 100) / 100
+    : 0
+  const estPayable = (st
+    ? ((st.monthWage?.basePay ?? 0) + st.unusedLeave.payout + (st.notice.pay ?? 0) + tbPositiveCashout)
+    : 0) - (tbDeductionVal || 0)
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
@@ -236,6 +266,28 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
               </div>
 
               <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
+                {/* ★ cwm-resigv3：當月工資（讀唔算 — 三態） */}
+                {st.monthWage?.source === 'payrollItem' && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                      <span>{lastDay.slice(0, 7)} 當月工資</span><span>{currency(st.monthWage.basePay)}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#6b7280' }}>已生成計糧（讀自計糧單，已按受僱日數 prorate）</div>
+                  </>
+                )}
+                {st.monthWage?.source === 'preview' && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#b45309' }}>
+                      <span>{lastDay.slice(0, 7)} 當月工資</span><span>{currency(st.monthWage.basePay)}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#b45309' }}>⚠️ 預覽值，未生成計糧（引擎直算，已 prorate）</div>
+                  </>
+                )}
+                {st.monthWage?.source === 'none' && (
+                  <div style={{ fontSize: 12, color: '#b45309', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 8px' }}>
+                    ⚠️ 攞唔到當月工資 — 請先生成該月計糧（確認結算掣已停用）
+                  </div>
+                )}
                 {s && (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -302,17 +354,24 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                         </div>
                       )}
                       <div style={{ color: '#7f1d1d', display: 'grid', gap: 2 }}>
-                        <div>┌ 該工資期工資（預估）${tb.caps.finalPeriodWage.toLocaleString()}</div>
+                        <div>┌ 該工資期工資（prorate 後）${tb.caps.finalPeriodWage.toLocaleString()}</div>
                         <div>│ 四分之一上限（單項扣除法定上限）${tb.caps.quarter.toLocaleString()}</div>
                         <div>│ 一半上限（扣除總額）${tb.caps.half.toLocaleString()}</div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>└ 本次扣除（人手輸入）</span>
+                          <span>└ 本次扣除（預填，可改）</span>
                           <input type="number" min="0" max={tb.caps.quarter} step="0.01"
-                            value={tbDeduction} onChange={e => setTbDeduction(e.target.value)}
+                            value={tbDeduction}
+                            onChange={e => { tbTouchedRef.current = true; setTbDeduction(e.target.value) }}
                             placeholder="0.00"
                             style={{ width: 110, padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, textAlign: 'right' }} />
                         </div>
                       </div>
+                      {tbDebtAmount > tb.caps.quarter && (
+                        <div style={{ fontSize: 11, color: '#b45309', marginTop: 4 }}>
+                          ⚠️ 欠款 ${tbDebtAmount.toFixed(2)} 超法定上限，預填已按上限 ${tb.caps.quarter.toFixed(2)}，
+                          差額 ${(tbDebtAmount - tb.caps.quarter).toFixed(2)} 需另行處理。
+                        </div>
+                      )}
                       <div style={{ fontSize: 11, color: '#991b1b', marginTop: 6 }}>{tb.deductionNote}</div>
                     </>
                   ) : (
@@ -327,14 +386,14 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
 
               {/* 預估應付 + EO s.25 */}
               <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, borderTop: '1px solid #fbbf24', paddingTop: 8 }}>
-                <span>預估應付（年假＋通知金−扣除）</span>
+                <span>預估應付（當月工資＋年假＋通知金＋正數折現−扣除）</span>
                 <span>{currency(estPayable)}</span>
               </div>
               <div style={{ fontSize: 12, color: '#1d4ed8', marginTop: 8, fontWeight: 600 }}>
                 📅 EO s.25：須於 {st.settleByDate} 或之前付清全部尾糧（最後工作日 +7 日）
               </div>
               <div style={{ fontSize: 11, color: '#6b7280', marginTop: 8, lineHeight: 1.5 }}>
-                當月工資（已 prorate）以計糧單為準，唔喺結算卡重算。<br />
+                當月工資「讀唔算」：讀自計糧單／引擎預覽（已按受僱日數 prorate），結算卡唔重算。<br />
                 年假按月累積（EO s.41D）；未滿 3 個月 = 0 日（EO s.41C）。休息日唔換錢（EO s.17）。
               </div>
             </div>
@@ -350,8 +409,9 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
           </button>
           {isOwner && (
             <button className="px-4 py-2 rounded-md text-sm" style={{ background: '#7c3aed', color: '#fff' }}
-              onClick={handleSettle} disabled={settleLoading || !st || settled != null}>
-              {settleLoading ? '處理中…' : '確認離職結算'}
+              onClick={handleSettle}
+              disabled={settleLoading || !st || settled != null || st.monthWage?.source === 'none'}>
+              {settleLoading ? '處理中…' : st.monthWage?.source === 'none' ? '確認離職結算（缺當月工資）' : '確認離職結算'}
             </button>
           )}
           {isOwner && (
@@ -386,20 +446,25 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
             </tr>
           </thead>
           <tbody>
+            <tr><td style={{ padding: '6px 8px' }}>當月工資（{lastDay.slice(0, 7)}，已 prorate）</td>
+              <td style={{ textAlign: 'right', padding: '6px 8px' }}>
+                {st?.monthWage?.source === 'none' ? '—' : currency(st?.monthWage?.basePay)}
+                {st?.monthWage?.source === 'preview' && <span style={{ fontSize: 11 }}>（預覽值，未生成計糧）</span>}
+              </td></tr>
             <tr><td style={{ padding: '6px 8px' }}>年假薪酬（{st?.unusedLeave?.days ?? 0} 日 × ADW）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(st?.unusedLeave?.payout)}</td></tr>
             <tr><td style={{ padding: '6px 8px' }}>代通知金{st?.notice?.pay != null ? `（${st?.notice?.days} 日 × ADW）` : ''}</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(st?.notice?.pay)}</td></tr>
             {tbDeductionVal != null && tbDeductionVal > 0 && (
               <tr><td style={{ padding: '6px 8px' }}>時間帳戶欠款扣除（人手）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>−{currency(tbDeductionVal).slice(1)}</td></tr>
             )}
             <tr style={{ borderTop: '1px solid #000', fontWeight: 700 }}>
-              <td style={{ padding: '6px 8px' }}>預估應付（當月工資另見計糧單）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(estPayable)}</td>
+              <td style={{ padding: '6px 8px' }}>預估應付</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(estPayable)}</td>
             </tr>
           </tbody>
         </table>
 
         <div style={{ fontSize: 10, color: '#555', marginTop: 12, lineHeight: 1.6 }}>
-          當月工資（已按受僱日數 prorate）以計糧單為準。年假按月累積含按比例（EO s.41D）；服務未滿 3 個月年假結算 0 日（EO s.41C）。
-          時間帳戶扣除受 EO s.32 限制（單項 ≤ 該工資期工資 1/4）。休息日系法定權利，唔換錢（EO s.17）。
+          當月工資「讀唔算」：讀自計糧單（已按受僱日數 prorate）或引擎預覽；結算書不重算。年假按月累積含按比例（EO s.41D）；服務未滿 3 個月年假結算 0 日（EO s.41C）。
+          時間帳戶扣除受 EO s.32 限制（單項 ≤ 該工資期工資 1/4，預填 min(欠款, 上限) 仍可改）。休息日系法定權利，唔換錢（EO s.17）。
         </div>
 
         {/* 簽名欄 */}

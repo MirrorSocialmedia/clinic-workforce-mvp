@@ -1059,12 +1059,30 @@ export async function generatePayrollRun(
           skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
           continue
         }
+        // ★ 2026-09-05 [cwm-resigv3] 離職結算注入（拍板③）：讀已確認快照，引擎唔重算。
+        //   parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。
+        let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; monthWage: { source: string; basePay: number | null } | null } | null = null
+        const rsJson = carried.resignSettlement[emp.id]
+        if (rsJson) {
+          try {
+            const parsed = JSON.parse(rsJson)
+            resignSettlementOpt = {
+              annualLeavePay: Number(parsed.annualLeavePay) || 0,
+              noticePay: Number(parsed.noticePay) || 0,
+              tbDeduction: parsed.tbDeduction == null ? null : (Number(parsed.tbDeduction) || 0),
+              monthWage: parsed.monthWage ?? null,
+            }
+          } catch (e) {
+            console.warn(`[generatePayrollRun] ${emp.id} resignSettlementJson parse 失敗，跳過注入:`, e)
+          }
+        }
         calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
           ...(config.base_type !== 'hourly' && (opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
             ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
           ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
             ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
           attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
+          resignSettlement: resignSettlementOpt,
         })
       } else {
         console.warn(`Employee ${emp.id} has no payRule, skipping`)
@@ -2102,6 +2120,13 @@ export function resolveEmployedRatio(
 // ------------------------------------------------------------------
 // NEW: Task 5 — MPF Calculation
 // ------------------------------------------------------------------
+
+/**
+ * ★ 2026-09-05 [cwm-resigv3]：離職結算金額（年假薪酬 + 代通知金）計唔計入
+ * MPF relevant earnings 基數。老細批預設計入（true）；2918 回覆後 flip 呢一行
+ * 做 false（settlement 照出糧，但唔入 MPF 基數）。
+ */
+export const MPF_INCLUDE_SETTLEMENT = true
 
 /**
  * MPF (強積金) employer contribution calculation.
@@ -3253,7 +3278,14 @@ export async function calculatePayrollWithRules(
   monthDate: Date,
   clinicId: string | null,
   config: PayRuleConfigModular,
-  options?: { storeBonus?: number; splitPay?: number; attendanceBonusOverride?: 'FORCE_ON' | 'FORCE_OFF' | null } // 店舖獎金 + 手動拆帳 + 勤工獎覆蓋
+  options?: {
+    storeBonus?: number; splitPay?: number; attendanceBonusOverride?: 'FORCE_ON' | 'FORCE_OFF' | null
+    // ★ 2026-09-05 [cwm-resigv3] 離職結算快照注入（拍板③）：
+    //   generatePayrollRun 由 PayrollItem.resignSettlementJson parse 後傳入。
+    //   annualLeavePay+noticePay 加落 gross（MPF_INCLUDE_SETTLEMENT 決定基數）；
+    //   tbDeduction 落 MPF 後 net 扣除。in-service 員工傳 null/唔傳 → 零改動。
+    resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null } | null
+  }
 ): Promise<PayrollResult> {
   // ★ Part-time hourly: bypass all modifier logic entirely
   if (config.base_type === 'hourly') {
@@ -3262,6 +3294,13 @@ export async function calculatePayrollWithRules(
 
   const { y: year, m: month } = hkParts(monthDate)
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
+
+  // ★ 2026-09-05 [cwm-resigv3]：離職結算注入參數（無結算 = 0/0 → 在職員工 path 零改動）
+  const rsSettle = options?.resignSettlement ?? null
+  const rsGrossAdd = rsSettle
+    ? (Number(rsSettle.annualLeavePay) || 0) + (Number(rsSettle.noticePay) || 0)
+    : 0
+  const rsTbDed = rsSettle ? Math.max(0, Number(rsSettle.tbDeduction) || 0) : 0
 
   // 1. Collect work data
   const workData = await collectWorkData(employeeId, monthDate, clinicId)
@@ -3548,11 +3587,13 @@ export async function calculatePayrollWithRules(
   const resolvedAdwAdjustment = await adwAdjustmentValue
 
   result.splitPay = effectiveSplitPay // 顯示與計算統一
-  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay
+  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay + rsGrossAdd
 
+  // ★ cwm-resigv3：MPF 基數受 MPF_INCLUDE_SETTLEMENT 控制（false 時 settlement 唔入基數）
   const mpfConfig = resolveMpfConfig(config, mods)
-  const mpf = calcMPF(grossPay, mpfConfig)
-  const netPay = Math.max(0, grossPay - mpf)
+  const mpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? grossPay : grossPay - rsGrossAdd, mpfConfig)
+  // ★ cwm-resigv3：tbDeduction 落 MPF 後 net 扣除（EO s.32 上限已喺 resign-settle route 驗過）
+  const netPay = Math.max(0, grossPay - mpf - rsTbDed)
   // ★ 2026-09-01 (cwm-mpf-20260902, MD #11)：MPF disabled 時 mpfRate 顯示 0 ——
   //   config.mpf 可以係 {enabled:false, rate:0.05}（UI 取消勾選喺度寫 rate），
   //   直接 .rate ?? 0.05 會令「唔扣但顯示 5%」，主管對數會以為系統壞。
@@ -3624,11 +3665,13 @@ export async function calculatePayrollWithRules(
     const oldOtPay = result.otPay
     result.otPay = Math.round(result.otHours * hourlyEquivalent * otMultiplier * 100) / 100
     const grossPayDelta = result.otPay - oldOtPay
-    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus)
+    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus + rsGrossAdd)
     const newGrossPay = oldGrossPay + grossPayDelta
     const mpfConfig = resolveMpfConfig(config, mods)
-    const newMpf = calcMPF(newGrossPay, mpfConfig)
-    const newNetPay = Math.max(0, newGrossPay - newMpf)
+    // ★ cwm-resigv3：OT 重算同步 settlement 口徑（MPF 基數 + tbDeduction），
+    //   唔同步會將 tbDeduction 洗走（此區塊覆寫 netPay）。
+    const newMpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? newGrossPay : newGrossPay - rsGrossAdd, mpfConfig)
+    const newNetPay = Math.max(0, newGrossPay - newMpf - rsTbDed)
     result.totalPayable = newNetPay
     result.detail = {
       ...result.detail,
@@ -3754,6 +3797,15 @@ export async function calculatePayrollWithRules(
       leaveConvertMinutes: tb.leaveConvertMinutes,
       leaveSwapBackMinutes: tb.leaveSwapBackMinutes,
     },
+    // ★ 2026-09-05 [cwm-resigv3]：離職結算行（尾糧單一次過見晒）—— 只喺有結算快照時寫入
+    resignSettlement: rsSettle ? {
+      annualLeavePay: Math.round((Number(rsSettle.annualLeavePay) || 0) * 100) / 100,
+      noticePay: Math.round((Number(rsSettle.noticePay) || 0) * 100) / 100,
+      tbDeduction: rsTbDed,
+      grossAdd: Math.round(rsGrossAdd * 100) / 100,
+      includedInMpf: MPF_INCLUDE_SETTLEMENT,
+      monthWage: rsSettle.monthWage ?? null,
+    } : undefined,
   }
 
   // ★ 雜項唯一加入點 —— 前面只設 netPay，唔可以喺嗰度加 miscTotal。
