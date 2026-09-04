@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { getConfidentialScope } from '@/lib/scope-helpers'
 import { calculatePayrollWithRules } from '@/lib/payroll-engine'
+import { getMonthRange } from '@/lib/hk-date'
 
 // ============================================================
 // POST /api/payroll-runs/preview — Preview payroll calculation
@@ -22,9 +23,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'periodMonth (YYYY-MM) is required' }, { status: 400 })
     }
 
-    // Parse YYYY-MM to Date
-    const [yearStr, monthStr] = periodMonth.split('-')
-    const monthDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1)
+    // Parse YYYY-MM to Date（★ HK-safe，同 generatePayrollRun 一致）
+    const monthDate = new Date(`${periodMonth}-01T00:00:00+08:00`)
+    const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
     // ★ Check for existing DRAFT to carry over storeBonus / splitPay
     const existing = await prisma.payrollRun.findFirst({
@@ -52,18 +53,39 @@ export async function POST(req: NextRequest) {
     }
 
     // Get employees — use homeClinicId instead of EmployeeClinic to avoid multi-clinic duplicates
-    const where: any = {
-      status: 'ACTIVE',
-    }
-    if (clinicId) where.homeClinicId = clinicId
-    if (employeeId) where.id = employeeId
+    // ★ 2026-09-04 [cwm-resigpay-20260904]：同 generatePayrollRun 口徑一致（拍板⑤）——
+    //   逐字抄 engine OR 三口徑（ACTIVE / 該月有打卡 / 該月有排更），離職員工有份。
+    const andClauses: any[] = [
+      {
+        OR: [
+          { status: 'ACTIVE' },
+          {
+            punches: {
+              some: {
+                punchTime: { gte: monthStart, lte: monthEnd },
+              },
+            },
+          },
+          {
+            shifts: {
+              some: {
+                date: { gte: monthStart, lte: monthEnd },
+              },
+            },
+          },
+        ],
+      },
+    ]
+    if (clinicId) andClauses.push({ homeClinicId: clinicId })
+    if (employeeId) andClauses.push({ id: employeeId })
 
     // ★ Confidential filter — 用 getConfidentialScope 一次過算好範圍（2026-08-03）
     const perms = auth.perms ?? []
     const confidentialScope = await getConfidentialScope(session, perms)
     if (confidentialScope !== null) {
-      where.OR = [{ payConfidential: false }, { homeClinicId: { in: confidentialScope } }]
+      andClauses.push({ OR: [{ payConfidential: false }, { homeClinicId: { in: confidentialScope } }] })
     }
+    const where: any = andClauses.length === 1 ? andClauses[0] : { AND: andClauses }
 
     const employees = await prisma.employee.findMany({
       where,
@@ -103,6 +125,8 @@ export async function POST(req: NextRequest) {
         items.push({
           employeeId: emp.id,
           employeeName: emp.user.name,
+          status: emp.status,
+          resignedAt: emp.resignedAt,
           payType: (result as any).payType || 'MONTHLY',
           workedHours: result.workedHours,
           otHours: result.otHours,

@@ -197,6 +197,9 @@ export function deductionDailyRate(
     // ★ 必須由呼叫者傳入 —— 佢要讀 pay rule 嘅 rest_days config，
     //   喺呢個純函數入面計唔到。傳唔到就 fallback 去曆日（安全側：扣少啲）。
     if (monthlyWorkingDays && monthlyWorkingDays > 0) return monthlySalary / monthlyWorkingDays
+    // ★ 2026-09-04 [cwm-resigpay-20260904]：workday 模式傳唔到分母會靜靜 fallback 曆日
+    //   （§2.1 陷阱：完全冇效果亦冇報錯）—— 一定要留痕。
+    console.error(`[payroll] ⛔ deductionDailyRate: mode=workday 但 monthlyWorkingDays 冇傳（fallback 曆日） month=${monthDate.toISOString().slice(0, 7)}`)
     const days = hkDaysInMonth(monthDate)
     return days > 0 ? monthlySalary / days : monthlySalary / 30
   }
@@ -940,11 +943,11 @@ export async function generatePayrollRun(
     },
   })
 
-  // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋 —— 唔記低就會被 deleteMany 一齊清走
+  // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋／離職結算 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
   const isRecalculation = !!existing
-  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } =
-    { storeBonus: {}, splitPay: {}, bonusOverride: {} }
+  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'>; resignSettlement: Record<string, string> } =
+    { storeBonus: {}, splitPay: {}, bonusOverride: {}, resignSettlement: {} }
   if (existing) {
     // CONFIRMED (FINALIZED/EXPORTED) — block recalculation
     if (existing.status === 'FINALIZED' || existing.status === 'EXPORTED') {
@@ -957,12 +960,14 @@ export async function generatePayrollRun(
     // DRAFT — allow recalculation: save bonus/splitPay/bonusOverride then delete old items
     const oldItems = await prisma.payrollItem.findMany({
       where: { runId: existing.id },
-      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true },
+      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true, resignSettlementJson: true },
     })
     for (const oi of oldItems) {
       if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
       if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
       if (oi.attendanceBonusOverride) carried.bonusOverride[oi.employeeId] = oi.attendanceBonusOverride as 'FORCE_ON' | 'FORCE_OFF'
+      // ★ 2026-09-04 [cwm-resigpay-20260904]：離職結算人手填嘅扣除 —— 重算唔好沖走
+      if (oi.resignSettlementJson) carried.resignSettlement[oi.employeeId] = oi.resignSettlementJson
     }
     await prisma.payrollItem.deleteMany({ where: { runId: existing.id } })
   }
@@ -1090,6 +1095,7 @@ export async function generatePayrollRun(
         excludedWage: (calcResult.detail as any)?.excludedWage ?? 0,
         maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
         paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
+        resignSettlementJson: carried.resignSettlement[emp.id] ?? null,
         attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? null,
       })
     } catch (err) {
@@ -1100,6 +1106,7 @@ export async function generatePayrollRun(
         basePay: 0, otPay: 0, splitPay: null, deduction: 0, storeBonus: 0, totalPayable: 0,
         miscAmount: 0,
         detailJson: JSON.stringify({ error: String(err) }),
+        resignSettlementJson: carried.resignSettlement[emp.id] ?? null,
       })
     }
   }
@@ -1172,6 +1179,8 @@ interface WorkData {
   restDays: number
   totalDaysInMonth: number
   monthlyWorkingDays: number
+  // ★ 2026-09-04 [cwm-resigpay-20260904]：受僱比例（月中入職／離職 prorate；完整月 = 1）
+  employedRatio?: number
   lateRecords: Array<{ date: string; minutes: number }>
   earlyLeaveRecords: Array<{ date: string; minutes: number }>
   leaveRecords: Array<{ isPlanned: boolean; days: number; cancelsBonus: boolean; name: string }>
@@ -2032,6 +2041,64 @@ export function countMonthlyLeaveDays(
   return { restDayCount, publicHolidayCount, total, workingDays: daysInMonth - total }
 }
 
+/**
+ * 日期範圍（含頭含尾，HK 日）嘅應出勤日數。
+ * ★ 2026-09-04 [cwm-resigpay-20260904]：供 resolveEmployedRatio 用（月中入職／離職 prorate）。
+ *
+ * ⚠️ 應出勤日判斷同 countMonthlyLeaveDays 同一套 —— UTC-safe dow + 傳入嘅
+ *    DB 公眾假期 set（HKPublicHoliday 表）。唔好另寫判斷，否則兩處走樣；
+ *    亦唔好改用 deprecated isPublicHoliday()（硬編碼 2026 清單有錯）。
+ * ⚠️ 唔數 Shift 表 —— 分母分子都由 rest_days config 按曆日推算（防員工把
+ *    休息日全部排喺月頭操縱比例）。
+ */
+export function countWorkingDaysInRange(
+  from: Date,
+  to: Date,
+  config: { restDays?: number[]; publicHolidaySet?: Set<string> },
+): number {
+  const restDays = config?.restDays ?? []
+  const phSet = config?.publicHolidaySet
+  let n = 0
+  let cur = toHKDateStr(from)
+  const last = toHKDateStr(to)
+  while (cur <= last) {
+    const dow = hkDayOfWeek(cur)
+    if (!restDays.includes(dow) && !phSet?.has(cur)) n++
+    cur = addDays(cur, 1)
+  }
+  return n
+}
+
+/**
+ * 受僱比例 = 該月受僱期間嘅應出勤日 ÷ 該月總應出勤日。
+ * 完整月份回 1（同舊行為一模一樣 —— 回歸安全，生死格 #1）。
+ *
+ * ★ 2026-09-04 [cwm-resigpay-20260904]：月中入職／離職按【受僱應出勤日】比例出糧。
+ *   ⚠️ 分母用 totalWorkingDays（= countMonthlyLeaveDays 同一次迴圈嘅 workingDays，
+ *      同扣薪日率／恆等式自檢同一口徑）；唔傳先自己算。
+ *   ⚠️ resignedAt 存嘅係「最後工作日**翌日** HK 午夜」（resign/route.ts）
+ *      → 範圍尾用 resignedAt − 1 日，先計到最後工作日本身。
+ *   ⚠️ 唔數 Shift 表（防操縱）。
+ */
+export function resolveEmployedRatio(
+  joinDate: Date | null,
+  resignedAt: Date | null,
+  monthStart: Date,
+  monthEnd: Date,
+  restCfg: { restDays?: number[]; publicHolidaySet?: Set<string>; totalWorkingDays?: number },
+): number {
+  const from = joinDate && joinDate > monthStart ? joinDate : monthStart
+  // 最後工作日 = resignedAt 前一日（resignedAt = 翌日 HK 午夜）
+  const to = resignedAt && resignedAt < monthEnd
+    ? new Date(resignedAt.getTime() - 86400000)
+    : monthEnd
+  if (from <= monthStart && to >= monthEnd) return 1  // ★ 完整月份 → 1
+  if (from > to) return 0                             // 該月完全未入職／已離職
+  const total = restCfg?.totalWorkingDays ?? countWorkingDaysInRange(monthStart, monthEnd, restCfg)
+  if (total <= 0) return 1
+  return countWorkingDaysInRange(from, to, restCfg) / total
+}
+
 // ------------------------------------------------------------------
 // NEW: Task 5 — MPF Calculation
 // ------------------------------------------------------------------
@@ -2662,7 +2729,10 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
   // ✅ 模型 A：底薪 = 全額月薪（不按出勤比例縮水），缺勤才扣
   // 之前錯誤：basePay 按 (paidDays/workingDays) 縮水 + deduction 再扣一次 = 同一件事扣兩次
   const workingDays = workData.workingDays
-  const basePay = monthlySalary * monthlyPayMultiplier  // 全額底薪，不縮水
+  // ★ 2026-09-04 [cwm-resigpay-20260904]：月中入職／離職按【受僱應出勤日】比例出糧。
+  //   ⚠️ 完整月份 employedRatio = 1（同舊行為一分唔變，生死格 #1）；時薪路徑唔走呢度。
+  const employedRatio = workData.employedRatio ?? 1
+  const basePay = monthlySalary * monthlyPayMultiplier * employedRatio  // 全額底薪 × 受僱比例，缺勤另扣
   // ★ 扣薪用當月曆日數，唔用 statutoryDailyWage（月薪×12÷365 屬法定權益公式）
   const dailyRate = deductionDailyRate(monthlySalary, monthDate, (config as any).deduction_basis ?? 'workday', workData.monthlyWorkingDays)
   const deduction = (absentDays + unpaidLeaveDays) * dailyRate * deductionRate
@@ -2692,6 +2762,7 @@ function calcMonthlyBase(config: PayRuleConfigModular, workData: WorkData, month
       baseType: 'monthly',
       monthlySalary,
       monthlyPayMultiplier,
+      employedRatio,  // ★ 2026-09-04：完整月 = 1；月中入職／離職 < 1
       workingDays: workData.workingDays,
       scheduledDays: workData.scheduledDays,
       actualAttendanceDays: workData.actualAttendanceDays,
@@ -3210,6 +3281,21 @@ export async function calculatePayrollWithRules(
   workData.workingDays = hkDaysInMonth(monthDate) - actualRestDays
   workData.restDays = actualRestDays
   workData.publicHolidayCount = leaveInfo.publicHolidayCount
+
+  // ★ 2026-09-04 [cwm-resigpay-20260904]：受僱日數 prorate（MD §一）
+  //   分母同 monthlyWorkingDays 同一來源（countMonthlyLeaveDays 同一次迴圈）；
+  //   完整月份 resolveEmployedRatio 返 exact 1 —— 生死格 #1（舊行為一分唔變）。
+  const empDates = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { joinDate: true, resignedAt: true },
+  })
+  workData.employedRatio = resolveEmployedRatio(
+    empDates?.joinDate ?? null,
+    empDates?.resignedAt ?? null,
+    monthStart,
+    monthEnd,
+    { restDays: restDayCfg, publicHolidaySet: _phSetCallerB, totalWorkingDays: leaveInfo.workingDays },
+  )
 
   // 2. Run base module
   const baseResult = runBaseModule(config, workData, monthDate, employeeId)

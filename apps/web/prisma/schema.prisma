@@ -789,6 +789,11 @@ model PayrollItem {
   miscDetailJson String?    // JSON: [{ amount, description }]
   detailJson   String?     // JSON string for SQLite compat
 
+  /// ★ 2026-09-04 [cwm-resigpay-20260904]：離職結算書（NULL = 無）
+  /// { lastDay, noticeDays, noticePay, annualLeaveDays, annualLeavePay,
+  ///   tbMinutes, tbAmount, tbDeduction, quarterCap, adwUsed, settledAt, settledBy }
+  resignSettlementJson String?
+
   /// ★ EO 定義的「工資」總額（供 ADW 用；不含雜項報銷、不含 MPF 僱主供款）
   eoWage        Float       @default(0)
   /// ★ 該月剔除天數與款額（713 條例要求）

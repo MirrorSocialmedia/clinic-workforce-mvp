@@ -17,6 +17,11 @@ export function todayHK(): string {
   return toHKDateStr(new Date())
 }
 
+/** 今日香港日期 YYYY-MM-DD —— todayHK() 別名（2026-09-04 [cwm-resigpay-20260904] 命名對齊） */
+export function hkTodayStr(): string {
+  return todayHK()
+}
+
 /** YYYY-MM-DD → midnight HK (e.g. "2026-07-06" → new Date("2026-07-06T00:00:00+08:00")) */
 export function hkDateStart(dateStr: string): Date {
   const d = new Date(`${dateStr}T00:00:00+08:00`)

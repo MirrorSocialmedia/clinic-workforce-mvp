@@ -6,7 +6,7 @@ import { Search } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, addDaysStr } from '@/lib/hk-date'
 
 interface Clinic {
   id: string
@@ -491,7 +491,15 @@ export default function NewPayrollPage() {
                         </td>
                       ) : (
                         <>
-                          <td className="px-1 py-1.5 text-center">{item.employeeName}</td>
+                          <td className="px-1 py-1.5 text-center">
+                            {item.employeeName}
+                            {item.status === 'RESIGNED' && (
+                              <span className="ml-1 inline-block rounded bg-amber-500 px-1 text-[10px] text-white">離職</span>
+                            )}
+                            {item.resignedAt && (
+                              <div className="text-[10px] text-amber-600">最後 {addDaysStr(toHKDateStr(item.resignedAt), -1)}</div>
+                            )}
+                          </td>
                           <td className="px-1 py-1.5 text-center">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</td>
                           <td className="px-1 py-1.5 text-center font-mono">{item.workedHours}</td>
                           <td className="px-1 py-1.5 text-center font-mono">{(item.basePay || 0).toLocaleString()}</td>
@@ -590,6 +598,12 @@ export default function NewPayrollPage() {
                     <>
                       <div className="flex justify-between items-center mb-1">
                         <span className="font-semibold">{item.employeeName}</span>
+                        {item.status === 'RESIGNED' && (
+                          <span className="rounded bg-amber-500 px-1 text-[10px] text-white">離職</span>
+                        )}
+                        {item.resignedAt && (
+                          <span className="text-[10px] text-amber-600">最後 {addDaysStr(toHKDateStr(item.resignedAt), -1)}</span>
+                        )}
                         <span className="text-xs text-muted-foreground">{item.payType === 'HOURLY' ? '時薪' : '月薪'}</span>
                       </div>
                       <div className="grid grid-cols-2 gap-1 text-xs mb-2">

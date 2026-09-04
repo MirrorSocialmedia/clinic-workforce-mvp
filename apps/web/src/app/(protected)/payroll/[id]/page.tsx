@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
 import { Wallet, Trash2 } from 'lucide-react'
-import { periodMonthKey, toHKDateStr } from '@/lib/hk-date'
+import { periodMonthKey, toHKDateStr, addDaysStr } from '@/lib/hk-date'
 
 // ★ 讀取類 fetch 一律繞過瀏覽器快取。
 // PUT 同 GET 用同一個 URL，唔加就會喺寫入之後攞返舊 response
@@ -37,6 +37,8 @@ interface PayrollItem {
     user: { name: string; phone: string }
     clinics: { clinicId: string; clinic: { name: string } }[]
     payRules: Array<{ payType: string }>
+    status: string
+    resignedAt: string | null
   }
 }
 
@@ -527,8 +529,16 @@ export default function PayrollDetailPage() {
                     <div style={{ fontWeight: 600 }}>
                       {confidential && <span title="薪資保密">🔒 </span>}
                       {item.employee.user.name}
+                      {item.employee.status === 'RESIGNED' && (
+                        <span style={{ marginLeft: 6, background: '#f59e0b', color: '#fff', borderRadius: 4, padding: '1px 5px', fontSize: 10, fontWeight: 600 }}>離職</span>
+                      )}
                     </div>
-                    <div style={{ fontSize: 11, color: '#888' }}>{item.employee.user.phone}</div>
+                    <div style={{ fontSize: 11, color: '#888' }}>
+                      {item.employee.user.phone}
+                      {item.employee.resignedAt && (
+                        <span style={{ color: '#d97706' }}> · 最後 {addDaysStr(toHKDateStr(item.employee.resignedAt), -1)}</span>
+                      )}
+                    </div>
                   </td>
                   <td style={{ padding: '8px 6px', fontSize: 12 }}>
                     {item.employee.clinics.map(c => c.clinic.name).join(', ')}

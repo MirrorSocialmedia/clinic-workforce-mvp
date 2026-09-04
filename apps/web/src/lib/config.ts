@@ -84,7 +84,8 @@ export const CONFIG = {
     'GET /api/employees/:id/overview/attendance-days': ['OWNER', 'MANAGER'],
 
     // Resign / Rehire routes
-    'GET /api/employees/:id/resign-preview': ['OWNER'],
+    // ★ 2026-09-04 [cwm-resigpay-20260904] 拍板 B：MANAGER 睇得到預覽（寫入 resign-settle 仍 OWNER-only）
+    'GET /api/employees/:id/resign-preview': ['OWNER', 'MANAGER'],
     'POST /api/employees/:id/resign': ['OWNER'],
     'POST /api/employees/:id/rehire': ['OWNER'],
 

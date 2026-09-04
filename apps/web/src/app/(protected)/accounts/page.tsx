@@ -6,6 +6,7 @@ import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
 import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS, zeroEntitledHint } from '@/lib/leave-types'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
 import { fmtDate } from '@/lib/hk-date'
+import ResignSettlementModal from '@/components/ResignSettlementModal'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from '@/lib/permissions'
 
@@ -61,11 +62,6 @@ export default function AccountsPage() {
   const [showResigned, setShowResigned] = useState(false)
   const [showResignModal, setShowResignModal] = useState(false)
   const [resignEmployee, setResignEmployee] = useState<Account | null>(null)
-  const [lastDay, setLastDay] = useState(new Date().toISOString().split('T')[0])
-  const [resignPreview, setResignPreview] = useState<{ futureShifts: number; futureApprovedLeaves: number; leaveSettlement: any; settlement?: any } | null>(null)
-  const [noticeSel, setNoticeSel] = useState('') // '' 未揀 | '0' 已做足 | '7' | '30' | 'custom'（拍板③：人手輸入）
-  const [noticeCustom, setNoticeCustom] = useState('')
-  const [resignLoading, setResignLoading] = useState(false)
 
   // KIOSK account creation state
   const [showKioskForm, setShowKioskForm] = useState(false)
@@ -113,26 +109,6 @@ export default function AccountsPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
   useEffect(() => { fetchAccounts() }, [fetchAccounts])
-
-  // Fetch resign preview when modal is open and lastDay / notice period changes
-  useEffect(() => {
-    if (!showResignModal || !resignEmployee?.employeeId) return
-    const noticeParam = noticeSel === 'custom' ? noticeCustom : noticeSel
-    const noticeQ = noticeParam !== '' && noticeParam !== undefined ? `&noticeDays=${noticeParam}` : ''
-    const fetchPreview = async () => {
-      try {
-        const res = await fetch(
-          `/api/employees/${resignEmployee.employeeId}/resign-preview?lastDay=${lastDay}${noticeQ}`,
-          { credentials: 'include' }
-        )
-        if (res.ok) {
-          const data = await res.json()
-          setResignPreview({ futureShifts: data.futureShifts, futureApprovedLeaves: data.futureApprovedLeaves, leaveSettlement: data.leaveSettlement ?? null, settlement: data.settlement ?? null })
-        }
-      } catch {}
-    }
-    fetchPreview()
-  }, [showResignModal, resignEmployee, lastDay, noticeSel, noticeCustom])
 
   // Auto-select homeClinicId = first assigned clinic when none set yet
   useEffect(() => {
@@ -334,37 +310,12 @@ export default function AccountsPage() {
   }
 
   // ─── Resign / Rehire ───
+  // ★ 2026-09-04 [cwm-resigpay-20260904]：modal 狀態（lastDay／notice／preview）全部移入共用元件
   const openResign = (acc: Account) => {
     setResignEmployee(acc)
-    setLastDay(new Date().toISOString().split('T')[0])
-    setResignPreview(null)
-    setNoticeSel('')
-    setNoticeCustom('')
     setShowResignModal(true)
   }
 
-  const handleResign = async () => {
-    if (!resignEmployee?.employeeId || !lastDay) return
-    if (!confirm(`確定為「${resignEmployee.name}」辦理離職？最後工作日：${lastDay}`)) return
-    setResignLoading(true)
-    try {
-      const res = await fetch(`/api/employees/${resignEmployee.employeeId}/resign`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lastDay }),
-      })
-      if (res.ok) {
-        setShowResignModal(false)
-        setResignEmployee(null)
-        fetchData()
-      } else {
-        const err = await res.json()
-        alert(err.error || '離職操作失敗')
-      }
-    } catch { alert('網絡錯誤') }
-    finally { setResignLoading(false) }
-  }
 
   const handleRehire = async (acc: Account) => {
     if (!confirm(`確定為「${acc.name}」辦理復職？`)) return
@@ -1295,196 +1246,14 @@ export default function AccountsPage() {
       )}
 
       {/* Resign Modal */}
-      {showResignModal && resignEmployee && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={() => setShowResignModal(false)}>
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-8 max-w-md w-full mx-4"
-            onClick={e => e.stopPropagation()}>
-            <h3 className="text-xl font-bold mb-4 text-red-700">👋 辦理離職</h3>
-
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{resignEmployee.name}</div>
-              <div style={{ fontSize: 12, color: '#888' }}>{resignEmployee.phone} · {ROLE_LABELS[resignEmployee.role] || resignEmployee.role}</div>
-            </div>
-
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>最後工作日</label>
-              <input
-                type="date"
-                value={lastDay}
-                onChange={e => setLastDay(e.target.value)}
-                className="px-3 py-2 rounded-md border text-sm w-full"
-              />
-            </div>
-
-            {resignPreview && (
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#dc2626', marginBottom: 4 }}>⚠️ 離職後將自動取消：</div>
-                <div style={{ fontSize: 12, color: '#7f1d1d' }}>班次：{resignPreview.futureShifts} 個</div>
-                <div style={{ fontSize: 12, color: '#7f1d1d' }}>已批假期：{resignPreview.futureApprovedLeaves} 筆</div>
-                <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>（僅取消最後工作日之後的記錄）</div>
-              </div>
-            )}
-
-            {/* ★ 離職結算預覽卡（2026-09-02 cwm-resigsettle-20260904：ADW／代通知金／時間帳戶上限／s.25） */}
-            {resignPreview && (resignPreview.leaveSettlement || resignPreview.settlement) && (() => {
-              const s = resignPreview.leaveSettlement
-              const st = resignPreview.settlement
-              const tb = st?.timebank
-              const noticeDaysLabel = noticeSel === '' ? null
-                : noticeSel === '0' ? '已做足 / 無須通知'
-                : noticeSel === '7' ? '7 日'
-                : noticeSel === '30' ? '1 個月'
-                : `${noticeCustom || '?'} 日（自訂）`
-              return (
-                <div style={{
-                  padding: 14, background: '#fffbeb', border: '1px solid #fde68a',
-                  borderRadius: 10, marginTop: 12,
-                }}>
-                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>
-                    離職結算預覽
-                  </div>
-                  <div style={{ fontSize: 11, color: '#92400e', marginBottom: 10 }}>
-                    ⚠️ 純預覽，唔會寫入任何記錄。以最後上班日 {lastDay} 計算。
-                  </div>
-
-                  {/* 通知期 —— 人手輸入（拍板③，系統唔自動推導） */}
-                  <div style={{ marginBottom: 10 }}>
-                    <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>通知期</label>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <select value={noticeSel} onChange={e => setNoticeSel(e.target.value)}
-                        className="px-2 py-1.5 rounded-md border text-sm" style={{ flex: 1 }}>
-                        <option value="">請揀……</option>
-                        <option value="0">已做足 / 無須通知</option>
-                        <option value="7">7 日</option>
-                        <option value="30">1 個月</option>
-                        <option value="custom">自訂</option>
-                      </select>
-                      {noticeSel === 'custom' && (
-                        <input type="number" min="0" max="365" value={noticeCustom}
-                          onChange={e => setNoticeCustom(e.target.value)}
-                          placeholder="日數"
-                          className="px-2 py-1.5 rounded-md border text-sm" style={{ width: 90 }} />
-                      )}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#b45309', marginTop: 4 }}>
-                      ⚠️ 按【合約】填，唔係按 EO 最低。EO 只定下限。
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
-                    {s && (
-                      <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>入職日</span><span>{fmtDate(s.joinDate)}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>服務年資</span>
-                          <span>{Math.floor(s.serviceMonths / 12)} 年 {s.serviceMonths % 12} 個月{s.serviceMonths < 3 ? ' · 試用期內（年假結算 0 日）' : ''}</span>
-                        </div>
-                        <div style={{ borderTop: '1px dashed #fbbf24', margin: '4px 0' }} />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                          <span>年假額度（按月累積，含按比例）</span><span>{s.accrued} 天</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>已用</span><span>− {s.used} 天</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                          <span>未放（可結算）</span><span>{s.unused} 天</span>
-                        </div>
-                      </>
-                    )}
-                    {st && st.adw.value > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#9ca3af', fontSize: 12 }}>
-                        <span>Effective ADW{st.adw.source === 'FALLBACK_MONTHLY' ? '（推算：月薪×12÷365）' : ''}</span>
-                        <span>${st.adw.value.toLocaleString()}</span>
-                      </div>
-                    )}
-                    {st && st.adw.value === 0 && (
-                      <div style={{ fontSize: 12, color: '#b45309' }}>
-                        ⚠️ 無法計算 ADW（無工資歷史／非月薪制）—— 年假薪酬同代通知金需另行按 ADW 計算
-                      </div>
-                    )}
-                    {st && st.adw.value > 0 && (
-                      <>
-                        <div style={{ borderTop: '1px dashed #fbbf24', margin: '4px 0' }} />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 15 }}>
-                          <span>應付年假薪酬（{st.unusedLeave.days} 日 × ADW）</span>
-                          <span>${st.unusedLeave.payout.toLocaleString()}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: st.notice.pay != null ? 600 : 400 }}>
-                          <span>代通知金{noticeDaysLabel ? `（${st.notice.days} 日 × ADW）` : '（尚未揀通知期）'}</span>
-                          <span>{st.notice.pay != null ? `$${st.notice.pay.toLocaleString()}` : '—'}</span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {/* 時間帳戶提示（拍板②：只顯示上限，唔自動扣） */}
-                  {tb && (
-                    <div style={{ marginTop: 10, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 10, fontSize: 12 }}>
-                      {tb.debtMinutes > 0 ? (
-                        <>
-                          <div style={{ fontWeight: 600, color: '#b91c1c', marginBottom: 4 }}>
-                            ⚠️ 時間帳戶欠 {tb.debtMinutes.toLocaleString()} 分（≈ {tb.debtDays} 日）
-                            {tb.latestPeriod ? `（截至 ${tb.latestPeriod}）` : ''}
-                          </div>
-                          {tb.entries.length > 0 && (
-                            <div style={{ color: '#7f1d1d', marginBottom: 6, lineHeight: 1.6 }}>
-                              來源（近 {tb.entries.length} 筆出帳）：
-                              {tb.entries.slice(0, 3).map((en: any, i: number) => (
-                                <span key={i}>{i > 0 && '，'}{fmtDate(en.date)} {en.type} {en.minutes} 分{en.note ? `（${en.note}）` : ''}</span>
-                              ))}
-                              {tb.entries.length > 3 && ` 等 ${tb.entries.length} 筆`}
-                            </div>
-                          )}
-                          <div style={{ color: '#7f1d1d', display: 'grid', gap: 2 }}>
-                            <div>┌ 該工資期工資（預估）${tb.caps.finalPeriodWage.toLocaleString()}</div>
-                            <div>│ 四分之一上限（單項扣除法定上限）${tb.caps.quarter.toLocaleString()}</div>
-                            <div>│ 一半上限（扣除總額）${tb.caps.half.toLocaleString()}</div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span>└ 本次扣除（人手輸入）</span>
-                              <input readOnly value="" placeholder="人手輸入"
-                                style={{ width: 110, padding: '3px 8px', border: '1px dashed #d1d5db', borderRadius: 6, fontSize: 12, background: '#fff', textAlign: 'right' }} />
-                            </div>
-                          </div>
-                          <div style={{ fontSize: 11, color: '#991b1b', marginTop: 6 }}>{tb.deductionNote}</div>
-                        </>
-                      ) : (
-                        <div style={{ color: '#374151' }}>
-                          時間帳戶：{tb.balanceMinutes >= 0 ? '+' : ''}{tb.balanceMinutes.toLocaleString()} 分
-                          （{tb.balanceMinutes >= 0 ? '正數 = 公司欠員工，本次唔涉及扣薪' : '無欠款'}）
-                          {tb.latestPeriod ? `（截至 ${tb.latestPeriod}）` : ''}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* EO s.25 尾糧期限 */}
-                  {st && (
-                    <div style={{ fontSize: 12, color: '#1d4ed8', marginTop: 10, fontWeight: 600 }}>
-                      📅 EO s.25：須於 {st.settleByDate} 或之前付清全部尾糧（最後工作日 +7 日）
-                    </div>
-                  )}
-
-                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 10, lineHeight: 1.5 }}>
-                    年假額度按月累積（公司政策，含進行中年度按比例，EO s.41D）；服務未滿 3 個月 = 年假結算 0 日（EO s.41C）。<br />
-                    休息日系法定權利，唔顯示喺結算單、唔換錢（EO s.17）。
-                  </div>
-                </div>
-              )
-            })()}
-
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn" style={{ background: '#eee', color: '#333' }}
-                onClick={() => setShowResignModal(false)}>取消</button>
-              <button className="btn" style={{ background: '#dc2626', color: 'white' }}
-                onClick={handleResign} disabled={resignLoading || !lastDay}>
-                {resignLoading ? '處理中...' : '確認離職'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {showResignModal && resignEmployee?.employeeId && (
+        <ResignSettlementModal
+          employee={{ employeeId: resignEmployee.employeeId, name: resignEmployee.fullName || resignEmployee.name, phone: resignEmployee.phone, role: resignEmployee.role }}
+          userRole={userRole}
+          onClose={() => { setShowResignModal(false); setResignEmployee(null) }}
+          onResigned={fetchData}
+          onSettled={fetchData}
+        />
       )}
     </div>
   )

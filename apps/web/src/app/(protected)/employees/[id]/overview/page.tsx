@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
 import { User, Printer, Eye } from 'lucide-react'
 import { fmtDate } from '@/lib/hk-date'
+import ResignSettlementModal from '@/components/ResignSettlementModal'
 import { hasPermission } from '@/lib/permissions'
 import { zeroEntitledHint } from '@/lib/leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
@@ -31,10 +32,8 @@ export default function EmployeeOverviewPage() {
   const [history, setHistory] = useState<any>(null)
   const [historyLoading, setHistoryLoading] = useState(true)
 
-  // Resign preview
-  const [showResignPreview, setShowResignPreview] = useState(false)
-  const [resignPreview, setResignPreview] = useState<any>(null)
-  const [resignLoading, setResignLoading] = useState(false)
+  // Resign settlement (2026-09-04 cwm-resigpay: 共用元件)
+  const [showResignModal, setShowResignModal] = useState(false)
 
   const [userRole, setUserRole] = useState<string>('')
   const [grant, setGrant] = useState<string[]>([])
@@ -435,90 +434,27 @@ export default function EmployeeOverviewPage() {
         </>
       ) : null}
 
-      {/* ⑨ Resignation Section (disabled placeholder) */}
+      {/* ⑨ Resignation Settlement (2026-09-04 cwm-resigpay-20260904：共用元件，拍板 B MANAGER 可預覽) */}
       <div style={{ border: '1px dashed #d1d5db', borderRadius: 10, padding: 16, background: '#fafafa', marginTop: 16 }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>👋 離職結算</div>
         <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
-          ⚠️ 功能開發中。年假結算已可預覽，代通知金同時間帳戶結算口徑待確認（需法律意見）。
+          年假薪酬、代通知金、時間帳戶扣除同 EO s.25 尾糧期限，以 Effective ADW 計算。
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={async () => {
-            setResignLoading(true)
-            try {
-              const res = await api(`/api/employees/${empId}/resign-preview?lastDay=${new Date().toISOString().split('T')[0]}`)
-              if (res.ok) {
-                setResignPreview(await res.json())
-                setShowResignPreview(true)
-              }
-            } catch {}
-            finally { setResignLoading(false) }
-          }} disabled={resignLoading}
-            style={{ padding: '8px 16px', background: '#f8f9fa', border: '1px solid #ddd', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-            {resignLoading ? '載入中...' : '預覽年假結算'}
-          </button>
-          <button disabled
-            style={{ padding: '8px 16px', background: '#e5e7eb', border: '1px solid #d1d5db', borderRadius: 6, cursor: 'not-allowed', opacity: 0.5, fontSize: 13 }}>
-            辦理離職（未開放）
-          </button>
-        </div>
+        <button onClick={() => setShowResignModal(true)}
+          style={{ padding: '8px 16px', background: '#f8f9fa', border: '1px solid #ddd', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
+          查看離職結算
+        </button>
       </div>
 
-      {/* Resign Preview Modal */}
-      {showResignPreview && resignPreview && (
-        <div className="no-print"
-          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-          onClick={() => setShowResignPreview(false)}>
-          <div style={{ background: '#fff', borderRadius: 12, padding: 24, width: '520px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
-            onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 18 }}>離職年假結算預覽</h3>
-            {resignPreview.leaveSettlement ? (() => {
-              const s = resignPreview.leaveSettlement
-              return (
-                <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>入職日</span><span>{fmtDate(s.joinDate)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>服務年資</span><span>{Math.floor(s.serviceMonths / 12)} 年 {s.serviceMonths % 12} 個月</span>
-                  </div>
-                  <div style={{ borderTop: '1px dashed #fbbf24', margin: '4px 0' }} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#9ca3af', fontSize: 12 }}>
-                    <span>日常可放（已賺取）</span><span>{s.earnedNow} 天</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                    <span>離職累積（含按比例）</span><span>{s.accrued} 天</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>已用</span><span>− {s.used} 天</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                    <span>可結算</span><span>{s.unused} 天</span>
-                  </div>
-                  {s.payout != null && (
-                    <>
-                      <div style={{ borderTop: '1px dashed #fbbf24', margin: '4px 0' }} />
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 15 }}>
-                        <span>應付年假薪酬</span><span>{fmtCurrency(s.payout)}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )
-            })() : (
-              <div style={{ color: '#888', fontSize: 13 }}>無法計算年假結算</div>
-            )}
-            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 10 }}>
-              「日常可放」按已完成服務年度（EO s.41A）；<br />
-              「離職累積」加埋進行中年度按比例（EO s.41D）。
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-              <button onClick={() => setShowResignPreview(false)}
-                style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd', background: '#f5f5f5', cursor: 'pointer', fontSize: 14 }}>
-                關閉
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* 離職結算 Modal（共用元件 — 同 accounts 同一份） */}
+      {showResignModal && basic && (
+        <ResignSettlementModal
+          employee={{ employeeId: empId, name: basic.fullName || basic.name, phone: basic.phone }}
+          userRole={userRole}
+          onClose={() => setShowResignModal(false)}
+          onResigned={fetchBasic}
+          onSettled={fetchBasic}
+        />
       )}
     </div>
   )

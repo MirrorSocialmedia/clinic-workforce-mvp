@@ -28,6 +28,8 @@ export async function GET(
             select: {
               payConfidential: true,
               homeClinicId: true,
+              status: true,
+              resignedAt: true,
               user: { select: { id: true, name: true, phone: true } },
               clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
               payRules: { where: { isActive: true }, take: 1 },
