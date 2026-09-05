@@ -116,18 +116,17 @@ export async function GET(req: NextRequest) {
     balanceByEmp.set(b.employeeId, (balanceByEmp.get(b.employeeId) ?? 0) + b.remaining)
   }
 
-  // ★ 2026-08-22 §6.2.3：REST_DAY 剩餘（「剩餘」欄 —— 拍板 (c) 即時值）
-  //   REST_DAY 每曆年一行（每月發放／請假都扣當曆年 row —— leave-requests route deductYear）。
-  //   ★ 唔加 year filter，按員工加總：上年未用完餘額仍係佢哋嘅休息日，加總先係真「當前剩餘」
-  //   （同上面 ANNUAL_LEAVE 嘅 balanceByEmp 加總語義一致；年假 year=0 累積制每人一行，加總＝原值）。
-  const restBalances = await prisma.leaveBalance.findMany({
-    where: { employeeId: { in: empIds }, leaveType: { systemKey: 'REST_DAY' } },
-    select: { employeeId: true, remaining: true },
-  })
+  // ★ 2026-09-05 cwm-lvsum：剩餘改「截至當月月底」—— 舊版讀 LeaveBalance.remaining（即時滾動值），
+  //   睇 8 月會顯示 9 月已放假之後嘅結餘（Horace 8 月顯示 −1，實際應該 0）。
+  //   ⚠️ 同「上月剩」（下面 restDayBalanceAsOf）用【同一個】helper，只係 asOf 唔同（本月尾）。
+  //   未來月份（asOf > 今日）冇 future 事件可扣 → 等於即時值（拍板② 照計）。
+  //   冇 LeaveBalance 行嘅員工 → helper 唔回 entry → 下面 `?? 0`（顯示 0 唔會爆）。
+  const [tmy, tm] = periodMonth.split('-').map(Number)
+  const thisLastDay = new Date(Date.UTC(tmy, tm, 0)).getUTCDate()
+  const thisMonthEnd = `${periodMonth}-${String(thisLastDay).padStart(2, '0')}`
+  const asOfThis = await restDayBalanceAsOf(prisma, empIds, thisMonthEnd)
   const restByEmp = new Map<string, number>()
-  for (const b of restBalances) {
-    restByEmp.set(b.employeeId, (restByEmp.get(b.employeeId) ?? 0) + b.remaining)
-  }
+  for (const [id, v] of asOfThis) restByEmp.set(id, v.remaining)
 
   // ★ 2026-08-22 §6.2.3：lastMonthRestRemaining —— 上月 LeaveBalanceSnapshot（REST_DAY）。
   //   上月 periodKey 要處理跨年（view "2026-01" → snapshot "2025-12"）。
@@ -206,8 +205,8 @@ export async function GET(req: NextRequest) {
       underOneYear: serviceMonths(emp.joinDate, now) < 12,
       takenDates: formatTakenDates(taken),
       restQuota,
-      // ★ 2026-08-22 §6.2.4（拍板 (c)）：「剩餘」= 當前 LeaveBalance.remaining（REST_DAY 即時值，
-      //   唔係「上月剩 − R − PL」推導 —— 後者未計本月發放）
+      // ★ 2026-09-05 cwm-lvsum：「剩餘」= REST_DAY 結餘「截至當月月底」（restDayBalanceAsOf asOf=本月尾，
+      //   同「上月剩」同一 helper）—— 舊即時值睇 8 月會顯示 9 月已放假後結餘
       restBalanceRemaining: r1(restByEmp.get(emp.id) ?? 0),
       // ★ 上月「剩」：有 snapshot = 凍結值；冇 = 動態算（截至上月底）。
       //   null = 兩者都冇數，或者冇 REST_DAY LeaveBalance 行（2026-09-02 cwm-lba 後嘅正常語義，顯示「—」）
