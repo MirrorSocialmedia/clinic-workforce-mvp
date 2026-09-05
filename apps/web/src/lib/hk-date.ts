@@ -133,6 +133,23 @@ export function addDaysStr(dateStr: string, n: number): string {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`
 }
 
+/**
+ * ★ 2026-09-05 [cwm-resignroster]：HK 日期字串列（含頭含尾），同 toHKDateStr 口徑。
+ * 收 'YYYY-MM-DD' 或 Date；from > to → 空陣列。
+ * HK 無夏令時 → +86400000ms 迭代安全（同 engine 產／侍產假迴圈同一做法）。
+ */
+export function hkDaysBetween(from: Date | string, to: Date | string): string[] {
+  let cur = toHKDateStr(from)
+  const last = toHKDateStr(to)
+  if (cur > last) return []
+  const out: string[] = []
+  while (cur <= last) {
+    out.push(cur)
+    cur = addDays(cur, 1)
+  }
+  return out
+}
+
 /** PayrollRun.periodMonth (DateTime, HK 月初午夜) → "YYYY-MM"
  *  — Date → toHKDateStr().slice(0,7)
  *  — plain "YYYY-MM" string → passthrough

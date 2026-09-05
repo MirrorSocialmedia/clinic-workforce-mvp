@@ -17,10 +17,23 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { periodMonth, clinicId, employeeId } = body
+    const { periodMonth, clinicId, employeeId, resignedAtOverride } = body
 
     if (!periodMonth) {
       return NextResponse.json({ error: 'periodMonth (YYYY-MM) is required' }, { status: 400 })
+    }
+
+    // ★ 2026-09-05 [cwm-resignroster]：離職結算預覽 — 員工未辦理離職時 DB resignedAt 仲係 NULL，
+    //   引擎會當佢做足全月（Selina 顯示 $17,500 而唔係 prorate 後嘅數）。
+    //   ⚠️ 只可以【收窄】— 唔准用嚟延長受僱期（route 下方逐員工驗證）。
+    //   ⚠️★★★ 格式一定要同 resign/route.ts:29 一致 — `${lastDay}T16:00:00Z` = 最後工作日翌日 HK 午夜；
+    //   引擎 :2110 會 −86400000 攞返最後工作日。傳錯格式會差一日（生死格 #19）。
+    let overrideDate: Date | undefined
+    if (resignedAtOverride != null && resignedAtOverride !== '') {
+      if (typeof resignedAtOverride !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(resignedAtOverride) || isNaN(Date.parse(`${resignedAtOverride}T00:00:00+08:00`))) {
+        return NextResponse.json({ error: 'resignedAtOverride (YYYY-MM-DD) 格式錯誤' }, { status: 400 })
+      }
+      overrideDate = new Date(`${resignedAtOverride}T16:00:00Z`)
     }
 
     // Parse YYYY-MM to Date（★ HK-safe，同 generatePayrollRun 一致）
@@ -98,6 +111,10 @@ export async function POST(req: NextRequest) {
     const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
     for (const emp of employees) {
       try {
+        // ★ 2026-09-05 [cwm-resignroster]：只准收窄 — 防已離職員工用 override 延長受僱期
+        if (overrideDate && emp.resignedAt && overrideDate > emp.resignedAt) {
+          return NextResponse.json({ error: 'resignedAtOverride 唔可以遲過實際離職日' }, { status: 400 })
+        }
         // Read employee pay rule to determine engine
         const payRule = await prisma.payRule.findFirst({
           where: {
@@ -115,7 +132,7 @@ export async function POST(req: NextRequest) {
             skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
             continue
           }
-          result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config)
+          result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config, { resignedAtOverride: overrideDate })
         } else {
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
           skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })

@@ -48,6 +48,8 @@ export interface ResignSettlementCalc {
   }
   // ★ cwm-resigv3：當月工資（讀唔算 — 三段 fallback）
   monthWage: { source: 'payrollItem' | 'preview' | 'none'; basePay: number | null }
+  // ★ cwm-resignroster：受僱比例快照（分子 = 實際排更日數，分母 = 該月工作日常額）— 結算寫入 monthWageRatio 用
+  monthWageRatio: { value: number; numerator: number; denominator: number } | null
   // EO s.32 上限基底（★ v3：prorate 後當月工資 + 年假薪酬，唔再用全月薪）
   finalPeriodWage: number
   quarterCap: number
@@ -74,27 +76,73 @@ export async function resolveMonthWage(
   empId: string,
   periodMonth: string,
   clinicId: string | null,
-): Promise<{ source: 'payrollItem' | 'preview' | 'none'; basePay: number | null }> {
-  // ① 已生成計糧單（權威）
-  try {
-    const monthDate = new Date(`${periodMonth}-01T00:00:00+08:00`)
-    const { start: ms, end: me } = getMonthRange(monthDate)
-    const item = await prisma.payrollItem.findFirst({
-      where: { employeeId: empId, run: { periodMonth: { gte: ms, lte: me } } },
-      select: { detailJson: true },
-    })
-    if (item?.detailJson) {
-      const d = JSON.parse(item.detailJson)
-      const bp = d?.salary?.basePay
-      if (typeof bp === 'number' && Number.isFinite(bp)) {
-        return { source: 'payrollItem', basePay: bp }
+  // ★ 2026-09-05 [cwm-resignroster]：離職預覽 lastDay（「最後工作日翌日 HK 午夜」口徑）—
+  //   員工未辦理離職時 DB resignedAt = NULL，唔傳 override 引擎會當做足全月。
+  resignedAtOverride?: Date,
+): Promise<{ source: 'payrollItem' | 'preview' | 'none'; basePay: number | null; ratioDetail: { value: number; numerator: number; denominator: number } | null }> {
+  // ★ 2026-09-05 [cwm-resignroster]：有 override 但 run 口徑唔配 preview lastDay 時，run 嘅數係舊嘅 → 跳過 ①。
+  //   兩種 stale：(a) 員工未辦理離職（DB resignedAt = NULL → run 係全月 ratio 1）；
+  //   (b) DB resignedAt 對應嘅最後工作日 ≠ 今次 lastDay（預覽/重結算咗另一日）。
+  //   無 override（月底計糧等舊路徑）→ 行為零改動。
+  let runStale = false
+  if (resignedAtOverride) {
+    try {
+      const d = await prisma.employee.findUnique({ where: { id: empId }, select: { resignedAt: true } })
+      const ovLastDay = toHKDateStr(new Date(resignedAtOverride.getTime() - 86400000))
+      const dbLastDay = d?.resignedAt ? toHKDateStr(new Date(d.resignedAt.getTime() - 86400000)) : null
+      runStale = dbLastDay === null || dbLastDay !== ovLastDay
+    } catch { runStale = true /* 查唔到當 stale → ② */ }
+  }
+  if (!runStale) {
+    // ① 已生成計糧單（權威）
+    try {
+      const monthDate = new Date(`${periodMonth}-01T00:00:00+08:00`)
+      const { start: ms, end: me } = getMonthRange(monthDate)
+      const item = await prisma.payrollItem.findFirst({
+        where: { employeeId: empId, run: { periodMonth: { gte: ms, lte: me } } },
+        select: { detailJson: true },
+      })
+      if (item?.detailJson) {
+        const d = JSON.parse(item.detailJson)
+        const bp = d?.salary?.basePay
+        if (typeof bp === 'number' && Number.isFinite(bp)) {
+          // ★ cwm-resignroster：老舊 run（fix 前生成）detailJson 無 employedRatioDetail → null
+          const rd = d?.employedRatioDetail
+          const ratioDetail = rd && typeof rd.value === 'number' && typeof rd.numerator === 'number' && typeof rd.denominator === 'number'
+            ? { value: rd.value, numerator: rd.numerator, denominator: rd.denominator }
+            : null
+          return { source: 'payrollItem', basePay: bp, ratioDetail }
+        }
       }
+    } catch (e) {
+      console.error('[resolveMonthWage] 讀 PayrollItem 失敗，fallback preview', e)
     }
-  } catch (e) {
-    console.error('[resolveMonthWage] 讀 PayrollItem 失敗，fallback preview', e)
   }
 
-  // ② 引擎直算（同 payroll-runs/preview route 取 config 方式一致 — 單一來源）
+  // ② 引擎直算（fallback）
+  const direct = await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId, resignedAtOverride)
+  if (direct.basePay != null) {
+    return { source: 'preview', basePay: direct.basePay, ratioDetail: direct.ratioDetail }
+  }
+
+  // ③ 兩者都 fail
+  return { source: 'none', basePay: null, ratioDetail: null }
+}
+
+/**
+ * ★ 2026-09-05 [cwm-resignroster]：引擎直算（同 payroll-runs/preview route 取 config 方式一致 — 單一來源）。
+ * 回 { basePay, ratioDetail }；basePay = null 表示算唔到（無薪酬規則／計算 error）。
+ * resign-settle 嘅 monthWageRatio 快照直接調呢個（唔經 resolveMonthWage 嘅 ① fallback）—
+ * 因為 snapshot 必須反映【今次確認嘅 lastDay】，而 run detailJson 嘅 ratio 係 DB resignedAt 口徑
+ * （re-settle 改咗 lastDay 時會走樣）。
+ */
+async function resolveMonthWageDirect(
+  prisma: PrismaClient,
+  empId: string,
+  periodMonth: string,
+  clinicId: string | null,
+  resignedAtOverride?: Date,
+): Promise<{ basePay: number | null; ratioDetail: { value: number; numerator: number; denominator: number } | null }> {
   try {
     const payRule = await prisma.payRule.findFirst({
       where: { employeeId: empId, isActive: true },
@@ -104,18 +152,20 @@ export async function resolveMonthWage(
       const config = JSON.parse(payRule.configJson)
       if (config.base_type || config.modifiers) {
         const monthDate = new Date(`${periodMonth}-01T00:00:00+08:00`)
-        const result = await calculatePayrollWithRules(empId, monthDate, clinicId, config)
+        const result = await calculatePayrollWithRules(empId, monthDate, clinicId, config, { resignedAtOverride })
         if (!result.error && typeof result.basePay === 'number' && Number.isFinite(result.basePay)) {
-          return { source: 'preview', basePay: result.basePay }
+          const rd = (result.detail as any)?.employedRatioDetail
+          const ratioDetail = rd && typeof rd.value === 'number' && typeof rd.numerator === 'number' && typeof rd.denominator === 'number'
+            ? { value: rd.value, numerator: rd.numerator, denominator: rd.denominator }
+            : null
+          return { basePay: result.basePay, ratioDetail }
         }
       }
     }
   } catch (e) {
-    console.error('[resolveMonthWage] calculatePayrollWithRules 失敗，fallback none', e)
+    console.error('[resolveMonthWageDirect] calculatePayrollWithRules 失敗', e)
   }
-
-  // ③ 兩者都 fail
-  return { source: 'none', basePay: null }
+  return { basePay: null, ratioDetail: null }
 }
 
 export async function computeResignSettlement(
@@ -124,6 +174,8 @@ export async function computeResignSettlement(
   lastDay: string,
   noticeDays?: number | null,
   clinicId?: string | null,
+  // ★ 2026-09-05 [cwm-resignroster]：預覽/結算嘅 lastDay（「最後工作日翌日 HK 午夜」）— 傳落引擎當 resignedAtOverride
+  opts?: { resignedAtOverride?: Date },
 ): Promise<ResignSettlementCalc> {
   // ★ cutoff = 最後工作日**結束**（翌日 HK 午夜）—— 同 resign/route.ts `${lastDay}T16:00:00Z` 口徑一致
   const cutoff = new Date(hkDateStart(lastDay).getTime() + 86400000)
@@ -192,8 +244,12 @@ export async function computeResignSettlement(
   }
 
   // ★ cwm-resigv3：當月工資（讀唔算；periodMonth = 最後工作日當月）
+  // ★ cwm-resignroster：金額照「讀唔算」（run 權威）但必須帶 override — 預覽時 DB resignedAt 仲係 NULL，
+  //   run 口徑對唔上 preview lastDay 時 resolveMonthWage 會自動跳過 ① 走引擎直算。
+  //   ratio 快照另走引擎直算 + override（跟今次 lastDay）
   const periodMonth = lastDay.slice(0, 7)
-  const monthWage = await resolveMonthWage(prisma, empId, periodMonth, clinicId ?? null)
+  const monthWage = await resolveMonthWage(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
+  const ratioDirect = await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
 
   // ★ 時間帳戶：欠款提示 + 上限（EO s.32）
   const tbRows = await prisma.timeBank.findMany({
@@ -246,6 +302,8 @@ export async function computeResignSettlement(
       entries: tbEntries as ResignSettlementCalc['tb']['entries'],
     },
     monthWage,
+    // ★ cwm-resignroster：比例快照（跟今次 lastDay 引擎直算；時薪/算唔到 → null）
+    monthWageRatio: ratioDirect.ratioDetail,
     finalPeriodWage,
     quarterCap,
     halfCap,

@@ -44,7 +44,7 @@ export async function GET(
           status: 'APPROVED',
         },
       }),
-      computeResignSettlement(prisma, empId, lastDay),
+      computeResignSettlement(prisma, empId, lastDay, undefined, undefined, { resignedAtOverride: cutoff }),
     ])
 
     // 通知期人手輸入（拍板③）
@@ -75,6 +75,8 @@ export async function GET(
       monthlySalary: calc.monthlySalary, // ★ 2026-09-04：離職結算書 PDF 顯示用（實際出糧以計糧單 prorate 為準）
       // ★ cwm-resigv3：當月工資（讀唔算 — 三段 fallback）；card/PDF 三態顯示 + 確認掣 disabled 用
       monthWage: calc.monthWage,
+      // ★ cwm-resignroster：受僱比例快照（結算卡顯示「排更 X 日 ÷ 配額 Y 日」做證明；老舊 run → null）
+      monthWageRatio: calc.monthWageRatio,
       settleByDate: calc.settleByDate,
       adw: { value: calc.adwValue, source: calc.adwSource, warnings: calc.adwWarnings },
       unusedLeave: { days: calc.unusedDays, dailyWage: calc.adwValue, payout: calc.leavePayout },

@@ -44,7 +44,35 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const [settleLoading, setSettleLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [settled, setSettled] = useState<any>(null) // 已寫入嘅結算（顯示「已確認」）
+  const [punches, setPunches] = useState<Array<{ date: string; in: string | null; out: string | null }>>([])
   const printRef = useRef<HTMLDivElement>(null)
+
+  // ★ 2026-09-05 [cwm-resignroster]：當月打卡記錄 — 純顯示做證明（老細拍板：打卡零計算影響）
+  const fetchPunches = useCallback(async () => {
+    const m = (lastDay || '').slice(0, 7)
+    if (!/^\d{4}-\d{2}$/.test(m)) { setPunches([]); return }
+    const [yy, mm] = m.split('-').map(Number)
+    const monthEnd = `${m}-${String(new Date(Date.UTC(yy, mm, 0)).getUTCDate()).padStart(2, '0')}`
+    const end = lastDay < monthEnd ? lastDay : monthEnd // ★ 證明窗口 = 最後工作日為止
+    try {
+      const res = await fetch(`/api/punches?employeeId=${employee.employeeId}&startDate=${m}-01&endDate=${end}&pageSize=100`, { credentials: 'include' })
+      if (!res.ok) { setPunches([]); return }
+      const data = await res.json()
+      const byDay: Record<string, { in: string | null; out: string | null }> = {}
+      for (const p of data.records ?? []) {
+        const k = new Date(p.punchTime).toLocaleDateString('en-CA', { timeZone: 'Asia/Hong_Kong' })
+        // 已批更鐘記錄優先（純顯示）
+        const corr = (p.corrections ?? [])[0]
+        const t = new Date((corr?.correctedTime ?? p.punchTime))
+        const hm = t.toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Hong_Kong' })
+        if (!byDay[k]) byDay[k] = { in: null, out: null }
+        if (p.punchType === 'CLOCK_IN' && !byDay[k].in) byDay[k].in = hm
+        else if (p.punchType === 'CLOCK_OUT' && !byDay[k].out) byDay[k].out = hm
+      }
+      setPunches(Object.entries(byDay).sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, ...v })))
+    } catch { setPunches([]) }
+  }, [employee.employeeId, lastDay])
+  useEffect(() => { fetchPunches() }, [fetchPunches])
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 離職／結算寫入薪金，API 側 resign-settle:25 同 resign:16 都係 OWNER-only，前端 gate 只係唔顯示掣（真正防線喺 API）。冇對應 permission key。
   const s = preview?.leaveSettlement ?? null
@@ -304,6 +332,29 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                   <div style={{ fontSize: 12, color: '#b45309', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 8px' }}>
                     ⚠️ 攞唔到當月工資 — 請先生成該月計糧（確認結算掣已停用）
                   </div>
+                )}
+                {/* ★ cwm-resignroster：受僱比例拆分（證明 — 分子 = 實際排更日，分母 = 該月工作日常額） */}
+                {st.monthWageRatio && st.monthWageRatio.denominator > 0 && (
+                  <div style={{ fontSize: 11, color: '#6b7280' }}>
+                    受僱比例：實際排更 {st.monthWageRatio.numerator} 日 ÷ 該月工作日 {st.monthWageRatio.denominator} 日 = {Math.round(st.monthWageRatio.value * 1000) / 10}%
+                  </div>
+                )}
+                {/* ★ cwm-resignroster：當月打卡記錄（純顯示做證明 — 唔計入計算） */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                  <span>當月打卡記錄（{lastDay.slice(0, 7)}，至 {lastDay}）</span>
+                  <span>{punches.length} 日</span>
+                </div>
+                {punches.length > 0 ? (
+                  <div style={{ fontSize: 12, color: '#78350f', maxHeight: 96, overflowY: 'auto' }}>
+                    {punches.map(p => (
+                      <div key={p.date} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{p.date}</span>
+                        <span>IN {p.in ?? '—'} · OUT {p.out ?? '—'}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: '#b45309' }}>無打卡記錄（當月工資分子淨係用實際更表＋已批帶薪假，打卡唔計入 — 純證明）</div>
                 )}
                 {s && (
                   <>

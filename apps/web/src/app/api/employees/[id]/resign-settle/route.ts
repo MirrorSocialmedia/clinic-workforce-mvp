@@ -59,8 +59,10 @@ export async function POST(
 
   // ── 伺服器側重算（同 preview 同一 lib）─────────────────
   let calc
+  // ★ 2026-09-05 [cwm-resignroster]：cutoff = 最後工作日翌日 HK 午夜（同 resign/route.ts:29 口徑）
+  const cutoffDate = new Date(`${lastDay}T16:00:00Z`)
   try {
-    calc = await computeResignSettlement(prisma, empId, lastDay)
+    calc = await computeResignSettlement(prisma, empId, lastDay, undefined, undefined, { resignedAtOverride: cutoffDate })
   } catch (e: any) {
     if (e?.message === 'EMP_NOT_FOUND') return NextResponse.json({ error: '員工不存在' }, { status: 404 })
     throw e
@@ -103,7 +105,7 @@ export async function POST(
   }
   const item = await prisma.payrollItem.findUnique({
     where: { runId_employeeId: { runId: run.id, employeeId: empId } },
-    select: { id: true },
+    select: { id: true, resignSettlementJson: true },
   })
   if (!item) {
     return NextResponse.json(
@@ -111,6 +113,16 @@ export async function POST(
       { status: 409 },
     )
   }
+
+  // ★ 2026-09-05 [cwm-resignroster] 拍板③a：改最後工作日 → 重新確認結算，直接覆蓋 snapshot，
+  //   但要 audit 記低變更（唔准「改咗最後工作日但用舊 ratio」）
+  let lastDayChangeNote = ''
+  try {
+    const prevSettlement = item.resignSettlementJson ? JSON.parse(item.resignSettlementJson) : null
+    if (prevSettlement?.monthWageRatio?.lastDay && prevSettlement.monthWageRatio.lastDay !== lastDay) {
+      lastDayChangeNote = `｜最後工作日由 ${prevSettlement.monthWageRatio.lastDay} 改為 ${lastDay}，ratio 重算`
+    }
+  } catch { /* 壞 JSON 唔阻塞結算 */ }
 
   const settlement = {
     lastDay: lastDay,
@@ -125,6 +137,10 @@ export async function POST(
     adwUsed: calc.adwValue,
     // ★ cwm-resigv3：當月工資快照（讀引擎 — 月底計糧注入時展示／審計用；金額以快照為準）
     monthWage: { source: calc.monthWage.source, basePay: calc.monthWage.basePay },
+    // ★ cwm-resignroster：受僱比例快照（分子 = 實際排更日數，分母 = 該月工作日常額）
+    monthWageRatio: calc.monthWageRatio
+      ? { ...calc.monthWageRatio, lastDay, computedAt: new Date().toISOString() }
+      : null,
     settledAt: new Date().toISOString(),
     settledBy: auth.session.userId,
   }
@@ -141,7 +157,7 @@ export async function POST(
         entity: 'PayrollItem',
         entityId: item.id,
         targetEmployeeId: empId,
-        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, ADW=${calc.adwValue}, run=${run.id}`,
+        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, ADW=${calc.adwValue}, run=${run.id}${lastDayChangeNote}`,
         ipAddress: null,
         userAgent: null,
       } as any,

@@ -8,9 +8,9 @@
 // ============================================================
 
 import { prisma, basePrisma } from './prisma'
-import { QUOTA_LEAVE_KEYS } from './leave-types'
+import { QUOTA_LEAVE_KEYS, LEAVE_SYSTEM_KEYS } from './leave-types'
 import { getEffectivePunches } from './punch-query'
-import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts, leaveCoversDate } from './hk-date'
+import { toHKDateStr, getMonthRange, hkDaysInMonth, hkDayOfWeek, hkDateStart, hkDateEnd, addDays, hkParts, leaveCoversDate, hkDaysBetween } from './hk-date'
 import { matchPunchesToShifts, diffMinutes } from './shift-punch-match'
 import type { PayType, RunStatus } from '@prisma/client'
 import { getEffectiveADW } from './adw'
@@ -1199,6 +1199,8 @@ interface WorkData {
   monthlyWorkingDays: number
   // ★ 2026-09-04 [cwm-resigpay-20260904]：受僱比例（月中入職／離職 prorate；完整月 = 1）
   employedRatio?: number
+  // ★ 2026-09-05 [cwm-resignroster]：比例快照（分子 = 實際排更日數，分母 = 該月工作日常額）
+  employedRatioDetail?: { value: number; numerator: number; denominator: number }
   lateRecords: Array<{ date: string; minutes: number }>
   earlyLeaveRecords: Array<{ date: string; minutes: number }>
   leaveRecords: Array<{ isPlanned: boolean; days: number; cancelsBonus: boolean; name: string }>
@@ -2098,23 +2100,115 @@ export function countWorkingDaysInRange(
  *      → 範圍尾用 resignedAt − 1 日，先計到最後工作日本身。
  *   ⚠️ 唔數 Shift 表（防操縱）。
  */
+/**
+ * 受僱期間喺該月嘅實際範圍（含頭含尾，HK 日）。
+ * ⚠️ resignedAt 存嘅係「最後工作日**翌日** HK 午夜」（resign/route.ts）→ 範圍尾 = resignedAt − 1 日。
+ * ★ 2026-09-05 [cwm-resignroster]：由 resolveEmployedRatio 抽出，call site 嘅 ratio 快照
+ *   （monthWageRatio 分子）同引擎用同一份 from/to 口徑 — 唔好兩處各寫各嘅。
+ */
+function employedPeriod(
+  joinDate: Date | null,
+  resignedAt: Date | null,
+  monthStart: Date,
+  monthEnd: Date,
+): { from: Date; to: Date } {
+  const from = joinDate && joinDate > monthStart ? joinDate : monthStart
+  const to = resignedAt && resignedAt < monthEnd
+    ? new Date(resignedAt.getTime() - 86400000)
+    : monthEnd
+  return { from, to }
+}
+
+/**
+ * ★ 2026-09-05 [cwm-resignroster]：[from, to]（含頭含尾，HK 日）內實際排更日數。
+ * 用 HK 日期字串比對 — 同 buildRosterDays 同一個 toHKDateStr 口徑。
+ */
+function countRosterDaysInRange(rosterDays: Set<string>, from: Date, to: Date): number {
+  let n = 0
+  for (const d of hkDaysBetween(from, to)) if (rosterDays.has(d)) n++
+  return n
+}
+
+/**
+ * ★ 2026-09-05 [cwm-resignroster]：該月【實際應返工作日】HK 日期集。
+ * = Shift（status ≠ CANCELLED）唯一日期 ＋ 已批【帶薪非 REST_DAY】假期（跨月 clamp）。
+ *
+ * ⚠️★★★ 三個易錯位（MD §2.1）：
+ *  1. **REST_DAY 一定要排除** — 佢本身就係「唔使返工」（Selina 三筆假全係 REST_DAY，計咗分子就變 10）
+ *  2. **無薪假唔計入分子** — 否則同現有 unpaidLeaveDays 扣減雙重處理
+ *  3. **跨月假期單** — 日期 clamp 入該月範圍
+ * ⚠️★ 預覽同正式計糧都唔用 PunchRecord（老細拍板 2026-09-05）— 打卡只喺結算卡顯示做證明。
+ * ⚠️ 假單查詢用 range-overlap（startDate ≤ monthEnd 且 endDate ≥ monthStart）：
+ *    「上月入場、本月出場」嘅跨月假單唔會漏（同 engine 產／侍產假查詢口徑一致）。
+ *    REST_DAY 排除用 OR 形式（systemKey NULL 嘅自訂帶薪假類型唔會受 SQL NULL 語義誤殺）。
+ */
+async function buildRosterDays(
+  employeeId: string, monthStart: Date, monthEnd: Date, db: any,
+): Promise<Set<string>> {
+  const [shifts, leaves] = await Promise.all([
+    db.shift.findMany({
+      where: { employeeId, date: { gte: monthStart, lte: monthEnd },
+               status: { not: 'CANCELLED' } },
+      select: { date: true },
+    }),
+    db.leaveRequest.findMany({
+      where: { employeeId, status: 'APPROVED',
+               startDate: { lte: monthEnd }, endDate: { gte: monthStart },
+               // ★ REST_DAY 唔計 — 佢本身就唔係應返工作日
+               leaveType: { OR: [{ systemKey: null }, { systemKey: { not: LEAVE_SYSTEM_KEYS.REST_DAY } }] } },
+      select: { startDate: true, endDate: true, leaveType: { select: { isPaid: true } } },
+    }),
+  ])
+  const s = new Set<string>()
+  const mStart = toHKDateStr(monthStart), mEnd = toHKDateStr(monthEnd)
+  for (const sh of shifts) s.add(toHKDateStr(sh.date))
+  for (const lv of leaves) {
+    // ⚠️ 帶薪假期先計入分子（無薪假由現有 unpaidLeaveDays 另行扣減，唔好雙重）
+    if (!lv.leaveType?.isPaid) continue
+    for (const d of hkDaysBetween(lv.startDate, lv.endDate ?? lv.startDate)) {
+      if (d >= mStart && d <= mEnd) s.add(d) // ★ 跨月 clamp
+    }
+  }
+  return s
+}
+
+/**
+ * 受僱比例 = 該月受僱期間嘅應出勤日 ÷ 該月總應出勤日。
+ * 完整月份回 1（同舊行為一模一樣 —— 回歸安全，生死格 #1）。
+ *
+ * ★ 2026-09-04 [cwm-resigpay-20260904]：月中入職／離職按【受僱應出勤日】比例出糧。
+ *   ⚠️ 分母用 totalWorkingDays（= countMonthlyLeaveDays 同一次迴圈嘅 workingDays，
+ *      同扣薪日率／恆等式自檢同一口徑）；唔傳先自己算。
+ *   ⚠️ resignedAt 存嘅係「最後工作日**翌日** HK 午夜」（resign/route.ts）
+ *      → 範圍尾用 resignedAt − 1 日，先計到最後工作日本身。
+ *
+ * ★ 2026-09-05 [cwm-resignroster]：分子改用【實際更表】（rosterDays）——
+ *   排班制之下 config 推算同事實脫節（Selina 實際休 9/3、9/4、9/10，config 當佢休 9/5、9/6）。
+ *   ⚠️ 分母維持 config 配額（countMonthlyLeaveDays）— 佢係「應返幾多日」，
+ *      唔會被刪更／取消更污染。分子分母口徑唔同係【刻意】。
+ *   rosterDays 唔傳（fallback）→ 舊行為 countWorkingDaysInRange。
+ *   ⚠️★★★ Math.min(1, …) 唔可以省 — 排 24 更／分母 22 → 109% → 多出糧（生死格 #3）。
+ */
 export function resolveEmployedRatio(
   joinDate: Date | null,
   resignedAt: Date | null,
   monthStart: Date,
   monthEnd: Date,
   restCfg: { restDays?: number[]; publicHolidaySet?: Set<string>; totalWorkingDays?: number },
+  rosterDays?: Set<string>,   // ★ 該月【實際應返工作日】HK 日期字串集
 ): number {
-  const from = joinDate && joinDate > monthStart ? joinDate : monthStart
-  // 最後工作日 = resignedAt 前一日（resignedAt = 翌日 HK 午夜）
-  const to = resignedAt && resignedAt < monthEnd
-    ? new Date(resignedAt.getTime() - 86400000)
-    : monthEnd
+  const { from, to } = employedPeriod(joinDate, resignedAt, monthStart, monthEnd)
   if (from <= monthStart && to >= monthEnd) return 1  // ★ 完整月份 → 1
   if (from > to) return 0                             // 該月完全未入職／已離職
   const total = restCfg?.totalWorkingDays ?? countWorkingDaysInRange(monthStart, monthEnd, restCfg)
-  if (total <= 0) return 1
-  return countWorkingDaysInRange(from, to, restCfg) / total
+  if (total <= 0) {
+    console.warn(`[payroll] resolveEmployedRatio: 分母（該月工作日常額）= 0，fallback ratio 1 — join=${joinDate?.toISOString()} resign=${resignedAt?.toISOString()}`)
+    return 1
+  }
+  const numerator = rosterDays
+    ? countRosterDaysInRange(rosterDays, from, to)
+    : countWorkingDaysInRange(from, to, restCfg)   // fallback：冇更表資料
+  return Math.min(1, numerator / total)             // ★ 封頂，頂更／加更唔會 >100%
 }
 
 // ------------------------------------------------------------------
@@ -3285,6 +3379,10 @@ export async function calculatePayrollWithRules(
     //   annualLeavePay+noticePay 加落 gross（MPF_INCLUDE_SETTLEMENT 決定基數）；
     //   tbDeduction 落 MPF 後 net 扣除。in-service 員工傳 null/唔傳 → 零改動。
     resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null } | null
+    // ★ 2026-09-05 [cwm-resignroster] 離職預覽 lastDay —「最後工作日翌日 HK 午夜」
+    //   （同 resign/route.ts `${lastDay}T16:00:00Z` 口徑）；优先於 DB resignedAt。
+    //   ⚠️ 只准收窄（route 側驗證唔得遲過實際離職日）— 唔准用嚟延長受僱期。
+    resignedAtOverride?: Date
   }
 ): Promise<PayrollResult> {
   // ★ Part-time hourly: bypass all modifier logic entirely
@@ -3328,13 +3426,31 @@ export async function calculatePayrollWithRules(
     where: { id: employeeId },
     select: { joinDate: true, resignedAt: true },
   })
+  // ★ 2026-09-05 [cwm-resignroster]：離職結算預覽傳入嘅 lastDay 优先於 DB resignedAt
+  const resolvedResignedAt = options?.resignedAtOverride ?? empDates?.resignedAt ?? null
+  // ★ 完整月份唔使查更表（省 2 條 query × N 員工 × 每次計糧）— 生死格 #2
+  const needRatio = (empDates?.joinDate && empDates.joinDate > monthStart)
+    || (resolvedResignedAt && resolvedResignedAt < monthEnd)
+  const rosterDays = needRatio
+    ? await buildRosterDays(employeeId, monthStart, monthEnd, prisma)
+    : undefined
   workData.employedRatio = resolveEmployedRatio(
     empDates?.joinDate ?? null,
-    empDates?.resignedAt ?? null,
+    resolvedResignedAt,
     monthStart,
     monthEnd,
     { restDays: restDayCfg, publicHolidaySet: _phSetCallerB, totalWorkingDays: leaveInfo.workingDays },
+    rosterDays,
   )
+  // ★ ratio 快照（resign-settle monthWageRatio 來源）— from/to 同 resolveEmployedRatio 同一口徑
+  { const ep = employedPeriod(empDates?.joinDate ?? null, resolvedResignedAt, monthStart, monthEnd)
+    workData.employedRatioDetail = {
+      value: workData.employedRatio,
+      numerator: rosterDays
+        ? countRosterDaysInRange(rosterDays, ep.from, ep.to)
+        : countWorkingDaysInRange(ep.from, ep.to, { restDays: restDayCfg, publicHolidaySet: _phSetCallerB }),
+      denominator: leaveInfo.workingDays,
+    } }
 
   // 2. Run base module
   const baseResult = runBaseModule(config, workData, monthDate, employeeId)
@@ -3715,6 +3831,8 @@ export async function calculatePayrollWithRules(
 
   result.detail = {
     ...result.detail,
+    // ★ 2026-09-05 [cwm-resignroster]：受僱比例快照（入 detailJson → resign-settle monthWageRatio 快照來源）
+    employedRatioDetail: workData.employedRatioDetail,
     // 出勤
     attendance: {
       expectedWorkDays: workData.scheduledDays,
