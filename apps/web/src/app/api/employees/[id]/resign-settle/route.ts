@@ -137,7 +137,7 @@ export async function POST(
     adwUsed: calc.adwValue,
     // ★ cwm-resigv3：當月工資快照（讀引擎 — 月底計糧注入時展示／審計用；金額以快照為準）
     monthWage: { source: calc.monthWage.source, basePay: calc.monthWage.basePay },
-    // ★ cwm-resignroster：受僱比例快照（分子 = 實際排更日數，分母 = 該月工作日常額）
+    // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日），分母 = 當月曆日數）
     monthWageRatio: calc.monthWageRatio
       ? { ...calc.monthWageRatio, lastDay, computedAt: new Date().toISOString() }
       : null,

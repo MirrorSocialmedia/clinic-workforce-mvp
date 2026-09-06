@@ -14,7 +14,7 @@
 //   防「engine 豁免、顯示層照計」漂移。
 // ============================================================
 
-import { toHKDateStr, hkDateStart, getMonthRange } from './hk-date'
+import { toHKDateStr, hkDateStart, getMonthRange, hkDaysInMonth, countHKDaysInclusive } from './hk-date'
 
 const MS_PER_DAY = 86400000
 
@@ -61,4 +61,38 @@ export function getMpfExemption(ctx: MpfCtx): MpfExemptionInfo | null {
   const inExemptPeriod = getMonthRange(ctx.periodMonth).end <= exemptUntil
 
   return { employedDays, inExemptPeriod, exemptUntil }
+}
+
+/**
+ * ★ 2026-09-06 [cwm-caldayratio] 拍板③：該糧期內嘅【受僱曆日數】（含頭含尾）。
+ * from = max(糧期初, 入職日)；to = lastDay ?? 糧期尾（在職 = 月尾；月中入職亦 pro-rate）。
+ * joinDate / periodMonth 缺失 → null（caller = 唔調整）。
+ * ⚠️ #19 鐵律：計日同 engine resolveEmployedRatio 共用 countHKDaysInclusive — 唔好各寫一次。
+ * ⚠️ 範圍空（糧期前已離職／糧期後先入職）→ ≤ 0 — caller 用 `empDays > 0` guard。
+ */
+export function employedDaysInMpfPeriod(ctx: MpfCtx): number | null {
+  if (!ctx?.joinDate || !ctx?.periodMonth) return null
+  const { start, end } = getMonthRange(ctx.periodMonth)
+  const from = ctx.joinDate > start ? ctx.joinDate : start
+  const to = ctx.lastDay ?? end
+  return countHKDaysInclusive(from, to)
+}
+
+/**
+ * ★ 2026-09-06 [cwm-caldayratio] 拍板③：不完整糧期（月中入職／離職）下限按【曆日比例】調整。
+ * 積金局：按日／周／半月支薪者以每日上下限釐定糧期上下限 — 同一原則（明文根據）。
+ *   · 完整糧期（empDays === total）→ 下限維持原值（生死格 #15：完整月份 MIN 維持 $7,100）
+ *   · MAX $30,000 唔按比例（拍板④）— 封頂由 caller 保持 30000
+ *   · ctx 傳唔到（periodMonth 缺失）／joinDate 缺失 → 唔調整（舊行為）
+ * engine calcMPF 同結算卡 calcMpfDisplay 必用呢個 helper（mpf60 生死格 #9 同款坑）。
+ */
+export function adjustMpfMinForPeriod(min: number, ctx?: MpfCtx | null): number {
+  if (!ctx) return min
+  const empDays = employedDaysInMpfPeriod(ctx)
+  if (empDays == null || !ctx.periodMonth) return min
+  const total = hkDaysInMonth(ctx.periodMonth)
+  if (total > 0 && empDays > 0 && empDays < total) {
+    return Math.round(min * empDays / total * 100) / 100
+  }
+  return min
 }

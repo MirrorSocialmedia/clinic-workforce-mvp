@@ -266,8 +266,8 @@ async function main() {
   console.warn = (...a: any[]) => { warnSpy.push(a.join(' ')) }
   let ratio4 = 0
   try {
-    // 月中段（9/10-9/19）+ rest_days 7 日全休 → countWorkingDaysInRange = 0 → total 0
-    ratio4 = resolveEmployedRatio(hkd('2026-09-10'), hkd('2026-09-20'), hkd('2026-09-01'), new Date('2026-09-30T23:59:59.999+08:00'), { restDays: [0, 1, 2, 3, 4, 5, 6], totalWorkingDays: 0 })
+    // ★ 2026-09-06 [cwm-caldayratio]：resolveEmployedRatio 改曆日比例（第 5 參 = monthDate）— 本單前嘅分母=0 場景已唔存在
+    ratio4 = resolveEmployedRatio(hkd('2026-09-10'), hkd('2026-09-20'), hkd('2026-09-01'), new Date('2026-09-30T23:59:59.999+08:00'), hkd('2026-09-01'))
   } finally { console.warn = origWarn }
   check('#4 分母=0 → ratio 1', ratio4 === 1, `got ${ratio4}`)
   check('#4 有 warn', warnSpy.some(w => w.includes('分母') && w.includes('0')), `warns: ${JSON.stringify(warnSpy)}`)

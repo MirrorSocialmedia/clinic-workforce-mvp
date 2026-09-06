@@ -112,6 +112,21 @@ export function hkDaysInMonth(d: Date): number {
   return new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
 }
 
+/**
+ * 日期範圍 [from, to] 嘅曆日數（含頭含尾，HK 日）。
+ * ★ 2026-09-06 [cwm-caldayratio]：離職當月曆日比例 ＋ MPF 不完整糧期下限 pro-rate
+ *   嘅【唯一】計日口徑 — engine（resolveEmployedRatio）同 mpf-exemption
+ *   （employedDaysInMpfPeriod / adjustMpfMinForPeriod / 結算卡顯示）全部共用。
+ *   ⚠️ 一定要 +1（含頭含尾）：9/1→9/10 = 10 日，漏咗 = Selina 少 $583。
+ *   ⚠️ HK 日界（toHKDateStr + hkDateStart）相減 — UTC 算會差一日。
+ *   ⚠️ from > to（範圍空）→ ≤ 0 — caller 自己 guard（ratio 返 0 / MPF 唔調整）。
+ */
+export function countHKDaysInclusive(from: Date, to: Date): number {
+  const a = hkDateStart(toHKDateStr(from)).getTime()
+  const b = hkDateStart(toHKDateStr(to)).getTime()
+  return Math.floor((b - a) / 86400000) + 1
+}
+
 /** HK 視角某天是星期幾（0=日）。收 'YYYY-MM-DD' 或 Date */
 export function hkDayOfWeek(input: string | Date): number {
   const s = typeof input === 'string' ? input : toHKDateStr(input)

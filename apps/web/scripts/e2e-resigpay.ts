@@ -227,10 +227,11 @@ async function main() {
   // #9 dow 時區（TZ=UTC 宿主下照舊啱）
   check(9, 'dow 時區（TZ=UTC 宿主）', hkDayOfWeek('2026-09-05') === 6 && hkDayOfWeek('2026-09-06') === 0 && hkDayOfWeek('2026-09-07') === 1, `9/5=六 9/6=日 9/7=一`)
   // #5 分母分子都係曆日推算（唔數 Shift 表 → 排休息日喺月頭都影響唔到）
-  const ratioFull = resolveEmployedRatio(hk('2020-01-01'), null, hk('2026-09-01'), hk('2026-09-30'), { restDays: [6, 0], publicHolidaySet: phSet, totalWorkingDays: totalW })
+  // ★ 2026-09-06 [cwm-caldayratio]：resolveEmployedRatio 改曆日比例（第 5 參 = monthDate）— 本單前嘅工作口徑斷言已作廢
+  const ratioFull = resolveEmployedRatio(hk('2020-01-01'), null, hk('2026-09-01'), hk('2026-09-30'), hk('2026-09-01'))
   check(5, '月頭排晒休息日 → 分子唔變細', ratioFull === 1 && countWorkingDaysInRange(hk('2026-09-01'), hk('2026-09-30'), { restDays: [6, 0], publicHolidaySet: phSet }) === totalW, `full-month ratio=1, 分母=${totalW}（曆日）`)
   // #7 該月完全未入職 → 0
-  const ratioNone = resolveEmployedRatio(hk('2026-10-05'), null, hk('2026-09-01'), hk('2026-09-30'), { restDays: [6, 0], publicHolidaySet: phSet, totalWorkingDays: totalW })
+  const ratioNone = resolveEmployedRatio(hk('2026-10-05'), null, hk('2026-09-01'), hk('2026-09-30'), hk('2026-09-01'))
   check(7, '該月完全未入職 ratio=0', ratioNone === 0)
   // #23p 換算公式（MD 例：2394÷540=4.43 日）
   const tbCalc = calcTimebankDebtAmount(-2394, 565.22)

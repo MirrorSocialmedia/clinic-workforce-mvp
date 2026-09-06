@@ -49,7 +49,7 @@ export interface ResignSettlementCalc {
   }
   // ★ cwm-resigv3：當月工資（讀唔算 — 三段 fallback）
   monthWage: { source: 'payrollItem' | 'preview' | 'none'; basePay: number | null }
-  // ★ cwm-resignroster：受僱比例快照（分子 = 實際排更日數，分母 = 該月工作日常額）— 結算寫入 monthWageRatio 用
+  // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日，含頭含尾），分母 = 當月曆日數）— 結算寫入 monthWageRatio 用
   monthWageRatio: { value: number; numerator: number; denominator: number } | null
   // EO s.32 上限基底（★ v3：prorate 後當月工資 + 年假薪酬，唔再用全月薪）
   finalPeriodWage: number

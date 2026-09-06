@@ -9,7 +9,7 @@
  */
 
 import { toHKDateStr, hkDateStart } from './hk-date'
-import { getMpfExemption } from './mpf-exemption'
+import { getMpfExemption, adjustMpfMinForPeriod } from './mpf-exemption'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 
 /**
@@ -41,6 +41,9 @@ export function prefillTbDeduction(debtAmount: number, quarterCap: number): numb
 const MPF_RATE = 0.05
 const MPF_MIN = 7100
 const MPF_MAX = 30000
+// ★ 2026-09-06 [cwm-caldayratio] 拍板③：不完整糧期下限 pro-rate — 同 engine 共用
+//   adjustMpfMinForPeriod（mpf-exemption.ts）；唔同步 = 結算卡同 engine 走樣（mpf60 生死格 #9 同款坑）。
+//   拍板④：MAX 30000 唔調（同 engine）。
 
 export interface MpfDisplayResult {
   /** 僱員供款金額（$0.00 時 = 0） */
@@ -75,6 +78,8 @@ export function calcMpfDisplay(
   }
   const ex = getMpfExemption(ctx)
   const employedDays = ex?.employedDays ?? null
+  // ★ 2026-09-06 [cwm-caldayratio] 拍板③：下限按不完整糧期曆日比例（同 engine 同一 helper）
+  const MIN = adjustMpfMinForPeriod(MPF_MIN, ctx)
   const fmt = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   if (ex && ex.employedDays < 60) {
@@ -83,8 +88,9 @@ export function calcMpfDisplay(
   if (ex && ex.inExemptPeriod) {
     return { employee: 0, employedDays, inExemptPeriod: true, zeroReason: '免供款期（首 30 日 ＋ 首個不完整糧期）' }
   }
-  if (relevantIncome < MPF_MIN) {
-    return { employee: 0, employedDays, inExemptPeriod: false, zeroReason: `有關入息 ${fmt(relevantIncome)}（低於 $7,100）` }
+  if (relevantIncome < MIN) {
+    const proRated = MIN !== MPF_MIN
+    return { employee: 0, employedDays, inExemptPeriod: false, zeroReason: `有關入息 ${fmt(relevantIncome)}（低於 ${fmt(MIN)}${proRated ? '（不完整糧期按比例）' : ''}）` }
   }
   return { employee: Math.round(Math.min(relevantIncome, MPF_MAX) * MPF_RATE * 100) / 100, employedDays, inExemptPeriod: false, zeroReason: null }
 }
