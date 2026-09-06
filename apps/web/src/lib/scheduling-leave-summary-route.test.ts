@@ -6,10 +6,11 @@
  * 覆蓋 §6.6 驗收：
  *   - #42 九月份「上月剩」= 八月快照（snapshot 有 2026-08 行 → lastMonthRestRemaining = 該行值）
  *   - #42 跨年：view 2026-01 → 查 snapshot periodMonth 2025-12
- *   - #38 上月未 finalize 過（snapshot 空）→ lastMonthRestRemaining = null
- *     （★ 唔係 0、唔係當前值 —— 零 fallback；當前值 restBalanceRemaining 照常回）
+ *   - #38 上月未 finalize 過（snapshot 空）→ 動態 fallback「截至上月底」（cwm-lba）；
+ *     冇 REST_DAY row → null（★ 唔係 0；當前值 restBalanceRemaining 照常回）
  *   - #42b REST_DAY 多曆年 row（上年＋本年）→ restBalanceRemaining 按員工加總
- *   - #37 API 回傳齊兩新欄 + 頁面 thead 欄序 員工｜上月剩｜R｜PL｜R+PL｜剩餘｜年假（服務年度）
+ *   - #37 API 回傳齊欄（含 accruedThisYear —— 2026-09-06 cwm-annualdisp：餘額反推，剷 remainThisYear）
+ *   + 頁面 thead 欄序 員工｜上月剩｜R+PL｜剩餘｜年假（服務年度）
  */
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -52,7 +53,10 @@ const fakes: Record<string, Any> = {
     findMany: async (args: Any) => {
       balanceQueries.push(args)
       const sys = args?.where?.leaveType?.systemKey
-      if (sys === 'REST_DAY') return restBalanceRows
+      if (sys === 'REST_DAY') {
+        // ★ 模擬 restDayBalanceAsOf 嘅 year filter（cwm-lba：year = asOf 曆年）
+        return restBalanceRows.filter(r => r.year === args?.where?.year)
+      }
       return [
         // ANNUAL_LEAVE 累積制 year=0 一行
         { employeeId: 'e1', remaining: 6 },
@@ -69,14 +73,17 @@ const fakes: Record<string, Any> = {
     },
   },
   hKPublicHoliday: { findMany: async () => [] },
+  // ★ 2026-09-06 cwm-annualdisp：restDayBalanceAsOf（cwm-lvsum 加）打 timeBankEntry —— 補 stub
+  timeBankEntry: { findMany: async () => [] },
 }
 
 const saved: Record<string, Any> = {}
 
 function resetState() {
   restBalanceRows = [
-    // 當前 REST_DAY 即時值（跟快照刻意唔同 —— 驗證零 fallback）
-    { employeeId: 'e1', remaining: 6.5 },
+    // ★ cwm-lba 後 helper 由 entitled/used 推算 remaining（唔再直接讀 remaining）
+    // 當前 REST_DAY：8.5 − 2 = 6.5（跟快照刻意唔同 —— 驗證零 fallback）
+    { employeeId: 'e1', year: 2026, entitled: 8.5, used: 2 },
   ]
   snapshotRows = []
   snapshotQueries.length = 0
@@ -143,33 +150,41 @@ describe('scheduling-leave-summary — 上月剩 / 剩餘（2026-08-22 §6.2.3�
     assert.equal(snapshotQueries[0].where.periodMonth, '2025-12')
   })
 
-  it('#38 上月未 finalize 過（snapshot 空）→ 上月剩 = null（唔係 0 / 唔係當前值）', async () => {
+  it('#38 上月未 finalize 過（snapshot 空）→ 動態 fallback（cwm-lba）', async () => {
     resetState()
     // snapshotRows = []（resetState 已清）
 
-    const row = await fetchRows('2026-09')
-    assert.equal(row.lastMonthRestRemaining, null, '無快照 = null（前端顯「—」）')
-    assert.notEqual(row.lastMonthRestRemaining, 0, '唔好 fallback 0')
+    // (a) 有 REST_DAY row → 動態算「截至上月底」= 6.5（source = computed）
+    let row = await fetchRows('2026-09')
+    assert.equal(row.lastMonthRestRemaining, 6.5, '無快照 + 有 row = 動態算截至上月底（cwm-lba fallback）')
+    assert.equal(row.lastMonthRestSource, 'computed', '來源標記 = computed')
     assert.equal(row.restBalanceRemaining, 6.5, '當前值照常回（唔受影響）')
     assert.equal(snapshotQueries[0].where.periodMonth, '2026-08', '都係查咗上月')
+
+    // (b) 無 REST_DAY row → helper 唔回 entry → null（前端顯「—」），唔係 0
+    restBalanceRows = []
+    row = await fetchRows('2026-09')
+    assert.equal(row.lastMonthRestRemaining, null, '無快照 + 無 row = null（前端顯「—」）')
+    assert.notEqual(row.lastMonthRestRemaining, 0, '唔好 fallback 0')
+    assert.equal(row.restBalanceRemaining, 0, '無 row → 剩餘 ?? 0（唔會爆）')
   })
 
-  it('#42b REST_DAY 多曆年 row（上年餘額 + 本年預支）→ 剩餘按員工加總', async () => {
+  it('#42b REST_DAY row：year = asOf 曆年（cwm-lba 語義：唔再跨年加總）', async () => {
     resetState()
     restBalanceRows = [
-      { employeeId: 'e1', remaining: 3 },   // 2025 行：上年未用完
-      { employeeId: 'e1', remaining: -1 },  // 2026 行：本月預支
+      { employeeId: 'e1', year: 2026, entitled: 3, used: 0 },    // 本年起 row → 剩 3
+      { employeeId: 'e1', year: 2025, entitled: 100, used: 99 }, // 上年 row → 攞唔到（單曆年語義）
     ]
 
     const row = await fetchRows('2026-09')
-    assert.equal(row.restBalanceRemaining, 2, '3 + (-1) = 2（唔加 year filter，按員工加總）')
-    // REST_DAY query 唔應該有 year filter（決定：加總語義）
+    assert.equal(row.restBalanceRemaining, 3, '只計 asOf 曆年（2026）row；上年 row 唔計（cwm-lba 單曆年語義）')
+    // ★ cwm-lba 後：restDayBalanceAsOf 帶 year filter（舊版唔加、跨年加總 — 語義已變）
     const restQuery = balanceQueries.find(q => q?.where?.leaveType?.systemKey === 'REST_DAY')
     assert.ok(restQuery, '有 REST_DAY 查詢')
-    assert.equal(restQuery.where.year, undefined, 'REST_DAY 唔加 year filter（理由：上年未用完餘額仍計入真餘額）')
+    assert.equal(restQuery.where.year, 2026, 'REST_DAY query 帶 asOf 曆年 filter')
   })
 
-  it('#37 API 回傳齊全部欄（14 欄，含兩新欄）', async () => {
+  it('#37 API 回傳齊全部欄（14 欄，含 accruedThisYear）', async () => {
     resetState()
     snapshotRows = [
       { employeeId: 'e1', leaveTypeId: 'lt-rest', periodMonth: '2026-08', remaining: 7.5 },
@@ -178,17 +193,19 @@ describe('scheduling-leave-summary — 上月剩 / 剩餘（2026-08-22 §6.2.3�
     const row = await fetchRows('2026-09')
     const expectedKeys = [
       'employeeId', 'name', 'syStart', 'syEnd', 'entitled', 'usedDays',
-      'remainThisYear', 'balanceRemaining', 'inProbation', 'underOneYear',
+      'accruedThisYear', 'balanceRemaining', 'inProbation', 'underOneYear',
       'takenDates', 'restQuota', 'restBalanceRemaining', 'lastMonthRestRemaining',
     ]
     for (const k of expectedKeys) {
       assert.ok(k in row, `API 回傳缺欄：${k}`)
     }
+    // ★ 2026-09-06 cwm-annualdisp：remainThisYear 已剷（同「實際餘額」矛盾）
+    assert.ok(!('remainThisYear' in row), 'remainThisYear 應該已剷')
     assert.equal(row.employeeId, 'e1')
     assert.equal(row.name, 'Ceci')
   })
 
-  it('#37 頁面 thead 欄序：員工｜上月剩｜R｜PL｜R+PL｜剩餘｜年假（服務年度）', () => {
+  it('#37 頁面 thead 欄序：員工｜上月剩｜R+PL｜剩餘｜年假（服務年度）', () => {
     const pagePath = path.join(import.meta.dirname, '../app/(protected)/scheduling/page.tsx')
     const src = readFileSync(pagePath, 'utf8')
 
@@ -197,7 +214,9 @@ describe('scheduling-leave-summary — 上月剩 / 剩餘（2026-08-22 §6.2.3�
     assert.ok(anchor > 0, '頁面要有「上月剩」欄')
     const window_ = src.slice(Math.max(0, anchor - 300), anchor + 900)
 
-    const order = ['>員工</th>', '>上月剩</th>', '>R</th>', '>PL</th>', '>R+PL</th>', '>剩餘</th>', '年假（服務年度）']
+    // ★ 2026-09-05 cwm-lvsum 已剷 R／PL 兩欄；「剩餘」th 含「截至 MM」span（唔係純閉合）——
+    //   用「剩餘 <span」做 label（window 內 comment 有裸「剩餘」字，純字串會假紅）
+    const order = ['>員工</th>', '>上月剩</th>', '>R+PL</th>', '剩餘 <span', '年假（服務年度）']
     let prevIdx = -1
     for (const label of order) {
       const idx = window_.indexOf(label)

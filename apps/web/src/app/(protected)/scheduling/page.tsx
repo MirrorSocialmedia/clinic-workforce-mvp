@@ -5955,20 +5955,33 @@ function getShiftCode(shift: Shift): string {
                           {r.restBalanceRemaining}
                         </td>
                         <td style={{ padding: '4px 5px', borderLeft: '2px solid #60a5fa', wordBreak: 'break-word' }}>
-                          {/* ★ 2026-08-22 §6.4：兩行結構（舊三行）。
-                               第 1 行：區間 ＋ 應得 ＋ 已放 ＋ 餘（實際）＋ 警示。
-                               「（實際 X）」＝ LeaveBalance.remaining（累積制含結轉）—— 常顯，
-                               取代舊條件式「連結轉」span。 */}
+                          {/* ★ 2026-09-06 cwm-annualdisp §3：兩行結構（舊三行）。
+                               第 1 行：已放 / 配額 · 餘（權威值）＋ 警示。
+                               ★「餘」= LeaveBalance.remaining（累積制，含結轉）—— ★★★ 權威值，
+                               ❌ 唔好由「配額 − 已放」推（Celia 會變 8−8=0，−1.2 訊息消失）。
+                               ★「已放」由餘額反推（假設上年度無結轉）→ tooltip 講明（拍板③）。
+                               ★「已預支」badge 只喺 balanceRemaining < 0 出現（拍板⑤）。 */}
                           <div style={{ lineHeight: 1.5 }}>
-                            <span style={{ color: '#94a3b8' }}>{r.syStart}～{r.syEnd}</span>
-                            {'　'}<strong>{r.entitled} 天</strong>
-                            {'　'}<span style={{ color: '#059669' }}>已放 {r.usedDays}</span>
-                            {'　'}<span style={{ color: '#2563eb' }}>餘 {r.remainThisYear}（實際 {r.balanceRemaining}）</span>
+                            <span title={`由餘額反推（假設上年度無結轉）\n當年已累積 ${r.accruedThisYear} − 餘額 ${r.balanceRemaining} = ${r.usedDays}`}>
+                              已放 <strong>{r.usedDays}</strong> / 配額 <strong>{r.entitled}</strong> 天
+                            </span>
+                            {'　·　'}
+                            <span style={{ color: r.balanceRemaining < 0 ? '#dc2626' : '#059669', fontWeight: 600 }}>
+                              餘 {r.balanceRemaining}
+                            </span>
+                            {r.balanceRemaining < 0 && (
+                              <span style={{ background: '#fee2e2', color: '#b91c1c', borderRadius: 3,
+                                             padding: '1px 6px', fontSize: 9, fontWeight: 600, marginLeft: 5 }}>已預支</span>
+                            )}
                             {r.underOneYear && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}⚠️ 未滿一年</span>}
                             {r.inProbation && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}· 試用期</span>}
                           </div>
-                          {/* 第 2 行：放咗邊日（fontSize 8→10、#94a3b8→#64748b —— 舊嘅「幾乎睇唔到」） */}
-                          <div style={{ color: '#64748b', fontSize: 10, lineHeight: 1.5 }}>放咗：{r.takenDates || '—'}</div>
+                          {/* 第 2 行：服務年度區間 */}
+                          <div style={{ color: '#94a3b8', fontSize: 9, lineHeight: 1.5 }}>{r.syStart}～{r.syEnd}</div>
+                          {/* 第 3 行：★ 拍板①有單先出（初始化階段多數員工冇單 → 唔會出現，兩行成立） */}
+                          {r.takenDates && (
+                            <div style={{ color: '#64748b', fontSize: 9, lineHeight: 1.5 }}>本年度假期單：{r.takenDates}</div>
+                          )}
                         </td>
                       </tr>
                     ))}

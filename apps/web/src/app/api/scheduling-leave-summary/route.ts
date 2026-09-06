@@ -20,7 +20,7 @@ import {
 //
 // ?companyId=&periodMonth=YYYY-MM →
 //   { periodMonth, rows: [{ employeeId, name, syStart, syEnd, entitled, usedDays,
-//                           remainThisYear, balanceRemaining, inProbation,
+//                           accruedThisYear, balanceRemaining, inProbation,
 //                           underOneYear, takenDates, restQuota,
 //                           restBalanceRemaining, lastMonthRestRemaining }] }
 //
@@ -38,7 +38,7 @@ import {
 
 const PERIOD_MONTH_RE = /^\d{4}-\d{2}$/
 
-/** 一位小數 —— usedDays / balanceRemaining 會係碎數（半日假等），唔好出長 float 尾數（應得喺 §6.1 後係整數） */
+/** 一位小數 —— accruedThisYear / balanceRemaining 會係碎數（半日假等），唔好出長 float 尾數（應得喺 §6.1 後係整數） */
 const r1 = (n: number) => Math.round(n * 10) / 10
 
 function parseConfig(json: string | null | undefined): any {
@@ -183,10 +183,17 @@ export async function GET(req: NextRequest) {
     const entitled = entitledForServiceYear(sy.index, table)
 
     const taken = annual.filter(lr => lr.employeeId === emp.id && overlapsRange(lr, sy.start, sy.end))
-    // ⚠️ 跨服務年度嘅假期：全部 days 落當前年度（罕見，第一版唔按日切分，已記低）
-    const usedDays = taken.reduce((s, lr) => s + (lr.days ?? 0), 0)
-    // ★ 拍板②A：本年度餘 —— 同 LeaveBalance.remaining（累積制，含上年結轉）係兩數
-    const remainThisYear = Math.max(0, entitled - usedDays)
+    // ⚠️ 跨服務年度嘅假期：taken 而家只用於 takenDates 顯示（罕見，第一版唔按日切分，已記低）
+    // ★ 2026-09-06 cwm-annualdisp：全部員工都係初始化 —— LeaveRequest 空，
+    //   舊 usedDays（由 LeaveRequest 數）永遠 0，令「餘 8」同「實際 −1.2」互相矛盾。
+    //   改由【餘額反推】：當年已放 = 當年已累積 − 餘額。
+    //   ⚠️ 前提「上年度結轉 = 0」，有結轉會低估 → UI tooltip 要講明係反推。
+    //   ★§2.1 四易錯位：HK 日界（唔好 UTC）/ +1 含頭含尾 / min(syDays,365) / clamp ≥0
+    const balRemaining = balanceByEmp.get(emp.id) ?? 0
+    const syDays = Math.floor(
+      (hkDateStart(toHKDateStr(now)).getTime() - hkDateStart(sy.start).getTime()) / 86400000) + 1
+    const accruedThisYear = Math.round(entitled * Math.min(syDays, 365) / 365 * 100) / 100
+    const usedDays = Math.max(0, Math.round((accruedThisYear - balRemaining) * 100) / 100)
 
     // ★ rest_days 優先 modifiers（RuleComposer 現行寫法），fallback 頂層（舊資料 / grant-restdays 讀法）
     const restDays: number[] = cfg?.modifiers?.working_days?.rest_days ?? cfg?.working_days?.rest_days ?? [6, 0]
@@ -198,8 +205,8 @@ export async function GET(req: NextRequest) {
       syStart: sy.start,
       syEnd: sy.end,
       entitled: r1(entitled),
-      usedDays: r1(usedDays),
-      remainThisYear: r1(remainThisYear),
+      usedDays: Math.round(usedDays),            // ★ 拍板②：顯示整數（7.98 → 8）
+      accruedThisYear: r1(accruedThisYear),      // ★ tooltip 用（當年已累積）
       balanceRemaining: r1(balanceByEmp.get(emp.id) ?? 0),
       inProbation: isInProbation(emp.joinDate, now),
       underOneYear: serviceMonths(emp.joinDate, now) < 12,
