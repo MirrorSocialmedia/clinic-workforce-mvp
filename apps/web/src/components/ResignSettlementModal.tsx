@@ -351,12 +351,6 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                     ⚠️ 攞唔到當月工資 — 請先生成該月計糧（確認結算掣已停用）
                   </div>
                 )}
-                {/* ★ 2026-09-06 [cwm-caldayratio]：受僱比例拆分（證明 — 分子 = 受僱曆日（含休息日，含頭含尾），分母 = 當月曆日數） */}
-                {st.monthWageRatio && st.monthWageRatio.denominator > 0 && (
-                  <div style={{ fontSize: 11, color: '#6b7280' }}>
-                    受僱 {st.monthWageRatio.numerator} 日（含休息日）÷ 當月 {st.monthWageRatio.denominator} 日 = {Math.round(st.monthWageRatio.value * 1000) / 10}%
-                  </div>
-                )}
                 {/* ★ cwm-resignroster：當月打卡記錄（純顯示 — 僅供參考，唔影響計算；2026-09-06 [cwm-caldayratio] 保留做參考） */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
                   <span>當月打卡記錄（僅供參考，唔影響計算）（{lastDay.slice(0, 7)}，至 {lastDay}）</span>

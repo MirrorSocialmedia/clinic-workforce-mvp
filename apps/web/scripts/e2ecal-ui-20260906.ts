@@ -5,7 +5,7 @@
  * 打 dev server :3000（cookie = OWNER JWT）。
  *
  * 斷言（SEL：9/1–9/10 受僱、月薪 $17,500、最後工作日 9/10）：
- *  #12 受僱比例行「受僱 10 日（含休息日）÷ 當月 30 日 = 33.3%」（舊：實際排更 10 日 ÷ 該月工作日 22 日）
+ *  #12 受僱比例行「受僱 10 日（含休息日）÷ 當月 30 日 = 33.3%」已剷除（2026-09-06 老細拍板 B：淨刪 UI，數據層 monthWageRatio 保留）
  *  打卡 block 標明「僅供參考，唔影響計算」（保留做參考，MD §1.3）
  *  當月工資 $5,833.33（preview 直算）
  *  MPF 行 $291.67（5,833.33 × 5%；MIN pro-rate 2,366.67 → 過線要供 — 同 engine 一致）
@@ -82,8 +82,8 @@ async function main() {
   })
 
   check('modal 載入（有預估應付）', screen.includes('預估應付'), `screen 長度=${screen.length}`)
-  check('#12 受僱比例行「受僱 10 日（含休息日）÷ 當月 30 日」', screen.includes('受僱 10 日（含休息日）÷ 當月 30 日'), `片段=${JSON.stringify(screen.match(/受僱[^\n]*/g))}`)
-  check('#12 比例 33.3%', screen.includes('33.3%'), `片段=${JSON.stringify(screen.match(/33\.3%|受僱[^\n]*/g))}`)
+  check('#12 受僱比例行「受僱 10 日（含休息日）÷ 當月 30 日」已消失', !screen.includes('受僱 10 日（含休息日）÷ 當月 30 日'), `片段=${JSON.stringify(screen.match(/受僱[^\n]*/g))}`)
+  check('#12 比例 33.3% 唔存在（結算卡全文搜）', !screen.includes('33.3%'), `片段=${JSON.stringify(screen.match(/33\.3%|受僱[^\n]*/g))}`)
   check('舊文案「實際排更」已消失', !screen.includes('實際排更'), `片段=${JSON.stringify(screen.match(/實際排更[^\n]*/g))}`)
   check('打卡 block 標明「僅供參考，唔影響計算」', screen.includes('當月打卡記錄') && screen.includes('僅供參考，唔影響計算'), `片段=${JSON.stringify(screen.match(/當月打卡記錄[^\n]*/g))}`)
   check('打卡 2 日（fixture 有 9/1、9/2 打卡）', /當月打卡記錄[\s\S]{0,80}?2 日/.test(screen), `片段=${JSON.stringify(screen.match(/當月打卡記錄[^\n]*\n[^\n]*/g))}`)
