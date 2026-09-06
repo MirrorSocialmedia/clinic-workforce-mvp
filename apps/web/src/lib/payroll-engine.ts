@@ -17,6 +17,7 @@ import { getEffectiveADW } from './adw'
 import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
+import { getMpfExemption } from './mpf-exemption'
 
 // ------------------------------------------------------------------
 // TimeBank Engine Version + Cache Key
@@ -2227,14 +2228,30 @@ export const MPF_INCLUDE_SETTLEMENT = true
  */
 export function calcMPF(
   relevantIncome: number,
-  config: { enabled?: boolean; rate?: number; min?: number; max?: number }
+  config: { enabled?: boolean; rate?: number; min?: number; max?: number },
+  // ★ 2026-09-06 [cwm-mpf60-20260906]：MPF 三層豁免（積金局）—— 傳唔到就當「已過豁免期」（舊行為）
+  //   ctx.joinDate    = 入職日（曆日）
+  //   ctx.periodMonth = 糧期內任一日期（拍板① 糧期＝曆月）
+  //   ctx.lastDay     = 受僱實際最後一日（離職 = 最後工作日；resignedAt 係 +1 日 exclusive，傳之前 −1 日）
+  ctx?: { joinDate?: Date | null; periodMonth?: Date | null; lastDay?: Date | null },
 ): number {
   const MIN = config.min ?? 7100
   const MAX = config.max ?? 30000
   const RATE = config.rate ?? 0.05
-  if (!config.enabled || relevantIncome < MIN) return 0
+  if (!config.enabled) return 0
+
+  // ★ ① 60 日規則：受僱唔夠 60【曆日】→ 唔使登記，僱員部分 0（啱啱 60 日要供 —— < 唔係 <=）
+  // ★ ② 免供款期：首 30 日 + 緊接首個不完整糧期（月尾）
+  //   ⚠️ 兩個 caller（主路徑 + OT 重算）一定要傳 ctx —— 漏一個 = 主路徑豁免、OT 重算照扣
+  const exemption = ctx ? getMpfExemption(ctx) : null
+  if (exemption) {
+    if (exemption.employedDays < 60) return 0
+    if (exemption.inExemptPeriod) return 0
+  }
+
+  if (relevantIncome < MIN) return 0                        // ★ ③
   const capped = Math.min(relevantIncome, MAX)
-  return Math.round(capped * RATE * 100) / 100
+  return Math.round(capped * RATE * 100) / 100              // ★ ④（MAX 30000 封頂 = $1,500）
 }
 
 /**
@@ -3707,7 +3724,13 @@ export async function calculatePayrollWithRules(
 
   // ★ cwm-resigv3：MPF 基數受 MPF_INCLUDE_SETTLEMENT 控制（false 時 settlement 唔入基數）
   const mpfConfig = resolveMpfConfig(config, mods)
-  const mpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? grossPay : grossPay - rsGrossAdd, mpfConfig)
+  // ★ 2026-09-06 [cwm-mpf60]：60 曆日 + 免供款期 ctx（離職：lastDay = resignedAt − 1 日 = 最後工作日）
+  const mpfCtx = {
+    joinDate: empDates?.joinDate ?? null,
+    periodMonth: monthDate,
+    lastDay: resolvedResignedAt ? new Date(resolvedResignedAt.getTime() - 86400000) : null,
+  }
+  const mpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? grossPay : grossPay - rsGrossAdd, mpfConfig, mpfCtx)
   // ★ cwm-resigv3：tbDeduction 落 MPF 後 net 扣除（EO s.32 上限已喺 resign-settle route 驗過）
   const netPay = Math.max(0, grossPay - mpf - rsTbDed)
   // ★ 2026-09-01 (cwm-mpf-20260902, MD #11)：MPF disabled 時 mpfRate 顯示 0 ——
@@ -3786,7 +3809,7 @@ export async function calculatePayrollWithRules(
     const mpfConfig = resolveMpfConfig(config, mods)
     // ★ cwm-resigv3：OT 重算同步 settlement 口徑（MPF 基數 + tbDeduction），
     //   唔同步會將 tbDeduction 洗走（此區塊覆寫 netPay）。
-    const newMpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? newGrossPay : newGrossPay - rsGrossAdd, mpfConfig)
+    const newMpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? newGrossPay : newGrossPay - rsGrossAdd, mpfConfig, mpfCtx)
     const newNetPay = Math.max(0, newGrossPay - newMpf - rsTbDed)
     result.totalPayable = newNetPay
     result.detail = {

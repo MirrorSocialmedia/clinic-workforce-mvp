@@ -18,6 +18,7 @@ import { calculatePayrollWithRules } from './payroll-engine'
 import { settleLeaveOnResign, totalAccruedLeave, serviceMonths } from './leave-calculation'
 import { LEAVE_SYSTEM_KEYS } from './leave-types'
 import { getEffectiveADW } from './adw'
+import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 
 export interface ResignSettlementCalc {
   monthlySalary: number
@@ -261,7 +262,7 @@ export async function computeResignSettlement(
   const tbLatest = tbRows.find(r => periodMonthKey(r.periodMonth) <= cutoffMonth) ?? null
   const tbBalance = tbLatest?.balance ?? 0
   const tbDebt = tbBalance < 0 ? -tbBalance : 0
-  const tbDebtDays = Math.round((tbDebt / 540) * 100) / 100 // 540 分 = 9 小時工作日
+  const tbDebtDays = Math.round((tbDebt / TIMEBANK_MINUTES_PER_DAY) * 100) / 100 // 9 小時工作日 = 1 日
   const tbEntries = tbDebt > 0
     ? await prisma.timeBankEntry.findMany({
         where: { employeeId: empId, minutes: { lt: 0 } },
@@ -316,6 +317,6 @@ export function calcNoticePay(adwValue: number, noticeDays: number | null): numb
   return Math.round(adwValue * noticeDays * 100) / 100
 }
 
-/** 時間帳戶欠款換算（MD §五）：tbDays = |tbMinutes| / 540（2 位小數）× 今日 ADW */
+/** 時間帳戶欠款換算（MD §五）：tbDays = |tbMinutes| ÷ 9 小時工作日（2 位小數）× 今日 ADW */
 // ★ cwm-resigv3：純函數搬去 settlement-utils.ts（client-safe）— 轉發保持舊 import 路徑
 export { calcTimebankDebtAmount, prefillTbDeduction } from './settlement-utils'

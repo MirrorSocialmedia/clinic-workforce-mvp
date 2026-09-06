@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { hkTodayStr, fmtDate } from '@/lib/hk-date'
-import { calcTimebankDebtAmount, prefillTbDeduction } from '@/lib/settlement-utils'
+import { calcTimebankDebtAmount, prefillTbDeduction, calcMpfDisplay } from '@/lib/settlement-utils'
+import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 
 /**
  * 離職結算 Modal（共用元件）— cwm-resigpay-20260904（MD §七）
@@ -212,15 +213,32 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
     ? calcTimebankDebtAmount(tb.debtMinutes, st.adw.value).tbAmount
     : 0
   const suggestedDeduction = (tb && tb.debtMinutes > 0) ? prefillTbDeduction(tbDebtAmount, tb.caps.quarter) : 0
-  // 預估應付 = 當月工資 + 年假薪酬 + 代通知金 + 時間帳戶正數折現 − 扣除
+  // 預估應付 = 當月工資 + 年假薪酬 + 代通知金 + 時間帳戶正數折現 − MPF（僱員） − 扣除
   //   ★ cwm-resigv3：當月工資「讀唔算」（st.monthWage，none → 0 且確認掣 disabled）；
-  //   正數餘額 = 公司欠員工 → 折現（|分|/540 日 × ADW；ADW 攞唔到 → 0）
+  //   正數餘額 = 公司欠員工 → 折現（分 ÷ TIMEBANK_MINUTES_PER_DAY 日 × ADW；ADW 攞唔到 → 0）
   const tbPositiveCashout = tb && tb.balanceMinutes > 0 && st && st.adw.value > 0
-    ? Math.round((tb.balanceMinutes / 540) * st.adw.value * 100) / 100
+    ? Math.round((tb.balanceMinutes / TIMEBANK_MINUTES_PER_DAY) * st.adw.value * 100) / 100
     : 0
+  // ★ 2026-09-06 [cwm-mpf60] (MD §3.2/§3.3)：MPF 行（僱員 5%）—— 有關入息 = 當月工資＋年假＋通知金＋正數折現（拍板③）；
+  //   豁免口徑同 engine 共用 mpf-exemption（60 曆日 + 免供款期）；時間帳戶扣除唔入基數（扣除喺 MPF 之後先扣）
+  const mpfRelevantIncome = st
+    ? ((st.monthWage?.basePay ?? 0) + (st.unusedLeave?.payout ?? 0) + (st.notice?.pay ?? 0) + tbPositiveCashout)
+    : 0
+  const mpfDisplay = calcMpfDisplay(s?.joinDate ?? null, lastDay, mpfRelevantIncome)
+  const mpfEmployee = st ? mpfDisplay.employee : 0
   const estPayable = (st
-    ? ((st.monthWage?.basePay ?? 0) + st.unusedLeave.payout + (st.notice.pay ?? 0) + tbPositiveCashout)
+    ? ((st.monthWage?.basePay ?? 0) + st.unusedLeave.payout + (st.notice.pay ?? 0) + tbPositiveCashout - mpfEmployee)
     : 0) - (tbDeductionVal || 0)
+
+  // ★ 2026-09-06 [cwm-mpf60] (MD §6.6)：開發期自檢 —— 逐行加起身必須等於預估應付。
+  //   今次個 bug 就係「總數有、行冇」—— 下回合加新項目漏行，即刻知。
+  if (process.env.NODE_ENV !== 'production' && st) {
+    const _lineSum = (st.monthWage?.basePay ?? 0) + (st.unusedLeave?.payout ?? 0) + (st.notice?.pay ?? 0)
+      + tbPositiveCashout - (tbDeductionVal ?? 0) - mpfEmployee
+    if (Math.abs(_lineSum - estPayable) > 0.01) {
+      console.error(`[resign-settlement] ⛔ 逐行加總 ${_lineSum} ≠ 預估應付 ${estPayable}`)
+    }
+  }
 
   // ★ cwm-modalfix-20260905：st 未載入（loading / API 失敗）時 footer 嘅 st.xxx 會 throw ——
   //   body 有 {st && (…)} 包住，但 footer 冇。早退一次過解決。
@@ -401,6 +419,16 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                     </div>
                   </>
                 )}
+                {/* ★ 2026-09-06 [cwm-mpf60] (MD §3.2)：MPF 行（僱員 5%）+ 零理由（拍板②：僱主供款唔顯示） */}
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>強積金（僱員 5%）</span>
+                  <span style={{ color: mpfEmployee > 0 ? '#dc2626' : '#94a3b8' }}>
+                    {mpfEmployee > 0 ? `−${currency(mpfEmployee)}` : currency(0)}
+                  </span>
+                </div>
+                {mpfEmployee === 0 && mpfDisplay.zeroReason && (
+                  <div style={{ fontSize: 11, color: '#94a3b8' }}>{mpfDisplay.zeroReason}</div>
+                )}
               </div>
 
               {/* 時間帳戶（拍板②：人手輸入扣除） */}
@@ -443,18 +471,27 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                       <div style={{ fontSize: 11, color: '#991b1b', marginTop: 6 }}>{tb.deductionNote}</div>
                     </>
                   ) : (
-                    <div style={{ color: '#374151' }}>
-                      時間帳戶：{tb.balanceMinutes >= 0 ? '+' : ''}{tb.balanceMinutes.toLocaleString()} 分
-                      （{tb.balanceMinutes >= 0 ? '正數 = 公司欠員工，本次唔涉及扣薪' : '無欠款'}）
-                      {tb.latestPeriod ? `（截至 ${tb.latestPeriod}）` : ''}
-                    </div>
+                    <>
+                      <div style={{ color: '#374151' }}>
+                        時間帳戶：{tb.balanceMinutes >= 0 ? '+' : ''}{tb.balanceMinutes.toLocaleString()} 分
+                        {tb.latestPeriod ? `（截至 ${tb.latestPeriod}）` : ''}
+                      </div>
+                      {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.3)：正數折現要獨立成行 —— 原本只喺總數入面睇唔到；
+                          而「本次唔涉及扣薪」有誤導（佢唔扣薪，但【加落應付】）→ 改寫移除 */}
+                      {tbPositiveCashout > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                          <span>時間帳戶折現（{(tb.balanceMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(2)} 日 × ADW）</span>
+                          <span style={{ color: '#059669' }}>+{currency(tbPositiveCashout).slice(1)}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
 
               {/* 預估應付 + EO s.25 */}
               <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, borderTop: '1px solid #fbbf24', paddingTop: 8 }}>
-                <span>預估應付（當月工資＋年假＋通知金＋正數折現−扣除）</span>
+                <span>預估應付（當月工資＋年假＋通知金＋正數折現−MPF−扣除）</span>
                 <span>{currency(estPayable)}</span>
               </div>
               <div style={{ fontSize: 12, color: '#1d4ed8', marginTop: 8, fontWeight: 600 }}>
@@ -521,8 +558,27 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
               </td></tr>
             <tr><td style={{ padding: '6px 8px' }}>年假薪酬（{st?.unusedLeave?.days ?? 0} 日 × ADW）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(st?.unusedLeave?.payout)}</td></tr>
             <tr><td style={{ padding: '6px 8px' }}>代通知金{st?.notice?.pay != null ? `（${st?.notice?.days} 日 × ADW）` : ''}</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(st?.notice?.pay)}</td></tr>
+            {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.4)：正數折現獨立行（同畫面一致）；
+                同欠款扣除行互斥 —— 兩行都有條件，唔會出 $0.00 廢行 */}
+            {tbPositiveCashout > 0 && tb && (
+              <tr>
+                <td style={{ padding: '6px 8px' }}>時間帳戶折現（{(tb.balanceMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(2)} 日 × ADW）</td>
+                <td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(tbPositiveCashout)}</td>
+              </tr>
+            )}
             {tbDeductionVal != null && tbDeductionVal > 0 && (
               <tr><td style={{ padding: '6px 8px' }}>時間帳戶欠款扣除（人手）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>−{currency(tbDeductionVal).slice(1)}</td></tr>
+            )}
+            {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.5)：MPF 行（僱員 5%）—— PDF 係俾員工簽收嘅，
+                顯示 $0.00 而唔講原因，員工會以為公司漏供 */}
+            <tr>
+              <td style={{ padding: '6px 8px' }}>強積金（僱員 5%）</td>
+              <td style={{ textAlign: 'right', padding: '6px 8px' }}>
+                {mpfEmployee > 0 ? `−${currency(mpfEmployee).slice(1)}` : currency(0)}
+              </td>
+            </tr>
+            {mpfEmployee === 0 && mpfDisplay.zeroReason && (
+              <tr><td colSpan={2} style={{ padding: '2px 8px', fontSize: 11, color: '#888' }}>{mpfDisplay.zeroReason}</td></tr>
             )}
             <tr style={{ borderTop: '1px solid #000', fontWeight: 700 }}>
               <td style={{ padding: '6px 8px' }}>預估應付</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(estPayable)}</td>

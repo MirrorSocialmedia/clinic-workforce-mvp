@@ -86,7 +86,7 @@ export async function POST(
     )
   }
 
-  // 時間帳戶換算（MD §五）：|tbMinutes|/540 日 × 今日 ADW
+  // 時間帳戶換算（MD §五）：|tbMinutes| ÷ 9 小時工作日 日 × 今日 ADW
   const { tbAmount } = calcTimebankDebtAmount(calc.tb.balanceMinutes, calc.adwValue)
 
   // ── 寫入 PayrollItem（最後工作日當月嘅計糧單）───────────
