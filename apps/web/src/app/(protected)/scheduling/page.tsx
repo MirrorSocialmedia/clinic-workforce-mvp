@@ -5959,10 +5959,16 @@ function getShiftCode(shift: Shift): string {
                                第 1 行：已放 / 配額 · 餘（權威值）＋ 警示。
                                ★「餘」= LeaveBalance.remaining（累積制，含結轉）—— ★★★ 權威值，
                                ❌ 唔好由「配額 − 已放」推（Celia 會變 8−8=0，−1.2 訊息消失）。
-                               ★「已放」由餘額反推（假設上年度無結轉）→ tooltip 講明（拍板③）。
+                               ★「已放」= max(假期單, 餘額反推) + 試用期 gate（cwm-annualused 方案 D）
+                               → tooltip 列兩來源 + 講明係估算。
                                ★「已預支」badge 只喺 balanceRemaining < 0 出現（拍板⑤）。 */}
                           <div style={{ lineHeight: 1.5 }}>
-                            <span title={`由餘額反推（假設上年度無結轉）\n當年已累積 ${r.accruedThisYear} − 餘額 ${r.balanceRemaining} = ${r.usedDays}`}>
+                            <span title={
+                              `已放 = max(系統假期單, 由餘額反推)\n` +
+                              `　系統假期單：${r.takenDays} 日\n` +
+                              `　反推值：當年已累積 ${r.accruedThisYear} − 餘額 ${r.balanceRemaining} = ${r.derivedUsed}\n` +
+                              `⚠️ 初始化資料冇逐張假期單，數學上無法還原「當年已放」，此為估算`
+                            }>
                               已放 <strong>{r.usedDays}</strong> / 配額 <strong>{r.entitled}</strong> 天
                             </span>
                             {'　·　'}

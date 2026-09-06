@@ -5,7 +5,7 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveAccessibleCompanyIds, companyInScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
-import { resolveLeaveTable, isInProbation, serviceMonths } from '@/lib/leave-calculation'
+import { resolveLeaveTable, isInProbation, serviceMonths, PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { countMonthlyLeaveDays } from '@/lib/payroll-engine'
 import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 import {
@@ -183,17 +183,27 @@ export async function GET(req: NextRequest) {
     const entitled = entitledForServiceYear(sy.index, table)
 
     const taken = annual.filter(lr => lr.employeeId === emp.id && overlapsRange(lr, sy.start, sy.end))
-    // ⚠️ 跨服務年度嘅假期：taken 而家只用於 takenDates 顯示（罕見，第一版唔按日切分，已記低）
-    // ★ 2026-09-06 cwm-annualdisp：全部員工都係初始化 —— LeaveRequest 空，
-    //   舊 usedDays（由 LeaveRequest 數）永遠 0，令「餘 8」同「實際 −1.2」互相矛盾。
-    //   改由【餘額反推】：當年已放 = 當年已累積 − 餘額。
-    //   ⚠️ 前提「上年度結轉 = 0」，有結轉會低估 → UI tooltip 要講明係反推。
-    //   ★§2.1 四易錯位：HK 日界（唔好 UTC）/ +1 含頭含尾 / min(syDays,365) / clamp ≥0
+    // ⚠️ 跨服務年度嘅假期：只判斷「有冇重疊」—— 全部 days 落當前年度（罕見，第一版唔按日切分，已記低）
+    // ★ 2026-09-06 cwm-annualused（方案 D）：已放 = max(當年假期單日數, 反推值)
+    //   反推值 = max(0, 當年已累積 − 餘額)
+    //   修正① 試用期 gate：totalAccruedLeave 有 `months < PROBATION_MONTHS return 0`，
+    //     舊反推冇跟 → 四個試用期員工顯示「已放 1」但實際冇放過（Luna/Selina/Horace/Lettie）。
+    //   修正② 假期單做 floor：反推 clamp 0 會蓋過系統已記錄嘅假期（Kathy 有 9/24–9/27
+    //     四日單，反推 −3.99 → 0，顯示同記錄矛盾）。
+    //   ⚠️ 兩個來源互補：假期單 = 系統啟用【後】；反推 = 捕捉啟用【前】嘅初始化。
+    //   ⚠️ 單靠 entitled/used/remaining 三個數數學上無法還原「當年已放」（MD §1.2）
+    //     → tooltip 必須講明係估算。
+    //   ★ 四易錯位：HK 日界（唔好 UTC）/ +1 含頭含尾 / min(syDays,365) / takenDays 唔 clamp（實數）
     const balRemaining = balanceByEmp.get(emp.id) ?? 0
     const syDays = Math.floor(
       (hkDateStart(toHKDateStr(now)).getTime() - hkDateStart(sy.start).getTime()) / 86400000) + 1
-    const accruedThisYear = Math.round(entitled * Math.min(syDays, 365) / 365 * 100) / 100
-    const usedDays = Math.max(0, Math.round((accruedThisYear - balRemaining) * 100) / 100)
+    const inProbation = serviceMonths(emp.joinDate, now) < PROBATION_MONTHS
+    const accruedThisYear = inProbation
+      ? 0
+      : Math.round(entitled * Math.min(syDays, 365) / 365 * 100) / 100
+    const derivedUsed = Math.max(0, accruedThisYear - balRemaining)
+    const takenDays = taken.reduce((s, lr) => s + (lr.days ?? 0), 0)
+    const usedDays = Math.max(takenDays, derivedUsed)
 
     // ★ rest_days 優先 modifiers（RuleComposer 現行寫法），fallback 頂層（舊資料 / grant-restdays 讀法）
     const restDays: number[] = cfg?.modifiers?.working_days?.rest_days ?? cfg?.working_days?.rest_days ?? [6, 0]
@@ -206,7 +216,9 @@ export async function GET(req: NextRequest) {
       syEnd: sy.end,
       entitled: r1(entitled),
       usedDays: Math.round(usedDays),            // ★ 拍板②：顯示整數（7.98 → 8）
-      accruedThisYear: r1(accruedThisYear),      // ★ tooltip 用（當年已累積）
+      accruedThisYear: r1(accruedThisYear),      // ★ tooltip 用（當年已累積；試用期 = 0）
+      takenDays: r1(takenDays),                  // ★ cwm-annualused：tooltip 用（假期單來源）
+      derivedUsed: r1(derivedUsed),              // ★ 同上（反推來源）
       balanceRemaining: r1(balanceByEmp.get(emp.id) ?? 0),
       inProbation: isInProbation(emp.joinDate, now),
       underOneYear: serviceMonths(emp.joinDate, now) < 12,
