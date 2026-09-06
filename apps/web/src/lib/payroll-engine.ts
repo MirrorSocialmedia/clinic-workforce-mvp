@@ -1062,7 +1062,7 @@ export async function generatePayrollRun(
         }
         // ★ 2026-09-05 [cwm-resigv3] 離職結算注入（拍板③）：讀已確認快照，引擎唔重算。
         //   parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。
-        let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; monthWage: { source: string; basePay: number | null } | null } | null = null
+        let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; monthWage: { source: string; basePay: number | null } | null } | null = null
         const rsJson = carried.resignSettlement[emp.id]
         if (rsJson) {
           try {
@@ -1071,6 +1071,8 @@ export async function generatePayrollRun(
               annualLeavePay: Number(parsed.annualLeavePay) || 0,
               noticePay: Number(parsed.noticePay) || 0,
               tbDeduction: parsed.tbDeduction == null ? null : (Number(parsed.tbDeduction) || 0),
+              // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日（老舊快照無呢欄 → null → 0，行為同改前一致）
+              excessRestDeduction: parsed.excessRestDeduction == null ? null : (Number(parsed.excessRestDeduction) || 0),
               monthWage: parsed.monthWage ?? null,
             }
           } catch (e) {
@@ -3323,8 +3325,11 @@ export async function calculatePayrollWithRules(
     // ★ 2026-09-05 [cwm-resigv3] 離職結算快照注入（拍板③）：
     //   generatePayrollRun 由 PayrollItem.resignSettlementJson parse 後傳入。
     //   annualLeavePay+noticePay 加落 gross（MPF_INCLUDE_SETTLEMENT 決定基數）；
-    //   tbDeduction 落 MPF 後 net 扣除。in-service 員工傳 null/唔傳 → 零改動。
-    resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null } | null
+    //   excessRestDeduction（⑤ 超額休息日）落 gross（MPF 之前 — 減基數）；
+    //   tbDeduction（⑥ 時間帳戶欠款）落 MPF 後 net 扣除。
+    //   ★★⑤⑥ 方向相反（一個少供、一個唔減基數）嚴禁合併（cwm-excessrest 生死格 #14）。
+    //   in-service 員工傳 null/唔傳 → 零改動。
+    resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbDeduction?: number | null; excessRestDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null } | null
     // ★ 2026-09-05 [cwm-resignroster] 離職預覽 lastDay —「最後工作日翌日 HK 午夜」
     //   （同 resign/route.ts `${lastDay}T16:00:00Z` 口徑）；优先於 DB resignedAt。
     //   ⚠️ 只准收窄（route 側驗證唔得遲過實際離職日）— 唔准用嚟延長受僱期。
@@ -3345,6 +3350,8 @@ export async function calculatePayrollWithRules(
     ? (Number(rsSettle.annualLeavePay) || 0) + (Number(rsSettle.noticePay) || 0)
     : 0
   const rsTbDed = rsSettle ? Math.max(0, Number(rsSettle.tbDeduction) || 0) : 0
+  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（MPF 之前 — 減低基數少供；拍板② s.32(2)(a)）
+  const rsExcessRest = rsSettle ? Math.max(0, Number(rsSettle.excessRestDeduction) || 0) : 0
 
   // 1. Collect work data
   const workData = await collectWorkData(employeeId, monthDate, clinicId)
@@ -3641,7 +3648,8 @@ export async function calculatePayrollWithRules(
   const resolvedAdwAdjustment = await adwAdjustmentValue
 
   result.splitPay = effectiveSplitPay // 顯示與計算統一
-  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay + rsGrossAdd
+  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款落 gross（MPF 之前；④ 折現唔入 engine — 既有行為 out of scope）
+  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay + rsGrossAdd - rsExcessRest
 
   // ★ cwm-resigv3：MPF 基數受 MPF_INCLUDE_SETTLEMENT 控制（false 時 settlement 唔入基數）
   const mpfConfig = resolveMpfConfig(config, mods)
@@ -3725,7 +3733,7 @@ export async function calculatePayrollWithRules(
     const oldOtPay = result.otPay
     result.otPay = Math.round(result.otHours * hourlyEquivalent * otMultiplier * 100) / 100
     const grossPayDelta = result.otPay - oldOtPay
-    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus + rsGrossAdd)
+    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus + rsGrossAdd - rsExcessRest)
     const newGrossPay = oldGrossPay + grossPayDelta
     const mpfConfig = resolveMpfConfig(config, mods)
     // ★ cwm-resigv3：OT 重算同步 settlement 口徑（MPF 基數 + tbDeduction），

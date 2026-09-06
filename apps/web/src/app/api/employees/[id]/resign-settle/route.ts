@@ -32,7 +32,7 @@ export async function POST(
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'body 必填 (JSON)' }, { status: 400 })
-  const { lastDay, noticeDays, tbDeduction } = body
+  const { lastDay, noticeDays, tbDeduction, excessDeduction } = body
 
   // ── 驗證 ──────────────────────────────────────────────
   if (typeof lastDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(lastDay) || isNaN(Date.parse(`${lastDay}T00:00:00+08:00`))) {
@@ -55,6 +55,15 @@ export async function POST(
       return NextResponse.json({ error: 'tbDeduction 必須 ≥ 0' }, { status: 400 })
     }
     tbDeductionVal = Math.round(tbDeduction * 100) / 100
+  }
+  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（拍板② 歸類 s.32(2)(a) 缺勤扣除 — 唔受 s.32 1/4 上限；
+  //   拍板①：body 冇傳/傳 null → 用伺服器計算值（預填口徑）。≥ 0 驗證。）
+  let excessDeductionVal: number | null = null
+  if (excessDeduction != null) {
+    if (typeof excessDeduction !== 'number' || !Number.isFinite(excessDeduction) || excessDeduction < 0) {
+      return NextResponse.json({ error: 'excessDeduction 必須 ≥ 0' }, { status: 400 })
+    }
+    excessDeductionVal = Math.round(excessDeduction * 100) / 100
   }
 
   // ── 伺服器側重算（同 preview 同一 lib）─────────────────
@@ -133,6 +142,9 @@ export async function POST(
     tbMinutes: calc.tb.balanceMinutes,
     tbAmount: tbAmount,
     tbDeduction: tbDeductionVal,
+    // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（MPF 之前；拍板① 預填 = 計算值）
+    excessRestDeduction: excessDeductionVal ?? calc.excessRestDeduction,
+    excessRest: calc.excessRest,
     quarterCap: calc.quarterCap,
     adwUsed: calc.adwValue,
     // ★ cwm-resigv3：當月工資快照（讀引擎 — 月底計糧注入時展示／審計用；金額以快照為準）
@@ -157,7 +169,7 @@ export async function POST(
         entity: 'PayrollItem',
         entityId: item.id,
         targetEmployeeId: empId,
-        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, ADW=${calc.adwValue}, run=${run.id}${lastDayChangeNote}`,
+        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, ADW=${calc.adwValue}, run=${run.id}${lastDayChangeNote}`,
         ipAddress: null,
         userAgent: null,
       } as any,

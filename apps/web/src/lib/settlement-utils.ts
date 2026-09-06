@@ -32,6 +32,43 @@ export function prefillTbDeduction(debtAmount: number, quarterCap: number): numb
   return Math.round(Math.min(debt, cap) * 100) / 100
 }
 
+/**
+ * ★ 2026-09-07 [cwm-excessrest]：超額休息日扣款（離職當月，⑤ — MPF 之前）。
+ *
+ * ⚠️ 休息日單已隨離職取消 → 「實放日數」由「受僱曆日 − 工作日」反推（唔存在 LeaveRequest）。
+ * ⚠️ 日率用【曆日】口徑（月薪 ÷ 當月曆日），同當月工資 ① 一致；唔可以用扣薪日率（÷22 應出勤日）。
+ * ⚠️ 非工作日要扣走已批年假／病假／公眾假期 —— 嗰啲唔算休息日。
+ * ⚠️ `max(0, …)` —— 做足月／少放休息日 → 唔會出現負扣款（變成加錢）。
+ *
+ * ★ 完整月份（無入職無離職）→ employedDays >= monthDays → 應得 = 全額 → excess = 0；
+ *   同 resolveEmployedRatio 一樣加短路（安全網，正常完整月 actualRestDays 都會 ≤ 應得）。
+ */
+export function calcExcessRestDayDeduction(args: {
+  employedDays: number          // 受僱曆日（含頭含尾；完整月 = 當月全月）
+  monthDays: number             // 當月曆日
+  workedDays: number            // 受僱期內 Shift 唯一日期（status ≠ CANCELLED）
+  paidLeaveDays: number         // 受僱期內已批年假／病假（非休息日）
+  publicHolidayDays: number     // 受僱期內公眾假期
+  monthlyRestGrantDays: number  // 當月 RESTDAY_GRANT 日數（TimeBankEntry minutes/1440；唔好由 rest_days config 推算）
+  monthlySalary: number
+}): { actualRestDays: number; entitledRestDays: number; excessDays: number; amount: number } {
+  // ★ 完整月份短路（MD §2.2）：應得 = 全額發放 → 超額 0
+  if (args.employedDays >= args.monthDays) {
+    const actualRestDays = Math.max(0,
+      args.employedDays - args.workedDays - args.paidLeaveDays - args.publicHolidayDays)
+    return { actualRestDays, entitledRestDays: args.monthlyRestGrantDays, excessDays: 0, amount: 0 }
+  }
+  const actualRestDays = Math.max(0,
+    args.employedDays - args.workedDays - args.paidLeaveDays - args.publicHolidayDays)
+  const entitledRestDays = args.monthDays > 0
+    ? Math.round(args.monthlyRestGrantDays * args.employedDays / args.monthDays * 100) / 100
+    : 0
+  const excessDays = Math.max(0, Math.round((actualRestDays - entitledRestDays) * 100) / 100)
+  const dailyRate = args.monthDays > 0 ? args.monthlySalary / args.monthDays : 0
+  return { actualRestDays, entitledRestDays, excessDays,
+           amount: Math.round(excessDays * dailyRate * 100) / 100 }
+}
+
 // ── MPF 顯示（2026-09-06 [cwm-mpf60-20260906]，MD §3.2）──────────────────
 // 結算卡「強積金（僱員 5%）」行 + 零理由。豁免口徑同 engine 共用 mpf-exemption。
 // ★ 法定默认（rate 5% / min 7100 / max 30000）—— 結算卡攞不到 clinic PayRule，

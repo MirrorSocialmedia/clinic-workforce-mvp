@@ -39,6 +39,9 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const [noticeCustom, setNoticeCustom] = useState('')
   const [tbDeduction, setTbDeduction] = useState('') // ★ cwm-resigv3：預填 min(欠款,1/4上限)，仍可改
   const tbTouchedRef = useRef(false) // 用戶動過掣 → 預填唔好再覆蓋
+  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（拍板① 預填計算值，仍可改；空白 = 計算值）
+  const [excessDeduction, setExcessDeduction] = useState('')
+  const excessTouchedRef = useRef(false)
   const [preview, setPreview] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [resignLoading, setResignLoading] = useState(false)
@@ -102,6 +105,13 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
           const pre = prefillTbDeduction(calcTimebankDebtAmount(t.debtMinutes, adv).tbAmount, t.caps.quarter)
           setTbDeduction(pre > 0 ? pre.toFixed(2) : '')
         }
+        // ★ 2026-09-07 [cwm-excessrest] 拍板①：⑤ 預填計算值（用戶動過掣就唔覆蓋）；無超額 → 清空（行隱藏）
+        const xr = data.settlement?.excessRest
+        if (xr && xr.excessDays > 0) {
+          if (!excessTouchedRef.current) setExcessDeduction(xr.amount > 0 ? xr.amount.toFixed(2) : '')
+        } else {
+          setExcessDeduction('')
+        }
       } else if (res.status !== 404) {
         const err = await res.json().catch(() => ({}))
         if (err.error) alert(err.error)
@@ -149,6 +159,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
       `確定為「${employee.name}」確認離職結算？\n\n` +
       `最後工作日：${lastDay}\n` +
       `應付：$${estPayable.toFixed(2)}\n` +
+      (excessDed > 0 ? `⚠️ 超額休息日扣款 $${excessDed.toFixed(2)}（MPF 之前）\n` : '') +
       (amt > 0 ? `⚠️ 將由尾糧扣除 $${amt.toFixed(2)}（時間帳戶欠款）\n` : '') +
       `寫入之後，月底計糧會直接讀呢份結算。`,
     )) return
@@ -156,6 +167,8 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
     try {
       const body: any = { lastDay, noticeDays: noticeDaysVal }
       if (tbDeduction !== '' && Number.isFinite(Number(tbDeduction))) body.tbDeduction = Number(tbDeduction)
+      // ★ 2026-09-07 [cwm-excessrest]：⑤ 預填即實扣（空白 = 計算值；拍板①）
+      if (xr && xr.excessDays > 0) body.excessDeduction = excessDed
       const res = await fetch(`/api/employees/${employee.employeeId}/resign-settle`, {
         method: 'POST',
         credentials: 'include',
@@ -208,6 +221,10 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
 
   const currency = (n: number | null | undefined) => n == null ? '—' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const tbDeductionVal = tbDeduction !== '' && Number.isFinite(Number(tbDeduction)) ? Number(tbDeduction) : null
+  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日（拍板①：空白 → 預填計算值）
+  const xr = st?.excessRest ?? null
+  const excessDeductionVal = excessDeduction !== '' && Number.isFinite(Number(excessDeduction)) ? Number(excessDeduction) : null
+  const excessDed = xr && xr.excessDays > 0 ? (excessDeductionVal ?? xr.amount) : 0
   // ★ cwm-resigv3 拍板②：欠款金額 + 預填（min(欠款, 1/4 上限)；正數餘額預填 0）— lib 純函數
   const tbDebtAmount = tb && tb.debtMinutes > 0 && st && st.adw.value > 0
     ? calcTimebankDebtAmount(tb.debtMinutes, st.adw.value).tbAmount
@@ -219,22 +236,25 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const tbPositiveCashout = tb && tb.balanceMinutes > 0 && st && st.adw.value > 0
     ? Math.round((tb.balanceMinutes / TIMEBANK_MINUTES_PER_DAY) * st.adw.value * 100) / 100
     : 0
-  // ★ 2026-09-06 [cwm-mpf60] (MD §3.2/§3.3)：MPF 行（僱員 5%）—— 有關入息 = 當月工資＋年假＋通知金＋正數折現（拍板③）；
-  //   豁免口徑同 engine 共用 mpf-exemption（60 曆日 + 免供款期）；時間帳戶扣除唔入基數（扣除喺 MPF 之後先扣）
+  // ★ 2026-09-06 [cwm-mpf60] (MD §3.2/§3.3)：MPF 行（僱員 5%）—— 有關入息 = 當月工資＋年假＋通知金＋正數折現−超額休息日（拍板③）；
+  //   ★ 2026-09-07 [cwm-excessrest]：⑤ 喺 MPF 之前（減低基數）；⑥ 欠款扣除唔入基數（喺 MPF 之後先扣）
+  //   豁免口徑同 engine 共用 mpf-exemption（60 曆日 + 免供款期）
   const mpfRelevantIncome = st
-    ? ((st.monthWage?.basePay ?? 0) + (st.unusedLeave?.payout ?? 0) + (st.notice?.pay ?? 0) + tbPositiveCashout)
+    ? ((st.monthWage?.basePay ?? 0) + (st.unusedLeave?.payout ?? 0) + (st.notice?.pay ?? 0) + tbPositiveCashout - excessDed)
     : 0
   const mpfDisplay = calcMpfDisplay(s?.joinDate ?? null, lastDay, mpfRelevantIncome)
   const mpfEmployee = st ? mpfDisplay.employee : 0
+  // 預估應付 = 當月工資 + 年假薪酬 + 代通知金 + 時間帳戶正數折現 − 超額休息日 − MPF（僱員） − 欠款扣除（★ ⑥ MPF 之後）
   const estPayable = (st
-    ? ((st.monthWage?.basePay ?? 0) + st.unusedLeave.payout + (st.notice.pay ?? 0) + tbPositiveCashout - mpfEmployee)
+    ? ((st.monthWage?.basePay ?? 0) + st.unusedLeave.payout + (st.notice.pay ?? 0) + tbPositiveCashout - excessDed - mpfEmployee)
     : 0) - (tbDeductionVal || 0)
 
   // ★ 2026-09-06 [cwm-mpf60] (MD §6.6)：開發期自檢 —— 逐行加起身必須等於預估應付。
   //   今次個 bug 就係「總數有、行冇」—— 下回合加新項目漏行，即刻知。
+  // ★ 2026-09-07 [cwm-excessrest]：⑤ 行加入 self-check（漏行即刻爆）。
   if (process.env.NODE_ENV !== 'production' && st) {
     const _lineSum = (st.monthWage?.basePay ?? 0) + (st.unusedLeave?.payout ?? 0) + (st.notice?.pay ?? 0)
-      + tbPositiveCashout - (tbDeductionVal ?? 0) - mpfEmployee
+      + tbPositiveCashout - excessDed - (tbDeductionVal ?? 0) - mpfEmployee
     if (Math.abs(_lineSum - estPayable) > 0.01) {
       console.error(`[resign-settlement] ⛔ 逐行加總 ${_lineSum} ≠ 預估應付 ${estPayable}`)
     }
@@ -413,6 +433,39 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                     </div>
                   </>
                 )}
+                {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.3)：④ 正數折現獨立行（喺 ⑤／MPF 之前 — 順序：當月工資/年假/通知/折現 → ⑤ → 有關入息） */}
+                {tb && tbPositiveCashout > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>時間帳戶折現（{(tb.balanceMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(2)} 日 × ADW）</span>
+                    <span style={{ color: '#059669' }}>+{currency(tbPositiveCashout).slice(1)}</span>
+                  </div>
+                )}
+                {/* ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（喺 MPF 之【前】— 位置唔可以擺錯；拍板① 預填計算值可改） */}
+                {xr && xr.excessDays > 0 && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                      <span>超額休息日扣款（{xr.excessDays} 日 × 月薪÷{xr.monthDays}）</span>
+                      <span style={{ color: '#dc2626' }}>−{currency(excessDed).slice(1)}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                      實放 {xr.actualRestDays} 日 − 按比例應得 {xr.entitledRestDays} 日（{xr.monthlyRestGrantDays} × {xr.employedDays}/{xr.monthDays}）
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, color: '#7f1d1d' }}>本次扣除（預填，可改）</span>
+                      <input type="number" min="0" step="0.01"
+                        value={excessDeduction}
+                        onChange={e => { excessTouchedRef.current = true; setExcessDeduction(e.target.value) }}
+                        placeholder="0.00"
+                        style={{ width: 110, padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, textAlign: 'right' }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: '#b45309' }}>⚠️ MPF 之前扣（減低供款基數）；空白 = 用計算值。歸類待勞工處確認（s.32(2)(a)）。</div>
+                  </>
+                )}
+                {/* ★ 2026-09-07 [cwm-excessrest]：有關入息（MPF 基數）小計行 — 證明 ⑤ 喺前、⑥ 喺後 */}
+                <div style={{ borderTop: '1px solid #fbbf24', margin: '4px 0', paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                  <span>有關入息（MPF 基數）</span>
+                  <span>{currency(mpfRelevantIncome)}</span>
+                </div>
                 {/* ★ 2026-09-06 [cwm-mpf60] (MD §3.2)：MPF 行（僱員 5%）+ 零理由（拍板②：僱主供款唔顯示） */}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>強積金（僱員 5%）</span>
@@ -466,18 +519,12 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                     </>
                   ) : (
                     <>
+                      {/* ★ 2026-09-07 [cwm-excessrest]：正數折現（④）已獨立喺 MPF 之前成行 — 呢度只留餘額資訊（⑥ 欠款扣除喺 MPF 之後） */}
                       <div style={{ color: '#374151' }}>
                         時間帳戶：{tb.balanceMinutes >= 0 ? '+' : ''}{tb.balanceMinutes.toLocaleString()} 分
                         {tb.latestPeriod ? `（截至 ${tb.latestPeriod}）` : ''}
+                        {tbPositiveCashout > 0 ? '（折現已計入上方有關入息）' : ''}
                       </div>
-                      {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.3)：正數折現要獨立成行 —— 原本只喺總數入面睇唔到；
-                          而「本次唔涉及扣薪」有誤導（佢唔扣薪，但【加落應付】）→ 改寫移除 */}
-                      {tbPositiveCashout > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                          <span>時間帳戶折現（{(tb.balanceMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(2)} 日 × ADW）</span>
-                          <span style={{ color: '#059669' }}>+{currency(tbPositiveCashout).slice(1)}</span>
-                        </div>
-                      )}
                     </>
                   )}
                 </div>
@@ -485,7 +532,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
 
               {/* 預估應付 + EO s.25 */}
               <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, borderTop: '1px solid #fbbf24', paddingTop: 8 }}>
-                <span>預估應付（當月工資＋年假＋通知金＋正數折現−MPF−扣除）</span>
+                <span>預估應付（當月工資＋年假＋通知金＋正數折現−超額休息日−MPF−欠款扣除）</span>
                 <span>{currency(estPayable)}</span>
               </div>
               <div style={{ fontSize: 12, color: '#1d4ed8', marginTop: 8, fontWeight: 600 }}>
@@ -552,7 +599,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
               </td></tr>
             <tr><td style={{ padding: '6px 8px' }}>年假薪酬（{st?.unusedLeave?.days ?? 0} 日 × ADW）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(st?.unusedLeave?.payout)}</td></tr>
             <tr><td style={{ padding: '6px 8px' }}>代通知金{st?.notice?.pay != null ? `（${st?.notice?.days} 日 × ADW）` : ''}</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(st?.notice?.pay)}</td></tr>
-            {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.4)：正數折現獨立行（同畫面一致）；
+            {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.4)：④ 正數折現獨立行（同畫面一致）；
                 同欠款扣除行互斥 —— 兩行都有條件，唔會出 $0.00 廢行 */}
             {tbPositiveCashout > 0 && tb && (
               <tr>
@@ -560,9 +607,23 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                 <td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(tbPositiveCashout)}</td>
               </tr>
             )}
-            {tbDeductionVal != null && tbDeductionVal > 0 && (
-              <tr><td style={{ padding: '6px 8px' }}>時間帳戶欠款扣除（人手）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>−{currency(tbDeductionVal).slice(1)}</td></tr>
+            {/* ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（喺 MPF 之前 — 同畫面一致） */}
+            {xr && xr.excessDays > 0 && (
+              <tr>
+                <td style={{ padding: '6px 8px' }}>
+                  超額休息日扣款（{xr.excessDays} 日 × 月薪÷{xr.monthDays}）
+                  <div style={{ fontSize: 10, color: '#666' }}>
+                    實放 {xr.actualRestDays} 日 − 按比例應得 {xr.entitledRestDays} 日（{xr.monthlyRestGrantDays} × {xr.employedDays}/{xr.monthDays}）
+                  </div>
+                </td>
+                <td style={{ textAlign: 'right', padding: '6px 8px' }}>−{currency(excessDed).slice(1)}</td>
+              </tr>
             )}
+            {/* ★ 2026-09-07 [cwm-excessrest]：有關入息（MPF 基數）小計行 — 證明 ⑤ 喺前、⑥ 喺後 */}
+            <tr style={{ borderTop: '1px solid #000', fontWeight: 700 }}>
+              <td style={{ padding: '6px 8px' }}>有關入息（MPF 基數）</td>
+              <td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(mpfRelevantIncome)}</td>
+            </tr>
             {/* ★ 2026-09-06 [cwm-mpf60] (MD §6.5)：MPF 行（僱員 5%）—— PDF 係俾員工簽收嘅，
                 顯示 $0.00 而唔講原因，員工會以為公司漏供 */}
             <tr>
@@ -573,6 +634,10 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
             </tr>
             {mpfEmployee === 0 && mpfDisplay.zeroReason && (
               <tr><td colSpan={2} style={{ padding: '2px 8px', fontSize: 11, color: '#888' }}>{mpfDisplay.zeroReason}</td></tr>
+            )}
+            {/* ★ 2026-09-07 [cwm-excessrest]：⑥ 時間帳戶欠款扣除（喺 MPF 之後 — 位置唔可以擺錯） */}
+            {tbDeductionVal != null && tbDeductionVal > 0 && (
+              <tr><td style={{ padding: '6px 8px' }}>時間帳戶欠款扣除（人手）</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>−{currency(tbDeductionVal).slice(1)}</td></tr>
             )}
             <tr style={{ borderTop: '1px solid #000', fontWeight: 700 }}>
               <td style={{ padding: '6px 8px' }}>預估應付</td><td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(estPayable)}</td>

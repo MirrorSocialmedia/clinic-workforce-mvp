@@ -77,6 +77,9 @@ export async function GET(
       monthWage: calc.monthWage,
       // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（結算卡顯示「受僱 X 日（含休息日）÷ 當月 Y 日」做證明；老舊 run → null）
       monthWageRatio: calc.monthWageRatio,
+      // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（伺服器計算；預填 = 計算值，拍板①）
+      excessRest: calc.excessRest,
+      excessRestDeduction: calc.excessRestDeduction,
       settleByDate: calc.settleByDate,
       adw: { value: calc.adwValue, source: calc.adwSource, warnings: calc.adwWarnings },
       unusedLeave: { days: calc.unusedDays, dailyWage: calc.adwValue, payout: calc.leavePayout },
