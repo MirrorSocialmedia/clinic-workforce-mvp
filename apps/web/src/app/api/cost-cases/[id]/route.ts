@@ -20,7 +20,10 @@ export async function PUT(
 
   const { id } = await params
   // ★ cwm-payoutcost-20260908 C2：帶埋 materials（audit 前後對比要用）
-  const existing = await prisma.costCase.findUnique({ where: { id }, include: { materials: true } })
+  const existing = await prisma.costCase.findUnique({
+    where: { id },
+    include: { materials: { orderBy: { id: 'asc' } } },   // ★ P0-2：同 GET 同一次序
+  })
 
   if (!existing) {
     return jsonNoStore({ error: '搵唔到記錄' }, { status: 404 })
@@ -118,7 +121,34 @@ export async function PUT(
   //   effectiveCategory 要用【改完之後】嗰個
   const effectiveCategory = category !== undefined ? category : existing.category
   const effectiveOrderedAt = orderedAt !== undefined ? new Date(orderedAt) : existing.orderedAt
-  const materialsChanged = materials !== undefined && Array.isArray(materials)
+  let materialsChanged = materials !== undefined && Array.isArray(materials)
+
+  // ★ cwm-payoutcost-fix-20260908 P0-2：材料冇【實質】改動 → 唔 resolve。
+  //   點解要咁：resolveMaterials 用 name + isActive:true 撈，材料一更名／全版本停用，
+  //   舊個案就算淨係改備註都會 400「冇生效記錄」。冇改就唔洗 resolve，問題自然消失，
+  //   而且順便保住快照 —— 冇碰過嘅材料行唔應該因為主檔改咗價而被重算。
+  //   ⚠️ 逐位比對，靠上面兩處 orderBy: { id: 'asc' } 保證次序一致。
+  if (materialsChanged && materials.length === existing.materials.length) {
+    const oldIds = [...new Set(existing.materials.map(m => m.materialItemId))]
+    const oldRows = oldIds.length > 0
+      ? await prisma.materialItem.findMany({
+          where: { id: { in: oldIds } },          // ★ 唔准加 isActive —— 就係要撈停用咗嘅
+          select: { id: true, name: true },
+        })
+      : []
+    const nameById = new Map(oldRows.map(r => [r.id, r.name]))
+    const same = existing.materials.every((old, i) => {
+      const m: any = materials[i]
+      if (!m) return false
+      if (String(m.materialName ?? '') !== (nameById.get(old.materialItemId) ?? '')) return false
+      if (Number(m.qty) !== old.qty) return false
+      // unitPrice 冇送 = 冇覆寫 = 跟舊快照，唔當有改
+      if (m.unitPrice != null && Number(m.unitPrice) !== Number(old.unitPriceUsed)) return false
+      if ((m.note?.trim() || null) !== (old.note ?? null)) return false
+      return true
+    })
+    if (same) materialsChanged = false
+  }
 
   let resolvedMaterials: Awaited<ReturnType<typeof resolveMaterials>> | null = null
   if (materialsChanged) {

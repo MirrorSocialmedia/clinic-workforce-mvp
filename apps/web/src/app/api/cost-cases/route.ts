@@ -83,7 +83,8 @@ export async function GET(req: NextRequest) {
       orderBy: { orderedAt: 'desc' },
       include: {
         lab: { select: { id: true, name: true } },
-        materials: true,
+        // ★ cwm-payoutcost-fix-20260908 P0-2：次序要確定 —— PUT 逐位比對「有冇改」靠佢
+        materials: { orderBy: { id: 'asc' } },
       },
     }),
     prisma.costCase.aggregate({
