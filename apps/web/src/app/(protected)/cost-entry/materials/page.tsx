@@ -37,6 +37,10 @@ export default function MaterialsPage() {
   const [renameForm, setRenameForm] = useState({ newName: '' })
   const [rowBusy, setRowBusy] = useState('')
 
+  // ★ cwm-payoutcost-20260908 B1：改日期
+  const [dateTarget, setDateTarget] = useState<RowItem | null>(null)
+  const [dateForm, setDateForm] = useState({ effectiveFrom: '', effectiveTo: '' })
+
   // 新增 / 改價 / 更名 / 停用 同一權限門（provider_payout = OWNER）
   const canEdit = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
 
@@ -178,9 +182,46 @@ export default function MaterialsPage() {
     }
   }
 
+  // —— ★ B1：改生效日 / 到期日（唔開新版本，直接改呢一版嘅日期）
+  const openDateModal = (item: RowItem) => {
+    setDateTarget(item)
+    setDateForm({
+      effectiveFrom: toHKDateStr(item.effectiveFrom),
+      effectiveTo: item.effectiveTo ? toHKDateStr(item.effectiveTo) : '',
+    })
+  }
+
+  const submitDate = async () => {
+    if (!dateTarget) return
+    if (!dateForm.effectiveFrom) { alert('生效日必填'); return }
+    setSaving(true)
+    try {
+      await apiFetch(`/api/material-items/${dateTarget.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          effectiveFrom: dateForm.effectiveFrom,
+          // ★ 空字串一定要轉 null —— 傳 '' 落去 `new Date('')` = Invalid Date → 400
+          effectiveTo: dateForm.effectiveTo || null,
+        }),
+      })
+      setDateTarget(null)
+      loadItems()
+    } catch (e: any) {
+      alert(`改日期失敗: ${e.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // —— ★ 停用 / 啟用：淨改 isActive，版本鏈記錄原封不動
   const toggleActive = async (item: RowItem) => {
-    if (item.isActive && !confirm(`確認停用「${item.name}」？停用後唔會再出現喺新增下拉，已錄入個案唔受影響。`)) return
+    if (item.isActive && !confirm(
+      `確認停用「${item.name}」？\n\n` +
+      `停用後唔會再出現喺新增下拉，已錄入個案唔受影響。\n` +
+      `⚠️ 停用最新版本【唔會】自動恢復上一版 —— 上一版嘅到期日仍然封住，` +
+      `可能令呢隻材料變成【冇任何版本可用】。要救就用「改日期」。`
+    )) return
     setRowBusy(item.id)
     try {
       await apiFetch(`/api/material-items/${item.id}`, {
@@ -270,16 +311,26 @@ export default function MaterialsPage() {
                             className="px-2 py-0.5 text-xs border border-purple-300 text-purple-700 rounded hover:bg-purple-50 disabled:opacity-50">
                             更名
                           </button>
+                          <button onClick={() => openDateModal(item)} disabled={rowBusy === item.id || saving}
+                            className="px-2 py-0.5 text-xs border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50">
+                            改日期
+                          </button>
                           <button onClick={() => toggleActive(item)} disabled={rowBusy === item.id}
                             className="px-2 py-0.5 text-xs border border-red-300 text-red-700 rounded hover:bg-red-50 disabled:opacity-50">
                             停用
                           </button>
                         </>
                       ) : (
-                        <button onClick={() => toggleActive(item)} disabled={rowBusy === item.id}
-                          className="px-2 py-0.5 text-xs border border-green-300 text-green-700 rounded hover:bg-green-50 disabled:opacity-50">
-                          啟用
-                        </button>
+                        <>
+                          <button onClick={() => openDateModal(item)} disabled={rowBusy === item.id || saving}
+                            className="px-2 py-0.5 text-xs border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50">
+                            改日期
+                          </button>
+                          <button onClick={() => toggleActive(item)} disabled={rowBusy === item.id}
+                            className="px-2 py-0.5 text-xs border border-green-300 text-green-700 rounded hover:bg-green-50 disabled:opacity-50">
+                            啟用
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>
@@ -357,6 +408,45 @@ export default function MaterialsPage() {
               <button onClick={submitPrice} disabled={saving}
                 className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">
                 {saving && <Loader2 size={14} className="animate-spin" />} 確定改價
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ★ B1 改日期 Modal — 只改呢一版嘅日期，唔開新版本 */}
+      {dateTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="p-6 w-full max-w-md">
+            <h2 className="text-lg font-bold mb-4">改日期 — {dateTarget.name}</h2>
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 mb-3">
+              改日期<strong>唔會</strong>開新版本，係直接改呢一版嘅生效範圍。
+              已錄入嘅個案用緊快照單價，唔會受影響；只影響之後新錄入／補錄嘅個案 resolve 邊個版本。
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm mb-1">名稱</label>
+                <input value={dateTarget.name} readOnly
+                  className="w-full border rounded px-2 py-1.5 text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">生效日 *</label>
+                <input type="date" value={dateForm.effectiveFrom}
+                  onChange={e => setDateForm({ ...dateForm, effectiveFrom: e.target.value })}
+                  className="w-full border rounded px-2 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">到期日 <span className="text-xs text-gray-400">（留空＝無限期）</span></label>
+                <input type="date" value={dateForm.effectiveTo}
+                  onChange={e => setDateForm({ ...dateForm, effectiveTo: e.target.value })}
+                  className="w-full border rounded px-2 py-1.5 text-sm" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setDateTarget(null)} className="px-4 py-1.5 border rounded text-sm">取消</button>
+              <button onClick={submitDate} disabled={saving}
+                className="px-4 py-1.5 bg-gray-700 text-white rounded text-sm hover:bg-gray-800 disabled:opacity-50 flex items-center gap-1">
+                {saving && <Loader2 size={14} className="animate-spin" />} 確定
               </button>
             </div>
           </Card>
