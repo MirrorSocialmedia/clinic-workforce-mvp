@@ -86,6 +86,8 @@ interface MaterialLine {
   isPriceOverridden: boolean
   subtotal: number
   note: string // ★ 2026-08-22：揀「Other」時手動填嘅材料名
+  // ★ cwm-payoutcost-fix-20260908 P0-2：由修改 modal 預填，新增嗰陣係 undefined（＝正常）
+  resolvable?: boolean
 }
 
 // ── Constants ──────────────────────────────────────────
@@ -1762,6 +1764,11 @@ export default function CostEntryPage() {
                                         <select value={line.materialName} onChange={e => updateMaterialLine(idx, 'materialName', e.target.value)}
                                           className="w-full border rounded px-2 py-1 text-xs">
                                           <option value="">選擇材料</option>
+                                          {/* ★ P0-2：已更名／停用嘅材料 —— 一定要有對應 option，
+                                              否則 select value 對唔上會顯示空白，用戶以為冇揀 */}
+                                          {line.resolvable === false && line.materialName && (
+                                            <option value={line.materialName}>{line.materialName}（已更名／停用）</option>
+                                          )}
                                           {materials.map(m => (
                                             <option key={m.id} value={m.name}>{m.name} — {m.unitPrice != null ? `$${Number(m.unitPrice).toFixed(2)}` : '(冇定價)'}</option>
                                           ))}
@@ -1780,6 +1787,9 @@ export default function CostEntryPage() {
                                           className={`w-full border rounded px-1 py-1 text-xs text-right ${showNoPrice ? 'border-amber-300 bg-amber-50' : ''}`}
                                           placeholder={showNoPrice ? '必填' : ''} />
                                         <div className="text-[10px] mt-0.5">
+                                          {line.resolvable === false && (
+                                            <span className="text-red-600">⚠️ 呢隻材料已更名／停用 —— 改咗數量或單價就要重揀材料先儲存到</span>
+                                          )}
                                           {showOverride && <span className="text-gray-400">✏️ 已覆寫（主檔 ${line.masterPrice!.toFixed(2)}）</span>}
                                           {showNoPrice && <span className="text-amber-600">⚠️ 主檔未有價，請手動填寫</span>}
                                         </div>
