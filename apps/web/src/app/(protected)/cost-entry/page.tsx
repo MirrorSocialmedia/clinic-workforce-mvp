@@ -1143,7 +1143,9 @@ export default function CostEntryPage() {
         {loading ? (
           <div className="flex justify-center py-8"><Loader2 className="animate-spin" size={24} /></div>
         ) : (
-          <table className="w-full text-sm">
+          // ★ cwm-payoutcost-20260908 D1：13 欄合計 1188px。冇 min-w 嘅話
+          // w-full 只會壓扁唔會捲（外層 Card 已有 overflow-auto）
+          <table className="w-full min-w-[1200px] text-sm">
             <thead>
               <tr className="border-b bg-gray-50">
                 {/* ★ 2026-08-28 cwm-matedit T2 §2.4：第一欄跟模式換（★★#19）— received 模式「到貨」升首欄 */}
@@ -1151,6 +1153,8 @@ export default function CostEntryPage() {
                 <SortableTh k="orderedAt">落單日</SortableTh>
                 <SortableTh k="patientCode">病人編號</SortableTh>
                 <SortableTh k="patientName">病人姓名</SortableTh>
+                {/* ★ D1：醫生欄 —— 老細拍板唔需要排序，所以用純 th 唔用 SortableTh */}
+                <th className="text-left p-2">醫生</th>
                 <SortableTh k="category">項目</SortableTh>
                 <SortableTh k="labName">Lab · 單號</SortableTh>
                 <SortableTh k="dsaName">DSA</SortableTh>
@@ -1184,14 +1188,26 @@ export default function CostEntryPage() {
                 <tr key={c.id} className="border-b hover:bg-gray-50">
                   {dateMode === 'received' ? (<>{receivedTd}{orderedTd}</>) : orderedTd}
                   <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
-                  <td className="p-2" style={vStyle}>{c.patientName || '—'}</td>
+                  {/* ★ D1：truncate 必配 max-w（同 :1200 備註欄同一課） */}
+                  <td className="p-2 max-w-[128px]" style={vStyle}>
+                    <span className="truncate block" title={c.patientName || ''}>
+                      {c.patientName || '—'}
+                    </span>
+                  </td>
+                  <td className="p-2 max-w-[96px]" style={vStyle}>
+                    <span className="truncate block" title={c.provider?.name || ''}>
+                      {c.provider?.shortName || c.provider?.name || '—'}
+                    </span>
+                  </td>
                   <td className="p-2" style={vStyle}>
                     <Badge variant="secondary" className="text-xs">{CATEGORY_LABELS[c.category] || c.category}</Badge>
                     {c.itemType && <span className="ml-1 text-gray-500">{c.itemType}</span>}
                   </td>
-                  <td className="p-2" style={vStyle}>
-                    {c.lab?.name && <span>{c.lab.name}</span>}
-                    {c.labOrderNo && <span className="ml-1 text-gray-500">{c.labOrderNo}</span>}
+                  <td className="p-2 max-w-[128px]" style={vStyle}>
+                    <span className="truncate block" title={`${c.lab?.name ?? ''}${c.labOrderNo ? ' ' + c.labOrderNo : ''}`}>
+                      {c.lab?.name && <span>{c.lab.name}</span>}
+                      {c.labOrderNo && <span className="ml-1 text-gray-500">{c.labOrderNo}</span>}
+                    </span>
                   </td>
                   <td className="p-2" style={vStyle}>{c.dsaName || '—'}</td>
                   <td className="p-2 text-right" style={vStyle}>
