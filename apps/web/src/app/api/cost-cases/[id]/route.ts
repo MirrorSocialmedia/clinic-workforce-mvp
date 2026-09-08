@@ -220,7 +220,8 @@ export async function PUT(
   // ★ Q2: discountPct now from table, not body
   // ★ cwm-costentry-20260827 #22：只喺 labId 有傳（工場有變）先同步 — 新工场跟新表折扣；
   //   PUT 唔傳 labId = discountPct 欄保持原值（唔郁）
-  if (labId !== undefined && discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
+  // ★ P2-3：植牙材料有改時上面 `data.discountPct = null` 已經寫咗 null，唔准俾呢行蓋返（坑①後蓋前；UI 觸發唔到，直接打 API 送 materials+labId 就中）
+  if (!resolvedMaterials && labId !== undefined && discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
   if (finalCost !== existing.finalCost?.toNumber()) data.finalCost = finalCost != null ? finalCost : null
   if (receivedAt !== undefined) data.receivedAt = receivedAt ? new Date(receivedAt) : null
   if (appointmentAt !== undefined) data.appointmentAt = appointmentAt ? new Date(appointmentAt) : null
@@ -233,14 +234,26 @@ export async function PUT(
   // ★ 2026-09-02 cwm-costnote：備註（undefined = 唔改；null/空字串 → null）
   if (note !== undefined) data.note = note?.trim() || null
 
+  // ★ P2-5 (cwm-payoutcost-fix-20260908 S7)：category 由 IMPLANT 轉走 → 舊材料行成孤兒
+  //   （轉走時 materials 唔送 → 唔會刪）→ 轉返 IMPLANT 會由孤兒行預填。呢度一併清走。
+  //   ⚠️ 呢個分支 materialsChanged 必然 = false（materials 唔送）→ 唔 trigger resolve，
+  //      同 S2 短路 / P2-3 無交互（resolvedMaterials = null）。
+  const isImplantToOther = category !== undefined
+    && existing.category === 'IMPLANT' && category !== 'IMPLANT'
+    && existing.materials.length > 0
+
   // ★ C2：材料要「刪晒再建」—— CostCaseMaterial 冇業務主鍵，diff 更新冇著數，
   //   而且 onDelete: Cascade 只綁 costCase，刪行要自己做 → 一齊成功一齊失敗
-  const updated = resolvedMaterials
+  // ★ P2-5：離 IMPLANT case 都入同一個 transaction（原子：唔會「category 改咗但材料行未清」）
+  const updated = (resolvedMaterials || isImplantToOther)
     ? await prisma.$transaction(async tx => {
+        // P2-5：離 IMPLANT 只刪唔建；材料有改：刪晒再建
         await tx.costCaseMaterial.deleteMany({ where: { costCaseId: id } })
-        await tx.costCaseMaterial.createMany({
-          data: resolvedMaterials!.materialData.map(m => ({ ...m, costCaseId: id })),
-        })
+        if (resolvedMaterials) {
+          await tx.costCaseMaterial.createMany({
+            data: resolvedMaterials!.materialData.map(m => ({ ...m, costCaseId: id })),
+          })
+        }
         return await tx.costCase.update({
           where: { id },
           data,
@@ -293,7 +306,11 @@ export async function PUT(
         redoReason: updated.redoReason,
         note: updated.note,
         // ★ C2：材料有改用新數，冇改用 existing（updated.materials 只喺 transaction 路徑先有）
-        materials: (resolvedMaterials?.materialData ?? existing.materials).map(m => ({
+        // ★ P2-5：離 IMPLANT case 入 tx → updated.materials = []（清完）；非 tx 路徑 undefined → 落回 existing
+        materials: (resolvedMaterials
+            ? resolvedMaterials.materialData
+            : ((updated as { materials?: typeof existing.materials }).materials ?? existing.materials)
+          ).map(m => ({
           materialItemId: m.materialItemId, qty: m.qty,
           unitPriceUsed: Number(m.unitPriceUsed), subtotal: Number(m.subtotal),
         })),
@@ -302,7 +319,9 @@ export async function PUT(
         + (resolvedMaterials
             ? `｜材料 ${existing.materials.length} → ${resolvedMaterials.materialData.length} 項，成本 $${existing.baseCost ?? 0} → $${resolvedMaterials.totalBaseCost}`
               + (resolvedMaterials.auditRecords.length > 0 ? ` [${resolvedMaterials.auditRecords.length} 項單價異常]` : '')
-            : ''),
+            : isImplantToOther
+              ? `｜材料 ${existing.materials.length} → 0 項（category 轉出 IMPLANT，舊行一併清走）`
+              : ''),
     },
   } as any)
 

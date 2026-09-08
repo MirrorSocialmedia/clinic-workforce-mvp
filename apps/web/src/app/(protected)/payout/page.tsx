@@ -92,17 +92,12 @@ function PayoutRunsPageInner() {
   const [allMonths, setAllMonths] = useState(false)
 
   useEffect(() => {
-    // ★ A2：mount 嗰次 load 都要帶埋當次 filter — 否則無 filter 嗰個 fetch 喺 server 端
-    //   多做 2 條 provider/clinic map query，較慢落後，會蓋過 filter effect 嘅結果 →
-    //   開頁最終見到全部月份（實測競態，違反 default = 當月行為）
-    loadRuns({
-      providerId: selectedProvider || undefined,
-      clinicId: selectedClinic || undefined,
-      periodMonth: allMonths ? undefined : (selectedMonth || undefined),
-    })
+    // ★ P2-1 (cwm-payoutcost-fix-20260908 S7)：剷走呢度重複嘅 loadRuns —— filter effect
+    //   喺 mount 用同一組 filter 跑（兩處三個字段係同一表達式 + 同一 initial state，
+    //   2026-09-09 已核實 byte-identical），留住 = 開頁發兩次 /api/payout-runs
     loadProviders()
     loadMe()
-    loadAllClinics(selectedMonth) // ★ A1：mount 拉「全部診所」名單（反方向診所下拉）
+    loadAllClinics() // ★ A1+P2-2：mount 拉「全部診所」名單（反方向診所下拉）
   }, [])
 
   // ★ A2：filter 一變就重載列表。★ 空字串 = 唔 filter（唔可以傳 '' 落 query，
@@ -134,13 +129,20 @@ function PayoutRunsPageInner() {
   }, [selectedProvider, selectedMonth])
 
   // ★ cwm-payoutcost-20260908 A1：淨揀咗診所（未揀醫生）→ 拉呢間店呢個月有收入嘅醫生
+  // ★ P2-4 (cwm-payoutcost-fix-20260908 S7)：舊 else 分支無條件 setClinicProviders(null) →
+  //   揀咗醫生嗰一刻收窄名單即刻彈返全量。而家：只喺診所或月份清空／改變（ctxChanged）
+  //   時先 load/reset；淨係醫生變 → 保留收窄名單（用 ref 記上次 clinic/month 區分）。
+  const cpContext = useRef({ clinic: '', month: '' })
   useEffect(() => {
-    if (selectedClinic && selectedMonth && !selectedProvider) {
+    const ctxChanged = cpContext.current.clinic !== selectedClinic || cpContext.current.month !== selectedMonth
+    if (ctxChanged) cpContext.current = { clinic: selectedClinic, month: selectedMonth }
+    if (selectedClinic && selectedMonth && (!selectedProvider || ctxChanged)) {
       loadClinicProviders(selectedClinic, selectedMonth)
-    } else {
+    } else if (ctxChanged) {
       setClinicProviders(null)
       setUncoveredProviders([])
     }
+    // else：淨係醫生變（診所/月份未變）→ clinicProviders 原值保留
   }, [selectedClinic, selectedMonth, selectedProvider])
 
   async function loadMe() {
@@ -154,7 +156,12 @@ function PayoutRunsPageInner() {
     }
   }
 
+  // ★ P2-1 (cwm-payoutcost-fix-20260908 S7)：request 序號 —— 快速連轉 filter 時，
+  //   慢嘅舊 response 唔准蓋過新 request 嘅結果（只認最後一次）
+  const runsReq = useRef(0)
+
   async function loadRuns(opts?: { providerId?: string; clinicId?: string; periodMonth?: string }) {
+    const seq = ++runsReq.current
     try {
       const qs = new URLSearchParams()
       if (opts?.providerId) qs.set('providerId', opts.providerId)
@@ -162,11 +169,12 @@ function PayoutRunsPageInner() {
       if (opts?.periodMonth) qs.set('periodMonth', opts.periodMonth)
       const url = qs.toString() ? `/api/payout-runs?${qs}` : '/api/payout-runs'
       const res = await apiFetch<{ runs: PayoutRun[] }>(url)
+      if (seq !== runsReq.current) return // 已經有更新嘅 request，掉咗佢
       setRuns(res.runs || [])
     } catch (e) {
       console.error('Failed to load payout runs', e)
     } finally {
-      setLoading(false)
+      if (seq === runsReq.current) setLoading(false) // 只有最新 request 先可以收 loading
     }
   }
 
@@ -203,13 +211,16 @@ function PayoutRunsPageInner() {
     }
   }
 
-  /** ★ A1：「全部診所」名單 — list mode（淨 periodMonth）。MD fallback：唔用 GET /api/clinics */
-  async function loadAllClinics(periodMonth: string) {
+  /** ★ A1：「全部診所」名單 — list mode（淨 periodMonth）。MD fallback：唔用 GET /api/clinics
+   *  ★ P2-2 (cwm-payoutcost-fix-20260908 S7)：剷走月份參數（舊：傳咗但改月份唔重拉，參數係謊言）。
+   *    server 仍然要 periodMonth（route 缺咗 400）→ 照送值：mount 時取 selectedMonth
+   *    （唯一 call site），payload 同改前一樣。 */
+  async function loadAllClinics() {
     try {
       const res = await apiFetch<any>('/api/payout-runs/clinics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ periodMonth }),
+        body: JSON.stringify({ periodMonth: selectedMonth }),
       })
       setAllClinics(res.allClinics || [])
     } catch (e) {
