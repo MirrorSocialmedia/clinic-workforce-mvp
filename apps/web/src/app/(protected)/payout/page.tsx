@@ -58,6 +58,19 @@ function PayoutRunsPageInner() {
   // ★ MD-AC3: 支援 /payout?clinicId=...&month=...（由店鋪營收卡片連結入嚟預先揀好）
   const [selectedClinic, setSelectedClinic] = useState(urlClinic)
   const [availableClinics, setAvailableClinics] = useState<ClinicOption[]>([])
+  // ★ cwm-payoutcost-20260908 A1：診所 → 醫生（反方向）。`providers` 係全量下拉，呢個係收窄後嘅名單
+  //   null = 唔知（未拉／fetch 失敗）→ 下拉退返全量；[] = 呢間店真係冇醫生 → 下拉空白
+  const [clinicProviders, setClinicProviders] = useState<
+    { id: string; name: string; shortName: string | null; source: string }[] | null
+  >(null)
+  // ★ A1：診所視角「有收入但未生成」提示
+  const [uncoveredProviders, setUncoveredProviders] = useState<
+    { id: string; name: string; shortName: string | null; source: string }[]
+  >([])
+  // ★ A1：「全部診所」名單（未揀醫生時診所下拉來源）。MD fallback：
+  //   本頁可用用戶包 provider_payout override 用戶，GET /api/clinics 唔保證覆蓋（scope filter）
+  //   → 改由 POST /api/payout-runs/clinics list mode（淨 periodMonth）供數
+  const [allClinics, setAllClinics] = useState<{ id: string; name: string; shortName?: string | null; source?: string }[]>([])
   const [selectedMonth, setSelectedMonth] = useState(urlMonth || currentMonth)
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])
@@ -89,6 +102,7 @@ function PayoutRunsPageInner() {
     })
     loadProviders()
     loadMe()
+    loadAllClinics(selectedMonth) // ★ A1：mount 拉「全部診所」名單（反方向診所下拉）
   }, [])
 
   // ★ A2：filter 一變就重載列表。★ 空字串 = 唔 filter（唔可以傳 '' 落 query，
@@ -117,6 +131,16 @@ function PayoutRunsPageInner() {
       setUncoveredClinics([])
     }
   }, [selectedProvider, selectedMonth])
+
+  // ★ cwm-payoutcost-20260908 A1：淨揀咗診所（未揀醫生）→ 拉呢間店呢個月有收入嘅醫生
+  useEffect(() => {
+    if (selectedClinic && selectedMonth && !selectedProvider) {
+      loadClinicProviders(selectedClinic, selectedMonth)
+    } else {
+      setClinicProviders(null)
+      setUncoveredProviders([])
+    }
+  }, [selectedClinic, selectedMonth, selectedProvider])
 
   async function loadMe() {
     try {
@@ -175,6 +199,38 @@ function PayoutRunsPageInner() {
     } catch (e) {
       console.error('Failed to load clinics', e)
       setAvailableClinics([])
+    }
+  }
+
+  /** ★ A1：「全部診所」名單 — list mode（淨 periodMonth）。MD fallback：唔用 GET /api/clinics */
+  async function loadAllClinics(periodMonth: string) {
+    try {
+      const res = await apiFetch<any>('/api/payout-runs/clinics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ periodMonth }),
+      })
+      setAllClinics(res.allClinics || [])
+    } catch (e) {
+      console.error('Failed to load all clinics', e)
+    }
+  }
+
+  /** ★ A1：某診所某月可用嘅醫生（反方向） */
+  async function loadClinicProviders(clinicId: string, periodMonth: string) {
+    try {
+      const res = await apiFetch<any>('/api/payout-runs/clinics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clinicId, periodMonth }),
+      })
+      setClinicProviders(res.providers || [])
+      setUncoveredProviders(res.uncoveredProviders || [])
+      if (res.allClinics) setAllClinics(res.allClinics)
+    } catch (e) {
+      console.error('Failed to load clinic providers', e)
+      setClinicProviders(null)   // ★ null = 退返全量，唔可以 []（會令下拉變空，人手揀唔到嘢）
+      setUncoveredProviders([])
     }
   }
 
@@ -297,8 +353,12 @@ function PayoutRunsPageInner() {
                 onChange={e => { userTouched.current = true; setSelectedProvider(e.target.value) }}
               >
                 <option value="">選擇醫生</option>
-                {providers.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                {(clinicProviders ?? providers).map((p: any) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {clinicProviders && p.source === 'ALLOCATION' ? ' (有收入)'
+                      : clinicProviders && p.source === 'REFERRAL' ? ' (轉介)' : ''}
+                  </option>
                 ))}
               </select>
             </div>
@@ -307,14 +367,16 @@ function PayoutRunsPageInner() {
               <select
                 className="border rounded px-3 py-2 w-48"
                 value={selectedClinic}
-                onChange={e => setSelectedClinic(e.target.value)}
-                disabled={!selectedProvider || !selectedMonth || availableClinics.length === 0}
+                onChange={e => { userTouched.current = true; setSelectedClinic(e.target.value) }}
+                disabled={!selectedMonth}
               >
                 <option value="">選擇診所</option>
-                {availableClinics.map(c => (
+                {(selectedProvider ? availableClinics : allClinics).map(c => (
                   <option key={c.id} value={c.id}>
                     {c.shortName || c.name}
-                    {c.source === 'ALLOCATION' ? ' (付款)' : c.source === 'REFERRAL' ? ' (轉介)' : ' (綁定)'}
+                    {selectedProvider
+                      ? (c.source === 'ALLOCATION' ? ' (付款)' : c.source === 'REFERRAL' ? ' (轉介)' : ' (綁定)')
+                      : ''}
                   </option>
                 ))}
               </select>
@@ -377,6 +439,24 @@ function PayoutRunsPageInner() {
                   </div>
                 )
               })()}
+            </div>
+          )}
+
+          {/* ★ A1：診所視角 —— 呢間店呢個月，邊幾個醫生未出月結（平行段，上方醫生視角段保留） */}
+          {!selectedProvider && selectedClinic && selectedMonth && uncoveredProviders.length > 0 && (
+            <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+              <div className="font-semibold mb-1">
+                {selectedMonth} · {allClinics.find(c => c.id === selectedClinic)?.shortName
+                  || allClinics.find(c => c.id === selectedClinic)?.name}
+              </div>
+              <div className="mt-1 space-y-0.5">
+                {uncoveredProviders.map(p => (
+                  <div key={p.id} className="flex items-center gap-1 text-amber-700">
+                    <AlertTriangle size={12} />
+                    <span>{p.shortName || p.name} — 有收入但未生成月結</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </Card>
