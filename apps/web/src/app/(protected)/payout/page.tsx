@@ -74,11 +74,32 @@ function PayoutRunsPageInner() {
   // 「有收入但未生成」提示
   const [uncoveredClinics, setUncoveredClinics] = useState<ClinicOption[]>([])
 
+  // ★ cwm-payoutcost-20260908 A2：列表 filter —— 勾選 = 唔理月份，全部列出
+  //   （同成本錄入頁 cost-entry/page.tsx:1101「全部月份」同一 pattern）
+  const [allMonths, setAllMonths] = useState(false)
+
   useEffect(() => {
-    loadRuns()
+    // ★ A2：mount 嗰次 load 都要帶埋當次 filter — 否則無 filter 嗰個 fetch 喺 server 端
+    //   多做 2 條 provider/clinic map query，較慢落後，會蓋過 filter effect 嘅結果 →
+    //   開頁最終見到全部月份（實測競態，違反 default = 當月行為）
+    loadRuns({
+      providerId: selectedProvider || undefined,
+      clinicId: selectedClinic || undefined,
+      periodMonth: allMonths ? undefined : (selectedMonth || undefined),
+    })
     loadProviders()
     loadMe()
   }, [])
+
+  // ★ A2：filter 一變就重載列表。★ 空字串 = 唔 filter（唔可以傳 '' 落 query，
+  //   後端 `if (providerId)` 對 '' 係 falsy 冇事，但傳咗會令 URL 難睇兼難 debug）
+  useEffect(() => {
+    loadRuns({
+      providerId: selectedProvider || undefined,
+      clinicId: selectedClinic || undefined,
+      periodMonth: allMonths ? undefined : (selectedMonth || undefined),
+    })
+  }, [selectedProvider, selectedClinic, selectedMonth, allMonths])
 
   // ★ MD-AC3: URL 連結預先揀好嘅診所 — 用戶未動過選擇之前，
   //   effect 唔可以清空佢（否則進頁面即失去預選）
@@ -108,9 +129,14 @@ function PayoutRunsPageInner() {
     }
   }
 
-  async function loadRuns() {
+  async function loadRuns(opts?: { providerId?: string; clinicId?: string; periodMonth?: string }) {
     try {
-      const res = await apiFetch<{ runs: PayoutRun[] }>('/api/payout-runs')
+      const qs = new URLSearchParams()
+      if (opts?.providerId) qs.set('providerId', opts.providerId)
+      if (opts?.clinicId) qs.set('clinicId', opts.clinicId)
+      if (opts?.periodMonth) qs.set('periodMonth', opts.periodMonth)
+      const url = qs.toString() ? `/api/payout-runs?${qs}` : '/api/payout-runs'
+      const res = await apiFetch<{ runs: PayoutRun[] }>(url)
       setRuns(res.runs || [])
     } catch (e) {
       console.error('Failed to load payout runs', e)
@@ -202,7 +228,11 @@ function PayoutRunsPageInner() {
       })
       alert(`月結單已生成 (總額: $${res.run.totalAmount})`)
       setShowPreview(false)
-      loadRuns()
+      loadRuns({
+        providerId: selectedProvider || undefined,
+        clinicId: selectedClinic || undefined,
+        periodMonth: allMonths ? undefined : (selectedMonth || undefined),
+      })
       // 重新載入診所列表
       if (selectedProvider && selectedMonth) {
         loadAvailableClinics(selectedProvider, selectedMonth)
@@ -298,6 +328,10 @@ function PayoutRunsPageInner() {
                 className="w-44"
               />
             </div>
+            <label className="flex items-center gap-1.5 text-sm text-gray-600 pb-2 cursor-pointer">
+              <input type="checkbox" checked={allMonths} onChange={e => setAllMonths(e.target.checked)} />
+              全部月份
+            </label>
             <Button
               onClick={handlePreview}
               disabled={previewLoading || !selectedProvider || !selectedMonth || !selectedClinic}
@@ -397,7 +431,13 @@ function PayoutRunsPageInner() {
 
       {/* Runs list */}
       <div className="space-y-2">
-        {runs.length === 0 && <p className="text-gray-500">暫無月結單</p>}
+        {runs.length === 0 && (
+          <p className="text-gray-500">
+            {selectedProvider || selectedClinic || !allMonths
+              ? '呢個篩選範圍冇月結單'
+              : '暫無月結單'}
+          </p>
+        )}
         {runs.map(run => (
           <Card key={run.id} className="p-4 flex justify-between items-center">
             <div>
