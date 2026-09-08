@@ -124,7 +124,8 @@ function PayoutRunsPageInner() {
       loadAvailableClinics(selectedProvider, selectedMonth)
     } else if (userTouched.current) {
       setAvailableClinics([])
-      setSelectedClinic('')
+      // ★ cwm-payoutcost-fix-20260908 P1-2：A1 之後診所係獨立主 filter，
+      //   唔可以跟住醫生一齊清（清咗 = 用戶想睇返全店就要重揀診所）
       setUncoveredClinics([])
     } else {
       setAvailableClinics([])
