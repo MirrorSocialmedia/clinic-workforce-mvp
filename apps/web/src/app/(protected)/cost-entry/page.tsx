@@ -790,17 +790,19 @@ export default function CostEntryPage() {
     } as any)
     // ★ cwm-payoutcost-20260908 C2：材料明細改為可編輯 —— 由原明細預填
     //   ⚠️ m.materialName 靠 C1（server join）；C1 未落刀就會變空白，所以 C2 一定排喺 C1 之後
-    //   ⚠️ masterPrice 特登 null —— 前端唔知舊主檔價，揀返材料時 updateMaterialLine 會重新帶入；
-    //      真正嘅 override 判斷喺 server（resolveMaterials），前端只係 UI 提示
+    // ★ cwm-payoutcost-fix-20260908 P1-1：masterPrice 由 server 帶落嚟（materialMasterPrice）。
+    //   之前寫死 null → 每行都出假「主檔未有價」警告、✏️ 覆寫標記消失、
+    //   而且永遠送 unitPrice，配合空白下拉會令歷史成本被今日價覆寫（實測會改錢）。
     setMaterialLines(
       (c.materials ?? []).map((m: any) => ({
         materialName: m.materialName || m.note || '',
         qty: m.qty,
         unitPrice: Number(m.unitPriceUsed),
-        masterPrice: null,
+        masterPrice: m.materialMasterPrice ?? null,
         isPriceOverridden: !!m.isPriceOverridden,
         subtotal: Number(m.subtotal),
         note: m.note ?? '',
+        resolvable: m.materialResolvable !== false,   // ★ P0-2
       })),
     )
     setManualPatientQuery('')

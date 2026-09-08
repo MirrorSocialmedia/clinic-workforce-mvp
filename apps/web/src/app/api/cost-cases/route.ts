@@ -148,10 +148,24 @@ export async function GET(req: NextRequest) {
   const materialRows = materialItemIds.length > 0
     ? await prisma.materialItem.findMany({
         where: { id: { in: materialItemIds } },
-        select: { id: true, name: true },
+        // ★ cwm-payoutcost-fix-20260908 P0-2/P1-1：連主檔價一齊帶落去，
+        //   修改 modal 先判斷得到「有冇覆寫」同「主檔有冇價」
+        select: { id: true, name: true, unitPrice: true },
       })
     : []
-  const materialNameById = new Map(materialRows.map(m => [m.id, m.name]))
+  const materialRowById = new Map(materialRows.map(m => [m.id, m]))
+
+  // ★ P0-2：呢隻材料名而家仲有冇 active 版本？冇 = 已更名／全停用 →
+  //   修改 modal 要明明白白話俾用戶知，唔好留白等佢亂揀
+  const usedNames = [...new Set(materialRows.map(r => r.name))]
+  const activeRows = usedNames.length > 0
+    ? await prisma.materialItem.findMany({
+        where: { name: { in: usedNames }, isActive: true },
+        select: { name: true },
+        distinct: ['name'],
+      })
+    : []
+  const activeNames = new Set(activeRows.map(r => r.name))
 
   const providerIds = [...new Set(cases.map(c => c.providerId))]
   const providerRows = providerIds.length > 0
@@ -172,7 +186,13 @@ export async function GET(req: NextRequest) {
     provider: providerById.get(c.providerId) ?? null,
     materials: c.materials.map(m => ({
       ...m,
-      materialName: materialNameById.get(m.materialItemId) ?? null,
+      materialName: materialRowById.get(m.materialItemId)?.name ?? null,
+      // ★ P1-1：呢個【版本】嘅主檔價（唔係今日最新版嘅價）
+      materialMasterPrice: materialRowById.get(m.materialItemId)?.unitPrice != null
+        ? Number(materialRowById.get(m.materialItemId)!.unitPrice)
+        : null,
+      // ★ P0-2：呢個名而家仲揀唔揀得返
+      materialResolvable: activeNames.has(materialRowById.get(m.materialItemId)?.name ?? ''),
       unitPriceUsed: Number(m.unitPriceUsed),
       subtotal: Number(m.subtotal),
     })),
