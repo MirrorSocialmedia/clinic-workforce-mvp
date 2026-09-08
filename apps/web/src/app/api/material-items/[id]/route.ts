@@ -64,6 +64,12 @@ export async function PUT(
     data.effectiveFrom = d
   }
 
+  // ★ cwm-payoutcost-fix-20260908 P0-1：三條守衛【只喺真係改日期時】先跑。
+  //   之前擺喺呢個 if 外面 → 淨改 isActive（停用／啟用）都會驗版本鏈。
+  //   舊資料本身可能已經重疊（舊版 effectiveTo=NULL ＋ 有新版），守衛就會擋住
+  //   停用／啟用，令用戶連救都救唔到。實測 fixture(SA) 29/8 撳「啟用」= 400。
+  //   ★ 守衛係防止【今次改動】搞爛版本鏈，唔係去審核歷史資料。
+  if (effectiveFrom !== undefined || effectiveTo !== undefined) {
   // ★ 三條守衛一定要喺 update 之前、用【合併後】嘅最終值去驗
   const finalFrom: Date = data.effectiveFrom ?? existing.effectiveFrom
   const finalTo: Date | null =
@@ -100,6 +106,7 @@ export async function PUT(
         { error: `到期日唔可以遲過下一版嘅生效日（${toHKDateStr(next.effectiveFrom)}）` }, { status: 400 },
       )
     }
+  }
   }
 
   if (Object.keys(data).length === 0) {
