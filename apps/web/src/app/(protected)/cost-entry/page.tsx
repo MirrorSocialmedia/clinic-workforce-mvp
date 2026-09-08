@@ -788,8 +788,21 @@ export default function CostEntryPage() {
       _redoAt: c.redoAt ? toHKDateStr(c.redoAt) : '',
       _redoReason: c.redoReason ?? '',
     } as any)
-    // ★ 材料明細喺修改 modal 係只讀（PUT 唔改 materials）—— 留空由 render 顯示原明細
-    setMaterialLines([])
+    // ★ cwm-payoutcost-20260908 C2：材料明細改為可編輯 —— 由原明細預填
+    //   ⚠️ m.materialName 靠 C1（server join）；C1 未落刀就會變空白，所以 C2 一定排喺 C1 之後
+    //   ⚠️ masterPrice 特登 null —— 前端唔知舊主檔價，揀返材料時 updateMaterialLine 會重新帶入；
+    //      真正嘅 override 判斷喺 server（resolveMaterials），前端只係 UI 提示
+    setMaterialLines(
+      (c.materials ?? []).map((m: any) => ({
+        materialName: m.materialName || m.note || '',
+        qty: m.qty,
+        unitPrice: Number(m.unitPriceUsed),
+        masterPrice: null,
+        isPriceOverridden: !!m.isPriceOverridden,
+        subtotal: Number(m.subtotal),
+        note: m.note ?? '',
+      })),
+    )
     setManualPatientQuery('')
     setManualPatients([])
     setClinicGuess(null)
@@ -820,6 +833,24 @@ export default function CostEntryPage() {
       return
     }
 
+    // ★ C2：材料驗證 —— 同新增路徑同一套（原守衛保留：唔開放「非植牙 → 植牙」轉換）
+    if (isImplant) {
+      if (materialLines.length === 0 || materialLines.some(l => !l.materialName)) {
+        alert('植牙至少要一項材料，而且每行都要揀材料')
+        return
+      }
+      if (materialLines.some(l => !Number.isInteger(l.qty) || l.qty < 1)) {
+        alert('材料數量必須為正整數')
+        return
+      }
+      for (const line of materialLines) {
+        if (line.masterPrice == null && (!line.unitPrice || line.unitPrice <= 0)) {
+          alert(`材料「${line.materialName}」主檔未有價，請手動填寫單價`)
+          return
+        }
+      }
+    }
+
     setSavingCost(true)
     try {
       const body: any = {
@@ -839,6 +870,16 @@ export default function CostEntryPage() {
         // ★ 2026-09-02 cwm-costnote：備註（undefined = 唔改 → 要明確送，空 = null 清空）
         note: costForm.note?.trim() || null,
       }
+      // ★ C2：植牙送材料明細；★ 唔送 baseCost（server 由材料合計覆寫）
+      if (isImplant) {
+        body.materials = materialLines.map(l => ({
+          materialName: l.materialName,
+          qty: l.qty,
+          unitPrice: l.isPriceOverridden || l.masterPrice == null ? l.unitPrice : undefined,
+          note: l.note?.trim() || null,
+        }))
+        delete body.baseCost
+      }
       // ★ itemTypeOther 只喺 Others 時傳 — 唔會誤悭其他狀態嘅值
       if (costForm.itemType === 'Others') {
         body.itemTypeOther = costForm.itemTypeOther || null
@@ -857,11 +898,15 @@ export default function CostEntryPage() {
           body.redoReason = (costForm as any)._redoReason || null
         }
       }
-      await apiFetch(`/api/cost-cases/${c.id}`, {
+      const res: any = await apiFetch(`/api/cost-cases/${c.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
+      // ★ C2 §7：已有月結單警告（server 出，唔擋保存）
+      if (res?.warnings?.length) {
+        alert(`⚠️ 已保存，但要留意：\n\n${res.warnings.join('\n')}`)
+      }
       setEditingCase(null)
       closePicker()
       loadCases()
@@ -1680,44 +1725,8 @@ export default function CostEntryPage() {
                   </div>
 
                   {/* ★ MD-K: Implant materials section */}
-                  {costForm.category === 'IMPLANT' && editingCase && (editingCase.materials?.length ?? 0) > 0 ? (
-                    /* ★ 2026-08-25：修改模式 — 材料明細唯讀（PUT 唔改 materials/finalCost） */
-                    <div className="col-span-2">
-                      <div className="border rounded-lg overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b">
-                          <h4 className="font-semibold text-sm">材料明細（唯讀）</h4>
-                          <span className="text-xs text-gray-400">材料唔可以喺修改 modal 改</span>
-                        </div>
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="text-gray-500">
-                              <th className="text-left px-3 py-1.5 font-medium">材料</th>
-                              <th className="text-right px-2 py-1.5 font-medium w-16">數量</th>
-                              <th className="text-right px-3 py-1.5 font-medium w-24">單價</th>
-                              <th className="text-right px-3 py-1.5 font-medium w-24">小計</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {editingCase.materials!.map((m: any) => (
-                              <tr key={m.id} className="border-b">
-                                <td className="px-3 py-1">
-                                  {m.materialName || m.note || m.materialItemId}
-                                  {m.isPriceOverridden && <span className="ml-1 text-gray-400" title="已覆寫單價">✏️</span>}
-                                </td>
-                                <td className="px-2 py-1 text-right">{m.qty}</td>
-                                <td className="px-3 py-1 text-right">${Number(m.unitPriceUsed).toFixed(2)}</td>
-                                <td className="px-3 py-1 text-right font-medium">${Number(m.subtotal).toFixed(2)}</td>
-                              </tr>
-                            ))}
-                            <tr className="bg-gray-50 border-t-2">
-                              <td colSpan={3} className="px-3 py-2 font-medium">合計</td>
-                              <td className="px-3 py-2 text-right font-bold">${editingCase.materials!.reduce((s: number, m: any) => s + Number(m.subtotal), 0).toFixed(2)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : costForm.category === 'IMPLANT' ? (
+                  {/* ★ cwm-payoutcost-20260908 C2：唯讀分支已剷 —— 材料明細可編輯（openEditModal 由原明細預填） */}
+                  {costForm.category === 'IMPLANT' ? (
                     <div className="col-span-2">
                       <div className="border rounded-lg overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b">

@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { handleRoute } from '@/lib/api-guard'
 import { toHKDateStr } from '@/lib/hk-date'
 import { prisma } from '@/lib/prisma'
+import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 
 // ============================================================
 // POST /api/cost-cases/implant — Create IMPLANT cost case with materials
@@ -44,114 +45,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
   }
 
-  // Validate material quantities are positive integers
-  for (const mat of materials) {
-    const qty = mat.qty
-    if (!Number.isInteger(qty) || qty < 1) {
-      return NextResponse.json(
-        { error: `材料「${mat.materialName}」嘅數量必須為正整數` },
-        { status: 400 }
-      )
-    }
-  }
-
   // ★ 2026-08-27 拍板①：成本按【到貨日】入月結（同 LAB/INVISALIGN POST 一致）；未到貨 = null
   const periodMonth = receivedAt ? toHKDateStr(receivedAt).slice(0, 7) : null
 
-  // ★ B1: Resolve material prices by name + orderedAt
+  // ★ B1 + cwm-payoutcost-20260908 C2：材料單價按 name + orderedAt resolve（抽咗共用 lib，
+  //   同 cost-cases/[id] PUT 共享同一套行為 — 單一來源）
   const orderedAtDate = new Date(orderedAt)
-  const names = materials.map((m: any) => m.materialName)
-  const rows = await prisma.materialItem.findMany({
-    where: {
-      name: { in: names },
-      isActive: true,
-      effectiveFrom: { lte: orderedAtDate },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: orderedAtDate } }],
-    },
-    orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
-  })
-
-  const priceMap = new Map<string, { id: string; price: number | null }>()
-  for (const r of rows) {
-    if (!priceMap.has(r.name)) {
-      priceMap.set(r.name, { id: r.id, price: r.unitPrice != null ? Number(r.unitPrice) : null })
-    }
+  let resolved
+  try {
+    resolved = await resolveMaterials(materials, orderedAtDate)
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 400 })
   }
-
-  // Validate: materials with no master price must have user-provided price
-  for (const mat of materials) {
-    const resolved = priceMap.get(mat.materialName)
-    if (!resolved) {
-      return NextResponse.json(
-        { error: `材料「${mat.materialName}」喺 ${orderedAt} 冇生效記錄` },
-        { status: 400 }
-      )
-    }
-    // ★ MD-K: 主檔冇價 → 用戶必填單價
-    if (resolved.price === null && mat.unitPrice == null) {
-      return NextResponse.json(
-        { error: `材料「${mat.materialName}」主檔未有價，請手動填寫單價` },
-        { status: 400 }
-      )
-    }
-  }
-
-  // Build material line items with snapshot prices + override tracking
-  let totalBaseCost = 0
-  const materialData: any[] = []
-  const auditRecords: any[] = [] // ★ MD-K: audit 記錄
-
-  for (const mat of materials) {
-    const resolved = priceMap.get(mat.materialName)!
-    const masterPrice = resolved.price
-    const userPrice = mat.unitPrice != null ? Number(mat.unitPrice) : null
-    
-    // ★ MD-K: Determine final price + override flag
-    let unitPriceUsed: number
-    let isPriceOverridden = false
-    
-    if (masterPrice != null) {
-      // 主檔有價
-      if (userPrice != null && userPrice !== masterPrice) {
-        // 用戶覆寫
-        unitPriceUsed = userPrice
-        isPriceOverridden = true
-      } else {
-        // 用主檔價
-        unitPriceUsed = masterPrice
-      }
-    } else {
-      // 主檔冇價 → 用用戶價（已驗證必填）
-      unitPriceUsed = userPrice!
-    }
-    
-    const qty = mat.qty || 1
-    const subtotal = Number((unitPriceUsed * qty).toFixed(2))
-    totalBaseCost += subtotal
-    
-    materialData.push({
-      materialItemId: resolved.id,
-      qty,
-      unitPriceUsed,
-      isPriceOverridden,
-      subtotal,
-      note: mat.note?.trim() || null, // ★ 2026-08-22：Other 材料名（手動輸入）
-    })
-    
-    // ★ MD-K: 收集 audit 記錄
-    if (isPriceOverridden || masterPrice === null) {
-      auditRecords.push({
-        materialName: mat.materialName,
-        materialItemId: resolved.id,
-        masterPrice: masterPrice,
-        usedPrice: unitPriceUsed,
-        overridden: isPriceOverridden,
-        reason: isPriceOverridden ? '用戶覆寫單價' : '主檔未有價',
-      })
-    }
-  }
-
-  totalBaseCost = Number(totalBaseCost.toFixed(2))
+  const { totalBaseCost, materialData, auditRecords } = resolved
 
   // Create cost case with materials in a transaction
   const caseData = await prisma.costCase.create({

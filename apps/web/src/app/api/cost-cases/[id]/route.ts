@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
+import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 
 // ============================================================
 // PUT /api/cost-cases/:id — Update a cost case
@@ -18,7 +19,8 @@ export async function PUT(
   const { session } = auth
 
   const { id } = await params
-  const existing = await prisma.costCase.findUnique({ where: { id } })
+  // ★ cwm-payoutcost-20260908 C2：帶埋 materials（audit 前後對比要用）
+  const existing = await prisma.costCase.findUnique({ where: { id }, include: { materials: true } })
 
   if (!existing) {
     return jsonNoStore({ error: '搵唔到記錄' }, { status: 404 })
@@ -41,6 +43,8 @@ export async function PUT(
     redoAt, redoReason,
     // ★ 2026-09-02 cwm-costnote：自由備註
     note,
+    // ★ C2：材料明細（只對 IMPLANT 有效；undefined = 唔改）
+    materials,
   } = body
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
@@ -110,15 +114,38 @@ export async function PUT(
     discountPctNum = d ? Number(d.discountPct) : null
   }
 
+  // ★ cwm-payoutcost-20260908 C2：材料明細可改（IMPLANT 專用）
+  //   effectiveCategory 要用【改完之後】嗰個
+  const effectiveCategory = category !== undefined ? category : existing.category
+  const effectiveOrderedAt = orderedAt !== undefined ? new Date(orderedAt) : existing.orderedAt
+  const materialsChanged = materials !== undefined && Array.isArray(materials)
+
+  let resolvedMaterials: Awaited<ReturnType<typeof resolveMaterials>> | null = null
+  if (materialsChanged) {
+    if (effectiveCategory !== 'IMPLANT') {
+      return jsonNoStore({ error: '只有植牙個案先有材料明細' }, { status: 400 })
+    }
+    if (materials.length === 0) {
+      return jsonNoStore({ error: '植牙個案至少要一項材料' }, { status: 400 })
+    }
+    try {
+      resolvedMaterials = await resolveMaterials(materials, effectiveOrderedAt)
+    } catch (e: any) {
+      return jsonNoStore({ error: e.message }, { status: 400 })
+    }
+  }
+
   // Compute finalCost if baseCost or labId changed
   // ★ cwm-costentry-20260827 #22：body 唔傳 discountPct（Q2 後本來就忽略 body）；
   //   labId 未傳（工場未變）時重算用 existing.discountPct（已存 snapshot），
   //   防止表行缺漏把有折扣嘅單靜靜變零折扣
   let finalCost: number | null = existing.finalCost ? Number(existing.finalCost) : null
 
-  // ★ 2026-08-27 cwm-costarrival：!= null 令「清空成本」（傳 null）跳過重算 →
-  //   finalCost 保留舊值，畫面「未有價」但月結仍然扣錢。改 !== undefined，同 :131 一致。
-  if (baseCost !== undefined || labId !== undefined) {
+  // ★ cwm-payoutcost-20260908 C2：IMPLANT 材料有改 → baseCost/finalCost 一律由材料合計決定，
+  //   完全唔行工場折扣線（implant 唔套折扣，同 implant/route.ts 一致）
+  if (resolvedMaterials) {
+    finalCost = resolvedMaterials.totalBaseCost
+  } else if (baseCost !== undefined || labId !== undefined) {
     // ★ baseCost 明確傳 null = 清空；undefined = 冇改動先 fallback
     const bc = baseCost !== undefined
       ? (baseCost != null ? Number(baseCost) : null)
@@ -155,6 +182,11 @@ export async function PUT(
   if (labOrderNo !== undefined) data.labOrderNo = labOrderNo
   if (dsaName !== undefined) data.dsaName = dsaName
   if (baseCost !== undefined) data.baseCost = baseCost != null ? Number(baseCost) : null
+  // ★ C2：材料合計覆寫 body.baseCost（前端對植牙唔應該送 baseCost，兜底）
+  if (resolvedMaterials) {
+    data.baseCost = resolvedMaterials.totalBaseCost
+    data.discountPct = null
+  }
   // ★ Q2: discountPct now from table, not body
   // ★ cwm-costentry-20260827 #22：只喺 labId 有傳（工場有變）先同步 — 新工场跟新表折扣；
   //   PUT 唔傳 labId = discountPct 欄保持原值（唔郁）
@@ -171,13 +203,27 @@ export async function PUT(
   // ★ 2026-09-02 cwm-costnote：備註（undefined = 唔改；null/空字串 → null）
   if (note !== undefined) data.note = note?.trim() || null
 
-  const updated = await prisma.costCase.update({
-    where: { id },
-    data,
-    include: {
-      lab: { select: { id: true, name: true } },
-    },
-  })
+  // ★ C2：材料要「刪晒再建」—— CostCaseMaterial 冇業務主鍵，diff 更新冇著數，
+  //   而且 onDelete: Cascade 只綁 costCase，刪行要自己做 → 一齊成功一齊失敗
+  const updated = resolvedMaterials
+    ? await prisma.$transaction(async tx => {
+        await tx.costCaseMaterial.deleteMany({ where: { costCaseId: id } })
+        await tx.costCaseMaterial.createMany({
+          data: resolvedMaterials!.materialData.map(m => ({ ...m, costCaseId: id })),
+        })
+        return await tx.costCase.update({
+          where: { id },
+          data,
+          include: { lab: { select: { id: true, name: true } }, materials: true },
+        })
+      })
+    : await prisma.costCase.update({
+        where: { id },
+        data,
+        include: {
+          lab: { select: { id: true, name: true } },
+        },
+      })
 
   // Audit log
   await prisma.auditLog.create({
@@ -200,6 +246,11 @@ export async function PUT(
         redoReason: existing.redoReason,
         // ★ 2026-09-02 cwm-costnote：備註
         note: existing.note,
+        // ★ C2：材料前後對比
+        materials: existing.materials.map(m => ({
+          materialItemId: m.materialItemId, qty: m.qty,
+          unitPriceUsed: Number(m.unitPriceUsed), subtotal: Number(m.subtotal),
+        })),
       }),
       afterJson: JSON.stringify({
         baseCost: updated.baseCost ? Number(updated.baseCost) : null,
@@ -211,10 +262,39 @@ export async function PUT(
         redoAt: updated.redoAt,
         redoReason: updated.redoReason,
         note: updated.note,
+        // ★ C2：材料有改用新數，冇改用 existing（updated.materials 只喺 transaction 路徑先有）
+        materials: (resolvedMaterials?.materialData ?? existing.materials).map(m => ({
+          materialItemId: m.materialItemId, qty: m.qty,
+          unitPriceUsed: Number(m.unitPriceUsed), subtotal: Number(m.subtotal),
+        })),
       }),
-      notes: `更新成本記錄: ${existing.category} ${existing.patientCode}`,
+      notes: `更新成本記錄: ${existing.category} ${existing.patientCode}`
+        + (resolvedMaterials
+            ? `｜材料 ${existing.materials.length} → ${resolvedMaterials.materialData.length} 項，成本 $${existing.baseCost ?? 0} → $${resolvedMaterials.totalBaseCost}`
+              + (resolvedMaterials.auditRecords.length > 0 ? ` [${resolvedMaterials.auditRecords.length} 項單價異常]` : '')
+            : ''),
     },
   } as any)
+
+  // ★ cwm-payoutcost-20260908 C2 §7：改咗成本，但該月已經有月結單（未鎖定）
+  //   → 出警告。唔擋 —— 鎖咗嘅單上面 lockedByRunId 已經 409，未鎖嘅重新生成就得。
+  const warnings: string[] = []
+  if (resolvedMaterials && effectivePeriodMonth) {
+    const run = await prisma.payoutRun.findFirst({
+      where: {
+        providerId: data.providerId ?? existing.providerId,
+        clinicId: data.clinicId ?? existing.clinicId,
+        periodMonth: effectivePeriodMonth,
+      },
+      select: { periodMonth: true, status: true },
+    })
+    if (run) {
+      warnings.push(
+        `${run.periodMonth} 已經有月結單（${run.status === 'LOCKED' ? '已鎖定' : '草稿'}）—— `
+        + `成本改咗，要退回並重新生成月結單先對到數`,
+      )
+    }
+  }
 
   const result = {
     ...updated,
@@ -223,7 +303,7 @@ export async function PUT(
     finalCost: updated.finalCost ? Number(updated.finalCost) : null,
   }
 
-  return jsonNoStore({ case: result })
+  return jsonNoStore({ case: result, warnings })
 }
 
 // ============================================================
