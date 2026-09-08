@@ -138,14 +138,40 @@ export async function GET(req: NextRequest) {
     labGroups[key].total += fc
   }
 
+  // ★ cwm-payoutcost-20260908 C1/D1：材料名 + 醫生名由 server 解析
+  //   ⚠️ CostCaseMaterial.materialItemId 同 CostCase.providerId 都係裸 String（schema 冇 relation）
+  //      → 做唔到 include，照 payout-runs/route.ts:30-35 手動 map
+  //   ★★ 呢兩條 query 一律【唔准】加 isActive / 日期窗口 filter ——
+  //      重點就係要撈到已停用／已過期嘅版本同已停用嘅醫生，否則就係而家個 bug
+  const materialItemIds = [...new Set(cases.flatMap(c => c.materials.map(m => m.materialItemId)))]
+  const materialRows = materialItemIds.length > 0
+    ? await prisma.materialItem.findMany({
+        where: { id: { in: materialItemIds } },
+        select: { id: true, name: true },
+      })
+    : []
+  const materialNameById = new Map(materialRows.map(m => [m.id, m.name]))
+
+  const providerIds = [...new Set(cases.map(c => c.providerId))]
+  const providerRows = providerIds.length > 0
+    ? await prisma.provider.findMany({
+        where: { id: { in: providerIds } },
+        select: { id: true, name: true, shortName: true },
+      })
+    : []
+  const providerById = new Map(providerRows.map(p => [p.id, p]))
+
   // Serialize Decimal fields for JSON
   const serializedCases = cases.map(c => ({
     ...c,
     baseCost: c.baseCost ? Number(c.baseCost) : null,
     discountPct: c.discountPct ? Number(c.discountPct) : null,
     finalCost: c.finalCost ? Number(c.finalCost) : null,
+    // ★ C1/D1
+    provider: providerById.get(c.providerId) ?? null,
     materials: c.materials.map(m => ({
       ...m,
+      materialName: materialNameById.get(m.materialItemId) ?? null,
       unitPriceUsed: Number(m.unitPriceUsed),
       subtotal: Number(m.subtotal),
     })),

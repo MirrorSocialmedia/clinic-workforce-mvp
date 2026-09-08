@@ -38,6 +38,9 @@ interface CostCase {
   lockedByRunId: string | null
   lab?: { id: string; name: string }
   materials?: any[]
+  // ★ C1/D1：server 解析好嘅醫生（唔准喺前端用 providers state 對 —— /api/providers
+  //   默認 isActive:true，停用醫生會出空白格）
+  provider?: { id: string; name: string; shortName: string | null } | null
   // ★ 2026-08-25：重做（拍板①）
   redoAt: string | null
   redoReason: string | null
@@ -1682,7 +1685,7 @@ export default function CostEntryPage() {
                             {editingCase.materials!.map((m: any) => (
                               <tr key={m.id} className="border-b">
                                 <td className="px-3 py-1">
-                                  {materials.find(x => x.id === m.materialItemId)?.name || m.note || m.materialItemId}
+                                  {m.materialName || m.note || m.materialItemId}
                                   {m.isPriceOverridden && <span className="ml-1 text-gray-400" title="已覆寫單價">✏️</span>}
                                 </td>
                                 <td className="px-2 py-1 text-right">{m.qty}</td>
