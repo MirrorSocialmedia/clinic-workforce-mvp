@@ -11,6 +11,7 @@ import { ACTIVE_ALLOCATION } from '@/lib/payout/engine'
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session, scope } = auth
 
   const body = await req.json().catch(() => ({}))
   const { providerId, periodMonth, clinicId } = body
@@ -23,7 +24,11 @@ export async function POST(req: NextRequest) {
   //   MD fallback：本 route 有 provider_payout override（config.ts），而 GET /api/clinics
   //   對 my-clinics scope 用戶會 filter session.clinics（同本頁 scope 語義唔一致）
   //   → 前端唔好依賴 GET /api/clinics，改由本 route 供 allClinics。
+  // ★ cwm-payoutcost-fix-20260908 P1-3：加返 scope —— my-clinics 用戶唔應該見到全部診所
   const allClinics = await prisma.clinic.findMany({
+    where: scope === 'my-clinics' && session.clinics?.length
+      ? { id: { in: session.clinics } }
+      : undefined,
     select: { id: true, name: true, shortName: true },
     orderBy: { createdAt: 'asc' },
   })
