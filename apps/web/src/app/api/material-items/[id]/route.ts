@@ -65,48 +65,20 @@ export async function PUT(
   }
 
   // ★ cwm-payoutcost-fix-20260908 P0-1：三條守衛【只喺真係改日期時】先跑。
-  //   之前擺喺呢個 if 外面 → 淨改 isActive（停用／啟用）都會驗版本鏈。
-  //   舊資料本身可能已經重疊（舊版 effectiveTo=NULL ＋ 有新版），守衛就會擋住
-  //   停用／啟用，令用戶連救都救唔到。實測 fixture(SA) 29/8 撳「啟用」= 400。
-  //   ★ 守衛係防止【今次改動】搞爛版本鏈，唔係去審核歷史資料。
+  // ★ cwm-matedate-open-20260909：版本鏈守衛（守衛 2／3）已剷 —— 老細 2026-09-09 拍板。
+  //   點解剷得起：CostCaseMaterial.unitPriceUsed 係快照 → 歷史個案唔受影響。
+  //   鏈亂咗只有兩個後果，兩個都自己會叫：
+  //     重疊 → resolveMaterials 按 effectiveFrom desc / id desc 揀最新（確定性）
+  //     有窿 → 錄入時 400「喺 X 冇生效記錄」
+  //   守衛擋住嘅係可見可救嘅嘢，但同時擋住咗人手救鏈 → 得不償失。
+  //   ★ 淨低守衛 1：唔係政策限制，係自相矛盾防呆（from > to 嘅版本永遠 resolve 唔到）。
   if (effectiveFrom !== undefined || effectiveTo !== undefined) {
-  // ★ 三條守衛一定要喺 update 之前、用【合併後】嘅最終值去驗
-  const finalFrom: Date = data.effectiveFrom ?? existing.effectiveFrom
-  const finalTo: Date | null =
-    data.effectiveTo !== undefined ? data.effectiveTo : existing.effectiveTo
-
-  // 守衛 1：生效日一定要早過到期日
-  if (finalTo && finalFrom >= finalTo) {
-    return NextResponse.json({ error: '生效日一定要早過到期日' }, { status: 400 })
-  }
-
-  // 守衛 2/3：同名版本鏈唔准倒走 / 唔准壓過下一版
-  //   ★ 鄰居用【現有】effectiveFrom 定位（用新日期搵鄰居會變循環論證）
-  const siblings = await prisma.materialItem.findMany({
-    where: { name: existing.name, id: { not: id } },
-    orderBy: { effectiveFrom: 'asc' },
-    select: { id: true, effectiveFrom: true },
-  })
-  const prev = [...siblings].reverse().find(s => s.effectiveFrom <= existing.effectiveFrom)
-  const next = siblings.find(s => s.effectiveFrom > existing.effectiveFrom)
-
-  if (prev && finalFrom <= prev.effectiveFrom) {
-    return NextResponse.json(
-      { error: `生效日要遲過上一版（${toHKDateStr(prev.effectiveFrom)}）` }, { status: 400 },
-    )
-  }
-  if (next) {
-    if (finalFrom >= next.effectiveFrom) {
-      return NextResponse.json(
-        { error: `生效日要早過下一版（${toHKDateStr(next.effectiveFrom)}）` }, { status: 400 },
-      )
+    const finalFrom: Date = data.effectiveFrom ?? existing.effectiveFrom
+    const finalTo: Date | null =
+      data.effectiveTo !== undefined ? data.effectiveTo : existing.effectiveTo
+    if (finalTo && finalFrom >= finalTo) {
+      return NextResponse.json({ error: '生效日一定要早過到期日' }, { status: 400 })
     }
-    if (!finalTo || finalTo > next.effectiveFrom) {
-      return NextResponse.json(
-        { error: `到期日唔可以遲過下一版嘅生效日（${toHKDateStr(next.effectiveFrom)}）` }, { status: 400 },
-      )
-    }
-  }
   }
 
   if (Object.keys(data).length === 0) {
