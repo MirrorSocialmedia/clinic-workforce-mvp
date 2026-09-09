@@ -11,6 +11,16 @@ import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
 
 
+// ★ cwm-tbcache-rosterdiff-20260909 D2：人手 TimeBankEntry 文案表（MD 逐字）
+const TB_TYPE_LABEL: Record<string, string> = {
+  MAKEUP: '補鐘',              // ★ E 章會按 targetType 再細分
+  LEAVE_CONVERT: 'OT 換假',
+  LEAVE_SWAP_BACK: '換假退回',
+  INIT_ADJUST: '初始化調整',
+  REST_TO_ACCOUNT: '休息日轉入',
+  ROSTER_DIFF: '編更差額',
+}
+
 interface PayrollItemData {
   id: string
   runId: string
@@ -29,6 +39,8 @@ interface PayrollItemData {
   miscDetailJson: string | null
   detailJson: string | null
   adwUsed: number | null
+  // ★ cwm-tbcache-rosterdiff-20260909 D1：API 帶埋當月人手 TimeBankEntry（ROSTER_DIFF 即時查）
+  manualEntries?: Array<{ date: string; type: string; targetType: string | null; minutes: number; note: string | null }>
   maternityPay: number
   paternityPay: number
   run: {
@@ -299,6 +311,37 @@ export default function EmployeePayrollDetailPage() {
   const otConvertedLeave = leaveAndOtDetail.otConvertedLeave ?? 0
   const otRemainderMinutes = leaveAndOtDetail.otRemainderMinutes ?? 0
 
+  // ★ cwm-tbcache-rosterdiff-20260909 D2+D3：人手 TimeBankEntry 行 + 對數行（坑⑩ 嘅出口）
+  //   逐行（逐日考勤）＋ 人手 entry ＋ 上月結轉 必須 = live 餘額，唔到就紅色自診行。
+  const manualEntries: any[] = (item as any).manualEntries || []
+  const detailRows = timeAccountDetail.flatMap((d: any) => {
+    const rows = []
+    if (d.lateMinutes) rows.push({ date: d.date, label: '上班遲到', min: -d.lateMinutes, color: '#dc2626' })
+    if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
+    if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
+    if (d.holidayOt) rows.push({ date: d.date, label: 'OT', min: d.holidayOt, color: '#059669' })
+    if (d.earlyInOt) rows.push({ date: d.date, label: '提早上班OT', min: d.earlyInOt, color: '#059669' })
+    if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
+    if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
+    return rows
+  })
+  const manualRows = manualEntries.map((e: any) => ({
+    date: toHKDateStr(e.date),
+    label: TB_TYPE_LABEL[e.type] ?? e.type,
+    min: e.minutes,
+    color: e.minutes >= 0 ? '#059669' : '#dc2626',
+  }))
+  const allDetailRows = [...detailRows, ...manualRows]
+  const rowsTotal = allDetailRows.reduce((s: number, r: any) => s + r.min, 0)
+  // ★ D3：餘額用 live 時間帳戶（route 已 invalidate 後重算）—— detailJson 喺 finalize 之前凍結，
+  //   永遠冇自己嗰筆 ROSTER_DIFF（問題二）；liveTb 拿唔到先退化 detailJson 口徑。
+  const liveTb: any = data?.timeBank ?? null
+  const carriedFromVal = typeof liveTb?.carriedFrom === 'number' ? liveTb.carriedFrom
+    : (typeof tb.carriedFrom === 'number' ? tb.carriedFrom : 0)
+  const liveBalance: number | null = typeof liveTb?.balance === 'number' ? liveTb.balance
+    : (typeof tb.timeAccountMinutes === 'number' ? tb.timeAccountMinutes : null)
+  const tbMismatch = liveBalance !== null && rowsTotal + carriedFromVal !== liveBalance
+
   // Daily punch/shift summary for collapsible detail
   const fmtTime24 = fmtTime
   const dailyPunchMap: Record<string, { punches: any[]; shiftDate: string }> = {}
@@ -566,13 +609,15 @@ export default function EmployeePayrollDetailPage() {
               {earlyRecords.length > 3 && <span>...+{earlyRecords.length - 3}</span>}
             </div>
           )}
-          {/* 🔧 Fix #2: 補鐘記錄 */}
+          {/* 🔧 Fix #2: 補鐘記錄 — cwm-tbcache-rosterdiff-20260909 E：按 targetType 細分文案 */}
           {detail.makeupRecords && detail.makeupRecords.length > 0 && (
             <div className="mt-2 text-sm">
-              <span className="font-semibold">🔧 補鐘記錄（{detail.makeupRecords.length} 筆）</span>
+              <span className="font-semibold">🔧 {detail.makeupRecords.some((m: any) => m.targetType === 'ABSENT') ? '補鐘／缺勤扣鐘記錄' : '補鐘記錄'}（{detail.makeupRecords.length} 筆）</span>
               {detail.makeupRecords.map((m: any, i: number) => (
                 <div key={i} className="text-muted-foreground ml-4">
-                  {m.date}：補鐘 {m.minutes} 分鐘（用OT補遲到/早退）
+                  {m.date}：{m.targetType === 'ABSENT' ? '缺勤扣OT鐘'
+                            : m.targetType === 'EARLY_LEAVE' ? '早退補鐘'
+                            : '遲到補鐘'} {m.minutes} 分鐘
                   {m.note && <span className="ml-2">— {m.note}</span>}
                 </div>
               ))}
@@ -1139,7 +1184,7 @@ export default function EmployeePayrollDetailPage() {
         </div>
 
         {/* ⏱ 時間帳戶明細 */}
-        {timeAccountDetail.length > 0 && (
+        {allDetailRows.length > 0 && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">⏱ 時間帳戶明細</h3>
             <div className="rounded-xl border shadow-card p-4 mt-3">
@@ -1154,17 +1199,7 @@ export default function EmployeePayrollDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {timeAccountDetail.flatMap((d: any) => {
-                      const rows = []
-                      if (d.lateMinutes) rows.push({ date: d.date, label: '上班遲到', min: -d.lateMinutes, color: '#dc2626' })
-                      if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
-                      if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
-                      if (d.holidayOt) rows.push({ date: d.date, label: 'OT', min: d.holidayOt, color: '#059669' })
-                      if (d.earlyInOt) rows.push({ date: d.date, label: '提早上班OT', min: d.earlyInOt, color: '#059669' })
-                      if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
-                      if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
-                      return rows
-                    }).map((r: any, i: number) => (
+                    {allDetailRows.map((r: any, i: number) => (
                       <tr key={i} className="border-b last:border-0">
                         <td className="py-2">{r.date}</td>
                         <td className="text-right">{r.label}</td>
@@ -1172,22 +1207,25 @@ export default function EmployeePayrollDetailPage() {
                           {r.min > 0 ? '+' : ''}{r.min} 分</td>
                       </tr>
                     ))}
+                    {/* ★ D3：對數行 —— 逐行 ＋ 上月結轉 必須 = 餘額（坑⑩ 嘅出口） */}
+                    <tr className="border-t-2 font-semibold">
+                      <td className="py-2">合計</td>
+                      <td className="text-right text-xs text-muted-foreground">
+                        逐行 {rowsTotal} ＋ 上月結轉 {carriedFromVal}
+                      </td>
+                      <td className="text-right">{rowsTotal + carriedFromVal} 分</td>
+                    </tr>
+                    {tbMismatch && (
+                      <tr><td colSpan={3} className="py-2 text-xs text-red-600">
+                        ⚠️ 對唔到餘額（{liveBalance}）—— 仲有未顯示嘅項目，請報告
+                      </td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
               {/* Mobile card view */}
               <div className="md:hidden space-y-2">
-                {timeAccountDetail.flatMap((d: any) => {
-                  const rows = []
-                  if (d.lateMinutes) rows.push({ date: d.date, label: '上班遲到', min: -d.lateMinutes, color: '#dc2626' })
-                  if (d.earlyMinutes) rows.push({ date: d.date, label: '早退', min: -d.earlyMinutes, color: '#dc2626' })
-                  if (d.clockOutOt) rows.push({ date: d.date, label: '下班 OT', min: d.clockOutOt, color: '#059669' })
-                  if (d.holidayOt) rows.push({ date: d.date, label: 'OT', min: d.holidayOt, color: '#059669' })
-                  if (d.earlyInOt) rows.push({ date: d.date, label: '提早上班OT', min: d.earlyInOt, color: '#059669' })
-                  if (d.lunchOt) rows.push({ date: d.date, label: '午休 OT（少休）', min: d.lunchOt, color: '#059669' })
-                  if (d.lunchLate) rows.push({ date: d.date, label: '午休遲到（超休）', min: -d.lunchLate, color: '#dc2626' })
-                  return rows
-                }).map((r: any, i: number) => (
+                {allDetailRows.map((r: any, i: number) => (
                   <div key={i} className="flex justify-between text-sm p-2 bg-muted/50 rounded">
                     <span>{r.date} {r.label}</span>
                     <span className="font-medium" style={{ color: r.color }}>
@@ -1195,6 +1233,16 @@ export default function EmployeePayrollDetailPage() {
                     </span>
                   </div>
                 ))}
+                {/* ★ D3：對數行（mobile） */}
+                <div className="flex justify-between text-sm p-2 font-semibold border-t-2">
+                  <span>合計 <span className="text-xs font-normal text-muted-foreground">逐行 {rowsTotal} ＋ 上月結轉 {carriedFromVal}</span></span>
+                  <span>{rowsTotal + carriedFromVal} 分</span>
+                </div>
+                {tbMismatch && (
+                  <div className="p-2 text-xs text-red-600">
+                    ⚠️ 對唔到餘額（{liveBalance}）—— 仲有未顯示嘅項目，請報告
+                  </div>
+                )}
               </div>
             </div>
           </div>

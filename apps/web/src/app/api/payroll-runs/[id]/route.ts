@@ -5,7 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
-import { toHKDateStr, hkDateStart } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart, getMonthRange } from '@/lib/hk-date'
 import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
 // ★ cwm-tbcache-rosterdiff-20260909：寫／刪 TimeBankEntry 一定要 invalidate 快取（坑④）
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
@@ -70,6 +70,29 @@ export async function GET(
     )
   }
 
+  // ★ cwm-tbcache-rosterdiff-20260909 D1：時間帳戶明細要見到人手 entry。
+  //   ⚠️ 只攞【影響時間帳戶餘額】嘅 type —— RESTDAY_GRANT 係假期發放（另一本帳），
+  //      夾硬列出嚟會令逐行加總對唔到餘額，仲亂。
+  //   ⚠️ 一次過攞（employeeId in 全部 item），唔准逐個員工 query。
+  const TB_DISPLAY_TYPES = [
+    'MAKEUP', 'LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF',
+  ]
+  const { start: tbStart, end: tbEnd } = getMonthRange(run.periodMonth)
+  const tbEntries = await prisma.timeBankEntry.findMany({
+    where: {
+      employeeId: { in: items.map(i => i.employeeId) },
+      type: { in: TB_DISPLAY_TYPES },
+      date: { gte: tbStart, lte: tbEnd },
+    },
+    select: { employeeId: true, date: true, type: true, targetType: true, minutes: true, note: true },
+    orderBy: [{ date: 'asc' }],
+  })
+  const tbByEmp = new Map<string, typeof tbEntries>()
+  for (const e of tbEntries) {
+    const arr = tbByEmp.get(e.employeeId) ?? []
+    arr.push(e); tbByEmp.set(e.employeeId, arr)
+  }
+
   // ★ Extract sickDeduction from detailJson for each item
   //   (2026-08-02: sickDeduction is stored in detailJson, not in PayrollItem.deduction)
   const itemsWithSickDeduction = items.map((it: any) => ({
@@ -77,6 +100,8 @@ export async function GET(
     sickDeduction: (() => {
       try { return JSON.parse(it.detailJson || '{}').sickDeduction ?? 0 } catch { return 0 }
     })(),
+    // ★ D1：ROSTER_DIFF 必須即時查（唔可以由 detailJson 攞 — 佢凍結喺 finalize 之前）
+    manualEntries: tbByEmp.get(it.employeeId) ?? [],
   }))
 
   // ★ Totals recalculated from visible items only (prevents reverse-engineering)

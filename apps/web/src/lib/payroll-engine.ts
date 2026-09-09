@@ -1227,7 +1227,7 @@ interface WorkData {
   absentDays: number
   otDeductedAbsences: Array<{ date: string; minutes: number }>
   shifts: any[]
-  makeupEntries: Array<{ date: string; minutes: number; note: string }>
+  makeupEntries: Array<{ date: string; minutes: number; note: string; targetType: string | null }>
   leaveByType: Array<{ leaveTypeName: string; days: number; dates: string[]; isPaid: boolean; systemKey: string | null }>
 }
 
@@ -2595,7 +2595,7 @@ async function collectWorkData(
 
   // Late/Early records: use getEffectivePunches (void排除 + 修正套用)
   // 🔧 Fetch MAKEUP entries — days with makeup should NOT count as late/early
-  let makeupEntries: Array<{ date: string; minutes: number; note: string }> = []
+  let makeupEntries: Array<{ date: string; minutes: number; note: string; targetType: string | null }> = []
   const makeupLateDates = new Set<string>()
   const makeupEarlyDates = new Set<string>()
   const makeupAbsentDates = new Map<string, number>()  // dateStr -> shiftMinutes (ABSENT)
@@ -2611,6 +2611,8 @@ async function collectWorkData(
       date: toHKDateStr(e.date),
       minutes: Math.abs(e.minutes),
       note: e.note || '',
+      // ★ cwm-tbcache-rosterdiff-20260909 E：文案按 targetType 細分（ABSENT/EARLY_LEAVE/LATE）
+      targetType: e.targetType ?? null,
     }))
     // Split by targetType
     for (const e of rawMakeupEntries) {

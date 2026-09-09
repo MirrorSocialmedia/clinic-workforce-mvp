@@ -5,6 +5,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
+// ★ cwm-tbcache-rosterdiff-20260909 D3：TimeBank 快取被 invalidate 後要現場重算（同 getCarriedFrom backfill 同語義）
+import { calculateTimeBank, persistTimeBank } from '@/lib/payroll-engine'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
 export async function GET(
@@ -147,6 +149,46 @@ export async function GET(
   }
   rosterSpanMinutes = Math.round(rosterSpanMinutes)
 
+  // ★ cwm-tbcache-rosterdiff-20260909 D1：時間帳戶明細要見到人手 entry。
+  //   只攞【影響時間帳戶餘額】嘅 type —— RESTDAY_GRANT 係假期發放（另一本帳），
+  //   夾硬列出嚟會令逐行加總對唔到餘額。ROSTER_DIFF 必須即時查（唔可以由 detailJson 攞 —
+  //   佢凍結喺 finalize 寫 ROSTER_DIFF 之前）。
+  const TB_DISPLAY_TYPES = [
+    'MAKEUP', 'LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF',
+  ]
+  const manualEntries = await prisma.timeBankEntry.findMany({
+    where: {
+      employeeId: params.empId,
+      type: { in: TB_DISPLAY_TYPES },
+      date: { gte: periodStart, lte: periodEnd },
+    },
+    select: { employeeId: true, date: true, type: true, targetType: true, minutes: true, note: true },
+    orderBy: [{ date: 'asc' }],
+  })
+
+  // ★ cwm-tbcache-rosterdiff-20260909 D3：對數行嘅「餘額」要用【live 時間帳戶】——
+  //   detailJson 喺 generate 時凍結，永遠冇自己嗰筆 ROSTER_DIFF（問題二）；
+  //   finalize 會 invalidate 快取 → 冇 row 就現場重算＋寫回（「下次讀重算」同語義）。
+  let liveTb: { balance: number; carriedFrom: number } | null = null
+  try {
+    const tbRow = await prisma.timeBank.findFirst({
+      where: { employeeId: params.empId, periodMonth: { gte: periodStart, lte: periodEnd } },
+      select: { balance: true, carriedFrom: true },
+    })
+    if (tbRow && typeof tbRow.balance === 'number') {
+      liveTb = { balance: tbRow.balance, carriedFrom: tbRow.carriedFrom ?? 0 }
+    } else {
+      const cfg = payRules[0]?.configJson ? (JSON.parse(payRules[0].configJson) as any) : {}
+      const timeBankConfig = { negative_carry: 'reset', ...(cfg?.modifiers?.time_bank ?? {}) }
+      const computed = await calculateTimeBank(params.empId, periodStart, timeBankConfig, prisma)
+      await persistTimeBank(prisma, params.empId, periodStart, computed)
+      liveTb = { balance: computed.balance, carriedFrom: computed.carriedFrom }
+    }
+  } catch (e) {
+    // 重算失敗唔阻擋頁面 —— liveTb=null → D3 對數行退化做 detailJson 口徑
+    console.error('[payroll-emp-detail] live TimeBank 解析失敗，對數行退化 detailJson 口徑', e)
+  }
+
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
   const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]
   const clinicsMap = new Map<string, { name: string; shortName: string | null }>()
@@ -159,13 +201,16 @@ export async function GET(
   }
 
   return NextResponse.json({
-    item, detail, punches, leaves, corrections,
+    item: { ...item, manualEntries },
+    detail, punches, leaves, corrections,
     clinicsMap: Object.fromEntries(clinicsMap),
     periodMonth: periodMonthKey(item.run.periodMonth),
     // ★ 編更差額
     rosterSpanMinutes,
     expectedMinutes,
     rosterDiffMinutes: rosterSpanMinutes - expectedMinutes,
+    // ★ cwm-tbcache-rosterdiff-20260909 D3：live 時間帳戶（對數行用）
+    timeBank: liveTb,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })
