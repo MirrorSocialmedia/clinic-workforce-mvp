@@ -69,6 +69,10 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'MATERIAL_ITEM_UPDATE', label: '材料項目停用／改到期日' },
   // ★ 2026-09-02 cwm-costnote：「已完成」綠剔狀態變更
   { action: 'COST_CASE_STATUS', label: '成本個案狀態變更（已完成標記）' },
+  // ★ cwm-payoutxlsx-20260908 D2: 雜項收入
+  { action: 'MISC_INCOME_CREATE', label: '新增雜項收入' },
+  { action: 'MISC_INCOME_UPDATE', label: '更新雜項收入' },
+  { action: 'MISC_INCOME_VOID', label: '作廢雜項收入' },
   { action: 'PATIENT_NAME_PURGE', label: 'PII 清理 — 清除病人姓名' },
   // ★ MD-C: Apricot Data Layer
   { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },

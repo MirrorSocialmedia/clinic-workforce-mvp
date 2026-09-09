@@ -26,8 +26,11 @@ interface RuleResult {
   needsReview: boolean
 }
 
-/** 解決 PaymentMethodRule — 按 method + paidAt resolve (pure function, rules from cache) */
-function resolveMethodRule(methodNorm: string, paidAt: Date, allRules: PaymentMethodRule[]): RuleResult {
+/**
+ * 解決 PaymentMethodRule — 按 method + paidAt resolve (pure function, rules from cache)
+ * ★ cwm-payoutxlsx-20260908 D2：export 畀雜項收入 API 驗證用（MD：唔准另寫一次）
+ */
+export function resolveMethodRule(methodNorm: string, paidAt: Date, allRules: PaymentMethodRule[]): RuleResult {
   const applicable = allRules
     .filter(r =>
       r.method === methodNorm &&

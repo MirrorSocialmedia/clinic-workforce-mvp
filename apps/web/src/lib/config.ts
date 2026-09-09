@@ -323,6 +323,11 @@ export const CONFIG = {
     // ★ MD-F: Cost Entry bill picker
     'GET /api/cost-cases/patient-search': ['OWNER', 'MANAGER'],
     'GET /api/cost-cases/bill-search': ['OWNER', 'MANAGER'],
+    // ★ cwm-payoutxlsx-20260908 D2: 雜項收入（前台日常；cost_entry 權限覆蓋見 RBAC_PERM_OVERRIDES）
+    'GET /api/misc-income': ['OWNER', 'MANAGER'],
+    'POST /api/misc-income': ['OWNER', 'MANAGER'],
+    'PUT /api/misc-income/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/misc-income/:id': ['OWNER', 'MANAGER'],
     // Lab 主檔
     'GET /api/labs': ['OWNER', 'MANAGER'],
     'POST /api/labs': ['OWNER'],
@@ -543,6 +548,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ Y4: provider_payout 也可以用病人/帳單搜尋
   'GET /api/cost-cases/patient-search': ['cost_entry', 'provider_payout'],
   'GET /api/cost-cases/bill-search': ['cost_entry', 'provider_payout'],
+  // ★ cwm-payoutxlsx-20260908 D2: 雜項收入 —— 前台日常工作，同成本錄入同一批人（cost_entry）
+  //   睇月報／出月結先係 OWNER，呢度唔放寬到 provider_payout
+  'GET /api/misc-income': ['cost_entry'],
+  'POST /api/misc-income': ['cost_entry'],
+  'PUT /api/misc-income/:id': ['cost_entry'],
+  'DELETE /api/misc-income/:id': ['cost_entry'],
   //   provider_payout 權限：折扣設定 / 材料單價（只 OWNER）
   'POST /api/cost-cases/recompute': ['provider_payout'],
   'POST /api/labs': ['provider_payout'],
