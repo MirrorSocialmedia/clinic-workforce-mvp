@@ -11,6 +11,9 @@ import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 // ★ cwm-lbsnap-asof-20260909：snapshot 要同排班總覽「剩餘」用同一個口徑
 import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
+// ★ cwm-tbledger-20260909 C1：finalize 凍結時間帳戶帳本（同讀取側總覽用同一個 builder）
+import { buildTimeBankLedger } from '@/lib/timebank-ledger'
+import { TIMEBANK_ENGINE_VERSION } from '@/lib/payroll-engine'
 
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
@@ -203,6 +206,9 @@ export async function PUT(
         const periodKey = (v: string | Date) =>
           typeof v === 'string' ? v.slice(0, 7) : toHKDateStr(v).slice(0, 7)
 
+        // cwm-tbledger-20260909 C2：finalize 凍結人數 — 供尾段 PAYROLL_FINALIZE audit notes 用
+        let frozenCount = 0
+
         // ★★ DRAFT → FINALIZED: auto-snapshot wage records for ADW
         if (status === 'FINALIZED' && run.status === 'DRAFT') {
           await snapshotWagesForADW(tx, params.id, auditCtx.actorId)
@@ -278,6 +284,37 @@ export async function PUT(
               where: { employeeId: { in: touchedEmpIds }, periodMonth: { gte: monthStart } },
             })
           }
+
+          // ★★★ cwm-tbledger-20260909 C1：凍結時間帳戶帳本。
+          //   位置一定要喺 ROSTER_DIFF 寫入【之後】—— ROSTER_DIFF 係嗰個月帳本嘅一行，
+          //   先凍結後寫就永遠漏咗佢（LeaveBalanceSnapshot 撞過同一個坑）。
+          //   upsert 唔用 create —— 重 FINALIZE（FINALIZED→DRAFT→FINALIZED）idempotent。
+          for (const item of items) {
+            const empId = item.employee.id
+            let cfg: any = {}
+            try { cfg = JSON.parse(item.employee.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
+            if (cfg?.base_type === 'hourly') continue          // ★ 時薪／兼職唔設時間帳戶
+
+            const ledger = await buildTimeBankLedger(tx, empId, pm, cfg)
+            await tx.timeBankLedgerSnapshot.upsert({
+              where: { employeeId_periodMonth: { employeeId: empId, periodMonth: pm } },
+              update: {
+                opening: ledger.opening, closing: ledger.closing,
+                linesJson: JSON.stringify(ledger.lines),
+                engineVersion: TIMEBANK_ENGINE_VERSION,
+                frozenAt: new Date(), frozenBy: session.userId,
+              },
+              create: {
+                employeeId: empId, periodMonth: pm,
+                opening: ledger.opening, closing: ledger.closing,
+                linesJson: JSON.stringify(ledger.lines),
+                engineVersion: TIMEBANK_ENGINE_VERSION,
+                frozenBy: session.userId,
+              },
+            })
+            frozenCount++
+          }
+          console.log(`[payroll-finalize] 凍結咗 ${frozenCount} 人 TimeBankLedgerSnapshot（${pm}）`)
 
           // ★ 2026-08-22 §6.2.2：假期餘額月結快照 —— 下個月排班總覽「上月剩」欄靠佢
           //   範圍：run 內全部員工（複用上面對面攞到嘅 items，唔多發 query）× 佢哋全部
@@ -366,6 +403,12 @@ export async function PUT(
           })
           console.log(`[payroll-revert] 刪咗 ${snapDeleted.count} 筆 LeaveBalanceSnapshot`)
 
+          // ★ cwm-tbledger-20260909 C3：退回要刪帳本快照 —— 唔刪嘅話總覽會顯示「已凍結」但實際已經退咗
+          const ledgerDeleted = await tx.timeBankLedgerSnapshot.deleteMany({
+            where: { employeeId: { in: itemsRevert.map(i => i.employeeId) }, periodMonth: pk },
+          })
+          console.log(`[payroll-revert] 刪咗 ${ledgerDeleted.count} 筆 TimeBankLedgerSnapshot`)
+
           // ★ cwm-tbcache-rosterdiff-20260909 A3：刪 ROSTER_DIFF 一樣要 invalidate —— 唔刪快取嘅話，
           //   退回之後條鏈仍然當嗰筆存在（方向相反，同一個病）。
           //   批次版：一次 deleteMany（幾十人逐個發 query 2026-08-15 撞過 transaction timeout）。
@@ -401,7 +444,7 @@ export async function PUT(
             entity: 'PayrollRun',
             entityId: result.id,
             afterJson: JSON.stringify(result),
-            notes: `PayrollRun status changed: ${run.status} → ${status ?? 'unchanged'}${payDate !== undefined ? `; payDate → ${payDate || null}` : ''}`,
+            notes: `PayrollRun status changed: ${run.status} → ${status ?? 'unchanged'}${payDate !== undefined ? `; payDate → ${payDate || null}` : ''}${status === 'FINALIZED' && run.status === 'DRAFT' ? `；確認計糧: ${periodKey(run.periodMonth)}（凍結時間帳戶帳本 ${frozenCount} 人）` : ''}`,
             ipAddress: auditCtx.ip || null,
             userAgent: auditCtx.ua || null,
           },
