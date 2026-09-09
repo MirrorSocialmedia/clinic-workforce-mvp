@@ -7,6 +7,8 @@ import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
 import { toHKDateStr, hkDateStart } from '@/lib/hk-date'
 import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
+// ★ cwm-lbsnap-asof-20260909：snapshot 要同排班總覽「剩餘」用同一個口徑
+import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
@@ -250,6 +252,32 @@ export async function PUT(
                 const k = `${b.employeeId}|${b.leaveTypeId}`
                 byEmpType.set(k, (byEmpType.get(k) ?? 0) + b.remaining)
               }
+
+              // ★ cwm-lbsnap-asof-20260909 A2：REST_DAY 唔可以抄 LeaveBalance.remaining ——
+              //   嗰個係【成個曆年嘅滾動值】，已經包含下個月已發放嘅休息日同已批嘅假期單。
+              //   八月尾／九月初先確認計糧，snapshot 就會攞到「9 月已發、9 月已放」之後嘅數，
+              //   令下個月「上月剩」對唔返上個月「剩餘」（實測 Jesscia 1 → −1、Luna 0 → 8）。
+              //   ★★★ 一定要同 scheduling-leave-summary 個「剩餘」用【同一個 helper】——
+              //      2026-09-05 cwm-lvsum 只改咗讀取側，寫入側漏咗（坑⑥）。
+              //   ⚠️ helper 只支援 REST_DAY（年假／OT補假／生日假冇逐月發放記錄）→ 其餘類型照舊抄。
+              const restType = await tx.leaveType.findFirst({
+                where: { systemKey: 'REST_DAY' },
+                select: { id: true },
+              })
+              if (restType) {
+                // pm = periodKey(run.periodMonth)（:193 已算，格式 'YYYY-MM'）
+                const [ry, rm] = pm.split('-').map(Number)
+                const runLastDay = new Date(Date.UTC(ry, rm, 0)).getUTCDate()
+                const runMonthEnd = `${pm}-${String(runLastDay).padStart(2, '0')}`
+                // ⚠️ 傳 tx 入去 —— helper 係純讀，而且要見到本 transaction 已寫入嘅嘢
+                const asOfRest = await restDayBalanceAsOf(tx, snapEmpIds, runMonthEnd)
+                for (const [empId, v] of asOfRest) {
+                  // ★ 係【覆寫】唔係相加 —— helper 已經回一個員工一個值
+                  byEmpType.set(`${empId}|${restType.id}`, v.remaining)
+                }
+                // ★ helper 冇回嘅員工（冇 LeaveBalance REST_DAY 行）→ 保留上面抄嘅值（多數係冇呢個 key）
+              }
+
               // ★ #50：periodMonth 用同 revert 端同一個 periodKey helper 導出（pm）——
               //   兩邊格式唔一致（例如 '2026-08' vs '2026-8'）會令退回刪唔到快照。
               await tx.leaveBalanceSnapshot.deleteMany({
