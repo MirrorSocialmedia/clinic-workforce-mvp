@@ -86,6 +86,11 @@ export async function GET(
   const tbSnapByEmp = new Map(tbSnaps.map(s => [s.employeeId, s]))
   const ledgerByEmp = new Map<string, any>()
   for (const it of items) {
+    // ★ 補丁A：時薪唔設時間帳戶 → ledger 唔計（item.timeBankLedger=null）→ UI 卡片 fallback 返 detailJson、新行唔渲染。
+    //   時薪員工冇 TimeBankEntry，live build 會回全 0 帳本，誤畫「兩清」卡。
+    let cfg: any = {}
+    try { cfg = JSON.parse(it.employee?.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
+    if (cfg?.base_type === 'hourly') continue
     const snap = tbSnapByEmp.get(it.employeeId)
     if (snap) {
       let snapLines: any[] = []
@@ -102,8 +107,6 @@ export async function GET(
         engineVersion: snap.engineVersion,
       })
     } else {
-      let cfg: any = {}
-      try { cfg = JSON.parse(it.employee?.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
       try {
         ledgerByEmp.set(it.employeeId, await buildTimeBankLedger(prisma, it.employeeId, tbPeriodKey, cfg))
       } catch (e) {

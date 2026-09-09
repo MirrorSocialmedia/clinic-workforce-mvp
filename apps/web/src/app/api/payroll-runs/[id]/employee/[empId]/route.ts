@@ -159,27 +159,31 @@ export async function GET(
   const pmKey = periodMonthKey(item.run.periodMonth)
   let ledger: LedgerMonth | null = null
   try {
-    const snap = await prisma.timeBankLedgerSnapshot.findUnique({
-      where: { employeeId_periodMonth: { employeeId: params.empId, periodMonth: pmKey } },
-    })
-    if (snap) {
-      let snapLines: any[] = []
-      try { snapLines = JSON.parse(snap.linesJson) } catch { snapLines = [] }
-      const snapSum = snapLines.reduce((s: number, l: any) => s + (Number(l.minutes) || 0), 0)
-      ledger = {
-        periodMonth: pmKey,
-        opening: snap.opening,
-        closing: snap.closing,
-        lines: snapLines,
-        // 凍結後都要重算對數 —— snapshot 加唔埋就標紅（唔好盲信）
-        reconciles: snap.opening + snapSum === snap.closing,
-        frozen: true,
-        frozenAt: snap.frozenAt.toISOString(),
-        engineVersion: snap.engineVersion,
+    // ★ 補丁A：時薪唔設時間帳戶 → ledger 維持 null（UI 卡片 fallback 返 detailJson、新行唔渲染）。
+    //   時薪員工冇 TimeBankEntry，live build 會回全 0 帳本，誤畫「兩清」卡。
+    const cfg = payRules[0]?.configJson ? (JSON.parse(payRules[0].configJson) as any) : {}
+    if (cfg?.base_type !== 'hourly') {
+      const snap = await prisma.timeBankLedgerSnapshot.findUnique({
+        where: { employeeId_periodMonth: { employeeId: params.empId, periodMonth: pmKey } },
+      })
+      if (snap) {
+        let snapLines: any[] = []
+        try { snapLines = JSON.parse(snap.linesJson) } catch { snapLines = [] }
+        const snapSum = snapLines.reduce((s: number, l: any) => s + (Number(l.minutes) || 0), 0)
+        ledger = {
+          periodMonth: pmKey,
+          opening: snap.opening,
+          closing: snap.closing,
+          lines: snapLines,
+          // 凍結後都要重算對數 —— snapshot 加唔埋就標紅（唔好盲信）
+          reconciles: snap.opening + snapSum === snap.closing,
+          frozen: true,
+          frozenAt: snap.frozenAt.toISOString(),
+          engineVersion: snap.engineVersion,
+        }
+      } else {
+        ledger = await buildTimeBankLedger(prisma, params.empId, pmKey, cfg)
       }
-    } else {
-      const cfg = payRules[0]?.configJson ? (JSON.parse(payRules[0].configJson) as any) : {}
-      ledger = await buildTimeBankLedger(prisma, params.empId, pmKey, cfg)
     }
   } catch (e) {
     // 即時算失敗唔阻擋頁面 —— ledger=null → 時間帳戶明細區塊隱藏（舊 D3 退化語義）

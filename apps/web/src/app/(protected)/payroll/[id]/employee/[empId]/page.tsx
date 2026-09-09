@@ -1090,7 +1090,10 @@ export default function EmployeePayrollDetailPage() {
               </div>
               {/* 時間帳戶 — 取代 OT剩餘+拖欠 兩卡 */}
               {(() => {
-                const timeAccount = tb.timeAccountMinutes ?? '—'
+                // ★ cwm-tbledger-20260909 補丁A：餘額 = 帳本期末（freeze 時序啱）。detailJson 嗰個
+                //   timeAccountMinutes 凍結喺 run 生成時（ROSTER_DIFF 寫入之前），必然缺一行；
+                //   ledger=null（時薪／即時算失敗）先 fallback 返 detailJson 舊值。
+                const timeAccount = tbLedger ? tbLedger.closing : (tb.timeAccountMinutes ?? '—')
                 if (typeof timeAccount !== 'number') {
                   return (
                     <div className="rounded-lg border p-3">
@@ -1122,8 +1125,17 @@ export default function EmployeePayrollDetailPage() {
                       {' − '}補鐘 {tb.makeupMinutes ?? 0}{' − '}淨遲到 {tb.netLateMinutes ?? 0}{' − '}淨早退 {tb.netEarlyMinutes ?? 0}
                       {' = '}{tb.netOtThisMonth ?? '—'}
                       {(tb.carriedFrom ?? 0) !== 0 && <><br/>上月結轉 {tb.carriedFrom} + 本月實得 {tb.netOtThisMonth ?? '—'}
-                      {(tb.convertedMinutes ?? 0) !== 0 && ` + 調整 ${tb.convertedMinutes}`} = {timeAccount}</>}
+                      {(tb.convertedMinutes ?? 0) !== 0 && ` + 調整 ${tb.convertedMinutes}`}</>}
                     </div>
+                    {/* ★ cwm-tbledger-20260909 補丁A：期初＋逐筆＝期末（帳本口徑；上方「本月實得」行係 OT 拆解，兩行講唔同嘢，都要留） */}
+                    {tbLedger && (
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        期初 {tbLedger.opening} ＋ 本月逐筆 {tbLedger.closing - tbLedger.opening} ＝ <b>{tbLedger.closing}</b>
+                        {tbLedger.frozen && tbLedger.frozenAt
+                          ? <span className="ml-1">🔒 已凍結 {toHKDateStr(new Date(tbLedger.frozenAt))}</span>
+                          : <span className="ml-1">⏳ 即時計算</span>}
+                      </div>
+                    )}
                   </div>
                 )
               })()}
