@@ -5,8 +5,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
-// ★ cwm-tbcache-rosterdiff-20260909 D3：TimeBank 快取被 invalidate 後要現場重算（同 getCarriedFrom backfill 同語義）
-import { calculateTimeBank, persistTimeBank } from '@/lib/payroll-engine'
+// ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder（同員工總覽同一把尺）
+import { buildTimeBankLedger, type LedgerMonth } from '@/lib/timebank-ledger'
 
 // GET /api/payroll-runs/[id]/employee/[empId] — Single employee payroll detail
 export async function GET(
@@ -149,44 +149,41 @@ export async function GET(
   }
   rosterSpanMinutes = Math.round(rosterSpanMinutes)
 
-  // ★ cwm-tbcache-rosterdiff-20260909 D1：時間帳戶明細要見到人手 entry。
-  //   只攞【影響時間帳戶餘額】嘅 type —— RESTDAY_GRANT 係假期發放（另一本帳），
-  //   夾硬列出嚟會令逐行加總對唔到餘額。ROSTER_DIFF 必須即時查（唔可以由 detailJson 攞 —
-  //   佢凍結喺 finalize 寫 ROSTER_DIFF 之前）。
-  const TB_DISPLAY_TYPES = [
-    'MAKEUP', 'LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF',
-  ]
-  const manualEntries = await prisma.timeBankEntry.findMany({
-    where: {
-      employeeId: params.empId,
-      type: { in: TB_DISPLAY_TYPES },
-      date: { gte: periodStart, lte: periodEnd },
-    },
-    select: { employeeId: true, date: true, type: true, targetType: true, minutes: true, note: true },
-    orderBy: [{ date: 'asc' }],
-  })
-
-  // ★ cwm-tbcache-rosterdiff-20260909 D3：對數行嘅「餘額」要用【live 時間帳戶】——
-  //   detailJson 喺 generate 時凍結，永遠冇自己嗰筆 ROSTER_DIFF（問題二）；
-  //   finalize 會 invalidate 快取 → 冇 row 就現場重算＋寫回（「下次讀重算」同語義）。
-  let liveTb: { balance: number; carriedFrom: number } | null = null
+  // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder ——
+  //   舊嘅「自己查 TimeBankEntry（TB_DISPLAY_TYPES）＋ live TimeBank 對數」兩套並存 = 坑②，此處收埋。
+  //   同員工總覽（S3 讀取 API）同一把尺：
+  //   · 有 TimeBankLedgerSnapshot（finalize 凍結）→ 讀凍結 lines（frozen:true）＝「証明」口徑；
+  //   · 冇 snapshot → buildTimeBankLedger 即時算（frozen:false）＝舊 live 口徑（未 finalize 月行為不變）。
+  //   帳本行齊晒：推導行（原始遲到/早退，同糧單七種一致）＋實體行（RESTDAY_GRANT 唔喺 ledger，
+  //   假期另一本帳）＋informational 0 分行（遲到/早退補鐘已抵銷）＋RECONCILE 未分類差額。
+  const pmKey = periodMonthKey(item.run.periodMonth)
+  let ledger: LedgerMonth | null = null
   try {
-    const tbRow = await prisma.timeBank.findFirst({
-      where: { employeeId: params.empId, periodMonth: { gte: periodStart, lte: periodEnd } },
-      select: { balance: true, carriedFrom: true },
+    const snap = await prisma.timeBankLedgerSnapshot.findUnique({
+      where: { employeeId_periodMonth: { employeeId: params.empId, periodMonth: pmKey } },
     })
-    if (tbRow && typeof tbRow.balance === 'number') {
-      liveTb = { balance: tbRow.balance, carriedFrom: tbRow.carriedFrom ?? 0 }
+    if (snap) {
+      let snapLines: any[] = []
+      try { snapLines = JSON.parse(snap.linesJson) } catch { snapLines = [] }
+      const snapSum = snapLines.reduce((s: number, l: any) => s + (Number(l.minutes) || 0), 0)
+      ledger = {
+        periodMonth: pmKey,
+        opening: snap.opening,
+        closing: snap.closing,
+        lines: snapLines,
+        // 凍結後都要重算對數 —— snapshot 加唔埋就標紅（唔好盲信）
+        reconciles: snap.opening + snapSum === snap.closing,
+        frozen: true,
+        frozenAt: snap.frozenAt.toISOString(),
+        engineVersion: snap.engineVersion,
+      }
     } else {
       const cfg = payRules[0]?.configJson ? (JSON.parse(payRules[0].configJson) as any) : {}
-      const timeBankConfig = { negative_carry: 'reset', ...(cfg?.modifiers?.time_bank ?? {}) }
-      const computed = await calculateTimeBank(params.empId, periodStart, timeBankConfig, prisma)
-      await persistTimeBank(prisma, params.empId, periodStart, computed)
-      liveTb = { balance: computed.balance, carriedFrom: computed.carriedFrom }
+      ledger = await buildTimeBankLedger(prisma, params.empId, pmKey, cfg)
     }
   } catch (e) {
-    // 重算失敗唔阻擋頁面 —— liveTb=null → D3 對數行退化做 detailJson 口徑
-    console.error('[payroll-emp-detail] live TimeBank 解析失敗，對數行退化 detailJson 口徑', e)
+    // 即時算失敗唔阻擋頁面 —— ledger=null → 時間帳戶明細區塊隱藏（舊 D3 退化語義）
+    console.error('[payroll-emp-detail] timebank ledger 解析失敗，明細區塊退化隱藏', e)
   }
 
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
@@ -201,7 +198,7 @@ export async function GET(
   }
 
   return NextResponse.json({
-    item: { ...item, manualEntries },
+    item,
     detail, punches, leaves, corrections,
     clinicsMap: Object.fromEntries(clinicsMap),
     periodMonth: periodMonthKey(item.run.periodMonth),
@@ -209,8 +206,8 @@ export async function GET(
     rosterSpanMinutes,
     expectedMinutes,
     rosterDiffMinutes: rosterSpanMinutes - expectedMinutes,
-    // ★ cwm-tbcache-rosterdiff-20260909 D3：live 時間帳戶（對數行用）
-    timeBank: liveTb,
+    // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶帳本（snapshot 優先 + 對數行 reconciles）
+    timeBankLedger: ledger,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })
