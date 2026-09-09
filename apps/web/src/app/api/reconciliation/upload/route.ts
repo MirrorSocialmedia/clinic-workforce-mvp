@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
 	try {
 		// 解析
 		const buf = Buffer.from(await file.arrayBuffer())
-		const { meta, rows, skipped } = parsePaymentReport(buf)
+		const { meta, rows, skipped, blankRows } = parsePaymentReport(buf)
 
 		// 月份驗證：UI 傳入嘅月份要同報表一致
 		if (periodMonth && meta.month !== periodMonth) {
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
 				systemTotal: result.systemTotal,
 				difference: result.difference,
 				status: result.status,
-				detailJson: buildDetail(result, skipped), // ★ MD-AC1: 跳過行數入 detailJson（唔改 schema）
+				detailJson: buildDetail(result, skipped, blankRows), // ★ MD-AC1: 跳過行數入 detailJson（唔改 schema）
 				reportCharges: result.reportCharges,
 				chargesVsPaid: result.chargesVsPaid,
 				uploadedBy: session.userId,
@@ -78,7 +78,8 @@ export async function POST(req: NextRequest) {
 				entity: 'ReconciliationImport',
 				entityId: record.id,
 				notes: `上載月報對數: ${clinic.shortName || clinic.name} ${meta.month} — ${result.status}`
-					+ (skipped > 0 ? `（跳過 ${skipped} 行）` : ''), // ★ A3：notes 帶診所名
+					+ (skipped > 0 ? `（解析失敗 ${skipped} 行）` : '')
+					+ (blankRows > 0 ? `（空行 ${blankRows} 行）` : ''), // ★ B3：空行唔係警告，同 skipped 分開顯示
 				afterJson: JSON.stringify({
 					providerId: provider.id,
 					clinicId: clinic.id, // ★ A3
@@ -96,6 +97,7 @@ export async function POST(req: NextRequest) {
 			status: result.status,
 			clinic: clinic.shortName || clinic.name, // ★ A3：return 帶診所名
 			skipped, // ★ MD-AC1: UI 顯示「跳過 N 行」
+			blankRows, // ★ cwm-recon-clinic-20260909 B3: UI 顯示「空行 N」（唔係警告）
 			difference: result.difference,
 			reportTotal: result.reportTotal,
 			reportCharges: result.reportCharges,
@@ -182,7 +184,7 @@ function buildDetail(result: {
 	status: string
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
 	byMethod: Array<{ method: string; amount: number }>
-}, skipped = 0): Record<string, any> {
+}, skipped = 0, blankRows = 0): Record<string, any> {
 	return {
 		reportTotal: result.reportTotal,
 		reportCharges: result.reportCharges,
@@ -194,5 +196,6 @@ function buildDetail(result: {
 		byDay: result.byDay,
 		byMethod: result.byMethod,
 		skipped, // ★ MD-AC1
+		blankRows, // ★ cwm-recon-clinic-20260909 B3
 	}
 }

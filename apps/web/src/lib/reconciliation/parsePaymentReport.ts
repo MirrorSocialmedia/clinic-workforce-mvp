@@ -16,6 +16,8 @@ export interface ParsedReport {
 	rows: ParsedRow[]
 	// ★ MD-AC1: 日期解析唔到嘅行數 — 必須回報，唔好靜靜跳過
 	skipped: number
+	// ★ cwm-recon-clinic-20260909 B3: 冇 Transaction Code 嘅空行 — 同 skipped 分開計（「空行」唔係警告）
+	blankRows: number
 }
 
 export function parsePaymentReport(buf: Buffer): ParsedReport {
@@ -42,9 +44,15 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 	const rows: ParsedRow[] = []
 	let lastDate: string | null = null
 	let skipped = 0
+	let blankRows = 0 // ★ cwm-recon-clinic-20260909 B3
 	for (let i = headerRow + 1; i < raw.length; i++) {
 		const r = raw[i]
-		if (!r || !r[cols.code]) continue
+		// ★ cwm-recon-clinic-20260909 B1：GRAND TOTAL 之後係「付款方式小計表」
+		//   （A欄 = 方式名、B欄 = 金額）。parser 攞 A 欄當日期梗係解析唔到 →
+		//   之前會報「跳過 10 行」，嚇到人以為漏咗錢，其實一蚊都冇漏。
+		//   ★ 實測 TW 2026-08：第 195 行 GRAND TOTAL、第 197-206 行就係嗰 10 行。
+		if (r && r.some((c: any) => /grand\s*total/i.test(String(c ?? '')))) break
+		if (!r || !r[cols.code]) { blankRows++; continue } // ★ B3：空行計數（唔係 skipped）
 		const dateStr = String(r[cols.date] ?? '').trim()
 		if (/total|小計|合計/i.test(dateStr)) continue
 
@@ -53,6 +61,9 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 			const parsed = parseHKDate(r[cols.date])
 			if (!parsed) {
 				// ★ 一行爛資料唔應該毀晒成個上載 — 跳過呢行，但一定要計數回報
+				// ★ B2：一定要清 lastDate —— 唔清嘅話，呢一行嘅【拆分行】（空日期）
+				//   會承接上一張單嘅日期，靜靜入錯日而且唔會計入 skipped
+				lastDate = null
 				skipped++
 				continue
 			}
@@ -82,7 +93,7 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 		throw new Error('REPORT_CONTRACT_BROKEN: 有資料行但零行解析成功')
 	}
 
-	return { meta, rows, skipped }
+	return { meta, rows, skipped, blankRows }
 }
 
 // parseAmount: 處理千分位逗號、$ 符號、括號負數、空白、/
