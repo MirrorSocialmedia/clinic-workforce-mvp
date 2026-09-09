@@ -29,6 +29,7 @@ function groupBy<T>(items: T[], fn: (item: T) => string): Record<string, T[]> {
 interface CompareResult {
 	reportTotal: number
 	reportCharges: number // ★ AA2: Total Charges
+	clinicExtId: string // ★ cwm-recon-clinic-20260909 A1：今次對數收窄咗邊間（方便畫面顯示同 debug）
 	systemTotal: number
 	difference: number
 	chargesVsPaid: number // ★ AA2: charges - paid 差額
@@ -41,6 +42,10 @@ export async function compareReport(
 	providerId: string,
 	periodMonth: string,
 	rows: ParsedRow[],
+	// ★ cwm-recon-clinic-20260909 A1：報表係【一間】診所，系統一定要收窄到同一間。
+	//   ★★★ 必填，唔准 optional —— optional 嘅話將來新 caller 唔傳就靜靜變返「全部診所」，
+	//      呢個正正就係今次個 bug。做成必填，TS 會逼所有 caller 交代。
+	clinicExtId: string,
 ): Promise<CompareResult> {
 	// 1) 攞 provider 嘅 apricotId
 	const provider = await prisma.provider.findUnique({
@@ -56,6 +61,7 @@ export async function compareReport(
 		where: {
 			...ACTIVE_ALLOCATION,
 			providerExtId: provider.apricotId,
+			clinicExtId, // ★ A1：收窄到報表嗰間診所
 			periodMonth,
 			countAsIncome: true,
 		},
@@ -108,5 +114,5 @@ export async function compareReport(
 	}
 	byMethod.sort((a, b) => b.amount - a.amount)
 
-	return { reportTotal, reportCharges: totalCharges, systemTotal, difference, chargesVsPaid, status, byDay, byMethod }
+	return { reportTotal, reportCharges: totalCharges, clinicExtId, systemTotal, difference, chargesVsPaid, status, byDay, byMethod }
 }

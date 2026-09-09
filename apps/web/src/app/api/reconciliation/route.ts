@@ -24,12 +24,23 @@ export async function GET(req: NextRequest) {
 		},
 	})
 
+	// ★ cwm-recon-clinic-20260909 A4：ReconciliationImport 冇 clinic relation（得個 clinicId String?），
+	//   唔加 relation／migration —— 手動查（同 payout-runs/route.ts providerMap 同一 pattern）
+	const clinicIds = [...new Set(imports.map((r) => r.clinicId).filter((c): c is string => !!c))]
+	const clinics = await prisma.clinic.findMany({
+		where: { id: { in: clinicIds } },
+		select: { id: true, name: true, shortName: true },
+	})
+	const clinicMap = new Map(clinics.map((c) => [c.id, c]))
+
 	return jsonNoStore({
 		imports: imports.map((r) => ({
 			id: r.id,
 			providerId: r.providerId,
 			providerName: r.provider.name,
 			providerShortName: r.provider.shortName,
+			clinicId: r.clinicId,
+			clinicName: r.clinicId ? clinicMap.get(r.clinicId)?.shortName || clinicMap.get(r.clinicId)?.name || null : null, // ★ A4：唔標診所嘅話，同一醫生兩間鋪兩行會睇落一模一樣
 			periodMonth: r.periodMonth,
 			fileName: r.fileName,
 			rowCount: r.rowCount,

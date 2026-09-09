@@ -18,6 +18,8 @@ interface ReconciliationRecord {
   providerId: string
   providerName: string
   providerShortName: string | null
+  clinicId: string | null
+  clinicName: string | null // ★ cwm-recon-clinic-20260909 A4
   periodMonth: string
   fileName: string
   rowCount: number
@@ -336,10 +338,12 @@ function ReconciliationPageInner() {
                 const isMatch = r.status === 'MATCH'
                 const isMismatch = r.status === 'MISMATCH'
                 const name = r.providerShortName || r.providerName || '未知'
+                // ★ cwm-recon-clinic-20260909 A4：醫生欄標明診所（例：HO · TW）—— 同一醫生兩間鋪分唔到邊行係邊間
+                const doctorLabel = r.clinicName ? `${name} · ${r.clinicName}` : name
                 return (
                   <React.Fragment key={r.id}>
                     <tr className="border-b hover:bg-gray-50">
-                      <td className="p-3 font-medium">{name}</td>
+                      <td className="p-3 font-medium" title={r.clinicName ? `診所：${r.clinicName}` : undefined}>{doctorLabel}</td>
                       <td className="p-3 text-right tabular-nums">{fmt(r.systemTotal)}</td>
                       <td className="p-3 text-right tabular-nums">{fmt(r.reportTotal)}</td>
                       <td className={`p-3 text-right tabular-nums font-medium ${isMismatch ? 'text-red-600' : 'text-green-600'}`}>
