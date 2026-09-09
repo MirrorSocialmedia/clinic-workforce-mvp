@@ -192,25 +192,25 @@ function ReconciliationPageInner() {
     [handleFileSelect],
   )
 
+  // ★ cwm-recon-clinic-20260909 D：用返呢筆 import 嘅診所，唔好硬食 clinics[0]
   const handleBackfill = useCallback(
-    async (date: string) => {
-      if (!confirm(`確定要重新同步 ${date} 嘅 Apricot 數據？`)) return
+    async (date: string, clinicId: string | null, clinicName: string) => {
+      if (!confirm(`確定要重新同步 ${clinicName} ${date} 嘅 Apricot 數據？`)) return
+      if (!clinicId) {
+        alert('呢筆對數記錄冇診所資料（舊記錄），請重新上載一次報表先做 backfill')
+        return
+      }
       try {
-        const clinicRes = await apiFetch<{ clinics: { id: string }[] }>('/api/clinics')
-        if (!clinicRes.clinics?.length) {
-          alert('搵唔到診所')
-          return
-        }
         await apiFetch('/api/apricot/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            clinicId: clinicRes.clinics[0].id,
+            clinicId,
             from: date,
             to: date,
           }),
         })
-        alert('同步完成，請重新上載月報對數')
+        alert(`${clinicName} ${date} 同步完成，請重新上載月報對數`)
       } catch (e: any) {
         alert(`同步失敗: ${e.message}`)
       }
@@ -396,7 +396,7 @@ function ReconciliationPageInner() {
                                           {Math.abs(d.diff) > 0.01 && (
                                             <button
                                               className="text-xs text-blue-600 hover:underline"
-                                              onClick={() => handleBackfill(d.date)}
+                                              onClick={() => handleBackfill(d.date, r.clinicId, r.clinicName ?? '未知診所')}
                                             >
                                               ↻ backfill
                                             </button>
