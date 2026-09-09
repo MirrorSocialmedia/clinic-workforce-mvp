@@ -58,10 +58,24 @@ async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, mon
   //   金額類（monthly_salary / deduction_rate）唔影響分鐘，唔使入。
   //   將來加新 config 時問一句：改咗佢，同一批打卡會唔會算出唔同分鐘？
   //   會 → 要加入指紋；唔會 → 唔使。
+  // ★ cwm-tbcache-rosterdiff-20260909 B：帶上當月 TimeBankEntry 嘅指紋。
+  //   之前個 key 只 hash config —— 寫咗新 entry 個 key 唔變，快取照用舊 balance
+  //   （ROSTER_DIFF −510 就係咁走甩）。帶上之後，就算寫入方漏叫 invalidate 都會自動失效（自癒）。
+  let tbFp = '0:0'
+  try {
+    const agg = await db.timeBankEntry.aggregate({ // AGG-OK: cache fingerprint, not a business calculation
+      where: { employeeId, date: { gte: monthStart, lte: monthEnd } },
+      _count: { _all: true },
+      _sum: { minutes: true },
+    })
+    tbFp = `${agg?._count?._all ?? 0}:${agg?._sum?.minutes ?? 0}`
+  } catch { /* 舊 client / 測試 stub 冇 aggregate → 當冇指紋，退化成舊行為 */ }
+
   return `v${TIMEBANK_ENGINE_VERSION}:` + JSON.stringify({
     ot: cfg?.modifiers?.overtime ?? null,
     lunch: cfg?.modifiers?.lunch_break ?? null,
     rest: cfg?.working_days?.rest_days ?? null,
+    tb: tbFp,
   })
 }
 

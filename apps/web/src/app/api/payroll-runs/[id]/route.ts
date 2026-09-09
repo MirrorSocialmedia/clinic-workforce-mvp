@@ -7,6 +7,8 @@ import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
 import { toHKDateStr, hkDateStart } from '@/lib/hk-date'
 import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
+// ★ cwm-tbcache-rosterdiff-20260909：寫／刪 TimeBankEntry 一定要 invalidate 快取（坑④）
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 // ★ cwm-lbsnap-asof-20260909：snapshot 要同排班總覽「剩餘」用同一個口徑
 import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 
@@ -210,6 +212,10 @@ export async function PUT(
 
           const rosterHours = await computeRosterHours(empIds, pm, tx)
 
+          // ★ cwm-tbcache-rosterdiff-20260909 A2（坑④）：收集受影響員工 —— 迴圈後一次過
+          //   批次 invalidate TimeBank 快取（= 逐個叫 invalidateTimeBankFrom 的批次版，
+          //   一次 deleteMany；2026-08-15 逐人發 query 撞過 transaction timeout）。
+          const touchedEmpIds: string[] = []
           for (const item of items) {
             const payRule = item.employee.payRules[0]
             if (!payRule || payRule.payType !== 'MONTHLY') continue
@@ -229,6 +235,22 @@ export async function PUT(
                 note: `${rosterDiffNote(pm)}：已編班 ${((rh?.rosterMinutes ?? 0) / 60).toFixed(1)}h − 應返 ${((rh?.expectedMinutes ?? 0) / 60).toFixed(1)}h`,
                 createdBy: session.userId,
               },
+            })
+            touchedEmpIds.push(empId)
+          }
+
+          // ★★★ cwm-tbcache-rosterdiff-20260909 A2（坑④）：寫咗 TimeBankEntry 就一定要
+          //   invalidate，否則 getCarriedFrom（payroll-engine.ts:1461-1466）會攞舊 TimeBank
+          //   快取直接 return，呢筆 ROSTER_DIFF 永遠唔會入條鏈。
+          //   ⚠️ 舊 cacheKey 只 hash config + 引擎版本，寫幾多 entry 個 key 都唔變 —— 靠佢兜唔到
+          //      （B 章 fingerprint 係第二道防線）。
+          //   ⚠️ 傳 tx（唔係 prisma），見得到本 transaction 已寫入嘅 entry。
+          //   ⚠️ 下界用 monthStart = getMonthRange(monthEndDate).start（同
+          //      invalidateTimeBankFrom(empId, monthEndDate, tx) 內部 deleteMany 完全同一語義）——
+          //      TimeBank.periodMonth 存月首日（YYYY-MM-01 HK），用 monthEndDate 做下界會漏咗 run 自己嗰個月。
+          if (touchedEmpIds.length > 0) {
+            await tx.timeBank.deleteMany({
+              where: { employeeId: { in: touchedEmpIds }, periodMonth: { gte: monthStart } },
             })
           }
 
@@ -318,6 +340,20 @@ export async function PUT(
             where: { employeeId: { in: itemsRevert.map(i => i.employeeId) }, periodMonth: pk },
           })
           console.log(`[payroll-revert] 刪咗 ${snapDeleted.count} 筆 LeaveBalanceSnapshot`)
+
+          // ★ cwm-tbcache-rosterdiff-20260909 A3：刪 ROSTER_DIFF 一樣要 invalidate —— 唔刪快取嘅話，
+          //   退回之後條鏈仍然當嗰筆存在（方向相反，同一個病）。
+          //   批次版：一次 deleteMany（幾十人逐個發 query 2026-08-15 撞過 transaction timeout）。
+          //   ⚠️ 下界 = revert 月首日（由 pk 導出，同 rosterDiffNoteFilter 同一個 key，格式保證一致）；
+          //   TimeBank.periodMonth 存月首日 —— run 月及之後全部清走，下游月份結轉要重算，正確
+          //   （同 invalidateTimeBankFrom(it.employeeId, revertMonthStart, tx) 逐人版語義一致）。
+          if (itemsRevert.length > 0) {
+            const [ry, rm] = pk.split('-').map(Number)
+            const revertMonthStart = new Date(`${ry}-${String(rm).padStart(2, '0')}-01T00:00:00+08:00`)
+            await tx.timeBank.deleteMany({
+              where: { employeeId: { in: itemsRevert.map(i => i.employeeId) }, periodMonth: { gte: revertMonthStart } },
+            })
+          }
 
           await tx.auditLog.create({
             data: {
