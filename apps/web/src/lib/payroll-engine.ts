@@ -26,7 +26,7 @@ import { getMpfExemption, adjustMpfMinForPeriod } from './mpf-exemption'
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-const TIMEBANK_ENGINE_VERSION = 7 // v7: 時薪路徑 deductLunch gate（不扣飯鐘生效）[cwm-lunchgate-20260902]
+export const TIMEBANK_ENGINE_VERSION = 7 // v7: 時薪路徑 deductLunch gate（不扣飯鐘生效）[cwm-lunchgate-20260902]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()

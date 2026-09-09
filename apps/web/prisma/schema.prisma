@@ -240,6 +240,7 @@ model Employee {
   leaveBalanceSnapshots LeaveBalanceSnapshot[]
   timeBankRecords TimeBank[]
   timeBankEntries TimeBankEntry[]
+  timeBankLedgers TimeBankLedgerSnapshot[]
   payrollItems    PayrollItem[]
   expenseEntries  ExpenseEntry[]
   faceTemplates   FaceTemplate[]
@@ -907,6 +908,30 @@ model TimeBankEntry {
   createdAt  DateTime @default(now())
 
   @@index([employeeId, date])
+}
+
+// ============================================================
+// Time Bank Ledger — frozen monthly ledger snapshot
+// ============================================================
+
+/// ★ cwm-tbledger-20260909：時間帳戶帳本凍結快照。
+///   計糧確認（finalize）時凍結該月成張帳本；退回草稿時刪除。
+///   ⚠️ 凍結之後改打卡【唔會】反映喺舊月份 —— 呢個就係「証明記錄」嘅意義。
+model TimeBankLedgerSnapshot {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  periodMonth   String   // 'YYYY-MM'
+  opening       Int
+  closing       Int
+  /// LedgerLine[] 序列化（lib/timebank-ledger.ts）
+  linesJson     String
+  engineVersion Int
+  frozenAt      DateTime @default(now())
+  frozenBy      String
+
+  @@unique([employeeId, periodMonth])
+  @@index([employeeId, periodMonth])
 }
 
 // ============================================================
