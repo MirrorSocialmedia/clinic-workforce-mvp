@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Fragment } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
 import { User, Printer, Eye } from 'lucide-react'
-import { fmtDate } from '@/lib/hk-date'
+import { fmtDate, fmtDateTime, toHKDateStr } from '@/lib/hk-date'
 import ResignSettlementModal from '@/components/ResignSettlementModal'
 import { hasPermission } from '@/lib/permissions'
 import { zeroEntitledHint } from '@/lib/leave-types'
@@ -83,6 +83,40 @@ export default function EmployeeOverviewPage() {
       setHistoryLoading(false)
     }
   }, [empId])
+
+  // 時間帳戶帳本（cwm-tbledger S4）— 獨立 lazy fetch，預設 6 個月；
+  // ★ 唔准塞入 fetchHistory（嗰條「可能需要數秒」，帳本要快出）
+  const [tbLedger, setTbLedger] = useState<any>(null)
+  const [tbLedgerMonths, setTbLedgerMonths] = useState(6)
+  const [tbLedgerLoading, setTbLedgerLoading] = useState(true)
+  const [tbLedgerLoadingMore, setTbLedgerLoadingMore] = useState(false)
+  const [tbLedgerError, setTbLedgerError] = useState<string | null>(null)
+
+  const fetchTbLedger = useCallback(async (months: number, isMore = false) => {
+    if (isMore) setTbLedgerLoadingMore(true)
+    else setTbLedgerLoading(true)
+    setTbLedgerError(null)
+    try {
+      const res = await api(`/api/employees/${empId}/timebank-ledger?months=${months}`)
+      if (!res.ok) {
+        setTbLedger(null)
+        setTbLedgerError(res.status === 403 ? '無權查看時間帳戶帳本' : '帳本載入失敗')
+        return
+      }
+      setTbLedger(await res.json())
+      setTbLedgerMonths(months)
+    } catch (err) {
+      console.error('Failed to fetch timebank ledger:', err)
+      setTbLedgerError('帳本載入失敗')
+    } finally {
+      setTbLedgerLoading(false)
+      setTbLedgerLoadingMore(false)
+    }
+  }, [empId])
+
+  useEffect(() => {
+    fetchTbLedger(6)
+  }, [fetchTbLedger])
 
   useEffect(() => {
     fetchBasic()
@@ -301,6 +335,15 @@ export default function EmployeeOverviewPage() {
             ) : (
               <div style={{ color: '#888', fontSize: 13 }}>無時間帳戶資料</div>
             )}
+            {/* ★ cwm-tbledger S4：帳本四樣（④對數橫幅 / ①逐月流水表+②running balance 展開 / ③操作記錄） */}
+            <TimeBankLedgerSection
+              ledger={tbLedger}
+              loading={tbLedgerLoading}
+              error={tbLedgerError}
+              months={tbLedgerMonths}
+              loadingMore={tbLedgerLoadingMore}
+              onMore={() => fetchTbLedger(Math.min(tbLedgerMonths + 6, 24), true)}
+            />
           </OverviewSection>
 
           {/* ⑤ Payroll Monthly Summary */}
@@ -475,6 +518,232 @@ function OverviewSection({ title, children }: { title: string; children: React.R
         {title}
       </div>
       {children}
+    </div>
+  )
+}
+
+// ─── 時間帳戶凍結帳本（cwm-tbledger-20260909 S4 E 章）───
+// 數據源 = GET /api/employees/:id/timebank-ledger（snapshot 優先／未凍結即時算）。
+// 本組件零改錢：純顯示。行分桶口徑：正數推導 = OT 入帳、負數推導 = 扣減、
+// ENTRY 行 = 調整（RECONCILE 補差行同歸調整，令「期初+三欄=期末」恆成立）、informational 計 0。
+function monthBuckets(m: any) {
+  let otIn = 0, deduct = 0, adjust = 0
+  for (const l of m.lines ?? []) {
+    if (l.informational) continue // 已抵銷行計 0
+    if (l.kind === 'DERIVED') {
+      if (l.minutes >= 0) otIn += l.minutes
+      else deduct += l.minutes
+    } else {
+      adjust += l.minutes // ENTRY（調整）+ RECONCILE（補差）
+    }
+  }
+  return { otIn, deduct, adjust }
+}
+
+function signMin(n: number): string {
+  return n > 0 ? `+${n}` : `${n}`
+}
+
+/** beforeJson/afterJson（{"balanceMinutes": N}）→ 顯示餘額；parse 唔到顯示原文 */
+function fmtBalanceMin(json: string | null | undefined): string {
+  if (json == null || json === '') return '—'
+  try {
+    const o = JSON.parse(json)
+    if (o && typeof o.balanceMinutes === 'number') return `${o.balanceMinutes} 分`
+  } catch { /* parse 唔到 → 原文 */ }
+  return String(json)
+}
+
+/** notes（JSON string）→ 「k: v；k: v」；parse 唔到顯示原文 */
+function fmtAuditNotes(notes: string | null | undefined): string {
+  if (notes == null || notes === '') return '—'
+  try {
+    const o = JSON.parse(notes)
+    if (o && typeof o === 'object' && !Array.isArray(o)) {
+      return Object.entries(o).map(([k, v]) => `${k}: ${v}`).join('；')
+    }
+  } catch { /* parse 唔到 → 原文 */ }
+  return String(notes)
+}
+
+/** ② 逐筆 running balance：（期初）→ 逐行累計 →（期末）✓/✗ */
+function LedgerRunningBalance({ m }: { m: any }) {
+  let running = m.opening
+  const rows: { key: string; date: string; label: string; minutes: string; bal: number; style: React.CSSProperties; title?: string }[] = []
+  rows.push({ key: 'opening', date: '（期初）', label: '', minutes: '—', bal: running, style: { color: '#666' } })
+  for (const l of m.lines ?? []) {
+    running += l.informational ? 0 : (Number(l.minutes) || 0)
+    const style: React.CSSProperties = { borderBottom: '1px solid #f0f0f0' }
+    let title: string | undefined
+    if (l.kind === 'RECONCILE') style.color = '#dc3545' // RECONCILE 紅字
+    else if (l.informational) { style.color = '#9ca3af'; style.background = '#eff6ff'; title = '已抵銷遲到扣減，淨效果為零' } // 灰字
+    else if (l.kind === 'ENTRY') style.background = '#eff6ff' // ENTRY 同 DERIVED 底色唔同
+    rows.push({
+      key: l.entryId ?? `${l.date}-${l.type}-${l.label}-${rows.length}`,
+      date: l.date, label: l.label,
+      minutes: l.informational ? '0' : signMin(l.minutes),
+      bal: running, style, title,
+    })
+  }
+  const ok = running === m.closing
+  rows.push({ key: 'closing', date: '（期末）', label: ok ? '✓' : '✗', minutes: '—', bal: m.closing, style: { color: ok ? '#198754' : '#dc3545', fontWeight: 600 } })
+
+  return (
+    <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+      <thead>
+        <tr style={{ background: '#f0f1f3' }}>
+          <th style={{ textAlign: 'left', padding: '3px 6px', width: 90 }}>日期</th>
+          <th style={{ textAlign: 'left', padding: '3px 6px' }}>類型</th>
+          <th style={{ textAlign: 'right', padding: '3px 6px', width: 70 }}>分鐘</th>
+          <th style={{ textAlign: 'right', padding: '3px 6px', width: 90 }}>結餘</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={r.key} style={r.style} title={r.title}>
+            <td style={{ padding: '3px 6px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{r.date}</td>
+            <td style={{ padding: '3px 6px' }}>{r.label}</td>
+            <td style={{ padding: '3px 6px', textAlign: 'right', fontFamily: 'monospace' }}>{r.minutes}</td>
+            <td style={{ padding: '3px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>{r.bal}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function TimeBankLedgerSection({
+  ledger, loading, error, months, loadingMore, onMore,
+}: {
+  ledger: any; loading: boolean; error: string | null
+  months: number; loadingMore: boolean; onMore: () => void
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  if (loading) return <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>帳本載入中…</div>
+  if (error) return <div style={{ marginTop: 12, color: '#dc3545', fontSize: 12 }}>{error}</div>
+  if (!ledger) return null
+  // 時薪／兼職 → 不設時間帳戶，四樣全部唔渲染
+  if (ledger.notApplicable) return <div style={{ marginTop: 12, color: '#888', fontSize: 13 }}>不設時間帳戶（時薪／兼職）</div>
+
+  const lsMonths: any[] = ledger.months ?? []
+  const lastMonth = lsMonths[lsMonths.length - 1]
+
+  // ④ 對數橫幅 — 任何一項唔夾 → 明寫差幾多、差邊個月
+  const problems: string[] = []
+  for (const cb of ledger.chainBreaks ?? []) {
+    problems.push(`⚠️ ${cb.from} 期末 ${cb.prevClosing} ≠ ${cb.to} 期初 ${cb.thisOpening}（差 ${Math.abs(cb.thisOpening - cb.prevClosing)}）— 請報告`)
+  }
+  for (const m of lsMonths) {
+    if (!m.reconciles) {
+      const lineSum = (m.lines ?? []).reduce((s: number, l: any) => s + (Number(l.minutes) || 0), 0)
+      problems.push(`⚠️ ${m.periodMonth} 加唔埋：期初 ${m.opening} + 分項合計 ${lineSum} = ${m.opening + lineSum} ≠ 期末 ${m.closing}`)
+    }
+  }
+  if (!ledger.balanceMatchesLatestClosing && lastMonth) {
+    problems.push(`⚠️ 顯示餘額 ${ledger.currentBalance ?? 'N/A'} ≠ 最新月（${lastMonth.periodMonth}）期末 ${lastMonth.closing}`)
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {/* ④ 對數橫幅（帳本區最頂） */}
+      <div style={{
+        padding: '8px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.7,
+        background: problems.length ? '#fdecea' : '#e8f5e9',
+        color: problems.length ? '#b71c1c' : '#1b5e20',
+      }}>
+        {problems.length === 0 ? (
+          <div>✅ 帳本已對數：{lsMonths.length} 個月逐月加得埋，月與月接得返，最新期末 = 顯示餘額 {ledger.currentBalance ?? 'N/A'} 分鐘</div>
+        ) : (
+          problems.map((p, i) => <div key={i}>{p}</div>)
+        )}
+      </div>
+
+      {/* ① 逐月流水表（撳月份展開 ②） */}
+      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', marginTop: 8 }}>
+        <thead>
+          <tr style={{ background: '#f8f9fa' }}>
+            {['月份', '期初', 'OT 入帳', '扣減', '調整', '期末', '狀態'].map(h => (
+              <th key={h} style={{ textAlign: h === '月份' || h === '狀態' ? 'left' : 'right', padding: '4px 6px' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {lsMonths.map(m => {
+            const b = monthBuckets(m)
+            const isOpen = expanded === m.periodMonth
+            return (
+              <Fragment key={m.periodMonth}>
+                <tr
+                  onClick={() => setExpanded(isOpen ? null : m.periodMonth)}
+                  style={{ cursor: 'pointer', background: m.reconciles ? (isOpen ? '#f8f9fa' : '#fff') : '#fdecea' }}
+                >
+                  <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>{isOpen ? '▲' : '▼'} {m.periodMonth}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>{m.opening}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', color: b.otIn > 0 ? '#198754' : undefined }}>{signMin(b.otIn)}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', color: b.deduct < 0 ? '#dc3545' : undefined }}>{signMin(b.deduct)}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>{signMin(b.adjust)}</td>
+                  <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>{m.closing}</td>
+                  <td style={{ padding: '4px 6px', fontSize: 11, whiteSpace: 'nowrap' }}>
+                    {m.frozen
+                      ? <>🔒 已凍結{m.frozenAt ? ` ${toHKDateStr(m.frozenAt)}` : ''}</>
+                      : '⏳ 未確認計糧（即時計算）'}
+                  </td>
+                </tr>
+                {isOpen && (
+                  <tr>
+                    <td colSpan={7} style={{ padding: '6px 10px 10px', background: '#fbfbfb', borderLeft: '3px solid #0d6efd' }}>
+                      <LedgerRunningBalance m={m} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+
+      {/* ③ 操作記錄（append-only 證明） */}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>📋 操作記錄</div>
+        {(ledger.audit ?? []).length === 0 ? (
+          <div style={{ color: '#888', fontSize: 12 }}>（無操作記錄）</div>
+        ) : (
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#f8f9fa' }}>
+                {['時間', '操作人', '動作', '餘額變化', '備註'].map(h => (
+                  <th key={h} style={{ textAlign: 'left', padding: '4px 6px' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(ledger.audit ?? []).map((a: any) => (
+                <tr key={a.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                  <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>{fmtDateTime(a.createdAt)}</td>
+                  <td style={{ padding: '4px 6px' }}>{a.actorName ?? a.actorId ?? '系統'}</td>
+                  <td style={{ padding: '4px 6px' }}>{a.action}</td>
+                  <td style={{ padding: '4px 6px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                    {fmtBalanceMin(a.beforeJson)} → {fmtBalanceMin(a.afterJson)}
+                  </td>
+                  <td style={{ padding: '4px 6px' }}>{fmtAuditNotes(a.notes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* 載入更多（route clamp 上限 24 個月） */}
+      {months < 24 && (
+        <button
+          onClick={onMore}
+          disabled={loadingMore}
+          style={{ marginTop: 8, fontSize: 13, padding: '2px 12px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: loadingMore ? 'wait' : 'pointer' }}
+        >
+          {loadingMore ? '載入中…' : '載入更多（+6 個月）'}
+        </button>
+      )}
     </div>
   )
 }
