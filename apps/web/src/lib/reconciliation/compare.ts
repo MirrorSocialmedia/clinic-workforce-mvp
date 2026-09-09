@@ -32,6 +32,8 @@ interface CompareResult {
 	reportCharges: number // ★ AA2: Total Charges
 	clinicExtId: string // ★ cwm-recon-clinic-20260909 A1：今次對數收窄咗邊間（方便畫面顯示同 debug）
 	systemTotal: number
+	freeSpTotal: number // ★ C3(a)：報表側 FREE SP 合計（已扣走，唔入對數口徑）
+	reportTotalAdjusted: number // ★ C3(a)：reportTotal − freeSpTotal（差異/status 用嘅口徑）
 	difference: number
 	chargesVsPaid: number // ★ AA2: charges - paid 差額
 	status: 'MATCH' | 'MISMATCH'
@@ -81,7 +83,20 @@ export async function compareReport(
 	const reportTotal = totalPaid // ★ 對數用實收
 	const chargesVsPaid = round2(totalCharges - totalPaid)
 
-	const difference = round2(reportTotal - systemTotal)
+	// ★ C3(a)：FREE SP 口徑 —— 報表 Total Paid 包 FREE SP，但系統 countAsIncome 會排走佢，
+	//   唔扣走嘅話同一間診所都永遠差呢個數。報表側扣走（透明：畫面出扣走行）。
+	//   舊格式（冇 method 欄）：freeSpTotal=0、adjusted=reportTotal，零行為變化。
+	let freeSpSum = 0
+	let hasReportFreeSp = false
+	for (const r of rows) {
+		if (r.method && normalizeMethod(r.method) === 'FREE_SP') {
+			freeSpSum += r.paid ?? 0
+			hasReportFreeSp = true
+		}
+	}
+	const freeSpTotal = round2(freeSpSum)
+	const reportTotalAdjusted = round2(reportTotal - freeSpTotal)
+	const difference = round2(reportTotalAdjusted - systemTotal)
 	const status = Math.abs(difference) <= 1 ? 'MATCH' : 'MISMATCH'
 
 	// 3) 逐日對比（用 paid 欄）
@@ -114,6 +129,8 @@ export async function compareReport(
 	for (const r of rows) {
 		if (!r.method) continue
 		const norm = normalizeMethod(r.method)
+		// ★ C3(a)：報表側計數排除 FREE_SP（口徑已扣走，byMethod 顯示 0/0）
+		if (norm === 'FREE_SP') continue
 		reportMethodMap.set(norm, round2((reportMethodMap.get(norm) ?? 0) + (r.paid ?? 0)))
 	}
 	const systemMethodMap = new Map<string, number>()
@@ -121,6 +138,7 @@ export async function compareReport(
 		systemMethodMap.set(a.methodNorm, round2((systemMethodMap.get(a.methodNorm) ?? 0) + Number(a.amount)))
 	}
 	const allMethods = new Set([...reportMethodMap.keys(), ...systemMethodMap.keys()])
+	if (hasReportFreeSp) allMethods.add('FREE_SP') // ★ C3(a)：報表有 FREE SP 就出 0/0/0 行，令用戶睇到佢被點處理
 	const byMethod: Array<{ method: string; report: number; system: number; diff: number }> = []
 	for (const method of allMethods) {
 		const report = reportMethodMap.get(method) ?? 0
@@ -129,5 +147,5 @@ export async function compareReport(
 	}
 	byMethod.sort((a, b) => (b.report + b.system) - (a.report + a.system))
 
-	return { reportTotal, reportCharges: totalCharges, clinicExtId, systemTotal, difference, chargesVsPaid, status, byDay, byMethod }
+	return { reportTotal, reportCharges: totalCharges, clinicExtId, systemTotal, freeSpTotal, reportTotalAdjusted, difference, chargesVsPaid, status, byDay, byMethod }
 }

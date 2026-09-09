@@ -52,8 +52,31 @@ export async function POST(req: NextRequest) {
 		const result = await compareReport(provider.id, meta.month, rows, clinic.apricotClinicId!)
 
 		// 存入 ReconciliationImport
-		const record = await prisma.reconciliationImport.create({
-			data: {
+		// ★ E：同一 provider+clinic+month 再上載 = 覆蓋（upsert），唔會堆新行
+		//   clinicId 必唔係 null —— resolveClinic 搵唔到一律 throw（唔准 fallback）
+		const detail = buildDetail(result, skipped, blankRows)
+		const record = await prisma.reconciliationImport.upsert({
+			where: {
+				providerId_clinicId_periodMonth: {
+					providerId: provider.id,
+					clinicId: clinic.id,
+					periodMonth: meta.month,
+				},
+			},
+			update: {
+				fileName: file.name,
+				rowCount: rows.length,
+				reportTotal: result.reportTotal,
+				systemTotal: result.systemTotal,
+				difference: result.difference,
+				status: result.status,
+				detailJson: detail,
+				reportCharges: result.reportCharges,
+				chargesVsPaid: result.chargesVsPaid,
+				uploadedBy: session.userId,
+				uploadedAt: new Date(), // ★ E：覆蓋時更新時間戳
+			},
+			create: {
 				providerId: provider.id,
 				clinicId: clinic.id, // ★ cwm-recon-clinic-20260909 A3：schema 一早有位，之前冇填
 				periodMonth: meta.month,
@@ -63,7 +86,7 @@ export async function POST(req: NextRequest) {
 				systemTotal: result.systemTotal,
 				difference: result.difference,
 				status: result.status,
-				detailJson: buildDetail(result, skipped, blankRows), // ★ MD-AC1: 跳過行數入 detailJson（唔改 schema）
+				detailJson: detail, // ★ MD-AC1: 跳過行數入 detailJson（唔改 schema）
 				reportCharges: result.reportCharges,
 				chargesVsPaid: result.chargesVsPaid,
 				uploadedBy: session.userId,
@@ -179,6 +202,8 @@ function buildDetail(result: {
 	reportCharges: number
 	clinicExtId: string // ★ cwm-recon-clinic-20260909 A1
 	systemTotal: number
+	freeSpTotal: number // ★ C3(a)
+	reportTotalAdjusted: number // ★ C3(a)
 	difference: number
 	chargesVsPaid: number
 	status: string
@@ -190,6 +215,8 @@ function buildDetail(result: {
 		reportCharges: result.reportCharges,
 		clinicExtId: result.clinicExtId, // ★ A1：今次對數收窄咗邊間（debug 用）
 		systemTotal: result.systemTotal,
+		freeSpTotal: result.freeSpTotal, // ★ C3(a)：畫面出透明扣走行用
+		reportTotalAdjusted: result.reportTotalAdjusted, // ★ C3(a)
 		difference: result.difference,
 		chargesVsPaid: result.chargesVsPaid,
 		status: result.status,

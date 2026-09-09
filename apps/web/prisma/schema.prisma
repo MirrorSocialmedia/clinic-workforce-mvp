@@ -1382,6 +1382,9 @@ model ReconciliationImport {
   uploadedAt   DateTime @default(now())
 
   @@index([providerId, periodMonth])
+  // ★ cwm-recon-clinic-20260909 E：同一醫生+診所+月再上載 = 覆蓋（upsert）
+  //   注意：clinicId 係 nullable，Postgres NULL 唔等於 NULL → 舊 NULL 記錄唔受保護（生產預清見 progress）
+  @@unique([providerId, clinicId, periodMonth])
 }
 
 // ★ cw-pa: Apricot 醫生時間表（P1 資料層）
