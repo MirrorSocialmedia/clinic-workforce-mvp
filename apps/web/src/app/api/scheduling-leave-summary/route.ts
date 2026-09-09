@@ -204,6 +204,14 @@ export async function GET(req: NextRequest) {
     const derivedUsed = Math.max(0, accruedThisYear - balRemaining)
     const takenDays = taken.reduce((s, lr) => s + (lr.days ?? 0), 0)
     const usedDays = Math.max(takenDays, derivedUsed)
+    // ★ 2026-09-06 cwm-carryover：分母由「配額」改「可用」——
+    //   Kathy 服務年度 8/1 先開始，本年只累積 0.9 日，但顯示「已放 4 / 配額 9」
+    //   令人以為今年 9 日用咗 4 日（實際食緊上期結轉 8 日）。
+    //   ⚠️ available 定義成 (餘額 + 已放) → 三數永遠自洽，冇 rounding 缺口。
+    const usedRounded = Math.round(usedDays)
+    const available = Math.round((balRemaining + usedRounded) * 10) / 10
+    // ★ 上期結轉 = 可用 − 本年累積；clamp 0（負結轉＝上期已預支，唔顯示）
+    const carryOver = Math.max(0, Math.round((available - accruedThisYear) * 10) / 10)
 
     // ★ rest_days 優先 modifiers（RuleComposer 現行寫法），fallback 頂層（舊資料 / grant-restdays 讀法）
     const restDays: number[] = cfg?.modifiers?.working_days?.rest_days ?? cfg?.working_days?.rest_days ?? [6, 0]
@@ -215,8 +223,10 @@ export async function GET(req: NextRequest) {
       syStart: sy.start,
       syEnd: sy.end,
       entitled: r1(entitled),
-      usedDays: Math.round(usedDays),            // ★ 拍板②：顯示整數（7.98 → 8）
+      usedDays: usedRounded,                     // ★ 拍板②：顯示整數（7.98 → 8）
       accruedThisYear: r1(accruedThisYear),      // ★ tooltip 用（當年已累積；試用期 = 0）
+      available,                    // ★ 2026-09-06 cwm-carryover 新：第 1 行分母（餘額 + 已放）
+      carryOver,                    // ★ cwm-carryover 新：上期結轉，UI > 0.5 先顯示
       takenDays: r1(takenDays),                  // ★ cwm-annualused：tooltip 用（假期單來源）
       derivedUsed: r1(derivedUsed),              // ★ 同上（反推來源）
       balanceRemaining: r1(balanceByEmp.get(emp.id) ?? 0),
