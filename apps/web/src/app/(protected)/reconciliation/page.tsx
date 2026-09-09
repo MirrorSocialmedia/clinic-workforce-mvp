@@ -407,17 +407,42 @@ function ReconciliationPageInner() {
                                 </tbody>
                               </table>
                             </div>
-                            {/* By method detail */}
+                            {/* By method detail — ★ C2：報表 vs 系統 兩邊對照 */}
                             {r.detailJson.byMethod && r.detailJson.byMethod.length > 0 && (
                               <div>
-                                <h4 className="font-semibold text-sm mb-2">逐方式（系統）</h4>
-                                <div className="flex flex-wrap gap-2">
-                                  {r.detailJson.byMethod.map((m: any, i: number) => (
-                                    <span key={i} className="px-2 py-1 bg-white border rounded text-xs tabular-nums">
-                                      {m.method}: {fmt(m.amount)}
-                                    </span>
-                                  ))}
-                                </div>
+                                <h4 className="font-semibold text-sm mb-2">逐方式（報表 vs 系統）</h4>
+                                <table className="w-full text-xs tabular-nums">
+                                  <thead>
+                                    <tr className="text-left text-gray-500">
+                                      <th className="py-1 pr-2 font-medium">方式</th>
+                                      <th className="py-1 pr-2 font-medium text-right">報表</th>
+                                      <th className="py-1 pr-2 font-medium text-right">系統</th>
+                                      <th className="py-1 font-medium text-right">差額</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {r.detailJson.byMethod.map((m: any, i: number) => (
+                                      <tr key={i} className="border-t border-gray-100">
+                                        <td className={
+                                          m.method === 'UNKNOWN'
+                                            ? 'py-1 pr-2 font-semibold text-red-600' // ★ 警號：normalize 撞唔到
+                                            : 'py-1 pr-2'
+                                        }>
+                                          {m.method}{m.method === 'UNKNOWN' ? ' ⚠' : ''}
+                                        </td>
+                                        <td className="py-1 pr-2 text-right">{fmt(m.report)}</td>
+                                        <td className="py-1 pr-2 text-right">{fmt(m.system)}</td>
+                                        <td className={
+                                          Math.abs(m.diff) > 0.01
+                                            ? 'py-1 text-right font-semibold text-red-600'
+                                            : 'py-1 text-right text-gray-400'
+                                        }>
+                                          {m.diff > 0 ? '+' : m.diff < 0 ? '−' : ''}{fmt(m.diff)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
                               </div>
                             )}
                           </div>

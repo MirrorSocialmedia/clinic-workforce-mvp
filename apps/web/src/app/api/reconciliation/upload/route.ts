@@ -183,7 +183,7 @@ function buildDetail(result: {
 	chargesVsPaid: number
 	status: string
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
-	byMethod: Array<{ method: string; amount: number }>
+	byMethod: Array<{ method: string; report: number; system: number; diff: number }> // ★ C2
 }, skipped = 0, blankRows = 0): Record<string, any> {
 	return {
 		reportTotal: result.reportTotal,

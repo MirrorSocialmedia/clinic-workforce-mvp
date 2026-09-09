@@ -42,6 +42,7 @@ describe('parsePaymentReport', () => {
 			amount: 50000,
 			charges: 50000,
 			paid: 50000,
+			method: '', // ★ C1：舊格式冇 Payment Method 欄 = ''（唔准必填）
 		})
 		assert.equal(rows[1].date, '2026-07-06')
 		assert.equal(rows[1].charges, 1234.56)

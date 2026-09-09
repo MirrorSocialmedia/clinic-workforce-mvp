@@ -3,6 +3,7 @@
 
 import { prisma } from '@/lib/prisma'
 import { toHKDateStr } from '@/lib/hk-date'
+import { normalizeMethod } from '@/lib/apricot/normalize' // ★ C2：報表側方式名統一（唔准另寫對照表）
 import { ParsedRow } from './parsePaymentReport'
 
 // ★ Re-export ACTIVE_ALLOCATION filter (same as payout engine)
@@ -35,7 +36,7 @@ interface CompareResult {
 	chargesVsPaid: number // ★ AA2: charges - paid 差額
 	status: 'MATCH' | 'MISMATCH'
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
-	byMethod: Array<{ method: string; amount: number }>
+	byMethod: Array<{ method: string; report: number; system: number; diff: number }> // ★ C2：兩邊對照（聯集）
 }
 
 export async function compareReport(
@@ -106,13 +107,27 @@ export async function compareReport(
 	}
 	byDay.sort((a, b) => a.date.localeCompare(b.date))
 
-	// 4) 逐方式對比（系統）
-	const byMethod: Array<{ method: string; amount: number }> = []
-	const methodGroups = groupBy(allocs, (a) => a.methodNorm)
-	for (const [method, items] of Object.entries(methodGroups)) {
-		byMethod.push({ method, amount: round2(sum(items.map((a) => Number(a.amount)))) })
+	// 4) 逐方式對比 —— ★ C2：兩邊對照（報表 vs 系統）
+	// 報表側：Payment Method 欄經 normalizeMethod 統一（MASTER→MASTERCARD、FREE SP→FREE_SP...）；
+	// 撞唔到回 'UNKNOWN' —— 保留當警號，唔好當零。
+	const reportMethodMap = new Map<string, number>()
+	for (const r of rows) {
+		if (!r.method) continue
+		const norm = normalizeMethod(r.method)
+		reportMethodMap.set(norm, round2((reportMethodMap.get(norm) ?? 0) + (r.paid ?? 0)))
 	}
-	byMethod.sort((a, b) => b.amount - a.amount)
+	const systemMethodMap = new Map<string, number>()
+	for (const a of allocs) {
+		systemMethodMap.set(a.methodNorm, round2((systemMethodMap.get(a.methodNorm) ?? 0) + Number(a.amount)))
+	}
+	const allMethods = new Set([...reportMethodMap.keys(), ...systemMethodMap.keys()])
+	const byMethod: Array<{ method: string; report: number; system: number; diff: number }> = []
+	for (const method of allMethods) {
+		const report = reportMethodMap.get(method) ?? 0
+		const system = systemMethodMap.get(method) ?? 0
+		byMethod.push({ method, report, system, diff: round2(report - system) })
+	}
+	byMethod.sort((a, b) => (b.report + b.system) - (a.report + a.system))
 
 	return { reportTotal, reportCharges: totalCharges, clinicExtId, systemTotal, difference, chargesVsPaid, status, byDay, byMethod }
 }

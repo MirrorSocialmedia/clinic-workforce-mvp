@@ -1,5 +1,5 @@
 // ★ MD-E: Parse Apricot monthly payment report xlsx
-// 只讀三欄：Date / Transaction Code / Total Charges — PII 唔存
+// 讀欄：Date / Transaction Code / Total Charges / Total Paid / Payment Method（C1）— PII 唔存
 
 import * as XLSX from 'xlsx'
 
@@ -9,6 +9,7 @@ export interface ParsedRow {
 	amount: number
 	charges: number | null // ★ AA2: Total Charges
 	paid: number | null // ★ AA2: Total Paid
+	method: string // ★ cwm-recon-clinic-20260909 C1：Payment Method 欄（舊格式冇呢欄 = ''）
 }
 
 export interface ParsedReport {
@@ -84,6 +85,8 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 			// ★ AA2: 兩個金額欄都讀
 			charges: cols.charges !== undefined ? parseAmount(r[cols.charges]) : null,
 			paid: cols.paid !== undefined ? parseAmount(r[cols.paid]) : null,
+			// ★ C1：冇呢欄嘅舊格式照 parse 得（method = ''，compare 側自然計 0）
+			method: cols.method !== undefined ? String(r[cols.method] ?? '').trim() : '',
 		})
 	}
 
@@ -162,8 +165,8 @@ function extractMeta(
 	return { practitioner, clinic, month }
 }
 
-function mapColumns(headerRow: any[]): { date: number; code: number; amount: number; charges?: number; paid?: number } {
-	const cols: { date?: number; code?: number; amount?: number; charges?: number; paid?: number } = {}
+function mapColumns(headerRow: any[]): { date: number; code: number; amount: number; charges?: number; paid?: number; method?: number } {
+	const cols: { date?: number; code?: number; amount?: number; charges?: number; paid?: number; method?: number } = {}
 	headerRow.forEach((c: any, i: number) => {
 		const s = String(c).trim()
 		if (s === 'Date') cols.date = i
@@ -174,6 +177,7 @@ function mapColumns(headerRow: any[]): { date: number; code: number; amount: num
 			cols.amount = i
 		}
 		if (s === 'Total Paid') cols.paid = i
+		if (s === 'Payment Method') cols.method = i // ★ C1
 	})
 	if (cols.date === undefined || cols.code === undefined) {
 		throw new Error('REPORT_FORMAT_CHANGED: 缺少 Date 或 Transaction Code 欄')
@@ -184,5 +188,5 @@ function mapColumns(headerRow: any[]): { date: number; code: number; amount: num
 	if (cols.amount === undefined && cols.charges !== undefined) {
 		cols.amount = cols.charges
 	}
-	return cols as { date: number; code: number; amount: number; charges?: number; paid?: number }
+	return cols as { date: number; code: number; amount: number; charges?: number; paid?: number; method?: number }
 }
