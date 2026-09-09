@@ -11,6 +11,11 @@
  *   - #42b REST_DAY 多曆年 row（上年＋本年）→ restBalanceRemaining 按員工加總
  *   - #37 API 回傳齊欄（含 accruedThisYear —— 2026-09-06 cwm-annualdisp：餘額反推，剷 remainThisYear）
  *   + 頁面 thead 欄序 員工｜上月剩｜R+PL｜剩餘｜年假（服務年度）
+ *
+ * ★ 寫入側守衛喺邊：本檔 #42 只測【讀取側】（snapshot 有行 → 用該行值）—— 2026-09-09
+ *   cwm-lbsnap-asof 寫入側 bug（finalize 抄 LeaveBalance.remaining 滾動值）一路喺呢度綠燈。
+ *   寫入側最小重現喺 `src/lib/payroll-snapshot-asof-write.test.ts`（D 章，坑⑥ 守衛：
+ *   finalize 後 snapshot REST_DAY 必 = restDayBalanceAsOf && != raw remaining；含 B 章 dev no-op）。
  */
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -122,6 +127,8 @@ async function fetchRows(periodMonth: string) {
 
 describe('scheduling-leave-summary — 上月剩 / 剩餘（2026-08-22 §6.2.3）', () => {
   it('#42 九月總覽：上月剩 = 八月快照值（唔係當前值）', async () => {
+    // ★ 呢個只係讀取側。寫入側（snapshot 寫入時係咪正確口徑）由
+    //   payroll-snapshot-asof-write.test.ts 守衛（cwm-lbsnap-asof-20260909 D 章）。
     resetState()
     snapshotRows = [
       { employeeId: 'e1', leaveTypeId: 'lt-rest', periodMonth: '2026-08', remaining: 7.5 },

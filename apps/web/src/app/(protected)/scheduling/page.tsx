@@ -5939,7 +5939,7 @@ function getShiftCode(shift: Shift): string {
                         <td style={{ padding: '5px', textAlign: 'center',
                                      color: r.lastMonthRestRemaining == null ? '#cbd5e1' : undefined }}
                             title={r.lastMonthRestSource === 'computed'
-                              ? '上月未確認計糧 —— 即時計算（截至上月底）'
+                              ? '即時計算（截至上月底）'
                               : '上月計糧確認時嘅凍結值'}>
                           {r.lastMonthRestRemaining == null ? '—' : r.lastMonthRestRemaining}
                         </td>
