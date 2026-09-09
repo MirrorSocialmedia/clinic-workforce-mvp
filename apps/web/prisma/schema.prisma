@@ -175,6 +175,7 @@ model Clinic {
   bookings        ProviderBooking[]
   weeklyPatterns  ProviderWeeklyPattern[]
   providerHolds   ProviderHold[]
+  miscIncomes     MiscIncome[] // ★ cwm-payoutxlsx-20260908 D1：店舖雜項收入
 }
 
 // User entity — system login account
@@ -1600,4 +1601,34 @@ model ProviderHold {
   provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
 
   @@index([clinicId, date])
+}
+
+// ============================================================
+// cwm-payoutxlsx-20260908 D1: 店舖雜項收入（MiscIncome）
+// ★ 唔經 Apricot 嘅收入（賣產品、器材按金等）。全歸公司，【唔參與醫生拆帳】。
+// ★ 設計決定（老細 2026-09-09 拍板）：
+//   ① 無 lockedByRunId —— 雜項收入唔入任何 PayoutRun，冇 run 可以鎖佢。
+//   ② periodMonth 由 server 端由 incomeAt 導出（HK 時區：
+//      toHKDateStr(incomeAt).slice(0,7)），前端唔准傳 — 同 CostCase.periodMonth 慣例。
+//   ③ 手續費照扣，用同一套 PaymentMethodRule（resolveMethodRule，export 共用）。
+// ============================================================
+model MiscIncome {
+  id          String   @id @default(cuid())
+  clinicId    String
+  clinic      Clinic   @relation(fields: [clinicId], references: [id])
+  incomeAt    DateTime
+  category    String   // PRODUCT | DEPOSIT | OTHER
+  itemName    String
+  note        String?
+  /// ★ 同 PaymentAllocation.methodNorm 同一口徑（lib/apricot/normalize.ts）
+  methodNorm  String
+  amount      Decimal  @db.Decimal(12,2)
+  /// ★ 由 incomeAt 導出（HK 時區）—— 同 CostCase.periodMonth 同一慣例
+  periodMonth String
+  isVoid      Boolean  @default(false)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([clinicId, periodMonth])
 }
