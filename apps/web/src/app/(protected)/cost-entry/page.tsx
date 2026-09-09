@@ -8,7 +8,7 @@ import { ITEM_TYPES } from '@/lib/payout/constants'
 import { applyPatientPick } from '@/lib/cost-entry/clinic-prefix'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X, Trash2, Package, Percent } from 'lucide-react'
+import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X, Trash2, Package, Percent, Coins } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────
 
@@ -1092,6 +1092,10 @@ export default function CostEntryPage() {
         </a>
         <a href="/cost-entry/lab-discounts" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
           <Percent size={14} /> Lab 月度折扣
+        </a>
+        {/* ★ cwm-payoutxlsx-20260908 D3：雜項收入錄入 */}
+        <a href="/cost-entry/misc-income" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+          <Coins size={14} /> 雜項收入
         </a>
       </div>
 

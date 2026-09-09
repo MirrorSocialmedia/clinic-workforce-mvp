@@ -3,10 +3,14 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { validateMiscIncome, miscIncomeScopeClinics, serializeMiscIncome } from '@/lib/misc-income'
+import { resolveMethodRule } from '@/lib/apricot/allocate'
 
 // ============================================================
 // /api/misc-income — 店舖雜項收入（cwm-payoutxlsx-20260908 D2）
 // GET    ?clinicId=&periodMonth=  列表（void 行照返，前端灰線顯示用）
+//   ★ 每行帶 feePercent —— server 端用同一個 resolveMethodRule resolve（D3：
+//     前端三行合計/手續費/淨額直接用 API 值，唔好前端重算兩邊唔同數；
+//     規則其後被刪 = null（讀取時無規則，顯示按 0 計））
 // POST   新增
 // Roles: OWNER, MANAGER + cost_entry 權限覆蓋（RBAC_PERM_OVERRIDES）
 // ★ periodMonth 恆由 server 從 incomeAt（HK 時區）derive —— 前端傳都忽略
@@ -37,7 +41,16 @@ export async function GET(req: NextRequest) {
     where,
     orderBy: [{ incomeAt: 'desc' }, { id: 'desc' }],
   })
-  return jsonNoStore({ items: rows.map(serializeMiscIncome) })
+
+  // ★ feePercent：同 POST 驗證同一個 resolveMethodRule（methodNorm + incomeAt）——
+  //   讀取時規則已刪 → needsReview → null（前端按 0 計；寫入時仍會 400 擋未知方法）
+  const allRules = await prisma.paymentMethodRule.findMany()
+  return jsonNoStore({
+    items: rows.map(r => {
+      const rule = resolveMethodRule(r.methodNorm, r.incomeAt, allRules)
+      return { ...serializeMiscIncome(r), feePercent: rule.needsReview ? null : rule.feePercent }
+    }),
+  })
 }
 
 export async function POST(req: NextRequest) {
