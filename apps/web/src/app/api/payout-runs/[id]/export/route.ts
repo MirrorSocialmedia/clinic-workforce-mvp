@@ -1,18 +1,24 @@
 /**
- * GET /api/payout-runs/[id]/export — Excel 匯出（單頁月結單，區塊 A/B/C/D/E/G/H）
- * ★ AA3: 唔帶病人姓名，只帶病人編號（PII 零容忍）
- * ★ MD-AC2: 四個 sheet → 一個 sheet「月結單」
- *   ① 逐日收款全月逐日出（冇收入嗰日留白唔寫 0）
- *   ② 付款方式欄由資料 derive（ORDER 固定次序，未知方式排最後）
- *   ③ Credit / Free SP 欄標「不計入收入」，Weighted 格寫 — 唔寫 0
+ * GET /api/payout-runs/[id]/export — Excel 匯出（單頁月報，六區 layout）
+ * ★ 2026-09-10 cwm-payoutxlsx-20260908 B 章：改用 exceljs 產生器（lib/payout/xlsx-report.ts）。
+ *   六區：A 逐日 / B Lab（含 Invisalign）/ C Implant / D SP+REF / E 調整 / F 結算。
+ *   ★ AA3 已廢（2026-09-08 老細拍板）：B 區（Lab）同 C 區（Implant）列病人姓名
+ *     （來源 CostCase.patientName）；PAYOUT_EXPORT audit notes 標明「包含病人姓名」。
+ * ★ 數字零改變（B 章唯一驗收）：攞數段照舊，舊 A/B/C/D/E 區金額由新六區重現
+ *   （舊 G 付款逐筆 / H 工廠總覽（跨醫生）剷走 — 屬舊系統附加，MD 樣板六區冇）。
+ * ★ MD-AC2 ②：付款方式欄由資料 derive（ORDER 固定次序，未知方式排最後）
+ * ★ 費率（F 區手續費率行）= 由 allocation 快照反解（net = raw×(1−fee)）—
+ *   allocation 落庫時費率已係 PaymentMethodRule resolve 快照（feePercentUsed），
+ *   反解保證同舊 A 區 Weighted / engine gross 一分不差；D2 章 export resolveMethodRule 後可換即時費率。
  */
 import { NextRequest } from 'next/server'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
 import { UNNAMED_VENDOR } from '@/lib/payout/engine'
+import { buildDoctorSheet, type DoctorSheetData } from '@/lib/payout/xlsx-report'
 
 // ★ MD-AC2 ②：付款方式固定次序（同月結單頁一致），未知方式排最後
 const METHOD_ORDER = ['CASH', 'HCV', 'VISA', 'MASTERCARD', 'OCTOPUS', 'FPS', 'ALIPAY', 'CCF', 'CREDIT', 'FREE_SP']
@@ -33,6 +39,7 @@ const NON_INCOME = new Set(['CREDIT', 'FREE_SP'])
 
 const num = (v: unknown): number => Number(v ?? 0)
 const money = (v: unknown): number => Number(num(v).toFixed(2))
+const round2 = (n: number): number => Math.round(n * 100) / 100
 
 /** ISO/Date → dd/MM（HK 時區） */
 function ddMM(v: string | Date | null | undefined): string {
@@ -50,8 +57,6 @@ function ddMyy(v: string | Date | null | undefined): string {
   if (isNaN(+d)) return ''
   return d.toLocaleDateString('en-GB', { timeZone: 'Asia/Hong_Kong' })
 }
-
-type Cell = string | number
 
 export async function GET(
   req: NextRequest,
@@ -81,15 +86,7 @@ export async function GET(
   const clinicName = clinic?.shortName || clinic?.name || '—'
   const clinicShort = clinic?.shortName || clinic?.name || '診所'
 
-  // ─── 標題行 ─────────────────────────────────────────────────────
-  // LOCKED → 「已鎖定 17/8/2026」；DRAFT → 「【草稿 — 數字可能會變】」
-  const statusSuffix =
-    run.status === 'LOCKED' && run.lockedAt
-      ? `已鎖定 ${ddMyy(run.lockedAt)}`
-      : '【草稿 — 數字可能會變】'
-  const title = `${providerName} · ${clinicName} · ${run.periodMonth} 月結單　${statusSuffix}`
-
-  // ─── 付款逐筆（breakdownJson）→ A 區逐日 + G 區 ─────────────────
+  // ─── 付款逐筆（breakdownJson）→ A 區逐日 ─────────────────────
   const breakdown: any[] = (() => {
     // ★ 2026-08-26：新 breakdownJson = { allocations, vendors }；舊 run 係裸陣列 → normalize
     const raw: any = run.breakdownJson
@@ -98,7 +95,7 @@ export async function GET(
 
   // ★ 引擎 breakdownJson 含 countAsIncome=true 嘅行 ＋ FREE_SP（★ 2026-08-22：FREE_SP 計醫生收入，
   //   engine allocWhere 已收埋），CREDIT（countAsIncome=false）唔喺入面 —
-  //   所以 CREDIT 嗰啲 allocation 要另外撈返嚟合併入 A/G 區（FREE_SP 排除防 double count）。
+  //   所以 CREDIT 嗰啲 allocation 要另外撈返嚟合併入 A 區（FREE_SP 排除防 double count）。
   const extraWhere: any = {
     providerExtId: provider?.apricotId,
     periodMonth: run.periodMonth,
@@ -133,7 +130,7 @@ export async function GET(
     billCode: extraBillCodes.get(a.billExtId) ?? '',
     countAsIncome: false,
   }))
-  // A / G 區用合併後全集（收入 + 不計入收入）
+  // A 區用合併後全集（收入 + 不計入收入）
   const allRows: any[] = [...breakdown, ...extraRows]
 
   // ★ MD-AC2 ②：付款方式欄由資料 derive（唔好寫死欄位）
@@ -172,64 +169,11 @@ export async function GET(
     dayM.set(m, cur)
   }
 
-  // ─── A 區：逐日收款（全月逐日出，冇收入留白） ───────────────────
+  // ─── A 區資料：全月逐日（冇收入嗰日 byMethod 傳 0 → 產生器留白） ──
   const [yy, mm] = run.periodMonth.split('-').map(Number)
   const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate()
 
-  const aRows: Cell[][] = [
-    ['A  逐日收款'],
-    ['日期', ...seenMethods.map(m => METHOD_LABELS[m] || m), 'TOTAL'],
-  ]
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dk = `${run.periodMonth}-${String(day).padStart(2, '0')}`
-    const dayM = dayMap.get(dk)
-    const row: Cell[] = [`${String(day).padStart(2, '0')}/${String(mm).padStart(2, '0')}`]
-    let dayTotal = 0
-    for (const m of seenMethods) {
-      const v = dayM?.get(m)
-      // ★ 冇收入嗰日留白（留白 = 冇交易；0 = 有交易但金額零）
-      if (v && v.raw !== 0) row.push(money(v.raw))
-      else row.push('')
-      // TOTAL 只計入收入方式（Credit / Free SP 唔計）
-      if (v && !NON_INCOME.has(m)) dayTotal += v.raw
-    }
-    row.push(dayTotal !== 0 ? money(dayTotal) : '')
-    aRows.push(row)
-  }
-  // Total 行（原始金額）
-  const totalRow: Cell[] = ['Total']
-  let grandRaw = 0
-  for (const m of seenMethods) {
-    let s = 0
-    for (const dayM of dayMap.values()) {
-      const v = dayM.get(m)
-      if (v) s += v.raw
-    }
-    totalRow.push(s !== 0 ? money(s) : '')
-    if (!NON_INCOME.has(m)) grandRaw += s
-  }
-  totalRow.push(money(grandRaw))
-  aRows.push(totalRow)
-  // Weighted 行（扣費後）— Credit / Free SP 格寫 — 唔好寫 0
-  const weightedRow: Cell[] = ['Weighted']
-  let grandNet = 0
-  for (const m of seenMethods) {
-    if (NON_INCOME.has(m)) {
-      weightedRow.push('—')
-      continue
-    }
-    let s = 0
-    for (const dayM of dayMap.values()) {
-      const v = dayM.get(m)
-      if (v) s += v.net
-    }
-    weightedRow.push(s !== 0 ? money(s) : '')
-    grandNet += s
-  }
-  weightedRow.push(money(grandNet))
-  aRows.push(weightedRow)
-
-  // ─── E 區資料先攞埋（B 區 label 要轉介費率） ─────────────────────
+  // E 區資料（SP 筆數逐日 + D 區行）
   const spWhere: any = {
     providerId: run.providerId,
     periodMonth: run.periodMonth,
@@ -265,33 +209,33 @@ export async function GET(
     : []
   const billByExt = new Map(bills.map(b => [b.extId, b]))
 
-  // ─── B 區：結算摘要（同月結單頁逐個對得上） ─────────────────────
-  const refPcts = new Set(refConfirmed.map(r => Number(r.refPercent)))
-  const refLabel = refPcts.size === 1 ? `轉介 ${[...refPcts][0]}%` : '轉介收入'
-  const bRows: Cell[][] = [
-    ['B  結算摘要'],
-    ['Gross（Weighted）', money(run.grossAmount), '已扣手續費'],
-    ['Lab 成本', -money(run.labCost), '見 C 區'],
-    ['Implant 成本', -money(run.implantCost), '見 D 區'],
-    ['Invisalign 成本', -money(run.invisalignCost)],
-    ['利潤', money(run.profitAmount)],
-    [`拆帳 ${num(run.percentUsed)}%`, money(run.salaryAmount)],
-    ['2人SP 補貼', money(run.spSubsidy), '見 E 區'],
-    [refLabel, money(run.refAmount), '見 E 區'],
-    ['上期調整', money(run.adjustAmount)],
-    ['總額', money(run.totalAmount)],
-  ]
-  // ★ 2026-08-22：FREE_SP 唔計店舖營收但計醫生收入 —— 單獨列一行（拍板③）
-  //   同 A 區 dayMap 同一來源（allocation netAmount，同 Gross 口徑）；
-  //   已 finalize 舊 run 嘅 Gross 未含 FREE_SP — 至 re-finalize 前「Gross+本行 ≠ 總額」係預期 one-off artifact
-  let freeSpNet = 0
-  for (const dayM of dayMap.values()) {
-    const v = dayM.get('FREE_SP')
-    if (v) freeSpNet += v.net
+  // SP 筆數逐日（A 區新增欄；billTime 無嘅唔計）
+  const spCountByDay = new Map<string, number>()
+  for (const sp of spConfirmed) {
+    const bill = sp.billExtId ? billByExt.get(sp.billExtId) : null
+    const t = bill?.billTime
+    if (!t) continue
+    const dk = toHKDateStr(new Date(t))
+    spCountByDay.set(dk, (spCountByDay.get(dk) ?? 0) + 1)
   }
-  if (freeSpNet > 0) bRows.push(['Free SP（不計店舖營收，計醫生收入）', money(freeSpNet)])
 
-  // ─── C / D 區：成本明細（只准 patientCode，❌ patientName） ─────
+  // ─── 費率（F 區手續費率行）：由 allocation 快照反解（見檔頭註） ───
+  const feeFor = (m: string): number => {
+    let raw = 0
+    let net = 0
+    for (const dayM of dayMap.values()) {
+      const v = dayM.get(m)
+      if (v) {
+        raw += v.raw
+        net += v.net
+      }
+    }
+    if (raw === 0) return 0
+    const fee = 1 - net / raw
+    return fee > 0 ? fee : 0
+  }
+
+  // ─── C / D 區：成本明細（B 區 = LAB + INVISALIGN；C 區 = IMPLANT）──
   const costWhere: any = {
     providerId: run.providerId,
     periodMonth: run.periodMonth,
@@ -309,6 +253,7 @@ export async function GET(
   })
 
   const labCases = costs.filter(c => c.category === 'LAB')
+  const invCases = costs.filter(c => c.category === 'INVISALIGN')
   const implantCases = costs.filter(c => c.category === 'IMPLANT')
 
   // 材料名（MaterialItem 冇 relation field，另查）
@@ -320,187 +265,141 @@ export async function GET(
 
   // ★ 2026-08-25：dsaName 係助護唔係工廠 —— 剔走 fallback
   const vendorOf = (c: any): string => String(c.lab?.name || c.labOther || '')
-  const cRows: Cell[][] = [
-    ['C  Lab 成本明細'],
-    ['落單日', '病人編號', '項目', '工場', '單號', 'DSA', '原價', '折扣%', '實計'],
-  ]
-  for (const c of labCases) {
-    cRows.push([
-      ddMM(c.orderedAt),
-      String(c.patientCode || ''), // ★ 只准 patientCode
-      String(c.itemType || c.itemTypeOther || ''),
-      vendorOf(c),
-      String(c.labOrderNo || ''),
-      String(c.dsaName || ''),
-      money(c.baseCost),
-      money(c.discountPct),
-      money(c.finalCost),
-    ])
-  }
-  // C 小計 — 逐工場
-  const labByVendor = new Map<string, number>()
-  for (const c of labCases) {
-    const v = vendorOf(c) || UNNAMED_VENDOR // ★ 2026-08-26：同畫面用同一個字串（拍板③）
-    labByVendor.set(v, (labByVendor.get(v) || 0) + num(c.finalCost))
-  }
-  const labTotal = [...labByVendor.values()].reduce((a, b) => a + b, 0)
-  const labVendorText = [...labByVendor.entries()].map(([k, v]) => `${k} ${money(v)}`).join(' · ')
-  const cSubtotalRow: Cell[] = ['C 小計']
-  for (let i = 1; i < 8; i++) cSubtotalRow.push(i === 2 ? labVendorText : '')
-  cSubtotalRow.push(money(labTotal))
-  cRows.push(cSubtotalRow)
 
-  // D 區：植體成本（按病人分組，每組一小計行）
-  // ★ 2026-08-26：加「工場」欄（拍板②b）—— 下游 pivot/VLOOKUP 用戶要通知欄位偏移
-  const dRows: Cell[][] = [
-    ['D  植體成本明細（按病人分組）'],
-    ['落單日', '病人編號', '工場', '材料', '數量', '單價', '小計'],
-  ]
-  const byPatient = new Map<string, typeof implantCases>()
-  for (const c of implantCases) {
-    const k = String(c.patientCode || '')
-    if (!byPatient.has(k)) byPatient.set(k, [])
-    byPatient.get(k)!.push(c)
-  }
-  for (const [patient, cases] of byPatient) {
-    let groupTotal = 0
-    for (const c of cases) {
-      if (c.materials.length > 0) {
-        for (const mat of c.materials) {
-          dRows.push([
-            ddMM(c.orderedAt),
-            patient,
-            vendorOf(c) || UNNAMED_VENDOR,
-            mat.note?.trim() || materialName.get(mat.materialItemId) || mat.materialItemId, // ★ 2026-08-22：Other 材料顯示手動填嘅材料名（note 優先）
-            mat.qty,
-            money(mat.unitPriceUsed),
-            money(mat.subtotal),
-          ])
-          groupTotal += num(mat.subtotal)
-        }
-      } else {
-        // 冇材料行 → 直接出 case 成本
-        dRows.push([ddMM(c.orderedAt), patient, vendorOf(c) || UNNAMED_VENDOR, String(c.itemType || c.itemTypeOther || ''), 1, money(c.finalCost), money(c.finalCost)])
-        groupTotal += num(c.finalCost)
-      }
+  // ─── 砌 DoctorSheetData（六區 layout，由產生器出） ──────────────
+  // ★ 口徑對齊 engine（lib/payout/engine.ts）：
+  //   gross = Σ 全 method net（CREDIT/FREE_SP 都計）→ F 區收入淨額 TOTAL
+  //   labRows 必傳 LAB + INVISALIGN 兩類（engine profit 要減 invisalignCost）
+  //   SP/REF 金額 = base × rate（rate 小數；base 折入 headcount/qty）
+  const days: DoctorSheetData['days'] = []
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dk = `${run.periodMonth}-${String(day).padStart(2, '0')}`
+    const dayM = dayMap.get(dk)
+    const byMethod: Record<string, number> = {}
+    for (const m of seenMethods) {
+      byMethod[m] = money(dayM?.get(m)?.raw ?? 0)
     }
-    dRows.push([`${patient} 小計`, '', '', '', '', '', money(groupTotal)])
+    days.push({
+      date: `${String(day).padStart(2, '0')}/${String(mm).padStart(2, '0')}`,
+      byMethod,
+      spCount: spCountByDay.get(dk) ?? 0,
+    })
   }
 
-  // ─── E 區：2人SP 補貼 ／ 轉介 2% ／ 調整 ────────────────────────
-  const eRows: Cell[][] = [
-    ['E  2人SP 補貼 ／ 轉介 2%'],
-    ['類別', '帳單', '日期', '項目', '單價', '數量', '%', '金額'],
-  ]
-  for (const sp of spConfirmed) {
-    const bill = billByExt.get(sp.billExtId)
-    eRows.push([
-      'SP',
-      bill?.code || sp.billExtId,
-      bill ? ddMM(bill.billTime) : '',
-      String(sp.itemDes || ''),
-      money(sp.listPrice),
-      sp.headcount,
-      `${num(sp.splitPercent)}%`,
-      money(sp.amount),
-    ])
-  }
-  for (const ref of refConfirmed) {
-    const bill = ref.billExtId ? billByExt.get(ref.billExtId) : null
-    eRows.push([
-      'REF',
-      ref.billCode || bill?.code || ref.billExtId || '',
-      bill ? ddMM(bill.billTime) : '',
-      String(ref.itemDes || ''),
-      ref.unitPrice != null ? money(ref.unitPrice) : '',
-      ref.qty,
-      `${num(ref.refPercent)}%`,
-      money(ref.amount),
-    ])
-  }
-  for (const adj of adjustments) {
-    eRows.push(['ADJ', String(adj.refCode || ''), '', `${adj.reason} — ${adj.note || ''}`, '', '', '', money(adj.amount)])
+  const labRows = [...labCases, ...invCases].map(c => ({
+    vendor: vendorOf(c) || UNNAMED_VENDOR,
+    orderedAt: ddMM(c.orderedAt),
+    patientCode: String(c.patientCode || ''),
+    patientName: String(c.patientName || ''), // 規則⑤：病人姓名可列（2026-09-08 拍板）
+    itemType: String(c.itemType || c.itemTypeOther || ''),
+    amount: money(c.finalCost),
+  }))
+
+  // C 區：IMPLANT 材料逐筆（單價 = unitPriceUsed 快照，規則②）；
+  // 冇材料行 → case 成本直出（qty=1 × finalCost，同舊 export fallback 口徑）
+  const implantRows: DoctorSheetData['implantRows'] = []
+  for (const c of implantCases) {
+    const patientCode = String(c.patientCode || '')
+    const patientName = String(c.patientName || '') // 規則⑤
+    if (c.materials.length > 0) {
+      for (const mat of c.materials) {
+        // 防呆：DB subtotal 同 qty×單價 唔一致（手改過）→ 公式重算值會偏舊出口徑
+        if (Math.abs(num(mat.subtotal) - num(mat.qty) * num(mat.unitPriceUsed)) > 0.005) {
+          console.warn(`[payout-export] 材料 subtotal 同 qty×單價 唔一致（case ${c.id}）：subtotal=${mat.subtotal}, qty×price=${num(mat.qty) * num(mat.unitPriceUsed)}`)
+        }
+        implantRows.push({
+          patientCode,
+          patientName,
+          orderedAt: ddMM(c.orderedAt),
+          material: mat.note?.trim() || materialName.get(mat.materialItemId) || mat.materialItemId, // ★ 2026-08-22：Other 材料顯示手動填嘅材料名（note 優先）
+          qty: mat.qty,
+          unitPrice: money(mat.unitPriceUsed),
+        })
+      }
+    } else {
+      implantRows.push({
+        patientCode,
+        patientName,
+        orderedAt: ddMM(c.orderedAt),
+        material: String(c.itemType || c.itemTypeOther || ''),
+        qty: 1,
+        unitPrice: money(c.finalCost),
+      })
+    }
   }
 
-  // ─── G 區：付款逐筆（由 breakdownJson，按日期排） ───────────────
-  const gRows: Cell[][] = [
-    [`G  付款逐筆（${allRows.length} 行）`],
-    ['日期', '帳單編號', '付款方式', '原始', '費率', '淨額'],
-    ...[...allRows]
-      .sort((a, b) => String(a.paidAt ?? '').localeCompare(String(b.paidAt ?? '')))
-      .map(b => [
-        ddMM(b.paidAt),
-        String(b.billCode || ''),
-        String(b.method),
-        money(b.rawAmount),
-        num(b.feePercentUsed),
-        money(b.netAmount),
-      ]),
-  ]
-
-  // ─── Build workbook（單 sheet） ─────────────────────────────────
-  // ─── H 區：工廠總覽（跨醫生）───────────────────────────────
-  // ★ 2026-08-26：跟 run.periodMonth + run.clinicId 匯總所有醫生（MD §三）。
-  //   where 唔可以有 providerId；status/finalCost 口徑照 engine（合計＝各醫生成本總和）。
-  const hWhere: any = {
-    periodMonth: run.periodMonth,
-    status: { not: 'VOID' },
-    finalCost: { not: null },
-  }
-  if (run.clinicId) hWhere.clinicId = run.clinicId
-  const hCosts = await prisma.costCase.findMany({
-    where: hWhere,
-    select: { category: true, finalCost: true, labOther: true, lab: { select: { name: true } } },
+  // D 區：SP（2人補貼）—— amount = (listPrice−actualPrice)×split%×headcount
+  const spRows = spConfirmed.map(sp => {
+    const bill = sp.billExtId ? billByExt.get(sp.billExtId) : null
+    const base = round2((num(sp.listPrice) - num(sp.actualPrice)) * sp.headcount)
+    const rate = num(sp.splitPercent) / 100
+    if (Math.abs(round2(base * rate) - num(sp.amount)) > 0.005) {
+      console.warn(`[payout-export] SP ${sp.id} amount=${sp.amount} ≠ base×rate=${round2(base * rate)}（手改過？）`)
+    }
+    return {
+      billCode: bill?.code || sp.billExtId,
+      date: bill ? ddMM(bill.billTime) : '',
+      patientName: '', // SpSubsidy 無病人欄
+      desc: String(sp.itemDes || ''),
+      base,
+      rate,
+    }
   })
-  const hAgg = new Map<string, { lab: number; impl: number; inv: number; count: number }>()
-  for (const c of hCosts) {
-    const v: string = String(c.lab?.name || c.labOther || UNNAMED_VENDOR)
-    const e = hAgg.get(v) ?? { lab: 0, impl: 0, inv: 0, count: 0 }
-    const amt = num(c.finalCost)
-    if (c.category === 'LAB') e.lab += amt
-    else if (c.category === 'IMPLANT') e.impl += amt
-    else if (c.category === 'INVISALIGN') e.inv += amt
-    e.count += 1
-    hAgg.set(v, e)
-  }
-  const hSorted = [...hAgg.entries()]
-    .map(([vendor, e]) => ({ vendor, ...e, total: num(e.lab) + num(e.impl) + num(e.inv) }))
-    .sort((a, b) => b.total - a.total)
-  const hTot = { lab: 0, impl: 0, inv: 0, count: 0 }
-  const hRows: Cell[][] = [
-    ['H  工廠總覽（跨醫生）'],
-    ['工場', 'Lab', 'Implant', 'Invisalign', '合計', '單數'],
-  ]
-  for (const e of hSorted) {
-    hRows.push([e.vendor, money(e.lab), money(e.impl), money(e.inv), money(e.total), e.count])
-    hTot.lab += num(e.lab); hTot.impl += num(e.impl); hTot.inv += num(e.inv); hTot.count += e.count
-  }
-  hRows.push(['合計', money(hTot.lab), money(hTot.impl), money(hTot.inv), money(hTot.lab + hTot.impl + hTot.inv), hTot.count])
 
-  const aoa: Cell[][] = [
-    [title],
-    [],
-    ...aRows,
-    [],
-    ...bRows,
-    [],
-    ...cRows,
-    [],
-    ...dRows,
-    [],
-    ...eRows,
-    [],
-    ...gRows,
-    [],
-    ...hRows,
-  ]
-  const ws = XLSX.utils.aoa_to_sheet(aoa)
-  ws['!cols'] = [
-    { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 14 },
-    { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
-  ]
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '月結單')
+  // D 區：REF（轉介收入）—— amount = unitPrice×qty×ref%
+  const refRows = refConfirmed.map(ref => {
+    const bill = ref.billExtId ? billByExt.get(ref.billExtId) : null
+    const base = ref.unitPrice != null ? round2(num(ref.unitPrice) * ref.qty) : 0
+    const rate = num(ref.refPercent) / 100
+    if (Math.abs(round2(base * rate) - num(ref.amount ?? 0)) > 0.005) {
+      console.warn(`[payout-export] REF ${ref.id} amount=${ref.amount} ≠ base×rate=${round2(base * rate)}（手改過？）`)
+    }
+    return {
+      billCode: ref.billCode || bill?.code || ref.billExtId || '',
+      date: bill ? ddMM(bill.billTime) : '',
+      patientName: '', // ProviderReferral 無病人欄（只有 patientNote）
+      desc: String(ref.itemDes || ''),
+      base,
+      rate,
+    }
+  })
+
+  // E 區：調整
+  const adjRows = adjustments.map(adj => ({
+    refCode: String(adj.refCode || ''),
+    date: ddMM(adj.createdAt),
+    reason: String(adj.reason || ''),
+    note: String(adj.note || ''),
+    amount: money(adj.amount),
+  }))
+
+  const data = {
+    providerName,
+    clinicName,
+    periodMonth: run.periodMonth,
+    // LOCKED → 帶鎖定日期；DRAFT → 草稿提示（同舊 title statusSuffix 同信息）
+    status:
+      run.status === 'LOCKED' && run.lockedAt
+        ? `LOCKED（已鎖定 ${ddMyy(run.lockedAt)}）`
+        : 'DRAFT（草稿 — 數字可能會變）',
+    methods: seenMethods.map(m => ({
+      key: m,
+      label: METHOD_LABELS[m] || m,
+      feePercent: feeFor(m),
+      countAsIncome: !NON_INCOME.has(m),
+    })),
+    days,
+    labRows,
+    implantRows,
+    spRows,
+    refRows,
+    adjRows,
+    percentUsed: num(run.percentUsed) / 100, // DB 存百分數（50）→ 產生器用小數（0.5）
+  }
+
+  // ─── Build workbook（單 sheet，sheet 名 = 醫生名） ─────────────
+  const wb = new ExcelJS.Workbook()
+  buildDoctorSheet(wb, data)
 
   // Audit log
   await prisma.auditLog.create({
@@ -509,12 +408,13 @@ export async function GET(
       action: 'PAYOUT_EXPORT',
       entity: 'PayoutRun',
       entityId: run.id,
-      notes: `匯出月結單：${run.periodMonth}`,
+      // ★ 規則⑤：匯出包含病人姓名（B/C 區）— 審計要查得返
+      notes: `匯出月度收入報表：${run.periodMonth}（包含病人姓名）`,
     },
   })
 
   // Generate buffer
-  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' })
+  const buf = await wb.xlsx.writeBuffer()
 
   // ★ MD-AC2：檔名 ${providerShort}_${clinicShort}_${periodMonth}_月結單.xlsx
   //   中文檔名一定要 filename*=UTF-8''（部分瀏覽器純 filename="中文" 會亂碼）
