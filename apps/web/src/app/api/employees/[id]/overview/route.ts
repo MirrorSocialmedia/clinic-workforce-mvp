@@ -7,6 +7,7 @@ import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { calculateADW, getEffectiveADW } from '@/lib/adw'
 import { getTimeAccountSummary } from '@/lib/timebank-summary'
 import { deductionDailyRate } from '@/lib/payroll-engine'
+import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
 
 // ★ 呢條 route 只可以呼叫 lib/ 嘅共用函數，唔可以自己由原始表格砌計算。
 //   時間帳戶用 getTimeAccountSummary、ADW 用 calculateADW、
@@ -29,11 +30,8 @@ export async function GET(
       user: { select: { id: true, name: true, phone: true, email: true, role: true, createdAt: true, fullName: true } },
       clinics: { include: { clinic: { select: { id: true, name: true, shortName: true } } } },
       homeClinic: { select: { id: true, name: true, shortName: true } },
-      payRules: {
-        where: { isActive: true },
-        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-        take: 1,
-      },
+      // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（lib/pay-rule-latest）
+      payRules: PAY_RULE_LATEST,
       leaveBalances: {
         include: {
           leaveType: { select: { id: true, name: true, systemKey: true, isPaid: true } },

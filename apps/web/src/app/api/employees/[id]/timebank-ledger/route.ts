@@ -6,6 +6,7 @@ import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { buildTimeBankLedger, type LedgerMonth } from '@/lib/timebank-ledger'
 import { getTimeAccountSummary } from '@/lib/timebank-summary'
 import { toHKDateStr } from '@/lib/hk-date'
+import { PAY_RULE_SELECT } from '@/lib/pay-rule-latest'
 
 // ★ 呢條 route 只可以呼叫 lib/ 嘅共用函數，唔可以自己由原始表格砌計算。
 //
@@ -35,7 +36,9 @@ export async function GET(
     select: {
       payConfidential: true,
       homeClinicId: true,
-      payRules: { select: { configJson: true } },
+      // ★ 覆核 P0-2：必須同 overview/route.ts 一模一樣 —— 唔 filter isActive 會攞到停用嘅舊規則，
+      //   令帳本同總覽頂部出兩個唔同嘅數。口徑已抽常數統一（lib/pay-rule-latest，P1-2）。
+      payRules: PAY_RULE_SELECT,
     },
   })
 

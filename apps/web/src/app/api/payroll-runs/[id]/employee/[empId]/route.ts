@@ -5,6 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
+import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
 // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder（同員工總覽同一把尺）
 import { buildTimeBankLedger, type LedgerMonth } from '@/lib/timebank-ledger'
 
@@ -37,7 +38,8 @@ export async function GET(
           homeClinicId: true,
           user: { select: { id: true, name: true, phone: true, fullName: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
-          payRules: { where: { isActive: true }, orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }], take: 1 },
+          // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（lib/pay-rule-latest）
+          payRules: PAY_RULE_LATEST,
         },
       },
     },
@@ -103,7 +105,10 @@ export async function GET(
       select: { employeeId: true, date: true, startTime: true, endTime: true, status: true, template: { select: { deductLunch: true } } },
     }),
     prisma.payRule.findMany({
-      where: { employeeId: params.empId, isActive: true },
+      // ★ cwm-tbfix-20260910 P1-2：同上面 relation select 同一口徑（lib/pay-rule-latest）
+      where: { employeeId: params.empId, ...PAY_RULE_LATEST.where },
+      orderBy: PAY_RULE_LATEST.orderBy,
+      take: PAY_RULE_LATEST.take,
       select: { employeeId: true, configJson: true },
     }),
   ])

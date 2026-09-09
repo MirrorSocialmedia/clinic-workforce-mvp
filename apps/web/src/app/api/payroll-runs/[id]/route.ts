@@ -5,7 +5,9 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
-import { toHKDateStr, hkDateStart, periodMonthKey } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart } from '@/lib/hk-date'
+// ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（P0-2 / 坑②）
+import { PAY_RULE_SELECT } from '@/lib/pay-rule-latest'
 import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
 // ★ cwm-tbcache-rosterdiff-20260909：寫／刪 TimeBankEntry 一定要 invalidate 快取（坑④）
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
@@ -39,7 +41,8 @@ export async function GET(
               resignedAt: true,
               user: { select: { id: true, name: true, phone: true } },
               clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
-              payRules: { where: { isActive: true }, take: 1 },
+              // ★ cwm-tbfix-20260910 P1-2：最新生效規則口徑統一（lib/pay-rule-latest）
+              payRules: PAY_RULE_SELECT,
             },
           },
         },
@@ -73,48 +76,11 @@ export async function GET(
     )
   }
 
-  // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder（同員工總覽同一把尺）——
-  //   舊嘅 TB_DISPLAY_TYPES 批量查 + 逐 item 拼 manualEntries 兩套並存 = 坑②，此處收埋。
-  //   · 有 TimeBankLedgerSnapshot（finalize 凍結）→ 讀凍結 lines（frozen:true）；
-  //   · 冇 → buildTimeBankLedger 即時算（frozen:false）。builder 係 per-employee → 逐個 call
-  //     （run 通常 <20 人，S2 實測 3 人 finalize 721ms 有餘量）；snapshot 一次過查（避免 N+1）。
-  const tbPeriodKey = periodMonthKey(run.periodMonth)
-  const itemEmpIds = items.map(i => i.employeeId)
-  const tbSnaps = itemEmpIds.length > 0 ? await prisma.timeBankLedgerSnapshot.findMany({
-    where: { employeeId: { in: itemEmpIds }, periodMonth: tbPeriodKey },
-  }) : []
-  const tbSnapByEmp = new Map(tbSnaps.map(s => [s.employeeId, s]))
-  const ledgerByEmp = new Map<string, any>()
-  for (const it of items) {
-    // ★ 補丁A：時薪唔設時間帳戶 → ledger 唔計（item.timeBankLedger=null）→ UI 卡片 fallback 返 detailJson、新行唔渲染。
-    //   時薪員工冇 TimeBankEntry，live build 會回全 0 帳本，誤畫「兩清」卡。
-    let cfg: any = {}
-    try { cfg = JSON.parse(it.employee?.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
-    if (cfg?.base_type === 'hourly') continue
-    const snap = tbSnapByEmp.get(it.employeeId)
-    if (snap) {
-      let snapLines: any[] = []
-      try { snapLines = JSON.parse(snap.linesJson) } catch { snapLines = [] }
-      const snapSum = snapLines.reduce((s: number, l: any) => s + (Number(l.minutes) || 0), 0)
-      ledgerByEmp.set(it.employeeId, {
-        periodMonth: tbPeriodKey,
-        opening: snap.opening,
-        closing: snap.closing,
-        lines: snapLines,
-        reconciles: snap.opening + snapSum === snap.closing,
-        frozen: true,
-        frozenAt: snap.frozenAt.toISOString(),
-        engineVersion: snap.engineVersion,
-      })
-    } else {
-      try {
-        ledgerByEmp.set(it.employeeId, await buildTimeBankLedger(prisma, it.employeeId, tbPeriodKey, cfg))
-      } catch (e) {
-        // 單人即時算失敗唔阻擋成張糧單 list —— 該人 ledger=null（明細區塊隱藏）
-        console.error('[payroll-run-detail] timebank ledger 即時算失敗', { employeeId: it.employeeId, error: e instanceof Error ? e.message : String(e) })
-      }
-    }
-  }
+  // ★ cwm-tbfix-20260910 P1-1：run 列表嘅 per-employee timeBankLedger 拼裝（舊 S5 F 段）已剷 ——
+  //   grep 全 repo：唯一 consumer 係糧單詳情頁（payroll/[id]/employee/[empId]/page.tsx:308），
+  //   而佢由自己條 route（api/payroll-runs/[id]/employee/[empId]）攞 ledger，呢度 N ×
+  //   calculateTimeBank 冇人用（實測 3 人 run 列表 458ms，大頭係呢段）。糧單詳情頁零影響。
+  //   日後列表真要 ledger 先加 ?withLedger=1 開關。
 
   // ★ Extract sickDeduction from detailJson for each item
   //   (2026-08-02: sickDeduction is stored in detailJson, not in PayrollItem.deduction)
@@ -123,8 +89,6 @@ export async function GET(
     sickDeduction: (() => {
       try { return JSON.parse(it.detailJson || '{}').sickDeduction ?? 0 } catch { return 0 }
     })(),
-    // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶帳本（snapshot 優先，同員工總覽同一把尺）
-    timeBankLedger: ledgerByEmp.get(it.employeeId) ?? null,
   }))
 
   // ★ Totals recalculated from visible items only (prevents reverse-engineering)
@@ -210,6 +174,8 @@ export async function PUT(
       }
 
       // FIX #1: Use $transaction — status update + audit in same transaction
+      // ★ 覆核 P0-1：帳本凍結令 transaction 重好多（N × calculateTimeBank）。
+      //   默認 5s 唔夠（實測 3 人 721ms → 21 人 ≈ 5s）。同 payroll-engine.ts:1173 同一設定。
       const updated = await basePrisma.$transaction(async (tx) => {
         const result = await tx.payrollRun.update({
           where: { id: params.id },
@@ -240,7 +206,8 @@ export async function PUT(
               employee: {
                 select: {
                   id: true,
-                  payRules: { where: { isActive: true }, take: 1, select: { payType: true, configJson: true } },
+                  // ★ cwm-tbfix-20260910 P1-2：最新生效規則口徑統一（lib/pay-rule-latest）
+                  payRules: PAY_RULE_SELECT,
                 },
               },
             },
@@ -334,7 +301,8 @@ export async function PUT(
             })
             frozenCount++
           }
-          console.log(`[payroll-finalize] 凍結咗 ${frozenCount} 人 TimeBankLedgerSnapshot（${pm}）`)
+          // ★ 覆核 P0-1：耗時 log —— 人數再大會有預警（runbook 4.3 計時目標；>30s 要停手回報）
+          console.log(`[payroll-finalize] ${pm} 凍結 ${frozenCount} 人，耗時 ${Date.now() - t0}ms`)
 
           // ★ 2026-08-22 §6.2.2：假期餘額月結快照 —— 下個月排班總覽「上月剩」欄靠佢
           //   範圍：run 內全部員工（複用上面對面攞到嘅 items，唔多發 query）× 佢哋全部
@@ -471,7 +439,7 @@ export async function PUT(
         })
 
         return result
-      })
+      }, { maxWait: 10_000, timeout: 120_000 })
 
       console.log('[payroll-run PUT]', { runId: params.id, status, durationMs: Date.now() - t0 })
       return NextResponse.json(updated)
