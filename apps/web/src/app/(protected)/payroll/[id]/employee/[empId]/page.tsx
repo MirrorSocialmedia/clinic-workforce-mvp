@@ -1125,7 +1125,8 @@ export default function EmployeePayrollDetailPage() {
                       {' − '}補鐘 {tb.makeupMinutes ?? 0}{' − '}淨遲到 {tb.netLateMinutes ?? 0}{' − '}淨早退 {tb.netEarlyMinutes ?? 0}
                       {' = '}{tb.netOtThisMonth ?? '—'}
                       {(tb.carriedFrom ?? 0) !== 0 && <><br/>上月結轉 {tb.carriedFrom} + 本月實得 {tb.netOtThisMonth ?? '—'}
-                      {(tb.convertedMinutes ?? 0) !== 0 && ` + 調整 ${tb.convertedMinutes}`}</>}
+                      {(tb.convertedMinutes ?? 0) !== 0 && ` + 調整 ${tb.convertedMinutes}`}
+                      {' = '}{tb.timeAccountMinutes} <span className="opacity-70">（run 生成時口徑）</span></>}
                     </div>
                     {/* ★ cwm-tbledger-20260909 補丁A：期初＋逐筆＝期末（帳本口徑；上方「本月實得」行係 OT 拆解，兩行講唔同嘢，都要留） */}
                     {tbLedger && (

@@ -94,8 +94,12 @@ export async function buildTimeBankLedger(
   let reconciles = true
   if (gap !== 0) {
     reconciles = false
+    // ★ cwm-tbfix-20260910 P2-2：RECONCILE 行 date = 當月最後一日（舊寫死 -31，二月會出 2026-02-31 唔存在嘅日子）。
+    //   安全算法同 payroll-runs/[id]/route.ts leaveBalanceSnapshot 段同一 idiom（純 UTC 月尾算術，check-dates 合規）。
+    const [rY, rM] = periodMonth.split('-').map(Number)
+    const lastDay = new Date(Date.UTC(rY, rM, 0)).getUTCDate()
     lines.push({
-      date: `${periodMonth}-31`, kind: 'RECONCILE', type: 'UNEXPLAINED',
+      date: `${periodMonth}-${String(lastDay).padStart(2, '0')}`, kind: 'RECONCILE', type: 'UNEXPLAINED',
       label: '⚠️ 未分類差額（帳本加唔埋，請報告）', minutes: gap,
     })
   }

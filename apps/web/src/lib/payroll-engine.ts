@@ -38,6 +38,13 @@ const earlyInOtWarnedSet = new Set<string>()
  *   always the null combination — equivalent to cacheKey being useless,
  *   and the key written by payroll differed from overview, causing mutual invalidation.
  */
+/**
+ * ★ cwm-tbfix-20260910 P2-1：指紋 aggregate 失敗 = cache 自癒安全網失效。
+ *   唔准靜靜降級（坑④會靜靜復活）—— warn 一次（module-level flag 防 spam，
+ *   而家每個 cache miss 都會重算 key）。
+ */
+let tbFingerprintWarned = false
+
 async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, monthStart: Date): Promise<string> {
   let cfg: any = {}
   try {
@@ -69,7 +76,13 @@ async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, mon
       _sum: { minutes: true },
     })
     tbFp = `${agg?._count?._all ?? 0}:${agg?._sum?.minutes ?? 0}`
-  } catch { /* 舊 client / 測試 stub 冇 aggregate → 當冇指紋，退化成舊行為 */ }
+  } catch (e) {
+    // 舊 client / 測試 stub 冇 aggregate → 當冇指紋，退化成舊行為
+    if (!tbFingerprintWarned) {
+      tbFingerprintWarned = true
+      console.warn('[payroll-engine] TimeBankEntry aggregate 失敗 → cache 指紋退化成 0:0（自癒安全網失效，請檢查 DB / Prisma client）', e instanceof Error ? e.message : String(e))
+    }
+  }
 
   return `v${TIMEBANK_ENGINE_VERSION}:` + JSON.stringify({
     ot: cfg?.modifiers?.overtime ?? null,

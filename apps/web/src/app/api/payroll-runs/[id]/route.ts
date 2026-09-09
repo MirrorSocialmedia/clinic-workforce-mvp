@@ -5,7 +5,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
 import { snapshotWagesForADW } from '@/lib/adw'
-import { toHKDateStr, hkDateStart } from '@/lib/hk-date'
+import { hkDateStart, periodMonthKey } from '@/lib/hk-date'
 // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（P0-2 / 坑②）
 import { PAY_RULE_SELECT } from '@/lib/pay-rule-latest'
 import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
@@ -188,9 +188,9 @@ export async function PUT(
           include: { _count: { select: { items: true } }, clinic: { select: { id: true, name: true } } },
         })
 
-        // ★ periodKey helper — 寫入同退回用同一個 helper，確保格式一致（2026-08-15）
-        const periodKey = (v: string | Date) =>
-          typeof v === 'string' ? v.slice(0, 7) : toHKDateStr(v).slice(0, 7)
+        // ★ cwm-tbfix-20260910 P2-3：寫入同退回一律用 hk-date 嘅 periodMonthKey（HK 口徑，
+        //   同讀取側同一個 helper，#50 格式一致原則）。
+        //   舊本地 periodKey 對 string ISO 輸入係 v.slice(0,7)（UTC 口徑）→ 潛在漂移，已剷。
 
         // cwm-tbledger-20260909 C2：finalize 凍結人數 — 供尾段 PAYROLL_FINALIZE audit notes 用
         let frozenCount = 0
@@ -212,7 +212,7 @@ export async function PUT(
               },
             },
           })
-          const pm = periodKey(run.periodMonth)
+          const pm = periodMonthKey(run.periodMonth)
           const [py, pmNum] = pm.split('-').map(Number)
           // ★ nextMonthStart 已處理跳年 —— 統一用它導出 monthEndDate
           const nextMonthStart = new Date(
@@ -368,7 +368,7 @@ export async function PUT(
         // ★ 退回草稿：獨立 action，方便日後追查
         if (status === 'DRAFT' && run.status === 'FINALIZED') {
           // ★ 退回時刪除 ROSTER_DIFF 入帳
-          const pk = periodKey(run.periodMonth)
+          const pk = periodMonthKey(run.periodMonth)
           const itemsRevert = await tx.payrollItem.findMany({
             where: { runId: params.id },
             select: { employeeId: true },
@@ -432,7 +432,7 @@ export async function PUT(
             entity: 'PayrollRun',
             entityId: result.id,
             afterJson: JSON.stringify(result),
-            notes: `PayrollRun status changed: ${run.status} → ${status ?? 'unchanged'}${payDate !== undefined ? `; payDate → ${payDate || null}` : ''}${status === 'FINALIZED' && run.status === 'DRAFT' ? `；確認計糧: ${periodKey(run.periodMonth)}（凍結時間帳戶帳本 ${frozenCount} 人）` : ''}`,
+            notes: `PayrollRun status changed: ${run.status} → ${status ?? 'unchanged'}${payDate !== undefined ? `; payDate → ${payDate || null}` : ''}${status === 'FINALIZED' && run.status === 'DRAFT' ? `；確認計糧: ${periodMonthKey(run.periodMonth)}（凍結時間帳戶帳本 ${frozenCount} 人）` : ''}`,
             ipAddress: auditCtx.ip || null,
             userAgent: auditCtx.ua || null,
           },
