@@ -419,6 +419,17 @@ function PayoutRunsPageInner() {
             >
               {generating ? '生成中...' : '生成並鎖定'}
             </Button>
+            {/* ★ cwm-payoutxlsx C：全店月報（封面＋逐醫生＋Clinic 雜項）— 只需診所＋月份 */}
+            <Button
+              variant="outline"
+              disabled={!selectedClinic || !selectedMonth}
+              onClick={() => {
+                window.location.href =
+                  `/api/payout-runs/clinic-report?clinicId=${selectedClinic}&periodMonth=${selectedMonth}`
+              }}
+            >
+              <Download size={14} className="mr-1" /> 月度收入報表
+            </Button>
           </div>
 
           {/* 「有收入但未生成」提示 */}

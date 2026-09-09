@@ -52,6 +52,8 @@ export interface DoctorSheetData {
   clinicName: string
   periodMonth: string // YYYY-MM
   status: string // DRAFT | LOCKED
+  /** sheet 名基底（C 步全店月報傳 shortName||name；單張匯出唔傳 → 照舊用 providerName） */
+  sheetNameBase?: string
   /** 方法欄，上游照 METHOD_ORDER 排好（未知排最後），產生器照順序出欄 */
   methods: { key: string; label: string; feePercent: number; countAsIncome: boolean }[]
   /** 逐日（上游傳全月逐日；冇收入 method 傳 0/缺省 → 留白） */
@@ -252,7 +254,7 @@ function setWidths(ws: ExcelJS.Worksheet, widths: number[]): void {
  * 返回 worksheet（MD 簽名 void；返 ws 係 superset，caller 可忽略 — 要 sheet 名時有用）。
  */
 export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): ExcelJS.Worksheet {
-  const name = nextSheetName(wb, d.providerName)
+  const name = nextSheetName(wb, d.sheetNameBase ?? d.providerName)
   const ws = wb.addWorksheet(name)
 
   const M = d.methods.length
