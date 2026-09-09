@@ -82,6 +82,7 @@ export const CONFIG = {
     'GET /api/employees/:id/overview': ['OWNER', 'MANAGER'],
     'GET /api/employees/:id/overview/history': ['OWNER', 'MANAGER'],
     'GET /api/employees/:id/overview/attendance-days': ['OWNER', 'MANAGER'],
+    'GET /api/employees/:id/timebank-ledger': ['OWNER', 'MANAGER'],
 
     // Resign / Rehire routes
     // ★ 2026-09-04 [cwm-resigpay-20260904] 拍板 B：MANAGER 睇得到預覽（寫入 resign-settle 仍 OWNER-only）
@@ -444,6 +445,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/employees/:id/overview': ['employee_overview'],
   'GET /api/employees/:id/overview/history': ['employee_overview'],
   'GET /api/employees/:id/overview/attendance-days': ['employee_overview'],
+  'GET /api/employees/:id/timebank-ledger': ['employee_overview'],
   'GET /api/employees': ['employee_overview', 'payroll_view', 'payroll_generate'],
 
   // ★ 2026-08-03：計糧相關 —— 側欄已開放畀有權限嘅 EMPLOYEE，
