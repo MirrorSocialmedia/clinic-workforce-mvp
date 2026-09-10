@@ -410,13 +410,6 @@ function ReconciliationPageInner() {
                             {/* By method detail — ★ C2：報表 vs 系統 兩邊對照 */}
                             {r.detailJson.byMethod && r.detailJson.byMethod.length > 0 && (
                               <div>
-                                {/* ★ C3(a)：FREE SP 口徑透明行 —— 報表 Total Paid 包 FREE SP，扣走先對數（freeSpTotal=0 唔顯示） */}
-                                {Number(r.detailJson.freeSpTotal || 0) > 0 && (
-                                  <p className="text-xs text-gray-500 mb-2 tabular-nums">
-                                    報表 Total Paid {fmt(Number(r.detailJson.reportTotal))} − FREE SP {fmt(Number(r.detailJson.freeSpTotal))} ={' '}
-                                    <span className="font-semibold text-gray-700">{fmt(Number(r.detailJson.reportTotalAdjusted))}</span> 用嚟對數
-                                  </p>
-                                )}
                                 <h4 className="font-semibold text-sm mb-2">逐方式（報表 vs 系統）</h4>
                                 <table className="w-full text-xs tabular-nums">
                                   <thead>

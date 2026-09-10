@@ -202,8 +202,6 @@ function buildDetail(result: {
 	reportCharges: number
 	clinicExtId: string // ★ cwm-recon-clinic-20260909 A1
 	systemTotal: number
-	freeSpTotal: number // ★ C3(a)
-	reportTotalAdjusted: number // ★ C3(a)
 	difference: number
 	chargesVsPaid: number
 	status: string
@@ -215,8 +213,7 @@ function buildDetail(result: {
 		reportCharges: result.reportCharges,
 		clinicExtId: result.clinicExtId, // ★ A1：今次對數收窄咗邊間（debug 用）
 		systemTotal: result.systemTotal,
-		freeSpTotal: result.freeSpTotal, // ★ C3(a)：畫面出透明扣走行用
-		reportTotalAdjusted: result.reportTotalAdjusted, // ★ C3(a)
+		// ★ cwm-reconxlsx-fix-20260910 B：freeSpTotal / reportTotalAdjusted 已剷（兩邊都包 FREE SP，唔使調整）
 		difference: result.difference,
 		chargesVsPaid: result.chargesVsPaid,
 		status: result.status,
