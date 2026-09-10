@@ -5,8 +5,9 @@
  * （第二真相來源坑）。所有欄位由 data derive，本檔**唔寫死任何方法/工場/單價**。
  *
  * 五條硬規矩（MD A 章，2026-09-08 老細拍板）：
- *  ① 合計格一律 `{ formula: 'SUM(...)' }` 唔寫死數；最終金額（應付總額／診所總收入）
- *     用 `{ formula, result }` 雙寫（部分手機預覽器無 cached value 會顯示空白）。
+ *  ① 合計格一律 `{ formula: 'SUM(...)' }` 唔寫死數；★ cwm-reconxlsx-fix-20260910 A：
+ *     所有公式格一律 `{ formula, result }` 雙寫（result 必填）— ExcelJS 純 { formula }
+ *     無 cached value，Google Sheets／OneDrive 預覽／手機一律顯示空白（實錘：F 結算成排空）。
  *  ② 欄由 data derive：方法欄照入傳 `methods[]` 順序（上游排好 METHOD_ORDER、
  *     未知排最後）；工場行按金額大→細；材料單價逐筆快照。本檔零硬編碼。
  *  ③ 費率行由入傳 `feePercent`（上游 `PaymentMethodRule` resolve），
@@ -175,25 +176,34 @@ function setData(cell: ExcelJS.Cell, v: string | number, o: { fmt?: string; gray
   if (o.fmt) cell.numFmt = o.fmt
 }
 
-/** 黑字 = 公式（規則④）；result 可選（最終金額必帶，規則①） */
+/** 黑字 = 公式（規則④）
+ *  ★ cwm-reconxlsx-fix-20260910 A：result 由選填改【必填】——
+ *    ExcelJS 純 { formula } 冇 cached value，Google Sheets／OneDrive 預覽／手機
+ *    一律顯示空白（實證：F 結算成排空，淨係雙寫嗰格「應付總額」有數）。
+ *    ★ 呢個唔係「求穩」，係「唔寫就見唔到」。
+ *    result 一律 round2()，同公式算出嚟嘅數一致（否則 Excel 重算個數會跳）。
+ */
 function setFormula(
   cell: ExcelJS.Cell,
   formula: string,
-  o: { fmt?: string; result?: number; bold?: boolean } = {},
+  o: { result: number; fmt?: string; bold?: boolean },
 ): void {
-  cell.value = o.result !== undefined ? { formula, result: o.result } : { formula }
+  cell.value = { formula, result: o.result }
   cell.font = mkFont({ bold: o.bold })
   cell.border = thinBorder
   if (o.fmt) cell.numFmt = o.fmt
 }
 
-/** 綠字 = 跨 sheet 連結（規則④） */
+/** 綠字 = 跨 sheet 連結（規則④）
+ *  ★ cwm-reconxlsx-fix-20260910 A（CEO 補充）：同 setFormula，result【必填】+ 雙寫——
+ *    封面逐醫生行就係 setLink，唔改一樣會空白。
+ */
 function setLink(
   cell: ExcelJS.Cell,
   formula: string,
-  o: { fmt?: string; result?: number; bold?: boolean } = {},
+  o: { result: number; fmt?: string; bold?: boolean },
 ): void {
-  cell.value = o.result !== undefined ? { formula, result: o.result } : { formula }
+  cell.value = { formula, result: o.result }
   cell.font = mkFont({ color: COLOR_GREEN, bold: o.bold })
   cell.border = thinBorder
   if (o.fmt) cell.numFmt = o.fmt
@@ -263,6 +273,23 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   const spCountCol = 2 + M + 1 // SP 筆數
   const lastCol = Math.max(2 + M + 1, 7) // 最闊區決定表寬（C/D 區 7 欄）
 
+  // ★ cwm-reconxlsx-fix-20260910 A：公式格 result 必填——以下值由同一份 data 推導
+  //   （engine 口徑 round2 逐步，同原 F12 前嘅推導式一字不差，只係搬前供 A/F 區雙寫用）：
+  const methodRaw = d.methods.map(m => round2(d.days.reduce((s, day) => s + (day.byMethod[m.key] ?? 0), 0)))
+  const collectTotal = round2(methodRaw.reduce((s, v) => s + v, 0))
+  const gross = round2(d.methods.reduce((s, m, i) => s + round2(methodRaw[i] * (1 - m.feePercent)), 0))
+  const labTotal = round2(d.labRows.reduce((s, r) => s + r.amount, 0))
+  const implantTotal = round2(d.implantRows.reduce((s, r) => s + round2(r.qty * r.unitPrice), 0))
+  const profit = round2(gross - labTotal - implantTotal)
+  const salary = round2(profit * d.percentUsed)
+  const spTotal = round2(d.spRows.reduce((s, r) => s + round2(r.base * r.rate), 0))
+  const refTotal = round2(d.refRows.reduce((s, r) => s + round2(r.base * r.rate), 0))
+  const adjTotal = round2(d.adjRows.reduce((s, r) => s + r.amount, 0))
+  const payableResult = round2(salary + spTotal + refTotal + adjTotal)
+  // A 區 TOTAL 欄只計 income method（同現行 route NON_INCOME 口徑；flag 由 data 帶入）
+  const incomeTotal = (byMethod: Record<string, number>): number =>
+    d.methods.reduce((s, m) => s + (m.countAsIncome ? round2(byMethod[m.key] ?? 0) : 0), 0)
+
   // 欄闊
   const widths: number[] = []
   for (let i = 1; i <= lastCol; i++) {
@@ -314,7 +341,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
         .map((m, i) => (m.countAsIncome ? `${colName(methodCol(i))}${row}` : null))
         .filter(Boolean)
         .join('+')
-      setFormula(tCell, parts, { fmt: MONEY_FMT })
+      setFormula(tCell, parts, { fmt: MONEY_FMT, result: round2(incomeTotal(day.byMethod)) })
     } else {
       tCell.value = ''
       tCell.border = thinBorder
@@ -332,13 +359,13 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   setLabel(ws.getCell(row, 1), 'Total', { bold: true })
   d.methods.forEach((m, i) => {
     const c = ws.getCell(row, methodCol(i))
-    if (d.days.length > 0) setFormula(c, `SUM(${colName(methodCol(i))}${aFirst}:${colName(methodCol(i))}${aLast})`, { fmt: MONEY_FMT, bold: true })
+    if (d.days.length > 0) setFormula(c, `SUM(${colName(methodCol(i))}${aFirst}:${colName(methodCol(i))}${aLast})`, { fmt: MONEY_FMT, bold: true, result: methodRaw[i] })
     else {
       setData(c, 0, { fmt: MONEY_FMT, gray: true })
     }
   })
   const atCell = ws.getCell(row, totalCol)
-  if (d.days.length > 0) setFormula(atCell, `SUM(${colName(totalCol)}${aFirst}:${colName(totalCol)}${aLast})`, { fmt: MONEY_FMT, bold: true })
+  if (d.days.length > 0) setFormula(atCell, `SUM(${colName(totalCol)}${aFirst}:${colName(totalCol)}${aLast})`, { fmt: MONEY_FMT, bold: true, result: round2(d.days.reduce((s, day) => s + incomeTotal(day.byMethod), 0)) })
   else setData(atCell, 0, { fmt: MONEY_FMT, gray: true })
   ws.getCell(row, spCountCol).border = thinBorder
   row += 2
@@ -355,6 +382,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   row++
   const bFirst = row
   const bSubtotalCells: number[] = [] // F 欄 subtotal 行號
+  const bSubtotalVals: number[] = [] // 各 subtotal cached result（B 總計 result 用）
   if (d.labRows.length === 0) {
     setLabel(ws.getCell(row, 1), '（無記錄）', { gray: true, italic: true })
     ws.getCell(row, 6).border = thinBorder
@@ -374,15 +402,17 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
     }
     setLabel(ws.getCell(row, 1), `${v} 小計`, { bold: true })
     for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
-    setFormula(ws.getCell(row, 6), `SUM(F${vFirst}:F${row - 1})`, { fmt: MONEY_FMT, bold: true })
+    const bSubVal = round2(rows.reduce((s, r) => s + round2(r.amount), 0))
+    setFormula(ws.getCell(row, 6), `SUM(F${vFirst}:F${row - 1})`, { fmt: MONEY_FMT, bold: true, result: bSubVal })
     bSubtotalCells.push(row)
+    bSubtotalVals.push(bSubVal)
     row++
   }
   const bTotalRow = row
   if (d.labRows.length > 0) {
     setLabel(ws.getCell(row, 1), 'B 總計（Lab+Invisalign）', { bold: true })
     for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
-    setFormula(ws.getCell(row, 6), bSubtotalCells.map(r => `F${r}`).join('+'), { fmt: MONEY_FMT, bold: true })
+    setFormula(ws.getCell(row, 6), bSubtotalCells.map(r => `F${r}`).join('+'), { fmt: MONEY_FMT, bold: true, result: round2(bSubtotalVals.reduce((s, x) => s + x, 0)) })
   } else {
     setLabel(ws.getCell(row, 1), 'B 總計（Lab+Invisalign）', { bold: true })
     for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
@@ -397,6 +427,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   row++
   const cFirst = row
   const cSubtotalCells: number[] = []
+  const cSubtotalVals: number[] = [] // 各 group subtotal cached result（C 總計 result 用）
   if (d.implantRows.length === 0) {
     setLabel(ws.getCell(row, 1), '（無記錄）', { gray: true, italic: true })
     for (let i = 2; i <= 7; i++) ws.getCell(row, i).border = thinBorder
@@ -407,10 +438,13 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   let groupFirst = row
   const flushGroup = (key: string): void => {
     if (key === '' || d.implantRows.length === 0) return
+    const gRows = d.implantRows.filter(r => (r.patientCode || '（未编号）') === key)
+    const cSubVal = round2(gRows.reduce((s, r) => s + round2(r.qty * r.unitPrice), 0))
     setLabel(ws.getCell(row, 1), `${key} 小計`, { bold: true })
     for (let i = 2; i <= 6; i++) ws.getCell(row, i).border = thinBorder
-    setFormula(ws.getCell(row, 7), `SUM(G${groupFirst}:G${row - 1})`, { fmt: MONEY_FMT, bold: true })
+    setFormula(ws.getCell(row, 7), `SUM(G${groupFirst}:G${row - 1})`, { fmt: MONEY_FMT, bold: true, result: cSubVal })
     cSubtotalCells.push(row)
+    cSubtotalVals.push(cSubVal)
     row++
     groupFirst = row
   }
@@ -426,14 +460,14 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
     setData(ws.getCell(row, 4), r.material)
     setData(ws.getCell(row, 5), r.qty)
     setData(ws.getCell(row, 6), round2(r.unitPrice), { fmt: MONEY_FMT }) // 快照價（規則②）
-    setFormula(ws.getCell(row, 7), `E${row}*F${row}`, { fmt: MONEY_FMT }) // 數量×單價
+    setFormula(ws.getCell(row, 7), `E${row}*F${row}`, { fmt: MONEY_FMT, result: round2(r.qty * r.unitPrice) }) // 數量×單價
     row++
   }
   flushGroup(groupKey)
   const cTotalRow = row
   setLabel(ws.getCell(row, 1), 'C 總計（Implant）', { bold: true })
   for (let i = 2; i <= 6; i++) ws.getCell(row, i).border = thinBorder
-  if (d.implantRows.length > 0) setFormula(ws.getCell(row, 7), cSubtotalCells.map(r => `G${r}`).join('+'), { fmt: MONEY_FMT, bold: true })
+  if (d.implantRows.length > 0) setFormula(ws.getCell(row, 7), cSubtotalCells.map(r => `G${r}`).join('+'), { fmt: MONEY_FMT, bold: true, result: round2(cSubtotalVals.reduce((s, x) => s + x, 0)) })
   else setData(ws.getCell(row, 7), 0, { fmt: MONEY_FMT, gray: true })
   row += 2
 
@@ -457,12 +491,12 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
       setData(ws.getCell(row, 4), r.desc)
       setData(ws.getCell(row, 5), round2(r.base), { fmt: MONEY_FMT })
       setData(ws.getCell(row, 6), r.rate, { fmt: PCT_FMT })
-      setFormula(ws.getCell(row, 7), `E${row}*F${row}`, { fmt: MONEY_FMT }) // 底數×比率
+      setFormula(ws.getCell(row, 7), `E${row}*F${row}`, { fmt: MONEY_FMT, result: round2(r.base * r.rate) }) // 底數×比率
       row++
     }
     setLabel(ws.getCell(row, 1), `${title} 小計`, { bold: true })
     for (let i = 2; i <= 6; i++) ws.getCell(row, i).border = thinBorder
-    if (rows.length > 0) setFormula(ws.getCell(row, 7), `SUM(G${first}:G${row - 1})`, { fmt: MONEY_FMT, bold: true })
+    if (rows.length > 0) setFormula(ws.getCell(row, 7), `SUM(G${first}:G${row - 1})`, { fmt: MONEY_FMT, bold: true, result: round2(rows.reduce((s, r) => s + round2(r.base * r.rate), 0)) })
     else setData(ws.getCell(row, 7), 0, { fmt: MONEY_FMT, gray: true })
     const subRow = row
     row++
@@ -489,7 +523,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   const eTotalRow = row
   setLabel(ws.getCell(row, 1), 'E 總計', { bold: true })
   for (let i = 2; i <= 4; i++) ws.getCell(row, i).border = thinBorder
-  if (d.adjRows.length > 0) setFormula(ws.getCell(row, 5), `SUM(E${eFirst}:E${row - 1})`, { fmt: MONEY_FMT, bold: true })
+  if (d.adjRows.length > 0) setFormula(ws.getCell(row, 5), `SUM(E${eFirst}:E${row - 1})`, { fmt: MONEY_FMT, bold: true, result: round2(d.adjRows.reduce((s, r) => s + round2(r.amount), 0)) })
   else setData(ws.getCell(row, 5), 0, { fmt: MONEY_FMT, gray: true })
   row += 2
 
@@ -502,9 +536,9 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   // F1 收款總額（照 A 區 Total 行，公式引用）
   setLabel(ws.getCell(row, 1), '收款總額')
   d.methods.forEach((m, i) => {
-    setFormula(ws.getCell(row, methodCol(i)), `${colName(methodCol(i))}${aTotalRow}`, { fmt: MONEY_FMT })
+    setFormula(ws.getCell(row, methodCol(i)), `${colName(methodCol(i))}${aTotalRow}`, { fmt: MONEY_FMT, result: methodRaw[i] })
   })
-  setFormula(ws.getCell(row, totalCol), `SUM(${colName(methodCol(0))}${row}:${colName(methodCol(M - 1))}${row})`, { fmt: MONEY_FMT })
+  setFormula(ws.getCell(row, totalCol), `SUM(${colName(methodCol(0))}${row}:${colName(methodCol(M - 1))}${row})`, { fmt: MONEY_FMT, result: collectTotal })
   const fCollectRow = row
   row++
   // F2 手續費率（規則③：入傳 feePercent，藍字）
@@ -517,9 +551,9 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   setLabel(ws.getCell(row, 1), '收入淨額', { bold: true })
   d.methods.forEach((m, i) => {
     const c = colName(methodCol(i))
-    setFormula(ws.getCell(row, methodCol(i)), `${c}${fCollectRow}*(1-${c}${fFeeRow})`, { fmt: MONEY_FMT })
+    setFormula(ws.getCell(row, methodCol(i)), `${c}${fCollectRow}*(1-${c}${fFeeRow})`, { fmt: MONEY_FMT, result: round2(methodRaw[i] * (1 - m.feePercent)) })
   })
-  setFormula(ws.getCell(row, totalCol), `SUM(${colName(methodCol(0))}${row}:${colName(methodCol(M - 1))}${row})`, { fmt: MONEY_FMT, bold: true })
+  setFormula(ws.getCell(row, totalCol), `SUM(${colName(methodCol(0))}${row}:${colName(methodCol(M - 1))}${row})`, { fmt: MONEY_FMT, bold: true, result: gross })
   const fNetRow = row
   row++
 
@@ -535,39 +569,29 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   }
 
   // F4/F5 成本（負數行，B/C 區合計引用）
-  const fLabRow = singleRow('Lab/Invisalign 成本', c => setFormula(c, `=-F${bTotalRow}`, { fmt: MONEY_FMT }))
-  const fImplantRow = singleRow('Implant 成本', c => setFormula(c, `=-G${cTotalRow}`, { fmt: MONEY_FMT }))
-  // F6 利潤
+  const fLabRow = singleRow('Lab/Invisalign 成本', c => setFormula(c, `-${'F'}${bTotalRow}`, { fmt: MONEY_FMT, result: -labTotal }))
+  const fImplantRow = singleRow('Implant 成本', c => setFormula(c, `-${'G'}${cTotalRow}`, { fmt: MONEY_FMT, result: -implantTotal }))
+  // ↑ F4/F5 成本（負數行，B/C 區合計引用）；公式一律唔帶前綴 =（OOXML <f> 規格）— 2026-09-10 S1 修：原 `=-F...` 寫法係現有 bug，部分 reader（Google Sheets/手機預覽）解析失敗會空白
   const fProfitRow = singleRow(
     '利潤',
-    c => setFormula(c, `${colName(totalCol)}${fNetRow}+B${fLabRow}+B${fImplantRow}`, { fmt: MONEY_FMT }),
+    c => setFormula(c, `${colName(totalCol)}${fNetRow}+B${fLabRow}+B${fImplantRow}`, { fmt: MONEY_FMT, result: profit }),
     true,
   )
   // F7 拆帳 %（藍字 data）
   const fPctRow = singleRow('拆帳比例', c => setData(c, d.percentUsed, { fmt: PCT_FMT }))
   // F8 醫生份額 = 利潤×拆帳%
-  const fSalaryRow = singleRow('醫生份額', c => setFormula(c, `B${fProfitRow}*B${fPctRow}`, { fmt: MONEY_FMT }))
+  const fSalaryRow = singleRow('醫生份額', c => setFormula(c, `B${fProfitRow}*B${fPctRow}`, { fmt: MONEY_FMT, result: salary }))
   // F9-F11 = D/E 區引用
-  const fSpRow = singleRow('SP 補貼', c => setFormula(c, `G${spSubRow}`, { fmt: MONEY_FMT }))
-  const fRefRow = singleRow('轉介收入', c => setFormula(c, `G${refSubRow}`, { fmt: MONEY_FMT }))
-  const fAdjRow = singleRow('上期調整', c => setFormula(c, `E${eTotalRow}`, { fmt: MONEY_FMT }))
+  const fSpRow = singleRow('SP 補貼', c => setFormula(c, `G${spSubRow}`, { fmt: MONEY_FMT, result: spTotal }))
+  const fRefRow = singleRow('轉介收入', c => setFormula(c, `G${refSubRow}`, { fmt: MONEY_FMT, result: refTotal }))
+  const fAdjRow = singleRow('上期調整', c => setFormula(c, `E${eTotalRow}`, { fmt: MONEY_FMT, result: adjTotal }))
   // F12 應付總額（規則①：{ formula, result } 雙寫；規則④：黃底）
   const fPayableRow = row
   setLabel(ws.getCell(row, 1), LABEL_PAYABLE, { bold: true })
   ws.mergeCells(row, 2, row, totalCol)
   const payCell = ws.getCell(row, 2)
   const payableFormula = `B${fSalaryRow}+B${fSpRow}+B${fRefRow}+B${fAdjRow}`
-  // result 由同一份 data 推導（engine 口徑 round2 逐步）：
-  const methodRaw = d.methods.map(m => round2(d.days.reduce((s, day) => s + (day.byMethod[m.key] ?? 0), 0)))
-  const gross = round2(d.methods.reduce((s, m, i) => s + round2(methodRaw[i] * (1 - m.feePercent)), 0))
-  const labTotal = round2(d.labRows.reduce((s, r) => s + r.amount, 0))
-  const implantTotal = round2(d.implantRows.reduce((s, r) => s + round2(r.qty * r.unitPrice), 0))
-  const profit = round2(gross - labTotal - implantTotal)
-  const salary = round2(profit * d.percentUsed)
-  const spTotal = round2(d.spRows.reduce((s, r) => s + round2(r.base * r.rate), 0))
-  const refTotal = round2(d.refRows.reduce((s, r) => s + round2(r.base * r.rate), 0))
-  const adjTotal = round2(d.adjRows.reduce((s, r) => s + r.amount, 0))
-  const payableResult = round2(salary + spTotal + refTotal + adjTotal)
+  // result 由同一份 data 推導（engine 口徑 round2 逐步）— 推導式已搬去函數頭（A 步：result 必填）
   payCell.value = { formula: payableFormula, result: payableResult }
   payCell.font = mkFont({ bold: true, size: 12 })
   payCell.numFmt = MONEY_FMT
@@ -620,7 +644,8 @@ export function buildMiscSheet(wb: ExcelJS.Workbook, m: MiscSheetData): ExcelJS.
   setLabel(ws.getCell(row, 1), '合計', { bold: true })
   for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
   // 合計只 SUM 非作廢區（void 行排喺底部，唔入範圍）
-  if (active.length > 0) setFormula(ws.getCell(row, 6), `SUM(F${first}:F${lastActive})`, { fmt: MONEY_FMT, bold: true })
+  const totalVal = round2(active.reduce((s, r) => s + r.amount, 0))
+  if (active.length > 0) setFormula(ws.getCell(row, 6), `SUM(F${first}:F${lastActive})`, { fmt: MONEY_FMT, bold: true, result: totalVal })
   else setData(ws.getCell(row, 6), 0, { fmt: MONEY_FMT, gray: true })
   row++
   // 手續費率（規則③：入傳，藍字）
@@ -632,7 +657,6 @@ export function buildMiscSheet(wb: ExcelJS.Workbook, m: MiscSheetData): ExcelJS.
   // 收入淨額 = 合計×(1-費率)（規則③；{ formula, result } 雙寫求穩）
   setLabel(ws.getCell(row, 1), LABEL_MISC_NET, { bold: true })
   for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
-  const totalVal = round2(active.reduce((s, r) => s + r.amount, 0))
   const netVal = round2(totalVal * (1 - m.feePercent))
   const netCell = ws.getCell(row, 6)
   netCell.value = { formula: `F${totalRow}*(1-F${feeRow})`, result: netVal }
@@ -684,7 +708,8 @@ export function buildCoverSheet(wb: ExcelJS.Workbook, c: CoverSheetData): ExcelJ
   const totalRow = row
   setLabel(ws.getCell(row, 1), '合計', { bold: true })
   ws.getCell(row, 2).border = thinBorder
-  if (c.doctors.length > 0) setFormula(ws.getCell(row, 3), `SUM(C${firstDoc}:C${lastDoc})`, { fmt: MONEY_FMT, bold: true })
+  const sumVal = round2(c.doctors.reduce((s, d) => s + d.totalAmount, 0))
+  if (c.doctors.length > 0) setFormula(ws.getCell(row, 3), `SUM(C${firstDoc}:C${lastDoc})`, { fmt: MONEY_FMT, bold: true, result: sumVal })
   else setData(ws.getCell(row, 3), 0, { fmt: MONEY_FMT, gray: true })
   row++
   const miscRow = row
@@ -703,7 +728,6 @@ export function buildCoverSheet(wb: ExcelJS.Workbook, c: CoverSheetData): ExcelJ
   // 診所總收入 = 合計 + 雜項淨額（規則①雙寫 + 規則④黃底）
   setLabel(ws.getCell(row, 1), '診所總收入', { bold: true })
   ws.getCell(row, 2).border = thinBorder
-  const sumVal = round2(c.doctors.reduce((s, d) => s + d.totalAmount, 0))
   const grandCell = ws.getCell(row, 3)
   grandCell.value = { formula: `C${totalRow}+C${miscRow}`, result: round2(sumVal + c.miscNet) }
   grandCell.font = mkFont({ bold: true, size: 12 })
