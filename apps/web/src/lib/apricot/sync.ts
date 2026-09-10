@@ -20,6 +20,60 @@ export async function updateJob(jobId: string, data: Partial<any>) {
   await prisma.apricotSyncJob.update({ where: { id: jobId }, data })
 }
 
+// ─── cwm-reconxlsx-fix-20260910 D: sweep ─────────────────────────────────
+// sync 完一個範圍後，將該範圍內 Apricot 冇再返嘅 payment 嘅 allocation 標 isVoid（已刪／已作廢）。
+// ★★★ 四個安全條件（缺一不可）：
+//   ① 只喺【完整成功】先掃（call site 負責：cancel 早退 / API 出錯 throw）—— 攞唔到 ≠ 已刪除
+//   ② allPayments.length > 0 —— 回零筆多數係 API 出事，唔係「嗰個月真係冇收錢」（call site 檢查 + 呢度 double-check）
+//   ③ clinicExtId 一定要 filter —— 唔 filter 會掃走第二間診所嘅數
+//   ④ paidAt 範圍 = 今次 sync 嘅範圍 —— 範圍外唔准掂
+// ★ 用 isVoid: true 唔好硬刪 —— 保住審計線索；ACTIVE_ALLOCATION 已經排除 isVoid
+// ★ seenPaymentIds 個 key = String(p.id) —— 同 allocate.ts 嘅 `paymentExtId: payment.id` 同一嚟源
+//   （sanitizePayment 原樣保留 raw.id）。撞唔啱就會把全部 allocation 當孤兒掃走 —— 本章最危險嗰步，落刀前已 grep 實。
+// ★ APRICOT_SWEEP_MODE=dry → 只 log 唔寫（預查用）；唔設 / on → 真掃
+async function sweepOrphanAllocations(opts: {
+  clinicExtId: string
+  startUtc: Date
+  endUtc: Date
+  fromISO: string
+  toISO: string
+  seenPaymentIds: Set<string>,
+}) {
+  const { clinicExtId, startUtc, endUtc, fromISO, toISO, seenPaymentIds } = opts
+  if (seenPaymentIds.size === 0) return // 條件② double-check：零筆 = 有問題，唔掃
+  const dryRun = process.env.APRICOT_SWEEP_MODE === 'dry'
+  const inRange = await prisma.paymentAllocation.findMany({
+    where: {
+      clinicExtId, // 條件③
+      paidAt: { gte: startUtc, lte: endUtc }, // 條件④
+      isVoid: false,
+      isSuperseded: false,
+    },
+    select: { id: true, paymentExtId: true, methodNorm: true, amount: true, paidAt: true, periodMonth: true },
+  })
+  const orphans = inRange.filter(a => !seenPaymentIds.has(String(a.paymentExtId)))
+  if (dryRun) {
+    for (const a of orphans) {
+      console.warn(
+        `[apricot-sync] sweep DRY-RUN (no write): clinic=${clinicExtId} allocId=${a.id} paymentExtId=${a.paymentExtId} method=${a.methodNorm} amount=${Number(a.amount)} paidAt=${a.paidAt.toISOString()} period=${a.periodMonth}`,
+      )
+    }
+    console.warn(
+      `[apricot-sync] sweep DRY-RUN summary: ${clinicExtId} ${fromISO}~${toISO} would-void=${orphans.length} seen=${seenPaymentIds.size} inRangeActive=${inRange.length}`,
+    )
+    return
+  }
+  if (orphans.length > 0) {
+    await prisma.paymentAllocation.updateMany({
+      where: { id: { in: orphans.map(a => a.id) } },
+      data: { isVoid: true },
+    })
+    console.warn(
+      `[apricot-sync] sweep: ${clinicExtId} ${fromISO}~${toISO} 標走 ${orphans.length} 筆 Apricot 已冇嘅 allocation`,
+    )
+  }
+}
+
 // ─── Core helpers (unchanged) ──────────────────────────────────────
 
 /** 判斷 dateTime 是否為 HK 當月 */
@@ -303,6 +357,21 @@ export async function syncClinicForJob(
     allocRows += rows.length
   }
 
+  // ★ cwm-reconxlsx-fix-20260910 D: sweep —— 呢個範圍入面，Apricot 冇再返嘅 payment = 已刪／已作廢，要標 isVoid 清走。
+  //   唔做嘅話舊記錄永久活住（實例：8/16 ALIPAY $14,000 被改正做 MASTER，舊 ALIPAY 冇被作廢 → 對數永遠差 $14,000）。
+  //   條件① !cancelled：呢個函數所有 cancel 點都係早退 return，行到呢度 = 完整成功。
+  //   條件② allPayments.length > 0：回零筆多數係 API 出事，唔掃。
+  if (allPayments.length > 0) {
+    await sweepOrphanAllocations({
+      clinicExtId,
+      startUtc,
+      endUtc,
+      fromISO,
+      toISO,
+      seenPaymentIds: new Set(allPayments.map((p: any) => String(p.id))),
+    })
+  }
+
   return { cancelled: false, paymentsSynced: allPayments.length, billsChecked, allocRows }
 }
 
@@ -420,6 +489,20 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
       const rows = await allocatePayment(p, methods, refs, billCache, clinicExtId, globalRefs, allRules)
       await upsertAllocations(rows.map(r => ({ ...r, isVoid: !!p.isVoid })))
       allocRows += rows.length
+    }
+
+    // ★ cwm-reconxlsx-fix-20260910 D: sweep —— 同新入口（坑⑥：兩邊都要改）。
+    //   條件①：舊入口冇 jobId/cancel；API 出錯 = apricotCall throw → 行唔到呢度 = 唔掃。
+    //   條件②③④ 見 sweepOrphanAllocations。
+    if (allPayments.length > 0) {
+      await sweepOrphanAllocations({
+        clinicExtId,
+        startUtc,
+        endUtc,
+        fromISO,
+        toISO,
+        seenPaymentIds: new Set(allPayments.map((p: any) => String(p.id))),
+      })
     }
 
     return { paymentsSynced: allPayments.length, billsChecked: billIds.length, allocRows }
