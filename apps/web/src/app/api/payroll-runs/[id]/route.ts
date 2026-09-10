@@ -30,7 +30,8 @@ export async function GET(
   const run = await prisma.payrollRun.findUnique({
     where: { id: params.id },
     include: {
-      clinic: { select: { id: true, name: true } },
+      // ★ 2026-09-10 cwm-payrollui 拍板⑤：自訂顯示（全公司統一）— clinic → company → payrollViewJson
+      clinic: { select: { id: true, name: true, company: { select: { id: true, name: true, payrollViewJson: true } } } },
       items: {
         include: {
           employee: {
@@ -110,9 +111,32 @@ export async function GET(
     }, 0),
     totalLeaveDays: itemsWithSickDeduction.reduce((s: number, i: any) => s + i.leaveDays, 0),
     totalAbsentDays: itemsWithSickDeduction.reduce((s: number, i: any) => s + i.absentDays, 0),
+    // ★ 2026-09-10 cwm-payrollui 拍板②：totalMisc API 側算（保密員工 miscAmount 前端可能見不到，
+    //   前端 reduce 會少計 → 「不含雜費」數字錯；#18 生死格）
+    totalMisc: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.miscAmount ?? 0), 0),
+    // ★ 2026-09-10：勤工獎總額（detailJson.attendanceBonus — engine 寫入係 number，cancelled 時已係 0，
+    //   同 totalPayable 口徑一致）→ 「額外收入（拆帳＋勤工）」卡
+    totalAttendanceBonus: itemsWithSickDeduction.reduce((s: number, i: any) => {
+      try {
+        const d = i.detailJson ? JSON.parse(i.detailJson) : null
+        const b = d?.attendanceBonus
+        const amount = typeof b === 'number' ? b : (b && typeof b === 'object' ? (b.amount ?? 0) : 0)
+        const cancelled = typeof b === 'number' ? !!d?.attendanceBonusCancelled : (b && typeof b === 'object' ? !!b.cancelled : false)
+        return s + (cancelled ? 0 : amount)
+      } catch { return s }
+    }, 0),
   }
 
-  return NextResponse.json({ run: { ...run, items: itemsWithSickDeduction }, summary }, {
+  return NextResponse.json({
+    run: { ...run, items: itemsWithSickDeduction },
+    summary,
+    // ★ 2026-09-10 cwm-payrollui：自訂顯示設定（跨店 run clinicId=null → 冇 company → null = 預設顯示）
+    company: run.clinic?.company ? {
+      id: run.clinic.company.id,
+      name: run.clinic.company.name,
+      payrollViewJson: run.clinic.company.payrollViewJson,
+    } : null,
+  }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })
 }

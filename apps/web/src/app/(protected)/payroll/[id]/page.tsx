@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -65,7 +65,67 @@ interface Summary {
   totalOTHours: number
   totalLeaveDays: number
   totalAbsentDays: number
+  // ★ 2026-09-10 cwm-payrollui：API 側 reduce（保密員工 miscAmount 可能前端見不到 — 唔好前端算，#18）
+  totalMisc?: number | null
+  totalAttendanceBonus?: number | null
   confidential?: boolean
+}
+
+interface PayrollCompany {
+  id: string
+  name: string
+  payrollViewJson: string | null
+}
+
+// ★ 2026-09-10 cwm-payrollui 拍板⑤：自訂顯示（全公司統一設定 — Company.payrollViewJson）
+//   存【要顯示】嘅 key；DB null = 預設。🔒 強制項 API 會補回，前端 disabled 唔俾撳。
+const CARD_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
+  { key: 'employeeCount', label: '員工數' },
+  { key: 'totalBase', label: '總基本薪資' },
+  { key: 'totalExtra', label: '額外收入（拆帳＋勤工）' },
+  { key: 'totalDeduction', label: '總扣款' },
+  { key: 'totalMisc', label: '雜項總額' },
+  { key: 'payableExMisc', label: '應付（不含雜費）' },
+  { key: 'totalPayable', label: '應付總額', required: true },
+  { key: 'totalHours', label: '總工時' },
+  { key: 'totalOTHours', label: '總加班時數' },
+  { key: 'totalLeaveAbsent', label: '總請假/缺勤' },
+]
+// ★ 預設（MD §4.2）：totalMisc 預設關；其餘全開
+const CARD_DEFAULTS = ['employeeCount', 'totalBase', 'totalExtra', 'totalDeduction', 'payableExMisc', 'totalPayable', 'totalHours', 'totalOTHours', 'totalLeaveAbsent']
+
+const COL_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
+  { key: 'employee', label: '員工', required: true },
+  { key: 'clinic', label: '診所' },
+  { key: 'payType', label: '薪酬類型' },
+  { key: 'hours', label: '工時' },
+  { key: 'otHours', label: '加班' },
+  { key: 'leaveDays', label: '請假' },
+  { key: 'absentDays', label: '缺勤' },
+  { key: 'baseSalary', label: '基本薪資' },
+  { key: 'extraIncome', label: '額外收入（拆帳／勤工）' },
+  { key: 'deduction', label: '扣款' },
+  { key: 'sickDeduction', label: '病假扣減' },
+  { key: 'misc', label: '雜項($)' },
+  { key: 'totalPayable', label: '應付總額', required: true },
+  { key: 'detail', label: '明細', required: true },
+]
+// ★ 預設（MD §4.2）：absentDays / deduction / sickDeduction 預設關
+const COL_DEFAULTS = ['employee', 'clinic', 'payType', 'hours', 'otHours', 'leaveDays', 'baseSalary', 'extraIncome', 'misc', 'totalPayable', 'detail']
+
+function parsePayrollView(json: string | null | undefined): { cards: string[]; columns: string[] } {
+  if (!json) return { cards: CARD_DEFAULTS, columns: COL_DEFAULTS }
+  try {
+    const d = JSON.parse(json)
+    // ★ 白名單過濾 + 強制項補回（同 API 側同一套 key）
+    const cards = Array.isArray(d.cards) ? d.cards.filter((k: any) => CARD_OPTIONS.some(o => o.key === k)) : []
+    const columns = Array.isArray(d.columns) ? d.columns.filter((k: any) => COL_OPTIONS.some(o => o.key === k)) : []
+    for (const o of CARD_OPTIONS) if (o.required && !cards.includes(o.key)) cards.push(o.key)
+    for (const o of COL_OPTIONS) if (o.required && !columns.includes(o.key)) columns.push(o.key)
+    return { cards: cards.length ? cards : CARD_DEFAULTS, columns: columns.length ? columns : COL_DEFAULTS }
+  } catch {
+    return { cards: CARD_DEFAULTS, columns: COL_DEFAULTS }
+  }
 }
 
 export default function PayrollDetailPage() {
@@ -75,6 +135,7 @@ export default function PayrollDetailPage() {
 
   const [run, setRun] = useState<PayrollRun | null>(null)
   const [summary, setSummary] = useState<Summary | null>(null)
+  const [company, setCompany] = useState<PayrollCompany | null>(null)
   const [loading, setLoading] = useState(true)
   const [userRole, setUserRole] = useState<string>('')
   const [exporting, setExporting] = useState<string | null>(null)
@@ -114,6 +175,47 @@ export default function PayrollDetailPage() {
   const [preflight, setPreflight] = useState<{ periodMonth: string; itemCount: number; blockers: string[]; warnings: string[] } | null>(null)
   const [confirming, setConfirming] = useState(false)
 
+  // ★ 2026-09-10 cwm-payrollui 拍板⑤：⚙️ 顯示欄位 modal — draft 先改，撳「儲存」先 PUT（唔即改即存）
+  const [viewSettingOpen, setViewSettingOpen] = useState(false)
+  const [draftCards, setDraftCards] = useState<string[]>(CARD_DEFAULTS)
+  const [draftCols, setDraftCols] = useState<string[]>(COL_DEFAULTS)
+  const [viewSaving, setViewSaving] = useState(false)
+
+  const payrollView = useMemo(
+    () => parsePayrollView(company?.payrollViewJson),
+    [company?.payrollViewJson],
+  )
+
+  const openViewSetting = () => {
+    setDraftCards(payrollView.cards)
+    setDraftCols(payrollView.columns)
+    setViewSettingOpen(true)
+  }
+
+  const handleSaveView = async () => {
+    if (!company) return
+    setViewSaving(true)
+    try {
+      const res = await api(`/api/companies/${company.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: company.name, payrollView: { cards: draftCards, columns: draftCols } }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || `儲存失敗（${res.status}）`)
+        return
+      }
+      setViewSettingOpen(false)
+      fetchRun() // 重新載入 → 頁面即刻反映新設定
+    } catch (err) {
+      console.error('Failed to save payroll view setting:', err)
+      alert('儲存失敗，請重試')
+    } finally {
+      setViewSaving(false)
+    }
+  }
+
   const fetchRun = useCallback(async () => {
     setLoading(true)
     try {
@@ -125,6 +227,7 @@ export default function PayrollDetailPage() {
       const data = await res.json()
       setRun(data.run)
       setSummary(data.summary)
+      setCompany(data.company ?? null)
     } catch (err) {
       console.error('Failed to fetch payroll run:', err)
     } finally {
@@ -324,6 +427,15 @@ export default function PayrollDetailPage() {
     try {
       const detail = JSON.parse(item.detailJson)
       const bonus = (detail as any)?.attendanceBonus
+      // ★ 2026-09-10 cwm-payrollui：engine 寫入係 number（+ 平欄 attendanceBonusCancelled/Reason），
+      //   舊代碼淨認 object 形 → number 永遠回 0。雙兼容。
+      if (typeof bonus === 'number') {
+        return {
+          amount: bonus,
+          cancelled: !!detail.attendanceBonusCancelled,
+          reason: detail.attendanceBonusReason || '',
+        }
+      }
       if (bonus && typeof bonus === 'object') {
         return {
           amount: bonus.amount ?? 0,
@@ -333,30 +445,6 @@ export default function PayrollDetailPage() {
       }
     } catch {}
     return { amount: 0, cancelled: false, reason: '' }
-  }
-
-  const renderAttendanceBonus = (item: PayrollItem) => {
-    if (item.confidential) {
-      return (
-        <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#888', fontSize: 12 }}>
-          🔒 保密
-        </td>
-      )
-    }
-    const { amount, cancelled, reason } = parseAttendanceBonus(item)
-    if (cancelled) {
-      return (
-        <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#dc3545', fontSize: 12 }}>
-          {fmtCurrency(0)}<br />
-          <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>⚠️ {reason || '遲到超30分取消'}</span>
-        </td>
-      )
-    }
-    return (
-      <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: amount > 0 ? '#198754' : 'inherit' }}>
-        {amount > 0 ? fmtCurrency(amount) : '-'}
-      </td>
-    )
   }
 
   if (loading) {
@@ -421,6 +509,14 @@ export default function PayrollDetailPage() {
             style={{ padding: '8px 16px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
             {exporting === 'pdf' ? '匯出中...' : '📄 PDF'}
           </button>
+          {/* ★ 2026-09-10 cwm-payrollui 拍板⑤：⚙️ 顯示欄位（全公司統一設定）
+              跨店 run（clinicId null）冇 company 可存 → disabled */}
+          <button onClick={openViewSetting} disabled={!company}
+            title={company ? '自訂顯示（全公司統一）' : '跨店計糧單無公司設定'}
+            style={{ padding: '8px 16px', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 6,
+                     cursor: company ? 'pointer' : 'not-allowed', opacity: company ? 1 : 0.5 }}>
+            ⚙️ 顯示欄位
+          </button>
           {run.status === 'DRAFT' && isOwner && (
             <button onClick={handleDelete}
               style={{ padding: '8px 16px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
@@ -443,28 +539,42 @@ export default function PayrollDetailPage() {
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
-            {[
-              { label: '員工數', value: summary.totalEmployees, color: '#0d6efd' },
-              { label: '總基本薪資', value: fmtCurrency(summary.totalBasePay, summary.confidential), color: '#6c757d' },
-              { label: '總加班費', value: fmtCurrency(summary.totalOTPay, summary.confidential), color: '#198754' },
-              { label: '總扣款', value: fmtCurrency(summary.totalDeduction, summary.confidential), color: '#dc3545' },
-              { label: '應付總額', value: fmtCurrency(summary.totalPayable, summary.confidential), color: '#0d6efd', bold: true },
-              { label: '總工時', value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
-              { label: '總加班時數', value: `${(summary.totalOTHours || 0).toFixed(1)}h`, color: '#6c757d' },
-              { label: '總請假/缺勤', value: `${summary.totalLeaveDays.toFixed(1)} / ${summary.totalAbsentDays.toFixed(1)} 天`, color: '#6c757d' },
-            ].map(card => (
-              <div key={card.label} style={{
-                padding: '12px 16px',
-                background: card.color + '10',
-                borderLeft: `3px solid ${card.color}`,
-                borderRadius: 4,
-              }}>
-                <div style={{ fontSize: 12, color: '#888' }}>{card.label}</div>
-                <div style={{ fontSize: 20, fontWeight: card.bold ? 700 : 600, color: card.color }}>
-                  {card.value}
-                </div>
-              </div>
-            ))}
+            {/* ★ 2026-09-10 cwm-payrollui 拍板④/⑤：
+                - 剷「總加班費」卡（總加班時數保留 — 時數唔係費用，OT 換假制下仍然有意义）
+                - 新「額外收入（拆帳＋勤工）」/「雜項總額」/「應付（不含雜費）」= totalPayable − totalMisc（API 側算）
+                - 按自訂顯示設定過濾（全公司統一） */}
+            {(() => {
+              const cardValues: Record<string, { value: React.ReactNode; color: string; bold?: boolean }> = {
+                employeeCount: { value: summary.totalEmployees, color: '#0d6efd' },
+                totalBase: { value: fmtCurrency(summary.totalBasePay, summary.confidential), color: '#6c757d' },
+                totalExtra: { value: fmtCurrency((summary.totalSplitPay ?? 0) + (summary.totalAttendanceBonus ?? 0), summary.confidential), color: '#7c3aed' },
+                totalDeduction: { value: fmtCurrency(summary.totalDeduction, summary.confidential), color: '#dc3545' },
+                totalMisc: { value: fmtCurrency(summary.totalMisc ?? 0, summary.confidential), color: '#0d9488' },
+                payableExMisc: { value: fmtCurrency((summary.totalPayable ?? 0) - (summary.totalMisc ?? 0), summary.confidential), color: '#1d4ed8' },
+                totalPayable: { value: fmtCurrency(summary.totalPayable, summary.confidential), color: '#0d6efd', bold: true },
+                totalHours: { value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
+                totalOTHours: { value: `${(summary.totalOTHours || 0).toFixed(1)}h`, color: '#6c757d' },
+                totalLeaveAbsent: { value: `${summary.totalLeaveDays.toFixed(1)} / ${summary.totalAbsentDays.toFixed(1)} 天`, color: '#6c757d' },
+              }
+              return CARD_OPTIONS
+                .filter(o => payrollView.cards.includes(o.key))
+                .map(o => {
+                  const card = { label: o.label, ...cardValues[o.key] }
+                  return (
+                    <div key={o.key} style={{
+                      padding: '12px 16px',
+                      background: card.color + '10',
+                      borderLeft: `3px solid ${card.color}`,
+                      borderRadius: 4,
+                    }}>
+                      <div style={{ fontSize: 12, color: '#888' }}>{card.label}</div>
+                      <div style={{ fontSize: 20, fontWeight: card.bold ? 700 : 600, color: card.color }}>
+                        {card.value}
+                      </div>
+                    </div>
+                  )
+                })
+            })()}
           </div>
         </div>
       )}
@@ -497,35 +607,30 @@ export default function PayrollDetailPage() {
       {/* Employee Table — Desktop */}
       <div className="hidden md:block" style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          {/* ★ 2026-09-10 cwm-payrollui 拍板③④⑤：
+              - 剷「加班費」欄（拍板④；「總加班時數」卡保留 — 時數唔係費用）
+              - 「勤工獎」+「拆帳」併「額外收入」一欄（上下兩行）
+              - 16 欄 → 14 欄，按自訂顯示設定過濾（全公司統一） */}
           <thead>
             <tr style={{ borderBottom: '2px solid #dee2e6' }}>
-              <th style={{ textAlign: 'left', padding: '8px 6px' }}>員工</th>
-              <th style={{ textAlign: 'left', padding: '8px 6px' }}>診所</th>
-              <th style={{ textAlign: 'left', padding: '8px 6px' }}>薪酬類型</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>工時</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>加班</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>請假</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>缺勤</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>基本薪資</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>勤工獎</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>加班費</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>拆帳</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>扣款</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>病假扣減</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>雜項($)</th>
-              <th style={{ textAlign: 'right', padding: '8px 6px' }}>應付總額</th>
-              <th style={{ textAlign: 'center', padding: '8px 6px' }}>明細</th>
+              {COL_OPTIONS.filter(o => payrollView.columns.includes(o.key)).map(o => (
+                <th key={o.key} style={{
+                  textAlign: (o.key === 'employee' || o.key === 'clinic' || o.key === 'payType') ? 'left' : (o.key === 'detail' ? 'center' : 'right'),
+                  padding: '8px 6px',
+                }}>
+                  {o.label}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {run.items.map(item => {
               const confidential = item.confidential
-              return (
-                <tr key={item.id} style={{
-                  borderBottom: '1px solid #f0f0f0',
-                  background: confidential ? '#fff9f0' : 'transparent',
-                }}>
-                  <td style={{ padding: '8px 6px' }}>
+              // ★ 2026-09-10 cwm-payrollui 拍板③⑤：per-key cell builder —
+              //   自訂顯示只係決定「顯示邊幾個 key」，金額計算零改（#25 生死格）
+              const colCells: Record<string, React.ReactNode> = {
+                employee: (
+                  <td key="employee" style={{ padding: '8px 6px' }}>
                     <div style={{ fontWeight: 600 }}>
                       {confidential && <span title="薪資保密">🔒 </span>}
                       {item.employee.user.name}
@@ -540,44 +645,83 @@ export default function PayrollDetailPage() {
                       )}
                     </div>
                   </td>
-                  <td style={{ padding: '8px 6px', fontSize: 12 }}>
+                ),
+                clinic: (
+                  <td key="clinic" style={{ padding: '8px 6px', fontSize: 12 }}>
                     {item.employee.clinics.map(c => c.clinic.name).join(', ')}
                   </td>
-                  <td style={{ padding: '8px 6px', fontSize: 12 }}>
+                ),
+                payType: (
+                  <td key="payType" style={{ padding: '8px 6px', fontSize: 12 }}>
                     {item.employee.payRules[0]?.payType || '-'}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.workedHours.toFixed(1)}</td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>
+                ),
+                hours: (
+                  <td key="hours" style={{ padding: '8px 6px', textAlign: 'right' }}>{item.workedHours.toFixed(1)}</td>
+                ),
+                otHours: (
+                  <td key="otHours" style={{ padding: '8px 6px', textAlign: 'right' }}>
                     {confidential ? '🔒' : (() => { try { const d = JSON.parse(item.detailJson || '{}'); return ((d?.timebank?.otMinutes ?? 0) / 60).toFixed(1) } catch { return item.otHours.toFixed(1) } })()}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{item.leaveDays.toFixed(1)}</td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right', color: item.absentDays > 0 ? '#dc3545' : 'inherit' }}>
+                ),
+                leaveDays: (
+                  <td key="leaveDays" style={{ padding: '8px 6px', textAlign: 'right' }}>{item.leaveDays.toFixed(1)}</td>
+                ),
+                absentDays: (
+                  <td key="absentDays" style={{ padding: '8px 6px', textAlign: 'right', color: item.absentDays > 0 ? '#dc3545' : 'inherit' }}>
                     {item.absentDays.toFixed(1)}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                ),
+                baseSalary: (
+                  <td key="baseSalary" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
                     {fmtCurrency(item.basePay, confidential)}
                   </td>
-                  {renderAttendanceBonus(item)}
-                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                    {fmtCurrency(item.otPay, confidential)}
+                ),
+                extraIncome: (
+                  <td key="extraIncome" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                    {/* ★ 2026-09-10 拍板③：拆帳＋勤工獎 合併一欄，上下兩行；兩者都冇先顯示「—」。
+                        ⚠️ 雜項【唔併入】— 「不含雜費」總額要排除佢。
+                        ★ CEO 拍板（設計預留）：未來第三種額外收入（花紅/佣金）只係喺 rows 多 push 一行，唔使改結構。 */}
+                    {confidential ? (
+                      <span style={{ color: '#888', fontSize: 12 }}>🔒 保密</span>
+                    ) : (() => {
+                      const rows: React.ReactNode[] = []
+                      if ((item.splitPay ?? 0) !== 0) {
+                        rows.push(<div key="split" style={{ color: '#7c3aed' }}>拆帳 {fmtCurrency(item.splitPay, confidential)}</div>)
+                      }
+                      const ab = parseAttendanceBonus(item)
+                      if (ab.cancelled) {
+                        rows.push(<div key="bonus" style={{ color: '#dc3545', fontSize: 11, whiteSpace: 'nowrap' }}>勤工 ⚠️ {ab.reason || '遲到超30分取消'}</div>)
+                      } else if (ab.amount > 0) {
+                        rows.push(<div key="bonus" style={{ color: '#059669' }}>勤工 {fmtCurrency(ab.amount, confidential)}</div>)
+                      }
+                      return rows.length === 0 ? <span style={{ color: '#ccc' }}>—</span> : rows
+                    })()}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
-                    {fmtCurrency(item.splitPay, confidential)}
-                  </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.deduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
+                ),
+                deduction: (
+                  <td key="deduction" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.deduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
                     {fmtCurrency(item.deduction, confidential)}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.sickDeduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
+                ),
+                sickDeduction: (
+                  <td key="sickDeduction" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: (item.sickDeduction ?? 0) > 0 ? '#dc3545' : 'inherit' }}>
                     {fmtCurrency(item.sickDeduction ?? 0, confidential)}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#059669' }}
+                ),
+                misc: (
+                  <td key="misc" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#059669' }}
                     title={item.miscDetailJson ? JSON.parse(item.miscDetailJson).map((d: any) => `${d.description} $${d.amount}`).join('\n') : undefined}>
                     {item.miscAmount ? `+${item.miscAmount.toLocaleString()}` : '+0'}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
+                ),
+                totalPayable: (
+                  <td key="totalPayable" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
                     {fmtCurrency(item.totalPayable, confidential)}
                   </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'center' }}>
+                ),
+                detail: (
+                  <td key="detail" style={{ padding: '8px 6px', textAlign: 'center' }}>
                     {confidential ? (
                       <span style={{ color: '#888', fontSize: 12, cursor: 'not-allowed' }} title="此員工薪資已設保密">🔒 保密</span>
                     ) : (
@@ -593,6 +737,14 @@ export default function PayrollDetailPage() {
                       </div>
                     )}
                   </td>
+                ),
+              }
+              return (
+                <tr key={item.id} style={{
+                  borderBottom: '1px solid #f0f0f0',
+                  background: confidential ? '#fff9f0' : 'transparent',
+                }}>
+                  {COL_OPTIONS.filter(o => payrollView.columns.includes(o.key)).map(o => colCells[o.key])}
                 </tr>
               )
             })}
@@ -654,10 +806,7 @@ export default function PayrollDetailPage() {
                   <span style={{ fontSize: 12, color: '#888' }}>基本薪資</span>
                   <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.basePay, confidential)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ fontSize: 12, color: '#888' }}>加班費</span>
-                  <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{fmtCurrency(item.otPay, confidential)}</span>
-                </div>
+                {/* ★ 2026-09-10 cwm-payrollui 拍板④：加班費完全剷走（同桌面表一致；時數睇上面「加班」格） */}
                 {item.deduction && item.deduction > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontSize: 12, color: '#dc3545' }}>扣款</span>
@@ -767,6 +916,64 @@ export default function PayrollDetailPage() {
               }}
             >
               {confirming ? '處理中…' : preflight.blockers.length > 0 ? '有項目未處理' : '確認計糧'}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )}
+
+    {/* ★ 2026-09-10 cwm-payrollui 拍板⑤：⚙️ 顯示欄位 modal — 10 卡 + 14 欄 checkbox；
+        強制項 disabled 灰底 🔒（唔隱藏，免得用戶以為漏咗）；「儲存」掣先 PUT（唔即改即存） */}
+    {viewSettingOpen && company && createPortal(
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setViewSettingOpen(false)}>
+        <div style={{ background: '#fff', borderRadius: 8, padding: 20, maxWidth: 560, width: '92%', maxHeight: '82vh', overflow: 'auto', boxShadow: '0 8px 30px rgba(0,0,0,0.2)' }}
+          onClick={e => e.stopPropagation()}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>⚙️ 顯示欄位</h3>
+          <p style={{ fontSize: 12, color: '#888', margin: '0 0 12px' }}>
+            全公司統一設定 — 儲存後所有員工睇呢條計糧單嘅顯示都一樣。🔒 = 強制顯示，關唔到。匯出 Excel/PDF 唔跟呢個設定（照舊完整資料）。
+          </p>
+          <div style={{ fontSize: 13, fontWeight: 600, margin: '10px 0 6px', color: '#444' }}>總覽卡（{CARD_OPTIONS.length}）</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+            {CARD_OPTIONS.map(o => (
+              <label key={o.key} style={{
+                display: 'flex', gap: 8, alignItems: 'center',
+                opacity: o.required ? 0.5 : 1,
+                background: o.required ? '#f3f4f6' : 'transparent',
+                padding: '4px 6px', borderRadius: 4,
+              }}>
+                <input type="checkbox" checked={draftCards.includes(o.key)} disabled={o.required}
+                  onChange={e => setDraftCards(prev => e.target.checked ? [...prev, o.key] : prev.filter(k => k !== o.key))} />
+                <span style={{ fontSize: 13 }}>{o.label}{o.required && ' 🔒'}</span>
+              </label>
+            ))}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 600, margin: '14px 0 6px', color: '#444' }}>表格欄（{COL_OPTIONS.length}）</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+            {COL_OPTIONS.map(o => (
+              <label key={o.key} style={{
+                display: 'flex', gap: 8, alignItems: 'center',
+                opacity: o.required ? 0.5 : 1,
+                background: o.required ? '#f3f4f6' : 'transparent',
+                padding: '4px 6px', borderRadius: 4,
+              }}>
+                <input type="checkbox" checked={draftCols.includes(o.key)} disabled={o.required}
+                  onChange={e => setDraftCols(prev => e.target.checked ? [...prev, o.key] : prev.filter(k => k !== o.key))} />
+                <span style={{ fontSize: 13 }}>{o.label}{o.required && ' 🔒'}</span>
+              </label>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end', alignItems: 'center' }}>
+            {viewSaving && <span style={{ fontSize: 12, color: '#888', marginRight: 'auto' }}>儲存中…</span>}
+            <button onClick={() => setViewSettingOpen(false)}
+              style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd', background: '#f5f5f5', cursor: 'pointer', fontSize: 14 }}>
+              取消
+            </button>
+            <button onClick={handleSaveView} disabled={viewSaving}
+              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: '#2563eb', color: '#fff',
+                       cursor: viewSaving ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 600 }}>
+              儲存
             </button>
           </div>
         </div>

@@ -1205,11 +1205,13 @@ export default function CostEntryPage() {
                 {dateMode === 'received' && <SortableTh k="receivedAt">到貨</SortableTh>}
                 <SortableTh k="orderedAt">落單日</SortableTh>
                 <SortableTh k="patientCode">病人編號</SortableTh>
-                <SortableTh k="patientName">病人姓名</SortableTh>
+                {/* ★ 2026-09-10 cwm-payrollui 拍板①：病人姓名 −15%（100→85px）、Lab·單號 −25%（100→75px）
+                    省返位全部俾備註欄（備註欄已在 tree — cwm-costnote；呢度淨改寬度） */}
+                <SortableTh k="patientName" className="text-left p-2 w-[85px]">病人姓名</SortableTh>
                 {/* ★ D1：醫生欄 —— 老細拍板唔需要排序，所以用純 th 唔用 SortableTh */}
                 <th className="text-left p-2">醫生</th>
                 <SortableTh k="category">項目</SortableTh>
-                <SortableTh k="labName">Lab · 單號</SortableTh>
+                <SortableTh k="labName" className="text-left p-2 w-[75px]">Lab · 單號</SortableTh>
                 <SortableTh k="dsaName">DSA</SortableTh>
                 <SortableTh k="finalCost" className="text-right p-2">成本</SortableTh>
                 {/* ordered 模式「到貨」留喺現行位置（成本之後）；received 模式已升首欄 */}
@@ -1241,8 +1243,9 @@ export default function CostEntryPage() {
                 <tr key={c.id} className="border-b hover:bg-gray-50">
                   {dateMode === 'received' ? (<>{receivedTd}{orderedTd}</>) : orderedTd}
                   <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
-                  {/* ★ D1：truncate 必配 max-w（同 :1200 備註欄同一課） */}
-                  <td className="p-2 max-w-[128px]" style={vStyle}>
+                  {/* ★ D1：truncate 必配 max-w（同 :1200 備註欄同一課）
+                      ★ 2026-09-10 cwm-payrollui 拍板①：85px 窄化（th 同寬） */}
+                  <td className="p-2 w-[85px] max-w-[85px]" style={vStyle}>
                     <span className="truncate block" title={c.patientName || ''}>
                       {c.patientName || '—'}
                     </span>
@@ -1256,7 +1259,8 @@ export default function CostEntryPage() {
                     <Badge variant="secondary" className="text-xs">{CATEGORY_LABELS[c.category] || c.category}</Badge>
                     {c.itemType && <span className="ml-1 text-gray-500">{c.itemType}</span>}
                   </td>
-                  <td className="p-2 max-w-[128px]" style={vStyle}>
+                  {/* ★ 2026-09-10 cwm-payrollui 拍板①：75px 窄化（th 同寬） */}
+                  <td className="p-2 w-[75px] max-w-[75px]" style={vStyle}>
                     <span className="truncate block" title={`${c.lab?.name ?? ''}${c.labOrderNo ? ' ' + c.labOrderNo : ''}`}>
                       {c.lab?.name && <span>{c.lab.name}</span>}
                       {c.labOrderNo && <span className="ml-1 text-gray-500">{c.labOrderNo}</span>}
@@ -1269,8 +1273,9 @@ export default function CostEntryPage() {
                   {dateMode === 'ordered' && receivedTd}
                   <td className="p-2" style={vStyle}>{fmtDate(c.appointmentAt)}</td>
                   {/* ★ 2026-09-02 cwm-costnote：備註（作廢行跟 voidStyle 刪除線 — 「操作」欄豁免）
-                      truncate 必配 max-w（淨 truncate 冇寬度限制唔生效） */}
-                  <td className="p-2 max-w-[120px]" style={vStyle}>
+                      truncate 必配 max-w（淨 truncate 冇寬度限制唔生效）
+                      ★ 2026-09-10 cwm-payrollui 拍板①：病人姓名−43px + Lab−53px = 省返 96px 全部俾備註（120→216） */}
+                  <td className="p-2 max-w-[216px]" style={vStyle}>
                     {c.note ? (
                       <span className="text-xs text-muted-foreground truncate block" title={c.note}>
                         {c.note}

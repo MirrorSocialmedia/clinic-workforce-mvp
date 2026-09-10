@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Fragment } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
@@ -49,6 +49,17 @@ export default function PayrollListPage() {
   // ★ 雜項審批狀態
   const [expStatusFilter, setExpStatusFilter] = useState<string>('') // '' = all, 'PENDING', 'APPROVED'
   const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null)
+
+  // ★ 2026-09-10 cwm-payrollui 拍板②：生成計糧 dropdown — 手機/PWA 冇 hover，撳掣 toggle + 撳出面收埋
+  const [genOpen, setGenOpen] = useState(false)
+  const genRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (genRef.current && !genRef.current.contains(e.target as Node)) setGenOpen(false)
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [])
 
   const fetchRuns = useCallback(async () => {
     setLoading(true)
@@ -223,16 +234,22 @@ export default function PayrollListPage() {
             <Link href="/payroll/reports/exceptions" className="px-4 py-2 rounded-md border bg-white hover:bg-slate-50 text-sm font-semibold transition-colors inline-block">
               📋 考勤異常報表
             </Link>
-            <div className="relative inline-block">
-              <button className="px-4 py-2 rounded-md bg-brand text-white text-sm font-semibold hover:bg-brand-dark transition-colors inline-block">
+            {/* ★ 2026-09-10 cwm-payrollui 拍板②：dropdown 釘死
+                1. 原本冇 hidden → 永遠展開遮住下面 → hidden group-hover:block
+                2. mt-1 改 pt-1 包住 margin —— margin 會留 4px 空隙，指標移落去 hover 斷開即刻收埋（#7）
+                3. 手機/PWA 冇 hover → genOpen 撳掣 toggle + document click 撳出面收埋（#8/#9） */}
+            <div className="relative inline-block group" ref={genRef}>
+              <button onClick={() => setGenOpen(v => !v)} className="px-4 py-2 rounded-md bg-brand text-white text-sm font-semibold hover:bg-brand-dark transition-colors inline-block">
                 + 生成計糧 ▾
               </button>
-              <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border z-10 py-1">
-                <Link href="/payroll/new" className="block px-4 py-2 text-sm hover:bg-slate-100" style={{ textDecoration: 'none', color: 'inherit' }}>
-                  員工計糧
-                </Link>
-                <div className="px-4 py-2 text-sm text-muted-foreground" title="待 Apricot 帳單接入（Phase 3）">
-                  醫生拆帳 ⓘ <span className="text-xs">等 Apricot 帳單接入</span>
+              <div className={`${genOpen ? 'block' : 'hidden'} group-hover:block absolute right-0 pt-1 w-48 z-10`}>
+                <div className="bg-white rounded-md shadow-lg border py-1">
+                  <Link href="/payroll/new" className="block px-4 py-2 text-sm hover:bg-slate-100" style={{ textDecoration: 'none', color: 'inherit' }}>
+                    員工計糧
+                  </Link>
+                  <div className="px-4 py-2 text-sm text-muted-foreground" title="待 Apricot 帳單接入（Phase 3）">
+                    醫生拆帳 ⓘ <span className="text-xs">等 Apricot 帳單接入</span>
+                  </div>
                 </div>
               </div>
             </div>

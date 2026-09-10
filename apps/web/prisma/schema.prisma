@@ -97,6 +97,9 @@ model Company {
   /// ★ 法定名稱（薪俸結算書公司印鑑用）—— 同 display name 可以唔同
   legalName String?
   logoData  String?  // data URL (image/png;base64,...)
+  /// ★ 2026-09-10 cwm-payrollui 拍板⑤：計糧詳情頁顯示設定（全公司統一）
+  /// { cards: string[], columns: string[] } —— 存【要顯示】嘅 key；null = 預設
+  payrollViewJson String?
   createdAt DateTime @default(now())
 
   clinics       Clinic[]
