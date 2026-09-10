@@ -231,14 +231,17 @@ function sectionTitle(ws: ExcelJS.Worksheet, row: number, text: string, lastCol:
   }
 }
 
-/** 欄 header 行（粗體黑字） */
-function headerRow(ws: ExcelJS.Worksheet, row: number, headers: string[]): void {
+/** 欄 header 行（粗體黑字）；wrap=true → 長標籤換行＋加高行（★ cwm-reconxlsx-fix-20260910 C：
+ *  FREE SP 標籤變長「不計店舖營收，計醫生收入」，width 12 欄一行擺唔低 → 換行，唔切字） */
+function headerRow(ws: ExcelJS.Worksheet, row: number, headers: string[], wrap = false): void {
   headers.forEach((h, i) => {
     const c = ws.getCell(row, i + 1)
     c.value = h
     c.font = mkFont({ bold: true })
     c.border = thinBorder
+    if (wrap) c.alignment = { wrapText: true }
   })
+  if (wrap) ws.getRow(row).height = 50
 }
 
 /** 掃描 A 欄搵 label → 行號（cover 跨連結搵 anchor 用）；搵唔到 = null */
@@ -317,7 +320,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   sectionTitle(ws, row, 'A  逐日收款', lastCol)
   row++
   const aHeaderRow = row
-  headerRow(ws, row, ['日期', ...d.methods.map(m => m.label), 'TOTAL', 'SP 筆數'])
+  headerRow(ws, row, ['日期', ...d.methods.map(m => m.label), 'TOTAL', 'SP 筆數'], true)
   row++
   const aFirst = row
   for (const day of d.days) {
@@ -530,7 +533,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   // ── F 區：結算（engine 口徑：salary+sp+ref+adj = totalAmount）──
   sectionTitle(ws, row, 'F  結算', lastCol)
   row++
-  headerRow(ws, row, ['項目', ...d.methods.map(m => m.label), '合計'])
+  headerRow(ws, row, ['項目', ...d.methods.map(m => m.label), '合計'], true)
   row++
 
   // F1 收款總額（照 A 區 Total 行，公式引用）

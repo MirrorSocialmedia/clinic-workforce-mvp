@@ -18,7 +18,11 @@ import type { PayoutRun } from '@prisma/client'
 
 // ★ MD-AC2 ②：付款方式固定次序（同月結單頁一致），未知方式排最後
 export const METHOD_ORDER = ['CASH', 'HCV', 'VISA', 'MASTERCARD', 'OCTOPUS', 'FPS', 'ALIPAY', 'CCF', 'CREDIT', 'FREE_SP']
-// ★ MD-AC2 ③：Credit / Free SP 唔計入收入
+// ★ MD-AC2 ③：Credit / Free SP 唔計【店舖營收】（countAsIncome=false）
+//   ★ cwm-reconxlsx-fix-20260910 C：FREE_SP 另【計醫生收入】（engine.ts:377-381 gross OR list 包 FREE_SP）——
+//   舊 label「不計入收入」講大話，老細睇到會以為醫生收唔到 → 改「不計店舖營收，計醫生收入」。
+//   CREDIT 查實（2026-09-10 S3）：engine gross OR list 唔含 CREDIT → 唔計店舖營收亦唔計醫生收入，
+//   label「不計入收入」準確 → 唔郁（MD 明令唔好抄 FREE SP 字句）。
 export const METHOD_LABELS: Record<string, string> = {
   CASH: 'Cash',
   HCV: 'HCV',
@@ -29,7 +33,7 @@ export const METHOD_LABELS: Record<string, string> = {
   ALIPAY: 'Alipay',
   CCF: 'CCF',
   CREDIT: 'Credit（不計入收入）',
-  FREE_SP: 'Free SP（不計入收入）',
+  FREE_SP: 'Free SP（不計店舖營收，計醫生收入）',
 }
 export const NON_INCOME = new Set(['CREDIT', 'FREE_SP'])
 
