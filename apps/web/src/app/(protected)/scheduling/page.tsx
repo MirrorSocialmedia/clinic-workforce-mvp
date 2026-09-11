@@ -5966,50 +5966,59 @@ function getShiftCode(shift: Shift): string {
                                ★「已放」= max(假期單, 餘額反推) + 試用期 gate（cwm-annualused 方案 D）
                                → tooltip 列兩來源 + 講明係估算。
                                ★「已預支」badge 只喺 balanceRemaining < 0 出現（拍板⑤）。 */}
-                          <div style={{ lineHeight: 1.5 }}>
-                            <span title={
-                              `已放 = max(系統假期單, 由餘額反推)\n` +
-                              `　系統假期單：${r.takenDays} 日\n` +
-                              `　反推值：當年已累積 ${r.accruedThisYear} − 餘額 ${r.balanceRemaining} = ${r.derivedUsed}\n` +
-                              `⚠️ 初始化資料冇逐張假期單，數學上無法還原「當年已放」，此為估算`
-                            }>
-                              {/* ★ cwm-carryover：分母改「可用」—— 「配額」降去第 3 行 */}
-                              已放 <strong>{r.usedDays}</strong> / 可用 <strong>{r.available}</strong> 天
+                          {/* ★ cwm-annualdisp-b-20260911 方案乙：餘額大字行頭，其餘退做細字。
+                               ★★★「餘」= LeaveBalance.remaining —— 權威值，
+                               ❌ 唔好由「累積 − 已放」推（Celia 會變 8−8=0，−1.2 訊息消失）。
+                               第 2 行嘅算式係【說明】，大字係【權威】；rounding 令兩者差 0.1 時以大字為準。
+                               ★「已放」= max(假期單, 餘額反推) + 試用期 gate（cwm-annualused 方案 D）→ tooltip 保留。 */}
+
+                          {/* 第 1 行：餘額大字 */}
+                          <div style={{ lineHeight: 1.4, display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 4 }}>
+                            <span style={{ fontSize: 16, fontWeight: 600,
+                                           color: r.balanceRemaining < 0 ? '#dc2626' : '#059669' }}>
+                              {r.balanceRemaining}
                             </span>
-                            {'　·　'}
-                            <span style={{ color: r.balanceRemaining < 0 ? '#dc2626' : '#059669', fontWeight: 600 }}>
-                              餘 {r.balanceRemaining}
-                            </span>
+                            <span style={{ fontSize: 10, color: '#64748b' }}>天可放</span>
                             {r.balanceRemaining < 0 && (
                               <span style={{ background: '#fee2e2', color: '#b91c1c', borderRadius: 3,
-                                             padding: '1px 6px', fontSize: 9, fontWeight: 600, marginLeft: 5 }}>已預支</span>
+                                             padding: '1px 6px', fontSize: 9, fontWeight: 600 }}>已預支</span>
                             )}
                             {/* ★ cwm-carryover 拍板①：門檻 0.5（負結轉＝上期已預支，API clamp 0 唔會出） */}
                             {r.carryOver > 0.5 && (
                               <span style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: 3,
-                                             padding: '1px 6px', fontSize: 9, fontWeight: 600, marginLeft: 4 }}>
+                                             padding: '1px 6px', fontSize: 9, fontWeight: 600 }}>
                                 含上期結轉 {r.carryOver.toFixed(1)}
                               </span>
                             )}
-                            {r.underOneYear && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}⚠️ 未滿一年</span>}
-                            {r.inProbation && <span style={{ color: '#b45309', fontSize: 9 }}>{'　'}· 試用期</span>}
                           </div>
-                          {/* 第 2 行：算式（拍板②一律顯示）
-                               ⚠️ 冇結轉時顯示 available 唔係 accruedThisYear —— 否則同第 1 行差 0.1；
-                               「本年累積」= available − carryOver（rounding 後同第 1 行加得返） */}
-                          <div style={{ color: '#64748b', fontSize: 9, lineHeight: 1.5, fontFamily: 'monospace' }}>
-                            {r.carryOver > 0.5
-                              ? `上期結轉 ${r.carryOver.toFixed(1)} ＋ 本年累積 ${r1(r.available - r.carryOver)}`
-                              : `本年累積 ${r.available}`}
+
+                          {/* 第 2 行：算式 ＋ 配額 ＋ 狀態標籤
+                               ⚠️ 冇結轉時顯示 available 唔係 accruedThisYear —— 否則同大字差 0.1；
+                               「本年累積」= available − carryOver（rounding 後加得返） */}
+                          <div style={{ color: '#64748b', fontSize: 9, lineHeight: 1.5 }}>
+                            <span style={{ fontFamily: 'monospace' }}>
+                              {r.carryOver > 0.5
+                                ? `結轉 ${r.carryOver.toFixed(1)}　＋　累積 ${r1(r.available - r.carryOver)}　−　`
+                                : `累積 ${r.available}　−　`}
+                              <span title={
+                                `已放 = max(系統假期單, 由餘額反推)\n` +
+                                `　系統假期單：${r.takenDays} 日\n` +
+                                `　反推值：當年已累積 ${r.accruedThisYear} − 餘額 ${r.balanceRemaining} = ${r.derivedUsed}\n` +
+                                `⚠️ 初始化資料冇逐張假期單，數學上無法還原「當年已放」，此為估算`
+                              } style={{ borderBottom: '1px dotted #94a3b8', cursor: 'help' }}>
+                                已放 {r.usedDays}
+                              </span>
+                            </span>
+                            {'　·　配額 '}{r.entitled}{' 天/年'}
+                            {r.underOneYear && <span style={{ color: '#b45309' }}>{'　'}⚠️ 未滿一年</span>}
+                            {r.inProbation && <span style={{ color: '#b45309' }}>{'　'}· 試用期</span>}
                           </div>
-                          {/* 第 3 行：服務年度區間 ＋ 配額（由第 1 行降落嚟） */}
+
+                          {/* 第 3 行：服務年度區間 ＋ 假期單（合併，原本第 3、4 行） */}
                           <div style={{ color: '#94a3b8', fontSize: 9, lineHeight: 1.5 }}>
-                            {r.syStart}～{r.syEnd} · 配額 {r.entitled} 天/年
+                            {r.syStart}～{r.syEnd}
+                            {r.takenDates && `　·　假期單 ${r.takenDates}`}
                           </div>
-                          {/* 第 4 行：假期單行（★ 拍板①有單先出，次序最後） */}
-                          {r.takenDates && (
-                            <div style={{ color: '#64748b', fontSize: 9, lineHeight: 1.5 }}>本年度假期單：{r.takenDates}</div>
-                          )}
                         </td>
                       </tr>
                     ))}
