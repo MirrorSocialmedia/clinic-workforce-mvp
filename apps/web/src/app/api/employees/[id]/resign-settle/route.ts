@@ -3,10 +3,10 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { computeResignSettlement, calcNoticePay, calcTimebankDebtAmount } from '@/lib/resign-settlement'
-import { getMonthRange, hkTodayStr } from '@/lib/hk-date'
+import { addDaysStr, hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
 
 /**
- * POST /api/employees/[id]/resign-settle — 確認離職結算，寫入 PayrollItem.resignSettlementJson
+ * POST /api/employees/[id]/resign-settle — 確認離職結算，寫入 ResignSettlement 表
  *
  * ★ 2026-09-04 [cwm-resigpay-20260904]（MD §六）：
  * - OWNER-only + payroll_generate（requirePerm；非 OWNER 403）
@@ -16,7 +16,9 @@ import { getMonthRange, hkTodayStr } from '@/lib/hk-date'
  * - ★ 2026-09-05 [cwm-resigv3]：
  *   - 時機守衛：lastDay > 今日（HKT）→ 400（當月考勤未齊，當月工資會計少）
  *   - 結算 JSON 帶 monthWage 快照（讀引擎；source='none' → 400 攔截）
- *   - 月底計糧讀呢份 JSON 注入（payroll-engine MPF_INCLUDE_SETTLEMENT）
+ * - ★ 2026-09-11 [cwm-resignflow-20260911]：
+ *   - 結算搬去獨立 ResignSettlement 表（唔使等該月計糧生成、冇打卡都結算到）
+ *   - 同一 transaction 同步寫 Employee.status/leaveDate/resignedAt + User.status（停用帳號）
  */
 export async function POST(
   req: NextRequest,
@@ -98,40 +100,19 @@ export async function POST(
   // 時間帳戶換算（MD §五）：|tbMinutes| ÷ 9 小時工作日 日 × 今日 ADW
   const { tbAmount } = calcTimebankDebtAmount(calc.tb.balanceMinutes, calc.adwValue)
 
-  // ── 寫入 PayrollItem（最後工作日當月嘅計糧單）───────────
+  // ── 寫入 ResignSettlement（cwm-resignflow-20260911 A3/B1）──────────
+  // ★ A3：唔再需要 PayrollRun／PayrollItem —— 結算有自己張表。
+  //   舊設計要等計糧生成先結算到，同 EO s.25「7 日內付清」衝突。
   const periodMonth = lastDay.slice(0, 7)
-  const monthDate = new Date(`${periodMonth}-01T00:00:00+08:00`)
-  const { start: ms, end: me } = getMonthRange(monthDate)
-  const run = await prisma.payrollRun.findFirst({
-    where: { periodMonth: { gte: ms, lte: me } },
-    select: { id: true, status: true },
-  })
-  if (!run) {
-    return NextResponse.json(
-      { error: `${periodMonth} 計糧單未生成 —— 請先生成該月計糧` },
-      { status: 409 },
-    )
-  }
-  const item = await prisma.payrollItem.findUnique({
-    where: { runId_employeeId: { runId: run.id, employeeId: empId } },
-    select: { id: true, resignSettlementJson: true },
-  })
-  if (!item) {
-    return NextResponse.json(
-      { error: '呢個員工唔喺該月計糧單入面（該月無打卡／排更？）' },
-      { status: 409 },
-    )
-  }
 
-  // ★ 2026-09-05 [cwm-resignroster] 拍板③a：改最後工作日 → 重新確認結算，直接覆蓋 snapshot，
-  //   但要 audit 記低變更（唔准「改咗最後工作日但用舊 ratio」）
+  // ★ 2026-09-05 [cwm-resignroster] 拍板③a：改最後工作日 → 重新確認結算，直接覆蓋同一筆，
+  //   但要 audit 記低變更（唔准「改咗最後工作日但用舊 ratio」）— 舊值改由新表讀
   let lastDayChangeNote = ''
-  try {
-    const prevSettlement = item.resignSettlementJson ? JSON.parse(item.resignSettlementJson) : null
-    if (prevSettlement?.monthWageRatio?.lastDay && prevSettlement.monthWageRatio.lastDay !== lastDay) {
-      lastDayChangeNote = `｜最後工作日由 ${prevSettlement.monthWageRatio.lastDay} 改為 ${lastDay}，ratio 重算`
-    }
-  } catch { /* 壞 JSON 唔阻塞結算 */ }
+  const prev = await prisma.resignSettlement.findUnique({ where: { employeeId: empId } })
+  const prevLastDay = prev ? toHKDateStr(prev.lastDay) : null
+  if (prevLastDay && prevLastDay !== lastDay) {
+    lastDayChangeNote = `｜最後工作日由 ${prevLastDay} 改為 ${lastDay}，ratio 重算`
+  }
 
   const settlement = {
     lastDay: lastDay,
@@ -157,24 +138,64 @@ export async function POST(
     settledBy: auth.session.userId,
   }
 
-  await prisma.$transaction([
-    prisma.payrollItem.update({
-      where: { id: item.id },
-      data: { resignSettlementJson: JSON.stringify(settlement) },
-    }),
-    prisma.auditLog.create({
+  // ★ B1：結算 + 員工狀態 + 停用帳號 + audit —— 四樣同一個 interactive transaction
+  //   （結算寫咗但狀態冇寫，就係之前嘅亂源）
+  const lastDayDate = hkDateOnly(lastDay)                         // 9/9 00:00+08:00 = 最後工作日
+  const effectiveDate = hkDateOnly(addDaysStr(lastDay, 1))        // 9/10 — resignedAt 語義 = 最後工作日 + 1（唔准改）
+
+  const emp = await prisma.employee.findUnique({
+    where: { id: empId },
+    select: { id: true, userId: true, status: true },
+  })
+  if (!emp) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+
+  const settlementData = {
+    noticeDays,
+    noticePay: noticePay ?? 0,   // noticeDays 上面已驗證必係 number → 實踐上必有值；欄 non-null
+    annualLeaveDays: calc.unusedDays,
+    annualLeavePay: calc.leavePayout,
+    tbMinutes: calc.tb.balanceMinutes,
+    tbAmount,
+    tbDeduction: tbDeductionVal,
+    excessRestDeduction: settlement.excessRestDeduction,
+    quarterCap: calc.quarterCap,
+    adwUsed: calc.adwValue,
+    detailJson: JSON.stringify(settlement),   // 同舊 resignSettlementJson 同結構（過渡對照用）
+    settledBy: auth.session.userId,
+  }
+
+  const settlementId = await prisma.$transaction(async (tx) => {
+    // ① 結算（upsert —— 改最後工作日 = 覆蓋同一筆；periodMonth 跟住變 → 舊月自動冇、新月自動有）
+    const row = await tx.resignSettlement.upsert({
+      where: { employeeId: empId },
+      create: { employeeId: empId, lastDay: lastDayDate, periodMonth, ...settlementData },
+      update: { lastDay: lastDayDate, periodMonth, ...settlementData, settledAt: new Date() },
+    })
+
+    // ② 員工狀態：leaveDate = 最後工作日；resignedAt = 生效日 = 最後工作日 + 1（語義唔准改）
+    await tx.employee.update({
+      where: { id: empId },
+      data: { status: 'RESIGNED', leaveDate: lastDayDate, resignedAt: effectiveDate },
+    })
+
+    // ③ ★★★ 帳號停用 —— login/route.ts:71 驗 User.status，唔寫呢句佢照樣登入到
+    await tx.user.update({ where: { id: emp.userId }, data: { status: 'RESIGNED' } })
+
+    // ④ audit
+    await tx.auditLog.create({
       data: {
         actorId: auth.session.userId,
         action: 'EMPLOYEE_RESIGN_SETTLE',
-        entity: 'PayrollItem',
-        entityId: item.id,
+        entity: 'ResignSettlement',
+        entityId: row.id,
         targetEmployeeId: empId,
-        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, ADW=${calc.adwValue}, run=${run.id}${lastDayChangeNote}`,
+        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號`,
         ipAddress: null,
         userAgent: null,
       } as any,
-    }),
-  ])
+    })
+    return row.id
+  })
 
-  return NextResponse.json({ ok: true, runId: run.id, itemId: item.id, settlement })
+  return NextResponse.json({ ok: true, settlementId, settlement })
 }

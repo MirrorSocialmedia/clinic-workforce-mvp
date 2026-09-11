@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { jsonNoStore } from '@/lib/api-response'
-import { hkDateOnly } from '@/lib/hk-date'
+import { hkDateOnly, hkTodayStr, addDaysStr } from '@/lib/hk-date'
 
 // GET /api/employees/[id] — employee detail
 export async function GET(
@@ -92,8 +92,17 @@ export async function PUT(
     if (joinDate) employeeUpdateData.joinDate = hkDateOnly(joinDate)
     if (status) employeeUpdateData.status = status
     if (notes !== undefined) employeeUpdateData.notes = notes
-    if (status === 'RESIGNED' && !employee.leaveDate) {
-      employeeUpdateData.leaveDate = new Date()
+    // ★ cwm-resignflow-20260911 E1：同 resign-settle 寫同一組欄，否則兩條路數據形狀唔同。
+    //   剷咗 `&& !employee.leaveDate` — 呢個條件令「改最後工作日」永遠唔生效（第一次寫咗就再唔會更新）。
+    //   lastDay 由 body 收（前端 prompt）；冇傳就當今日（後備路徑，冇結算）。
+    if (status === 'RESIGNED') {
+      const lastDayStr = typeof body.lastDay === 'string' && body.lastDay ? body.lastDay : hkTodayStr()
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDayStr)) {
+        return NextResponse.json({ error: 'lastDay 必須係 YYYY-MM-DD' }, { status: 400 })
+      }
+      employeeUpdateData.leaveDate = hkDateOnly(lastDayStr)                    // 最後工作日
+      employeeUpdateData.resignedAt = hkDateOnly(addDaysStr(lastDayStr, 1))    // 生效日 = +1（語義寫死）
+      userUpdateData.status = 'RESIGNED'   // ★★★ 停用帳號（login:71 驗 User.status）
     }
 
     const result = await prisma.$transaction(async (tx) => {

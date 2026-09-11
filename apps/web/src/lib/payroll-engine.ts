@@ -974,8 +974,8 @@ export async function generatePayrollRun(
   // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋／離職結算 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
   const isRecalculation = !!existing
-  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'>; resignSettlement: Record<string, string> } =
-    { storeBonus: {}, splitPay: {}, bonusOverride: {}, resignSettlement: {} }
+  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } =
+    { storeBonus: {}, splitPay: {}, bonusOverride: {} }
   if (existing) {
     // CONFIRMED (FINALIZED/EXPORTED) — block recalculation
     if (existing.status === 'FINALIZED' || existing.status === 'EXPORTED') {
@@ -988,14 +988,12 @@ export async function generatePayrollRun(
     // DRAFT — allow recalculation: save bonus/splitPay/bonusOverride then delete old items
     const oldItems = await prisma.payrollItem.findMany({
       where: { runId: existing.id },
-      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true, resignSettlementJson: true },
+      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true },
     })
     for (const oi of oldItems) {
       if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
       if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
       if (oi.attendanceBonusOverride) carried.bonusOverride[oi.employeeId] = oi.attendanceBonusOverride as 'FORCE_ON' | 'FORCE_OFF'
-      // ★ 2026-09-04 [cwm-resigpay-20260904]：離職結算人手填嘅扣除 —— 重算唔好沖走
-      if (oi.resignSettlementJson) carried.resignSettlement[oi.employeeId] = oi.resignSettlementJson
     }
     await prisma.payrollItem.deleteMany({ where: { runId: existing.id } })
   }
@@ -1029,6 +1027,15 @@ export async function generatePayrollRun(
     include: { user: { select: { name: true } } },
     orderBy: { id: 'asc' },
   })
+
+  // ★ cwm-resignflow-20260911 A4：結算由 ResignSettlement 讀，唔再靠 carry-forward。
+  //   由 periodMonth 對，所以改咗最後工作日之後，舊月份自動冇、新月份自動有。
+  const settlements = await prisma.resignSettlement.findMany({
+    where: { employeeId: { in: employees.map(e => e.id) }, periodMonth },
+  })
+  const settlementByEmp = new Map(settlements.map(s => [s.employeeId, s]))
+  // ★ 過渡期：舊欄 resignSettlementJson 結構同 detailJson 完全一致 → 原樣寫返做對照；確認穩定後連同 A2 一齊剷
+  const toLegacyShape = (s: { detailJson: string }) => JSON.parse(s.detailJson)
 
   // 3d: Transition warning — detect employees assigned to this clinic but homeClinicId=null
   let transitionWarning: string | null = null
@@ -1090,7 +1097,9 @@ export async function generatePayrollRun(
         // ★ 2026-09-05 [cwm-resigv3] 離職結算注入（拍板③）：讀已確認快照，引擎唔重算。
         //   parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。
         let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; monthWage: { source: string; basePay: number | null } | null } | null = null
-        const rsJson = carried.resignSettlement[emp.id]
+        // ★ cwm-resignflow-20260911 A4：resignSettlementJson parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。（源頭改由 ResignSettlement.detailJson，結構同舊 JSON）
+        const rsRow = settlementByEmp.get(emp.id)
+        const rsJson = rsRow ? rsRow.detailJson : null
         if (rsJson) {
           try {
             const parsed = JSON.parse(rsJson)
@@ -1143,7 +1152,10 @@ export async function generatePayrollRun(
         excludedWage: (calcResult.detail as any)?.excludedWage ?? 0,
         maternityPay: (calcResult.detail as any)?.maternityPay ?? 0,
         paternityPay: (calcResult.detail as any)?.paternityPay ?? 0,
-        resignSettlementJson: carried.resignSettlement[emp.id] ?? null,
+        // ★ cwm-resignflow-20260911 A4：過渡期同時寫返舊欄（坑⑥：兩條 create 路徑都要改）
+        resignSettlementJson: settlementByEmp.has(emp.id)
+          ? JSON.stringify(toLegacyShape(settlementByEmp.get(emp.id)!))
+          : null,
         attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? null,
       })
     } catch (err) {
@@ -1154,7 +1166,9 @@ export async function generatePayrollRun(
         basePay: 0, otPay: 0, splitPay: null, deduction: 0, storeBonus: 0, totalPayable: 0,
         miscAmount: 0,
         detailJson: JSON.stringify({ error: String(err) }),
-        resignSettlementJson: carried.resignSettlement[emp.id] ?? null,
+        resignSettlementJson: settlementByEmp.has(emp.id)
+          ? JSON.stringify(toLegacyShape(settlementByEmp.get(emp.id)!))
+          : null,
       })
     }
   }
@@ -3352,7 +3366,9 @@ export async function calculatePayrollWithRules(
   options?: {
     storeBonus?: number; splitPay?: number; attendanceBonusOverride?: 'FORCE_ON' | 'FORCE_OFF' | null
     // ★ 2026-09-05 [cwm-resigv3] 離職結算快照注入（拍板③）：
-    //   generatePayrollRun 由 PayrollItem.resignSettlementJson parse 後傳入。
+    //   generatePayrollRun 由 ResignSettlement 表讀 detailJson parse 後傳入。
+    //   （cwm-resignflow-20260911 A4：源頭由 PayrollItem.resignSettlementJson 搬去獨立表；
+    //     過渡期舊欄仍會寫返，但引擎只讀新表。）
     //   annualLeavePay+noticePay 加落 gross（MPF_INCLUDE_SETTLEMENT 決定基數）；
     //   excessRestDeduction（⑤ 超額休息日）落 gross（MPF 之前 — 減基數）；
     //   tbDeduction（⑥ 時間帳戶欠款）落 MPF 後 net 扣除。

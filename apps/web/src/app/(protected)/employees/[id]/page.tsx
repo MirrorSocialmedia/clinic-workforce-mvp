@@ -203,13 +203,21 @@ export default function EmployeeDetailPage({ params }: { params: { id: string } 
             <button
               className="btn btn-danger"
               onClick={async () => {
-                if (!confirm('確定要標記此員工為離職嗎？')) return
+                // ★ cwm-resignflow-20260911 E2：問最後工作日（同 resign-settle 寫同一組欄）
+                const lastDay = prompt(
+                  '最後工作日（YYYY-MM-DD）：\n\n' +
+                  '★ 呢個掣只標記狀態 + 停用帳號，【唔會】計算離職結算金額。\n' +
+                  '　要計結算（代通知金／年假／時間帳戶）請用員工總覽嘅「離職結算」。',
+                  toHKDateStr(new Date()),
+                )
+                if (!lastDay) return
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDay)) { alert('日期格式要 YYYY-MM-DD'); return }
                 try {
                   const res = await fetch(`/api/employees/${employee.id}`, {
                     method: 'PUT',
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status: 'RESIGNED' }),
+                    body: JSON.stringify({ status: 'RESIGNED', lastDay }),
                   })
                   if (res.ok) {
                     fetchEmployee()

@@ -250,9 +250,16 @@ model Employee {
   faceTemplates   FaceTemplate[]
   auditTargets    AuditLog[] @relation("AuditTarget")
   joinDate  DateTime
+
+  /// ★ cwm-resignflow-20260911：離職【最後工作日】（例：9/9），唔係標記當日。
+  ///   寫入口：resign-settle 結算確認 / employees PUT 標記離職（body.lastDay）。純顯示 reader。
   leaveDate DateTime?
+
+  /// ★ cwm-resignflow-20260911：離職【生效日】= 最後工作日 + 1（例：9/10）。語義唔准改 ——
+  ///   payroll-runs/preview 嘅 resignedAtOverride 會傳落引擎算受僱曆日比例，改咗就係改錢。
   resignedAt DateTime?
   status    EmployeeStatus   @default(ACTIVE)
+  resignSettlement ResignSettlement?
   payConfidential Boolean @default(false) // 薪資保密 — 非 OWNER 的計糧 API 遮蔽金額
   notes     String?
   createdAt DateTime         @default(now())
@@ -794,11 +801,12 @@ model PayrollItem {
   miscDetailJson String?    // JSON: [{ amount, description }]
   detailJson   String?     // JSON string for SQLite compat
 
-  /// ★ 2026-09-04 [cwm-resigpay-20260904]：離職結算書（NULL = 無）
+  /// @deprecated cwm-resignflow-20260911 — 已搬去 ResignSettlement 表。
+  ///   保留做過渡對照，確認新表穩定後（建議一個計糧周期）先另開 migration 剷。
+  /// 舊結構 [cwm-resigpay-20260904]：
   /// { lastDay, noticeDays, noticePay, annualLeaveDays, annualLeavePay,
   ///   tbMinutes, tbAmount, tbDeduction, quarterCap, adwUsed,
-  ///   monthWage { source, basePay }  // ★ cwm-resigv3：當月工資快照（讀引擎）
-  ///   settledAt, settledBy }
+  ///   monthWage { source, basePay }, settledAt, settledBy }
   resignSettlementJson String?
 
   /// ★ EO 定義的「工資」總額（供 ADW 用；不含雜項報銷、不含 MPF 僱主供款）
@@ -819,6 +827,40 @@ model PayrollItem {
 
   @@unique([runId, employeeId])
   @@index([employeeId, createdAt])
+}
+
+/// ★ cwm-resignflow-20260911：離職結算。
+///   舊設計寄生喺 PayrollItem.resignSettlementJson —— 要等該月計糧生成先做得到結算，
+///   而 EO s.25 係終止僱傭後【7 日內】要付清，流程上注定遲。
+///   獨立成表之後：唔使等計糧、冇打卡都結算到、唔會跟住 PayrollItem 被刪。
+model ResignSettlement {
+  id                  String   @id @default(cuid())
+  employeeId          String   @unique   // ★ 一個員工一筆；改最後工作日 = update 同一筆
+  employee            Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// 最後工作日（HK 日期，00:00+08:00）
+  lastDay             DateTime
+  /// 由 lastDay 導出嘅 'YYYY-MM' —— 計糧引擎用呢個欄搵返該月要注入邊筆
+  periodMonth         String
+
+  noticeDays          Int
+  noticePay           Decimal  @db.Decimal(12,2)
+  annualLeaveDays     Decimal  @db.Decimal(6,2)
+  annualLeavePay      Decimal  @db.Decimal(12,2)
+  tbMinutes           Int
+  tbAmount            Decimal  @db.Decimal(12,2)
+  tbDeduction         Decimal? @db.Decimal(12,2)
+  excessRestDeduction Decimal? @db.Decimal(12,2)
+  quarterCap          Decimal  @db.Decimal(12,2)
+  adwUsed             Decimal  @db.Decimal(12,2)
+
+  /// 快照 JSON：monthWage / monthWageRatio / excessRest 明細（結構同舊 resignSettlementJson）
+  detailJson          String
+
+  settledAt           DateTime @default(now())
+  settledBy           String
+
+  @@index([periodMonth])
 }
 
 // ============================================================

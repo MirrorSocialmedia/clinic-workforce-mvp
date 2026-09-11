@@ -302,12 +302,21 @@ export async function GET(req: NextRequest) {
     ...rawPunches.map(p => p.employeeId),
   ])]
   const empNames = new Map<string, string>()
+  const resignedEmpIds = new Set<string>()
   if (allEmpIds.length > 0) {
     const emps = await prisma.employee.findMany({
       where: { id: { in: allEmpIds } },
-      select: { id: true, user: { select: { name: true } } },
+      select: { id: true, status: true, user: { select: { name: true } } },
     })
-    emps.forEach(e => empNames.set(e.id, e.user?.name ?? '—'))
+    emps.forEach(e => {
+      empNames.set(e.id, e.user?.name ?? '—')
+      // ★ cwm-resignflow-20260911 C：老總拍板「直接隱藏」。
+      //   ⚠️ 副作用：離職【當月】嘅考勤異常同時間帳戶喺儀表板睇唔到 ——
+      //      但嗰個月仲要計糧。計糧頁（/payroll/new）照舊有佢（where 有「當月有打卡／排更」），
+      //      而且有 RESIGNED 標記同「最後 X」顯示。
+      //   同一個 Set 過濾所有出口（exceptions + summaries）— 坑⑥：唔好逐處各寫判斷。
+      if (e.status === 'RESIGNED') resignedEmpIds.add(e.id)
+    })
   }
 
   // Detect LATE from effective clock-in punches vs shift start
@@ -785,8 +794,9 @@ export async function GET(req: NextRequest) {
   // Compute per-employee timebank summaries — include ALL employees with punch/shift data (not just those with exceptions)
   const punchEmpIds = rawPunches.map(p => p.employeeId)
   const shiftEmpIds = shifts.map(s => s.employeeId)
-  let uniqueEmployeeIds = [...new Set([...punchEmpIds, ...shiftEmpIds, ...exceptions.map(e => e.employeeId)])]
-  if (employeeId && !uniqueEmployeeIds.includes(employeeId)) {
+  // ★ cwm-resignflow-20260911 C：summaries 出口隱藏已離職（同一個 resignedEmpIds Set）
+  let uniqueEmployeeIds = [...new Set([...punchEmpIds, ...shiftEmpIds, ...exceptions.map(e => e.employeeId)])].filter(eid => !resignedEmpIds.has(eid))
+  if (employeeId && !uniqueEmployeeIds.includes(employeeId) && !resignedEmpIds.has(employeeId)) {
     uniqueEmployeeIds.push(employeeId)
   }
   // empNames already defined earlier (after getClinicName) — covers all employees
@@ -857,17 +867,20 @@ export async function GET(req: NextRequest) {
     })
   )
 
+  // ★ cwm-resignflow-20260911 C：exceptions 出口隱藏已離職（同一個 resignedEmpIds Set）
+  const visibleExceptions = exceptions.filter(e => !resignedEmpIds.has(e.employeeId))
+
   return NextResponse.json({
-    exceptions,
+    exceptions: visibleExceptions,
     summaries: employeeSummaries,
     employeeSummaries,
     summary: {
-      total: exceptions.length,
-      late: exceptions.filter(e => e.type === 'LATE').length,
-      absent: exceptions.filter(e => e.type === 'ABSENT').length,
-      correction: exceptions.filter(e => e.type === 'CORRECTION').length,
-      earlyLeave: exceptions.filter(e => e.type === 'EARLY_LEAVE').length,
-      earlyIn: exceptions.filter(e => e.type === 'EARLY_IN').length,
+      total: visibleExceptions.length,
+      late: visibleExceptions.filter(e => e.type === 'LATE').length,
+      absent: visibleExceptions.filter(e => e.type === 'ABSENT').length,
+      correction: visibleExceptions.filter(e => e.type === 'CORRECTION').length,
+      earlyLeave: visibleExceptions.filter(e => e.type === 'EARLY_LEAVE').length,
+      earlyIn: visibleExceptions.filter(e => e.type === 'EARLY_IN').length,
     },
     geoAnomalies,
     warnings,

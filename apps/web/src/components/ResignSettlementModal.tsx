@@ -157,6 +157,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
     const amt = tbDeductionVal ?? 0
     if (!confirm(
       `確定為「${employee.name}」確認離職結算？\n\n` +
+      `★ 確認後會同時：標記員工為【已離職】、停用登入帳號、由排班同儀表板移除。\n\n` +
       `最後工作日：${lastDay}\n` +
       `應付：$${estPayable.toFixed(2)}\n` +
       (excessDed > 0 ? `⚠️ 超額休息日扣款 $${excessDed.toFixed(2)}（MPF 之前）\n` : '') +
@@ -315,7 +316,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
 
           {settled && (
             <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: 12, marginBottom: 14, fontSize: 13, color: '#166534' }}>
-              ✅ 已確認結算（{fmtDate(settled.settledAt)}）—— 已寫入 {settled.lastDay} 當月計糧單。
+              ✅ 已確認結算（{fmtDate(settled.settledAt)}）—— 最後工作日 {settled.lastDay}，已標記離職、已停用帳號。{settled.lastDay.slice(0, 7)} 計糧會自動帶入結算金額。
             </div>
           )}
 
