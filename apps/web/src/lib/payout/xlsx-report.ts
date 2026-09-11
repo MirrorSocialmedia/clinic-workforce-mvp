@@ -8,6 +8,8 @@
  *  ① 合計格一律 `{ formula: 'SUM(...)' }` 唔寫死數；★ cwm-reconxlsx-fix-20260910 A：
  *     所有公式格一律 `{ formula, result }` 雙寫（result 必填）— ExcelJS 純 { formula }
  *     無 cached value，Google Sheets／OneDrive 預覽／手機一律顯示空白（實錘：F 結算成排空）。
+ *     ★★★ 一律用 SUM(a,b,c)，【禁止】用 a+b+c —— 空格寫 null 之後 + 仍然脆弱，
+ *     而 SUM 對文字／空格一律忽略。2026-09-11 因為 + 撞空字串爆 #VALUE! 修過一次。
  *  ② 欄由 data derive：方法欄照入傳 `methods[]` 順序（上游排好 METHOD_ORDER、
  *     未知排最後）；工場行按金額大→細；材料單價逐筆快照。本檔零硬編碼。
  *  ③ 費率行由入傳 `feePercent`（上游 `PaymentMethodRule` resolve），
@@ -333,7 +335,9 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
         setData(cell, round2(v), { fmt: MONEY_FMT })
         if (m.countAsIncome) anyIncome = true
       } else {
-        cell.value = ''
+        // ★ cwm-costui-xlsxfix-20260911 B1：寫 '' 會變【文字格】，
+        //   令任何用 + 串嘅公式爆 #VALUE!（WPS 重算即見）。null = 真空格。
+        cell.value = null
         cell.border = thinBorder
       }
     })
@@ -343,16 +347,19 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
       const parts = d.methods
         .map((m, i) => (m.countAsIncome ? `${colName(methodCol(i))}${row}` : null))
         .filter(Boolean)
-        .join('+')
-      setFormula(tCell, parts, { fmt: MONEY_FMT, result: round2(incomeTotal(day.byMethod)) })
+        .join(',')
+      // ★ B2：一定要 SUM(a,b,c) 唔可以 a+b+c —— SUM 忽略文字，+ 撞文字就 #VALUE!
+      setFormula(tCell, `SUM(${parts})`, { fmt: MONEY_FMT, result: round2(incomeTotal(day.byMethod)) })
     } else {
-      tCell.value = ''
+      // ★ B1：null = 真空格（同 method 格，避免文字格爆 + 公式）
+      tCell.value = null
       tCell.border = thinBorder
     }
     const spCell = ws.getCell(row, spCountCol)
     if (day.spCount > 0) setData(spCell, day.spCount)
     else {
-      spCell.value = ''
+      // ★ B1：null = 真空格（同 method 格，避免文字格爆 + 公式）
+      spCell.value = null
       spCell.border = thinBorder
     }
     row++
@@ -415,7 +422,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   if (d.labRows.length > 0) {
     setLabel(ws.getCell(row, 1), 'B 總計（Lab+Invisalign）', { bold: true })
     for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
-    setFormula(ws.getCell(row, 6), bSubtotalCells.map(r => `F${r}`).join('+'), { fmt: MONEY_FMT, bold: true, result: round2(bSubtotalVals.reduce((s, x) => s + x, 0)) })
+    setFormula(ws.getCell(row, 6), `SUM(${bSubtotalCells.map(r => `F${r}`).join(',')})`, { fmt: MONEY_FMT, bold: true, result: round2(bSubtotalVals.reduce((s, x) => s + x, 0)) })
   } else {
     setLabel(ws.getCell(row, 1), 'B 總計（Lab+Invisalign）', { bold: true })
     for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
@@ -470,7 +477,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   const cTotalRow = row
   setLabel(ws.getCell(row, 1), 'C 總計（Implant）', { bold: true })
   for (let i = 2; i <= 6; i++) ws.getCell(row, i).border = thinBorder
-  if (d.implantRows.length > 0) setFormula(ws.getCell(row, 7), cSubtotalCells.map(r => `G${r}`).join('+'), { fmt: MONEY_FMT, bold: true, result: round2(cSubtotalVals.reduce((s, x) => s + x, 0)) })
+  if (d.implantRows.length > 0) setFormula(ws.getCell(row, 7), `SUM(${cSubtotalCells.map(r => `G${r}`).join(',')})`, { fmt: MONEY_FMT, bold: true, result: round2(cSubtotalVals.reduce((s, x) => s + x, 0)) })
   else setData(ws.getCell(row, 7), 0, { fmt: MONEY_FMT, gray: true })
   row += 2
 

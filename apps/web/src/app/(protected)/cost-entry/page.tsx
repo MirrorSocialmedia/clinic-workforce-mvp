@@ -1198,28 +1198,34 @@ export default function CostEntryPage() {
         ) : (
           // ★ cwm-payoutcost-20260908 D1：13 欄合計 1188px。冇 min-w 嘅話
           // w-full 只會壓扁唔會捲（外層 Card 已有 overflow-auto）
-          <table className="w-full min-w-[1200px] text-sm">
+          // ★ 拍板①(甲)：病人姓名放全名令總寬增加，備註 216px 唔郁 → min-w 調高。
+          // 慳返：DSA ~30px ＋ 狀態 ~25px ＋ 剷重做掣 ~34px ≈ 89px；
+          // 病人姓名 85px → 不限（實測約 180-240px）→ 淨增約 +40px
+          <table className="w-full min-w-[1240px] text-sm">
             <thead>
               <tr className="border-b bg-gray-50">
                 {/* ★ 2026-08-28 cwm-matedit T2 §2.4：第一欄跟模式換（★★#19）— received 模式「到貨」升首欄 */}
                 {dateMode === 'received' && <SortableTh k="receivedAt">到貨</SortableTh>}
                 <SortableTh k="orderedAt">落單日</SortableTh>
                 <SortableTh k="patientCode">病人編號</SortableTh>
-                {/* ★ 2026-09-10 cwm-payrollui 拍板①：病人姓名 −15%（100→85px）、Lab·單號 −25%（100→75px）
-                    省返位全部俾備註欄（備註欄已在 tree — cwm-costnote；呢度淨改寬度） */}
-                <SortableTh k="patientName" className="text-left p-2 w-[85px]">病人姓名</SortableTh>
+                {/* ★ cwm-costui-20260911 拍板①：病人姓名要顯示【全名】——
+                    唔設寬度限制，由內容撐開（whitespace-nowrap 保證唔換行）
+                    （推翻 2026-09-10 cwm-payrollui 拍板① 嘅姓名 85px 收窄；Lab 75px 保留） */}
+                <SortableTh k="patientName" className="text-left p-2 whitespace-nowrap">病人姓名</SortableTh>
                 {/* ★ D1：醫生欄 —— 老細拍板唔需要排序，所以用純 th 唔用 SortableTh */}
                 <th className="text-left p-2">醫生</th>
                 <SortableTh k="category">項目</SortableTh>
                 <SortableTh k="labName" className="text-left p-2 w-[75px]">Lab · 單號</SortableTh>
-                <SortableTh k="dsaName">DSA</SortableTh>
+                {/* ★ 拍板①：DSA 內容短（Lily／Ivy），收窄讓位俾病人姓名 */}
+                <SortableTh k="dsaName" className="text-left p-2 w-[60px]">DSA</SortableTh>
                 <SortableTh k="finalCost" className="text-right p-2">成本</SortableTh>
                 {/* ordered 模式「到貨」留喺現行位置（成本之後）；received 模式已升首欄 */}
                 {dateMode === 'ordered' && <SortableTh k="receivedAt">到貨</SortableTh>}
                 <SortableTh k="appointmentAt">覆診</SortableTh>
                 {/* ★ 2026-09-02 cwm-costnote：備註欄（覆診之後） */}
                 <SortableTh k="note">備註</SortableTh>
-                <SortableTh k="status">狀態</SortableTh>
+                {/* ★ 拍板①：狀態最長係「未有價」／「重做中」三個字 */}
+                <SortableTh k="status" className="text-left p-2 w-[76px]">狀態</SortableTh>
                 <th className="text-left p-2">操作</th>
               </tr>
             </thead>
@@ -1243,12 +1249,9 @@ export default function CostEntryPage() {
                 <tr key={c.id} className="border-b hover:bg-gray-50">
                   {dateMode === 'received' ? (<>{receivedTd}{orderedTd}</>) : orderedTd}
                   <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
-                  {/* ★ D1：truncate 必配 max-w（同 :1200 備註欄同一課）
-                      ★ 2026-09-10 cwm-payrollui 拍板①：85px 窄化（th 同寬） */}
-                  <td className="p-2 w-[85px] max-w-[85px]" style={vStyle}>
-                    <span className="truncate block" title={c.patientName || ''}>
-                      {c.patientName || '—'}
-                    </span>
+                  {/* ★ 拍板①：全名必顯示 —— 剷走 truncate／max-w，改 whitespace-nowrap */}
+                  <td className="p-2 whitespace-nowrap" style={vStyle}>
+                    {c.patientName || '—'}
                   </td>
                   <td className="p-2 max-w-[96px]" style={vStyle}>
                     <span className="truncate block" title={c.provider?.name || ''}>
@@ -1266,7 +1269,9 @@ export default function CostEntryPage() {
                       {c.labOrderNo && <span className="ml-1 text-gray-500">{c.labOrderNo}</span>}
                     </span>
                   </td>
-                  <td className="p-2" style={vStyle}>{c.dsaName || '—'}</td>
+                  <td className="p-2 w-[60px] max-w-[60px]" style={vStyle}>
+                    <span className="truncate block" title={c.dsaName || ''}>{c.dsaName || '—'}</span>
+                  </td>
                   <td className="p-2 text-right" style={vStyle}>
                     {c.finalCost != null ? `$${c.finalCost.toFixed(2)}` : c.baseCost == null ? <span className="text-yellow-600">未有價</span> : '$—'}
                   </td>
@@ -1282,7 +1287,7 @@ export default function CostEntryPage() {
                       </span>
                     ) : <span className="text-gray-300">—</span>}
                   </td>
-                  <td className="p-2" style={vStyle}>
+                  <td className="p-2 w-[76px]" style={vStyle}>
                     {/* ★ 2026-08-25：REDO = 琥珀色（bg #fef3c7 / fg #92400e = tailwind amber-100/800） */}
                     <Badge
                       variant={STATUS_CONFIG[c.status]?.color === 'green' ? 'default' : 'secondary'}
@@ -1308,9 +1313,8 @@ export default function CostEntryPage() {
                         )}
                         {!c.lockedByRunId && (<>
                         <button onClick={() => openEditModal(c)} className="text-blue-600 text-xs hover:underline">修改</button>
-                        {c.status !== 'VOID' && c.status !== 'REDO' && (
-                          <button onClick={() => openRedoModal(c)} className="text-amber-600 text-xs hover:underline">重做</button>
-                        )}
+                        {/* ★ cwm-costui-20260911 拍板②：列表「重做」掣已剷，REDO 狀態同 modal 保留（將來可能開返）。
+                            openRedoModal 暫時冇 caller — 唔好刪；REDO 個案唯一出口係「修改」modal（狀態轉換含 REDO→DONE）。 */}
                         {c.status !== 'VOID' && (
                           <button onClick={() => handleDelete(c.id)} className="text-red-500 text-xs hover:underline">作廢</button>
                         )}

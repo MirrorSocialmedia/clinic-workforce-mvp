@@ -182,6 +182,17 @@ export async function requireAuth(
     scope = 'all'
   }
 
+  // ★ cwm-costui-xlsxfix-kiosk-20260911 C：同 scheduling 先例 — 經 provider_payout 放行嘅，scope = all。
+  //   provider_payout 係跨店概念（一個醫生喺幾間店睇症，月結單／對數本來就要跨店）；
+  //   KIOSK 係裝置帳號冇 Employee 記錄 → scope='self' 時 getOwnHomeClinicId 回 null
+  //   → scopeClinics=[] → 無論揀邊間店都 403（2026-09-11 實測）。
+  //   老細 2026-09-10 拍板 (甲)：KIOSK 睇到全醫生全診所冇問題（B 路）。
+  //   ⚠️ payout-runs／clinic-report／reconciliation 呢批 route 行 requireAuth（唔係 requirePerm），
+  //      所以 requirePerm 入面嘅 SCOPE_ALL 對佢哋唔生效 — 呢度要同一份口徑同步提升。
+  if (viaPerm && RBAC_PERM_OVERRIDES[normalized]?.includes('provider_payout')) {
+    scope = 'all'
+  }
+
   /**
    * ★ 排班需要读到的数据 route。
    * 有 scheduling 权限 = 全店排班权，排班必然要睇到所有员工嘅假期 + 假期余额。
@@ -350,7 +361,12 @@ export async function requirePerm(
   // ★ 「編更」= 全店權限。
   //   調鋪 / 跨公司借調係日常操作，排班嘅人本來就要睇晒所有店先排得到，
   //   所以 scheduling 一有就係全店，唔按 UserClinic 綁定收窄。
-  const SCOPE_ALL = ['scheduling']
+  // ★ cwm-costui-xlsxfix-kiosk-20260911 C：provider_payout 一樣係跨店概念 ——
+  //   一個醫生喺幾間店睇症，月結單／對數本來就要跨店。
+  //   而且 KIOSK 係【裝置帳號】，冇 Employee 記錄 → scope='self' 時 getOwnHomeClinicId
+  //   回 null → scopeClinics=[] → 無論揀邊間店都 403（2026-09-11 實測）。
+  //   老細 2026-09-10 拍板 (甲)：KIOSK 睇到全醫生全診所冇問題。
+  const SCOPE_ALL = ['scheduling', 'provider_payout']
   if (SCOPE_ALL.includes(perm)) scope = 'all'
 
   // ★ 回傳 perms 同 requireAuth 一致（重用上頭嘅 base）
