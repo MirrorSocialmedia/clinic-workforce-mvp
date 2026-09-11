@@ -12,13 +12,19 @@ export async function GET(req: NextRequest) {
 
 	const { searchParams } = new URL(req.url)
 	const periodMonth = searchParams.get('month')
+	// ★ cwm-reconkiosk-20260910 B1：clinicId 過濾 —— 月結單係【醫生×診所×月】粒度，
+	//   同一醫生兩間診所嘅對數記錄會互相串門（生產實證：何嘉俊醫生 2026-08）
+	const clinicId = searchParams.get('clinicId')
 
-	const where: { periodMonth?: string } = {}
+	const where: { periodMonth?: string; clinicId?: string } = {}
 	if (periodMonth) where.periodMonth = periodMonth
+	if (clinicId) where.clinicId = clinicId
 
 	const imports = await prisma.reconciliationImport.findMany({
 		where,
-		orderBy: [{ providerId: 'asc' }, { periodMonth: 'desc' }],
+		// ★ cwm-reconkiosk-20260910 B1：加 uploadedAt tie-break —— 同一 provider+month 可以有多筆
+		//   （生產實證：何嘉俊醫生 2026-08 有三筆 clinicId=NULL），冇 tie-break 次序唔定
+		orderBy: [{ providerId: 'asc' }, { periodMonth: 'desc' }, { uploadedAt: 'desc' }],
 		include: {
 			provider: { select: { id: true, name: true, shortName: true } },
 		},

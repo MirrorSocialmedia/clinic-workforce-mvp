@@ -227,7 +227,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     // ★ 2026-08-22：KIOSK 可 grant 權限（成本錄入／醫生月結／時間表／同步）
     // 重用 navItems + hasPermission（同一套判斷），唔好另寫清單
     const KIOSK_PATHS = ['/provider-schedule', '/provider-availability',
-      '/cost-entry', '/payout', '/apricot-sync']
+      '/cost-entry', '/payout', '/apricot-sync', '/reconciliation']
     const kioskLinks = navItems.filter(item =>
       KIOSK_PATHS.includes(item.path) &&
       (Array.isArray(item.perm) ? item.perm : [item.perm])

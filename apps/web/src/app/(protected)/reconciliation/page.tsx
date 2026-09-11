@@ -363,6 +363,16 @@ function ReconciliationPageInner() {
                         {r.fileName}
                       </td>
                     </tr>
+                    {/* ★ cwm-reconkiosk-20260910 A2：對數包晒全部 payment，但月結引擎會排走
+                        countAsIncome=false 嘅方式（生產實值 = CREDIT）—— 解釋同月結單嘅數點解唔同。
+                        純顯示：nonIncomeTotal=0 / 舊記錄（detailJson 冇欄）唔出呢行。 */}
+                    {(r.detailJson?.nonIncomeTotal ?? 0) > 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-3 pb-2 text-xs text-blue-700 bg-blue-50">
+                          ℹ️ 其中 {fmt(r.detailJson.nonIncomeTotal)}（{(r.detailJson.nonIncomeMethods as string[])?.join('、') || '—'}）唔計醫生收入 → 醫生月結會顯示 {fmt(r.detailJson.payoutBasisTotal ?? r.systemTotal)}
+                        </td>
+                      </tr>
+                    )}
                     {/* Expandable detail */}
                     {r.id === expandedId && r.detailJson?.byDay && (
                       <tr>

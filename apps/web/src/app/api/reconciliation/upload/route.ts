@@ -207,6 +207,9 @@ function buildDetail(result: {
 	status: string
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
 	byMethod: Array<{ method: string; report: number; system: number; diff: number }> // ★ C2
+	nonIncomeTotal: number // ★ cwm-reconkiosk-20260910 A1：純顯示欄
+	nonIncomeMethods: string[]
+	payoutBasisTotal: number
 }, skipped = 0, blankRows = 0): Record<string, any> {
 	return {
 		reportTotal: result.reportTotal,
@@ -219,6 +222,10 @@ function buildDetail(result: {
 		status: result.status,
 		byDay: result.byDay,
 		byMethod: result.byMethod,
+		// ★ cwm-reconkiosk-20260910 A1：對數包咗但月結排走嘅部分（純顯示）
+		nonIncomeTotal: result.nonIncomeTotal,
+		nonIncomeMethods: result.nonIncomeMethods,
+		payoutBasisTotal: result.payoutBasisTotal,
 		skipped, // ★ MD-AC1
 		blankRows, // ★ cwm-recon-clinic-20260909 B3
 	}

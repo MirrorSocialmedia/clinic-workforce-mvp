@@ -37,6 +37,10 @@ interface CompareResult {
 	status: 'MATCH' | 'MISMATCH'
 	byDay: Array<{ date: string; report: number; system: number; diff: number }>
 	byMethod: Array<{ method: string; report: number; system: number; diff: number }> // ★ C2：兩邊對照（聯集）
+	// ★ cwm-reconkiosk-20260910 A1：對數包咗但月結引擎排走嘅部分（純顯示，唔影響 difference/status）
+	nonIncomeTotal: number
+	nonIncomeMethods: string[]
+	payoutBasisTotal: number
 }
 
 export async function compareReport(
@@ -77,10 +81,22 @@ export async function compareReport(
 			amount: true,
 			methodNorm: true,
 			paidAt: true,
+			countAsIncome: true, // ★ cwm-reconkiosk-20260910 A1：純顯示用（識別 CREDIT 等唔計收入方式），唔入任何計算
 		},
 	})
 
 	const systemTotal = round2(sum(allocs.map((a) => Number(a.amount))))
+
+	// ★ cwm-reconkiosk-20260910 A1：對數包晒全部 payment，但月結引擎會排走
+	//   countAsIncome=false 而又唔係 FREE_SP 嘅方式（engine.ts:377-382，生產實值 = CREDIT）。
+	//   兩個數本來就唔同 —— 唔講清楚用戶必然以為有一個錯（實證：Dr.Tse 694,940 vs 697,440）。
+	//   ⚠️ 純顯示，【唔准】影響 difference / status。
+	const nonIncomeAllocs = allocs.filter(
+		(a) => !a.countAsIncome && a.methodNorm !== 'FREE_SP',
+	)
+	const nonIncomeTotal = round2(sum(nonIncomeAllocs.map((a) => Number(a.amount))))
+	const nonIncomeMethods = [...new Set(nonIncomeAllocs.map((a) => a.methodNorm))].sort()
+	const payoutBasisTotal = round2(systemTotal - nonIncomeTotal)
 
 	// ★ AA2: 對數用 Total Paid（實收）做主
 	const totalPaid = round2(sum(rows.map((r) => r.paid ?? r.charges ?? r.amount ?? 0)))
@@ -140,5 +156,5 @@ export async function compareReport(
 	}
 	byMethod.sort((a, b) => (b.report + b.system) - (a.report + a.system))
 
-	return { reportTotal, reportCharges: totalCharges, clinicExtId, systemTotal, difference, chargesVsPaid, status, byDay, byMethod }
+	return { reportTotal, reportCharges: totalCharges, clinicExtId, systemTotal, difference, chargesVsPaid, status, byDay, byMethod, nonIncomeTotal, nonIncomeMethods, payoutBasisTotal }
 }

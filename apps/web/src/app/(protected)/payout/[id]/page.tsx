@@ -49,10 +49,12 @@ interface VendorSummaryRow {
 interface ReconciliationStatus {
   id: string
   providerId: string
+  clinicId: string | null // ★ cwm-reconkiosk-20260910 B2：月結單係【醫生×診所×月】粒度，badge 要比對到診所
   status: string
   difference: number
   reportTotal: number
   systemTotal: number
+  detailJson?: any // ★ cwm-reconkiosk-20260910 A3：nonIncomeTotal/nonIncomeMethods（CREDIT 口徑說明行）
 }
 
 export default function PayoutRunDetailPage({ params }: { params: { id: string } }) {
@@ -79,8 +81,8 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
     try {
       const res = await apiFetch<{ run: PayoutRun }>(`/api/payout-runs/${params.id}`)
       setRun(res.run)
-      // Fetch reconciliation status for this provider + month
-      loadReconciliation(res.run.providerId, res.run.periodMonth)
+      // Fetch reconciliation status for this provider + clinic + month
+      loadReconciliation(res.run.providerId, res.run.periodMonth, res.run.clinicId)
       // ★ 2026-08-26：工廠總覽（跨醫生）
       loadVendorSummary(res.run.id)
     } catch (e: any) {
@@ -102,12 +104,19 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
     }
   }
 
-  async function loadReconciliation(providerId: string, periodMonth: string) {
+  async function loadReconciliation(providerId: string, periodMonth: string, clinicId: string | null) {
     try {
       const res = await apiFetch<{ imports: ReconciliationStatus[] }>(
-        `/api/reconciliation?month=${encodeURIComponent(periodMonth)}`,
+        `/api/reconciliation?month=${encodeURIComponent(periodMonth)}${clinicId ? `&clinicId=${encodeURIComponent(clinicId)}` : ''}`,
       )
-      const match = res.imports.find((r) => r.providerId === providerId)
+      // ★ cwm-reconkiosk-20260910 B2：月結單係【醫生 × 診所 × 月】粒度。淨對 providerId 會攞到第二間診所，
+      //   或者 clinic-scope 修好之前嗰批 clinicId=NULL 舊記錄
+      //   （實證：何嘉俊醫生月結單顯示 573,384，實際嗰筆係全診所混埋嘅舊數）。
+      //   ★ NULL 記錄嘅 clinicId 永遠 !== clinicId → 修咗之後自動被忽略。
+      //   run 冇 clinicId（唔應該發生，POST 必填）→ 拒絕 match，寧缺毋濫。
+      const match = clinicId
+        ? res.imports.find((r) => r.providerId === providerId && r.clinicId === clinicId)
+        : undefined
       setReconciliation(match || null)
     } catch {
       // Reconciliation data optional — don't block page load
@@ -306,6 +315,14 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
         <h2 className="font-semibold mb-3">收入明細</h2>
         <div className="space-y-1 text-sm">
           <div className="flex justify-between"><span>原始收入（扣手續費前）</span><span>${run.rawAmount.toFixed(2)}</span></div>
+          {/* ★ cwm-reconkiosk-20260910 A3：對數口徑 vs 月結口徑說明 —— 對數包晒全部 payment，
+              月結引擎排走 countAsIncome=false 嘅方式（生產實值 = CREDIT）。
+              純顯示：冇 countAsIncome=false 記錄嘅月份（nonIncomeTotal=0）唔出呢行。 */}
+          {reconciliation && (reconciliation.detailJson?.nonIncomeTotal ?? 0) > 0 && (
+            <div className="text-xs text-gray-500 pl-2">
+              └ 對數口徑 ${reconciliation.systemTotal.toFixed(2)}，差 ${(reconciliation.systemTotal - run.rawAmount).toFixed(2)}（{((reconciliation.detailJson?.nonIncomeMethods as string[]) || []).join(', ')} 不計醫生收入）
+            </div>
+          )}
           <div className="flex justify-between font-semibold"><span>收入（扣手續費後）</span><span>${run.grossAmount.toFixed(2)}</span></div>
         </div>
       </Card>

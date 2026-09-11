@@ -1257,6 +1257,7 @@ model PaymentMethodRule {
   createdBy     String
 
   @@index([method, effectiveFrom])
+  @@unique([method, effectiveFrom])
 }
 
 // ============================================================
