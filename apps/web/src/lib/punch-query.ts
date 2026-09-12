@@ -107,7 +107,8 @@ export async function getEffectivePunches(
 export async function invalidateTimeBankFrom(
   employeeId: string,
   fromDate: Date | string,
-  db = prisma,
+  // ★ cwm-holidayot-20260911：接納 transaction client（Omit 型）—— 扣減 API 要喺同一 tx 內清快取
+  db: (typeof prisma) | Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'> = prisma,
 ) {
   const date = new Date(fromDate)
   const { start: monthStart } = getMonthRange(date)

@@ -224,6 +224,19 @@ export async function GET(req: NextRequest) {
     select: { employeeId: true, startDate: true, endDate: true },
   })
 
+  // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減（一日一筆）——
+  //   打卡頁必須顯示同引擎一致嘅淨值（先扣減、後套 min/round，落地板 0，同 payroll-engine B2 同一順序）。
+  let holidayOtDeductByEmpDate = new Map<string, number>()
+  try {
+    const holidayOtAdjs = await prisma.holidayOtAdjustment.findMany({
+      where: { employeeId: { in: allShiftAndPunchEmpIds }, workDate: { gte: monthStart, lte: monthEnd } },
+      select: { employeeId: true, workDate: true, deductMinutes: true },
+    })
+    holidayOtDeductByEmpDate = new Map(
+      holidayOtAdjs.map(a => [`${a.employeeId}|${toHKDateStr(a.workDate)}`, a.deductMinutes]),
+    )
+  } catch { /* 舊 client 無該表 → 當冇扣減 */ }
+
   const leaveDateSet = new Set<string>()
   for (const lv of leaves) {
     let cur = toHKDateStr(lv.startDate)
@@ -248,6 +261,10 @@ export async function GET(req: NextRequest) {
     deductedLunch?: boolean; // ★ 2026-08-08: ABSENT 午飯標示
     // ★ 2026-08-06: 假期返工標記
     leaveWork?: boolean;
+    // ★ cwm-holidayot-20260911: 假期返工 OT 人手扣減（打卡頁 ✏️ 調整 modal 用）
+    isHolidayOt?: boolean;
+    otGrossMinutes?: number;
+    deductMinutes?: number;
     // ★ 2026-08-08: EARLY_IN-specific fields
     earlyInMinutes?: number;
     earlyOtApproved?: boolean;
@@ -525,9 +542,12 @@ export async function GET(req: NextRequest) {
       const pairMins = Math.floor((lastOut.effectiveTime.getTime() - firstIn.effectiveTime.getTime()) / 60000)
       if (pairMins <= 0) continue
 
+      // ★ cwm-holidayot-20260911：人手扣減（同 payroll-engine B2 同一順序：先扣、後 min/round gate，落地板 0）
+      const deduct = holidayOtDeductByEmpDate.get(`${empId}|${dateStr}`) ?? 0
+      let displayOt = Math.max(0, pairMins - deduct)
+
       const minReq = otMinByEmp.get(empId) ?? 0
       const roundReq = otRoundByEmp.get(empId) ?? 0
-      let displayOt = pairMins
       if (displayOt >= minReq) {
         displayOt = roundReq > 0 ? Math.floor(displayOt / roundReq) * roundReq : displayOt
       } else {
@@ -539,9 +559,12 @@ export async function GET(req: NextRequest) {
         clinicName: getEmpInfo(empId).clinics[0]?.clinicName || '—',
         date: dateStr, type: 'OT',
         otMinutes: displayOt,
-        detail: `假期返工 OT ${displayOt} 分鐘`,
+        detail: deduct > 0 ? `假期返工 OT ${displayOt} 分鐘（已扣 ${deduct}）` : `假期返工 OT ${displayOt} 分鐘`,
         punchTime: lastOut.effectiveTime.toISOString(),
         leaveWork: true,
+        isHolidayOt: true,
+        otGrossMinutes: pairMins,
+        deductMinutes: deduct,
       })
     } else {
       // Single punch → incomplete, no OT
@@ -553,6 +576,9 @@ export async function GET(req: NextRequest) {
         detail: '假期返工·打卡不完整',
         punchTime: punches[0].effectiveTime.toISOString(),
         leaveWork: true,
+        isHolidayOt: true,
+        otGrossMinutes: 0,
+        deductMinutes: 0,
       })
     }
   }

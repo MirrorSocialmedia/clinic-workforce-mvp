@@ -217,6 +217,12 @@ export const CONFIG = {
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/allowed-clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
+    // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減 —— 拍板④ 只有 OWNER。
+    //   ⚠️ RBAC_PERM_OVERRIDES 一條都唔加（加咗就會俾有 attendance_manage 嘅人入到）。
+    'GET /api/holiday-ot-adjustments': ['OWNER'],
+    'PUT /api/holiday-ot-adjustments': ['OWNER'],
+    'DELETE /api/holiday-ot-adjustments/:id': ['OWNER'],
+
     // Account management routes
     'GET /api/accounts': ['OWNER'],
     'POST /api/accounts': ['OWNER'],

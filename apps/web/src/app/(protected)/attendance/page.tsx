@@ -92,6 +92,10 @@ interface ExceptionRecord {
   clinicId?: string
   // ★ 2026-08-06: 假期返工標記
   leaveWork?: boolean
+  // ★ cwm-holidayot-20260911: 假期返工 OT 人手扣減（✏️ 調整 modal 用）
+  isHolidayOt?: boolean
+  otGrossMinutes?: number
+  deductMinutes?: number
   // EARLY_IN-specific
   earlyInMinutes?: number
   earlyOtApproved?: boolean
@@ -324,6 +328,8 @@ export default function AttendancePage() {
     return toHKDateStr(lastMonth).slice(0, 7)
   })
   const [exceptions, setExceptions] = useState<ExceptionRecord[]>([])
+  // ★ cwm-holidayot-20260911: 假期返工 OT 調整 modal（只喺「假期返工 OT」＋ OWNER 先開到）
+  const [otAdjustTarget, setOtAdjustTarget] = useState<{ empId: string; empName: string; date: string } | null>(null)
   const [exLoading, setExLoading] = useState(false)
   const [exClinics, setExClinics] = useState<Array<{ id: string; name: string }>>([])
   const [exEmployees, setExEmployees] = useState<Array<{ id: string; name: string }>>([])
@@ -1130,7 +1136,30 @@ export default function AttendancePage() {
                           <>
                             {showLate && <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {showLate.lateMinutes || 0} 分</span>}
                             {showEarly && <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {showEarly.earlyMinutes || 0} 分</span>}
-                            {showOt && <span style={{ color: '#059669', fontWeight: 600 }}>OT {showOt.otMinutes || 0} 分</span>}
+                            {showOt && (
+                              <>
+                                <span style={{ color: '#059669', fontWeight: 600 }}>OT {showOt.otMinutes || 0} 分</span>
+                                {showOt.isHolidayOt && (
+                                  <>
+                                    {(showOt.deductMinutes ?? 0) > 0 && (
+                                      <span style={{ fontSize: 10, background: '#fef3c7', color: '#b45309',
+                                                   padding: '1px 6px', borderRadius: 3, marginLeft: 6 }}>
+                                        已扣 {showOt.deductMinutes} 分
+                                      </span>
+                                    )}
+                                    {/* ★ 拍板④：只有 OWNER。★ ROLE-OK（check-role-hardcode 需要）；
+                                        otGrossMinutes>0 = 有完整打卡 pair（單腳唔開掣）*/}
+                                    {user?.role === 'OWNER' && (showOt.otGrossMinutes ?? 0) > 0 && ( // ROLE-OK: 拍板④ 只 OWNER 可调減
+                                      <button
+                                        onClick={() => setOtAdjustTarget({ empId: showOt.employeeId, empName: showOt.employeeName, date: showOt.date })}
+                                        style={{ fontSize: 11, color: '#2563eb', marginLeft: 6, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                                        ✏️ {showOt.deductMinutes ? '改' : '調整'}
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </>
+                            )}
                             {showEarlyIn && <span style={{ color: '#185FA5', fontWeight: 600 }}>提早上班 {showEarlyIn.earlyInMinutes || 0} 分</span>}
                             {!showLate && !showEarly && !showOt && !showEarlyIn && <span style={{ color: '#16a34a' }}>正常</span>}
                           </>
@@ -1786,6 +1815,146 @@ export default function AttendancePage() {
           </div>
         </div>
       )}
+      {/* ★ cwm-holidayot-20260911: 假期返工 OT 調整 modal（只 OWNER 開到，見上 ✏️ 掣）*/}
+      {otAdjustTarget && (
+        <HolidayOtAdjustModal
+          empId={otAdjustTarget.empId}
+          empName={otAdjustTarget.empName}
+          workDate={otAdjustTarget.date}
+          onClose={() => setOtAdjustTarget(null)}
+          onSaved={() => { fetchRecordExceptions(); fetchExceptions() }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ============================================================
+// ★ cwm-holidayot-20260911: 假期返工 OT 調整 modal（拍板④ OWNER only）
+//   在場時間／扣減分鐘／實際 OT／原因。儲存 = PUT upsert（一日一筆，改唔係加）；
+//   移除扣減 = DELETE。成功後即時 refetch —— 引擎重算先係真值。
+// ============================================================
+function HolidayOtAdjustModal({ empId, empName, workDate, onClose, onSaved }: {
+  empId: string
+  empName: string
+  workDate: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [info, setInfo] = useState<{
+    adjustment: { id: string; deductMinutes: number; reason: string } | null
+    presentMinutes: number
+    firstIn: string | null
+    lastOut: string | null
+    hasShift: boolean
+  } | null>(null)
+  const [deduct, setDeduct] = useState<string>('')
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    fetch(`/api/holiday-ot-adjustments?employeeId=${encodeURIComponent(empId)}&workDate=${workDate}`, { credentials: 'include', cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(d => {
+        if (!alive) return
+        setInfo(d)
+        setDeduct(d.adjustment ? String(d.adjustment.deductMinutes) : '')
+        setReason(d.adjustment?.reason ?? '')
+      })
+      .catch(e => { if (alive) { alert('讀取失敗：' + (e instanceof Error ? e.message : String(e))); onClose() } })
+    return () => { alive = false }
+  }, [empId, workDate])
+
+  const fmtHK = (iso: string | null) => iso
+    ? new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit' })
+    : '—'
+
+  const deductNum = Number(deduct)
+  const deductOk = deduct.trim() !== '' && Number.isInteger(deductNum) && deductNum >= 0
+  const canSave = !!info && !info.hasShift && deductOk && deductNum <= (info?.presentMinutes ?? 0) && reason.trim().length > 0
+  const netOt = info && deductOk ? Math.max(0, info.presentMinutes - deductNum) : null
+
+  const submit = async (mode: 'save' | 'delete') => {
+    if (!info) return
+    setBusy(true)
+    try {
+      let res: Response
+      if (mode === 'delete') {
+        if (!info.adjustment?.id) return
+        res = await fetch(`/api/holiday-ot-adjustments/${info.adjustment.id}`, { method: 'DELETE', credentials: 'include' })
+      } else {
+        res = await fetch('/api/holiday-ot-adjustments', {
+          method: 'PUT', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employeeId: empId, workDate, deductMinutes: deductNum, reason: reason.trim() }),
+        })
+      }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { alert(data.error || '操作失敗'); return }
+      onSaved() // ★ 即時 refetch —— 引擎重算先係真值（唔好淨係改 local state）
+      onClose()
+    } catch { alert('網路錯誤') }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+         onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{ background: '#fff', borderRadius: 10, padding: '18px 20px', width: 420, maxWidth: '92vw', boxShadow: '0 8px 30px rgba(0,0,0,0.2)' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#111827', marginBottom: 12 }}>
+          假期返工 OT 調整 —— {empName} · {workDate}
+        </div>
+        {info === null ? (
+          <div style={{ fontSize: 12, color: '#6b7280' }}>載入中…</div>
+        ) : info.hasShift ? (
+          <div style={{ fontSize: 12, color: '#b91c1c' }}>
+            嗰日有更表 —— 更表日嘅 OT 由「不扣飯鐘」設定處理，唔喺呢度扣。
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#6b7280' }}>在場時間</span>
+              <span style={{ fontWeight: 600 }}>
+                {fmtHK(info.firstIn)} → {fmtHK(info.lastOut)}
+                <span style={{ color: '#6b7280', fontWeight: 400, marginLeft: 6 }}>{info.presentMinutes} 分</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label style={{ color: '#6b7280' }}>扣減分鐘</label>
+              <input type="number" min={0} max={info.presentMinutes} value={deduct} onChange={e => setDeduct(e.target.value)}
+                placeholder={`0–${info.presentMinutes}`}
+                style={{ width: 90, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12 }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#6b7280' }}>實際 OT</span>
+              <span style={{ fontWeight: 700, color: '#059669' }}>{netOt === null ? '—' : `${netOt} 分`}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label style={{ color: '#6b7280' }}>原因（必填）</label>
+              <input type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="例：午飯 60 分鐘"
+                style={{ width: 200, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12 }} />
+            </div>
+            <div style={{ fontSize: 11, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 8px' }}>
+              ⚠️ 呢個扣減會改時間帳戶餘額，並會記入操作記錄。一日只有一筆（再入係改，唔係加）。
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 2 }}>
+              <button onClick={onClose} disabled={busy} style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>取消</button>
+              {info.adjustment && (
+                <button onClick={() => { if (confirm(`移除 ${workDate} 嘅 ${info.adjustment!.deductMinutes} 分扣減？`)) submit('delete') }}
+                  disabled={busy}
+                  style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid #fca5a5', color: '#b91c1c', background: '#fff', cursor: 'pointer' }}>
+                  移除扣減
+                </button>
+              )}
+              <button onClick={() => submit('save')} disabled={!canSave || busy}
+                style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: 'none', background: canSave && !busy ? '#2563eb' : '#93c5fd', color: '#fff', cursor: canSave && !busy ? 'pointer' : 'default', fontWeight: 600 }}>
+                {busy ? '處理中…' : '儲存'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

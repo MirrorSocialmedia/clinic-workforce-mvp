@@ -84,11 +84,25 @@ async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, mon
     }
   }
 
+  // ★ cwm-holidayot-20260911 D：假期 OT 人手扣減一樣要入指紋 ——
+  //   佢直接改 otMinutes，但唔係 TimeBankEntry，上面個指紋照唔到。
+  //   兩層保護（C2 invalidate ＋ 呢個指紋）先做到拍板⑥「即時更新」。
+  let hoFp = '0:0'
+  try {
+    const agg2 = await db.holidayOtAdjustment.aggregate({ // AGG-OK: cache fingerprint
+      where: { employeeId, workDate: { gte: monthStart, lte: monthEnd } },
+      _count: { _all: true },
+      _sum: { deductMinutes: true },
+    })
+    hoFp = `${agg2?._count?._all ?? 0}:${agg2?._sum?.deductMinutes ?? 0}`
+  } catch { /* 同上：舊 client / 測試 stub → 當冇指紋 */ }
+
   return `v${TIMEBANK_ENGINE_VERSION}:` + JSON.stringify({
     ot: cfg?.modifiers?.overtime ?? null,
     lunch: cfg?.modifiers?.lunch_break ?? null,
     rest: cfg?.working_days?.rest_days ?? null,
     tb: tbFp,
+    ho: hoFp, // ★ cwm-holidayot-20260911：加咗新欄 → 全部舊 cacheKey 即時失效，首次計糧全體重算（一次性）
   })
 }
 
@@ -1794,6 +1808,15 @@ export async function calculateTimeBank(
   //   → dayOt += pair 時長（分鐘）
   //   單腳：唔計 OT（維持 isPartial 現有處理，唔當缺勤 — 假期日本身唔會標缺勤）
   try {
+    // ★ cwm-holidayot-20260911 B1：人手扣減，一日一筆。
+    //   只用於下方【假期／休息日返工 OT】路徑；更表日 deductLunch gate、earlyInOt 不受影響。
+    const holidayOtAdjs = await db.holidayOtAdjustment.findMany({
+      where: { employeeId, workDate: { gte: monthStart, lte: monthEnd } },
+      select: { workDate: true, deductMinutes: true },
+    })
+    const holidayOtDeductByDate = new Map<string, number>(
+      holidayOtAdjs.map((a: { workDate: Date; deductMinutes: number }) => [toHKDateStr(a.workDate), a.deductMinutes]),
+    )
     const leaveRecords = await db.leaveRequest.findMany({
       where: {
         employeeId,
@@ -1824,6 +1847,15 @@ export async function calculateTimeBank(
         .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
       let pairMins = Math.floor((lastOut.effectiveTime.getTime() - firstIn.effectiveTime.getTime()) / 60000)
       if (pairMins <= 0) continue
+
+      // ★★★ cwm-holidayot-20260911 B2：人手扣減 —— 老細拍板【唔自動扣】，只認人手輸入。
+      //   ⚠️ 先扣減，後套 ot_min / ot_round —— 扣減係「實際 OT 唔係咁多」，
+      //      唔係「算完之後再扣」。順序反轉會令 round 用錯基數。
+      //   ⚠️ 落地板 0：扣多過在場時數 → OT 0，唔准出負數。
+      const deduct = holidayOtDeductByDate.get(dateStr) ?? 0
+      if (deduct > 0) pairMins = Math.max(0, pairMins - deduct)
+      if (pairMins <= 0) continue
+
       // Apply ot_min_minutes / ot_round_minutes (same as shift-based OT)
       if (pairMins >= otMinMinutes) {
         pairMins = otRoundMinutes > 0 ? Math.floor(pairMins / otRoundMinutes) * otRoundMinutes : pairMins

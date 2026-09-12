@@ -260,6 +260,7 @@ model Employee {
   resignedAt DateTime?
   status    EmployeeStatus   @default(ACTIVE)
   resignSettlement ResignSettlement?
+  holidayOtAdjustments HolidayOtAdjustment[] // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減
   payConfidential Boolean @default(false) // 薪資保密 — 非 OWNER 的計糧 API 遮蔽金額
   notes     String?
   createdAt DateTime         @default(now())
@@ -978,6 +979,31 @@ model TimeBankLedgerSnapshot {
 
   @@unique([employeeId, periodMonth])
   @@index([employeeId, periodMonth])
+}
+
+/// ★ cwm-holidayot-20260911：假期／休息日返工 OT 嘅人手扣減。
+///   點解要人手：假期返工冇更表（payroll-engine:1815 有更就 skip），所以冇 template.deductLunch
+///   可以跟；而實際有冇食飯／落場／返半日，系統估唔到 → 老細拍板唔自動扣，純人手。
+///   ⚠️ 只影響【假期／休息日返工】嗰種 OT（holidayOt）。
+///      更表日行 deductLunch gate（:1723）、提早上班 OT（earlyInOt）—— 兩樣都【唔准】受呢張表影響。
+model HolidayOtAdjustment {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// HK 日期 00:00+08:00
+  workDate      DateTime
+  /// 扣減分鐘（正數）。實際 OT = 在場分鐘 − deductMinutes，落地板 0
+  deductMinutes Int
+  /// 必填 —— 呢個會改時間帳戶餘額，間接影響離職結算，要追得返點解
+  reason        String
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedBy     String?
+  updatedAt     DateTime @updatedAt
+
+  /// ★★★ 拍板⑥「唔可以重複輸入」嘅【結構性】保證 —— 唔係靠 UI 檢查
+  @@unique([employeeId, workDate])
+  @@index([employeeId, workDate])
 }
 
 // ============================================================

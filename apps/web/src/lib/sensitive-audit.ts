@@ -33,6 +33,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'EXPENSE_CREATE', label: '新增雜項' },
   { action: 'EXPENSE_DELETE', label: '刪除雜項' },
   { action: 'PAYROLL_REVERT_TO_DRAFT', label: '計糧重製草稿' },
+  // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減（改時間帳戶餘額，間接影響離職結算）
+  { action: 'HOLIDAY_OT_ADJUST', label: '假期返工OT扣減' },
+  { action: 'HOLIDAY_OT_ADJUST_DELETE', label: '移除假期返工OT扣減' },
   // ★ 2026-08-05: Additional sensitive actions from coverage scan
   { action: 'ACCOUNT_DELETE', label: '刪除帳戶' },
   { action: 'ACCOUNT_PURGE', label: '⚠️ 徹底清除帳號' },

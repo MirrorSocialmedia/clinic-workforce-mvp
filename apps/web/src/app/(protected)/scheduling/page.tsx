@@ -827,12 +827,17 @@ export default function SchedulingPage() {
 
   // ★ 2026-08-21：月視圖底部假期總覽 —— 一條 API 一次過回（員工＋服務年度年假＋餘額＋restQuota）
   const [leaveSummary, setLeaveSummary] = useState<any[] | null>(null)
+  // ★ cwm-holidayot-20260911 F2：本月應得休息日（= RESTDAY_GRANT 實發數；多人設定唔同 → 出範圍）
+  const [restQuotaSummary, setRestQuotaSummary] = useState<{ value: number } | { min: number; max: number } | null>(null)
   useEffect(() => {
-    if (!currentCompanyId) { setLeaveSummary([]); return }
+    if (!currentCompanyId) { setLeaveSummary([]); setRestQuotaSummary(null); return }
     getJSON(`/api/scheduling-leave-summary?companyId=${currentCompanyId}&periodMonth=${ovMonth}`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => setLeaveSummary(d?.rows ?? []))
-      .catch(() => setLeaveSummary([]))
+      .then(d => {
+        setLeaveSummary(d?.rows ?? [])
+        setRestQuotaSummary(d?.restQuotaSummary ?? null)
+      })
+      .catch(() => { setLeaveSummary([]); setRestQuotaSummary(null) })
   }, [currentCompanyId, ovMonth])
 
   // ★ 小時格式化 helpers
@@ -5775,10 +5780,20 @@ function getShiftCode(shift: Shift): string {
                     {/* ★ 2026-08-04: 每日備註列 —— 月視圖用「·」唔係「＋」 */}
                     <tr>
                       <th style={{
-                        position: 'sticky', left: 0, zIndex: 2, background: '#fff',
+                        position: 'sticky', left: 0, zIndex: 2,
                         width: 110, minWidth: 110, borderRight: '0.5px solid #e5e7eb',
-                        padding: '3px 6px', fontSize: 10, fontWeight: 400, color: '#9ca3af', textAlign: 'center',
-                      }}>備註</th>
+                        padding: '3px 6px', textAlign: 'center', background: '#eff6ff',
+                      }}>
+                        {/* ★ cwm-holidayot-20260911 F2：本月應得休息日（= RESTDAY_GRANT 實發數）
+                            ⚠️ 「備註」兩個字讓位，但下面每格仍然撳得入去編輯（renderNoteCell 一個字唔郁）*/}
+                        <div style={{ fontSize: 9, color: '#1d4ed8', lineHeight: 1.2 }}>本月應得休息日</div>
+                        <div style={{ fontSize: 16, fontWeight: 600, color: '#1d4ed8', lineHeight: 1.2 }}>
+                          {restQuotaSummary == null ? '—'
+                            : 'value' in restQuotaSummary ? restQuotaSummary.value
+                            : `${restQuotaSummary.min}–${restQuotaSummary.max}`}
+                          <span style={{ fontSize: 9, fontWeight: 400 }}> 日</span>
+                        </div>
+                      </th>
                       {monthDays.map(d => (
                         <th key={`note-${d}`} style={{ width: 56, minWidth: 56, padding: 2, fontWeight: 400 }}>
                           {renderNoteCell(d, { editable: true, compact: true })}

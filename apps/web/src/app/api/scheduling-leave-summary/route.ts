@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
         where: { isActive: true },
         orderBy: { effectiveFrom: 'desc' },
         take: 1,
-        select: { configJson: true },
+        select: { payType: true, configJson: true },
       },
     },
   })
@@ -246,5 +246,21 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  return jsonNoStore({ periodMonth, rows })
+  // ★ cwm-holidayot-20260911 F1：月視圖「本月應得休息日」聚合。
+  //   ⚠️ 必須同 leave/grant-restdays:52-63 一模一樣 —— 呢個數要對得返員工實際收到嘅休息日。
+  //   ⚠️ rest_days 係【逐個員工】嘅 PayRule config；HOURLY 唔發休息日（grant 會 skip）。
+  //   ★ quotas.size > 1 出範圍唔出單一數 —— 出一個數會對唔同設定嗰個人講大話。
+  const quotas = new Set<number>()
+  for (const emp of employees) {
+    const rule = emp.payRules[0]
+    if (rule?.payType === 'HOURLY') continue
+    const cfg = parseConfig(rule?.configJson)
+    const restDays: number[] = cfg?.modifiers?.working_days?.rest_days ?? cfg?.working_days?.rest_days ?? [6, 0]
+    quotas.add(countMonthlyLeaveDays(py, pm - 1, restDays, phSet).total)
+  }
+  const restQuotaSummary = quotas.size === 0 ? null
+    : quotas.size === 1 ? { value: [...quotas][0] }
+    : { min: Math.min(...quotas), max: Math.max(...quotas) }
+
+  return jsonNoStore({ periodMonth, rows, restQuotaSummary })
 }
