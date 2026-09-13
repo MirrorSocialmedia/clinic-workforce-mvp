@@ -29,17 +29,26 @@ export async function GET(req: NextRequest) {
   return handleRoute('apricot-accounts/unassigned', async () => {
     // ★ MD 逐字 SQL — 唔好改語義（NOT EXISTS 用 kind <> 'UNKNOWN'）
     const rows = await prisma.$queryRaw<UnassignedRow[]>`
-      SELECT pa."providerExtId"          AS "apricotId",
-             MAX(ab."providerName")      AS name,
-             COUNT(*)::int               AS "allocCount",
-             SUM(pa.amount)              AS amount,
-             MIN(pa."periodMonth")       AS "firstMonth",
-             MAX(pa."periodMonth")       AS "lastMonth",
-             ARRAY_AGG(DISTINCT c.name)  AS clinics
+      SELECT pa."providerExtId"                             AS "apricotId",
+             -- ★ cwm-unassigned-fix-20260913 ①：用 subquery 唔用 JOIN。
+             --   JOIN "ApricotBill" ON providerExtId 係 1 對多 → COUNT/SUM 會被乘以單數
+             --   （實測：2 筆 × 5 張單 = 10 筆、$580 × 5 = $2,900）。
+             (SELECT ab."providerName"
+                FROM "ApricotBill" ab
+               WHERE ab."providerExtId" = pa."providerExtId"
+                 AND ab."providerName" IS NOT NULL
+               ORDER BY ab."billTime" DESC
+               LIMIT 1)                                      AS name,
+              COUNT(*)::int                                   AS "allocCount",
+              SUM(pa.amount)                                  AS amount,
+              MIN(pa."periodMonth")                           AS "firstMonth",
+              MAX(pa."periodMonth")                           AS "lastMonth",
+              ARRAY_AGG(DISTINCT c.name) FILTER (WHERE c.name IS NOT NULL)  AS clinics
       FROM "PaymentAllocation" pa
-      LEFT JOIN "ApricotBill" ab ON ab."providerExtId" = pa."providerExtId"
       LEFT JOIN "Clinic"      c  ON c."apricotClinicId" = pa."clinicExtId"
       WHERE pa."isVoid" = false AND pa."isSuperseded" = false
+        -- ★ ②：金額 0 冇資訊價值，只會令清單有噪音（實測有一筆 $0 / methodNorm=UNKNOWN）
+        AND pa.amount > 0
         AND NOT EXISTS (
           SELECT 1 FROM "ApricotPractitioner" ap
           WHERE ap."apricotId" = pa."providerExtId" AND ap.kind <> 'UNKNOWN'
