@@ -104,6 +104,8 @@ export interface MiscSheetData {
     note?: string
     amount: number
     isVoid?: boolean
+    /// ★ cwm-clinicmisc-wire-20260913：'APRICOT'（診所帳號收款）／'MANUAL'（人手錄入）
+    source?: 'APRICOT' | 'MANUAL'
   }[]
 }
 
@@ -624,8 +626,9 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
 export function buildMiscSheet(wb: ExcelJS.Workbook, m: MiscSheetData): ExcelJS.Worksheet {
   const name = nextSheetName(wb, 'Clinic 雜項')
   const ws = wb.addWorksheet(name)
-  const lastCol = 6
-  setWidths(ws, [12, 10, 20, 12, 24, 12])
+  // ★ cwm-clinicmisc-wire-20260913：6 欄→7 欄（加「來源」；金額留 F 欄，公式/引用唔變）
+  const lastCol = 7
+  setWidths(ws, [12, 10, 20, 12, 24, 12, 10])
 
   let row = 1
   ws.mergeCells(row, 1, row, lastCol)
@@ -633,9 +636,10 @@ export function buildMiscSheet(wb: ExcelJS.Workbook, m: MiscSheetData): ExcelJS.
   ws.getCell(row, 1).font = mkFont({ bold: true, size: 14 })
   row += 2
 
-  sectionTitle(ws, row, '雜項收入明細（唔經 Apricot）', lastCol)
+  // ★ cwm-clinicmisc-wire-20260913：改完之後雜項已經有 Apricot 來源 → 標題改中性
+  sectionTitle(ws, row, '雜項收入明細', lastCol)
   row++
-  headerRow(ws, row, ['日期', '類別', '項目', '付款方式', '備註', '金額'])
+  headerRow(ws, row, ['日期', '類別', '項目', '付款方式', '備註', '金額', '來源'])
   row++
   const active = m.rows.filter(r => !r.isVoid).sort((a, b) => a.incomeAt.localeCompare(b.incomeAt))
   const voids = m.rows.filter(r => r.isVoid).sort((a, b) => a.incomeAt.localeCompare(b.incomeAt))
@@ -647,12 +651,13 @@ export function buildMiscSheet(wb: ExcelJS.Workbook, m: MiscSheetData): ExcelJS.
     setData(ws.getCell(row, 4), r.methodLabel, { gray: r.isVoid })
     setData(ws.getCell(row, 5), r.note ?? '', { gray: r.isVoid })
     setData(ws.getCell(row, 6), round2(r.amount), { fmt: MONEY_FMT, gray: r.isVoid })
+    setData(ws.getCell(row, 7), r.source === 'MANUAL' ? '人手' : 'Apricot', { gray: r.isVoid })
     row++
   }
   const lastActive = first + active.length - 1
   const totalRow = row
   setLabel(ws.getCell(row, 1), '合計', { bold: true })
-  for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
+  for (let i = 2; i <= lastCol; i++) ws.getCell(row, i).border = thinBorder
   // 合計只 SUM 非作廢區（void 行排喺底部，唔入範圍）
   const totalVal = round2(active.reduce((s, r) => s + r.amount, 0))
   if (active.length > 0) setFormula(ws.getCell(row, 6), `SUM(F${first}:F${lastActive})`, { fmt: MONEY_FMT, bold: true, result: totalVal })
@@ -660,13 +665,13 @@ export function buildMiscSheet(wb: ExcelJS.Workbook, m: MiscSheetData): ExcelJS.
   row++
   // 手續費率（規則③：入傳，藍字）
   setLabel(ws.getCell(row, 1), '手續費率')
-  for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
+  for (let i = 2; i <= lastCol; i++) ws.getCell(row, i).border = thinBorder
   setData(ws.getCell(row, 6), m.feePercent, { fmt: PCT_FMT })
   const feeRow = row
   row++
   // 收入淨額 = 合計×(1-費率)（規則③；{ formula, result } 雙寫求穩）
   setLabel(ws.getCell(row, 1), LABEL_MISC_NET, { bold: true })
-  for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
+  for (let i = 2; i <= lastCol; i++) ws.getCell(row, i).border = thinBorder
   const netVal = round2(totalVal * (1 - m.feePercent))
   const netCell = ws.getCell(row, 6)
   netCell.value = { formula: `F${totalRow}*(1-F${feeRow})`, result: netVal }

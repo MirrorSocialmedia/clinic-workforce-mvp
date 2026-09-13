@@ -21,6 +21,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { resolveMethodRule } from '@/lib/apricot/allocate'
 import { loadDoctorSheetData, METHOD_LABELS, round2 } from '@/lib/payout/report-data'
+import { loadClinicMisc } from '@/lib/payout/clinic-misc'
 import { buildCoverSheet, buildDoctorSheet, buildMiscSheet } from '@/lib/payout/xlsx-report'
 
 const PERIOD_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
 
   const clinic = await prisma.clinic.findUnique({
     where: { id: clinicId },
-    select: { id: true, name: true, shortName: true },
+    select: { id: true, name: true, shortName: true, apricotClinicId: true },
   })
   if (!clinic) return jsonNoStore({ error: '診所不存在' }, { status: 404 })
   const clinicShort = clinic.shortName || clinic.name
@@ -62,11 +63,10 @@ export async function GET(req: NextRequest) {
     orderBy: { totalAmount: 'desc' },
   })
 
-  // ─── 2. Clinic 雜項（非 void 入合計；void 行照列灰線，A 步產生器處理）──
-  const miscRows = await prisma.miscIncome.findMany({
-    where: { clinicId, periodMonth },
-    orderBy: [{ incomeAt: 'asc' }, { id: 'asc' }],
-  })
+  // ─── 2. Clinic 雜項 = Apricot CLINIC 帳號 ＋ 人手錄入（lib/payout/clinic-misc.ts 唯一來源）──
+  //   ★ cwm-clinicmisc-wire-20260913：之前只讀 MiscIncome（人手表一直係空）→ 雜項頁永遠冇記錄。
+  //     診所雜費其實一直喺 Apricot 收（CLINIC 帳號），MiscIncome 只係退路。
+  const miscRows = await loadClinicMisc(clinicId, clinic.apricotClinicId, periodMonth)
 
   if (runs.length === 0 && miscRows.length === 0) {
     return jsonNoStore({ error: `該診所 ${periodMonth} 冇月結單／雜項收入` }, { status: 404 })
@@ -116,6 +116,7 @@ export async function GET(req: NextRequest) {
       note: r.note ?? undefined,
       amount: Number(r.amount),
       isVoid: r.isVoid,
+      source: r.source,
     })),
   })
 
