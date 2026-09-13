@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { handleRoute } from '@/lib/api-guard'
-import { toHKDateStr } from '@/lib/hk-date'
 import { prisma } from '@/lib/prisma'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
+import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 
 // ============================================================
 // POST /api/cost-cases/implant — Create IMPLANT cost case with materials
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const {
     providerId, clinicId, patientCode, patientName,
     orderedAt, itemType, dsaName,
-    receivedAt, appointmentAt,
+    receivedAt: _ignoredReceivedAt, appointmentAt: _ignoredAppointmentAt,
     materials,
     billExtId, billCode, billItemEleId, // ★ MD-K: 由帳單新增
     // ★ 2026-09-02 cwm-costnote：個案備註 — 命名 caseNote 避免同 materials[].note（材料名）混
@@ -45,8 +45,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
   }
 
-  // ★ 2026-08-27 拍板①：成本按【到貨日】入月結（同 LAB/INVISALIGN POST 一致）；未到貨 = null
-  const periodMonth = receivedAt ? toHKDateStr(receivedAt).slice(0, 7) : null
+  // ★★★ cwm-implantdate-20260913 拍板乙：植牙冇「到貨」概念（材料即場用），
+  //   UI 已剷走到貨日欄 → 後端【強制】receivedAt = orderedAt。
+  //   ⚠️ 一定要【強制】唔可以做 default —— 前端唔傳 receivedAt 嘅話，
+  //      原本邏輯會俾 null，periodMonth 變 null，成本永遠唔入月結（engine.ts:390 撈唔到）。
+  //   ⚠️ 覆診日（appointmentAt）一律 null —— 全 repo 只有成本錄入頁顯示，冇引擎 consumer。
+  //   （取代 2026-08-27 拍板①嘅「跟到貨日」—— 只針對 IMPLANT；LAB 路徑唔受影響。）
+  const { receivedAt: effectiveReceivedAt, periodMonth } = deriveCostPeriod('IMPLANT', orderedAt, _ignoredReceivedAt)
 
   // ★ B1 + cwm-payoutcost-20260908 C2：材料單價按 name + orderedAt resolve（抽咗共用 lib，
   //   同 cost-cases/[id] PUT 共享同一套行為 — 單一來源）
@@ -72,8 +77,8 @@ export async function POST(req: NextRequest) {
       dsaName: dsaName || null,
       baseCost: totalBaseCost,
       finalCost: totalBaseCost, // ★ IMPLANT 唔套工場折扣
-      receivedAt: receivedAt ? new Date(receivedAt) : null,
-      appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
+      receivedAt: effectiveReceivedAt,   // ★ 強制 = 落單日（deriveCostPeriod('IMPLANT', ...)）
+      appointmentAt: null,                // ★ 植牙唔用覆診日
       // ★ 2026-09-02 cwm-costnote：個案備註（共用 modal 同 LAB 一樣有備註欄 — 唔接會靜默食值）
       note: caseNote?.trim() || null,
       billExtId: billExtId || null,

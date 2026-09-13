@@ -215,9 +215,6 @@ export default function CostEntryPage() {
     patientName: '',
   })
   const [savingCost, setSavingCost] = useState(false)
-  // ★ 2026-08-28 cwm-matedit T3 §3 #22-#26：到貨日人手動過（填/清）→ 改落單日唔再自動同步；
-  //   新增 modal 開時 false；編輯模式載入現有值後 true（已有資料 = 當已人手填過，唔覆蓋）
-  const [receivedAtTouched, setReceivedAtTouched] = useState(false)
 
   // ★ MD-K: Implant material lines
   const [materialLines, setMaterialLines] = useState<MaterialLine[]>([])
@@ -554,8 +551,6 @@ export default function CostEntryPage() {
     setMaterialLines([])
     setLabDiscountPct(null)
     setLabDiscountPeriodMonth('')
-    // ★ T3 #22：新增 modal 開 → 到貨日未人手動過（IMPLANT 落單日自動帶到貨日）
-    setReceivedAtTouched(false)
     // ★ 2026-08-25：重置新增 state
     setManualPatientQuery('')
     setManualPatients([])
@@ -812,8 +807,6 @@ export default function CostEntryPage() {
     setClinicGuess(null)
     setLabDiscountPct(null)
     setLabDiscountPeriodMonth('')
-    // ★ T3 #26：編輯模式載入現有值後 → 當已人手填過，改落單日唔覆蓋已有到貨日
-    setReceivedAtTouched(true)
     setPickerOpen(true)
   }
 
@@ -869,8 +862,11 @@ export default function CostEntryPage() {
           : (costForm.itemType || null),
         dsaName: costForm.dsaName || null,
         baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
-        receivedAt: costForm.receivedAt || null,
-        appointmentAt: costForm.appointmentAt || null,
+        // ★ cwm-implantdate-20260913：IMPLANT 後端強制 receivedAt = orderedAt、appointmentAt = null，送咗都會被覆寫
+        ...(costForm.category === 'IMPLANT' ? {} : {
+          receivedAt: costForm.receivedAt || null,
+          appointmentAt: costForm.appointmentAt || null,
+        }),
         // ★ 2026-09-02 cwm-costnote：備註（undefined = 唔改 → 要明確送，空 = null 清空）
         note: costForm.note?.trim() || null,
       }
@@ -999,8 +995,11 @@ export default function CostEntryPage() {
           orderedAt: costForm.orderedAt || todayHK(),
           itemType: costForm.itemType === 'Others' ? (costForm.itemTypeOther?.trim() || 'Others') : (costForm.itemType || null),
           dsaName: costForm.dsaName || null,
-          receivedAt: costForm.receivedAt || null,
-          appointmentAt: costForm.appointmentAt || null,
+          // ★ cwm-implantdate-20260913：IMPLANT 後端強制 receivedAt = orderedAt、appointmentAt = null，送咗都會被覆寫
+          ...(costForm.category === 'IMPLANT' ? {} : {
+            receivedAt: costForm.receivedAt || null,
+            appointmentAt: costForm.appointmentAt || null,
+          }),
           // ★ 2026-09-02 cwm-costnote：個案備註
           note: costForm.note?.trim() || null,
           materials: materialLines.map(l => ({
@@ -1040,8 +1039,11 @@ export default function CostEntryPage() {
           discountPct: null, // ★ 拍板②：server 端 Q2 後本來就忽略 body.discountPct（跟 LabMonthlyDiscount 表）；明確 null 記錄拍板
           dsaName: costForm.dsaName || null,
           baseCost: costForm.baseCost ? Number(costForm.baseCost) : null,
-          receivedAt: costForm.receivedAt || null,
-          appointmentAt: costForm.appointmentAt || null,
+          // ★ cwm-implantdate-20260913：IMPLANT 後端強制 receivedAt = orderedAt、appointmentAt = null，送咗都會被覆寫
+          ...(costForm.category === 'IMPLANT' ? {} : {
+            receivedAt: costForm.receivedAt || null,
+            appointmentAt: costForm.appointmentAt || null,
+          }),
           // ★ 2026-09-02 cwm-costnote：個案備註
           note: costForm.note?.trim() || null,
           ...(pickerMode === 'bill' && selectedBill ? {
@@ -1718,8 +1720,8 @@ export default function CostEntryPage() {
                     <label className="block text-sm mb-1">落單日</label>
                     <input type="date" value={costForm.orderedAt} onChange={e => {
                       const v = e.target.value
-                      // ★ T3 #22/#23：IMPLANT 且到貨日未人手動過 → 跟住落單日同步
-                      setCostForm(f => ({ ...f, orderedAt: v, ...(f.category === 'IMPLANT' && !receivedAtTouched ? { receivedAt: v } : {}) }))
+                      // ★ cwm-implantdate-20260913：IMPLANT 嘅 receivedAt 由後端強制 = orderedAt，前端唔使再同步
+                      setCostForm(f => ({ ...f, orderedAt: v }))
                     }}
                       className="w-full border rounded px-2 py-1.5 text-sm" />
                   </div>
@@ -1872,20 +1874,29 @@ export default function CostEntryPage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm mb-1">到貨日</label>
-                    <input type="date" value={costForm.receivedAt} onChange={e => {
-                      // ★ T3 #24：人手動過到貨日（填或清）→ 之後改落單日唔再自動同步
-                      setReceivedAtTouched(true)
-                      setCostForm({ ...costForm, receivedAt: e.target.value })
-                    }}
-                      className="w-full border rounded px-2 py-1.5 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-sm mb-1">覆診日</label>
-                    <input type="date" value={costForm.appointmentAt} onChange={e => setCostForm({ ...costForm, appointmentAt: e.target.value })}
-                      className="w-full border rounded px-2 py-1.5 text-sm" />
-                  </div>
+                  {/* ★ cwm-implantdate-20260913 拍板乙：植牙冇到貨／覆診概念 —— 後端強制 receivedAt = 落單日。
+                      ⚠️ 唔好用 disabled —— 用戶會以為填得但唔生效。直接唔顯示。*/}
+                  {costForm.category !== 'IMPLANT' && (
+                    <>
+                      <div>
+                        <label className="block text-sm mb-1">到貨日</label>
+                        <input type="date" value={costForm.receivedAt} onChange={e => {
+                          setCostForm({ ...costForm, receivedAt: e.target.value })
+                        }}
+                          className="w-full border rounded px-2 py-1.5 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-sm mb-1">覆診日</label>
+                        <input type="date" value={costForm.appointmentAt} onChange={e => setCostForm({ ...costForm, appointmentAt: e.target.value })}
+                          className="w-full border rounded px-2 py-1.5 text-sm" />
+                      </div>
+                    </>
+                  )}
+                  {costForm.category === 'IMPLANT' && (
+                    <div className="text-xs text-muted-foreground col-span-2">
+                      植牙材料即場使用 —— 成本按<strong>落單日</strong>入該月醫生月結，冇到貨／覆診日。
+                    </div>
+                  )}
                 </div>
 
                 {/* ★ 2026-09-02 cwm-costnote：自由備註（例：補做上排、等病人 confirm 色） */}

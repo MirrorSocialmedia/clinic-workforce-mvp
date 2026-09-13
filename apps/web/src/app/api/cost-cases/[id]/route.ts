@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
-import { toHKDateStr } from '@/lib/hk-date'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
+import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 
 // ============================================================
 // PUT /api/cost-cases/:id — Update a cost case
@@ -52,11 +52,17 @@ export async function PUT(
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
   const effectiveLabId = labId !== undefined ? (labId || null) : existing.labId
-  // ★ 2026-08-27 拍板①：periodMonth 跟 receivedAt 唔跟 orderedAt（未到貨 = null）
-  const effectiveReceivedAt = receivedAt !== undefined ? receivedAt : existing.receivedAt
-  const effectivePeriodMonth = effectiveReceivedAt
-    ? toHKDateStr(effectiveReceivedAt).slice(0, 7)
-    : null
+  // ★ cwm-implantdate-20260913 拍板乙：IMPLANT 冇到貨日概念 → 強制跟落單日。
+  //   ⚠️ 改咗落單日而 receivedAt 唔跟，periodMonth 就唔會跟，成本會留喺舊月份。
+  //   （取代 2026-08-27 拍板①嘅「跟到貨日」—— 只針對 IMPLANT；LAB 路徑照舊跟到貨日，一個字冇改。）
+  const effCategory = category !== undefined ? category : existing.category
+  const effOrderedAt = orderedAt !== undefined ? orderedAt : existing.orderedAt
+  const effectiveReceivedAt = effCategory === 'IMPLANT'
+    ? effOrderedAt
+    : (receivedAt !== undefined ? receivedAt : existing.receivedAt)
+  const { periodMonth: effectivePeriodMonth } = deriveCostPeriod(
+    effCategory, effOrderedAt, effectiveReceivedAt,
+  )
 
   // ★ 2026-08-25 守衛①：改醫生／診所要驗存在性（FK 撞 = 400 唔係 500）
   if (providerId !== undefined && providerId !== existing.providerId) {
@@ -225,6 +231,13 @@ export async function PUT(
   if (finalCost !== existing.finalCost?.toNumber()) data.finalCost = finalCost != null ? finalCost : null
   if (receivedAt !== undefined) data.receivedAt = receivedAt ? new Date(receivedAt) : null
   if (appointmentAt !== undefined) data.appointmentAt = appointmentAt ? new Date(appointmentAt) : null
+  // ★ cwm-implantdate-20260913：IMPLANT：receivedAt 一律寫返 = 落單日；appointmentAt 一律清空。
+  //   ⚠️ 放喺上面兩行 generic 寫入【之後】—— 確保前端送咗 receivedAt/appointmentAt（舊 UI/直接打 API）
+  //      都唔可以蓋過強制值，否則 periodMonth（由落單日導出）同 receivedAt 會劈腿。
+  if (effCategory === 'IMPLANT') {
+    data.receivedAt = new Date(effOrderedAt)
+    data.appointmentAt = null
+  }
   if (status !== undefined) data.status = status
   if (providerId !== undefined) data.providerId = providerId
   if (clinicId !== undefined) data.clinicId = clinicId

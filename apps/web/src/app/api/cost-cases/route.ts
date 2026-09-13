@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
-import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -256,10 +257,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
   }
 
-  // ★ 2026-08-27 拍板①：成本按【到貨日】入月結 —— 落單 7/25、到貨 8/5 → 計 8 月。
-  //   ⚠️ 未到貨（receivedAt null）→ periodMonth = null → 唔入任何月結，
-  //      等補咗到貨日先計（拍板① (a)）。
-  const periodMonth = receivedAt ? toHKDateStr(receivedAt).slice(0, 7) : null
+  // ★ cwm-implantdate-20260913：IMPLANT 強制跟落單日；LAB/INVISALIGN 維持跟到貨日（未到貨 = null）。
+  //   （2026-08-27 拍板①嘅「跟到貨日」只保留畀 LAB/INVISALIGN：落單 7/25、到貨 8/5 → 計 8 月；
+  //    未到貨（receivedAt null）→ periodMonth = null → 唔入任何月結，等補咗到貨日先計。）
+  //   ⚠️ 上方 guard 而家會擋住 IMPLANT（400 導流去 /api/cost-cases/implant），
+  //      呢個 IMPLANT branch 係 defensive（MD A3 要求三 route 導出邏輯統一）。
+  const { receivedAt: effectiveReceivedAt, periodMonth } = deriveCostPeriod(category, orderedAt, receivedAt)
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
   //   ★ 2026-08-27：periodMonth null（未到貨）→ 冇月度折扣，finalCost = baseCost
@@ -303,8 +306,8 @@ export async function POST(req: NextRequest) {
       baseCost: baseCostNum != null ? baseCostNum : null,
       discountPct: discountPctNum != null ? discountPctNum : null,
       finalCost: finalCostNum != null ? finalCostNum : null,
-      receivedAt: receivedAt ? new Date(receivedAt) : null,
-      appointmentAt: appointmentAt ? new Date(appointmentAt) : null,
+      receivedAt: effectiveReceivedAt,   // ★ IMPLANT = 落單日；LAB = 到貨日（deriveCostPeriod）
+      appointmentAt: category === 'IMPLANT' ? null : (appointmentAt ? new Date(appointmentAt) : null),
       // ★ 2026-09-02 cwm-costnote：備註（trim；空字串 → null）
       note: note?.trim() || null,
       billExtId: billExtId || null,
