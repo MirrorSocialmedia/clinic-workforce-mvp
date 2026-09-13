@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { getDailyHash, verifyDailyHash } from '@/lib/daily-hash'
 import { hkDateStart } from '@/lib/hk-date'
+import { boolParam } from '@/lib/query-params'
 
 // GET /api/daily-hash/[date] — Get/verify daily hash for a specific date
 export async function GET(
@@ -15,7 +16,7 @@ export async function GET(
 
   const { searchParams } = new URL(req.url)
   const clinicId = searchParams.get('clinicId')
-  const verify = searchParams.get('verify') === 'true'
+  const verify = boolParam(searchParams, 'verify')
 
   if (!clinicId) {
     return NextResponse.json({ error: 'clinicId query parameter is required' }, { status: 400 })

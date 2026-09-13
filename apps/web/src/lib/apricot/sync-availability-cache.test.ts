@@ -323,7 +323,7 @@ describe('runAvailabilityCacheSync — MD §B.2', () => {
     for (const leak of ['A123456(7)', '91234567', 'clinicPatient', 'JOAN TEST NURSE', 'CHAN TAK-WAH', 'HYPERTENSION']) {
       assert.ok(!logJson.includes(leak), `log 出現 PII：${leak}`)
     }
-    // bookedCount 對（★ cwc-rdchain-20260823-a1 MD §0 佔用規則：只計 status ∈ {0, 102}）：
+    // bookedCount 對（★ cwm-slotsafe-20260913 MD §0 佔用規則：只剔 RELEASED {4,-3,-6,-7}；未知當佔用）：
     // 09:00 格 0、09:30 格 1（570–600 status 0）、10:00 格 0（600–645 係 status 4 完成 — 唔計）；
     // isRemoved 筆唔計
     const grid = allRows
@@ -383,22 +383,28 @@ describe('runAvailabilityCacheSync — MD §B.2', () => {
   })
 })
 
-// ── cwc-rdchain-20260823-a1: bookedCount status 規則（MD §0）─────────────
+// ── cwm-slotsafe-20260913: bookedCount status 規則（MD §0，白名單→黑名單 fail-safe）─────────────
 
-describe('buildSlotGrid — bookedCount 只計 status ∈ {0, 102}（MD §0 佔用規則）', () => {
-  it('0/102 計；4/-6/-7/未知值唔計', () => {
+describe('buildSlotGrid — bookedCount 只剔 RELEASED {4,-3,-6,-7}（MD §0 佔用規則 fail-safe）', () => {
+  it('0/102/未知值計；4/-6/-7（RELEASED）唔計', () => {
     const rows = buildSlotGrid(
       [sch(540, 600)],
       [bk(570, 600, 0), bk(570, 600, 102), bk(570, 600, 4), bk(570, 600, -6), bk(570, 600, -7), bk(570, 600, 7)],
     )
     assert.equal(rows.length, 2) // 09:00–10:00 = 兩格；booking 570–600 只重疊 09:30 格
     assert.equal(rows[0].bookedCount, 0)
-    assert.equal(rows[1].bookedCount, 2, '只有 0 同 102 計')
+    assert.equal(rows[1].bookedCount, 3, '0、102 同未知 7 都計（fail-safe）；4/-6/-7（RELEASED）唔計')
   })
 
   it('mock 一單 -7 → 該 slot 佔用唔計（驗收字面）', () => {
     const rows = buildSlotGrid([sch(540, 600)], [bk(570, 600, -7)])
     assert.equal(rows[0].bookedCount, 0)
+  })
+
+  it('status=1（Arrived）計佔用（2026-09-13 老細由 Apricot 畫面確認）', () => {
+    const rows = buildSlotGrid([sch(540, 600)], [bk(570, 600, 1)])
+    assert.equal(rows[0].bookedCount, 0)
+    assert.equal(rows[1].bookedCount, 1)
   })
 })
 
@@ -454,7 +460,7 @@ describe('§3.1 高頻 — 一 call 三表齊（白名單 v2）', () => {
     assert.equal(u4.create.bookingStatus, -7)
   })
 
-  it('bookedCount 只計 0/102：09:30 格 = 2（0+102）、10:00 格 = 0（4+-7）；10:30 後冇格（開診 10:30 止）', async () => {
+  it('bookedCount 只剔 RELEASED：09:30 格 = 2（0+102）、10:00 格 = 0（4/-7 都係 RELEASED）；10:30 後冇格（開診 10:30 止）', async () => {
     clinicRows = [CLINICS[0]]
     callImpl = async (path) => { calls.push({ path }); return richRaw() }
     await runAvailabilityCacheSync({ callFn: callImpl, now: NOW })
@@ -478,8 +484,38 @@ describe('§3.1 高頻 — 一 call 三表齊（白名單 v2）', () => {
     const log = ALL_LOG()
     assert.ok(log.includes('unknown_booking_status'), '應該有 unknown_booking_status ALERT 行')
     assert.ok(log.includes('value=7'), 'alert 要帶 value')
+    assert.ok(log.includes('【當佔用】（fail-safe）'), 'A3：ALERT 文案改為「照存並【當佔用】（fail-safe）」')
     // 未知值照存（唔剔）
     assert.ok(apptUpserts.some(u => u.where.apricotApptId === 'apt-h5'), '未知 status 筆要照存')
+  })
+
+  it('未知碼 77 → 當佔用（bookedCount 計入）+ ALERT unknown_booking_status（cwm-slotsafe-20260913 新增 case）', async () => {
+    clinicRows = [CLINICS[0]]
+    callImpl = async (path) => {
+      calls.push({ path })
+      return {
+        [TODAY]: {
+          appointments: {
+            D001: {
+              practitionerOpenSchs: { timeSlots: [{ startTime: 900, endTime: 1000 }] }, // 09:00–10:00（HHMM int）
+              bookingDetail: [
+                { id: 'apt-77', bookingTime: hkIso(TODAY, 570), bookingEndTime: hkIso(TODAY, 600), bookingStatus: 77, isRemoved: false, clinicPatient: { id: 9001, code: 'TKW901', fullName: 'UNK (test)', phoneNum: '60000001' } },
+              ],
+            },
+          },
+        },
+      }
+    }
+    await runAvailabilityCacheSync({ callFn: callImpl, now: NOW })
+
+    // 09:30 格（570–600）未知 77 → 當佔用（fail-safe）
+    const grid = creates.flatMap(c => c.data).filter(r => r.clinicId === 'cl-a')
+    assert.equal(grid.find(r => r.startTime === '09:30')!.bookedCount, 1)
+    assert.equal(grid.find(r => r.startTime === '09:00')!.bookedCount, 0)
+    const log = ALL_LOG()
+    assert.ok(log.includes('unknown_booking_status'), '應該有 unknown_booking_status ALERT 行')
+    assert.ok(log.includes('value=77'), 'alert 要帶 value=77')
+    assert.ok(log.includes('【當佔用】（fail-safe）'), 'A3 文案：照存並【當佔用】（fail-safe）')
   })
 })
 

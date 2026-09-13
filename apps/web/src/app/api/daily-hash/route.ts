@@ -6,6 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { generateDailyHash, listDailyHashes, verifyDailyHash } from '@/lib/daily-hash'
 import { hkDateStart } from '@/lib/hk-date'
 import { jsonNoStore } from '@/lib/api-response'
+import { boolParam } from '@/lib/query-params'
 
 // ============================================================
 // POST /api/daily-hash — Generate daily hash for a clinic
@@ -75,12 +76,12 @@ export async function GET(req: NextRequest) {
   const date = searchParams.get('date')
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
-  const verify = searchParams.get('verify')
+  const verify = boolParam(searchParams, 'verify')
 
   if (clinicId && date) {
     const targetDate = hkDateStart(date)
 
-    if (verify === 'true') {
+    if (verify) {
       const result = await verifyDailyHash(clinicId, targetDate)
       return jsonNoStore({ clinicId, date: targetDate.toISOString(), ...result })
     }

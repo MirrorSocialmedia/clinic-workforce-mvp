@@ -7,6 +7,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
 import { jsonNoStore } from '@/lib/api-response'
+import { boolParam } from '@/lib/query-params'
 
 // GET /api/accounts — merged User + Employee list
 export async function GET(req: NextRequest) {
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
   const role = searchParams.get('role')
   const status = searchParams.get('status')
   const search = searchParams.get('search')
-  const includeResigned = searchParams.get('includeResigned') === 'true'
+  const includeResigned = boolParam(searchParams, 'includeResigned')
 
   const userWhere: any = {}
   if (role) userWhere.role = role

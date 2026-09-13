@@ -79,12 +79,19 @@ const SLOT_STEP_MIN = 30
 
 const PATHNAME = '/api/external/v1/availability' // audit/monitor 識別用（本檔唔寫 audit）
 
-// ★ cwc-rdchain-20260823-a1（read-chain MD §0/§3）：
-// - 佔用規則：bookedCount 只計 bookingStatus ∈ {0, 102}（confirmed/rescheduled）
-//   — 4（完成）/ -6 / -7（取消）一律唔計（吉咗位唔好永遠顯示滿）
-// - 已知狀態碼：{0, 102, 4, -6, -7}；未知值照存 + ALERT unknown_booking_status
-const ACTIVE_BOOKING_STATUSES = new Set([0, 102])
-const KNOWN_BOOKING_STATUSES = new Set([0, 102, 4, -6, -7])
+// ★ cwm-slotsafe-20260913：佔用規則由【白名單】改【黑名單】—— fail-safe。
+//   點解：Apricot 狀態下拉有九個（Booked/Arrived/Ready for Consultation/In Consultation/
+//   Checkout/Completed/No Show/Rescheduled/Cancelled），但我哋只見過七個碼。
+//   「Ready for Consultation」「In Consultation」係過渡狀態（病人喺度嗰幾分鐘），
+//   sync 週期多數撞唔到 —— 但撞到就會當佢空位。白名單一定再中。
+//   ⚠️ 預設「當佔用」：估錯只係少做一單；估錯另一邊係 double-book，病人白行。
+//
+//   2026-09-13 實測（老細由 Apricot 畫面確認 1 = Arrived）：
+//     0=Booked · 1=Arrived · 102=Rescheduled           → 計佔用
+//     4=Completed/Checkout · -3 · -6 · -7（No Show／取消）→ 已釋放
+//   ⚠️ 只有【明確知道「完咗／唔嚟」】先准入 RELEASED —— 有疑問一律唔加。
+const RELEASED_BOOKING_STATUSES = new Set([4, -3, -6, -7])
+const KNOWN_BOOKING_STATUSES = new Set([0, 1, 4, 102, -3, -6, -7])
 
 // ─── 連續失敗計數（in-memory，run 級）──────────────────────────────────
 // 現有 repo 無外部警報通道（grep alert/monitor 零命中）→ MD fallback：
@@ -135,9 +142,9 @@ function hhmmToMin(s: string): number {
  * 一個醫生某日嘅 slot grid：openSch 開診時段 × 30 分鐘格。
  *
  * bookedCount = 同該格【重疊】嘅 booking 數（b.start < slotEnd && b.end > slotStart）—
- *   ★ cwc-rdchain-20260823-a1（MD §0 佔用規則）：只計 bookingStatus ∈ {0, 102}
- *   （confirmed/rescheduled）；4（完成）同 -6/-7（取消）一律唔計；
- *   未知狀態碼都唔計（另發 unknown_booking_status alert）。
+ *   ★ cwm-slotsafe-20260913（MD §0 佔用規則，白名單→黑名單 fail-safe）：
+ *   只剔 RELEASED_BOOKING_STATUSES {4, -3, -6, -7}（完咗／取消／No Show）；
+ *   未知狀態碼一律當佔用（另發 unknown_booking_status alert）。
  *   預約佔住醫生，重疊即唔空。isRemoved/跨日/壞格式筆已經被 extractBookings 剔走。
  * isOpen：格喺 openSch 時段內 → true（開診先有格；冇開診就冇格，唔硬造）。
  */
@@ -150,7 +157,8 @@ export function buildSlotGrid(openSches: OpenSchRow[], bookings: BookingRow[]): 
     for (let cur = s; cur < e; cur += SLOT_STEP_MIN) {
       const slotEnd = Math.min(cur + SLOT_STEP_MIN, e) // 尾格可以短於 30 分鐘
       const bookedCount = bookings.filter(
-        b => b.date === sch.date && ACTIVE_BOOKING_STATUSES.has(b.status) && b.startMin < slotEnd && b.endMin > cur,
+        // ★ A2：!RELEASED → 未知碼一律當佔用（fail-safe，見上面 A1 註釋）
+        b => b.date === sch.date && !RELEASED_BOOKING_STATUSES.has(b.status) && b.startMin < slotEnd && b.endMin > cur,
       ).length
       rows.push({
         date: sch.date,
@@ -266,7 +274,7 @@ export async function syncAvailabilityCacheForClinic(
   // ★ MD §0/§3.4：unknown bookingStatus alert（每店每 run 每個值一次，唔 spam）
   for (const v of [...unknownStatuses].sort((a, b) => a - b)) {
     console.error(
-      `[availability-cache] ⚠️ ALERT unknown_booking_status — value=${v}（clinic=${clinic.name ?? clinic.apricotClinicId}）— 照存唔計入 bookedCount，報 CEO 核對 Apricot 狀態碼`,
+      `[availability-cache] ⚠️ ALERT unknown_booking_status — value=${v}（clinic=${clinic.name ?? clinic.apricotClinicId}）— 照存並【當佔用】（fail-safe），報 CEO 核對 Apricot 狀態碼後入 KNOWN/RELEASED`,
     )
   }
 

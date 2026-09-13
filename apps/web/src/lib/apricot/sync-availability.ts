@@ -198,10 +198,16 @@ export async function runAvailabilitySync(
   opts: { callFn?: ApricotCallFn; from?: string } = {},
 ): Promise<AvailabilityRunOutcome> {
   const { callFn, from } = opts
-  // §2.2：冇 apricotClinicId 嘅店（青衣）唔會 sync —— warning 出嚟
+  // §2.2：冇 apricotClinicId 嘅店唔會 sync。
+  // ★ cwm-slotsafe-20260913：老細 2026-09-13 確認青衣暫時唔用 Apricot → 降級做 log，
+  //   唔再用 console.warn 嘈（每次 sync 都出，會蓋過真正嘅 ALERT）。
+  //   ⚠️ 但【唔准剷】—— 將來青衣接 Apricot 而冇填 id 就要睇到呢行。
   const skippedClinics = await prisma.clinic.count({ where: { apricotClinicId: null } })
   if (skippedClinics > 0) {
-    console.warn(`[availability] ${skippedClinics} 間診所冇 apricotClinicId，唔會 sync`)
+    const names = await prisma.clinic.findMany({
+      where: { apricotClinicId: null }, select: { name: true },
+    })
+    console.log(`[availability] ${skippedClinics} 間診所冇 apricotClinicId，唔會 sync：${names.map(n => n.name).join('、')}`)
   }
 
   // ★ 2026-08-22（cw-patwk）：from = 前端當前顯示週首日；無 → 今日（cron 唔傳，行為唔變）。

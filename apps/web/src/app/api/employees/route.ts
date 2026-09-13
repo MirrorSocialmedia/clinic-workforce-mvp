@@ -6,6 +6,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
+import { boolParam } from '@/lib/query-params'
 
 // ============================================================
 // GET /api/employees — list employees with filters
@@ -21,14 +22,14 @@ export async function GET(req: NextRequest) {
   const role = searchParams.get('role')
   const status = searchParams.get('status')
   const search = searchParams.get('search')
-  const includeResigned = searchParams.get('includeResigned') === 'true'
+  const includeResigned = boolParam(searchParams, 'includeResigned')
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1)
   const pageSize = Math.min(200, Math.max(1, parseInt(searchParams.get('pageSize') || '20', 10) || 20))
   const skip = (page - 1) * pageSize
 
   // ★ 下拉選單需要全部員工 —— 分頁預設 20 會靜靜漏人（2026-08-03 撞過）。
   // all=1 唔分頁，但只可以用喺內部管理頁（員工數目可控）。
-  const takeAll = searchParams.get('all') === '1'
+  const takeAll = boolParam(searchParams, 'all')
 
   const where: any = {}
 

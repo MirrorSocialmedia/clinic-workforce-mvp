@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
+import { boolParam } from '@/lib/query-params'
 
 // ============================================================
 // GET /api/my/schedule — My upcoming schedule
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const from = searchParams.get('from')
   const to = searchParams.get('to')
-  const includeCoworkers = searchParams.get('includeCoworkers') === 'true'
+  const includeCoworkers = boolParam(searchParams, 'includeCoworkers')
 
   const employee = await prisma.employee.findUnique({
     where: { userId: session.userId },
