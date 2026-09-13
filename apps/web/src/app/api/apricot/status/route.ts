@@ -83,9 +83,11 @@ export async function GET(req: NextRequest) {
       where: { extId: { in: reviewBillExtIds } },
       select: { extId: true, code: true, billTime: true },
     }),
-    prisma.provider.findMany({
+    // ★ C 章：反查經 ApricotPractitioner（Provider 舊 apricotId 欄已剷走）。
+    //   kind=PROVIDER → 醫生名；CLINIC／UNKNOWN → 顯示帳號名，唔好當醫生。
+    prisma.apricotPractitioner.findMany({
       where: { apricotId: { in: reviewDetails.map(r => r.providerExtId).filter(Boolean) as string[] } },
-      select: { apricotId: true, name: true },
+      select: { apricotId: true, name: true, kind: true, provider: { select: { name: true } } },
     }),
     prisma.clinic.findMany({
       where: { apricotClinicId: { in: reviewDetails.map(r => r.clinicExtId).filter(Boolean) as string[] } },
@@ -99,7 +101,10 @@ export async function GET(req: NextRequest) {
   ])
 
   const reviewBillMap = new Map(reviewBills.map(b => [b.extId, b]))
-  const reviewProviderMap = new Map(reviewProviders.map(p => [p.apricotId, p.name]))
+  // ★ C 章：PROVIDER → 醫生名；其餘 kind（CLINIC／UNKNOWN）→ 帳號名（純顯示，唔當醫生）
+  const reviewProviderMap = new Map(
+    reviewProviders.map(({ apricotId, kind, name, provider }) => [apricotId, kind === 'PROVIDER' ? (provider?.name ?? name) : name]),
+  )
   const reviewClinicMap = new Map(reviewClinics.map(c => [c.apricotClinicId, c.name]))
   // ★ methodRaw lookup: key = paymentExtId + '|' + methodNorm
   const reviewMethodRawMap = new Map<string, string>()

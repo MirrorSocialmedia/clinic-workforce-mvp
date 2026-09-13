@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { parsePaymentReport, type ParsedRow } from '@/lib/reconciliation/parsePaymentReport'
 import { compareReport } from '@/lib/reconciliation/compare'
+import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 
 export async function POST(req: NextRequest) {
 	const auth = await requireAuth(req, 'POST', req.url)
@@ -44,6 +45,13 @@ export async function POST(req: NextRequest) {
 
 		// 搵 provider（由 meta.practitioner 配對 Provider.name）
 		const provider = await resolveProvider(meta.practitioner, providerId || undefined)
+
+		// ★ G 章（防呆）：一個醫生多個 Apricot 帳號 → 報表可能只包咗部分 ID。
+		//   ⚠️ 唔改 upsert —— 讀唔到報表包咗邊幾個帳號，改累加會令重複上載變雙倍。
+		const apricotIds = await apricotIdsOfProvider(prisma, provider.id)
+		const multiAccountWarning = apricotIds.length > 1
+			? `⚠️ ${provider.name} 有 ${apricotIds.length} 個 Apricot 帳號 —— 請確認報表已剔齊全部`
+			: null
 
 		// ★ cwm-recon-clinic-20260909 A2：搵診所 —— 搵唔到一律 throw，唔准 fallback
 		const clinic = await resolveClinic(meta.clinic)
@@ -120,6 +128,7 @@ export async function POST(req: NextRequest) {
 			status: result.status,
 			clinic: clinic.shortName || clinic.name, // ★ A3：return 帶診所名
 			skipped, // ★ MD-AC1: UI 顯示「跳過 N 行」
+			multiAccountWarning, // ★ G 章：多帳號防呆（純警告，唔擋對數）
 			blankRows, // ★ cwm-recon-clinic-20260909 B3: UI 顯示「空行 N」（唔係警告）
 			difference: result.difference,
 			reportTotal: result.reportTotal,
@@ -141,7 +150,7 @@ async function resolveProvider(practitionerName: string, hintProviderId?: string
 	if (hintProviderId) {
 		const p = await prisma.provider.findUnique({
 			where: { id: hintProviderId },
-			select: { id: true, apricotId: true, shortName: true },
+			select: { id: true, name: true, shortName: true },
 		})
 		if (p) return p
 	}
@@ -152,7 +161,7 @@ async function resolveProvider(practitionerName: string, hintProviderId?: string
 
 	const matches = await prisma.provider.findMany({
 		where: { shortName: code },
-		select: { id: true, apricotId: true, shortName: true },
+		select: { id: true, name: true, shortName: true },
 		orderBy: { id: 'asc' }, // ★ 唯一 tiebreaker
 	})
 

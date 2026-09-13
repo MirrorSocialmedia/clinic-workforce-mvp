@@ -2,6 +2,7 @@
 // 容差 $1。MISMATCH 唔擋生成月結，只警告。
 
 import { prisma } from '@/lib/prisma'
+import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 import { toHKDateStr } from '@/lib/hk-date'
 import { normalizeMethod } from '@/lib/apricot/normalize' // ★ C2：報表側方式名統一（唔准另寫對照表）
 import { ParsedRow } from './parsePaymentReport'
@@ -52,20 +53,18 @@ export async function compareReport(
 	//      呢個正正就係今次個 bug。做成必填，TS 會逼所有 caller 交代。
 	clinicExtId: string,
 ): Promise<CompareResult> {
-	// 1) 攞 provider 嘅 apricotId
-	const provider = await prisma.provider.findUnique({
-		where: { id: providerId },
-		select: { apricotId: true },
-	})
-	if (!provider?.apricotId) {
-		throw new Error(`Provider ${providerId} 冇設定 apricotId`)
+	// 1) 攞 provider 嘅【全部】Apricot 帳號（★ Stage 2：ApricotPractitioner 係唯一來源）
+	//    空 array = 冇綁任何帳號 —— 明確 throw，唔准當「唔 filter」
+	const apricotIds = await apricotIdsOfProvider(prisma, providerId)
+	if (apricotIds.length === 0) {
+		throw new Error(`PROVIDER_NO_APRICOT_ID: Provider ${providerId} 冇綁任何 Apricot 帳號`)
 	}
 
 	// 2) 攞系統數 — PaymentAllocation.rawAmount（扣手續費前）
 	const allocs = await prisma.paymentAllocation.findMany({
 		where: {
 			...ACTIVE_ALLOCATION,
-			providerExtId: provider.apricotId,
+			providerExtId: { in: apricotIds },
 			clinicExtId, // ★ A1：收窄到報表嗰間診所
 			periodMonth,
 			// ★ cwm-reconxlsx-fix-20260910 B：【唔准】用 countAsIncome filter。

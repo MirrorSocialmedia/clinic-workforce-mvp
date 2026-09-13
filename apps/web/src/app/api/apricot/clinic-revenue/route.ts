@@ -40,6 +40,14 @@ export async function GET(req: NextRequest) {
       orderBy: { name: 'asc' },
     })
 
+    // ★ cwm-apricotacct Stage 2（H 章）：Clinic 雜項改讀 CLINIC 帳號。
+    //   ⚠️★★★ 唔准用 `ap.clinicId` 做 filter —— 通用 Clinic 個 clinicId 係 null，用佢 filter 會全部漏。
+    //   歸店靠 allocation 嘅 clinicExtId = clinic.apricotClinicId（同 MD 代碼 pattern 一致）。
+    const clinicAccts = await prisma.apricotPractitioner.findMany({
+      where: { kind: 'CLINIC' }, select: { apricotId: true },
+    })
+    const clinicAcctIds = clinicAccts.map(({ apricotId }) => apricotId)
+
     const clinics = await Promise.all(allClinics.map(async (c) => {
       // 未綁 Apricot ID：無數據可言
       if (!c.apricotClinicId) {
@@ -58,6 +66,7 @@ export async function GET(req: NextRequest) {
           providerCount: 0,
           payoutRunCount: 0,
           hasData: false,
+          clinicMisc: 0,
         }
       }
 
@@ -105,6 +114,21 @@ export async function GET(req: NextRequest) {
         where: { clinicId: c.id, periodMonth },
       })
 
+      // ★ H 章：Clinic 雜項（CLINIC 帳號收嘅錢）— 口徑 = ACTIVE_ALLOCATION（isVoid/isSuperseded）
+      //   + clinicExtId 歸店 + periodMonth。呢筆錢唔入任何醫生月結（engine Gate 1b② 已剔）。
+      const clinicMiscAgg = clinicAcctIds.length > 0
+        ? await prisma.paymentAllocation.aggregate({
+            where: {
+              clinicExtId: c.apricotClinicId,
+              periodMonth,
+              isVoid: false,
+              isSuperseded: false,
+              providerExtId: { in: clinicAcctIds },
+            },
+            _sum: { amount: true },
+          })
+        : null
+
       const allocationRowCount = agg._count._all
       // 「該月有無同步過」— 有付款或有 allocation 都算
       const hasData = paymentCount > 0 || allocationRowCount > 0
@@ -123,6 +147,8 @@ export async function GET(req: NextRequest) {
         lastSyncedAt: syncAgg._max.syncedAt ?? null,
         providerCount: providers.length,
         payoutRunCount,
+        // ★ H 章：CLINIC 帳號收入（店舖層，唔拆俾醫生）
+        clinicMisc: Number(clinicMiscAgg?._sum.amount ?? 0),
         hasData,
       }
     }))
@@ -136,6 +162,8 @@ export async function GET(req: NextRequest) {
       periodMonth,
       // 合計只計綁咗嘅店；★ 唔顯示手續費
       totalRevenue: Number(bound.reduce((s, c) => s + c.revenue, 0).toFixed(2)),
+      // ★ H 章：Clinic 雜項合計（CLINIC 帳號；已包含喺 totalRevenue 內，獨立出嚟俾用戶睇清邊筆唔入月結）
+      totalClinicMisc: Number(bound.reduce((s, c) => s + c.clinicMisc, 0).toFixed(2)),
       totalPayments: bound.reduce((s, c) => s + c.paymentCount, 0),
       unsyncedCount: bound.filter(c => !c.hasData).length,
       unboundClinics,

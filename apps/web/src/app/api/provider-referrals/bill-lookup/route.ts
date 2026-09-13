@@ -42,15 +42,19 @@ export async function GET(req: NextRequest) {
     }
 
     // Resolve provider from bill's providerExtId
+    // ★ C 章：反查經 ApricotPractitioner（Provider 舊 apricotId 欄已剷走）。
+    //   ⚠️ 只認 kind=PROVIDER 嘅帳號 —— CLINIC／UNKNOWN 要 return 唔到醫生，
+    //   否則轉介費會俾錯（例如診所收款帳號被當做醫生）。
     let providerName: string | null = null
     let providerId: string | null = null
     if (bill.providerExtId) {
-      const provider = await prisma.provider.findUnique({
+      const acct = await prisma.apricotPractitioner.findUnique({
         where: { apricotId: bill.providerExtId },
+        include: { provider: { select: { id: true, name: true } } },
       })
-      if (provider) {
-        providerName = provider.name
-        providerId = provider.id
+      if (acct?.kind === 'PROVIDER' && acct.provider) {
+        providerName = acct.provider.name
+        providerId = acct.provider.id
       }
     }
 

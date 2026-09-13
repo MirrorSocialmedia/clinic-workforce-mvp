@@ -18,6 +18,7 @@
 // ============================================================
 
 import { basePrisma } from '@/lib/prisma'
+import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 import { ExternalApiError } from '@/lib/external-api'
 import { resolveClinic } from '@/app/api/external/v1/bookings/guards'
 import { todayHK, addDaysStr, hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
@@ -116,6 +117,8 @@ export interface WindowData {
   providerName: Map<string, string>
   /** providerId → apricotId（grid 軌 + Apricot write 用） */
   providerApricotId: Map<string, string | null>
+  /** ★ Stage 2：全部帳號（一個醫生可多個）— grid 行合併用 */
+  providerApricotIds: Map<string, string[]>
   /** date → 當值 providerId 集（三層疊 或 fallback；已剔 leave） */
   onDuty: Map<string, Set<string>>
   /** date → providerId → openSch intervals（null = 未 sync） */
@@ -141,7 +144,7 @@ export async function loadWindowData(
       basePrisma.providerClinic.findMany({ where: { clinicId: clinic.id }, select: { providerId: true } }),
       basePrisma.provider.findMany({
         where: { isActive: true, ...(providerId ? { id: providerId } : {}) },
-        select: { id: true, name: true, apricotId: true },
+        select: { id: true, name: true },
       }),
       basePrisma.providerWeeklyPattern.findMany({
         where: { clinicId: clinic.id },
@@ -181,10 +184,25 @@ export async function loadWindowData(
   const linked = new Set(links.map((l) => l.providerId))
   const providerName = new Map<string, string>()
   const providerApricotId = new Map<string, string | null>()
+  // ★ Stage 2：Provider.apricotId 欄已剷走 — 帳號唯一來源 = ApricotPractitioner（PROVIDER 類）
+  const accountRows = await basePrisma.apricotPractitioner.findMany({
+    where: { kind: 'PROVIDER', providerId: { in: providers.map(p => p.id) } },
+    select: { apricotId: true, providerId: true },
+  })
+  const idsByP = new Map<string, string[]>()
+  for (const { apricotId, providerId } of accountRows) {
+    const key = providerId!
+    const arr = idsByP.get(key) ?? []
+    arr.push(apricotId)
+    idsByP.set(key, arr)
+  }
+  const providerApricotIds = new Map<string, string[]>()
   for (const p of providers) {
     if (!linked.has(p.id)) continue
     providerName.set(p.id, p.name)
-    providerApricotId.set(p.id, p.apricotId)
+    const ids = (idsByP.get(p.id) ?? []).sort()
+    providerApricotIds.set(p.id, ids)
+    providerApricotId.set(p.id, ids[0] ?? null) // 主帳號（第一個，決定性）
   }
 
   // 日期序列
@@ -257,7 +275,7 @@ export async function loadWindowData(
     grid.set(c.date, byP)
   }
 
-  return { dates, providerName, providerApricotId, onDuty, openSch, bookings, holds, grid }
+  return { dates, providerName, providerApricotId, providerApricotIds, onDuty, openSch, bookings, holds, grid }
 }
 
 // ─── 雙軌評估 ─────────────────────────────────────────────────────────
@@ -365,7 +383,8 @@ export function buildDays(
     const closed = pids.size === 0
     const daySlots: SlotOut[] = []
     for (const pid of pids) {
-      const apricotId = wd.providerApricotId.get(pid) ?? null
+      // ★ Stage 2：多帳號 — 合併該醫生全部帳號嘅 grid 行（cache 行以 providerApricotId 為 key）
+      const apricotIds = wd.providerApricotIds.get(pid) ?? []
       const openSch = wd.openSch.get(date)?.get(pid) ?? null
       const ctx: DayContext = {
         capacity: clinic.capacityPerProvider,
@@ -374,7 +393,9 @@ export function buildDays(
         openSch,
         bookings: wd.bookings.get(date)?.get(pid) ?? [],
         holds: wd.holds.get(date)?.get(pid) ?? [],
-        grid: apricotId ? (wd.grid.get(date)?.get(apricotId) ?? []) : [],
+        grid: apricotIds.length > 0
+          ? apricotIds.flatMap(id => wd.grid.get(date)?.get(id) ?? [])
+          : [],
       }
       const evalr = evaluateProviderDay(ctx, includeFragments)
       if (!evalr) continue
@@ -444,11 +465,12 @@ async function claimInTx(
   tx: Prisma.TransactionClient,
   args: {
     clinic: ClinicSlotConfig
-    provider: { id: string; name: string; apricotId: string | null }
+    provider: { id: string; name: string; apricotIds: string[] }
     parts: { clinicCode: string; date: string; start: string; providerId: string; unitMin: number }
   },
 ): Promise<void> {
   const { clinic, provider, parts } = args
+  const { apricotIds } = provider // ★ Stage 2：多帳號（ApricotPractitioner）
   const date = parts.date
   const startMin = hhmmToMin(parts.start)
   const endMin = startMin + 30
@@ -472,7 +494,8 @@ async function claimInTx(
       select: { startDate: true, endDate: true },
     }),
     tx.availabilityCache.findMany({
-      where: { clinicId: clinic.id, providerApricotId: provider.apricotId ?? '', date, isOpen: true },
+      // ★ Stage 2：多帳號 — 該醫生全部帳號嘅 grid 行都要（冇帳號 → [''] 保證零行，同舊语义）
+      where: { clinicId: clinic.id, providerApricotId: { in: apricotIds.length > 0 ? apricotIds : [''] }, date, isOpen: true },
       select: { startTime: true, endTime: true, bookedCount: true },
     }),
   ])
@@ -492,7 +515,7 @@ async function claimInTx(
     openSch: openSch && openSch.length > 0 ? openSch : null,
     bookings: bookRows.map((r) => ({ startMin: r.startMin, endMin: r.endMin })),
     holds: holdRows.map((r) => ({ startMin: r.startMin, endMin: r.endMin })),
-    grid: provider.apricotId
+    grid: apricotIds.length > 0
       ? gridRows.map((r) => ({ startMin: hhmmToMin(r.startTime), endMin: hhmmToMin(r.endTime), bookedCount: r.bookedCount }))
       : [],
   }
@@ -516,11 +539,14 @@ export async function claimSlot(input: ClaimInput): Promise<ClaimResult> {
   if (!parts) throw new ExternalApiError(400, 'invalid slotKey', 'BAD_REQUEST')
 
   const clinic = await resolveSlotClinic(parts.clinicCode)
-  const provider = await basePrisma.provider.findUnique({
+  const providerRow = await basePrisma.provider.findUnique({
     where: { id: parts.providerId },
-    select: { id: true, name: true, apricotId: true },
+    select: { id: true, name: true },
   })
-  if (!provider) throw new ExternalApiError(404, 'provider not found', 'PROVIDER_NOT_FOUND')
+  if (!providerRow) throw new ExternalApiError(404, 'provider not found', 'PROVIDER_NOT_FOUND')
+  // ★ Stage 2：Apricot 帳號 = ApricotPractitioner（PROVIDER 類）— 一個醫生可多個帳號
+  const providerApricotIds = await apricotIdsOfProvider(basePrisma, providerRow.id)
+  const provider = { id: providerRow.id, name: providerRow.name, apricotIds: providerApricotIds }
   const linked = await basePrisma.providerClinic.findFirst({
     where: { clinicId: clinic.id, providerId: provider.id },
     select: { id: true },
@@ -666,7 +692,7 @@ export async function claimSlot(input: ClaimInput): Promise<ClaimResult> {
  */
 async function maybeWriteApricot(
   clinic: ClinicSlotConfig,
-  provider: { id: string; name: string; apricotId: string | null },
+  provider: { id: string; name: string; apricotIds: string[] },
   hold: { id: string; date: string; startMin: number; status: string; apricotRef: string | null },
   input: ClaimInput,
 ): Promise<{ outcome: 'written' | 'skipped' | 'failed'; reason?: string }> {
@@ -676,9 +702,11 @@ async function maybeWriteApricot(
   const visitReasonId = input.visitReasonId ?? process.env.APRICOT_DEFAULT_VISIT_REASON_ID?.trim() ?? null
   if (!visitReasonId) return { outcome: 'skipped', reason: 'missing_visit_reason' }
   if (!isNewPatientWriteEnabled()) return { outcome: 'skipped', reason: 'new_patient_disabled' }
-  if (!provider.apricotId) return { outcome: 'skipped', reason: 'provider_no_apricot_id' }
+  // ★ Stage 2：多帳號 — 寫 Apricot 用第一個帳號（主帳號）
+  const { apricotIds } = provider
+  if (apricotIds.length === 0) return { outcome: 'skipped', reason: 'provider_no_apricot_id' }
   const apricotClinicId = clinic.apricotClinicId
-  const providerApricotId = provider.apricotId
+  const providerApricotId = apricotIds[0]
 
   try {
     const res = await createBooking({

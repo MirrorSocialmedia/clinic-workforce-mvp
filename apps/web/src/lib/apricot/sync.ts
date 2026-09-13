@@ -167,6 +167,8 @@ async function upsertBill(b: any) {
       code: b.code,
       billTime: new Date(b.billTime),
       providerExtId: b.practitioner?.id || null,
+      // ★ D1：存顯示名（撞到未知帳號唔使再返 Apricot 查）；舊行 null，下次 sync 自動補
+      providerName: b.practitioner?.name || null,
       clinicExtId: b.clinic?.id || '',
       amt: new Prisma.Decimal(String(b.amt ?? 0)),
       ttlAmt: new Prisma.Decimal(String(b.ttlAmt ?? 0)),
@@ -186,6 +188,8 @@ async function upsertBill(b: any) {
       code: b.code,
       billTime: new Date(b.billTime),
       providerExtId: b.practitioner?.id || null,
+      // ★ D1：同 update 側一致（create 都要帶）
+      providerName: b.practitioner?.name || null,
       clinicExtId: b.clinic?.id || '',
       amt: new Prisma.Decimal(String(b.amt ?? 0)),
       ttlAmt: new Prisma.Decimal(String(b.ttlAmt ?? 0)),
@@ -200,6 +204,44 @@ async function upsertBill(b: any) {
 }
 
 // ─── Sync for a single clinic (used by background job) ─────────────
+
+/**
+ * ★ D2：sync 撞到未知帳號一定要嗌（帶埋個名）。
+ *   同 unknown_booking_status 同一 pattern：照存唔擋，但一定要嗌。
+ *   ⚠️ 每次 sync 每個 id 只嗌一次（seen 由 caller 貫穿整個 sync 傳入），唔好每筆都嗌。
+ * @param rows 本次 allocation 行（providerExtId + billExtId）
+ * @param billNameByExtId billExtId → 帳號顯示名（由 billCache 導出）
+ * @param clinicName 診所名（log 用）
+ */
+export async function maybeAlertUnknownPractitioners(
+  rows: Array<{ providerExtId: string | null; billExtId: string | null }>,
+  billNameByExtId: Map<string, string>,
+  clinicName: string,
+  seen: Set<string>,
+): Promise<void> {
+  // 先收埋呢個 sync 未見過的 id（含已知 — 已知嘅之後都唔使再查）
+  const fresh = new Map<string, string | null>()
+  for (const r of rows) {
+    if (r.providerExtId && !seen.has(r.providerExtId)) {
+      seen.add(r.providerExtId)
+      fresh.set(r.providerExtId, r.billExtId ? (billNameByExtId.get(r.billExtId) ?? null) : null)
+    }
+  }
+  if (fresh.size === 0) return
+  const known = await prisma.apricotPractitioner.findMany({
+    where: { apricotId: { in: [...fresh.keys()] } },
+    select: { apricotId: true },
+  })
+  const knownSet = new Set(known.map(({ apricotId }) => apricotId))
+  for (const [id, name] of fresh) {
+    if (!knownSet.has(id)) {
+      console.error(
+        `[apricot-sync] ⚠️ ALERT unknown_practitioner — 「${name ?? '(無名)'}」(${id}) @${clinicName}`
+        + ` — 照存但【唔會入任何月結】，請去「未綁帳號」頁綁定`,
+      )
+    }
+  }
+}
 
 /** 同步一間診所，支援 shouldCancel 檢查。傳入 jobId 用於追蹤進度。 */
 export async function syncClinicForJob(
@@ -331,6 +373,13 @@ export async function syncClinicForJob(
     if (b) billCache.set(bid, b)
   }
 
+  // ★ D2：未知帳號 ALERT 用 — billExtId → 帳號顯示名（D1 providerName 已入庫；fallback 用 bill code）
+  const billNameByExtId = new Map<string, string>(
+    [...billCache].map(([extId, b]) => [extId, b.providerName || b.code || '']),
+  )
+  const unknownSeen = new Set<string>() // ★ 每次 sync 每個 id 只嗌一次
+  const clinicName = (await prisma.clinic.findFirst({ where: { apricotClinicId: clinicExtId }, select: { name: true } }))?.name ?? clinicExtId
+
   let allocRows = 0
   for (let idx = 0; idx < allPayments.length; idx++) {
     // ★ V4: 每 10 筆付款檢查 cancel（唔好每筆都 query DB）
@@ -353,6 +402,8 @@ export async function syncClinicForJob(
     if (!refs.length) continue
 
     const rows = await allocatePayment(p, methods, refs, billCache, clinicExtId, globalRefs, allRules)
+    // ★ D2：upsertAllocations 前嗌未知帳號（每個 id 每次 sync 只嗌一次）
+    await maybeAlertUnknownPractitioners(rows, billNameByExtId, clinicName, unknownSeen)
     await upsertAllocations(rows.map(r => ({ ...r, isVoid: !!p.isVoid })))
     allocRows += rows.length
   }
@@ -471,6 +522,13 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
       if (b) billCache.set(bid, b)
     }
 
+    // ★ D2：未知帳號 ALERT 用（同 syncClinicForJob 一致 — 坑⑥：兩邊都要改）
+    const billNameByExtId = new Map<string, string>(
+      [...billCache].map(([extId, b]) => [extId, b.providerName || b.code || '']),
+    )
+    const unknownSeen = new Set<string>() // ★ 每次 sync 每個 id 只嗌一次
+    const clinicName = (await prisma.clinic.findFirst({ where: { apricotClinicId: clinicExtId }, select: { name: true } }))?.name ?? clinicExtId
+
     let allocRows = 0
     for (const p of allPayments) {
       const methods = (p.paymentMethods || []).map((m: any) => ({
@@ -487,6 +545,8 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
       if (!refs.length) continue
 
       const rows = await allocatePayment(p, methods, refs, billCache, clinicExtId, globalRefs, allRules)
+      // ★ D2：upsertAllocations 前嗌未知帳號（每個 id 每次 sync 只嗌一次）
+      await maybeAlertUnknownPractitioners(rows, billNameByExtId, clinicName, unknownSeen)
       await upsertAllocations(rows.map(r => ({ ...r, isVoid: !!p.isVoid })))
       allocRows += rows.length
     }

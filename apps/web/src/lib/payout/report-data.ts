@@ -11,6 +11,7 @@
  *   → 砌好 DoctorSheetData 交回。
  */
 import { prisma } from '@/lib/prisma'
+import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 import { toHKDateStr } from '@/lib/hk-date'
 import { UNNAMED_VENDOR } from '@/lib/payout/engine'
 import type { DoctorSheetData } from '@/lib/payout/xlsx-report'
@@ -60,7 +61,7 @@ export function ddMyy(v: string | Date | null | undefined): string {
 
 export interface DoctorSheetLoad {
   run: PayoutRun
-  provider: { id: string; name: string; shortName: string | null; apricotId: string | null } | null
+  provider: { id: string; name: string; shortName: string | null } | null
   clinic: { id: string; name: string; shortName: string | null; apricotClinicId: string | null } | null
   data: DoctorSheetData
 }
@@ -75,7 +76,7 @@ export async function loadDoctorSheetData(runId: string): Promise<DoctorSheetLoa
 
   const provider = await prisma.provider.findUnique({
     where: { id: run.providerId },
-    select: { id: true, name: true, shortName: true, apricotId: true },
+    select: { id: true, name: true, shortName: true },
   })
   const clinic = run.clinicId
     ? await prisma.clinic.findUnique({
@@ -94,11 +95,14 @@ export async function loadDoctorSheetData(runId: string): Promise<DoctorSheetLoa
     return Array.isArray(raw) ? raw : (raw?.allocations ?? [])
   })()
 
+  // ★ Stage 2：Provider 舊 apricotId 欄已剷走 —— 帳號由 ApricotPractitioner（唯一來源）攞。
+  //   冇綁帳號 → extraAllocs 空（舊行為 providerExtId=null 會攞到別行，純 latent bug，唔再重現）。
+  const providerApricotIds = provider ? await apricotIdsOfProvider(prisma, provider.id) : []
   // ★ 引擎 breakdownJson 含 countAsIncome=true 嘅行 ＋ FREE_SP（★ 2026-08-22：FREE_SP 計醫生收入，
   //   engine allocWhere 已收埋），CREDIT（countAsIncome=false）唔喺入面 —
   //   所以 CREDIT 嗰啲 allocation 要另外撈返嚟合併入 A 區（FREE_SP 排除防 double count）。
   const extraWhere: any = {
-    providerExtId: provider?.apricotId,
+    providerExtId: { in: providerApricotIds },
     periodMonth: run.periodMonth,
     isVoid: false,
     isSuperseded: false,
@@ -106,13 +110,15 @@ export async function loadDoctorSheetData(runId: string): Promise<DoctorSheetLoa
     methodNorm: { not: 'FREE_SP' },
   }
   if (clinic?.apricotClinicId) extraWhere.clinicExtId = clinic.apricotClinicId
-  const extraAllocs = await prisma.paymentAllocation.findMany({
-    where: extraWhere,
-    select: {
-      methodNorm: true, amount: true, netAmount: true,
-      feePercentUsed: true, paidAt: true, billExtId: true,
-    },
-  })
+  const extraAllocs = providerApricotIds.length > 0
+    ? await prisma.paymentAllocation.findMany({
+        where: extraWhere,
+        select: {
+          methodNorm: true, amount: true, netAmount: true,
+          feePercentUsed: true, paidAt: true, billExtId: true,
+        },
+      })
+    : []
   const extraBillCodes = new Map<string, string>(
     (extraAllocs.length
       ? await prisma.apricotBill.findMany({

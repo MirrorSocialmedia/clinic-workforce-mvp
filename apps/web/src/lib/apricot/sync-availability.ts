@@ -104,9 +104,15 @@ export async function syncAvailability(
 ): Promise<AvailabilitySyncResult> {
   const { start, end } = resolveSyncWindow(opts?.from) // ★ 單一窗口來源（唔好再自算）
 
-  const providers = await prisma.provider.findMany({
-    where: { isActive: true, apricotId: { not: null } },
-    select: { id: true, apricotId: true },
+  // ★ Stage 2：Provider.apricotId 欄已剷走 — 唯一來源係 ApricotPractitioner（PROVIDER 類）。
+  //   一個醫生多個帳號 → 每帳號一行 doctorIds。
+  const activeProviders = await prisma.provider.findMany({
+    where: { isActive: true },
+    select: { id: true },
+  })
+  const acctRows = await prisma.apricotPractitioner.findMany({
+    where: { kind: 'PROVIDER', providerId: { in: activeProviders.map(p => p.id) } },
+    select: { apricotId: true, providerId: true },
   })
 
   const qs = new URLSearchParams()
@@ -120,7 +126,7 @@ export async function syncAvailability(
   //   兩個都要傳，唔可以二選一。
   qs.append('clinicIds', clinic.apricotClinicId)
   qs.set('openSchClinicId', clinic.apricotClinicId) // ★ 單數
-  for (const p of providers) qs.append('doctorIds', p.apricotId!) // ★ 逐個列
+  for (const { apricotId } of acctRows) qs.append('doctorIds', apricotId) // ★ 逐個帳號列
 
   // ★ 必填參數自檢 —— 漏一個 Apricot 就回 400，而 log 唔開頁冇人睇
   const REQUIRED = ['startDate', 'endDate', 'clinicIds', 'openSchClinicId'] as const
@@ -135,7 +141,7 @@ export async function syncAvailability(
   // ★ 只 call —— retry 處理 503/busy；lock 由外層負責
   const raw = await callFn(`${APPOINTMENTS_PATH}?${qs.toString()}`)
 
-  const knownIds = new Map(providers.map((p) => [p.apricotId!, p.id]))
+  const knownIds = new Map(acctRows.map(({ apricotId, providerId }) => [apricotId, providerId!]))
   // §2.1：unknown practitioner 收集（id:code → 出現次數；Set 升級做 Map 係為咗 #8 報告要次數）
   const unknown = new Map<string, number>()
   const availRows: { clinicId: string; providerId: string; date: string; startTime: string; endTime: string }[] = []

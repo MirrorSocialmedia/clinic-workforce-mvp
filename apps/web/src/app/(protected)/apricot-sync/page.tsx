@@ -69,12 +69,15 @@ type ClinicRevenueItem = {
   lastSyncedAt: string | null
   providerCount: number
   payoutRunCount: number
+  // ★ cwm-apricotacct Stage 2 H 章：CLINIC 帳號收入（店舖層，唔入任何醫生月結）
+  clinicMisc: number
   hasData: boolean
 }
 
 interface ClinicRevenueData {
   periodMonth: string
   totalRevenue: number
+  totalClinicMisc: number
   totalPayments: number
   unsyncedCount: number
   unboundClinics: { id: string; name: string }[]
@@ -381,6 +384,12 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
           <div className="text-sm text-gray-600">
             {revenue.clinics.filter(c => c.bound).length} 間合計{' '}
             <strong className="text-gray-900">${revenue.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
+            {revenue.totalClinicMisc > 0 && (
+              <>
+                <span className="mx-1">·</span>
+                <span title="CLINIC 帳號收入 — 唔入任何醫生月結">Clinic 雜項 ${revenue.totalClinicMisc.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+              </>
+            )}
             <span className="mx-1">·</span>
             付款 {revenue.totalPayments.toLocaleString()} 筆
             {revenue.unsyncedCount > 0 && (
@@ -801,6 +810,13 @@ function ClinicRevenueCard({
       <div className="text-sm text-gray-600 mt-1">
         付款 {c.paymentCount.toLocaleString()} 筆
       </div>
+
+      {/* ★ cwm-apricotacct Stage 2 H 章：CLINIC 帳號收嘅錢（唔入醫生月結） */}
+      {c.clinicMisc > 0 && (
+        <div className="text-sm text-gray-500 mt-1">
+          Clinic 雜項（CLINIC 帳號）{fmtMoney(c.clinicMisc)} — 唔入醫生月結
+        </div>
+      )}
 
       {/* ★ 付款日期範圍唔可以慳 */}
       <div className={`text-sm mt-1 ${rangeIncomplete ? 'text-red-600 font-medium' : 'text-gray-600'}`}>

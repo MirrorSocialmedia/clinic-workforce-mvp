@@ -144,6 +144,8 @@ export default function CostEntryPage() {
   const [cases, setCases] = useState<CostCase[]>([])
   const [loading, setLoading] = useState(true)
   const [providers, setProviders] = useState<any[]>([])
+  // ★ cwm-apricotacct Stage 2（C 章）：API 回嘅 apricotId → providerId map（反查用）
+  const [providerByApricotId, setProviderByApricotId] = useState<Record<string, string>>({})
   const [clinics, setClinics] = useState<any[]>([])
   const [labs, setLabs] = useState<any[]>([])
   const [materials, setMaterials] = useState<any[]>([]) // ★ MD-K: implant materials
@@ -369,6 +371,8 @@ export default function CostEntryPage() {
     try {
       const data: any = await apiFetch('/api/providers')
       setProviders(data.providers || [])
+      // ★ cwm-apricotacct Stage 2（C 章）：practitioner.id → providerId 反查改由 API 回嘅 map 做
+      setProviderByApricotId(data.providerByApricotId || {})
     } catch (e) {
       console.error('[cost-entry] load providers failed', e)
       setLoadError('載入醫生列表失敗')
@@ -620,8 +624,9 @@ export default function CostEntryPage() {
     const clinic = clinics.find(c => c.apricotClinicId === bill.clinic?.id)
     const clinicId = clinic?.id || ''
     setSelectedClinicInternalId(clinicId)
-    const provider = providers.find(p => p.apricotId === bill.practitioner?.id)
-    const providerId = provider?.id || ''
+    // ★ cwm-apricotacct Stage 2（C 章）：Provider 舊欄已剷走 ——
+    //   反查改用 API 回嘅 providerByApricotId map（一個醫生多個帳號都指向同一個 provider）
+    const providerId = (bill.practitioner?.id ? providerByApricotId[bill.practitioner.id] : undefined) || ''
     setSelectedProviderInternalId(providerId)
 
     const category = suggestCategoryFromBill(bill)

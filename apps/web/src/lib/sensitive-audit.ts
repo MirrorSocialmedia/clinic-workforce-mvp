@@ -79,6 +79,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PATIENT_NAME_PURGE', label: 'PII 清理 — 清除病人姓名' },
   // ★ MD-C: Apricot Data Layer
   { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },
+  // ★ cwm-apricotacct-20260913 E 章：Apricot 帳號綁定（影響月結歸屬，必須審計）
+  { action: 'APRICOT_ACCOUNT_BIND', label: 'Apricot 帳號綁定' },
   { action: 'PAYMENT_METHOD_RULE_CREATE', label: '新增付款方式規則' },
   // ★ MD-D: Payout Engine
   { action: 'PAYOUT_RUN_LOCK', label: '鎖定月結單' },

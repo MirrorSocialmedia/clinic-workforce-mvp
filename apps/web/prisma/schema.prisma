@@ -365,7 +365,8 @@ model Provider {
   shortName String?
   phone     String?
   color     String?
-  apricotId     String?  @unique
+  // ★ cwm-apricotacct-20260913 I 章：apricotId 已剷走 — 唯一來源係 ApricotPractitioner 表（可多帳號）。
+  //   ⚠️ apricotUserId 係 Apricot 登入帳號，另一樣嘢，保留。
   apricotUserId String?  // Apricot 登入帳號 id，參考用
   companyId     String?
   company   Company? @relation(fields: [companyId], references: [id])
@@ -1274,6 +1275,9 @@ model ApricotBill {
   code          String
   billTime      DateTime
   providerExtId String?
+  /// ★ Apricot 顯示名。之前只存 id，撞到未知帳號就要去 Apricot 逐個查
+  ///   （2026-09-13 花咗成日）。個名本身就喺 bill payload 隔籬，白丟咗。
+  providerName  String?
   clinicExtId   String
   amt           Decimal          @db.Decimal(12,2)
   ttlAmt        Decimal          @db.Decimal(12,2)

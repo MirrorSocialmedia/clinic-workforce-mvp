@@ -206,16 +206,22 @@ export async function syncAvailabilityCacheForClinic(
   const start = opts.dateOnly ?? opts.start ?? toHKDateStr(now)
   const end = opts.dateOnly ?? opts.end ?? addDaysStr(start, WINDOW_DAYS)
 
-  // ★ MD §B.2.1 字面：doctorIds = 全部 Provider.apricotId != null（唔 filter isActive）。
+  // ★ MD §B.2.1 字面：doctorIds = 全部 Provider 帳號（唔 filter isActive）。
+  //   ★ Stage 2：Provider.apricotId 欄已剷走 — 唯一來源係 ApricotPractitioner（PROVIDER 類）。
   //   新醫生規則：未入 Provider 表嘅醫生永遠唔會喺空檔資料出現（要 admin 先入表）。
-  const providers = await prisma.provider.findMany({
-    where: { apricotId: { not: null } },
-    select: { apricotId: true, name: true },
+  const acctRows = await prisma.apricotPractitioner.findMany({
+    where: { kind: 'PROVIDER', providerId: { not: null } },
+    select: { apricotId: true, providerId: true },
   })
-  if (providers.length === 0) {
+  if (acctRows.length === 0) {
     throw new Error('[availability-cache] 冇任何 provider 有 apricotId —— 補齊先再 sync')
   }
-  const nameByApricotId = new Map(providers.map(p => [p.apricotId!, p.name]))
+  const providerIds = [...new Set(acctRows.map(a => a.providerId!))]
+  const provRows = providerIds.length > 0
+    ? await prisma.provider.findMany({ where: { id: { in: providerIds } }, select: { id: true, name: true } })
+    : []
+  const nameById = new Map(provRows.map(p => [p.id, p.name]))
+  const nameByApricotId = new Map(acctRows.map(({ apricotId, providerId }) => [apricotId, nameById.get(providerId!) ?? '']))
 
   const qs = new URLSearchParams()
   qs.set('startDate', start)
@@ -223,7 +229,7 @@ export async function syncAvailabilityCacheForClinic(
   // 同 syncAvailability 同參數口徑：clinicIds（List）+ openSchClinicId（單數）都要傳
   qs.append('clinicIds', clinic.apricotClinicId)
   qs.set('openSchClinicId', clinic.apricotClinicId)
-  for (const p of providers) qs.append('doctorIds', p.apricotId!)
+  for (const { apricotId } of acctRows) qs.append('doctorIds', apricotId)
 
   // ★ 必填參數自檢（同 syncAvailability — 漏一個 Apricot 回 400，log 冇人睇）
   const REQUIRED = ['startDate', 'endDate', 'clinicIds', 'openSchClinicId'] as const

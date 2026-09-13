@@ -10,6 +10,7 @@ import { Prisma, PaymentAllocation } from '@prisma/client'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { SP_2P1K_PER_PERSON } from '@/lib/payout/constants'
+import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -157,20 +158,30 @@ export async function runGates(
     return { errors, warnings }
   }
 
-  // Gate 1: Provider must have apricotId mapped
+  // Gate 1: Provider must have ≥1 Apricot account bound
+  // ★ Stage 2：ApricotPractitioner 係唯一來源（Provider 舊 apricotId 欄已剷走）。
+  //   空 array = 冇綁任何帳號 —— 唔准當「唔 filter」（{ in: [] } 會靜靜出 $0 月結單）。
   const provider = await prisma.provider.findUnique({
     where: { id: providerId },
   })
-  if (!provider?.apricotId) {
-    errors.push(`PAYOUT_PROVIDER_NOT_MAPPED: 醫生 ${providerId} 未綁定 Apricot ID`)
+  if (!provider) {
+    errors.push(`PAYOUT_PROVIDER_NOT_FOUND: 醫生 ${providerId} 不存在`)
+    return { errors, warnings }
+  }
+  const apricotIds = await apricotIdsOfProvider(prisma, providerId)
+  if (apricotIds.length === 0) {
+    errors.push(
+      `PAYOUT_PROVIDER_NOT_MAPPED: 醫生 ${providerId} 冇綁任何 Apricot 帳號`
+      + `（请到「未綁帳號」頁或醫生設定綁定）`,
+    )
   } else {
     // Gate 1b①: 全歷史有冇對到 —— 答「ID 啱唔啱」
     const everHit = await prisma.paymentAllocation.count({
-      where: { providerExtId: provider.apricotId },
+      where: { providerExtId: { in: apricotIds } },
     })
     if (everHit === 0) {
       errors.push(
-        `醫生「${provider.name}」嘅 Apricot ID (${provider.apricotId}) ` +
+        `醫生「${provider.name}」嘅 Apricot 帳號 (${apricotIds.join('、')}) ` +
         `喺所有已同步嘅付款入面一次都冇出現過。` +
         `請確認佢係 practitioner.id 而唔係 userId。`
       )
@@ -178,7 +189,7 @@ export async function runGates(
       // Gate 1b②: 該月有冇 —— 答「今個月有冇收入」
       const monthHitWhere: any = {
         ...ACTIVE_ALLOCATION,
-        providerExtId: provider.apricotId,
+        providerExtId: { in: apricotIds },
         periodMonth,
       }
       if (clinic?.apricotClinicId) {
@@ -200,7 +211,7 @@ export async function runGates(
   // Gate 3: No needsReview allocations allowed
   const gate3Where: any = {
     ...ACTIVE_ALLOCATION,
-    providerExtId: provider?.apricotId || '',
+    providerExtId: apricotIds.length > 0 ? { in: apricotIds } : '',
     periodMonth,
     needsReview: true,
   }
@@ -356,8 +367,14 @@ export async function computePayout(
   const provider = await prisma.provider.findUnique({
     where: { id: providerId },
   })
-  if (!provider?.apricotId) {
+  if (!provider) {
     throw new Error('PAYOUT_PROVIDER_NOT_MAPPED')
+  }
+  // ★ B3：空 array = 冇綁任何帳號，一定要明確 throw（唔准當「唔 filter」，
+  //   Prisma { in: [] } 會靜靜出一張 $0 月結單）。
+  const apricotIds = await apricotIdsOfProvider(prisma, providerId)
+  if (apricotIds.length === 0) {
+    throw new Error(`PROVIDER_NO_APRICOT_ID: 醫生 ${providerId} 冇綁任何 Apricot 帳號`)
   }
 
   const warnings: string[] = []
@@ -372,7 +389,7 @@ export async function computePayout(
   // ─── ① Gross from PaymentAllocation ─────────────────────────────────
   const allocWhere: any = {
     ...ACTIVE_ALLOCATION,
-    providerExtId: provider.apricotId,
+    providerExtId: { in: apricotIds },
     periodMonth,
     // ★ 2026-08-22：FREE_SP 唔計店舖營收（countAsIncome=false）但計醫生收入
     //   methodNorm 存 normalized 值（normalize.ts: 'FREE SP' → 'FREE_SP'），精確 match
@@ -756,17 +773,29 @@ export async function scanSpSubsidies(
   const candidates: any[] = []
   let skippedLocked = 0
   let created = 0
+
+  // ★ Stage 2：providerExtId → provider 批量反查（Provider.apricotId 已剷走；唯一來源 = ApricotPractitioner）
+  const billExtIds = [...new Set(items.map(i => i.bill.providerExtId).filter((v): v is string => !!v))]
+  const acctRows = billExtIds.length > 0
+    ? await prisma.apricotPractitioner.findMany({
+        where: { apricotId: { in: billExtIds }, kind: 'PROVIDER', providerId: { not: null } },
+        select: { apricotId: true, providerId: true },
+      })
+    : []
+  const extIdToProviderId = new Map<string, string>(acctRows.map(({ apricotId, providerId }) => [apricotId, providerId!]))
+  const providerIdSet = [...new Set(acctRows.map(a => a.providerId!))]
+  const providerRows = providerIdSet.length > 0
+    ? await prisma.provider.findMany({ where: { id: { in: providerIdSet } } })
+    : []
+  const providerById = new Map<string, any>(providerRows.map(p => [p.id, p]))
   let updated = 0
   const failed: { eleId: string; error: string }[] = []
 
   for (const item of items) {
     try {
       const bill: any = (item as any).bill
-      const provider = bill.providerExtId
-        ? await prisma.provider.findUnique({
-            where: { apricotId: bill.providerExtId! },
-          })
-        : null
+      const acctProviderId = bill.providerExtId ? extIdToProviderId.get(bill.providerExtId) : undefined
+      const provider = acctProviderId ? (providerById.get(acctProviderId) ?? null) : null
 
       if (!provider) continue
 

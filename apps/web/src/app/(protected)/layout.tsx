@@ -190,6 +190,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/hash', label: '完整性驗證', icon: ShieldCheck, roles: ['OWNER'] },
     // ★ 2026-08-22：新開咗 apricot_sync key（permissions.ts:19），同 POST /api/apricot/sync route 一致
     { path: '/apricot-sync', label: 'Apricot 同步', icon: CreditCard, roles: ['OWNER'], perm: ['apricot_sync', 'provider_payout'] },
+    // ★ cwm-apricotacct-20260913 E3：未綁帳號清單（有收入冇綁個體 → 唔入月結）— OWNER only（同 API RBAC 一致）
+    { path: '/apricot-accounts', label: '未綁帳號', icon: CreditCard, roles: ['OWNER'] },
     // ★ MD-E: 月報對數
     { path: '/reconciliation', label: '月報對數', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
     // ★ P3-deploy: 成本錄入 (MANAGER + OWNER) + 醫生月結 (OWNER only)

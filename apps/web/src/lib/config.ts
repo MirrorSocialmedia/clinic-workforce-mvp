@@ -356,6 +356,10 @@ export const CONFIG = {
     'GET /api/apricot/status': ['OWNER', 'MANAGER'],
     // ★ MD-AC3: 店鋪營收卡片 — OWNER 預設，provider_payout 權限可放行
     'GET /api/apricot/clinic-revenue': ['OWNER'],
+    // ★ cwm-apricotacct-20260913 E2：未綁帳號 — 直接影響拆帳，只准 OWNER。
+    //   ★★★ 唔加 RBAC_PERM_OVERRIDES（坑⑧）。
+    'GET /api/apricot-accounts/unassigned': ['OWNER'],
+    'PUT /api/apricot-accounts': ['OWNER'],
     'GET /api/payment-method-rules': ['OWNER', 'MANAGER'],
     'POST /api/payment-method-rules': ['OWNER'],
 

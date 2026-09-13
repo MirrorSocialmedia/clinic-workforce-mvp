@@ -91,6 +91,17 @@ function PayoutRunsPageInner() {
   //   （同成本錄入頁 cost-entry/page.tsx:1101「全部月份」同一 pattern）
   const [allMonths, setAllMonths] = useState(false)
 
+  // ★ cwm-apricotacct Stage 2（E4）：未綁帳號入口提示（月結單頁頂）— 非 OWNER 403 → 靜默唔出
+  const [unassigned, setUnassigned] = useState<any[]>([])
+  const [unassignedTotal, setUnassignedTotal] = useState(0)
+  async function loadUnassigned() {
+    try {
+      const res = await apiFetch<any>('/api/apricot-accounts/unassigned')
+      setUnassigned(res.unassigned || [])
+      setUnassignedTotal(res.totalAmount ?? 0)
+    } catch { /* 非 OWNER 403 → 唔出提示 */ }
+  }
+
   useEffect(() => {
     // ★ P2-1 (cwm-payoutcost-fix-20260908 S7)：剷走呢度重複嘅 loadRuns —— filter effect
     //   喺 mount 用同一組 filter 跑（兩處三個字段係同一表達式 + 同一 initial state，
@@ -98,6 +109,7 @@ function PayoutRunsPageInner() {
     loadProviders()
     loadMe()
     loadAllClinics() // ★ A1+P2-2：mount 拉「全部診所」名單（反方向診所下拉）
+    loadUnassigned() // ★ cwm-apricotacct Stage 2 E4：未綁帳號提示
   }, [])
 
   // ★ A2：filter 一變就重載列表。★ 空字串 = 唔 filter（唔可以傳 '' 落 query，
@@ -328,6 +340,18 @@ function PayoutRunsPageInner() {
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">醫生月結單</h1>
+
+      {/* ★ cwm-apricotacct Stage 2（E4）：未綁帳號入口提示 */}
+      {unassigned.length > 0 && (
+        <div className="flex items-center gap-2 text-amber-800 bg-amber-50 border border-amber-300 rounded-md p-3 text-sm mb-4">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            有 {unassigned.length} 個 Apricot 帳號未綁（${unassignedTotal.toLocaleString('en-US', { maximumFractionDigits: 2 })}）
+            —— 呢啲收入唔會入月結
+          </span>
+          <a href="/apricot-accounts" className="font-medium underline shrink-0">去處理 →</a>
+        </div>
+      )}
 
       {/* Entry links */}
       <div className="flex gap-4 flex-wrap mb-4">

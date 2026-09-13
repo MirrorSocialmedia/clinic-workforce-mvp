@@ -1,10 +1,11 @@
 'use client'
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { Plus, Edit2, EyeOff, Check, X, Wallet, Download } from 'lucide-react'
+import { Plus, Edit2, EyeOff, Check, X, Wallet, Download, AlertTriangle } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 interface Clinic { id: string; name: string; shortName?: string | null }
@@ -17,6 +18,17 @@ export default function ProvidersPage() {
   const [loading, setLoading] = useState(true)
   const [showInactive, setShowInactive] = useState(false)
 
+  // ★ cwm-apricotacct Stage 2（E4）：未綁帳號入口提示（非 OWNER 403 → 靜默唔出 banner）
+  const [unassigned, setUnassigned] = useState<any[]>([])
+  const [unassignedTotal, setUnassignedTotal] = useState(0)
+  async function loadUnassigned() {
+    try {
+      const res = await apiFetch<any>('/api/apricot-accounts/unassigned')
+      setUnassigned(res.unassigned || [])
+      setUnassignedTotal(res.totalAmount ?? 0)
+    } catch { /* 非 OWNER 403 → 唔出提示 */ }
+  }
+
   // ★ Commission panel state
   const [commissionPanel, setCommissionPanel] = useState<string | null>(null)
   const [commissions, setCommissions] = useState<any[]>([])
@@ -28,7 +40,7 @@ export default function ProvidersPage() {
   const canPayout = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
   const canExport = userRole ? ['OWNER', 'MANAGER'].includes(userRole) : false
 
-  useEffect(() => { loadProviders(); loadClinics(); loadMe() }, [showInactive])
+  useEffect(() => { loadProviders(); loadClinics(); loadMe(); loadUnassigned() }, [showInactive])
 
   async function loadMe() {
     try {
@@ -90,12 +102,13 @@ export default function ProvidersPage() {
 
   function startAdd() {
     setEditing('__new__')
-    setForm({ name: '', shortName: '', phone: '', apricotId: '', apricotUserId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [], showInCostEntry: true })
+    // ★ F 章：單一 apricotId 欄 → 多帳號 apricotAccounts 陣列（name 可選，server 缺省用醫生名）
+    setForm({ name: '', shortName: '', phone: '', apricotAccounts: [], apricotUserId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [], showInCostEntry: true })
   }
 
   function startEdit(p: any) {
     setEditing(p.id)
-    setForm({ ...p, clinicIds: p.clinicIds || [] })
+    setForm({ ...p, clinicIds: p.clinicIds || [], apricotAccounts: p.apricotAccounts || [] })
   }
 
   function toggleClinic(cid: string) {
@@ -105,17 +118,56 @@ export default function ProvidersPage() {
     setForm({ ...form, clinicIds: ids })
   }
 
+  // ★ F 章：多帳號編輯 — 每行一個 Apricot 帳號 ID（一個醫生可以有幾個帳單帳號，例 APR-HO + APR-HO-2）
+  function renderAccountInputs() {
+    const accounts: Array<{ apricotId: string; name?: string }> = form.apricotAccounts || []
+    return (
+      <div className="space-y-1">
+        {accounts.map(({ apricotId: acctId }, i) => (
+          <div key={i} className="flex items-center gap-1">
+            <Input
+              value={acctId}
+              onChange={e => {
+                const next = [...accounts]
+                next[i] = { ...next[i], apricotId: e.target.value.trim() }
+                setForm({ ...form, apricotAccounts: next })
+              }}
+              placeholder={`practitioner.id${accounts.length > 1 ? ` #${i + 1}` : ''}（帳單／預約用）`}
+              className="font-mono text-xs"
+            />
+            {accounts.length > 1 && (
+              <button type="button" onClick={() => setForm({ ...form, apricotAccounts: accounts.filter((_, j) => j !== i) })} className="text-red-500 hover:text-red-700" title="刪咗呢個帳號">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        ))}
+        <button type="button" onClick={() => setForm({ ...form, apricotAccounts: [...accounts, { apricotId: '' }] })} className="text-xs text-primary hover:underline">
+          + 加一個帳號
+        </button>
+        <p className="text-xs text-muted-foreground">★ 由 Apricot 帳單 JSON 嘅 practitioner.id 抄（一個醫生可以有多個帳單帳號）</p>
+      </div>
+    )
+  }
+
   async function save() {
     if (!form.name?.trim()) return alert('名稱必填')
     try {
+      // ★ F 章：payload 剔走舊單帳號欄，送 apricotAccounts（剔咗嘅空 ID）
+      const payload: any = { ...form }
+      Object.keys(payload).forEach(k => { if (k === 'apricotId') delete payload[k] }) // 舊欄名精確對齊先刪
+      payload.apricotAccounts = (form.apricotAccounts || [])
+        .filter((a: any) => a.apricotId && a.apricotId.trim()) // ApricotPractitioner 帳號輸入
+        .map((a: any) => ({ apricotId: a.apricotId.trim(), name: a.name?.trim() || undefined })) // ApricotPractitioner 帳號輸入
       if (editing === '__new__') {
-        const res = await apiFetch<any>('/api/providers', { method: 'POST', body: JSON.stringify(form) })
+        const res = await apiFetch<any>('/api/providers', { method: 'POST', body: JSON.stringify(payload) })
         setProviders(prev => [...prev, res.provider].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)))
       } else {
-        const res = await apiFetch<any>(`/api/providers/${editing}`, { method: 'PUT', body: JSON.stringify(form) })
+        const res = await apiFetch<any>(`/api/providers/${editing}`, { method: 'PUT', body: JSON.stringify(payload) })
         setProviders(prev => prev.map(p => p.id === editing ? res.provider : p))
       }
       setEditing(null)
+      loadUnassigned()
     } catch (e: any) { alert(e?.message || '儲存失敗') }
   }
 
@@ -142,7 +194,7 @@ export default function ProvidersPage() {
         p.name || '',
         p.shortName || '',
         p.phone || '',
-        p.apricotId || '',
+        (p.apricotAccounts || []).map(({ apricotId }: any) => apricotId || '').join('; ') || '',
         clinicNames || '—',
         p.isActive ? '活躍' : '停用',
       ].map((field: string) => `"${field.replace(/"/g, '""')}"`).join(',')
@@ -171,6 +223,18 @@ export default function ProvidersPage() {
         </div>
       </div>
 
+      {/* ★ cwm-apricotacct Stage 2（E4）：未綁帳號入口提示 */}
+      {unassigned.length > 0 && (
+        <div className="flex items-center gap-2 text-amber-800 bg-amber-50 border border-amber-300 rounded-md p-3 text-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            有 {unassigned.length} 個 Apricot 帳號未綁（${unassignedTotal.toLocaleString('en-US', { maximumFractionDigits: 2 })}）
+            —— 呢啲收入唔會入月結
+          </span>
+          <Link href="/apricot-accounts" className="font-medium underline shrink-0">去處理 →</Link>
+        </div>
+      )}
+
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -194,10 +258,7 @@ export default function ProvidersPage() {
                 <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
                 <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
                 <td className="p-2"><Input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="電話" /></td>
-                <td className="p-2">
-                  <Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="practitioner.id（帳單／預約用）" />
-                  <p className="text-xs text-muted-foreground">★ 由 Apricot 帳單 JSON 嘅 practitioner.id 抄，唔係下面幾行嗰個 userId</p>
-                </td>
+                <td className="p-2">{renderAccountInputs()}</td>
                 <td className="p-2">
                   <Input value={form.apricotUserId || ''} onChange={e => setForm({ ...form, apricotUserId: e.target.value.trim() })} placeholder="userId（參考用，唔影響計算）" />
                 </td>
@@ -227,10 +288,7 @@ export default function ProvidersPage() {
                 <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
                 <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
                 <td className="p-2"><Input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="電話" /></td>
-                <td className="p-2">
-                  <Input value={form.apricotId || ''} onChange={e => setForm({ ...form, apricotId: e.target.value.trim() })} placeholder="practitioner.id（帳單／預約用）" />
-                  <p className="text-xs text-muted-foreground">★ 由 Apricot 帳單 JSON 嘅 practitioner.id 抄，唔係下面幾行嗰個 userId</p>
-                </td>
+                <td className="p-2">{renderAccountInputs()}</td>
                 <td className="p-2">
                   <Input value={form.apricotUserId || ''} onChange={e => setForm({ ...form, apricotUserId: e.target.value.trim() })} placeholder="userId（參考用，唔影響計算）" />
                 </td>
@@ -260,9 +318,15 @@ export default function ProvidersPage() {
                 <td className="p-3">{p.shortName || '—'}</td>
                 <td className="p-3">{p.phone || '—'}</td>
                 <td className="p-3">
-                  {p.apricotId
-                    ? <code className="text-xs">{p.apricotId}</code>
-                    : <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">未綁定</span>}
+                  {(p.apricotAccounts || []).length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {p.apricotAccounts.map(({ apricotId }: any) => (
+                        <code key={apricotId} className="text-xs px-1.5 py-0.5 bg-muted rounded">{apricotId}</code>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">未綁定</span>
+                  )}
                 </td>
                 <td className="p-3">
                   {p.apricotUserId

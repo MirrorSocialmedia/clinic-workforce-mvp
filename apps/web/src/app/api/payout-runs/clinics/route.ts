@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { ACTIVE_ALLOCATION } from '@/lib/payout/engine'
+import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -54,13 +55,15 @@ export async function POST(req: NextRequest) {
   }
 
   // 1. Clinics from PaymentAllocation (provider has income)
+  // ★ Stage 2：帳號由 ApricotPractitioner（唯一來源）攞，冇綁 = 無付款診所（舊行為一致）
+  const apricotIds = await apricotIdsOfProvider(prisma, providerId)
   let apricotClinicIds: string[] = []
   let refClinicIds: string[] = []
 
-  if (provider.apricotId) {
+  if (apricotIds.length > 0) {
     const allocRows = await prisma.paymentAllocation.findMany({
       where: {
-        providerExtId: provider.apricotId,
+        providerExtId: { in: apricotIds },
         periodMonth,
         ...ACTIVE_ALLOCATION,
       },
@@ -195,9 +198,18 @@ async function providersForClinic(
     })
     allocExtIds = rows.map(r => r.providerExtId).filter(Boolean) as string[]
   }
-  const allocProviders = allocExtIds.length > 0
+  // ★ C 章：反查改經 ApricotPractitioner（Provider 舊 apricotId 欄已剷走）——
+  //   只認 kind=PROVIDER 嘅帳號；CLINIC／UNKNOWN 帳號唔係醫生，唔好當醫生計。
+  const allocPractitioners = allocExtIds.length > 0
+    ? await prisma.apricotPractitioner.findMany({
+        where: { apricotId: { in: allocExtIds }, kind: 'PROVIDER' },
+        select: { providerId: true },
+      })
+    : []
+  const allocProviderIds = [...new Set(allocPractitioners.map(p => p.providerId).filter(Boolean))] as string[]
+  const allocProviders = allocProviderIds.length > 0
     ? await prisma.provider.findMany({
-        where: { apricotId: { in: allocExtIds } },
+        where: { id: { in: allocProviderIds } },
         select: { id: true, name: true, shortName: true },
       })
     : []
