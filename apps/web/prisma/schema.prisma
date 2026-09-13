@@ -179,6 +179,7 @@ model Clinic {
   weeklyPatterns  ProviderWeeklyPattern[]
   providerHolds   ProviderHold[]
   miscIncomes     MiscIncome[] // ★ cwm-payoutxlsx-20260908 D1：店舖雜項收入
+  apricotAccounts ApricotPractitioner[]
 }
 
 // User entity — system login account
@@ -384,8 +385,41 @@ model Provider {
   bookings       ProviderBooking[]
   weeklyPatterns ProviderWeeklyPattern[]
   holds          ProviderHold[]
+  apricotAccounts ApricotPractitioner[]
 
   @@index([companyId, isActive])
+}
+
+/// ★ cwm-apricotacct-20260913：Apricot practitioner 帳號 → 本系統個體。
+///   一個醫生／一間診所可以有多個帳號 → 呢張表做【唯一來源】。
+enum ApricotAccountKind {
+  PROVIDER   // 醫生（一個醫生可以有多行）
+  CLINIC     // 診所收款身分
+  UNKNOWN    // 知道存在、知道有錢，但未確認 —— 唔准當醫生計拆帳
+}
+
+model ApricotPractitioner {
+  id         String             @id @default(cuid())
+  /// = PaymentAllocation.providerExtId
+  apricotId  String             @unique
+  /// Apricot 顯示名
+  name       String
+  kind       ApricotAccountKind
+
+  providerId String?
+  provider   Provider?          @relation(fields: [providerId], references: [id])
+
+  /// ★★★ 通用「Clinic」帳號一定要留 null —— 佢喺每間店都係同一個 ID，
+  ///    實際邊間由該筆 allocation 嘅 clinicExtId 決定。
+  clinicId   String?
+  clinic     Clinic?            @relation(fields: [clinicId], references: [id])
+
+  note       String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@index([kind])
+  @@index([providerId])
 }
 
 model ProviderShift {
