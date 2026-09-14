@@ -109,6 +109,8 @@ interface Employee {
   payRules?: { payType: string }[]
   status: string
   homeClinicId?: string | null
+  // ★ cwm-attexempt-20260914：免考勤員工（會計）唔出現喺排班（optional：舊資料可能冇呢個欄）
+  attendanceExempt?: boolean
 }
 
 interface Clinic {
@@ -1242,7 +1244,8 @@ function getShiftCode(shift: Shift): string {
   const clinicEmployees = useMemo(() => {
     // ★ cwm-resignflow-20260911 D：白名單太窄 —— EmployeeStatus 有四個值，
     //   PROBATION（試用期）／ON_LEAVE（休假中）會一齊消失。改黑名單，同 api/employees:37 口徑一致。
-    const activeEmployees = employees.filter(emp => emp.status !== 'RESIGNED')
+    // ★ cwm-attexempt-20260914：免考勤員工（會計）唔出現喺排班
+    const activeEmployees = employees.filter(emp => emp.status !== 'RESIGNED' && emp.attendanceExempt !== true)
     if (empScope === 'all') return activeEmployees
     if (selectedClinicId) return activeEmployees.filter(emp => emp.homeClinicId === selectedClinicId)
     // ★ 公司模式：冇單一店，但收窄到該公司所有店
@@ -1303,7 +1306,8 @@ function getShiftCode(shift: Shift): string {
   // ★ 調鋪員工清單（按主屬診所分組）
   const tcEmployeeGroups = useMemo(() => {
     // ★ cwm-resignflow-20260911 D：白名單改黑名單（同上面五處口徑一致，PROBATION／ON_LEAVE 唔會誤殺）
-    const pool = employees.filter(e => e.status !== 'RESIGNED')
+    // ★ cwm-attexempt-20260914：免考勤員工（會計）唔出現喺排班
+    const pool = employees.filter(e => e.status !== 'RESIGNED' && e.attendanceExempt !== true)
     const byClinic = new Map<string, any[]>()
     for (const e of pool) {
       const cid = e.homeClinicId ?? '_none'
@@ -1364,7 +1368,7 @@ function getShiftCode(shift: Shift): string {
     return new Set(
       employees
         // ★ cwm-resignflow-20260911 D：白名單改黑名單
-        .filter(emp => emp.status !== 'RESIGNED')
+        .filter(emp => emp.status !== 'RESIGNED' && emp.attendanceExempt !== true) // ★ cwm-attexempt-20260914：免考勤唔排更
         .filter(emp => emp.clinics?.some((ec: any) => ec.clinic?.id === selectedClinicId))
         .map(emp => emp.id)
     )
@@ -1407,7 +1411,8 @@ function getShiftCode(shift: Shift): string {
   // Step 7: Overview employees (filtered by scope + sorted by home-group then role, full/part split)
   const ovEmployees = useMemo(() => {
     // ★ cwm-resignflow-20260911 D：白名單改黑名單
-    const activeEmployees = employees.filter(emp => emp.status !== 'RESIGNED')
+    // ★ cwm-attexempt-20260914：免考勤員工（會計）唔出現喺排班
+    const activeEmployees = employees.filter(emp => emp.status !== 'RESIGNED' && emp.attendanceExempt !== true)
     let scoped = activeEmployees
     if (scopeClinicIds) {
       // ★ 2026-08-06 拍板：綁定 → 主屬＋更次三條件（圖示確認）
@@ -2573,7 +2578,7 @@ function getShiftCode(shift: Shift): string {
     }
     // ★ scope-aware: company view shows all employees in that company
     const hoursEmps = employees.filter(e =>
-      e.status !== 'RESIGNED' &&
+      e.status !== 'RESIGNED' && e.attendanceExempt !== true && // ★ cwm-attexempt-20260914：免考勤唔排更
       (!scopeClinicIds || (e.homeClinicId && scopeClinicIds.has(e.homeClinicId)))
     )
     return hoursEmps
@@ -3910,7 +3915,8 @@ function getShiftCode(shift: Shift): string {
 
   const allEmployees = useMemo(() => {
     // ★ cwm-resignflow-20260911 D：白名單改黑名單
-    return employees.filter(emp => emp.status !== 'RESIGNED')
+    // ★ cwm-attexempt-20260914：免考勤員工（會計）唔出現喺排班
+    return employees.filter(emp => emp.status !== 'RESIGNED' && emp.attendanceExempt !== true)
   }, [employees])
 
   // Clinic sidebar: count shifts per clinic this week

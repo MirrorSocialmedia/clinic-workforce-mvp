@@ -20,7 +20,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 //
 //   排除：
 //   ① punch.clinicId ∈ 該日 shift 嘅 {clinicId, secondaryClinicId} → 走鋪計劃內，唔算異地
-//   ② ACCOUNTANT 免考勤暫代（TODO(cwm-attexempt)：attendanceExempt 未落刀）
+//   ② 免考勤員工（attendanceExempt=true；ACCOUNTANT role 安全網 — cwm-attexempt-tblayout-20260914 落刀後 union 保守翻轉，老細拍板）
 //   ③ RESIGNED
 //   ④ 已作廢打卡（PunchVoid 1:1 relation → void: null）
 //
@@ -102,15 +102,16 @@ export async function GET(req: NextRequest) {
   const empIds = [...new Set(punches.map(p => p.employeeId))]
   const employees = await prisma.employee.findMany({
     where: { id: { in: empIds } },
-    select: { id: true, status: true, user: { select: { id: true, name: true, role: true } } },
+    select: { id: true, status: true, attendanceExempt: true, user: { select: { id: true, name: true, role: true } } },
   })
   const empMap = new Map(employees.map(e => [e.id, e]))
   const eligible = (empId: string): boolean => {
     const e = empMap.get(empId)
     if (!e) return false
     if (e.status === 'RESIGNED') return false
-    // TODO(cwm-attexempt): cwm-attexempt 落刀後改用 e.attendanceExempt（免考勤員工成日打卡冇更表，唔排除就日日噪音）
-    if (e.user.role === 'ACCOUNTANT') return false // ROLE-OK: cwm-attexempt 未落刀 —— 老細 2026-09-14 拍板暫用 ACCOUNTANT 作免考勤暫代（MD A2 ② 明示）
+    // ★ cwm-attexempt-20260914 S6：免考勤員工成日打卡冇更表，唔排除就日日噪音。
+    //   attexempt 已落刀（主判）；role=ACCOUNTANT 保留做過渡安全網。
+    if (e.attendanceExempt === true || e.user.role === 'ACCOUNTANT') return false // ROLE-OK: 老細 2026-09-14 拍板 union 保守 — 兩者任一命中就排除
     return true
   }
 

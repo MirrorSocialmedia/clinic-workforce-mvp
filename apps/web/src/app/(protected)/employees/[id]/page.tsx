@@ -15,6 +15,8 @@ interface EmployeeDetail {
   joinDate: string
   leaveDate: string | null
   notes: string | null
+  // ★ cwm-attexempt-20260914 F：免考勤開關（optional：舊資料可能冇呢個欄）
+  attendanceExempt?: boolean
   user: {
     id: string
     name: string
@@ -489,6 +491,8 @@ function EditEmployeeModal({
     joinDate: toHKDateStr(new Date(employee.joinDate)),
     status: employee.status,
     notes: employee.notes || '',
+    // ★ cwm-attexempt-20260914 F：免考勤開關（舊資料可能 undefined → 用 === true 防呆）
+    attendanceExempt: employee.attendanceExempt === true,
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -522,6 +526,8 @@ function EditEmployeeModal({
         joinDate: form.joinDate,
         status: form.status,
         notes: form.notes || undefined,
+        // ★ cwm-attexempt-20260914 F：免考勤開關
+        attendanceExempt: form.attendanceExempt,
       }
       if (form.password) {
         body.password = form.password
@@ -678,6 +684,23 @@ function EditEmployeeModal({
               <option value="PROBATION">試用</option>
               <option value="RESIGNED">離職</option>
             </select>
+          </div>
+
+          {/* ★ cwm-attexempt-20260914 F：免考勤開關 */}
+          <div className="form-group">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={form.attendanceExempt}
+                onChange={(e) => setForm({ ...form, attendanceExempt: e.target.checked })}
+              />
+              免考勤（會計／行政）
+            </label>
+            <div style={{ fontSize: 12, color: '#666', marginTop: 4, marginLeft: 26 }}>
+              開咗之後：唔會出現喺排班表、工時概覽、考勤異常、編更差額。
+              <br />
+              計糧、MPF、年假、法定權利一律照常。
+            </div>
           </div>
 
           <div className="form-group">

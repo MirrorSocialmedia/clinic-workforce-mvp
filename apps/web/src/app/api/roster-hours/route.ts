@@ -19,6 +19,8 @@ export async function GET(req: NextRequest) {
   const employees = await prisma.employee.findMany({
     where: {
       status: 'ACTIVE',
+      // ★ cwm-attexempt-20260914 C2：免考勤員工（會計）唔喺工時概覽
+      attendanceExempt: false,
       homeClinic: { companyId },
       payRules: { some: { isActive: true, payType: 'MONTHLY' } }, // ★ 只要月薪
     },

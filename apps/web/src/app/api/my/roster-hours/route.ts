@@ -16,10 +16,13 @@ export async function GET(req: NextRequest) {
 
   const employee = await prisma.employee.findUnique({
     where: { userId },
-    select: { id: true },
+    select: { id: true, attendanceExempt: true },
   })
   // ★ 冇 Employee 記錄（純 admin）唔係錯誤
   if (!employee) return jsonNoStore({ applicable: false })
+
+  // ★ cwm-attexempt-20260914 C2：免考勤員工（會計）冇更表冇打卡，「應返工時」唔適用
+  if (employee.attendanceExempt) return jsonNoStore({ applicable: false })
 
   // ★ 只有月薪員工有「應返工時」概念（時薪係返幾多鐘出幾多錢）
   const payRule = await prisma.payRule.findFirst({

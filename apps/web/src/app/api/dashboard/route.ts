@@ -160,7 +160,11 @@ export async function GET(req: NextRequest) {
   const weekEnd = new Date(weekStart.getTime() + 7 * 86400000)
 
   const activeEmployees = await prisma.employee.findMany({
-    where: { status: 'ACTIVE' },
+    where: {
+      status: 'ACTIVE',
+      // ★ cwm-attexempt-20260914 C2：免考勤員工（會計）唔喺工時概覽（同 api/roster-hours 口徑）
+      attendanceExempt: false,
+    },
     select: {
       id: true,
       homeClinicId: true,

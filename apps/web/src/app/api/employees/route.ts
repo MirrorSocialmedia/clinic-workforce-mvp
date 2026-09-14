@@ -127,6 +127,8 @@ export async function GET(req: NextRequest) {
         resignedAt: true,
         status: true,
         payConfidential: true,
+        // ★ cwm-attexempt-20260914 A2：帶欄俾各消費端自己 filter（API 側唔准 filter）
+        attendanceExempt: true,
         user: { select: { id: true, name: true, phone: true, email: true, fullName: true } },
         clinics: {
           include: { clinic: { select: { id: true, name: true } } },

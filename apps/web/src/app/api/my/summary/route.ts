@@ -90,6 +90,9 @@ export async function GET(req: NextRequest) {
       lateMinutes: tb.netLateMinutes, // 已扣補鐘
       earlyLeaveMinutes: tb.netEarlyMinutes,
       otMinutes: tb.otMinutes,
+      // ★ cwm-attexempt-tblayout-20260914 G：鐘口徑毛 OT（= otMinutes + earlyInOtMinutes；lunch 已含喺 otMinutes 入面）
+      //   —— 直式「本月 OT」行用呢個數（G1 實測），同 /api/my/timebank 口徑一致
+      otMinutesForAccount: tb.otMinutesForAccount,
       // ★ 2026-08-19: 四格要喺首載就有準確數 — lunchOt 已含喺 otMinutes 入面
       lunchOtMinutes: tb.lunchOtMinutes,
       earlyInOtMinutes: tb.earlyInOtMinutes,
@@ -110,6 +113,8 @@ export async function GET(req: NextRequest) {
         endDate: toHKDateStr(r.endDate),
       })),
       correctionsCount: corrections,
+      // ★ cwm-attexempt-20260914 D：免考勤員工（會計）唔出時間帳戶卡（前端 my/dashboard 用）
+      attendanceExempt: employee.attendanceExempt,
     },
   })
 }

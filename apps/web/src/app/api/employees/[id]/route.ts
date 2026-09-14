@@ -66,7 +66,7 @@ export async function PUT(
 
   return runWithAudit(auditCtx, async () => {
     const body = await req.json()
-    const { name, phone, email, password, clinicIds, joinDate, status, notes } = body
+    const { name, phone, email, password, clinicIds, joinDate, status, notes, attendanceExempt } = body
 
     const employee = await prisma.employee.findUnique({
       where: { id: params.id },
@@ -92,6 +92,8 @@ export async function PUT(
     if (joinDate) employeeUpdateData.joinDate = hkDateOnly(joinDate)
     if (status) employeeUpdateData.status = status
     if (notes !== undefined) employeeUpdateData.notes = notes
+    // ★ cwm-attexempt-20260914 F：免考勤開關（會計等）—— 只影響考勤路徑，計糧/MPF/年假照常
+    if (attendanceExempt !== undefined) employeeUpdateData.attendanceExempt = !!attendanceExempt
     // ★ cwm-resignflow-20260911 E1：同 resign-settle 寫同一組欄，否則兩條路數據形狀唔同。
     //   剷咗 `&& !employee.leaveDate` — 呢個條件令「改最後工作日」永遠唔生效（第一次寫咗就再唔會更新）。
     //   lastDay 由 body 收（前端 prompt）；冇傳就當今日（後備路徑，冇結算）。

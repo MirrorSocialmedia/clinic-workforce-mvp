@@ -230,6 +230,8 @@ export async function PUT(
               employee: {
                 select: {
                   id: true,
+                  // ★ cwm-attexempt-20260914 C1：編更差額 filter 要用
+                  attendanceExempt: true,
                   // ★ cwm-tbfix-20260910 P1-2：最新生效規則口徑統一（lib/pay-rule-latest）
                   payRules: PAY_RULE_SELECT,
                 },
@@ -249,7 +251,10 @@ export async function PUT(
           const monthStart = new Date(`${pm}-01T00:00:00+08:00`)
           // ★ 提到迴圈外 — 防止 N+1 query 撞 transaction timeout（2026-08-15）
           const empIds = items
-            .filter(i => i.employee.payRules[0]?.payType === 'MONTHLY')
+            // ★ cwm-attexempt-20260914：免考勤員工冇更表，計「編更差額」冇意義。
+            //   ⚠️ roster-hours.ts:136 只擋到「冇更【又】冇假」—— 一放公眾假期就會出 −15,660。
+            .filter(i => i.employee.payRules[0]?.payType === 'MONTHLY'
+              && i.employee.attendanceExempt !== true)
             .map(i => i.employee.id)
 
           const rosterHours = await computeRosterHours(empIds, pm, tx)

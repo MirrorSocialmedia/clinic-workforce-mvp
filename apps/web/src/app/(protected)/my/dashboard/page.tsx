@@ -262,7 +262,9 @@ export default function MyDashboardPage() {
       <StatCard value={summary?.lateMinutes || 0} title="本月遲到（分鐘）" color="violet" />
 
       {/* Time Bank — use summary data (少咗 /api/my/timebank fetch) */}
-      {summary && summary.timeAccountMinutes != null && (
+      {/* ★ cwm-attexempt-20260914 D：免考勤員工（會計）時間帳戶卡整張唔出
+          —— 理論上冇更冇打卡所有數自然 0，但出一張全 0 卡係噪音。 */}
+      {summary && !summary.attendanceExempt && summary.timeAccountMinutes != null && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">時間銀行</CardTitle>
@@ -276,7 +278,11 @@ export default function MyDashboardPage() {
                   borderWidth: 2,
                   background: timeAccount >= 0 ? '#f0fdf4' : '#fef2f2',
                 }}>
-                  <div className="text-sm text-muted-foreground">我的時間帳戶</div>
+                  {/* ★ 拍板③：大字用【目前結餘】而且一定要標明 ——
+                      下面條式尾係「月底結餘」，兩個數差住編更差額。
+                      ⚠️ 目前結餘先係 DB 真實值；編更差額要等確認計糧先寫入 TimeBankEntry，
+                         員工換假時系統係按【目前結餘】算。 */}
+                  <div className="text-sm text-muted-foreground">目前結餘</div>
                   <div className="text-3xl font-bold mt-1" style={{ color: timeAccount >= 0 ? '#059669' : '#dc2626' }}>
                     {timeAccount >= 0 ? '+' : '−'}{Math.abs(timeAccount)} 分鐘
                   </div>
@@ -289,52 +295,11 @@ export default function MyDashboardPage() {
                     </>}
                     {timeAccount === 0 && '兩清'}
                   </div>
-                  {/* ★ 2026-08-19: OT 四格 —— ①OT（含提早上班）②午休OT ③遲到/早退/補鐘 ④本月實收 OT */}
-                  {/*   ①+②+③ = netOtThisMonth（同 payroll-engine 一致，算式行寫出嚟防「加唔埋」） */}
+                  {/* ★ cwm-attexempt-tblayout-20260914 G3：OT 四格橫排剷走，併入下面「本月預測」直式
+                      （毛 OT／遲到早退補鐘拆做兩行 —— 欄位組合由 G1 實測決定，2026-09-14）。 */}
                   {(() => {
-                    // ★ 陷阱①：otMinutes 已含 lunchOt —— 第①格一定減走先，否則同第②格重複計
-                    const c1 = (summary.otMinutes ?? 0) - (summary.lunchOtMinutes ?? 0) + (summary.earlyInOtMinutes ?? 0)
-                    const c2 = summary.lunchOtMinutes ?? 0
-                    // ★ 陷阱②：makeupMinutes（= late + early + absent）全部計入第③格，唔計三格加唔埋
-                    const c3 = -((summary.netLateMinutes ?? 0) + (summary.netEarlyMinutes ?? 0) + (summary.makeupMinutes ?? 0))
-                    const c4 = summary.netOtThisMonth ?? null
                     return (
                       <>
-                        <div className="grid grid-cols-2 gap-2 mt-4">
-                          <div>
-                            <div className="text-[10px] text-muted-foreground">OT（含提早上班）</div>
-                            <div className="text-base font-semibold" style={{ color: c1 >= 0 ? '#059669' : '#dc2626' }}>
-                              {c1 >= 0 ? '+' : '−'}{Math.abs(c1)}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] text-muted-foreground">午飯OT</div>
-                            <div className="text-base font-semibold" style={{ color: '#059669' }}>+{c2}</div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] text-muted-foreground">遲到／早退／補鐘</div>
-                            <div className="text-base font-semibold" style={{ color: c3 < 0 ? '#dc2626' : '#9ca3af' }}>
-                              {c3 === 0 ? '0' : c3}
-                            </div>
-                            {/* ★ 拍板③(a)：用淨值，但補鐘要睇得到 */}
-                            {(summary.makeupMinutes ?? 0) > 0 && (
-                              <div className="text-[9px] text-muted-foreground">
-                                含補鐘 {summary.makeupMinutes} 分
-                                {(summary.makeupAbsentMinutes ?? 0) > 0 && `（缺勤 ${summary.makeupAbsentMinutes}）`}
-                              </div>
-                            )}
-                          </div>
-                          <div className="rounded" style={{ background: '#f0fdf4', padding: 4 }}>
-                            <div className="text-[10px] text-muted-foreground font-medium">本月實收 OT</div>
-                            <div className="text-base font-bold" style={{ color: c4 === null ? '#9ca3af' : c4 >= 0 ? '#059669' : '#dc2626' }}>
-                              {c4 === null ? '—' : `${c4 >= 0 ? '+' : '−'}${Math.abs(c4)}`}
-                            </div>
-                          </div>
-                        </div>
-                        {/* ★ 算式直接寫出嚟 —— 最直接嘅防線 */}
-                        <div className="text-[9px] text-muted-foreground mt-1">
-                          {c1} {c2 >= 0 ? '+' : '−'} {Math.abs(c2)} {c3 >= 0 ? '+' : '−'} {Math.abs(c3)} = {c4 === null ? '—' : c4}
-                        </div>
 
                         {/* ★ 2026-08-31 (cwm-earlyin) 拍板③：OT 換假／退回 —— 有值先顯示（分鐘＋天）。
                             日數換算用共享常數（同寫入側同一個「一日」單位），唔好再砌第三個寫死值。 */}
@@ -375,7 +340,17 @@ export default function MyDashboardPage() {
                               本月預測
                             </div>
                             <ForecastRow label="上月結轉" value={summary?.carriedFrom ?? 0} />
-                            <ForecastRow label="本月實收 OT" value={summary?.netOtThisMonth ?? 0} />
+                            {/* ★ cwm-attexempt-tblayout-20260914 G3（拍板②）：OT 用【毛額】、遲到補鐘獨立一行 —— 同老細張 Excel 口徑一致。
+                                欄位組合由 G1 實測決定（2026-09-14 dev 實測）：
+                                毛 = otMinutesForAccount（= otMinutes + earlyInOtMinutes；lunchOt 已含喺 otMinutes 入面，唔好再加）；
+                                負 = makeup（late+early+absent）+ netLate + netEarly。
+                                硬驗收：兩行加返 === netOtThisMonth（engine :1960 定義）。 */}
+                            <ForecastRow label="本月 OT" sub="含提早・午飯" value={summary?.otMinutesForAccount ?? 0} />
+                            <ForecastRow label="遲到／早退／補鐘"
+                                         sub={(summary?.makeupMinutes ?? 0) > 0
+                                             ? `含補鐘 ${summary.makeupMinutes} 分${(summary?.makeupAbsentMinutes ?? 0) > 0 ? `（缺勤 ${summary.makeupAbsentMinutes}）` : ''}`
+                                             : undefined}
+                                         value={-((summary?.makeupMinutes ?? 0) + (summary?.netLateMinutes ?? 0) + (summary?.netEarlyMinutes ?? 0))} />
                             {(summary?.leaveConvertMinutes ?? 0) !== 0 && (
                               <ForecastRow label="OT 換假" sub={`${Math.abs(summary.leaveConvertMinutes / TIMEBANK_MINUTES_PER_DAY).toFixed(1)} 天`}
                                            value={summary.leaveConvertMinutes} highlight />
@@ -390,9 +365,16 @@ export default function MyDashboardPage() {
                                                   - (summary?.leaveConvertMinutes ?? 0)
                                                   - (summary?.leaveSwapBackMinutes ?? 0)} />
                             <ForecastRow label="目前結餘" value={summary?.timeAccountMinutes ?? 0} divider bold />
-                            {/* ★ 2026-08-31 拍板④：「預計 OT」→「應返時間OT」；settled 保留「（已入帳）」 */}
-                            <ForecastRow label={rh?.settled ? '應返時間OT（已入帳）' : '應返時間OT'} sub="編更差額" value={rh?.diffMinutes ?? 0} />
-                            <ForecastRow label="預計月底"
+                            {/* ★ cwm-attexempt-tblayout-20260914 G4（拍板②）：「已編更 / 應返」縮做子項 ——
+                                放喺加減式入面會令人以為要加 8,610。實際只有【差額】入賬。
+                                底部原「本月工時」block 嘅獨有註（已出糧鎖定／以實際為準）搬咗落嚟。 */}
+                            <ForecastRow label={rh?.settled ? '編更差額（已入帳）' : '編更差額'}
+                                         sub={`已編更 ${rh?.rosterMinutes ?? 0} · 應返 ${rh?.expectedMinutes ?? 0}`}
+                                         value={rh?.diffMinutes ?? 0} />
+                            <div style={{ fontSize: 9, color: '#9ca3af', padding: '0 4px' }}>
+                              {rh?.settled ? '已出糧鎖定；之後改更表唔會影響呢個數' : '更表未定，出糧時以實際為準'}
+                            </div>
+                            <ForecastRow label="月底結餘"
                                          value={(summary?.timeAccountMinutes ?? 0) + (rh?.diffMinutes ?? 0)}
                                          divider strong />
                           </div>
@@ -476,40 +458,12 @@ export default function MyDashboardPage() {
       )}
 
       {/* Leave Balances */}
-      {rh?.applicable && (
-        rh.unscheduled ? (
-          <div className="rounded-xl border p-3 mt-3">
-            <div className="text-xs text-muted-foreground mb-2">本月工時</div>
-            <div className="text-xs text-muted-foreground py-2 text-center">本月未排更</div>
-          </div>
-        ) : (
-          <div className="rounded-xl border p-3 mt-3">
-            <div className="text-xs text-muted-foreground mb-2">本月工時</div>
-            <div className="flex justify-between text-sm py-1">
-              <span className="text-muted-foreground">應返</span>
-              <span>{rh.expectedMinutes} 分</span>
-            </div>
-            <div className="flex justify-between text-sm py-1">
-              <span className="text-muted-foreground">已編班</span>
-              <span>{rh.rosterMinutes} 分</span>
-            </div>
-            <div className="flex justify-between text-sm pt-2 border-t font-medium">
-              <span>{rh.settled ? '編更差額（已入帳）' : '預計 OT'}</span>
-              <span style={{ color: rh.diffMinutes > 0 ? '#059669' : rh.diffMinutes < 0 ? '#dc2626' : '#6b7280' }}>
-                {rh.diffMinutes > 0 ? '+' : rh.diffMinutes < 0 ? '−' : ''}
-                {Math.abs(rh.diffMinutes)} 分
-              </span>
-            </div>
-            {rh.settled && (
-              <div className="text-[10px] text-muted-foreground mt-1">
-                已出糧鎖定；之後改更表唔會影響呢個數
-              </div>
-            )}
-            <div className="text-[10px] text-muted-foreground mt-2">
-              {rh.settled ? '已出糧，數字已入時間帳戶' : '更表未定，出糧時以實際為準'}
-            </div>
-          </div>
-        )
+      {/* ★ cwm-attexempt-tblayout-20260914 G5：原「本月工時」block 剷走 —— 已編更／應返／差額同「編更差額」子行完全重複，
+          獨有文字（已出糧鎖定／以實際為準）已搬去子行旁邊。未排更提示保留一行。 */}
+      {rh?.applicable && rh.unscheduled && (
+        <div className="rounded-xl border p-3 mt-3">
+          <div className="text-xs text-muted-foreground py-1 text-center">本月未排更</div>
+        </div>
       )}
       {leaveBalances.length > 0 && (
         <Card>

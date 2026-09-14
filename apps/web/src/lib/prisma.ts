@@ -55,6 +55,8 @@ const AUDIT_FIELD_WHITELIST = new Set([
   'date', 'startTime', 'endTime', 'punchType', 'punchTime', 'minutes', 'days',
   'entitled', 'remaining', 'used', 'year', 'reason', 'totalPayable',
   'leaveTypes', 'count', 'target', 'balance', 'otMinutes', 'lateMinutes',
+  // ★ cwm-attexempt-20260914 F：免考勤開關入 audit（beforeJson/afterJson 帶到新欄）
+  'attendanceExempt',
   'earlyLeaveMinutes', 'makeupMinutes', 'carriedFrom', 'monthEndNote',
   'initMinutes', 'balanceMinutes', 'otBalanceMinutes', 'delta',
   'startDate', 'endDate', 'voidReason', 'voidNote', 'punchNote',

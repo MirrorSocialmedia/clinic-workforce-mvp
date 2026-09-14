@@ -263,6 +263,12 @@ model Employee {
   resignSettlement ResignSettlement?
   holidayOtAdjustments HolidayOtAdjustment[] // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減
   payConfidential Boolean @default(false) // 薪資保密 — 非 OWNER 的計糧 API 遮蔽金額
+
+  /// ★ cwm-attexempt-20260914：免考勤員工（會計等）。
+  ///   true = 唔打卡、唔排更、唔計 OT／遲到／編更差額，只按月薪出糧。
+  ///   ⚠️ 計糧、MPF、年假、法定權利【一律照常】—— 佢係正式員工。
+  ///   ⚠️ 唔好用 status=RESIGNED 或者停用帳號嚟代替 —— 佢仲要出糧。
+  attendanceExempt Boolean @default(false)
   notes     String?
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt

@@ -320,10 +320,11 @@ export async function GET(req: NextRequest) {
   ])]
   const empNames = new Map<string, string>()
   const resignedEmpIds = new Set<string>()
+  const exemptEmpIds = new Set<string>() // ★ cwm-attexempt-20260914 C3：免考勤員工（會計）
   if (allEmpIds.length > 0) {
     const emps = await prisma.employee.findMany({
       where: { id: { in: allEmpIds } },
-      select: { id: true, status: true, user: { select: { name: true } } },
+      select: { id: true, status: true, attendanceExempt: true, user: { select: { name: true } } },
     })
     emps.forEach(e => {
       empNames.set(e.id, e.user?.name ?? '—')
@@ -333,6 +334,8 @@ export async function GET(req: NextRequest) {
       //      而且有 RESIGNED 標記同「最後 X」顯示。
       //   同一個 Set 過濾所有出口（exceptions + summaries）— 坑⑥：唔好逐處各寫判斷。
       if (e.status === 'RESIGNED') resignedEmpIds.add(e.id)
+      // ★ cwm-attexempt-20260914：免考勤員工冇打卡冇更表，唔應該出喺考勤異常
+      if (e.attendanceExempt) exemptEmpIds.add(e.id)
     })
   }
 
@@ -821,8 +824,9 @@ export async function GET(req: NextRequest) {
   const punchEmpIds = rawPunches.map(p => p.employeeId)
   const shiftEmpIds = shifts.map(s => s.employeeId)
   // ★ cwm-resignflow-20260911 C：summaries 出口隱藏已離職（同一個 resignedEmpIds Set）
-  let uniqueEmployeeIds = [...new Set([...punchEmpIds, ...shiftEmpIds, ...exceptions.map(e => e.employeeId)])].filter(eid => !resignedEmpIds.has(eid))
-  if (employeeId && !uniqueEmployeeIds.includes(employeeId) && !resignedEmpIds.has(employeeId)) {
+  // ★ cwm-attexempt-20260914 C3：免考勤一齊隱藏（同一個 exemptEmpIds Set）
+  let uniqueEmployeeIds = [...new Set([...punchEmpIds, ...shiftEmpIds, ...exceptions.map(e => e.employeeId)])].filter(eid => !resignedEmpIds.has(eid) && !exemptEmpIds.has(eid))
+  if (employeeId && !uniqueEmployeeIds.includes(employeeId) && !resignedEmpIds.has(employeeId) && !exemptEmpIds.has(employeeId)) {
     uniqueEmployeeIds.push(employeeId)
   }
   // empNames already defined earlier (after getClinicName) — covers all employees
@@ -894,7 +898,8 @@ export async function GET(req: NextRequest) {
   )
 
   // ★ cwm-resignflow-20260911 C：exceptions 出口隱藏已離職（同一個 resignedEmpIds Set）
-  const visibleExceptions = exceptions.filter(e => !resignedEmpIds.has(e.employeeId))
+  // ★ cwm-attexempt-20260914 C3：免考勤一齊隱藏（同一個 exemptEmpIds Set）
+  const visibleExceptions = exceptions.filter(e => !resignedEmpIds.has(e.employeeId) && !exemptEmpIds.has(e.employeeId))
 
   return NextResponse.json({
     exceptions: visibleExceptions,
