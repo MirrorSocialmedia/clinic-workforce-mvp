@@ -20,8 +20,11 @@ import type { PayoutRun } from '@prisma/client'
 // ★ MD-AC2 ②：付款方式固定次序（同月結單頁一致），未知方式排最後
 export const METHOD_ORDER = ['CASH', 'HCV', 'VISA', 'MASTERCARD', 'OCTOPUS', 'FPS', 'ALIPAY', 'CCF', 'CREDIT', 'FREE_SP']
 // ★ MD-AC2 ③：Credit / Free SP 唔計【店舖營收】（countAsIncome=false）
-//   ★ cwm-reconxlsx-fix-20260910 C：FREE_SP 另【計醫生收入】（engine.ts:377-381 gross OR list 包 FREE_SP）——
-//   舊 label「不計入收入」講大話，老細睇到會以為醫生收唔到 → 改「不計店舖營收，計醫生收入」。
+//   ★ cwm-reconxlsx-fix-20260910 C：FREE_SP 另【計醫生收入】（engine.ts:377-381 gross OR list 包 FREE_SP）。
+//   ★ 2026-09-14：欄標題剷走括號提示（老細話欄頭太逼）。
+//     但【口徑冇變】—— Free SP 仍然係「唔計店舖營收、計醫生收入」。
+//     解釋改為出喺【封面備註區】（cwm-coverrevenue-20260914 A7），
+//     所以呢度唔使再喺欄頭重複。⚠️ 唔好見到標題淨係「Free SP」就以為漏咗說明。
 //   CREDIT 查實（2026-09-10 S3）：engine gross OR list 唔含 CREDIT → 唔計店舖營收亦唔計醫生收入，
 //   label「不計入收入」準確 → 唔郁（MD 明令唔好抄 FREE SP 字句）。
 export const METHOD_LABELS: Record<string, string> = {
@@ -34,9 +37,14 @@ export const METHOD_LABELS: Record<string, string> = {
   ALIPAY: 'Alipay',
   CCF: 'CCF',
   CREDIT: 'Credit（不計入收入）',
-  FREE_SP: 'Free SP（不計店舖營收，計醫生收入）',
+  FREE_SP: 'Free SP',
 }
 export const NON_INCOME = new Set(['CREDIT', 'FREE_SP'])
+
+// ★ cwm-coverrevenue-20260914 A4：封面撈 FREE_SP / CREDIT 合計用呢兩個常數 ——
+//   要同 METHOD_ORDER 一致，唔准 hardcode 字串第二次。
+export const KEY_FREE_SP = 'FREE_SP'
+export const KEY_CREDIT = 'CREDIT'
 
 export const num = (v: unknown): number => Number(v ?? 0)
 export const money = (v: unknown): number => Number(num(v).toFixed(2))

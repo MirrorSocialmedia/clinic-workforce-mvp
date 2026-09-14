@@ -6,7 +6,9 @@
  *  - 冇 run（LOCKED/FINALIZED）嘅醫生唔出頁（唔出全零頁）
  *  - Clinic 雜項頁 = buildMiscSheet（A 步產生器）；費率口徑 = D2/D3 同一個 resolveMethodRule
  *    （逐行 resolve → 逐行 round2 加總 → 匯總有效費率，同 D3 頁底部三行天然一致）
- *  - 封面 = buildCoverSheet：逐醫生應付總額行（綠字跨 sheet 連結）＋合計＋雜項淨額＋診所總收入（黃底）
+ *  - 封面 = buildCoverSheet：逐醫生「店舖營收／應付醫生」兩欄（綠字跨 sheet 連結）＋合計
+ *    ＋三層結算（店舖總收入 = 營收合計＋雜項淨額；診所淨收入 = 店舖總收入−應付合計，黃底）
+ *    ＋Free SP／Credit 備註區（cwm-coverrevenue-20260914）
  *
  * 權限：OWNER ＋ provider_payout 權限覆蓋（RBAC_MATRIX + RBAC_PERM_OVERRIDES，MD 坑⑧）。
  * Audit：PAYOUT_CLINIC_REPORT_EXPORT（SENSITIVE_AUDIT_SPEC，MD 坑⑦）— notes 標明包含病人姓名。
@@ -20,9 +22,9 @@ import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
 import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { resolveMethodRule } from '@/lib/apricot/allocate'
-import { loadDoctorSheetData, METHOD_LABELS, round2 } from '@/lib/payout/report-data'
+import { loadDoctorSheetData, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT } from '@/lib/payout/report-data'
 import { loadClinicMisc } from '@/lib/payout/clinic-misc'
-import { buildCoverSheet, buildDoctorSheet, buildMiscSheet } from '@/lib/payout/xlsx-report'
+import { buildCoverSheet, buildDoctorSheet, buildMiscSheet, incomeTotalOf } from '@/lib/payout/xlsx-report'
 
 const PERIOD_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
 
@@ -74,18 +76,30 @@ export async function GET(req: NextRequest) {
 
   // ─── 3. 逐 run 砌醫生頁（共同攞數函數，MD 坑⑥）───────────────────
   const wb = new ExcelJS.Workbook()
-  const doctorEntries: { sheetName: string; sheetLabel: string; status: string; totalAmount: number }[] = []
+  const doctorEntries: {
+    sheetName: string; sheetLabel: string; status: string
+    totalAmount: number; revenue: number; freeSp: number; credit: number; methodCount: number
+  }[] = []
   for (const run of runs) {
     const loaded = await loadDoctorSheetData(run.id)
     if (!loaded) continue // 理論上唔會發生（run 剛先查過）— 防呆 skip
     const sheetLabel = loaded.provider?.shortName || loaded.provider?.name || '未知'
     loaded.data.sheetNameBase = sheetLabel // sheet 名 = shortName || name（MD C 章）
     const ws = buildDoctorSheet(wb, loaded.data)
+    // ★ cwm-coverrevenue-20260914：用返醫生頁同一個 incomeTotalOf，唔重新計（坑②）
+    const revenue = round2(loaded.data.days.reduce(
+      (s, day) => s + incomeTotalOf(loaded.data.methods, day.byMethod), 0))
+    const sumMethod = (key: string) => round2(loaded.data.days.reduce(
+      (s, day) => s + Number(day.byMethod[key] ?? 0), 0))
     doctorEntries.push({
       sheetName: ws.name,
       sheetLabel,
       status: loaded.data.status,
       totalAmount: Number(loaded.run.totalAmount),
+      revenue,
+      freeSp: sumMethod(KEY_FREE_SP),
+      credit: sumMethod(KEY_CREDIT),
+      methodCount: loaded.data.methods.length,
     })
   }
 
@@ -129,6 +143,10 @@ export async function GET(req: NextRequest) {
       sheetName: d.sheetName,
       status: d.status,
       totalAmount: d.totalAmount,
+      revenue: d.revenue,
+      freeSp: d.freeSp,
+      credit: d.credit,
+      methodCount: d.methodCount,
     })),
     miscSheetName: miscWs.name,
     miscNet,

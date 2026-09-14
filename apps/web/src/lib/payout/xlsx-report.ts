@@ -118,7 +118,21 @@ export interface MiscSheetData {
 export interface CoverSheetData {
   clinicName: string
   periodMonth: string
-  doctors: { providerName: string; sheetName: string; status: string; totalAmount: number }[]
+  doctors: {
+    providerName: string
+    sheetName: string
+    status: string
+    /// 應付醫生（拆帳後，已扣 Lab／植體成本）
+    totalAmount: number
+    /// ★ 店舖營收（countAsIncome method 合計，唔含 Free SP / Credit）— 同醫生頁 A 區 TOTAL 行同一口徑
+    revenue: number
+    /// ★ Free SP（唔計店舖營收，【已計入】醫生收入 → 已包含喺 totalAmount）
+    freeSp: number
+    /// ★ Credit（店舖營收、醫生收入兩樣都唔計）
+    credit: number
+    /// ★ 醫生頁 method 欄數（封面計算 A 區 TOTAL 欄 = 2+methodCount 用嚟跨連結；封面自己唔知 M）
+    methodCount: number
+  }[]
   /** 雜項頁實際 sheet 名（有則跨連結淨額，綠字；無則靜態數） */
   miscSheetName?: string
   miscNet: number // 雜項淨額（合計×(1-費率)），result 雙寫 fallback
@@ -140,6 +154,19 @@ const colName = (c: number): string => {
 }
 
 /** Excel sheet 名硬限制：≤31 字元、禁 `: \ / ? * [ ]`；同名加 `(2)` 後綴（MD C 章） */
+
+/**
+ * ★ cwm-coverrevenue-20260914 A2：income method 合計（A 區 TOTAL 欄口徑）。
+ * 導出嚟俾封面同醫生頁用同一個 function（坑②：唔准兩處各寫一次，將來改一邊就出兩個數）；
+ * 醫生頁內部 closure 照舊 call 佢（行為零變）。countAsIncome=false（FREE_SP/CREDIT）唔計。
+ */
+export function incomeTotalOf(
+  methods: { key: string; countAsIncome: boolean }[],
+  byMethod: Record<string, number>,
+): number {
+  return methods.reduce((s, m) => s + (m.countAsIncome ? round2(byMethod[m.key] ?? 0) : 0), 0)
+}
+
 export function nextSheetName(wb: ExcelJS.Workbook, base: string): string {
   let clean = base.replace(/[\\/?*[\]:]/g, '').trim() || 'Sheet'
   if (clean.length > 31) clean = clean.slice(0, 31)
@@ -294,8 +321,8 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   const adjTotal = round2(d.adjRows.reduce((s, r) => s + r.amount, 0))
   const payableResult = round2(salary + spTotal + refTotal + adjTotal)
   // A 區 TOTAL 欄只計 income method（同現行 route NON_INCOME 口徑；flag 由 data 帶入）
-  const incomeTotal = (byMethod: Record<string, number>): number =>
-    d.methods.reduce((s, m) => s + (m.countAsIncome ? round2(byMethod[m.key] ?? 0) : 0), 0)
+  // ★ cwm-coverrevenue-20260914 A2：邏輯搬去 incomeTotalOf（導出俾封面共用）— 行為零變
+  const incomeTotal = (byMethod: Record<string, number>): number => incomeTotalOf(d.methods, byMethod)
 
   // 欄闊
   const widths: number[] = []
@@ -586,7 +613,8 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   // ↑ F4/F5 成本（負數行，B/C 區合計引用）；公式一律唔帶前綴 =（OOXML <f> 規格）— 2026-09-10 S1 修：原 `=-F...` 寫法係現有 bug，部分 reader（Google Sheets/手機預覽）解析失敗會空白
   const fProfitRow = singleRow(
     '利潤',
-    c => setFormula(c, `${colName(totalCol)}${fNetRow}+B${fLabRow}+B${fImplantRow}`, { fmt: MONEY_FMT, result: profit }),
+    // ★ cwm-coverrevenue-20260914：a+b+c → SUM(a,b,c)（全檔禁裸 +；numeric cells 同值）
+    c => setFormula(c, `SUM(${colName(totalCol)}${fNetRow},B${fLabRow},B${fImplantRow})`, { fmt: MONEY_FMT, result: profit }),
     true,
   )
   // F7 拆帳 %（藍字 data）
@@ -602,7 +630,8 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): Exce
   setLabel(ws.getCell(row, 1), LABEL_PAYABLE, { bold: true })
   ws.mergeCells(row, 2, row, totalCol)
   const payCell = ws.getCell(row, 2)
-  const payableFormula = `B${fSalaryRow}+B${fSpRow}+B${fRefRow}+B${fAdjRow}`
+  // ★ cwm-coverrevenue-20260914：a+b+c+d → SUM(a,b,c,d)（全檔禁裸 +；numeric cells 同值）
+  const payableFormula = `SUM(B${fSalaryRow},B${fSpRow},B${fRefRow},B${fAdjRow})`
   // result 由同一份 data 推導（engine 口徑 round2 逐步）— 推導式已搬去函數頭（A 步：result 必填）
   payCell.value = { formula: payableFormula, result: payableResult }
   payCell.font = mkFont({ bold: true, size: 12 })
@@ -686,36 +715,51 @@ export function buildMiscSheet(wb: ExcelJS.Workbook, m: MiscSheetData): ExcelJS.
 // ── 封面總表 ──────────────────────────────────────────────────────
 
 /**
- * 封面總表（只喺全店月報出）：逐醫生應付總額行 + 合計行 + 雜項行 + 診所總收入（MD C 章）。
- * 醫生應付總額 = 跨 sheet 公式連結（綠字，規則④）；搵唔到 anchor 先 fallback 靜態藍數。
- * 診所總收入 = 黃底 + { formula, result }（規則①④）。
+ * 封面總表（只喺全店月報出）— ★ cwm-coverrevenue-20260914 方案甲：
+ * 逐醫生「店舖營收／應付醫生」兩欄 ＋ 合計 ＋ 三層結算
+ * （店舖總收入 = 營收合計＋雜項淨額；診所淨收入 = 店舖總收入−應付醫生合計，黃底）
+ * ＋ Free SP／Credit 備註區 ＋ 底部免責句。
+ * 店舖營收 = 跨 sheet 連結醫生頁 A 區 Total 行（綠字）；搵唔到 anchor → setData fallback（唔報錯）。
+ * 應付醫生 = 跨 sheet 連結醫生頁 F 區 B 欄（綠字）；搵唔到 anchor → setData fallback。
+ * 舊「診所總收入 = 應付合計＋雜項」概念錯（應付 ≠ 店舖營收）→ 廢棄。
  */
 export function buildCoverSheet(wb: ExcelJS.Workbook, c: CoverSheetData): ExcelJS.Worksheet {
   const name = nextSheetName(wb, '封面')
   const ws = wb.addWorksheet(name)
-  const lastCol = 3
-  setWidths(ws, [24, 10, 16])
+  // ★ cwm-coverrevenue-20260914 A5：3 欄→4 欄（逐醫生 店舖營收／應付醫生 兩欄）
+  const lastCol = 4
+  setWidths(ws, [24, 10, 16, 16])
 
   let row = 1
   ws.mergeCells(row, 1, row, lastCol)
   ws.getCell(row, 1).value = `${c.clinicName} · ${c.periodMonth} · 月度收入報表（總表）`
   ws.getCell(row, 1).font = mkFont({ bold: true, size: 14 })
   row += 2
-  headerRow(ws, row, ['醫生', '狀態', '應付總額'])
+  headerRow(ws, row, ['醫生', '狀態', '店舖營收', '應付醫生'])
   row++
   const firstDoc = row
   for (const doc of c.doctors) {
     setData(ws.getCell(row, 1), doc.providerName)
     setData(ws.getCell(row, 2), doc.status)
-    const cell = ws.getCell(row, 3)
-    // 跨 sheet 連結：醫生頁 F 區 B 欄（F zone 值喺 B 欄，merged）
     const docWs = wb.getWorksheet(doc.sheetName)
-    const payRow = docWs ? findLabelRow(docWs, LABEL_PAYABLE) : null
-    if (docWs && payRow) {
+    // 店舖營收：跨 sheet 連結醫生頁 A 區 Total 行（TOTAL 欄 = 2+M，M = methodCount）
+    const revCell = ws.getCell(row, 3)
+    const docTotalRowNo = docWs ? findLabelRow(docWs, 'Total') : null
+    if (docWs && docTotalRowNo) {
       const quoted = doc.sheetName.replace(/'/g, "''")
-      setLink(cell, `'${quoted}'!B${payRow}`, { fmt: MONEY_FMT, result: doc.totalAmount })
+      setLink(revCell, `'${quoted}'!${colName(2 + doc.methodCount)}${docTotalRowNo}`, { fmt: MONEY_FMT, result: doc.revenue })
     } else {
-      setData(cell, round2(doc.totalAmount), { fmt: MONEY_FMT })
+      // ★ MD A5：搵唔到 row → setData fallback，唔報錯
+      setData(revCell, round2(doc.revenue), { fmt: MONEY_FMT })
+    }
+    // 應付醫生：跨 sheet 連結醫生頁 F 區 B 欄（F zone 值喺 B 欄，merged）— 照現行，搬咗去第 4 欄
+    const payCell = ws.getCell(row, 4)
+    const payRowNo = docWs ? findLabelRow(docWs, LABEL_PAYABLE) : null
+    if (docWs && payRowNo) {
+      const quoted = doc.sheetName.replace(/'/g, "''")
+      setLink(payCell, `'${quoted}'!B${payRowNo}`, { fmt: MONEY_FMT, result: doc.totalAmount })
+    } else {
+      setData(payCell, round2(doc.totalAmount), { fmt: MONEY_FMT })
     }
     row++
   }
@@ -723,12 +767,26 @@ export function buildCoverSheet(wb: ExcelJS.Workbook, c: CoverSheetData): ExcelJ
   const totalRow = row
   setLabel(ws.getCell(row, 1), '合計', { bold: true })
   ws.getCell(row, 2).border = thinBorder
-  const sumVal = round2(c.doctors.reduce((s, d) => s + d.totalAmount, 0))
-  if (c.doctors.length > 0) setFormula(ws.getCell(row, 3), `SUM(C${firstDoc}:C${lastDoc})`, { fmt: MONEY_FMT, bold: true, result: sumVal })
-  else setData(ws.getCell(row, 3), 0, { fmt: MONEY_FMT, gray: true })
+  const revSum = round2(c.doctors.reduce((s, d) => s + d.revenue, 0))
+  const paySum = round2(c.doctors.reduce((s, d) => s + d.totalAmount, 0))
+  if (c.doctors.length > 0) {
+    setFormula(ws.getCell(row, 3), `SUM(C${firstDoc}:C${lastDoc})`, { fmt: MONEY_FMT, bold: true, result: revSum })
+    setFormula(ws.getCell(row, 4), `SUM(D${firstDoc}:D${lastDoc})`, { fmt: MONEY_FMT, bold: true, result: paySum })
+  } else {
+    setData(ws.getCell(row, 3), 0, { fmt: MONEY_FMT, gray: true })
+    setData(ws.getCell(row, 4), 0, { fmt: MONEY_FMT, gray: true })
+  }
   row++
-  const miscRow = row
-  setLabel(ws.getCell(row, 1), 'Clinic 雜項（淨額）')
+
+  // ── 結算區（五行）：★ A6 全部用【公式】＋ result 雙寫（規則①）；一律 SUM，禁裸 + ──
+  // 行 1：醫生店舖營收合計
+  setLabel(ws.getCell(row, 1), '醫生店舖營收合計')
+  ws.getCell(row, 2).border = thinBorder
+  setFormula(ws.getCell(row, 3), `C${totalRow}`, { fmt: MONEY_FMT, result: revSum })
+  const r1 = row
+  row++
+  // 行 2：＋ Clinic 雜項（淨額）— 沿用現有跨 sheet 連結
+  setLabel(ws.getCell(row, 1), '＋  Clinic 雜項（淨額）')
   ws.getCell(row, 2).border = thinBorder
   const miscCell = ws.getCell(row, 3)
   const miscWs = c.miscSheetName ? wb.getWorksheet(c.miscSheetName) : null
@@ -739,17 +797,49 @@ export function buildCoverSheet(wb: ExcelJS.Workbook, c: CoverSheetData): ExcelJ
   } else {
     setData(miscCell, round2(c.miscNet), { fmt: MONEY_FMT })
   }
+  const r2 = row
   row++
-  // 診所總收入 = 合計 + 雜項淨額（規則①雙寫 + 規則④黃底）
-  setLabel(ws.getCell(row, 1), '診所總收入', { bold: true })
+  // 行 3：＝ 店舖總收入 = 營收合計＋雜項淨額
+  setLabel(ws.getCell(row, 1), '＝  店舖總收入', { bold: true })
   ws.getCell(row, 2).border = thinBorder
-  const grandCell = ws.getCell(row, 3)
-  grandCell.value = { formula: `C${totalRow}+C${miscRow}`, result: round2(sumVal + c.miscNet) }
-  grandCell.font = mkFont({ bold: true, size: 12 })
-  grandCell.numFmt = MONEY_FMT
-  grandCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_YELLOW } }
-  grandCell.border = thinBorder
+  setFormula(ws.getCell(row, 3), `SUM(C${r1},C${r2})`, { fmt: MONEY_FMT, bold: true, result: round2(revSum + c.miscNet) })
+  const r3 = row
   row++
+  // 行 4：− 應付醫生合計
+  setLabel(ws.getCell(row, 1), '−   應付醫生合計')
+  ws.getCell(row, 2).border = thinBorder
+  setFormula(ws.getCell(row, 3), `D${totalRow}`, { fmt: MONEY_FMT, result: paySum })
+  const r4 = row
+  row++
+  // 行 5：＝ 診所淨收入 = 店舖總收入−應付醫生合計
+  // ★ A6：FILL_YELLOW 由舊「診所總收入」搬嚟呢度（舊嗰個數冇意義，唔應該高亮）
+  setLabel(ws.getCell(row, 1), '＝  診所淨收入', { bold: true })
+  ws.getCell(row, 2).border = thinBorder
+  const netCell = ws.getCell(row, 3)
+  setFormula(netCell, `C${r3}-C${r4}`, { fmt: MONEY_FMT, bold: true, result: round2(revSum + c.miscNet - paySum) })
+  netCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_YELLOW } }
+  row += 2
+
+  // ── 備註區（A7）：Free SP / Credit 分開列，全 0 都照出 ──
+  // ★ MD A1：兩者性質唔同，加埋一齊列會令人嘗試加落營收 = double count；每行各要一句解釋
+  setLabel(ws.getCell(row, 1), '備註 · 唔計入店舖營收', { bold: true })
+  for (let i = 2; i <= lastCol; i++) ws.getCell(row, i).border = thinBorder
+  row++
+  setLabel(ws.getCell(row, 1), '  Free SP')
+  ws.getCell(row, 2).border = thinBorder
+  setData(ws.getCell(row, 3), round2(c.doctors.reduce((s, d) => s + d.freeSp, 0)), { fmt: MONEY_FMT })
+  setLabel(ws.getCell(row, 4), '唔計店舖營收，已計入醫生收入（已包含喺上面「應付醫生」）', { gray: true, italic: true })
+  row++
+  setLabel(ws.getCell(row, 1), '  Credit')
+  ws.getCell(row, 2).border = thinBorder
+  setData(ws.getCell(row, 3), round2(c.doctors.reduce((s, d) => s + d.credit, 0)), { fmt: MONEY_FMT })
+  setLabel(ws.getCell(row, 4), '店舖營收、醫生收入兩樣都唔計（記賬用）', { gray: true, italic: true })
+  row += 2
+
+  // ★ A8：底部免責句（唔准慳）— 冇佢會令人以為「診所淨收入」係最終盈利
+  const disclaimer = ws.getCell(row, 1)
+  disclaimer.value = '※「應付醫生」已扣 Lab／植體成本。「診所淨收入」未扣診所自身開支（租金、人工、器材）。'
+  disclaimer.font = mkFont({ italic: true, color: COLOR_GRAY })
 
   return ws
 }
