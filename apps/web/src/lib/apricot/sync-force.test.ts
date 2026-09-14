@@ -150,11 +150,16 @@ beforeEach(() => {
 
 const FROM = '2026-08-04T00:00:00.000Z'
 const TO = '2026-08-04T23:59:59.000Z'
+// ★ cwm-syncclinicid-20260914：入口加咗 24 位 hex ObjectId 防呆 → 測試 clinic id 要用 hex24。
+//   舊版 'MF'/'TW' 係 dev E2E fixture 嘅 apricotClinicId 字面值，regex 【故意唔 loosen】收佢哋
+//   （dev 對 MF/TW 嘅 sync job FAILED 係預期行為 — 見 MD 鐵律）。
+const CLINIC_A = '695e6e491e430c48022a768a'
+const CLINIC_B = '695e6e491e430c48022a768b'
 
 describe('cwm-syncforce-20260913 syncClinicForJob force', () => {
   it('A: force=true 拉 bill 中途 cancel → billsFetched=10 照回 + stats map 記到', async () => {
     shouldCancelImpl = () => billApiCalls >= 10 // 拉咗 10 張先 cancel（billsChecked=10 嗰次 check 觸發）
-    const r = await syncClinicForJob('MF', FROM, TO, 'job-sf-a', true)
+    const r = await syncClinicForJob(CLINIC_A, FROM, TO, 'job-sf-a', true)
     assert.equal(r.cancelled, true)
     assert.equal(r.billsFetched, 10)
     assert.equal(r.billsChecked, 10)
@@ -168,7 +173,7 @@ describe('cwm-syncforce-20260913 syncClinicForJob force', () => {
   it('B: force=false 對照 — 四條件全唔成立 → 12 張單 0 次 bill API call, billsFetched=0', async () => {
     // cancel 次序：①page-loop ②拉完付款 ③upsert idx0 ④拉完 bill → 第 4 次返 true（行完 bill loop 先 cancel）
     shouldCancelImpl = () => ++cancelCalls >= 4
-    const r = await syncClinicForJob('MF', FROM, TO, 'job-sf-b', false)
+    const r = await syncClinicForJob(CLINIC_A, FROM, TO, 'job-sf-b', false)
     assert.equal(r.cancelled, true)
     assert.equal(r.billsFetched, 0)
     assert.equal(r.billsChecked, 12) // 12 張全部「檢查」咗
@@ -179,11 +184,11 @@ describe('cwm-syncforce-20260913 syncClinicForJob force', () => {
 
   it('C: 同一 jobId 兩間 clinic 累積 → stats map 10+10=20', async () => {
     shouldCancelImpl = () => billApiCalls >= 10
-    const r1 = await syncClinicForJob('MF', FROM, TO, 'job-sf-c', true)
+    const r1 = await syncClinicForJob(CLINIC_A, FROM, TO, 'job-sf-c', true)
     assert.equal(r1.billsFetched, 10)
     billApiCalls = 0 // 第二間 clinic 重新計
     shouldCancelImpl = () => billApiCalls >= 10
-    const r2 = await syncClinicForJob('TW', FROM, TO, 'job-sf-c', true)
+    const r2 = await syncClinicForJob(CLINIC_B, FROM, TO, 'job-sf-c', true)
     assert.equal(r2.billsFetched, 10) // 每次 call 嘅回傳係該 clinic 自己嘅數
     assert.equal(getBillFetchStats('job-sf-c'), 20) // map 係 job 級累積
   })

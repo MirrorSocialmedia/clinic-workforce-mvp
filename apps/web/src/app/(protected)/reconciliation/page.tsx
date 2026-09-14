@@ -208,8 +208,11 @@ function ReconciliationPageInner() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             clinicId,
-            from: date,
-            to: date,
+            // ★ cwm-syncclinicid-20260914：純日期會被 new Date() 當【UTC 午夜】＝ HK 08:00，
+            //   from === to 變成零長度區間，拉唔到成日嘅數據。
+            //   格式同 apricot-sync/page.tsx:241-242 一致。
+            from: `${date}T00:00:00+08:00`,
+            to:   `${date}T23:59:59+08:00`,
             // ★ cwm-syncforce-20260913：backfill = 人手「我知呢日有問題」，
             //   一定要繞過 shouldFetch 快取，否則舊單改咗都唔會重拉。
             force: true,

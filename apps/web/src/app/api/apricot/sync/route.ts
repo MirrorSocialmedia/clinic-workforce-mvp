@@ -146,8 +146,23 @@ export async function POST(req: NextRequest) {
     let clinicExtId: string | null = null
 
     if (clinicId) {
-      targets = [clinicId]
-      clinicExtId = clinicId
+      // ★ cwm-syncclinicid-20260914：caller 可能傳【我哋嘅 Clinic.id】（reconciliation backfill）
+      //   或者【apricotClinicId】（apricot-sync 頁下拉）。route 要兩種都收得。
+      //   ⚠️ 之前直接當佢係 apricotClinicId → backfill 傳 cuid 就 APRICOT_HTTP_500
+      //      "invalid hexadecimal representation of an ObjectId"。
+      const c = await prisma.clinic.findFirst({
+        where: { OR: [{ id: clinicId }, { apricotClinicId: clinicId }] },
+        select: { id: true, name: true, apricotClinicId: true },
+      })
+      if (!c) {
+        return NextResponse.json({ error: `搵唔到診所：${clinicId}` }, { status: 404 })
+      }
+      if (!c.apricotClinicId) {
+        return NextResponse.json(
+          { error: `診所「${c.name}」未綁 Apricot ID，唔同步得` }, { status: 400 })
+      }
+      targets = [c.apricotClinicId]
+      clinicExtId = c.apricotClinicId
     } else {
       const cs = await prisma.clinic.findMany({
         where: { apricotClinicId: { not: null } },

@@ -286,10 +286,24 @@ export async function syncClinicForJob(
    */
   force = false,
 ) {
+  // ★ cwm-syncclinicid-20260914：Apricot 個 clinicId 係 24 位 hex ObjectId。
+  //   傳咗本地 cuid 上去會回一個好難讀嘅 500
+  //   ("invalid hexadecimal representation of an ObjectId")——
+  //   喺呢度即刻 throw，錯誤訊息直接講明係咩事。
+  if (!/^[0-9a-f]{24}$/i.test(clinicExtId)) {
+    throw new Error(
+      `APRICOT_BAD_CLINIC_ID: ${clinicExtId} —— 似係本地 Clinic.id，唔係 apricotClinicId`)
+  }
+
   const startUtc = new Date(fromISO)
   const endUtc = new Date(toISO)
   if (isNaN(+startUtc) || isNaN(+endUtc)) {
     throw new Error(`APRICOT_BAD_DATE_RANGE: from=${fromISO} to=${toISO}`)
+  }
+  // ★ from === to（純日期被當 UTC 午夜）→ 零長度區間，靜靜拉唔到嘢
+  if (endUtc.getTime() <= startUtc.getTime()) {
+    throw new Error(
+      `APRICOT_BAD_DATE_RANGE: 區間零長度或者倒轉 from=${fromISO} to=${toISO}`)
   }
   const startValue = startUtc.toISOString()
   const endValue = endUtc.toISOString()
