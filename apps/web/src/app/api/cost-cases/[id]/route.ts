@@ -87,16 +87,54 @@ export async function PUT(
   // ★ 2026-08-25 守衛③：改落單日會換 periodMonth — 目標月份已 LOCKED 唔准改
   //   ⚠️ PayoutRun status 實值只有 DRAFT | LOCKED（2026-08-25 grep 確認；
   //      MD 寫嘅 EXPORTED 係 PayrollRun 嘅狀態，唔係 PayoutRun 嘅）
-  if (effectivePeriodMonth !== existing.periodMonth) {
-    // ★ 2026-08-27：null（由有到貨變未到貨）唔使檢查目標月（#13 唔會 409）
-    if (effectivePeriodMonth) {
-      const lockedRun = await prisma.payoutRun.findFirst({
-        where: { periodMonth: effectivePeriodMonth, status: 'LOCKED' },
+  // ★★★ cwm-costlock-scope-20260913：守衛範圍由「月份」收窄到「醫生 × 診所 × 月」。
+  //   舊版只驗 periodMonth → 只要該月任何一個醫生鎖咗，全公司該月成本都改唔到
+  //   （實證：Dr.Tse 未生成月結，但因為同月 5 位醫生已鎖而改唔到佢嘅成本）。
+  //   ★ 口徑同 provider-referrals/route.ts:148-154 一致（PayoutRun = 醫生 × 診所 × 月）。
+  //   ⚠️ 要驗【兩邊】：providerId / clinicId 本身可改（:42-44 拍板③），
+  //      搬出（舊 run 少一筆）同搬入（新 run 多一筆）都會令已鎖金額變錯。
+  const effectiveProviderId = providerId !== undefined ? providerId : existing.providerId
+  const effectiveClinicId   = clinicId   !== undefined ? clinicId   : existing.clinicId
+
+  const movedRun =
+    effectivePeriodMonth !== existing.periodMonth ||
+    effectiveProviderId !== existing.providerId ||
+    effectiveClinicId   !== existing.clinicId
+
+  if (movedRun) {
+    // ★ 搬出：舊歸屬（periodMonth 可能係 null —— null 冇 run，跳過）
+    if (existing.periodMonth) {
+      const fromRun = await prisma.payoutRun.findFirst({
+        where: {
+          providerId: existing.providerId,
+          clinicId:   existing.clinicId,
+          periodMonth: existing.periodMonth,
+          status: 'LOCKED',
+        },
         select: { id: true },
       })
-      if (lockedRun) {
+      if (fromRun) {
         return jsonNoStore(
-          { error: `${effectivePeriodMonth} 已出月結，唔可以改到嗰個月` }, { status: 409 })
+          { error: `原本嗰張月結單（${existing.periodMonth}）已出月結，唔可以搬走呢筆成本` },
+          { status: 409 })
+      }
+    }
+
+    // ★ 搬入：新歸屬（2026-08-27：null = 由有到貨變未到貨，冇目標 run，跳過）
+    if (effectivePeriodMonth) {
+      const toRun = await prisma.payoutRun.findFirst({
+        where: {
+          providerId: effectiveProviderId,
+          clinicId:   effectiveClinicId,
+          periodMonth: effectivePeriodMonth,
+          status: 'LOCKED',
+        },
+        select: { id: true },
+      })
+      if (toRun) {
+        return jsonNoStore(
+          { error: `目標月結單（${effectivePeriodMonth}）已出月結，唔可以改到嗰度` },
+          { status: 409 })
       }
     }
   }
