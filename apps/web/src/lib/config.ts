@@ -153,6 +153,8 @@ export const CONFIG = {
     'PUT /api/punches/:id': ['OWNER', 'MANAGER'],
     'POST /api/punches/:id/void': ['OWNER', 'MANAGER'],
     'GET /api/punch/my-records': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    // ★ cwm-crossclinic-20260914：異地打卡提醒（純查詢）。★ 唔加 ACCOUNTANT —— 佢哋唔改排班。
+    'GET /api/attendance/cross-clinic': ['OWNER', 'MANAGER'],
 
     // Punch correction routes
     'POST /api/punch-corrections': ['OWNER', 'MANAGER', 'EMPLOYEE'],
@@ -486,6 +488,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/punches': ['attendance_manage'],
   'GET /api/punches/:id': ['attendance_manage'],
   'PUT /api/punch-corrections/:id': ['attendance_manage'],
+
+  // ★ cwm-crossclinic-20260914：異地打卡提醒（純查詢，同 GET /api/punches 同一級）
+  'GET /api/attendance/cross-clinic': ['attendance_manage'],
 
   // ★ 2026-08-04: 排班每日備註 —— 有 scheduling 權限可讀/寫
   'GET /api/schedule-notes': ['scheduling'],

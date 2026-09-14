@@ -5,12 +5,39 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Pencil, Plus, Smartphone, Wrench, Search, Clock } from 'lucide-react'
-import { toHKDateStr, fmtDateTime, fmtDate, todayHK } from '@/lib/hk-date'
+import { toHKDateStr, fmtDateTime, fmtDate, todayHK, hkDayOfWeek } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
 import { hasPermission } from '@/lib/permissions'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
-type TabKey = 'records' | 'exceptions' | 'hash'
+type TabKey = 'records' | 'exceptions' | 'hash' | 'crossClinic'
+
+// ★ cwm-crossclinic-20260914：異地打卡提醒（純查詢 GET /api/attendance/cross-clinic）
+type CrossClinicKind = 'UNPAIRED' | 'WRONG_CLINIC' | 'NO_SHIFT'
+
+interface CrossClinicItem {
+  employeeId: string
+  employeeName: string
+  date: string
+  kind: CrossClinicKind
+  shift: {
+    clinicName: string
+    secondaryClinicName: string | null
+    startTime: string
+    endTime: string
+  } | null
+  punches: Array<{ time: string; type: string; clinicName: string; inShift: boolean }>
+}
+
+// 排序：UNPAIRED → NO_SHIFT → WRONG_CLINIC（API 已排好；前端照收）
+const CROSS_CLINIC_BADGE: Record<CrossClinicKind, { label: string; bg: string; color: string }> = {
+  UNPAIRED: { label: '配唔成對', bg: '#fde8e8', color: '#c62828' },
+  NO_SHIFT: { label: '冇更表', bg: '#fde8e8', color: '#c62828' },
+  WRONG_CLINIC: { label: '全日異地', bg: '#fff8e1', color: '#b26a00' },
+}
+
+const HK_WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
+const weekdayOf = (dateStr: string) => HK_WEEKDAY[hkDayOfWeek(dateStr)] ?? ''
 
 interface PunchRecord {
   id: string
@@ -334,6 +361,10 @@ export default function AttendancePage() {
   const [exClinics, setExClinics] = useState<Array<{ id: string; name: string }>>([])
   const [exEmployees, setExEmployees] = useState<Array<{ id: string; name: string }>>([])
 
+  // ★ cwm-crossclinic-20260914：異地打卡提醒 tab（當月，純查詢）
+  const [crossClinicItems, setCrossClinicItems] = useState<CrossClinicItem[]>([])
+  const [crossClinicLoading, setCrossClinicLoading] = useState(false)
+
   // Hash tab state
   const [selectedClinic, setSelectedClinic] = useState('')
   const [hashes, setHashes] = useState<any[]>([])
@@ -508,6 +539,37 @@ export default function AttendancePage() {
     finally { setExLoading(false) }
   }, [exClinicId, exEmployeeId, periodMonth])
 
+  // ★ cwm-crossclinic-20260914：異地打卡提醒（當月，唔帶參數 — 拍板③：LOCKED 月改唔到排班，唔給揀舊月）
+  const fetchCrossClinic = useCallback(async () => {
+    setCrossClinicLoading(true)
+    try {
+      const res = await fetch('/api/attendance/cross-clinic', { credentials: 'include', cache: 'no-store' })
+      if (res.ok) {
+        const data = await res.json()
+        setCrossClinicItems(data.items || [])
+      } else {
+        setCrossClinicItems([])
+      }
+    } catch {
+      setCrossClinicItems([])
+    } finally {
+      setCrossClinicLoading(false)
+    }
+  }, [])
+
+  // 開頁就攞（tab 標籤要顯示 N）；每次切 tab 都重fetch（去咗排班頁改完返嚟 = 自動刷新）
+  useEffect(() => { if (user) fetchCrossClinic() }, [user, activeTab, fetchCrossClinic])
+
+  // ★ cwm-crossclinic-20260914 B3：「睇打卡記錄」→ records tab 帶 employee+date filter
+  //   （records tab 現行就有 employeeFilter / startDate / endDate state，實打實帶到）
+  const viewCrossClinicPunches = (item: CrossClinicItem) => {
+    setEmployeeFilter(item.employeeId)
+    setStartDate(item.date)
+    setEndDate(item.date)
+    setPage(1)
+    setActiveTab('records')
+  }
+
   const handleMakeup = async (record: ExceptionRecord) => {
     const minutes = record.lateMinutes || record.earlyMinutes || 0
     if (!minutes || minutes <= 0) { alert('無法確定補鐘分鐘數'); return }
@@ -666,6 +728,9 @@ export default function AttendancePage() {
   const canAddCorrection = hasPermission(user.role, 'attendance_manage', user.grant, user.deny)
   const hasAttendanceManage = canAddCorrection // alias for existing callers
   const isManagerOrAbove = user.role === 'OWNER' || user.role === 'MANAGER' /* ROLE-OK: 作廢/修正工具區塊影響防篡改證據鏈 */
+  // ★ cwm-crossclinic-20260914：異地打卡 tab 可見性 —— 同 API RBAC 對齊（OWNER/MANAGER，或持有人被開咗 attendance_manage）
+  const showCrossClinicTab = isManagerOrAbove || hasAttendanceManage
+  const crossClinicCount = crossClinicItems.length
   // ★ 補鐘 = 時間帳戶操作，唔係考勤管理 —— 同 api/timebank/makeup 用同一個權限。
   const canMakeup = hasPermission(user.role, 'timebank_ops', user.grant, user.deny)
   const totalPages = Math.ceil(total / pageSize)
@@ -680,9 +745,15 @@ export default function AttendancePage() {
           { key: 'records' as TabKey, label: '全部記錄' },
           { key: 'exceptions' as TabKey, label: '異常（遲到/缺卡/補登）' },
           { key: 'hash' as TabKey, label: '完整性驗證' },
+          // ★ cwm-crossclinic-20260914：N>0 先標黃（琥珀），0 唔標
+          ...(showCrossClinicTab ? [{
+            key: 'crossClinic' as TabKey,
+            label: `⚠️ 異地打卡${crossClinicCount > 0 ? ` ${crossClinicCount}` : ''}`,
+            hot: crossClinicCount > 0,
+          }] : []),
         ]).map(tab => (
           <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-            className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px whitespace-nowrap ${activeTab === tab.key ? 'border-brand text-brand' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+            className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 -mb-px whitespace-nowrap ${activeTab === tab.key ? 'border-brand text-brand' : (tab as { hot?: boolean }).hot ? 'border-transparent text-amber-600' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
             {tab.label}
           </button>
         ))}
@@ -1453,6 +1524,66 @@ export default function AttendancePage() {
       )}
 
       {/* Hash Tab */}
+      {/* ★ cwm-crossclinic-20260914：異地打卡提醒（純查詢 — 只係話你知邊日要改排班，改完自動消失） */}
+      {activeTab === 'crossClinic' && (
+        <div>
+          <p className="text-sm text-muted-foreground mb-4">
+            打卡診所唔喺更表指派範圍內。改咗排班之後，工時／OT／早退就會計返。
+          </p>
+          {crossClinicLoading ? (
+            <div className="text-center py-10 text-sm text-muted-foreground">載入中…</div>
+          ) : crossClinicItems.length === 0 ? (
+            <div className="text-center py-10 text-sm text-muted-foreground">本月冇異地打卡</div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {crossClinicItems.map(item => {
+                const badge = CROSS_CLINIC_BADGE[item.kind]
+                return (
+                  <div key={`${item.employeeId}:${item.date}`} className="border border-gray-200 rounded-lg p-4" style={{ background: '#fafafa' }}>
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <span className="font-semibold text-sm">{item.employeeName}</span>
+                      <span className="text-sm text-muted-foreground">{item.date}（{weekdayOf(item.date)}）</span>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: badge.bg, color: badge.color }}>{badge.label}</span>
+                    </div>
+                    <div className="text-sm space-y-1">
+                      <div className="flex gap-2">
+                        <span className="w-14 text-muted-foreground shrink-0">更表</span>
+                        <span>{item.shift
+                          ? `${item.shift.clinicName}　${item.shift.startTime}–${item.shift.endTime}${item.shift.secondaryClinicName ? `（可走：${item.shift.secondaryClinicName}）` : ''}`
+                          : '—'}</span>
+                      </div>
+                      {item.punches.map((p, i) => (
+                        <div key={i} className="flex gap-2">
+                          <span className="w-14 text-muted-foreground shrink-0">{punchLabel(p.type)}</span>
+                          <span>
+                            {p.time} · {p.clinicName}{' '}
+                            {p.inShift
+                              ? <span className="text-green-600">✓</span>
+                              : <span className="text-red-600">✗ 唔喺更表範圍</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      {/* ★ B3：排班頁零 searchParams（落刀前核實）→ 淨跳 /scheduling，唔靜靜帶錯誤日期 */}
+                      <Link href="/scheduling"
+                        className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-medium text-white transition-colors"
+                        style={{ background: '#0d6efd' }}>
+                        {item.kind === 'NO_SHIFT' ? '補排更 →' : '改排班 →'}
+                      </Link>
+                      <button onClick={() => viewCrossClinicPunches(item)}
+                        className="px-3 py-1.5 rounded-md border text-sm font-medium transition-colors hover:bg-slate-100">
+                        睇打卡記錄
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {activeTab === 'hash' && (
         <>
           <p className="text-sm text-muted-foreground mb-6">
