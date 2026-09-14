@@ -20,6 +20,35 @@ export async function updateJob(jobId: string, data: Partial<any>) {
   await prisma.apricotSyncJob.update({ where: { id: jobId }, data })
 }
 
+// ─── cwm-syncforce-20260913 D: billsFetched in-memory stats ─────────────────────
+// ★ Zero-schema 設計：ApricotSyncJob 冇 JSON result 欄（本單零 migration 唔准加欄），
+//   而 POST /api/apricot/sync 即回 jobId → 實際重拉數無法持久化，走呢個 map。
+//   key = jobId（一個 job 可跨多間 clinic，逐 clinic 累積），value = { count, at }。
+//   jobs/[id] GET 回應帶佢做非持久欄；map 冇就唔帶（誠實，唔好講大話）。
+// ★ TTL：每次寫入時剔 >1h 條目（除本身）— 唔使 background timer，防 map 漏。
+const billFetchStats = new Map<string, { count: number; at: number }>()
+const BILL_FETCH_STATS_TTL_MS = 60 * 60 * 1000
+
+function recordBillFetchStats(jobId: string | undefined, count: number) {
+  if (!jobId) return
+  const now = Date.now()
+  for (const [k, v] of billFetchStats) {
+    if (k !== jobId && now - v.at > BILL_FETCH_STATS_TTL_MS) billFetchStats.delete(k)
+  }
+  const prev = billFetchStats.get(jobId)
+  billFetchStats.set(jobId, { count: (prev?.count ?? 0) + count, at: now })
+}
+
+/** 俾 jobs/[id] GET：實際重拉數。undefined = 無記錄（job 未終態／server 重啟／舊 job）→ 唔帶。 */
+export function getBillFetchStats(jobId: string): number | undefined {
+  return billFetchStats.get(jobId)?.count
+}
+
+/** 單測用：清空 stats map */
+export function _resetBillFetchStatsForTest() {
+  billFetchStats.clear()
+}
+
 // ─── cwm-reconxlsx-fix-20260910 D: sweep ─────────────────────────────────
 // sync 完一個範圍後，將該範圍內 Apricot 冇再返嘅 payment 嘅 allocation 標 isVoid（已刪／已作廢）。
 // ★★★ 四個安全條件（缺一不可）：
@@ -249,6 +278,13 @@ export async function syncClinicForJob(
   fromISO: string,
   toISO: string,
   jobId?: string,
+  /**
+   * ★ cwm-syncforce-20260913：繞過 shouldFetch 快取，逐張 bill 強制重拉。
+   *   點解要：舊單嘅 practitioner／金額被員工改咗之後，四個 shouldFetch 條件
+   *   全部唔成立（唔係本月、七日內 sync 過）→ 永遠唔會重拉，DB 永遠係舊值。
+   *   ⚠️ 只俾【人手 backfill】用 —— 定期 sync 用返快取，否則 API call 會爆。
+   */
+  force = false,
 ) {
   const startUtc = new Date(fromISO)
   const endUtc = new Date(toISO)
@@ -262,10 +298,21 @@ export async function syncClinicForJob(
   let page = 0
   const allPayments: any[] = []
 
+  // ★ cwm-syncforce-20260913 D: 實際重拉（有 API call）張數 — 喺度先宣告，令 finish()
+  //   可以喺任何 return path（包括 billsChecked 宣告前嘅 cancel 早退）安全引用
+  let billsFetched = 0
+
+  // ★ cwm-syncforce-20260913: 單一出口 — 所有 return path（含全部 cancel 早退）都經呢度，
+  //   結構性保證 billsFetched 每一路都回傳 + 寫入 stats map，零漏分支。
+  const finish = (cancelled: boolean, billsCheckedNow: number, allocRowsNow: number) => {
+    recordBillFetchStats(jobId, billsFetched)
+    return { cancelled, paymentsSynced: allPayments.length, billsChecked: billsCheckedNow, allocRows: allocRowsNow, billsFetched }
+  }
+
   do {
     // ★ MD-Q: 每頁檢查 cancel
     if (jobId && (await shouldCancel(jobId))) {
-      return { cancelled: true, paymentsSynced: allPayments.length, billsChecked: 0, allocRows: 0 }
+      return finish(true, 0, 0)
     }
 
     if (jobId) {
@@ -296,13 +343,13 @@ export async function syncClinicForJob(
 
   // ★ MD-Q: 拉完付款檢查 cancel
   if (jobId && (await shouldCancel(jobId))) {
-    return { cancelled: true, paymentsSynced: allPayments.length, billsChecked: 0, allocRows: 0 }
+    return finish(true, 0, 0)
   }
 
   // 2) upsert Payments — ★ V4: 每 10 筆檢查 cancel
   for (let idx = 0; idx < allPayments.length; idx++) {
     if (idx % 10 === 0 && jobId && (await shouldCancel(jobId))) {
-      return { cancelled: true, paymentsSynced: allPayments.length, billsChecked: 0, allocRows: 0 }
+      return finish(true, 0, 0)
     }
     await upsertPayment(allPayments[idx], clinicExtId)
   }
@@ -314,7 +361,9 @@ export async function syncClinicForJob(
   for (const billId of billIds) {
     const existing = await prisma.apricotBill.findUnique({ where: { extId: billId } })
     const billTime = existing?.billTime || new Date()
+    // ★ cwm-syncforce-20260913: force 加喺最前 short-circuit — 人手 backfill 逐張單強制重拉
     const shouldFetch =
+      force ||
       !existing ||
       !existing.syncedAt ||
       (new Date().getTime() - existing.syncedAt.getTime()) > 7 * 24 * 3600 * 1000 ||
@@ -323,7 +372,7 @@ export async function syncClinicForJob(
     if (shouldFetch) {
       // ★ V4: 每 10 張 bill 檢查 cancel（唔好每張都 query DB）
       if (billsChecked % 10 === 0 && jobId && (await shouldCancel(jobId))) {
-        return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows: 0 }
+        return finish(true, billsChecked, 0)
       }
 
       if (jobId) {
@@ -334,13 +383,14 @@ export async function syncClinicForJob(
       const sanitized = sanitizeBill(rawBill)
       assertNoPii(sanitized)
       await upsertBill(sanitized)
+      billsFetched++ // ★ cwm-syncforce-20260913 D: 計實際重拉數
     }
     billsChecked++
   }
 
   // ★ MD-Q: 拉完 bill 檢查 cancel
   if (jobId && (await shouldCancel(jobId))) {
-    return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows: 0 }
+    return finish(true, billsChecked, 0)
   }
 
   // 4) 重算 allocation
@@ -384,7 +434,7 @@ export async function syncClinicForJob(
   for (let idx = 0; idx < allPayments.length; idx++) {
     // ★ V4: 每 10 筆付款檢查 cancel（唔好每筆都 query DB）
     if (idx % 10 === 0 && jobId && (await shouldCancel(jobId))) {
-      return { cancelled: true, paymentsSynced: allPayments.length, billsChecked, allocRows }
+      return finish(true, billsChecked, allocRows)
     }
     const p = allPayments[idx]
 
@@ -423,7 +473,7 @@ export async function syncClinicForJob(
     })
   }
 
-  return { cancelled: false, paymentsSynced: allPayments.length, billsChecked, allocRows }
+  return finish(false, billsChecked, allocRows)
 }
 
 /** 舊版入口 — 被 withApricotLock 包起，保持原有同步行為 */

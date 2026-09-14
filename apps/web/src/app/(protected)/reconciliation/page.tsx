@@ -193,6 +193,8 @@ function ReconciliationPageInner() {
   )
 
   // ★ cwm-recon-clinic-20260909 D：用返呢筆 import 嘅診所，唔好硬食 clinics[0]
+  // ★ cwm-syncforce-20260913 C+D：backfill 傳 force:true（繞過 shouldFetch 快取）+
+  //   route 即回 jobId（非等完）→ poll job 到終態先讀 billsFetched，提示顯示真實重拉數，唔好再講大話。
   const handleBackfill = useCallback(
     async (date: string, clinicId: string | null, clinicName: string) => {
       if (!confirm(`確定要重新同步 ${clinicName} ${date} 嘅 Apricot 數據？`)) return
@@ -201,18 +203,59 @@ function ReconciliationPageInner() {
         return
       }
       try {
-        await apiFetch('/api/apricot/sync', {
+        const res = await apiFetch<{ jobId?: string }>('/api/apricot/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             clinicId,
             from: date,
             to: date,
+            // ★ cwm-syncforce-20260913：backfill = 人手「我知呢日有問題」，
+            //   一定要繞過 shouldFetch 快取，否則舊單改咗都唔會重拉。
+            force: true,
           }),
         })
-        alert(`${clinicName} ${date} 同步完成，請重新上載月報對數`)
+        const jobId = res?.jobId
+        if (!jobId) {
+          alert('同步任務建立失敗（無 jobId），請再試一次')
+          return
+        }
+
+        // ★ poll job 到終態（~2s 間隔，上限 ~3 分鐘）— 期間唔斷就唔好話完成
+        let job: { status?: string; errorMessage?: string | null; billsFetched?: number } | null = null
+        const deadline = Date.now() + 3 * 60 * 1000
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 2000))
+          const jr = await apiFetch<{ job?: any }>(`/api/apricot/sync/jobs/${jobId}`)
+          job = jr?.job ?? null
+          if (job && (job.status === 'DONE' || job.status === 'FAILED' || job.status === 'CANCELLED')) break
+        }
+
+        if (!job || (job.status !== 'DONE' && job.status !== 'FAILED' && job.status !== 'CANCELLED')) {
+          alert(`${clinicName} ${date} 同步任務超過 3 分鐘仍未完成，請到同步狀態頁確認 —— 唔好當已完成`)
+          return
+        }
+        if (job.status === 'FAILED') {
+          alert(`${clinicName} ${date} 同步失敗：${job.errorMessage || '未知錯誤'}（呢次冇完成 backfill）`)
+          return
+        }
+        if (job.status === 'CANCELLED') {
+          alert(`${clinicName} ${date} 同步已取消（呢次冇完成 backfill）`)
+          return
+        }
+        // DONE：billsFetched 唔喺（server 重啟過／舊 job）就唔顯示 —— 誠實，唔好講大話
+        alert(
+          `${clinicName} ${date} 同步完成` +
+          (job.billsFetched != null ? `（重拉咗 ${job.billsFetched} 張帳單）` : '') +
+          `\n請重新上載月報對數`,
+        )
       } catch (e: any) {
-        alert(`同步失敗: ${e.message}`)
+        if (e.status === 409) {
+          // 已有同步任務進行中 —— 誠實提示，唔好話「同步完成」
+          alert(`已有同步任務進行中，呢次冇做 backfill（${e.message}），請稍後再試`)
+        } else {
+          alert(`同步失敗: ${e.message}`)
+        }
       }
     },
     [],

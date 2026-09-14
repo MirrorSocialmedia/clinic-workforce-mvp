@@ -23,6 +23,8 @@ async function runSyncInBackground(
   targets: string[],
   fromISO: string,
   toISO: string,
+  // ★ cwm-syncforce-20260913 B：force 預設 false（定期 sync / cron 唔會 accidentally 變 force）
+  force = false,
 ) {
   // 順序執行，唔准 Promise.all — 每次 call 可能 rotate token
   let totalPayments = 0
@@ -52,7 +54,7 @@ async function runSyncInBackground(
       })
 
       try {
-        const r = await syncClinicForJob(t, fromISO, toISO, jobId)
+        const r = await syncClinicForJob(t, fromISO, toISO, jobId, force)
         if (r.cancelled) {
           return // shouldCancel 已經處理咗 job status
         }
@@ -102,10 +104,22 @@ export async function POST(req: NextRequest) {
 
   return handleRoute('apricot/sync', async () => {
     const body = await req.json().catch(() => ({} as any))
-    const { clinicId, from, to } = body
+    const { clinicId, from, to, force } = body
+    // ★ cwm-syncforce-20260913 B：force 只認嚴格 boolean true（防手寫字串 "true" 被當 force）；
+    //   預設 false —— 定期 sync 維持快取，force 只俾人手 backfill 用。
+    const forceMode = force === true
 
     if (!from || !to) {
       return NextResponse.json({ error: 'from, to required' }, { status: 400 })
+    }
+
+    // ★ cwm-syncforce-20260913 B：force 會逐張單 call Apricot API —— 限 7 日內，防手殘拉半年
+    if (forceMode) {
+      const days = (new Date(to).getTime() - new Date(from).getTime()) / 86400000
+      if (days > 7) {
+        return NextResponse.json(
+          { error: '強制重拉只准 7 日內範圍（會逐張單 call Apricot API）' }, { status: 400 })
+      }
     }
 
     // 1) Clean zombie jobs
@@ -159,7 +173,7 @@ export async function POST(req: NextRequest) {
     })
 
     // 5) 背景執行 — 唔等完成；加 .catch() 防止未預期錯誤令 job 永遠 RUNNING
-    void runSyncInBackground(job.id, targets, fromISO, toISO).catch(async (e: any) => {
+    void runSyncInBackground(job.id, targets, fromISO, toISO, forceMode).catch(async (e: any) => {
       console.error('[apricot/sync-bg] 未預期錯誤', e)
       await prisma.apricotSyncJob.update({
         where: { id: job.id },
