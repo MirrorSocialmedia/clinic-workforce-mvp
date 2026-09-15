@@ -1688,6 +1688,53 @@ model PatientIndex {
 }
 
 // ============================================================
+// cwi-followup-p1-20260915 S0: 索引管道 schema（MD §2.2 逐字 — 從施工單 ```prisma 區塊提取）
+// 臨床資料邊界（MD §2.4）：noteJson 只存 workforce DB — wa-inbox 唔存；
+// external 列表 API 只回 firstLine，全文獨立 endpoint + 100% audit。
+// 原始電話唔過界：phoneHashes[]（§1.2 phoneHashes，多號）。
+// ============================================================
+model ClinicalRecordIndex {
+  id                String   @id @default(cuid())
+  clinicId          String
+  patientApricotId  String                     // cpId
+  patientCode       String?                    // YL000556
+  phoneHashes       String[]                   // ★ 可多個（§1.2）
+  visitDate         DateTime @db.Date          // conTime／checkInTime 嘅 HK 日
+  apricotApptId     String?
+  apricotNoteId     String?
+  bookingStatus     Int                        // 0/1/4/102/-3/負數
+  visitReasonCodes  String[]                   // ["0017"]
+  providerCode      String?
+  hasNote           Boolean  @default(false)
+  noteKind          String?                    // STANDARD | TEMPLATE
+  noteJson          Json?                      // ★ 見 2.4 邊界
+  quotedItems       Json?                      // E 類：[{text, amount}]
+  rxCodes           String[]                   // 藥物 code（術後判斷）
+  billTtlAmt        Int?
+  billOsAmt         Int?                       // 病人層欠款（F 類）
+  syncedAt          DateTime
+  parseVersion      Int      @default(1)       // 解析器版本（改版可重跑）
+  @@unique([patientApricotId, visitDate, apricotApptId])
+  @@index([clinicId, visitDate])
+  @@index([clinicId, bookingStatus, visitDate])
+}
+
+model ClinicalIndexJob {                        // 回填／夜跑進度
+  id         String   @id @default(cuid())
+  kind       String                             // NIGHTLY | BACKFILL
+  rangeFrom  DateTime @db.Date
+  rangeTo    DateTime @db.Date
+  cursorDate DateTime? @db.Date
+  status     String   @default("PENDING")       // PENDING|RUNNING|DONE|FAILED
+  patients   Int      @default(0)
+  apiCalls   Int      @default(0)
+  errors     Int      @default(0)
+  lastError  String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+}
+
+// ============================================================
 // providerslot-20260830 T1: 可約時段硬保留（hard hold）
 // MD: whatsapp-flow-booking.md §四（一揀即佔位；HELD 即時從可約計算扣除）
 // 🔴 PII 紅線：patientWaId / patientName 只係 workforce 內部用 —

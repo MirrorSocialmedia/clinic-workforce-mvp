@@ -121,4 +121,8 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // ★ cwi-refresh-20260831: External availability/refresh（wa-inbox 專用）—
   // 只觸發單日 cache re-sync（零 PII 槽格），notes 只記 dates+ok/error code
   'EXTERNAL_AVAILABILITY_REFRESH',
+  // ★ cwi-followup-p1-20260915: 臨床索引 external audit（wa-inbox 專用）—
+  // EXTERNAL_NOTE_VIEWED：記 staffId+visitId（零內容）；
+  // PATIENT_RECORD_REFRESHED：記 staffId+cpId+結果（零病人內容）— metadata-only
+  'EXTERNAL_NOTE_VIEWED', 'PATIENT_RECORD_REFRESHED',
 ])
