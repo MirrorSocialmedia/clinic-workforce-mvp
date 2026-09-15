@@ -1,0 +1,12 @@
+{ "v": 1, "companies": [
+  { "id": "fup0cmpa0000000000000000001", "name": "菁薈",
+    "clinics": [ { "id": "fup0tycl0000000000000000001", "code": "TY", "name": "TY 診所" } ] },
+  { "id": "fup0cmpb0000000000000000002", "name": "臻善",
+    "clinics": [ { "id": "fup0ymtc0000000000000000002", "code": "YMT", "name": "YMT 診所" },
+                 { "id": "e2ereconcltw00000000001", "code": "TW", "name": "E2E Recon TW 診所" },
+                 { "id": "e2ereconclmf00000000002", "code": "MF", "name": "E2E Recon MF 診所" } ] },
+  { "id": "fup0cmpc0000000000000000003", "name": "匯樂",
+    "clinics": [ { "id": "fup0tkwc0000000000000000003", "code": "TKW", "name": "TKW 診所" },
+                 { "id": "fup0ylcl0000000000000000004", "code": "YL", "name": "YL 診所" },
+                 { "id": "fup0wtcl0000000000000000005", "code": "WTC", "name": "WTC 診所" } ] }
+] }
