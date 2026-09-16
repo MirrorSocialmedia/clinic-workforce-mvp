@@ -38,9 +38,11 @@ export function __setLlmFn(fn: LlmFn | null): void {
 }
 
 /** sglang Qwen3：enable_thinking=false 先有 content（thinking 吃光 token budget — 實測）。
- *  只對 local（127.0.0.1/localhost）base 發 — 生產 OpenAI-compatible 唔一定識呢個欄位。 */
+ *  只對「自家機器」base 發（loopback / RFC1918 內網 / host.docker.internal）—
+ *  生產 OpenAI-compatible 唔一定識呢個欄位。2026-09-16：生產 sglang 喺 LAN IP（192.168.x），
+ *  舊版 regex 只認 127.0.0.1 → 生產唔發 flag → thinking 食光 token → LLM 層靜默死（CEO 實測捉到）。 */
 function isLocalBase(base: string): boolean {
-  return /(^|:)\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(base)
+  return /(^|:)\/\/(127\.0\.0\.1|localhost|host\.docker\.internal|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:|\/|$)/.test(base)
 }
 
 export async function llmChat(msgs: LlmChatMsg[], opts?: { maxTokens?: number }): Promise<LlmResult | null> {
