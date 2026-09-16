@@ -30,6 +30,8 @@ import {
   getPatientBills,
 } from './apricot-client'
 import { resolvePatientDay, upsertVisitIndex, buildClinicMap } from './visit-index'
+import { loadRxCodeEntries } from '@/lib/clinical/extract-rx-codes'
+import { storeQuotesForVisit } from '@/lib/clinical/quote-extract'
 import type { ClinicalCallFn } from './types'
 
 export interface RefreshBucketResult {
@@ -117,6 +119,7 @@ export async function refreshPatientIndex(
   const { call } = makeThrottledCallFn(opts.callFn)
   const phoneKey = process.env.PHONE_HASH_KEY ?? ''
   const clinicMap = await buildClinicMap()
+  const rxCodeEntries = await loadRxCodeEntries()
 
   // Call 1：appointments（決定目標日）
   let appointments: any[]
@@ -168,7 +171,7 @@ export async function refreshPatientIndex(
     registrationClinic: appointments[0]?.clinicId ?? cp.registrationClinic,
   }
 
-  const v = resolvePatientDay({ patient, appointments, notes, bills, day: targetDay, clinicMap, phoneKey })
+  const v = resolvePatientDay({ patient, appointments, notes, bills, day: targetDay, clinicMap, phoneKey, rxCodeEntries })
   if (v) await upsertVisitIndex(v)
 
   const row = await basePrisma.clinicalRecordIndex.findFirst({
@@ -179,6 +182,15 @@ export async function refreshPatientIndex(
     },
     orderBy: { syncedAt: 'desc' },
   })
+
+  // S3：手動刷新同步抽報價（best-effort — 唔阻 refresh 回應）
+  if (v?.hasNote && v.noteJson && row) {
+    try {
+      await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${targetDay}T00:00:00Z`), note: v.noteJson as any })
+    } catch (e) {
+      console.error('[quote-extract] 存儲失敗（唔阻 refresh）:', e)
+    }
+  }
 
   return {
     ok: true,

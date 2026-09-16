@@ -20,10 +20,14 @@ import { jsonNoStore } from '@/lib/api-response'
 //
 //   200: { v:1, visits:[{ visitId, patientApricotId, patientCode, phoneHashes,
 //          visitDate, clinicCode, bookingStatus, visitReasonCodes, providerCode,
-//          hasNote, quotedItems, billTtlAmt, billOsAmt }] }
+//          hasNote, quotedItems, rxCodes: [{ code, name, isAntibiotic }],
+//          billTtlAmt, billOsAmt }] }
 //
 // 讀索引（ClinicalRecordIndex）— 唔打 Apricot。
 // 🔴 只回 phoneHashes[]（永不回原始電話）；零 note 內容（全文走 #5）。
+// 🔴 rxCodes audit（cwi-followup-p4 S4 — 規則同 P1 EXTERNAL_NOTE_VIEWED 一致）：
+//    任何一行 rxCodes 非空 → 回內容之前先寫 EXTERNAL_RX_VIEWED（零藥物內容）；
+//    audit 寫入失敗 → 500 唔出內容。
 // ============================================================
 
 const MAX_RANGE_DAY_DIFF = 365 // 366 日含首尾（同回填 365 日範圍同口徑）
@@ -64,23 +68,47 @@ export async function GET(req: NextRequest) {
       orderBy: [{ visitDate: 'desc' }, { patientApricotId: 'asc' }],
     })
 
-    return jsonNoStore({
-      v: 1,
-      visits: rows.map(r => ({
-        visitId: r.id,
-        patientApricotId: r.patientApricotId,
-        patientCode: r.patientCode,
-        phoneHashes: r.phoneHashes,
-        visitDate: r.visitDate.toISOString().slice(0, 10),
-        clinicCode,
-        bookingStatus: r.bookingStatus,
-        visitReasonCodes: r.visitReasonCodes,
-        providerCode: r.providerCode,
-        hasNote: r.hasNote,
-        quotedItems: r.quotedItems,
-        billTtlAmt: r.billTtlAmt,
-        billOsAmt: r.billOsAmt,
-      })),
-    })
+    // S4：藥物 code → 顯示名 + 抗生素旗（C 類判定用；零全文）
+    const staffId = (req.headers.get('x-staff-id') ?? '').trim() || 'anonymous'
+    const rxRows = await basePrisma.clinicalRxCode.findMany({ select: { code: true, nameCn: true, nameEn: true, isAntibiotic: true } })
+    const rxInfo = new Map(rxRows.map(r => [r.code, { name: r.nameCn || r.nameEn || r.code, isAntibiotic: r.isAntibiotic }]))
+    const visits = rows.map(r => ({
+      visitId: r.id,
+      patientApricotId: r.patientApricotId,
+      patientCode: r.patientCode,
+      phoneHashes: r.phoneHashes,
+      visitDate: r.visitDate.toISOString().slice(0, 10),
+      clinicCode,
+      bookingStatus: r.bookingStatus,
+      visitReasonCodes: r.visitReasonCodes,
+      providerCode: r.providerCode,
+      hasNote: r.hasNote,
+      quotedItems: r.quotedItems,
+      rxCodes: r.rxCodes.map(c => ({ code: c, name: rxInfo.get(c)?.name ?? c, isAntibiotic: rxInfo.get(c)?.isAntibiotic ?? false })),
+      billTtlAmt: r.billTtlAmt,
+      billOsAmt: r.billOsAmt,
+    }))
+
+    // 🔴 rxCodes 非空 → 先 audit 後出內容（同 P1 EXTERNAL_NOTE_VIEWED 規則）
+    const withRx = visits.filter(v => v.rxCodes.length > 0)
+    if (withRx.length) {
+      try {
+        await basePrisma.auditLog.create({
+          data: {
+            actorId: null,
+            action: 'EXTERNAL_RX_VIEWED',
+            entity: 'ClinicalRecordIndex',
+            entityId: withRx[0].visitId,
+            clinicId: clinic.id,
+            notes: JSON.stringify({ staffId, clinicCode, visits: withRx.map(v => v.visitId), rxCount: withRx.reduce((s2, v) => s2 + v.rxCodes.length, 0) }),
+          },
+        })
+      } catch (err) {
+        console.error('[visits-batch-rx] EXTERNAL_RX_VIEWED audit 寫入失敗（唔出內容）:', err)
+        throw new ExternalApiError(500, 'audit write failed', 'INTERNAL')
+      }
+    }
+
+    return jsonNoStore({ v: 1, visits })
   })
 }

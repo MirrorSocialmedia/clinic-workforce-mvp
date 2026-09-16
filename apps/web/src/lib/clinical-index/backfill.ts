@@ -27,6 +27,8 @@ import {
 } from './types'
 import { fetchPatientData, searchPatientsForDate, makeThrottledCallFn, isStopNightError } from './apricot-client'
 import { resolvePatientDay, upsertVisitIndex, buildClinicMap } from './visit-index'
+import { loadRxCodeEntries } from '@/lib/clinical/extract-rx-codes'
+import { storeQuotesForVisit } from '@/lib/clinical/quote-extract'
 
 export type BackfillPauseReason = 'PAUSED_CALLS' | 'PAUSED_HOURS' | 'PAUSED_RATE_LIMITED' | 'PAUSED_QUOTA' | 'FAILED'
 
@@ -93,6 +95,7 @@ export async function runClinicalIndexBackfill(opts: {
   const { call, calls } = makeThrottledCallFn(opts.callFn)
   const phoneKey = process.env.PHONE_HASH_KEY ?? ''
   const clinicMap = await buildClinicMap()
+  const rxCodeEntries = await loadRxCodeEntries()
 
   const pause = (reason: BackfillPauseReason, lastError: string | null = null) => {
     outcome.status = reason
@@ -121,8 +124,21 @@ export async function runClinicalIndexBackfill(opts: {
         if (Date.now() - t0 >= maxMs) { pause('PAUSED_HOURS'); midDayStop = true; break }
         try {
           const data = await fetchPatientData(call, p.cpId ?? p.id, day)
-          const v = resolvePatientDay({ patient: p, ...data, day, clinicMap, phoneKey })
-          if (v) { await upsertVisitIndex(v); outcome.upserts++ }
+          const v = resolvePatientDay({ patient: p, ...data, day, clinicMap, phoneKey, rxCodeEntries })
+          if (v) {
+          await upsertVisitIndex(v); outcome.upserts++
+          if (v.hasNote && v.noteJson) {
+            try {
+              const row = await basePrisma.clinicalRecordIndex.findUnique({
+                where: { patientApricotId_visitDate_apricotApptId: { patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), apricotApptId: v.apricotApptId as string } },
+                select: { id: true },
+              })
+              if (row) await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), note: v.noteJson as any })
+            } catch (e) {
+              console.error('[quote-extract] 存儲失敗（唔阻 pipeline）:', e)
+            }
+          }
+        }
           outcome.patients++
         } catch (e) {
           if (isStopNightError(e)) { pause('PAUSED_RATE_LIMITED', errMsg(e)); midDayStop = true; break }

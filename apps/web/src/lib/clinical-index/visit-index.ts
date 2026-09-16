@@ -21,6 +21,7 @@ import { Prisma } from '@prisma/client'
 import { toHKDateStr } from '@/lib/hk-date'
 import { phoneHashes } from '@/lib/phone'
 import { extractNoteText } from './extract-note-text'
+import { extractRxCodes, type RxCodeEntry } from '@/lib/clinical/extract-rx-codes'
 import type { NoteText, ResolvedVisit } from './types'
 
 interface ExistingRow {
@@ -30,12 +31,13 @@ interface ExistingRow {
   noteKind: string | null
   noteJson: unknown
   apricotNoteId: string | null
+  rxCodes: string[]
   billTtlAmt: number | null
   billOsAmt: number | null
 }
 const SELECT_MERGE = {
   id: true, phoneHashes: true, hasNote: true, noteKind: true, noteJson: true,
-  apricotNoteId: true, billTtlAmt: true, billOsAmt: true,
+  apricotNoteId: true, rxCodes: true, billTtlAmt: true, billOsAmt: true,
 } as const
 
 /** 合併守則（檔案頭）→ create/update data 對。 */
@@ -67,8 +69,7 @@ function merged(r: ResolvedVisit, existing: ExistingRow | null): { create: Prism
       visitReasonCodes: r.visitReasonCodes,
       providerCode: r.providerCode,
       ...noteFields,
-      // P1 一律 []（MD 未指定來源欄；P4 C 類決定點 — progress 設計 #9）
-      rxCodes: [],
+      rxCodes: r.rxCodes ?? [],
       billTtlAmt,
       billOsAmt,
       syncedAt: new Date(),
@@ -81,7 +82,8 @@ function merged(r: ResolvedVisit, existing: ExistingRow | null): { create: Prism
       visitReasonCodes: r.visitReasonCodes,
       providerCode: r.providerCode,
       ...noteFields,
-      rxCodes: [],
+      // rxCodes 跟 note 欄走（keepNote = 保留現有；新 note = 新抽取）— 同 P1 守則
+      rxCodes: keepNote ? (existing!.rxCodes ?? []) : (r.rxCodes ?? []),
       billTtlAmt,
       billOsAmt,
       // phoneHashes 只係新值非空先覆寫（守則；update 路徑 existing 必非空）
@@ -152,8 +154,10 @@ export function resolvePatientDay(opts: {
   /** Apricot clinicId → 本系統 Clinic.id（未設 apricotClinicId 嘅 clinic 唔喺入面）。 */
   clinicMap: Map<string, string>
   phoneKey: string
+  /** 藥物字典（cwi-followup-p4 S4 — note → rxCodes 抽取；唔傳 = []）。 */
+  rxCodeEntries?: RxCodeEntry[]
 }): ResolvedVisit | null {
-  const { patient, appointments, notes, bills, day, clinicMap, phoneKey } = opts
+  const { patient, appointments, notes, bills, day, clinicMap, phoneKey, rxCodeEntries } = opts
 
   // 1) 錨點 = 該日嘅 appointment（conTime／checkInTime 嘅 HK 日 — MD §2.2 visitDate 定義；
   //    conTime 可能係 UTC Z 格式 → 必須 toHKDateStr，唔好用字串前綴）
@@ -194,6 +198,8 @@ export function resolvePatientDay(opts: {
     hasNote: !!noteText,
     noteKind: noteText ? noteText.kind : null,
     noteJson: noteText,
+    // S4：藥物 code（note → 字典匹配；零全文入庫）
+    rxCodes: rxCodeEntries ? extractRxCodes(noteText, rxCodeEntries) : [],
     billTtlAmt,
     billOsAmt,
   }

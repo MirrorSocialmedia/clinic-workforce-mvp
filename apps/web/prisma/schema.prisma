@@ -1734,6 +1734,65 @@ model ClinicalIndexJob {                        // 回填／夜跑進度
   finishedAt DateTime?
 }
 
+// 速記術語表（cwi-followup-p4-20260916 S1 — MD §5.2/§5.3）
+// 醫生／護士可編輯（external API PUT，wa-inbox 術語表 admin 頁）。
+// 解析規則（FDI 牙位／金額／意向詞）唔可編輯 — 只詞表可改（MD §5.3）。
+model ClinicalTermMap {
+  id        String   @id @default(cuid())
+  shorthand String   @unique   // 速記（x / rsd / br / implant / SP / INV / FILLING…）
+  nameCn    String            // 標準名稱（拔牙 / 牙根刮治 / 牙橋…）
+  nameEn    String?           // extraction / root planing / bridge…
+  usedFor   String[]          // 用喺（顯示用）：after_treatment / quote_extraction / recall
+  active    Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+}
+
+// 藥物 code 字典（cwi-followup-p4-20260916 S4 — rxCodes 抽取 + C 類抗生素判定）
+// note 文本對 nameEn/nameCn 匹配 → 存 code 入 ClinicalRecordIndex.rxCodes。
+model ClinicalRxCode {
+  id           String   @id @default(cuid())
+  code         String   @unique   // AMOX / METRO / CIPRO / IBU…
+  nameEn       String            // AMOXICILLIN（匹配用，case-insensitive）
+  nameCn       String?           // 阿莫西林
+  isAntibiotic Boolean  @default(false)   // C 類：rxCodes 有抗生素判定
+  active       Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+
+  @@index([active])
+}
+
+// E 類報價抽取存儲（cwi-followup-p4-20260916 S3 — MD §5.2 兩層 + 確認隊列）
+// 冪等口徑：重跑（夜跑/回填/刷新）只重建 pending 行；人手決定（confirmed/corrected/discarded）保留。
+model QuotedItem {
+  id               String   @id @default(cuid())
+  clinicId         String
+  patientApricotId String
+  sourceVisitId    String?                    // ClinicalRecordIndex.id
+  sourceVisitDate  DateTime @db.Date          // 報價日（E 類 7 日窗口起點）
+  text             String                     // 原始匹配文字（速記／orphan 短句）
+  termShorthand    String?                    // 術語表 code（LLM 輸出必須落返字典 — 鐵律）
+  nameCn           String?                    // 標準名稱（顯示用）
+  amountMin        Int?
+  amountMax        Int?                       // range（5-6K → 5000..6000）
+  perUnit          Boolean  @default(false)
+  fdiTeeth         String[]                   // FDI 11–48（只標記唔判斷）
+  intent           String   @default("unknown")  // not_done（quoted/suggest/consider/TCA — §6.5）｜unknown
+  certainty        String   @default("low")      // high（字典命中）｜low（LLM／orphan）
+  source           String   @default("parser")   // parser｜llm｜manual
+  status           String   @default("pending")  // pending｜confirmed｜corrected｜discarded
+  correctionNote   String?
+  decidedBy        String?                    // opaque staff id（零 PII）
+  decidedAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([patientApricotId, status])
+  @@index([clinicId, sourceVisitDate])
+  @@index([status, sourceVisitDate])
+}
+
 // ============================================================
 // providerslot-20260830 T1: 可約時段硬保留（hard hold）
 // MD: whatsapp-flow-booking.md §四（一揀即佔位；HELD 即時從可約計算扣除）

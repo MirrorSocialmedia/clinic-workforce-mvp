@@ -31,6 +31,8 @@ import {
   getPatientNotes,
 } from './apricot-client'
 import { resolvePatientDay, upsertVisitIndex, rescanUpdateNote, buildClinicMap } from './visit-index'
+import { loadRxCodeEntries } from '@/lib/clinical/extract-rx-codes'
+import { storeQuotesForVisit } from '@/lib/clinical/quote-extract'
 import { extractNoteText } from './extract-note-text'
 
 export interface NightlyOutcome {
@@ -72,6 +74,7 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
   const { call, calls } = makeThrottledCallFn(opts.callFn)
   const phoneKey = process.env.PHONE_HASH_KEY ?? ''
   const clinicMap = await buildClinicMap()
+  const rxCodeEntries = await loadRxCodeEntries()
 
   const outcome: NightlyOutcome = {
     status: 'DONE', stopReason: null, scanDate: yesterday,
@@ -106,11 +109,24 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
       if (outcome.status !== 'DONE') break
       try {
         const data = await fetchPatientData(call, p.cpId ?? p.id, yesterday)
-        const v = resolvePatientDay({ patient: p, ...data, day: yesterday, clinicMap, phoneKey })
-        if (v) { await upsertVisitIndex(v); outcome.upserts++ }
+        const v = resolvePatientDay({ patient: p, ...data, day: yesterday, clinicMap, phoneKey, rxCodeEntries })
+        if (v) {
+          await upsertVisitIndex(v); outcome.upserts++
+          if (v.hasNote && v.noteJson) {
+            try {
+              const row = await basePrisma.clinicalRecordIndex.findUnique({
+                where: { patientApricotId_visitDate_apricotApptId: { patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), apricotApptId: v.apricotApptId as string } },
+                select: { id: true },
+              })
+              if (row) await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), note: v.noteJson as any })
+            } catch (e) {
+              console.error('[quote-extract] 存儲失敗（唔阻 pipeline）:', e)
+            }
+          }
+        }
         // 3) 未來 7 日（B 類）— notes/bills 唔計（hasNote=false、bill null）
         for (const fd of futureDays(data.appointments, today)) {
-          const fv = resolvePatientDay({ patient: p, appointments: data.appointments, notes: [], bills: [], day: fd, clinicMap, phoneKey })
+          const fv = resolvePatientDay({ patient: p, appointments: data.appointments, notes: [], bills: [], day: fd, clinicMap, phoneKey, rxCodeEntries })
           if (fv) { await upsertVisitIndex(fv); outcome.upserts++ }
         }
         outcome.patientsProcessed++
@@ -129,7 +145,7 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
           hasNote: false,
           apricotApptId: { not: null },
         },
-        select: { id: true, patientApricotId: true, apricotApptId: true },
+        select: { id: true, patientApricotId: true, apricotApptId: true, clinicId: true, visitDate: true },
       })
       const byPatient = new Map<string, typeof rows>()
       for (const r of rows) {
@@ -146,6 +162,11 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
             if (!note) continue
             const nt = extractNoteText(note)
             await rescanUpdateNote(r.id, { apricotNoteId: typeof note.id === 'string' ? note.id : null, noteKind: nt.kind, noteJson: nt })
+            try {
+              await storeQuotesForVisit({ visitId: r.id, clinicId: r.clinicId, patientApricotId: r.patientApricotId, visitDate: r.visitDate, note: nt })
+            } catch (e) {
+              console.error('[quote-extract] 重掃存儲失敗（唔阻 pipeline）:', e)
+            }
             outcome.rescanned++
           }
         } catch (e) {

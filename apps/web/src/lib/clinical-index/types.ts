@@ -52,6 +52,8 @@ export interface ResolvedVisit {
   hasNote: boolean
   noteKind: string | null
   noteJson: NoteText | null
+  /** 藥物 code（cwi-followup-p4 S4 — extractRxCodes 由 note 抽；C 類抗生素判定） */
+  rxCodes: string[]
   billTtlAmt: number | null
   billOsAmt: number | null
 }
