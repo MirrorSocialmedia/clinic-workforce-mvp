@@ -18,6 +18,7 @@ import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 import { getMpfExemption, adjustMpfMinForPeriod } from './mpf-exemption'
+import { findPayRuleForMonth } from './pay-rule-for-month'
 
 // ------------------------------------------------------------------
 // TimeBank Engine Version + Cache Key
@@ -1114,18 +1115,8 @@ export async function generatePayrollRun(
     }
     try {
       // Read employee pay rule — now outside transaction, uses prisma directly
-      const payRule = await prisma.payRule.findFirst({
-        where: {
-          employeeId: emp.id,
-          isActive: true,
-          effectiveFrom: { lte: monthEndForRule },
-          OR: [
-            { effectiveTo: null },
-            { effectiveTo: { gte: monthStartForRule } },
-          ],
-        },
-        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-      })
+      // ★ cwm-money P2-6：單一來源（active 覆蓋本月 → 退回經 POST 停用且有 effectiveTo 嘅舊規則）
+      const payRule = await findPayRuleForMonth(prisma, emp.id, monthStartForRule, monthEndForRule)
 
       let calcResult
       if (payRule?.configJson) {
@@ -3438,9 +3429,12 @@ export async function calculatePayrollWithRules(
     //   annualLeavePay+noticePay 加落 gross（MPF_INCLUDE_SETTLEMENT 決定基數）；
     //   excessRestDeduction（⑤ 超額休息日）落 gross（MPF 之前 — 減基數）；
     //   tbDeduction（⑥ 時間帳戶欠款）落 MPF 後 net 扣除。
+    //   ★ cwm-tbcashout-20260917：tbCashout（④ 時間帳戶【正數】折現）落 gross（MPF 之前 — 加基數）。
+    //     老闆 2026-09-17 拍板：折現屬工資，計入 MPF 有關入息。
+    //     ⚠️ 同 ⑥ tbDeduction 方向相反 ——【嚴禁合併】。
     //   ★★⑤⑥ 方向相反（一個少供、一個唔減基數）嚴禁合併（cwm-excessrest 生死格 #14）。
     //   in-service 員工傳 null/唔傳 → 零改動。
-    resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbDeduction?: number | null; excessRestDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null } | null
+    resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbCashout?: number; tbDeduction?: number | null; excessRestDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null } | null
     // ★ 2026-09-05 [cwm-resignroster] 離職預覽 lastDay —「最後工作日翌日 HK 午夜」
     //   （同 resign/route.ts `${lastDay}T16:00:00Z` 口徑）；优先於 DB resignedAt。
     //   ⚠️ 只准收窄（route 側驗證唔得遲過實際離職日）— 唔准用嚟延長受僱期。
@@ -3457,8 +3451,11 @@ export async function calculatePayrollWithRules(
 
   // ★ 2026-09-05 [cwm-resigv3]：離職結算注入參數（無結算 = 0/0 → 在職員工 path 零改動）
   const rsSettle = options?.resignSettlement ?? null
+  // ★ cwm-tbcashout-20260917：④ 折現同 ②③ 同向（加 gross、MPF 前）→ 併入 rsGrossAdd。
+  //   ⚠️ Math.max(0, …) 防呆：折現理論上 ≥ 0（負餘額行 ⑥），萬一傳負數會變成靜靜扣錢。
+  const rsTbCashout = rsSettle ? Math.max(0, Number(rsSettle.tbCashout) || 0) : 0
   const rsGrossAdd = rsSettle
-    ? (Number(rsSettle.annualLeavePay) || 0) + (Number(rsSettle.noticePay) || 0)
+    ? (Number(rsSettle.annualLeavePay) || 0) + (Number(rsSettle.noticePay) || 0) + rsTbCashout
     : 0
   const rsTbDed = rsSettle ? Math.max(0, Number(rsSettle.tbDeduction) || 0) : 0
   // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（MPF 之前 — 減低基數少供；拍板② s.32(2)(a)）
@@ -3983,6 +3980,8 @@ export async function calculatePayrollWithRules(
       annualLeavePay: Math.round((Number(rsSettle.annualLeavePay) || 0) * 100) / 100,
       noticePay: Math.round((Number(rsSettle.noticePay) || 0) * 100) / 100,
       tbDeduction: rsTbDed,
+      // ★ cwm-tbcashout-20260917：④ 時間帳戶正數折現（已計入 grossPay 同 MPF 基數）
+      tbCashout: rsTbCashout,
       grossAdd: Math.round(rsGrossAdd * 100) / 100,
       includedInMpf: MPF_INCLUDE_SETTLEMENT,
       monthWage: rsSettle.monthWage ?? null,

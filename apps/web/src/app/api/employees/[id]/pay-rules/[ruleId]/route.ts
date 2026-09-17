@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { getMonthRange } from '@/lib/hk-date'
 
 // PUT /api/employees/:id/pay-rules/:ruleId — update existing pay rule
 export async function PUT(
@@ -42,6 +43,25 @@ export async function PUT(
     include: { employee: { select: { id: true, user: { select: { name: true } } } } },
   })
   if (!before) return NextResponse.json({ error: 'PayRule not found' }, { status: 404 })
+
+  // ★ cwm-money P2-6：已用於已確認計糧嘅規則，唔准原地改薪／改生效日
+  const salaryKey = (c: any) => `${c?.base_type}|${c?.monthly_salary ?? ''}|${c?.hourly_rate ?? ''}|${c?.split_ratio ?? ''}`
+  let beforeCfg: any = {}
+  try { beforeCfg = JSON.parse(before.configJson || '{}') } catch (e) { console.error('[pay-rule PUT] bad configJson', e) }
+  const touched =
+    (baseAmount !== undefined && Number(baseAmount) !== Number(before.baseAmount)) ||
+    (!!effectiveFrom && new Date(`${effectiveFrom}T00:00:00+08:00`).getTime() !== before.effectiveFrom.getTime()) ||
+    (!!modularConfig && salaryKey(modularConfig) !== salaryKey(beforeCfg))
+  if (touched) {
+    const used = await prisma.payrollItem.findFirst({
+      where: {
+        employeeId: before.employeeId,
+        run: { status: { in: ['FINALIZED', 'EXPORTED'] }, periodMonth: { gte: getMonthRange(before.effectiveFrom).start } },
+      },
+      select: { id: true },
+    })
+    if (used) return NextResponse.json({ error: '呢條規則已用於已確認計糧，改薪請揀新生效日期（會新增規則）' }, { status: 409 })
+  }
 
   const rule = await prisma.payRule.update({
     where: { id: params.ruleId },

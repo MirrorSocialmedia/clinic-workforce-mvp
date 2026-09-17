@@ -39,6 +39,8 @@ export default function NewPayrollPage() {
       totalPayable: number; error?: string;
     }>;
     itemCount: number; totalPayable: number;
+    // ★ cwm-money P2-6 E：月中調薪提示（active 規則本月 2 號或之後生效）
+    midMonthRuleChanges?: Array<{ name: string; effectiveFrom: string }>;
   } | null>(null)
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<string>('')
@@ -387,6 +389,16 @@ export default function NewPayrollPage() {
             <div className="mb-2 text-sm g text-muted-foreground text-center">
               員工數: {previewResult.itemCount} | 應付總額: HK${previewResult.totalPayable.toLocaleString()}
             </div>
+
+            {/* ★ cwm-money P2-6 E：月中調薪黃色 banner */}
+            {previewResult.midMonthRuleChanges && previewResult.midMonthRuleChanges.length > 0 && (
+              <div className="mb-3 rounded-md p-3 text-sm" style={{ background: '#fef9c3', border: '1px solid #facc15', color: '#854d0e' }}>
+                ⚠️ 以下員工本月中途調薪，系統按新薪計全月，請人手調整差額：
+                {previewResult.midMonthRuleChanges.map((r: any, i: number) => (
+                  <div key={i}>• {r.name}（{r.effectiveFrom} 生效）</div>
+                ))}
+              </div>
+            )}
 
             {/* Store bonus fill-all control — only for specific clinic */}
             {selectedClinic && (

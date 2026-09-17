@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Wallet, ClipboardList } from 'lucide-react'
 import type { PayRuleConfigModular } from '@/lib/payroll-engine'
 import { todayHK, toHKDateStr } from '@/lib/hk-date'
@@ -136,6 +136,8 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
   const [error, setError] = useState('')
   const [ruleId, setRuleId] = useState<string | undefined>(initialRuleId)
   const [loadWarning, setLoadWarning] = useState('')
+  // ★ cwm-money P2-6：記錄載入時原規則嘅薪金快照 — 判斷「改薪」要開新規則
+  const originalRef = useRef<{ baseType: BaseType; monthly?: number; hourly?: number; effectiveFrom: string } | null>(null)
 
   // ── Load existing active rule on mount ──────────────────────────
   const loadExistingRule = useCallback(async () => {
@@ -185,6 +187,12 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
       // Set effectiveFrom from existing rule
       if (activeRule.effectiveFrom) {
         setEffectiveFrom(toHKDateStr(new Date(activeRule.effectiveFrom)))
+      }
+      // ★ cwm-money P2-6：快照原規則薪金（改薪判斷用）
+      originalRef.current = {
+        baseType: (modularConfig?.base_type as BaseType) ?? PAY_TYPE_TO_BASE_TYPE[activeRule.payType] ?? 'monthly',
+        monthly: modularConfig?.monthly_salary, hourly: modularConfig?.hourly_rate,
+        effectiveFrom: toHKDateStr(new Date(activeRule.effectiveFrom)),
       }
     } catch (err) {
       console.error('Failed to load existing rule:', err)
@@ -263,7 +271,18 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
     setSubmitting(true)
 
     try {
-      const isEditing = !!ruleId
+      // ★ cwm-money P2-6：改薪 → 新增規則（保留歷史）；淨係改獎金／午飯等 → 原地改
+      const o = originalRef.current
+      const salaryChanged = !!ruleId && !!o && (
+        baseType !== o.baseType ||
+        Number(config.monthly_salary ?? 0) !== Number(o.monthly ?? 0) ||
+        Number(config.hourly_rate ?? 0) !== Number(o.hourly ?? 0))
+      if (salaryChanged && effectiveFrom <= o!.effectiveFrom) {
+        setError(`改薪要揀新生效日期（要遲過現行規則 ${o!.effectiveFrom}）`)
+        setSubmitting(false)
+        return
+      }
+      const isEditing = !!ruleId && !salaryChanged
       const url = isEditing
         ? `/api/employees/${employeeId}/pay-rules/${ruleId}`
         : `/api/employees/${employeeId}/pay-rules`
@@ -1486,6 +1505,7 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 value={effectiveFrom}
                 onChange={(e) => setEffectiveFrom(e.target.value)}
               />
+              {ruleId && <p style={{ fontSize: 11, color: '#6b7280' }}>改月薪／時薪會新增一條規則，舊規則保留到新生效日前一日</p>}
             </div>
           </div>
 

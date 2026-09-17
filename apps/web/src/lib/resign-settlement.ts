@@ -20,6 +20,7 @@ import { LEAVE_SYSTEM_KEYS } from './leave-types'
 import { getEffectiveADW } from './adw'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 import { calcExcessRestDayDeduction } from './settlement-utils'
+import { findPayRuleForMonth } from './pay-rule-for-month'
 
 export interface ResignSettlementCalc {
   monthlySalary: number
@@ -162,10 +163,9 @@ async function resolveMonthWageDirect(
   resignedAtOverride?: Date,
 ): Promise<{ basePay: number | null; ratioDetail: { value: number; numerator: number; denominator: number } | null }> {
   try {
-    const payRule = await prisma.payRule.findFirst({
-      where: { employeeId: empId, isActive: true },
-      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-    })
+    // ★ cwm-money P2-6：單一來源（active 覆蓋本月 → 退回經 POST 停用且有 effectiveTo 嘅舊規則）
+    const { start: _rsMonthStart, end: _rsMonthEnd } = getMonthRange(new Date(`${periodMonth}-01T00:00:00+08:00`))
+    const payRule = await findPayRuleForMonth(prisma, empId, _rsMonthStart, _rsMonthEnd)
     if (payRule?.configJson) {
       const config = JSON.parse(payRule.configJson)
       if (config.base_type || config.modifiers) {

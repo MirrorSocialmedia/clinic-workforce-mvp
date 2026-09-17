@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { getConfidentialScope } from '@/lib/scope-helpers'
 import { calculatePayrollWithRules } from '@/lib/payroll-engine'
-import { getMonthRange } from '@/lib/hk-date'
+import { getMonthRange, toHKDateStr, hkParts } from '@/lib/hk-date'
+import { findPayRuleForMonth } from '@/lib/pay-rule-for-month'
 
 // ============================================================
 // POST /api/payroll-runs/preview — Preview payroll calculation
@@ -109,6 +110,8 @@ export async function POST(req: NextRequest) {
     // Calculate payroll for each employee WITHOUT writing to DB
     const items = []
     const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
+    // ★ cwm-money P2-6 E：月中調薪 — active 規則 effectiveFrom 喺本月 2 號或之後
+    const midMonthRuleChanges: Array<{ name: string; effectiveFrom: string }> = []
     for (const emp of employees) {
       try {
         // ★ 2026-09-05 [cwm-resignroster]：只准收窄 — 防已離職員工用 override 延長受僱期
@@ -116,13 +119,15 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: 'resignedAtOverride 唔可以遲過實際離職日' }, { status: 400 })
         }
         // Read employee pay rule to determine engine
-        const payRule = await prisma.payRule.findFirst({
-          where: {
-            employeeId: emp.id,
-            isActive: true,
-          },
-          orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-        })
+        // ★ cwm-money P2-6：單一來源（active 覆蓋本月 → 退回經 POST 停用且有 effectiveTo 嘅舊規則）
+        const payRule = await findPayRuleForMonth(prisma, emp.id, monthStart, monthEnd)
+        // ★ cwm-money P2-6 E：月中調薪偵測（active 規則本月 2 號或之後生效）
+        if (payRule?.isActive && payRule.effectiveFrom) {
+          const ef = new Date(payRule.effectiveFrom)
+          if (ef >= monthStart && ef <= monthEnd && hkParts(ef).day >= 2) {
+            midMonthRuleChanges.push({ name: emp.user.name, effectiveFrom: toHKDateStr(ef) })
+          }
+        }
 
         let result
         if (payRule?.configJson) {
@@ -144,7 +149,9 @@ export async function POST(req: NextRequest) {
           employeeName: emp.user.name,
           status: emp.status,
           resignedAt: emp.resignedAt,
-          payType: (result as any).payType || 'MONTHLY',
+          // ★ cwm-money P2-10：時薪引擎只寫 detail.payType — 頂層 payType 會 fallback 錯當 MONTHLY
+          payType: (result.detail as any)?.payType
+            ?? (JSON.parse(payRule?.configJson || '{}').base_type === 'hourly' ? 'HOURLY' : 'MONTHLY'),
           workedHours: result.workedHours,
           otHours: result.otHours,
           leaveDays: result.leaveDays,
@@ -175,6 +182,7 @@ export async function POST(req: NextRequest) {
       itemCount: items.length,
       totalPayable: Math.round(totalPayable * 100) / 100,
       skipped,
+      midMonthRuleChanges,
     })
   } catch (err: any) {
     console.error('Payroll preview error:', err)

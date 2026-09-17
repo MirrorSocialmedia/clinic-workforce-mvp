@@ -262,6 +262,8 @@ export default function EmployeePayrollDetailPage() {
   const resignSettle = detail.resignSettlement ?? null
   const rsGrossAdd = resignSettle ? (Number(resignSettle.annualLeavePay) || 0) + (Number(resignSettle.noticePay) || 0) : 0
   const rsTbDed = resignSettle ? Math.max(0, Number(resignSettle.tbDeduction) || 0) : 0
+  // ★ cwm-tbcashout-20260917：④ 時間帳戶正數折現（已計入 grossPay 同 MPF 基數）
+  const rsTbCashout = resignSettle ? Math.max(0, Number(resignSettle.tbCashout) || 0) : 0
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
   const miscAmount = (item as any).miscAmount ?? 0
@@ -792,6 +794,13 @@ export default function EmployeePayrollDetailPage() {
                   <div className="flex justify-between">
                     <span className="text-sm">時間帳戶扣除（由尾糧扣）</span>
                     <span className="font-mono font-medium text-red-600">−{fmtCurrency(rsTbDed)}</span>
+                  </div>
+                )}
+                {/* ★ cwm-tbcashout-20260917：④ 時間帳戶【正數】折現 — 加落 gross（MPF 前），同 ⑥ 扣除方向相反 */}
+                {rsTbCashout > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm">時間帳戶折現</span>
+                    <span className="font-mono font-medium text-green-600">+{fmtCurrency(rsTbCashout)}</span>
                   </div>
                 )}
                 <div className="text-xs" style={{ color: '#6d28d9' }}>
