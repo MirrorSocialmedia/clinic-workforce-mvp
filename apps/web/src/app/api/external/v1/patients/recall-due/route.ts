@@ -21,8 +21,12 @@ import { jsonNoStore } from '@/lib/api-response'
 // 🔴 只回 phoneHashes[]；零原始電話、零 note。
 // ============================================================
 
-/** 今日 − n 個月（日曆月；1/31 − 1 個月 → 12/31 clamp）。 */
-export function monthsAgoStr(dateStr: string, n: number): string {
+/** 今日 − n 個月（日曆月；1/31 − 1 個月 → 12/31 clamp）。
+ * ★ cwm-money-20260917 S6 gate 修復：移除 export —— route 檔 export 非 route field
+ * 會令 next build 掛（"monthsAgoStr is not a valid Route export field"）。
+ * pre-existing（5d5db098 cwi-followup-p1 引入，baseline 9c3f3f3c 起 build 已紅）；
+ * 本檔無外部引用（只 :54 內部用），移除 export = 零行為改動。 */
+function monthsAgoStr(dateStr: string, n: number): string {
   const [y, m, d] = dateStr.split('-').map(Number)
   const base = new Date(Date.UTC(y, m - 1 - n, d))
   if (base.getUTCDate() !== d) base.setUTCDate(0) // 溢出 → 上個月末日
