@@ -45,6 +45,7 @@ export async function POST(
       throw new ExternalApiError(400, `action must be one of ${ACTIONS.join('|')}`, 'BAD_REQUEST')
     }
 
+    // ownership-ok: external API 係全機構單一 consumer（wa-inbox），requireExternalKey(req,'patients') 已限 scope；冇 per-clinic tenancy
     const row = await basePrisma.quotedItem.findUnique({ where: { id } })
     if (!row) throw new ExternalApiError(404, 'quote not found', 'QUOTE_NOT_FOUND')
 

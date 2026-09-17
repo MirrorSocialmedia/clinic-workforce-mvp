@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 DC="docker compose -p clinic -f $ROOT/docker-compose.yml"
@@ -9,38 +9,31 @@ BK="$ROOT/backups/clinic_$(date +%F_%H%M).sql.gz"
 mkdir -p "$ROOT/backups"
 docker exec clinic-prod-db pg_dump -U clinic clinic_prod | gzip > $BK
 echo " $BK"
+[ "$(gzip -cd "$BK" | head -c 2000 | wc -c)" -gt 500 ] || { echo "❌ 備份檔異常（太細），中止"; exit 1; }
 find "$ROOT/backups" -mtime +14 -delete
 
-echo "== 拉代碼 =="
+echo "== 拉代碼（先驗後落）=="
 git fetch origin
-git reset --hard origin/main
-
-echo "== 預部署靜態檢查 =="
 CHECKS="check-rbac-matrix.sh check-role-hardcode.sh check-role-hardcode-api.sh \
  check-ownership.sh check-sensitive-coverage.sh check-audit-coverage.sh \
  check-duplicate-calc.sh check-get-no-store.sh check-balance-year.sh \
- check-apricot-boundary.sh check-payout-boundary.sh check-pii.sh \
- check-company-scope.sh"
+ check-apricot-boundary.sh check-payout-boundary.sh check-pii.sh check-dates.sh \
+ check-company-scope.sh check-holiday-coverage.sh check-payroll-surface.sh check-catch-ignore.sh"
+GUARD_DIR="$(mktemp -d)"
+git worktree add --detach "$GUARD_DIR" origin/main >/dev/null
+GUARD_FAIL=0
 for script in $CHECKS; do
-  if [ ! -f "scripts/$script" ]; then
-    echo "❌ scripts/$script 不存在"
-    exit 1
-  fi
+  [ -f "$GUARD_DIR/scripts/$script" ] || continue
   echo "▶ $script"
-  bash "scripts/$script" || { echo "❌ $script failed, aborting deploy"; exit 1; }
+  ( cd "$GUARD_DIR" && bash "scripts/$script" ) || { echo "❌ $script failed"; GUARD_FAIL=1; break; }
 done
+git worktree remove --force "$GUARD_DIR"
+[ "$GUARD_FAIL" = 0 ] || { echo "❌ guard 未過 — 未 reset，host 保持舊版"; exit 1; }
+git reset --hard origin/main
 
 # Wiring check — info only, does not block deploy
 echo "▶ check-wiring.sh"
 bash "scripts/check-wiring.sh" || true
-
-# Legacy aliases — skip if missing (backwards compat)
-for script in check-rbac-api.sh check-dates.sh; do
-  if [ -f "scripts/$script" ]; then
-    echo "▶ $script"
-    bash "scripts/$script" || { echo "❌ $script failed, aborting deploy"; exit 1; }
-  fi
-done
 
 echo "== 清理舊 image（備份完成之後、build 之前）=="
 # ★ 2026-08-28 cwm-costfix：build 前先 prune dangling image —— 防多餘 image 堆積

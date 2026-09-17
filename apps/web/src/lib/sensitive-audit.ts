@@ -129,4 +129,6 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // EXTERNAL_NOTE_VIEWED：記 staffId+visitId（零內容）；
   // PATIENT_RECORD_REFRESHED：記 staffId+cpId+結果（零病人內容）— metadata-only
   'EXTERNAL_NOTE_VIEWED', 'PATIENT_RECORD_REFRESHED',
+  // ★ cwi-followup-p4：處方碼外部讀取 — metadata-only（記 staffId+visitId，零內容），同 EXTERNAL_NOTE_VIEWED 同構
+  'EXTERNAL_RX_VIEWED',
 ])
