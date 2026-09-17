@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
+import { resolvePayrollScope } from '@/lib/scope-helpers'
 import { toHKDateStr, getMonthRange } from '@/lib/hk-date'
 
 interface PreflightRun {
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!raw) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // ★ Cross-clinic guard (2026-08-03): 被限制範圍嘅人唔可以預覽跨店計糧單
-  const allowed = await resolveClinicScope(auth.session, auth.perms ?? [], {
+  const allowed = await resolvePayrollScope(auth.session, auth.perms ?? [], {
     homeOnly: ['payroll_view', 'payroll_generate'],
   })
   if (allowed !== null) {

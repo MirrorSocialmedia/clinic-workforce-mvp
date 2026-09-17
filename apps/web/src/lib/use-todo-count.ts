@@ -10,6 +10,7 @@ interface TodoCounts {
   reviewN: number
   failN: number
   noFaceN: number
+  faceReviewAllowed: boolean
 }
 
 export function useTodoCount(): TodoCounts {
@@ -21,6 +22,7 @@ export function useTodoCount(): TodoCounts {
     reviewN: 0,
     failN: 0,
     noFaceN: 0,
+    faceReviewAllowed: true,
   })
 
   useEffect(() => {
@@ -52,7 +54,8 @@ export function useTodoCount(): TodoCounts {
           cache: 'no-store',
         })
           .then((r) => {
-            if (r.status === 403) return []
+            // ★ cwm-acct-20260917 A10：403 = 冇權睇人臉覆核 → null（儀表板唔渲染假卡，唔係假 0）
+            if (r.status === 403) return null
             return r.json()
           })
           .catch((e) => { console.warn('[todo] /api/face/review failed', e); return [] }),
@@ -61,7 +64,9 @@ export function useTodoCount(): TodoCounts {
         const correctionArr = Array.isArray(corr) ? corr : corr.punchCorrections || corr.items || []
         const correctionN = correctionArr.length
         const enrollN = Array.isArray(en) ? en.length : en.items?.length || 0
-        const reviewArr = Array.isArray(rv) ? rv : rv.items || []
+        // ★ cwm-acct-20260917 A10：rv === null = 403（無權限），唔好計 0 當「無異常」
+        const faceReviewAllowed = rv !== null
+        const reviewArr = rv === null ? [] : (Array.isArray(rv) ? rv : rv.items || [])
         const reviewN = reviewArr.length
         const failN = reviewArr.filter(
           (item: any) => item.faceStatus === 'FAIL'
@@ -77,6 +82,7 @@ export function useTodoCount(): TodoCounts {
           reviewN,
           failN,
           noFaceN,
+          faceReviewAllowed,
         })
       })
 

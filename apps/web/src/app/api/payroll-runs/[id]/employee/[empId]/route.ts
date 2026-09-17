@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
+import { resolvePayrollScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
@@ -52,7 +52,7 @@ export async function GET(
   //   改用 resolveClinicScope：OWNER/MANAGER → null（全公司）、
   //   有權限嘅 EMPLOYEE → [主屬店]。（2026-08-03）
   // ★ Cross-clinic guard (2026-08-03): 被限制範圍嘅人唔可以查看跨店計糧單
-  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+  const allowedClinics = await resolvePayrollScope(session, auth.perms ?? [], {
     homeOnly: ['payroll_view', 'payroll_generate'],
   })
   if (allowedClinics !== null) {

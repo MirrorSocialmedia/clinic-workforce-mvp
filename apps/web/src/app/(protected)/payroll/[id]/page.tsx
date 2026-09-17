@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { BackButton } from '@/components/BackButton'
 import { Wallet, Trash2 } from 'lucide-react'
 import { periodMonthKey, toHKDateStr, addDaysStr } from '@/lib/hk-date'
+import { hasPermission } from '@/lib/permissions'
 
 // ★ 讀取類 fetch 一律繞過瀏覽器快取。
 // PUT 同 GET 用同一個 URL，唔加就會喺寫入之後攞返舊 response
@@ -138,6 +139,8 @@ export default function PayrollDetailPage() {
   const [company, setCompany] = useState<PayrollCompany | null>(null)
   const [loading, setLoading] = useState(true)
   const [userRole, setUserRole] = useState<string>('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
   const [exporting, setExporting] = useState<string | null>(null)
   const [updateNote, setUpdateNote] = useState('')
   const [statusAction, setStatusAction] = useState<string | null>(null)
@@ -241,10 +244,13 @@ export default function PayrollDetailPage() {
       if (!r.ok) return { user: { role: '' } }
       const d = await r.json()
       setUserRole(d.user?.role || '')
+      setGrant(Array.isArray(d.user?.grant) ? d.user.grant : [])
+      setDeny(Array.isArray(d.user?.deny) ? d.user.deny : [])
     })
   }, [fetchRun])
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 保密員工薪金隔離，刻意用 role 唔用權限
+  const canFinalize = isOwner || hasPermission(userRole as any, 'payroll_finalize', grant, deny)
 
   const handleStatusChange = async (newStatus: string) => {
     try {
@@ -480,26 +486,26 @@ export default function PayrollDetailPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {run.status === 'DRAFT' && isOwner && (
+          {run.status === 'DRAFT' && canFinalize && (
             <button onClick={handleConfirmClick} disabled={statusAction !== null}
               style={{ padding: '8px 16px', background: '#0d6efd', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
               確認計糧
             </button>
           )}
+          {run.status === 'FINALIZED' && canFinalize && (
+            <button onClick={() => handleStatusChange('EXPORTED')} disabled={statusAction !== null}
+              style={{ padding: '8px 16px', background: '#198754', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
+              標記已匯出
+            </button>
+          )}
           {run.status === 'FINALIZED' && isOwner && (
-            <>
-              <button onClick={() => handleStatusChange('EXPORTED')} disabled={statusAction !== null}
-                style={{ padding: '8px 16px', background: '#198754', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
-                標記已匯出
-              </button>
-              {/* ★ B2: 退回草稿 */}
-              <button
-                onClick={handleRevert}
-                style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #f59e0b', background: '#fff', color: '#b45309', fontSize: 14, cursor: 'pointer' }}
-              >
-                退回草稿
-              </button>
-            </>
+            // ★ B2: 退回草稿（永遠 OWNER-only，cwm-acct-20260917）
+            <button
+              onClick={handleRevert}
+              style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #f59e0b', background: '#fff', color: '#b45309', fontSize: 14, cursor: 'pointer' }}
+            >
+              退回草稿
+            </button>
           )}
           <button onClick={() => handleExport('xlsx')} disabled={exporting !== null}
             style={{ padding: '8px 16px', background: '#198754', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
@@ -895,7 +901,7 @@ export default function PayrollDetailPage() {
 
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 16 }}>
             確認之後計糧單會鎖定，工資記錄會用於日後 ADW 計算。
-            如需修改，OWNER 可以「退回草稿」（會記入審計日誌）。
+            如需修改，負責人可以「退回草稿」（會記入審計日誌）。
           </p>
 
           <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>

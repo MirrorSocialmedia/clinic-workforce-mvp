@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
+import { resolvePayrollScope } from '@/lib/scope-helpers'
 import { toHKDateStr, fmtTime, getMonthRange } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 import { getEffectivePunches } from '@/lib/punch-query'
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   // ⚠️ 如果將來加咗金額欄位，就要分開兩個用途。
   let scopedClinicId: string | undefined = clinicId || undefined
   let scopedClinicIds: string[] | undefined
-  const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+  const allowedClinics = await resolvePayrollScope(session, auth.perms ?? [], {
     companyWide: ['attendance_manage', 'scheduling'],
     homeOnly: ['payroll_view', 'payroll_generate'],
   })

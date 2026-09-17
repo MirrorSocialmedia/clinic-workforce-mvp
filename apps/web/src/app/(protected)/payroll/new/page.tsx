@@ -282,7 +282,12 @@ export default function NewPayrollPage() {
     await doGenerate()
   }
 
-  if (userRole && !canGenerate) return null
+  if (userRole && !canGenerate) return (
+    <div className="p-6">
+      <BackButton to="/payroll" label="返回計糧" />
+      <p className="mt-4 text-sm">你未有「計糧生成」權限，請搵負責人喺「帳號管理」開通。</p>
+    </div>
+  )
 
   return (
     <div className="p-6" style={{ maxWidth: '1800px' }}>

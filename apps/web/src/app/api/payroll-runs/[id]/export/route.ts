@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
+import { resolvePayrollScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { toHKDateStr } from '@/lib/hk-date'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
@@ -66,7 +66,7 @@ export async function POST(
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // ★ Cross-clinic guard (2026-08-03): 被限制範圍嘅人唔可以匯出跨店計糧單
-  const allowed = await resolveClinicScope(session, auth.perms ?? [], {
+  const allowed = await resolvePayrollScope(session, auth.perms ?? [], {
     homeOnly: ['payroll_view', 'payroll_generate'],
   })
   if (allowed !== null) {
@@ -92,6 +92,15 @@ export async function POST(
   const periodMonth = toHKDateStr(run.periodMonth).slice(0, 7)
   const clinicName = run.clinic?.name || '全部診所'
 
+  // ★ cwm-acct-20260917 A9：匯出係敏感操作 — 必留審計（visible items 數，保密已濾）
+  await prisma.auditLog.create({
+    data: {
+      actorId: session.userId, action: 'PAYROLL_EXPORT', entity: 'PayrollRun', entityId: params.id,
+      notes: `${format} · ${runData.items.length} 人 · ${runData.status}`,
+      ipAddress: req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || null,
+    },
+  })
+
   if (format === 'xlsx') return exportToExcel(runData, periodMonth, clinicName)
   return exportToPDF(runData, periodMonth, clinicName)
 }
@@ -109,23 +118,29 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
       '聯絡電話': item.employee.user.phone,
       '診所': clinics,
       '薪酬類型': payType,
-      '工作時數': item.workedHours.toFixed(2),
-      '加班時數': item.otHours.toFixed(2),
-      '請假日數': item.leaveDays.toFixed(2),
-      '缺勤日數': item.absentDays.toFixed(2),
-      '基本薪資': (item.basePay ?? 0).toFixed(2),
-      '加班費': (item.otPay ?? 0).toFixed(2),
-      '拆帳': (item.splitPay ?? 0).toFixed(2),
-      '扣款': (item.deduction ?? 0).toFixed(2),
-      '病假扣減': (detail.sickDeduction ?? 0).toFixed(2),
-      '勤工獎': (detail.attendanceBonus ?? 0).toFixed(2),
-      '津貼': (detail.totalAllowances ?? 0).toFixed(2),
-      '產假/侍產假': ((item.maternityPay ?? 0) + (item.paternityPay ?? 0)).toFixed(2),
-      'ADW調整': (detail.adwAdjustment ?? 0).toFixed(2),
-      'MPF': (detail.mpf ?? 0).toFixed(2),
-      '雜項': (item.miscAmount ?? 0).toFixed(2),
-      '店舖獎金': (item.storeBonus ?? 0).toFixed(2),
-      '應付總額（含雜項）': (item.totalPayable ?? 0).toFixed(2),
+      '工作時數': Number((item.workedHours ?? 0).toFixed(2)),
+      '加班時數': Number((item.otHours ?? 0).toFixed(2)),
+      '請假日數': Number((item.leaveDays ?? 0).toFixed(2)),
+      '缺勤日數': Number((item.absentDays ?? 0).toFixed(2)),
+      '基本薪資': Number((item.basePay ?? 0).toFixed(2)),
+      '加班費': Number((item.otPay ?? 0).toFixed(2)),
+      '拆帳': Number((item.splitPay ?? 0).toFixed(2)),
+      '扣款': Number((item.deduction ?? 0).toFixed(2)),
+      '病假扣減': Number((detail.sickDeduction ?? 0).toFixed(2)),
+      '勤工獎': Number((detail.attendanceBonus ?? 0).toFixed(2)),
+      '津貼': Number((detail.totalAllowances ?? 0).toFixed(2)),
+      '產假/侍產假': Number(((item.maternityPay ?? 0) + (item.paternityPay ?? 0)).toFixed(2)),
+      'ADW調整': Number((detail.adwAdjustment ?? 0).toFixed(2)),
+      'MPF': Number((detail.mpf ?? 0).toFixed(2)),
+      '雜項': Number((item.miscAmount ?? 0).toFixed(2)),
+      '店舖獎金': Number((item.storeBonus ?? 0).toFixed(2)),
+      // ★ cwm-acct-20260917 A9：5 結算欄（時間帳戶折現 = P2-4 已落）
+      'Gross': Number((detail.grossPay ?? 0).toFixed(2)),
+      '離職結算加項': Number((detail.resignSettlement?.grossAdd ?? 0).toFixed(2)),
+      '超額休息日扣減': Number((detail.resignSettlement?.excessRestDeduction ?? 0).toFixed(2)),
+      '時間帳戶欠款扣減': Number((detail.resignSettlement?.tbDeduction ?? 0).toFixed(2)),
+      '時間帳戶折現': Number((detail.tbCashout ?? 0).toFixed(2)),
+      '應付總額（含雜項）': Number((item.totalPayable ?? 0).toFixed(2)),
     }
   })
 
@@ -136,7 +151,10 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
     { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
     { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
-    { wch: 8 }, { wch: 12 },
+    { wch: 8 },
+    // ★ cwm-acct-20260917 A9：5 結算欄寬度
+    { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 },
+    { wch: 12 },
   ]
   XLSX.utils.book_append_sheet(wb, ws, '糧單')
 
@@ -166,7 +184,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
   XLSX.utils.book_append_sheet(wb, ws2, '摘要')
 
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
-  const excelFilename = `payroll_${periodMonth}_${clinicName}.xlsx`
+  const excelFilename = `${run.status === 'DRAFT' ? '草稿_' : ''}payroll_${periodMonth}_${clinicName}.xlsx`
   return new NextResponse(buf, {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -219,21 +237,25 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string): NextRes
 
   const tableData = run.items.map((item: any) => {
     const clinics = item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
+    let detail: any = {}
+    try { detail = JSON.parse(item.detailJson ?? '{}') } catch { /* fallback to empty */ }
+    const gross = Number(detail.grossPay ?? 0), mpf = Number(detail.mpf ?? 0)
+    const misc = Number(item.miscAmount ?? 0), net = Number(item.totalPayable ?? 0)
+    const otherDeduct = Math.round((gross - mpf + misc - net) * 100) / 100   // 行恆等式：Gross − MPF − 其他 + 雜項 = 實發
     return [
       item.employee.user.name, clinics,
-      item.workedHours.toFixed(1), item.otHours.toFixed(1),
-      item.leaveDays.toFixed(1), item.absentDays.toFixed(1),
-      `$${(item.basePay ?? 0).toFixed(0)}`, `$${(item.otPay ?? 0).toFixed(0)}`,
-      (item.splitPay != null ? `$${(item.splitPay ?? 0).toFixed(0)}` : '-'),
-      `$${(item.deduction ?? 0).toFixed(0)}`, `+${(item.miscAmount ?? 0).toFixed(0)}`,
-      `$${(item.storeBonus ?? 0).toFixed(0)}`,
-      `$${(item.totalPayable ?? 0).toFixed(0)}`,
+      item.workedHours.toFixed(1),
+      `$${gross.toFixed(2)}`,
+      `$${mpf.toFixed(2)}`,
+      `$${otherDeduct.toFixed(2)}`,
+      `$${misc.toFixed(2)}`,
+      `$${net.toFixed(2)}`,
     ]
   })
 
   const headerLabels = hasChineseFont
-    ? ['姓名', '診所', '工時', '加班', '請假', '缺勤', '基本', '加班費', '拆帳', '扣款', '雜項', '店舖獎金', '應付']
-    : ['Name', 'Clinic', 'Hours', 'OT', 'Leave', 'Absent', 'Base', 'OT Pay', 'Split', 'Deduct', 'Misc', 'Bonus', 'Total']
+    ? ['姓名', '診所', '工時', 'Gross', 'MPF', '其他扣減', '雜項', '實發']
+    : ['Name', 'Clinic', 'Hours', 'Gross', 'MPF', 'Deduct', 'Misc', 'Net']
 
   autoTable(doc, {
     startY: y,
@@ -262,7 +284,7 @@ function exportToPDF(run: any, periodMonth: string, clinicName: string): NextRes
   doc.text(empLabel, 14, finalY + 6)
 
   const buf = Buffer.from(doc.output('arraybuffer') as ArrayBuffer)
-  const pdfFilename = `計糧_${periodMonth}_${clinicName}.pdf`
+  const pdfFilename = `${run.status === 'DRAFT' ? '草稿_' : ''}計糧_${periodMonth}_${clinicName}.pdf`
   return new NextResponse(buf, {
     headers: {
       'Content-Type': 'application/pdf',

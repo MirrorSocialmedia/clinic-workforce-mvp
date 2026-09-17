@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
+import { resolvePayrollScope } from '@/lib/scope-helpers'
 import { prisma } from '@/lib/prisma'
 
 // GET /api/payroll-runs/allowed-clinics
@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   const { session } = auth
 
   // ★ 同 POST /api/payroll-runs 用同一個範圍判斷
-  const allowed = await resolveClinicScope(session, auth.perms ?? [], {
+  const allowed = await resolvePayrollScope(session, auth.perms ?? [], {
     homeOnly: ['payroll_generate'],
   })
 

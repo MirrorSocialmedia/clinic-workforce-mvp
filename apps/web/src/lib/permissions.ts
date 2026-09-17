@@ -4,6 +4,7 @@ export const PERMISSIONS = {
   attendance_manage: '考勤管理（補登/修正/作廢）',
   payroll_view: '計糧查看',
   payroll_generate: '計糧生成',
+  payroll_finalize: '計糧確認／標記已匯出',
   pay_rules: '薪酬規則',
   pay_view_confidential: '查看保密薪資',
   leave_approve: '假期審批',

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope, getOwnHomeClinicId, getConfidentialScope } from '@/lib/scope-helpers'
+import { resolvePayrollScope, getOwnHomeClinicId, getConfidentialScope } from '@/lib/scope-helpers'
 import { generatePayrollRun } from '@/lib/payroll-engine'
 import { getMonthRange } from '@/lib/hk-date'
 
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
 
   // ★ 2026-08-03: MANAGER 見全公司計糧單（保密員工由 getConfidentialScope 喺 items 層擋住）
   // forPerms: 計糧列表 → homeOnly（只限主屬診所）
-  const allowed = await resolveClinicScope(session, perms ?? [], {
+  const allowed = await resolvePayrollScope(session, perms ?? [], {
     homeOnly: ['payroll_generate'],
   })
   if (allowed !== null) {
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
 
       // ★ 診所範圍限制（2026-08-03）
       // forPerms: 計糧生成 → homeOnly（只限主屬診所）
-      const allowedClinics = await resolveClinicScope(session, auth.perms ?? [], {
+      const allowedClinics = await resolvePayrollScope(session, auth.perms ?? [], {
         homeOnly: ['payroll_generate'],
       })
       if (allowedClinics !== null) {

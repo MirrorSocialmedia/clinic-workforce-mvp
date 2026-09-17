@@ -195,30 +195,32 @@ export default function DashboardPage() {
 
       {/* ── Mobile-first cards: Face anomaly + Todo ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Face anomaly card */}
-        <Card
-          className="cursor-pointer hover:shadow-md transition-shadow"
-          onClick={() => router.push('/todo')}
-        >
-          <CardContent className="p-4 flex items-center gap-3">
-            <AlertTriangle
-              size={24}
-              className={todoCounts.failN + todoCounts.noFaceN > 0 ? 'text-red-500' : 'text-green-500'}
-            />
-            <div>
-              {todoCounts.failN + todoCounts.noFaceN > 0 ? (
-                <div>
-                  <span className="font-semibold">⚠️ {todoCounts.failN} 未通過</span>
-                  <span className="text-muted-foreground mx-1">·</span>
-                  <span className="font-semibold text-orange-500">🟠 {todoCounts.noFaceN} 未拍攝</span>
-                  <span className="text-sm text-muted-foreground ml-1">→ 點擊處理</span>
-                </div>
-              ) : (
-                <div className="text-green-600 font-medium">✅ 今日臉部驗證無異常</div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Face anomaly card — cwm-acct-20260917 A10：冇人臉覆核權限時唔渲染（防假 0 卡） */}
+        {todoCounts.faceReviewAllowed && (
+          <Card
+            className="cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => router.push('/todo')}
+          >
+            <CardContent className="p-4 flex items-center gap-3">
+              <AlertTriangle
+                size={24}
+                className={todoCounts.failN + todoCounts.noFaceN > 0 ? 'text-red-500' : 'text-green-500'}
+              />
+              <div>
+                {todoCounts.failN + todoCounts.noFaceN > 0 ? (
+                  <div>
+                    <span className="font-semibold">⚠️ {todoCounts.failN} 未通過</span>
+                    <span className="text-muted-foreground mx-1">·</span>
+                    <span className="font-semibold text-orange-500">🟠 {todoCounts.noFaceN} 未拍攝</span>
+                    <span className="text-sm text-muted-foreground ml-1">→ 點擊處理</span>
+                  </div>
+                ) : (
+                  <div className="text-green-600 font-medium">✅ 今日臉部驗證無異常</div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Todo summary card */}
         <Card

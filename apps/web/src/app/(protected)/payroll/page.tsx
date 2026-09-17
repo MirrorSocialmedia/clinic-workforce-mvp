@@ -223,6 +223,14 @@ export default function PayrollListPage() {
     <div className="p-6" style={{ maxWidth: '1200px' }}>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: 0 }}>💰 計糧管理</h1>
+        {!canGenerate && canView && (
+          <span className="text-xs text-muted-foreground">生成計糧需要負責人喺「帳號管理」開通「計糧生成」</span>
+        )}
+        {(canGenerate || canView) && (
+          <Link href="/payroll/reports/exceptions" className="px-4 py-2 rounded-md border bg-white hover:bg-slate-50 text-sm font-semibold transition-colors inline-block">
+            📋 考勤異常報表
+          </Link>
+        )}
         {canGenerate && (
           <div className="flex gap-2">
             <button
@@ -231,9 +239,6 @@ export default function PayrollListPage() {
             >
               💰 雜項費用
             </button>
-            <Link href="/payroll/reports/exceptions" className="px-4 py-2 rounded-md border bg-white hover:bg-slate-50 text-sm font-semibold transition-colors inline-block">
-              📋 考勤異常報表
-            </Link>
             {/* ★ 2026-09-10 cwm-payrollui 拍板②：dropdown 釘死
                 1. 原本冇 hidden → 永遠展開遮住下面 → hidden group-hover:block
                 2. mt-1 改 pt-1 包住 margin —— margin 會留 4px 空隙，指標移落去 hover 斷開即刻收埋（#7）
@@ -444,7 +449,7 @@ export default function PayrollListPage() {
         <div className="text-center py-10 g text-muted-foreground">載入中...</div>
       ) : runs.length === 0 ? (
         <div className="text-center py-10 g text-muted-foreground">
-          尚無計糧記錄{canGenerate ? '。点击上方「生成計糧」開始。' : ''}
+          尚無計糧記錄{canGenerate ? '。點擊上方「生成計糧」開始。' : ''}
         </div>
       ) : (
         <>

@@ -481,6 +481,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ 診所範圍 — 計糧生成用獨立 route，同 POST /api/payroll-runs 同一範圍
   'GET /api/payroll-runs/allowed-clinics': ['payroll_generate'],
 
+  // ★ cwm-acct-20260917：確認計糧／標記匯出可以授權（退回草稿仍然 OWNER-only，喺 handler 用 role 擋）
+  'PUT /api/payroll-runs/:id': ['payroll_finalize'],
+
   // ★ 考勤補登
   'POST /api/punch-corrections': ['attendance_manage'],
 
