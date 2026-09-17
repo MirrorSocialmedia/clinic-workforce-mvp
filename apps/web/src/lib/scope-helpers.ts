@@ -16,6 +16,26 @@ export async function getOwnHomeClinicId(userId: string): Promise<string | null>
 }
 
 /**
+ * ★ cwm-companyscope-20260917：使用者所屬公司嘅全部診所 ID。
+ * 公司歸屬由【主屬診所】決定（Employee.homeClinicId → Clinic.companyId）——
+ * 唔用 UserClinic，因為嗰個係「指派咗邊幾間」，可能唔齊。
+ * @returns string[] = 該公司全部診所；[] = 攞唔到公司（fail-closed，乜都睇唔到）
+ */
+export async function getOwnCompanyClinicIds(userId: string): Promise<string[]> {
+  const emp = await prisma.employee.findUnique({
+    where: { userId },
+    select: { homeClinic: { select: { companyId: true } } },
+  })
+  const companyId = emp?.homeClinic?.companyId
+  if (!companyId) return [] // ★ fail-closed：唔好返 null（null = 全系統）
+  const clinics = await prisma.clinic.findMany({
+    where: { companyId },
+    select: { id: true },
+  })
+  return clinics.map(c => c.id)
+}
+
+/**
  * 診所範圍。
  *
  * @param forPerms 只考慮呢啲權限 —— 因為唔同用途對同一個員工要求唔同範圍：
@@ -39,14 +59,19 @@ export async function resolveClinicScope(
     )
   }
 
-  // ROLE-OK: OWNER 全公司，刻意用 role
+  // ROLE-OK: OWNER 全系統（跨公司），刻意用 role —— 老闆本身就係多間公司嘅老闆
   if (session.role === 'OWNER') return null
 
+  // ★★★ cwm-companyscope-20260917：以下由「零 filter」收窄做「同公司全部診所」。
+  // 舊碼返 null = 完全唔限制診所 → 經理睇到唔關佢事嘅公司。呢個係修 bug，唔係改政策。
+  // ⚠️ 保密員工係【另一層】（getConfidentialScope），唔受呢個改動影響。
   // ROLE-OK: 2026-08-03 決定 MANAGER 見全公司（保密由 getConfidentialScope 擋）
-  if (session.role === 'MANAGER') return null
+  if (session.role === 'MANAGER') return getOwnCompanyClinicIds(session.userId)
 
-  // ★ companyWide：有其中一個權限 → 全公司（考勤、排班需要跨店）
-  if ((forPerms.companyWide ?? []).some(p => perms.includes(p))) return null
+  // ★ companyWide：有其中一個權限 → 同公司全部診所（考勤、排班需要跨店）
+  if ((forPerms.companyWide ?? []).some(p => perms.includes(p))) {
+    return getOwnCompanyClinicIds(session.userId)
+  }
 
   // ★ homeOnly：有其中一個權限 → 只限主屬店（計糧、總覽涉及薪金）
   if ((forPerms.homeOnly ?? []).some(p => perms.includes(p))) {
