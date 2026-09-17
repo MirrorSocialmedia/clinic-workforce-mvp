@@ -76,6 +76,8 @@ export default function TodoPage() {
 
   // ROLE-OK: 人臉審核冇對應權限，matrix 係 ['OWNER','MANAGER']
   const [userRole, setUserRole] = useState<string>('')
+  // ★ cwm-money P2-1：核准／拒絕請求期間 disabled，防前端雙擊雙寫
+  const [busyId, setBusyId] = useState<string | null>(null)
 
   // Enroll code shortcut
   const [codeEmployeeId, setCodeEmployeeId] = useState('')
@@ -118,6 +120,8 @@ export default function TodoPage() {
   /* ── Actions: Leave ── */
 
   const handleLeaveAction = async (id: string, action: 'APPROVE' | 'REJECT') => {
+    // ★ cwm-money P2-1：請求期間鎖住該張單嘅按鈕
+    setBusyId(id)
     try {
       const res = await fetch(`/api/leave-requests/${id}`, {
         method: 'PUT',
@@ -133,6 +137,8 @@ export default function TodoPage() {
       }
     } catch {
       alert('網絡錯誤')
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -302,13 +308,15 @@ export default function TodoPage() {
                       </div>
                       <div className="flex gap-2 ml-4">
                         <button
-                          className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                          className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 min-h-[44px] min-w-[44px] flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={busyId === l.id}
                           onClick={() => handleLeaveAction(l.id, 'APPROVE')}
                         >
                           核准
                         </button>
                         <button
-                          className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                          className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 min-h-[44px] min-w-[44px] flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={busyId === l.id}
                           onClick={() => handleLeaveAction(l.id, 'REJECT')}
                         >
                           拒絕

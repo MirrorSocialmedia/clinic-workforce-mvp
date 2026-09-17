@@ -83,24 +83,31 @@ export async function POST(req: NextRequest) {
     if (!bal || bal.remaining < daysInt) {
       return NextResponse.json({ error: `休息日餘額不足（剩 ${bal?.remaining ?? 0} 天）` }, { status: 400 })
     }
-    // 扣減休息日餘額
-    await prisma.leaveBalance.update({
-      where: { id: bal.id },
-      data: { used: bal.used + daysInt, remaining: bal.remaining - daysInt },
-    })
-    // ② 帳戶進分鐘（★ 2026-08-31：改用共享常數，同顯示層換算同一個「一日」單位）
+    // 扣減休息日餘額 + 建 entry 同一 transaction
+    // ★ cwm-money P2-1：where 帶 remaining>=days，雙擊／524 重試 → P2025 → 409
     const minutes = Math.round(daysInt * TIMEBANK_MINUTES_PER_DAY)
-    const beforeBalance = await tbBalance(employeeId)
-    await prisma.timeBankEntry.create({
-      data: {
-        employeeId,
-        date: new Date(),
-        type: 'REST_TO_ACCOUNT',
-        minutes,
-        note: note?.trim() || `假還鐘：休息日 ${daysInt} 天 → +${minutes} 分鐘（償還拖欠）`,
-        createdBy: auth.session.userId,
-      },
-    })
+    const beforeBalance = await tbBalance(employeeId) // ★ 讀取保留喺 transaction 前
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.leaveBalance.update({
+          where: { id: bal.id, remaining: { gte: daysInt } },
+          data: { used: { increment: daysInt }, remaining: { decrement: daysInt } },
+        })
+        await tx.timeBankEntry.create({
+          data: {
+            employeeId,
+            date: new Date(),
+            type: 'REST_TO_ACCOUNT',
+            minutes,
+            note: note?.trim() || `假還鐘：休息日 ${daysInt} 天 → +${minutes} 分鐘（償還拖欠）`,
+            createdBy: auth.session.userId,
+          },
+        })
+      })
+    } catch (e: any) {
+      if (e?.code === 'P2025') return NextResponse.json({ error: '休息日餘額不足或已處理' }, { status: 409 })
+      throw e
+    }
     const afterBalance = await tbBalance(employeeId)
     await prisma.auditLog.create({
       data: {

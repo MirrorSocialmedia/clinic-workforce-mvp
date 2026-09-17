@@ -985,6 +985,15 @@ export async function generatePayrollRun(
     },
   })
 
+  // ★ cwm-money P2-3：同月「全部診所」單同分店單唔可以並存（會重複計人）
+  const conflicting = await prisma.payrollRun.findFirst({
+    where: { periodMonth: { gte: monthStart, lte: monthEnd }, clinicId: clinicId ? null : { not: null } },
+    select: { id: true, status: true },
+  })
+  if (conflicting) {
+    return { error: clinicId ? '本月已有「全部診所」計糧單，唔可以再開分店單' : '本月已有分店計糧單，唔可以再開全部診所單', runId: conflicting.id, status: conflicting.status }
+  }
+
   // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋／離職結算 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
   const isRecalculation = !!existing
@@ -1009,7 +1018,8 @@ export async function generatePayrollRun(
       if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
       if (oi.attendanceBonusOverride) carried.bonusOverride[oi.employeeId] = oi.attendanceBonusOverride as 'FORCE_ON' | 'FORCE_OFF'
     }
-    await prisma.payrollItem.deleteMany({ where: { runId: existing.id } })
+    // ★ cwm-money P2-2：唔再喺計算前 deleteMany（crash 會清走舊 item）。
+    //   carry-forward 已喺上面讀完；最終寫入 transaction（見下）內先 delete + 重寫。
   }
 
   // FIX: Use homeClinicId instead of EmployeeClinic to avoid multi-clinic duplicates
@@ -1041,6 +1051,19 @@ export async function generatePayrollRun(
     include: { user: { select: { name: true } } },
     orderBy: { id: 'asc' },
   })
+
+  // ★ cwm-money P2-3：同月已喺其他計糧單出現嘅員工一律跳過
+  const inOtherRun = new Map<string, string>()
+  {
+    const others = await prisma.payrollItem.findMany({
+      where: {
+        employeeId: { in: employees.map(e => e.id) },
+        run: { periodMonth: { gte: monthStart, lte: monthEnd }, ...(existing ? { id: { not: existing.id } } : {}) },
+      },
+      select: { employeeId: true, run: { select: { clinic: { select: { name: true } } } } },
+    })
+    for (const o of others) inOtherRun.set(o.employeeId, o.run.clinic?.name ?? '全部診所')
+  }
 
   // ★ cwm-resignflow-20260911 A4：結算由 ResignSettlement 讀，唔再靠 carry-forward。
   //   由 periodMonth 對，所以改咗最後工作日之後，舊月份自動冇、新月份自動有。
@@ -1085,6 +1108,10 @@ export async function generatePayrollRun(
   const items: Array<any> = []
   const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
   for (const emp of employees) {
+    if (inOtherRun.has(emp.id)) {
+      skipped.push({ employeeId: emp.id, name: emp.user.name, reason: `本月已喺「${inOtherRun.get(emp.id)}」計糧單出現，唔會重複計` })
+      continue
+    }
     try {
       // Read employee pay rule — now outside transaction, uses prisma directly
       const payRule = await prisma.payRule.findFirst({
@@ -1191,6 +1218,11 @@ export async function generatePayrollRun(
 
   // ★ Transaction only handles writes — fast, won't timeout
   const result = await basePrisma.$transaction(async (tx) => {
+    // ★ cwm-money P2-2：計算期間可能有人確認咗 —— 鎖 row 再查，非 DRAFT 取消（唔寫任何 item）
+    const locked = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "PayrollRun" WHERE id = ${run!.id} FOR UPDATE`
+    if (locked[0]?.status !== 'DRAFT') {
+      throw new Error('計算期間計糧單已被確認，今次生成已取消')
+    }
     if (isRecalculation) {
       await tx.payrollItem.deleteMany({ where: { runId: run!.id } })
     }

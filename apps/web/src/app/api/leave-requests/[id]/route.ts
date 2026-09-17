@@ -108,31 +108,38 @@ export async function PUT(
     }
 
     // ★ 2026-08-04: $transaction 包住 status + 扣額度
-    const updated = await prisma.$transaction(async (tx) => {
-      const u = await tx.leaveRequest.update({
-        where: { id: requestId },
-        data: { status: status as any, approverId: session.userId, approvedAt: new Date() },
-      })
+    // ★ cwm-money P2-1：where 帶 status 防雙擊／524 重試雙寫（P2025 → 409）
+    let updated
+    try {
+      updated = await prisma.$transaction(async (tx) => {
+        const u = await tx.leaveRequest.update({
+          where: { id: requestId, status: 'PENDING' },
+          data: { status: status as any, approverId: session.userId, approvedAt: new Date() },
+        })
 
-      if (status === 'APPROVED') {
-        const systemKey = request.leaveType?.systemKey ?? ''
-        const isNoQuota = ['SICK', 'UNPAID_LEAVE'].includes(systemKey)
+        if (status === 'APPROVED') {
+          const systemKey = request.leaveType?.systemKey ?? ''
+          const isNoQuota = ['SICK', 'UNPAID_LEAVE'].includes(systemKey)
 
-        if (!isNoQuota) {
-          const leaveYear = balanceYearFor(systemKey, new Date(request.startDate))
-          await tx.leaveBalance.updateMany({
-            where: {
-              employeeId: request.employeeId,
-              leaveTypeId: request.leaveTypeId,
-              year: leaveYear,
-            },
-            data: { used: { increment: request.days }, remaining: { decrement: request.days } },
-          })
+          if (!isNoQuota) {
+            const leaveYear = balanceYearFor(systemKey, new Date(request.startDate))
+            await tx.leaveBalance.updateMany({
+              where: {
+                employeeId: request.employeeId,
+                leaveTypeId: request.leaveTypeId,
+                year: leaveYear,
+              },
+              data: { used: { increment: request.days }, remaining: { decrement: request.days } },
+            })
+          }
         }
-      }
 
-      return u
-    })
+        return u
+      })
+    } catch (e: any) {
+      if (e?.code === 'P2025') return NextResponse.json({ error: '呢張假期申請已經有人處理咗' }, { status: 409 })
+      throw e
+    }
 
     await createNotification({
       employeeId: request.employeeId,
@@ -200,29 +207,31 @@ export async function DELETE(
         return NextResponse.json({ error: 'Forbidden (cannot modify approved leave)' }, { status: 403 })
       }
 
-      // Restore leave balance if approved
-      if (request.status === 'APPROVED') {
-        // ★ 累積制假期用 year = 0（2026-08-04 修）
-        const leaveYear = balanceYearFor(request.leaveType?.systemKey, new Date(request.startDate))
-        const updated = await prisma.leaveBalance.updateMany({
-          where: {
-            employeeId: request.employeeId,
-            leaveTypeId: request.leaveTypeId,
-            year: leaveYear,
-          },
-          data: { used: { decrement: request.days }, remaining: { increment: request.days } },
-        })
+      // ★ cwm-money P2-1：delete + 還額度同一 transaction（先 delete 後 refund），重試 → P2025 → 409
+      await prisma.$transaction(async (tx) => {
+        await tx.leaveRequest.delete({ where: { id: requestId, status: request.status } })
 
-        // ★ 唔好靜靜吞 —— 還唔到額度係資料錯誤，一定要留痕
-        if (updated.count === 0) {
-          console.error(
-            `[leave-delete] ⛔ 還額度失敗：employeeId=${request.employeeId} ` +
-            `leaveTypeId=${request.leaveTypeId} year=${leaveYear} days=${request.days}`,
-          )
+        if (request.status === 'APPROVED') {
+          // ★ 累積制假期用 year = 0（2026-08-04 修）
+          const leaveYear = balanceYearFor(request.leaveType?.systemKey, new Date(request.startDate))
+          const r = await tx.leaveBalance.updateMany({
+            where: {
+              employeeId: request.employeeId,
+              leaveTypeId: request.leaveTypeId,
+              year: leaveYear,
+            },
+            data: { used: { decrement: request.days }, remaining: { increment: request.days } },
+          })
+
+          // ★ 唔好靜靜吞 —— 還唔到額度係資料錯誤，一定要留痕
+          if (r.count === 0) {
+            console.error(
+              `[leave-delete] ⛔ 還額度失敗：employeeId=${request.employeeId} ` +
+              `leaveTypeId=${request.leaveTypeId} year=${leaveYear} days=${request.days}`,
+            )
+          }
         }
-      }
-
-      await prisma.leaveRequest.delete({ where: { id: requestId } })
+      })
 
       // ★ 刪除假期影響缺勤判斷同午飯扣減 → 快取要失效
       try {
@@ -233,6 +242,10 @@ export async function DELETE(
 
       return NextResponse.json({ success: true })
     } catch (error) {
+      // ★ cwm-money P2-1：已經刪咗（雙擊／524 重試）→ 409
+      if ((error as any)?.code === 'P2025') {
+        return NextResponse.json({ error: '呢張假期已經刪咗' }, { status: 409 })
+      }
       console.error('Delete leave request error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }

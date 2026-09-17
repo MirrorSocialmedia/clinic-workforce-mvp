@@ -305,9 +305,9 @@ export async function snapshotWagesForADW(
     }
   })
   if (notComputed.length > 0) {
+    // ★ cwm-money P2-2：訊息改準（計算失敗同舊版都會入呢度）
     throw new Error(
-      `有 ${notComputed.length} 位員工的 EO 工資未計算 —— 呢個計糧單可能係舊版引擎產生。` +
-      `請先「重新生成」計糧再確認。`,
+      `有 ${notComputed.length} 位員工計算失敗或者係舊版計糧（糧單入面金額為 0 嗰幾行），請修正後重新生成`,
     )
   }
 

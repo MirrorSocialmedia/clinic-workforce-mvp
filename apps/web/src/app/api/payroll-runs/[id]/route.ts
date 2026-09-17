@@ -202,7 +202,8 @@ export async function PUT(
       //   默認 5s 唔夠（實測 3 人 721ms → 21 人 ≈ 5s）。同 payroll-engine.ts:1173 同一設定。
       const updated = await basePrisma.$transaction(async (tx) => {
         const result = await tx.payrollRun.update({
-          where: { id: params.id },
+          // ★ cwm-money P2-1：狀態轉換只准成功一次（防雙擊／524 重試雙寫 ROSTER_DIFF）
+          where: status && status !== run.status ? { id: params.id, status: run.status } : { id: params.id },
           data: {
             ...(status && { status }),
             ...(notes !== undefined && { notes }),
@@ -473,6 +474,8 @@ export async function PUT(
       console.log('[payroll-run PUT]', { runId: params.id, status, durationMs: Date.now() - t0 })
       return NextResponse.json(updated)
     } catch (e: any) {
+      // ★ cwm-money P2-1：狀態已被其他請求改咗（雙擊／524 重試）→ 409
+      if (e?.code === 'P2025') return NextResponse.json({ error: '計糧單狀態已經被其他人改咗，請重新整理' }, { status: 409 })
       // ★ 2026-08-17: 原本冇 catch，業務守衛的中文訊息變成空白 500
       console.error('[payroll-run PUT]', {
         runId: params.id,
