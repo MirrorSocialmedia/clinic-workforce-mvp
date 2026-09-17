@@ -490,7 +490,8 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
           <div style={sectionStyle}>
             <div style={sectionTitleStyle}>1️⃣ 基礎薪酬模式（選一）</div>
             <div style={radioGroupStyle}>
-              {(['monthly', 'hourly', 'split'] as BaseType[]).map((type) => (
+              {/* ★ cwm-money-20260917 P2-9：拆帳（split）UI 收起 —— 引擎 / 舊 rule data 零改動（只唔再新開拆帳） */}
+              {(['monthly', 'hourly'] as BaseType[]).map((type) => (
                 <label key={type} style={checkboxLabelStyle}>
                   <input
                     type="radio"

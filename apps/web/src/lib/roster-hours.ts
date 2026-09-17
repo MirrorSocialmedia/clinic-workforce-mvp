@@ -5,7 +5,9 @@ import { estimateScheduledHours } from './shift-punch-match'
 export const rosterDiffNote = (month: string) => `編更差額 ${month}`
 export const rosterDiffNoteFilter = (month: string) => ({ contains: rosterDiffNote(month) })
 
-/** 應返 = (曆日 − 當月全部假期日數，按日期去重) × 9；已編班 = 更次跨度（剔走假期日） */
+/** 應返 = (曆日 − 當月全部假期日數，按日期去重) × 9；已編班 = 更次跨度（剔走假期日）
+ * ★ cwm-money-20260917 P2-5：免考勤員工（attendanceExempt）已由上游 caller（payroll-runs/[id] empIds filter，
+ *   cwm-attexempt-20260914）隔走，呢度唔好重複加 attendanceExempt filter。 */
 export async function computeRosterHours(
   employeeIds: string[],
   periodMonth: string, // 'YYYY-MM'

@@ -42,6 +42,10 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'UPDATE_ACCOUNT', label: '更新帳戶' },
   { action: 'ADW_POLICY_CAP', label: '扣OT政策上限' },
   { action: 'CREATE_PAYROLL_RUN', label: '建立計糧批次' },
+  // ★ cwm-money-20260917 P2-11：人手刪除計糧項（重複糧單清理）
+  { action: 'PAYROLL_ITEM_MANUAL_DELETE', entity: 'PayrollItem', label: '人手刪除計糧項' },
+  // ★ cwm-money-20260917 P2-7：計糧 run-lock 守衛擋下嘅寫入（FINALIZED/EXPORTED 月份）
+  { action: 'PAYROLL_LOCK_BLOCKED', entity: 'PayrollRun', label: '⚠️ 已出糧月份寫入被擋（run-lock）' },
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
   { action: 'EMPLOYEE_RESIGN_SETTLE', label: '離職結算確認（寫入薪金／時間帳戶扣除）' },

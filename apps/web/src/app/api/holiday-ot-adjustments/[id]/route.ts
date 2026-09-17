@@ -7,6 +7,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { toHKDateStr, hkDateOnly } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { guardPayrollLock } from '@/lib/payroll-lock'
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'DELETE', req.url)
@@ -40,22 +41,17 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       )
     }
 
-    // --- C3③：該月帳本已凍結／計糧已確認 → 唔准刪（刪咗帳本同糧單會唱反調）---
+    // --- C3③：該月計糧已確認／已匯出 → 唔准刪（★ cwm-money-20260917 P2-7 統一守衛；刪咗帳本同糧單會唱反調）---
+    const locked = await guardPayrollLock(session, row.employeeId, [workDate], '移除假期返工 OT 扣減')
+    if (locked) return locked
+
+    // --- C3③：該月帳本已凍結 → 唔准刪（TimeBankLedgerSnapshot 守衛保留）---
     const pm = workDate.slice(0, 7)
-    const [frozen, run] = await Promise.all([
-      prisma.timeBankLedgerSnapshot.findUnique({
-        where: { employeeId_periodMonth: { employeeId: row.employeeId, periodMonth: pm } },
-      }),
-      prisma.payrollRun.findFirst({
-        where: { periodMonth: hkDateOnly(`${pm}-01`), status: 'FINALIZED' },
-        select: { id: true },
-      }),
-    ])
+    const frozen = await prisma.timeBankLedgerSnapshot.findUnique({
+      where: { employeeId_periodMonth: { employeeId: row.employeeId, periodMonth: pm } },
+    })
     if (frozen) {
       return NextResponse.json({ error: `${pm} 時間帳戶帳本已凍結 —— 請先喺計糧退回草稿` }, { status: 409 })
-    }
-    if (run) {
-      return NextResponse.json({ error: `${pm} 計糧已確認 —— 請先退回草稿` }, { status: 409 })
     }
 
     await prisma.$transaction(async (tx) => {

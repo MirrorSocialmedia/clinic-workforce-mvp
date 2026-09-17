@@ -12,21 +12,14 @@ import { runWithAudit } from '@/lib/audit-context'
 import { hkDateOnly } from '@/lib/hk-date'
 import { jsonNoStore } from '@/lib/api-response'
 import { getEffectivePunches, invalidateTimeBankFrom } from '@/lib/punch-query'
+import { guardPayrollLock } from '@/lib/payroll-lock'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 // ★★★ C3③：該月已凍結／已確認就唔准改 —— 改咗都唔會反映，仲會令帳本同糧單唱反調
 //   （正正係三份 MD 花咗力氣消滅嘅對唔到數局面）。
-async function getMonthLocks(employeeId: string, pm: string): Promise<{ frozen: boolean; runId: string | null }> {
-  const frozen = await prisma.timeBankLedgerSnapshot.findUnique({
-    where: { employeeId_periodMonth: { employeeId, periodMonth: pm } },
-  })
-  const run = await prisma.payrollRun.findFirst({
-    where: { periodMonth: hkDateOnly(`${pm}-01`), status: 'FINALIZED' },
-    select: { id: true },
-  })
-  return { frozen: !!frozen, runId: run?.id ?? null }
-}
+//   ★ cwm-money-20260917 P2-7：run 部分改用 guardPayrollLock（FINALIZED+EXPORTED 統一守衛，
+//   修返舊守衛 EXPORTED 漏網）；TimeBankLedgerSnapshot 凍結守衛保留（帳本凍結 ≠ 計糧封存）。
 
 // 當日在場分鐘（CLOCK_IN→CLOCK_OUT 完整 pair；冇完整 pair = 0 → 冇 OT 可扣）
 async function getDayPresence(employeeId: string, workDate: string) {
@@ -140,14 +133,18 @@ export async function PUT(req: NextRequest) {
       )
     }
 
-    // --- C3③：該月帳本已凍結／計糧已確認 → 唔准改 ---
+    // --- C3③：該月計糧已確認／已匯出 → 唔准改（★ cwm-money-20260917 P2-7 統一守衛）---
+    const locked = await guardPayrollLock(session, employeeId, [workDate], '假期返工 OT 扣減')
+    if (locked) return locked
+
+    // --- C3③：該月帳本已凍結 → 唔准改（TimeBankLedgerSnapshot 守衛保留）---
     const pm = workDate.slice(0, 7)
-    const lock = await getMonthLocks(employeeId, pm)
-    if (lock.frozen) {
+    const frozen = await prisma.timeBankLedgerSnapshot.findUnique({
+      where: { employeeId_periodMonth: { employeeId, periodMonth: pm } },
+      select: { id: true },
+    })
+    if (frozen) {
       return NextResponse.json({ error: `${pm} 時間帳戶帳本已凍結 —— 請先喺計糧退回草稿` }, { status: 409 })
-    }
-    if (lock.runId) {
-      return NextResponse.json({ error: `${pm} 計糧已確認 —— 請先退回草稿` }, { status: 409 })
     }
 
     // --- C2：upsert + 清時間帳戶快取 + audit（同一 transaction）---

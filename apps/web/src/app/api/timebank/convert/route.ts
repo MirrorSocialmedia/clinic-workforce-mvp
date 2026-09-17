@@ -6,6 +6,8 @@ import { calculateTimeBank } from '@/lib/payroll-engine'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { LEAVE_SYSTEM_KEYS, balanceYearFor } from '@/lib/leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
+import { toHKDateStr } from '@/lib/hk-date'
+import { guardPayrollLock } from '@/lib/payroll-lock'
 
 async function getOtLeaveTypeId() {
   const lt = await prisma.leaveType.findUnique({
@@ -60,6 +62,12 @@ export async function POST(req: NextRequest) {
   if (!Number.isInteger(daysInt) || daysInt < 1) {
     return NextResponse.json({ error: '天數必須為正整數' }, { status: 400 })
   }
+
+  // ★ cwm-money-20260917 P2-7：該月計糧已確認／已匯出 → 唔准兌換（entry 日期 = 今日 HK）
+  //   三個 direction 都寫 TimeBankEntry（影響時間帳戶 → 影響計糧），統一喺分支前擋。
+  //   註：本 route 原本無 TimeBankLedgerSnapshot 守衛（無嘅唔使保留）。
+  const locked = await guardPayrollLock(auth.session, employeeId, [toHKDateStr(new Date())], 'OT 換假')
+  if (locked) return locked
 
   if (direction === 'rest_to_account') {
     // ① 找休息日餘額（REST_DAY 系統類型）

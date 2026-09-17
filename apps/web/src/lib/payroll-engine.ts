@@ -1110,7 +1110,7 @@ export async function generatePayrollRun(
         }
         // ★ 2026-09-05 [cwm-resigv3] 離職結算注入（拍板③）：讀已確認快照，引擎唔重算。
         //   parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。
-        let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; monthWage: { source: string; basePay: number | null } | null } | null = null
+        let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null } | null = null
         // ★ cwm-resignflow-20260911 A4：resignSettlementJson parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。（源頭改由 ResignSettlement.detailJson，結構同舊 JSON）
         const rsRow = settlementByEmp.get(emp.id)
         const rsJson = rsRow ? rsRow.detailJson : null
@@ -1120,9 +1120,11 @@ export async function generatePayrollRun(
             resignSettlementOpt = {
               annualLeavePay: Number(parsed.annualLeavePay) || 0,
               noticePay: Number(parsed.noticePay) || 0,
-              tbDeduction: parsed.tbDeduction == null ? null : (Number(parsed.tbDeduction) || 0),
-              // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日（老舊快照無呢欄 → null → 0，行為同改前一致）
-              excessRestDeduction: parsed.excessRestDeduction == null ? null : (Number(parsed.excessRestDeduction) || 0),
+              // ★ cwm-money-20260917 P2-4：改讀 typed 欄（detailJson 係 legacy 對照用）
+              tbDeduction: rsRow!.tbDeduction == null ? null : Number(rsRow!.tbDeduction),
+              excessRestDeduction: rsRow!.excessRestDeduction == null ? null : Number(rsRow!.excessRestDeduction),
+              // ★ ④ 時間帳戶正數折現（MPF 前）—— 餘額 > 0 時 tbAmount 就係折現額
+              tbCashout: Number(rsRow!.tbMinutes) > 0 ? Number(rsRow!.tbAmount) : 0,
               monthWage: parsed.monthWage ?? null,
             }
           } catch (e) {
