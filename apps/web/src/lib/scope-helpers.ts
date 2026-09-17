@@ -62,16 +62,20 @@ export async function resolveClinicScope(
   // ROLE-OK: OWNER 全系統（跨公司），刻意用 role —— 老闆本身就係多間公司嘅老闆
   if (session.role === 'OWNER') return null
 
-  // ★★★ cwm-companyscope-20260917：以下由「零 filter」收窄做「同公司全部診所」。
-  // 舊碼返 null = 完全唔限制診所 → 經理睇到唔關佢事嘅公司。呢個係修 bug，唔係改政策。
-  // ⚠️ 保密員工係【另一層】（getConfidentialScope），唔受呢個改動影響。
   // ROLE-OK: 2026-08-03 決定 MANAGER 見全公司（保密由 getConfidentialScope 擋）
-  if (session.role === 'MANAGER') return getOwnCompanyClinicIds(session.userId)
-
-  // ★ companyWide：有其中一個權限 → 同公司全部診所（考勤、排班需要跨店）
-  if ((forPerms.companyWide ?? []).some(p => perms.includes(p))) {
+  // ★★★ cwm-companyscope-20260917 rev2：唔好一刀切收窄——老闆 2026-09-17 明示
+  // 「員工包括經理都要自由喺唔同公司／診所上班，排班唔可以限死」。照 forPerms 分流：
+  // · 有【宣告】companyWide（排班/打卡/考勤/人臉）→ 全部診所（null），維持跨公司
+  // · 其餘（計糧/薪金/員工總覽）→ 所屬公司
+  // ⚠️ 判斷用「有冇【宣告】companyWide」唔用「perms 有冇命中」——
+  // MANAGER 權限係 role-based，未必出現喺 perms array（例：face/review/[id] 傳 perms=[]）。
+  if (session.role === 'MANAGER') {
+    if ((forPerms.companyWide?.length ?? 0) > 0) return null
     return getOwnCompanyClinicIds(session.userId)
   }
+
+  // ★ companyWide：有其中一個權限 → 全部診所（考勤、排班需要跨店；員工可跨公司上班——老闆 2026-09-17）
+  if ((forPerms.companyWide ?? []).some(p => perms.includes(p))) return null
 
   // ★ homeOnly：有其中一個權限 → 只限主屬店（計糧、總覽涉及薪金）
   if ((forPerms.homeOnly ?? []).some(p => perms.includes(p))) {
