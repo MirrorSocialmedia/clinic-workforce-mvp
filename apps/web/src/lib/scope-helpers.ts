@@ -83,6 +83,27 @@ export async function resolveClinicScope(
 }
 
 /**
+ * ★ cwm-money-20260917 P3A A1：會計（ACCOUNTANT）計糧範圍。
+ * ACCOUNTANT + payroll_view → 所屬公司全部診所（公司級，唔係主屬店）；
+ * 禁返 null（null = 全系統跨公司）—— 冇公司 = [] = 乜都睇唔到（fail-closed）。
+ * 其他角色／權限組合 → 原封交 resolveClinicScope。
+ * ⚠️ A2–A10 接線等原單 —— 本 helper 只係提供能力，唔改任何 caller。
+ */
+export async function resolvePayrollScope(
+  session: { userId: string; role: string; clinics: string[] },
+  perms: string[],
+  forPerms: {
+    /** 呢啲權限 → 全公司 */ companyWide?: string[]
+    /** 呢啲權限 → 主屬店 */ homeOnly?: string[]
+  } = {},
+): Promise<string[] | null> {
+  if (session.role === 'ACCOUNTANT' && perms.includes('payroll_view')) {
+    return getOwnCompanyClinicIds(session.userId)
+  }
+  return resolveClinicScope(session, perms, forPerms)
+}
+
+/**
  * 公司範圍 —— 用戶管嘅 companyId 集合。
  *
  * ★ 2026-08-21: SchedulingMemo 係公司級備註（拍板：MANAGER 唔可以寫其他公司）。
