@@ -113,6 +113,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PROVIDER_HOLD_COMMIT', label: '硬保留入 Apricot（commit）' },
   { action: 'PROVIDER_HOLD_RELEASE', label: '放開硬保留（release）' },
   { action: 'PROVIDER_HOLD_AUTO_RELEASE', label: '硬保留逾時自動放開' },
+  // ★ cwm-p0sec-20260917 S2：修改員工帳號（電話／密碼／狀態）— User 入 MANUAL_TXN_ENTITIES，extension 唔會記，route 手動記
+  { action: 'EMPLOYEE_ACCOUNT_UPDATE', label: '修改員工帳號（電話／密碼／狀態）' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([

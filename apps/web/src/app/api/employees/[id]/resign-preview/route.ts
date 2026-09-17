@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { canSeeConfidential } from '@/lib/scope-helpers'
 import { computeResignSettlement, calcNoticePay } from '@/lib/resign-settlement'
 import { hkDateStart } from '@/lib/hk-date'
 
@@ -23,6 +24,16 @@ export async function GET(
   const lastDay = new URL(req.url).searchParams.get('lastDay')
   if (!lastDay)
     return NextResponse.json({ error: 'lastDay 必填' }, { status: 400 })
+
+  // ★ cwm-p0sec-20260917：保密員工 —— 預覽含薪金，一律 403（同一個 canSeeConfidential helper）
+  const empConf = await prisma.employee.findUnique({
+    where: { id: empId },
+    select: { payConfidential: true, homeClinicId: true },
+  })
+  if (!empConf) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+  if (!(await canSeeConfidential(auth.session, auth.perms ?? [], empConf))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   // ★ cwm-resigsettle-20260904：cutoff = 最後工作日**結束**（翌日 HK 午夜）—— 同 resign/route.ts
   //   `${lastDay}T16:00:00Z` 口徑一致，結算計足最後一日。

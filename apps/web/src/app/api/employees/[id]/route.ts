@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { jsonNoStore } from '@/lib/api-response'
+import { canSeeConfidential } from '@/lib/scope-helpers'
 import { hkDateOnly, hkTodayStr, addDaysStr } from '@/lib/hk-date'
 
 // GET /api/employees/[id] — employee detail
@@ -46,6 +47,13 @@ export async function GET(
     if (!hasAccess) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
+  // ★ cwm-p0sec-20260917：保密員工 —— 無權者 payRules 回空陣列（唔係 403，前端详情頁唔會報錯）
+  const canSeePay = await canSeeConfidential(session, auth.perms ?? [], employee)
+  if (!canSeePay) {
+    // ★ cwm-p0sec-20260917 b2-fix：照原回應 shape 包 { employee }（前端 setEmployee(data.employee)）
+    return jsonNoStore({ employee: { ...employee, payRules: [] } })
+  }
+
   return jsonNoStore({ employee })
 }
 
@@ -75,7 +83,10 @@ export async function PUT(
 
     if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
 
-    const beforeJson = JSON.stringify(employee)
+    // ★ cwm-p0sec-20260917：非 OWNER 只可以改 EMPLOYEE 角色嘅帳號（防經理改其他經理／老闆密碼）
+    if (session.role !== 'OWNER' && employee.user.role !== 'EMPLOYEE') { // ROLE-OK: 帳號安全邊界
+      return NextResponse.json({ error: '唔可以修改管理層帳號，請搵負責人' }, { status: 403 })
+    }
 
     const userUpdateData: any = {}
     if (name) userUpdateData.name = name
@@ -134,6 +145,24 @@ export async function PUT(
           clinics: { include: { clinic: { select: { id: true, name: true } } } },
         },
       })
+
+      // ★ cwm-p0sec-20260917 S2：User 喺 MANUAL_TXN_ENTITIES，audit extension 唔會記 → 手動補記
+      //   任何 user/employee 欄改動（電話／密碼／狀態／attendanceExempt 等）都記；afterJson mask password
+      if (Object.keys(userUpdateData).length > 0 || Object.keys(employeeUpdateData).length > 0) {
+        await tx.auditLog.create({
+          data: {
+            actorId: session.userId,
+            action: 'EMPLOYEE_ACCOUNT_UPDATE',
+            entity: 'User',
+            entityId: employee.userId,
+            targetEmployeeId: employee.id,
+            beforeJson: JSON.stringify({ name: employee.user.name, phone: employee.user.phone, email: employee.user.email, status: employee.user.status }),
+            afterJson: JSON.stringify({ ...userUpdateData, ...employeeUpdateData, password: userUpdateData.password ? '[已更改]' : undefined }),
+            ipAddress: req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || null,
+            userAgent: req.headers.get('user-agent') || null,
+          },
+        })
+      }
 
       return updated
     })

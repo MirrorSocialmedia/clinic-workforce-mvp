@@ -1,101 +1,10 @@
 export const dynamic = 'force-dynamic'
-import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
-import prisma from '@/lib/prisma'
-import jwt from 'jsonwebtoken'
-import bcrypt from 'bcryptjs'
-import { CONFIG } from '@/lib/config'
+import { NextResponse } from 'next/server'
 
 // POST /api/auth/reset-password
-// Body: { token: string, newPassword: string }
-// Response: { success: true, message: string }
-
-export async function POST(request: NextRequest) {
-  try {
-    const { token, newPassword } = await request.json()
-
-    // Validate inputs
-    if (!token || !newPassword) {
-      return NextResponse.json(
-        { error: 'token 和新密碼為必填欄位' },
-        { status: 400 }
-      )
-    }
-
-    // Password strength check
-    if (newPassword.length < 6) {
-      return NextResponse.json(
-        { error: '密碼至少需要 6 個字元' },
-        { status: 400 }
-      )
-    }
-
-    // Verify reset token
-    let decoded: any
-    try {
-      decoded = jwt.verify(token, CONFIG.JWT_SECRET)
-    } catch {
-      return NextResponse.json(
-        { error: '重置連結已過期或無效' },
-        { status: 400 }
-      )
-    }
-
-    // Check token purpose
-    if (decoded.purpose !== 'password-reset') {
-      return NextResponse.json(
-        { error: '無效的重置令牌' },
-        { status: 400 }
-      )
-    }
-
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: '用戶不存在' },
-        { status: 404 }
-      )
-    }
-
-    // Hash new password and update
-    const hashedPassword = await bcrypt.hash(newPassword, 12)
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        password: hashedPassword,
-        // ★ 改密碼一定要令所有舊 session 失效 ——
-        //   否則「忘記密碼」重設之後，盜用者的舊 session 仍然有效。
-        //   session 係 365 日，窗口好長。
-        tokenVersion: { increment: 1 },
-      },
-    })
-
-    // Log the password reset in audit log
-    await prisma.auditLog.create({
-      data: {
-        actorId: user.id,
-        action: 'PASSWORD_RESET',
-        entity: 'User',
-        entityId: user.id,
-        notes: '密碼已重置',
-        ipAddress: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || null,
-        userAgent: request.headers.get('user-agent') || null,
-      },
-    })
-
-    return NextResponse.json({
-      success: true,
-      message: '密碼已重置成功，請使用新密碼登入',
-    })
-  } catch (error) {
-    console.error('[Reset Password Error]', error)
-    return NextResponse.json(
-      { error: '服務器錯誤' },
-      { status: 500 }
-    )
-  }
+// ★ cwm-p0sec-20260917：自助重設暫停；舊 JWT reset token 一律唔收。
+//   舊 reset 邏輯（jwt.verify / bcrypt / user.update / audit）已整段剷除 —— 喺 unreachable dead code 入面
+//   tsc 唔會做 null-narrowing（TS18047），保留只會埋雷。
+export async function POST() {
+  return NextResponse.json({ error: '自助重設密碼已停用，請聯絡診所負責人' }, { status: 410 })
 }

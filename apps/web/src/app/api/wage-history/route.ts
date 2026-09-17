@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { periodMonthKey } from '@/lib/hk-date'
 import { jsonNoStore } from '@/lib/api-response'
+import { canSeeConfidential } from '@/lib/scope-helpers'
 
 // ============================================================
 // GET /api/wage-history?employeeId=xxx
@@ -16,6 +17,15 @@ export async function GET(req: NextRequest) {
   const employeeId = searchParams.get('employeeId')
   if (!employeeId) {
     return NextResponse.json({ error: 'employeeId required' }, { status: 400 })
+  }
+
+  // ★ cwm-p0sec-20260917：保密員工薪酬 —— 同一個 canSeeConfidential helper（坑⑥）
+  const empConf = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { payConfidential: true, homeClinicId: true },
+  })
+  if (!(await canSeeConfidential(auth.session, auth.perms ?? [], empConf ?? { payConfidential: false, homeClinicId: null }))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const [payrollItems, wageHistories] = await Promise.all([

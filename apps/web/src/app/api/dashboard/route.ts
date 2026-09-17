@@ -121,22 +121,6 @@ export async function GET(req: NextRequest) {
     todayStats: todayStats.find((s) => s.clinicId === clinic.id) ?? null,
   }))
 
-  // Get recent audit logs for non-EMPLOYEE
-  let recentAuditLogs: any[] = []
-  if (scope !== 'self') {
-    const where: any = {}
-    const sessionClinics = session.clinics ?? []
-    if (scope === 'my-clinics' && sessionClinics.length > 0) {
-      where.clinicId = { in: sessionClinics }
-    }
-    recentAuditLogs = await prisma.auditLog.findMany({
-      where,
-      include: { actor: { select: { name: true, role: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-    })
-  }
-
   // Count distinct employees across all clinics (not EmployeeClinic bindings)
   const allEmployeeClinics = await prisma.employeeClinic.findMany({
     where: {
@@ -257,7 +241,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     role: session.role,
     clinics: clinicsWithStats,
-    recentAuditLogs,
     distinctEmployeeCount,
     workHours,
     whClinics: whClinics,

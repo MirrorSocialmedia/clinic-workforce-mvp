@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { jsonNoStore } from '@/lib/api-response'
+import { canSeeConfidential } from '@/lib/scope-helpers'
 
 // GET /api/employees/:id/pay-rules — get all pay rules for employee
 export async function GET(
@@ -12,6 +13,16 @@ export async function GET(
 ) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
+
+  // ★ cwm-p0sec-20260917：保密員工薪酬 —— 同 overview/route.ts:55 同一個 helper（坑②）
+  const emp = await prisma.employee.findUnique({
+    where: { id: params.id },
+    select: { payConfidential: true, homeClinicId: true },
+  })
+  if (!emp) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+  if (!(await canSeeConfidential(auth.session, auth.perms ?? [], emp))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const payRules = await prisma.payRule.findMany({
     where: { employeeId: params.id },
