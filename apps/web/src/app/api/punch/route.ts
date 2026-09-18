@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { validateAndMarkTokenUsed } from '@/lib/qr-token'
+import { resolveQrToken } from '@/lib/qr-token'
 import { todayHK, hkDateStart } from '@/lib/hk-date'
 import { distanceMeters } from '@/lib/geo'
 
@@ -60,32 +60,25 @@ export async function POST(req: NextRequest) {
       let source: string = 'QR_DYNAMIC'
       let tokenValid: boolean | null = true
       let crossClinic = false
+      let tokenIdForUsage: string | null = null
 
       // ★ Token + clinic resolution: token-first, explicit-fallback
       if (qrToken) {
-        // Atomic: validate + mark token used in one operation
-        const validation = await validateAndMarkTokenUsed(qrToken, employee.id)
-
-        if (!validation || !validation.valid) {
-          if (validation?.reason === 'ALREADY_USED') {
-            return NextResponse.json(
-              { error: '呢個 QR 你已經掃過，請等螢幕更新後再掃' },
-              { status: 409 }, // 409 Conflict - 已經用過
-            )
-          }
-          return NextResponse.json(
-            { error: `QR token 無效：${validation?.reason || '未知錯誤'}` },
-            { status: 400 },
-          )
+        const tokenCheck = await resolveQrToken(qrToken)
+        if (!tokenCheck.valid) {
+          return NextResponse.json({
+            error: tokenCheck.reason === 'EXPIRED'
+              ? 'QR 碼已過期，請等 iPad 更新後再掃（今次未打到卡）'
+              : 'QR 碼無效，請掃診所 iPad 上最新嘅 QR（今次未打到卡）',
+            code: tokenCheck.reason,
+          }, { status: 400 })
         }
-
-        clinicId = validation.clinicId ?? null
-        if (!clinicId) {
-          return NextResponse.json(
-            { error: 'Clinic ID missing from token validation' },
-            { status: 400 }
-          )
+        // ★ cwm-antitamper P1-1：唔准用自己裝置發出嘅 QR
+        if (tokenCheck.issuedByUserId && tokenCheck.issuedByUserId === session.userId) {
+          return NextResponse.json({ error: '唔可以用自己裝置顯示嘅 QR 打卡，請掃診所 iPad（今次未打到卡）', code: 'SELF_ISSUED' }, { status: 403 })
         }
+        clinicId = tokenCheck.clinicId
+        tokenIdForUsage = tokenCheck.tokenId
 
         // ★ 決定（2026-08-01）：借調係常態，唔擋跨店打卡。
         // 排班嗰邊已經唔檢查 EmployeeClinic（2026-07-28 全店排班權），
@@ -96,7 +89,7 @@ export async function POST(req: NextRequest) {
           crossClinic = true
         }
 
-        source = validation.source || 'QR_DYNAMIC'
+        source = 'QR_DYNAMIC'
         // ★ Explicit type + valid token = normal punch, NOT MANUAL_CORRECTION
       } else {
         // ★ 決定 6：一律要 QR token（含午休卡）。
@@ -187,6 +180,8 @@ export async function POST(req: NextRequest) {
 
       // Transaction: punch record (audit auto-handled by Prisma extension)
       const result = await prisma.$transaction(async (tx) => {
+        // ★ cwm-antitamper：所有檢查通過先消耗 token（之前喺一開頭就消耗，失敗都會食咗）
+        await tx.qRTokenUsage.create({ data: { tokenId: tokenIdForUsage!, employeeId: employee.id } })
         const record = await tx.punchRecord.create({
           data: {
             employeeId: employee.id,
@@ -206,7 +201,20 @@ export async function POST(req: NextRequest) {
               : (body.notes || null),
           },
         })
-
+        // ★ cwm-antitamper P1-2：每張卡入 audit（入 SENSITIVE_AUDIT_EXEMPT，唔入敏感摘要）
+        await tx.auditLog.create({
+          data: {
+            actorId: session.userId,
+            action: 'PUNCH_CREATE',
+            entity: 'PunchRecord',
+            entityId: record.id,
+            targetEmployeeId: employee.id,
+            clinicId,
+            afterJson: JSON.stringify({ punchType, locationFlag, distanceM, crossClinic }),
+            ipAddress: req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || null,
+            userAgent: req.headers.get('user-agent') || null,
+          },
+        })
         return record
       })
 
@@ -219,11 +227,15 @@ export async function POST(req: NextRequest) {
     } catch (error: any) {
       console.error('Punch error:', error)
       // Transaction rollback already happened
+      if (error.code === 'P2002') {
+        // ★ cwm-antitamper：QRTokenUsage unique(tokenId, employeeId) — 同碼第二次 = 已用
+        return NextResponse.json({ error: '呢個 QR 你啱啱已經用咗（上一次已打卡成功），請等螢幕更新', code: 'ALREADY_USED' }, { status: 409 })
+      }
       if (error.code === 'P2025') {
         // Record not unique — token already used
         return NextResponse.json({ error: 'Token invalid or already used' }, { status: 400 })
       }
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+      return NextResponse.json({ error: '系統錯誤，今次未打到卡，請再試或者搵主管' }, { status: 500 })
     }
   })
 }

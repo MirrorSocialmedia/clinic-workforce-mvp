@@ -6,6 +6,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { hkDateEnd } from '@/lib/hk-date'
 import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
+import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 
 // ============================================================
 // GET /api/leave-balance — Get leave balance
@@ -222,6 +223,15 @@ export async function PATCH(req: NextRequest) {
       })
 
       return u
+    })
+
+    // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+    await flagIfSelfEdit({
+      actorUserId: session.userId,
+      targetEmployeeId: cur.employeeId,
+      what: '改假期額度',
+      detail: { entitled: nextEntitled, used: nextUsed, remaining: updateData.remaining },
+      req,
     })
 
     return NextResponse.json({ success: true, leaveBalance: updated })

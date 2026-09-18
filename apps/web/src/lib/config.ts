@@ -162,7 +162,8 @@ export const CONFIG = {
     'PUT /api/punch-corrections/:id': ['OWNER', 'MANAGER'],
 
     // QR token routes
-    'GET /api/qr-tokens': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE', 'KIOSK'],
+    // ★ cwm-antitamper-20260917：員工／會計唔准自己發 QR（否則可喺屋企打卡）
+    'GET /api/qr-tokens': ['OWNER', 'MANAGER', 'KIOSK'],
 
     // Daily hash routes
     'POST /api/daily-hash': ['OWNER', 'MANAGER'],

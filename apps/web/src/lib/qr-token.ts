@@ -4,12 +4,10 @@ import { QR_REFRESH_SECONDS } from './qr-constants'
 
 const TOKEN_TTL_SECONDS = QR_REFRESH_SECONDS * 2 // 舊碼多活一個週期 — 尾端掃描唔過期
 
-/**
- * Generate an 8-char base64url short code.
- * 6 bytes = 48 bits = 2^48 space. With 60s expiry window, brute force infeasible.
- */
+// ★ cwm-antitamper：大楷＋去除易混字（0/O/1/I），手動輸入唔再分大細楷
+const SHORT_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // 32 字 → 5 bit
 function generateShortCode(): string {
-  return randomBytes(6).toString('base64url').slice(0, 8)
+  return Array.from(randomBytes(8), b => SHORT_ALPHABET[b & 31]).join('')
 }
 
 /**
@@ -18,7 +16,7 @@ function generateShortCode(): string {
  * Short code: 8-char base64url, displayed in QR instead of full token.
  * Expires after TOKEN_TTL_SECONDS seconds.
  */
-export async function generateQRToken(clinicId: string): Promise<{
+export async function generateQRToken(clinicId: string, issuedByUserId?: string): Promise<{
   id: string
   token: string
   shortCode: string
@@ -41,6 +39,7 @@ export async function generateQRToken(clinicId: string): Promise<{
           clinicId,
           token,
           shortCode,
+          issuedByUserId: issuedByUserId ?? null, // ★ cwm-antitamper：發碼裝置登入者
           issuedAt,
           expiresAt,
         },
@@ -54,7 +53,7 @@ export async function generateQRToken(clinicId: string): Promise<{
     } catch (err: any) {
       if (err?.code === 'P2002' && attempt < maxRetries - 1) {
         // Retry with new random short code
-        shortCode = randomBytes(6).toString('base64url').slice(0, 8)
+        shortCode = generateShortCode()
         token = createHash('sha256').update(clinicId + issuedAt.getTime() + shortCode).digest('hex')
       } else {
         throw err
@@ -123,6 +122,27 @@ export async function validateAndMarkTokenUsed(
     clinicId: record.clinicId,
     source: 'QR_DYNAMIC',
   }
+}
+
+/**
+ * ★ cwm-antitamper：只驗證，唔寫入。
+ * punch route 改咗「先檢查後消耗」—— 所有守衛通過先消耗 token（失敗唔食碼）。
+ * 消耗喺 route 嘅 $transaction 第一句（QRTOKEN_USAGE 冪等 → 同碼第二次 = P2002 → 409 ALREADY_USED）。
+ */
+export async function resolveQrToken(scanned: string): Promise<
+  | { valid: true; tokenId: string; clinicId: string; issuedByUserId: string | null }
+  | { valid: false; reason: 'NOT_FOUND' | 'EXPIRED' }
+> {
+  let record = await prisma.qRToken.findUnique({ where: { token: scanned } })
+  if (!record) {
+    record = await prisma.qRToken.findFirst({
+      where: { shortCode: scanned.trim().toUpperCase(), expiresAt: { gt: new Date() } },
+      orderBy: { issuedAt: 'desc' },
+    })
+  }
+  if (!record) return { valid: false, reason: 'NOT_FOUND' }
+  if (new Date() > record.expiresAt) return { valid: false, reason: 'EXPIRED' }
+  return { valid: true, tokenId: record.id, clinicId: record.clinicId, issuedByUserId: record.issuedByUserId ?? null }
 }
 
 /**

@@ -12,6 +12,8 @@ export default function QrScannerClient({ onScan, onScannerReady }: QrScannerCli
   const videoRef = useRef<HTMLVideoElement>(null)
   const scannerRef = useRef<QrScanner | null>(null)
   const processingRef = useRef(false)
+  // ★ cwm-antitamper：同一個失敗碼喺 3 秒防抖窗口內唔重複送（鏡頭會連續掃到同一個碼）
+  const lastFailedRef = useRef<string | null>(null)
   const onScanRef = useRef(onScan)
   const [status, setStatus] = useState('開啟鏡頭中...')
   const [manualMode, setManualMode] = useState(false)
@@ -27,6 +29,8 @@ export default function QrScannerClient({ onScan, onScannerReady }: QrScannerCli
       video,
       async (result) => {
         if (processingRef.current) return
+        // ★ cwm-antitamper：重複碼防抖 — 上一個失敗碼喺窗口內唔再送
+        if (result.data === lastFailedRef.current) return
         processingRef.current = true
         setStatus('打卡中...')
         const ok = await onScanRef.current(result.data)
@@ -34,9 +38,10 @@ export default function QrScannerClient({ onScan, onScannerReady }: QrScannerCli
           try { scanner.stop(); scanner.destroy() } catch { /* ignore */ }
           scannerRef.current = null
         } else {
+          lastFailedRef.current = result.data
           setTimeout(() => {
             processingRef.current = false
-            setStatus('請對準診所 QR 碼')
+            setStatus('未打到卡 — 請等 iPad 換新 QR 再掃')
           }, 3000)
         }
       },

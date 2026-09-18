@@ -8,6 +8,7 @@ import { LEAVE_SYSTEM_KEYS, balanceYearFor } from '@/lib/leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 import { toHKDateStr } from '@/lib/hk-date'
 import { guardPayrollLock } from '@/lib/payroll-lock'
+import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 
 async function getOtLeaveTypeId() {
   const lt = await prisma.leaveType.findUnique({
@@ -126,6 +127,14 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${new Date()}`, e)
     }
+    // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+    await flagIfSelfEdit({
+      actorUserId: auth.session.userId,
+      targetEmployeeId: employeeId,
+      what: '假還鐘',
+      detail: { direction, days: daysInt, minutes },
+      req,
+    })
     return NextResponse.json({ ok: true })
   }
 
@@ -167,6 +176,14 @@ export async function POST(req: NextRequest) {
         notes: JSON.stringify({ delta: -(daysInt * TIMEBANK_MINUTES_PER_DAY), days: daysInt, direction, date: new Date().toISOString() }),
       },
     } as any)
+    // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+    await flagIfSelfEdit({
+      actorUserId: auth.session.userId,
+      targetEmployeeId: employeeId,
+      what: '假還鐘',
+      detail: { direction, days: daysInt },
+      req,
+    })
   } else {
     const otLeaveTypeId = await getOtLeaveTypeId()
     if (!otLeaveTypeId) {
@@ -210,6 +227,14 @@ export async function POST(req: NextRequest) {
         notes: JSON.stringify({ delta: daysInt * TIMEBANK_MINUTES_PER_DAY, days: daysInt, direction, date: new Date().toISOString() }),
       },
     } as any)
+    // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+    await flagIfSelfEdit({
+      actorUserId: auth.session.userId,
+      targetEmployeeId: employeeId,
+      what: '假還鐘',
+      detail: { direction, days: daysInt },
+      req,
+    })
   }
 
   return NextResponse.json({ success: true })

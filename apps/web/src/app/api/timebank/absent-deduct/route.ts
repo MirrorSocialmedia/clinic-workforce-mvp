@@ -5,6 +5,7 @@ import prisma from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
+import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
@@ -140,6 +141,15 @@ export async function POST(req: NextRequest) {
         notes: JSON.stringify({ delta: -shiftMinutes, date, reason: '缺勤扣OT鐘' }),
       },
     } as any)
+
+    // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+    await flagIfSelfEdit({
+      actorUserId: auth.session.userId,
+      targetEmployeeId: employeeId,
+      what: '缺勤扣OT',
+      detail: { date, minutes: -shiftMinutes },
+      req,
+    })
 
     return NextResponse.json({ success: true, shiftMinutes })
   } catch (err: any) {

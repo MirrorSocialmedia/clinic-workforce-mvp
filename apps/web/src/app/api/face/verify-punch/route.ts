@@ -38,6 +38,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'punch not found' }, { status: 404 })
   }
 
+  // ★ cwm-antitamper-20260917：一張卡只准寫一次人臉結果，而且要喺打卡後 5 分鐘內
+  //   （前端正常流程最多 ~20 秒；PENDING_ENROLL／NOT_ENROLLED 係「未驗證」狀態，准覆寫）
+  const ALREADY_FINAL = punch.faceStatus && !['PENDING_ENROLL', 'NOT_ENROLLED'].includes(punch.faceStatus)
+  if (ALREADY_FINAL) {
+    return NextResponse.json({ error: 'already verified', status: punch.faceStatus }, { status: 409 })
+  }
+  if (Date.now() - punch.createdAt.getTime() > 5 * 60 * 1000) {
+    return NextResponse.json({ error: 'verification window closed' }, { status: 409 })
+  }
+
   const tmpl = await prisma.faceTemplate.findFirst({ where: { employeeId: employee.id, active: true } })
   if (!tmpl) {
    // Check for pending enrollment

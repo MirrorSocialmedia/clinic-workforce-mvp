@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { diffMinutes } from '@/lib/shift-punch-match'
+import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
@@ -143,6 +144,15 @@ export async function POST(req: NextRequest) {
       notes: JSON.stringify({ delta: -Math.abs(parseInt(minutes)), date, reason: reason?.trim(), targetType }),
     },
   } as any)
+
+  // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+  await flagIfSelfEdit({
+    actorUserId: auth.session.userId,
+    targetEmployeeId: employeeId,
+    what: '補鐘',
+    detail: { date, minutes: -Math.abs(parseInt(minutes)), targetType },
+    req,
+  })
 
   return NextResponse.json({ success: true })
 }

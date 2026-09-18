@@ -1,0 +1,1 @@
+ALTER TABLE "QRToken" ADD COLUMN "issuedByUserId" TEXT;

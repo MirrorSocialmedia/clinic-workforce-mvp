@@ -99,6 +99,12 @@ export async function PUT(
   const oldRecord = await prisma.punchRecord.findUnique({ where: { id: params.id } })
   if (!oldRecord) return NextResponse.json({ error: '記錄不存在' }, { status: 404 })
 
+  // ★ cwm-antitamper P1-5：手改必有原因，時間唔可以係未來
+  if (!reason || String(reason).trim().length < 2) return NextResponse.json({ error: '請填寫修改原因' }, { status: 400 })
+  if (punchTime && (isNaN(new Date(punchTime).getTime()) || new Date(punchTime).getTime() > Date.now() + 60_000)) {
+    return NextResponse.json({ error: '時間無效' }, { status: 400 })
+  }
+
   // ★ IDOR: MANAGER 只可以改自己店嘅打卡
   // ★ 用 resolveClinicScope 取代 assertClinicAccess（2026-08-03）
   // forPerms: 編輯打卡 → companyWide（考勤跨店）
@@ -130,9 +136,9 @@ export async function PUT(
         clinicId: oldRecord.clinicId,
         punchTime: punchTime ? new Date(punchTime) : oldRecord.punchTime,
         punchType: punchType || oldRecord.punchType,
-        source: oldRecord.source,
-        tokenValid: oldRecord.tokenValid,
-        deviceInfo: oldRecord.deviceInfo,
+        source: 'MANUAL_CORRECTION' as any,   // ★ cwm-antitamper：手改嘅卡唔准再顯示「動態QR碼 · QR有效」
+        tokenValid: null,
+        deviceInfo: null,
         notes: notes !== undefined ? notes : oldRecord.notes,
       },
     })

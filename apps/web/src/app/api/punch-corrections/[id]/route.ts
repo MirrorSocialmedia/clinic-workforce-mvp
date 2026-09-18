@@ -49,29 +49,39 @@ export async function PUT(
     const status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED'
 
     // Transaction: correction update (audit auto-handled by Prisma extension)
-    const updated = await prisma.$transaction(async (tx) => {
-      const result = await tx.punchCorrection.update({
-        where: { id },
-        data: { status: status as any, approvedBy: session.userId },
-      })
-
-      // If approved and no original punch record exists, create one
-      if (status === 'APPROVED' && !correction.punchRecordId) {
-        await tx.punchRecord.create({
-          data: {
-            employeeId: correction.employeeId,
-            clinicId: correction.clinicId,
-            punchTime: correction.correctedTime,
-            punchType: correction.punchType,
-            source: 'MANUAL_CORRECTION' as any,
-            tokenValid: null,
-            notes: notes || `Corrected via punch correction #${correction.id}: ${correction.reason || 'N/A'}`,
-          },
+    let updated
+    try {
+      updated = await prisma.$transaction(async (tx) => {
+        // ★ cwm-antitamper：status 條件寫入 —— 雙擊／兩個經理同時批，只有一個成功（另一個 P2025 → 409）
+        const result = await tx.punchCorrection.update({
+          where: { id, status: 'PENDING' },
+          data: { status: status as any, approvedBy: session.userId },
         })
-      }
 
-      return result
-    })
+        // If approved and no original punch record exists, create one
+        if (status === 'APPROVED' && !correction.punchRecordId) {
+          const pr = await tx.punchRecord.create({
+            data: {
+              employeeId: correction.employeeId,
+              clinicId: correction.clinicId,
+              punchTime: correction.correctedTime,
+              punchType: correction.punchType,
+              source: 'MANUAL_CORRECTION' as any,
+              tokenValid: null,
+              notes: notes || `Corrected via punch correction #${correction.id}: ${correction.reason || 'N/A'}`,
+            },
+          })
+          // ★ cwm-antitamper P1-4：一定要回寫，否則 punch-query.ts:74 當 orphan 再砌一張 synthetic
+          return tx.punchCorrection.update({ where: { id }, data: { punchRecordId: pr.id } })
+        }
+        return result
+      })
+    } catch (e: any) {
+      if (e?.code === 'P2025') {
+        return NextResponse.json({ error: '呢張申請已經有人處理咗' }, { status: 409 })
+      }
+      throw e
+    }
 
     // ★ 自批記錄：批核自己提出嘅 PENDING 申請
     if (status === 'APPROVED' && correction.employee?.userId === session.userId) {

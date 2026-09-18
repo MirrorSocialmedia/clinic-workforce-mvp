@@ -117,6 +117,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PROVIDER_HOLD_AUTO_RELEASE', label: '硬保留逾時自動放開' },
   // ★ cwm-p0sec-20260917 S2：修改員工帳號（電話／密碼／狀態）— User 入 MANUAL_TXN_ENTITIES，extension 唔會記，route 手動記
   { action: 'EMPLOYEE_ACCOUNT_UPDATE', label: '修改員工帳號（電話／密碼／狀態）' },
+  // ★ cwm-antitamper-20260917 P1-6：自己改自己假期／時間帳戶（標紅，唔擋）
+  { action: 'SELF_BALANCE_EDIT', label: '⚠️ 自己改自己假期／時間帳戶' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([
@@ -135,4 +137,6 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   'EXTERNAL_NOTE_VIEWED', 'PATIENT_RECORD_REFRESHED',
   // ★ cwi-followup-p4：處方碼外部讀取 — metadata-only（記 staffId+visitId，零內容），同 EXTERNAL_NOTE_VIEWED 同構
   'EXTERNAL_RX_VIEWED',
+  // ★ cwm-antitamper-20260917 P1-2：每張打卡都記 PUNCH_CREATE（有 IP/UA 審計），但係常規操作，唔入敏感摘要
+  'PUNCH_CREATE',
 ])

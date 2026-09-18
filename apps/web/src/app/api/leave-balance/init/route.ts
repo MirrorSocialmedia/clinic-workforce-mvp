@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 
 // ============================================================
 // POST /api/leave-balance/init — Batch initialize leave balances
@@ -121,6 +122,15 @@ export async function POST(req: NextRequest) {
           },
         })
       }
+
+      // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+      await flagIfSelfEdit({
+        actorUserId: session.userId,
+        targetEmployeeId: empId,
+        what: '初始化／增加假期',
+        detail: { leaveTypeId, days, year, mode },
+        req,
+      })
 
       results.push(result)
     }

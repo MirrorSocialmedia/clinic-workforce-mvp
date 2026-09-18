@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
+import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -69,6 +70,15 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${date}`, e)
   }
+
+  // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
+  await flagIfSelfEdit({
+    actorUserId: auth.session.userId,
+    targetEmployeeId: employeeId,
+    what: '時間帳戶初始化',
+    detail: { minutes: totalMinutes, effectiveMonth, reason: reason.trim() },
+    req,
+  })
 
   return NextResponse.json({ ok: true, minutes: totalMinutes })
 }
