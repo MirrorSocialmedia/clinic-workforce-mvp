@@ -1007,8 +1007,7 @@ export default function AttendancePage() {
                   </div>
                   <div className="flex justify-between items-center text-sm">
                     <div className="flex items-center gap-2">
-                      <span className="px-1.5 py-0.5 text-[10px] rounded border
-                        {isClockIn ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : !isClockIn && record.punchType === 'CLOCK_OUT' ? 'border-orange-300 bg-orange-50 text-orange-700' : record.punchType === 'LUNCH_START' ? 'border-amber-300 bg-amber-50 text-amber-700' : record.punchType === 'LUNCH_END' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-300 bg-gray-50 text-gray-700'} font-medium">
+                      <span className={`px-1.5 py-0.5 text-[10px] rounded border font-medium ${isClockIn ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : record.punchType === 'CLOCK_OUT' ? 'border-orange-300 bg-orange-50 text-orange-700' : record.punchType === 'LUNCH_START' ? 'border-amber-300 bg-amber-50 text-amber-700' : record.punchType === 'LUNCH_END' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-300 bg-gray-50 text-gray-700'}`}>
                         {typeLabel}
                       </span>
                       <span>{displayTime}</span>
@@ -1033,6 +1032,18 @@ export default function AttendancePage() {
                   <div className="flex justify-end gap-2 mt-2">
                     {record.corrections && record.corrections.length > 0 && (
                       <span className="text-amber-600 text-[10px]">{record.corrections.length} 筆修正</span>
+                    )}
+                    {!isVoided && (
+                      <button className="text-amber-600 text-xs px-2 py-1 rounded border border-amber-200"
+                        onClick={() => { setCorrectionRecord(record); setCorrectionForm({ time: '', reason: '', punchType: record.punchType }); setShowCorrectionModal(true) }}>
+                        ✏️ 修正
+                      </button>
+                    )}
+                    {!isVoided && hasAttendanceManage && (
+                      <button className="text-red-600 text-xs px-2 py-1 rounded border border-red-200"
+                        onClick={() => { setVoidRecord(record); setVoidReason(''); setShowVoidModal(true) }}>
+                        🗑 作廢
+                      </button>
                     )}
                     <Link href={`/attendance/${record.id}`} className="text-brand hover:underline text-xs">詳情</Link>
                   </div>

@@ -31,7 +31,7 @@ async function runSyncInBackground(
   let totalBills = 0
   let totalAllocs = 0
 
-  await withApricotLock(async () => {
+  const acquired = await withApricotLock(async () => {
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i]
 
@@ -95,6 +95,17 @@ async function runSyncInBackground(
       endedAt: new Date(),
     })
   })
+
+  // ★ cwm-ops P4-6：攞唔到鎖（Apricot 正被另一 process 用，例如臨床索引夜跑）→
+  //   即刻標 FAILED，唔好卡住 RUNNING 等到 zombie cleanup
+  if (acquired === null) {
+    await updateJob(jobId, {
+      status: 'FAILED',
+      errorMessage: 'Apricot 正忙，請稍後再試',
+      currentStep: 'Apricot 正忙',
+      endedAt: new Date(),
+    })
+  }
 }
 
 /** POST /api/apricot/sync — 建立 job + 背景執行（OWNER only） */

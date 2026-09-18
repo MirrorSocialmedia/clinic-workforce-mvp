@@ -93,9 +93,11 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${DB_CONTAINER}$"; then
 fi
 
 # ★ Trap to always restore restart policy, even on failure
+# ★ cwm-ops：還原未完成（RESTORE_OK=0）→ app 保持停止，唔好自動起返俾人用
+RESTORE_OK=0
 trap 'docker update --restart=unless-stopped "${APP_CONTAINER}" >/dev/null 2>&1 || true; \
- docker start "${APP_CONTAINER}" >/dev/null 2>&1 || true; \
- echo "🔁 (trap) app 容器已嘗試起返"' EXIT
+ if [ "$RESTORE_OK" = 1 ]; then docker start "${APP_CONTAINER}" >/dev/null 2>&1 || true; echo "🔁 (trap) app 已起返"; \
+ else echo "⛔ (trap) 還原未完成 —— app 保持停止，查清楚先手動 docker start ${APP_CONTAINER}"; fi' EXIT
 
 # Stop app container and disable auto-restart to prevent reconnection
 echo "⏸️  停止 web 容器並關閉自動重啟..."
@@ -189,6 +191,7 @@ if [ -f "${ROWS_FILE}" ]; then
     exit 1
   fi
   echo "✅ ${CHECKED} 張表 row count 全部一致"
+  RESTORE_OK=1
   if [ "${CHECKED}" -lt 40 ]; then
    echo " ⚠️ 只對咗 ${CHECKED} 張表 — 呢個備份係舊版 backup.sh 出嘅"
    echo " （新版由 schema 生成，應該有 50+ 張）"
@@ -197,6 +200,7 @@ if [ -f "${ROWS_FILE}" ]; then
 else
   echo "⚠️ 冇 .rows 檔（這個備份多數係 deploy.sh 出的）—— 跳過自動對數"
   echo " ★ 請人手確認上面的摘要合不合理"
+  RESTORE_OK=1
 fi
 
 # ★ 補跑 migration — 備份的 schema 可能落後於當前代碼

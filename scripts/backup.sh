@@ -4,6 +4,7 @@
 # Schedule via cron: 0 2 * * * /path/to/backup.sh /backups
 
 set -euo pipefail
+export PATH="/home/clinicapp/bin:/usr/local/bin:/usr/bin:/bin"
 
 BACKUP_DIR="${1:-/backups/clinic-mvp}"
 mkdir -p "${BACKUP_DIR}"
@@ -138,6 +139,17 @@ echo "✅ 備份內容驗證通過"
 # Generate checksum
 sha256sum "${BACKUP_FILE}" > "${BACKUP_FILE}.sha256"
 echo "✅ Checksum saved"
+
+# ★ cwm-ops：加密後推異地（age 公鑰喺 server；私鑰只喺老闆電腦／密碼庫）
+if [ -f /home/clinicapp/.backup_age_pub ] && command -v age >/dev/null && command -v rclone >/dev/null; then
+  age -R /home/clinicapp/.backup_age_pub -o "${BACKUP_FILE}.age" "${BACKUP_FILE}"
+  rclone copy "${BACKUP_FILE}.age" offsite:clinic-backups/ \
+    && rclone copy "${BACKUP_FILE}.sha256" offsite:clinic-backups/ \
+    && rm -f "${BACKUP_FILE}.age" \
+    || { echo "❌ 異地備份失敗"; exit 1; }
+else
+  echo "⚠️ 未設定 age／rclone —— 今次冇異地備份"; exit 1
+fi
 
 # Clean up old backups beyond retention period
 find "${BACKUP_DIR}" -maxdepth 1 -name "clinic_prod_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete

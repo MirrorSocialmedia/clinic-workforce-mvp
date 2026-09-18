@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
                 clinicId,
                 punchTime: correctedTime,
                 punchType: punchType as any,
-                source: 'CORRECTION' as any,
+                source: 'MANUAL_CORRECTION',
               },
             })
             newPunchRecordId = newRecord.id

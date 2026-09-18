@@ -16,11 +16,21 @@
 // ============================================================
 
 import { apricotCall } from '@/lib/apricot/client'
+import { withApricotLock } from '@/lib/apricot/lock'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { PAGE_SIZE, rateLimitMs, type ClinicalCallFn } from './types'
 
-/** 預設 callFn = 真 Apricot（cookie 三件套 + rotation 已喺 apricotCall 封裝）。 */
-const defaultCall: ClinicalCallFn = (path, init) => apricotCall(path, init)
+/** 預設 callFn = 真 Apricot（cookie 三件套 + rotation 已喺 apricotCall 封裝）。
+ * ★ cwm-ops P4-6：包 advisory lock（同 sync/write-booking 同一把）— 攞唔到就 500ms 後重試，
+ *   最多 20 次；仲係攞唔到 → APRICOT_BUSY（夜跑同 sync 唔好搶 token）。 */
+const defaultCall: ClinicalCallFn = async (path, init) => {
+  for (let i = 0; i < 20; i++) {
+    const r = await withApricotLock(async () => ({ v: await apricotCall(path, init) }))
+    if (r) return r.v
+    await new Promise(res => setTimeout(res, 500))
+  }
+  throw new Error('APRICOT_BUSY')
+}
 
 /**
  * 包一層限速計數：每次 call 之間 sleep(rateLimitMs())（第一次唔 sleep）。

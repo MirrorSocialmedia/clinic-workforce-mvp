@@ -25,6 +25,8 @@ if gunzip -c "${LATEST}" | docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}"
 else
  echo "❌ 演練還原失敗 —— 你嘅備份還原唔到！"
  tail -20 /tmp/drill_err.log
+ docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres -c "DROP DATABASE IF EXISTS ${DRILL_DB};" || true
+ exit 1
 fi
 
 docker exec "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres \

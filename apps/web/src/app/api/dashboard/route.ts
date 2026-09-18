@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { todayHK, hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
-import { matchPunchesToShifts, estimateScheduledHours } from '@/lib/shift-punch-match'
+import { estimateScheduledHours } from '@/lib/shift-punch-match'
+import { buildTodayBoard } from '@/lib/today-board'
 import { computeRosterHours, rosterDiffNoteFilter } from '@/lib/roster-hours'
 
 /** Get start/end of today in HK (UTC+8) */
@@ -18,7 +19,7 @@ function hkTodayBounds() {
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
-  const { session, scope } = auth
+  const { session, scope, perms } = auth
 
   let clinics: any[] = []
 
@@ -55,63 +56,16 @@ export async function GET(req: NextRequest) {
   // ── Today's daily stats per clinic ──
   const { start: todayStart, end: todayEnd } = hkTodayBounds()
 
+  // ★ cwm-ownerdash-20260917：今日出勤看板（有時間感知；名單只俾管理層）
+  const canSeePeople = session.role === 'OWNER' || session.role === 'MANAGER' || (perms ?? []).includes('attendance_manage') // ROLE-OK: 同事出勤名單
   const todayStats = await Promise.all(clinics.map(async (clinic) => {
-    // 1. Scheduled shifts today (non-cancelled)
-    const scheduled = await prisma.shift.count({
-      where: {
-        clinicId: clinic.id,
-        date: { gte: todayStart, lt: todayEnd },
-        status: { notIn: ['CANCELLED', 'DRAFT'] },
-      },
-    })
-
-    // 2. Employee IDs who have a scheduled shift today
-    const scheduledEmployees = await prisma.shift.findMany({
-      where: {
-        clinicId: clinic.id,
-        date: { gte: todayStart, lt: todayEnd },
-        status: { notIn: ['CANCELLED', 'DRAFT'] },
-      },
-      select: { id: true, employeeId: true, startTime: true, endTime: true, clinicId: true, secondaryClinicId: true, date: true, status: true },
-    })
-
-    const employeeIds = scheduledEmployees.map((s) => s.employeeId)
-
-    // 3. CLOCK_IN records today at this clinic for scheduled employees
-    const punchRecords =
-      employeeIds.length > 0
-        ? await prisma.punchRecord.findMany({
-            where: {
-              clinicId: clinic.id,
-              employeeId: { in: employeeIds },
-              punchTime: { gte: todayStart, lt: todayEnd },
-              void: { is: null }, // 已作廢的不算
-            },
-            select: { employeeId: true, punchTime: true, punchType: true, clinicId: true },
-          })
-        : []
-
-    const clockedInSet = new Set(punchRecords.filter(p => p.punchType === 'CLOCK_IN').map((p) => p.employeeId))
-    const clockedIn = clockedInSet.size
-
-    // ★ 用共用配對邏輯（唔再用 Map(employeeId → 第一張更)）
-    const matched = matchPunchesToShifts(
-      scheduledEmployees,
-      punchRecords.map(p => ({
-        effectiveTime: p.punchTime,
-        punchType: p.punchType,
-        clinicId: p.clinicId,
-      })),
-    )
-    const late = matched.filter(m => m.lateMinutes > 0).length
-
+    const b = await buildTodayBoard(clinic.id, todayStart, todayEnd)
     return {
-      clinicId: clinic.id,
-      clinicName: clinic.name,
-      scheduled,
-      clockedIn,
-      late,
-      notArrived: scheduled - clockedIn,
+      clinicId: clinic.id, clinicName: clinic.name,
+      scheduled: b.scheduled, expected: b.expected, clockedIn: b.clockedIn,
+      late: b.late, notArrived: b.notArrived, notStarted: b.notStarted,
+      missingOut: b.missingOut, onLeaveCount: b.onLeaveCount,
+      ...(canSeePeople ? { people: b.people, onLeave: b.onLeave } : {}),
     }
   }))
 
@@ -244,5 +198,6 @@ export async function GET(req: NextRequest) {
     distinctEmployeeCount,
     workHours,
     whClinics: whClinics,
+    updatedAt: new Date().toISOString(),
   })
 }

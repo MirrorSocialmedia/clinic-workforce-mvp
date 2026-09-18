@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { hasPermission } from '@/lib/permissions'
 import { allowsNegativeBalance } from '@/lib/leave-types'
+import { MobileDaySheet, type MobileSheetState, type ConflictState } from '@/components/scheduling/MobileDaySheet'
 
 // ============================================================
 // Sorting helpers
@@ -603,6 +604,8 @@ export default function SchedulingPage() {
   // Mobile day view state
   const [mobileSelectedDate, setMobileSelectedDate] = useState<string>(toHKDateStr(todayHK()))
   const [mobileView, setMobileView] = useState<'day' | 'week'>('day')
+  const [mobileSheet, setMobileSheet] = useState<MobileSheetState>(null)
+  const [mobileConflict, setMobileConflict] = useState<ConflictState>(null)
   const mobileWeekDays = useMemo(() => {
     const d = new Date(mobileSelectedDate)
     const dow = d.getDay() // 0=日
@@ -4625,7 +4628,7 @@ function getShiftCode(shift: Shift): string {
       {/* Mobile: Read-only day view + week overview */}
       <div className="md:hidden px-4" style={{ marginTop: 12 }}>
         <p className="text-xs text-muted-foreground mb-3 text-center bg-amber-50 rounded-lg p-2 border border-amber-200">
-          📱 手機為唯讀檢視，排班請用電腦
+          {canManage ? '📱 撳「＋ 加更／加假」或者撳更卡刪除；拖拉排班請用電腦' : '📱 手機為唯讀檢視，排班請用電腦'}
         </p>
 
         {/* Tab switch: Day / Week */}
@@ -4745,6 +4748,12 @@ function getShiftCode(shift: Shift): string {
           const hasClinic = !!selectedClinicId
           return (
             <div className="space-y-2">
+              {hasClinic && canManage && (
+                <button className="w-full rounded-xl border-2 border-dashed border-brand/40 py-3 text-sm font-semibold text-brand active:bg-muted"
+                  onClick={() => { setMobileConflict(null); setMobileSheet({ kind: 'add', date: mobileSelectedDate }) }}>
+                  ＋ 加更／加假（{mobileSelectedDate.slice(5).replace('-', '月')}日）
+                </button>
+              )}
               {!hasClinic ? (
                 <div className="text-center py-8 text-sm text-muted-foreground">請選擇診所</div>
               ) : dayShifts.length === 0 && dayLeaves.length === 0 ? (
@@ -4758,7 +4767,11 @@ function getShiftCode(shift: Shift): string {
                     const isTransIn = s.secondaryClinicId === selectedClinicId
                     const nameOf = (cid?: string | null) => cid ? (clinicById.get(cid)?.name ?? '?') : '?'
                     return (
-                    <div key={s.id} className="rounded-xl border shadow-card p-3">
+                    <div key={s.id} className="rounded-xl border shadow-card p-3"
+                      onClick={() => canManage && s.clinicId === selectedClinicId && setMobileSheet({
+                        kind: 'shift', date: mobileSelectedDate, shiftId: s.id,
+                        title: `${s.employee?.user?.name ?? ''} ${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`,
+                      })}>
                       <div className="flex justify-between items-center mb-1">
                         <span className="font-semibold text-sm">
                           {s.employee?.user?.name || s.employeeId}
@@ -4792,7 +4805,8 @@ function getShiftCode(shift: Shift): string {
                     const ltName = lr.leaveType?.name ?? '假期'
                     const ltColor = lr.leaveType?.color ?? '#92400e'
                     return (
-                      <div key={lr.id} className="rounded-xl border shadow-card p-3" style={{ background: '#fefce8' }}>
+                      <div key={lr.id} className="rounded-xl border shadow-card p-3" style={{ background: '#fefce8' }}
+                        onClick={() => canManage && setMobileSheet({ kind: 'leave', date: mobileSelectedDate, leaveId: lr.id, title: `${empName} ${ltName}` })}>
                         <div className="flex justify-between items-center mb-1">
                           <span className="font-semibold text-sm">{empName}</span>
                           <span className="text-xs text-muted-foreground">{lr.startDate} ~ {lr.endDate}</span>
@@ -4888,6 +4902,37 @@ function getShiftCode(shift: Shift): string {
           </div>
         )}
       </div>
+
+      <MobileDaySheet
+        state={mobileSheet}
+        conflict={mobileConflict}
+        homeEmployees={clinicEmployees}
+        otherEmployees={employees.filter(e => e.status !== 'RESIGNED' && e.attendanceExempt !== true && e.homeClinicId !== selectedClinicId)}
+        templates={cellShiftOptions.find(g => g.clinicId === selectedClinicId)?.items ?? []}
+        leaveTypes={leaveTypes}
+        onClose={() => { setMobileSheet(null); setMobileConflict(null) }}
+        onAddShift={async (empId, tpl) => {
+          const date = mobileSheet!.date
+          let conflicted = false
+          const ok = await createShift(empId, date, tpl as any, {
+            clinicIdOverride: selectedClinicId,
+            onConflict: (c) => { conflicted = true; setMobileConflict({ empId, tpl, kind: c.kind, existing: c.existing }) },
+          })
+          if (ok) { setMobileSheet(null); await refreshAll() }
+          else if (!conflicted) { setMobileSheet(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+        }}
+        onReplace={async (c) => {
+          const ok = await createShift(c.empId, mobileSheet!.date, c.tpl as any, {
+            clinicIdOverride: selectedClinicId,
+            ...(c.kind === 'shift' ? { replaceShiftIds: c.existing.map(x => x.id) } : { replaceLeaveIds: c.existing.map(x => x.id) }),
+          })
+          if (!ok) window.scrollTo({ top: 0, behavior: 'smooth' })
+          await refreshAll()
+        }}
+        onAddLeave={async (empId, ltId) => { await applyLeaveToCell(empId, mobileSheet!.date, ltId) }}
+        onDeleteShift={async (id) => { await deleteShift(id) }}
+        onDeleteLeave={async (id) => { await deleteLeave(id) }}
+      />
 
       {/* ── Fullscreen Week Overview Overlay ── */}
       {fullscreenOverview && (

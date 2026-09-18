@@ -10,16 +10,33 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { useTodoCount } from '@/lib/use-todo-count'
+import { LabourCostCard } from '@/components/dashboard/LabourCostCard'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
+
+/** ★ cwm-ownerdash-20260917：今日出勤看板人名單（同 lib/today-board.ts TodayPerson 形狀） */
+interface TodayPerson {
+  employeeId: string
+  name: string
+  status: 'ARRIVED' | 'LATE' | 'NOT_ARRIVED' | 'NOT_STARTED' | 'LEFT' | 'MISSING_OUT'
+  shiftStart: string
+  shiftEnd: string
+  minutes?: number
+}
 
 interface TodayStats {
   clinicId: string
   clinicName: string
   scheduled: number
+  expected: number
   clockedIn: number
   late: number
   notArrived: number
+  notStarted: number
+  missingOut: number
+  onLeaveCount: number
+  people?: TodayPerson[]
+  onLeave?: { employeeId: string; name: string; leaveType: string }[]
 }
 
 interface ClinicData {
@@ -45,6 +62,7 @@ export default function DashboardPage() {
     clinics: ClinicData[]
     workHours?: Array<{ employeeId: string; name: string; clinicId: string | null; clinicName: string; weekHours: number; monthHours: number; weekOvertime: boolean; expectedMinutes: number | null; rosterDiffMinutes: number | null; settled: boolean; unscheduled: boolean }>
     whClinics?: Array<{ clinicId: string; clinicName: string }>
+    updatedAt?: string
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -92,7 +110,7 @@ export default function DashboardPage() {
           router.replace('/my/dashboard')
           return
         }
-        setData({ role: d.role, clinics: d.clinics, workHours: d.workHours, whClinics: d.whClinics })
+        setData({ role: d.role, clinics: d.clinics, workHours: d.workHours, whClinics: d.whClinics, updatedAt: d.updatedAt })
       })
       .catch(err => setError(err.message || '載入失敗'))
       .finally(() => setLoading(false))
@@ -169,6 +187,11 @@ export default function DashboardPage() {
     }
   }
 
+  // ★ cwm-ownerdash-20260917：ISO → HK HH:MM（今日出勤卡用）
+  function fmtTimeHK(iso: string) {
+    return new Date(iso).toLocaleTimeString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit', hour12: false })
+  }
+
   function renderDiff(before: any, after: any): string {
     if (!before || !after) return ''
     const keys = new Set([...Object.keys(before), ...Object.keys(after)])
@@ -192,6 +215,95 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground mt-1">角色: {roleLabels[data.role]}</p>
         </div>
       </div>
+
+      {/* ── Today's Attendance Board — cwm-ownerdash-20260917（時間感知；名單只俾管理層） ── */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center justify-between">
+            <span className="flex items-center gap-2"><CalendarDays size={18} /> 今日出勤</span>
+            <div className="flex items-center gap-2 text-xs font-normal text-muted-foreground">
+              {data.updatedAt && (
+                <span>{new Date(data.updatedAt).toLocaleTimeString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit' })} 更新</span>
+              )}
+              <button className="text-brand hover:underline" title="重新載入"
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/dashboard', { credentials: 'include', cache: 'no-store' })
+                    if (!res.ok) return
+                    const d = await res.json()
+                    setData(prev => prev ? { ...prev, clinics: d.clinics, updatedAt: d.updatedAt } : prev)
+                  } catch { /* 保持舊數據 */ }
+                }}>⟳</button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {(data.clinics ?? []).map(clinic => {
+              const stats = clinic.todayStats
+              const abnormal = stats ? (stats.notArrived + stats.missingOut) : 0
+              return (
+                <div key={clinic.id} className="border rounded-lg px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold truncate">{clinic.name}</span>
+                    {abnormal > 0
+                      ? <span className="text-xs font-semibold" style={{ color: '#dc2626' }}>{abnormal} 異常</span>
+                      : <span className="text-xs text-green-600">✅</span>}
+                  </div>
+                  {stats ? (
+                    <>
+                      <div className="flex flex-wrap gap-x-3 mt-1 text-xs text-muted-foreground">
+                        <span>應到 {stats.expected}</span>
+                        <span>已到 {stats.clockedIn}</span>
+                        <span>遲到 {stats.late}</span>
+                        <span>未到 {stats.notArrived}</span>
+                        <span>請假 {stats.onLeaveCount}</span>
+                      </div>
+                      {stats.people && (stats.people.length > 0 || (stats.onLeave?.length ?? 0) > 0) && (
+                        <div className="mt-1 space-y-0.5">
+                          {stats.people.filter(p => p.status === 'NOT_ARRIVED').map(p => (
+                            <div key={p.employeeId} className="text-xs cursor-pointer hover:underline" style={{ color: '#dc2626' }}
+                              onClick={() => router.push('/attendance')}>
+                              🔴 {p.name}（{fmtTimeHK(p.shiftStart)} 更，已過 {p.minutes ?? 0} 分）
+                            </div>
+                          ))}
+                          {stats.people.filter(p => p.status === 'LATE').map(p => (
+                            <div key={p.employeeId} className="text-xs cursor-pointer hover:underline" style={{ color: '#d97706' }}
+                              onClick={() => router.push('/attendance')}>
+                              🟠 遲到 {p.name}（遲 {p.minutes ?? 0} 分）
+                            </div>
+                          ))}
+                          {stats.people.filter(p => p.status === 'MISSING_OUT').map(p => (
+                            <div key={p.employeeId} className="text-xs cursor-pointer hover:underline" style={{ color: '#d97706' }}
+                              onClick={() => router.push('/attendance')}>
+                              🟠 漏落班卡 {p.name}（{fmtTimeHK(p.shiftEnd)} 收工）
+                            </div>
+                          ))}
+                          {stats.people.filter(p => p.status === 'NOT_STARTED').map(p => (
+                            <div key={p.employeeId} className="text-xs text-gray-500">
+                              ⚪ {p.name}（{fmtTimeHK(p.shiftStart)}）
+                            </div>
+                          ))}
+                          {(stats.onLeave ?? []).map(l => (
+                            <div key={l.employeeId} className="text-xs text-muted-foreground">
+                              🏖 {l.name}（{l.leaveType}）
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-xs text-muted-foreground mt-1">今日無排班資料</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 人工卡（OWNER-only）— cwm-ownerdash-20260917 */}
+      {data.role === 'OWNER' /* ROLE-OK: 全公司人工只限負責人 */ && <LabourCostCard />}
 
       {/* ── Mobile-first cards: Face anomaly + Todo ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -395,40 +507,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
-
-      {/* ── Today's Daily Operations (multi-clinic) — compact grid ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><CalendarDays size={18} /> 今日各店營運</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {(data.clinics ?? []).map(clinic => {
-              const stats = clinic.todayStats
-              const abnormal = stats ? (stats.late + stats.notArrived) : 0
-              return (
-                <div key={clinic.id} className="border rounded-lg px-3 py-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold truncate">{clinic.name}</span>
-                    <span className="text-xs" style={{ color: abnormal > 0 ? '#dc2626' : '#10b981' }}>
-                      {abnormal > 0 ? `${abnormal} 異常` : '正常'}
-                    </span>
-                  </div>
-                  {stats ? (
-                    <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                      <span>排班 {stats.scheduled}</span>
-                      <span>已到 {stats.clockedIn}</span>
-                      <span>未到 {stats.notArrived}</span>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground mt-1">今日無排班資料</div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
 
       {/* ── Time Account Overview Card (cumulative) ── */}
       {empSummary.length > 0 && (

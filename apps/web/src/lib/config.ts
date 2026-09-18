@@ -62,6 +62,7 @@ export const CONFIG = {
 
     // Dashboard
     'GET /api/dashboard': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'GET /api/dashboard/labour-cost': ['OWNER'],   // ★ cwm-ownerdash：唔准加 RBAC_PERM_OVERRIDES
 
     // Employee routes
     'GET /api/employees': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
