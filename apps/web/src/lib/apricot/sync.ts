@@ -17,7 +17,9 @@ export async function shouldCancel(jobId: string): Promise<boolean> {
 }
 
 export async function updateJob(jobId: string, data: Partial<any>) {
-  await prisma.apricotSyncJob.update({ where: { id: jobId }, data })
+  // ★ cwm-syncstuck-20260918 E3-3：每次 checkpoint 都刷 heartbeatAt ——
+  //   cancel endpoint 用佢判斷背景有冇回應（stale → 即刻 CANCELLED，唔使等）。
+  await prisma.apricotSyncJob.update({ where: { id: jobId }, data: { ...data, heartbeatAt: new Date() } })
 }
 
 // ─── cwm-syncforce-20260913 D: billsFetched in-memory stats ─────────────────────

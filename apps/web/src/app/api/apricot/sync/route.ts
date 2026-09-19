@@ -6,8 +6,21 @@ import { prisma } from '@/lib/prisma'
 import { syncClinicForJob, shouldCancel, updateJob } from '@/lib/apricot/sync'
 import { withApricotLock } from '@/lib/apricot/lock'
 
-/** 清理殭屍 job：RUNNING + 超過 1 小時 → FAILED */
+/** 清理殭屍 job：
+ * ★ cwm-syncstuck-20260918 E2：兩條規則
+ *   ① cancelRequested 但 2 分鐘仍然 RUNNING → 背景已經死，直接收工（CANCELLED）
+ *   ② 冇 cancel 但 RUNNING 超過 1 小時 → zombie（FAILED）
+ *   ⚠️ 規則② 維持 1 小時（本單紀律：生產數據未出，唔縮到 10 分鐘，防誤殺長 sync）
+ */
 async function cleanZombieJobs() {
+  await prisma.apricotSyncJob.updateMany({
+    where: {
+      status: 'RUNNING',
+      cancelRequested: true,
+      startedAt: { lt: new Date(Date.now() - 2 * 60 * 1000) },
+    },
+    data: { status: 'CANCELLED', errorMessage: '已停止（背景程序未回應）', currentStep: '已停止', endedAt: new Date() },
+  })
   await prisma.apricotSyncJob.updateMany({
     where: {
       status: 'RUNNING',
@@ -26,6 +39,10 @@ async function runSyncInBackground(
   // ★ cwm-syncforce-20260913 B：force 預設 false（定期 sync / cron 唔會 accidentally 變 force）
   force = false,
 ) {
+  // ★ cwm-syncstuck-20260918 E1-2：任何路徑走完（完成／失敗／cancel／未預期 throw），
+  //   job 都唔可以留喺 RUNNING —— 兜底 finally。
+  //   ⚠️ updateMany + status:'RUNNING' 條件：正常完成嘅 job 已經係 DONE/CANCELLED/FAILED，唔會被覆蓋。
+  try {
   // 順序執行，唔准 Promise.all — 每次 call 可能 rotate token
   let totalPayments = 0
   let totalBills = 0
@@ -56,7 +73,20 @@ async function runSyncInBackground(
       try {
         const r = await syncClinicForJob(t, fromISO, toISO, jobId, force)
         if (r.cancelled) {
-          return // shouldCancel 已經處理咗 job status
+          // ★ cwm-syncstuck-20260918 E1：舊註釋講大話 —— syncClinicForJob 內部嘅 cancel
+          //   （lib/apricot/sync.ts `return finish(true, …)`）只係 return，【唔會】寫 job。
+          //   唔喺呢度補寫，status 永遠停喺 RUNNING、currentStep 停喺「拉帳單 100/100」，
+          //   而 409 守衛令之後開唔到新 job。
+          await updateJob(jobId, {
+            status: 'CANCELLED',
+            doneClinics: i,
+            paymentsSynced: totalPayments + (r.paymentsSynced ?? 0),
+            billsChecked: totalBills + (r.billsChecked ?? 0),
+            allocRows: totalAllocs + (r.allocRows ?? 0),
+            currentStep: '已停止',
+            endedAt: new Date(),
+          })
+          return
         }
         totalPayments += r.paymentsSynced
         totalBills += r.billsChecked
@@ -106,6 +136,14 @@ async function runSyncInBackground(
       endedAt: new Date(),
     })
   }
+  } finally {
+    // ★ cwm-syncstuck-20260918 E1-2：兜底 —— process 中途死（deploy/OOM/重啟）之前，
+    //   任何正常退出但漏咗終態嘅 job 都轉 FAILED。已係終態嘅 job（status≠RUNNING）唔受影響。
+    await prisma.apricotSyncJob.updateMany({
+      where: { id: jobId, status: 'RUNNING' },
+      data: { status: 'FAILED', errorMessage: '背景程序結束但未標記完成', endedAt: new Date() },
+    }).catch(() => { /* 兜底都失敗：zombie cleanup 會收尾 */ })
+  }
 }
 
 /** POST /api/apricot/sync — 建立 job + 背景執行（OWNER only） */
@@ -143,7 +181,20 @@ export async function POST(req: NextRequest) {
     })
     if (runningJob) {
       return NextResponse.json(
-        { error: '已有同步任務進行中', jobId: runningJob.id },
+        {
+          error: '已有同步任務進行中',
+          jobId: runningJob.id,
+          // ★ cwm-syncstuck-20260918 E3-1：淨係話「進行中」用戶唔知係邊個卡住，
+          //   撳極都冇反應仲以為個掣壞咗。
+          running: {
+            clinicExtId: runningJob.clinicExtId,
+            totalClinics: runningJob.totalClinics,
+            doneClinics: runningJob.doneClinics,
+            currentStep: runningJob.currentStep,
+            cancelRequested: runningJob.cancelRequested,
+            startedAt: runningJob.startedAt,
+          },
+        },
         { status: 409 },
       )
     }
@@ -195,6 +246,7 @@ export async function POST(req: NextRequest) {
         totalClinics: targets.length,
         createdBy: userId,
         currentStep: '準備中',
+        heartbeatAt: new Date(),
       },
     })
 

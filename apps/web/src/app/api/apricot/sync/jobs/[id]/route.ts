@@ -41,7 +41,7 @@ export async function POST(
   const { id } = await params
   const job = await prisma.apricotSyncJob.findUnique({
     where: { id },
-    select: { status: true },
+    select: { status: true, startedAt: true, heartbeatAt: true },
   })
 
   if (!job) {
@@ -52,10 +52,17 @@ export async function POST(
     return NextResponse.json({ error: 'job is not running' }, { status: 400 })
   }
 
+  // ★ cwm-syncstuck-20260918 E3-3：除咗 cancelRequested，如果背景已經冇回應
+  //   （heartbeatAt 超過 2 分鐘冇郁 —— 每個 checkpoint 都會刷），直接標 CANCELLED，唔好等。
+  //   heartbeatAt 為 null（舊 job / 從未 checkpoint）→ fallback 用 startedAt。
+  const lastBeat = job.heartbeatAt ?? job.startedAt
+  const stale = Date.now() - lastBeat.getTime() > 2 * 60 * 1000
   await prisma.apricotSyncJob.update({
     where: { id },
-    data: { cancelRequested: true },
+    data: stale
+      ? { cancelRequested: true, status: 'CANCELLED', currentStep: '已停止', endedAt: new Date(), errorMessage: '人手中止（背景未回應）' }
+      : { cancelRequested: true },
   })
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ success: true, cancelledImmediately: stale })
 }

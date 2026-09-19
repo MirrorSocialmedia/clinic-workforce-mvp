@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { RefreshCw, Database, Loader2, Square, CheckCircle2, XCircle } from 'lucide-react'
+import { RefreshCw, Database, Loader2, Square, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { RequireRole } from '@/components/RequireRole'
 
@@ -52,6 +52,16 @@ interface SyncJob {
   startedAt: string
   endedAt: string | null
   createdBy: string
+}
+
+// ★ cwm-syncstuck-20260918 E3-2: 409 回應帶住嘅舊 job 快照（E3-1）
+interface RunningJobInfo {
+  clinicExtId: string | null
+  totalClinics: number
+  doneClinics: number
+  currentStep: string | null
+  cancelRequested: boolean
+  startedAt: string
 }
 
 // ★ MD-AC3: 店鋪營收卡片
@@ -114,6 +124,10 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
   // ★ MD-Q: Job progress state
   const [activeJob, setActiveJob] = useState<SyncJob | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ★ cwm-syncstuck-20260918 E3-2: 409 時顯示舊 job 資料 + 「強制中止並重試」
+  const [blockedJob, setBlockedJob] = useState<{ jobId: string; running: RunningJobInfo } | null>(null)
+  const [forceAborting, setForceAborting] = useState(false)
 
   // ★ H3: Load clinics for dropdown
   useEffect(() => {
@@ -199,6 +213,9 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
             pollTimerRef.current = null
           }
 
+          // ★ cwm-syncstuck-20260918 E3-2：被擋嗰個舊 job 收工咗 → 收走「未開到新 job」橫幅
+          setBlockedJob(prev => (prev && prev.jobId === jobId ? null : prev))
+
           if (data.job.status === 'DONE') {
             toast.success('同步完成')
             fetchStatus()
@@ -224,6 +241,13 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
     }
   }, [])
 
+  // ★ cwm-syncstuck-20260918 E3-2：抽出 sync body —— 「強制中止並重試」要原封不動重發
+  const buildSyncBody = () => ({
+    clinicId: clinicId || null,
+    from: `${fromDate}T00:00:00+08:00`,
+    to: `${toDate}T23:59:59+08:00`,
+  })
+
   const handleSync = async () => {
     if (!fromDate || !toDate) {
       toast.error('請填齊起始日期、結束日期')
@@ -236,11 +260,7 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          clinicId: clinicId || null,
-          from: `${fromDate}T00:00:00+08:00`,
-          to: `${toDate}T23:59:59+08:00`,
-        }),
+        body: JSON.stringify(buildSyncBody()),
       })
 
       if (!res.ok) {
@@ -249,7 +269,10 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
           // 已有 job 進行中，直接開始 poll
           setActiveJob(null)
           pollJob(data.jobId)
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
           pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
+          // ★ cwm-syncstuck-20260918 E3-2：409 帶住舊 job 快照 → 顯示資料 + 強制中止並重試
+          setBlockedJob({ jobId: data.jobId, running: data.running || { clinicExtId: null, totalClinics: 0, doneClinics: 0, currentStep: null, cancelRequested: false, startedAt: '' } })
           toast.info('已有同步任務進行中，顯示進度...')
           return
         }
@@ -258,8 +281,10 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
 
       const data = await res.json()
       if (data.jobId) {
+        setBlockedJob(null)
         // ★ MD-Q: 即刻開始 poll
         pollJob(data.jobId)
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current)
         pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
         toast.info('同步已開始，請留意進度...')
       }
@@ -284,6 +309,79 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
       toast.info('已發送停止指令...')
     } catch (e: any) {
       toast.error(`取消失敗: ${e.message}`)
+    }
+  }
+
+  // ★ cwm-syncstuck-20260918 E3-2：強制中止並重試 —
+  //   ① 發 cancel（E3-3：stale / 背景已死嘅 job 會即刻被標 CANCELLED）
+  //   ② 輪詢到 status !== 'RUNNING' 先重發 POST（⚠️ 唔好即刻重發，否則又中 409）
+  //   ③ 重發原本嘅 sync POST（同一組日期／診所）
+  const handleForceAbortRetry = async () => {
+    if (!blockedJob || forceAborting) return
+    setForceAborting(true)
+    setSyncing(true)
+    const oldJobId = blockedJob.jobId
+    try {
+      const cRes = await fetch(`/api/apricot/sync/jobs/${oldJobId}`, {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+      })
+      if (!cRes.ok) {
+        const cd = await cRes.json().catch(() => ({}))
+        // 400 = job 已經唔係 RUNNING（中途自己收工咗）→ 照行落去，輪詢即刻確認
+        if (cRes.status !== 400) throw new Error(cd.error || '發送停止指令失敗')
+      }
+
+      // 輪詢到非 RUNNING：stale 場景第一圈就中招；正常場景等 shouldCancel 生效；
+      //   背景真卡死最長 2 分鐘由 E2 zombie 規則兜底 —— 150 秒 timeout 先於佢報錯
+      const deadline = Date.now() + 150000
+      let terminal = false
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 2000))
+        const gRes = await fetch(`/api/apricot/sync/jobs/${oldJobId}`, { credentials: 'include', cache: 'no-store' })
+        if (!gRes.ok) { terminal = true; break }
+        const gd = await gRes.json().catch(() => ({}))
+        if (gd.job && gd.job.status !== 'RUNNING') { terminal = true; break }
+      }
+      if (!terminal) {
+        toast.error('舊 job 仍未收工（背景無回應），請稍後再試')
+        setSyncing(false)
+        return
+      }
+
+      // 重發原本嘅 POST
+      const res = await fetch('/api/apricot/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(buildSyncBody()),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        if (res.status === 409 && data.jobId) {
+          // 又有新 job 行緊 → 照樣顯示 blocked 橫幅
+          setBlockedJob({ jobId: data.jobId, running: data.running || { clinicExtId: null, totalClinics: 0, doneClinics: 0, currentStep: null, cancelRequested: false, startedAt: '' } })
+          toast.info('仍有同步任務進行中，未開到新 job')
+          setSyncing(false)
+          return
+        }
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      if (data.jobId) {
+        setBlockedJob(null)
+        pollJob(data.jobId)
+        if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+        pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
+        toast.success('舊 job 已中止，新同步已開始')
+      }
+      setSyncing(false)
+    } catch (e: any) {
+      toast.error(`強制中止失敗: ${e.message}`)
+      setSyncing(false)
+    } finally {
+      setForceAborting(false)
     }
   }
 
@@ -538,6 +636,41 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
             處理方法：去 <a href="/apricot-sync/payment-methods" className="underline">付款方式規則設定</a>
             加返呢啲方式嘅費率，然後 <strong>重跑同步</strong>（費率係快照，唔會自動重算）
           </div>
+        </Card>
+      )}
+
+      {/* ★ cwm-syncstuck-20260918 E3-2: 被 409 擋住 — 顯示舊 job 資料 + 強制中止並重試 */}
+      {blockedJob && (
+        <Card className="border-amber-300 bg-amber-50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-amber-800">
+              <AlertTriangle size={16} className="text-amber-500" />
+              有同步進行中，未開到新 job
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm text-amber-800">
+              {blockedJob.running.clinicExtId ? `診所 ${blockedJob.running.clinicExtId}` : '全部診所'}
+              {' · '}{blockedJob.running.doneClinics} / {blockedJob.running.totalClinics}
+              {blockedJob.running.startedAt && (
+                <> · {new Date(blockedJob.running.startedAt).toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' })} 開始</>
+              )}
+              {blockedJob.running.cancelRequested && ' · 已請求停止'}
+            </div>
+            {blockedJob.running.currentStep && (
+              <div className="text-xs text-amber-700 mt-1">目前：{blockedJob.running.currentStep}</div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleForceAbortRetry}
+              disabled={forceAborting}
+              className="mt-3 gap-2 text-amber-800 border-amber-400 hover:bg-amber-100"
+            >
+              {forceAborting ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
+              {forceAborting ? '中止中，等舊 job 收工...（長約 2 分鐘）' : '強制中止並重試'}
+            </Button>
+          </CardContent>
         </Card>
       )}
 
