@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Fragment } from 'react'
 import Link from 'next/link'
 import { Hand, Smartphone, Calendar, Palmtree, Bell } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -79,6 +79,23 @@ export default function MyDashboardPage() {
       setAttDaysLoaded(true)
     }
   }
+
+  // ★ cwm-payrollcols-20260918 C2/C3：逐月帳本 —— lazy load on expand；
+  //   reconciled / currentBalance 全部由 server 算好（C4：前端唔好自己算）
+  const [ledgerOpen, setLedgerOpen] = useState(false)
+  const [ledger, setLedger] = useState<any | null>(null)
+  const [ledgerLoading, setLedgerLoading] = useState(false)
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null)
+  const loadLedger = useCallback(async () => {
+    if (ledger || ledgerLoading) return
+    setLedgerLoading(true)
+    try {
+      const r = await fetch('/api/my/timebank-ledger', { credentials: 'include', cache: 'no-store' })
+      if (r.ok) setLedger(await r.json())
+    } catch { /* 載入失敗：下次撳再試 */ } finally {
+      setLedgerLoading(false)
+    }
+  }, [ledger, ledgerLoading])
 
   const fetchData = useCallback(async () => {
     setError('')
@@ -453,6 +470,120 @@ export default function MyDashboardPage() {
                 </div>
               )
             })()}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ★ cwm-payrollcols-20260918 C2/C3：逐月帳本（可摺疊，預設收起）—— 同一條件先出（冇時間帳戶就唔出）
+          五欄（手機）：月份／期初／OT／扣減／期末 ＋ 狀態圖示；「調整」併入 OT/扣減，逐日明細分開列。
+          C4：頂部大字＝最後一個月期末；reconciled 橫幅由 API 回，唔好前端自己算。 */}
+      {summary && !summary.attendanceExempt && summary.timeAccountMinutes != null && (
+        <Card>
+          <CardContent className="pt-4">
+            <button
+              onClick={() => { setLedgerOpen(o => !o); if (!ledgerOpen) loadLedger() }}
+              className="w-full text-xs py-1 text-blue-600"
+            >
+              {ledgerOpen ? '▲ 逐月帳本' : '▼ 逐月帳本'}
+            </button>
+
+            {ledgerOpen && (
+              <div className="mt-2">
+                {ledgerLoading || !ledger ? (
+                  <div className="text-xs text-muted-foreground py-2 text-center">載入中…</div>
+                ) : ledger.notApplicable ? (
+                  <div className="text-xs text-muted-foreground py-2 text-center">時薪／兼職不設時間帳戶</div>
+                ) : (
+                  <>
+                    {/* C4：頂部大字「目前結餘」同帳本最後一個月「期末」必須一樣 */}
+                    <div className="flex items-baseline gap-2 mb-2">
+                      <span className="text-xs text-muted-foreground">目前結餘</span>
+                      <span className="text-xl font-bold">{ledger.currentBalance ?? 0} 分</span>
+                      {!ledger.balanceMatchesLatestClosing && (
+                        <span className="text-[10px] text-amber-600">⚠️ 同帳本最新月期末唔符，請報告</span>
+                      )}
+                    </div>
+
+                    {/* C4：「帳本已對數」橫幅 —— 由 API 嘅 reconciled 決定 */}
+                    {ledger.reconciled ? (
+                      <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 mb-2">
+                        ✅ 帳本已對數：{ledger.months?.length ?? 6} 個月逐月加得埋，月與月接得返
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">
+                        ⚠️ 帳本有唔加得埋／接唔返嘅月：
+                        {(ledger.months as any[]).filter(m => !m.reconciles).map(m => m.periodMonth).filter(Boolean).join('、')}
+                        {ledger.chainBreaks?.length > 0 &&
+                          `；月鏈斷點：${ledger.chainBreaks.map((b: any) => `${b.from}→${b.to}`).join('、')}`}
+                      </div>
+                    )}
+
+                    {/* 五欄表（手機）：月份／期初／OT／扣減／期末＋狀態圖示 */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr className="text-muted-foreground">
+                            <th className="text-left py-1 pr-1 font-normal">月份</th>
+                            <th className="text-right py-1 px-1 font-normal">期初</th>
+                            <th className="text-right py-1 px-1 font-normal">OT</th>
+                            <th className="text-right py-1 px-1 font-normal">扣減</th>
+                            <th className="text-right py-1 px-1 font-normal">期末</th>
+                            <th className="py-1 pl-1 w-6"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(ledger.months as any[]).map(m => {
+                            const otAdd = m.lines.reduce((s: number, l: any) => s + (l.minutes > 0 ? l.minutes : 0), 0)
+                            const ded = m.lines.reduce((s: number, l: any) => s + (l.minutes < 0 ? l.minutes : 0), 0)
+                            const expanded = expandedMonth === m.periodMonth
+                            return (
+                              <Fragment key={m.periodMonth}>
+                                <tr
+                                  onClick={() => setExpandedMonth(expanded ? null : m.periodMonth)}
+                                  className="cursor-pointer border-t border-gray-100"
+                                >
+                                  <td className="py-1.5 pr-1">{m.periodMonth}</td>
+                                  <td className="py-1.5 px-1 text-right">{m.opening}</td>
+                                  <td className="py-1.5 px-1 text-right" style={{ color: otAdd ? '#059669' : undefined }}>{otAdd > 0 ? `+${otAdd}` : otAdd}</td>
+                                  <td className="py-1.5 px-1 text-right" style={{ color: ded ? '#dc2626' : undefined }}>{ded}</td>
+                                  <td className="py-1.5 px-1 text-right font-semibold">{m.closing}</td>
+                                  <td className="py-1.5 pl-1" title={m.frozen ? '已確認計糧' : '未確認計糧'}>
+                                    {m.frozen ? '✓' : '⏳'}
+                                  </td>
+                                </tr>
+                                {expanded && (
+                                  <tr>
+                                    <td colSpan={6} className="pb-2 pl-3">
+                                      {m.lines.length === 0 ? (
+                                        <div className="text-[11px] text-muted-foreground">本月無入帳記錄</div>
+                                      ) : (
+                                        m.lines.map((l: any, i: number) => (
+                                          <div key={`${m.periodMonth}-${i}`} className="flex justify-between text-[11px] py-0.5">
+                                            <span className="text-muted-foreground">
+                                              {String(l.date).slice(5)}　{l.label}{l.note ? `（${l.note}）` : ''}
+                                            </span>
+                                            <span style={{ color: l.minutes > 0 ? '#059669' : l.minutes < 0 ? '#dc2626' : '#6b7280' }}>
+                                              {l.minutes > 0 ? `+${l.minutes}` : l.minutes}
+                                            </span>
+                                          </div>
+                                        ))
+                                      )}
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      撳一行展開逐日明細；✓ 已確認計糧／⏳ 未確認（出糧後凍結）
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

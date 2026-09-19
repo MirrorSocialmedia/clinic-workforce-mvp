@@ -201,6 +201,8 @@ export const CONFIG = {
     'GET /api/my/punches': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/my/leave': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/my/summary': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    // ★ cwm-payrollcols-20260918 C：員工睇自己嘅逐月帳本（route 內 session.userId 反查，唔收 param）
+    'GET /api/my/timebank-ledger': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
     'GET /api/my/company-overview': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
 
     // Notification routes
