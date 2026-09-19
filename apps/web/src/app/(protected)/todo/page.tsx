@@ -248,7 +248,7 @@ export default function TodoPage() {
   /* ── Render ── */
 
   return (
-    <div className="p-4 space-y-6 max-w-2xl mx-auto">
+    <div className="p-4 space-y-6 max-w-2xl mx-auto pb-[calc(72px+env(safe-area-inset-bottom))] md:pb-4">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>

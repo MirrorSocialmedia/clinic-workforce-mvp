@@ -1855,7 +1855,7 @@ function getShiftCode(shift: Shift): string {
 
   const createShift = useCallback(async (
     employeeId: string, date: string, template: ShiftTemplate,
-    opts?: { clinicIdOverride?: string | null; replaceShiftIds?: string[]; replaceLeaveIds?: string[]; onConflict?: (c: { kind: 'shift' | 'leave', existing: Array<{ id: string; label: string }> }) => void; keepTransferCombo?: boolean }
+    opts?: { clinicIdOverride?: string | null; secondaryClinicIdOverride?: string | null; replaceShiftIds?: string[]; replaceLeaveIds?: string[]; onConflict?: (c: { kind: 'shift' | 'leave', existing: Array<{ id: string; label: string }> }) => void; keepTransferCombo?: boolean }
   ): Promise<boolean> => {
     const targetClinicId = opts?.clinicIdOverride ?? selectedClinicId
     if (!targetClinicId) {
@@ -1930,7 +1930,12 @@ function getShiftCode(shift: Shift): string {
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
         templateId: template.id,
-        secondaryClinicId: secondaryClinicId || null,
+        // ★ cwm-mobilefix-20260918 D2：手機冇拖拉，走鋪要由參數明確傳入。
+        //   ⚠️ 用 !== undefined 唔用 || —— null 係合法值（「唔係走鋪」），
+        //      用 || 會令手機傳 null 時 fallback 去 state（電腦版殘留值）。
+        secondaryClinicId: opts?.secondaryClinicIdOverride !== undefined
+          ? opts.secondaryClinicIdOverride
+          : (secondaryClinicId || null),
       }
       if (opts?.replaceShiftIds?.length) body.replaceShiftIds = opts.replaceShiftIds
       if (opts?.replaceLeaveIds?.length) body.replaceLeaveIds = opts.replaceLeaveIds
@@ -4626,7 +4631,10 @@ function getShiftCode(shift: Shift): string {
 
 
       {/* Mobile: Read-only day view + week overview */}
-      <div className="md:hidden px-4" style={{ marginTop: 12 }}>
+      {/* ★ cwm-mobilefix-20260918 D1：AdminMobileNav 係 fixed bottom-0，唔佔文件流 —
+          冇呢個 padding 最後一張卡永遠被遮。72px ≈ nav 高度 + 呼吸位。
+          加喺最外層容器（包住成段手機日視圖），唔加喺個 list。 */}
+      <div className="md:hidden px-4 pb-[calc(72px+env(safe-area-inset-bottom))]" style={{ marginTop: 12 }}>
         <p className="text-xs text-muted-foreground mb-3 text-center bg-amber-50 rounded-lg p-2 border border-amber-200">
           {canManage ? '📱 撳「＋ 加更／加假」或者撳更卡刪除；拖拉排班請用電腦' : '📱 手機為唯讀檢視，排班請用電腦'}
         </p>
@@ -4804,12 +4812,16 @@ function getShiftCode(shift: Shift): string {
                     const empName = clinicEmployees.find(e => e.id === lr.employeeId)?.user?.name || '未知'
                     const ltName = lr.leaveType?.name ?? '假期'
                     const ltColor = lr.leaveType?.color ?? '#92400e'
+                    // ★ cwm-mobilefix-20260918 D3：日期要顯示就格式化（MM/DD），唔好出 raw ISO；
+                    //   同日 → 「MM/DD 全日」，跨日 → 「MM/DD–MM/DD」（endDate 可能為 null）
+                    const sD = toHKDateStr(new Date(lr.startDate)).slice(5)
+                    const eD = toHKDateStr(new Date(lr.endDate || lr.startDate)).slice(5)
                     return (
                       <div key={lr.id} className="rounded-xl border shadow-card p-3" style={{ background: '#fefce8' }}
-                        onClick={() => canManage && setMobileSheet({ kind: 'leave', date: mobileSelectedDate, leaveId: lr.id, title: `${empName} ${ltName}` })}>
+                        onClick={() => canManage && setMobileSheet({ kind: 'leave', date: mobileSelectedDate, leaveId: lr.id, title: `${empName} ${ltName || '假期'}` })}>
                         <div className="flex justify-between items-center mb-1">
                           <span className="font-semibold text-sm">{empName}</span>
-                          <span className="text-xs text-muted-foreground">{lr.startDate} ~ {lr.endDate}</span>
+                          <span className="text-xs text-muted-foreground">{sD === eD ? `${sD} 全日` : `${sD}–${eD}`}</span>
                         </div>
                         <div className="text-xs" style={{ color: ltColor }}>
                           🏖 {ltName}
@@ -4910,20 +4922,26 @@ function getShiftCode(shift: Shift): string {
         otherEmployees={employees.filter(e => e.status !== 'RESIGNED' && e.attendanceExempt !== true && e.homeClinicId !== selectedClinicId)}
         templates={cellShiftOptions.find(g => g.clinicId === selectedClinicId)?.items ?? []}
         leaveTypes={leaveTypes}
+        allClinics={clinics}
+        primaryClinicId={selectedClinicId}
         onClose={() => { setMobileSheet(null); setMobileConflict(null) }}
-        onAddShift={async (empId, tpl) => {
+        onAddShift={async (empId, tpl, secondary) => {
           const date = mobileSheet!.date
           let conflicted = false
           const ok = await createShift(empId, date, tpl as any, {
             clinicIdOverride: selectedClinicId,
+            // ★ D2：手機走鋪由參數明確傳入（null = 唔走鋪；createShift 內用 !== undefined 判斷，唔會 fallback 去電腦版 state）
+            secondaryClinicIdOverride: secondary,
             onConflict: (c) => { conflicted = true; setMobileConflict({ empId, tpl, kind: c.kind, existing: c.existing }) },
           })
           if (ok) { setMobileSheet(null); await refreshAll() }
           else if (!conflicted) { setMobileSheet(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }
         }}
-        onReplace={async (c) => {
+        onReplace={async (c, secondary) => {
           const ok = await createShift(c.empId, mobileSheet!.date, c.tpl as any, {
             clinicIdOverride: selectedClinicId,
+            // ★ D2：取代原有時唔丟失走鋪設定
+            secondaryClinicIdOverride: secondary,
             ...(c.kind === 'shift' ? { replaceShiftIds: c.existing.map(x => x.id) } : { replaceLeaveIds: c.existing.map(x => x.id) }),
           })
           if (!ok) window.scrollTo({ top: 0, behavior: 'smooth' })

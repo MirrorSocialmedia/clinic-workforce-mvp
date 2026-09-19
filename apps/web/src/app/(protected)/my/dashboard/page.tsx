@@ -166,7 +166,7 @@ export default function MyDashboardPage() {
   if (error) return <div className="p-4 text-destructive">⚠️ {error}</div>
 
   return (
-    <div className="p-4 space-y-4" style={{ maxWidth: '640px' }}>
+    <div className="p-4 space-y-4 pb-[calc(72px+env(safe-area-inset-bottom))] md:pb-4" style={{ maxWidth: '640px' }}>
       <h1 className="text-xl font-bold text-foreground">
         <Hand size={20} style={{ marginRight: 8 }} /> 我的首頁
       </h1>
