@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolvePayrollScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { toHKDateStr } from '@/lib/hk-date'
+import { EXPORT_COLS, EXPORT_COLS_DEFAULT } from '@/lib/payroll-export-cols'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -43,7 +44,7 @@ export async function POST(
         select: {
           id: true,
           name: true,
-          company: { select: { name: true, logoData: true } },
+          company: { select: { name: true, logoData: true, payrollExportCols: true } },
         },
       },
       items: {
@@ -106,56 +107,66 @@ export async function POST(
 }
 
 function exportToExcel(run: any, periodMonth: string, clinicName: string): NextResponse {
+  // ★ cwm-payrollcols-20260918 B3-4：欄位由公司設定決定（Company.payrollExportCols）；
+  //   ⚠️ 只影響【欄】，唔影響【行】—— 行嘅過濾喺 POST 內 getConfidentialScope，唔准郁。
+  let cols: string[] = [...EXPORT_COLS_DEFAULT]
+  try {
+    const saved: any = JSON.parse(run.clinic?.company?.payrollExportCols ?? '[]')
+    if (Array.isArray(saved) && saved.length > 0) {
+      const validKeys = new Set(EXPORT_COLS.map(c => c.key as string))
+      const filtered = saved.filter((k: any) => typeof k === 'string' && validKeys.has(k))
+      // 強制項補回（防舊設定／手改漏咗 required 欄）
+      for (const c of EXPORT_COLS) if (c.required && !filtered.includes(c.key as string)) filtered.push(c.key as string)
+      if (filtered.length > 0) cols = filtered
+    }
+  } catch { /* 設定解析失敗 → 用預設 */ }
+
+  const labelOf = (k: string) => EXPORT_COLS.find(c => c.key === k)?.label ?? k
+  // 數字欄一律 Number((x ?? 0).toFixed(2))（A9 口徑，保持可 SUM()）
+  const pick = (item: any, detail: any, key: string): string | number => {
+    switch (key) {
+      case 'employee': return item.employee.user.name
+      case 'clinic': return item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
+      case 'payType': return item.employee.payRules[0]?.payType || 'N/A'
+      case 'workedHours': return Number((item.workedHours ?? 0).toFixed(2))
+      case 'otHours': return Number((item.otHours ?? 0).toFixed(2))
+      case 'leaveDays': return Number((item.leaveDays ?? 0).toFixed(2))
+      case 'basePay': return Number((item.basePay ?? 0).toFixed(2))
+      case 'splitPay': return Number((item.splitPay ?? 0).toFixed(2))
+      case 'attendanceBonus': return Number((detail.attendanceBonus ?? 0).toFixed(2))
+      case 'storeBonus': return Number((item.storeBonus ?? 0).toFixed(2))
+      case 'deduction': return Number((item.deduction ?? 0).toFixed(2))
+      case 'grossPay': return Number((detail.grossPay ?? 0).toFixed(2))
+      case 'mpf': return Number((detail.mpf ?? 0).toFixed(2))
+      case 'mpfEmployer': return Number((detail.mpfEmployer ?? 0).toFixed(2))
+      case 'rsGrossAdd': return Number((detail.resignSettlement?.grossAdd ?? 0).toFixed(2))
+      case 'excessRestDeduction': return Number((detail.resignSettlement?.excessRestDeduction ?? 0).toFixed(2))
+      case 'tbDeduction': return Number((detail.resignSettlement?.tbDeduction ?? 0).toFixed(2))
+      case 'tbCashout': return Number((detail.tbCashout ?? 0).toFixed(2))
+      case 'miscAmount': return Number((item.miscAmount ?? 0).toFixed(2))
+      case 'totalPayable': return Number((item.totalPayable ?? 0).toFixed(2))
+      default: return ''
+    }
+  }
+
   const rows = run.items.map((item: any) => {
-    const clinics = item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
-    const payType = item.employee.payRules[0]?.payType || 'N/A'
     // ★ Parse detailJson safely — old records may have invalid JSON
     let detail: any = {}
     try { detail = JSON.parse(item.detailJson ?? '{}') } catch { /* fallback to empty */ }
-    return {
-      '員工姓名': item.employee.user.name,
-      '全名': item.employee.user.fullName || '',
-      '聯絡電話': item.employee.user.phone,
-      '診所': clinics,
-      '薪酬類型': payType,
-      '工作時數': Number((item.workedHours ?? 0).toFixed(2)),
-      '加班時數': Number((item.otHours ?? 0).toFixed(2)),
-      '請假日數': Number((item.leaveDays ?? 0).toFixed(2)),
-      '缺勤日數': Number((item.absentDays ?? 0).toFixed(2)),
-      '基本薪資': Number((item.basePay ?? 0).toFixed(2)),
-      '加班費': Number((item.otPay ?? 0).toFixed(2)),
-      '拆帳': Number((item.splitPay ?? 0).toFixed(2)),
-      '扣款': Number((item.deduction ?? 0).toFixed(2)),
-      '病假扣減': Number((detail.sickDeduction ?? 0).toFixed(2)),
-      '勤工獎': Number((detail.attendanceBonus ?? 0).toFixed(2)),
-      '津貼': Number((detail.totalAllowances ?? 0).toFixed(2)),
-      '產假/侍產假': Number(((item.maternityPay ?? 0) + (item.paternityPay ?? 0)).toFixed(2)),
-      'ADW調整': Number((detail.adwAdjustment ?? 0).toFixed(2)),
-      'MPF': Number((detail.mpf ?? 0).toFixed(2)),
-      '雜項': Number((item.miscAmount ?? 0).toFixed(2)),
-      '店舖獎金': Number((item.storeBonus ?? 0).toFixed(2)),
-      // ★ cwm-acct-20260917 A9：5 結算欄（時間帳戶折現 = P2-4 已落）
-      'Gross': Number((detail.grossPay ?? 0).toFixed(2)),
-      '離職結算加項': Number((detail.resignSettlement?.grossAdd ?? 0).toFixed(2)),
-      '超額休息日扣減': Number((detail.resignSettlement?.excessRestDeduction ?? 0).toFixed(2)),
-      '時間帳戶欠款扣減': Number((detail.resignSettlement?.tbDeduction ?? 0).toFixed(2)),
-      '時間帳戶折現': Number((detail.tbCashout ?? 0).toFixed(2)),
-      '應付總額（含雜項）': Number((item.totalPayable ?? 0).toFixed(2)),
-    }
+    return Object.fromEntries(cols.map(k => [labelOf(k), pick(item, detail, k)]))
   })
+
+  const COL_WIDTH: Record<string, number> = {
+    employee: 12, clinic: 20, payType: 10, workedHours: 10, otHours: 10, leaveDays: 10,
+    basePay: 12, splitPay: 10, attendanceBonus: 10, storeBonus: 12, deduction: 10,
+    grossPay: 12, mpf: 12, mpfEmployer: 12, rsGrossAdd: 12, excessRestDeduction: 14,
+    tbDeduction: 14, tbCashout: 12, miscAmount: 10, totalPayable: 14,
+  }
 
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.json_to_sheet(rows)
-  ws['!cols'] = [
-    { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 },
-    { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-    { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
-    { wch: 8 },
-    // ★ cwm-acct-20260917 A9：5 結算欄寬度
-    { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 },
-    { wch: 12 },
-  ]
+  // ★ cwm-payrollcols-20260918 B3-4：!cols 寬度跟住 cols 動態生成
+  ws['!cols'] = cols.map(k => ({ wch: COL_WIDTH[k] ?? 12 }))
   XLSX.utils.book_append_sheet(wb, ws, '糧單')
 
   // ★ Totals from visible items only

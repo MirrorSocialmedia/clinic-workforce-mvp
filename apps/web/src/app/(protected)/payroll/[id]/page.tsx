@@ -8,6 +8,7 @@ import { BackButton } from '@/components/BackButton'
 import { Wallet, Trash2 } from 'lucide-react'
 import { periodMonthKey, toHKDateStr, addDaysStr } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
+import { EXPORT_COLS, EXPORT_COLS_DEFAULT } from '@/lib/payroll-export-cols'
 
 // ★ 讀取類 fetch 一律繞過瀏覽器快取。
 // PUT 同 GET 用同一個 URL，唔加就會喺寫入之後攞返舊 response
@@ -71,6 +72,9 @@ interface Summary {
   totalMisc?: number | null
   totalAttendanceBonus?: number | null
   totalStoreBonus?: number | null
+  // ★ cwm-payrollcols-20260918 B4：總 MPF（僱員／僱主）；totalMpfEmployer null = 舊糧單冇呢個欄 → 顯示 —
+  totalMpf?: number | null
+  totalMpfEmployer?: number | null
   confidential?: boolean
 }
 
@@ -78,6 +82,8 @@ interface PayrollCompany {
   id: string
   name: string
   payrollViewJson: string | null
+  // ★ cwm-payrollcols-20260918 B3：匯出欄位（同顯示欄位分兩份，拍板②）
+  payrollExportCols: string | null
 }
 
 // ★ 2026-09-10 cwm-payrollui 拍板⑤：自訂顯示（全公司統一設定 — Company.payrollViewJson）
@@ -88,6 +94,8 @@ const CARD_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = 
   { key: 'totalExtra', label: '額外收入（拆帳＋勤工＋店舖）' },
   { key: 'totalDeduction', label: '總扣款' },
   { key: 'totalMisc', label: '雜項總額' },
+  // ★ cwm-payrollcols-20260918 B4：總 MPF 卡（僱員＋僱主兩行）
+  { key: 'totalMpf', label: '總 MPF' },
   { key: 'payableExMisc', label: '應付（不含雜費）' },
   { key: 'totalPayable', label: '應付總額', required: true },
   { key: 'totalHours', label: '總工時' },
@@ -95,7 +103,7 @@ const CARD_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = 
   { key: 'totalLeaveAbsent', label: '總請假/缺勤' },
 ]
 // ★ 預設（MD §4.2）：totalMisc 預設關；其餘全開
-const CARD_DEFAULTS = ['employeeCount', 'totalBase', 'totalExtra', 'totalDeduction', 'payableExMisc', 'totalPayable', 'totalHours', 'totalOTHours', 'totalLeaveAbsent']
+const CARD_DEFAULTS = ['employeeCount', 'totalBase', 'totalExtra', 'totalDeduction', 'payableExMisc', 'totalPayable', 'totalHours', 'totalOTHours', 'totalLeaveAbsent', 'totalMpf']
 
 const COL_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'employee', label: '員工', required: true },
@@ -186,6 +194,11 @@ export default function PayrollDetailPage() {
   const [draftCols, setDraftCols] = useState<string[]>(COL_DEFAULTS)
   const [viewSaving, setViewSaving] = useState(false)
 
+  // ★ cwm-payrollcols-20260918 B3-3：⚙️ 匯出欄位 modal — 同顯示欄位分兩份（拍板②）；draft 先改，撳「儲存」先 PUT
+  const [exportColsOpen, setExportColsOpen] = useState(false)
+  const [draftExportCols, setDraftExportCols] = useState<string[]>([...EXPORT_COLS_DEFAULT])
+  const [exportColsSaving, setExportColsSaving] = useState(false)
+
   const payrollView = useMemo(
     () => parsePayrollView(company?.payrollViewJson),
     [company?.payrollViewJson],
@@ -195,6 +208,42 @@ export default function PayrollDetailPage() {
     setDraftCards(payrollView.cards)
     setDraftCols(payrollView.columns)
     setViewSettingOpen(true)
+  }
+
+  // ★ cwm-payrollcols-20260918 B3-3：匯出欄位 draft（DB null = 預設）
+  const openExportCols = () => {
+    let saved: string[] = [...EXPORT_COLS_DEFAULT]
+    if (company?.payrollExportCols) {
+      try {
+        const arr = JSON.parse(company.payrollExportCols)
+        if (Array.isArray(arr) && arr.length > 0) saved = arr.filter((k: any) => EXPORT_COLS.some(c => c.key === k))
+      } catch { /* 壞 JSON → 預設 */ }
+    }
+    setDraftExportCols(saved)
+    setExportColsOpen(true)
+  }
+
+  const handleSaveExportCols = async () => {
+    if (!company) return
+    setExportColsSaving(true)
+    try {
+      const res = await api(`/api/companies/${company.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: company.name, payrollExportCols: draftExportCols }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || `儲存失敗（${res.status}）`)
+        return
+      }
+      setExportColsOpen(false)
+    } catch (err) {
+      console.error('Failed to save payroll export cols:', err)
+      alert('儲存失敗，請重試')
+    } finally {
+      setExportColsSaving(false)
+    }
   }
 
   const handleSaveView = async () => {
@@ -525,6 +574,13 @@ export default function PayrollDetailPage() {
                      cursor: company ? 'pointer' : 'not-allowed', opacity: company ? 1 : 0.5 }}>
             ⚙️ 顯示欄位
           </button>
+          {/* ★ cwm-payrollcols-20260918 B3-3：⚙️ 匯出欄位（只影響 Excel；PDF 版面固定） */}
+          <button onClick={openExportCols} disabled={!company}
+            title={company ? '自訂 Excel 匯出欄位（全公司統一）' : '跨店計糧單無公司設定'}
+            style={{ padding: '8px 16px', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 6,
+                     cursor: company ? 'pointer' : 'not-allowed', opacity: company ? 1 : 0.5 }}>
+            ⚙️ 匯出欄位
+          </button>
           {run.status === 'DRAFT' && isOwner && (
             <button onClick={handleDelete}
               style={{ padding: '8px 16px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
@@ -560,6 +616,18 @@ export default function PayrollDetailPage() {
                 totalExtra: { value: fmtCurrency((summary.totalSplitPay ?? 0) + (summary.totalAttendanceBonus ?? 0) + (summary.totalStoreBonus ?? 0), summary.confidential), color: '#7c3aed' },
                 totalDeduction: { value: fmtCurrency(summary.totalDeduction, summary.confidential), color: '#dc3545' },
                 totalMisc: { value: fmtCurrency(summary.totalMisc ?? 0, summary.confidential), color: '#0d9488' },
+                // ★ cwm-payrollcols-20260918 B4：總 MPF 卡 — 僱員＋僱主兩行；舊糧單冇 mpfEmployer → —（唔好顯示 $0）
+                totalMpf: {
+                  value: (
+                    <span style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1.3 }}>
+                      <span>僱員 {fmtCurrency(summary.totalMpf, summary.confidential)}</span>
+                      <span style={{ fontSize: 13 }}>
+                        僱主 {summary.totalMpfEmployer == null ? '—' : fmtCurrency(summary.totalMpfEmployer, summary.confidential)}
+                      </span>
+                    </span>
+                  ),
+                  color: '#0d6efd',
+                },
                 payableExMisc: { value: fmtCurrency((summary.totalPayable ?? 0) - (summary.totalMisc ?? 0), summary.confidential), color: '#1d4ed8' },
                 totalPayable: { value: fmtCurrency(summary.totalPayable, summary.confidential), color: '#0d6efd', bold: true },
                 totalHours: { value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
@@ -946,7 +1014,7 @@ export default function PayrollDetailPage() {
           onClick={e => e.stopPropagation()}>
           <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>⚙️ 顯示欄位</h3>
           <p style={{ fontSize: 12, color: '#888', margin: '0 0 12px' }}>
-            全公司統一設定 — 儲存後所有員工睇呢條計糧單嘅顯示都一樣。🔒 = 強制顯示，關唔到。匯出 Excel/PDF 唔跟呢個設定（照舊完整資料）。
+            全公司統一設定 — 儲存後所有員工睇呢條計糧單嘅顯示都一樣。🔒 = 強制顯示，關唔到。顯示設定只影響呢個頁面；Excel 匯出欄位另有一份設定（⚙️ 匯出欄位），PDF 版面固定。
           </p>
           <div style={{ fontSize: 13, fontWeight: 600, margin: '10px 0 6px', color: '#444' }}>總覽卡（{CARD_OPTIONS.length}）</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
@@ -987,6 +1055,48 @@ export default function PayrollDetailPage() {
             <button onClick={handleSaveView} disabled={viewSaving}
               style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: '#2563eb', color: '#fff',
                        cursor: viewSaving ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 600 }}>
+              儲存
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )}
+
+    {/* ★ cwm-payrollcols-20260918 B3-3：⚙️ 匯出欄位 modal — 結構照抄顯示欄位 modal（draft 先改、撳「儲存」先 PUT）；
+        只影響 Excel 匯出；PDF 版面固定八欄；required 兩欄 disabled＋剔住（🔒） */}
+    {exportColsOpen && company && createPortal(
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => setExportColsOpen(false)}>
+        <div style={{ background: '#fff', borderRadius: 8, padding: 20, maxWidth: 560, width: '92%', maxHeight: '82vh', overflow: 'auto', boxShadow: '0 8px 30px rgba(0,0,0,0.2)' }}
+          onClick={e => e.stopPropagation()}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 18 }}>⚙️ 匯出欄位</h3>
+          <p style={{ fontSize: 12, color: '#888', margin: '0 0 12px' }}>
+            全公司統一設定 — 控制「📊 Excel」匯出出邊啲欄。🔒 = 強制匯出，關唔到。PDF 版面固定，設定只影響 Excel。
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+            {EXPORT_COLS.map(o => (
+              <label key={o.key} style={{
+                display: 'flex', gap: 8, alignItems: 'center',
+                opacity: o.required ? 0.5 : 1,
+                background: o.required ? '#f3f4f6' : 'transparent',
+                padding: '4px 6px', borderRadius: 4,
+              }}>
+                <input type="checkbox" checked={draftExportCols.includes(o.key)} disabled={o.required}
+                  onChange={e => setDraftExportCols(prev => e.target.checked ? [...prev, o.key] : prev.filter(k => k !== o.key))} />
+                <span style={{ fontSize: 13 }}>{o.label}{o.required && ' 🔒'}</span>
+              </label>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end', alignItems: 'center' }}>
+            {exportColsSaving && <span style={{ fontSize: 12, color: '#888', marginRight: 'auto' }}>儲存中…</span>}
+            <button onClick={() => setExportColsOpen(false)}
+              style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #ddd', background: '#f5f5f5', cursor: 'pointer', fontSize: 14 }}>
+              取消
+            </button>
+            <button onClick={handleSaveExportCols} disabled={exportColsSaving}
+              style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: '#2563eb', color: '#fff',
+                       cursor: exportColsSaving ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 600 }}>
               儲存
             </button>
           </div>

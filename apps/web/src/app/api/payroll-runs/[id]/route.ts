@@ -17,6 +17,12 @@ import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 import { buildTimeBankLedger } from '@/lib/timebank-ledger'
 import { TIMEBANK_ENGINE_VERSION } from '@/lib/payroll-engine'
 
+// ★ cwm-payrollcols-20260918 B4：detailJson 安全 parse（舊記錄可能係壞 JSON → null）
+function safeParse(json: string | null | undefined): any {
+  if (!json) return null
+  try { return JSON.parse(json) } catch { return null }
+}
+
 
 // GET /api/payroll-runs/[id] — Payroll run detail with items
 export async function GET(
@@ -31,7 +37,7 @@ export async function GET(
     where: { id: params.id },
     include: {
       // ★ 2026-09-10 cwm-payrollui 拍板⑤：自訂顯示（全公司統一）— clinic → company → payrollViewJson
-      clinic: { select: { id: true, name: true, company: { select: { id: true, name: true, payrollViewJson: true } } } },
+      clinic: { select: { id: true, name: true, company: { select: { id: true, name: true, payrollViewJson: true, payrollExportCols: true } } } },
       items: {
         include: {
           employee: {
@@ -100,6 +106,12 @@ export async function GET(
     totalSplitPay: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.splitPay || 0), 0),
     // ★ cwm-payrollcols-20260918：店舖獎金（之前冇入 totalExtra，卡同逐行都漏咗）
     totalStoreBonus: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.storeBonus || 0), 0),
+    // ★ cwm-payrollcols-20260918 B4：總 MPF（僱員＝detailJson.mpf；僱主＝detailJson.mpfEmployer）
+    //   舊糧單 detailJson 冇 mpfEmployer 個 key → null（前端顯示 —，唔好俾人以為真係 $0）
+    totalMpf: itemsWithSickDeduction.reduce((s: number, i: any) => s + (safeParse(i.detailJson)?.mpf || 0), 0),
+    totalMpfEmployer: itemsWithSickDeduction.every((i: any) => safeParse(i.detailJson) && 'mpfEmployer' in safeParse(i.detailJson)!)
+      ? itemsWithSickDeduction.reduce((s: number, i: any) => s + (safeParse(i.detailJson)?.mpfEmployer || 0), 0)
+      : null,
     // ★ totalDeduction includes both absent/unpaid deduction AND sick deduction (2026-08-02)
     totalDeduction: itemsWithSickDeduction.reduce(
       (s: number, i: any) => s + (i.deduction || 0) + (i.sickDeduction || 0), 0,
@@ -137,6 +149,8 @@ export async function GET(
       id: run.clinic.company.id,
       name: run.clinic.company.name,
       payrollViewJson: run.clinic.company.payrollViewJson,
+      // ★ cwm-payrollcols-20260918 B3：匯出欄位（null = 預設）
+      payrollExportCols: run.clinic.company.payrollExportCols,
     } : null,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },

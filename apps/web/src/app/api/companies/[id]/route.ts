@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { EXPORT_COLS } from '@/lib/payroll-export-cols'
 
 // PUT /api/companies/[id] — rename company
 // RBAC: OWNER only
@@ -34,6 +35,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       for (const k of ['totalPayable']) if (!cards.includes(k)) cards.push(k)
       for (const k of ['employee', 'totalPayable', 'detail']) if (!columns.includes(k)) columns.push(k)
       data.payrollViewJson = JSON.stringify({ cards, columns })
+    }
+    // ★ cwm-payrollcols-20260918 B3：Excel 匯出欄位（拍板②：同顯示欄位 payrollViewJson 分兩份，唔共用）
+    //   白名單過濾防前端亂塞 + 強制項（員工／應付總額）補回
+    if (body.payrollExportCols !== undefined) {
+      const EXPORT_COL_KEYS = EXPORT_COLS.map(c => c.key as string)
+      const cols = Array.isArray(body.payrollExportCols)
+        ? body.payrollExportCols.filter((k: any) => typeof k === 'string' && EXPORT_COL_KEYS.includes(k)) : []
+      for (const c of EXPORT_COLS) if (c.required && !cols.includes(c.key as string)) cols.push(c.key as string)
+      data.payrollExportCols = JSON.stringify(cols)
     }
     const company = await prisma.company.update({ where: { id }, data })
     return NextResponse.json(company)

@@ -100,6 +100,9 @@ model Company {
   /// ★ 2026-09-10 cwm-payrollui 拍板⑤：計糧詳情頁顯示設定（全公司統一）
   /// { cards: string[], columns: string[] } —— 存【要顯示】嘅 key；null = 預設
   payrollViewJson String?
+  /// ★ cwm-payrollcols-20260918 拍板②：Excel 匯出欄位設定（同顯示欄位分兩份，唔共用）
+  /// JSON array string（要匯出嘅 key）；null = EXPORT_COLS_DEFAULT
+  payrollExportCols String?
   createdAt DateTime @default(now())
 
   clinics       Clinic[]
