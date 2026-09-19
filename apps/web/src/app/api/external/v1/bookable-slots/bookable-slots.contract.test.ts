@@ -87,6 +87,8 @@ const fakes: Any = {
     findMany: async ({ where }: Any) => (where?.id ? [PROVIDER] : [{ ...PROVIDER }]),
     findUnique: async () => ({ ...PROVIDER }),
   },
+  // ★ cwi-final S0-12-workforce 輔助修（pre-existing）：Stage 2 f070c23d 帳號來源改 ApricotPractitioner，fake 漏 mock → GET/claim 全 500
+  apricotPractitioner: { findMany: async () => [{ apricotId: 'prov-ho', providerId: PROVIDER.id }] },
   providerWeeklyPattern: { findMany: async () => [] },
   providerShift: { findMany: async () => [] },
   providerLeave: { findMany: async () => [] },
@@ -149,11 +151,13 @@ const fakes: Any = {
 let saved: [Any, string, Any][] = []
 const envSaved: string[] = []
 before(() => {
-  envSaved.push(process.env.APRICOT_WRITE ?? '', process.env.ALLOW_NEW_PATIENT_WRITE ?? '', process.env.BOOKABLE_SLOT_HMAC_SECRET ?? '')
+  envSaved.push(process.env.APRICOT_WRITE ?? '', process.env.ALLOW_NEW_PATIENT_WRITE ?? '', process.env.BOOKABLE_SLOT_HMAC_SECRET ?? '', process.env.ALLOW_SLOT_CLAIM ?? '')
   // 本地實測路徑（驗收 gate 指定）：APRICOT_WRITE=0 → claim 必留 HELD
   process.env.APRICOT_WRITE = '0'
   delete process.env.ALLOW_NEW_PATIENT_WRITE
   process.env.BOOKABLE_SLOT_HMAC_SECRET = 'test-hmac-secret-bookable-slots'
+  // ★ cwi-final S0-12：G2 閘 — 明確開，現有 claim/commit case 照跑
+  process.env.ALLOW_SLOT_CLAIM = '1'
   for (const obj of [prisma, basePrisma]) {
     for (const k of Object.keys(fakes)) {
       saved.push([obj, k, (obj as Any)[k]])
@@ -165,6 +169,8 @@ after(() => {
   ;(process.env as Any).APRICOT_WRITE = envSaved[0]
   if (envSaved[1]) process.env.ALLOW_NEW_PATIENT_WRITE = envSaved[1]
   if (envSaved[2]) process.env.BOOKABLE_SLOT_HMAC_SECRET = envSaved[2]
+  if (envSaved[3]) process.env.ALLOW_SLOT_CLAIM = envSaved[3]
+  else delete process.env.ALLOW_SLOT_CLAIM
   for (const [obj, k, orig] of saved) {
     Object.defineProperty(obj, k, { value: orig, configurable: true, writable: true })
   }
@@ -588,5 +594,39 @@ describe('401/403/429', () => {
     }
     assert.equal(counts[200], 60)
     assert.equal(counts[429], 1)
+  })
+})
+
+// ── G2 閘（cwi-final S0-12）────────────────────────────────────
+
+describe('G2 閘 ALLOW_SLOT_CLAIM=0（cwi-final S0-12）', () => {
+  before(() => { process.env.ALLOW_SLOT_CLAIM = '0' })
+  after(() => { process.env.ALLOW_SLOT_CLAIM = '1' })
+
+  it('claim 403 SLOT_CLAIM_DISABLED（零 hold 入）', async () => {
+    const slotKey = await fetchSlotKey('10:00')
+    const body = claimBody({ slotKey, flowToken: 'flow-tok-gate-1' })
+    const res = await claimPOST(mkReq('POST', `${BASE}/claim`, {
+      key: KEY_MAIN, body, headers: { 'idempotency-key': body.flowToken },
+    }))
+    assert.equal(res.status, 403)
+    const json = await res.json()
+    assert.equal(json.code, 'SLOT_CLAIM_DISABLED')
+    assert.equal(heldRows.length, 0)
+  })
+
+  it('commit 403 SLOT_CLAIM_DISABLED', async () => {
+    await seedHold('HELD')
+    const res = await commitRoute.POST(mkReq('POST', `${BASE}/claim/hold-cr-001/commit`, { key: KEY_MAIN, body: {} }), { params: { holdId: 'hold-cr-001' } })
+    assert.equal(res.status, 403)
+    assert.equal((await res.json()).code, 'SLOT_CLAIM_DISABLED')
+  })
+
+  it('release DELETE 照 200/404（閘唔影響 release）', async () => {
+    await seedHold('HELD')
+    const res = await releaseRoute.DELETE(mkReq('DELETE', `${BASE}/claim/hold-cr-001`, { key: KEY_MAIN }), { params: { holdId: 'hold-cr-001' } })
+    assert.equal(res.status, 200)
+    const nf = await releaseRoute.DELETE(mkReq('DELETE', `${BASE}/claim/hold-nexist-0000000000000`, { key: KEY_MAIN }), { params: { holdId: 'hold-nexist-0000000000000' } })
+    assert.equal(nf.status, 404)
   })
 })

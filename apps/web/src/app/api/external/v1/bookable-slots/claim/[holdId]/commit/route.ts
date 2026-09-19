@@ -27,6 +27,11 @@ export async function POST(
     const key = await requireExternalKey(req, 'bookable-slots')
     ctx.setKey(key.name)
 
+    // ★ cwi-final S0-12：G2 閘 — 冇明確開 = 唔准佔位／commit（release DELETE、held GET 照開）
+    if ((process.env.ALLOW_SLOT_CLAIM ?? '0').trim() !== '1') {
+      throw new ExternalApiError(403, 'slot claim disabled (G2 gate)', 'SLOT_CLAIM_DISABLED')
+    }
+
     const holdId = params.holdId
     if (!/^[a-zA-Z0-9_-]{8,64}$/.test(holdId)) {
       throw new ExternalApiError(400, 'holdId invalid', 'BAD_REQUEST')

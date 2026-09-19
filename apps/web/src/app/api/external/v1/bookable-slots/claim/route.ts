@@ -39,6 +39,11 @@ export async function POST(req: NextRequest) {
     const key = await requireExternalKey(req, 'bookable-slots')
     ctx.setKey(key.name)
 
+    // ★ cwi-final S0-12：G2 閘 — 冇明確開 = 唔准佔位／commit（release DELETE、held GET 照開）
+    if ((process.env.ALLOW_SLOT_CLAIM ?? '0').trim() !== '1') {
+      throw new ExternalApiError(403, 'slot claim disabled (G2 gate)', 'SLOT_CLAIM_DISABLED')
+    }
+
     let body: Record<string, unknown>
     try {
       body = (await req.json()) as Record<string, unknown>
