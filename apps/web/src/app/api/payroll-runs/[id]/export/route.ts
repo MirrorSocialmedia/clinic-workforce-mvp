@@ -126,24 +126,32 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
   const pick = (item: any, detail: any, key: string): string | number => {
     switch (key) {
       case 'employee': return item.employee.user.name
+      case 'fullName': return item.employee.user.fullName || ''
+      case 'phone': return item.employee.user.phone
       case 'clinic': return item.employee.clinics.map((c: any) => c.clinic.name).join(', ')
       case 'payType': return item.employee.payRules[0]?.payType || 'N/A'
       case 'workedHours': return Number((item.workedHours ?? 0).toFixed(2))
       case 'otHours': return Number((item.otHours ?? 0).toFixed(2))
       case 'leaveDays': return Number((item.leaveDays ?? 0).toFixed(2))
+      case 'absentDays': return Number((item.absentDays ?? 0).toFixed(2))
       case 'basePay': return Number((item.basePay ?? 0).toFixed(2))
+      case 'otPay': return Number((item.otPay ?? 0).toFixed(2))
       case 'splitPay': return Number((item.splitPay ?? 0).toFixed(2))
-      case 'attendanceBonus': return Number((detail.attendanceBonus ?? 0).toFixed(2))
-      case 'storeBonus': return Number((item.storeBonus ?? 0).toFixed(2))
       case 'deduction': return Number((item.deduction ?? 0).toFixed(2))
-      case 'grossPay': return Number((detail.grossPay ?? 0).toFixed(2))
+      case 'sickDeduction': return Number((detail.sickDeduction ?? 0).toFixed(2))
+      case 'attendanceBonus': return Number((detail.attendanceBonus ?? 0).toFixed(2))
+      case 'totalAllowances': return Number((detail.totalAllowances ?? 0).toFixed(2))
+      case 'maternityPay': return Number(((item.maternityPay ?? 0) + (item.paternityPay ?? 0)).toFixed(2))
+      case 'adwAdjustment': return Number((detail.adwAdjustment ?? 0).toFixed(2))
       case 'mpf': return Number((detail.mpf ?? 0).toFixed(2))
       case 'mpfEmployer': return Number((detail.mpfEmployer ?? 0).toFixed(2))
+      case 'miscAmount': return Number((item.miscAmount ?? 0).toFixed(2))
+      case 'storeBonus': return Number((item.storeBonus ?? 0).toFixed(2))
+      case 'grossPay': return Number((detail.grossPay ?? 0).toFixed(2))
       case 'rsGrossAdd': return Number((detail.resignSettlement?.grossAdd ?? 0).toFixed(2))
       case 'excessRestDeduction': return Number((detail.resignSettlement?.excessRestDeduction ?? 0).toFixed(2))
       case 'tbDeduction': return Number((detail.resignSettlement?.tbDeduction ?? 0).toFixed(2))
       case 'tbCashout': return Number((detail.tbCashout ?? 0).toFixed(2))
-      case 'miscAmount': return Number((item.miscAmount ?? 0).toFixed(2))
       case 'totalPayable': return Number((item.totalPayable ?? 0).toFixed(2))
       default: return ''
     }
@@ -157,8 +165,11 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
   })
 
   const COL_WIDTH: Record<string, number> = {
-    employee: 12, clinic: 20, payType: 10, workedHours: 10, otHours: 10, leaveDays: 10,
-    basePay: 12, splitPay: 10, attendanceBonus: 10, storeBonus: 12, deduction: 10,
+    employee: 12, fullName: 14, phone: 14, clinic: 20, payType: 10,
+    workedHours: 10, otHours: 10, leaveDays: 10, absentDays: 10,
+    basePay: 12, otPay: 10, splitPay: 10, sickDeduction: 12,
+    attendanceBonus: 10, totalAllowances: 10, maternityPay: 12, adwAdjustment: 10,
+    storeBonus: 12, deduction: 10,
     grossPay: 12, mpf: 12, mpfEmployer: 12, rsGrossAdd: 12, excessRestDeduction: 14,
     tbDeduction: 14, tbCashout: 12, miscAmount: 10, totalPayable: 14,
   }
@@ -187,6 +198,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     { '項目': '總產假/侍產假', '值': visibleItems.reduce((s: number, i: any) => s + (i.maternityPay ?? 0) + (i.paternityPay ?? 0), 0).toFixed(2) },
     { '項目': '總ADW調整', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').adwAdjustment ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
     { '項目': '總MPF', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').mpf ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
+    { '項目': '總MPF（僱主）', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').mpfEmployer ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
     { '項目': '總雜項', '值': visibleItems.reduce((s: number, i: any) => s + (i.miscAmount ?? 0), 0).toFixed(2) },
     { '項目': '應付總額（含雜項）', '值': visibleItems.reduce((s: number, i: any) => s + (i.totalPayable ?? 0), 0).toFixed(2) },
   ]
