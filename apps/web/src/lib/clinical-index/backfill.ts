@@ -18,6 +18,7 @@
 
 import { basePrisma } from '@/lib/prisma'
 import { toHKDateStr, addDaysStr } from '@/lib/hk-date'
+import { llmStats, resetLlmStats } from '@/lib/clinical/llm-client'
 import {
   BACKFILL_DAYS_PER_RUN,
   BACKFILL_MAX_CALLS,
@@ -60,6 +61,7 @@ export async function runClinicalIndexBackfill(opts: {
   daysPerRun?: number
 }): Promise<BackfillOutcome> {
   const t0 = Date.now()
+  resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
   const now = opts.now ?? new Date()
   const today = toHKDateStr(now)
   const rangeTo = addDaysStr(today, -1)
@@ -191,5 +193,7 @@ export async function runClinicalIndexBackfill(opts: {
       },
     })
   }
+  // ★ cwi-final S0-9：job 完結 log — 睇到「LLM 層零產出」
+  console.log(`[clinical-index-backfill] done status=${outcome.status} days=${outcome.processedDays} patients=${outcome.patients} errors=${outcome.errors} llm: ${JSON.stringify(llmStats())}`)
   return outcome
 }

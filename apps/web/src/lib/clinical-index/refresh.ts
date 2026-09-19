@@ -22,6 +22,7 @@
 
 import { basePrisma } from '@/lib/prisma'
 import { toHKDateStr } from '@/lib/hk-date'
+import { llmStats, resetLlmStats } from '@/lib/clinical/llm-client'
 import {
   makeThrottledCallFn,
   isStopNightError,
@@ -115,6 +116,7 @@ export async function refreshPatientIndex(
   opts: { callFn?: ClinicalCallFn; now?: Date } = {},
 ): Promise<RefreshResult> {
   const now = opts.now ?? new Date()
+  resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
   const today = toHKDateStr(now)
   const { call } = makeThrottledCallFn(opts.callFn)
   const phoneKey = process.env.PHONE_HASH_KEY ?? ''
@@ -192,6 +194,8 @@ export async function refreshPatientIndex(
     }
   }
 
+  // ★ cwi-final S0-9：job 完結 log — 睇到「LLM 層零產出」
+  console.log(`[clinical-index-refresh] done visits=${row ? 1 : 0} llm: ${JSON.stringify(llmStats())}`)
   return {
     ok: true,
     visitDate: targetDay,

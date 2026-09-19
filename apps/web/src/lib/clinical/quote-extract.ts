@@ -108,7 +108,7 @@ export interface ExtractedQuote {
   source: 'parser' | 'llm'
 }
 
-export async function extractQuotes(note: NoteText, terms: TermEntry[]): Promise<ExtractedQuote[]> {
+export async function extractQuotes(note: NoteText, terms: TermEntry[], visitId?: string): Promise<ExtractedQuote[]> {
   const plain = noteTextToPlain(note)
   const parsed = parseQuote(plain, terms)
   const termByIdx = new Map(terms.map((t) => [t.shorthand, t]))
@@ -126,7 +126,7 @@ export async function extractQuotes(note: NoteText, terms: TermEntry[]): Promise
     source: 'parser' as const,
   }))
 
-  if (parsed.needsLlm) {
+    if (parsed.needsLlm) {
     const llmItems = await runLlmLayer(plain, terms)
     if (llmItems) {
       // LLM 補低信心 orphan（text 子串配對）+ 收 LLM 新發現
@@ -165,6 +165,9 @@ export async function extractQuotes(note: NoteText, terms: TermEntry[]): Promise
           })
         }
       }
+    } else {
+      // ★ cwi-final S0-9：LLM 層零產出 — low 項保留（落確認隊列）；visitId 係內部 id，唔係 PII
+      console.info('[quote-extract] llm layer null — items kept low-certainty', { visitId, orphan: items.filter(i => i.certainty === 'low').length })
     }
     // LLM 失敗/唔中 → low 項保留（落確認隊列）
   }
@@ -188,7 +191,7 @@ export async function storeQuotesForVisit(opts: {
   note: NoteText
 }): Promise<{ stored: number }> {
   const terms = await loadTermEntries()
-  const items = await extractQuotes(opts.note, terms)
+  const items = await extractQuotes(opts.note, terms, opts.visitId)
   if (!items.length) {
     // 冇報價項 — 清走舊 pending（重跑口徑一致）
     await basePrisma.quotedItem.deleteMany({ where: { sourceVisitId: opts.visitId, status: 'pending' } })

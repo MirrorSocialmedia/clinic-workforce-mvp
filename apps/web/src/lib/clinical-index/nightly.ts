@@ -18,6 +18,7 @@
 
 import { basePrisma } from '@/lib/prisma'
 import { toHKDateStr, addDaysStr } from '@/lib/hk-date'
+import { llmStats, resetLlmStats } from '@/lib/clinical/llm-client'
 import {
   FUTURE_WINDOW_DAYS,
   RESCAN_DAYS,
@@ -68,6 +69,7 @@ function futureDays(appointments: any[], today: string): string[] {
 
 export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; now?: Date }): Promise<NightlyOutcome> {
   const t0 = Date.now()
+  resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
   const now = opts.now ?? new Date()
   const today = toHKDateStr(now)
   const yesterday = addDaysStr(today, -1)
@@ -191,5 +193,7 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
       },
     })
   }
+  // ★ cwi-final S0-9：job 完結 log — 睇到「LLM 層零產出」
+  console.log(`[clinical-index-nightly] done status=${outcome.status} patients=${outcome.patientsProcessed} errors=${outcome.errors} llm: ${JSON.stringify(llmStats())}`)
   return outcome
 }
