@@ -18,6 +18,7 @@ import type { ADWResult, AdwPolicyResult } from './adw'
 import { calculateMaternityPay, calculatePaternityPay, filterHolidaysExcludingMaternity } from './maternity'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 import { getMpfExemption, adjustMpfMinForPeriod } from './mpf-exemption'
+import { calcMpfEmployer } from './mpf-employer'
 import { findPayRuleForMonth } from './pay-rule-for-month'
 
 // ------------------------------------------------------------------
@@ -2250,7 +2251,8 @@ export function resolveEmployedRatio(
 export const MPF_INCLUDE_SETTLEMENT = true
 
 /**
- * MPF (強積金) employer contribution calculation.
+ * MPF (強積金)【僱員】供款計算 —— 會由 gross 扣落 net。
+ * ⚠️ 僱主供款用 lib/mpf-employer.ts 嘅 calcMpfEmployer（規則唔同：冇 7,100 下限、唔受首 30 日免供款期影響）。
  */
 export function calcMPF(
   relevantIncome: number,
@@ -3767,7 +3769,9 @@ export async function calculatePayrollWithRules(
     periodMonth: monthDate,
     lastDay: resolvedResignedAt ? new Date(resolvedResignedAt.getTime() - 86400000) : null,
   }
-  const mpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? grossPay : grossPay - rsGrossAdd, mpfConfig, mpfCtx)
+  // ★ cwm-payrollcols-20260918 B2：mpfBase 拎出嚟做名 — 僱主 MPF 一定要用同一個基數（同 :3741 一模一樣）
+  const mpfBase = MPF_INCLUDE_SETTLEMENT ? grossPay : grossPay - rsGrossAdd
+  const mpf = calcMPF(mpfBase, mpfConfig, mpfCtx)
   // ★ cwm-resigv3：tbDeduction 落 MPF 後 net 扣除（EO s.32 上限已喺 resign-settle route 驗過）
   const netPay = Math.max(0, grossPay - mpf - rsTbDed)
   // ★ 2026-09-01 (cwm-mpf-20260902, MD #11)：MPF disabled 時 mpfRate 顯示 0 ——
@@ -3786,6 +3790,8 @@ export async function calculatePayrollWithRules(
     storeBonus,
     grossPay: Math.round(grossPay * 100) / 100,
     mpf,
+    // ★ cwm-payrollcols-20260918：僱主供款（純顯示／報表，唔入 grossPay／totalPayable）— 同僱員同一組 mpfBase/mpfConfig/mpfCtx
+    mpfEmployer: calcMpfEmployer(mpfBase, mpfConfig, mpfCtx),
     mpfRate: mpfRate,
     netPay: Math.round(netPay * 100) / 100,
     sickDeduction: sickDeduction.amount,
@@ -3846,13 +3852,18 @@ export async function calculatePayrollWithRules(
     const mpfConfig = resolveMpfConfig(config, mods)
     // ★ cwm-resigv3：OT 重算同步 settlement 口徑（MPF 基數 + tbDeduction），
     //   唔同步會將 tbDeduction 洗走（此區塊覆寫 netPay）。
-    const newMpf = calcMPF(MPF_INCLUDE_SETTLEMENT ? newGrossPay : newGrossPay - rsGrossAdd, mpfConfig, mpfCtx)
+    // ★ cwm-payrollcols-20260918 B2：OT 重算後 base 同 main path 一樣拎出嚟做名
+    const newMpfBase = MPF_INCLUDE_SETTLEMENT ? newGrossPay : newGrossPay - rsGrossAdd
+    const newMpf = calcMPF(newMpfBase, mpfConfig, mpfCtx)
+    // ★ cwm-payrollcols-20260918 坑⑥：OT 重算後僱主 MPF 都要同步（否則保留舊值）
+    const newMpfEmployer = calcMpfEmployer(newMpfBase, mpfConfig, mpfCtx)
     const newNetPay = Math.max(0, newGrossPay - newMpf - rsTbDed)
     result.totalPayable = newNetPay
     result.detail = {
       ...result.detail,
       grossPay: Math.round(newGrossPay * 100) / 100,
       mpf: newMpf,
+      mpfEmployer: newMpfEmployer,
       netPay: Math.round(newNetPay * 100) / 100,
     }
   } else {
@@ -3887,6 +3898,7 @@ export async function calculatePayrollWithRules(
   //   但本地 const grossPay（:2886）仍係舊值 —— 一定要取最終值。
   const finalGrossPay = (result.detail as any).grossPay ?? grossPay
   const finalMpf = (result.detail as any).mpf ?? mpf
+  const finalMpfEmployer = (result.detail as any).mpfEmployer ?? calcMpfEmployer(mpfBase, mpfConfig, mpfCtx)
   const finalNetPay = (result.detail as any).netPay ?? netPay
 
   result.detail = {
@@ -3924,6 +3936,8 @@ export async function calculatePayrollWithRules(
       sickEpisodes: sickDeduction.episodes,
       grossPay: Math.round(finalGrossPay * 100) / 100,
       mpf: Math.round(finalMpf * 100) / 100,
+      // ★ cwm-payrollcols-20260918：salary 段同步寫僱主（跟 finalMpf 同一模式）
+      mpfEmployer: Math.round(finalMpfEmployer * 100) / 100,
       mpfRate: mpfRate,
       netPay: Math.round(finalNetPay * 100) / 100,
     },
