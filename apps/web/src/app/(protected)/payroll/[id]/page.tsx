@@ -27,6 +27,7 @@ interface PayrollItem {
   basePay: number | null
   otPay: number | null
   splitPay: number | null
+  storeBonus: number | null
   deduction: number | null
   totalPayable: number | null
   miscAmount: number | null
@@ -69,6 +70,7 @@ interface Summary {
   // ★ 2026-09-10 cwm-payrollui：API 側 reduce（保密員工 miscAmount 可能前端見不到 — 唔好前端算，#18）
   totalMisc?: number | null
   totalAttendanceBonus?: number | null
+  totalStoreBonus?: number | null
   confidential?: boolean
 }
 
@@ -83,7 +85,7 @@ interface PayrollCompany {
 const CARD_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'employeeCount', label: '員工數' },
   { key: 'totalBase', label: '總基本薪資' },
-  { key: 'totalExtra', label: '額外收入（拆帳＋勤工）' },
+  { key: 'totalExtra', label: '額外收入（拆帳＋勤工＋店舖）' },
   { key: 'totalDeduction', label: '總扣款' },
   { key: 'totalMisc', label: '雜項總額' },
   { key: 'payableExMisc', label: '應付（不含雜費）' },
@@ -104,7 +106,7 @@ const COL_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'leaveDays', label: '請假' },
   { key: 'absentDays', label: '缺勤' },
   { key: 'baseSalary', label: '基本薪資' },
-  { key: 'extraIncome', label: '額外收入（拆帳／勤工）' },
+  { key: 'extraIncome', label: '額外收入（拆帳／勤工／店舖）' },
   { key: 'deduction', label: '扣款' },
   { key: 'sickDeduction', label: '病假扣減' },
   { key: 'misc', label: '雜項($)' },
@@ -553,7 +555,9 @@ export default function PayrollDetailPage() {
               const cardValues: Record<string, { value: React.ReactNode; color: string; bold?: boolean }> = {
                 employeeCount: { value: summary.totalEmployees, color: '#0d6efd' },
                 totalBase: { value: fmtCurrency(summary.totalBasePay, summary.confidential), color: '#6c757d' },
-                totalExtra: { value: fmtCurrency((summary.totalSplitPay ?? 0) + (summary.totalAttendanceBonus ?? 0), summary.confidential), color: '#7c3aed' },
+                // ★ cwm-payrollcols-20260918：totalExtra 前端砌 — 補返店舖獎金（storeBonus 本來已計入 totalPayable，
+                //   只係顯示漏咗；應付總額唔變）。只加呢一处，唔好 API/前端兩邊都加。
+                totalExtra: { value: fmtCurrency((summary.totalSplitPay ?? 0) + (summary.totalAttendanceBonus ?? 0) + (summary.totalStoreBonus ?? 0), summary.confidential), color: '#7c3aed' },
                 totalDeduction: { value: fmtCurrency(summary.totalDeduction, summary.confidential), color: '#dc3545' },
                 totalMisc: { value: fmtCurrency(summary.totalMisc ?? 0, summary.confidential), color: '#0d9488' },
                 payableExMisc: { value: fmtCurrency((summary.totalPayable ?? 0) - (summary.totalMisc ?? 0), summary.confidential), color: '#1d4ed8' },
@@ -694,6 +698,10 @@ export default function PayrollDetailPage() {
                       const rows: React.ReactNode[] = []
                       if ((item.splitPay ?? 0) !== 0) {
                         rows.push(<div key="split" style={{ color: '#7c3aed' }}>拆帳 {fmtCurrency(item.splitPay, confidential)}</div>)
+                      }
+                      // ★ cwm-payrollcols-20260918：店舖獎金（PayrollItem.storeBonus，人手錄入）
+                      if ((item.storeBonus ?? 0) !== 0) {
+                        rows.push(<div key="store" style={{ color: '#0891b2' }}>店舖 {fmtCurrency(item.storeBonus, confidential)}</div>)
                       }
                       const ab = parseAttendanceBonus(item)
                       if (ab.cancelled) {

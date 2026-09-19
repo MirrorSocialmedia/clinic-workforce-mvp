@@ -98,6 +98,8 @@ export async function GET(
     totalBasePay: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.basePay || 0), 0),
     totalOTPay: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.otPay || 0), 0),
     totalSplitPay: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.splitPay || 0), 0),
+    // ★ cwm-payrollcols-20260918：店舖獎金（之前冇入 totalExtra，卡同逐行都漏咗）
+    totalStoreBonus: itemsWithSickDeduction.reduce((s: number, i: any) => s + (i.storeBonus || 0), 0),
     // ★ totalDeduction includes both absent/unpaid deduction AND sick deduction (2026-08-02)
     totalDeduction: itemsWithSickDeduction.reduce(
       (s: number, i: any) => s + (i.deduction || 0) + (i.sickDeduction || 0), 0,
