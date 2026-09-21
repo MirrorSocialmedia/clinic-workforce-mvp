@@ -8,6 +8,8 @@ import { Pencil, Plus, Smartphone, Wrench, Search, Clock } from 'lucide-react'
 import { toHKDateStr, fmtDateTime, fmtDate, todayHK, hkDayOfWeek } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
 import { hasPermission } from '@/lib/permissions'
+import { useLatestRequest } from '@/lib/use-latest-request'
+import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 type TabKey = 'records' | 'exceptions' | 'hash' | 'crossClinic'
@@ -470,7 +472,9 @@ export default function AttendancePage() {
   useEffect(() => { if (user) setLoading(false) }, [user])
 
   // Records
+  const recordsReq = useLatestRequest()
   const fetchRecords = async () => {
+    const { signal, isLatest } = recordsReq()
     setLoading(true); setError('')
     try {
       const params = new URLSearchParams({ page: page.toString(), pageSize: pageSize.toString() })
@@ -479,12 +483,15 @@ export default function AttendancePage() {
       if (startDate) params.set('startDate', startDate)
       if (endDate) params.set('endDate', endDate)
       if (showVoided) params.set('includeVoided', '1')
-      const res = await fetch(`/api/punches?${params}`, { credentials: 'include', cache: 'no-store' })
-      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `伺服器錯誤 (${res.status})`) }
-      const data = await res.json()
+      const res = await fetch(`/api/punches?${params}`, { credentials: 'include', cache: 'no-store', signal })
+      const data = await res.json().catch(() => ({}))
+      if (!isLatest()) return
+      if (!res.ok) throw new Error(data.error || `伺服器錯誤 (${res.status})`)
       setRecords(data.records || []); setTotal(data.total || 0)
-    } catch (err: any) { setError(err.message || '載入失敗') }
-    finally { setLoading(false) }
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || !isLatest()) return
+      setError(err.message || '載入失敗')
+    } finally { if (isLatest()) setLoading(false) }
   }
 
   // Records tab: fetch exceptions for color-coding & status display
@@ -499,7 +506,9 @@ export default function AttendancePage() {
     return [...s].sort().join(',')
   }, [startDate, endDate, records])
 
+  const recExReq = useLatestRequest()
   const fetchRecordExceptions = useCallback(async () => {
+    const { signal, isLatest } = recExReq()
     const months = monthsKey.split(',')
     try {
       const results = await Promise.all(months.map(async m => {
@@ -509,35 +518,43 @@ export default function AttendancePage() {
         const res = await fetch(`/api/payroll-runs/exceptions?${params}`, {
           credentials: 'include',
           cache: 'no-store',
+          signal,
         })
         return res.ok ? (await res.json()).exceptions || [] : []
       }))
+      if (!isLatest()) return
       setRecordsExceptions(results.flat())
       setLoadedMonths(new Set(months))
     } catch (e) {
+      if ((e as any)?.name === 'AbortError') return
       console.error('[attendance] record exceptions fetch failed', e)
     }
-  }, [monthsKey, clinicFilter, employeeFilter])
+  }, [monthsKey, clinicFilter, employeeFilter, recExReq])
 
   useEffect(() => {
     if (user && activeTab === 'records') fetchRecordExceptions()
   }, [user, activeTab, fetchRecordExceptions])
 
   useEffect(() => { if (user) fetchRecords() }, [user, page, clinicFilter, employeeFilter, startDate, endDate, showVoided])
+  // ★ cwm-consistency Stage 5.2：live refresh（records tab 每 60s + 其他 tab mutation 即 refetch）
+  useLiveRefresh(() => { fetchRecords(); fetchRecordExceptions(); fetchExceptions() }, ['attendance', 'correction', 'leave', 'schedule'], { intervalMs: 60_000, enabled: activeTab === 'records' })
 
   // Exceptions
+  const exReq = useLatestRequest()
   const fetchExceptions = useCallback(async () => {
+    const { signal, isLatest } = exReq()
     setExLoading(true)
     try {
       const params = new URLSearchParams({ periodMonth })
       if (exClinicId) params.set('clinicId', exClinicId)
       if (exEmployeeId) params.set('employeeId', exEmployeeId)
-      const res = await fetch(`/api/payroll-runs/exceptions?${params}`, { credentials: 'include', cache: 'no-store' })
+      const res = await fetch(`/api/payroll-runs/exceptions?${params}`, { credentials: 'include', cache: 'no-store', signal })
+      if (!isLatest()) return
       if (res.ok) { const data = await res.json(); setExceptions(data.exceptions || []) }
       else { setExceptions([]) }
-    } catch { setExceptions([]) }
-    finally { setExLoading(false) }
-  }, [exClinicId, exEmployeeId, periodMonth])
+    } catch { if (!isLatest()) return; setExceptions([]) }
+    finally { if (isLatest()) setExLoading(false) }
+  }, [exClinicId, exEmployeeId, periodMonth, exReq])
 
   // ★ cwm-crossclinic-20260914：異地打卡提醒（當月，唔帶參數 — 拍板③：LOCKED 月改唔到排班，唔給揀舊月）
   const fetchCrossClinic = useCallback(async () => {
@@ -1799,7 +1816,7 @@ export default function AttendancePage() {
                       punchRecordId: correctionRecord.id,   // ★ DB-06：指定修正邊張
                     }),
                   })
-                  if (res.ok) { alert('修正申請已提交'); setShowCorrectionModal(false); setCorrectionForm({ time: '', reason: '', punchType: '' }); fetchRecords(); fetchRecordExceptions(); fetchExceptions() }
+                  if (res.ok) { alert('修正申請已提交'); setShowCorrectionModal(false); setCorrectionForm({ time: '', reason: '', punchType: '' }); notifyDataChanged('attendance', 'correction'); fetchRecords(); fetchRecordExceptions(); fetchExceptions() }
                   else { const err = await res.json(); alert(err.error || '提交失敗') }
                 } catch { alert('網路錯誤') }
                 finally { setSubmittingCorrection(false) }
@@ -1893,7 +1910,7 @@ export default function AttendancePage() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ date: datetime, punchType, reason, clinicId, employeeId }),
                   })
-                  if (res.ok) { alert('補登申請已提交'); setShowAddPunchModal(false); setAddPunchForm({ employeeId: '', clinicId: clinics[0]?.id || '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '' }); fetchRecords(); fetchRecordExceptions(); fetchExceptions() }
+                  if (res.ok) { alert('補登申請已提交'); setShowAddPunchModal(false); setAddPunchForm({ employeeId: '', clinicId: clinics[0]?.id || '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '' }); notifyDataChanged('attendance', 'correction'); fetchRecords(); fetchRecordExceptions(); fetchExceptions() }
                   else { const err = await res.json(); alert(err.error || '提交失敗') }
                 } catch { alert('網路錯誤') }
                 finally { setSubmittingAddPunch(false) }
@@ -1946,6 +1963,7 @@ export default function AttendancePage() {
                   setShowVoidModal(false)
                   setVoidReason('')
                   setVoidRecord(null)
+                  notifyDataChanged('attendance', 'correction')
                   fetchRecords()
                   fetchRecordExceptions()
                 } catch { alert('網路錯誤') }

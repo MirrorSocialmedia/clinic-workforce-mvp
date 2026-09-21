@@ -14,6 +14,8 @@ import zhcn from '@fullcalendar/core/locales/zh-cn'
 import type { DatesSetArg, EventContentArg, EventMountArg } from '@fullcalendar/core'
 const FullCalendarCmp = FullCalendar as unknown as React.ComponentType<any>
 import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK, addDaysStr } from '@/lib/hk-date'
+import { useLatestRequest } from '@/lib/use-latest-request'
+import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
 import { aggregateRestPl } from '@/lib/leave-summary'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { textOn, shiftShade } from '@/lib/color'
@@ -450,8 +452,8 @@ export default function SchedulingPage() {
 
   // ★ 讀取類 fetch 一律繞過瀏覽器快取。
   //   Next 的 `export const dynamic = 'force-dynamic'` 只管伺服器，唔管瀏覽器。
-  const getJSON = (url: string) =>
-    fetch(url, { credentials: 'include', cache: 'no-store' })
+  const getJSON = (url: string, init?: RequestInit) =>
+    fetch(url, { credentials: 'include', cache: 'no-store', ...init })
 
   // Permission guard state
   const [userRole, setUserRole] = useState<string>('')
@@ -965,47 +967,59 @@ export default function SchedulingPage() {
   )
 
   // Load month shifts via pagination (extracted so refreshAll can call it)
+  const ovReq = useLatestRequest()
   const loadOvMonth = useCallback(async () => {
     if (!monthDays.length) return
+    const { signal, isLatest } = ovReq()
     const allShifts: any[] = []
     let page = 1
     let ok = true
     const pageSize = 1000
-    while (true) {
-      const r = await getJSON(`/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&page=${page}&pageSize=${pageSize}`)
-      if (!r.ok) { ok = false; break }
-      const d = await r.json()
-      const batch = d.shifts || []
-      allShifts.push(...batch)
-      if (batch.length < pageSize) break
-      page++
-      if (page > 20) break
-    }
+    try {
+      while (true) {
+        const r = await getJSON(`/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&page=${page}&pageSize=${pageSize}`, { signal })
+        if (!isLatest()) return
+        if (!r.ok) { ok = false; break }
+        const d = await r.json()
+        if (!isLatest()) return
+        const batch = d.shifts || []
+        allShifts.push(...batch)
+        if (batch.length < pageSize) break
+        page++
+        if (page > 20) break
+      }
+    } catch { if (!isLatest()) return; ok = false }
     if (!ok) { console.error('[loadOvMonth] fetch failed — keep previous data'); return }   // ★ 唔覆蓋
+    if (!isLatest()) return
     setOvMonthShifts(allShifts)
 
     try {
       const lrRes = await getJSON(
         `/api/leave-requests?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&status=APPROVED`,
+        { signal },
       )
+      if (!isLatest()) return
       if (lrRes.ok) {
         const lrData = await lrRes.json()
+        if (!isLatest()) return
         setMonthLeaveRequests(lrData.leaveRequests || [])
       }
     } catch { /* ignore */ }
-  }, [monthDays])
+  }, [monthDays, ovReq])
 
   useEffect(() => { loadOvMonth() }, [loadOvMonth])
 
   // 🔧 Fix #3a: 抓當前選中員工的假期餘額
   const [selectedEmpBalances, setSelectedEmpBalances] = useState<any[]>([])
+  const balReq = useLatestRequest()
   useEffect(() => {
     if (!selectedEmployeeId) { setSelectedEmpBalances([]); return }
-    getJSON(`/api/leave-balance?employeeId=${selectedEmployeeId}`)
+    const { signal, isLatest } = balReq()
+    getJSON(`/api/leave-balance?employeeId=${selectedEmployeeId}`, { signal })
       .then(r => r.ok ? r.json() : { leaveBalances: [] })
-      .then(d => setSelectedEmpBalances(d.leaveBalances || []))
-      .catch(() => setSelectedEmpBalances([]))
-  }, [selectedEmployeeId])
+      .then(d => { if (isLatest()) setSelectedEmpBalances(d.leaveBalances || []) })
+      .catch(() => { if (isLatest()) setSelectedEmpBalances([]) })
+  }, [selectedEmployeeId, balReq])
 
   // 🔧 Fix #4a: Refresh leave balances after drag-drop or delete
   const refreshLeaveBalances = useCallback(async () => {
@@ -1588,8 +1602,10 @@ function getShiftCode(shift: Shift): string {
   // ============================================================
   // Load shifts for current view (all clinics, no clinicId filter)
   // ============================================================
+  const shiftsReq = useLatestRequest()
   const loadShifts = useCallback(async () => {
     if (!viewRange) return
+    const { signal, isLatest } = shiftsReq()
 
     // Extend endDate by 7 days to cover both this week and next week in overview
     const endDate = new Date(viewRange.end)
@@ -1600,21 +1616,25 @@ function getShiftCode(shift: Shift): string {
 
     try {
       const [shiftsRes, leavesRes] = await Promise.all([
-        getJSON(url),
-        getJSON(`/api/leave-requests?startDate=${viewRange.start}&endDate=${endDateStr}&status=APPROVED`),
+        getJSON(url, { signal }),
+        getJSON(`/api/leave-requests?startDate=${viewRange.start}&endDate=${endDateStr}&status=APPROVED`, { signal }),
       ])
+      if (!isLatest()) return
       if (shiftsRes.ok) {
         const data = await shiftsRes.json()
+        if (!isLatest()) return
         if (Array.isArray(data.shifts)) setShifts(data.shifts)
       }
       if (leavesRes.ok) {
         const leavesData = await leavesRes.json()
+        if (!isLatest()) return
         if (Array.isArray(leavesData.leaveRequests)) setLeaveRequests(leavesData.leaveRequests)
       }
     } catch (error) {
+      if (!isLatest()) return
       console.error('Failed to load shifts:', error)
     }
-  }, [viewRange])
+  }, [viewRange, shiftsReq])
 
   useEffect(() => {
     if (viewRange) loadShifts()
@@ -1657,6 +1677,9 @@ function getShiftCode(shift: Shift): string {
     ])
   }, [loadShifts, loadOvMonth, refreshLeaveBalances])
 
+  // ★ cwm-consistency Stage 5.2：live refresh（排班頁唔設 interval — 頁重；只 focus/visibility + 其他 tab mutation）
+  useLiveRefresh(refreshAll, ['schedule', 'leave'])
+
   // Unified deleteLeave helper — single entry point for all leave deletions
   const deleteLeave = useCallback(async (leaveId: string) => {
     const res = await fetch(`/api/leave-requests/${leaveId}`, {
@@ -1664,6 +1687,7 @@ function getShiftCode(shift: Shift): string {
       credentials: 'include',
     })
     if (res.ok) {
+      notifyDataChanged('schedule', 'leave')
       await refreshAll()
       await refreshLeaveBalances()
       return true
@@ -1963,6 +1987,7 @@ function getShiftCode(shift: Shift): string {
             message: `⚠️ ${data.payrollLocked.month} 已${data.payrollLocked.status === 'EXPORTED' ? '匯出' : '確認'}出糧 —— 呢個改動唔會反映喺已出嘅糧單`,
           }])
         }
+        notifyDataChanged('schedule', 'leave')
         await refreshAll()
         return true
       } else {
@@ -2016,6 +2041,7 @@ function getShiftCode(shift: Shift): string {
             message: `⚠️ ${data.payrollLocked.month} 已${data.payrollLocked.status === 'EXPORTED' ? '匯出' : '確認'}出糧 —— 呢個改動唔會反映喺已出嘅糧單`,
           }])
         }
+        notifyDataChanged('schedule', 'leave')
         await refreshAll()
       } else {
         const err = await res.json().catch(() => ({}))
@@ -2074,6 +2100,7 @@ function getShiftCode(shift: Shift): string {
       }),
     })
     if (res.ok) {
+      notifyDataChanged('schedule', 'leave')
       await refreshAll()
       await refreshLeaveBalances()
     } else {
@@ -2096,7 +2123,7 @@ function getShiftCode(shift: Shift): string {
 
     // ★ 豁免類型（病假 / 休息日 / 自訂無限）跳過餘額檢查
       if (!isBalanceExempt(leaveType)) {
-      const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveType.id)
+      const bal = selectedEmpBalances.find(b => b.employeeId === employeeId && b.leaveTypeId === leaveType.id)
       if ((!bal || bal.remaining <= 0) && !allowsNegativeBalance(leaveType.systemKey)) {
         setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
         return
@@ -2364,7 +2391,7 @@ function getShiftCode(shift: Shift): string {
 
       const lt = leaveTypes.find(l => l.id === dl.leaveTypeId)
       if (!isBalanceExempt(lt)) {
-        const bal = selectedEmpBalances.find(b => b.leaveTypeId === dl.leaveTypeId)
+        const bal = selectedEmpBalances.find(b => b.employeeId === dl.employeeId && b.leaveTypeId === dl.leaveTypeId)
         if ((!bal || bal.remaining <= 0) && !allowsNegativeBalance(lt.systemKey)) {
           setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
           return
@@ -5462,6 +5489,7 @@ function getShiftCode(shift: Shift): string {
                   const r = await fetch('/api/leave-requests/' + l.id, { method: 'DELETE', credentials: 'include' })
                   if (!r.ok) failed.push(`假 ${toHKDateStr(new Date(l.startDate))}`)
                 }
+                notifyDataChanged('schedule', 'leave')
                 await refreshAll()
                 await refreshLeaveBalances()
                 if (failed.length) alert(`以下 ${failed.length} 項刪除失敗，請重試：\n${failed.join('\n')}`)
@@ -6439,7 +6467,7 @@ function getShiftCode(shift: Shift): string {
                   // 🔧 Fix #3c: 拖放時再次檢查餘額（豁免類型跳過）
                   const lt = leaveTypes.find(l => l.id === leaveTypeId)
                   if (!isBalanceExempt(lt)) {
-                    const bal = selectedEmpBalances.find(b => b.leaveTypeId === leaveTypeId)
+                    const bal = selectedEmpBalances.find(b => b.employeeId === selectedEmployeeId && b.leaveTypeId === leaveTypeId)
                     if ((!bal || bal.remaining <= 0) && !allowsNegativeBalance(lt.systemKey)) {
                       setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
                       return

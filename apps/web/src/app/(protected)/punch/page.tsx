@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { XCircle, Smartphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { notifyDataChanged } from '@/lib/live-refresh'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import QrScanner from './components/qr-scanner'
 import { fmtTime, fmtDateTime } from '@/lib/hk-date'
@@ -287,6 +288,7 @@ export default function PunchPage() {
         time: fmtTime(data.punchTime),
       })
       setCountdown(3)
+      notifyDataChanged('attendance')
       fetchRecords()
       await scannerStopRef.current?.()
 

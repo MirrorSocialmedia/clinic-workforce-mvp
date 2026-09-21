@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { fmtDateTime, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel, punchBg, punchTextColor } from '@/lib/punch-label'
+import { useLiveRefresh } from '@/lib/live-refresh'
 
 export default function MyPunchesPage() {
   const [punches, setPunches] = useState<any[]>([])
@@ -48,6 +49,9 @@ export default function MyPunchesPage() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // ★ cwm-consistency Stage 5.2：live refresh（考勤/修正改動 → 60s 或 focus 即 refetch）
+  useLiveRefresh(fetchData, ['attendance', 'correction'], { intervalMs: 60_000 })
 
   // Fetch clinics for correction form
   useEffect(() => {

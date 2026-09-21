@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { hasPermission } from '@/lib/permissions'
 import { toHKDateStr, fmtDateTime } from '@/lib/hk-date'
+import { useLatestRequest } from '@/lib/use-latest-request'
+import { useLiveRefresh } from '@/lib/live-refresh'
 
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
 
@@ -61,29 +63,36 @@ export default function PayrollListPage() {
     return () => document.removeEventListener('click', onDocClick)
   }, [])
 
+  const runsReq = useLatestRequest()
   const fetchRuns = useCallback(async () => {
+    const { signal, isLatest } = runsReq()
     setLoading(true)
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '20' })
       if (statusFilter) params.set('status', statusFilter)
       if (periodFilter) params.set('periodMonth', periodFilter)
 
-      const res = await fetch(`/api/payroll-runs?${params}`)
+      const res = await fetch(`/api/payroll-runs?${params}`, { signal })
+      const data = await res.json().catch(() => null)
+      if (!isLatest()) return
       if (res.ok) {
-        const data = await res.json()
         setRuns(data.runs)
         setTotalPages(data.totalPages)
       }
     } catch (err) {
+      if ((err as any)?.name === 'AbortError' || !isLatest()) return
       console.error('Failed to fetch payroll runs:', err)
     } finally {
-      setLoading(false)
+      if (isLatest()) setLoading(false)
     }
-  }, [page, statusFilter, periodFilter])
+  }, [page, statusFilter, periodFilter, runsReq])
 
   useEffect(() => {
     fetchRuns()
   }, [fetchRuns])
+
+  // ★ cwm-consistency Stage 5.2：live refresh（其他 tab finalize/revert 後即 refetch）
+  useLiveRefresh(fetchRuns, ['payroll'])
 
   useEffect(() => {
     fetch('/api/me').then(async r => {

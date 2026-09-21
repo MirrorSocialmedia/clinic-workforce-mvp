@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { fmtDate } from '@/lib/hk-date'
 import { zeroEntitledHint } from '@/lib/leave-types'
+import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
 
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 
@@ -111,6 +112,9 @@ export default function MyLeavePage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // ★ cwm-consistency Stage 5.2：live refresh（manager 批假後 60s 內 / 切返 tab 即刻變已批）
+  useLiveRefresh(fetchData, ['leave'], { intervalMs: 60_000 })
+
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.leaveTypeId || !form.startDate || !form.endDate || !form.days) return
@@ -131,6 +135,7 @@ export default function MyLeavePage() {
 
       if (res.ok) {
         setForm({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
+        notifyDataChanged('leave')
         fetchData()
       } else {
         const err = await res.json()

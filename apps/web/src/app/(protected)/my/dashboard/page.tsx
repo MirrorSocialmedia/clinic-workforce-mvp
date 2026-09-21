@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { toHKDateStr, fmtTime, fmtDate, fmtDateTime } from '@/lib/hk-date'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
+import { useLiveRefresh } from '@/lib/live-refresh'
 
 // ★ 2026-08-31 (cwm-earlyin)：本月預測逐項加減嘅單行 —— 直式逐行，唔係四格橫排
 function ForecastRow({ label, value, sub, highlight, divider, bold, strong }: {
@@ -143,6 +144,9 @@ export default function MyDashboardPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ★ cwm-consistency Stage 5.2：live refresh（打卡/時間帳戶/假期改動 → 60s 或 focus 即 refetch）
+  useLiveRefresh(fetchData, ['attendance', 'timebank', 'leave'], { intervalMs: 60_000 })
 
   useEffect(() => {
     fetch('/api/my/roster-hours', { credentials: 'include' })

@@ -9,6 +9,7 @@ import { Wallet, Trash2 } from 'lucide-react'
 import { periodMonthKey, toHKDateStr, addDaysStr } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
 import { EXPORT_COLS, EXPORT_COLS_DEFAULT } from '@/lib/payroll-export-cols'
+import { notifyDataChanged } from '@/lib/live-refresh'
 
 // ★ 讀取類 fetch 一律繞過瀏覽器快取。
 // PUT 同 GET 用同一個 URL，唔加就會喺寫入之後攞返舊 response
@@ -311,6 +312,7 @@ export default function PayrollDetailPage() {
         body: JSON.stringify({ status: newStatus }),
       })
       if (res.ok) {
+        notifyDataChanged('payroll')
         fetchRun()
       } else {
         const err = await res.json()
@@ -341,6 +343,7 @@ export default function PayrollDetailPage() {
       alert(err.error || `退回失敗（${res.status}）`)
       return
     }
+    notifyDataChanged('payroll')
     await fetchRun()
   }
 
@@ -372,6 +375,7 @@ export default function PayrollDetailPage() {
         body: JSON.stringify({ status: 'FINALIZED' }),
       })
       if (res.ok) {
+        notifyDataChanged('payroll')
         setShowPreflight(false)
         await fetchRun()
       } else {

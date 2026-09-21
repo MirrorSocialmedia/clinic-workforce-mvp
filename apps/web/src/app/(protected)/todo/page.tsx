@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { toHKDateStr } from '@/lib/hk-date'
 import { useTodoCount } from '@/lib/use-todo-count'
+import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
 
 /* ── Types ── */
 
@@ -117,6 +118,9 @@ export default function TodoPage() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  // ★ cwm-consistency Stage 5.2：live refresh（其他 tab 批/拒 假/修正 → 即 refetch；30s 兼容）
+  useLiveRefresh(loadData, ['leave', 'correction'], { intervalMs: 30_000 })
+
   /* ── Actions: Leave ── */
 
   const handleLeaveAction = async (id: string, action: 'APPROVE' | 'REJECT') => {
@@ -130,6 +134,7 @@ export default function TodoPage() {
         body: JSON.stringify({ action }),
       })
       if (res.ok || res.status === 409) {
+        notifyDataChanged('leave')
         setLeaves(prev => prev.filter(l => l.id !== id))
         if (res.status === 409) { const e = await res.json().catch(() => ({})); alert(e.error || '已有人處理咗') }
       } else {
@@ -151,6 +156,7 @@ export default function TodoPage() {
     try {
       const res = await fetch(`/api/punch-corrections/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ action }) })
       if (res.ok || res.status === 409) {
+        notifyDataChanged('correction')
         setCorrections(prev => prev.filter(c => c.id !== id))
         if (res.status === 409) { const e = await res.json().catch(() => ({})); alert(e.error || '已有人處理咗') }
       } else {

@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { fmtTime, toHKDateStr, addDays, hkDayOfWeek } from '@/lib/hk-date'
+import { useLatestRequest } from '@/lib/use-latest-request'
+import { useLiveRefresh } from '@/lib/live-refresh'
 
 /* ─────────── Company Overview Table (read-only) ─────────── */
 function CompanyOverviewTable({
@@ -165,7 +167,9 @@ export default function MySchedulePage() {
       .catch(() => {})
   }, [])
 
+  const schedReq = useLatestRequest()
   const fetchData = useCallback(async () => {
+    const { signal, isLatest } = schedReq()
     setLoading(true)
     try {
       const monthStart = new Date(`${month}-01`)
@@ -179,8 +183,9 @@ export default function MySchedulePage() {
       const url = includeCoworkers
         ? `/api/my/schedule?from=${fromStr}&to=${toStr}&includeCoworkers=true`
         : `/api/my/schedule?from=${fromStr}&to=${toStr}`
-      const res = await fetch(url, { credentials: 'include' })
-      const data = await res.json()
+      const res = await fetch(url, { credentials: 'include', signal })
+      const data = await res.json().catch(() => null)
+      if (!isLatest()) return
       if (includeCoworkers) {
         setShifts(data.myShifts || [])
         setCoworkerShifts(data.coworkerShifts || [])
@@ -191,13 +196,17 @@ export default function MySchedulePage() {
         setCompanyId(data.companyId ?? null)
       }
     } catch (err) {
+      if ((err as any)?.name === 'AbortError' || !isLatest()) return
       console.error('Fetch schedule error:', err)
     } finally {
-      setLoading(false)
+      if (isLatest()) setLoading(false)
     }
-  }, [month, includeCoworkers])
+  }, [month, includeCoworkers, schedReq])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ★ cwm-consistency Stage 5.2：live refresh（120s + 其他 tab 排班/假期 mutation 即 refetch）
+  useLiveRefresh(fetchData, ['schedule', 'leave'], { intervalMs: 120_000 })
 
   // ★ 2026-08-04: Fetch schedule notes (read-only for employee)
   useEffect(() => {

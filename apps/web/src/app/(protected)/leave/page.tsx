@@ -5,6 +5,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS, zeroEntitledHint } from '@/lib/leave-types'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { Plus } from 'lucide-react'
+import { useLiveRefresh } from '@/lib/live-refresh'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
@@ -325,6 +326,9 @@ export default function LeavePage() {
       setBalances(balData.leaveBalances || [])
     } catch {}
   }, [])
+
+  // ★ cwm-consistency Stage 5.2：live refresh（其他 tab 請假/批假/初始化 → 即 refetch；唔設 interval）
+  useLiveRefresh(fetchBalances, ['leave'])
 
   const handleInitLeave = async () => {
     const isAdd = initForm.mode === 'add'
