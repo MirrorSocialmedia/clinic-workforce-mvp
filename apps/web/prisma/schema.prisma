@@ -1031,6 +1031,15 @@ model TimeBankLedgerSnapshot {
   @@index([employeeId, periodMonth])
 }
 
+/// ★ Stage 3：TimeBank 快取髒水位 —— 由 DB trigger tb_dirty 維護，app 只經 $queryRaw 讀（payroll-engine timeBankCacheKey）
+model TimeBankDirty {
+  employeeId String
+  ym         String
+  seq        BigInt
+
+  @@id([employeeId, ym])
+}
+
 /// ★ cwm-holidayot-20260911：假期／休息日返工 OT 嘅人手扣減。
 ///   點解要人手：假期返工冇更表（payroll-engine:1815 有更就 skip），所以冇 template.deductLunch
 ///   可以跟；而實際有冇食飯／落場／返半日，系統估唔到 → 老細拍板唔自動扣，純人手。

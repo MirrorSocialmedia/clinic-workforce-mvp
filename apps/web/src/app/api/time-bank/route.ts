@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { calculateTimeBank, persistTimeBank } from '@/lib/payroll-engine'
+import { calculateTimeBank, persistTimeBank, timeBankCacheKey } from '@/lib/payroll-engine'
+import { getMonthRange } from '@/lib/hk-date'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -84,6 +85,10 @@ export async function POST(req: NextRequest) {
       const [yearStr, monthStr] = periodMonth.split('-')
       const monthDate = new Date(`${yearStr}-${monthStr.padStart(2, '0')}-01T00:00:00+08:00`)
 
+      // ★ Stage 3.3（CA-02）：key 喺計算【之前】攞（讀輸入之前），race 期間寫入嘅舊值下次自動失配
+      const { start, end } = getMonthRange(monthDate)
+      const tbKeyAtStart = await timeBankCacheKey(basePrisma, employeeId, end, start)
+
       // Calculate time bank data
       const result = await calculateTimeBank(
         employeeId,
@@ -93,7 +98,7 @@ export async function POST(req: NextRequest) {
       )
 
       // ★ persistTimeBank guarantees all 6 fields + cacheKey written atomically
-      await persistTimeBank(basePrisma, employeeId, monthDate, result)
+      await persistTimeBank(basePrisma, employeeId, monthDate, result, tbKeyAtStart)
 
       // Read back for response
       const record = await prisma.timeBank.findUnique({

@@ -47,7 +47,7 @@ const earlyInOtWarnedSet = new Set<string>()
  */
 let tbFingerprintWarned = false
 
-async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, monthStart: Date): Promise<string> {
+export async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, monthStart: Date): Promise<string> {
   let cfg: any = {}
   try {
     const rule = await db.payRule.findFirst({
@@ -99,7 +99,17 @@ async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, mon
     hoFp = `${agg2?._count?._all ?? 0}:${agg2?._sum?.deductMinutes ?? 0}`
   } catch { /* 同上：舊 client / 測試 stub → 當冇指紋 */ }
 
+  // ★ Stage 3：DB trigger 維護嘅「髒水位」—— 本月或之前任何輸入（打卡/作廢/補登/假期/更/entry）一改，seq 就變
+  //   用 <= ym：chain 語義（N-2 月改咗，N 月 cache 都要失效）；key 喺計算【之前】讀 → race 期間寫入嘅舊值下次自動失配
+  let dirtyFp = '0'
+  try {
+    const ym = toHKDateStr(monthStart).slice(0, 7)
+    const rows: any[] = await db.$queryRaw`SELECT COALESCE(MAX("seq"), 0)::text AS s FROM "TimeBankDirty" WHERE "employeeId" = ${employeeId} AND "ym" <= ${ym}`
+    dirtyFp = rows?.[0]?.s ?? '0'
+  } catch { /* 表未建（migration 未跑）→ 退化舊行為 */ }
+
   return `v${TIMEBANK_ENGINE_VERSION}:` + JSON.stringify({
+    dirty: dirtyFp,
     ot: cfg?.modifiers?.overtime ?? null,
     lunch: cfg?.modifiers?.lunch_break ?? null,
     rest: cfg?.working_days?.rest_days ?? null,
@@ -1158,6 +1168,9 @@ export async function generatePayrollRun(
           attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
           resignSettlement: resignSettlementOpt,
         })
+
+        // ★ Stage 3.4（CA-07）：時間帳戶讀輸入失敗（degraded）→ 唔准靜默出錯數，立即 fail（下次重試）
+        if ((calcResult as any)?.detail?.timebank?.degraded) throw new Error('時間帳戶讀取失敗，請重試')
       } else {
         console.warn(`Employee ${emp.id} has no payRule, skipping`)
         skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })
@@ -1573,6 +1586,8 @@ async function getCarriedFrom(
 
   // ④ Persist the backfilled record so future lookups are fast
   // ★ 六個欄全部寫齊 —— update 只寫兩欄會令 row 內部矛盾（新 balance + 舊明細）
+  // ★ Stage 3.4（CA-07）：degraded 結果唔准入 cache（直接回傳，唔 upsert）
+  if ((tb as any).degraded) return tb.balance
   const cacheData = {
     balance: tb.balance,
     carriedFrom: tb.carriedFrom,
@@ -1636,7 +1651,11 @@ export async function calculateTimeBank(
   // ★ 2026-08-16: 午休超時/少休拆解
   lunchLateMinutes: number
   lunchOtMinutes: number
+  // ★ Stage 3.4（CA-07）：讀輸入失敗 → 結果不完整，唔准入 cache
+  degraded?: boolean
 }> {
+  // ★ Stage 3.4（CA-07）：任何輸入讀取失敗 → degraded（call 端唔准 cache／唔准靜默出錯數）
+  let degraded = false
   // TZ-safe month range
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
@@ -1896,7 +1915,7 @@ export async function calculateTimeBank(
         timeAccountDetail.push({ date: dateStr, holidayOt: pairMins })
       }
     }
-  } catch (e) { console.error('payroll calc error:', e) /* leave table may not exist */ }
+  } catch (e) { degraded = true; console.error('payroll calc error:', e) /* leave table may not exist */ }
 
   // Grab makeup entries for this month — split by targetType
   let makeupMinutes = 0
@@ -1915,6 +1934,7 @@ export async function calculateTimeBank(
     }
     makeupMinutes = makeupLateMinutes + makeupEarlyMinutes + makeupAbsentMinutes // 總消耗（帳戶用）
   } catch (e) {
+    degraded = true
     console.error('[payroll-engine] makeup entries read failed, treated as 0', { employeeId, error: e })
   }
 
@@ -1927,6 +1947,7 @@ export async function calculateTimeBank(
     })) || []
     earlyInOtMinutes = earlyInRows.reduce((s: number, e: any) => s + e.minutes, 0)
   } catch (e) {
+    degraded = true
     if (!earlyInOtWarnedSet.has(employeeId)) { earlyInOtWarnedSet.add(employeeId); console.error('[payroll-engine] EARLY_IN_OT read failed', { employeeId, error: e }) }
   }
 
@@ -1973,6 +1994,7 @@ export async function calculateTimeBank(
       .filter((e: any) => e.type === 'LEAVE_SWAP_BACK')
       .reduce((s: number, e: any) => s + e.minutes, 0)
   } catch (e) {
+    degraded = true
     console.error('[payroll-engine] leave convert entries read failed, treated as 0', { employeeId, error: e })
   }
 
@@ -2041,6 +2063,7 @@ export async function calculateTimeBank(
     // ★ 2026-08-31: OT 換假顯示拆分（純顯示，balance 唔受影響）
     leaveConvertMinutes,
     leaveSwapBackMinutes,
+    degraded, // ★ Stage 3.4（CA-07）：call 端判斷（getCarriedFrom 唔 upsert／persistTimeBank 唔寫／計糧 throw）
   }
 }
 
@@ -2438,7 +2461,9 @@ export async function persistTimeBank(
   employeeId: string,
   periodMonth: Date,
   tb: any,
+  keyAtStart?: string,
 ): Promise<void> {
+  if (tb?.degraded) return                                       // ★ 3.4
   const { start, end } = getMonthRange(periodMonth)
   const cacheData = {
     balance: tb.balance, // ★ 唯一來源
@@ -2447,7 +2472,7 @@ export async function persistTimeBank(
     lateMinutes: tb.lateMinutes,
     earlyLeaveMinutes: tb.earlyLeaveMinutes,
     makeupMinutes: tb.makeupMinutes,
-    cacheKey: await timeBankCacheKey(db, employeeId, end, start),
+    cacheKey: keyAtStart ?? await timeBankCacheKey(db, employeeId, end, start),  // ★ 盡量傳 keyAtStart
   }
   await db.timeBank.upsert({
     where: { employeeId_periodMonth: { employeeId, periodMonth: start } },
@@ -3831,6 +3856,8 @@ export async function calculatePayrollWithRules(
     negative_carry: 'reset',
     ...(mods.time_bank ?? {}),
   }
+  const { start: tbS, end: tbE } = getMonthRange(monthDate)
+  const tbKeyAtStart = await timeBankCacheKey(prisma, employeeId, tbE, tbS)   // ★ Stage 3.3：喺讀輸入之前攞
   const tb = await calculateTimeBank(employeeId, monthDate, timeBankConfig, prisma)
   result.otHours = tb.otMinutes / 60 // 從分鐘換算，不自己算
 
@@ -3885,7 +3912,7 @@ export async function calculatePayrollWithRules(
   //
   // ★ 亦唔使再叫 getCarriedFrom —— calculateTimeBank 內部已經叫過，
   //   呢度係第二次遞歸，純浪費。
-  await persistTimeBank(prisma, employeeId, monthDate, tb)
+  await persistTimeBank(prisma, employeeId, monthDate, tb, tbKeyAtStart)
 
   // 8. Task 6 + TimeBank: Build comprehensive detail JSON with timebank data
   // tb already computed at line 1992 (OT唯一來源)
@@ -3988,6 +4015,7 @@ export async function calculatePayrollWithRules(
       convertedMinutes: tb.convertedMinutes,
       leaveConvertMinutes: tb.leaveConvertMinutes,
       leaveSwapBackMinutes: tb.leaveSwapBackMinutes,
+      degraded: tb.degraded, // ★ Stage 3.4（CA-07）：轉發，供 generatePayrollRun 判斷
     },
     // ★ 2026-09-05 [cwm-resigv3]：離職結算行（尾糧單一次過見晒）—— 只喺有結算快照時寫入
     resignSettlement: rsSettle ? {
