@@ -13,6 +13,7 @@ import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { shiftReplacedMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
 import { balanceYearFor } from '@/lib/leave-types'
+import { lockEmployee, HttpError } from '@/lib/emp-lock'
 
 // ============================================================
 // GET /api/shifts — list shifts with filters
@@ -190,8 +191,8 @@ export async function POST(req: NextRequest) {
       /**
        * Check for overlapping shifts (Fix #4: shift overlap validation)
        */
-      async function checkShiftOverlap(empId: string, _dateVal: Date, startVal: Date, endVal: Date) {
-        return prisma.shift.findFirst({
+      async function checkShiftOverlap(empId: string, _dateVal: Date, startVal: Date, endVal: Date, db: any = prisma) {
+        return db.shift.findFirst({
           where: {
             employeeId: empId,
             status: { not: 'CANCELLED' },
@@ -229,27 +230,29 @@ export async function POST(req: NextRequest) {
           planned.push({ d, times })
         }
 
-        const created = await prisma.$transaction(
-          planned.map(p => prisma.shift.create({
-            data: {
-              employeeId,
-              clinicId,
-              date: p.times.date,
-              startTime: p.times.startTime,
-              endTime: p.times.endTime,
-              role: role || null,
-              status: status as any,
-              templateId: templateId || null,
-              secondaryClinicId: secondaryClinicId || null,
-              createdBy: session.userId,
-            },
-            include: {
-              employee: { include: { user: { select: { id: true, name: true } } } },
-              clinic: { select: { id: true, name: true } },
-              template: { select: { id: true, name: true, deductLunch: true } },
-            },
-          }))
-        )
+        const created = await prisma.$transaction(async (tx) => {
+          await lockEmployee(tx, employeeId)
+          const out: any[] = []
+          for (const p of planned) {
+            const ov = await checkShiftOverlap(employeeId, p.times.date, p.times.startTime, p.times.endTime, tx)
+            if (ov) throw new HttpError(409, `${p.d} 該員工在此時段已有排班`, { conflictShiftId: ov.id, date: p.d })
+            const lc = await checkShiftLeaveConflict(employeeId, p.times.date, tx)
+            if (lc.conflict) throw new HttpError(409, `${p.d} 該員工已有假期（${lc.leaveName}），無法排班`, { date: p.d })
+            out.push(await tx.shift.create({
+              data: {
+                employeeId, clinicId, date: p.times.date, startTime: p.times.startTime, endTime: p.times.endTime,
+                role: role || null, status: status as any, templateId: templateId || null,
+                secondaryClinicId: secondaryClinicId || null, createdBy: session.userId,
+              },
+              include: {
+                employee: { include: { user: { select: { id: true, name: true } } } },
+                clinic: { select: { id: true, name: true } },
+                template: { select: { id: true, name: true, deductLunch: true } },
+              },
+            }))
+          }
+          return out
+        }, { timeout: 30_000 })
         shifts.push(...created)
 
         // ★ 已出糧警告：檢查 bulk 嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單
@@ -314,6 +317,7 @@ export async function POST(req: NextRequest) {
         let replacedShiftDates: string[] = []
         let victims: any[] = []
         const created = await prisma.$transaction(async (tx) => {
+          await lockEmployee(tx, employeeId)   // ★ Stage 1.1：同建假／批假／打卡同一把鎖
           // ① Replace old shifts — verify ownership + scope (prevent IDOR)
           if (replaceShiftIds?.length) {
             victims = await tx.shift.findMany({
@@ -326,12 +330,11 @@ export async function POST(req: NextRequest) {
               select: { id: true, date: true, status: true, startTime: true, endTime: true, clinicId: true },
             })
             if (victims.length !== replaceShiftIds.length) {
-              throw new Error('replace target mismatch: shift ownership or scope check failed')
+              throw new HttpError(409, '要替換嘅更已被改動／刪除，請重新整理')
             }
             replacedShiftDates = victims.map(v => toHKDateStr(v.date))
-            await tx.shift.deleteMany({
-              where: { id: { in: victims.map(v => v.id) } },
-            })
+            const del = await tx.shift.deleteMany({ where: { id: { in: victims.map(v => v.id) } } })
+            if (del.count !== victims.length) throw new HttpError(409, '要替換嘅更已被改動，請重新整理')
           }
 
           // ② Replace old leave requests — refund balance + delete
@@ -347,10 +350,13 @@ export async function POST(req: NextRequest) {
               include: { leaveType: true },
             })
             if (victimLeaves.length !== replaceLeaveIds.length) {
-              throw new Error('replace target mismatch: leave ownership check failed')
+              throw new HttpError(409, '要替換嘅假期已被改動／刪除，請重新整理')
             }
             // Refund balance (skip unapproved — only APPROVED leaves had balance deducted)
             for (const vl of victimLeaves) {
+              // ★ Stage 1.3：先「搶」刪除（帶讀到嘅 status）—— 搶唔到 = 另一請求已處理 → 409，唔准再退
+              const claimed = await tx.leaveRequest.deleteMany({ where: { id: vl.id, status: vl.status } })
+              if (claimed.count !== 1) throw new HttpError(409, '假期已被其他人改動，請重新整理')
               if (vl.status !== 'APPROVED') continue // ★ PENDING leaves never had balance deducted
               const leaveYear = balanceYearFor(vl.leaveType?.systemKey, new Date(vl.startDate))
               const updated = await tx.leaveBalance.updateMany({
@@ -371,10 +377,14 @@ export async function POST(req: NextRequest) {
                 })
               }
             }
-            await tx.leaveRequest.deleteMany({
-              where: { id: { in: victimLeaves.map(v => v.id) } },
-            })
           }
+
+          // ★ Stage 1.3：替換完之後喺鎖入面用 tx 再驗 ——
+          //   唔再信「client 傳嚟嘅 replace ids = 全部衝突」（client state 可能係舊嘅）
+          const overlapTx = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime, tx)
+          if (overlapTx) throw new HttpError(409, '該員工在此時段已有排班', { conflictShiftId: overlapTx.id })
+          const leaveTx = await checkShiftLeaveConflict(employeeId, times.date, tx)
+          if (leaveTx.conflict) throw new HttpError(409, `該員工該天已有假期（${leaveTx.leaveName}），無法排班`)
 
           return tx.shift.create({
             data: {
@@ -471,6 +481,9 @@ export async function POST(req: NextRequest) {
         { status: 201 }
       )
     } catch (error: any) {
+      if (error instanceof HttpError) {
+        return NextResponse.json({ error: error.message, ...(error.extra ?? {}) }, { status: error.status })
+      }
       // ★ P2002: unique constraint violation (duplicate shift submission)
       if (error?.code === 'P2002') {
         return NextResponse.json(

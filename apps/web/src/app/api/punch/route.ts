@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic'
+import { lockEmployee, HttpError } from '@/lib/emp-lock'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
@@ -180,6 +181,13 @@ export async function POST(req: NextRequest) {
 
       // Transaction: punch record (audit auto-handled by Prisma extension)
       const result = await prisma.$transaction(async (tx) => {
+        // ★ Stage 1.6：同員工串行化 + 鎖入面再驗（:103-124 只係 fast-fail）
+        await lockEmployee(tx, employee.id)
+        const dupTx = await tx.punchRecord.findFirst({
+          where: { employeeId: employee.id, clinicId, punchType: punchType as any, punchTime: { gte: todayStart }, void: { is: null } },
+          select: { id: true },
+        })
+        if (dupTx) throw new HttpError(400, '今天已打呢種卡（上一次已成功）', { code: 'ALREADY_PUNCHED' })
         // ★ cwm-antitamper：所有檢查通過先消耗 token（之前喺一開頭就消耗，失敗都會食咗）
         await tx.qRTokenUsage.create({ data: { tokenId: tokenIdForUsage!, employeeId: employee.id } })
         const record = await tx.punchRecord.create({
@@ -225,6 +233,9 @@ export async function POST(req: NextRequest) {
         punchType,
       })
     } catch (error: any) {
+      if (error instanceof HttpError) {
+        return NextResponse.json({ error: error.message, ...(error.extra ?? {}) }, { status: error.status })
+      }
       console.error('Punch error:', error)
       // Transaction rollback already happened
       if (error.code === 'P2002') {

@@ -510,10 +510,11 @@ export async function validateShiftBatch(
  */
 export async function checkShiftLeaveConflict(
   employeeId: string,
-  shiftDate: Date
+  shiftDate: Date,
+  db: Pick<typeof prisma, 'leaveRequest'> = prisma, // ★ Stage 1.4：tx 內要傳 tx
 ): Promise<{ conflict: boolean; leaveName?: string }> {
   const dateStr = toHKDateStr(shiftDate)
-  const candidates = await prisma.leaveRequest.findMany({
+  const candidates = await db.leaveRequest.findMany({
     where: {
       employeeId,
       status: 'APPROVED',

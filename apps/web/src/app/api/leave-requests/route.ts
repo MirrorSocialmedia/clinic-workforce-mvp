@@ -8,6 +8,7 @@ import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance, isAccumulativeLeave } from '@/lib/leave-types'
+import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 // ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
 class InsufficientBalanceError extends Error {}
@@ -227,6 +228,35 @@ export async function POST(req: NextRequest) {
       //   舊寫法交易只包 create，扣餘額失敗會留低一筆已 commit 嘅假期，
       //   前端收到 500 唔會 refresh，結果「格被佔用但冇膠囊」。
       const request = await prisma.$transaction(async (tx) => {
+        // ★ Stage 1.2：同員工串行化 + 喺鎖入面用 tx 再驗（:184 / :207 嗰兩次只係 fast-fail）
+        await lockEmployee(tx, employee.id)
+        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        const overlapTx = await tx.leaveRequest.findFirst({
+          where: {
+            employeeId: employee.id,
+            status: { in: ['PENDING', 'APPROVED'] },
+            startDate: { lte: new Date(endDate) }, // TZ-OK: LeaveRequest 用 UTC 午夜儲存
+            endDate: { gte: new Date(startDate) }, // TZ-OK
+            ...(isSickLeave ? { leaveType: { systemKey: 'SICK' } } : {}),
+          },
+          include: { leaveType: { select: { name: true } } },
+        })
+        if (overlapTx) {
+          throw new HttpError(409, isSickLeave ? '該日期範圍已有病假申請' : `該日期範圍已有請假申請（${overlapTx.leaveType?.name ?? ''}）`)
+        }
+        if (isApprover && !isSickLeave) {
+          const shiftTx = await tx.shift.findFirst({
+            where: {
+              employeeId: employee.id,
+              status: { not: 'CANCELLED' },
+              date: {
+                gte: new Date(`${toHKDateStr(new Date(startDate))}T00:00:00+08:00`),
+                lte: new Date(`${toHKDateStr(new Date(endDate))}T23:59:59+08:00`),
+              },
+            },
+          })
+          if (shiftTx) throw new HttpError(400, `該員工在假期範圍內已有排班（${toHKDateStr(shiftTx.date)}），請先移除排班或改假期日期`)
+        }
         const req = await tx.leaveRequest.create({
           data: {
             employeeId: employee.id,
@@ -323,6 +353,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, leaveRequest: request }, { status: 201 })
     } catch (error) {
       console.error('Leave request error:', error)
+      { const r = toHttpResponse(error); if (r) return r }
       // ★ 餘額不足係用家錯誤（400），唔係伺服器錯誤（500）
       if (error instanceof InsufficientBalanceError) {
         return NextResponse.json({ error: error.message }, { status: 400 })
