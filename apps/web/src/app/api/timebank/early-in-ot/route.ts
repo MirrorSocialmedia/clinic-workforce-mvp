@@ -7,6 +7,8 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { getEffectivePunches } from '@/lib/punch-query'
 import { matchPunchesToShifts } from '@/lib/shift-punch-match'
 import { computeEarlyInOt, readEarlyInOtCfg } from '@/lib/early-in-ot'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } })
@@ -116,8 +118,10 @@ export async function POST(req: NextRequest) {
       .filter(p => p.punchType === 'CLOCK_IN')
       .sort((a, b) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
 
-    // Transaction: 刪舊（stale 重批）+ 建新
+    // Transaction: 刪舊（stale 重批）+ 建新（★ Stage 4A（D1 硬鎖）：tx 第一句鎖人 + 已出糧月份檢查）
     await prisma.$transaction(async (tx) => {
+      await lockEmployee(tx, employeeId)
+      await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: [date], what: '早到OT' })
       // 刪舊 entry（分鐘唔同 = stale 重批）
       if (existing) {
         await tx.timeBankEntry.delete({ where: { id: existing.id } })
@@ -204,6 +208,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, finalMinutes, rawEarly })
   } catch (err: any) {
+    // ★ Stage 4A：HttpError（409 PAYROLL_LOCKED 等）→ response
+    const r = toHttpResponse(err); if (r) return r
     console.error('early-in-ot error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

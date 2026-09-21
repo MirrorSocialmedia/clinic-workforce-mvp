@@ -95,6 +95,18 @@ const fakes: Record<string, Any> = {
       return { id: 'lr-test', isEmployeeRequested: args?.data?.isEmployeeRequested ?? false }
     },
   },
+  // ★ cwm-consist S4（Stage 4A D1 硬鎖）：route 個 update 包咗 prisma.$transaction
+  //   → fake 要提供 $transaction（透傳 fn，tx 用同一套 fake model），唔會真連 DB。
+  $transaction: async (fn: Any) => fn(fakeTx),
+}
+
+// ★ S4：$transaction 透傳用嘅 fake tx —— advisory lock（$executeRaw）同
+//   FOR SHARE 月鎖查詢（$queryRaw）全部空操作（無鎖定 run → 放行）。
+const fakeTx: Any = {
+  $executeRaw: async () => 0,
+  $queryRaw: async () => [],
+  leaveRequest: fakes.leaveRequest,
+  employee: fakes.employee,
 }
 
 const saved: Record<string, Any> = {}
@@ -132,6 +144,10 @@ const restDayLr = (targetCompany: string | null, isEmployeeRequested = false, cl
   id: 'lr-test',
   clinicId,
   isEmployeeRequested,
+  // ★ S4：route 讀 lr.status/startDate/endDate 做已出糧月份硬鎖檢查
+  status: 'APPROVED',
+  startDate: new Date('2026-08-17T00:00:00+08:00'),
+  endDate: null,
   leaveType: { systemKey: 'REST_DAY' },
   employee: { homeClinic: targetCompany ? { companyId: targetCompany } : null },
 })

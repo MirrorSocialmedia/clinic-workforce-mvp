@@ -1551,6 +1551,15 @@ async function getCarriedFrom(
   const lastMonth = new Date(`${String(lastMonthY).padStart(4, '0')}-${String(lastMonthM + 1).padStart(2, '0')}-01T00:00:00+08:00`)
   const { start: lStart, end: lEnd } = getMonthRange(lastMonth)
 
+  // ★ Stage 4B（D1）：已凍結月份（FINALIZED/EXPORTED 時寫咗 TimeBankLedgerSnapshot）→ 直接用凍結期末
+  //   已出糧月份之後嘅任何改動（排更警告照改、規則原地改 modifier…）唔會擴散去下月期初。
+  //   revert 返 DRAFT 會刪 snapshot（payroll-runs/[id] revert tx）→ 自動恢復即時計。
+  const snap = await db.timeBankLedgerSnapshot?.findUnique?.({
+    where: { employeeId_periodMonth: { employeeId, periodMonth: toHKDateStr(lStart).slice(0, 7) } },
+    select: { closing: true },
+  })?.catch?.(() => null)
+  if (snap) return snap.closing
+
   // ① Check existing TimeBank record — validate cacheKey fingerprint
   const key = await timeBankCacheKey(db, employeeId, lEnd, lStart)
   const rec = await db.timeBank.findFirst({

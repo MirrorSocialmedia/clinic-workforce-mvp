@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 /**
  * POST /api/timebank/early-in-ot/cancel
@@ -40,8 +42,17 @@ export async function POST(req: NextRequest) {
     })
     const balanceBefore = beforeBalance._sum.minutes ?? 0
 
-    // Delete (not create negative entry)
-    await prisma.timeBankEntry.delete({ where: { id: entry.id } })
+    // Delete (not create negative entry)（★ Stage 4A（D1 硬鎖）：delete 包入 tx）
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockEmployee(tx, employeeId)
+        await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: [date], what: '取消早到OT' })
+        return tx.timeBankEntry.delete({ where: { id: entry.id } })
+      })
+    } catch (e: any) {
+      const r = toHttpResponse(e); if (r) return r
+      throw e
+    }
 
     const afterBalance = await prisma.timeBankEntry.aggregate({
       where: { employeeId },
@@ -75,6 +86,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, minutes: entry.minutes })
   } catch (err: any) {
+    // ★ Stage 4A：HttpError（409 PAYROLL_LOCKED 等）→ response
+    const r = toHttpResponse(err); if (r) return r
     console.error('early-in-ot cancel error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

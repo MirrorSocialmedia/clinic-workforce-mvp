@@ -9,6 +9,7 @@ import { isInProbation } from '@/lib/leave-calculation'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance, isAccumulativeLeave, consumesQuota } from '@/lib/leave-types'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx, monthsInRange } from '@/lib/payroll-lock'
 
 // ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
 class InsufficientBalanceError extends Error {}
@@ -230,7 +231,11 @@ export async function POST(req: NextRequest) {
       const request = await prisma.$transaction(async (tx) => {
         // ★ Stage 1.2：同員工串行化 + 喺鎖入面用 tx 再驗（:184 / :207 嗰兩次只係 fast-fail）
         await lockEmployee(tx, employee.id)
-        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        // ★ Stage 4A（D1 硬鎖）：已出糧月份唔准再改（同 finalize 嘅 UPDATE status 互斥）
+        await assertMonthsUnlockedTx(tx, {
+          actorId: session.userId, employeeId: employee.id, what: '建立假期',
+          months: monthsInRange(toHKDateStr(new Date(startDate)), toHKDateStr(new Date(endDate))),
+        })
         const overlapTx = await tx.leaveRequest.findFirst({
           where: {
             employeeId: employee.id,

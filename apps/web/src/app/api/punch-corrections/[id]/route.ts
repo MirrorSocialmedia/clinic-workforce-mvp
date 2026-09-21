@@ -8,6 +8,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 // PUT /api/punch-corrections/[id] — Approve/reject a correction
 export async function PUT(
@@ -54,7 +55,13 @@ export async function PUT(
     try {
       updated = await prisma.$transaction(async (tx) => {
         await lockEmployee(tx, correction.employeeId)
-        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        // ★ Stage 4A（D1 硬鎖）：只限 APPROVED（REJECT 唔生卡，唔影響計糧）
+        if (status === 'APPROVED') {
+          await assertMonthsUnlockedTx(tx, {
+            actorId: session.userId, employeeId: correction.employeeId, what: '批核補登',
+            months: [toHKDateStr(correction.correctedTime)],
+          })
+        }
         const result = await tx.punchCorrection.update({
           where: { id, status: 'PENDING' },
           data: { status: status as any, approvedBy: session.userId },

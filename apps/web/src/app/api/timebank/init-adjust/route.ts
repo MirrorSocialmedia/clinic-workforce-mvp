@@ -6,6 +6,8 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 import { todayHK, toHKDateStr } from '@/lib/hk-date'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -34,46 +36,33 @@ export async function POST(req: NextRequest) {
   }
   const date = new Date(`${effectiveMonth || todayHK().slice(0, 7)}-01T00:00:00+08:00`)
 
-  // ★ 覆蓋語義：刪除舊 INIT_ADJUST（初始化 = 設定基準，非累加）
-  const oldInits = await prisma.timeBankEntry.findMany({
-    where: { employeeId, type: 'INIT_ADJUST' },
-  })
-  const oldTotal = oldInits.reduce((s, e) => s + e.minutes, 0)
-
-  // ★ Stage 2.4：delete + create + audit + 失效同一 tx（失敗 = rollback）
-  await prisma.$transaction(async (tx) => {
-    await tx.timeBankEntry.deleteMany({ where: { employeeId, type: 'INIT_ADJUST' } })
-
-    await tx.timeBankEntry.create({
-      data: {
-        employeeId,
-        date,
-        type: 'INIT_ADJUST',
-        minutes: totalMinutes,
+  // ★ cwm-consistency Stage 4A.4（D1 硬鎖）：整段入 tx —— 先鎖人 + 新月/所有舊 INIT 月未凍結先准做
+  //   （覆寫語義：刪除舊 INIT_ADJUST（初始化 = 設定基準，非累加））
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockEmployee(tx, employeeId)
+      const oldInits = await tx.timeBankEntry.findMany({ where: { employeeId, type: 'INIT_ADJUST' } })
+      const oldTotal = oldInits.reduce((s, e) => s + e.minutes, 0)
+      const touchedMonths = [toHKDateStr(date), ...oldInits.map(o => toHKDateStr(o.date))]
+      await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: touchedMonths, what: '時間帳戶初始化' })
+      await tx.timeBankEntry.deleteMany({ where: { employeeId, type: 'INIT_ADJUST' } })
+      await tx.timeBankEntry.create({ data: {
+        employeeId, date, type: 'INIT_ADJUST', minutes: totalMinutes,
         note: `初始化調整 ${totalMinutes >= 0 ? '+' : ''}${totalMinutes} 分鐘：${reason.trim()}`,
-        createdBy: auth.session.userId,
-      },
-    })
-
-    // ★ 審計記原始值→修改後值
-    await tx.auditLog.create({
-      data: {
-        actorId: auth.session.userId,
-        action: 'TIMEBANK_INIT_ADJUST',
-        entity: 'TimeBank',
-        entityId: employeeId,
+        createdBy: auth.session.userId } })
+      await tx.auditLog.create({ data: {
+        actorId: auth.session.userId, action: 'TIMEBANK_INIT_ADJUST', entity: 'TimeBank', entityId: employeeId,
         targetEmployeeId: employeeId,
-        beforeJson: JSON.stringify({ initMinutes: oldTotal }),
-        afterJson: JSON.stringify({ initMinutes: totalMinutes }),
-        notes: JSON.stringify({ minutes: totalMinutes, effectiveMonth, reason: reason.trim() }),
-      },
-    } as any)
-
-    // ★ CA-03：失效由 min(新月, 所有舊 INIT 月) 起（舊 INIT 喺邊個月，邊個月開始嘅 carry chain 都變）
-    const oldMonthStarts = oldInits.map(e => new Date(`${toHKDateStr(e.date).slice(0, 7)}-01T00:00:00+08:00`).getTime())
-    const earliest = new Date(Math.min(date.getTime(), ...(oldMonthStarts.length ? oldMonthStarts : [date.getTime()])))
-    await invalidateTimeBankFrom(employeeId, earliest, tx)
-  })
+        beforeJson: JSON.stringify({ initMinutes: oldTotal }), afterJson: JSON.stringify({ initMinutes: totalMinutes }),
+        notes: JSON.stringify({ minutes: totalMinutes, effectiveMonth, reason: reason.trim() }) } } as any)
+      // ★ CA-03：由最早嗰個月開始失效（舊 INIT 可能早過新嘅）
+      const earliest = [date, ...oldInits.map(o => o.date)].reduce((a, b) => (a < b ? a : b))
+      await invalidateTimeBankFrom(employeeId, earliest, tx)
+    })
+  } catch (e: any) {
+    const r = toHttpResponse(e); if (r) return r
+    throw e
+  }
 
   // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
   await flagIfSelfEdit({

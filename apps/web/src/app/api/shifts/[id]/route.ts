@@ -113,7 +113,7 @@ export async function PUT(
     try {
       shift = await prisma.$transaction(async (tx) => {
         await lockEmployees(tx, [existing.employeeId, updateData.employeeId])
-        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        // ★ D1 拍板：排更維持「警告照改」，唔加硬鎖（靠 4B 凍結期末兜底）—— Stage 4 只收窄下面警告嘅範圍
         const empId = updateData.employeeId ?? existing.employeeId
         // overlap：喺鎖入面再驗（排除自己）
         const overlap = await tx.shift.findFirst({
@@ -171,15 +171,18 @@ export async function PUT(
     }
 
     // ★ 已出糧警告：檢查新日期/診所嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單（§四.E）
-    const checkClinicId = updateData.clinicId ?? existing.clinicId
     const checkDate = updateData.date || existing.date
     const dateStr = toHKDateStr(checkDate instanceof Date ? checkDate : new Date(checkDate + 'T00:00:00+08:00'))
     const { start: pm } = getMonthRange(checkDate instanceof Date ? checkDate : new Date(checkDate + 'T00:00:00+08:00'))
+    // ★ Stage 4A：同 assertMonthsUnlockedTx 同一範圍（員工實際入咗嗰張 run）；換咗員工就新舊兩個都查
+    const checkEmpIds = updateData.employeeId && updateData.employeeId !== existing.employeeId
+      ? [existing.employeeId, updateData.employeeId]
+      : [existing.employeeId]
     const locked = await prisma.payrollRun.findFirst({
       where: {
         periodMonth: pm,
         status: { in: ['FINALIZED', 'EXPORTED'] },
-        OR: [{ clinicId: null }, { clinicId: checkClinicId }],
+        items: { some: { employeeId: { in: checkEmpIds } } },
       },
       select: { id: true, status: true, clinicId: true },
     })
@@ -262,7 +265,7 @@ export async function DELETE(
       where: {
         periodMonth: pm,
         status: { in: ['FINALIZED', 'EXPORTED'] },
-        OR: [{ clinicId: null }, { clinicId: existing.clinicId }],
+        items: { some: { employeeId: existing.employeeId } },   // ★ Stage 4A：同 assertMonthsUnlockedTx 同一範圍
       },
       select: { id: true, status: true, clinicId: true },
     })

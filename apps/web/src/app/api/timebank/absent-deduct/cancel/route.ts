@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 /**
  * POST /api/timebank/absent-deduct/cancel
@@ -35,7 +37,17 @@ export async function POST(req: NextRequest) {
     })
     if (!entry) return NextResponse.json({ error: '該日未扣OT鐘' }, { status: 400 })
 
-    await prisma.timeBankEntry.delete({ where: { id: entry.id } })
+    // ★ Stage 4A（D1 硬鎖）：delete 包入 tx（先鎖人 + 已出糧月份檢查）
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockEmployee(tx, employeeId)
+        await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: [date], what: '取消缺勤扣鐘' })
+        return tx.timeBankEntry.delete({ where: { id: entry.id } })
+      })
+    } catch (e: any) {
+      const r = toHttpResponse(e); if (r) return r
+      throw e
+    }
 
     // Invalidate TimeBank so carry chain recalculates
     try {

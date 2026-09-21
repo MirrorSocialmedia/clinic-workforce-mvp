@@ -16,15 +16,17 @@
 // - audit：shifts 守衛 block 時寫 AuditLog（SHIFT_EDIT_AFTER_PAYROLL）→ 呢度跟上，
 //   寫 PAYROLL_LOCK_BLOCKED（已入 SENSITIVE_AUDIT_SPEC）。audit 寫入失敗只 log 唔阻擋 409。
 import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { prisma, basePrisma } from '@/lib/prisma'
 import { hkDateOnly, toHKDateStr } from '@/lib/hk-date'
+import { HttpError } from '@/lib/emp-lock'
 
 /**
  * 計糧 run-lock 守衛：該月計糧已確認（FINALIZED）／已匯出（EXPORTED）就回 409。
- * match 只按 periodMonth + status（無 clinic filter —— 已出糧月份，所有員工都鎖）。
+ * ★ cwm-consistency Stage 4A（CEO 2026-09-20 收窄）：match 只鎖【呢個員工實際入咗嗰張 run】
+ * （PayrollItem join）—— 其他店已 finalize 唔會誤擋本店 DRAFT 月份；轉鋪員工唔會漏。
  *
  * @param session   認證 session（actorId 落 audit；RBAC 由 caller route 負責）
- * @param employeeId 受影響員工（落 audit；唔影響 match 範圍）
+ * @param employeeId 受影響員工（落 audit；同時決定 match 範圍）
  * @param dates     ['YYYY-MM-DD', ...] 涉及日期
  * @param what      audit label，例 '假期返工 OT 扣減'
  * @returns 409 NextResponse（已鎖）或 null（未鎖，可繼續）
@@ -43,6 +45,7 @@ export async function guardPayrollLock(
     where: {
       periodMonth: { in: pms.map(pm => hkDateOnly(`${pm}-01`)) },
       status: { in: ['FINALIZED', 'EXPORTED'] },
+      items: { some: { employeeId } },   // ★ Stage 4A 收窄：員工實際入咗嗰張 run（同 assertMonthsUnlockedTx 同一範圍）
     },
     select: { id: true, status: true, periodMonth: true },
   })
@@ -74,4 +77,60 @@ export async function guardPayrollLock(
     { error: `${months.join('、')} 計糧${stateWord} —— 唔可以再改，請先喺計糧退回草稿` },
     { status: 409 },
   )
+}
+
+// ============================================================
+// ★ cwm-consistency Stage 4A（D1 拍板：硬鎖）—— tx 內版本
+//   - 喺寫入 tx 入面用 FOR SHARE 讀 PayrollRun：同 finalize 嘅 UPDATE status 互斥
+//     （finalize 先 commit → 呢度見到 FINALIZED → 409；呢度先 commit → finalize 等我哋完先凍結，包埋呢筆）
+//   - 被擋嘅嘗試用 basePrisma（tx 外）寫 PAYROLL_LOCK_BLOCKED，tx rollback 都留低
+//   - throw HttpError(409) → 各 route 嘅 toHttpResponse 轉 response
+// ============================================================
+
+/** 'YYYY-MM-DD'（HK）起訖 → 涉及嘅 'YYYY-MM' 清單（跨 3 個月以上嘅長假都齊） */
+export function monthsInRange(startHK: string, endHK: string): string[] {
+  const out: string[] = []
+  let [y, m] = startHK.slice(0, 7).split('-').map(Number)
+  const [ey, em] = (endHK || startHK).slice(0, 7).split('-').map(Number)
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`)
+    m++
+    if (m > 12) { m = 1; y++ }
+  }
+  return out
+}
+
+export async function assertMonthsUnlockedTx(
+  tx: any,
+  p: { actorId: string; employeeId: string; months: Array<string | null | undefined>; what: string },
+): Promise<void> {
+  const pms = [...new Set(p.months.filter(Boolean).map(x => (x as string).slice(0, 7)))]
+  if (pms.length === 0) return
+  // ★★★ CEO 2026-09-20 收窄：只鎖【呢個員工實際入咗嗰張 run】（PayrollItem join），
+  //   唔係「該月任何一張 run」。理由見下面「點解用 PayrollItem 唔用 clinicId」。
+  const rows: Array<{ id: string; status: string; ym: string }> = await tx.$queryRaw`
+    SELECT r.id, r.status::text AS status,
+           to_char((r."periodMonth" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Hong_Kong', 'YYYY-MM') AS ym
+      FROM "PayrollRun" r
+      JOIN "PayrollItem" pi ON pi."runId" = r.id AND pi."employeeId" = ${p.employeeId}
+     WHERE to_char((r."periodMonth" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Hong_Kong', 'YYYY-MM') = ANY(${pms})
+       FOR SHARE OF r`
+  const hit = rows.filter(r => r.status === 'FINALIZED' || r.status === 'EXPORTED')
+  if (hit.length === 0) return
+  const months = [...new Set(hit.map(r => r.ym))].sort()
+  try {
+    await basePrisma.auditLog.create({
+      data: {
+        actorId: p.actorId,
+        action: 'PAYROLL_LOCK_BLOCKED',
+        entity: 'PayrollRun',
+        entityId: hit[0].id,
+        targetEmployeeId: p.employeeId,
+        notes: `${p.what} 被擋：${months.join('、')} 計糧已確認／已匯出（runs: ${hit.map(r => r.id).join(', ')}）`,
+      },
+    })
+  } catch (e) {
+    console.error('[payroll-lock] audit write failed (action=PAYROLL_LOCK_BLOCKED)', e)
+  }
+  throw new HttpError(409, `${months.join('、')} 計糧已確認 —— 唔可以再改，請 OWNER 先喺計糧退回草稿`, { code: 'PAYROLL_LOCKED', months })
 }

@@ -7,6 +7,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { toHKDateStr } from '@/lib/hk-date'
 import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 // POST /api/punches/[id]/void — Void a punch record (OWNER/MANAGER)
 export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
@@ -48,7 +49,11 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   try {
     await prisma.$transaction(async (tx) => {
       await lockEmployee(tx, punch.employeeId)
-      // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+      // ★ Stage 4A（D1 硬鎖）：已出糧月份唔准作廢打卡
+      await assertMonthsUnlockedTx(tx, {
+        actorId: session.userId, employeeId: punch.employeeId, what: '作廢打卡',
+        months: [toHKDateStr(punch.punchTime)],
+      })
       await tx.punchVoid.create({ data: { punchRecordId: id, voidedBy: session.userId, reason } })
       await tx.auditLog.create({ data: {
         actorId: session.userId, action: 'VOID_PUNCH', entity: 'PunchRecord', entityId: id,

@@ -6,6 +6,8 @@ import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
@@ -108,17 +110,28 @@ export async function POST(req: NextRequest) {
     const { minutes: shiftMinutes } = computeAbsentDeductMinutes(sameDayShifts as any, lunchMinutes)
 
     const beforeBalance = await tbBalance(employeeId)
-    const entry = await prisma.timeBankEntry.create({
-      data: {
-        employeeId,
-        type: 'MAKEUP',
-        targetType: 'ABSENT',
-        date: dayStart,
-        minutes: -shiftMinutes,
-        note: `缺勤扣OT鐘 ${shiftMinutes}分`,
-        createdBy: auth.session.userId,
-      },
-    })
+    // ★ Stage 4A（D1 硬鎖）：create 包入 tx（先鎖人 + 已出糧月份檢查）
+    let entry
+    try {
+      entry = await prisma.$transaction(async (tx) => {
+        await lockEmployee(tx, employeeId)
+        await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: [date], what: '缺勤扣鐘' })
+        return tx.timeBankEntry.create({
+          data: {
+            employeeId,
+            type: 'MAKEUP',
+            targetType: 'ABSENT',
+            date: dayStart,
+            minutes: -shiftMinutes,
+            note: `缺勤扣OT鐘 ${shiftMinutes}分`,
+            createdBy: auth.session.userId,
+          },
+        })
+      })
+    } catch (e: any) {
+      const r = toHttpResponse(e); if (r) return r
+      throw e
+    }
 
     // Invalidate TimeBank so carry chain recalculates
     try {

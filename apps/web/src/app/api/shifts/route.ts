@@ -265,7 +265,7 @@ export async function POST(req: NextRequest) {
             where: {
               periodMonth: pm,
               status: { in: ['FINALIZED', 'EXPORTED'] },
-              OR: [{ clinicId: null }, { clinicId: clinicId }],
+              items: { some: { employeeId } },   // ★ Stage 4A：同 assertMonthsUnlockedTx 同一範圍（員工實際入咗嗰張 run）
             },
             select: { id: true, status: true, clinicId: true },
           })
@@ -456,7 +456,7 @@ export async function POST(req: NextRequest) {
           where: {
             periodMonth: pm,
             status: { in: ['FINALIZED', 'EXPORTED'] },
-            OR: [{ clinicId: null }, { clinicId: clinicId }],
+            items: { some: { employeeId } },   // ★ Stage 4A：同 assertMonthsUnlockedTx 同一範圍（員工實際入咗嗰張 run）
           },
           select: { id: true, status: true, clinicId: true },
         })

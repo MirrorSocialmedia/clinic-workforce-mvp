@@ -2746,7 +2746,12 @@ function getShiftCode(shift: Shift): string {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value }),
       })
-      if (!r.ok) throw new Error(String(r.status))
+      if (!r.ok) {
+        // ★ Stage 4A.3：業務 409（例如已出糧月份硬鎖）→ 顯示 server 訊息，唔當網絡錯 retry
+        const e = await r.json().catch(() => ({}))
+        if (e?.error) alert(e.error)
+        throw new Error(String(r.status))
+      }
     } catch {
       const revert = (prev: any[]) => prev.map((lr: any) =>
         lr.id === leaveId ? { ...lr, isEmployeeRequested: !value } : lr)

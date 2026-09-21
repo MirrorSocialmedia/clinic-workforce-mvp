@@ -7,6 +7,8 @@ import { jsonNoStore } from '@/lib/api-response'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { getMonthRange, toHKDateStr } from '@/lib/hk-date'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 // GET /api/punches/[id] — Single punch record + full correction chain
 export async function GET(
@@ -120,63 +122,74 @@ export async function PUT(
   const existingVoid = await prisma.punchVoid.findUnique({ where: { punchRecordId: params.id } })
   if (existingVoid) return NextResponse.json({ error: '此記錄已被作廢' }, { status: 400 })
 
-  // 在 transaction 內執行三步
-  const newRecord = await prisma.$transaction(async (tx) => {
-    // ① 作廢舊筆
-    await tx.punchVoid.create({
-      data: {
-        punchRecordId: params.id,
-        voidedBy: session.userId,
-        reason: reason || '管理端更正',
-      },
-    })
-    // ② 建新筆
-    const nr = await tx.punchRecord.create({
-      data: {
-        employeeId: oldRecord.employeeId,
-        clinicId: oldRecord.clinicId,
-        punchTime: punchTime ? new Date(punchTime) : oldRecord.punchTime,
-        punchType: punchType || oldRecord.punchType,
-        source: 'MANUAL_CORRECTION' as any,   // ★ cwm-antitamper：手改嘅卡唔准再顯示「動態QR碼 · QR有效」
-        tokenValid: null,
-        deviceInfo: null,
-        notes: notes !== undefined ? notes : oldRecord.notes,
-      },
-    })
-    // ③ 審計
-    await tx.auditLog.create({
-      data: {
-        actorId: session.userId,
-        action: 'PUNCH_EDIT',
-        entity: 'PunchRecord',
-        entityId: params.id,
-        targetEmployeeId: oldRecord.employeeId,
-        afterJson: JSON.stringify({
-          oldRecordId: params.id,
-          newRecordId: nr.id,
-          oldValue: { punchTime: oldRecord.punchTime.toISOString(), punchType: oldRecord.punchType },
-          newValue: { punchTime, punchType },
-          reason: reason || '管理端編輯',
-        }),
-        ipAddress: req.headers.get('x-forwarded-for') || null,
-        userAgent: req.headers.get('user-agent') || null,
-      },
-    })
-    // ★ Stage 2.4：改 punchTime / punchType 直接影響遲到／早退／OT 配對，快取失效 + OT 撤回入 tx（失敗 = rollback）
-    // ⚠️ 新舊時間所屬月份【兩個都要清】—— 由 5/31 改去 6/1，兩個月嘅數字都變咗。
-    await invalidateTimeBankFrom(oldRecord.employeeId, oldRecord.punchTime, tx)
-    await revokeStaleEarlyOt(oldRecord.employeeId, toHKDateStr(oldRecord.punchTime), session.userId, 'PUNCH_EDIT', tx)
-    if (punchTime) {
-      const newTime = new Date(punchTime)
-      const { start: oldMonth } = getMonthRange(oldRecord.punchTime)
-      const { start: newMonth } = getMonthRange(newTime)
-      if (newMonth.getTime() !== oldMonth.getTime()) {
-        await invalidateTimeBankFrom(oldRecord.employeeId, newTime, tx)
+  // 在 transaction 內執行三步（★ Stage 4A（D1 硬鎖）：先鎖人 + 新舊兩個月份都查）
+  let newRecord
+  try {
+    newRecord = await prisma.$transaction(async (tx) => {
+      await lockEmployee(tx, oldRecord.employeeId)
+      await assertMonthsUnlockedTx(tx, {
+        actorId: session.userId, employeeId: oldRecord.employeeId, what: '修改打卡',
+        months: [toHKDateStr(oldRecord.punchTime), punchTime ? toHKDateStr(new Date(punchTime)) : null],
+      })
+      // ① 作廢舊筆
+      await tx.punchVoid.create({
+        data: {
+          punchRecordId: params.id,
+          voidedBy: session.userId,
+          reason: reason || '管理端更正',
+        },
+      })
+      // ② 建新筆
+      const nr = await tx.punchRecord.create({
+        data: {
+          employeeId: oldRecord.employeeId,
+          clinicId: oldRecord.clinicId,
+          punchTime: punchTime ? new Date(punchTime) : oldRecord.punchTime,
+          punchType: punchType || oldRecord.punchType,
+          source: 'MANUAL_CORRECTION' as any,   // ★ cwm-antitamper：手改嘅卡唔准再顯示「動態QR碼 · QR有效」
+          tokenValid: null,
+          deviceInfo: null,
+          notes: notes !== undefined ? notes : oldRecord.notes,
+        },
+      })
+      // ③ 審計
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'PUNCH_EDIT',
+          entity: 'PunchRecord',
+          entityId: params.id,
+          targetEmployeeId: oldRecord.employeeId,
+          afterJson: JSON.stringify({
+            oldRecordId: params.id,
+            newRecordId: nr.id,
+            oldValue: { punchTime: oldRecord.punchTime.toISOString(), punchType: oldRecord.punchType },
+            newValue: { punchTime, punchType },
+            reason: reason || '管理端編輯',
+          }),
+          ipAddress: req.headers.get('x-forwarded-for') || null,
+          userAgent: req.headers.get('user-agent') || null,
+        },
+      })
+      // ★ Stage 2.4：改 punchTime / punchType 直接影響遲到／早退／OT 配對，快取失效 + OT 撤回入 tx（失敗 = rollback）
+      // ⚠️ 新舊時間所屬月份【兩個都要清】—— 由 5/31 改去 6/1，兩個月嘅數字都變咗。
+      await invalidateTimeBankFrom(oldRecord.employeeId, oldRecord.punchTime, tx)
+      await revokeStaleEarlyOt(oldRecord.employeeId, toHKDateStr(oldRecord.punchTime), session.userId, 'PUNCH_EDIT', tx)
+      if (punchTime) {
+        const newTime = new Date(punchTime)
+        const { start: oldMonth } = getMonthRange(oldRecord.punchTime)
+        const { start: newMonth } = getMonthRange(newTime)
+        if (newMonth.getTime() !== oldMonth.getTime()) {
+          await invalidateTimeBankFrom(oldRecord.employeeId, newTime, tx)
+        }
+        await revokeStaleEarlyOt(oldRecord.employeeId, toHKDateStr(newTime), session.userId, 'PUNCH_EDIT', tx)
       }
-      await revokeStaleEarlyOt(oldRecord.employeeId, toHKDateStr(newTime), session.userId, 'PUNCH_EDIT', tx)
-    }
-    return nr
-  })
+      return nr
+    })
+  } catch (e: any) {
+    const r = toHttpResponse(e, '此打卡記錄已被作廢'); if (r) return r
+    throw e
+  }
 
   return NextResponse.json({ ok: true, record: { id: newRecord.id } })
 }

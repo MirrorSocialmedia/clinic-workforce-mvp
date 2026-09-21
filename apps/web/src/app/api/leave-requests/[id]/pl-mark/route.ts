@@ -4,6 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveCompanyScopeForScheduling, companyInScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
+import { toHKDateStr } from '@/lib/hk-date'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx, monthsInRange } from '@/lib/payroll-lock'
 
 // ============================================================
 // PATCH /api/leave-requests/[id]/pl-mark — 切換 PL 標記（員工自請休息日）
@@ -32,6 +35,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     select: {
       id: true,
       isEmployeeRequested: true,
+      // ★ Stage 4A（D1 硬鎖）：已出糧月份檢查用
+      employeeId: true,
+      status: true,
+      startDate: true,
+      endDate: true,
       leaveType: { select: { systemKey: true } },
       // ★ 下面公司層 ownership guard 用（employee 主屬店所屬公司）；
       //   clinicId 留低 —— check-ownership.sh 嘅 guard 關鍵字 + 日誌除錯
@@ -58,10 +66,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const updated = await prisma.leaveRequest.update({
-    where: { id },
-    data: { isEmployeeRequested: next },
-    select: { id: true, isEmployeeRequested: true },
-  })
+  // ★ Stage 4A（D1 硬鎖）：update 包入 tx（先鎖人 + 已出糧月份檢查）
+  let updated
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      await lockEmployee(tx, lr.employeeId)
+      if (lr.status === 'APPROVED') {
+        await assertMonthsUnlockedTx(tx, { actorId: session.userId, employeeId: lr.employeeId, what: '標記 PL',
+          months: monthsInRange(toHKDateStr(lr.startDate), toHKDateStr(lr.endDate || lr.startDate)) })
+      }
+      return tx.leaveRequest.update({ where: { id }, data: { isEmployeeRequested: next }, select: { id: true, isEmployeeRequested: true } })
+    })
+  } catch (e: any) {
+    const r = toHttpResponse(e); if (r) return r
+    throw e
+  }
   return jsonNoStore(updated)
 }

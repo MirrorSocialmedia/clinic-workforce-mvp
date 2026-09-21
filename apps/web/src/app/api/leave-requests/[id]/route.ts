@@ -8,6 +8,7 @@ import { createNotification } from '@/lib/notification'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { balanceYearFor, allowsNegativeBalance, consumesQuota } from '@/lib/leave-types'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx, monthsInRange } from '@/lib/payroll-lock'
 
 // PUT /api/leave-requests/[id] — Approve/Reject leave request
 export async function PUT(
@@ -114,8 +115,12 @@ export async function PUT(
     try {
       updated = await prisma.$transaction(async (tx) => {
         await lockEmployee(tx, request.employeeId)
-        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        // ★ Stage 4A（D1 硬鎖）：只限 APPROVED（REJECT 唔影響計糧）
         if (status === 'APPROVED') {
+          await assertMonthsUnlockedTx(tx, {
+            actorId: session.userId, employeeId: request.employeeId, what: '批核假期',
+            months: monthsInRange(toHKDateStr(request.startDate), toHKDateStr(request.endDate || request.startDate)),
+          })
           // mutex：喺鎖入面再查（:58-76 保留做 fast-fail）
           const c = await tx.shift.findFirst({ where: {
             employeeId: request.employeeId, status: { not: 'CANCELLED' },
@@ -220,6 +225,14 @@ export async function DELETE(
 
       // ★ cwm-money P2-1：delete + 還額度同一 transaction（先 delete 後 refund），重試 → P2025 → 409
       await prisma.$transaction(async (tx) => {
+        // ★ Stage 4A（D1 硬鎖）：先鎖人再查已出糧月份
+        await lockEmployee(tx, request.employeeId)
+        if (request.status === 'APPROVED') {
+          await assertMonthsUnlockedTx(tx, {
+            actorId: session.userId, employeeId: request.employeeId, what: '刪除已批假期',
+            months: monthsInRange(toHKDateStr(request.startDate), toHKDateStr(request.endDate || request.startDate)),
+          })
+        }
         await tx.leaveRequest.delete({ where: { id: requestId, status: request.status } })
 
         if (request.status === 'APPROVED' && consumesQuota(request.leaveType)) {
@@ -263,6 +276,8 @@ export async function DELETE(
       if ((error as any)?.code === 'P2025') {
         return NextResponse.json({ error: '呢張假期已經刪咗' }, { status: 409 })
       }
+      // ★ Stage 4A：HttpError（409 PAYROLL_LOCKED 等）→ response
+      { const r = toHttpResponse(error); if (r) return r }
       console.error('Delete leave request error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
@@ -302,9 +317,14 @@ export async function PATCH(
         return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
       }
 
-      const updated = await prisma.leaveRequest.update({
-        where: { id: params.id },
-        data: updateData,
+      // ★ Stage 4A（D1 硬鎖）：update 包入 tx（先鎖人 + 已出糧月份檢查）
+      const updated = await prisma.$transaction(async (tx) => {
+        await lockEmployee(tx, request.employeeId)
+        if (request.status === 'APPROVED') {
+          await assertMonthsUnlockedTx(tx, { actorId: session.userId, employeeId: request.employeeId, what: '修改已批假期',
+            months: monthsInRange(toHKDateStr(request.startDate), toHKDateStr(request.endDate || request.startDate)) })
+        }
+        return tx.leaveRequest.update({ where: { id: params.id }, data: updateData })
       })
 
       // ★ audit: LeaveRequest 變更（PATCH 唔啱入 Prisma extension auto-audit）
@@ -321,6 +341,8 @@ export async function PATCH(
 
       return NextResponse.json({ success: true, leaveRequest: updated })
     } catch (error) {
+      // ★ Stage 4A：HttpError（409 PAYROLL_LOCKED 等）→ response
+      { const r = toHttpResponse(error); if (r) return r }
       console.error('Leave request update error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }

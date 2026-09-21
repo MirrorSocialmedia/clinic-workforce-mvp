@@ -5,6 +5,8 @@ import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { diffMinutes } from '@/lib/shift-punch-match'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 async function tbBalance(employeeId: string) {
   const r = await prisma.timeBankEntry.aggregate({ where: { employeeId }, _sum: { minutes: true } }) // AGG-OK: timebank management
@@ -111,17 +113,28 @@ export async function POST(req: NextRequest) {
   }
 
   const beforeBalance = await tbBalance(employeeId)
-  const makeup = await prisma.timeBankEntry.create({
-    data: {
-      employeeId,
-      date: new Date(date),
-      type: 'MAKEUP',
-      minutes: -Math.abs(parseInt(minutes)),
-      targetType, // 現在一定有值
-      note: `補鐘：${targetType === 'EARLY_LEAVE' ? '早退' : '遲到'} ${Math.abs(parseInt(minutes))}分`,
-      createdBy: auth.session.userId,
-    },
-  })
+  // ★ Stage 4A（D1 硬鎖）：create 包入 tx（先鎖人 + 已出糧月份檢查）
+  let makeup
+  try {
+    makeup = await prisma.$transaction(async (tx) => {
+      await lockEmployee(tx, employeeId)
+      await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: [date], what: '補鐘' })
+      return tx.timeBankEntry.create({
+        data: {
+          employeeId,
+          date: new Date(date),
+          type: 'MAKEUP',
+          minutes: -Math.abs(parseInt(minutes)),
+          targetType, // 現在一定有值
+          note: `補鐘：${targetType === 'EARLY_LEAVE' ? '早退' : '遲到'} ${Math.abs(parseInt(minutes))}分`,
+          createdBy: auth.session.userId,
+        },
+      })
+    })
+  } catch (e: any) {
+    const r = toHttpResponse(e, '當天該類型已補鐘'); if (r) return r
+    throw e
+  }
 
   // Invalidate TimeBank so carry chain recalculates from makeup date
   try {
