@@ -7,6 +7,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveQrToken } from '@/lib/qr-token'
 import { todayHK, hkDateStart } from '@/lib/hk-date'
 import { distanceMeters } from '@/lib/geo'
+import { invalidateTimeBankFrom } from '@/lib/punch-query'
 
 // ============================================================
 // POST /api/punch — Clock in/out via QR token or manual lunch punch
@@ -223,6 +224,8 @@ export async function POST(req: NextRequest) {
             userAgent: req.headers.get('user-agent') || null,
           },
         })
+        // ★ Stage 2.4：打卡影響缺勤判斷同午飯扣減 → 快取失效入 tx（失敗 = rollback）
+        await invalidateTimeBankFrom(employee.id, record.punchTime, tx)
         return record
       })
 

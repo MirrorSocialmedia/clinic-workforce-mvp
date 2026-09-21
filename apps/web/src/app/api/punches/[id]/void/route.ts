@@ -59,18 +59,12 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
         data: { status: 'REJECTED', approvedBy: session.userId },
       })
       await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, tx)
+      // ★ 2026-08-08: Revoke stale early-in OT if punches changed（Stage 2.4：入 tx，失敗 = rollback）
+      await revokeStaleEarlyOt(punch.employeeId, toHKDateStr(punch.punchTime), session.userId, 'PUNCH_VOID', tx)
     })
   } catch (e: any) {
     { const r = toHttpResponse(e, '此打卡記錄已被作廢'); if (r) return r }
     throw e
-  }
-
-  // ★ 2026-08-08: Revoke stale early-in OT if punches changed
-  try {
-    const hkDate = toHKDateStr(punch.punchTime)
-    await revokeStaleEarlyOt(punch.employeeId, hkDate, session.userId, 'PUNCH_VOID', prisma)
-  } catch (e) {
-    console.error(`[early-in-ot] revoke failed employeeId=${punch.employeeId}`, e)
   }
 
   return NextResponse.json({ ok: true })

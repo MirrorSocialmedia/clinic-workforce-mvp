@@ -5,6 +5,8 @@ type AuditContext = {
   actorName?: string
   ip?: string
   ua?: string
+  /** ★ Stage 2.1：interactive tx client（由 lib/prisma.ts 嘅 $transaction proxy 注入） */
+  tx?: unknown
 }
 
 const als = new AsyncLocalStorage<AuditContext>()

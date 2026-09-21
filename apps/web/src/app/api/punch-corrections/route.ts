@@ -287,25 +287,15 @@ export async function POST(req: NextRequest) {
           })
         }
 
+        // ★ Stage 2.4：失效 + OT 撤回入 tx（失敗 = rollback，唔再只 log）
+        if (c.status === 'APPROVED') {
+          await invalidateTimeBankFrom(c.employeeId, c.correctedTime, tx)
+          // ★ 2026-08-08: Revoke stale early-in OT if punches changed
+          await revokeStaleEarlyOt(c.employeeId, toHKDateStr(c.correctedTime), session.userId, 'CORRECTION_CREATE', tx)
+        }
+
         return c
       })
-
-      // Invalidate TimeBank from correction date so carry chain recalculates (only for APPROVED)
-      if (correction.status === 'APPROVED') {
-        try {
-          await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
-        } catch (e) {
-          console.error(`[timebank-cache] invalidate failed employeeId=${correction.employeeId} date=${correction.correctedTime}`, e)
-        }
-
-        // ★ 2026-08-08: Revoke stale early-in OT if punches changed
-        try {
-          const hkDate = toHKDateStr(correction.correctedTime)
-          await revokeStaleEarlyOt(correction.employeeId, hkDate, session.userId, 'CORRECTION_CREATE', prisma)
-        } catch (e) {
-          console.error(`[early-in-ot] revoke failed employeeId=${correction.employeeId}`, e)
-        }
-      }
 
       return NextResponse.json(
         { success: true, correction, createdPunchRecord: !!(!existingFound && (perms ?? []).includes('attendance_manage')) },

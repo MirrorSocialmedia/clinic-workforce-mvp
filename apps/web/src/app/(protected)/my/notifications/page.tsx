@@ -6,6 +6,7 @@ import { fmtDateTime } from '@/lib/hk-date'
 const TYPE_ICONS: Record<string, string> = {
   LEAVE_APPROVED: '✅',
   LEAVE_REJECTED: '❌',
+  LEAVE_CANCELLED: '🚫',
   SHIFT_CHANGED: '📅',
   CORRECTION_APPROVED: '📋',
   CORRECTION_REJECTED: '❌',
@@ -17,6 +18,7 @@ const TYPE_ICONS: Record<string, string> = {
 const TYPE_COLORS: Record<string, string> = {
   LEAVE_APPROVED: '#4CAF50',
   LEAVE_REJECTED: '#dc3545',
+  LEAVE_CANCELLED: '#888',
   SHIFT_CHANGED: '#2196F3',
   CORRECTION_APPROVED: '#FF9800',
   CORRECTION_REJECTED: '#dc3545',

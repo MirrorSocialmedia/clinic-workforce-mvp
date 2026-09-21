@@ -1,6 +1,11 @@
 import { prisma } from '@/lib/prisma'
 import { toHKDateStr, getMonthRange } from './hk-date'
 
+// ★ cwm-consistency Stage 2.4：「prisma client 或 interactive tx client」共用型別
+export type PrismaDb =
+  (typeof prisma)
+  | Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'>
+
 // ------------------------------------------------------------------
 // Void filter helpers
 // ------------------------------------------------------------------
@@ -31,7 +36,7 @@ export async function getEffectivePunches(
     employeeIds?: string[]  // ★ 多員工批量查詢（exceptions route）
     clinicId?: string
     clinicIds?: string[]    // ★ MANAGER 多店 scope
-    db?: typeof prisma
+    db?: PrismaDb
   },
 ): Promise<Array<{ punchType: string; clinicId: string; effectiveTime: Date; raw: any }>> {
   const db = opts?.db ?? prisma
@@ -108,7 +113,7 @@ export async function invalidateTimeBankFrom(
   employeeId: string,
   fromDate: Date | string,
   // ★ cwm-holidayot-20260911：接納 transaction client（Omit 型）—— 扣減 API 要喺同一 tx 內清快取
-  db: (typeof prisma) | Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'> = prisma,
+  db: PrismaDb = prisma,
 ) {
   const date = new Date(fromDate)
   const { start: monthStart } = getMonthRange(date)

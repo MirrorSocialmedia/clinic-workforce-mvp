@@ -325,30 +325,21 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        return req
-      })
-
-      // ★ 通知失敗唔應該令整筆假期失敗 —— 放交易外，包 try/catch
-      if (request.status === 'APPROVED') {
-        try {
+        // ★ Stage 2.3：通知入 tx（同狀態同生死，outbox 語義）
+        if (req.status === 'APPROVED') {
           await createNotification({
             employeeId: employee.id,
             type: 'LEAVE_APPROVED',
             content: `Your ${leaveType.name} request (${days} days) has been approved.`,
             relatedEntity: 'LeaveRequest',
-            relatedId: request.id,
-          })
-        } catch (e) {
-          console.error('notify failed', e)
+            relatedId: req.id,
+          }, tx)
         }
-      }
+        // ★ Stage 2.4：失效入 tx（失敗 = rollback，唔再只 log）
+        await invalidateTimeBankFrom(employee.id, new Date(startDate), tx)
 
-      // ★ 假期影響缺勤判斷同午飯扣減 → 快取要失效
-      try {
-        await invalidateTimeBankFrom(employee.id, new Date(startDate), prisma)
-      } catch (e) {
-        console.error(`[timebank-cache] invalidate failed employeeId=${employee.id} date=${new Date(startDate)}`, e)
-      }
+        return req
+      })
 
       return NextResponse.json({ success: true, leaveRequest: request }, { status: 201 })
     } catch (error) {

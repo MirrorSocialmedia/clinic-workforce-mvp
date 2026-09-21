@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client'
-import { getAuditContext } from './audit-context'
+import { getAuditContext, runWithAudit } from './audit-context'
 import { fmtDate } from './hk-date'
 
 // ----------------------------------------------------------
@@ -72,151 +72,108 @@ function slimForAudit(obj: any): any {
   return out
 }
 
+// ============================================================
+// ★ cwm-consistency Stage 2.1：audit 同主操作「同生同死」
+//   ① 主操作 query(args) 永遠只執行一次（舊版 audit 失敗會 fall-through 再跑一次 → increment 雙扣）
+//   ② 喺 interactive tx 入面 → audit 用同一個 tx client 寫（rollback 就一齊冇；唔再借第二條 connection）
+//   ③ autocommit（冇 tx）→ 主操作已 commit，audit 失敗只 log，唔可以回 500 呃 UI 話「失敗」
+//   ④ updateMany / deleteMany 嘅受影響 ID 喺主操作【之前】解析（tx 內 delete 咗就搵唔返）
+// ============================================================
 const extended = base.$extends({
   query: {
     $allModels: {
       async $allOperations({ model, operation, args, query }) {
         const isWrite = WRITE_OPS.has(operation)
-        const shouldAudit = isWrite && model && AUDIT_ENTITIES.has(model)
-
-        if (!shouldAudit) {
+        if (!isWrite || !model || !AUDIT_ENTITIES.has(model) || MANUAL_TXN_ENTITIES.has(model)) {
           return query(args)
         }
-
-        // FIX #1: Skip auto-audit for entities that write audit manually inside $transaction
-        if (MANUAL_TXN_ENTITIES.has(model)) {
-          return query(args)
-        }
-
-        // D2: Capture before/after diff for UPDATE operations
-        if (operation === 'update') {
-          try {
-            const where = (args as any)?.where
-            if (where) {
-              const before = await (base as any)[model].findUnique({ where })
-              const result = await query(args)
-
-              // Compute diff
-              const changes: Record<string, { from: unknown; to: unknown }> = {}
-              if (before && result) {
-                for (const key of Object.keys(before)) {
-                  if ((before as any)[key] !== (result as any)[key]) {
-                    changes[key] = { from: (before as any)[key], to: (result as any)[key] }
-                  }
-                }
-              }
-
-              // Generate human-readable notes
-              const parts: string[] = []
-              for (const [key, diff] of Object.entries(changes)) {
-                const fromVal = typeof diff.from === 'object' ? JSON.stringify(diff.from) : String(diff.from)
-                const toVal = typeof diff.to === 'object' ? JSON.stringify(diff.to) : String(diff.to)
-                parts.push(`${key} ${fromVal.slice(0, 30)} → ${toVal.slice(0, 30)}`)
-              }
-
-              // FIX 1a: For LeaveRequest, prepend leave type name to notes
-              let notes = parts.join('; ')
-              if (model === 'LeaveRequest' && result) {
-                const lr = result as any
-                if (lr.leaveTypeId) {
-                  const lt = await base.leaveType.findUnique({ where: { id: lr.leaveTypeId } })
-                  notes = `${lt?.name ?? '假期'}：${notes}`
-                }
-              }
-
-              // Write audit log with diff
-              const ctx = getAuditContext()
-              if (ctx) {
-                await base.auditLog.create({
-                  data: {
-                    actorId: ctx.actorId,
-                    action: operation.toUpperCase(),
-                    entity: model,
-                    entityId: String((result as any)?.id ?? (where as any)?.id ?? ''),
-                    beforeJson: safeStringify(slimForAudit(before)),
-                    afterJson: safeStringify(slimForAudit(result)),
-                    notes,
-                    ipAddress: ctx.ip ?? null,
-                    userAgent: ctx.ua ?? null,
-                  },
-                })
-              }
-
-              return result
-            }
-          } catch {
-            // If diff capture fails, fall through to standard audit
-          }
-        }
-
-        const result = await query(args)
 
         const ctx = getAuditContext()
-        if (ctx) {
-          let entityId = (result as any)?.id ?? (args as any)?.where?.id ?? 'batch'
+        if (!ctx) return query(args)
 
-          // FIX #4: For batch operations, resolve affected IDs for precise audit
+        const txDb: any = (ctx as any).tx ?? null
+        const db: any = txDb ?? base
+        const where = (args as any)?.where
+
+        // ── 主操作之前：before 快照 / 受影響 ID（best effort，唔影響主操作）
+        let before: any = null
+        let batchIds: string[] | null = null
+        try {
+          if (operation === 'update' && where) {
+            before = await db[model].findUnique({ where })
+          } else if ((operation === 'updateMany' || operation === 'deleteMany') && where) {
+            batchIds = (await db[model].findMany({ where, select: { id: true } })).map((r: any) => r.id)
+          }
+        } catch { /* 快照失敗唔阻主操作 */ }
+
+        // ── 主操作：只跑一次
+        const result = await query(args)
+
+        // ── audit
+        try {
           let notes: string | null = null
-          if (['updateMany', 'deleteMany'].includes(operation)) {
-            const where = (args as any)?.where
-            if (where) {
-              try {
-                const affected = await (base as any)[model].findMany({
-                  where,
-                  select: { id: true },
-                })
-                const ids = affected.map((r: any) => r.id)
-                if (ids.length > 0) {
-                  notes = `Batch ${operation}: affected IDs = [${ids.join(', ')}]`
-                  entityId = ids.join(', ')
-                }
-              } catch {
-                // Fallback: keep entityId='batch'
+          let entityId = String((result as any)?.id ?? where?.id ?? 'batch')
+          if (operation === 'update' && before && result) {
+            const parts: string[] = []
+            for (const key of Object.keys(before)) {
+              if ((before as any)[key] !== (result as any)[key]) {
+                const f = (before as any)[key], t = (result as any)[key]
+                parts.push(`${key} ${String(typeof f === 'object' ? JSON.stringify(f) : f).slice(0, 30)} → ${String(typeof t === 'object' ? JSON.stringify(t) : t).slice(0, 30)}`)
               }
             }
+            notes = parts.join('; ')
           }
-
-          // FIX 1a: For LeaveRequest CREATE/DELETE, resolve leave type name + employee name
-          if (model === 'LeaveRequest' && ['create', 'delete'].includes(operation)) {
-            try {
-              let lr: any = null
-              if (operation === 'create') {
-                lr = result
-              } else {
-                // For delete, we need to fetch before deletion (but Prisma extension runs after)
-                // Use args to reconstruct — but delete already happened. Use the result if available.
-                // Actually for delete, result is the deleted record
-                lr = result
-              }
-              if (lr && lr.leaveTypeId) {
-                const lt = await base.leaveType.findUnique({ where: { id: lr.leaveTypeId } })
-                const emp = await base.employee.findUnique({ where: { id: lr.employeeId }, include: { user: { select: { name: true } } } })
-                const dateStr = lr.startDate ? fmtDate(lr.startDate) : ''
-                notes = `${lt?.name ?? '假期'}：${emp?.user?.name ?? ''} ${dateStr}`.trim()
-              }
-            } catch {
-              // Fallback: leave notes as-is
+          if (batchIds && batchIds.length > 0) {
+            notes = `Batch ${operation}: affected IDs = [${batchIds.join(', ')}]`
+            entityId = batchIds.join(', ')
+          }
+          if (model === 'LeaveRequest' && result && (result as any).leaveTypeId) {
+            const lr = result as any
+            const lt = await db.leaveType.findUnique({ where: { id: lr.leaveTypeId } })
+            if (operation === 'update') {
+              notes = `${lt?.name ?? '假期'}：${notes ?? ''}`
+            } else if (operation === 'create' || operation === 'delete') {
+              const emp = await db.employee.findUnique({ where: { id: lr.employeeId }, include: { user: { select: { name: true } } } })
+              notes = `${lt?.name ?? '假期'}：${emp?.user?.name ?? ''} ${lr.startDate ? fmtDate(lr.startDate) : ''}`.trim()
             }
           }
-
-          // Use base (raw) client for audit writes to avoid re-triggering the extension
-          await base.auditLog.create({
+          await db.auditLog.create({
             data: {
               actorId: ctx.actorId,
               action: operation.toUpperCase(),
               entity: model,
-              entityId: String(entityId),
+              entityId,
+              beforeJson: before ? safeStringify(slimForAudit(before)) : null,
               afterJson: safeStringify(slimForAudit(result)),
               notes,
               ipAddress: ctx.ip ?? null,
               userAgent: ctx.ua ?? null,
             },
           })
+        } catch (e) {
+          if (txDb) throw e   // tx 內：audit 失敗 → 成個 tx rollback（冇 audit 就冇操作）
+          console.error(`[audit] write failed AFTER autocommit ${model}.${operation} — data committed, audit missing`, e)
         }
-
         return result
       },
     },
+  },
+})
+
+// ★ Stage 2.1：interactive $transaction 自動將 tx client 放入 ALS → extension 用佢寫 audit
+//   陣列式 $transaction([...]) 維持原樣（見 2.2）
+const txAware = new Proxy(extended as any, {
+  get(target, prop, receiver) {
+    if (prop === '$transaction') {
+      return (arg: any, opts?: any) => {
+        if (typeof arg !== 'function') return target.$transaction(arg, opts)
+        return target.$transaction((tx: any) => {
+          const ctx = getAuditContext()
+          return ctx ? runWithAudit({ ...ctx, tx } as any, () => arg(tx)) : arg(tx)
+        }, opts)
+      }
+    }
+    return Reflect.get(target, prop, receiver)
   },
 })
 
@@ -225,7 +182,7 @@ const extended = base.$extends({
 // ============================================================
 
 // Extended client — auto-audit enabled (default for all routes)
-export const prisma = extended as unknown as PrismaClient
+export const prisma = txAware as unknown as PrismaClient
 // Raw client — no auto-audit (use inside $transaction or for AuditLog writes)
 export const basePrisma = base
 export default prisma

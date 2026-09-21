@@ -149,31 +149,26 @@ export async function PUT(
             if (r.count !== 1) throw new HttpError(400, `${request.leaveType.name}餘額不足或未設定額度`)
           }
         }
+        // ★ Stage 2.3：通知入 tx（同狀態同生死，outbox 語義）
+        await createNotification({
+          employeeId: request.employeeId,
+          type: status === 'APPROVED' ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
+          content: status === 'APPROVED'
+            ? `Your ${request.leaveType.name} request (${request.days} days) has been approved.`
+            : `Your ${request.leaveType.name} request (${request.days} days) has been rejected.${notes ? ` Reason: ${notes}` : ''}`,
+          relatedEntity: 'LeaveRequest',
+          relatedId: request.id,
+        }, tx)
+        // ★ Stage 2.4：失效入 tx（失敗 = rollback，唔再只 log）
+        if (status === 'APPROVED') {
+          await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), tx)
+        }
         return u
       })
     } catch (e: any) {
       { const r = toHttpResponse(e); if (r) return r }
       if (e?.code === 'P2025') return NextResponse.json({ error: '呢張假期申請已經有人處理咗' }, { status: 409 })
       throw e
-    }
-
-    await createNotification({
-      employeeId: request.employeeId,
-      type: status === 'APPROVED' ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
-      content: status === 'APPROVED'
-        ? `Your ${request.leaveType.name} request (${request.days} days) has been approved.`
-        : `Your ${request.leaveType.name} request (${request.days} days) has been rejected.${notes ? ` Reason: ${notes}` : ''}`,
-      relatedEntity: 'LeaveRequest',
-      relatedId: request.id,
-    })
-
-    // ★ 假期審批影響缺勤判斷同午飯扣減 → 快取要失效
-    if (status === 'APPROVED') {
-      try {
-        await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
-      } catch (e) {
-        console.error(`[timebank-cache] invalidate failed employeeId=${request.employeeId} date=${new Date(request.startDate)}`, e)
-      }
     }
 
     // Audit handled by Prisma extension (LeaveRequest ∈ AUDIT_ENTITIES)
@@ -202,7 +197,7 @@ export async function DELETE(
       const requestId = params.id
       const request = await prisma.leaveRequest.findUnique({
         where: { id: requestId },
-        include: { leaveType: { select: { systemKey: true } } },
+        include: { leaveType: { select: { systemKey: true, name: true } } },
       })
       if (!request) {
         return NextResponse.json({ error: 'Leave request not found' }, { status: 404 })
@@ -247,14 +242,20 @@ export async function DELETE(
             )
           }
         }
-      })
 
-      // ★ 刪除假期影響缺勤判斷同午飯扣減 → 快取要失效
-      try {
-        await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), prisma)
-      } catch (e) {
-        console.error(`[timebank-cache] invalidate failed employeeId=${request.employeeId} date=${new Date(request.startDate)}`, e)
-      }
+        // ★ Stage 2.3：假期取消通知（只係已批嘅假先算「取消」）
+        if (request.status === 'APPROVED') {
+          await createNotification({
+            employeeId: request.employeeId,
+            type: 'LEAVE_CANCELLED',
+            content: `你 ${toHKDateStr(request.startDate)} 嘅${request.leaveType?.name ?? '假期'}已被取消`,
+            relatedEntity: 'LeaveRequest',
+            relatedId: request.id,
+          }, tx)
+        }
+        // ★ Stage 2.4：失效入 tx（失敗 = rollback，唔再只 log）
+        await invalidateTimeBankFrom(request.employeeId, new Date(request.startDate), tx)
+      })
 
       return NextResponse.json({ success: true })
     } catch (error) {

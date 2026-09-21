@@ -1,15 +1,14 @@
-import { PrismaClient } from '@prisma/client'
+import { basePrisma } from './prisma'
 
-// ★ 唔經 lib/prisma.ts —— 避開 audit extension 造成遞迴
-// 但要 singleton，唔可以每次 new（會打爆 connection pool）
-const g = globalThis as any
-const rawClient: PrismaClient = g.__notificationPrisma ?? new PrismaClient()
-if (process.env.NODE_ENV !== 'production') g.__notificationPrisma = rawClient
+// ★ Stage 2.3：共用 prisma 嘅 base client（同一 connection pool，唔再各自 new PrismaClient）
+//   仍係 raw client（無 audit extension）—— 通知唔係審計實體，唔會遞迴
+const rawClient = basePrisma
 
 export async function createNotification(data: {
   employeeId: string; type: string; content: string;
   relatedEntity?: string | null; relatedId?: string | null; details?: string | null;
-}): Promise<void> {
+}, db?: { notification: { create: (a: any) => Promise<unknown> } }): Promise<void> {
+  if (db) { await db.notification.create({ data: { ...data } }); return }
   try {
     await rawClient.notification.create({ data: { ...data } })
   } catch (err) {

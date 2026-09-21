@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from './hk-date'
-import { getEffectivePunches } from './punch-query'
+import { getEffectivePunches, type PrismaDb } from './punch-query'
 import { matchPunchesToShifts } from './shift-punch-match'
 import { invalidateTimeBankFrom } from './punch-query'
 
@@ -61,7 +61,8 @@ export async function revokeStaleEarlyOt(
   dateStr: string,
   actorId: string,
   reason: string,
-  db = prisma,
+  // ★ cwm-consistency Stage 2.4：接納 transaction client（同 invalidateTimeBankFrom 同一 PrismaDb 型）
+  db: PrismaDb = prisma,
 ): Promise<{ revoked: boolean; minutes?: number }> {
   const dayStart = hkDateStart(dateStr)
   const dayEnd = hkDateEnd(dateStr)

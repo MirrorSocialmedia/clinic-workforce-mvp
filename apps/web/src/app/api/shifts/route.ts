@@ -251,6 +251,9 @@ export async function POST(req: NextRequest) {
               },
             }))
           }
+          // ★ Stage 2.4：排班影響遲到／早退／OT 判斷 → 快取失效入 tx（批量排班用最早日期）
+          const earliest = new Date(Math.min(...planned.map(p => new Date(p.times.date).getTime())))
+          await invalidateTimeBankFrom(employeeId, earliest, tx)
           return out
         }, { timeout: 30_000 })
         shifts.push(...created)
@@ -357,6 +360,16 @@ export async function POST(req: NextRequest) {
               // ★ Stage 1.3：先「搶」刪除（帶讀到嘅 status）—— 搶唔到 = 另一請求已處理 → 409，唔准再退
               const claimed = await tx.leaveRequest.deleteMany({ where: { id: vl.id, status: vl.status } })
               if (claimed.count !== 1) throw new HttpError(409, '假期已被其他人改動，請重新整理')
+              // ★ Stage 2.3：假期取消通知（已批假俾更次替換刪走）
+              if (vl.status === 'APPROVED') {
+                await createNotification({
+                  employeeId: vl.employeeId,
+                  type: 'LEAVE_CANCELLED',
+                  content: `你 ${toHKDateStr(vl.startDate)} 嘅${vl.leaveType?.name ?? '假期'}已被取消`,
+                  relatedEntity: 'LeaveRequest',
+                  relatedId: vl.id,
+                }, tx)
+              }
               if (vl.status !== 'APPROVED' || !consumesQuota(vl.leaveType)) continue // ★ PENDING leaves never had balance deducted
               const leaveYear = balanceYearFor(vl.leaveType?.systemKey, new Date(vl.startDate))
               const updated = await tx.leaveBalance.updateMany({
@@ -386,7 +399,7 @@ export async function POST(req: NextRequest) {
           const leaveTx = await checkShiftLeaveConflict(employeeId, times.date, tx)
           if (leaveTx.conflict) throw new HttpError(409, `該員工該天已有假期（${leaveTx.leaveName}），無法排班`)
 
-          return tx.shift.create({
+          const created = await tx.shift.create({
             data: {
               employeeId,
               clinicId,
@@ -405,6 +418,34 @@ export async function POST(req: NextRequest) {
               template: { select: { id: true, name: true, deductLunch: true } },
             },
           })
+
+          // ★ Stage 2.3：victim 通知入 tx（同狀態同生死）
+          // ★ Notify employee if replaced shifts were CONFIRMED
+          if (victims.length > 0) {
+            const clinics = await tx.clinic.findMany({ select: { id: true, name: true } })
+            const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
+            const confirmedItems = victims
+              .filter(v => v.status === 'CONFIRMED')
+              .map(v => shiftReplacedMsg(v, (cid) => clinicNameMap.get(cid) ?? ''))
+            if (confirmedItems.length > 0) {
+              await createNotification(buildNotification(employeeId, confirmedItems, created.id), tx)
+            }
+          }
+
+          // ★ Stage 2.4：deleteMany bypasses DELETE handler hooks —— 被取代更嘅 OT 撤回 + 快取失效入 tx（失敗 = rollback）
+          if (replacedShiftDates.length > 0) {
+            const uniqueDates = [...new Set(replacedShiftDates)]
+            for (const d of uniqueDates) {
+              await revokeStaleEarlyOt(employeeId, d, session.userId, 'SHIFT_REPLACE', tx)
+            }
+            const earliest = new Date(Math.min(...replacedShiftDates.map(d => new Date(d).getTime())))
+            await invalidateTimeBankFrom(employeeId, earliest, tx)
+          }
+
+          // ★ Stage 2.4：排班影響遲到／早退／OT 判斷 → 快取失效入 tx
+          await invalidateTimeBankFrom(employeeId, times.date, tx)
+
+          return created
         })
 
         shifts.push(created)
@@ -431,49 +472,6 @@ export async function POST(req: NextRequest) {
           month: toHKDateStr(pm).slice(0, 7),
           status: locked.status,
         } : null
-
-        // ★ deleteMany bypasses DELETE handler hooks — manually revoke OT + invalidate cache
-        if (replacedShiftDates.length > 0) {
-          const uniqueDates = [...new Set(replacedShiftDates)]
-          for (const d of uniqueDates) {
-            try {
-              await revokeStaleEarlyOt(employeeId, d, session.userId, 'SHIFT_REPLACE', prisma)
-            } catch (e) {
-              console.error(`[early-in-ot] revoke failed for replaced shift date=${d}`, e)
-            }
-          }
-          try {
-            const earliest = new Date(Math.min(...replacedShiftDates.map(d => new Date(d).getTime())))
-            await invalidateTimeBankFrom(employeeId, earliest, prisma)
-          } catch (e) {
-            console.error(`[timebank-cache] invalidate failed for replaced shifts`, e)
-          }
-
-          // ★ Notify employee if replaced shifts were CONFIRMED
-          if (victims.length > 0) {
-            const clinics = await prisma.clinic.findMany({ select: { id: true, name: true } })
-            const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
-            const confirmedItems = victims
-              .filter(v => v.status === 'CONFIRMED')
-              .map(v => shiftReplacedMsg(v, (cid) => clinicNameMap.get(cid) ?? ''))
-            if (confirmedItems.length > 0) {
-              await createNotification(buildNotification(employeeId, confirmedItems, created.id))
-            }
-          }
-        }
-      }
-
-      // ★ 排班影響遲到／早退／OT 判斷 → 快取要失效
-      // 批量排班用最早日期（invalidateTimeBankFrom 會清該月及之後全部）
-      if (shifts.length > 0) {
-        const dates = shifts.map((s: any) => new Date(s.date).getTime()).sort()
-        const earliest = new Date(dates[0])
-        const empId = shifts[0].employeeId
-        try {
-          await invalidateTimeBankFrom(empId, earliest, prisma)
-        } catch (e) {
-          console.error(`[timebank-cache] invalidate failed employeeId=${empId} date=${earliest}`, e)
-        }
       }
 
       return NextResponse.json(

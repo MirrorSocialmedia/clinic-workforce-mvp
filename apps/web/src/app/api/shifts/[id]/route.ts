@@ -134,7 +134,7 @@ export async function PUT(
         const leaveConflict = await checkShiftLeaveConflict(empId, targetDate, tx)
         if (leaveConflict.conflict) throw new HttpError(409, `該員工該天已有假期（${leaveConflict.leaveName}），無法排班`)
 
-        return tx.shift.update({
+        const updated = await tx.shift.update({
           where: { id: existing.id },
           data: updateData,
           include: {
@@ -143,6 +143,21 @@ export async function PUT(
             template: { select: { id: true, name: true } },
           },
         })
+
+        // ★ Stage 2.4：排班變更影響遲到／早退／OT 判斷 → 快取失效 + OT 撤回入 tx（失敗 = rollback）
+        //   PUT 換員工：**新舊員工 × 新舊日期**都做（改期會影響兩個月）
+        const newEmpId = updateData.employeeId ?? existing.employeeId
+        const affectedEmpIds = newEmpId === existing.employeeId ? [newEmpId] : [newEmpId, existing.employeeId]
+        const oldDateStr = toHKDateStr(existing.date)
+        const newDateStr = toHKDateStr(updateData.date || existing.date)
+        for (const eid of affectedEmpIds) {
+          await invalidateTimeBankFrom(eid, existing.date, tx)
+          if (updateData.date) await invalidateTimeBankFrom(eid, updateData.date, tx)
+          await revokeStaleEarlyOt(eid, oldDateStr, session.userId, 'SHIFT_EDIT', tx)
+          if (updateData.date) await revokeStaleEarlyOt(eid, newDateStr, session.userId, 'SHIFT_EDIT', tx)
+        }
+
+        return updated
       })
     } catch (error) {
       { const r = toHttpResponse(error); if (r) return r }
@@ -153,36 +168,6 @@ export async function PUT(
     if (wasConfirmed) {
       const msg = describeShiftChange(beforeSnapshot, shift, (cid) => clinicNameMap.get(cid) ?? '')
       await createNotification(buildNotification(shift.employeeId, [msg], shift.id))
-    }
-
-    // ★ 排班變更影響遲到／早退／OT 判斷 → 新舊日期都要失效（改期會影響兩個月）
-    try {
-      await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
-    } catch (e) {
-      console.error(`[timebank-cache] invalidate failed employeeId=${existing.employeeId} date=${existing.date}`, e)
-    }
-    if (updateData.date) {
-      try {
-        await invalidateTimeBankFrom(existing.employeeId, updateData.date, prisma)
-      } catch (e) {
-        console.error(`[timebank-cache] invalidate failed employeeId=${existing.employeeId} date=${updateData.date}`, e)
-      }
-    }
-
-    // ★ 2026-08-08: Revoke stale early-in OT on shift changes (old + new date)
-    try {
-      const oldDate = toHKDateStr(existing.date)
-      await revokeStaleEarlyOt(existing.employeeId, oldDate, session.userId, 'SHIFT_EDIT', prisma)
-    } catch (e) {
-      console.error(`[early-in-ot] revoke failed employeeId=${existing.employeeId}`, e)
-    }
-    if (updateData.date) {
-      try {
-        const newDate = toHKDateStr(updateData.date)
-        await revokeStaleEarlyOt(existing.employeeId, newDate, session.userId, 'SHIFT_EDIT', prisma)
-      } catch (e) {
-        console.error(`[early-in-ot] revoke failed employeeId=${existing.employeeId}`, e)
-      }
     }
 
     // ★ 已出糧警告：檢查新日期/診所嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單（§四.E）
@@ -251,6 +236,9 @@ export async function DELETE(
       await prisma.$transaction(async (tx) => {
         await lockEmployee(tx, existing.employeeId)
         await tx.shift.delete({ where: { id } })
+        // ★ Stage 2.4：刪除排班影響遲到／早退／OT 判斷 → 快取失效 + OT 撤回入 tx（失敗 = rollback）
+        await invalidateTimeBankFrom(existing.employeeId, existing.date, tx)
+        await revokeStaleEarlyOt(existing.employeeId, toHKDateStr(existing.date), session.userId, 'SHIFT_DELETE', tx)
       })
     } catch (e: any) {
       if (e?.code === 'P2003') return NextResponse.json({ error: '呢張更仲有關聯記錄，唔可以直接刪' }, { status: 409 })
@@ -285,21 +273,6 @@ export async function DELETE(
         entityId: id,
         notes: `${toHKDateStr(existing.date)} 屬於已${locked.status === 'EXPORTED' ? '匯出' : '確認'}嘅計糧月份，糧單唔會自動更新`,
       })
-    }
-
-    // ★ 刪除排班影響遲到／早退／OT 判斷 → 快取要失效
-    try {
-      await invalidateTimeBankFrom(existing.employeeId, existing.date, prisma)
-    } catch (e) {
-      console.error(`[timebank-cache] invalidate failed employeeId=${existing.employeeId} date=${existing.date}`, e)
-    }
-
-    // ★ 2026-08-08: Revoke stale early-in OT on shift delete
-    try {
-      const hkDate = toHKDateStr(existing.date)
-      await revokeStaleEarlyOt(existing.employeeId, hkDate, session.userId, 'SHIFT_DELETE', prisma)
-    } catch (e) {
-      console.error(`[early-in-ot] revoke failed employeeId=${existing.employeeId}`, e)
     }
 
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)

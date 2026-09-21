@@ -59,12 +59,51 @@ export async function PUT(
           where: { id, status: 'PENDING' },
           data: { status: status as any, approvedBy: session.userId },
         })
-        if (status !== 'APPROVED') return result
+
+        // ★ Stage 2.3：通知入 tx（同狀態同生死，outbox 語義）
+        const notify = () => createNotification({
+          employeeId: correction.employeeId,
+          type: action === 'APPROVE' ? 'CORRECTION_APPROVED' : 'CORRECTION_REJECTED',
+          content: action === 'APPROVE'
+            ? `Your punch correction request has been approved.`
+            : `Your punch correction request has been rejected.${notes ? ` Reason: ${notes}` : ''}`,
+          relatedEntity: 'PunchCorrection',
+          relatedId: correction.id,
+        }, tx)
+
+        if (status !== 'APPROVED') {
+          await notify()
+          return result
+        }
+
+        // ★ Stage 2.4：自批 audit + 失效 + OT 撤回入 tx（失敗 = rollback）
+        // ★ 自批記錄：批核自己提出嘅 PENDING 申請
+        if (correction.employee?.userId === session.userId) {
+          await tx.auditLog.create({
+            data: {
+              actorId: session.userId,
+              action: 'CORRECTION_SELF_APPROVE',
+              entity: 'PunchCorrection',
+              entityId: correction.id,
+              targetEmployeeId: correction.employeeId,
+              clinicId: correction.clinicId,
+              afterJson: JSON.stringify({ correctedTime: correction.correctedTime, punchType: correction.punchType }),
+              notes: '批核自己提出的補登申請',
+              ipAddress: req.headers.get('x-forwarded-for') || null,
+              userAgent: req.headers.get('user-agent') || null,
+            },
+          })
+        }
+        // ★ 審批通過會新增 PunchRecord，快取必須清（同 OT 撤回一齊入 tx）
+        await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, tx)
+        // ★ 2026-08-08: Revoke stale early-in OT if punches changed
+        await revokeStaleEarlyOt(correction.employeeId, toHKDateStr(correction.correctedTime), session.userId, 'CORRECTION_APPROVE', tx)
 
         if (correction.punchRecordId) {
           // ★ RC-07：原卡已作廢 → 呢張修正冇嘢可以 overlay，唔准「假成功」
           const voided = await tx.punchVoid.findUnique({ where: { punchRecordId: correction.punchRecordId } })
           if (voided) throw new HttpError(409, '原打卡已被作廢，呢張修正冇效，請員工重新提交補登')
+          await notify()
           return result
         }
         // ★ RC-05：冇 link → 先搵同日同類 active 卡（申請後員工可能已經真打咗），有就 link，冇先建
@@ -87,6 +126,7 @@ export async function PUT(
           },
         })).id
         // ★ cwm-antitamper P1-4：一定要回寫，否則 punch-query 當 orphan 再砌一張 synthetic
+        await notify()
         return tx.punchCorrection.update({ where: { id }, data: { punchRecordId: targetId } })
       })
     } catch (e: any) {
@@ -96,55 +136,6 @@ export async function PUT(
       }
       throw e
     }
-
-    // ★ 自批記錄：批核自己提出嘅 PENDING 申請
-    if (status === 'APPROVED' && correction.employee?.userId === session.userId) {
-      await prisma.auditLog.create({
-        data: {
-          actorId: session.userId,
-          action: 'CORRECTION_SELF_APPROVE',
-          entity: 'PunchCorrection',
-          entityId: correction.id,
-          targetEmployeeId: correction.employeeId,
-          clinicId: correction.clinicId,
-          afterJson: JSON.stringify({ correctedTime: correction.correctedTime, punchType: correction.punchType }),
-          notes: '批核自己提出的補登申請',
-          ipAddress: req.headers.get('x-forwarded-for') || null,
-          userAgent: req.headers.get('user-agent') || null,
-        },
-      })
-    }
-
-    // ★ 審批通過會新增 PunchRecord（:53-64），快取必須清。
-    // 建立路徑（route.ts:253）有清，但審批呢條路徑之前漏咗 ——
-    // 結果係「員工申請 → 經理批」之後，時間帳戶仍然係批准前嘅數。
-    if (status === 'APPROVED') {
-      try {
-        await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, prisma)
-      } catch (e) {
-        console.error(`[timebank-cache] invalidate failed employeeId=${correction.employeeId} date=${correction.correctedTime}`, e)
-      }
-
-      // ★ 2026-08-08: Revoke stale early-in OT if punches changed
-      try {
-        const hkDate = toHKDateStr(correction.correctedTime)
-        await revokeStaleEarlyOt(correction.employeeId, hkDate, session.userId, 'CORRECTION_APPROVE', prisma)
-      } catch (e) {
-        console.error(`[early-in-ot] revoke failed employeeId=${correction.employeeId}`, e)
-      }
-    }
-
-    // Notification outside transaction (non-critical side effect)
-
-    await createNotification({
-      employeeId: correction.employeeId,
-      type: action === 'APPROVE' ? 'CORRECTION_APPROVED' : 'CORRECTION_REJECTED',
-      content: action === 'APPROVE'
-        ? `Your punch correction request has been approved.`
-        : `Your punch correction request has been rejected.${notes ? ` Reason: ${notes}` : ''}`,
-      relatedEntity: 'PunchCorrection',
-      relatedId: correction.id,
-    })
 
     return NextResponse.json({ success: true, correction: updated })
   })
