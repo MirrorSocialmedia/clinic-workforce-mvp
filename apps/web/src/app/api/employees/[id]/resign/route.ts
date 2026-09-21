@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { balanceYearFor } from '@/lib/leave-types'
+import { balanceYearFor, consumesQuota } from '@/lib/leave-types'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { shiftDeletedMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
@@ -78,6 +78,8 @@ export async function POST(
         where: { id: lr.id },
         data: { status: 'CANCELLED' },
       })
+      // ★ Stage 1.5：統一口徑 —— 唔扣額嘅類型（SICK 等）從來冇扣過，唔使還
+      if (!consumesQuota(lr.leaveType)) continue
       // ★ 年假累積制 = year 0；休息日等 = 曆年（照 leave-requests/[id]:207 口徑）
       const leaveYear = balanceYearFor(lr.leaveType.systemKey, new Date(lr.startDate))
       const updated = await tx.leaveBalance.updateMany({

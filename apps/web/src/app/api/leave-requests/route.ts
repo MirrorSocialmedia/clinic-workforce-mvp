@@ -7,7 +7,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
 import { isInProbation } from '@/lib/leave-calculation'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance, isAccumulativeLeave } from '@/lib/leave-types'
+import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance, isAccumulativeLeave, consumesQuota } from '@/lib/leave-types'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 // ★ 餘額不足錯誤 —— 用於在 $transaction 內拋出，catch 層分辨 400 vs 500
@@ -277,7 +277,7 @@ export async function POST(req: NextRequest) {
         })
 
         // ★ 扣餘額搬入交易內（SICK 除外 —— 成本喺計糧端結算）
-        if (req.status === 'APPROVED' && !isUnlimited && leaveType.systemKey !== LEAVE_SYSTEM_KEYS.SICK) {
+        if (req.status === 'APPROVED' && consumesQuota(leaveType)) {
           // 累積制假期（年假、生日假）用 year=0；其餘假期用曆年
           const deductYear = isAccumulativeLeave(leaveType.systemKey)
             ? 0
@@ -314,15 +314,15 @@ export async function POST(req: NextRequest) {
             )
           }
 
-          await tx.leaveBalance.update({
-            where: {
-              employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: deductYear },
-            },
-            data: {
-              used: { increment: days },
-              remaining: { decrement: days },
-            },
-          })
+          if (allowsNegativeBalance(leaveType.systemKey)) {
+            await tx.leaveBalance.update({ where: { employeeId_leaveTypeId_year: { employeeId: employee.id, leaveTypeId, year: deductYear } },
+              data: { used: { increment: days }, remaining: { decrement: days } } })
+          } else {
+            const r = await tx.leaveBalance.updateMany({
+              where: { employeeId: employee.id, leaveTypeId, year: deductYear, remaining: { gte: days } },
+              data: { used: { increment: days }, remaining: { decrement: days } } })
+            if (r.count !== 1) throw new InsufficientBalanceError(`${leaveType.name}餘額不足（需 ${days} 天）。請先調整該員工嘅假期額度。`)
+          }
         }
 
         return req

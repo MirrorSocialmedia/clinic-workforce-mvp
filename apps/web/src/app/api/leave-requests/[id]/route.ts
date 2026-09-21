@@ -6,7 +6,8 @@ import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth
 import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { balanceYearFor, allowsNegativeBalance } from '@/lib/leave-types'
+import { balanceYearFor, allowsNegativeBalance, consumesQuota } from '@/lib/leave-types'
+import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 // PUT /api/leave-requests/[id] — Approve/Reject leave request
 export async function PUT(
@@ -112,31 +113,46 @@ export async function PUT(
     let updated
     try {
       updated = await prisma.$transaction(async (tx) => {
+        await lockEmployee(tx, request.employeeId)
+        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        if (status === 'APPROVED') {
+          // mutex：喺鎖入面再查（:58-76 保留做 fast-fail）
+          const c = await tx.shift.findFirst({ where: {
+            employeeId: request.employeeId, status: { not: 'CANCELLED' },
+            date: {
+              gte: new Date(`${toHKDateStr(request.startDate)}T00:00:00+08:00`),
+              lte: new Date(`${toHKDateStr(request.endDate || request.startDate)}T23:59:59+08:00`),
+            } } })
+          if (c) throw new HttpError(400, `該員工在假期範圍內已有排班（${toHKDateStr(c.date)}），請先移除排班或改假期日期`)
+        }
         const u = await tx.leaveRequest.update({
           where: { id: requestId, status: 'PENDING' },
           data: { status: status as any, approverId: session.userId, approvedAt: new Date() },
         })
-
-        if (status === 'APPROVED') {
-          const systemKey = request.leaveType?.systemKey ?? ''
-          const isNoQuota = ['SICK', 'UNPAID_LEAVE'].includes(systemKey)
-
-          if (!isNoQuota) {
-            const leaveYear = balanceYearFor(systemKey, new Date(request.startDate))
-            await tx.leaveBalance.updateMany({
-              where: {
-                employeeId: request.employeeId,
-                leaveTypeId: request.leaveTypeId,
-                year: leaveYear,
-              },
+        if (status === 'APPROVED' && consumesQuota(request.leaveType)) {
+          const systemKey = request.leaveType?.systemKey ?? null
+          const year = balanceYearFor(systemKey, new Date(request.startDate))
+          const key = { employeeId: request.employeeId, leaveTypeId: request.leaveTypeId, year }
+          if (allowsNegativeBalance(systemKey)) {
+            // 可預支：冇 row 就建（同 POST :262-270 一致）—— 唔再「APPROVED 但冇扣」
+            await tx.leaveBalance.upsert({
+              where: { employeeId_leaveTypeId_year: key },
+              create: { ...key, entitled: 0, used: request.days, remaining: -request.days },
+              update: { used: { increment: request.days }, remaining: { decrement: request.days } },
+            })
+          } else {
+            // 唔准負：條件扣，count≠1 = 冇 row 或唔夠 → rollback
+            const r = await tx.leaveBalance.updateMany({
+              where: { ...key, remaining: { gte: request.days } },
               data: { used: { increment: request.days }, remaining: { decrement: request.days } },
             })
+            if (r.count !== 1) throw new HttpError(400, `${request.leaveType.name}餘額不足或未設定額度`)
           }
         }
-
         return u
       })
     } catch (e: any) {
+      { const r = toHttpResponse(e); if (r) return r }
       if (e?.code === 'P2025') return NextResponse.json({ error: '呢張假期申請已經有人處理咗' }, { status: 409 })
       throw e
     }
@@ -211,7 +227,7 @@ export async function DELETE(
       await prisma.$transaction(async (tx) => {
         await tx.leaveRequest.delete({ where: { id: requestId, status: request.status } })
 
-        if (request.status === 'APPROVED') {
+        if (request.status === 'APPROVED' && consumesQuota(request.leaveType)) {
           // ★ 累積制假期用 year = 0（2026-08-04 修）
           const leaveYear = balanceYearFor(request.leaveType?.systemKey, new Date(request.startDate))
           const r = await tx.leaveBalance.updateMany({

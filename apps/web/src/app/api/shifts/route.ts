@@ -12,7 +12,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { shiftReplacedMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
-import { balanceYearFor } from '@/lib/leave-types'
+import { balanceYearFor, consumesQuota } from '@/lib/leave-types'
 import { lockEmployee, HttpError } from '@/lib/emp-lock'
 
 // ============================================================
@@ -357,7 +357,7 @@ export async function POST(req: NextRequest) {
               // ★ Stage 1.3：先「搶」刪除（帶讀到嘅 status）—— 搶唔到 = 另一請求已處理 → 409，唔准再退
               const claimed = await tx.leaveRequest.deleteMany({ where: { id: vl.id, status: vl.status } })
               if (claimed.count !== 1) throw new HttpError(409, '假期已被其他人改動，請重新整理')
-              if (vl.status !== 'APPROVED') continue // ★ PENDING leaves never had balance deducted
+              if (vl.status !== 'APPROVED' || !consumesQuota(vl.leaveType)) continue // ★ PENDING leaves never had balance deducted
               const leaveYear = balanceYearFor(vl.leaveType?.systemKey, new Date(vl.startDate))
               const updated = await tx.leaveBalance.updateMany({
                 where: {
