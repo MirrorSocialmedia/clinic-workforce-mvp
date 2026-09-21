@@ -8,6 +8,7 @@ import { punchLabel } from '@/lib/punch-label'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { jsonNoStore } from '@/lib/api-response'
+import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 // ============================================================
 // POST /api/punch-corrections — Create a punch correction request
@@ -134,6 +135,16 @@ export async function POST(req: NextRequest) {
       const correction = await prisma.$transaction(async (tx) => {
         // ★ 同上：唔改呢度，補登會成功但唔建立 PunchRecord
         const isManager = (perms ?? []).includes('attendance_manage')
+        await lockEmployee(tx, employee.id)
+        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        if (!isManager) {
+          const dupPending = await tx.punchCorrection.findFirst({
+            where: { employeeId: employee.id, punchType: punchType as any, status: 'PENDING',
+                     correctedTime: { gte: dayStart, lte: dayEnd } },
+            select: { id: true },
+          })
+          if (dupPending) throw new HttpError(409, '同一日同類補登已有申請等緊批，唔使再交')
+        }
 
         // ★ Check if punchType changed (originalPunchType provided and different)
         let voidedOriginalId: string | null = null
@@ -301,6 +312,7 @@ export async function POST(req: NextRequest) {
         { status: 201 }
       )
     } catch (error) {
+      { const r = toHttpResponse(error); if (r) return r }
       console.error('Punch correction error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }

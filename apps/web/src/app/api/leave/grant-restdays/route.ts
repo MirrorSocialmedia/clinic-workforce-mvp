@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { grantMonthlyRestDays, countMonthlyLeaveDays, getPublicHolidayDays } from '@/lib/payroll-engine'
 import { hkParts, toHKDateStr } from '@/lib/hk-date'
+import { lockEmployee } from '@/lib/emp-lock'
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -60,7 +61,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const ph = await getPublicHolidayDays(mStart, mEnd)
     const phSet = new Set(ph.map(d => toHKDateStr(d)))
     const quota = countMonthlyLeaveDays(y, m, restDays, phSet)
-    await grantMonthlyRestDays(e.id, y, m, quota.total, prisma)
+    await prisma.$transaction(async (tx) => {
+      await lockEmployee(tx, e.id)
+      await grantMonthlyRestDays(e.id, y, m, quota.total, tx)
+    })
     n++
   }
 

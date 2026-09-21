@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { toHKDateStr } from '@/lib/hk-date'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
 
 // POST /api/punches/[id]/void — Void a punch record (OWNER/MANAGER)
 export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
@@ -44,26 +45,24 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json({ error: '此打卡記錄已被作廢' }, { status: 400 })
   }
 
-  await prisma.punchVoid.create({
-    data: { punchRecordId: id, voidedBy: session.userId, reason },
-  })
-
-  await prisma.auditLog.create({
-    data: {
-      actorId: session.userId,
-      action: 'VOID_PUNCH',
-      entity: 'PunchRecord',
-      entityId: id,
-      targetEmployeeId: punch.employeeId,
-      notes: `作廢打卡：${reason}`,
-    },
-  })
-
-  // Invalidate TimeBank so carry chain recalculates from void date
   try {
-    await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, prisma)
-  } catch (e) {
-    console.error(`[timebank-cache] invalidate failed employeeId=${punch.employeeId} date=${punch.punchTime}`, e)
+    await prisma.$transaction(async (tx) => {
+      await lockEmployee(tx, punch.employeeId)
+      // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+      await tx.punchVoid.create({ data: { punchRecordId: id, voidedBy: session.userId, reason } })
+      await tx.auditLog.create({ data: {
+        actorId: session.userId, action: 'VOID_PUNCH', entity: 'PunchRecord', entityId: id,
+        targetEmployeeId: punch.employeeId, notes: `作廢打卡：${reason}` } })
+      // ★ RC-07：指向呢張卡嘅 PENDING 修正已冇對象 → 標 REJECTED
+      await tx.punchCorrection.updateMany({
+        where: { punchRecordId: id, status: 'PENDING' },
+        data: { status: 'REJECTED', approvedBy: session.userId },
+      })
+      await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, tx)
+    })
+  } catch (e: any) {
+    { const r = toHttpResponse(e, '此打卡記錄已被作廢'); if (r) return r }
+    throw e
   }
 
   // ★ 2026-08-08: Revoke stale early-in OT if punches changed

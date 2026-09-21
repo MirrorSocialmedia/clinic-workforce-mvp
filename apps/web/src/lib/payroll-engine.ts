@@ -2515,7 +2515,7 @@ export async function grantMonthlyRestDays(
     where: {
       employeeId,
       type: 'RESTDAY_GRANT',
-      note: { contains: grantKey },
+      note: { startsWith: `${grantKey}:` },   // ★ 'restday_grant_2026_1:' 唔會 match 到 '_10:'；唔依賴 date 欄
     },
   })
   const prevDays = prevGrant ? Math.round(prevGrant.minutes / (24 * 60)) : 0

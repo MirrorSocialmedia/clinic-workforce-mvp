@@ -6,7 +6,8 @@ import { runWithAudit } from '@/lib/audit-context'
 import { createNotification } from '@/lib/notification'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 // PUT /api/punch-corrections/[id] — Approve/reject a correction
 export async function PUT(
@@ -52,31 +53,44 @@ export async function PUT(
     let updated
     try {
       updated = await prisma.$transaction(async (tx) => {
-        // ★ cwm-antitamper：status 條件寫入 —— 雙擊／兩個經理同時批，只有一個成功（另一個 P2025 → 409）
+        await lockEmployee(tx, correction.employeeId)
+        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
         const result = await tx.punchCorrection.update({
           where: { id, status: 'PENDING' },
           data: { status: status as any, approvedBy: session.userId },
         })
+        if (status !== 'APPROVED') return result
 
-        // If approved and no original punch record exists, create one
-        if (status === 'APPROVED' && !correction.punchRecordId) {
-          const pr = await tx.punchRecord.create({
-            data: {
-              employeeId: correction.employeeId,
-              clinicId: correction.clinicId,
-              punchTime: correction.correctedTime,
-              punchType: correction.punchType,
-              source: 'MANUAL_CORRECTION' as any,
-              tokenValid: null,
-              notes: notes || `Corrected via punch correction #${correction.id}: ${correction.reason || 'N/A'}`,
-            },
-          })
-          // ★ cwm-antitamper P1-4：一定要回寫，否則 punch-query.ts:74 當 orphan 再砌一張 synthetic
-          return tx.punchCorrection.update({ where: { id }, data: { punchRecordId: pr.id } })
+        if (correction.punchRecordId) {
+          // ★ RC-07：原卡已作廢 → 呢張修正冇嘢可以 overlay，唔准「假成功」
+          const voided = await tx.punchVoid.findUnique({ where: { punchRecordId: correction.punchRecordId } })
+          if (voided) throw new HttpError(409, '原打卡已被作廢，呢張修正冇效，請員工重新提交補登')
+          return result
         }
-        return result
+        // ★ RC-05：冇 link → 先搵同日同類 active 卡（申請後員工可能已經真打咗），有就 link，冇先建
+        const day = toHKDateStr(correction.correctedTime)
+        const existing = await tx.punchRecord.findFirst({
+          where: { employeeId: correction.employeeId, clinicId: correction.clinicId, punchType: correction.punchType,
+                   punchTime: { gte: hkDateStart(day), lte: hkDateEnd(day) }, void: { is: null } },
+          orderBy: [{ punchTime: 'asc' }, { id: 'asc' }],
+          select: { id: true },
+        })
+        const targetId = existing?.id ?? (await tx.punchRecord.create({
+          data: {
+            employeeId: correction.employeeId,
+            clinicId: correction.clinicId,
+            punchTime: correction.correctedTime,
+            punchType: correction.punchType,
+            source: 'MANUAL_CORRECTION' as any,
+            tokenValid: null,
+            notes: notes || `Corrected via punch correction #${correction.id}: ${correction.reason || 'N/A'}`,
+          },
+        })).id
+        // ★ cwm-antitamper P1-4：一定要回寫，否則 punch-query 當 orphan 再砌一張 synthetic
+        return tx.punchCorrection.update({ where: { id }, data: { punchRecordId: targetId } })
       })
     } catch (e: any) {
+      { const r = toHttpResponse(e); if (r) return r }
       if (e?.code === 'P2025') {
         return NextResponse.json({ error: '呢張申請已經有人處理咗' }, { status: 409 })
       }

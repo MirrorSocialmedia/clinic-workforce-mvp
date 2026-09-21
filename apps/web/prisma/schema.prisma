@@ -1002,6 +1002,7 @@ model TimeBankEntry {
   // ★ cwm-money P2-1：Prisma schema 表達唔到 partial index，raw migration 兜底
   //   （20260917140500_timebank_rosterdiff_once）：每人每月最多一筆 ROSTER_DIFF，
   //   防雙擊／524 重試雙寫。新增 ROSTER_DIFF 類型行前核實無重複。
+  //   另有 3 個 partial unique（20260921000000）：RESTDAY_GRANT / MAKEUP / EARLY_IN_OT。
 
   @@index([employeeId, date])
 }
