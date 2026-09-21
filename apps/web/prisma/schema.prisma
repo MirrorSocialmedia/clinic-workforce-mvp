@@ -669,8 +669,8 @@ model AuditLog {
 // Shift change request — swap/cover/report
 model ShiftChangeRequest {
   id             String       @id @default(cuid())
-  shiftId        String
-  shift          Shift        @relation(fields: [shiftId], references: [id])
+  shiftId        String?      // ★ Stage 1.10（D4）：更被刪 → SetNull，保留歷史申請、唔再鎖死刪更
+  shift          Shift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
   fromEmployeeId String
   fromEmployee   Employee     @relation("ChangeFrom", fields: [fromEmployeeId], references: [id])
   toEmployeeId   String?

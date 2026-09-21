@@ -12,6 +12,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { describeShiftChange, buildNotification, shiftDeletedMsg } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
+import { lockEmployee, lockEmployees, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 // PUT /api/shifts/[id] — edit shift
 export async function PUT(
@@ -99,36 +100,6 @@ export async function PUT(
     // ★ D1: check collision before writing
     const targetStart = updateData.startTime ?? existing.startTime
     const targetEnd = updateData.endTime ?? existing.endTime
-    const targetEmp = updateData.employeeId ?? existing.employeeId
-
-    const overlap = await prisma.shift.findFirst({
-      where: {
-        id: { not: id },
-        employeeId: targetEmp,
-        status: { not: 'CANCELLED' },
-        date: { gte: new Date(targetStart.getTime() - 86400000), lte: targetEnd },
-        startTime: { lt: targetEnd },
-        endTime: { gt: targetStart },
-      },
-      select: { id: true, clinicId: true, startTime: true, endTime: true },
-    })
-    if (overlap) {
-      return NextResponse.json(
-        { error: '該員工在此時段已有排班', conflictShiftId: overlap.id },
-        { status: 409 }
-      )
-    }
-
-    // Fix: check leave conflict after rebuildShiftDate, before write
-    const targetEmpId = updateData.employeeId || existing.employeeId
-    const targetDate = updateData.date || existing.date
-    const leaveConflict = await checkShiftLeaveConflict(targetEmpId, targetDate)
-    if (leaveConflict.conflict) {
-      return NextResponse.json(
-        { error: `該員工該天已有假期（${leaveConflict.leaveName}），無法排班` },
-        { status: 409 }
-      )
-    }
 
     // ★ Capture before-update snapshot for notification
     const wasConfirmed = existing.status === 'CONFIRMED'
@@ -138,26 +109,45 @@ export async function PUT(
       secondaryClinicId: existing.secondaryClinicId,
     }
 
-    const shift = await prisma.shift.update({
-      where: { id },
-      data: updateData,
-      include: {
-        employee: { include: { user: { select: { id: true, name: true } } } },
-        clinic: { select: { id: true, name: true } },
-        template: { select: { id: true, name: true } },
-      },
-    }).catch(async (e: any) => {
-      // ★ P2002: unique constraint violation
-      if (e?.code === 'P2002') {
-        return NextResponse.json(
-          { error: '該時段已有相同排班（可能重複提交）' },
-          { status: 409 }
-        )
-      }
-      throw e
-    })
+    let shift
+    try {
+      shift = await prisma.$transaction(async (tx) => {
+        await lockEmployees(tx, [existing.employeeId, updateData.employeeId])
+        // ★ Stage 4A 嘅 assertMonthsUnlockedTx 會插喺呢度（見 Stage 4）
+        const empId = updateData.employeeId ?? existing.employeeId
+        // overlap：喺鎖入面再驗（排除自己）
+        const overlap = await tx.shift.findFirst({
+          where: {
+            id: { not: existing.id },
+            employeeId: empId,
+            status: { not: 'CANCELLED' },
+            date: { gte: new Date(targetStart.getTime() - 86400000), lte: targetEnd },
+            startTime: { lt: targetEnd },
+            endTime: { gt: targetStart },
+          },
+          select: { id: true, clinicId: true, startTime: true, endTime: true },
+        })
+        if (overlap) throw new HttpError(409, '該員工在此時段已有排班', { conflictShiftId: overlap.id })
 
-    if (shift instanceof NextResponse) return shift
+        // leave：喺鎖入面再驗
+        const targetDate = updateData.date || existing.date
+        const leaveConflict = await checkShiftLeaveConflict(empId, targetDate, tx)
+        if (leaveConflict.conflict) throw new HttpError(409, `該員工該天已有假期（${leaveConflict.leaveName}），無法排班`)
+
+        return tx.shift.update({
+          where: { id: existing.id },
+          data: updateData,
+          include: {
+            employee: { include: { user: { select: { id: true, name: true } } } },
+            clinic: { select: { id: true, name: true } },
+            template: { select: { id: true, name: true } },
+          },
+        })
+      })
+    } catch (error) {
+      { const r = toHttpResponse(error); if (r) return r }
+      throw error
+    }
 
     // ★ Notify employee if shift was CONFIRMED and changed
     if (wasConfirmed) {
@@ -257,7 +247,15 @@ export async function DELETE(
     }
 
     const wasConfirmed = existing.status === 'CONFIRMED'
-    await prisma.shift.delete({ where: { id } })
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockEmployee(tx, existing.employeeId)
+        await tx.shift.delete({ where: { id } })
+      })
+    } catch (e: any) {
+      if (e?.code === 'P2003') return NextResponse.json({ error: '呢張更仲有關聯記錄，唔可以直接刪' }, { status: 409 })
+      throw e
+    }
 
     // ★ Notify employee if deleted shift was CONFIRMED
     if (wasConfirmed) {

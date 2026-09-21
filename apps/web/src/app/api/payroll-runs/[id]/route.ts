@@ -545,7 +545,9 @@ export async function DELETE(
 
       // FIX #1: Use $transaction — delete + audit in same transaction
       await basePrisma.$transaction(async (tx) => {
-        await tx.payrollRun.delete({ where: { id: params.id } })
+        // ★ RC-11：條件刪 —— 預查同落刀之間 run 可能已 FINALIZED，只准刪 DRAFT
+        const { count } = await tx.payrollRun.deleteMany({ where: { id: params.id, status: 'DRAFT' } })
+        if (count === 0) throw Object.assign(new Error('計糧單狀態已改變'), { code: 'P2025' })
 
         // Manual audit inside same transaction
         await tx.auditLog.create({
