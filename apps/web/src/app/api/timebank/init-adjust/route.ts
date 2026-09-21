@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
+import { todayHK } from '@/lib/hk-date'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 
 export async function POST(req: NextRequest) {
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
   if (!employeeId || !totalMinutes || !reason?.trim()) {
     return NextResponse.json({ error: '需要員工、非零分鐘數與原因' }, { status: 400 })
   }
-  const date = new Date(`${effectiveMonth || new Date().toISOString().slice(0, 7)}-01T00:00:00+08:00`)
+  const date = new Date(`${effectiveMonth || todayHK().slice(0, 7)}-01T00:00:00+08:00`)
 
   // ★ 覆蓋語義：刪除舊 INIT_ADJUST（初始化 = 設定基準，非累加）
   const oldInits = await prisma.timeBankEntry.findMany({

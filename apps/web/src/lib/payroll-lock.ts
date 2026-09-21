@@ -17,7 +17,7 @@
 //   寫 PAYROLL_LOCK_BLOCKED（已入 SENSITIVE_AUDIT_SPEC）。audit 寫入失敗只 log 唔阻擋 409。
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateOnly } from '@/lib/hk-date'
+import { hkDateOnly, toHKDateStr } from '@/lib/hk-date'
 
 /**
  * 計糧 run-lock 守衛：該月計糧已確認（FINALIZED）／已匯出（EXPORTED）就回 409。
@@ -49,7 +49,7 @@ export async function guardPayrollLock(
   if (runs.length === 0) return null
 
   const months = [...new Set(
-    runs.map(r => `${r.periodMonth.getFullYear()}-${String(r.periodMonth.getMonth() + 1).padStart(2, '0')}`),
+    runs.map(r => toHKDateStr(r.periodMonth).slice(0, 7)),
   )]
   const hasExported = runs.some(r => r.status === 'EXPORTED')
   const stateWord = hasExported ? '已確認或已匯出' : '已確認'

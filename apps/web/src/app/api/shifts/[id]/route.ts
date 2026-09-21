@@ -220,7 +220,7 @@ export async function PUT(
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true, shift, payrollLocked: locked ? {
-      month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+      month: toHKDateStr(pm).slice(0, 7),
       status: locked.status,
     } : null })
   })
@@ -307,7 +307,7 @@ export async function DELETE(
     // Audit handled by Prisma extension (Shift ∈ AUDIT_ENTITIES)
 
     return NextResponse.json({ success: true, payrollLocked: locked ? {
-      month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+      month: toHKDateStr(pm).slice(0, 7),
       status: locked.status,
     } : null })
   })

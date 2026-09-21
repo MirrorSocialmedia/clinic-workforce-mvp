@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
@@ -61,6 +61,8 @@ export default function NewPayrollPage() {
 
   // ★ 2026-08-02：勤工獎三態覆蓋（AUTO/FORCE_ON/FORCE_OFF）
   const [bonusOverrides, setBonusOverrides] = useState<Record<string, 'FORCE_ON' | 'FORCE_OFF'>>({})
+  const previewSeq = useRef(0)          // ★ DB-03：只接受最新一次 preview
+  const generatingRef = useRef(false)   // ★ 生成 in-flight（setState 有延遲，要用 ref）
 
   // ★ P1-3: parse string inputs to numbers on blur
   const handleStoreBonusBlur = (employeeId: string) => {
@@ -89,6 +91,7 @@ export default function NewPayrollPage() {
 
   const runPreview = useCallback(async () => {
     if (!selectedClinic || !periodMonth) return
+    const my = ++previewSeq.current
     setPreviewing(true)
     setError(null)
     setPreviewResult(null)
@@ -97,22 +100,16 @@ export default function NewPayrollPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          periodMonth,
-          clinicId: selectedClinic || null,
-          employeeId: selectedEmployee || null,
-        }),
+        body: JSON.stringify({ periodMonth, clinicId: selectedClinic || null, employeeId: selectedEmployee || null }),
       })
-      if (!res.ok) {
-        const errData = await res.json()
-        throw new Error(errData.error || '試算失敗')
-      }
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+      if (my !== previewSeq.current) return            // ★ 過時 response，丟棄
+      if (!res.ok) throw new Error(data.error || '試算失敗')
       setPreviewResult(data)
     } catch (err: any) {
-      setError(err.message || '試算失敗')
+      if (my === previewSeq.current) setError(err.message || '試算失敗')
     } finally {
-      setPreviewing(false)
+      if (my === previewSeq.current) setPreviewing(false)
     }
   }, [selectedClinic, periodMonth, selectedEmployee])
 
@@ -161,12 +158,22 @@ export default function NewPayrollPage() {
     if (Object.keys(sp).length) setSplitPayInputs(prev => ({ ...sp, ...prev }))
   }, [previewResult?.items])
 
+  // ★ DB-03：換店／換月 → 手動輸入全部作廢（否則上個月獎金會寫入今個月 run）
+  useEffect(() => {
+    setStoreBonusInputs({}); setStoreBonuses({})
+    setSplitPayInputs({}); setSplitPays({})
+    setBonusOverrides({})
+  }, [selectedClinic, periodMonth])
+
   // Auto-run preview when clinic + month are both selected
   useEffect(() => {
     if (selectedClinic && periodMonth) runPreview()
   }, [selectedClinic, periodMonth, runPreview])
 
   const handleGenerate = async () => {
+    if (generatingRef.current) return
+    generatingRef.current = true
+    try {
     if (!periodMonth) {
       setError('請選擇計糧月份')
       return
@@ -192,23 +199,16 @@ export default function NewPayrollPage() {
 
     // ★ A4: 檢查是否有現有草稿，提示用戶
     try {
-      const checkRes = await fetch('/api/payroll-runs', {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      })
+      const checkRes = await fetch(
+        `/api/payroll-runs?periodMonth=${periodMonth}&clinicId=${selectedClinic}&status=DRAFT&pageSize=1`,
+        { credentials: 'include', cache: 'no-store' },
+      )
       if (checkRes.ok) {
         const checkData = await checkRes.json()
-        const existingDraft = (checkData.runs || []).find(
-          (r: any) => r.periodMonth && (
-            r.periodMonth === periodMonth ||
-            r.periodMonth.startsWith(periodMonth + '-') ||
-            r.periodMonth.slice(0, 7) === periodMonth
-          ) && r.clinicId === selectedClinic && r.status === 'DRAFT'
-        )
+        const existingDraft = (checkData.runs || [])[0]
         if (existingDraft) {
           const ok = confirm(
-            `該月已有草稿（${existingDraft.itemCount || '?'} 位員工）。\n\n` +
+            `該月已有草稿（${existingDraft._count?.items ?? '?'} 位員工）。\n\n` +
             `重新生成會用最新嘅打卡／補登／假期重算，\n` +
             `已輸入嘅店舖獎金同拆帳會保留。\n\n` +
             `確定重新生成？`
@@ -221,6 +221,9 @@ export default function NewPayrollPage() {
     }
 
     await doGenerate()
+    } finally {
+      generatingRef.current = false
+    }
   }
 
   const doGenerate = async () => {

@@ -129,11 +129,13 @@ export default function TodoPage() {
         credentials: 'include',
         body: JSON.stringify({ action }),
       })
-      if (res.ok) {
+      if (res.ok || res.status === 409) {
         setLeaves(prev => prev.filter(l => l.id !== id))
+        if (res.status === 409) { const e = await res.json().catch(() => ({})); alert(e.error || '已有人處理咗') }
       } else {
         const err = await res.json().catch(() => ({}))
         alert(err.error || '操作失敗')
+        loadData()
       }
     } catch {
       alert('網絡錯誤')
@@ -145,22 +147,19 @@ export default function TodoPage() {
   /* ── Actions: Punch Corrections ── */
 
   const handleCorrectionAction = async (id: string, action: 'APPROVE' | 'REJECT') => {
+    setBusyId(id)
     try {
-      const res = await fetch(`/api/punch-corrections/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ action }),
-      })
-      if (res.ok) {
+      const res = await fetch(`/api/punch-corrections/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ action }) })
+      if (res.ok || res.status === 409) {
         setCorrections(prev => prev.filter(c => c.id !== id))
+        if (res.status === 409) { const e = await res.json().catch(() => ({})); alert(e.error || '已有人處理咗') }
       } else {
         const err = await res.json().catch(() => ({}))
         alert(err.error || '操作失敗')
+        loadData()
       }
-    } catch {
-      alert('網絡錯誤')
-    }
+    } catch { alert('網絡錯誤'); loadData() }
+    finally { setBusyId(null) }
   }
 
   /* ── Actions: Enroll ── */
@@ -362,12 +361,14 @@ export default function TodoPage() {
                         <button
                           className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
                           onClick={() => handleCorrectionAction(c.id, 'APPROVE')}
+                          disabled={busyId === c.id}
                         >
                           核准
                         </button>
                         <button
                           className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
                           onClick={() => handleCorrectionAction(c.id, 'REJECT')}
+                          disabled={busyId === c.id}
                         >
                           拒絕
                         </button>

@@ -84,6 +84,7 @@ export default function PunchPage() {
 
   // Error banner (inline, not full-screen)
   const [error, setError] = useState<string | null>(null)
+  const [errorInfo, setErrorInfo] = useState(false)   // ★ true = amber 提示（ALREADY_PUNCHED），非紅色失敗
 
   // ★ Type-first punch: employee selects type before scanner opens
   const [pendingType, setPendingType] = useState<null | 'CLOCK_IN' | 'CLOCK_OUT' | 'LUNCH_START' | 'LUNCH_END'>(null)
@@ -243,10 +244,12 @@ export default function PunchPage() {
     // ★ Anti-spam: 30s cooldown + in-flight lock
     if (punchingRef.current) return false
     if (Date.now() - lastPunchRef.current < 30000) {
+      setErrorInfo(false)
       setError('剛打過卡，請稍候')
       return false
     }
     punchingRef.current = true
+    setErrorInfo(false)
     setError(null)
 
     try {
@@ -269,7 +272,11 @@ export default function PunchPage() {
       })
 
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || '打卡失敗')
+      if (!res.ok) {
+        const punchErr: any = new Error(data.error || '打卡失敗')
+        punchErr.code = data.code   // ★ 透傳至 catch（例：ALREADY_PUNCHED）
+        throw punchErr
+      }
 
       // ★ 三重回饋：震動 + 嗶聲 + 全螢幕
       navigator.vibrate?.([80, 40, 80])
@@ -310,7 +317,9 @@ export default function PunchPage() {
       }
       return true
     } catch (e: any) {
-      setError(e.message)
+      fetchRecords()   // ★ DB-07：失敗都 refetch（卡可能已成功入庫）
+      setErrorInfo(e.code === 'ALREADY_PUNCHED')
+      setError(e.code === 'ALREADY_PUNCHED' ? '今日已打過呢種卡（上次已成功）' : (e.message || '打卡失敗'))
       return false
     } finally {
       punchingRef.current = false
@@ -568,13 +577,15 @@ export default function PunchPage() {
       {/* ★ Error banner — fixed top for immediate visibility */}
       {error && (
         <div
-          className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex items-start gap-3 shadow-lg"
+          className={errorInfo
+            ? 'bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3 flex items-start gap-3 shadow-lg'
+            : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 flex items-start gap-3 shadow-lg'}
           style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999 }}
         >
-          <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <XCircle className={`h-5 w-5 ${errorInfo ? 'text-amber-600' : 'text-red-600'} flex-shrink-0 mt-0.5`} />
           <div className="flex-1">
-            <div className="font-semibold text-red-800 dark:text-red-200 text-sm">打卡失敗</div>
-            <div className="text-sm text-red-700 dark:text-red-300 mt-0.5">{error}</div>
+            <div className={`font-semibold ${errorInfo ? 'text-amber-800 dark:text-amber-200' : 'text-red-800 dark:text-red-200'} text-sm`}>{errorInfo ? '已打過卡' : '打卡失敗'}</div>
+            <div className={`text-sm mt-0.5 ${errorInfo ? 'text-amber-700 dark:text-amber-300' : 'text-red-700 dark:text-red-300'}`}>{error}</div>
           </div>
           <button
             onClick={() => setError(null)}

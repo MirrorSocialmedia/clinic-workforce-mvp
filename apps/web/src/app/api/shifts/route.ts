@@ -272,7 +272,7 @@ export async function POST(req: NextRequest) {
             })
           }
           payrollLocked = locked ? {
-            month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+            month: toHKDateStr(pm).slice(0, 7),
             status: locked.status,
           } : null
         }
@@ -418,7 +418,7 @@ export async function POST(req: NextRequest) {
           })
         }
         payrollLocked = locked ? {
-          month: `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`,
+          month: toHKDateStr(pm).slice(0, 7),
           status: locked.status,
         } : null
 

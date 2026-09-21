@@ -124,7 +124,7 @@ export async function PUT(
 
     await createNotification({
       employeeId: correction.employeeId,
-      type: 'CORRECTION_APPROVED',
+      type: action === 'APPROVE' ? 'CORRECTION_APPROVED' : 'CORRECTION_REJECTED',
       content: action === 'APPROVE'
         ? `Your punch correction request has been approved.`
         : `Your punch correction request has been rejected.${notes ? ` Reason: ${notes}` : ''}`,

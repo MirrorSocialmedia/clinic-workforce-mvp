@@ -61,7 +61,7 @@ export function useTodoCount(): TodoCounts {
           .catch((e) => { console.warn('[todo] /api/face/review failed', e); return [] }),
       ]).then(([lv, corr, en, rv]) => {
         const leaveN = lv.leaveRequests?.length || lv.length || 0
-        const correctionArr = Array.isArray(corr) ? corr : corr.punchCorrections || corr.items || []
+        const correctionArr = Array.isArray(corr) ? corr : corr.corrections || corr.punchCorrections || corr.items || []
         const correctionN = correctionArr.length
         const enrollN = Array.isArray(en) ? en.length : en.items?.length || 0
         // ★ cwm-acct-20260917 A10：rv === null = 403（無權限），唔好計 0 當「無異常」

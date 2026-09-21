@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { toHKDateStr, hkDateStart, hkDateEnd, getMonthRange } from '@/lib/hk-date'
+import { toHKDateStr, hkDateStart, hkDateEnd, getMonthRange, todayHK } from '@/lib/hk-date'
 import { calculateTimeBank } from '@/lib/payroll-engine'
 
 // ============================================================
@@ -27,8 +27,7 @@ export async function GET(req: NextRequest) {
   if (month) {
     targetMonth = month
   } else {
-    const now = new Date()
-    targetMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
+    targetMonth = todayHK().slice(0, 7)
   }
 
   const { start: monthStart, end: monthEnd } = getMonthRange(new Date(`${targetMonth}-01T00:00:00+08:00`))

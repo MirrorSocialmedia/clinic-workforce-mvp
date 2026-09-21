@@ -969,12 +969,11 @@ export default function SchedulingPage() {
     if (!monthDays.length) return
     const allShifts: any[] = []
     let page = 1
-    const pageSize = 1000 // ★ 2026-08-07 26人×30日≈780更，200→4 round trip
+    let ok = true
+    const pageSize = 1000
     while (true) {
-      const r = await getJSON(
-        `/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&page=${page}&pageSize=${pageSize}`,
-      )
-      if (!r.ok) break
+      const r = await getJSON(`/api/shifts?startDate=${monthDays[0]}&endDate=${monthDays[monthDays.length - 1]}&page=${page}&pageSize=${pageSize}`)
+      if (!r.ok) { ok = false; break }
       const d = await r.json()
       const batch = d.shifts || []
       allShifts.push(...batch)
@@ -982,6 +981,7 @@ export default function SchedulingPage() {
       page++
       if (page > 20) break
     }
+    if (!ok) { console.error('[loadOvMonth] fetch failed — keep previous data'); return }   // ★ 唔覆蓋
     setOvMonthShifts(allShifts)
 
     try {
@@ -1968,11 +1968,13 @@ function getShiftCode(shift: Shift): string {
       } else {
         const err = await res.json()
         setValidationIssues([{ type: 'error', rule: 'api', message: err.error || '建立班次失敗' }])
+        await refreshAll().catch(() => {})
         return false
       }
     } catch (error) {
       console.error('Create shift error:', error)
-      setValidationIssues([{ type: 'error', rule: 'network', message: '❌ 網路錯誤，建立失敗' }])
+      setValidationIssues([{ type: 'error', rule: 'network', message: '❌ 網路錯誤——已重新載入，請確認更有冇建立' }])
+      await refreshAll().catch(() => {})     // ★ response 丟失 ≠ 失敗
       return false
     } finally {
       creatingKeyRef.current = null
@@ -2015,9 +2017,14 @@ function getShiftCode(shift: Shift): string {
           }])
         }
         await refreshAll()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setValidationIssues([{ type: 'error', rule: 'api', message: `❌ 刪除失敗：${err.error || res.status}` }])
+        await refreshAll()
       }
     } catch (error) {
       console.error('Delete shift error:', error)
+      await refreshAll().catch(() => {})
     }
   }
 
@@ -5415,8 +5422,13 @@ function getShiftCode(shift: Shift): string {
           {selectedEmployeeId && canManage && (
             <button
               onClick={async () => {
-                if (!confirm('確定清空當週排班？')) return
-                const { startDate, endDate } = getDateRange()
+                // ★ DB-05：唔好用 getDateRange()（月視圖會回傳成個月）
+                const base = new Date(currentDate)
+                const dow = base.getDay()  // tz-ok: client-side browser
+                const mon = new Date(base); mon.setDate(base.getDate() + ((dow === 0 ? -6 : 1) - dow))  // tz-ok: client-side browser
+                const sun = new Date(mon); sun.setDate(mon.getDate() + 6)  // tz-ok: client-side browser
+                const startDate = toHKDateStr(mon), endDate = toHKDateStr(sun)
+                if (!confirm(`確定清空 ${startDate} 至 ${endDate} 嘅排班同假期？`)) return
                 // 清排班
                 const weekShifts = shifts.filter(s => {
                   const shiftDateStr = toHKDateStr(new Date(s.date))
@@ -5436,20 +5448,18 @@ function getShiftCode(shift: Shift): string {
                   alert('該員工當週沒有排班及假期')
                   return
                 }
+                const failed: string[] = []
                 for (const shift of weekShifts) {
-                  await fetch('/api/shifts/' + shift.id, {
-                    method: 'DELETE',
-                    credentials: 'include',
-                  })
+                  const r = await fetch('/api/shifts/' + shift.id, { method: 'DELETE', credentials: 'include' })
+                  if (!r.ok) failed.push(`更 ${toHKDateStr(new Date(shift.date))}`)
                 }
                 for (const l of weekLeaves) {
-                  await fetch('/api/leave-requests/' + l.id, {
-                    method: 'DELETE',
-                    credentials: 'include',
-                  })
+                  const r = await fetch('/api/leave-requests/' + l.id, { method: 'DELETE', credentials: 'include' })
+                  if (!r.ok) failed.push(`假 ${toHKDateStr(new Date(l.startDate))}`)
                 }
                 await refreshAll()
                 await refreshLeaveBalances()
+                if (failed.length) alert(`以下 ${failed.length} 項刪除失敗，請重試：\n${failed.join('\n')}`)
               }}
               style={{
                 background: '#fde8e8', color: '#dc3545', border: '1px solid #f5c6cb',

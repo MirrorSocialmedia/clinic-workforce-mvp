@@ -99,19 +99,35 @@ export async function POST(req: NextRequest) {
       const dayEnd = hkDateEnd(dayStr)
 
       let punchRecordId: string | null = null
-      const existing = await prisma.punchRecord.findFirst({
-        where: {
-          employeeId: employee.id,
-          clinicId,
-          punchType: punchType as any,
-          punchTime: { gte: dayStart, lte: dayEnd },
-          void: { is: null }, // 已作廢的不算存在
-        },
-      })
-
-      if (existing) {
-        // Existing record found — link correction to it (correction semantics: overlay, don't create duplicate)
-        punchRecordId = existing.id
+      let targetDayStr: string | null = null      // ★ Stage 4A 會用（被修正卡嘅日子）
+      let existingFound = false                    // ★ 回應 createdPunchRecord 用（舊 !existing 口徑）
+      if (requestBodyPunchRecordId) {
+        // ★ DB-06：前端指定咗邊張 → 驗證後直接用，唔再按日期估
+        const target = await prisma.punchRecord.findUnique({
+          where: { id: requestBodyPunchRecordId },
+          include: { void: true },
+        })
+        if (!target || target.employeeId !== employee.id) {
+          return NextResponse.json({ error: '搵唔到要修正嘅打卡' }, { status: 404 })
+        }
+        if (target.void) {
+          return NextResponse.json({ error: '呢張打卡已作廢，唔可以再修正' }, { status: 409 })
+        }
+        punchRecordId = target.id
+        targetDayStr = toHKDateStr(target.punchTime)
+        existingFound = true   // 指定卡存在 = 舊語義「existing」
+      } else {
+        const existing = await prisma.punchRecord.findFirst({
+          where: {
+            employeeId: employee.id, clinicId, punchType: punchType as any,
+            punchTime: { gte: dayStart, lte: dayEnd }, void: { is: null },
+          },
+          orderBy: [{ punchTime: 'asc' }, { id: 'asc' }],   // ★ 確定性
+        })
+        if (existing) {
+          punchRecordId = existing.id
+          existingFound = true
+        }
       }
 
       // Transaction: create correction + punchRecord (if no original exists)
@@ -281,7 +297,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { success: true, correction, createdPunchRecord: !!(!existing && (perms ?? []).includes('attendance_manage')) },
+        { success: true, correction, createdPunchRecord: !!(!existingFound && (perms ?? []).includes('attendance_manage')) },
         { status: 201 }
       )
     } catch (error) {

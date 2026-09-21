@@ -1796,9 +1796,10 @@ export default function AttendancePage() {
                       reason: correctionForm.reason, clinicId: correctionRecord.clinicId,
                       employeeId: correctionRecord.employeeId,
                       originalPunchType: correctionRecord.punchType,
+                      punchRecordId: correctionRecord.id,   // ★ DB-06：指定修正邊張
                     }),
                   })
-                  if (res.ok) { alert('修正申請已提交'); setShowCorrectionModal(false); setCorrectionForm({ time: '', reason: '', punchType: '' }); fetchRecords() }
+                  if (res.ok) { alert('修正申請已提交'); setShowCorrectionModal(false); setCorrectionForm({ time: '', reason: '', punchType: '' }); fetchRecords(); fetchRecordExceptions(); fetchExceptions() }
                   else { const err = await res.json(); alert(err.error || '提交失敗') }
                 } catch { alert('網路錯誤') }
                 finally { setSubmittingCorrection(false) }
@@ -1892,7 +1893,7 @@ export default function AttendancePage() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ date: datetime, punchType, reason, clinicId, employeeId }),
                   })
-                  if (res.ok) { alert('補登申請已提交'); setShowAddPunchModal(false); setAddPunchForm({ employeeId: '', clinicId: clinics[0]?.id || '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '' }); fetchRecords() }
+                  if (res.ok) { alert('補登申請已提交'); setShowAddPunchModal(false); setAddPunchForm({ employeeId: '', clinicId: clinics[0]?.id || '', date: '', time: '09:00', punchType: 'CLOCK_IN', reason: '' }); fetchRecords(); fetchRecordExceptions(); fetchExceptions() }
                   else { const err = await res.json(); alert(err.error || '提交失敗') }
                 } catch { alert('網路錯誤') }
                 finally { setSubmittingAddPunch(false) }
