@@ -50,14 +50,10 @@ let tbFingerprintWarned = false
 export async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Date, monthStart: Date): Promise<string> {
   let cfg: any = {}
   try {
-    const rule = await db.payRule.findFirst({
-      where: {
-        employeeId, isActive: true,
-        effectiveFrom: { lte: monthEnd },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
-      },
-      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-    })
+    // ★ cwm-consist S3b（CA-10）：同底薪同用 findPayRuleForMonth ——
+    //   舊 isActive:true 查詢喺「新規則下月生效」入單後會搵唔到覆蓋本月嘅規則，
+    //   令時間帳戶 config 錯落 default（OT 門檻/rounding/午飯）
+    const rule = await findPayRuleForMonth(db, employeeId, monthStart, monthEnd)
     if (rule?.configJson) {
       cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
     }
@@ -1675,15 +1671,8 @@ export async function calculateTimeBank(
   let lunchDefault = 60
   let lunchMin = 30
   try {
-    const rule = await db.payRule.findFirst({
-      where: {
-        employeeId,
-        isActive: true,
-        effectiveFrom: { lte: monthEnd },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthStart } }],
-      },
-      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-    })
+    // ★ cwm-consist S3b（CA-10）：同底薪同用 findPayRuleForMonth（見 timeBankCacheKey 注）
+    const rule = await findPayRuleForMonth(db, employeeId, monthStart, monthEnd)
     if (rule?.configJson) {
       const cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
       otMinMinutes = cfg?.modifiers?.overtime?.ot_min_minutes ?? 0
