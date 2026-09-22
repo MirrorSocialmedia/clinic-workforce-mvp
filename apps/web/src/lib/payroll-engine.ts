@@ -4045,6 +4045,10 @@ export async function calculatePayrollWithRules(
       tbDeduction: rsTbDed,
       // ★ cwm-tbcashout-20260917：④ 時間帳戶正數折現（已計入 grossPay 同 MPF 基數）
       tbCashout: rsTbCashout,
+      // ★ cwm-payrollsheet-20260921 S1：⑤ 超額休息日扣減之前【完全冇寫入】detailJson ——
+      //   :3808 grossPay 有扣（− rsExcessRest），但糧單睇唔返扣咗幾多，匯出永遠出 0。
+      //   只影響之後生成嘅糧單；已生成嘅冇呢個 key（唔好為咗補數重算已確認單）。
+      excessRestDeduction: Math.round(rsExcessRest * 100) / 100,
       grossAdd: Math.round(rsGrossAdd * 100) / 100,
       includedInMpf: MPF_INCLUDE_SETTLEMENT,
       monthWage: rsSettle.monthWage ?? null,

@@ -140,7 +140,11 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
       case 'deduction': return Number((item.deduction ?? 0).toFixed(2))
       case 'sickDeduction': return Number((detail.sickDeduction ?? 0).toFixed(2))
       case 'attendanceBonus': return Number((detail.attendanceBonus ?? 0).toFixed(2))
-      case 'totalAllowances': return Number((detail.totalAllowances ?? 0).toFixed(2))
+      // ★ cwm-payrollsheet-20260921 S1（D-1）：引擎 final detail 寫嘅數字喺 salary.allowances（:3982）；
+      //   top-level totalAllowances 係 modifier（:3284）順手寫嘅（DRAFT 實測 =500，spec「永遠 0」假設已推翻）。
+      //   ⚠️ 唔好讀 top-level detail.allowances —— 嗰個係 array（modifier :3284），.toFixed 會爆。
+      //   case key 名 'totalAllowances' 唔改（EXPORT_COLS / 公司 payrollExportCols 已存值）。
+      case 'totalAllowances': return Number(((detail.salary?.allowances ?? detail.totalAllowances) ?? 0).toFixed(2))
       case 'maternityPay': return Number(((item.maternityPay ?? 0) + (item.paternityPay ?? 0)).toFixed(2))
       case 'adwAdjustment': return Number((detail.adwAdjustment ?? 0).toFixed(2))
       case 'mpf': return Number((detail.mpf ?? 0).toFixed(2))
@@ -151,7 +155,8 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
       case 'rsGrossAdd': return Number((detail.resignSettlement?.grossAdd ?? 0).toFixed(2))
       case 'excessRestDeduction': return Number((detail.resignSettlement?.excessRestDeduction ?? 0).toFixed(2))
       case 'tbDeduction': return Number((detail.resignSettlement?.tbDeduction ?? 0).toFixed(2))
-      case 'tbCashout': return Number((detail.tbCashout ?? 0).toFixed(2))
+      // ★ cwm-payrollsheet-20260921 S1：tbCashout 喺 resignSettlement 入面（引擎 :4042-4050），唔係 top-level
+      case 'tbCashout': return Number((detail.resignSettlement?.tbCashout ?? 0).toFixed(2))
       case 'totalPayable': return Number((item.totalPayable ?? 0).toFixed(2))
       default: return ''
     }
@@ -194,7 +199,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     { '項目': '總扣款', '值': visibleItems.reduce((s: number, i: any) => s + (i.deduction ?? 0), 0).toFixed(2) },
     { '項目': '總病假扣減', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').sickDeduction ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
     { '項目': '總勤工獎', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').attendanceBonus ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
-    { '項目': '總津貼', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').totalAllowances ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
+    { '項目': '總津貼', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { const d = JSON.parse(i.detailJson ?? '{}'); return d.salary?.allowances ?? d.totalAllowances ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
     { '項目': '總產假/侍產假', '值': visibleItems.reduce((s: number, i: any) => s + (i.maternityPay ?? 0) + (i.paternityPay ?? 0), 0).toFixed(2) },
     { '項目': '總ADW調整', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').adwAdjustment ?? 0 } catch { return 0 } })()), 0).toFixed(2) },
     { '項目': '總MPF', '值': visibleItems.reduce((s: number, i: any) => s + ((() => { try { return JSON.parse(i.detailJson ?? '{}').mpf ?? 0 } catch { return 0 } })()), 0).toFixed(2) },

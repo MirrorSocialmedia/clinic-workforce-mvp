@@ -19,7 +19,7 @@ CHECKS="check-rbac-matrix.sh check-role-hardcode.sh check-role-hardcode-api.sh \
  check-duplicate-calc.sh check-get-no-store.sh check-balance-year.sh \
  check-apricot-boundary.sh check-payout-boundary.sh check-pii.sh check-dates.sh \
  check-company-scope.sh check-holiday-coverage.sh check-payroll-surface.sh check-catch-ignore.sh \
- check-export-cols.sh check-payroll-view-keys.sh"
+ check-export-cols.sh check-payroll-view-keys.sh check-detail-keys.sh"
 GUARD_DIR="$(mktemp -d)"
 git worktree add --detach "$GUARD_DIR" origin/main >/dev/null
 GUARD_FAIL=0
