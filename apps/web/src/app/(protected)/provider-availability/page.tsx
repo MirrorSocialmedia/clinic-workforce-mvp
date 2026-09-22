@@ -36,6 +36,9 @@ import {
   gridWeekEmpty,
   hkNowMin,
   hkTodayStr,
+  mismatchBadge,
+  mismatchText,
+  MISMATCH_COLOR,
   providerColor,
   soft,
   syncChip,
@@ -46,8 +49,10 @@ import {
   type GridSlot,
 } from '@/lib/provider-availability-view'
 import { buildStaffByDate, shouldLoadStaffShifts, type StaffCell } from '@/lib/staff-by-date'
+import { useAutoRefresh } from '@/lib/use-auto-refresh'
 
-const REFRESH_MS = 5 * 60 * 1000 // ★ 後端 10 分鐘 sync 一次 → 前端 5 分鐘 refetch
+// ★ cwm-provroster S4：5 分鐘 → 60 秒 + 返到頁面即刻更新 —— 當值表／休假改咗，前台唔使等 5 分鐘
+const REFRESH_MS = 60 * 1000
 const SYNC_COOLDOWN_MS = 60_000 // ★ 同後端一致；正常情況由 429 retryAfterMs 為準
 
 // ★ MD §六：行高 28px → 34px（3a）
@@ -58,9 +63,24 @@ const ROW_STEP = ROW_H + ROW_GAP
 const MINI_ROW_H = 16
 const MINI_ROW_GAP = 2
 const MINI_ROW_STEP = MINI_ROW_H + MINI_ROW_GAP
+/** ★ cwm-provroster S3：手機 mini 醫生姓氏行高 */
+const MINI_LABEL_H = 14
 
 /** 灰底斜紋（未開診 — 3a hatched） */
 const HATCH = `repeating-linear-gradient(45deg, color-mix(in srgb, #201e1d 7%, transparent) 0, color-mix(in srgb, #201e1d 7%, transparent) 5px, transparent 5px, transparent 10px)`
+
+/** ★ cwm-provroster S2：呢 7 日有冇 Apricot 開診／有約／有出入（預設篩選 + idle chip 共用一個定義） */
+function hasWeekData(p: GridResp['providers'][number]): boolean {
+  return p.days.some(d => d.apricotOpen || d.bookCount > 0 || !!d.mismatch)
+}
+
+/** ★ cwm-provroster S1-7：同步錯誤碼 → 人話（前台睇得明） */
+function syncErrorText(code: string): string {
+  if (code.startsWith('APRICOT_NOT_CONFIGURED')) return 'Apricot 帳號未設定'
+  if (/APRICOT_HTTP_40[13]/.test(code)) return 'Apricot 登入過期，請通知負責人重新授權'
+  if (code.startsWith('APRICOT_HTTP_5')) return 'Apricot 伺服器出錯，稍後再試'
+  return code.slice(0, 40)
+}
 
 /** hold 來源 / 狀態 → 人讀（tooltip 用；零 PII — API 本來就唔回 patientWaId/patientName） */
 function holdSrcLabel(src: string): string {
@@ -108,11 +128,14 @@ export default function ProviderAvailabilityPage() {
   const [staffError, setStaffError] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [cooldownLeft, setCooldownLeft] = useState(0)
+  // ★ cwm-provroster S1-7：同步結果（逐間店）—— 之前 API 回 ok:true + 每間 error 都當成功
+  const [syncNotice, setSyncNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null)
 
   // ★ 醫生篩選 chip：預設只顯示「該週有預約」嘅醫生。
   // shown=null = 未初始化（首次渲染全顯示，effect 落定先 filter）。
   const [shown, setShown] = useState<Set<string> | null>(null)
   const [showIdle, setShowIdle] = useState(false) // 零預約醫生摺埋，撳「+N 位只開診冇預約」展開
+  const [showMismatch, setShowMismatch] = useState(false) // ★ S2：出入清單摺埋
 
   // 診所清單（現有 /api/clinics；只載一次 — clinicId 唔好入 deps，會無限 loop）
   useEffect(() => {
@@ -126,8 +149,17 @@ export default function ProviderAvailabilityPage() {
           name: c.name,
           connected: !!c.apricotClinicId,
         }))
-        setClinics(list)
-        setClinicId(prev => prev || defaultClinicId(list))
+        // ★ cwm-provroster S1-9：MANAGER 只可以睇主屬店（resolveProviderScheduleScope）——
+        //   之前下拉列晒全部，揀其他店即「載入失敗：無權查看此診所」。scope 由 provider-shifts GET 帶返
+        return fetch(`/api/provider-shifts?startDate=${hkTodayStr()}&endDate=${hkTodayStr()}`, { credentials: 'include' })
+          .then(r => (r.ok ? r.json() : { scope: null }))
+          .then(sd => {
+            if (!live) return
+            const scope: string[] | null = sd?.scope ?? null
+            const allowed = scope === null ? list : list.filter(c => scope.includes(c.id))
+            setClinics(allowed)
+            setClinicId(prev => prev || defaultClinicId(allowed))
+          })
       })
       .catch(() => {
         if (live) setClinics([])
@@ -163,18 +195,22 @@ export default function ProviderAvailabilityPage() {
   // ★ 篩選初始化：只跑一次（refetch 唔重置）；換診所時由 select onChange 將 shown 設返 null 觸發重初始化
   useEffect(() => {
     if (!data || shown !== null) return      // ★ 只初始化一次
-    const withBookings = new Set<string>()
+    // ★ CTO-fix 2026-09-22（偏差 D-2）：stale data 守門 — 換診所後、新 clinic data 未到之前，
+    //   effect 會用「舊 clinic 個 data」再消耗一次 shown=null → 新 data 到時 shown 已非 null → 永遠唔再 init
+    //   → 換診所後所有醫生被收埋（成週「休診」）。加 clinic 匹配先 init。
+    if (data.clinic?.id !== clinicId) return
+    // ★ cwm-provroster S2：預設顯示「呢週有 Apricot 開診／有約／有出入」嘅醫生（之前只顯示有約 → 有開診冇約嘅醫生反而收埋）
+    const withData = new Set<string>()
     for (const p of data.providers) {
-      if ((p.weekBookings ?? 0) > 0) withBookings.add(p.id)
+      if (hasWeekData(p)) withData.add(p.id)
     }
-    setShown(withBookings)
-  }, [data, shown])
+    setShown(withData)
+  }, [data, shown, clinicId])
+  // ★ S2：轉週要重新初始化 —— 之前沿用第一週個 set，下週新出現嘅醫生會靜靜收埋
+  useEffect(() => { setShown(null); setShowIdle(false) }, [from])
 
-  // ★ 5 分鐘 auto refetch（離 page clear）
-  useEffect(() => {
-    const t = setInterval(() => { void load() }, REFRESH_MS)
-    return () => clearInterval(t)
-  }, [load])
+  // ★ S4：60 秒 auto refetch（只喺分頁見到時）+ visibility／focus 即時 refetch
+  useAutoRefresh(() => { void load() }, REFRESH_MS)
 
   // ★ 員工當值列（同 provider-schedule 同一條 API，唔寫第二份）
   useEffect(() => {
@@ -223,6 +259,7 @@ export default function ProviderAvailabilityPage() {
     // ★ disabled 要包 syncing + cooldownLeft —— 淨係其中一個都會俾人狂撳
     if (syncing || cooldownLeft > 0) return
     setSyncing(true)
+    setSyncNotice(null)
     try {
       const r = await fetch('/api/provider-availability/sync', {
         method: 'POST', credentials: 'include',
@@ -230,16 +267,25 @@ export default function ProviderAvailabilityPage() {
         // ★ 傳當前睇緊嘅週首日 —— 唔傳就永遠只拉今日起 7 日
         body: JSON.stringify({ from }),
       })
+      const d = await r.json().catch(() => ({} as any))
       if (r.status === 429) {
-        const d = await r.json().catch(() => ({}))
         setCooldownLeft(d?.retryAfterMs ?? SYNC_COOLDOWN_MS)
         return
       }
-      if (!r.ok) throw new Error(String(r.status))
+      if (!r.ok) {
+        // ★ S1-7：400（例如睇緊過去日期）唔好用 setError —— 會收埋成個時間表
+        setSyncNotice({ tone: 'warn', text: `同步唔到：${d?.error ?? `HTTP ${r.status}`}` })
+        return
+      }
       setCooldownLeft(SYNC_COOLDOWN_MS)
+      const results: Array<{ clinic: string; error?: string }> = d?.results ?? []
+      const failed = results.filter(x => x.error)
+      setSyncNotice(failed.length === 0
+        ? { tone: 'ok', text: `已同步 ${results.length} 間診所` }
+        : { tone: 'warn', text: `同步失敗：${failed.map(x => `${x.clinic}（${syncErrorText(x.error!)}）`).join('、')}。畫面仍然係上次同步嘅資料。` })
       await load() // ★ sync 完即刻 refetch
     } catch {
-      setError('同步失敗 — 撳重試')
+      setSyncNotice({ tone: 'warn', text: '同步失敗（網絡問題）— 撳「↻ 立即同步」再試' })
     } finally {
       setSyncing(false)
     }
@@ -252,7 +298,7 @@ export default function ProviderAvailabilityPage() {
   const daysInfo = useMemo(() => {
     if (!data) return [] as {
       date: string
-      flag: { date: string; onDutyCount: number; hasPattern: boolean }
+      flag: GridResp['dayFlags'][number]
       providers: { p: GridResp['providers'][number]; day: GridDay }[]
     }[]
     return data.dayFlags.map(f => {
@@ -285,6 +331,17 @@ export default function ProviderAvailabilityPage() {
     const s = name.replace(/^Dr\s*/i, '').replace(/醫生$/, '').trim()
     return /^[\u4e00-\u9fa5]/.test(s) ? s.charAt(0) : s.slice(0, 3)
   }
+
+  // ★ S2：本週出入清單（唔理篩選 chip —— 出入一定要見到）
+  const mismatchList = useMemo(() => {
+    if (!data) return [] as { date: string; pid: string; name: string; text: string }[]
+    const out: { date: string; pid: string; name: string; text: string }[] = []
+    for (const p of data.providers) for (const d of p.days) {
+      const t = mismatchText(d)
+      if (t) out.push({ date: d.date, pid: p.id, name: p.name, text: t })
+    }
+    return out.sort((a, b) => a.date.localeCompare(b.date))
+  }, [data])
 
   const weekEmpty = useMemo(() => (data ? gridWeekEmpty(data) : false), [data])
   const weekProviderIds = useMemo(() => {
@@ -356,7 +413,14 @@ export default function ProviderAvailabilityPage() {
   }
 
   // ─── 日視圖單格（3a 完整：mini seat + 文案；行高 34px）───
-  function DayCell({ slot, capacity, precise }: { slot: GridSlot; capacity: number; precise: boolean }) {
+  function DayCell({ slot, capacity, precise }: { slot: GridSlot | undefined; capacity: number; precise: boolean }) {
+    // ★ cwm-provroster S1-1：當值表有排但 Apricot 冇數據 → slots=[] → 之前成頁 crash（reading 'frag'）
+    if (!slot) {
+      return (
+        <div title="Apricot 未見呢位醫生當日開診"
+          style={{ height: ROW_H, borderRadius: 11, background: '#f1f5f9', border: '1px dashed #cbd5e1' }} />
+      )
+    }
     const ui = gridCellState(slot)
     const cs = gridCellStyle(ui.state)
     const hatched = ui.state === 'closed' && ui.closedKind === 'outside_open'
@@ -369,7 +433,7 @@ export default function ProviderAvailabilityPage() {
           border: cs.border !== 'none' ? cs.border : undefined,
           display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', overflow: 'hidden',
         }}>
-        {slot.occ && precise ? <MiniSeats occ={slot.occ} capacity={capacity} /> : null}
+        {slot.occ && precise && !hatched ? <MiniSeats occ={slot.occ} capacity={capacity} /> : null /* ★ S1-8：未開診唔畫席位 */}
         {hatched ? (
           <span style={{ fontSize: 10, color: GRID_COLORS.textMuted, whiteSpace: 'nowrap' }}>{ui.label}</span>
         ) : (
@@ -425,7 +489,8 @@ export default function ProviderAvailabilityPage() {
   }) {
     // 全日冇數據（onDuty 但 slots 全空）→ 休診/未同步
     const anyData = providers.some(x => x.day.slots.length > 0)
-    if (providers.length === 0 || !anyData) {
+    const anyMismatch = providers.some(x => x.day.mismatch) // ★ S2：有出入就唔好寫「休診」
+    if (providers.length === 0 || (!anyData && !anyMismatch)) {
       return (
         <div style={{ position: 'relative', height: '100%', borderRadius: 6, background: '#f1f5f9',
                       display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -441,14 +506,29 @@ export default function ProviderAvailabilityPage() {
         {providers.map(({ p, day }) => {
           const pc = providerColor(p.id, p.color)
           return (
-            <div key={p.id} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <div key={p.id} title={mismatchText(day) ?? undefined} style={{
+              flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
+              // ★ S2：同當值表唔夾 → 紅虛框（週視圖／手機 mini 都見到）
+              ...(day.mismatch ? { outline: `1.5px dashed ${MISMATCH_COLOR}`, outlineOffset: 1, borderRadius: 6 } : {}),
+            }}>
+              {/* ★ cwm-provroster S3：手機 mini 之前冇醫生名，淨係色條 —— 加單字姓 */}
+              {mini && (
+                <div style={{ height: MINI_LABEL_H, fontSize: 10, lineHeight: `${MINI_LABEL_H}px`, textAlign: 'center', color: pc, fontWeight: 700, overflow: 'hidden' }}>
+                  {shortSurname(p.name)}
+                </div>
+              )}
               {!mini && (
-                <div style={{ height: 22, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ height: 22, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
                   <span title={p.name} style={{
                     fontSize: 11, borderRadius: 3, padding: '0 5px', whiteSpace: 'nowrap', maxWidth: '100%',
                     overflow: 'hidden', textOverflow: 'ellipsis',
                     background: soft(pc), color: pc,
                   }}>{shortSurname(p.name)}{day.bookCount ? ` ${day.bookCount}` : ''}</span>
+                  {mismatchBadge(day) && (
+                    <span style={{ fontSize: 10, color: '#fff', background: MISMATCH_COLOR, borderRadius: 3, padding: '0 3px', whiteSpace: 'nowrap' }}>
+                      {mismatchBadge(day)}
+                    </span>
+                  )}
                 </div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: mini ? MINI_ROW_GAP : ROW_GAP }}>
@@ -478,7 +558,7 @@ export default function ProviderAvailabilityPage() {
     providers: { p: GridResp['providers'][number]; day: GridDay }[]
   }) {
     const anyData = providers.some(x => x.day.slots.length > 0)
-    if (!anyData) {
+    if (!anyData && !providers.some(x => x.day.mismatch)) { // ★ S2
       return (
         <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8', fontSize: 13 }}>
           {data?.sync.lastSyncAt ? '休診' : '未同步'}
@@ -525,9 +605,13 @@ export default function ProviderAvailabilityPage() {
         {/* 醫生欄頭 */}
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <span style={{ width: 46, flex: 'none' }} />
-          {providers.map(({ p }) => (
+          {providers.map(({ p, day }) => (
             <span key={p.id} style={{ flex: 1, minWidth: 0, textAlign: 'center', fontSize: 12.5, fontWeight: 600 }}>
               {p.name}
+              {/* ★ S2：日視圖直接講清楚出入 */}
+              {mismatchText(day) && (
+                <span style={{ display: 'block', fontSize: 11, fontWeight: 500, color: MISMATCH_COLOR }}>⚠️ {mismatchText(day)}</span>
+              )}
             </span>
           ))}
         </div>
@@ -581,6 +665,7 @@ export default function ProviderAvailabilityPage() {
         <span><i style={sw({ background: GRID_COLORS.fragmentBg, border: `1.5px dashed ${GRID_COLORS.fragmentBorder}` })} />虛邊綠 · 只人手可插（15 分鐘碎片，Flow 唔出）</span>
         <span><i style={sw({ background: GRID_COLORS.heldBg, border: `1.5px solid ${GRID_COLORS.heldBorder}` })} />橙邊 · 線上已佔（HELD / IN_APRICOT，未入 Apricot）</span>
         <span><i style={sw({ background: GRID_COLORS.closedBg })} />灰 · 滿 / 未開診 / 線上未開</span>
+        <span><i style={sw({ background: 'transparent', border: `1.5px dashed ${MISMATCH_COLOR}` })} />紅虛框 · 同醫生當值表唔夾（漏排／休假有約／未開診）</span>
         <span>格內上下兩排 ＝ :00–:15 / :15–:30；深塊 ＝ 已佔席位（由左填起，唔代表椅號）</span>
         <span><i style={sw({ background: 'transparent', borderTop: '2px solid #dc2626', height: 0, borderRadius: 0, margin: '0 5px 0 3px' })} />而家</span>
       </div>
@@ -682,13 +767,23 @@ export default function ProviderAvailabilityPage() {
         </span>
       </div>
 
+      {/* ★ cwm-provroster S1-7：同步結果（唔遮時間表） */}
+      {syncNotice && (
+        <div style={{ flexShrink: 0, padding: '6px 12px', fontSize: 12, borderBottom: '1px solid #e5e7eb',
+                      background: syncNotice.tone === 'ok' ? '#f0fdf4' : '#fef2f2',
+                      color: syncNotice.tone === 'ok' ? '#15803d' : '#b91c1c', display: 'flex', gap: 8 }}>
+          <span style={{ flex: 1 }}>{syncNotice.tone === 'ok' ? '✓ ' : '⚠️ '}{syncNotice.text}</span>
+          <button onClick={() => setSyncNotice(null)} aria-label="關閉" style={{ background: 'none', border: 'none', color: 'inherit' }}>✕</button>
+        </div>
+      )}
+
       {/* ═══ header 第二行：醫生篩選 chip ═══ */}
       {cur?.connected && data && (
         <div style={{ flexShrink: 0, background: '#f8fafc', borderBottom: '1px solid #e5e7eb',
                       padding: '6px 12px', display: 'flex', alignItems: 'center',
                       gap: 6, flexWrap: 'wrap' }}>
           {data.providers.map(p => {
-            const idle = (p.weekBookings ?? 0) === 0
+            const idle = !hasWeekData(p) // ★ S2：同預設篩選同一個定義（之前 chip 用「有約」、格用另一套，會出現 chip 收埋但格照顯示）
             if (idle && !showIdle) return null
             const on = shown?.has(p.id) ?? false
             const pc = providerColor(p.id, p.color)
@@ -708,17 +803,37 @@ export default function ProviderAvailabilityPage() {
                   background: on ? soft(pc) : '#fff', color: on ? pc : '#9ca3af',
                   cursor: 'pointer', whiteSpace: 'nowrap',
                 }}>
-                {on ? '✓ ' : ''}{docShortNames.get(p.name) ?? p.name}{p.weekBookings ? ` ${p.weekBookings}` : ''}{!hasData ? '（無數據）' : ''}
+                {on ? '✓ ' : ''}{docShortNames.get(p.name) ?? p.name}{p.weekBookings ? ` ${p.weekBookings}` : ''}{!hasData ? '（Apricot 未開）' : ''}
               </button>
             )
           })}
-          {data.providers.filter(p => (p.weekBookings ?? 0) === 0).length > 0 && (
+          {data.providers.filter(p => !hasWeekData(p)).length > 0 && (
             <button onClick={() => setShowIdle(v => !v)}
               style={{ fontSize: 12, padding: '2px 8px', borderRadius: 999,
                        background: '#fff', color: '#9ca3af', border: '1px dashed #cbd5e1',
                        cursor: 'pointer' }}>
-              {showIdle ? '收起' : `+ ${data.providers.filter(p => (p.weekBookings ?? 0) === 0).length} 位只開診冇預約`}
+              {showIdle ? '收起' : `+ ${data.providers.filter(p => !hasWeekData(p)).length} 位呢 7 日冇 Apricot 資料`}
             </button>
+          )}
+        </div>
+      )}
+
+      {/* ★ cwm-provroster S2：本週出入清單（撳去當值表修正） */}
+      {cur?.connected && data && mismatchList.length > 0 && (
+        <div style={{ flexShrink: 0, padding: '6px 12px', borderBottom: '1px solid #e5e7eb', background: '#fff7f7', fontSize: 12 }}>
+          <button onClick={() => setShowMismatch(v => !v)}
+            style={{ background: 'none', border: 'none', padding: 0, color: MISMATCH_COLOR, fontWeight: 600, cursor: 'pointer' }}>
+            ⚠️ 呢 7 日有 {mismatchList.length} 處同醫生當值表唔夾 {showMismatch ? '▴' : '▾'}
+          </button>
+          {showMismatch && (
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18, color: '#7f1d1d' }}>
+              {mismatchList.map(m => (
+                <li key={`${m.date}:${m.pid}`}>
+                  {m.date.slice(5)}（{WEEKDAY[new Date(`${m.date}T00:00:00Z`).getUTCDay()]}）· {m.name} · {m.text}
+                  {' '}<a href={`/provider-schedule?clinicId=${encodeURIComponent(clinicId)}&date=${m.date}`} style={{ color: '#2563eb' }}>去當值表 ›</a>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}
@@ -816,7 +931,7 @@ export default function ProviderAvailabilityPage() {
                             <div style={{ position: 'relative', borderRadius: 6,
                                           height: 22 + rowCount * ROW_STEP - ROW_GAP + 2,
                                           ...(day.date === today ? { boxShadow: '0 0 0 1px #2563eb' } : {}) }}>
-                              {day.flag.hasPattern && day.flag.onDutyCount === 0 ? (
+                              {day.flag.hasPattern && day.flag.onDutyCount === 0 && (day.flag.apricotCount ?? 0) === 0 ? ( /* ★ S2：Apricot 有開診／有約就唔可以講冇醫生 */
                                 <div style={{
                                   position: 'absolute', left: 0, right: 0, top: 24, bottom: 0,
                                   borderRadius: 5,
@@ -861,7 +976,7 @@ export default function ProviderAvailabilityPage() {
                     {/* ═══ 手機：週概覽（mini 色條）— zoomDay 喺上面 shared DayView 分支（手機桌麵共用）═══ */}
                     <div className="md:hidden" style={{ minHeight: 380 }}>
                       <div style={{ display: 'flex', gap: 6 }}>
-                          <div style={{ width: 32, flexShrink: 0, position: 'relative', marginTop: 28 + 2 }}>
+                          <div style={{ width: 32, flexShrink: 0, position: 'relative', marginTop: 28 + 2 + MINI_LABEL_H }}>
                             {hourTicks.map(t => (
                               <span key={t.m} style={{
                                 position: 'absolute', right: 2, transform: 'translateY(-50%)',
@@ -883,9 +998,9 @@ export default function ProviderAvailabilityPage() {
                                 </div>
                                 <div style={{ borderRadius: 6,
                                               ...(day.date === today ? { boxShadow: '0 0 0 1px #2563eb' } : {}) }}>
-                                  {day.flag.hasPattern && day.flag.onDutyCount === 0 ? (
+                                  {day.flag.hasPattern && day.flag.onDutyCount === 0 && (day.flag.apricotCount ?? 0) === 0 ? ( /* ★ S2：Apricot 有開診／有約就唔可以講冇醫生 */
                                     <div style={{
-                                      height: rowCount * MINI_ROW_STEP - MINI_ROW_GAP, borderRadius: 5,
+                                      height: rowCount * MINI_ROW_STEP - MINI_ROW_GAP + MINI_LABEL_H, borderRadius: 5,
                                       border: '0.5px dashed #cbd5e1',
                                       background: 'repeating-linear-gradient(45deg,#e9edf2,#e9edf2 6px,#f1f5f9 6px,#f1f5f9 12px)',
                                       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -893,7 +1008,7 @@ export default function ProviderAvailabilityPage() {
                                       <span style={{ fontSize: 11 }}>🚫</span>
                                     </div>
                                   ) : (
-                                    <div style={{ height: rowCount * MINI_ROW_STEP - MINI_ROW_GAP + 2, paddingTop: 2 }}>
+                                    <div style={{ height: rowCount * MINI_ROW_STEP - MINI_ROW_GAP + 2 + MINI_LABEL_H, paddingTop: 2 }}>
                                       <WeekDayColumn date={day.date} providers={day.providers} mini />
                                     </div>
                                   )}
