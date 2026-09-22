@@ -78,7 +78,10 @@ function hasWeekData(p: GridResp['providers'][number]): boolean {
 /** ★ cwm-provroster S1-7：同步錯誤碼 → 人話（前台睇得明） */
 function syncErrorText(code: string): string {
   if (code.startsWith('APRICOT_NOT_CONFIGURED')) return 'Apricot 帳號未設定'
-  if (/APRICOT_HTTP_40[13]/.test(code)) return 'Apricot 登入過期，請通知負責人重新授權'
+  // ★ V-4：client.ts 401/403 會 throw APRICOT_AUTH_EXPIRED（唔係 APRICOT_HTTP_401）；RATE_LIMITED／BUSY 都要人話
+  if (/APRICOT_HTTP_40[13]/.test(code) || code.startsWith('APRICOT_AUTH_EXPIRED')) return 'Apricot 登入過期，請通知負責人重新授權'
+  if (code.startsWith('APRICOT_RATE_LIMITED')) return 'Apricot 限流中，請幾分鐘後再試'
+  if (/BUSY/i.test(code)) return '另一個同步進行緊，稍後再試'
   if (code.startsWith('APRICOT_HTTP_5')) return 'Apricot 伺服器出錯，稍後再試'
   return code.slice(0, 40)
 }
@@ -300,6 +303,11 @@ export default function ProviderAvailabilityPage() {
         setSyncNotice({ tone: 'warn', text: `同步唔到：${d?.error ?? `HTTP ${r.status}`}` })
         return
       }
+      // ★ V-4：200 但 {ok:false, skipped}（Apricot 鎖忙，例如 cron 跑緊）唔好當成功、唔好開 cooldown
+      if (d?.ok === false) {
+        setSyncNotice({ tone: 'warn', text: `今次冇同步到（${d?.skipped ? '另一個同步進行緊' : d?.error ?? '未知原因'}）—— 稍後再撳「↻ 立即同步」` })
+        return
+      }
       setCooldownLeft(SYNC_COOLDOWN_MS)
       const results: Array<{ clinic: string; error?: string }> = d?.results ?? []
       const failed = results.filter(x => x.error)
@@ -416,8 +424,8 @@ export default function ProviderAvailabilityPage() {
   }
 
   // ─── 格 tooltip（零 PII；hold 顯示來源 + 狀態 + 時間）───
-  function slotTooltip(slot: GridSlot, capacity: number): string {
-    const ui = gridCellState(slot)
+  function slotTooltip(slot: GridSlot, capacity: number, roster?: GridDay['roster']): string {
+    const ui = gridCellState(slot, { roster })
     const range = `${slot.start}–${slot.end}`
     if (ui.state === 'held') {
       const hs = slot.holds.map(h =>
@@ -426,6 +434,7 @@ export default function ProviderAvailabilityPage() {
       return `${range} · 線上已佔${hs ? `：${hs}` : ''}`
     }
     if (ui.state === 'offerable') return `${range} · 線上可出 · ${slot.seatsFree} 席`
+    if (ui.rosterBlocked) return `${range} · Apricot 有 ${slot.seatsFree} 席，但當值表${roster === 'NONE' ? '冇排' : roster === 'LEAVE' ? '休假' : '當日唔返'} → Flow 唔會出（只可人手約）`   // ★ V-1
     if (ui.state === 'fragment') {
       return `${range} · 只人手可插 · ${ui.fragCount} × 15 分（30 分鐘位已滿，碎片唔經 Flow 出）`
     }
@@ -436,7 +445,7 @@ export default function ProviderAvailabilityPage() {
   }
 
   // ─── 日視圖單格（3a 完整：mini seat + 文案；行高 34px）───
-  function DayCell({ slot, capacity, precise }: { slot: GridSlot | undefined; capacity: number; precise: boolean }) {
+  function DayCell({ slot, capacity, precise, roster }: { slot: GridSlot | undefined; capacity: number; precise: boolean; roster?: GridDay['roster'] }) {
     // ★ cwm-provroster S1-1：當值表有排但 Apricot 冇數據 → slots=[] → 之前成頁 crash（reading 'frag'）
     if (!slot) {
       return (
@@ -444,12 +453,12 @@ export default function ProviderAvailabilityPage() {
           style={{ height: ROW_H, borderRadius: 11, background: '#f1f5f9', border: '1px dashed #cbd5e1' }} />
       )
     }
-    const ui = gridCellState(slot)
+    const ui = gridCellState(slot, { roster })   // ★ V-1
     const cs = gridCellStyle(ui.state)
     const hatched = ui.state === 'closed' && ui.closedKind === 'outside_open'
     return (
       <div
-        title={slotTooltip(slot, capacity)}
+        title={slotTooltip(slot, capacity, roster)}
         style={{
           height: ROW_H, borderRadius: 11, boxSizing: 'border-box',
           background: hatched ? `${HATCH}, ${GRID_COLORS.closedBg}` : cs.background,
@@ -471,11 +480,11 @@ export default function ProviderAvailabilityPage() {
   }
 
   // ─── 週視圖緊湊格（色塊 + 短文案；mini = 手機概覽色條）───
-  function WeekCell({ slot, mini }: { slot: GridSlot | undefined; mini: boolean }) {
+  function WeekCell({ slot, mini, roster }: { slot: GridSlot | undefined; mini: boolean; roster?: GridDay['roster'] }) {
     if (!slot) {
       return <div style={{ height: mini ? MINI_ROW_H : ROW_H, borderRadius: mini ? 4 : 11, background: '#f1f5f9' }} />
     }
-    const ui = gridCellState(slot)
+    const ui = gridCellState(slot, { roster })   // ★ V-1
     const cs = gridCellStyle(ui.state)
     const hatched = ui.state === 'closed' && ui.closedKind === 'outside_open'
     const shortLabel =
@@ -486,7 +495,7 @@ export default function ProviderAvailabilityPage() {
       : ''
     return (
       <div
-        title={slotTooltip(slot, capacityOf)}
+        title={slotTooltip(slot, capacityOf, roster)}
         style={{
           height: mini ? MINI_ROW_H : ROW_H, borderRadius: mini ? 4 : 11, boxSizing: 'border-box',
           background: hatched ? `${HATCH}, ${GRID_COLORS.closedBg}` : cs.background,
@@ -556,7 +565,7 @@ export default function ProviderAvailabilityPage() {
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: mini ? MINI_ROW_GAP : ROW_GAP }}>
                 {rowMins.map(m => (
-                  <WeekCell key={m} slot={day.slots[Math.floor(m / 30)]} mini={mini} />
+                  <WeekCell key={m} slot={day.slots[Math.floor(m / 30)]} mini={mini} roster={day.roster} />
                 ))}
               </div>
             </div>
@@ -597,8 +606,8 @@ export default function ProviderAvailabilityPage() {
     for (const { day } of providers) {
       for (const s of day.slots) {
         if (s.i * 30 < fromMin) continue
-        if (s.status === 'offerable') offerableCount++
-        const ui = gridCellState(s)
+        const ui = gridCellState(s, { roster: day.roster })   // ★ V-1：非當值日唔計「線上可出」
+        if (ui.state === 'offerable') offerableCount++
         if (ui.state === 'fragment') fragTotal += ui.fragCount
       }
     }
@@ -652,7 +661,7 @@ export default function ProviderAvailabilityPage() {
                 }}>{fmtMin(m)}</span>
                 {providers.map(({ p, day }) => (
                   <div key={p.id} style={{ flex: 1, minWidth: 0 }}>
-                    <DayCell slot={day.slots[Math.floor(m / 30)]} capacity={data?.capacity ?? 3} precise={day.precise} />
+                    <DayCell slot={day.slots[Math.floor(m / 30)]} capacity={data?.capacity ?? 3} precise={day.precise} roster={day.roster} />
                   </div>
                 ))}
               </div>

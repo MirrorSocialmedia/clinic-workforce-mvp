@@ -49,6 +49,9 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const auth = await requirePerm(req, 'provider_schedule')
   if (isAuthError(auth)) return auth.error
+  // ★ V-2：KIOSK（前台 iPad）唔准改醫生固定表／休假 —— RBAC_MATRIX 只准 OWNER/MANAGER，
+  //   但 requirePerm 只睇 perm（KIOSK 預設有 provider_schedule），所以要喺度擋
+  if (auth.session.role === 'KIOSK') return NextResponse.json({ error: '前台帳戶唔可以修改醫生固定表／休假' }, { status: 403 })
 
   const body = await req.json().catch(() => ({} as any))
   const { providerId, clinicId } = body
@@ -96,6 +99,13 @@ export async function PUT(req: NextRequest) {
 
   try {
     if (slot == null) { // 清除
+      // ★ V-5：清除 + expected=null（畫面見到係空白）→ 冇 row 就 ok；有 row = 其他人啱啱設咗 → STALE
+      //   （舊寫法會無條件 deleteMany：靜靜刪咗人哋啱啱設嘅值，或者 count 0 誤報 409）
+      if (hasExp && expected === null) {
+        const cur = await prisma.providerWeeklyPattern.findUnique({ where: { providerId_clinicId_weekday: { providerId, clinicId, weekday } }, select: { slot: true } })
+        if (cur) return await stale409()
+        return jsonNoStore({ ok: true, slot: null })
+      }
       const d = await prisma.providerWeeklyPattern.deleteMany({
         where: { providerId, clinicId, weekday, ...(hasExp && expected ? { slot: expected } : {}) },
       })

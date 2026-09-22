@@ -545,7 +545,7 @@ export const GRID_COLORS = {
  * 灰再分文案：on_leave=「休假」/ outside_open=「未開診」/ lead_time=「未開診」
  *             / over_capacity(無碎片)=「滿」。
  */
-export function gridCellState(slot: GridSlot): {
+export function gridCellState(slot: GridSlot, opts?: { roster?: GridDay['roster'] }): {
   state: GridUiState
   /** 主文案（格內） */
   label: string
@@ -553,6 +553,8 @@ export function gridCellState(slot: GridSlot): {
   closedKind: 'on_leave' | 'outside_open' | 'lead_time' | 'full' | null
   /** 碎片數（15m 小格個數） */
   fragCount: number
+  /** ★ V-1：當值表冇排／休假／唔返 —— Apricot 有位但對外 Flow（bookable-slots，只出當值醫生）唔會出 */
+  rosterBlocked?: boolean
 } {
   const fragCount = (slot.frag[0] ? 1 : 0) + (slot.frag[1] ? 1 : 0)
 
@@ -560,6 +562,11 @@ export function gridCellState(slot: GridSlot): {
   const hasHold = slot.holds.length > 0 || slot.status === 'held_overlap'
   if (hasHold) {
     return { state: 'held', label: '線上已佔', closedKind: null, fragCount }
+  }
+  // 1b. ★ V-1：S2 之後非當值日都會出（標出入用）；grid evaluate 用 onLeave:false → 會變「線上可出」，
+  //     但 Flow 只出當值醫生 → 改用虛邊綠「只人手」，唔好講「線上可出（Flow 會出）」
+  if (slot.status === 'offerable' && (opts?.roster === 'NONE' || opts?.roster === 'LEAVE' || opts?.roster === 'OFF')) {
+    return { state: 'fragment', label: opts.roster === 'NONE' ? '只人手 · 當值表冇排' : '只人手 · 當值表唔返', closedKind: null, fragCount, rosterBlocked: true }
   }
   // 2. 實心綠：線上可出
   if (slot.status === 'offerable') {

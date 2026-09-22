@@ -40,6 +40,8 @@ function effectiveTimeDisplay(r: any): string {
     .filter((c: any) => c.status === 'APPROVED')
     .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   if (approved.length === 0) return fmtDateTime(r.punchTime)
+  // ★ F-6：補登建嘅卡 punchTime == correctedTime → 唔好顯示「09:00（原 09:00）」
+  if (new Date(approved[0].correctedTime).getTime() === new Date(r.punchTime).getTime()) return fmtDateTime(r.punchTime)
   return `${fmtDateTime(approved[0].correctedTime)}（原 ${fmtDateTime(r.punchTime)}）`
 }
 

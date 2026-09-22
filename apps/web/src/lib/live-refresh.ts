@@ -28,17 +28,29 @@ export function useLiveRefresh(
 ): void {
   const fn = useRef(refetch)
   fn.current = refetch
+  // ★ F-2：「上次 refetch 時間」放 ref —— 開關 modal（enabled 變）令 effect 重跑都唔會 reset
+  const lastRef = useRef(Date.now())   // mount 嗰下頁面自己已經 fetch 咗
   const key = topics.join(',')
   const enabled = opts.enabled ?? true
   useEffect(() => {
     if (!enabled) return
-    let last = Date.now()               // mount 嗰下頁面自己已經 fetch 咗
-    const run = () => {
-      const now = Date.now()
-      if (now - last < 2000) return
-      last = now
-      void fn.current()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const fire = () => {
+      lastRef.current = Date.now()
+      // ★ F-3：refetch reject／throw 唔好變 unhandled rejection
+      Promise.resolve().then(() => fn.current()).catch(() => { /* 頁面自己處理錯誤 */ })
     }
+    const run = () => {
+      const wait = lastRef.current + 2000 - Date.now()
+      if (wait > 0) {
+        // ★ F-1：2 秒窗口內唔丟，排一次尾班（trailing）—— 否則 1 秒內連建兩格更，另一個 tab 只會同步到第一格
+        if (!timer) timer = setTimeout(() => { timer = null; fire() }, wait)
+        return
+      }
+      fire()
+    }
+    // ★ F-2：由 disabled 變返 enabled（例如面板／modal 關咗）而且已經超過一個 interval 冇更新 → 即刻補一次
+    if (opts.intervalMs && Date.now() - lastRef.current > opts.intervalMs) run()
     const onVis = () => { if (document.visibilityState === 'visible') run() }
     document.addEventListener('visibilitychange', onVis)
     window.addEventListener('focus', onVis)
@@ -55,6 +67,7 @@ export function useLiveRefresh(
       document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener('focus', onVis)
       if (t) clearInterval(t)
+      if (timer) clearTimeout(timer)
       c?.removeEventListener('message', onMsg)
     }
   }, [key, opts.intervalMs, enabled])

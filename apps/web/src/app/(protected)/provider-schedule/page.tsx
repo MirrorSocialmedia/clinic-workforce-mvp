@@ -13,6 +13,7 @@ import { mismatchBadge, mismatchText, MISMATCH_COLOR, type GridDay } from '@/lib
 // ★ cwm-provroster S3：一格嘅顯示資料（桌面／手機／詳情共用）＋ S4 自動更新
 import { buildCellInfo, cellColors, mondayOf, SLOT_TEXT, type CellInfo } from '@/lib/provider-cell'
 import { useAutoRefresh } from '@/lib/use-auto-refresh'
+import { useLatestRequest } from '@/lib/use-latest-request'
 import { notifyDataChanged } from '@/lib/live-refresh' // ★ cwm-provroster B4：mutation 成功後通知同機其他 tab（'provider' topic）
 import DayDetailPanel, { type ExceptionInput } from '@/components/provider-schedule/DayDetailPanel'
 import { Card } from '@/components/ui/card'
@@ -213,18 +214,24 @@ export default function ProviderSchedulePage() {
     } catch (e) { console.error('[provider-schedule] load leaves failed', e) }
   }
 
+  // ★ V-6：轉週／deep-link 雙載／60s refresh 重疊時，舊回應唔准蓋新（abort + seq）
+  const shiftsReqP = useLatestRequest()
+  const apricotReqP = useLatestRequest()
   async function loadShifts() {
+    const { signal, isLatest } = shiftsReqP()
     try {
       setLoadError(null)
       const params = new URLSearchParams({
         startDate: weekStart, endDate: weekEnd,
         ...(selectedClinicId ? { clinicId: selectedClinicId } : {}),
       })
-      const res = await apiFetch<any>(`/api/provider-shifts?${params}`)
+      const res = await apiFetch<any>(`/api/provider-shifts?${params}`, { signal })
+      if (!isLatest()) return
       setShifts(res.shifts || [])
       setScope(res.scope ?? null)
       setScopeLoaded(true)
     } catch (e: any) {
+      if (!isLatest() || e?.name === 'AbortError') return
       console.error('[provider-schedule] load shifts failed', e)
       if (e?.status === 401) { window.location.href = '/login'; return }
       if (e?.status === 403 && selectedClinicId) {
@@ -253,12 +260,15 @@ export default function ProviderSchedulePage() {
   async function loadApricot() {
     const c = clinics.find((x: any) => x.id === selectedClinicId)
     if (!c?.apricotClinicId) { setApricotByKey(new Map()); return }
+    const { signal, isLatest } = apricotReqP()   // ★ V-6
     try {
-      const res = await apiFetch<any>(`/api/provider-availability/grid?clinicId=${selectedClinicId}&from=${weekStart}`)
+      const res = await apiFetch<any>(`/api/provider-availability/grid?clinicId=${selectedClinicId}&from=${weekStart}`, { signal })
+      if (!isLatest()) return
       const m = new Map<string, GridDay>()
       for (const p of res.providers || []) for (const d of p.days || []) m.set(`${d.date}|${p.id}`, d)
       setApricotByKey(m)
-    } catch (e) {
+    } catch (e: any) {
+      if (!isLatest() || e?.name === 'AbortError') return
       console.error('[provider-schedule] load apricot failed', e)
       setApricotByKey(new Map())
     }
@@ -323,6 +333,7 @@ export default function ProviderSchedulePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ providerId, clinicId: selectedClinicId, weekday, slot: next || null, expected: cur || null }),
       })
+      notifyDataChanged('provider')   // ★ V-3：B4 漏咗固定表 —— 其他 tab 要等 60s 先見到
       const name = providers.find(p => p.id === providerId)?.name ?? ''
       showToast('ok', `已儲存：${name} 逢星期${DAY_LABELS[weekday]} → ${next ? SLOT_TEXT[next as SlotKey] : '唔排'}`)
     } catch (e: any) {
@@ -378,7 +389,11 @@ export default function ProviderSchedulePage() {
       loadApricot()
       setDetail(null)
       showToast('ok', info.patternSlot ? '已還原固定表' : '已刪除當日當值')
-    } catch (e: any) { fail(e, '刪除失敗') }
+    } catch (e: any) {
+      // ★ V-8：已被人改／刪 → 重載兼關面板（同 saveException 一致），唔好留住舊面板
+      if (e?.status === 409 || e?.status === 404) { await loadShifts(); setDetail(null) }
+      fail(e, '刪除失敗')
+    }
     finally { setBusy(false) }
   }
 
@@ -545,7 +560,7 @@ export default function ProviderSchedulePage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-lg font-bold">醫生當值表</h1>
         <div className="flex items-center gap-2 flex-wrap">
-          {canSchedule && (
+          {canManage && (   // ★ V-2：休假只准 OWNER/MANAGER（server 亦擋 KIOSK）
             <button onClick={() => openLeaveModal(null)}
               className="text-xs px-2 py-1.5 border rounded hover:bg-muted flex items-center gap-1">
               <CalendarDays className="w-3 h-3" /> 醫生休假
@@ -755,6 +770,7 @@ export default function ProviderSchedulePage() {
           apricot={apricotByKey.get(`${detail.date}|${detail.providerId}`)}
           slots={clinicSlots}
           canEdit={canSchedule}
+          canEditLeave={canManage}   // ★ V-2：KIOSK 唔准郁休假（server 亦擋）
           busy={busy}
           onClose={() => setDetail(null)}
           onSaveException={input => saveException(detail.date, detail.providerId, detailInfo, input)}

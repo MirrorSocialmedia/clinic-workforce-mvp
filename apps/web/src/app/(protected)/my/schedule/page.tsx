@@ -168,9 +168,10 @@ export default function MySchedulePage() {
   }, [])
 
   const schedReq = useLatestRequest()
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (opts?: { silent?: boolean }) => {
     const { signal, isLatest } = schedReq()
-    setLoading(true)
+    // ★ F-4：live refresh 唔好成頁變「載入中」（捲動彈返頂、公司總覽 remount 再拉一次）
+    if (!opts?.silent) setLoading(true)
     try {
       const monthStart = new Date(`${month}-01`)
       const monthEnd = new Date(monthStart)
@@ -186,6 +187,7 @@ export default function MySchedulePage() {
       const res = await fetch(url, { credentials: 'include', signal })
       const data = await res.json().catch(() => null)
       if (!isLatest()) return
+      if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`)   // ★ F-4：失敗唔好清空現有班表
       if (includeCoworkers) {
         setShifts(data.myShifts || [])
         setCoworkerShifts(data.coworkerShifts || [])
@@ -206,7 +208,7 @@ export default function MySchedulePage() {
   useEffect(() => { fetchData() }, [fetchData])
 
   // ★ cwm-consistency Stage 5.2：live refresh（120s + 其他 tab 排班/假期 mutation 即 refetch）
-  useLiveRefresh(fetchData, ['schedule', 'leave'], { intervalMs: 120_000 })
+  useLiveRefresh(() => fetchData({ silent: true }), ['schedule', 'leave'], { intervalMs: 120_000 })
 
   // ★ 2026-08-04: Fetch schedule notes (read-only for employee)
   useEffect(() => {

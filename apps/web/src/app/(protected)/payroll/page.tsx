@@ -64,9 +64,9 @@ export default function PayrollListPage() {
   }, [])
 
   const runsReq = useLatestRequest()
-  const fetchRuns = useCallback(async () => {
+  const fetchRuns = useCallback(async (opts?: { silent?: boolean }) => {
     const { signal, isLatest } = runsReq()
-    setLoading(true)
+    if (!opts?.silent) setLoading(true)   // ★ F-4：focus／跨 tab refresh 唔好成個表閃「載入中」
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '20' })
       if (statusFilter) params.set('status', statusFilter)
@@ -92,7 +92,7 @@ export default function PayrollListPage() {
   }, [fetchRuns])
 
   // ★ cwm-consistency Stage 5.2：live refresh（其他 tab finalize/revert 後即 refetch）
-  useLiveRefresh(fetchRuns, ['payroll'])
+  useLiveRefresh(() => fetchRuns({ silent: true }), ['payroll'])
 
   useEffect(() => {
     fetch('/api/me').then(async r => {
@@ -461,7 +461,7 @@ export default function PayrollListPage() {
           />
 
           <button
-            onClick={fetchRuns}
+            onClick={() => fetchRuns()}
             className="px-3 py-2 rounded-md g border bg-slate-100 hover:bg-slate-200 text-sm transition-colors w-full md:w-auto"
           >
             查詢

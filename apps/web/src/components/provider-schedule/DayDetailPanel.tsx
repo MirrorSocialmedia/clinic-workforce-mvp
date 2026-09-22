@@ -28,6 +28,8 @@ export default function DayDetailPanel(props: {
   apricot: GridDay | undefined
   slots: SlotMap
   canEdit: boolean
+  /** ★ V-2：休假只准 OWNER/MANAGER（KIOSK 可以改當日當值，唔可以郁休假）；唔傳 = 跟 canEdit */
+  canEditLeave?: boolean
   busy: boolean
   onClose: () => void
   onSaveException: (input: ExceptionInput) => Promise<void>
@@ -116,10 +118,14 @@ export default function DayDetailPanel(props: {
         ) : mode === 'view' ? (
           <div className="grid grid-cols-2 gap-2">
             {info.kind === 'leave' ? (
-              <>
-                <button disabled={props.busy} onClick={props.onEditLeave} className="h-11 rounded-lg border text-sm">修改休假</button>
-                <button disabled={props.busy} onClick={props.onDeleteLeave} className="h-11 rounded-lg border text-sm text-destructive">刪除休假</button>
-              </>
+              (props.canEditLeave ?? true) ? (
+                <>
+                  <button disabled={props.busy} onClick={props.onEditLeave} className="h-11 rounded-lg border text-sm">修改休假</button>
+                  <button disabled={props.busy} onClick={props.onDeleteLeave} className="h-11 rounded-lg border text-sm text-destructive">刪除休假</button>
+                </>
+              ) : (
+                <div className="col-span-2 text-xs text-muted-foreground">（休假只可以由負責人／經理修改）</div>
+              )
             ) : (
               <>
                 <button disabled={props.busy} onClick={() => setMode('edit')} className="h-11 rounded-lg bg-primary text-primary-foreground text-sm">
@@ -133,7 +139,9 @@ export default function DayDetailPanel(props: {
                     {info.patternSlot ? '還原固定表' : '刪除當日當值'}
                   </button>
                 )}
-                <button disabled={props.busy} onClick={props.onNewLeave} className="h-11 rounded-lg border text-sm">設為休假…</button>
+                {(props.canEditLeave ?? true) && (
+                  <button disabled={props.busy} onClick={props.onNewLeave} className="h-11 rounded-lg border text-sm">設為休假…</button>
+                )}
               </>
             )}
             <button disabled={props.busy} onClick={props.onOpenBatch} className="h-11 rounded-lg border text-sm col-span-2">批量排（多日／多週）…</button>

@@ -10,6 +10,9 @@ import { lockKey, HttpError, toHttpResponse } from '@/lib/emp-lock'
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePerm(req, 'provider_schedule')
   if (isAuthError(auth)) return auth.error
+  // ★ V-2：KIOSK（前台 iPad）唔准改醫生固定表／休假 —— RBAC_MATRIX 只准 OWNER/MANAGER，
+  //   但 requirePerm 只睇 perm（KIOSK 預設有 provider_schedule），所以要喺度擋
+  if (auth.session.role === 'KIOSK') return NextResponse.json({ error: '前台帳戶唔可以修改醫生固定表／休假' }, { status: 403 })
 
   const { id } = await params
 
@@ -57,6 +60,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePerm(req, 'provider_schedule')
   if (isAuthError(auth)) return auth.error
+  // ★ V-2：KIOSK（前台 iPad）唔准改醫生固定表／休假 —— RBAC_MATRIX 只准 OWNER/MANAGER，
+  //   但 requirePerm 只睇 perm（KIOSK 預設有 provider_schedule），所以要喺度擋
+  if (auth.session.role === 'KIOSK') return NextResponse.json({ error: '前台帳戶唔可以修改醫生固定表／休假' }, { status: 403 })
 
   const { id } = await params
   const body = await req.json().catch(() => ({} as any))
