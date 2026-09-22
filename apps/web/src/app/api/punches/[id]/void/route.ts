@@ -7,6 +7,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { toHKDateStr } from '@/lib/hk-date'
 import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { createNotification } from '@/lib/notification'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 // POST /api/punches/[id]/void — Void a punch record (OWNER/MANAGER)
@@ -55,14 +56,31 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
         months: [toHKDateStr(punch.punchTime)],
       })
       await tx.punchVoid.create({ data: { punchRecordId: id, voidedBy: session.userId, reason } })
+      // ★ RC-07：指向呢張卡嘅 PENDING 修正已冇對象 → 標 REJECTED
+      // ★ A-2：先攞 id —— 要寫入 audit 同通知員工（之前靜靜 REJECT，員工唔知）
+      const pendingIds = (await tx.punchCorrection.findMany({
+        where: { punchRecordId: id, status: 'PENDING' }, select: { id: true },
+      })).map(c => c.id)
       await tx.auditLog.create({ data: {
         actorId: session.userId, action: 'VOID_PUNCH', entity: 'PunchRecord', entityId: id,
-        targetEmployeeId: punch.employeeId, notes: `作廢打卡：${reason}` } })
-      // ★ RC-07：指向呢張卡嘅 PENDING 修正已冇對象 → 標 REJECTED
-      await tx.punchCorrection.updateMany({
-        where: { punchRecordId: id, status: 'PENDING' },
-        data: { status: 'REJECTED', approvedBy: session.userId },
-      })
+        targetEmployeeId: punch.employeeId,
+        afterJson: JSON.stringify({ reason, autoRejectedCorrections: pendingIds }),
+        notes: `作廢打卡：${reason}${pendingIds.length ? `（自動拒絕待批修正 ${pendingIds.length} 張）` : ''}` } })
+      if (pendingIds.length > 0) {
+        await tx.punchCorrection.updateMany({
+          where: { id: { in: pendingIds }, status: 'PENDING' },
+          data: { status: 'REJECTED', approvedBy: session.userId },
+        })
+        for (const cid of pendingIds) {
+          await createNotification({
+            employeeId: punch.employeeId,
+            type: 'CORRECTION_REJECTED',
+            content: `你嘅補打卡申請已自動拒絕：原打卡記錄已被作廢（${reason || '冇註明原因'}），如有需要請重新提交。`,
+            relatedEntity: 'PunchCorrection',
+            relatedId: cid,
+          }, tx)
+        }
+      }
       await invalidateTimeBankFrom(punch.employeeId, punch.punchTime, tx)
       // ★ 2026-08-08: Revoke stale early-in OT if punches changed（Stage 2.4：入 tx，失敗 = rollback）
       await revokeStaleEarlyOt(punch.employeeId, toHKDateStr(punch.punchTime), session.userId, 'PUNCH_VOID', tx)

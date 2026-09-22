@@ -87,11 +87,15 @@ export async function PATCH(
       const diffParts: string[] = []
       for (const key of Object.keys(existing)) {
         if (key === 'employee' || key === 'updatedAt') continue
-        if ((existing as any)[key] !== (updated as any)[key]) {
+        const a = (existing as any)[key], b = (updated as any)[key]
+        // ★ A-8：Date 要比數值（!== 比 reference → periodMonth／createdAt 永遠當改咗）
+        const same = a instanceof Date && b instanceof Date ? a.getTime() === b.getTime() : a === b
+        if (!same) {
           const f = (existing as any)[key], t = (updated as any)[key]
           diffParts.push(`${key} ${String(typeof f === 'object' ? JSON.stringify(f) : f).slice(0, 30)} → ${String(typeof t === 'object' ? JSON.stringify(t) : t).slice(0, 30)}`)
         }
       }
+      // ★ A-8：資料已 commit —— audit 寫失敗唔好變 500（用戶會以為冇改到再改多次），留 log
       await writeAuditLog({
         action: 'UPDATE',
         entity: 'TimeBank',
@@ -99,7 +103,7 @@ export async function PATCH(
         beforeJson: JSON.stringify(slimForAudit(existing)),
         afterJson: JSON.stringify(slimForAudit(updated)),
         notes: diffParts.join('; ') || null,
-      })
+      }).catch(e => console.error('[time-bank/[id]] audit write failed (UPDATE)', params.id, e))
 
       return NextResponse.json({ success: true, timeBank: updated })
     } catch (error) {
@@ -148,7 +152,7 @@ export async function DELETE(
         beforeJson: JSON.stringify(slimForAudit(existing)),
         afterJson: null,
         notes: null,
-      })
+      }).catch(e => console.error('[time-bank/[id]] audit write failed (DELETE)', params.id, e))   // ★ A-8
 
       return NextResponse.json({ success: true })
     } catch (error) {

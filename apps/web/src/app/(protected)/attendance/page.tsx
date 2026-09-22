@@ -473,9 +473,11 @@ export default function AttendancePage() {
 
   // Records
   const recordsReq = useLatestRequest()
-  const fetchRecords = async () => {
+  const fetchRecords = async (opts?: { silent?: boolean }) => {
     const { signal, isLatest } = recordsReq()
-    setLoading(true); setError('')
+    // ★ F-4：live refresh 唔好成個表變「載入中」、捲動彈返頂；背景失敗保留現有資料
+    const silent = !!opts?.silent
+    if (!silent) { setLoading(true); setError('') }
     try {
       const params = new URLSearchParams({ page: page.toString(), pageSize: pageSize.toString() })
       if (clinicFilter) params.set('clinicId', clinicFilter)
@@ -490,7 +492,8 @@ export default function AttendancePage() {
       setRecords(data.records || []); setTotal(data.total || 0)
     } catch (err: any) {
       if (err?.name === 'AbortError' || !isLatest()) return
-      setError(err.message || '載入失敗')
+      if (silent) console.warn('[attendance] 背景更新失敗，保留現有資料', err)
+      else setError(err.message || '載入失敗')
     } finally { if (isLatest()) setLoading(false) }
   }
 
@@ -537,13 +540,17 @@ export default function AttendancePage() {
 
   useEffect(() => { if (user) fetchRecords() }, [user, page, clinicFilter, employeeFilter, startDate, endDate, showVoided])
   // ★ cwm-consistency Stage 5.2：live refresh（records tab 每 60s + 其他 tab mutation 即 refetch）
-  useLiveRefresh(() => { fetchRecords(); fetchRecordExceptions(); fetchExceptions() }, ['attendance', 'correction', 'leave', 'schedule'], { intervalMs: 60_000, enabled: activeTab === 'records' })
+  // ★ A-9：records tab 唔再每 60s 拉 fetchExceptions（最重嘅 exceptions route，逐人 calculateTimeBank）——
+  //   異常 tab 自己一個 refresh（只喺嗰個 tab 開住先跑）
+  useLiveRefresh(() => { fetchRecords({ silent: true }); fetchRecordExceptions() }, ['attendance', 'correction', 'leave', 'schedule'], { intervalMs: 60_000, enabled: activeTab === 'records' })
+  useLiveRefresh(() => { fetchExceptions({ silent: true }) }, ['attendance', 'correction', 'leave', 'schedule'], { intervalMs: 120_000, enabled: activeTab === 'exceptions' })
 
   // Exceptions
   const exReq = useLatestRequest()
-  const fetchExceptions = useCallback(async () => {
+  const fetchExceptions = useCallback(async (opts?: { silent?: boolean }) => {
     const { signal, isLatest } = exReq()
-    setExLoading(true)
+    const silent = !!opts?.silent   // ★ F-4：背景 refresh 唔閃、失敗唔清空
+    if (!silent) setExLoading(true)
     try {
       const params = new URLSearchParams({ periodMonth })
       if (exClinicId) params.set('clinicId', exClinicId)
@@ -551,8 +558,8 @@ export default function AttendancePage() {
       const res = await fetch(`/api/payroll-runs/exceptions?${params}`, { credentials: 'include', cache: 'no-store', signal })
       if (!isLatest()) return
       if (res.ok) { const data = await res.json(); setExceptions(data.exceptions || []) }
-      else { setExceptions([]) }
-    } catch { if (!isLatest()) return; setExceptions([]) }
+      else if (!silent) { setExceptions([]) }
+    } catch { if (!isLatest()) return; if (!silent) setExceptions([]) }
     finally { if (isLatest()) setExLoading(false) }
   }, [exClinicId, exEmployeeId, periodMonth, exReq])
 
@@ -1378,7 +1385,7 @@ export default function AttendancePage() {
               </select>
             </div>
             <div className="flex items-end">
-              <button onClick={fetchExceptions} disabled={exLoading}
+              <button onClick={() => fetchExceptions()} disabled={exLoading}
                 className="px-4 py-2 rounded-md border-none bg-brand text-white text-sm font-semibold hover:bg-brand-dark disabled:bg-gray-400">
                 {exLoading ? '查詢中...' : '查詢'}
               </button>
@@ -1408,7 +1415,7 @@ export default function AttendancePage() {
                 {exEmployees.map(e => (<option key={e.id} value={e.id}>{e.name}</option>))}
               </select>
             </div>
-            <button onClick={fetchExceptions} disabled={exLoading}
+            <button onClick={() => fetchExceptions()} disabled={exLoading}
               className="w-full px-4 py-2 rounded-md border-none bg-brand text-white text-sm font-semibold hover:bg-brand-dark disabled:bg-gray-400">
               {exLoading ? '查詢中...' : '查詢'}
             </button>

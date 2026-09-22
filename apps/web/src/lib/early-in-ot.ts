@@ -116,6 +116,8 @@ export async function revokeStaleEarlyOt(
       await invalidateTimeBankFrom(employeeId, dayStart, db)
     } catch (e) {
       console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${dayStart}`, e)
+      // ★ A-6：tx 入面 DB 錯誤令 PG tx aborted —— 吞咗佢，下一句會爆誤導性嘅「current transaction is aborted」
+      if (db !== prisma) throw e
     }
 
     return { revoked: true, minutes: entry.minutes }
@@ -174,6 +176,7 @@ export async function revokeStaleEarlyOt(
     await invalidateTimeBankFrom(employeeId, dayStart, db)
   } catch (e) {
     console.error(`[timebank-cache] invalidate failed employeeId=${employeeId} date=${dayStart}`, e)
+    if (db !== prisma) throw e   // ★ A-6：同上
   }
 
   return { revoked: true, minutes: entry.minutes }

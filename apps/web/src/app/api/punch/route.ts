@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
         if (todayPunches.some(p => p.punchType === punchType)) {
           const label = punchType === 'CLOCK_IN' ? '上班' : punchType === 'CLOCK_OUT' ? '下班' : punchType === 'LUNCH_START' ? '午休開始' : '午休結束'
           return NextResponse.json(
-            { error: `今天已打${label}卡` },
+            { error: `今天已打${label}卡`, code: 'ALREADY_PUNCHED' },   // ★ A-5：同 tx 內重驗一致 → 打卡頁顯示琥珀色提示唔係紅色失敗
             { status: 400 }
           )
         }

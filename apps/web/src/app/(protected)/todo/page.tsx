@@ -133,10 +133,15 @@ export default function TodoPage() {
         credentials: 'include',
         body: JSON.stringify({ action }),
       })
-      if (res.ok || res.status === 409) {
+      // ★ A-1：409 唔一定係「已有人處理」—— PAYROLL_LOCKED（計糧已鎖）／BUSY（處理緊）張單仍然係 PENDING，唔好移走
+      const e409 = res.status === 409 ? await res.json().catch(() => ({})) : null
+      if (res.ok || (e409 && !e409.code)) {
         notifyDataChanged('leave')
         setLeaves(prev => prev.filter(l => l.id !== id))
-        if (res.status === 409) { const e = await res.json().catch(() => ({})); alert(e.error || '已有人處理咗') }
+        if (e409) alert(e409.error || '已有人處理咗')
+      } else if (e409) {
+        alert(e409.error || '暫時處理唔到，請稍後再試')
+        loadData()
       } else {
         const err = await res.json().catch(() => ({}))
         alert(err.error || '操作失敗')
@@ -155,10 +160,16 @@ export default function TodoPage() {
     setBusyId(id)
     try {
       const res = await fetch(`/api/punch-corrections/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ action }) })
-      if (res.ok || res.status === 409) {
+      // ★ A-1：PAYROLL_LOCKED／BUSY／RC-07「原打卡已被作廢」都係 409 —— 只有 P2025「已有人處理」先移走
+      const e409 = res.status === 409 ? await res.json().catch(() => ({})) : null
+      const handledElsewhere = e409 && !e409.code && /已經有人處理/.test(e409.error || '')
+      if (res.ok || handledElsewhere) {
         notifyDataChanged('correction')
         setCorrections(prev => prev.filter(c => c.id !== id))
-        if (res.status === 409) { const e = await res.json().catch(() => ({})); alert(e.error || '已有人處理咗') }
+        if (e409) alert(e409.error || '已有人處理咗')
+      } else if (e409) {
+        alert(e409.error || '暫時處理唔到，請稍後再試')
+        loadData()
       } else {
         const err = await res.json().catch(() => ({}))
         alert(err.error || '操作失敗')

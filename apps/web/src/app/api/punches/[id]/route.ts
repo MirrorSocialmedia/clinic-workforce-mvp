@@ -9,6 +9,7 @@ import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { getMonthRange, toHKDateStr } from '@/lib/hk-date'
 import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
+import { createNotification } from '@/lib/notification'
 
 // GET /api/punches/[id] — Single punch record + full correction chain
 export async function GET(
@@ -139,6 +140,25 @@ export async function PUT(
           reason: reason || '管理端更正',
         },
       })
+      // ★ A-7：同作廢一樣（RC-07）—— 指住舊筆嘅待批修正已冇對象，自動拒絕並通知員工（否則之後批會 409）
+      const pendingIds = (await tx.punchCorrection.findMany({
+        where: { punchRecordId: params.id, status: 'PENDING' }, select: { id: true },
+      })).map(c => c.id)
+      if (pendingIds.length > 0) {
+        await tx.punchCorrection.updateMany({
+          where: { id: { in: pendingIds }, status: 'PENDING' },
+          data: { status: 'REJECTED', approvedBy: session.userId },
+        })
+        for (const cid of pendingIds) {
+          await createNotification({
+            employeeId: oldRecord.employeeId,
+            type: 'CORRECTION_REJECTED',
+            content: `你嘅補打卡申請已自動拒絕：主管已直接修改咗嗰張打卡（${reason}），如仍有出入請重新提交。`,
+            relatedEntity: 'PunchCorrection',
+            relatedId: cid,
+          }, tx)
+        }
+      }
       // ② 建新筆
       const nr = await tx.punchRecord.create({
         data: {
@@ -182,7 +202,9 @@ export async function PUT(
         if (newMonth.getTime() !== oldMonth.getTime()) {
           await invalidateTimeBankFrom(oldRecord.employeeId, newTime, tx)
         }
-        await revokeStaleEarlyOt(oldRecord.employeeId, toHKDateStr(newTime), session.userId, 'PUNCH_EDIT', tx)
+        if (toHKDateStr(newTime) !== toHKDateStr(oldRecord.punchTime)) {   // ★ A-7：同日唔使撤兩次
+          await revokeStaleEarlyOt(oldRecord.employeeId, toHKDateStr(newTime), session.userId, 'PUNCH_EDIT', tx)
+        }
       }
       return nr
     })
