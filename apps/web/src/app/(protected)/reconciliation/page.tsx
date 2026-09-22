@@ -12,6 +12,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Upload, FileSpreadsheet, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
 import { RequireRole } from '@/components/RequireRole'
+import { todayHK } from '@/lib/hk-date'
 
 interface ReconciliationRecord {
   id: string
@@ -541,6 +542,6 @@ function ReconciliationPageInner() {
 }
 
 function getCurrentMonth(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  // ★ cwm-consist S6 TZ-05：HK 視角當月（舊版 local 月，非 HK 瀏覽器會差月）
+  return todayHK().slice(0, 7)
 }

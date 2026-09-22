@@ -27,7 +27,7 @@ export default function MaterialsPage() {
 
   // Create modal
   const [modalOpen, setModalOpen] = useState(false)
-  const [form, setForm] = useState({ name: '', unitPrice: '', effectiveFrom: new Date().toISOString().slice(0, 10) })
+  const [form, setForm] = useState({ name: '', unitPrice: '', effectiveFrom: todayHK() })  // ★ cwm-consist S6 TZ-05：HK 視角當日（舊版 UTC 切片）
   const [saving, setSaving] = useState(false)
 
   // ★ 2026-08-28 (cwm-matedit-t1): 改價 / 更名 / 停用 状態
@@ -95,7 +95,7 @@ export default function MaterialsPage() {
       })
 
       setModalOpen(false)
-      setForm({ name: '', unitPrice: '', effectiveFrom: new Date().toISOString().slice(0, 10) })
+      setForm({ name: '', unitPrice: '', effectiveFrom: todayHK() })
       loadItems()
     } catch (e: any) {
       alert(`新增失敗: ${e.message}`)

@@ -9,7 +9,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { notifyDataChanged } from '@/lib/live-refresh'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import QrScanner from './components/qr-scanner'
-import { fmtTime, fmtDateTime } from '@/lib/hk-date'
+import { fmtTime, fmtDateTime, todayHK } from '@/lib/hk-date'
 import { useFaceCapture } from '@/lib/use-face-capture'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
@@ -671,7 +671,7 @@ export default function PunchPage() {
       {/* ── Version hint ── */}
       {!punchResult && (
         <div style={{ fontSize: 11, color: '#999', textAlign: 'center', marginTop: 8, paddingBottom: 8 }}>
-          v{new Date().toISOString().slice(0, 10)} — 若顯示異常請硬刷新
+          v{todayHK()} — 若顯示異常請硬刷新
         </div>
       )}
 

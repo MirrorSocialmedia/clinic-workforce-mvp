@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, todayHK } from '@/lib/hk-date'
 import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS, zeroEntitledHint } from '@/lib/leave-types'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { Plus } from 'lucide-react'
@@ -172,7 +172,7 @@ export default function LeavePage() {
   const isManager = userRole === 'OWNER' || userRole === 'MANAGER' /* ROLE-OK(TEMP): 見上面 TODO */
   const isOwner = userRole === 'OWNER' /* ROLE-OK(TEMP): 見上面 TODO */
 
-  const currentYear = new Date().getFullYear()
+  const currentYear = Number(todayHK().slice(0, 4))  // ★ cwm-consist S6 TZ-05：HK 視角年（舊版 local 年，跨年假期前後會差年）
 
   const fetchData = useCallback(async () => {
     try {

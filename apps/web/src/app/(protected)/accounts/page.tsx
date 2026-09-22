@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Wallet, Plus, Eye, EyeOff } from 'lucide-react'
 import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS, zeroEntitledHint } from '@/lib/leave-types'
 import { RuleComposerModal } from '@/components/RuleComposerModal'
-import { fmtDate } from '@/lib/hk-date'
+import { fmtDate, todayHK } from '@/lib/hk-date'
 import ResignSettlementModal from '@/components/ResignSettlementModal'
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from '@/lib/permissions'
@@ -462,7 +462,7 @@ export default function AccountsPage() {
   }
 
   // 週年發放制：年假只顯示當年
-  const currentYear = new Date().getFullYear()
+  const currentYear = Number(todayHK().slice(0, 4))  // ★ cwm-consist S6 TZ-05：HK 視角年
 
   if (loading) return <div className="main-content" style={{ padding: 24 }}>載入中...</div>
 

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Plus, Edit2, EyeOff, Check, X, Wallet, Download, AlertTriangle } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
+import { toHKDateStr, todayHK } from '@/lib/hk-date'
 
 interface Clinic { id: string; name: string; shortName?: string | null }
 
@@ -204,7 +205,7 @@ export default function ProvidersPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `providers_${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `providers_${todayHK()}.csv`  // ★ cwm-consist S6 TZ-05：HK 視角當日（舊版 UTC 切片）
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -383,8 +384,8 @@ export default function ProvidersPage() {
                   <div key={c.id} className="text-xs p-2 rounded bg-muted/30">
                     <span className="font-medium">{c.percent}% {c.basis}</span>
                     {c.minGuarantee && <span className="text-muted-foreground ml-2">保底 ${c.minGuarantee}</span>}
-                    <span className="text-muted-foreground ml-2">生效 {new Date(c.effectiveFrom).toISOString().slice(0, 10)}</span>
-                    {c.effectiveTo && <span className="text-muted-foreground">– {new Date(c.effectiveTo).toISOString().slice(0, 10)}</span>}
+                    <span className="text-muted-foreground ml-2">生效 {toHKDateStr(c.effectiveFrom)}</span>
+                    {c.effectiveTo && <span className="text-muted-foreground">– {toHKDateStr(c.effectiveTo)}</span>}
                     {c.note && <span className="ml-2 text-amber-700">·{c.note}</span>}
                   </div>
                 ))}

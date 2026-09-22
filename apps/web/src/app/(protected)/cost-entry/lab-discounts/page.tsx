@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
+import { todayHK } from '@/lib/hk-date'
 import { Card } from '@/components/ui/card'
 import { Loader2, AlertTriangle, Edit3, Power, Trash2 } from 'lucide-react'
 
@@ -74,11 +75,12 @@ export default function LabDiscountsPage() {
 
   // Get last 3 months for display
   const months = (() => {
-    const now = new Date()
+    // ★ cwm-consist S6 TZ-05：HK 視角當月往前 3 個月（舊版 local 月，非 HK 瀏覽器會差月）
+    const [y0, m0] = todayHK().slice(0, 7).split('-').map(Number)
     const result: string[] = []
     for (let i = 0; i < 3; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      result.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+      const d = new Date(Date.UTC(y0, m0 - 1 - i, 1))
+      result.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`)
     }
     return result
   })()

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Pencil, Plus, Smartphone, Wrench, Search, Clock } from 'lucide-react'
-import { toHKDateStr, fmtDateTime, fmtDate, todayHK, hkDayOfWeek } from '@/lib/hk-date'
+import { toHKDateStr, fmtDateTime, fmtDate, todayHK, hkDayOfWeek, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
 import { hasPermission } from '@/lib/permissions'
 import { useLatestRequest } from '@/lib/use-latest-request'
@@ -292,12 +292,12 @@ export default function AttendancePage() {
   const [clinicFilter, setClinicFilter] = useState('')
   const [employeeFilter, setEmployeeFilter] = useState('')
   const [startDate, setStartDate] = useState(() => {
-    const now = new Date()
-    return toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
+    // ★ cwm-consist S6 TZ-05：HK 視角當月首日（舊版用 local 月首 + toHKDateStr，非 HK 瀏覽器會差月）
+    return `${todayHK().slice(0, 7)}-01`
   })
   const [endDate, setEndDate] = useState(() => {
-    const now = new Date()
-    return toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    // ★ cwm-consist S6 TZ-05：HK 視角當月末日
+    return `${todayHK().slice(0, 7)}-${String(hkDaysInMonth(new Date())).padStart(2, '0')}`
   })
   const [showVoided, setShowVoided] = useState(false)
 
@@ -322,14 +322,14 @@ export default function AttendancePage() {
 
   const attMonthLabel = useMemo(() => {
     if (!attSelectedDay) return ''
-    const d = new Date(attSelectedDay)
-    return `${d.getFullYear()}年${d.getMonth() + 1}月`
+    // ★ cwm-consist S6 TZ-05：HK 日期字串直接拆（舊版 new Date(str) = UTC 午夜 → local 月，非 HK 瀏覽器差一日）
+    const [y, m] = attSelectedDay.split('-')
+    return `${y}年${Number(m)}月`
   }, [attSelectedDay])
 
   const shiftAttWeek = (delta: number) => {
-    const d = new Date(attSelectedDay)
-    d.setDate(d.getDate() + delta)
-    setAttSelectedDay(toHKDateStr(d))
+    // ★ cwm-consist S6 TZ-05：純日期字串運算（舊版 local setDate，非 HK 瀏覽器會差一日）
+    setAttSelectedDay(addDaysStr(attSelectedDay, delta))
   }
 
   const selectAttDay = (d: string) => {
@@ -705,9 +705,10 @@ export default function AttendancePage() {
   // NOTE: useMemo MUST be before early return (Rules of Hooks)
   // ★ Empty-state hint: detect default month range so we can suggest changing dates (2026-08-03)
   const isDefaultMonthRange = (() => {
-    const now = new Date()
-    const defStart = toHKDateStr(new Date(now.getFullYear(), now.getMonth(), 1))
-    const defEnd = toHKDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    // ★ cwm-consist S6 TZ-05：同上面個 default state 同一 HK 口徑
+    const ym = todayHK().slice(0, 7)
+    const defStart = `${ym}-01`
+    const defEnd = `${ym}-${String(hkDaysInMonth(new Date())).padStart(2, '0')}`
     return startDate === defStart && endDate === defEnd
   })()
 

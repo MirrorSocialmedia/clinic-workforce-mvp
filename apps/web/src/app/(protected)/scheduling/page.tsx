@@ -13,7 +13,7 @@ import zhcn from '@fullcalendar/core/locales/zh-cn'
 //   舊 tsbuildinfo 一直掩住，next build 先暴露）。type-level alias，零 runtime 影響。
 import type { DatesSetArg, EventContentArg, EventMountArg } from '@fullcalendar/core'
 const FullCalendarCmp = FullCalendar as unknown as React.ComponentType<any>
-import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK, addDaysStr } from '@/lib/hk-date'
+import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK, addDaysStr, hkDayOfWeek } from '@/lib/hk-date'
 import { useLatestRequest } from '@/lib/use-latest-request'
 import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
 import { aggregateRestPl } from '@/lib/leave-summary'
@@ -612,24 +612,21 @@ export default function SchedulingPage() {
   const [mobileShifts, setMobileShifts] = useState<Shift[]>([])
   const [mobileLeaves, setMobileLeaves] = useState<any[]>([])
   const mobileWeekDays = useMemo(() => {
-    const d = new Date(mobileSelectedDate)
-    const dow = d.getDay() // 0=日
+    // ★ cwm-consist S6 TZ-05：HK 口徑週計算（純日期字串運算）—— 舊版 new Date(str) = UTC 午夜
+    //   + local getDay/setDate，非 HK 瀏覽器整個週會移走一日
+    const dow = hkDayOfWeek(mobileSelectedDate) // 0=日（HK 視角）
     const mondayOffset = dow === 0 ? -6 : 1 - dow
-    const monday = new Date(d)
-    monday.setDate(d.getDate() + mondayOffset)
+    const monday = addDaysStr(mobileSelectedDate, mondayOffset)
     const days: string[] = []
     for (let i = 0; i < 7; i++) {
-      const wd = new Date(monday)
-      wd.setDate(monday.getDate() + i)
-      days.push(toHKDateStr(wd))
+      days.push(addDaysStr(monday, i))
     }
     return days // 週一→週日，固定一週
   }, [mobileSelectedDate])
 
   const shiftMobileWeek = (deltaDays: number) => {
-    const d = new Date(mobileSelectedDate)
-    d.setDate(d.getDate() + deltaDays)
-    setMobileSelectedDate(toHKDateStr(d))
+    // ★ cwm-consist S6 TZ-05：純日期字串運算（舊版 local setDate，非 HK 瀏覽器差一日）
+    setMobileSelectedDate(addDaysStr(mobileSelectedDate, deltaDays))
   }
 
   // Desktop: week navigation — no longer depends on calendarRef
@@ -4763,7 +4760,11 @@ function getShiftCode(shift: Shift): string {
           <div className="mb-3 rounded-lg border bg-card px-3 py-2">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-sm font-semibold">
-                📊 工時 {(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); return `${a.getFullYear()}年${a.getMonth() + 1}月` })()}
+                📊 工時 {(() => {
+                  // ★ cwm-consist S6 TZ-05：HK 日期字串直接拆（舊版 new Date(str) local 月，非 HK 瀏覽器差月）
+                  const s = viewRange?.start ?? todayHK()
+                  return `${s.slice(0, 4)}年${Number(s.slice(5, 7))}月`
+                })()}
               </span>
               <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
             </div>
@@ -4778,7 +4779,12 @@ function getShiftCode(shift: Shift): string {
             </div>
             {/* 當週 */}
             <div className="pt-1 border-t">
-              <span className="text-xs text-muted-foreground mr-2">{(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); const e = new Date(a); e.setDate(a.getDate() + 6); return `當週(${toHKDateStr(a).slice(5)}–${toHKDateStr(e).slice(5)})` })()}</span>
+              <span className="text-xs text-muted-foreground mr-2">{(() => {
+                // ★ cwm-consist S6 TZ-05：純日期字串運算（舊版 local setDate +6，非 HK 瀏覽器週尾差一日）
+                const s = viewRange?.start ?? todayHK()
+                const e = addDaysStr(s, 6)
+                return `當週(${s.slice(5)}–${e.slice(5)})`
+              })()}</span>
               <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
                 {monthlyWorkHours.map(e => (
                   <span key={e.id} className={e.week > 45 ? 'text-red-600 font-semibold' : ''}>
@@ -4808,8 +4814,9 @@ function getShiftCode(shift: Shift): string {
           </button>
           <span className="text-sm font-semibold">
             {(() => {
-              const d = new Date(mobileSelectedDate)
-              return `${d.getFullYear()}年${d.getMonth() + 1}月`
+              // ★ cwm-consist S6 TZ-05：HK 日期字串直接拆（舊版 local 月，非 HK 瀏覽器差月）
+              const [y, m] = mobileSelectedDate.split('-')
+              return `${y}年${Number(m)}月`
             })()}
           </span>
           <button onClick={() => shiftMobileWeek(7)}
@@ -5120,7 +5127,11 @@ function getShiftCode(shift: Shift): string {
           <div className="mb-3 rounded-lg border bg-card px-3 py-2">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-sm font-semibold">
-              📊 工時 {(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); return `${a.getFullYear()}年${a.getMonth() + 1}月` })()}
+              📊 工時 {(() => {
+                // ★ cwm-consist S6 TZ-05：HK 日期字串直接拆（舊版 new Date(str) local 月，非 HK 瀏覽器差月）
+                const s = viewRange?.start ?? todayHK()
+                return `${s.slice(0, 4)}年${Number(s.slice(5, 7))}月`
+              })()}
             </span>
             <span className="text-xs text-muted-foreground">{currentCompanyName || selectedClinicId ? (clinics.find(c => c.id === selectedClinicId)?.name || '') : ''}</span>
           </div>
@@ -5135,7 +5146,12 @@ function getShiftCode(shift: Shift): string {
           </div>
           {/* 當週 */}
           <div className="pt-1 border-t">
-            <span className="text-xs text-muted-foreground mr-2">{(() => { const a = viewRange ? new Date(viewRange.start) : new Date(); const e = new Date(a); e.setDate(a.getDate() + 6); return `當週(${toHKDateStr(a).slice(5)}–${toHKDateStr(e).slice(5)})` })()}</span>
+            <span className="text-xs text-muted-foreground mr-2">{(() => {
+              // ★ cwm-consist S6 TZ-05：純日期字串運算（舊版 local setDate +6，非 HK 瀏覽器週尾差一日）
+              const s = viewRange?.start ?? todayHK()
+              const e = addDaysStr(s, 6)
+              return `當週(${s.slice(5)}–${e.slice(5)})`
+            })()}</span>
             <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
               {monthlyWorkHours.map(e => (
                 <span key={e.id} className={e.week > 45 ? 'text-red-600 font-semibold' : ''}>
@@ -7376,13 +7392,14 @@ function getShiftCode(shift: Shift): string {
                   return '請設定日期範圍同星期'
                 }
                 const previewDates: string[] = []
-                let d = new Date(bulkStartDate)
-                const end = new Date(bulkEndDate)
-                while (d <= end) {
-                  if (bulkWeekdays.includes(d.getDay())) {
-                    previewDates.push(`${d.getMonth() + 1}/${d.getDate()}`)
+                // ★ cwm-consist S6 TZ-05：純 HK 日期字串運算（舊版 new Date(str) = UTC 午夜 + local getDay，
+                //   非 HK 瀏覽器星期判定差一日 → 預覽同實際建立都可能錯日）
+                let ds = bulkStartDate
+                while (ds <= bulkEndDate) {
+                  if (bulkWeekdays.includes(hkDayOfWeek(ds))) {
+                    previewDates.push(`${Number(ds.slice(5, 7))}/${Number(ds.slice(8, 10))}`)
                   }
-                  d.setDate(d.getDate() + 1)
+                  ds = addDaysStr(ds, 1)
                 }
                 if (previewDates.length === 0) return '日期範圍內冇符合嘅星期'
                 return `將建立 ${previewDates.length} 張更次：${previewDates.join(', ')}`
@@ -7408,13 +7425,14 @@ function getShiftCode(shift: Shift): string {
                   }
                   // Expand date range × weekdays into dates[]
                   const dates: string[] = []
-                  let d = new Date(bulkStartDate)
-                  const end = new Date(bulkEndDate)
-                  while (d <= end) {
-                    if (bulkWeekdays.includes(d.getDay())) {
-                      dates.push(toHKDateStr(d))
+                  // ★ cwm-consist S6 TZ-05：純 HK 日期字串運算（同上面預覽同一口徑；
+                  //   舊版 local getDay/setDate 喺非 HK 瀏覽器會建錯日）
+                  let ds = bulkStartDate
+                  while (ds <= bulkEndDate) {
+                    if (bulkWeekdays.includes(hkDayOfWeek(ds))) {
+                      dates.push(ds)
                     }
-                    d.setDate(d.getDate() + 1)
+                    ds = addDaysStr(ds, 1)
                   }
                   if (dates.length === 0) {
                     alert('日期範圍內冇符合嘅星期')

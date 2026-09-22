@@ -12,6 +12,7 @@
  */
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
+import { todayHK } from '@/lib/hk-date'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -57,8 +58,8 @@ export default function ReferralsPage() {
 
   // Y3: Month filter
   const [month, setMonth] = useState(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    // ★ cwm-consist S6 TZ-05：HK 視角當月（舊版 local 月，非 HK 瀏覽器會差月）
+    return todayHK().slice(0, 7)
   })
 
   // Y2: Collapse state

@@ -796,9 +796,10 @@ function AttendanceDetail({ empId }: { empId: string }) {
       <div style={{ display: 'flex', gap: 6, marginBottom: 8, fontSize: 12 }}>
         {[['近7日', 7], ['近30日', 30]].map(([label, d]) => (
           <button key={label as string} onClick={() => {
-            const to = new Date()
-            const from = new Date(Date.now() - (d as number) * 86400000)
-            const r = { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) }
+            // ★ cwm-consist S6 TZ-05：HK 視角日期（舊版 toISOString = UTC 切片，非 HK 瀏覽器差一日）
+            const to = toHKDateStr(new Date())
+            const from = toHKDateStr(new Date(Date.now() - (d as number) * 86400000))
+            const r = { from, to }
             setRange(r); setPage(1); load(1, r)
           }} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
             {label}

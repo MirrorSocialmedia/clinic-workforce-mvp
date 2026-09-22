@@ -269,7 +269,7 @@ export default function WageHistoryPage({ params }: { params: { id: string } }) 
         <div>
           <h1 className="text-xl font-semibold">歷史工資</h1>
           <p className="text-sm text-muted-foreground">
-            {employee?.name ?? '員工'} · 入職日 {employee?.joinDate ? new Date(employee.joinDate).toISOString().slice(0, 10) : '—'}
+            {employee?.name ?? '員工'} · 入職日 {employee?.joinDate ? toHKDateStr(employee.joinDate) : '—'}
           </p>
         </div>
         <button onClick={() => router.back()} className="text-sm text-brand hover:underline">
