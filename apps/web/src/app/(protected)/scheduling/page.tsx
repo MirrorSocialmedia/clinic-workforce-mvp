@@ -1296,6 +1296,40 @@ function getShiftCode(shift: Shift): string {
     }
     return activeEmployees
   }, [employees, selectedClinicId, empScope, ovScope, clinics])
+
+  // ★ cwm-tplgroup-20260923：管理頁按公司分組顯示。
+  //   ⚠️ templates state（上方「Load templates for ALL companies」）維持【全部公司】—— 跨公司調鋪要揀得到其他公司嘅更次，
+  //      呢度只係【顯示】分組，唔係過濾。
+  const templatesByCompany = useMemo(() => {
+    const nameOf = new Map<string, string>()
+    for (const c of clinics) if (c.company?.id) nameOf.set(c.company.id, c.company.name ?? '（未命名公司）')
+
+    const groups = new Map<string, { companyId: string; companyName: string; items: ShiftTemplate[] }>()
+    for (const t of templates) {
+      const cid = t.companyId ?? '__none__'
+      if (!groups.has(cid)) {
+        groups.set(cid, {
+          companyId: cid,
+          companyName: cid === '__none__' ? '（未綁公司）' : (nameOf.get(cid) ?? '（其他公司）'),
+          items: [],
+        })
+      }
+      groups.get(cid)!.items.push(t)
+    }
+    // ★ 當前公司排第一，其餘按名排
+    return [...groups.values()].sort((a, b) => {
+      if (a.companyId === currentCompanyId) return -1
+      if (b.companyId === currentCompanyId) return 1
+      return a.companyName.localeCompare(b.companyName, 'zh-HK')
+    })
+  }, [templates, clinics, currentCompanyId])
+
+  // ★ cwm-tplgroup-20260923：當前公司預設展開，其他公司預設收起；切換公司即 reset
+  const [expandedTplCompanies, setExpandedTplCompanies] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    setExpandedTplCompanies(new Set(currentCompanyId ? [currentCompanyId] : []))
+  }, [currentCompanyId])
+
   // ★ Cell shift options for month view click menu
   const cellShiftOptions = useMemo(() => {
     // ★ 公司模式冇單一主店 —— 由 ovScope 攞公司
@@ -4609,8 +4643,41 @@ function getShiftCode(shift: Shift): string {
                 有編更權限就應該管得到模版。role 寫死會繞過權限系統。 */}
           {canManage && (
             <div style={{ marginTop: 24, borderTop: '1px solid #eee', paddingTop: 16 }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: 15, fontWeight: 600 }} className="flex items-center gap-2"><ClipboardList size={16} /> 更次模版管理{currentCompanyName ? ` — ${currentCompanyName}` : ''}</h3>
-              {templates.map(t => (
+              <h3 style={{ margin: '0 0 4px 0', fontSize: 15, fontWeight: 600 }} className="flex items-center gap-2">
+                <ClipboardList size={16} /> 更次模版管理
+              </h3>
+              {/* ★ cwm-tplgroup-20260923：標題唔再寫單一公司名（之前寫「— 匯樂」但列晒三間，會誤導） */}
+              <p style={{ fontSize: 11, color: '#6b7280', margin: '0 0 12px 0' }}>
+                模版全公司共用（調鋪要揀得到其他公司嘅更次）。新增會加入
+                <strong>{currentCompanyName || '當前公司'}</strong>。
+              </p>
+
+              {templatesByCompany.map(g => {
+                const open = expandedTplCompanies.has(g.companyId)
+                return (
+                  <div key={g.companyId} style={{ marginBottom: 12 }}>
+                    <button
+                      onClick={() => setExpandedTplCompanies(prev => {
+                        const n = new Set(prev)
+                        if (n.has(g.companyId)) n.delete(g.companyId); else n.add(g.companyId)
+                        return n
+                      })}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                        padding: '6px 10px', background: g.companyId === currentCompanyId ? '#eff6ff' : '#f3f4f6',
+                        border: '1px solid ' + (g.companyId === currentCompanyId ? '#bfdbfe' : '#e5e7eb'),
+                        borderRadius: 6, fontSize: 13, fontWeight: 600, textAlign: 'left',
+                      }}
+                    >
+                      <span style={{ fontSize: 10 }}>{open ? '▼' : '▸'}</span>
+                      {g.companyName}
+                      <span style={{ fontSize: 11, fontWeight: 400, color: '#6b7280' }}>（{g.items.length}）</span>
+                      {g.companyId === currentCompanyId && (
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#1d4ed8' }}>當前</span>
+                      )}
+                    </button>
+
+                    {open && g.items.map(t => (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, padding: '8px 12px', background: '#f9f9f9', borderRadius: 6 }}>
                   <span style={{ minWidth: 60, fontWeight: 500, fontSize: 13 }}>{t.name}</span>
                   {t.shortName && <span style={{ fontSize: 10, color: '#6b7280', background: '#f3f4f6', padding: '1px 5px', borderRadius: 4 }}>簡稱: {t.shortName}</span>}
@@ -4647,7 +4714,10 @@ function getShiftCode(shift: Shift): string {
                       >刪除</button>
                     </div>
                 </div>
-              ))}
+                    ))}
+                  </div>
+                )
+              })}
               {/* Add new template */}
               <NewShiftTemplateForm
                 onCreated={async (tpl) => {
