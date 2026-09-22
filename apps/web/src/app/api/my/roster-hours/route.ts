@@ -2,11 +2,9 @@ export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { PrismaClient } from '@prisma/client'
+import { basePrisma as prisma } from '@/lib/prisma'  // cwm-consist S6 CA-09b：shared client（舊 new PrismaClient() 每 request 開新 connection）
 import { toHKDateStr } from '@/lib/hk-date'
 import { computeRosterHours, rosterDiffNoteFilter } from '@/lib/roster-hours'
-
-const prisma = new PrismaClient()
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
