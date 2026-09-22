@@ -98,7 +98,7 @@ export default function ReferralsPage() {
     fromProviderId: '',
     toProviderId: '',
     patientNote: '',
-    periodMonth: new Date().toISOString().slice(0, 7),
+    periodMonth: todayHK().slice(0, 7),  // ★ cwm-consist S6 TZ-05b：HK 視角當月（舊版 toISOString = UTC slice，00:00–07:59 HK 會差月）
   })
   const [draftSaving, setDraftSaving] = useState(false)
 
@@ -319,7 +319,7 @@ export default function ReferralsPage() {
       })
       setDraftForm({
         fromProviderId: '', toProviderId: '', patientNote: '',
-        periodMonth: new Date().toISOString().slice(0, 7),
+        periodMonth: todayHK().slice(0, 7),  // ★ cwm-consist S6 TZ-05b：HK 視角當月（同上）
       })
       setFromProviderId('')
       setShowDraftForm(false)

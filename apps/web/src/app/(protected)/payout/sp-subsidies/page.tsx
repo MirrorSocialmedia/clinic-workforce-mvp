@@ -10,6 +10,7 @@
  */
 import { useEffect, useState, useMemo } from 'react'
 import { apiFetch } from '@/lib/api-client'
+import { todayHK } from '@/lib/hk-date'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -56,7 +57,7 @@ export default function SpSubsidiesPage() {
   const [confirming, setConfirming] = useState<string | null>(null)
 
   // R3: 篩選 state
-  const currentMonth = new Date().toISOString().slice(0, 7) // '2026-08'
+  const currentMonth = todayHK().slice(0, 7) // '2026-08'  // ★ cwm-consist S6 TZ-05b：HK 視角當月（舊版 toISOString = UTC slice，00:00–07:59 HK 會差月）
   const [month, setMonth] = useState(currentMonth)
   const [filterProvider, setFilterProvider] = useState('')
   const [filterClinic, setFilterClinic] = useState('')
