@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { serviceMonths, totalAccruedLeave, accruedBirthdayLeave, PROBATION_MONTHS, resolveLeaveTable } from '@/lib/leave-calculation'
 import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
@@ -113,10 +114,14 @@ export async function POST(req: NextRequest) {
           ? entitledNow - existing.used
           : Math.max(0, entitledNow - existing.used)
         if (existing.entitled !== entitledNow || existing.remaining !== nextRemaining) {
-          await prisma.leaveBalance.update({
-            where: { id: existing.id },
-            data: { entitled: entitledNow, remaining: nextRemaining },
-          })
+          // ★ cwm-consist S6 RC-12：atomic UPDATE —— DB 由「新 entitled（參數）+ row 目前嘅 used」推導 remaining，
+          //   舊版 read-then-write：讀完到寫入之間若有並發放假扣 used 就失；只有 !allowsNegativeBalance 先 clamp。
+          //   ⚠️ PG 嘅 UPDATE SET 表达式一律讀 row 舊值 → 新 entitled 一定要用參數寫入 remaining 表达式，
+          //   唔好用 "entitled" 欄（會用舊 entitled 計）。
+          const remainingExpr = allowsNegativeBalance(annualLeaveType.systemKey)
+            ? Prisma.sql`${entitledNow} - "used"`
+            : Prisma.sql`GREATEST(${entitledNow} - "used", 0)`
+          await prisma.$executeRaw(Prisma.sql`UPDATE "LeaveBalance" SET "entitled" = ${entitledNow}, "remaining" = (${remainingExpr}) WHERE "id" = ${existing.id}`)
           updated++
         }
       } else {

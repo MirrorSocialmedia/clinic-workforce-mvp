@@ -1,9 +1,10 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
+import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
 import { hkDateEnd } from '@/lib/hk-date'
 import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
@@ -180,12 +181,18 @@ export async function PATCH(req: NextRequest) {
       updateData.used = used
     }
 
-    const cur = await prisma.leaveBalance.findUnique({ where: { id: balanceId } })
+    const cur = await prisma.leaveBalance.findUnique({
+      where: { id: balanceId },
+      include: { leaveType: { select: { systemKey: true, name: true } } },
+    })
     if (!cur) return NextResponse.json({ error: '找不到餘額記錄' }, { status: 404 })
 
     const nextEntitled = updateData.entitled ?? cur.entitled
     const nextUsed = updateData.used ?? cur.used
-    updateData.remaining = Math.max(0, nextEntitled - nextUsed)
+    // ★ cwm-consist S6 RC-12：只有 !allowsNegativeBalance 先 clamp（JS 值同 DB 寫入口徑一致，俾審計/標紅用）
+    updateData.remaining = allowsNegativeBalance(cur.leaveType?.systemKey)
+      ? nextEntitled - nextUsed
+      : Math.max(0, nextEntitled - nextUsed)
 
     // ★ 值完全冇變就唔好寫 DB／寫審計（例如前端重複送同一個值）
     if (
@@ -197,15 +204,33 @@ export async function PATCH(req: NextRequest) {
     }
 
     // ★ 2026-08-04: 包裝在 $transaction —— 審計失敗 = 資料唔改
-    const updated = await prisma.$transaction(async (tx) => {
-      const u = await tx.leaveBalance.update({
-        where: { id: balanceId },
-        data: updateData,
-        include: {
-          leaveType: { select: { id: true, name: true } },
-          employee: { include: { user: { select: { id: true, name: true } } } },
-        },
-      })
+    // ★ cwm-consist S6 RC-12：atomic UPDATE —— DB 由 row 目前嘅 entitled/used 推導 remaining
+    //   （舊版 read-then-write：讀完到寫入之間若有人並發放假，remaining 就 stale；
+    //   而 Math.max(0) 無條件 clamp 會洗走可預支類型嘅負餘額）。只有 !allowsNegativeBalance 先 clamp。
+    await prisma.$transaction(async (tx) => {
+      // ★ cwm-consist S6 RC-12：atomic UPDATE —— remaining 由「新值（參數）+ row 目前值（欄）」推導，
+      //   舊版 read-then-write：讀完到寫入之間若有並發放假就 stale；只有 !allowsNegativeBalance 先 clamp。
+      //   ⚠️ PG 嘅 UPDATE SET 表达式一律讀 row 舊值 → 未改嘅欄引用欄名（= row 目前值），
+      //   改咗嘅欄必須用參數（引用欄名會計到舊值）。
+      const allowNeg = allowsNegativeBalance(cur.leaveType?.systemKey)
+      let stmt: Prisma.Sql
+      if (entitled !== undefined && used !== undefined) {
+        const rem = allowNeg
+          ? Prisma.sql`${nextEntitled} - ${nextUsed}`
+          : Prisma.sql`GREATEST(${nextEntitled} - ${nextUsed}, 0)`
+        stmt = Prisma.sql`UPDATE "LeaveBalance" SET "entitled" = ${nextEntitled}, "used" = ${nextUsed}, "remaining" = (${rem}) WHERE "id" = ${balanceId}`
+      } else if (used !== undefined) {
+        const rem = allowNeg
+          ? Prisma.sql`"entitled" - ${nextUsed}`
+          : Prisma.sql`GREATEST("entitled" - ${nextUsed}, 0)`
+        stmt = Prisma.sql`UPDATE "LeaveBalance" SET "used" = ${nextUsed}, "remaining" = (${rem}) WHERE "id" = ${balanceId}`
+      } else {
+        const rem = allowNeg
+          ? Prisma.sql`${nextEntitled} - "used"`
+          : Prisma.sql`GREATEST(${nextEntitled} - "used", 0)`
+        stmt = Prisma.sql`UPDATE "LeaveBalance" SET "entitled" = ${nextEntitled}, "remaining" = (${rem}) WHERE "id" = ${balanceId}`
+      }
+      await tx.$executeRaw(stmt)
 
       await tx.auditLog.create({
         data: {
@@ -216,13 +241,20 @@ export async function PATCH(req: NextRequest) {
           targetEmployeeId: cur.employeeId,
           beforeJson: JSON.stringify({ entitled: cur.entitled, used: cur.used, remaining: cur.remaining }),
           afterJson: JSON.stringify({ entitled: nextEntitled, used: nextUsed, remaining: updateData.remaining }),
-          notes: `校正${u.leaveType?.name ?? ''}已用：${cur.used} → ${nextUsed}`,
+          notes: `校正${cur.leaveType?.name ?? ''}已用：${cur.used} → ${nextUsed}`,
           ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
           userAgent: req.headers.get('user-agent') ?? null,
         },
       })
+    })
 
-      return u
+    // ★ cwm-consist S6 RC-12：raw UPDATE 唔回傳 row —— 重新 fetch 俾 response
+    const updated = await prisma.leaveBalance.findUnique({
+      where: { id: balanceId },
+      include: {
+        leaveType: { select: { id: true, name: true } },
+        employee: { include: { user: { select: { id: true, name: true } } } },
+      },
     })
 
     // ★ cwm-antitamper P1-6：自己改自己標紅（記，唔擋）
