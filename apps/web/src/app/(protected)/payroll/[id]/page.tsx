@@ -35,6 +35,8 @@ interface PayrollItem {
   miscAmount: number | null
   miscDetailJson: string | null
   sickDeduction: number | null
+  // ★ cwm-payrollsheet-20260921 S3：支票號（出糧後人手填；純記錄）
+  chequeNo: string | null
   detailJson: string | null
   confidential?: boolean
   employee: {
@@ -126,6 +128,8 @@ const COL_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'sickDeduction', label: '病假扣減' },
   { key: 'misc', label: '雜項($)' },
   { key: 'totalPayable', label: '應付總額', required: true },
+  // ★ cwm-payrollsheet-20260921 S3：支票號（可選欄；預設唔開 — 入 ⚙️ 顯示欄位開）
+  { key: 'chequeNo', label: '支票號' },
   { key: 'detail', label: '明細', required: true },
 ]
 // ★ 預設（MD §4.2）：absentDays / deduction / sickDeduction 預設關
@@ -309,6 +313,26 @@ export default function PayrollDetailPage() {
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 保密員工薪金隔離，刻意用 role 唔用權限
   const canFinalize = isOwner || hasPermission(userRole as any, 'payroll_finalize', grant, deny)
+
+  // ★ cwm-payrollsheet-20260921 S3：支票號填寫（blur 時 PATCH；同 canFinalize 同一個權限）
+  const handleChequeNoBlur = async (item: PayrollItem, raw: string) => {
+    const val = raw.trim() || null
+    if (val === (item.chequeNo ?? null)) return
+    try {
+      const res = await api(`/api/payroll-runs/${runId}/employee/${item.employeeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chequeNo: val }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.error || `保存支票號失敗（${res.status}）`)
+      }
+      fetchRun() // 同步本地 item.chequeNo（成功/失敗都回撈真實值）
+    } catch (e) {
+      console.error('Failed to save chequeNo:', e)
+    }
+  }
 
   const handleStatusChange = async (newStatus: string) => {
     try {
@@ -842,6 +866,26 @@ export default function PayrollDetailPage() {
                 totalPayable: (
                   <td key="totalPayable" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>
                     {fmtCurrency(item.totalPayable, confidential)}
+                  </td>
+                ),
+                // ★ cwm-payrollsheet-20260921 S3：支票號 — 可填（OWNER／payroll_finalize）；冇權限只係睇
+                //   空白 = 未填；FINALIZED/EXPORTED 都准填（API 冇 lock guard）
+                chequeNo: (
+                  <td key="chequeNo" style={{ padding: '8px 6px' }}>
+                    {canFinalize ? (
+                      <input
+                        key={`${item.id}:${item.chequeNo ?? ''}`}
+                        defaultValue={item.chequeNo ?? ''}
+                        placeholder="未填"
+                        maxLength={64}
+                        onBlur={e => handleChequeNoBlur(item, e.target.value)}
+                        style={{ width: 96, padding: '3px 6px', borderRadius: 4, border: '1px solid #ddd', fontSize: 12, fontFamily: 'monospace' }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 12, fontFamily: 'monospace', color: item.chequeNo ? '#333' : '#ccc' }}>
+                        {item.chequeNo || '—'}
+                      </span>
+                    )}
                   </td>
                 ),
                 detail: (

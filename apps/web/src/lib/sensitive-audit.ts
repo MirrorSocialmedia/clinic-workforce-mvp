@@ -141,4 +141,6 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   'EXTERNAL_RX_VIEWED',
   // ★ cwm-antitamper-20260917 P1-2：每張打卡都記 PUNCH_CREATE（有 IP/UA 審計），但係常規操作，唔入敏感摘要
   'PUNCH_CREATE',
+  // ★ cwm-payrollsheet-20260921 S3：支票號（純記錄，before/after 只有 chequeNo，唔涉薪資數）
+  'PAYROLL_CHEQUE_NO',
 ])

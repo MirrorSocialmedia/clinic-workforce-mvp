@@ -223,6 +223,8 @@ export const CONFIG = {
     'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/payroll-runs/preview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    // ★ cwm-payrollsheet-20260921 S3：支票號填寫（出糧後人手填；純記錄）
+    'PATCH /api/payroll-runs/:id/employee/:id': ['OWNER'],
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/allowed-clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
@@ -478,6 +480,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/payroll-runs': ['payroll_view', 'payroll_generate'],
   'GET /api/payroll-runs/:id': ['payroll_view', 'payroll_generate'],
   'GET /api/payroll-runs/:id/employee/:id': ['payroll_view', 'payroll_generate'],
+  // ★ cwm-payrollsheet-20260921 S3：同「確認計糧」（PUT :id）同一個權限 —— 會計開咗 payroll_finalize 就填得到
+  'PATCH /api/payroll-runs/:id/employee/:id': ['payroll_finalize'],
   'POST /api/payroll-runs/:id/export': ['payroll_view', 'payroll_generate'],
   'GET /api/payroll-runs/exceptions': ['payroll_view', 'payroll_generate', 'attendance_manage'],
   'POST /api/payroll-runs/preview': ['payroll_view', 'payroll_generate'],

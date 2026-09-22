@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolvePayrollScope, canSeeConfidential } from '@/lib/scope-helpers'
+import { runWithAudit } from '@/lib/audit-context'
 import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
@@ -219,5 +220,96 @@ export async function GET(
     timeBankLedger: ledger,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
+  })
+}
+
+// PATCH /api/payroll-runs/[id]/employee/[empId] — { chequeNo: string | null }
+// ★ cwm-payrollsheet-20260921 S3：支票號（出糧後人手填，純記錄，唔影響計算）。
+//   守衛同 GET 一樣（requireAuth + resolvePayrollScope + canSeeConfidential）；
+//   刻意【唔加 guardPayrollLock】—— 支票號係出糧之後先有，正正係喺 FINALIZED／EXPORTED 月填。
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string; empId: string } }
+) {
+  const auth = await requireAuth(req, 'PATCH', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session } = auth
+  const perms = auth.perms ?? []
+
+  const body = await req.json().catch(() => null)
+  if (!body || typeof body !== 'object' || !('chequeNo' in body)) {
+    return NextResponse.json({ error: '需要欄位 chequeNo（string 或 null）' }, { status: 400 })
+  }
+  const rawChequeNo = body.chequeNo
+  if (rawChequeNo !== null && typeof rawChequeNo !== 'string') {
+    return NextResponse.json({ error: 'chequeNo 必須係 string 或 null' }, { status: 400 })
+  }
+  // 空白 = 未填（normalize 做 null，避免存 ''）
+  const chequeNo = rawChequeNo === null ? null : String(rawChequeNo).trim() || null
+  if (chequeNo !== null && chequeNo.length > 64) {
+    return NextResponse.json({ error: 'chequeNo 太長（上限 64 字元）' }, { status: 400 })
+  }
+
+  const item = await prisma.payrollItem.findUnique({
+    where: { runId_employeeId: { runId: params.id, employeeId: params.empId } },
+    select: {
+      id: true, chequeNo: true,
+      run: { select: { clinicId: true } },
+      employee: { select: { payConfidential: true, homeClinicId: true } },
+    },
+  })
+  if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // 診所範圍守衛（同 GET 口徑）
+  const allowedClinics = await resolvePayrollScope(session, perms, {
+    homeOnly: ['payroll_view', 'payroll_generate'],
+  })
+  if (allowedClinics !== null) {
+    if (!item.run?.clinicId) {
+      return NextResponse.json({ error: '你冇權限處理跨店計糧單' }, { status: 403 })
+    }
+    if (!allowedClinics.includes(item.run.clinicId)) {
+      return NextResponse.json({ error: '你冇權限處理呢間診所嘅計糧單' }, { status: 403 })
+    }
+  }
+
+  // 保密守衛（同 GET）
+  const emp = { payConfidential: item.employee.payConfidential, homeClinicId: item.employee.homeClinicId }
+  if (!(await canSeeConfidential(session, perms, emp))) {
+    return NextResponse.json({ error: '此員工薪資已設保密' }, { status: 403 })
+  }
+
+  const before = item.chequeNo
+  if (before === chequeNo) {
+    // 無變更 —— 唔寫 audit，直接回（幂等）
+    return NextResponse.json({ ok: true, changed: false, chequeNo: before })
+  }
+
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
+  }
+  return runWithAudit(auditCtx, async () => {
+    const updated = await prisma.payrollItem.update({
+      where: { id: item.id },
+      data: { chequeNo },
+      select: { id: true, chequeNo: true },
+    })
+    await prisma.auditLog.create({
+      data: {
+        actorId: session.userId,
+        action: 'PAYROLL_CHEQUE_NO',
+        entity: 'PayrollItem',
+        entityId: item.id,
+        targetEmployeeId: params.empId,
+        clinicId: item.run?.clinicId ?? null,
+        beforeJson: JSON.stringify({ chequeNo: before }),
+        afterJson: JSON.stringify({ chequeNo }),
+        ipAddress: auditCtx.ip || null,
+        userAgent: auditCtx.ua || null,
+      },
+    })
+    return NextResponse.json({ ok: true, changed: true, chequeNo: updated.chequeNo })
   })
 }

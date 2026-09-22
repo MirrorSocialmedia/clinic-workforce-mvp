@@ -1007,8 +1007,8 @@ export async function generatePayrollRun(
   const isRecalculation = !!existing
   // ★ cwm-consist S6 CA-04：舊 run 員工名單（regenerate 後計算 removed[] 用）
   let oldEmps: { id: string; name: string }[] = []
-  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } =
-    { storeBonus: {}, splitPay: {}, bonusOverride: {} }
+  const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'>; chequeNo: Record<string, string | null> } =
+    { storeBonus: {}, splitPay: {}, bonusOverride: {}, chequeNo: {} }
   if (existing) {
     // CONFIRMED (FINALIZED/EXPORTED) — block recalculation
     if (existing.status === 'FINALIZED' || existing.status === 'EXPORTED') {
@@ -1021,13 +1021,15 @@ export async function generatePayrollRun(
     // DRAFT — allow recalculation: save bonus/splitPay/bonusOverride then delete old items
     const oldItems = await prisma.payrollItem.findMany({
       where: { runId: existing.id },
-      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true, employee: { select: { user: { select: { name: true } } } } },
+      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true, chequeNo: true, employee: { select: { user: { select: { name: true } } } } },
     })
     oldEmps = oldItems.map(oi => ({ id: oi.employeeId, name: oi.employee?.user?.name ?? '(unknown)' }))
     for (const oi of oldItems) {
       if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
       if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
       if (oi.attendanceBonusOverride) carried.bonusOverride[oi.employeeId] = oi.attendanceBonusOverride as 'FORCE_ON' | 'FORCE_OFF'
+      // ★ cwm-payrollsheet-20260921 S3：支票號人手填，重算要保留（否則退回草稿重生成就清走）
+      if (oi.chequeNo != null) carried.chequeNo[oi.employeeId] = oi.chequeNo
     }
     // ★ cwm-money P2-2：唔再喺計算前 deleteMany（crash 會清走舊 item）。
     //   carry-forward 已喺上面讀完；最終寫入 transaction（見下）內先 delete + 重寫。
@@ -1205,6 +1207,8 @@ export async function generatePayrollRun(
           ? JSON.stringify(toLegacyShape(settlementByEmp.get(emp.id)!))
           : null,
         attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? null,
+        // ★ cwm-payrollsheet-20260921 S3：支票號 carry-forward（重算保留已填值）
+        chequeNo: carried.chequeNo[emp.id] ?? null,
       })
     } catch (err) {
       console.error(`Failed payroll for ${emp.id}:`, err)
@@ -1218,6 +1222,8 @@ export async function generatePayrollRun(
         resignSettlementJson: settlementByEmp.has(emp.id)
           ? JSON.stringify(toLegacyShape(settlementByEmp.get(emp.id)!))
           : null,
+        // ★ cwm-payrollsheet-20260921 S3：failed 路徑都要帶埋（否則重算 failed 會清走舊支票號）
+        chequeNo: carried.chequeNo[emp.id] ?? null,
       })
     }
   }
