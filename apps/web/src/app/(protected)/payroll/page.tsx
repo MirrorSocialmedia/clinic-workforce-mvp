@@ -240,6 +240,31 @@ export default function PayrollListPage() {
             📋 考勤異常報表
           </Link>
         )}
+        {/* ★ cwm-payrollsheet-20260921 S4：月度出糧總表（權限同考勤異常報表） */}
+        {(canGenerate || canView) && (
+          <div className="flex items-center gap-1">
+            <select
+              defaultValue=""
+              onChange={e => {
+                const ym = e.target.value
+                if (!/^\d{4}-\d{2}$/.test(ym)) return
+                window.open(`/api/payroll-runs/cheque-sheet?month=${ym}`, '_blank')
+                e.target.value = ''
+              }}
+              className="px-2 py-2 rounded-md border bg-white text-sm"
+              title="揀月份匯出出糧總表"
+            >
+              <option value="" disabled>💰 出糧總表</option>
+              {[...new Set(runs.map(r => fmtPeriodMonth(r.periodMonth)))]
+                .filter(Boolean)
+                .sort()
+                .reverse()
+                .map(ym => (
+                  <option key={ym} value={ym}>{ym}</option>
+                ))}
+            </select>
+          </div>
+        )}
         {canGenerate && (
           <div className="flex gap-2">
             <button

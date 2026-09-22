@@ -48,6 +48,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PAYROLL_LOCK_BLOCKED', entity: 'PayrollRun', label: '⚠️ 已出糧月份寫入被擋（run-lock）' },
   // ★ cwm-acct-20260917 A9：匯出計糧（可含保密員工資料，必須審計）
   { action: 'PAYROLL_EXPORT', label: '匯出計糧' },
+  // ★ cwm-payrollsheet-20260921 S4：月度出糧總表匯出（同 PAYROLL_EXPORT 同級 — 敏感摘要）
+  { action: 'PAYROLL_CHEQUE_SHEET', label: '匯出月度出糧總表' },
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
   { action: 'EMPLOYEE_RESIGN_SETTLE', label: '離職結算確認（寫入薪金／時間帳戶扣除）' },

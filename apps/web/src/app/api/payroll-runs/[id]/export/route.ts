@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolvePayrollScope, getConfidentialScope } from '@/lib/scope-helpers'
+import { filterConfidentialItems } from '@/lib/payroll-confidential'
 import { toHKDateStr } from '@/lib/hk-date'
 import { EXPORT_COLS, EXPORT_COLS_DEFAULT } from '@/lib/payroll-export-cols'
 import * as XLSX from 'xlsx'
@@ -80,14 +81,10 @@ export async function POST(
   }
 
   // ★ Confidential filter — 用 getConfidentialScope 一次過算好範圍（2026-08-03）
+  //   ★ cwm-payrollsheet-20260921 S4：抽共用 helper（同 cheque-sheet 同一把尺）
   const perms = auth.perms ?? []
   const confidentialScope = await getConfidentialScope(session, perms)
-  let items = run.items
-  if (confidentialScope !== null) {
-    items = items.filter((item: any) =>
-      !item.employee?.payConfidential || (!!item.employee?.homeClinicId && confidentialScope.includes(item.employee.homeClinicId))
-    )
-  }
+  const items = filterConfidentialItems(run.items, confidentialScope)
 
   const runData = { ...run, items }
   const periodMonth = toHKDateStr(run.periodMonth).slice(0, 7)
