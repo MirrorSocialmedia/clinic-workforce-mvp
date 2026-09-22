@@ -23,7 +23,7 @@
  *   只准 inline style；icon 用 text glyph ‹ ›（唔用 lucide-react）
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   GRID_COLORS,
   addDays,
@@ -50,6 +50,7 @@ import {
 } from '@/lib/provider-availability-view'
 import { buildStaffByDate, shouldLoadStaffShifts, type StaffCell } from '@/lib/staff-by-date'
 import { useAutoRefresh } from '@/lib/use-auto-refresh'
+import { useLatestRequest } from '@/lib/use-latest-request'
 
 // ★ cwm-provroster S4：5 分鐘 → 60 秒 + 返到頁面即刻更新 —— 當值表／休假改咗，前台唔使等 5 分鐘
 const REFRESH_MS = 60 * 1000
@@ -169,26 +170,46 @@ export default function ProviderAvailabilityPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const load = useCallback(async () => {
+  // ★ H1-12（P1-12）：背景 refresh（同診所同一週已有資料）唔閃「載入緊」、失敗唔清空時間表（前台 KIOSK 主畫面）
+  // ★ V-6：轉週／轉店／60s refresh 重疊時，舊回應唔准蓋新（abort + seq）
+  const gridReq = useLatestRequest()
+  const dataRef = useRef<GridResp | null>(null)
+  dataRef.current = data
+  const [bgError, setBgError] = useState<string | null>(null)
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!clinicId) return
-    setLoading(true)
-    setError(null)
+    const { signal, isLatest } = gridReq()
+    const cur = dataRef.current
+    const silent = !!opts?.silent && !!cur && cur.clinic?.id === clinicId && cur.from === from
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const r = await fetch(
         `/api/provider-availability/grid?clinicId=${encodeURIComponent(clinicId)}&from=${from}`,
-        { credentials: 'include', cache: 'no-store' },
+        { credentials: 'include', cache: 'no-store', signal },
       )
       if (!r.ok) {
         throw new Error(r.status === 403 ? '無權查看此診所' : r.status === 404 ? '診所不存在' : `HTTP ${r.status}`)
       }
-      setData(await r.json())
+      const j = await r.json()
+      if (!isLatest()) return
+      setData(j)
+      setBgError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '載入失敗')
-      setData(null)
+      if (!isLatest()) return
+      const msg = e instanceof Error ? e.message : '載入失敗'
+      if (silent) {
+        setBgError(msg)            // 保留現有時間表，只出細 banner
+      } else {
+        setError(msg)
+        setData(null)
+      }
     } finally {
-      setLoading(false)
+      if (isLatest()) setLoading(false)
     }
-  }, [clinicId, from])
+  }, [clinicId, from, gridReq])
 
   useEffect(() => { void load() }, [load])
 
@@ -199,18 +220,20 @@ export default function ProviderAvailabilityPage() {
     //   effect 會用「舊 clinic 個 data」再消耗一次 shown=null → 新 data 到時 shown 已非 null → 永遠唔再 init
     //   → 換診所後所有醫生被收埋（成週「休診」）。加 clinic 匹配先 init。
     if (data.clinic?.id !== clinicId) return
+    // ★ H1-10（P1-10）：轉週一樣 —— 新一週 data 未到之前，唔准用上一週個 data 消耗 shown=null
+    if (data.from !== from) return
     // ★ cwm-provroster S2：預設顯示「呢週有 Apricot 開診／有約／有出入」嘅醫生（之前只顯示有約 → 有開診冇約嘅醫生反而收埋）
     const withData = new Set<string>()
     for (const p of data.providers) {
       if (hasWeekData(p)) withData.add(p.id)
     }
     setShown(withData)
-  }, [data, shown, clinicId])
+  }, [data, shown, clinicId, from])
   // ★ S2：轉週要重新初始化 —— 之前沿用第一週個 set，下週新出現嘅醫生會靜靜收埋
   useEffect(() => { setShown(null); setShowIdle(false) }, [from])
 
   // ★ S4：60 秒 auto refetch（只喺分頁見到時）+ visibility／focus 即時 refetch
-  useAutoRefresh(() => { void load() }, REFRESH_MS)
+  useAutoRefresh(() => { void load({ silent: true }) }, REFRESH_MS)
 
   // ★ 員工當值列（同 provider-schedule 同一條 API，唔寫第二份）
   useEffect(() => {
@@ -877,6 +900,12 @@ export default function ProviderAvailabilityPage() {
               </div>
             )}
 
+            {bgError && data && !loading && !error && (
+              <div style={{ fontSize: 12, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a',
+                            borderRadius: 8, padding: '4px 10px', margin: '0 0 8px' }}>
+                ⚠ 自動更新失敗（{bgError}）—— 顯示緊上次資料，稍後會再試
+              </div>
+            )}
             {data && !loading && !error && (
               <>
                 {/* GET 200 但全空 → 「未有資料」 */}

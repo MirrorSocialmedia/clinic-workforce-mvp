@@ -55,11 +55,18 @@ export async function PUT(
     try {
       updated = await prisma.$transaction(async (tx) => {
         await lockEmployee(tx, correction.employeeId)
+        // ★ H1-1：已 link 嘅原卡（員工申請時帶 punchRecordId）—— 跨日／改類型要作廢佢，所以佢嘅月份都要查鎖
+        const linked = correction.punchRecordId
+          ? await tx.punchRecord.findUnique({
+              where: { id: correction.punchRecordId },
+              select: { id: true, punchTime: true, punchType: true, clinicId: true },
+            })
+          : null
         // ★ Stage 4A（D1 硬鎖）：只限 APPROVED（REJECT 唔生卡，唔影響計糧）
         if (status === 'APPROVED') {
           await assertMonthsUnlockedTx(tx, {
             actorId: session.userId, employeeId: correction.employeeId, what: '批核補登',
-            months: [toHKDateStr(correction.correctedTime)],
+            months: [toHKDateStr(correction.correctedTime), linked ? toHKDateStr(linked.punchTime) : null],
           })
         }
         const result = await tx.punchCorrection.update({
@@ -101,16 +108,55 @@ export async function PUT(
             },
           })
         }
-        // ★ 審批通過會新增 PunchRecord，快取必須清（同 OT 撤回一齊入 tx）
-        await invalidateTimeBankFrom(correction.employeeId, correction.correctedTime, tx)
-        // ★ 2026-08-08: Revoke stale early-in OT if punches changed
-        await revokeStaleEarlyOt(correction.employeeId, toHKDateStr(correction.correctedTime), session.userId, 'CORRECTION_APPROVE', tx)
+        // ★ A-4：失效／OT 撤回搬去 link／建卡【之後】先做（見下面 finish()）—— 單日判斷要睇到最終狀態
+        const corrDay = toHKDateStr(correction.correctedTime)
+        const finish = async (extraDay: string | null, fromTime: Date) => {
+          // ★ 審批通過會新增／改 PunchRecord，快取必須清（同 OT 撤回一齊入 tx）
+          await invalidateTimeBankFrom(correction.employeeId, fromTime, tx)
+          // ★ 2026-08-08: Revoke stale early-in OT if punches changed
+          await revokeStaleEarlyOt(correction.employeeId, corrDay, session.userId, 'CORRECTION_APPROVE', tx)
+          if (extraDay && extraDay !== corrDay) {
+            await revokeStaleEarlyOt(correction.employeeId, extraDay, session.userId, 'CORRECTION_APPROVE', tx)
+          }
+          await notify()
+        }
 
         if (correction.punchRecordId) {
           // ★ RC-07：原卡已作廢 → 呢張修正冇嘢可以 overlay，唔准「假成功」
           const voided = await tx.punchVoid.findUnique({ where: { punchRecordId: correction.punchRecordId } })
-          if (voided) throw new HttpError(409, '原打卡已被作廢，呢張修正冇效，請員工重新提交補登')
-          await notify()
+          if (voided || !linked) throw new HttpError(409, '原打卡已被作廢，呢張修正冇效，請員工重新提交補登')
+          const linkedDay = toHKDateStr(linked.punchTime)
+          if (linkedDay !== corrDay || linked.punchType !== correction.punchType) {
+            // ★ H1-1（P1-1）：跨日／改類型 —— 唔可以 overlay（getEffectivePunches 按原打卡時間撈卡，修正會喺兩日都消失；
+            //   類型亦只睇原卡）→ 作廢原卡、喺 correctedTime 建新卡、修正改 link 新卡
+            const note = linked.punchType !== correction.punchType
+              ? `類型變更: ${linked.punchType} → ${correction.punchType}`
+              : `修正跨日: ${linkedDay} → ${corrDay}`
+            await tx.punchVoid.create({ data: { punchRecordId: linked.id, voidedBy: session.userId, reason: `批核補登 #${correction.id}：${note}` } })
+            const nr = await tx.punchRecord.create({
+              data: {
+                employeeId: correction.employeeId,
+                clinicId: correction.clinicId,
+                punchTime: correction.correctedTime,
+                punchType: correction.punchType,
+                source: 'MANUAL_CORRECTION' as any,
+                tokenValid: null,
+                notes: notes || `Corrected via punch correction #${correction.id}: ${note}`,
+              },
+            })
+            await tx.auditLog.create({
+              data: {
+                actorId: session.userId, action: 'VOID_PUNCH', entity: 'PunchRecord', entityId: linked.id,
+                targetEmployeeId: correction.employeeId, clinicId: correction.clinicId,
+                beforeJson: JSON.stringify({ punchType: linked.punchType, punchTime: linked.punchTime }),
+                afterJson: JSON.stringify({ replacedBy: nr.id, correctionId: correction.id }),
+                notes: `批核補登作廢原記錄（${note}）`,
+              },
+            })
+            await finish(linkedDay, linked.punchTime < correction.correctedTime ? linked.punchTime : correction.correctedTime)
+            return tx.punchCorrection.update({ where: { id }, data: { punchRecordId: nr.id } })
+          }
+          await finish(null, correction.correctedTime)
           return result
         }
         // ★ RC-05：冇 link → 先搵同日同類 active 卡（申請後員工可能已經真打咗），有就 link，冇先建
@@ -133,8 +179,9 @@ export async function PUT(
           },
         })).id
         // ★ cwm-antitamper P1-4：一定要回寫，否則 punch-query 當 orphan 再砌一張 synthetic
-        await notify()
-        return tx.punchCorrection.update({ where: { id }, data: { punchRecordId: targetId } })
+        const linkedResult = await tx.punchCorrection.update({ where: { id }, data: { punchRecordId: targetId } })
+        await finish(null, correction.correctedTime)
+        return linkedResult
       })
     } catch (e: any) {
       { const r = toHttpResponse(e); if (r) return r }

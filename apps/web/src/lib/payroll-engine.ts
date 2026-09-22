@@ -28,7 +28,7 @@ import { findPayRuleForMonth } from './pay-rule-for-month'
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-export const TIMEBANK_ENGINE_VERSION = 7 // v7: 時薪路徑 deductLunch gate（不扣飯鐘生效）[cwm-lunchgate-20260902]
+export const TIMEBANK_ENGINE_VERSION = 8 // v8: S3b 按月規則 + S4B 凍結期末接駁 + degraded 向上傳（H1-6／E-1）；v7: 時薪路徑 deductLunch gate [cwm-lunchgate-20260902]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -1566,6 +1566,8 @@ async function getCarriedFrom(
   db: any,
   depth = 0,
   config: any = {},
+  // ★ H1-6（P1-6）：out-param —— 遞歸任何一個月 degraded，都要話返畀 parent（parent 唔准 cache、計糧唔准出）
+  flags?: { degraded: boolean },
 ): Promise<number> {
   if (depth >= 24) return 0
 
@@ -1604,14 +1606,18 @@ async function getCarriedFrom(
   })
   const hasTimeBankEntry = hasPunch ? false : await db.timeBankEntry?.findFirst?.({
     where: { employeeId, date: { gte: lStart, lte: lEnd } },
-  }).catch(() => null)
+  }).catch(() => {
+    // ★ H1-6：讀唔到 ≠ 冇活動 —— 標 degraded（舊寫法當冇活動 → 跳過成個月 → 錯數入 cache）
+    if (flags) flags.degraded = true
+    return null
+  })
   const hasActivity = hasPunch || hasTimeBankEntry
   // ★ 2026-08-02：冇活動唔代表鏈斷 ——
   // 員工可能長期病假、產假、停薪留職，或者月頭仲未打卡。
   // 舊版直接 return 0，令累計餘額被靜靜清零。
   // 繼續往前搵，depth 上限（現有參數）防止無限遞歸。
   if (!hasActivity) {
-    return getCarriedFrom(employeeId, lastMonth, db, depth + 1, config)
+    return getCarriedFrom(employeeId, lastMonth, db, depth + 1, config, flags)
   }
 
   // ③ Has activity but no (valid) TimeBank → recursively recalculate last month (single source of truth)
@@ -1621,7 +1627,10 @@ async function getCarriedFrom(
   // ④ Persist the backfilled record so future lookups are fast
   // ★ 六個欄全部寫齊 —— update 只寫兩欄會令 row 內部矛盾（新 balance + 舊明細）
   // ★ Stage 3.4（CA-07）：degraded 結果唔准入 cache（直接回傳，唔 upsert）
-  if ((tb as any).degraded) return tb.balance
+  if ((tb as any).degraded) {
+    if (flags) flags.degraded = true   // ★ H1-6：向上傳
+    return tb.balance
+  }
   const cacheData = {
     balance: tb.balance,
     carriedFrom: tb.carriedFrom,
@@ -1721,7 +1730,9 @@ export async function calculateTimeBank(
 
   // Previous month carry — recursive backfill (pass depth to prevent infinite recursion)
   // ★ 傳同一份 config，否則過往月份的 OT 門檻／午休設定全部失效
-  const carriedFrom = await getCarriedFrom(employeeId, monthDate, db, depth, config)
+  const carryFlags = { degraded: false }   // ★ H1-6
+  const carriedFrom = await getCarriedFrom(employeeId, monthDate, db, depth, config, carryFlags)
+  if (carryFlags.degraded) degraded = true
 
   // Grab ALL effective punches (CLOCK_IN + CLOCK_OUT) with corrections applied
   const effectivePunches = await getEffectivePunches(monthStart, monthEnd, { employeeId, db })

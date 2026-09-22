@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { fmtDateTime, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel, punchBg, punchTextColor } from '@/lib/punch-label'
 import { useLiveRefresh } from '@/lib/live-refresh'
@@ -12,6 +12,8 @@ function effectiveTimeDisplay(p: any): string {
     .filter((c: any) => c.status === 'APPROVED')
     .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   if (approved.length === 0) return fmtDateTime(p.punchTime)
+  // ★ F-6：補登建嘅卡 punchTime == correctedTime → 唔好顯示「09:00（原 09:00）」
+  if (new Date(approved[0].correctedTime).getTime() === new Date(p.punchTime).getTime()) return fmtDateTime(p.punchTime)
   return `${fmtDateTime(approved[0].correctedTime)}（原 ${fmtDateTime(p.punchTime)}）`
 }
 
@@ -32,8 +34,11 @@ export default function MyPunchesPage() {
   const [submittingCorrection, setSubmittingCorrection] = useState(false)
   const [clinics, setClinics] = useState<any[]>([])
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
+  const loadedRef = useRef(false)
+  const fetchData = useCallback(async (opts?: { silent?: boolean }) => {
+    // ★ F-4：背景 live refresh 唔好 setLoading(true) —— 否則成頁變「載入中」，開住嘅補打卡 modal 會 unmount
+    const silent = !!opts?.silent && loadedRef.current
+    if (!silent) setLoading(true)
     try {
       const monthStart = new Date(`${month}-01`)
       const monthEnd = new Date(monthStart)
@@ -42,24 +47,25 @@ export default function MyPunchesPage() {
       //   令後端 hkDateStart() 產生 Invalid Date + UTC 差一日
       const fromStr = toHKDateStr(monthStart)
       const toStr = toHKDateStr(monthEnd)
-      // ★ cwm-consist S6 DB-11：改用 /api/punch/my-records — 該端點已回傳每筆打卡嘅 APPROVED corrections，唔使再多打一轉 API
-      const res = await fetch(
-        `/api/punch/my-records?startDate=${fromStr}&endDate=${toStr}`,
-        { credentials: 'include' }
-      )
+      // ★ cwm-consist S6 DB-11：打卡列用 /api/punch/my-records（有 APPROVED corrections → 生效時間）
+      // ★ H1-3（P1-3）：補打卡表返用 /api/my/punches（全狀態：待審批／已批準／已拒絕，最近 50 張）——
+      //   my-records 只帶 APPROVED 兼連住未作廢卡嘅修正，員工交完申請會「消失」
+      const [res, corrRes] = await Promise.all([
+        fetch(`/api/punch/my-records?startDate=${fromStr}&endDate=${toStr}`, { credentials: 'include' }),
+        fetch(`/api/my/punches?from=${fromStr}&to=${toStr}`, { credentials: 'include' }),
+      ])
+      if (!res.ok) throw new Error(`打卡記錄載入失敗（${res.status}）`)
       const data = await res.json()
-      const recs = data.records || []
-      setPunches(recs)
-      // 補打卡表 = flatten my-records 已回傳嘅 APPROVED corrections（申請時間降冓）
-      setCorrections(
-        recs
-          .flatMap((p: any) => (p.corrections || []).map((c: any) => ({ ...c, clinicName: p.clinic?.name })))
-          .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      )
+      setPunches(data.records || [])
+      if (corrRes.ok) {
+        const d2 = await corrRes.json()
+        setCorrections(d2.corrections || [])
+      }
+      loadedRef.current = true
     } catch (err) {
-      console.error('Fetch punches error:', err)
+      console.error('Fetch punches error:', err)   // 背景失敗：保留現有資料
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [month])
 
@@ -68,7 +74,7 @@ export default function MyPunchesPage() {
   }, [fetchData])
 
   // ★ cwm-consistency Stage 5.2：live refresh（考勤/修正改動 → 60s 或 focus 即 refetch）
-  useLiveRefresh(fetchData, ['attendance', 'correction'], { intervalMs: 60_000 })
+  useLiveRefresh(() => fetchData({ silent: true }), ['attendance', 'correction'], { intervalMs: 60_000 })
 
   // Fetch clinics for correction form
   useEffect(() => {
@@ -194,7 +200,7 @@ export default function MyPunchesPage() {
                         {punchLabel(c.punchType)}
                       </span>
                     </td>
-                    <td>{c.clinicName || '-'}</td>
+                    <td>{c.clinicName || clinics.find((x: any) => x.id === c.clinicId)?.name || '-'}</td>
                     <td style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {c.reason || '-'}
                     </td>

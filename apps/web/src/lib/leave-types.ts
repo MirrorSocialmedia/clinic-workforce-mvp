@@ -68,7 +68,8 @@ export function zeroEntitledHint(systemKey?: string | null): string {
 }
 
 /** ★ Stage 1.5：「呢種假扣唔扣額」唯一口徑 —— POST／approve／DELETE／replace／resign 全部用佢 */
-export function consumesQuota(lt: { systemKey: string | null; quantity?: number | null } | null | undefined): boolean {
+// ★ H1-8c：quantity 改必填 —— select 漏咗 quantity 會編譯唔過（之前 optional：undefined == null → 自訂類型靜靜當唔扣額）
+export function consumesQuota(lt: { systemKey: string | null; quantity: number | null } | null | undefined): boolean {
   if (!lt) return false
   if (lt.systemKey === LEAVE_SYSTEM_KEYS.SICK) return false
   if (!lt.systemKey && lt.quantity == null) return false   // 同 POST :140 isUnlimited 口徑

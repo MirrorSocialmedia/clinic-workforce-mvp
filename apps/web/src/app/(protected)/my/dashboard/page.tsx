@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, Fragment } from 'react'
+import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import Link from 'next/link'
 import { Hand, Smartphone, Calendar, Palmtree, Bell } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -98,8 +98,11 @@ export default function MyDashboardPage() {
     }
   }, [ledger, ledgerLoading])
 
-  const fetchData = useCallback(async () => {
-    setError('')
+  const loadedRef = useRef(false)
+  const fetchData = useCallback(async (opts?: { silent?: boolean }) => {
+    // ★ H1-4（P1-4）：背景 live refresh 失敗唔好成頁變 ⚠️（手機喚醒時網絡未通好常見）—— 保留現有資料
+    const silent = !!opts?.silent && loadedRef.current
+    if (!silent) setError('')
     try {
       const [summaryRes, scheduleRes, leaveRes, notifRes] = await Promise.all([
         fetch('/api/my/summary', { credentials: 'include' }),
@@ -136,17 +139,19 @@ export default function MyDashboardPage() {
       setLeaveBalances(leaveData.leaveBalances || [])
       setNotifications(notifData.notifications || [])
       setUnreadCount(notifData.unreadCount || 0)
+      loadedRef.current = true
     } catch (err: any) {
-      setError(err.message || '載入失敗')
+      if (silent) console.warn('[my/dashboard] 背景更新失敗，保留現有資料', err)
+      else setError(err.message || '載入失敗')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
 
   // ★ cwm-consistency Stage 5.2：live refresh（打卡/時間帳戶/假期改動 → 60s 或 focus 即 refetch）
-  useLiveRefresh(fetchData, ['attendance', 'timebank', 'leave'], { intervalMs: 60_000 })
+  useLiveRefresh(() => fetchData({ silent: true }), ['attendance', 'timebank', 'leave'], { intervalMs: 60_000 })
 
   useEffect(() => {
     fetch('/api/my/roster-hours', { credentials: 'include' })

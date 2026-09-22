@@ -69,7 +69,7 @@ export async function POST(
         days: true,
         leaveTypeId: true,
         startDate: true,
-        leaveType: { select: { systemKey: true } },
+        leaveType: { select: { systemKey: true, quantity: true } },   // ★ H1-8c：consumesQuota 要 quantity
       },
     })
     let leavesCancelled = 0
@@ -78,6 +78,7 @@ export async function POST(
         where: { id: lr.id },
         data: { status: 'CANCELLED' },
       })
+      leavesCancelled++   // ★ L-2：病假／自訂假都係取消咗，要計入「取消假期=N」（舊位置喺 continue 之後會漏計）
       // ★ Stage 1.5：統一口徑 —— 唔扣額嘅類型（SICK 等）從來冇扣過，唔使還
       if (!consumesQuota(lr.leaveType)) continue
       // ★ 年假累積制 = year 0；休息日等 = 曆年（照 leave-requests/[id]:207 口徑）
@@ -97,7 +98,6 @@ export async function POST(
           `leaveTypeId=${lr.leaveTypeId} year=${leaveYear} days=${lr.days} leaveRequestId=${lr.id}`,
         )
       }
-      leavesCancelled++
     }
 
     // ④ Deactivate face templates (soft disable, hard delete later after final payroll)

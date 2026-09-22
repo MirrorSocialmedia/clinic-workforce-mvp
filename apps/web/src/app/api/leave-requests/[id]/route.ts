@@ -37,7 +37,8 @@ export async function PUT(
     const request = await prisma.leaveRequest.findUnique({
       where: { id: requestId },
       include: {
-        leaveType: { select: { id: true, name: true, isPaid: true, systemKey: true } },
+        // ★ H1-8c：consumesQuota 要睇 quantity（冇 select → undefined == null → 自訂類型一律當唔扣額）
+        leaveType: { select: { id: true, name: true, isPaid: true, systemKey: true, quantity: true } },
         employee: { include: { user: { select: { id: true, name: true } } } },
       },
     })
@@ -58,7 +59,10 @@ export async function PUT(
     const status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED'
 
     // Fix: check shift conflict before approving
-    if (action === 'APPROVE') {
+    // ★ H1-8b（P1-8b）：病假豁免排更互斥（同 POST route.ts:252／checkShiftLeaveConflict 口徑）——
+    //   有更嗰日病咗係常態；要刪更先批到會毀咗計糧要用嘅上班證據
+    const isSick = request.leaveType?.systemKey === 'SICK'
+    if (action === 'APPROVE' && !isSick) {
       const conflictShift = await prisma.shift.findFirst({
         where: {
           employeeId: request.employeeId,
@@ -78,11 +82,12 @@ export async function PUT(
     }
 
     // ★ 2026-08-04: 審批前檢查餘額（唔可以先寫 APPROVED 後查）
+    // ★ H1-8a（P1-8a）：改用唯一口徑 consumesQuota —— 舊 isNoQuota=['SICK','UNPAID_LEAVE']（冇 UNPAID_LEAVE 呢個 key），
+    //   無薪假／事假／請假（systemKey null、quantity null）會被當要扣額 → 冇 balance row → 400 永遠批唔到
     if (action === 'APPROVE') {
       const systemKey = request.leaveType?.systemKey ?? ''
-      const isNoQuota = ['SICK', 'UNPAID_LEAVE'].includes(systemKey)
 
-      if (!isNoQuota) {
+      if (consumesQuota(request.leaveType)) {
         const leaveYear = balanceYearFor(systemKey, new Date(request.startDate))
         const bal = await prisma.leaveBalance.findUnique({
           where: {
@@ -121,8 +126,8 @@ export async function PUT(
             actorId: session.userId, employeeId: request.employeeId, what: '批核假期',
             months: monthsInRange(toHKDateStr(request.startDate), toHKDateStr(request.endDate || request.startDate)),
           })
-          // mutex：喺鎖入面再查（:58-76 保留做 fast-fail）
-          const c = await tx.shift.findFirst({ where: {
+          // mutex：喺鎖入面再查（:58-76 保留做 fast-fail）；★ H1-8b：病假豁免
+          const c = isSick ? null : await tx.shift.findFirst({ where: {
             employeeId: request.employeeId, status: { not: 'CANCELLED' },
             date: {
               gte: new Date(`${toHKDateStr(request.startDate)}T00:00:00+08:00`),
@@ -202,7 +207,7 @@ export async function DELETE(
       const requestId = params.id
       const request = await prisma.leaveRequest.findUnique({
         where: { id: requestId },
-        include: { leaveType: { select: { systemKey: true, name: true } } },
+        include: { leaveType: { select: { systemKey: true, name: true, quantity: true } } },   // ★ H1-8c：consumesQuota 要 quantity
       })
       if (!request) {
         return NextResponse.json({ error: 'Leave request not found' }, { status: 404 })

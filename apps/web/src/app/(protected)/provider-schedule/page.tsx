@@ -343,14 +343,19 @@ export default function ProviderSchedulePage() {
           body: JSON.stringify({ ...input, expectedUpdatedAt: info.shift.updatedAt }),
         })
       } else {
-        await apiFetch<any>('/api/provider-shifts/batch', {
+        // ★ H1-11（P1-11）：唔可以 overwrite —— batch overwrite 按 (醫生, 日期, 開始時間) 跨診所 match，
+        //   會將醫生喺其他診所嗰行搬過嚟本店（OWNER）或者靜靜略過但照報「已儲存」（MANAGER／KIOSK）
+        const res = await apiFetch<any>('/api/provider-shifts/batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             entries: [{ providerId, clinicId: selectedClinicId, date, start: input.start, end: input.end, note: input.note, slot: input.slot ?? '' }],
-            repeatWeeks: 1, onConflict: 'overwrite',
+            repeatWeeks: 1, onConflict: 'skip',
           }),
         })
+        if (!res?.created) {
+          throw Object.assign(new Error(`醫生 ${date} 已經有同一開始時間（${input.start}）嘅當值（可能喺其他診所）—— 請先喺嗰間診所修改或刪除`), { status: 409 })
+        }
       }
       await loadShifts()
       notifyDataChanged('provider') // ★ cwm-provroster B4：同機其他 tab 即刻同步
@@ -420,7 +425,7 @@ export default function ProviderSchedulePage() {
         body: JSON.stringify({ entries, repeatWeeks: modalRepeatWeeks, onConflict: modalConflict }),
       })
       showToast(res.skipped > 0 ? 'err' : 'ok', res.skipped > 0
-        ? `已新增 ${res.created} 日${res.updated ? `、更新 ${res.updated} 日` : ''}；${res.skipped} 日原本已有當值，冇改到（要改請揀「衝突處理：覆蓋」或者撳嗰日改）`
+        ? `已新增 ${res.created} 日${res.updated ? `、更新 ${res.updated} 日` : ''}；${res.skipped} 日原本已有當值，冇改到${res.crossClinic ? `（其中 ${res.crossClinic} 日係其他診所嘅當值，唔會搬過嚟）` : '（要改請揀「衝突處理：覆蓋」或者撳嗰日改）'}`
         : `已儲存：新增 ${res.created} 日${res.updated ? `、更新 ${res.updated} 日` : ''}`)
       setModalOpen(false)
       await loadShifts()

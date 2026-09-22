@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  let created = 0, updated = 0, skipped = 0
+  let created = 0, updated = 0, skipped = 0, crossClinic = 0   // ★ H1-11
   try {
     if (onConflict === 'skip') {
       // ★ Bulk insert with skipDuplicates — faster than per-row check
@@ -97,6 +97,8 @@ export async function POST(req: NextRequest) {
         const existing = await prisma.providerShift.findUnique({ where: key })
         if (existing) {
           if (!inScope(scope, existing.clinicId)) { skipped++; continue }
+          // ★ H1-11（P1-11）：overwrite 唔准跨診所「搬」—— 其他診所嗰行會靜靜喺佢嘅當值表消失
+          if (existing.clinicId !== r.clinicId) { skipped++; crossClinic++; continue }
           await prisma.providerShift.update({
             where: key,
             data: { clinicId: r.clinicId, endTime: r.endTime, note: r.note, slot: r.slot },
@@ -126,5 +128,5 @@ export async function POST(req: NextRequest) {
     },
   }).catch(e => console.error('[provider-shifts/batch] audit failed', e))
 
-  return NextResponse.json({ created, updated, skipped, total: rows.length })
+  return NextResponse.json({ created, updated, skipped, crossClinic, total: rows.length })
 }

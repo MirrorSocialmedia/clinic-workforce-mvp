@@ -1442,7 +1442,8 @@ function getShiftCode(shift: Shift): string {
       // 月視圖嘅更喺 ovMonthShifts — 兩個陣列都要掃，
       // 否則「下個月先調入」嘅人喺月視圖唔會有行
       const touching = new Set<string>()
-      for (const s of [...shifts, ...ovMonthShifts]) {
+      // ★ H1-5：CA-06 之後手機週喺獨立 mobileShifts —— 唔掃佢，借調員工喺手機週會冇行
+      for (const s of [...shifts, ...ovMonthShifts, ...mobileShifts]) {
         if (scopeClinicIds.has(s.clinicId) || (s.secondaryClinicId && scopeClinicIds.has(s.secondaryClinicId))) {
           touching.add(s.employeeId)
         }
@@ -1465,7 +1466,7 @@ function getShiftCode(shift: Shift): string {
     const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byHomeGroupThenRoleName)
     const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byHomeGroupThenRoleName)
     return { full, part, ordered: [...full, ...part] }
-  }, [employees, scopeClinicIds, shifts, ovMonthShifts, homeOrder])
+  }, [employees, scopeClinicIds, shifts, ovMonthShifts, mobileShifts, homeOrder])
 
   // Step 7: Overview shifts (filtered by scope)
   const ovShifts = useMemo(() => {
@@ -1679,23 +1680,40 @@ function getShiftCode(shift: Shift): string {
   // ★ cwm-consist S6 CA-06：改獨立 mobileShifts/mobileLeaves + replace 語義 ——
   //   舊版 merge 入共享 shifts/leaveRequests：mobile 週喺 viewRange 之外時，
   //   refreshAll 後 loadShifts 以 viewRange 數據覆蓋 → mobile 週數據失；共享態仲被污染。
-  const loadMobileWeek = useCallback(() => {
+  // ★ L-7：而家係 replace 語義 —— 快速撳 ‹ › 時舊週回應唔准蓋新週（abort + seq）
+  const mobileReq = useLatestRequest()
+  const loadMobileWeek = useCallback(async () => {
     if (typeof window !== 'undefined' && window.innerWidth >= 768) return
     if (!selectedClinicId || mobileWeekDays.length === 0) return
     const weekStart = mobileWeekDays[0]
     const weekEnd = mobileWeekDays[6]
     if (!weekStart || !weekEnd) return
-    const url = `/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`
-    getJSON(url)
-      .then(r => r.ok ? r.json() : { shifts: [] })
-      .then(d => { if (Array.isArray(d.shifts)) setMobileShifts(d.shifts) })
-      .catch(err => console.error('Failed to load mobile shifts:', err))
-    // Also load leave requests for the mobile week
-    getJSON(`/api/leave-requests?startDate=${weekStart}&endDate=${weekEnd}&status=APPROVED`)
-      .then(r => r.ok ? r.json() : { leaveRequests: [] })
-      .then(d => { if (Array.isArray(d.leaveRequests)) setMobileLeaves(d.leaveRequests) })
-      .catch(() => {})
-  }, [selectedClinicId, mobileWeekDays])
+    const { signal, isLatest } = mobileReq()
+    try {
+      const [sr, lr] = await Promise.all([
+        getJSON(`/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`, { signal }),
+        // Also load leave requests for the mobile week
+        getJSON(`/api/leave-requests?startDate=${weekStart}&endDate=${weekEnd}&status=APPROVED`, { signal }),
+      ])
+      const d = sr.ok ? await sr.json() : null
+      const l = lr.ok ? await lr.json() : null
+      if (!isLatest()) return
+      if (Array.isArray(d?.shifts)) setMobileShifts(d.shifts)
+      if (Array.isArray(l?.leaveRequests)) setMobileLeaves(l.leaveRequests)
+    } catch (err) {
+      if (!isLatest()) return
+      console.error('Failed to load mobile shifts:', err)
+    }
+  }, [selectedClinicId, mobileWeekDays, mobileReq])
+
+  // ★ L-7：桌面寬度載入後轉直／縮窄到 <768 → 手機視圖要即刻有資料
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(max-width: 767px)')
+    const onChange = () => { if (mq.matches) void loadMobileWeek() }
+    mq.addEventListener?.('change', onChange)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [loadMobileWeek])
 
   useEffect(() => {
     loadMobileWeek()
@@ -1972,6 +1990,8 @@ function getShiftCode(shift: Shift): string {
             const m = new Map<string, any>()
             for (const s of shifts) m.set(s.id, s)
             for (const s of ovMonthShifts) m.set(s.id, s)
+            // ★ H1-5（P1-5）：CA-06 之後手機週唔再 merge 入 shifts —— 唔加呢行，手機「取代原有」會冇 replaceShiftIds → 409
+            for (const s of mobileShifts) m.set(s.id, s)
             return [...m.values()].filter(
               s => s.employeeId === employeeId && toHKDateStr(new Date(s.date)) === date
             )
@@ -2056,7 +2076,7 @@ function getShiftCode(shift: Shift): string {
     } finally {
       creatingKeyRef.current = null
     }
-  }, [selectedClinicId, secondaryClinicId, setValidationIssues, refreshAll, validateBeforeCreate, shifts, ovMonthShifts, templateById])
+  }, [selectedClinicId, secondaryClinicId, setValidationIssues, refreshAll, validateBeforeCreate, shifts, ovMonthShifts, mobileShifts, templateById])
 
   // ★ 2026-08-03：儲存更次深淺設定
   const saveTemplateShade = async (templateId: string, shade: number) => {

@@ -14,8 +14,12 @@ interface PreflightRun {
     storeBonus: number | null
     splitPay: number | null
     totalPayable: number | null
+    detailJson: string | null   // ★ H1-7：計糧失敗嘅佔位 item = '{"error":…}'
   }>
 }
+
+/** ★ H1-7（P1-7）：generatePayrollRun 失敗員工會寫 $0 佔位 item，detailJson = {"error": …}（payroll-engine.ts:1211-1221） */
+const isFailedItem = (i: { detailJson: string | null }) => (i.detailJson ?? '').startsWith('{"error":')
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -25,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     where: { id: params.id },
     include: {
       items: {
-        select: { employeeId: true, storeBonus: true, splitPay: true, totalPayable: true },
+        select: { employeeId: true, storeBonus: true, splitPay: true, totalPayable: true, detailJson: true },
       },
     },
   }) as unknown as PreflightRun | null
@@ -75,7 +79,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     }),
     Promise.resolve(run.items.filter(i => (i.storeBonus ?? 0) === 0).length),
     Promise.resolve(run.items.filter(i => (i.totalPayable ?? 0) < 0).length),
-    Promise.resolve(run.items.filter(i => (i.totalPayable ?? 0) === 0).length),
+    Promise.resolve(run.items.filter(i => (i.totalPayable ?? 0) === 0 && !isFailedItem(i)).length),
   ])
 
   const blockers: string[] = []
@@ -99,6 +103,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     )
   }
 
+  // ★ H1-7：計糧失敗（$0 佔位）一定要擋 —— 之前只係「實發 $0（當月無工作記錄）」warning，理由仲寫錯
+  const failedN = run.items.filter(isFailedItem).length
+  if (failedN > 0) blockers.push(`${failedN} 位員工計糧失敗（$0 佔位，多數係讀取時間帳戶出錯）—— 請重新產生計糧單`)
   if (negativeNet > 0) blockers.push(`${negativeNet} 位員工實發為負數，請檢查扣減項是否過多`)
   if (zeroNet > 0) warnings.push(`${zeroNet} 位員工實發為 $0（當月無工作記錄）—— 確認係咪應該包含喺呢張計糧單`)
   if (partialPunches > 0) warnings.push(`${partialPunches} 筆打卡記錄未配對到排班（缺卡/多卡）`)

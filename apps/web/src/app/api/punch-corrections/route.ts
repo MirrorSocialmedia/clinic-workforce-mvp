@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
 
       let punchRecordId: string | null = null
       let targetDayStr: string | null = null      // ★ Stage 4A 會用（被修正卡嘅日子）
+      let targetPunchTime: Date | null = null     // ★ H1-1：跨日修正要由較早嗰日開始失效
       let existingFound = false                    // ★ 回應 createdPunchRecord 用（舊 !existing 口徑）
       if (requestBodyPunchRecordId) {
         // ★ DB-06：前端指定咗邊張 → 驗證後直接用，唔再按日期估
@@ -117,6 +118,7 @@ export async function POST(req: NextRequest) {
         }
         punchRecordId = target.id
         targetDayStr = toHKDateStr(target.punchTime)
+        targetPunchTime = target.punchTime
         existingFound = true   // 指定卡存在 = 舊語義「existing」
       } else {
         const existing = await prisma.punchRecord.findFirst({
@@ -155,24 +157,36 @@ export async function POST(req: NextRequest) {
         let voidedOriginalId: string | null = null
         let newPunchRecordId: string | null = null
         const isTypeChange = originalPunchType && originalPunchType !== punchType
+        // ★ H1-1（P1-1）：指定卡喺另一個 HK 日 —— link 會令修正喺兩日都消失（getEffectivePunches 按原打卡時間撈卡）
+        const crossDay = !!targetDayStr && targetDayStr !== dayStr
 
-        if (isTypeChange && isManager) {
-          // Find the original punchRecord by original type
-          const original = await tx.punchRecord.findFirst({
-            where: {
-              employeeId: employee.id,
-              clinicId,
-              punchType: originalPunchType as any,
-              punchTime: { gte: dayStart, lte: dayEnd },
-              void: { is: null },
-            },
-          })
+        // ★ H1-1／A-3：指定卡喺鎖內再驗（預查同落刀之間可能已被作廢）
+        if (requestBodyPunchRecordId) {
+          const stillActive = await tx.punchRecord.findFirst({ where: { id: punchRecordId!, void: { is: null } }, select: { id: true } })
+          if (!stillActive) throw new HttpError(409, '呢張打卡已作廢，唔可以再修正')
+        }
+
+        if ((isTypeChange || crossDay) && isManager) {
+          // ★ H1-2（P1-2）：有指定卡就只用佢；冇先沿用舊「同日 + 原類型」搵法（舊法會作廢錯卡）
+          const original = requestBodyPunchRecordId
+            ? await tx.punchRecord.findFirst({ where: { id: punchRecordId!, void: { is: null } } })
+            : await tx.punchRecord.findFirst({
+                where: {
+                  employeeId: employee.id,
+                  clinicId,
+                  punchType: originalPunchType as any,
+                  punchTime: { gte: dayStart, lte: dayEnd },
+                  void: { is: null },
+                },
+              })
+          const changeNote = isTypeChange
+            ? `類型變更: ${originalPunchType} → ${punchType}`
+            : `修正跨日: ${targetDayStr} → ${dayStr}`
 
           if (original) {
             // 1. Void original punchRecord
-            await tx.punchRecord.update({
-              where: { id: original.id },
-              data: { void: { create: { reason: `類型變更: ${originalPunchType} → ${punchType}`, voidedBy: session.userId } } },
+            await tx.punchVoid.create({
+              data: { punchRecordId: original.id, voidedBy: session.userId, reason: changeNote },
             })
             voidedOriginalId = original.id
 
@@ -186,8 +200,8 @@ export async function POST(req: NextRequest) {
                 targetEmployeeId: employee.id,
                 clinicId,
                 beforeJson: JSON.stringify({ punchType: original.punchType, punchTime: original.punchTime }),
-                afterJson: JSON.stringify({ voidReason: `類型變更: ${originalPunchType} → ${punchType}` }),
-                notes: `作廢原記錄（類型變更）: ${originalPunchType} → ${punchType}`,
+                afterJson: JSON.stringify({ voidReason: changeNote }),
+                notes: `作廢原記錄（${changeNote}）`,
                 ipAddress: req.headers.get('x-forwarded-for') || null,
                 userAgent: req.headers.get('user-agent') || null,
               },
@@ -214,9 +228,9 @@ export async function POST(req: NextRequest) {
                 entityId: newRecord.id,
                 targetEmployeeId: employee.id,
                 clinicId,
-                beforeJson: JSON.stringify({ punchType: originalPunchType, punchRecordId: original.id }),
-                afterJson: JSON.stringify({ punchType, punchRecordId: newRecord.id, reason: `類型變更: ${originalPunchType} → ${punchType}` }),
-                notes: `補登類型變更: ${originalPunchType} → ${punchType}`,
+                beforeJson: JSON.stringify({ punchType: original.punchType, punchTime: original.punchTime, punchRecordId: original.id }),
+                afterJson: JSON.stringify({ punchType, punchTime: correctedTime, punchRecordId: newRecord.id, reason: changeNote }),
+                notes: `補登${changeNote}`,
                 ipAddress: req.headers.get('x-forwarded-for') || null,
                 userAgent: req.headers.get('user-agent') || null,
               },
@@ -231,7 +245,7 @@ export async function POST(req: NextRequest) {
             clinicId,
             correctedTime: new Date(date),
             punchType: punchType as any,
-            reason: isTypeChange ? `類型變更: ${originalPunchType} → ${punchType}${reason ? '; ' + reason : ''}` : (reason || null),
+            reason: (isTypeChange || (crossDay && isManager)) ? `${isTypeChange ? `類型變更: ${originalPunchType} → ${punchType}` : `修正跨日: ${targetDayStr} → ${dayStr}`}${reason ? '; ' + reason : ''}` : (reason || null),
             requestedBy: session.userId,
             status: isManager ? 'APPROVED' : 'PENDING',
             approvedBy: isManager ? session.userId : null,
@@ -294,9 +308,14 @@ export async function POST(req: NextRequest) {
 
         // ★ Stage 2.4：失效 + OT 撤回入 tx（失敗 = rollback，唔再只 log）
         if (c.status === 'APPROVED') {
-          await invalidateTimeBankFrom(c.employeeId, c.correctedTime, tx)
+          // ★ H1-1：跨日 → 由較早嗰日開始失效；兩日都撤回過時早到 OT
+          const fromTime = targetPunchTime && targetPunchTime < c.correctedTime ? targetPunchTime : c.correctedTime
+          await invalidateTimeBankFrom(c.employeeId, fromTime, tx)
           // ★ 2026-08-08: Revoke stale early-in OT if punches changed
           await revokeStaleEarlyOt(c.employeeId, toHKDateStr(c.correctedTime), session.userId, 'CORRECTION_CREATE', tx)
+          if (targetDayStr && targetDayStr !== toHKDateStr(c.correctedTime)) {
+            await revokeStaleEarlyOt(c.employeeId, targetDayStr, session.userId, 'CORRECTION_CREATE', tx)
+          }
         }
 
         return c

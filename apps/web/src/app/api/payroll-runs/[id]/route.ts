@@ -254,6 +254,14 @@ export async function PUT(
         }
       }
 
+      // ★ H1-7（P1-7）：有計糧失敗嘅 $0 佔位 item → 唔准確認（preflight blocker 只係前端 disable，server 要再擋）
+      if (status === 'FINALIZED' && run.status === 'DRAFT') {
+        const failedN = await prisma.payrollItem.count({ where: { runId: params.id, detailJson: { startsWith: '{"error":' } } })
+        if (failedN > 0) {
+          return NextResponse.json({ error: `${failedN} 位員工計糧失敗（$0 佔位），請重新產生計糧單先確認`, code: 'HAS_FAILED_ITEMS' }, { status: 409 })
+        }
+      }
+
       // FIX #1: Use $transaction — status update + audit in same transaction
       // ★ 覆核 P0-1：帳本凍結令 transaction 重好多（N × calculateTimeBank）。
       //   默認 5s 唔夠（實測 3 人 721ms → 21 人 ≈ 5s）。同 payroll-engine.ts:1173 同一設定。

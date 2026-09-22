@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { fmtDate } from '@/lib/hk-date'
 import { zeroEntitledHint } from '@/lib/leave-types'
 import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
@@ -62,22 +62,26 @@ export default function MyLeavePage() {
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
   const [userRole, setUserRole] = useState<string>('')
 
-  const fetchData = useCallback(async () => {
-    setError('')
-    setBalanceError(false)
+  const loadedRef = useRef(false)
+  const fetchData = useCallback(async (opts?: { silent?: boolean }) => {
+    // ★ H1-4（P1-4）：背景 live refresh 失敗唔好成頁變 ⚠️ —— 保留現有資料
+    const silent = !!opts?.silent && loadedRef.current
+    if (!silent) {
+      setError('')
+      setBalanceError(false)
+    }
     try {
+      // ★ H1-4：斷網唔好造 {ok:false} 假物件（之後 call .json() 會變「a.json is not a function」）→ 用 null
+      const safe = (p: Promise<Response>) => p.catch(() => null)
       const [leaveRes, balanceRes, typesRes, meRes] = await Promise.all([
-        fetch('/api/my/leave', { credentials: 'include', cache: 'no-store' })
-          .catch(() => ({ ok: false } as Response)),
+        safe(fetch('/api/my/leave', { credentials: 'include', cache: 'no-store' })),
         // 2026-08-04: 餘額另外攞——生日假已拆出獨立 LeaveType
-        fetch('/api/leave-balance', { credentials: 'include', cache: 'no-store' })
-          .catch(() => ({ ok: false } as Response)),
-        fetch('/api/leave-types', { credentials: 'include', cache: 'no-store' })
-          .catch(() => ({ ok: false } as Response)),
-        fetch('/api/me', { credentials: 'include' })
-          .catch(() => ({ ok: false } as Response)),
+        safe(fetch('/api/leave-balance', { credentials: 'include', cache: 'no-store' })),
+        safe(fetch('/api/leave-types', { credentials: 'include', cache: 'no-store' })),
+        safe(fetch('/api/me', { credentials: 'include' })),
       ])
 
+      if (!leaveRes) throw new Error('網絡未連線，請稍後再試')
       if (!leaveRes.ok) {
         const body = await leaveRes.json().catch(() => ({}))
         throw new Error(body.error || `伺服器錯誤 (${leaveRes.status})`)
@@ -86,34 +90,36 @@ export default function MyLeavePage() {
       setRequests(data.leaveRequests || [])
 
       // ★ 餘額攞唔到要留痕——唔好靜靜當「冇假期」
-      if (balanceRes.ok) {
+      if (balanceRes?.ok) {
         const bData = await balanceRes.json()
         setBalances(bData.leaveBalances || [])
-      } else {
-        console.warn(`[my/leave] /api/leave-balance ${balanceRes.status}`)
+      } else if (!silent) {
+        console.warn(`[my/leave] /api/leave-balance ${balanceRes?.status ?? 'network'}`)
         setBalanceError(true)
       }
 
-      if (typesRes.ok) {
+      if (typesRes?.ok) {
         const tData = await typesRes.json()
         setLeaveTypes(tData.leaveTypes || tData || [])
       }
 
-      if (meRes.ok) {
+      if (meRes?.ok) {
         const meData = await meRes.json()
         setUserRole(meData.user?.role || '')
       }
+      loadedRef.current = true
     } catch (err: any) {
-      setError(err.message || '載入失敗')
+      if (silent) console.warn('[my/leave] 背景更新失敗，保留現有資料', err)
+      else setError(err.message || '載入失敗')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
 
   // ★ cwm-consistency Stage 5.2：live refresh（manager 批假後 60s 內 / 切返 tab 即刻變已批）
-  useLiveRefresh(fetchData, ['leave'], { intervalMs: 60_000 })
+  useLiveRefresh(() => fetchData({ silent: true }), ['leave'], { intervalMs: 60_000 })
 
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault()
