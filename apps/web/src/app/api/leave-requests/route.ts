@@ -110,6 +110,11 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         )
       }
+      // ★ L-1：起訖要合法而且 end ≥ start —— 否則 monthsInRange() 回 []，計糧硬鎖（assertMonthsUnlockedTx）會被跳過
+      if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())
+        || toHKDateStr(new Date(endDate)) < toHKDateStr(new Date(startDate))) {
+        return NextResponse.json({ error: '假期日期無效（結束日要喺開始日或之後）' }, { status: 400 })
+      }
 
       // Support manager creating leave for another employee
       let employee: any
@@ -349,7 +354,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, leaveRequest: request }, { status: 201 })
     } catch (error) {
       console.error('Leave request error:', error)
-      { const r = toHttpResponse(error); if (r) return r }
+      { const r = toHttpResponse(error, '同一日已有相同假期（可能重複提交）'); if (r) return r }   // ★ L-16
       // ★ 餘額不足係用家錯誤（400），唔係伺服器錯誤（500）
       if (error instanceof InsufficientBalanceError) {
         return NextResponse.json({ error: error.message }, { status: 400 })

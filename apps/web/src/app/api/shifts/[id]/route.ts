@@ -160,7 +160,8 @@ export async function PUT(
         return updated
       })
     } catch (error) {
-      { const r = toHttpResponse(error); if (r) return r }
+      // ★ L-6：P2002 用返舊訊息（toHttpResponse 預設「已處理（重複提交）」會誤導）
+      { const r = toHttpResponse(error, '該時段已有相同排班（可能重複提交）'); if (r) return r }
       throw error
     }
 
@@ -244,6 +245,9 @@ export async function DELETE(
         await revokeStaleEarlyOt(existing.employeeId, toHKDateStr(existing.date), session.userId, 'SHIFT_DELETE', tx)
       })
     } catch (e: any) {
+      { const r = toHttpResponse(e); if (r) return r }   // ★ H0-2c BUSY 等
+      // ★ L-6：已經被刪（例如清空週同拖刪撞）→ 409，唔好 500（清空週會當失敗列出）
+      if (e?.code === 'P2025') return NextResponse.json({ error: '呢張更已經刪咗', code: 'ALREADY_DELETED' }, { status: 409 })
       if (e?.code === 'P2003') return NextResponse.json({ error: '呢張更仲有關聯記錄，唔可以直接刪' }, { status: 409 })
       throw e
     }

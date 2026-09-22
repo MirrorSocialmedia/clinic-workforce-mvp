@@ -148,13 +148,16 @@ export async function POST(
         await tx.payRule.deleteMany({ where: { employeeId: empId } })
         await tx.wageHistory.deleteMany({ where: { employeeId: empId } })
         await tx.timeBank.deleteMany({ where: { employeeId: empId } })
-        // ★ Stage 3：TimeBank 快取髒水位（冇 FK，唔清只係留孤兒 row，順手清走）
-        await tx.$executeRaw`DELETE FROM "TimeBankDirty" WHERE "employeeId" = ${empId}`
       }
       await tx.auditLog.deleteMany({
         where: { OR: [{ actorId: userId }, ...(empId ? [{ targetEmployeeId: empId }] : [])] },
       })
-      if (empId) await tx.employee.delete({ where: { id: empId } })
+      if (empId) {
+        await tx.employee.delete({ where: { id: empId } })
+        // ★ Stage 3：TimeBank 快取髒水位（冇 FK，唔清只係留孤兒 row，順手清走）
+        // ★ L-17：要喺 employee.delete【之後】—— delete cascade 落 HolidayOtAdjustment 等表，trigger 會再寫返孤兒 dirty row
+        await tx.$executeRaw`DELETE FROM "TimeBankDirty" WHERE "employeeId" = ${empId}`
+      }
       await tx.userClinic.deleteMany({ where: { userId } })
       await tx.user.delete({ where: { id: userId } })
     })

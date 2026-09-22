@@ -54,6 +54,11 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  // ★ L-5：DB-12 拎走 take 之後要限範圍 —— 否則一次可以撈幾年自己同同事嘅更
+  if (from && to && (hkDateStart(to).getTime() - hkDateStart(from).getTime()) > 62 * 86400000) {
+    return NextResponse.json({ error: '日期範圍最多 62 日' }, { status: 400 })
+  }
+
   if (from) {
     where.startTime = { gte: hkDateStart(from) }
   } else {

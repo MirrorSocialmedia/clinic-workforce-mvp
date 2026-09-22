@@ -410,7 +410,8 @@ export default function LeavePage() {
       })
       const d = await res.json()
       if (res.ok) {
-        alert(`✅ 已發放 ${d.granted} 名員工的 ${d.month} 休息日`)
+        // ★ L-4：部分失敗要講出嚟
+        alert(`✅ 已發放 ${d.granted} 名員工的 ${d.month} 休息日` + (d.failed?.length ? `\n⚠️ ${d.failed.length} 名失敗：${d.failed.map((f: any) => f.error).join('；')}` : ''))
       } else {
         alert(d.error || '發放失敗')
       }

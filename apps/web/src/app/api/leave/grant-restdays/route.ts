@@ -44,6 +44,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   let n = 0
+  const failed: Array<{ employeeId: string; error: string }> = []   // ★ L-4
   for (const e of emps) {
     const rule = await prisma.payRule.findFirst({
       where: { employeeId: e.id, isActive: true },
@@ -61,16 +62,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const ph = await getPublicHolidayDays(mStart, mEnd)
     const phSet = new Set(ph.map(d => toHKDateStr(d)))
     const quota = countMonthlyLeaveDays(y, m, restDays, phSet)
-    await prisma.$transaction(async (tx) => {
-      await lockEmployee(tx, e.id)
-      await grantMonthlyRestDays(e.id, y, m, quota.total, tx)
-    })
-    n++
+    // ★ L-4：逐人 try/catch —— 一個人撞 unique（例如舊格式 marker 同日）唔好令成個迴圈 500、
+    //   前面已 commit 嘅人又冇回報
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockEmployee(tx, e.id)
+        await grantMonthlyRestDays(e.id, y, m, quota.total, tx)
+      })
+      n++
+    } catch (err: any) {
+      console.error(`[grant-restdays] employee=${e.id} ${y}-${m + 1} failed`, err)
+      failed.push({ employeeId: e.id, error: err?.code === 'P2002' ? '同月已有休息日發放記錄（舊格式），請人手核對' : String(err?.message ?? err) })
+    }
   }
 
   return NextResponse.json({
-    ok: true,
+    ok: failed.length === 0,
     granted: n,
+    failed,
     month: `${y}-${String(m + 1).padStart(2, '0')}`,
   })
 }

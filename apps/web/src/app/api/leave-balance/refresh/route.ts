@@ -169,11 +169,15 @@ export async function POST(req: NextRequest) {
           })
 
           if (birthdayExisting) {
-            if (birthdayExisting.entitled !== birthdayEntitled || birthdayExisting.remaining !== Math.max(0, birthdayEntitled - birthdayExisting.used)) {
-              await prisma.leaveBalance.update({
-                where: { id: birthdayExisting.id },
-                data: { entitled: birthdayEntitled, remaining: Math.max(0, birthdayEntitled - birthdayExisting.used) },
-              })
+            // ★ L-3：同年假（RC-12）一樣 —— 生日假可預支（NEGATIVE_ALLOWED_KEYS），唔准 clamp 0（舊寫法每次 refresh 洗走預支）；
+            //   atomic UPDATE：remaining 由 DB 當刻嘅 used 推導，唔用讀出嚟嘅舊 used
+            const bdNegOk = allowsNegativeBalance(birthdayType.systemKey)
+            const nextBdRemaining = bdNegOk ? birthdayEntitled - birthdayExisting.used : Math.max(0, birthdayEntitled - birthdayExisting.used)
+            if (birthdayExisting.entitled !== birthdayEntitled || birthdayExisting.remaining !== nextBdRemaining) {
+              const bdExpr = bdNegOk
+                ? Prisma.sql`${birthdayEntitled} - "used"`
+                : Prisma.sql`GREATEST(${birthdayEntitled} - "used", 0)`
+              await prisma.$executeRaw(Prisma.sql`UPDATE "LeaveBalance" SET "entitled" = ${birthdayEntitled}, "remaining" = (${bdExpr}) WHERE "id" = ${birthdayExisting.id}`)
               updated++
             }
           } else {

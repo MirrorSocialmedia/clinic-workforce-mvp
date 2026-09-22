@@ -707,13 +707,21 @@ export default function SchedulingPage() {
   // ★ OT 時間卡片數據
   const [otRows, setOtRows] = useState<any[]>([])
   // ★ cwm-consist S6 CA-06：loader 抽 useCallback（加入 refreshAll）
-  const loadOtRows = useCallback(() => {
+  // ★ L-8：latest guard（舊回應唔准蓋新）+ 背景失敗保留現有卡片（唔好清空）
+  const otReq = useLatestRequest()
+  const loadOtRows = useCallback(async () => {
     if (!currentCompanyId) { setOtRows([]); return }
-    getJSON('/api/timebank/overview')
-      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
-      .then(d => setOtRows(d.summaries ?? []))
-      .catch(e => { console.error('[ot-card] load failed', e); setOtRows([]) })
-  }, [currentCompanyId])
+    const { signal, isLatest } = otReq()
+    try {
+      const r = await getJSON('/api/timebank/overview', { signal })
+      if (!r.ok) throw new Error(String(r.status))
+      const d = await r.json()
+      if (isLatest()) setOtRows(d.summaries ?? [])
+    } catch (e) {
+      if (!isLatest()) return
+      console.error('[ot-card] load failed（保留現有資料）', e)
+    }
+  }, [currentCompanyId, otReq])
   useEffect(() => { loadOtRows() }, [loadOtRows])
 
   const otCardRows = useMemo(() => {
@@ -751,13 +759,17 @@ export default function SchedulingPage() {
   // ★ 應返工時卡片數據
   const [rhRows, setRhRows] = useState<any[]>([])
   // ★ cwm-consist S6 CA-06：loader 抽 useCallback（加入 refreshAll）
-  const loadRosterHours = useCallback(() => {
+  // ★ L-8：latest guard（轉月快過回應時舊月唔准蓋新月）+ 失敗唔清空
+  const rhReq = useLatestRequest()
+  const loadRosterHours = useCallback(async () => {
     if (!currentCompanyId) { setRhRows([]); return }
-    getJSON(`/api/roster-hours?month=${ovMonth}&companyId=${currentCompanyId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setRhRows(d?.rows ?? []))
-      .catch(() => setRhRows([]))
-  }, [currentCompanyId, ovMonth])
+    const { signal, isLatest } = rhReq()
+    try {
+      const r = await getJSON(`/api/roster-hours?month=${ovMonth}&companyId=${currentCompanyId}`, { signal })
+      const d = r.ok ? await r.json() : null
+      if (isLatest() && d) setRhRows(d.rows ?? [])
+    } catch { /* abort／網絡：保留現有資料 */ }
+  }, [currentCompanyId, ovMonth, rhReq])
   useEffect(() => { loadRosterHours() }, [loadRosterHours])
 
   // ★ 月備註貼（拍板 2026-08-21：按公司 + 按月；純記事，零下游影響）
@@ -841,16 +853,19 @@ export default function SchedulingPage() {
   // ★ cwm-holidayot-20260911 F2：本月應得休息日（= RESTDAY_GRANT 實發數；多人設定唔同 → 出範圍）
   const [restQuotaSummary, setRestQuotaSummary] = useState<{ value: number } | { min: number; max: number } | null>(null)
   // ★ cwm-consist S6 CA-06：loader 抽 useCallback（加入 refreshAll）
-  const loadLeaveSummary = useCallback(() => {
+  // ★ L-8：latest guard + 失敗唔清空
+  const lsReq = useLatestRequest()
+  const loadLeaveSummary = useCallback(async () => {
     if (!currentCompanyId) { setLeaveSummary([]); setRestQuotaSummary(null); return }
-    getJSON(`/api/scheduling-leave-summary?companyId=${currentCompanyId}&periodMonth=${ovMonth}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        setLeaveSummary(d?.rows ?? [])
-        setRestQuotaSummary(d?.restQuotaSummary ?? null)
-      })
-      .catch(() => { setLeaveSummary([]); setRestQuotaSummary(null) })
-  }, [currentCompanyId, ovMonth])
+    const { signal, isLatest } = lsReq()
+    try {
+      const r = await getJSON(`/api/scheduling-leave-summary?companyId=${currentCompanyId}&periodMonth=${ovMonth}`, { signal })
+      const d = r.ok ? await r.json() : null
+      if (!isLatest() || !d) return
+      setLeaveSummary(d.rows ?? [])
+      setRestQuotaSummary(d.restQuotaSummary ?? null)
+    } catch { /* abort／網絡：保留現有資料 */ }
+  }, [currentCompanyId, ovMonth, lsReq])
   useEffect(() => { loadLeaveSummary() }, [loadLeaveSummary])
 
   // ★ 小時格式化 helpers
@@ -1028,14 +1043,17 @@ export default function SchedulingPage() {
   }, [selectedEmployeeId, balReq])
 
   // 🔧 Fix #4a: Refresh leave balances after drag-drop or delete
+  // ★ L-10：同 balReq effect 共用 latest guard（轉員工期間唔會顯示錯人餘額）+ try/catch（focus 時斷網唔好 unhandled rejection）
   const refreshLeaveBalances = useCallback(async () => {
     if (!selectedEmployeeId) return
-    const res = await getJSON(`/api/leave-balance?employeeId=${selectedEmployeeId}`)
-    if (res.ok) {
+    const { signal, isLatest } = balReq()
+    try {
+      const res = await getJSON(`/api/leave-balance?employeeId=${selectedEmployeeId}`, { signal })
+      if (!res.ok || !isLatest()) return
       const d = await res.json()
-      setSelectedEmpBalances(d.leaveBalances || [])
-    }
-  }, [selectedEmployeeId])
+      if (isLatest()) setSelectedEmpBalances(d.leaveBalances || [])
+    } catch { /* abort／斷網：保留現有餘額 */ }
+  }, [selectedEmployeeId, balReq])
 
   // ★ B-02①: in-flight guard — prevent duplicate shift creation on same cell
   const creatingKeyRef = useRef<string | null>(null)
@@ -1771,6 +1789,7 @@ function getShiftCode(shift: Shift): string {
       }
       const res = await fetch(`/api/shifts/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
+      notifyDataChanged('schedule')   // ★ L-13
       await refreshAll()
       const restore = async () => {
         const r = await fetch('/api/shifts', {
@@ -1781,7 +1800,7 @@ function getShiftCode(shift: Shift): string {
         if (!r.ok) {
           const e = await r.json().catch(() => ({}))
           setValidationIssues([{ type: 'error', rule: 'api', message: `還原失敗：${e.error || '該時段已有其他排班'}` }])
-        }
+        } else notifyDataChanged('schedule')   // ★ L-13
         await refreshAll()
       }
       if (undoTimer.current) clearTimeout(undoTimer.current)
@@ -1805,6 +1824,7 @@ function getShiftCode(shift: Shift): string {
       }
       const res = await fetch(`/api/leave-requests/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
+      notifyDataChanged('schedule', 'leave')   // ★ L-13
       await refreshAll()
       await refreshLeaveBalances()
       const restore = async () => {
@@ -1829,6 +1849,7 @@ function getShiftCode(shift: Shift): string {
             }).catch(() => {})
           }
         }
+        if (r.ok) notifyDataChanged('schedule', 'leave')   // ★ L-13
         await refreshAll()
         await refreshLeaveBalances()
       }
@@ -2152,6 +2173,7 @@ function getShiftCode(shift: Shift): string {
         setValidationIssues([{ type: 'error', rule: 'api', message: `${err.error || '批量排班失敗'}（已全部取消，冇建立任何更次）` }])
         return
       }
+      notifyDataChanged('schedule')   // ★ L-13
       await refreshAll()
       const d = await res.json()
       alert(`批量排班成功，共 ${d.shifts?.length ?? dates.length} 張`)
@@ -2194,7 +2216,8 @@ function getShiftCode(shift: Shift): string {
     if (!canManage) return
 
     // ★ 豁免類型（病假 / 休息日 / 自訂無限）跳過餘額檢查
-      if (!isBalanceExempt(leaveType)) {
+    // ★ L-9：selectedEmpBalances 只係「揀咗嗰個員工」嘅餘額 —— 撳第二個員工嘅格就冇數可查，唔好誤報餘額不足（server 會再驗）
+    if (!isBalanceExempt(leaveType) && employeeId === selectedEmployeeId) {
       const bal = selectedEmpBalances.find(b => b.employeeId === employeeId && b.leaveTypeId === leaveType.id)
       if ((!bal || bal.remaining <= 0) && !allowsNegativeBalance(leaveType.systemKey)) {
         setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 此假期餘額不足，無法安排' }])
@@ -2233,6 +2256,7 @@ function getShiftCode(shift: Shift): string {
       })
       if (res.ok) {
         setValidationIssues([])
+        notifyDataChanged('schedule', 'leave')   // ★ L-13
         await refreshAll()
         await refreshLeaveBalances()
       } else {
@@ -2245,7 +2269,7 @@ function getShiftCode(shift: Shift): string {
       setValidationIssues([{ type: 'error', rule: 'leave', message: '❌ 建立假期失敗' }])
       await refreshAll()
     }
-  }, [selectedEmpBalances, shifts, setValidationIssues, selectedClinicId, refreshAll, refreshLeaveBalances])
+  }, [selectedEmpBalances, selectedEmployeeId, shifts, setValidationIssues, selectedClinicId, refreshAll, refreshLeaveBalances])
   // eslint-disable-next-line react-hooks/exhaustive-deps -- canManage is a stable boolean guard derived from userRole props
 
   // ============================================================
@@ -2858,6 +2882,7 @@ function getShiftCode(shift: Shift): string {
         if (e?.error) alert(e.error)
         throw new Error(String(r.status))
       }
+      notifyDataChanged('leave')   // ★ L-13
     } catch {
       // ★ cwm-consist S6 PL：該假已有更新嘅 click → skip（嗰次會負責 reconcile）；
       //   revert 一律用 click 前嘅值
@@ -2868,8 +2893,11 @@ function getShiftCode(shift: Shift): string {
       setMonthLeaveRequests(revert)
       setValidationIssues(prev => [...prev,
         { type: 'warning', rule: 'leave', message: '⚠️ PL 標記失敗，已還原' }])
+      // ★ L-11：連撳兩下都失敗時 prevValue 可能係上一下未確認嘅樂觀值 —— 以 DB 為準重載
+      void loadShifts()
+      void loadOvMonth()
     }
-  }, [])
+  }, [loadShifts, loadOvMonth])
 
   const handleOverviewCellClick = useCallback(async (
     empId: string,
@@ -2922,7 +2950,7 @@ function getShiftCode(shift: Shift): string {
             },
           }),
         })
-        if (ok) { setValidationIssues([]); await refreshAll() }
+        if (ok) setValidationIssues([])   // ★ L-8：createShift 成功時自己已經 refreshAll，唔使再跑一次
         return
       }
 
@@ -4851,7 +4879,7 @@ function getShiftCode(shift: Shift): string {
             const isToday = d === toHKDateStr(todayHK())
             const isSelected = d === mobileSelectedDate
             const parts = d.split('-')
-            const dayOfWeek = ['日','一','二','三','四','五','六'][new Date(d).getDay()]
+            const dayOfWeek = ['日','一','二','三','四','五','六'][hkDayOfWeek(d)]   // ★ L-12：TZ-05 漏網（香港以西瀏覽器會錯一日）
             return (
               <button key={d} onClick={() => setMobileSelectedDate(d)}
                 className="flex-shrink-0 flex flex-col items-center justify-center rounded-lg border px-3 py-2 text-xs transition-all"
@@ -5012,7 +5040,7 @@ function getShiftCode(shift: Shift): string {
                     <th className="text-left w-14 sticky left-0 bg-white">員工</th>
                     {mobileWeekDays.map(d => (
                       <th key={d} className="text-center px-0.5">
-                        {['一', '二', '三', '四', '五', '六', '日'][new Date(d).getDay() === 0 ? 6 : new Date(d).getDay() - 1]}
+                        {['一', '二', '三', '四', '五', '六', '日'][hkDayOfWeek(d) === 0 ? 6 : hkDayOfWeek(d) - 1]}{/* ★ L-12 */}
                       </th>
                     ))}
                   </tr>
@@ -5065,7 +5093,7 @@ function getShiftCode(shift: Shift): string {
             secondaryClinicIdOverride: secondary,
             onConflict: (c) => { conflicted = true; setMobileConflict({ empId, tpl, kind: c.kind, existing: c.existing }) },
           })
-          if (ok) { setMobileSheet(null); await refreshAll() }
+          if (ok) setMobileSheet(null)   // ★ L-8：createShift 成功時自己已經 refreshAll
           else if (!conflicted) { setMobileSheet(null); window.scrollTo({ top: 0, behavior: 'smooth' }) }
         }}
         onReplace={async (c, secondary) => {
@@ -5562,15 +5590,25 @@ function getShiftCode(shift: Shift): string {
                 const sun = new Date(mon); sun.setDate(mon.getDate() + 6)  // tz-ok: client-side browser
                 const startDate = toHKDateStr(mon), endDate = toHKDateStr(sun)
                 if (!confirm(`確定清空 ${startDate} 至 ${endDate} 嘅排班同假期？`)) return
+                // ★ L-14：直接問 server 攞嗰 7 日 —— 月視圖時 shifts 由 ovMonth-01 起載，跨月嗰幾日唔喺 state 入面會靜靜漏清
+                let wkShifts: any[] = shifts, wkLeaves: any[] = leaveRequests
+                try {
+                  const [sr, lr] = await Promise.all([
+                    getJSON(`/api/shifts?startDate=${startDate}&endDate=${endDate}&pageSize=1000`),
+                    getJSON(`/api/leave-requests?startDate=${startDate}&endDate=${endDate}&status=APPROVED`),
+                  ])
+                  if (sr.ok) { const d = await sr.json(); if (Array.isArray(d.shifts)) wkShifts = d.shifts }
+                  if (lr.ok) { const d = await lr.json(); if (Array.isArray(d.leaveRequests)) wkLeaves = d.leaveRequests }
+                } catch { /* 攞唔到就用返畫面 state */ }
                 // 清排班
-                const weekShifts = shifts.filter(s => {
+                const weekShifts = wkShifts.filter(s => {
                   const shiftDateStr = toHKDateStr(new Date(s.date))
                   return s.employeeId === selectedEmployeeId &&
                     shiftDateStr >= startDate &&
                     shiftDateStr <= endDate
                 })
                 // 清假期
-                const weekLeaves = leaveRequests.filter(lr => {
+                const weekLeaves = wkLeaves.filter(lr => {
                   const lrStart = toHKDateStr(new Date(lr.startDate))
                   const lrEnd = lr.endDate ? toHKDateStr(new Date(lr.endDate)) : lrStart
                   return lr.employeeId === selectedEmployeeId &&
@@ -5584,7 +5622,10 @@ function getShiftCode(shift: Shift): string {
                 const failed: string[] = []
                 for (const shift of weekShifts) {
                   const r = await fetch('/api/shifts/' + shift.id, { method: 'DELETE', credentials: 'include' })
-                  if (!r.ok) failed.push(`更 ${toHKDateStr(new Date(shift.date))}`)
+                  if (!r.ok) {
+                    const b = r.status === 409 ? await r.json().catch(() => ({})) : {}
+                    if ((b as any).code !== 'ALREADY_DELETED') failed.push(`更 ${toHKDateStr(new Date(shift.date))}`)   // ★ L-6：已經刪咗唔算失敗
+                  }
                 }
                 for (const l of weekLeaves) {
                   const r = await fetch('/api/leave-requests/' + l.id, { method: 'DELETE', credentials: 'include' })
