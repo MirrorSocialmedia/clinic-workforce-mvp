@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef } from 'react'
 
-export type DataTopic = 'attendance' | 'correction' | 'leave' | 'schedule' | 'payroll' | 'timebank'
+export type DataTopic = 'attendance' | 'correction' | 'leave' | 'schedule' | 'payroll' | 'timebank' | 'provider' // ★ cwm-provroster B4：醫生當值表／時間表 topic
 const CH = 'cwm-data-changed'
 let bc: BroadcastChannel | null = null
 function channel(): BroadcastChannel | null {
