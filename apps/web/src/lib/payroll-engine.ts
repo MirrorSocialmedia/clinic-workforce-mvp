@@ -976,7 +976,7 @@ export async function generatePayrollRun(
     excludeConfidential?: boolean // ★ 新增：非 OWNER 排除保密員工
   },
 ): Promise<
-  | { runId: string; itemCount: number; totalPayable: number; skipped?: Array<{ employeeId: string; name: string; reason: string }>; transitionWarning?: string | null }
+  | { runId: string; itemCount: number; totalPayable: number; skipped?: Array<{ employeeId: string; name: string; reason: string }>; removed?: Array<{ employeeId: string; name: string }>; transitionWarning?: string | null }
   | { error: string; runId: string; status: string }
 > {
   // Parse YYYY-MM → HK-tz-safe Date (use +08:00 suffix to avoid local TZ confusion)
@@ -1005,6 +1005,8 @@ export async function generatePayrollRun(
   // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋／離職結算 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
   const isRecalculation = !!existing
+  // ★ cwm-consist S6 CA-04：舊 run 員工名單（regenerate 後計算 removed[] 用）
+  let oldEmps: { id: string; name: string }[] = []
   const carried: { storeBonus: Record<string, number>; splitPay: Record<string, number>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } =
     { storeBonus: {}, splitPay: {}, bonusOverride: {} }
   if (existing) {
@@ -1019,8 +1021,9 @@ export async function generatePayrollRun(
     // DRAFT — allow recalculation: save bonus/splitPay/bonusOverride then delete old items
     const oldItems = await prisma.payrollItem.findMany({
       where: { runId: existing.id },
-      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true },
+      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true, employee: { select: { user: { select: { name: true } } } } },
     })
+    oldEmps = oldItems.map(oi => ({ id: oi.employeeId, name: oi.employee?.user?.name ?? '(unknown)' }))
     for (const oi of oldItems) {
       if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
       if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
@@ -1050,6 +1053,9 @@ export async function generatePayrollRun(
           },
         },
       },
+      // ★ cwm-consist S6 CA-04：regenerate 時舊 run 有 item 嘅員工都必須入名單 ——
+      //   否則員工已唔 ACTIVE 同本月無 punch/shift 時就漏咗，寫入 tx deleteMany 後冇人重寫 → 靜默清走
+      ...(existing ? [{ payrollItems: { some: { runId: existing.id } } }] : []),
     ],
   }
   if (clinicId) where.homeClinicId = clinicId
@@ -1249,7 +1255,11 @@ export async function generatePayrollRun(
   }, { maxWait: 10_000, timeout: 60_000 })
 
   const totalPayable = items.reduce((sum, item) => sum + item.totalPayable, 0)
-  return { runId: run!.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped, transitionWarning }
+  // ★ cwm-consist S6 CA-04：regenerate 後舊 run 有 item 但新 items 冇嘅員工（被 skip／無規則／保密排除等）→ 明確回報 removed[]
+  const removed = isRecalculation
+    ? oldEmps.filter(e => !items.some(it => it.employeeId === e.id)).map(e => ({ employeeId: e.id, name: e.name }))
+    : []
+  return { runId: run!.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped, removed, transitionWarning }
 }
 
 // Export for testing
