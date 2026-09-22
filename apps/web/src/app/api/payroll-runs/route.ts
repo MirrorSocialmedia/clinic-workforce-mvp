@@ -196,6 +196,10 @@ export async function POST(req: NextRequest) {
       }, { status: 201 })
     } catch (err: any) {
       console.error('Failed to generate payroll:', err)
+      // ★ cwm-consist S6 RR-02：併發下 @@unique([clinicId, periodMonth]) 撞車 → 409（唔係 500）
+      if (err?.code === 'P2002') {
+        return NextResponse.json({ error: '本月計糧單已存在（併發創建衝突），請刷新重試' }, { status: 409 })
+      }
       return NextResponse.json({ error: err.message || 'Internal error' }, { status: 500 })
     }
   })

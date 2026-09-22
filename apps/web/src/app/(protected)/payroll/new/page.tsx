@@ -24,7 +24,7 @@ export default function NewPayrollPage() {
   })
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ runId: string; itemCount: number; totalPayable: number; notice?: string } | null>(null)
+  const [result, setResult] = useState<{ runId: string; itemCount: number; totalPayable: number; notice?: string; failed?: { employeeId: string; name: string; error: string }[] } | null>(null)
   const [userRole, setUserRole] = useState<string>('')
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
@@ -371,6 +371,17 @@ export default function NewPayrollPage() {
             {result.notice && (
               <div className="mt-2 p-2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                 ⚠️ {result.notice}
+              </div>
+            )}
+            {/* ★ cwm-consist S6 RR-02：計算失敗嘅員工（已以零額記入，需檢查後重算） */}
+            {result.failed && result.failed.length > 0 && (
+              <div className="mt-2 p-2 rounded bg-red-50 text-red-700 border border-red-200">
+                <div className="font-semibold">⚠️ {result.failed.length} 位員工計算失敗（已以零額記入，請檢查後重算）：</div>
+                <ul className="mt-1 list-disc pl-4">
+                  {result.failed.map((f) => (
+                    <li key={f.employeeId}>{f.name} — {f.error}</li>
+                  ))}
+                </ul>
               </div>
             )}
             <div style={{ marginTop: 12 }}>

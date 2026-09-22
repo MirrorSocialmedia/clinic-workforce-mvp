@@ -976,7 +976,7 @@ export async function generatePayrollRun(
     excludeConfidential?: boolean // ★ 新增：非 OWNER 排除保密員工
   },
 ): Promise<
-  | { runId: string; itemCount: number; totalPayable: number; skipped?: Array<{ employeeId: string; name: string; reason: string }>; removed?: Array<{ employeeId: string; name: string }>; transitionWarning?: string | null }
+  | { runId: string; itemCount: number; totalPayable: number; skipped?: Array<{ employeeId: string; name: string; reason: string }>; removed?: Array<{ employeeId: string; name: string }>; failed?: Array<{ employeeId: string; name: string; error: string }>; transitionWarning?: string | null }
   | { error: string; runId: string; status: string }
 > {
   // Parse YYYY-MM → HK-tz-safe Date (use +08:00 suffix to avoid local TZ confusion)
@@ -1106,21 +1106,19 @@ export async function generatePayrollRun(
     }
   }
 
-  // ★ 2026-08-02: Ensure run exists before calculation loop —
-  //   calculatePayrollWithRules does 8+ queries per employee (shift, punch, leave,
+  // ★ 2026-08-02: calculatePayrollWithRules does 8+ queries per employee (shift, punch, leave,
   //   timebank recursion, etc.). 5 employees × 8+ queries exceeds Prisma's default
   //   5s transaction timeout. Calculation is read-only (no mutations), so it's safe
   //   to move outside transaction; transaction only handles writes.
-  if (!run) {
-    run = await basePrisma.payrollRun.create({
-      data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
-    })
-  }
+  // ★ cwm-consist S6 RR-02：run 唔再喺計算前 create（tx 外）—— 改喺寫入 tx 內建（見下）。
+  //   舊版 create 咗先 crash 喺 tx 前 → 留空 DRAFT run 孤兒；而家任一環節 crash = 整 tx 滾返。
 
   // ★ Calculate payroll outside transaction — prevents timeout
   const { start: monthStartForRule, end: monthEndForRule } = getMonthRange(monthDate)
   const items: Array<any> = []
   const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
+  // ★ cwm-consist S6 RR-02：計算失敗嘅員工（舊版只係靜默寫零額 item）→ 明確回報 failed[]
+  const failed: Array<{ employeeId: string; name: string; error: string }> = []
   for (const emp of employees) {
     if (inOtherRun.has(emp.id)) {
       skipped.push({ employeeId: emp.id, name: emp.user.name, reason: `本月已喺「${inOtherRun.get(emp.id)}」計糧單出現，唔會重複計` })
@@ -1210,6 +1208,7 @@ export async function generatePayrollRun(
       })
     } catch (err) {
       console.error(`Failed payroll for ${emp.id}:`, err)
+      failed.push({ employeeId: emp.id, name: emp.user.name, error: String(err) })
       items.push({
         employeeId: emp.id,
         workedHours: 0, otHours: 0, leaveDays: 0, absentDays: 0,
@@ -1225,6 +1224,20 @@ export async function generatePayrollRun(
 
   // ★ Transaction only handles writes — fast, won't timeout
   const result = await basePrisma.$transaction(async (tx) => {
+    // ★ cwm-consist S6 RR-02：run 喺寫入 tx 內建 —— 重算單：upsert by id（no-op）；新單：tx 內 create。
+    //   併發同月兩個新單 → 第二個 P2002 → route 轉 409（唔係 500）。
+    //   注意：compound unique `clinicId_periodMonth` 嘅 where 型唔收 null（Prisma 6），所以新單用 create 唔係 upsert。
+    if (existing) {
+      run = await tx.payrollRun.upsert({
+        where: { id: existing.id },
+        create: { id: existing.id, clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
+        update: {},
+      })
+    } else {
+      run = await tx.payrollRun.create({
+        data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
+      })
+    }
     // ★ cwm-money P2-2：計算期間可能有人確認咗 —— 鎖 row 再查，非 DRAFT 取消（唔寫任何 item）
     const locked = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "PayrollRun" WHERE id = ${run!.id} FOR UPDATE`
     if (locked[0]?.status !== 'DRAFT') {
@@ -1259,7 +1272,7 @@ export async function generatePayrollRun(
   const removed = isRecalculation
     ? oldEmps.filter(e => !items.some(it => it.employeeId === e.id)).map(e => ({ employeeId: e.id, name: e.name }))
     : []
-  return { runId: run!.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped, removed, transitionWarning }
+  return { runId: run!.id, itemCount: items.length, totalPayable: Math.round(totalPayable * 100) / 100, skipped, removed, failed, transitionWarning }
 }
 
 // Export for testing
