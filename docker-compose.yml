@@ -50,6 +50,10 @@ services:
       APRICOT_ENC_KEY: ${APRICOT_ENC_KEY}
       APRICOT_CRON_KEY: ${APRICOT_CRON_KEY}
       PHONE_HASH_KEY: ${PHONE_HASH_KEY}
+      # ★ cwi-final S2-9：報價第二層經 wa-inbox proxy（應用層加密）
+      WA_INBOX_LLM_URL: ${WA_INBOX_LLM_URL:-}
+      INTERNAL_LLM_SECRET: ${INTERNAL_LLM_SECRET:-}
+      INTERNAL_LLM_KID: ${INTERNAL_LLM_KID:-k1}
     networks: [clinic_net]
     # ★ 2026-08-28 cwm-costfix：log 輪轉（同上）
     logging:

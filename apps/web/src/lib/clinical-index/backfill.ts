@@ -62,6 +62,9 @@ export async function runClinicalIndexBackfill(opts: {
 }): Promise<BackfillOutcome> {
   const t0 = Date.now()
   resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
+  // ★ cwi-final S2-9b：backfill LLM 限流 — 每次打 LLM 之後 GAP（預設 1500ms）+ 每 job 上限（預設 300，超過停打 — log backfill_cap）
+  const llmGapMs = Number(process.env.BACKFILL_LLM_GAP_MS ?? 1500)
+  let llmBudgetLeft = Math.max(0, Math.floor(Number(process.env.BACKFILL_LLM_MAX ?? 300)))
   const now = opts.now ?? new Date()
   const today = toHKDateStr(now)
   const rangeTo = addDaysStr(today, -1)
@@ -135,7 +138,18 @@ export async function runClinicalIndexBackfill(opts: {
                 where: { patientApricotId_visitDate_apricotApptId: { patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), apricotApptId: v.apricotApptId as string } },
                 select: { id: true },
               })
-              if (row) await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), note: v.noteJson as any })
+              if (row) {
+                const llmCallsBefore = llmStats().calls
+                await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), note: v.noteJson as any, skipLlm: llmBudgetLeft <= 0 })
+                const dLlm = llmStats().calls - llmCallsBefore
+                if (dLlm > 0) {
+                  llmBudgetLeft -= dLlm
+                  if (llmBudgetLeft <= 0) {
+                    console.warn('[clinical-index-backfill] LLM quota 用完 — 剩餘 note 唔再打 LLM（低信心行落確認隊列）', { reason: 'backfill_cap', llm: llmStats().calls, cap: Number(process.env.BACKFILL_LLM_MAX ?? 300) })
+                  }
+                  await new Promise((r) => setTimeout(r, llmGapMs))
+                }
+              }
             } catch (e) {
               console.error('[quote-extract] 存儲失敗（唔阻 pipeline）:', e)
             }

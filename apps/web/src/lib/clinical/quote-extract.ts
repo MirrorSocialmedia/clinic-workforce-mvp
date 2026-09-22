@@ -14,7 +14,7 @@
 import { basePrisma } from '@/lib/prisma'
 import { parseQuote, type ParsedQuoteItem, type TermEntry } from './quote-parser'
 import { noteTextToPlain } from './extract-rx-codes'
-import { llmChat } from './llm-client'
+import { extractViaWaInbox } from './llm-client'
 import type { NoteText } from '@/lib/clinical-index/types'
 
 // ── 術語表載入（5 分鐘 in-process cache — 同 rx 口徑）────────────────────
@@ -39,16 +39,6 @@ export interface LlmQuoteItem {
   code: string | null // 必須喺字典；唔喺 → null
   amount: number | null
   perUnit: boolean
-}
-
-function buildLlmPrompt(terms: TermEntry[]): string {
-  const dict = terms.map((t) => `${t.shorthand}=${t.nameCn}${t.nameEn ? `(${t.nameEn})` : ''}`).join(', ')
-  return (
-    `你係牙科臨床記錄報價抽取器。由文本抽出報價項目，只輸出 JSON（唔好任何其他文字）：` +
-    `{"items":[{"text":"原文詞","code":"療程code","amount":數字|null,"perUnit":bool}]}。` +
-    `code 只能由下列清單揀（唔准自由發明，唔知就 null）：${dict}。` +
-    `金額：4K=4000、900@=900 per unit、5-6K 取中 5500。`
-  )
 }
 
 /** 解析 LLM 輸出（strip ``` fence + 只收字典 code）→ null = 失敗（低信心保留）。 */
@@ -83,15 +73,10 @@ export async function runLlmLayer(
   notePlain: string,
   terms: TermEntry[]
 ): Promise<LlmQuoteItem[] | null> {
-  const res = await llmChat(
-    [
-      { role: 'system', content: buildLlmPrompt(terms) },
-      { role: 'user', content: notePlain.slice(0, 2000) },
-    ],
-    { maxTokens: 800 }
-  )
-  if (!res) return null
-  return parseLlmQuoteResponse(res.content, terms)
+  const items = await extractViaWaInbox(notePlain, terms)
+  if (!items) return null
+  // 雙保險：wa-inbox 已過濾，但呢度再以本地字典驗 code（唔信任 proxy 回傳）
+  return parseLlmQuoteResponse(JSON.stringify({ items }), terms)
 }
 
 // ── 兩層合併 ────────────────────────────────────────────────────────────
@@ -108,7 +93,7 @@ export interface ExtractedQuote {
   source: 'parser' | 'llm'
 }
 
-export async function extractQuotes(note: NoteText, terms: TermEntry[], visitId?: string): Promise<ExtractedQuote[]> {
+export async function extractQuotes(note: NoteText, terms: TermEntry[], visitId?: string, opts?: { skipLlm?: boolean }): Promise<ExtractedQuote[]> {
   const plain = noteTextToPlain(note)
   const parsed = parseQuote(plain, terms)
   const termByIdx = new Map(terms.map((t) => [t.shorthand, t]))
@@ -126,7 +111,7 @@ export async function extractQuotes(note: NoteText, terms: TermEntry[], visitId?
     source: 'parser' as const,
   }))
 
-    if (parsed.needsLlm) {
+    if (parsed.needsLlm && !opts?.skipLlm) {
     const llmItems = await runLlmLayer(plain, terms)
     if (llmItems) {
       // LLM 補低信心 orphan（text 子串配對）+ 收 LLM 新發現
@@ -189,9 +174,11 @@ export async function storeQuotesForVisit(opts: {
   patientApricotId: string
   visitDate: Date
   note: NoteText
+  /** ★ S2-9b backfill 限流：LLM quota 用完後唔再打 LLM（low 行照存 — 落確認隊列） */
+  skipLlm?: boolean
 }): Promise<{ stored: number }> {
   const terms = await loadTermEntries()
-  const items = await extractQuotes(opts.note, terms, opts.visitId)
+  const items = await extractQuotes(opts.note, terms, opts.visitId, { skipLlm: opts.skipLlm })
   if (!items.length) {
     // 冇報價項 — 清走舊 pending（重跑口徑一致）
     await basePrisma.quotedItem.deleteMany({ where: { sourceVisitId: opts.visitId, status: 'pending' } })
