@@ -20,6 +20,10 @@ export class HttpError extends Error {
   }
 }
 
+/** ★ cwm-provroster B3（CHECK P-3）：generic key 版鎖（同 lockEmployee 同一把 pg_advisory_xact_lock，
+ *  key 前綴自己揀，例如 `prov:${providerId}` 串行醫生休假寫入）。 */
+export const lockKey = (tx: any, key: string) => tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`
+
 /** route catch 用：HttpError / P2002 → response；其他 → null（交返原本處理） */
 export function toHttpResponse(e: any, dupMessage = '已處理（重複提交）'): NextResponse | null {
   if (e instanceof HttpError) return NextResponse.json({ error: e.message, ...(e.extra ?? {}) }, { status: e.status })

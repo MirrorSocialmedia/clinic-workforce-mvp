@@ -79,11 +79,45 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Provider not found' }, { status: 404 })
   }
 
+  // ★ cwm-provroster S4 + B2（CHECK P-2）：樂觀鎖 atomic —— 唔再「findUnique 攞 slot → JS 比較 → upsert/delete」
+  //   （兩部機同時撳會互相蓋走）。前端帶 expected（佢畫面見到嘅 slot；null = 空白）：
+  //   由空白變有值 → create 靠 unique 擋（P2002 = STALE）；由 A 變 B → 條件 updateMany(slot: expected)；
+  //   清除 → deleteMany 帶 slot 條件。唔帶 expected = 舊 client，照舊直接寫。
+  const hasExp = Object.prototype.hasOwnProperty.call(body, 'expected')
+  const expected = (body.expected ?? null) as string | null
+
+  // stale409 = 409 句 + re-query 最新 slot 交畀前端更新畫面
+  const stale409 = () => prisma.providerWeeklyPattern
+    .findUnique({ where: { providerId_clinicId_weekday: { providerId, clinicId, weekday } }, select: { slot: true } })
+    .then(cur => NextResponse.json(
+      { error: '呢格啱啱俾其他人改咗，畫面已更新，請再揀一次', code: 'STALE', current: cur?.slot ?? null },
+      { status: 409 },
+    ))
+
   try {
-    if (slot == null) {
-      await prisma.providerWeeklyPattern.deleteMany({ where: { providerId, clinicId, weekday } })
+    if (slot == null) { // 清除
+      const d = await prisma.providerWeeklyPattern.deleteMany({
+        where: { providerId, clinicId, weekday, ...(hasExp && expected ? { slot: expected } : {}) },
+      })
+      if (hasExp && d.count !== 1) return await stale409()
       return jsonNoStore({ ok: true, slot: null })
     }
+    if (hasExp && expected === null) { // 由空白變有值 → 靠 unique 擋
+      const c = await prisma.providerWeeklyPattern.create({
+        data: { providerId, clinicId, weekday, slot: String(slot), updatedBy: auth.session!.userId },
+        select: { slot: true },
+      })
+      return jsonNoStore({ ok: true, slot: c.slot })
+    }
+    if (hasExp) { // 由 A 變 B → 條件更新
+      const u = await prisma.providerWeeklyPattern.updateMany({
+        where: { providerId, clinicId, weekday, slot: expected! },
+        data: { slot: String(slot), updatedBy: auth.session!.userId },
+      })
+      if (u.count !== 1) return await stale409()
+      return jsonNoStore({ ok: true, slot: String(slot) })
+    }
+    // 冇帶 expected（舊 client）→ 照舊 upsert
     const saved = await prisma.providerWeeklyPattern.upsert({
       where: { providerId_clinicId_weekday: { providerId, clinicId, weekday } },
       update: { slot: String(slot), updatedBy: auth.session!.userId },
@@ -91,7 +125,8 @@ export async function PUT(req: NextRequest) {
       select: { slot: true },
     })
     return jsonNoStore({ ok: true, slot: saved.slot })
-  } catch (e) {
+  } catch (e: any) {
+    if (e?.code === 'P2002') return await stale409()
     console.error('[provider-patterns] PUT failed', e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

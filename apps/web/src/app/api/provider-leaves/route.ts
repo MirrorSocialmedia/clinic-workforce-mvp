@@ -5,6 +5,8 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { resolveProviderScheduleScope } from '@/lib/provider-scope'
+import { findOverlappingLeave } from '@/lib/provider-leave-db'
+import { lockKey, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 export async function GET(req: NextRequest) {
   const auth = await requirePerm(req, 'provider_schedule')
@@ -49,20 +51,27 @@ export async function POST(req: NextRequest) {
   const { providerId, startDate, endDate, note } = body
 
   if (!providerId || !startDate || !endDate) {
-    return NextResponse.json({ error: 'providerId, startDate, endDate required' }, { status: 400 })
+    return NextResponse.json({ error: '醫生、開始日、結束日必填' }, { status: 400 })
   }
 
   const start = hkDateStart(startDate)
   const end = hkDateStart(endDate)
 
   if (end < start) {
-    return NextResponse.json({ error: 'endDate must be >= startDate' }, { status: 400 })
+    return NextResponse.json({ error: '結束日唔可以早過開始日' }, { status: 400 })
   }
 
+  // ★ cwm-provroster S1-3 + B3（CHECK P-3）：同一醫生休假唔准重疊（之前會靜靜入兩條）。
+  //   重疊檢查 + 寫入放同一 tx，用 advisory lock 按醫生串行 —— check-then-insert 原子化。
   try {
-    const leave = await prisma.providerLeave.create({
-      data: { providerId, startDate: start, endDate: end, note: note || null, createdBy: auth.session!.userId },
-      include: { provider: { select: { id: true, name: true } } },
+    const leave = await prisma.$transaction(async tx => {
+      await lockKey(tx, `prov:${providerId}`)
+      const overlap = await findOverlappingLeave(providerId, start, end, null, tx)
+      if (overlap) throw new HttpError(409, overlap, { code: 'LEAVE_OVERLAP' })
+      return tx.providerLeave.create({
+        data: { providerId, startDate: start, endDate: end, note: note || null, createdBy: auth.session!.userId },
+        include: { provider: { select: { id: true, name: true } } },
+      })
     })
 
     await prisma.auditLog.create({
@@ -78,6 +87,8 @@ export async function POST(req: NextRequest) {
 
     return jsonNoStore({ leave })
   } catch (e: any) {
+    const http = toHttpResponse(e)
+    if (http) return http
     console.error('[provider-leaves] POST failed', e)
     return NextResponse.json({ error: '建立失敗' }, { status: 500 })
   }

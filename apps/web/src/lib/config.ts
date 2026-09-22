@@ -125,6 +125,8 @@ export const CONFIG = {
     'GET /api/provider-shifts': ['OWNER', 'MANAGER', 'KIOSK'],
     'POST /api/provider-shifts/batch': ['OWNER', 'MANAGER', 'KIOSK'],
     'DELETE /api/provider-shifts/:id': ['OWNER', 'MANAGER', 'KIOSK'],
+    // ★ cwm-provroster S1-2：改單條例外（原地 update）—— 同 DELETE 同一組角色（KIOSK 維持現狀可改本週例外）
+    'PATCH /api/provider-shifts/:id': ['OWNER', 'MANAGER', 'KIOSK'],
     // ★ 每週固定 pattern（cw-patwl）：KIOSK 只准 GET（打卡屏唔應該改當值表）
     'GET /api/provider-patterns': ['OWNER', 'MANAGER', 'KIOSK'],
     'PUT /api/provider-patterns': ['OWNER', 'MANAGER'],
@@ -132,6 +134,7 @@ export const CONFIG = {
     'GET /api/provider-leaves': ['OWNER', 'MANAGER'],
     'POST /api/provider-leaves': ['OWNER', 'MANAGER'],
     'DELETE /api/provider-leaves/:id': ['OWNER', 'MANAGER'],
+    'PATCH /api/provider-leaves/:id': ['OWNER', 'MANAGER'], // ★ cwm-provroster S1-3
     // ★ 醫生拆帳（OWNER only）
     'GET /api/provider-commissions': ['OWNER'],
     'POST /api/provider-commissions': ['OWNER'],
@@ -524,6 +527,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/provider-shifts': ['provider_schedule', 'scheduling'],
   'POST /api/provider-shifts/batch': ['provider_schedule', 'scheduling'],
   'DELETE /api/provider-shifts/:id': ['provider_schedule', 'scheduling'],
+  'PATCH /api/provider-shifts/:id': ['provider_schedule', 'scheduling'], // ★ cwm-provroster S1-2
   // ★ 每週固定 pattern（cw-patwl）—— 同 provider-shifts 同一組權限
   'GET /api/provider-patterns': ['provider_schedule', 'scheduling'],
   'PUT /api/provider-patterns': ['provider_schedule', 'scheduling'],
@@ -540,6 +544,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/provider-leaves': ['provider_schedule'],
   'POST /api/provider-leaves': ['provider_schedule'],
   'DELETE /api/provider-leaves/:id': ['provider_schedule'],
+  'PATCH /api/provider-leaves/:id': ['provider_schedule'], // ★ cwm-provroster S1-3
 
   // —— 醫生拆帳 —— OWNER only（MANAGER 冇權睇醫生收入）
   'GET /api/provider-commissions': ['provider_payout'],

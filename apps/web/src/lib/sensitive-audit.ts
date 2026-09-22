@@ -63,9 +63,11 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PROVIDER_UPDATE', label: '更新醫生' },
   { action: 'PROVIDER_SHIFT_BATCH', label: '批量排醫生當值' },
   { action: 'PROVIDER_SHIFT_DELETE', label: '刪除醫生當值' },
+  { action: 'PROVIDER_SHIFT_UPDATE', label: '修改醫生當值' }, // ★ cwm-provroster S1-2
   { action: 'PROVIDER_COMMISSION_SET', label: '新增醫生拆帳設定' },
   { action: 'PROVIDER_LEAVE_SET', label: '新增醫生休假' },
   { action: 'PROVIDER_LEAVE_DELETE', label: '刪除醫生休假' },
+  { action: 'PROVIDER_LEAVE_UPDATE', label: '修改醫生休假' }, // ★ cwm-provroster S1-3
   // ★ MD-B: Cost Entry audit actions
   { action: 'COST_CASE_CREATE', label: '新增成本記錄' },
   { action: 'COST_CASE_UPDATE', label: '更新成本記錄' },

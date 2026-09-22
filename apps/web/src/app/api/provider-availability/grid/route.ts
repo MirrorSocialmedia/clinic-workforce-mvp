@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAnyPerm, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { todayHK, hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { todayHK, hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { addDaysStr } from '@/lib/apricot/sync-availability'
 import { resolveProviderScheduleScope, inScope } from '@/lib/provider-scope'
 import { expandLeavesToSet } from '@/lib/provider-leave'
@@ -39,6 +39,17 @@ import { buildTimeline, minToHHmm } from '@/lib/bookable-slots'
 const STALE_MS = 30 * 60 * 1000 // 同現有 GET（超過 30 分鐘變黃 stale）
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const ACTIVE_HOLD_STATUSES = ['HELD', 'IN_APRICOT'] as const
+// ★ cwm-provroster S2：同 bookable-slots-service ACTIVE_BOOKING_STATUSES 一致（0 已約／102 改期；負數＝取消類）
+const ACTIVE_BOOKING_STATUSES = [0, 102]
+
+/**
+ * ★ cwm-provroster S2：當值表（人手）vs Apricot（實際）出入。
+ *   NOT_ROSTERED     當值表冇排，但 Apricot 有開診／有約
+ *   OFF_BUT_APRICOT  當值表休假／當日唔返，但 Apricot 仍開診／有約
+ *   ROSTER_NOT_OPEN  當值表有排，但 Apricot 未見開診（只喺已同步 + 今日或之後先標）
+ */
+type RosterState = 'ON' | 'OFF' | 'LEAVE' | 'NONE' | 'UNKNOWN'
+type Mismatch = 'NOT_ROSTERED' | 'OFF_BUT_APRICOT' | 'ROSTER_NOT_OPEN' | null
 
 /** hold 元數據（tooltip 用 — 零 PII） */
 interface HoldMeta {
@@ -129,14 +140,25 @@ export async function GET(req: NextRequest) {
       startDate: { lte: hkDateEnd(to) },
       endDate: { gte: hkDateStart(from) },
     },
-    select: { providerId: true, startDate: true, endDate: true },
+    select: { providerId: true, startDate: true, endDate: true, note: true },
   })
   const leaveSet = expandLeavesToSet(leaves)
+  // ★ S2：休假備註（逐日展開）—— 出入提示要講「休假（年假）」
+  const leaveNote = new Map<string, string | null>()
+  for (const lv of leaves) {
+    for (const k of expandLeavesToSet([lv])) if (!leaveNote.has(k)) leaveNote.set(k, lv.note ?? null)
+  }
+  // ★ S2：當日唔返（slot='OFF'）例外 —— resolveOnDuty 已剔走，要另外撈先分得出「OFF」同「冇排」
+  const offRows = await prisma.providerShift.findMany({
+    where: { clinicId: clinic.id, slot: 'OFF', date: { gte: hkDateStart(from), lte: hkDateEnd(to) } },
+    select: { providerId: true, date: true, note: true },
+  })
+  const offNote = new Map<string, string | null>(offRows.map(r => [`${r.providerId}:${toHKDateStr(r.date)}`, r.note ?? null]))
 
   // 窗口預約總筆數（剔 -6 取消 — 同現有 GET weekBookings 口徑）— 篩選 chip 用
   const bookCounts = await prisma.providerBooking.groupBy({
     by: ['providerId'],
-    where: { clinicId: clinic.id, date: { gte: from, lte: to }, status: { not: -6 } },
+    where: { clinicId: clinic.id, date: { gte: from, lte: to }, status: { in: ACTIVE_BOOKING_STATUSES } }, // ★ S2：之前 not -6 會計埋 -7 取消
     _count: { _all: true },
   })
   const weekBookingsMap = new Map<string, number>(bookCounts.map(b => [b.providerId, b._count._all]))
@@ -157,20 +179,46 @@ export async function GET(req: NextRequest) {
   // dayFlags —「🚫 冇醫生當值」全灰判斷（★★#20 鐵律：hasPattern 保護）
   const patternCount = await prisma.providerWeeklyPattern.count({ where: { clinicId: clinic.id } })
   const hasPattern = patternCount > 0
-  const dayFlags = wd.dates.map(d => ({
-    date: d,
-    onDutyCount: wd.onDuty.get(d)?.size ?? 0,
-    hasPattern,
-  }))
 
   const today = todayHK()
   const nowMin = nowMinHk()
 
+  const synced = lastSyncAt !== null
+
+  /** ★ S2：Apricot 當日有冇開診（精確軌 openSch 或保守軌 grid cache 任一） */
+  const apricotOpenOf = (pid: string, date: string): boolean => {
+    if ((wd.openSch.get(date)?.get(pid)?.length ?? 0) > 0) return true
+    const ids = wd.providerApricotIds.get(pid) ?? []
+    return ids.some(aid => (wd.grid.get(date)?.get(aid)?.length ?? 0) > 0)
+  }
+  const rosterOf = (pid: string, date: string): RosterState => {
+    const k = `${pid}:${date}`
+    if (leaveSet.has(k)) return 'LEAVE'
+    if (!hasPattern) return 'UNKNOWN' // 冇固定表 = fallback 全員當值 → 唔知人手排咗未，唔標出入（#20 鐵律）
+    if (wd.onDuty.get(date)?.has(pid)) return 'ON'
+    if (offNote.has(k)) return 'OFF'
+    return 'NONE'
+  }
+
   const providersOut = providers.map(p => {
-    // 逐日：只出當值日（onDuty 三層疊已剔 leave）
+    // ★ cwm-provroster S2：唔再「只出當值日」—— 當值表 ∪ Apricot 有開診 ∪ 有約，再逐日標出入
+    //   （之前當值表冇排／休假嘅日子，Apricot 有約都會收埋，畫面寫「冇醫生當值」）
     const days = wd.dates
-      .filter(date => wd.onDuty.get(date)?.has(p.id))
+      .filter(date => wd.onDuty.get(date)?.has(p.id)
+        || apricotOpenOf(p.id, date)
+        || (wd.bookings.get(date)?.get(p.id)?.length ?? 0) > 0)
       .map(date => {
+        const roster = rosterOf(p.id, date)
+        const apricotOpen = apricotOpenOf(p.id, date)
+        const bookCount = wd.bookings.get(date)?.get(p.id)?.length ?? 0
+        const k = `${p.id}:${date}`
+        const rosterNote = roster === 'LEAVE' ? (leaveNote.get(k) ?? null) : roster === 'OFF' ? (offNote.get(k) ?? null) : null
+        const mismatch: Mismatch =
+          roster === 'NONE' && (apricotOpen || bookCount > 0) ? 'NOT_ROSTERED'
+          : (roster === 'LEAVE' || roster === 'OFF') && (apricotOpen || bookCount > 0) ? 'OFF_BUT_APRICOT'
+          : roster === 'ON' && !apricotOpen && synced && date >= today ? 'ROSTER_NOT_OPEN'
+          : null
+        const meta = { roster, rosterNote, apricotOpen, mismatch }
         const openSch = wd.openSch.get(date)?.get(p.id) ?? null
         const bookings = wd.bookings.get(date)?.get(p.id) ?? []
         const holds = wd.holds.get(date)?.get(p.id) ?? []
@@ -185,7 +233,7 @@ export async function GET(req: NextRequest) {
           grid: apricotId ? (wd.grid.get(date)?.get(apricotId) ?? []) : [],
         }
         const ev = evaluateProviderDay(ctx, true)
-        if (!ev) return { date, precise: false, bookCount: bookings.length, slots: [] } // 兩軌都冇數據 → 該日 0 格
+        if (!ev) return { date, precise: false, bookCount: bookings.length, slots: [], ...meta } // 兩軌都冇數據 → 該日 0 格
 
         // 15m 子格佔用（精確軌先有）— mini seat 顯示用（bookings + holds）
         const precise = openSch != null
@@ -224,7 +272,7 @@ export async function GET(req: NextRequest) {
             })),
           }
         })
-        return { date, precise, bookCount: bookings.length, slots }
+        return { date, precise, bookCount: bookings.length, slots, ...meta }
       })
 
     return {
@@ -235,6 +283,20 @@ export async function GET(req: NextRequest) {
       leaveDates: wd.dates.filter(d => leaveSet.has(`${p.id}:${d}`)),
       days,
     }
+  })
+
+  // dayFlags —「🚫 冇醫生當值」全灰判斷（★★#20 鐵律：hasPattern 保護）
+  // ★ S2：加 apricotCount（當日 Apricot 有開診／有約嘅醫生數）＋ mismatchCount —— 兩樣都 0 先可以講「冇醫生」
+  const dayFlags = wd.dates.map(d => {
+    let apricotCount = 0
+    let mismatchCount = 0
+    for (const po of providersOut) {
+      const day = po.days.find(x => x.date === d)
+      if (!day) continue
+      if (day.apricotOpen || day.bookCount > 0) apricotCount++
+      if (day.mismatch) mismatchCount++
+    }
+    return { date: d, onDutyCount: wd.onDuty.get(d)?.size ?? 0, hasPattern, apricotCount, mismatchCount }
   })
 
   return jsonNoStore({

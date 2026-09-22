@@ -464,7 +464,29 @@ export interface GridDay {
   /** 當日預約筆數（chip 顯示用） */
   bookCount: number
   slots: GridSlot[]
+  // ★ cwm-provroster S2：當值表 vs Apricot（舊 response 冇呢四欄 → optional，caller 用 ?? 兜）
+  roster?: 'ON' | 'OFF' | 'LEAVE' | 'NONE' | 'UNKNOWN'
+  rosterNote?: string | null
+  apricotOpen?: boolean
+  mismatch?: 'NOT_ROSTERED' | 'OFF_BUT_APRICOT' | 'ROSTER_NOT_OPEN' | null
 }
+
+/** ★ cwm-provroster S2：出入 → 短 badge（格頭用）／長句（日視圖、清單、當值表用）—— 兩頁共用一份文案 */
+export function mismatchBadge(d: Pick<GridDay, 'mismatch' | 'roster'>): string | null {
+  if (d.mismatch === 'NOT_ROSTERED') return '漏排'
+  if (d.mismatch === 'OFF_BUT_APRICOT') return d.roster === 'LEAVE' ? '休假有約' : '唔返有約'
+  if (d.mismatch === 'ROSTER_NOT_OPEN') return '未開診'
+  return null
+}
+export function mismatchText(d: Pick<GridDay, 'mismatch' | 'roster' | 'rosterNote' | 'bookCount' | 'apricotOpen'>): string | null {
+  const apricot = d.bookCount > 0 ? `有 ${d.bookCount} 個約` : '有開診'
+  const note = d.rosterNote ? `（${d.rosterNote}）` : ''
+  if (d.mismatch === 'NOT_ROSTERED') return `當值表冇排，但 Apricot ${apricot}`
+  if (d.mismatch === 'OFF_BUT_APRICOT') return `當值表${d.roster === 'LEAVE' ? '休假' : '當日唔返'}${note}，但 Apricot 仍然${apricot}`
+  if (d.mismatch === 'ROSTER_NOT_OPEN') return '當值表有排，但 Apricot 未見開診'
+  return null
+}
+export const MISMATCH_COLOR = '#dc2626'
 
 export interface GridProvider {
   id: string
@@ -483,7 +505,7 @@ export interface GridResp {
   leadTimeMin: number
   generatedAt: string
   sync: { lastSyncAt: string | null; stale: boolean }
-  dayFlags: { date: string; onDutyCount: number; hasPattern: boolean }[]
+  dayFlags: { date: string; onDutyCount: number; hasPattern: boolean; apricotCount?: number; mismatchCount?: number }[]
   providers: GridProvider[]
 }
 
@@ -504,9 +526,9 @@ export const GRID_COLORS = {
   /** 灰 — 不可出 */
   closedBg: '#dcd3c4',
   closedText: '#645c50',
-  /** 已佔 mini 格 */
-  seatTaken: '#a19786',
-  seatFree: '#56633f',
+  /** 已佔 mini 格 —— ★ cwm-provroster S1-8：圖例寫「深塊＝已佔」，之前調轉咗（已佔淺、空位深） */
+  seatTaken: '#3f4a2c',
+  seatFree: 'rgba(255,255,255,0.65)',
   textDark: '#272e1b',
   textMuted: '#82796a',
 } as const
