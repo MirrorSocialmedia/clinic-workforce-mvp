@@ -1801,6 +1801,18 @@ function getShiftCode(shift: Shift): string {
         if (!r.ok) {
           const e = await r.json().catch(() => ({}))
           setValidationIssues([{ type: 'error', rule: 'api', message: `還原失敗：${e.error || '該時段已有其他排班'}` }])
+        } else if (lr.isEmployeeRequested === true && lr.leaveType?.systemKey === 'REST_DAY') {
+          // ★ cwm-consist S6 PL：undo 還原要補回 PL 標記 —— POST 唔收 isEmployeeRequested（server 忽略），
+          //   只有 pl-mark 可以設（只准 REST_DAY，上面已 guard）
+          const created = await r.json().catch(() => null)
+          const newId = created?.leaveRequest?.id
+          if (newId) {
+            await fetch(`/api/leave-requests/${newId}/pl-mark`, {
+              method: 'PATCH', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: true }),
+            }).catch(() => {})
+          }
         }
         await refreshAll()
         await refreshLeaveBalances()
@@ -2804,8 +2816,15 @@ function getShiftCode(shift: Shift): string {
   // ★ PL 標記（2026-08-21）—— optimistic + 失敗 revert + 警告
   //   星期（leaveRequests）同月份（monthLeaveRequests）兩個 array 都要 patch：
   //   邊個視圖嘅格就喺邊個 array；id 相同，map 唔中嘅 array 係 no-op。
+  // ★ cwm-consist S6 PL：每張假一個 seq —— 只有該假最新一次 click 先負責 reconcile，
+  //   舊嘅 in-flight response 唔好覆蓋新 click 嘅狀態（舊版快速連 click 時 `!value` 會 revert 錯值）；
+  //   revert 用 click 前嘅值（prevValue），唔好用 `!value`。
   // ============================================================
-  const togglePl = useCallback(async (leaveId: string, value: boolean) => {
+  const plSeqRef = useRef<Record<string, number>>({})
+
+  const togglePl = useCallback(async (leaveId: string, value: boolean, prevValue: boolean) => {
+    const seq = (plSeqRef.current[leaveId] ?? 0) + 1
+    plSeqRef.current[leaveId] = seq
     const patch = (prev: any[]) => prev.map((lr: any) =>
       lr.id === leaveId ? { ...lr, isEmployeeRequested: value } : lr)
     setLeaveRequests(patch)
@@ -2823,8 +2842,11 @@ function getShiftCode(shift: Shift): string {
         throw new Error(String(r.status))
       }
     } catch {
+      // ★ cwm-consist S6 PL：該假已有更新嘅 click → skip（嗰次會負責 reconcile）；
+      //   revert 一律用 click 前嘅值
+      if (plSeqRef.current[leaveId] !== seq) return
       const revert = (prev: any[]) => prev.map((lr: any) =>
-        lr.id === leaveId ? { ...lr, isEmployeeRequested: !value } : lr)
+        lr.id === leaveId ? { ...lr, isEmployeeRequested: prevValue } : lr)
       setLeaveRequests(revert)
       setMonthLeaveRequests(revert)
       setValidationIssues(prev => [...prev,
@@ -2848,7 +2870,7 @@ function getShiftCode(shift: Shift): string {
         lr.leaveType?.systemKey === 'REST_DAY' &&
         leaveCoversDate(lr, dateStr))
       if (!rest) return
-      await togglePl(rest.id, !rest.isEmployeeRequested)
+      await togglePl(rest.id, !rest.isEmployeeRequested, !!rest.isEmployeeRequested)
       return
     }
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
