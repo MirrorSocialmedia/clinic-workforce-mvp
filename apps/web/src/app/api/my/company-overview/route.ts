@@ -104,6 +104,8 @@ export async function GET(req: NextRequest) {
   const shifts = await prisma.shift.findMany({
     where: {
       employeeId: { in: employeeIds },
+      // ★ cwm-consist S6 DB-12：取消咗嘅更唔應該出現喺公司總覽
+      status: { not: 'CANCELLED' },
       OR: [
         { clinicId: { in: allClinicIds } },
         { secondaryClinicId: { in: allClinicIds } },

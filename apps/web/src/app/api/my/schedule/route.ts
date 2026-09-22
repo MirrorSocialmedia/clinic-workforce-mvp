@@ -81,7 +81,6 @@ export async function GET(req: NextRequest) {
       },
     },
     orderBy: { startTime: 'asc' },
-    take: 50,
   })
 
   // ★ Coworker shifts — include secondaryClinic for cross-clinic shifts (7c)
@@ -118,7 +117,6 @@ export async function GET(req: NextRequest) {
           },
         },
         orderBy: { startTime: 'asc' },
-        take: 200,
       })
 
       // ★ Resolve coworker secondary clinic names
