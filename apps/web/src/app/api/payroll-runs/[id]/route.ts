@@ -139,6 +139,35 @@ export async function GET(
         return s + (cancelled ? 0 : amount)
       } catch { return s }
     }, 0),
+    // ★ cwm-payrollsheet-20260921 S2：總覽之前漏咗 7 個組成（otPay 有算冇卡；其餘連算都冇），
+    //   條式只喺呢 7 項全部係 0 先加得埋。
+    //   ⚠️ key 一定要同 payroll-engine.ts 實際寫嘅一致（見 S1 教訓）：
+    //      allowances — 數字喺 salary.allowances（:3982）；top-level totalAllowances 係 modifier
+    //      （:3284）副產；top-level allowances 係 array 禁讀（S1 D-1 實證）。
+    //      adwAdjustment（top-level）／resignSettlement.grossAdd｜tbDeduction｜excessRestDeduction（:4042-4054）
+    otherAdd: (() => {
+      let ot = 0, allow = 0, adw = 0, mat = 0, rsAdd = 0
+      for (const i of itemsWithSickDeduction as any[]) {
+        const d = safeParse(i.detailJson) ?? {}
+        ot    += Number(i.otPay) || 0
+        allow += Number(d.totalAllowances ?? d.salary?.allowances) || 0
+        adw   += Number(d.adwAdjustment) || 0
+        mat   += (Number(i.maternityPay) || 0) + (Number(i.paternityPay) || 0)
+        rsAdd += Number(d.resignSettlement?.grossAdd) || 0
+      }
+      const r2 = (n: number) => Math.round(n * 100) / 100
+      return { total: r2(ot + allow + adw + mat + rsAdd), ot: r2(ot), allowances: r2(allow), adw: r2(adw), maternity: r2(mat), resignAdd: r2(rsAdd) }
+    })(),
+    otherDeduct: (() => {
+      let excess = 0, tb = 0
+      for (const i of itemsWithSickDeduction as any[]) {
+        const d = safeParse(i.detailJson) ?? {}
+        excess += Number(d.resignSettlement?.excessRestDeduction) || 0
+        tb     += Number(d.resignSettlement?.tbDeduction) || 0
+      }
+      const r2 = (n: number) => Math.round(n * 100) / 100
+      return { total: r2(excess + tb), excessRest: r2(excess), tbDeduction: r2(tb) }
+    })(),
   }
 
   return NextResponse.json({

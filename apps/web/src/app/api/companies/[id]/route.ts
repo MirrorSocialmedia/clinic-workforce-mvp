@@ -28,7 +28,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         // ★ cwm-exportcols-regress-20260919：總 MPF 卡。
         //   ⚠️ 前端 payroll/[id]/page.tsx:98 加咗選項但呢度冇跟 → 剔完儲存被 filter 隔走。
         //   ★ 將來加新卡：前端 CARD_OPTIONS 同呢度【兩邊都要加】（見 check-payroll-view-keys.sh）。
-        'totalMpf']
+        'totalMpf',
+        // ★ cwm-payrollsheet-20260921 S2：其他加項／其他扣項卡（兩邊都要加 — totalMpf 教訓）
+        'otherAdd', 'otherDeduct']
       const COL_KEYS = ['employee', 'clinic', 'payType', 'hours', 'otHours', 'leaveDays',
         'absentDays', 'baseSalary', 'extraIncome', 'deduction', 'sickDeduction', 'misc', 'totalPayable', 'detail']
       const cards = Array.isArray(body.payrollView.cards)

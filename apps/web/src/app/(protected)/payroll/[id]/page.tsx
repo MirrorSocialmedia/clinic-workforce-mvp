@@ -76,6 +76,9 @@ interface Summary {
   // ★ cwm-payrollcols-20260918 B4：總 MPF（僱員／僱主）；totalMpfEmployer null = 舊糧單冇呢個欄 → 顯示 —
   totalMpf?: number | null
   totalMpfEmployer?: number | null
+  // ★ cwm-payrollsheet-20260921 S2：其他加項／其他扣項（7 個組成；API 側 reduce，保密過濾後 items）
+  otherAdd?: { total: number; ot: number; allowances: number; adw: number; maternity: number; resignAdd: number } | null
+  otherDeduct?: { total: number; excessRest: number; tbDeduction: number } | null
   confidential?: boolean
 }
 
@@ -97,6 +100,9 @@ const CARD_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = 
   { key: 'totalMisc', label: '雜項總額' },
   // ★ cwm-payrollcols-20260918 B4：總 MPF 卡（僱員＋僱主兩行）
   { key: 'totalMpf', label: '總 MPF' },
+  // ★ cwm-payrollsheet-20260921 S2：總覽補齊 — 之前漏咗 7 個組成（有數時舊總覽加唔埋）
+  { key: 'otherAdd', label: '其他加項' },
+  { key: 'otherDeduct', label: '其他扣項' },
   { key: 'payableExMisc', label: '應付（不含雜費）' },
   { key: 'totalPayable', label: '應付總額', required: true },
   { key: 'totalHours', label: '總工時' },
@@ -104,7 +110,7 @@ const CARD_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = 
   { key: 'totalLeaveAbsent', label: '總請假/缺勤' },
 ]
 // ★ 預設（MD §4.2）：totalMisc 預設關；其餘全開
-const CARD_DEFAULTS = ['employeeCount', 'totalBase', 'totalExtra', 'totalDeduction', 'payableExMisc', 'totalPayable', 'totalHours', 'totalOTHours', 'totalLeaveAbsent', 'totalMpf']
+const CARD_DEFAULTS = ['employeeCount', 'totalBase', 'totalExtra', 'totalDeduction', 'otherAdd', 'otherDeduct', 'payableExMisc', 'totalPayable', 'totalHours', 'totalOTHours', 'totalLeaveAbsent', 'totalMpf']
 
 const COL_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'employee', label: '員工', required: true },
@@ -612,7 +618,7 @@ export default function PayrollDetailPage() {
                 - 新「額外收入（拆帳＋勤工）」/「雜項總額」/「應付（不含雜費）」= totalPayable − totalMisc（API 側算）
                 - 按自訂顯示設定過濾（全公司統一） */}
             {(() => {
-              const cardValues: Record<string, { value: React.ReactNode; color: string; bold?: boolean }> = {
+              const cardValues: Record<string, { value: React.ReactNode; color: string; bold?: boolean; detail?: Array<[string, number | null | undefined]> }> = {
                 employeeCount: { value: summary.totalEmployees, color: '#0d6efd' },
                 totalBase: { value: fmtCurrency(summary.totalBasePay, summary.confidential), color: '#6c757d' },
                 // ★ cwm-payrollcols-20260918：totalExtra 前端砌 — 補返店舖獎金（storeBonus 本來已計入 totalPayable，
@@ -633,6 +639,26 @@ export default function PayrollDetailPage() {
                   color: '#0d6efd',
                 },
                 payableExMisc: { value: fmtCurrency((summary.totalPayable ?? 0) - (summary.totalMisc ?? 0), summary.confidential), color: '#1d4ed8' },
+                // ★ cwm-payrollsheet-20260921 S2：其他加項／其他扣項 — 撳卡展開明細（值 0 行都要出，睇到「0」先知冇漏）
+                otherAdd: {
+                  value: fmtCurrency(summary.otherAdd?.total ?? 0, summary.confidential),
+                  color: '#059669',
+                  detail: [
+                    ['加班費', summary.otherAdd?.ot],
+                    ['津貼', summary.otherAdd?.allowances],
+                    ['ADW 調整', summary.otherAdd?.adw],
+                    ['產假／侍產假', summary.otherAdd?.maternity],
+                    ['離職結算加項', summary.otherAdd?.resignAdd],
+                  ],
+                },
+                otherDeduct: {
+                  value: fmtCurrency(summary.otherDeduct?.total ?? 0, summary.confidential),
+                  color: '#dc2626',
+                  detail: [
+                    ['超額休息日扣減', summary.otherDeduct?.excessRest],
+                    ['時間帳戶欠款扣減', summary.otherDeduct?.tbDeduction],
+                  ],
+                },
                 totalPayable: { value: fmtCurrency(summary.totalPayable, summary.confidential), color: '#0d6efd', bold: true },
                 totalHours: { value: `${summary.totalWorkedHours.toFixed(1)}h`, color: '#6c757d' },
                 totalOTHours: { value: `${(summary.totalOTHours || 0).toFixed(1)}h`, color: '#6c757d' },
@@ -653,6 +679,18 @@ export default function PayrollDetailPage() {
                       <div style={{ fontSize: 20, fontWeight: card.bold ? 700 : 600, color: card.color }}>
                         {card.value}
                       </div>
+                      {/* ★ cwm-payrollsheet-20260921 S2：明細摺疊（<details> 最簡單做法，唔重寫卡系統） */}
+                      {card.detail && (
+                        <details style={{ marginTop: 6 }}>
+                          <summary style={{ fontSize: 12, color: '#888', cursor: 'pointer', userSelect: 'none' }}>明細</summary>
+                          {card.detail.map(([lbl, v]) => (
+                            <div key={lbl} style={{ fontSize: 12, color: '#555', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                              <span>{lbl}</span>
+                              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrency(v ?? 0, summary.confidential)}</span>
+                            </div>
+                          ))}
+                        </details>
+                      )}
                     </div>
                   )
                 })
