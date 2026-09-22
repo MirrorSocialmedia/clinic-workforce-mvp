@@ -1,3 +1,5 @@
+import { toHKDateStr } from './hk-date'
+
 /**
  * Leave type system keys — single source of truth.
  * Any typos (e.g. ANNUAL vs ANNUAL_LEAVE) will be caught at compile time.
@@ -57,7 +59,10 @@ export function allowsNegativeBalance(systemKey: string | null): boolean {
  */
 export function balanceYearFor(systemKey: string | null | undefined, refDate?: Date): number {
   if (isAccumulativeLeave(systemKey)) return 0
-  return (refDate ?? new Date()).getUTCFullYear()
+  // ★ cwm-leaveasof-20260922 ⑤：假期日存 HK 午夜 —— HK 1/1 00:00 ＝ UTC 12/31 16:00，
+  //   getUTCFullYear 會攞到【舊年】→ 1 月 1 日嘅休息日扣錯去舊年嗰行。
+  //   同 restDayBalanceAsOf（year = asOf 前四位，HK）口徑一致。
+  return Number(toHKDateStr(refDate ?? new Date()).slice(0, 4))
 }
 
 /** ★ 2026-08-05：entitled = 0 時的說明文字 —— 前端三處共用 */
