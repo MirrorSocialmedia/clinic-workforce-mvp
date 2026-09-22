@@ -100,7 +100,9 @@ export async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Da
   let dirtyFp = '0'
   try {
     const ym = toHKDateStr(monthStart).slice(0, 7)
-    const rows: any[] = await db.$queryRaw`SELECT COALESCE(MAX("seq"), 0)::text AS s FROM "TimeBankDirty" WHERE "employeeId" = ${employeeId} AND "ym" <= ${ym}`
+    // ★ E-4：MAX(seq) 唔跟 commit 次序（A 攞 seq 100 但遲過 B 嘅 101 commit → MAX 唔變 → 舊 cache 過關）；
+    //   改用 COUNT + SUM：任何一行 seq 被更新都會令 SUM 變
+    const rows: any[] = await db.$queryRaw`SELECT COUNT(*)::text || ':' || COALESCE(SUM("seq"), 0)::text AS s FROM "TimeBankDirty" WHERE "employeeId" = ${employeeId} AND "ym" <= ${ym}`
     dirtyFp = rows?.[0]?.s ?? '0'
   } catch { /* 表未建（migration 未跑）→ 退化舊行為 */ }
 
@@ -1021,8 +1023,17 @@ export async function generatePayrollRun(
     // DRAFT — allow recalculation: save bonus/splitPay/bonusOverride then delete old items
     const oldItems = await prisma.payrollItem.findMany({
       where: { runId: existing.id },
-      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true, chequeNo: true, employee: { select: { user: { select: { name: true } } } } },
+      select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true, chequeNo: true, employee: { select: { payConfidential: true, user: { select: { name: true } } } } },
     })
+    // ★ E-13：冇保密權限（MANAGER）重算一張有保密員工嘅 run → 舊 items 會被 deleteMany、新 items 又排除保密員工
+    //   = 保密員工成條糧靜靜消失（finalize 已經擋 MANAGER，重算都要擋，同一口徑）
+    if (opts?.excludeConfidential && oldItems.some(oi => oi.employee?.payConfidential)) {
+      return {
+        error: '此計糧單包含薪酬保密員工，只可以由負責人重算',
+        runId: existing.id,
+        status: existing.status,
+      }
+    }
     oldEmps = oldItems.map(oi => ({ id: oi.employeeId, name: oi.employee?.user?.name ?? '(unknown)' }))
     for (const oi of oldItems) {
       if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
@@ -1234,11 +1245,10 @@ export async function generatePayrollRun(
     //   併發同月兩個新單 → 第二個 P2002 → route 轉 409（唔係 500）。
     //   注意：compound unique `clinicId_periodMonth` 嘅 where 型唔收 null（Prisma 6），所以新單用 create 唔係 upsert。
     if (existing) {
-      run = await tx.payrollRun.upsert({
-        where: { id: existing.id },
-        create: { id: existing.id, clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
-        update: {},
-      })
+      // ★ E-3：重算期間 DRAFT 被人刪咗 → 唔好用同一個 id 重建（舊 upsert 會令已刪嘅 run 連 items 復活）
+      const still = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "PayrollRun" WHERE id = ${existing.id} FOR UPDATE`
+      if (still.length === 0) throw Object.assign(new Error('計算期間呢張計糧單已被刪除，今次生成已取消'), { httpStatus: 409 })
+      run = existing
     } else {
       run = await tx.payrollRun.create({
         data: { clinicId, periodMonth: monthDate, status: 'DRAFT' as RunStatus },
@@ -1247,7 +1257,7 @@ export async function generatePayrollRun(
     // ★ cwm-money P2-2：計算期間可能有人確認咗 —— 鎖 row 再查，非 DRAFT 取消（唔寫任何 item）
     const locked = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "PayrollRun" WHERE id = ${run!.id} FOR UPDATE`
     if (locked[0]?.status !== 'DRAFT') {
-      throw new Error('計算期間計糧單已被確認，今次生成已取消')
+      throw Object.assign(new Error('計算期間計糧單已被確認，今次生成已取消'), { httpStatus: 409 })   // ★ E-3：409 唔係 500
     }
     if (isRecalculation) {
       await tx.payrollItem.deleteMany({ where: { runId: run!.id } })

@@ -24,7 +24,7 @@ export default function NewPayrollPage() {
   })
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ runId: string; itemCount: number; totalPayable: number; notice?: string; failed?: { employeeId: string; name: string; error: string }[] } | null>(null)
+  const [result, setResult] = useState<{ runId: string; itemCount: number; totalPayable: number; notice?: string; failed?: { employeeId: string; name: string; error: string }[]; removed?: { employeeId: string; name: string }[] } | null>(null)
   const [userRole, setUserRole] = useState<string>('')
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
@@ -382,6 +382,13 @@ export default function NewPayrollPage() {
                     <li key={f.employeeId}>{f.name} — {f.error}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {/* ★ E-9：重算後舊 run 有、新 run 冇嘅員工（轉鋪／停用規則／離職等）—— API 有回傳但之前冇顯示 */}
+            {result.removed && result.removed.length > 0 && (
+              <div className="mt-2 p-2 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                <div className="font-semibold">ℹ️ 重算後有 {result.removed.length} 位員工唔再喺呢張計糧單：</div>
+                <div className="mt-1">{result.removed.map((r) => r.name).join('、')}</div>
               </div>
             )}
             <div style={{ marginTop: 12 }}>

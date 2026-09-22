@@ -97,6 +97,11 @@ export async function POST(req: NextRequest) {
         basePrisma
       )
 
+      // ★ E-6：讀輸入失敗（degraded）→ 唔 persist（3.4），亦唔好回 201 + 舊 row 扮成功
+      if ((result as any)?.degraded) {
+        return NextResponse.json({ error: '時間帳戶計算時讀取資料失敗，請稍後再試', code: 'DEGRADED' }, { status: 503 })
+      }
+
       // ★ persistTimeBank guarantees all 6 fields + cacheKey written atomically
       await persistTimeBank(basePrisma, employeeId, monthDate, result, tbKeyAtStart)
 

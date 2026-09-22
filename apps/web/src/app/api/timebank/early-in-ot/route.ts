@@ -2,12 +2,13 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr, getMonthRange } from '@/lib/hk-date'
+import { findPayRuleForMonth } from '@/lib/pay-rule-for-month'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { getEffectivePunches } from '@/lib/punch-query'
 import { matchPunchesToShifts } from '@/lib/shift-punch-match'
 import { computeEarlyInOt, readEarlyInOtCfg } from '@/lib/early-in-ot'
-import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { lockEmployee, toHttpResponse, HttpError } from '@/lib/emp-lock'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 async function tbBalance(employeeId: string) {
@@ -61,15 +62,10 @@ export async function POST(req: NextRequest) {
     if (rawEarly <= 0) return NextResponse.json({ error: '該日無提早上班記錄' }, { status: 400 })
 
     // 攞 payRule config（條件照 payroll-engine.ts:1491-1498）
-    const empPayRule = await prisma.payRule.findFirst({
-      where: {
-        employeeId,
-        isActive: true,
-        effectiveFrom: { lte: dayEnd },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: dayStart } }],
-      },
-      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-    })
+    // ★ E-5：同 engine（S3b）同一口徑 —— 按 HK 月份揀規則（findPayRuleForMonth），
+    //   唔再只搵 isActive（未來生效新規則之前嗰個月會搵唔到 → 用 default，同 engine 唔夾）
+    const { start: ruleMonthStart, end: ruleMonthEnd } = getMonthRange(dayStart)
+    const empPayRule = await findPayRuleForMonth(prisma, employeeId, ruleMonthStart, ruleMonthEnd)
     const cfg = readEarlyInOtCfg(empPayRule?.configJson)
 
     // 計算最終分鐘
@@ -124,7 +120,9 @@ export async function POST(req: NextRequest) {
       await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: [date], what: '早到OT' })
       // 刪舊 entry（分鐘唔同 = stale 重批）
       if (existing) {
-        await tx.timeBankEntry.delete({ where: { id: existing.id } })
+        // ★ E-7：並發重批 → 第二次 delete P2025 → 500；改 deleteMany + count
+        const { count } = await tx.timeBankEntry.deleteMany({ where: { id: existing.id } })
+        if (count === 0) throw new HttpError(409, '呢日嘅提早上班 OT 啱啱已經有人改咗，請重新整理')
         await tx.auditLog.create({
           data: {
             actorId: auth.session.userId,
@@ -209,7 +207,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, finalMinutes, rawEarly })
   } catch (err: any) {
     // ★ Stage 4A：HttpError（409 PAYROLL_LOCKED 等）→ response
-    const r = toHttpResponse(err); if (r) return r
+    const r = toHttpResponse(err, '當天已批過提早上班 OT'); if (r) return r   // ★ L-16：具體訊息
     console.error('early-in-ot error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

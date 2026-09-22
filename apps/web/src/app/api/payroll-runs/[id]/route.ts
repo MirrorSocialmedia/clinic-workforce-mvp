@@ -615,6 +615,8 @@ export async function DELETE(
 
       return NextResponse.json({ success: true })
     } catch (e: any) {
+      // ★ E-2：1.11 條件刪撞 race（預查係 DRAFT、落刀時已被確認）→ 409（之前被下面 /^P\d{4}$/ 判成 Prisma 錯 → 500）
+      if (e?.code === 'P2025') return NextResponse.json({ error: e.message || '計糧單狀態已改變', code: 'P2025' }, { status: 409 })
       console.error('[payroll-run DELETE]', {
         runId: params.id,
         code: e?.code,

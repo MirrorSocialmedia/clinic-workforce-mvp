@@ -14,7 +14,7 @@
  */
 import { PrismaClient } from '@prisma/client'
 import { hkDateStart, toHKDateStr, periodMonthKey, getMonthRange, hkDaysInMonth, countHKDaysInclusive } from './hk-date'
-import { calculatePayrollWithRules } from './payroll-engine'
+import { calculatePayrollWithRules, calculateTimeBank, timeBankCacheKey } from './payroll-engine'
 import { settleLeaveOnResign, totalAccruedLeave, serviceMonths } from './leave-calculation'
 import { LEAVE_SYSTEM_KEYS } from './leave-types'
 import { getEffectiveADW } from './adw'
@@ -331,7 +331,22 @@ export async function computeResignSettlement(
   })
   const cutoffMonth = cutoffStr.slice(0, 7)
   const tbLatest = tbRows.find(r => periodMonthKey(r.periodMonth) <= cutoffMonth) ?? null
-  const tbBalance = tbLatest?.balance ?? 0
+  let tbBalance = tbLatest?.balance ?? 0
+  // ★ E-10：raw TimeBank row 可能係舊快取 —— S3 之後部分路徑（例如改更次扣飯鐘、raw SQL）只靠 cacheKey 失配，唔會刪 row。
+  //   驗 key；唔夾就即場重算嗰個月（同 engine 同一口徑：規則按月 + negative_carry），degraded 就唔准出數。
+  if (tbLatest) {
+    const { start: tbMonthStart, end: tbMonthEnd } = getMonthRange(tbLatest.periodMonth)
+    const freshKey = await timeBankCacheKey(prisma, empId, tbMonthEnd, tbMonthStart)
+    if (tbLatest.cacheKey !== freshKey) {
+      const tbRule = await findPayRuleForMonth(prisma, empId, tbMonthStart, tbMonthEnd)
+      let tbCfg: any = {}
+      try { tbCfg = JSON.parse(tbRule?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
+      // 同 payroll-engine.ts:3897 timeBankConfig 口徑：{ negative_carry: 'reset', ...modifiers.time_bank }
+      const fresh = await calculateTimeBank(empId, tbMonthStart, { negative_carry: 'reset', ...(tbCfg?.modifiers?.time_bank ?? {}) }, prisma)
+      if ((fresh as any).degraded) throw new Error('時間帳戶讀取失敗，離職結算暫停，請重試')
+      tbBalance = fresh.balance
+    }
+  }
   const tbDebt = tbBalance < 0 ? -tbBalance : 0
   const tbDebtDays = Math.round((tbDebt / TIMEBANK_MINUTES_PER_DAY) * 100) / 100 // 9 小時工作日 = 1 日
   const tbEntries = tbDebt > 0

@@ -200,6 +200,8 @@ export async function POST(req: NextRequest) {
       if (err?.code === 'P2002') {
         return NextResponse.json({ error: '本月計糧單已存在（併發創建衝突），請刷新重試' }, { status: 409 })
       }
+      // ★ E-3：engine 業務衝突（run 被刪／被確認）→ 409
+      if (err?.httpStatus === 409) return NextResponse.json({ error: err.message }, { status: 409 })
       return NextResponse.json({ error: err.message || 'Internal error' }, { status: 500 })
     }
   })

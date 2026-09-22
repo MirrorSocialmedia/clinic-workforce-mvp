@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { lockEmployee, toHttpResponse, HttpError } from '@/lib/emp-lock'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 /**
@@ -42,7 +42,9 @@ export async function POST(req: NextRequest) {
       await prisma.$transaction(async (tx) => {
         await lockEmployee(tx, employeeId)
         await assertMonthsUnlockedTx(tx, { actorId: auth.session.userId, employeeId, months: [date], what: '取消缺勤扣鐘' })
-        return tx.timeBankEntry.delete({ where: { id: entry.id } })
+        // ★ E-7：雙擊／並發取消 → 第二次 delete P2025 → 500；改 deleteMany + count
+        const { count } = await tx.timeBankEntry.deleteMany({ where: { id: entry.id } })
+        if (count === 0) throw new HttpError(409, '已經取消咗')
       })
     } catch (e: any) {
       const r = toHttpResponse(e); if (r) return r

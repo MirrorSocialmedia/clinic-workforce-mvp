@@ -46,10 +46,17 @@ export async function POST(req: NextRequest) {
       select: { id: true, note: true },
     })
     for (const entry of nullEntries) {
-      await prisma.timeBankEntry.update({
-        where: { id: entry.id },
-        data: { targetType: entry.note?.includes('早退') ? 'EARLY_LEAVE' : 'LATE' },
-      })
+      // ★ E-8：逐行 try —— 撞 TimeBankEntry_makeup_once（同日已有同 targetType）就跳過該行，
+      //   唔好第一行撞咗就成個迴圈停，之後每次 makeup 都重試
+      try {
+        await prisma.timeBankEntry.update({
+          where: { id: entry.id },
+          data: { targetType: entry.note?.includes('早退') ? 'EARLY_LEAVE' : 'LATE' },
+        })
+      } catch (e: any) {
+        if (e?.code !== 'P2002') throw e
+        console.warn('[makeup] 舊 null targetType 回填撞 unique，跳過（要人手核對）', entry.id)
+      }
     }
   } catch { /* 舊版本可能無 targetType 欄位，忽略 */ }
 

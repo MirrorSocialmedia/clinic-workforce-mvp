@@ -6,6 +6,7 @@ import { balanceYearFor, consumesQuota } from '@/lib/leave-types'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { shiftDeletedMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
+import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
 
 export async function POST(
   req: NextRequest,
@@ -29,7 +30,12 @@ export async function POST(
 
   const cutoff = new Date(`${lastDay}T16:00:00Z`) // HK midnight
 
-  const result = await prisma.$transaction(async (tx) => {
+  let result: { shiftsCancelled: number; leavesCancelled: number }
+  try {
+  result = await prisma.$transaction(async (tx) => {
+    // ★ E-11：同其他員工寫入一樣先鎖人 —— 否則同排更／批假／打卡並發，
+    //   兩邊按唔同次序鎖 TimeBankDirty(emp, ym) 會 deadlock（40P01），一邊 500
+    await lockEmployee(tx, empId)
     // ① Employee status → RESIGNED
     await tx.employee.update({
       where: { id: empId },
@@ -122,6 +128,10 @@ export async function POST(
 
     return { shiftsCancelled: shifts.count, leavesCancelled }
   })
+  } catch (e: any) {
+    { const r = toHttpResponse(e); if (r) return r }   // ★ E-11：BUSY 等 → 409
+    throw e
+  }
 
   // ★ 取消未來更次／假期會改變應出勤日 → 清時間帳戶快取（2026-08-10）
   const cutoffDate = cutoff ?? new Date()

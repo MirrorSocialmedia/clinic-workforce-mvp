@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma'
-import { hkDateStart, hkDateEnd } from './hk-date'
+import { hkDateStart, hkDateEnd, getMonthRange } from './hk-date'
+import { findPayRuleForMonth } from './pay-rule-for-month'
 import { getEffectivePunches, type PrismaDb } from './punch-query'
 import { matchPunchesToShifts } from './shift-punch-match'
 import { invalidateTimeBankFrom } from './punch-query'
@@ -135,15 +136,9 @@ export async function revokeStaleEarlyOt(
   )
 
   // 2b: 攞 payRule config
-  const empPayRule = await db.payRule.findFirst({
-    where: {
-      employeeId,
-      isActive: true,
-      effectiveFrom: { lte: dayEnd },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: dayStart } }],
-    },
-    orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-  })
+  // ★ E-5：同 engine（S3b）同一口徑 —— 按 HK 月份揀規則
+  const { start: ruleMonthStart, end: ruleMonthEnd } = getMonthRange(dayStart)
+  const empPayRule = await findPayRuleForMonth(db, employeeId, ruleMonthStart, ruleMonthEnd)
   const cfg = readEarlyInOtCfg(empPayRule?.configJson)
 
   const recomputed = computeEarlyInOt(rawEarly, cfg)

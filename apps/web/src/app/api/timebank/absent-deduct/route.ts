@@ -2,7 +2,8 @@ export const dynamic = 'force-dynamic'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, getMonthRange } from '@/lib/hk-date'
+import { findPayRuleForMonth } from '@/lib/pay-rule-for-month'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { computeAbsentDeductMinutes } from '@/lib/absent-deduct-minutes'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
@@ -90,15 +91,10 @@ export async function POST(req: NextRequest) {
 
     // 計算扣分鐘：加總當日全部更次 → 按 deductLunch gate 扣一次午飯
     // ★ 2026-08-08: payRule query 條件同 payroll-engine.ts:1491-1498 一致
-    const empPayRule = await prisma.payRule.findFirst({
-      where: {
-        employeeId,
-        isActive: true,
-        effectiveFrom: { lte: dayEnd },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: dayStart } }],
-      },
-      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-    })
+    // ★ E-5：同 engine（S3b）同一口徑 —— 按 HK 月份揀規則（findPayRuleForMonth），
+    //   唔再只搵 isActive（未來生效新規則之前嗰個月會搵唔到 → 用 default，同 engine 唔夾）
+    const { start: ruleMonthStart, end: ruleMonthEnd } = getMonthRange(dayStart)
+    const empPayRule = await findPayRuleForMonth(prisma, employeeId, ruleMonthStart, ruleMonthEnd)
     let lunchMinutes = 60
     if (empPayRule?.configJson) {
       try {
@@ -129,7 +125,7 @@ export async function POST(req: NextRequest) {
         })
       })
     } catch (e: any) {
-      const r = toHttpResponse(e); if (r) return r
+      const r = toHttpResponse(e, '當天已扣過缺勤鐘'); if (r) return r   // ★ L-16：具體訊息
       throw e
     }
 
