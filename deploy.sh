@@ -41,8 +41,12 @@ echo "== 清理舊 image（備份完成之後、build 之前）=="
 #   食晒磁碟令 build 失敗。best-effort（失敗唔擋部署）。
 docker image prune -f > /dev/null 2>&1 || true
 
-echo "== 重建 app（migration 檔在映像裡，build 必須在 migrate 之前）=="
-if ! $DC up -d --build app; then
+echo "== 建置 app image（未上線；migration 檔在映像裡）=="
+# ★ H0-3（P0-3）：次序改做 build → migrate → up。舊次序係 `up -d --build` 先（新 code 即刻上線）、
+#   等 face build + sleep 15 之後先 migrate —— 窗口期新 code 對住舊 schema（finalize tx 查 TimeBankDirty 會 25P02 → 500）；
+#   migration 失敗（例如 partial unique 撞重複資料）更會令新 code 長期對住唔完整嘅 schema。
+#   新 migration 全部 additive，舊 app 喺 migrate 期間繼續服務冇問題。
+if ! $DC build app; then
  echo ""
  echo "❌ 建置失敗 —— 上面通常有原因，最常見係："
  echo " · TypeScript error（next build 會做 typecheck）"
@@ -50,6 +54,15 @@ if ! $DC up -d --build app; then
  echo " 資料庫未改動，可以安全修好再跑一次。"
  exit 1
 fi
+
+echo "== 套用 migration（新 image、一次性 container；舊 app 仲喺度服務）=="
+if ! $DC run --rm --no-deps app npx prisma migrate deploy --schema apps/web/prisma/schema.prisma; then
+ echo "❌ migration 失敗 —— app 未換版（仍然係舊 code）。修好 migration（prisma migrate resolve）再跑一次。"
+ exit 1
+fi
+
+echo "== 上線 app =="
+$DC up -d app
 
 echo "── Face service（warn-only，永不擋主站）──"
 if $DC build face && $DC up -d face; then
@@ -62,9 +75,6 @@ if $DC build face && $DC up -d face; then
 else
  echo "⚠️ face 建置/啟動失敗——同上，主站繼續部署"
 fi
-
-echo "== 套用 migration =="
-$DC exec app npx prisma migrate deploy --schema apps/web/prisma/schema.prisma
 
 echo "== 完成 =="
 docker logs clinic-prod-app --tail 5

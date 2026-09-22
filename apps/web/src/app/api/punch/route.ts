@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic'
-import { lockEmployee, HttpError } from '@/lib/emp-lock'
+import { lockEmployee, HttpError, isLockBusy } from '@/lib/emp-lock'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
@@ -238,6 +238,10 @@ export async function POST(req: NextRequest) {
     } catch (error: any) {
       if (error instanceof HttpError) {
         return NextResponse.json({ error: error.message, ...(error.extra ?? {}) }, { status: error.status })
+      }
+      if (isLockBusy(error)) {
+        // ★ H0-2c：等鎖超時 —— 未寫入，叫佢再撳一次（唔好顯示「系統錯誤」）
+        return NextResponse.json({ error: '系統忙緊（資料處理中），今次未打到卡，請 5 秒後再撳一次', code: 'BUSY' }, { status: 409 })
       }
       console.error('Punch error:', error)
       // Transaction rollback already happened

@@ -258,6 +258,10 @@ export async function PUT(
       // ★ 覆核 P0-1：帳本凍結令 transaction 重好多（N × calculateTimeBank）。
       //   默認 5s 唔夠（實測 3 人 721ms → 21 人 ≈ 5s）。同 payroll-engine.ts:1173 同一設定。
       const updated = await basePrisma.$transaction(async (tx) => {
+        // ★ H0-2b：本 tx 暫停 TimeBankDirty trigger 標記（否則成個 finalize 揸住 (emp,ym) row lock → 同批員工打卡 P2028）
+        //   commit 前（return 之前）一次過補標；set_config is_local=true → 只影響本 tx
+        await tx.$executeRaw`SELECT set_config('cwm.tb_defer_dirty', 'on', true)`
+        const dirtyMarks: Array<[string, string]> = []   // [employeeId, 'YYYY-MM']
         const result = await tx.payrollRun.update({
           // ★ cwm-money P2-1：狀態轉換只准成功一次（防雙擊／524 重試雙寫 ROSTER_DIFF）
           where: status && status !== run.status ? { id: params.id, status: run.status } : { id: params.id },
@@ -342,6 +346,7 @@ export async function PUT(
               },
             })
             touchedEmpIds.push(empId)
+            dirtyMarks.push([empId, pm])   // ★ H0-2b
           }
 
           // ★★★ cwm-tbcache-rosterdiff-20260909 A2（坑④）：寫咗 TimeBankEntry 就一定要
@@ -469,6 +474,7 @@ export async function PUT(
             },
           })
           console.log(`[payroll-revert] 刪咗 ${deleted.count} 筆 ROSTER_DIFF`)
+          for (const i of itemsRevert) dirtyMarks.push([i.employeeId, pk])   // ★ H0-2b（超集：刪 ROSTER_DIFF + 刪 snapshot 都要令 ≥pk 月份失效）
 
           // ★ 2026-08-22 §6.2.2：退回要刪假期餘額快照 ——
           //   唔刪嘅話下個月「上月剩」會攞到「已 finalize 但實際退咗」嘅數。
@@ -525,6 +531,13 @@ export async function PUT(
           },
         })
 
+        // ★ H0-2b：補標（排序 → 固定鎖序；一句過）
+        await tx.$executeRaw`SELECT set_config('cwm.tb_defer_dirty', 'off', true)`
+        if (dirtyMarks.length > 0) {
+          const uniq = [...new Map(dirtyMarks.map(m => [m.join('|'), m])).values()]
+            .sort((x, y) => (x[0] === y[0] ? x[1].localeCompare(y[1]) : x[0].localeCompare(y[0])))
+          await tx.$executeRaw`SELECT tb_mark_dirty(t.e, t.y) FROM unnest(${uniq.map(m => m[0])}::text[], ${uniq.map(m => m[1])}::text[]) AS t(e, y)`
+        }
         return result
       }, { maxWait: 10_000, timeout: 120_000 })
 

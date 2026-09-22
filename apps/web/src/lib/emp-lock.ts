@@ -5,7 +5,14 @@ import type { Prisma } from '@prisma/client'
 import { NextResponse } from 'next/server'
 
 export async function lockEmployee(tx: Prisma.TransactionClient, employeeId: string): Promise<void> {
+  // ★ H0-2c：本 tx 之後每句等鎖最多 3s（< 5s interactive tx timeout）→ 55P03 → 409 BUSY，唔好拖到 P2028 → 500
+  await tx.$executeRaw`SELECT set_config('lock_timeout', '3s', true)`
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'emp:' + employeeId}))`
+}
+
+/** ★ H0-2c：等鎖超時（lock_timeout → SQLSTATE 55P03）；Rust engine／driver adapter 兩種錯誤格式都認 */
+export function isLockBusy(e: any): boolean {
+  return /55P03|lock timeout/i.test(`${e?.meta?.code ?? ''} ${e?.meta?.message ?? ''} ${e?.message ?? ''}`)
 }
 
 /** 兩個員工（例如交換）→ 按 id 排序先鎖，避免 deadlock */
@@ -27,6 +34,7 @@ export const lockKey = (tx: any, key: string) => tx.$executeRaw`SELECT pg_adviso
 /** route catch 用：HttpError / P2002 → response；其他 → null（交返原本處理） */
 export function toHttpResponse(e: any, dupMessage = '已處理（重複提交）'): NextResponse | null {
   if (e instanceof HttpError) return NextResponse.json({ error: e.message, ...(e.extra ?? {}) }, { status: e.status })
+  if (isLockBusy(e)) return NextResponse.json({ error: '同一員工／計糧資料正喺度處理緊，請幾秒後再試', code: 'BUSY' }, { status: 409 })
   if (e?.code === 'P2002') return NextResponse.json({ error: dupMessage }, { status: 409 })
   return null
 }

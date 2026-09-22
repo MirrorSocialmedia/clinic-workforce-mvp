@@ -117,7 +117,13 @@ export async function invalidateTimeBankFrom(
 ) {
   const date = new Date(fromDate)
   const { start: monthStart } = getMonthRange(date)
-  await db.timeBank.deleteMany({
-    where: { employeeId, periodMonth: { gte: monthStart } },
-  })
+  // ★ hotfix 20260922：SKIP LOCKED —— 被其他 tx（例如 finalize 嘅 deleteMany）鎖住嘅 row 唔等：
+  //   嗰個 tx 自己會刪／commit；就算佢 rollback，TimeBankDirty 水位已令嗰行 cacheKey 失配。
+  //   舊寫法喺 interactive tx 入面會等到 finalize commit → 超 5s → P2028 → 打卡 500。
+  await (db as any).$executeRaw`
+    DELETE FROM "TimeBank" WHERE "id" IN (
+      SELECT "id" FROM "TimeBank"
+       WHERE "employeeId" = ${employeeId}
+         AND "periodMonth" >= (${monthStart.toISOString()}::timestamptz AT TIME ZONE 'UTC')   -- 欄係 UTC timestamp(3)，唔靠 session TimeZone
+         FOR UPDATE SKIP LOCKED)`
 }
