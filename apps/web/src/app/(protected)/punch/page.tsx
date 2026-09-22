@@ -33,6 +33,16 @@ async function getPunchLocationLive(): Promise<{ lat?: number; lng?: number; fla
   return r
 }
 
+/** ★ cwm-consist S6 DB-11：effective time 顯示 — 照 attendance 頁 effectiveTime() 口徑。
+ *  /api/punch/my-records 已回傳每筆 record 嘅 APPROVED corrections，唔使再多打一轉 API */
+function effectiveTimeDisplay(r: any): string {
+  const approved = (r.corrections || [])
+    .filter((c: any) => c.status === 'APPROVED')
+    .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  if (approved.length === 0) return fmtDateTime(r.punchTime)
+  return `${fmtDateTime(approved[0].correctedTime)}（原 ${fmtDateTime(r.punchTime)}）`
+}
+
 /** Play a short confirmation beep via Web Audio API */
 function playBeep() {
   try {
@@ -624,7 +634,7 @@ export default function PunchPage() {
                       <span className="text-foreground">{r.clinic?.name || '診所'}</span>
                     </div>
                     <span className="text-muted-foreground text-xs">
-                      {fmtDateTime(r.punchTime)}
+                      {effectiveTimeDisplay(r)}
                     </span>
                   </div>
                 ))}

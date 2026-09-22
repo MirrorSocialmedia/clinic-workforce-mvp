@@ -5,6 +5,16 @@ import { fmtDateTime, toHKDateStr } from '@/lib/hk-date'
 import { punchLabel, punchBg, punchTextColor } from '@/lib/punch-label'
 import { useLiveRefresh } from '@/lib/live-refresh'
 
+/** ★ cwm-consist S6 DB-11：effective time 顯示 — 照 attendance 頁 effectiveTime() 口徑。
+ *  /api/punch/my-records 已回傳每筆 record 嘅 APPROVED corrections，唔使再多打一轉 API */
+function effectiveTimeDisplay(p: any): string {
+  const approved = (p.corrections || [])
+    .filter((c: any) => c.status === 'APPROVED')
+    .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  if (approved.length === 0) return fmtDateTime(p.punchTime)
+  return `${fmtDateTime(approved[0].correctedTime)}（原 ${fmtDateTime(p.punchTime)}）`
+}
+
 export default function MyPunchesPage() {
   const [punches, setPunches] = useState<any[]>([])
   const [corrections, setCorrections] = useState<any[]>([])
@@ -32,13 +42,20 @@ export default function MyPunchesPage() {
       //   令後端 hkDateStart() 產生 Invalid Date + UTC 差一日
       const fromStr = toHKDateStr(monthStart)
       const toStr = toHKDateStr(monthEnd)
+      // ★ cwm-consist S6 DB-11：改用 /api/punch/my-records — 該端點已回傳每筆打卡嘅 APPROVED corrections，唔使再多打一轉 API
       const res = await fetch(
-        `/api/my/punches?from=${fromStr}&to=${toStr}`,
+        `/api/punch/my-records?startDate=${fromStr}&endDate=${toStr}`,
         { credentials: 'include' }
       )
       const data = await res.json()
-      setPunches(data.punches || [])
-      setCorrections(data.corrections || [])
+      const recs = data.records || []
+      setPunches(recs)
+      // 補打卡表 = flatten my-records 已回傳嘅 APPROVED corrections（申請時間降冓）
+      setCorrections(
+        recs
+          .flatMap((p: any) => (p.corrections || []).map((c: any) => ({ ...c, clinicName: p.clinic?.name })))
+          .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      )
     } catch (err) {
       console.error('Fetch punches error:', err)
     } finally {
@@ -116,7 +133,7 @@ export default function MyPunchesPage() {
             <tbody>
               {punches.map(p => (
                 <tr key={p.id}>
-                  <td>{fmtDateTime(p.punchTime)}</td>
+                  <td>{effectiveTimeDisplay(p)}</td>
                   <td>
                     <span style={{
                       padding: '2px 8px',
@@ -177,7 +194,7 @@ export default function MyPunchesPage() {
                         {punchLabel(c.punchType)}
                       </span>
                     </td>
-                    <td>{c.clinicId ? `Clinic: ${c.clinicId.substring(0, 8)}` : '-'}</td>
+                    <td>{c.clinicName || '-'}</td>
                     <td style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {c.reason || '-'}
                     </td>
