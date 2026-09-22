@@ -57,7 +57,9 @@ export default function MyLeavePage() {
   const [leaveTypes, setLeaveTypes] = useState<LeaveTypeItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [balanceError, setBalanceError] = useState(false)
+  // ★ cwm-leaveasof-20260922 S3-B：「截至 X 月」標記 + 預排明細（同來自 /api/my/leave）
+  const [asOf, setAsOf] = useState<string | null>(null)
+  const [upcoming, setUpcoming] = useState<any[]>([])
   const [filter, setFilter] = useState<LeaveStatus | ''>('')
   const [form, setForm] = useState({ leaveTypeId: '', startDate: '', endDate: '', days: '', reason: '' })
   const [userRole, setUserRole] = useState<string>('')
@@ -68,15 +70,12 @@ export default function MyLeavePage() {
     const silent = !!opts?.silent && loadedRef.current
     if (!silent) {
       setError('')
-      setBalanceError(false)
     }
     try {
       // ★ H1-4：斷網唔好造 {ok:false} 假物件（之後 call .json() 會變「a.json is not a function」）→ 用 null
       const safe = (p: Promise<Response>) => p.catch(() => null)
-      const [leaveRes, balanceRes, typesRes, meRes] = await Promise.all([
+      const [leaveRes, typesRes, meRes] = await Promise.all([
         safe(fetch('/api/my/leave', { credentials: 'include', cache: 'no-store' })),
-        // 2026-08-04: 餘額另外攞——生日假已拆出獨立 LeaveType
-        safe(fetch('/api/leave-balance', { credentials: 'include', cache: 'no-store' })),
         safe(fetch('/api/leave-types', { credentials: 'include', cache: 'no-store' })),
         safe(fetch('/api/me', { credentials: 'include' })),
       ])
@@ -88,15 +87,11 @@ export default function MyLeavePage() {
       }
       const data = await leaveRes.json()
       setRequests(data.leaveRequests || [])
-
-      // ★ 餘額攞唔到要留痕——唔好靜靜當「冇假期」
-      if (balanceRes?.ok) {
-        const bData = await balanceRes.json()
-        setBalances(bData.leaveBalances || [])
-      } else if (!silent) {
-        console.warn(`[my/leave] /api/leave-balance ${balanceRes?.status ?? 'network'}`)
-        setBalanceError(true)
-      }
+      // ★ cwm-leaveasof-20260922 S3-B：balances 由 /api/my/leave 攞（as-of 口徑，同 my/dashboard 同一個源）
+      //   —— 舊 /api/leave-balance（即時原始值）唔再俾餘額卡用，口徑統一唔會兩頁兩套數。
+      setBalances(data.leaveBalances || [])
+      setAsOf(data.asOf ?? null)
+      setUpcoming(data.upcoming ?? [])
 
       if (typesRes?.ok) {
         const tData = await typesRes.json()
@@ -169,11 +164,7 @@ export default function MyLeavePage() {
       <div className="card mb-3">
         <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">假期餘額</h2>
 
-        {balanceError ? (
-          <div className="text-sm text-red-500 py-3">
-            載入失敗，請重新整理
-          </div>
-        ) : balances.length === 0 ? (
+        {balances.length === 0 ? (
           <div className="text-sm text-gray-400 py-3">
             暫無假期額度 — 試用期滿三個月後開始累積年假
           </div>
@@ -182,46 +173,68 @@ export default function MyLeavePage() {
             {balances.map(b => (
               <div
                 key={b.id}
-                className="flex items-center justify-between p-3 rounded-lg"
+                className="p-3 rounded-lg"
                 style={{
                   background: `${b.leaveType.color || '#0d7377'}10`,
                   borderLeft: `3px solid ${b.leaveType.color || '#0d7377'}`,
                 }}
               >
-                <div>
-                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{b.leaveType.name}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">已用 {b.used.toFixed(1)} 天</div>
-                  {/* ★ 休息日加說明 */}
-                  {b.leaveType?.systemKey === 'REST_DAY' && (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{b.leaveType.name}</div>
                     <div className="text-xs text-gray-400 mt-0.5">
-                      每月按該月星期六日 + 公眾假期數目發放
+                      已用 {b.used.toFixed(1)} 天{asOf ? `（截至 ${Number(asOf.slice(5, 7))} 月）` : ''}
                     </div>
-                  )}
-                </div>
-                <div className="text-right">
-                  {b.leaveType?.systemKey === 'SICK' ? (
-                    <>
-                      <div className="text-lg font-bold" style={{ color: '#16a34a' }}>無上限</div>
-                      <div className="text-xs text-gray-400">
-                        病假不設額度，薪酬按《僱傭條例》喺計糧時結算
+                    {/* ★ 休息日加說明 */}
+                    {b.leaveType?.systemKey === 'REST_DAY' && (
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        每月按該月星期六日 + 公眾假期數目發放
                       </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-lg font-bold" style={{ color: b.remaining < 0 ? '#dc2626' : undefined }}>
-                        {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}
-                      </div>
-                      {b.entitled === 0 && zeroEntitledHint(b.leaveType?.systemKey) && (
-                        <div className="text-xs text-gray-400 mt-0.5">
-                          {zeroEntitledHint(b.leaveType?.systemKey)}
+                    )}
+                  </div>
+                  <div className="text-right">
+                    {b.leaveType?.systemKey === 'SICK' ? (
+                      <>
+                        <div className="text-lg font-bold" style={{ color: '#16a34a' }}>無上限</div>
+                        <div className="text-xs text-gray-400">
+                          病假不設額度，薪酬按《僱傭條例》喺計糧時結算
                         </div>
-                      )}
-                    </>
-                  )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-lg font-bold" style={{ color: b.remaining < 0 ? '#dc2626' : undefined }}>
+                          {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}{asOf ? `（截至 ${Number(asOf.slice(5, 7))} 月）` : ''}
+                        </div>
+                        {b.entitled === 0 && zeroEntitledHint(b.leaveType?.systemKey) && (
+                          <div className="text-xs text-gray-400 mt-0.5">
+                            {zeroEntitledHint(b.leaveType?.systemKey)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
+                {/* ★ cwm-leaveasof-20260922 S3-B：預排明細（只有有數先出） */}
+                {(() => {
+                  const rows = upcoming.filter(u => u.leaveTypeId === b.leaveTypeId && (u.scheduledDays > 0 || u.grantedDays > 0))
+                  if (rows.length === 0) return null
+                  return (
+                    <div className="mt-2 pt-2 border-t border-dashed text-xs text-gray-400 space-y-0.5">
+                      {rows.map(u => (
+                        <div key={u.month} className="flex justify-between">
+                          <span>{Number(u.month.slice(5, 7))} 月</span>
+                          <span>
+                            {u.grantedDays > 0 ? `已發放 ${u.grantedDays} 天 · ` : ''}
+                            {u.scheduledDays > 0 ? `已預排 ${u.scheduledDays} 天` : ''}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
               </div>
             ))}
           </div>

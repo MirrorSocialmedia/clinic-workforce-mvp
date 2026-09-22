@@ -58,6 +58,9 @@ export default function MyDashboardPage() {
   const [summary, setSummary] = useState<any>(null)
   const [schedule, setSchedule] = useState<any[]>([])
   const [leaveBalances, setLeaveBalances] = useState<any[]>([])
+  // ★ cwm-leaveasof-20260922 S3-A：「截至 X 月」標記 + 預排明細（數據同來自 /api/my/leave）
+  const [leaveAsOf, setLeaveAsOf] = useState<string | null>(null)
+  const [leaveUpcoming, setLeaveUpcoming] = useState<any[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState<any[]>([])
 
@@ -137,6 +140,8 @@ export default function MyDashboardPage() {
         ),
       )
       setLeaveBalances(leaveData.leaveBalances || [])
+      setLeaveAsOf(leaveData.asOf ?? null)
+      setLeaveUpcoming(leaveData.upcoming ?? [])
       setNotifications(notifData.notifications || [])
       setUnreadCount(notifData.unreadCount || 0)
       loadedRef.current = true
@@ -615,21 +620,43 @@ export default function MyDashboardPage() {
               {leaveBalances.map(b => (
                 <div
                   key={b.id}
-                  className="flex items-center justify-between p-3 rounded-lg"
+                  className="p-3 rounded-lg"
                   style={{
                     background: `${b.leaveType.color || '#0d7377'}10`,
                     borderLeft: `3px solid ${b.leaveType.color || '#0d7377'}`,
                   }}
                 >
-                  <div>
-                    <div className="text-sm text-muted-foreground">{b.leaveType.name}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-lg font-bold" style={{ color: b.remaining < 0 ? '#dc2626' : undefined }}>
-                      {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm text-muted-foreground">{b.leaveType.name}</div>
                     </div>
-                    <div className="text-xs text-muted-foreground">天剩餘</div>
+                    <div className="text-right">
+                      <div className="text-lg font-bold" style={{ color: b.remaining < 0 ? '#dc2626' : undefined }}>
+                        {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        天剩餘{leaveAsOf ? `（截至 ${Number(leaveAsOf.slice(5, 7))} 月）` : ''}
+                      </div>
+                    </div>
                   </div>
+                  {/* ★ cwm-leaveasof-20260922 S3-A：預排明細（只有有數先出） */}
+                  {(() => {
+                    const rows = leaveUpcoming.filter(u => u.leaveTypeId === b.leaveTypeId && (u.scheduledDays > 0 || u.grantedDays > 0))
+                    if (rows.length === 0) return null
+                    return (
+                      <div className="mt-2 pt-2 border-t border-dashed text-xs text-muted-foreground space-y-0.5">
+                        {rows.map(u => (
+                          <div key={u.month} className="flex justify-between">
+                            <span>{Number(u.month.slice(5, 7))} 月</span>
+                            <span>
+                              {u.grantedDays > 0 ? `已發放 ${u.grantedDays} 天 · ` : ''}
+                              {u.scheduledDays > 0 ? `已預排 ${u.scheduledDays} 天` : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
                 </div>
               ))}
             </div>

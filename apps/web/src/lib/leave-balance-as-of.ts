@@ -12,7 +12,8 @@
 //   ① /api/leave-balance?asOf=        —— 薪資明細「假期餘額」（asOf = 薪資月月底）
 //   ② /api/scheduling-leave-summary   —— 排班「上月剩」（asOf = 上月月底，snapshot 缺時 fallback）
 // ============================================================
-import { hkDateEnd } from './hk-date'
+import { hkDateEnd, getMonthRange, toHKDateStr } from './hk-date'
+import { balanceYearFor } from './leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 
 /**
@@ -100,4 +101,118 @@ export async function restDayBalanceAsOf(
     v.remaining = Math.round((v.entitled - v.used) * 10) / 10
   }
   return out
+}
+
+/**
+ * ★ cwm-leaveasof-20260922：累積制／無逐月發放嘅假期「截至某日」餘額。
+ *   適用：ANNUAL_LEAVE、BIRTHDAY_LEAVE（year=0 累積制）、OT_LEAVE（曆年但冇逐月發放）。
+ *   ⚠️ 休息日【唔好】用呢個 —— 用上面 restDayBalanceAsOf（佢仲要扣未來發放同換鐘）。
+ *
+ *   entitled(asOf) = LeaveBalance.entitled（照用 —— 年假累積到 refresh 嗰刻，唔會包未來）
+ *   used(asOf)     = LeaveBalance.used − Σ LeaveRequest(同類, APPROVED, startDate > asOfEnd,
+ *                  且歸咗落呢一行嘅).days
+ *
+ *   ⚠️ 邊界同 restDayBalanceAsOf 一致：`gt: asOfEnd`；
+ *      跨月假期（例：9/29–10/2）按 startDate 歸月 —— 成張算入 9 月。
+ *   ⚠️ 歸行口徑 = balanceYearFor（同 approve 寫入路徑同一個 source of truth）——
+ *      年假／生日假永遠歸 year=0 行（即使同類仲有 legacy 曆年行，佢哋唔會被扣）；
+ *      曆年類（REST_DAY/OT_LEAVE）歸 startDate 嘅 HK 年行。
+ *   ⚠️ 純讀，LeaveBalance 一行都唔改。
+ *
+ * @param db    Prisma client（或 tx）
+ * @param rows  已撈好嘅 LeaveBalance（含 leaveType.systemKey）—— 唔另外 query
+ */
+export async function accumulativeBalanceAsOf(
+  db: any,
+  employeeId: string,
+  rows: Array<{ leaveTypeId: string; year: number; entitled: number; used: number; leaveType: { systemKey: string | null } }>,
+  asOf: string,                 // 'YYYY-MM-DD'（HK）
+): Promise<Map<string, { entitled: number; used: number; remaining: number }>> {
+  const asOfEnd = hkDateEnd(asOf)
+  const out = new Map<string, { entitled: number; used: number; remaining: number }>()
+  if (rows.length === 0) return out
+
+  const future = await db.leaveRequest.findMany({
+    where: {
+      employeeId, status: 'APPROVED',
+      leaveTypeId: { in: rows.map(r => r.leaveTypeId) },
+      startDate: { gt: asOfEnd },
+    },
+    select: { leaveTypeId: true, days: true, startDate: true, leaveType: { select: { systemKey: true } } },
+  })
+
+  for (const r of rows) {
+    // ★ 只扣「真係扣咗落呢一行」嘅未來已批假（同 approve 寫入路徑同一條 balanceYearFor）——
+    //   唔係 per-row 年份 cap：同類多行（例：年假 y=0 + legacy y=2026）時，
+    //   同一張假唔會雙重扣（寫入路徑只會落其中一行）。
+    const futureUsed = future
+      .filter((f: any) => f.leaveTypeId === r.leaveTypeId && balanceYearFor(f.leaveType.systemKey, f.startDate) === r.year)
+      .reduce((s: number, f: any) => s + Number(f.days), 0)
+    const used = Math.round((r.used - futureUsed) * 10) / 10
+    const entitled = Math.round(r.entitled * 10) / 10
+    out.set(`${r.leaveTypeId}:${r.year}`, { entitled, used, remaining: Math.round((entitled - used) * 10) / 10 })
+  }
+  return out
+}
+
+/**
+ * ★ cwm-leaveasof-20260922：asOf 之後已批嘅假（按月、按類型）＋ 休息日未來發放。
+ *   ⚠️ 唔設年份上限 —— 12 月時都要睇到 1 月預排。
+ *   只攞 asOf 之後 3 個月（員工端唔需要睇半年後）。
+ *
+ * ⚠️ 歸月口徑 = startDate（HK 視角）—— 同 accumulativeBalanceAsOf / restDayBalanceAsOf 一致。
+ * ⚠️ grant 歸 REST_DAY 類型（按 systemKey 撈 id）； grant minutes / 1440 = 日
+ *    （同 restDayBalanceAsOf 一致）。
+ * ⚠️ 純讀。
+ */
+export async function upcomingLeaveByMonth(
+  db: any,
+  employeeId: string,
+  asOf: string,
+): Promise<Array<{ month: string; leaveTypeId: string; scheduledDays: number; grantedDays: number }>> {
+  const asOfEnd = hkDateEnd(asOf)
+  // ★ asOf 之後 3 個月嘅月底（例：2026-09 → 2026-12-31 日終）。
+  //   年月純算術 + getMonthRange —— 唔好用 new Date(y, m, 1)（伺服器 UTC 差 8 小時）。
+  const [ay, am] = asOf.slice(0, 7).split('-').map(Number)
+  const t = (am - 1) + 3
+  const horizonYm = `${ay + Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`
+  const horizon = getMonthRange(new Date(`${horizonYm}-01T00:00:00+08:00`)).end
+
+  const [leaves, grants, restDayType] = await Promise.all([
+    db.leaveRequest.findMany({
+      where: { employeeId, status: 'APPROVED', startDate: { gt: asOfEnd, lte: horizon } },
+      select: { leaveTypeId: true, days: true, startDate: true },
+    }),
+    db.timeBankEntry.findMany({
+      where: { employeeId, type: 'RESTDAY_GRANT', date: { gt: asOfEnd, lte: horizon } },
+      select: { minutes: true, date: true },
+    }),
+    db.leaveType.findFirst({ where: { systemKey: 'REST_DAY' }, select: { id: true } }),
+  ])
+
+  const byKey = new Map<string, { month: string; leaveTypeId: string; scheduledDays: number; grantedDays: number }>()
+  const row = (month: string, leaveTypeId: string) => {
+    const k = `${month}|${leaveTypeId}`
+    let r = byKey.get(k)
+    if (!r) { r = { month, leaveTypeId, scheduledDays: 0, grantedDays: 0 }; byKey.set(k, r) }
+    return r
+  }
+
+  for (const l of leaves) {
+    row(toHKDateStr(l.startDate).slice(0, 7), l.leaveTypeId).scheduledDays += Number(l.days)
+  }
+  if (restDayType) {
+    for (const g of grants) {
+      row(toHKDateStr(g.date).slice(0, 7), restDayType.id).grantedDays += g.minutes / 1440
+    }
+  }
+
+  return [...byKey.values()]
+    .map(r => ({
+      ...r,
+      scheduledDays: Math.round(r.scheduledDays * 10) / 10,
+      grantedDays: Math.round(r.grantedDays * 10) / 10,
+    }))
+    .filter(r => r.scheduledDays > 0 || r.grantedDays > 0)
+    .sort((a, b) => a.month.localeCompare(b.month))
 }
