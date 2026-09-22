@@ -25,10 +25,12 @@ if (process.env.NODE_ENV !== 'production') {
 const AUDIT_ENTITIES = new Set([
   'User', 'Clinic', 'Employee', 'PayRule', 'Shift', 'ShiftChangeRequest',
   'PunchCorrection', 'LeaveRequest', 'LeaveType', 'LeaveBalance',
-  'ConsultationRevenue', 'PayrollRun', 'PayrollItem', 'DailyHash', 'TimeBank',
+  'ConsultationRevenue', 'PayrollRun', 'PayrollItem', 'DailyHash',
   'ExpenseEntry',
   // NOTE: AuditLog is intentionally excluded to prevent infinite recursion
   // NOTE: PunchRecord is excluded — punch route handles audit manually in $transaction
+  // NOTE: TimeBank is excluded — cwm-consist S6 CA-09a：TimeBank 係 cache（payroll-engine 重算寫入），
+  //   cache 讀寫唔應該入審計；人手改嘅路（time-bank/[id] route）自己寫 audit
 ])
 
 // Entities whose audit is written manually inside $transaction.
@@ -63,7 +65,7 @@ const AUDIT_FIELD_WHITELIST = new Set([
   'shiftDate', 'shiftStart', 'shiftEnd', 'note',
 ])
 
-function slimForAudit(obj: any): any {
+export function slimForAudit(obj: any): any {
   if (!obj || typeof obj !== 'object') return obj
   const out: any = {}
   for (const [k, v] of Object.entries(obj)) {

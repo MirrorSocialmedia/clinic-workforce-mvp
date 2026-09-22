@@ -1,6 +1,6 @@
 // ownership-ok: RBAC matrix 控制
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { prisma, writeAuditLog, slimForAudit } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError, assertClinicAccess } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
@@ -82,6 +82,25 @@ export async function PATCH(
         data: updateData,
       })
 
+      // ★ cwm-consist S6 CA-09a：TimeBank 已移出 AUDIT_ENTITIES（cache 讀寫唔入審計）——
+      //   人手改呢條路自己寫 audit（欄位口徑同舊 auto-audit 一致）
+      const diffParts: string[] = []
+      for (const key of Object.keys(existing)) {
+        if (key === 'employee' || key === 'updatedAt') continue
+        if ((existing as any)[key] !== (updated as any)[key]) {
+          const f = (existing as any)[key], t = (updated as any)[key]
+          diffParts.push(`${key} ${String(typeof f === 'object' ? JSON.stringify(f) : f).slice(0, 30)} → ${String(typeof t === 'object' ? JSON.stringify(t) : t).slice(0, 30)}`)
+        }
+      }
+      await writeAuditLog({
+        action: 'UPDATE',
+        entity: 'TimeBank',
+        entityId: params.id,
+        beforeJson: JSON.stringify(slimForAudit(existing)),
+        afterJson: JSON.stringify(slimForAudit(updated)),
+        notes: diffParts.join('; ') || null,
+      })
+
       return NextResponse.json({ success: true, timeBank: updated })
     } catch (error) {
       console.error('Time bank update error:', error)
@@ -120,6 +139,16 @@ export async function DELETE(
       if (denied) return denied
 
       await prisma.timeBank.delete({ where: { id: params.id } })
+
+      // ★ cwm-consist S6 CA-09a：TimeBank 已移出 AUDIT_ENTITIES —— 人手刪呢條路自己寫 audit
+      await writeAuditLog({
+        action: 'DELETE',
+        entity: 'TimeBank',
+        entityId: params.id,
+        beforeJson: JSON.stringify(slimForAudit(existing)),
+        afterJson: null,
+        notes: null,
+      })
 
       return NextResponse.json({ success: true })
     } catch (error) {
