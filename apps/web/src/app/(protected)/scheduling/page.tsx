@@ -608,6 +608,9 @@ export default function SchedulingPage() {
   const [mobileView, setMobileView] = useState<'day' | 'week'>('day')
   const [mobileSheet, setMobileSheet] = useState<MobileSheetState>(null)
   const [mobileConflict, setMobileConflict] = useState<ConflictState>(null)
+  // ★ cwm-consist S6 CA-06：mobile 週獨立數據（replace 語義 — 唔 merge 入共享 shifts/leaveRequests）
+  const [mobileShifts, setMobileShifts] = useState<Shift[]>([])
+  const [mobileLeaves, setMobileLeaves] = useState<any[]>([])
   const mobileWeekDays = useMemo(() => {
     const d = new Date(mobileSelectedDate)
     const dow = d.getDay() // 0=日
@@ -706,13 +709,15 @@ export default function SchedulingPage() {
 
   // ★ OT 時間卡片數據
   const [otRows, setOtRows] = useState<any[]>([])
-  useEffect(() => {
+  // ★ cwm-consist S6 CA-06：loader 抽 useCallback（加入 refreshAll）
+  const loadOtRows = useCallback(() => {
     if (!currentCompanyId) { setOtRows([]); return }
     getJSON('/api/timebank/overview')
       .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
       .then(d => setOtRows(d.summaries ?? []))
       .catch(e => { console.error('[ot-card] load failed', e); setOtRows([]) })
   }, [currentCompanyId])
+  useEffect(() => { loadOtRows() }, [loadOtRows])
 
   const otCardRows = useMemo(() => {
     if (!currentCompanyId) return []
@@ -748,13 +753,15 @@ export default function SchedulingPage() {
 
   // ★ 應返工時卡片數據
   const [rhRows, setRhRows] = useState<any[]>([])
-  useEffect(() => {
+  // ★ cwm-consist S6 CA-06：loader 抽 useCallback（加入 refreshAll）
+  const loadRosterHours = useCallback(() => {
     if (!currentCompanyId) { setRhRows([]); return }
     getJSON(`/api/roster-hours?month=${ovMonth}&companyId=${currentCompanyId}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setRhRows(d?.rows ?? []))
       .catch(() => setRhRows([]))
   }, [currentCompanyId, ovMonth])
+  useEffect(() => { loadRosterHours() }, [loadRosterHours])
 
   // ★ 月備註貼（拍板 2026-08-21：按公司 + 按月；純記事，零下游影響）
   const [memo, setMemo] = useState('')
@@ -836,7 +843,8 @@ export default function SchedulingPage() {
   const [leaveSummary, setLeaveSummary] = useState<any[] | null>(null)
   // ★ cwm-holidayot-20260911 F2：本月應得休息日（= RESTDAY_GRANT 實發數；多人設定唔同 → 出範圍）
   const [restQuotaSummary, setRestQuotaSummary] = useState<{ value: number } | { min: number; max: number } | null>(null)
-  useEffect(() => {
+  // ★ cwm-consist S6 CA-06：loader 抽 useCallback（加入 refreshAll）
+  const loadLeaveSummary = useCallback(() => {
     if (!currentCompanyId) { setLeaveSummary([]); setRestQuotaSummary(null); return }
     getJSON(`/api/scheduling-leave-summary?companyId=${currentCompanyId}&periodMonth=${ovMonth}`)
       .then(r => r.ok ? r.json() : null)
@@ -846,6 +854,7 @@ export default function SchedulingPage() {
       })
       .catch(() => { setLeaveSummary([]); setRestQuotaSummary(null) })
   }, [currentCompanyId, ovMonth])
+  useEffect(() => { loadLeaveSummary() }, [loadLeaveSummary])
 
   // ★ 小時格式化 helpers
   const fmtH = (mins: number) => {
@@ -1512,10 +1521,39 @@ function getShiftCode(shift: Shift): string {
     return [...m.values()]
   }, [clinics])
 
+  // ★ cwm-consist S6 CA-06：mobile 週 keymap — 由獨立 mobileShifts/mobileLeaves 建（唔再復用桌面 ovShifts/leaveRequests）
+  const mobileShiftsByKey = useMemo(() => {
+    const m = new Map<string, any[]>()
+    for (const s of mobileShifts) {
+      const k = `${s.employeeId}|${toHKDateStr(new Date(s.date))}`
+      const arr = m.get(k)
+      if (arr) arr.push(s)
+      else m.set(k, [s])
+    }
+    return m
+  }, [mobileShifts])
+
+  const mobileLeavesByKey = useMemo(() => {
+    const m = new Map<string, any[]>()
+    for (const lr of mobileLeaves) {
+      let cur = toHKDateStr(new Date(lr.startDate))
+      const last = toHKDateStr(new Date(lr.endDate))
+      let guard = 0
+      while (cur <= last && guard++ < 400) {
+        const k = `${lr.employeeId}|${cur}`
+        const arr = m.get(k)
+        if (arr) arr.push(lr)
+        else m.set(k, [lr])
+        cur = addDaysStr(cur, 1)
+      }
+    }
+    return m
+  }, [mobileLeaves])
+
   // Helper: get mobile overview cell for an employee on a given date
   const getMobileCell = useCallback((empId: string, dateStr: string) => {
-    const empShiftsOnDay = weekShiftsByKey.get(`${empId}|${dateStr}`) ?? EMPTY
-    const empLeavesOnDay = weekLeavesByKey.get(`${empId}|${dateStr}`) ?? EMPTY
+    const empShiftsOnDay = mobileShiftsByKey.get(`${empId}|${dateStr}`) ?? EMPTY
+    const empLeavesOnDay = mobileLeavesByKey.get(`${empId}|${dateStr}`) ?? EMPTY
     const sickLeave = empLeavesOnDay.find(lr => lr.leaveType?.systemKey === 'SICK')
     // ★ 2026-08-14: 病假撞佔額度假期標紅
     const conflict = sickQuotaConflict(empLeavesOnDay)
@@ -1569,7 +1607,7 @@ function getShiftCode(shift: Shift): string {
       }
     }
     return { label: '—', bg: 'transparent', detail: '', pl: false, conflict }
-  }, [weekShiftsByKey, weekLeavesByKey, shiftColor])
+  }, [mobileShiftsByKey, mobileLeavesByKey, shiftColor])
 
   // Mobile week label: "M/D–M/D"
   const mobileWeekLabel = useMemo(() => {
@@ -1641,7 +1679,10 @@ function getShiftCode(shift: Shift): string {
   }, [viewRange])
 
   // Mobile: load shifts for the current mobile week independently
-  useEffect(() => {
+  // ★ cwm-consist S6 CA-06：改獨立 mobileShifts/mobileLeaves + replace 語義 ——
+  //   舊版 merge 入共享 shifts/leaveRequests：mobile 週喺 viewRange 之外時，
+  //   refreshAll 後 loadShifts 以 viewRange 數據覆蓋 → mobile 週數據失；共享態仲被污染。
+  const loadMobileWeek = useCallback(() => {
     if (typeof window !== 'undefined' && window.innerWidth >= 768) return
     if (!selectedClinicId || mobileWeekDays.length === 0) return
     const weekStart = mobileWeekDays[0]
@@ -1650,22 +1691,18 @@ function getShiftCode(shift: Shift): string {
     const url = `/api/shifts?startDate=${weekStart}&endDate=${weekEnd}&pageSize=1000`
     getJSON(url)
       .then(r => r.ok ? r.json() : { shifts: [] })
-      .then(d => { if (Array.isArray(d.shifts)) setShifts((prev: Shift[]) => {
-        const existingIds = new Set(prev.map((s: Shift) => s.id))
-        const newShifts = d.shifts.filter((s: Shift) => !existingIds.has(s.id))
-        return newShifts.length ? [...prev, ...newShifts] : prev
-      }) })
+      .then(d => { if (Array.isArray(d.shifts)) setMobileShifts(d.shifts) })
       .catch(err => console.error('Failed to load mobile shifts:', err))
     // Also load leave requests for the mobile week
     getJSON(`/api/leave-requests?startDate=${weekStart}&endDate=${weekEnd}&status=APPROVED`)
       .then(r => r.ok ? r.json() : { leaveRequests: [] })
-      .then(d => { if (Array.isArray(d.leaveRequests)) setLeaveRequests((prev: any[]) => {
-        const existingIds = new Set(prev.map((lr: any) => lr.id))
-        const newLeaves = d.leaveRequests.filter((lr: any) => !existingIds.has(lr.id))
-        return newLeaves.length ? [...prev, ...newLeaves] : prev
-      }) })
+      .then(d => { if (Array.isArray(d.leaveRequests)) setMobileLeaves(d.leaveRequests) })
       .catch(() => {})
-  }, [mobileSelectedDate, selectedClinicId])
+  }, [selectedClinicId, mobileWeekDays])
+
+  useEffect(() => {
+    loadMobileWeek()
+  }, [loadMobileWeek])
 
   // Refresh all data after shift changes (Task 2)
   // ★ 2026-08-04: 合併 refreshLeaveBalances + Promise.all 加快
@@ -1674,8 +1711,14 @@ function getShiftCode(shift: Shift): string {
       loadShifts(),
       loadOvMonth(), // ★ 月視圖表格用嘅（ovMonthShifts）
       refreshLeaveBalances(), // ★ 加入嚟，唔使各處記得叫
+      // ★ cwm-consist S6 CA-06：roster／OT／leaveSummary loader 抽 useCallback 加入 refreshAll
+      loadRosterHours(),
+      loadOtRows(),
+      loadLeaveSummary(),
+      // ★ cwm-consist S6 CA-06：mobile 週獨立數據同步 refresh
+      loadMobileWeek(),
     ])
-  }, [loadShifts, loadOvMonth, refreshLeaveBalances])
+  }, [loadShifts, loadOvMonth, refreshLeaveBalances, loadRosterHours, loadOtRows, loadLeaveSummary, loadMobileWeek])
 
   // ★ cwm-consistency Stage 5.2：live refresh（排班頁唔設 interval — 頁重；只 focus/visibility + 其他 tab mutation）
   useLiveRefresh(refreshAll, ['schedule', 'leave'])
@@ -4780,11 +4823,11 @@ function getShiftCode(shift: Shift): string {
         {/* Shift cards for selected date */}
         {(() => {
           // ★ 2026-08-10: 按揀咗嘅診所篩 —— 主店或調入店任何一邊夾中都要出
-          const dayShifts = shifts.filter(s =>
+          const dayShifts = mobileShifts.filter(s =>
             toHKDateStr(new Date(s.date)) === mobileSelectedDate &&
             (s.clinicId === selectedClinicId || s.secondaryClinicId === selectedClinicId)
           )
-          const dayLeaves = leaveRequests.filter(lr => {
+          const dayLeaves = mobileLeaves.filter(lr => {
             const lrStart = toHKDateStr(new Date(lr.startDate))
             const lrEnd = toHKDateStr(new Date(lr.endDate))
             if (!(mobileSelectedDate >= lrStart && mobileSelectedDate <= lrEnd)) return false
