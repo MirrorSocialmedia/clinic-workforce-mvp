@@ -139,13 +139,16 @@ export async function runClinicalIndexBackfill(opts: {
                 select: { id: true },
               })
               if (row) {
-                const llmCallsBefore = llmStats().calls
+                // ★ cwm-leaveasoffix-20260923 S5-1：用 attempts 唔用 calls ——
+                //   calls 喺 `WA_INBOX_LLM_URL` 未設嗰陣都會加 1，
+                //   舊版會對每張 note 白白 sleep 1.5 秒、扣 budget，扣到 300 就 log「quota 用完」。
+                const llmCallsBefore = llmStats().attempts
                 await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), note: v.noteJson as any, skipLlm: llmBudgetLeft <= 0 })
-                const dLlm = llmStats().calls - llmCallsBefore
+                const dLlm = llmStats().attempts - llmCallsBefore
                 if (dLlm > 0) {
                   llmBudgetLeft -= dLlm
                   if (llmBudgetLeft <= 0) {
-                    console.warn('[clinical-index-backfill] LLM quota 用完 — 剩餘 note 唔再打 LLM（低信心行落確認隊列）', { reason: 'backfill_cap', llm: llmStats().calls, cap: Number(process.env.BACKFILL_LLM_MAX ?? 300) })
+                    console.warn('[clinical-index-backfill] LLM quota 用完 — 剩餘 note 唔再打 LLM（低信心行落確認隊列）', { reason: 'backfill_cap', llm: llmStats().attempts, cap: Number(process.env.BACKFILL_LLM_MAX ?? 300) })
                   }
                   await new Promise((r) => setTimeout(r, llmGapMs))
                 }

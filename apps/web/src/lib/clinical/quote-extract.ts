@@ -71,9 +71,10 @@ export function parseLlmQuoteResponse(content: string, terms: TermEntry[]): LlmQ
 
 export async function runLlmLayer(
   notePlain: string,
-  terms: TermEntry[]
+  terms: TermEntry[],
+  llmMaxAttempts?: number,
 ): Promise<LlmQuoteItem[] | null> {
-  const items = await extractViaWaInbox(notePlain, terms)
+  const items = await extractViaWaInbox(notePlain, terms, llmMaxAttempts ? { maxAttempts: llmMaxAttempts } : undefined)
   if (!items) return null
   // 雙保險：wa-inbox 已過濾，但呢度再以本地字典驗 code（唔信任 proxy 回傳）
   return parseLlmQuoteResponse(JSON.stringify({ items }), terms)
@@ -93,7 +94,7 @@ export interface ExtractedQuote {
   source: 'parser' | 'llm'
 }
 
-export async function extractQuotes(note: NoteText, terms: TermEntry[], visitId?: string, opts?: { skipLlm?: boolean }): Promise<ExtractedQuote[]> {
+export async function extractQuotes(note: NoteText, terms: TermEntry[], visitId?: string, opts?: { skipLlm?: boolean; llmMaxAttempts?: number }): Promise<ExtractedQuote[]> {
   const plain = noteTextToPlain(note)
   const parsed = parseQuote(plain, terms)
   const termByIdx = new Map(terms.map((t) => [t.shorthand, t]))
@@ -112,7 +113,7 @@ export async function extractQuotes(note: NoteText, terms: TermEntry[], visitId?
   }))
 
     if (parsed.needsLlm && !opts?.skipLlm) {
-    const llmItems = await runLlmLayer(plain, terms)
+    const llmItems = await runLlmLayer(plain, terms, opts?.llmMaxAttempts)
     if (llmItems) {
       // LLM 補低信心 orphan（text 子串配對）+ 收 LLM 新發現
       const consumed = new Set<string>()
@@ -176,9 +177,11 @@ export async function storeQuotesForVisit(opts: {
   note: NoteText
   /** ★ S2-9b backfill 限流：LLM quota 用完後唔再打 LLM（low 行照存 — 落確認隊列） */
   skipLlm?: boolean
+  /** ★ cwm-leaveasoffix-20260923 S5-3：request path 傳 1（唔重試 429） */
+  llmMaxAttempts?: number
 }): Promise<{ stored: number }> {
   const terms = await loadTermEntries()
-  const items = await extractQuotes(opts.note, terms, opts.visitId, { skipLlm: opts.skipLlm })
+  const items = await extractQuotes(opts.note, terms, opts.visitId, { skipLlm: opts.skipLlm, llmMaxAttempts: opts.llmMaxAttempts })
   if (!items.length) {
     // 冇報價項 — 清走舊 pending（重跑口徑一致）
     await basePrisma.quotedItem.deleteMany({ where: { sourceVisitId: opts.visitId, status: 'pending' } })

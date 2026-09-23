@@ -42,6 +42,10 @@ type Mod = { basePrisma: any; storeQuotesForVisit: any; resetTermCache: any; ext
 let M: Mod
 let server: http.Server
 let savedEnv: { url?: string; secret?: string; kid?: string } = {}
+// ★ cwm-leaveasoffix-20260923 S6：冇測試 DB 時唔可以令成個 `npm test` 吊死 ——
+//   舊版 before() 喺 deleteMany 度 throw，after() 又喺同一句 throw → http server 冇 close、
+//   prisma pool 冇 disconnect → node:test 等到 runner timeout，後面 3 個 test 檔完全冇跑。
+let dbDown = false
 
 type MockMode = 'ok' | 'busy-then-ok' | 'busy-always' | '500' | '400'
 let mode: MockMode = 'ok'
@@ -108,22 +112,31 @@ before(async () => {
   process.env.INTERNAL_LLM_KID = 'k1'
 
   // 4) 術語表 seed（冪等 pre-clean）+ 清 term cache（5 分鐘 in-process）
-  await M.basePrisma.clinicalTermMap.deleteMany({ where: { shorthand: { in: TERM_IDS } } })
-  await M.basePrisma.clinicalTermMap.create({ data: { shorthand: 'T623A', nameCn: 'T623測試項目A', nameEn: null, usedFor: ['quote_extraction'] } })
-  await M.basePrisma.clinicalTermMap.create({ data: { shorthand: 'T623B', nameCn: 'T623測試項目B', nameEn: null, usedFor: ['quote_extraction'] } })
+  try {
+    await M.basePrisma.clinicalTermMap.deleteMany({ where: { shorthand: { in: TERM_IDS } } })
+    await M.basePrisma.clinicalTermMap.create({ data: { shorthand: 'T623A', nameCn: 'T623測試項目A', nameEn: null, usedFor: ['quote_extraction'] } })
+    await M.basePrisma.clinicalTermMap.create({ data: { shorthand: 'T623B', nameCn: 'T623測試項目B', nameEn: null, usedFor: ['quote_extraction'] } })
+  } catch (e) {
+    dbDown = true
+    console.warn(`[T623] skip —— 連唔到測試 DB（設 CWM_TEST_DATABASE_URL 可覆蓋）：${(e as Error)?.message}`)
+    await M.basePrisma.$disconnect().catch(() => {})
+  }
   M.resetTermCache()
   M.__setExtractFn(null)
   M.resetLlmStats()
 })
 
 after(async () => {
-  await M.basePrisma.quotedItem.deleteMany({ where: { sourceVisitId: VISIT_ID } })
-  await M.basePrisma.clinicalTermMap.deleteMany({ where: { shorthand: { in: TERM_IDS } } })
+  if (!dbDown) {
+    await M.basePrisma.quotedItem.deleteMany({ where: { sourceVisitId: VISIT_ID } })
+    await M.basePrisma.clinicalTermMap.deleteMany({ where: { shorthand: { in: TERM_IDS } } })
+  }
   for (const [k, v] of Object.entries(savedEnv)) {
     if (v === undefined) delete process.env[k as 'WA_INBOX_LLM_URL' | 'INTERNAL_LLM_SECRET' | 'INTERNAL_LLM_KID']
     else process.env[k as 'WA_INBOX_LLM_URL' | 'INTERNAL_LLM_SECRET' | 'INTERNAL_LLM_KID'] = v
   }
   await new Promise<void>((r) => server.close(() => r()))
+  if (dbDown) return
   // 零殘留
   assert.equal(await M.basePrisma.quotedItem.count({ where: { sourceVisitId: VISIT_ID } }), 0)
   assert.equal(await M.basePrisma.clinicalTermMap.count({ where: { shorthand: { in: TERM_IDS } } }), 0)
@@ -131,7 +144,8 @@ after(async () => {
 
 const reset = () => { reqCount = 0; mode = 'ok'; M.resetLlmStats() }
 
-test('T623 main: storeQuotesForVisit → 高信心行（stub proxy 落字典 code + 雙保險丟非字典 code）', async () => {
+test('T623 main: storeQuotesForVisit → 高信心行（stub proxy 落字典 code + 雙保險丟非字典 code）', async (t) => {
+  if (dbDown) return t.skip('冇測試 DB（CWM_TEST_DATABASE_URL 未設）')
   reset()
   const { stored } = await M.storeQuotesForVisit({
     visitId: VISIT_ID,
@@ -158,7 +172,8 @@ test('T623 main: storeQuotesForVisit → 高信心行（stub proxy 落字典 cod
   assert.equal(reqCount, 1) // 真 HTTP 打咗 stub（唔係 testFn shortcut）
 })
 
-test('T623 reason: not_configured（WA_INBOX_LLM_URL／INTERNAL_LLM_SECRET 未設）', async () => {
+test('T623 reason: not_configured（WA_INBOX_LLM_URL／INTERNAL_LLM_SECRET 未設）', async (t) => {
+  if (dbDown) return t.skip('冇測試 DB（CWM_TEST_DATABASE_URL 未設）')
   reset()
   const saved = { url: process.env.WA_INBOX_LLM_URL, secret: process.env.INTERNAL_LLM_SECRET }
   delete process.env.WA_INBOX_LLM_URL
@@ -176,7 +191,8 @@ test('T623 reason: not_configured（WA_INBOX_LLM_URL／INTERNAL_LLM_SECRET 未�
   }
 })
 
-test('T623 reason: busy 429 重試 → 第 3 次成功（retryAfterSec=0 ×2）', async () => {
+test('T623 reason: busy 429 重試 → 第 3 次成功（retryAfterSec=0 ×2）', async (t) => {
+  if (dbDown) return t.skip('冇測試 DB（CWM_TEST_DATABASE_URL 未設）')
   reset()
   mode = 'busy-then-ok'
   const r = await M.extractViaWaInbox(NOTE_PLAIN, TERMS_MIN)
@@ -187,7 +203,8 @@ test('T623 reason: busy 429 重試 → 第 3 次成功（retryAfterSec=0 ×2）'
   assert.equal(reqCount, 3) // 429 + 429 + 200
 })
 
-test('T623 reason: busy 429 耗盡（3 次全 429 → busy）', async () => {
+test('T623 reason: busy 429 耗盡（3 次全 429 → busy）', async (t) => {
+  if (dbDown) return t.skip('冇測試 DB（CWM_TEST_DATABASE_URL 未設）')
   reset()
   mode = 'busy-always'
   const r = await M.extractViaWaInbox(NOTE_PLAIN, TERMS_MIN)
@@ -197,7 +214,8 @@ test('T623 reason: busy 429 耗盡（3 次全 429 → busy）', async () => {
   assert.equal(reqCount, 3)
 })
 
-test('T623 reason: upstream 500', async () => {
+test('T623 reason: upstream 500', async (t) => {
+  if (dbDown) return t.skip('冇測試 DB（CWM_TEST_DATABASE_URL 未設）')
   reset()
   mode = '500'
   const r = await M.extractViaWaInbox(NOTE_PLAIN, TERMS_MIN)
@@ -206,7 +224,8 @@ test('T623 reason: upstream 500', async () => {
   assert.equal(reqCount, 1)
 })
 
-test('T623 reason: rejected 400', async () => {
+test('T623 reason: rejected 400', async (t) => {
+  if (dbDown) return t.skip('冇測試 DB（CWM_TEST_DATABASE_URL 未設）')
   reset()
   mode = '400'
   const r = await M.extractViaWaInbox(NOTE_PLAIN, TERMS_MIN)
@@ -215,7 +234,8 @@ test('T623 reason: rejected 400', async () => {
   assert.equal(reqCount, 1)
 })
 
-test('T623 reason: timeout（fetch stub reject TimeoutError — 真 35s timeout 唔實測）', async () => {
+test('T623 reason: timeout（fetch stub reject TimeoutError — 真 35s timeout 唔實測）', async (t) => {
+  if (dbDown) return t.skip('冇測試 DB（CWM_TEST_DATABASE_URL 未設）')
   reset()
   const origFetch = globalThis.fetch
   const err = new Error('The operation was aborted due to timeout')

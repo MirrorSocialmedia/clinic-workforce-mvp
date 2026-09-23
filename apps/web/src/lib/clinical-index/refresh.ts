@@ -188,7 +188,9 @@ export async function refreshPatientIndex(
   // S3：手動刷新同步抽報價（best-effort — 唔阻 refresh 回應）
   if (v?.hasNote && v.noteJson && row) {
     try {
-      await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${targetDay}T00:00:00Z`), note: v.noteJson as any })
+      // ★ cwm-leaveasoffix-20260923 S5-3：呢度係 POST /api/external/v1/patients/{id}/refresh 嘅 request path，
+      //   429 重試（sleep ≤10s ×2 + 每次 fetch 上限 35s）最壞會拖 55 秒 → nginx/CF 切 504。手動刷新唔重試。
+      await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${targetDay}T00:00:00Z`), note: v.noteJson as any, llmMaxAttempts: 1 })
     } catch (e) {
       console.error('[quote-extract] 存儲失敗（唔阻 refresh）:', e)
     }
