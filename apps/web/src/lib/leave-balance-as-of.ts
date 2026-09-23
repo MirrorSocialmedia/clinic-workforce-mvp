@@ -13,7 +13,7 @@
 //   ② /api/scheduling-leave-summary   —— 排班「上月剩」（asOf = 上月月底，snapshot 缺時 fallback）
 // ============================================================
 import { hkDateEnd, getMonthRange, toHKDateStr } from './hk-date'
-import { balanceYearFor } from './leave-types'
+import { balanceYearFor, consumesQuota } from './leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 
 /**
@@ -138,7 +138,9 @@ export async function accumulativeBalanceAsOf(
       leaveTypeId: { in: rows.map(r => r.leaveTypeId) },
       startDate: { gt: asOfEnd },
     },
-    select: { leaveTypeId: true, days: true, startDate: true, leaveType: { select: { systemKey: true } } },
+    // ★ cwm-leaveasoffix-20260923 S1-1：quantity 必須 select —— consumesQuota 靠佢分辨
+    //   「systemKey 空 + quantity 空」嘅自訂無薪類（事假／無薪假／請假）。
+    select: { leaveTypeId: true, days: true, startDate: true, leaveType: { select: { systemKey: true, quantity: true } } },
   })
 
   for (const r of rows) {
@@ -146,7 +148,11 @@ export async function accumulativeBalanceAsOf(
     //   唔係 per-row 年份 cap：同類多行（例：年假 y=0 + legacy y=2026）時，
     //   同一張假唔會雙重扣（寫入路徑只會落其中一行）。
     const futureUsed = future
-      .filter((f: any) => f.leaveTypeId === r.leaveTypeId && balanceYearFor(f.leaveType.systemKey, f.startDate) === r.year)
+      // ★ cwm-leaveasoffix-20260923 S1-1：加 consumesQuota —— 同寫入路徑（POST:289 / approve:141）同一條閘。
+      //   冇呢句：病假／無薪假（唔扣額）嘅未來已批假會被減走 → used 變負、remaining 憑空變大。
+      .filter((f: any) => f.leaveTypeId === r.leaveTypeId
+        && consumesQuota(f.leaveType)
+        && balanceYearFor(f.leaveType.systemKey, f.startDate) === r.year)
       .reduce((s: number, f: any) => s + Number(f.days), 0)
     const used = Math.round((r.used - futureUsed) * 10) / 10
     const entitled = Math.round(r.entitled * 10) / 10
@@ -181,7 +187,8 @@ export async function upcomingLeaveByMonth(
   const [leaves, grants, restDayType] = await Promise.all([
     db.leaveRequest.findMany({
       where: { employeeId, status: 'APPROVED', startDate: { gt: asOfEnd, lte: horizon } },
-      select: { leaveTypeId: true, days: true, startDate: true },
+      // ★ cwm-leaveasoffix-20260923 S4-1：預排明細掛喺「額度卡」下面，所以只列扣額嘅類型
+      select: { leaveTypeId: true, days: true, startDate: true, leaveType: { select: { systemKey: true, quantity: true } } },
     }),
     db.timeBankEntry.findMany({
       where: { employeeId, type: 'RESTDAY_GRANT', date: { gt: asOfEnd, lte: horizon } },
@@ -199,6 +206,7 @@ export async function upcomingLeaveByMonth(
   }
 
   for (const l of leaves) {
+    if (!consumesQuota(l.leaveType)) continue   // ★ S4-1：病假／無薪假唔扣額 —— 唔好掛喺額度卡
     row(toHKDateStr(l.startDate).slice(0, 7), l.leaveTypeId).scheduledDays += Number(l.days)
   }
   if (restDayType) {

@@ -115,7 +115,8 @@ export default function MyDashboardPage() {
           const tomorrow = toHKDateStr(new Date(Date.now() + 86400000))
           return fetch(`/api/my/schedule?from=${today}&to=${tomorrow}`, { credentials: 'include' })
         })(),
-        fetch('/api/my/leave', { credentials: 'include' }),
+        // ★ cwm-leaveasoffix-20260923 S3-3：加 no-store —— 本 endpoint 而家係餘額唯一來源，唔可以食瀏覽器快取
+        fetch('/api/my/leave', { credentials: 'include', cache: 'no-store' }),
         fetch('/api/notifications', { credentials: 'include' }),
       ])
 
@@ -628,21 +629,30 @@ export default function MyDashboardPage() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="text-sm text-muted-foreground">{b.leaveType.name}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {b.leaveType.name}
+                        {/* ★ S3-2：舊年行標年份 */}
+                        {leaveAsOf && b.year > 0 && String(b.year) !== leaveAsOf.slice(0, 4) && (
+                          <span className="ml-1 text-xs opacity-70">（{b.year} 年）</span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-right">
                       <div className="text-lg font-bold" style={{ color: b.remaining < 0 ? '#dc2626' : undefined }}>
                         {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        天剩餘{leaveAsOf ? `（截至 ${Number(leaveAsOf.slice(5, 7))} 月）` : ''}
+                        天剩餘{leaveAsOf && b.asOfSupported ? `（截至 ${Number(leaveAsOf.slice(5, 7))} 月）` : ''}
                       </div>
                     </div>
                   </div>
                   {/* ★ cwm-leaveasof-20260922 S3-A：預排明細（只有有數先出） */}
                   {(() => {
                     const rows = leaveUpcoming.filter(u => u.leaveTypeId === b.leaveTypeId && (u.scheduledDays > 0 || u.grantedDays > 0))
-                    if (rows.length === 0) return null
+                    // ★ cwm-leaveasoffix-20260923 S3-4：同類多行時預排明細只掛一張卡
+                    const sameType = leaveBalances.filter((x: any) => x.leaveTypeId === b.leaveTypeId)
+                    const owner = sameType.find((x: any) => x.asOfSupported) ?? [...sameType].sort((p: any, q: any) => q.year - p.year)[0]
+                    if (rows.length === 0 || owner?.id !== b.id) return null
                     return (
                       <div className="mt-2 pt-2 border-t border-dashed text-xs text-muted-foreground space-y-0.5">
                         {rows.map(u => (

@@ -28,6 +28,8 @@ interface LeaveBalanceItem {
   entitled: number
   used: number
   remaining: number
+  /** ★ cwm-leaveasoffix-20260923 S3-1：false = 呢一行唔支援 as-of（legacy 曆年行／舊年行）→ 唔可以出「截至」label */
+  asOfSupported?: boolean
 }
 
 interface LeaveTypeItem {
@@ -181,9 +183,15 @@ export default function MyLeavePage() {
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{b.leaveType.name}</div>
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                      {b.leaveType.name}
+                      {/* ★ S3-2：舊年行而家會顯示（S2-2）—— 一定要標年份，唔好同當年行撈亂 */}
+                      {asOf && b.year > 0 && String(b.year) !== asOf.slice(0, 4) && (
+                        <span className="ml-1 text-xs text-gray-400">（{b.year} 年）</span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-400 mt-0.5">
-                      已用 {b.used.toFixed(1)} 天{asOf ? `（截至 ${Number(asOf.slice(5, 7))} 月）` : ''}
+                      已用 {b.used.toFixed(1)} 天{asOf && b.asOfSupported ? `（截至 ${Number(asOf.slice(5, 7))} 月）` : ''}
                     </div>
                     {/* ★ 休息日加說明 */}
                     {b.leaveType?.systemKey === 'REST_DAY' && (
@@ -206,7 +214,7 @@ export default function MyLeavePage() {
                           {b.remaining < 0 ? `欠 ${Math.abs(b.remaining).toFixed(1)}` : b.remaining.toFixed(1)}
                         </div>
                         <div className="text-xs text-gray-400">
-                          天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}{asOf ? `（截至 ${Number(asOf.slice(5, 7))} 月）` : ''}
+                          天剩餘{b.leaveType.annualQuota !== null ? ` / ${b.leaveType.annualQuota}` : ''}{asOf && b.asOfSupported ? `（截至 ${Number(asOf.slice(5, 7))} 月）` : ''}
                         </div>
                         {b.entitled === 0 && zeroEntitledHint(b.leaveType?.systemKey) && (
                           <div className="text-xs text-gray-400 mt-0.5">
@@ -220,7 +228,11 @@ export default function MyLeavePage() {
                 {/* ★ cwm-leaveasof-20260922 S3-B：預排明細（只有有數先出） */}
                 {(() => {
                   const rows = upcoming.filter(u => u.leaveTypeId === b.leaveTypeId && (u.scheduledDays > 0 || u.grantedDays > 0))
-                  if (rows.length === 0) return null
+                  // ★ cwm-leaveasoffix-20260923 S3-4：同一假種可以有多行（year=0 + legacy 曆年 + 舊年）——
+                  //   預排明細只可以掛一張卡，否則同一張假會重複列。優先掛「寫入路徑會扣嗰行」。
+                  const sameType = balances.filter(x => x.leaveTypeId === b.leaveTypeId)
+                  const owner = sameType.find(x => x.asOfSupported) ?? [...sameType].sort((p, q) => q.year - p.year)[0]
+                  if (rows.length === 0 || owner?.id !== b.id) return null
                   return (
                     <div className="mt-2 pt-2 border-t border-dashed text-xs text-gray-400 space-y-0.5">
                       {rows.map(u => (
