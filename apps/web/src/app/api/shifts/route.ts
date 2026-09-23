@@ -13,7 +13,7 @@ import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { shiftReplacedMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
 import { balanceYearFor, consumesQuota } from '@/lib/leave-types'
-import { lockEmployee, HttpError } from '@/lib/emp-lock'
+import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
 // ============================================================
 // GET /api/shifts — list shifts with filters
@@ -479,16 +479,12 @@ export async function POST(req: NextRequest) {
         { status: 201 }
       )
     } catch (error: any) {
-      if (error instanceof HttpError) {
-        return NextResponse.json({ error: error.message, ...(error.extra ?? {}) }, { status: error.status })
-      }
-      // ★ P2002: unique constraint violation (duplicate shift submission)
-      if (error?.code === 'P2002') {
-        return NextResponse.json(
-          { error: '該時段已有相同排班（可能重複提交）' },
-          { status: 409 }
-        )
-      }
+      // ★ cwm-leaveasoffix-20260923 S9：本 route 係最後一條攞 lockEmployee 但冇接 isLockBusy 嘅寫入 route。
+      //   舊版：撞住 finalize／批假 → lock_timeout 3s → 55P03 → 掉落最底 → 500「Internal server error」
+      //   （實測：批量 POST 500 @3.035s、單筆 POST 500 @3.017s）。
+      //   toHttpResponse 一次過收 HttpError / 55P03(BUSY 409) / P2002(409)，同其他 route 同一口徑。
+      const mapped = toHttpResponse(error, '該時段已有相同排班（可能重複提交）')
+      if (mapped) return mapped
       console.error('Create shift error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }

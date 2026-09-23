@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { grantMonthlyRestDays, countMonthlyLeaveDays, getPublicHolidayDays } from '@/lib/payroll-engine'
 import { hkParts, toHKDateStr } from '@/lib/hk-date'
-import { lockEmployee } from '@/lib/emp-lock'
+import { lockEmployee, isLockBusy } from '@/lib/emp-lock'
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -72,7 +72,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       n++
     } catch (err: any) {
       console.error(`[grant-restdays] employee=${e.id} ${y}-${m + 1} failed`, err)
-      failed.push({ employeeId: e.id, error: err?.code === 'P2002' ? '同月已有休息日發放記錄（舊格式），請人手核對' : String(err?.message ?? err) })
+      // ★ cwm-leaveasoffix-20260923 S9b：鎖等唔到唔好掉 raw Prisma 訊息落前端（用家睇唔明、以為壞咗）
+      failed.push({
+        employeeId: e.id,
+        error: err?.code === 'P2002'
+          ? '同月已有休息日發放記錄（舊格式），請人手核對'
+          : isLockBusy(err)
+            ? '該員工資料正喺度處理緊（計糧／批假），請幾秒後再試'
+            : String(err?.message ?? err),
+      })
     }
   }
 

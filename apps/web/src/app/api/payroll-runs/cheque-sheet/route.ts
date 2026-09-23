@@ -31,7 +31,8 @@ export async function GET(req: NextRequest) {
   const perms = auth.perms ?? []
 
   const ym = new URL(req.url).searchParams.get('month')
-  if (!ym || !/^\d{4}-\d{2}$/.test(ym)) {
+  // ★ cwm-leaveasoffix-20260923 S8-1：舊 regex 收 2026-13 → new Date 出 Invalid Date → getMonthRange RangeError → 500
+  if (!ym || !/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) {
     return NextResponse.json({ error: 'month 格式 YYYY-MM' }, { status: 400 })
   }
   const { start, end } = getMonthRange(new Date(`${ym}-01T00:00:00+08:00`))
@@ -94,7 +95,16 @@ export async function GET(req: NextRequest) {
     const confItems = filterConfidentialItems(run.items as any[], confScope)
     for (const item of confItems as any[]) {
       // ⚠️ guard 對 `detail.` 讀取逐個核引擎寫入層 — 變數名必須係 detail
-      const detail = item.detailJson ? JSON.parse(item.detailJson) : {}
+      // ★ cwm-leaveasoffix-20260923 S8-2：一條壞 detailJson 唔可以炸走成張支票表（舊版直接 500）。
+      //   壞就當 {} 出行，喺備註標出嚟俾人手跟。
+      let detailBroken = false
+      let detail: any = {}
+      try {
+        detail = item.detailJson ? JSON.parse(item.detailJson) : {}
+      } catch {
+        detailBroken = true
+        console.error('[cheque-sheet] detailJson 解析失敗', { payrollItemId: item.id })
+      }
       const salary = Number(detail.grossPay) || 0
       const mpf = Number(detail.mpf) || 0
       const net = Number(detail.netPay) || 0
@@ -118,6 +128,7 @@ export async function GET(req: NextRequest) {
 
       // 恆等式檢查 + 備註（tbDed > 0 嘅行加「含離職扣減 $X」— 手寫表冇呢欄，防人以為計錯）
       const notes: string[] = []
+      if (detailBroken) notes.push('⚠ 明細資料損壞，金額未必齊 — 請人手核對')   // ★ S8-2
       if (tbDed > 0) notes.push(`含離職扣減 $${tbDed.toFixed(2)}`)
       if (Math.abs(salary - mpf - tbDed - net) > 0.005) notes.push('⚠ Net Pay 截零（負數）')
       if (Math.abs(net + fare - total) > 0.005) notes.push('⚠ Net+FARE≠Total')

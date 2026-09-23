@@ -1327,8 +1327,14 @@ function getShiftCode(shift: Shift): string {
   // ★ cwm-tplgroup-20260923：當前公司預設展開，其他公司預設收起；切換公司即 reset
   const [expandedTplCompanies, setExpandedTplCompanies] = useState<Set<string>>(new Set())
   useEffect(() => {
-    setExpandedTplCompanies(new Set(currentCompanyId ? [currentCompanyId] : []))
-  }, [currentCompanyId])
+    // ★ cwm-leaveasoffix-20260923 S7-1：揀咗「全部」時 currentCompanyId 係 null，
+    //   舊版會變成空 Set → 所有公司組全部收埋，模版管理表面好似空咗。冇當前公司就全開。
+    setExpandedTplCompanies(
+      currentCompanyId
+        ? new Set([currentCompanyId])
+        : new Set(templatesByCompany.map(g => g.companyId)),
+    )
+  }, [currentCompanyId, templatesByCompany])
 
   // ★ Cell shift options for month view click menu
   const cellShiftOptions = useMemo(() => {
@@ -4648,8 +4654,12 @@ function getShiftCode(shift: Shift): string {
               </h3>
               {/* ★ cwm-tplgroup-20260923：標題唔再寫單一公司名（之前寫「— 匯樂」但列晒三間，會誤導） */}
               <p style={{ fontSize: 11, color: '#6b7280', margin: '0 0 12px 0' }}>
-                模版全公司共用（調鋪要揀得到其他公司嘅更次）。新增會加入
-                <strong>{currentCompanyName || '當前公司'}</strong>。
+                模版全公司共用（調鋪要揀得到其他公司嘅更次）。
+                {/* ★ cwm-leaveasoffix-20260923 S7-2：冇當前公司（揀咗「全部」）時唔可以講「新增會加入當前公司」——
+                    嗰陣 POST 會帶 companyId: null，而 GET 一定要 companyId → 新建嘅模版之後永遠攞唔返。 */}
+                {currentCompanyId
+                  ? <>新增會加入<strong>{currentCompanyName}</strong>。</>
+                  : <span style={{ color: '#b45309' }}>而家揀咗「全部」—— 要先揀一間診所先可以新增模版。</span>}
               </p>
 
               {templatesByCompany.map(g => {
@@ -4718,8 +4728,8 @@ function getShiftCode(shift: Shift): string {
                   </div>
                 )
               })}
-              {/* Add new template */}
-              <NewShiftTemplateForm
+              {/* Add new template —— ★ S7-2：冇當前公司就唔出表單（避免建出攞唔返嘅模版） */}
+              {currentCompanyId && <NewShiftTemplateForm
                 onCreated={async (tpl) => {
                   try {
                     const res = await fetch('/api/shifts/templates', {
@@ -4736,7 +4746,7 @@ function getShiftCode(shift: Shift): string {
                     }
                   } catch (e) { console.error('Create template error:', e) }
                 }}
-              />
+              />}
               {editingTemplate && (
                 <EditShiftTemplateForm
                   template={editingTemplate}
