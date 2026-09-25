@@ -15,6 +15,8 @@
 // ============================================================
 
 import { basePrisma } from '@/lib/prisma'
+import { ExternalApiError } from '@/lib/external-api'
+import { resolveClinicByCode } from '@/lib/external-clinic'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -57,11 +59,15 @@ export async function fetchDutyRoster(
 ): Promise<DutyRosterLookup> {
   if (!DATE_RE.test(dateStr)) throw new Error('invalid date')
 
-  const clinic = await basePrisma.clinic.findFirst({
-    where: { OR: [{ shortName: clinicCode }, { id: clinicCode }] },
-    select: { id: true, shortName: true },
-  })
-  if (!clinic) return { clinic: null, rows: [] }
+  // ★ cwi-final S5-5：消歧口徑 — 404 保持舊語義（route 層轉 404 CLINIC_NOT_FOUND）；
+  //   AMBIGUOUS_CLINIC_CODE（400）照拋（唔好隨機揀錯店出班表）
+  let clinic: { id: string; shortName: string | null }
+  try {
+    clinic = await resolveClinicByCode(clinicCode)
+  } catch (e) {
+    if (e instanceof ExternalApiError && e.code === 'CLINIC_NOT_FOUND') return { clinic: null, rows: [] }
+    throw e
+  }
 
   const dayStart = hkDateStart(dateStr)
   const dayEnd = hkDateEnd(dateStr)

@@ -42,7 +42,9 @@ import { Prisma } from '@prisma/client'
 
 // ★ 佔用口徑同 sync-availability-cache.ts 一致（cwc-rdchain：0=已約 102=改期；
 //   4=完成/-6=-7=取消一律唔計）
-const ACTIVE_BOOKING_STATUSES = [0, 102] as const
+// ★ cwi-final S5-7（W-8）：1=已到診（Arrived）— 病人已到店、位仍佔住，
+//   同 sync-availability-cache.ts:82-94 黑名單口徑一致（1 唔喺 RELEASED → 計佔用）
+export const ACTIVE_BOOKING_STATUSES = [0, 1, 102] as const
 const ACTIVE_HOLD_STATUSES = ['HELD', 'IN_APRICOT'] as const
 
 // ─── 小工具 ──────────────────────────────────────────────────────────

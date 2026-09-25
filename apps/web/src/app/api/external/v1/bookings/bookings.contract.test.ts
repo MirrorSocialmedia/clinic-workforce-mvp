@@ -79,6 +79,8 @@ const cacheRows: Any[] = []
 let locked = true
 const auditCreates: Any[] = []
 const keyUpdates: Any[] = []
+// ★ cwi-final S5-5：clinic 表可控（S5-5 消歧測試用）
+const clinicRows: Any[] = [{ id: 'cl-tkw', shortName: 'TKW', apricotClinicId: 'apr-clinic-1' }]
 
 const fakes = {
   $queryRaw: async (strings: Any) => {
@@ -93,10 +95,16 @@ const fakes = {
     create: async (args: Any) => { auditCreates.push(args.data); return {} },
   },
   clinic: {
-    findFirst: async () => ({ id: 'cl-tkw', shortName: 'TKW', apricotClinicId: 'apr-clinic-1' }),
-    findUnique: async () => ({ id: 'cl-tkw', apricotClinicId: 'apr-clinic-1' }),
+    // ★ cwi-final S5-5：resolveClinicByCode = findUnique(id) 先 → findMany(shortName)（唯一先過）
+    //   可控 rows（測試可加同簡稱第二間店）
+    findUnique: async ({ where }: Any) => clinicRows.find((r) => r.id === where.id) ?? null,
+    findMany: async ({ where }: Any) => clinicRows.filter((r) => r.shortName === where.shortName),
   },
-  provider: { findMany: async () => [{ apricotId: 'prov-1', name: 'Dr. T' }] },
+  provider: { findMany: async () => [{ id: 'p-1', name: 'Dr. T' }] },
+  // 單日 sync 會查 provider 帳號映射（Stage 2 口徑）
+  apricotPractitioner: { findMany: async () => [{ apricotId: 'prov-1', providerId: 'p-1', kind: 'PROVIDER' }] },
+  appointmentIndex: { findFirst: async () => null },
+  patientIndex: { upsert: async () => ({}) },
   bookingWriteLog: {
     findUnique: async ({ where }: Any) => writeLogs.get(where.idempotencyKey) ?? null,
     upsert: async ({ where, update, create }: Any) => {
@@ -108,6 +116,21 @@ const fakes = {
         writeLogs.set(key, row)
       }
       return writeLogs.get(key)
+    },
+    // ★ cwi-final S5-3①：remove 成功 → CREATE OK 行消耗（REMOVED）
+    updateMany: async ({ where, data }: Any) => {
+      let n = 0
+      for (const row of writeLogs.values()) {
+        const match =
+          (where.action == null || row.action === where.action) &&
+          (where.apricotApptId == null || row.apricotApptId === where.apricotApptId) &&
+          (where.status == null || row.status === where.status)
+        if (match) {
+          Object.assign(row, data)
+          n += 1
+        }
+      }
+      return { count: n }
     },
   },
   apricotDictionary: {
@@ -171,6 +194,8 @@ beforeEach(() => {
   cacheRows.length = 0
   auditCreates.length = 0
   keyUpdates.length = 0
+  clinicRows.length = 0
+  clinicRows.push({ id: 'cl-tkw', shortName: 'TKW', apricotClinicId: 'apr-clinic-1' })
   locked = true
   respond = (c) => {
     if (c.path.includes('checkClash')) return []
@@ -189,8 +214,8 @@ beforeEach(() => {
 
 // ── request 助手 ─────────────────────────────────────────────────────
 const BASE = 'http://localhost:3000/api/external/v1'
-function mkReq(method: string, url: string, opts: { key?: string; body?: Any } = {}): NextRequest {
-  const headers: Record<string, string> = {}
+function mkReq(method: string, url: string, opts: { key?: string; body?: Any; headers?: Record<string, string> } = {}): NextRequest {
+  const headers: Record<string, string> = { ...opts.headers }
   if (opts.key) headers['x-api-key'] = opts.key
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
   return new NextRequest(`${BASE}${url}`, { method, headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined })
@@ -230,6 +255,9 @@ const CreateBookingV1Schema = z.object({
   patientCode: z.string().nullable(),
   dayRefreshed: z.boolean(),
   syncedAt: z.string().nullable(),
+  // ★ cwi-final S5-3②/S5-1：重放 / 「先查後建」dedup 標記
+  replayed: z.boolean(),
+  deduped: z.boolean(),
 }).strict()
 
 // ── C.1 contract ─────────────────────────────────────────────────────
@@ -334,6 +362,27 @@ describe('POST /v1/bookings — 200 契約', () => {
     }
   })
 
+  it('S5-5：cuid 作 clinicCode → 200（精確匹配，不受同簡稱影響）', async () => {
+    // 加多間同簡稱店（模擬重複簡稱）— cuid 路都應該精確命中
+    clinicRows.push({ id: 'cl-tkw2', shortName: 'TKW', apricotClinicId: 'apr-clinic-2' })
+    const res = await POST(mkReq('POST', '/bookings', { key: KEY_MAIN, body: bookingBody({ clinicCode: 'cl-tkw' }) }))
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.apricotApptId, 'apt-new-1')
+    // payload 打去啱間店（apr-clinic-1 唔係 apr-clinic-2）
+    const post = calls.find((c) => c.path.endsWith('/booking-details') && c.method === 'POST')
+    assert.equal(post!.body.clinicId, 'apr-clinic-1')
+  })
+
+  it('S5-5：兩間同 shortName → 400 AMBIGUOUS_CLINIC_CODE（唔會隨機揀一間落錯店）', async () => {
+    clinicRows.push({ id: 'cl-tkw2', shortName: 'TKW', apricotClinicId: 'apr-clinic-2' })
+    const res = await POST(mkReq('POST', '/bookings', { key: KEY_MAIN, body: bookingBody({ clinicCode: 'TKW' }) }))
+    assert.equal(res.status, 400)
+    const b = await res.json()
+    assert.equal(b.code, 'AMBIGUOUS_CLINIC_CODE')
+    assert.equal(createCallCount(), 0)
+  })
+
   it('400 各款（格式/範圍/patient）', async () => {
     const cases: Any[] = [
       bookingBody({ idempotencyKey: 'short' }),
@@ -387,7 +436,6 @@ describe('PUT /v1/bookings/{id}/status', () => {
     assert.equal((await res.json()).code, 'BAD_REQUEST')
     assert.equal(calls.length, 0)
   })
-
   it('status=102 → 200 { bookingStatus:102, dayRefreshed:true }', async () => {
     const res = await statusRoute.PUT(
       mkReq('PUT', `/bookings/apt-1/status?status=102&date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }),
@@ -421,6 +469,30 @@ describe('PUT /v1/bookings/{id}/status', () => {
       assert.equal(res.status, 503)
       assert.equal((await res.json()).code, 'WRITE_DISABLED')
     })
+  })
+
+  it('S5-2 對接（W 側 F2）：idempotency-key: resched-<holdId> 同 key 重試 → 只打一次 updateStatus、重放回舊結果', async () => {
+    const headers = { 'idempotency-key': 'resched-hold-abc123' } // W 側格式：resched-${hold.id}
+    const r1 = await statusRoute.PUT(
+      mkReq('PUT', `/bookings/apt-1/status?status=102&date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN, headers }),
+      { params: { id: 'apt-1' } },
+    )
+    assert.equal(r1.status, 200)
+    const b1 = await r1.json()
+    assert.equal(b1.bookingStatus, 102)
+    assert.equal(b1.dayRefreshed, true)
+    assert.equal(calls.filter((c) => c.path.includes('updateStatus?status=102')).length, 1)
+
+    // 重試（timeout 重發）→ 冪等重放：唔重複打 Apricot
+    const r2 = await statusRoute.PUT(
+      mkReq('PUT', `/bookings/apt-1/status?status=102&date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN, headers }),
+      { params: { id: 'apt-1' } },
+    )
+    assert.equal(r2.status, 200)
+    const b2 = await r2.json()
+    assert.equal(b2.bookingStatus, 102)
+    assert.equal(b2.dayRefreshed, false, '重放 = 無新寫入')
+    assert.equal(calls.filter((c) => c.path.includes('updateStatus?status=102')).length, 1)
   })
 
   it('缺 date/clinicCode → 400', async () => {
@@ -476,26 +548,66 @@ describe('POST /v1/bookings/{id}/reschedule', () => {
     oldDate: BOOK_DATE,
     patient: { patientApricotId: 'pat-1' },
   })
+  // ★ cwi-final S5-2：Idempotency-Key 必填（W 側 F2 送 idempotency-key: sha256(flowToken)）
+  const IDEM = { 'idempotency-key': sha('flow-token-test-0001') }
 
-  it('200 { oldApptId, newApptId, dayRefreshed:true }', async () => {
+  it('S5-2：缺 Idempotency-Key → 400（必填）', async () => {
     const res = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body() }), { params: { id: 'apt-old' } })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).code, 'BAD_REQUEST')
+    assert.equal(calls.length, 0, '未過守門 = 零 Apricot call')
+  })
+
+  it('200 { oldApptId, newApptId, dayRefreshed:true, replayed:false }；次序 checkClash→102→create', async () => {
+    const res = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body(), headers: IDEM }), { params: { id: 'apt-old' } })
     assert.equal(res.status, 200)
     const b = await res.json()
+    assert.equal(b.v, 1)
     assert.equal(b.oldApptId, 'apt-old')
     assert.equal(b.newApptId, 'apt-new-1')
     assert.equal(b.dayRefreshed, true)
+    assert.ok(b.syncedAt)
+    assert.equal(b.replayed, false)
+    // 次序：checkClash 先、後 102、最後 create（S5-2 原子化）
+    const idxClash = calls.findIndex((c) => c.path.includes('checkClash'))
+    const idx102 = calls.findIndex((c) => c.path.includes('updateStatus?status=102'))
+    const idxCreate = calls.findIndex((c) => c.path.endsWith('/booking-details') && c.method === 'POST')
+    assert.ok(idxClash >= 0 && idx102 > idxClash && idxCreate > idx102, '應該 checkClash→102→create')
   })
 
-  it('§6：新單 fail → 502 + WriteLog ERROR:create_after_102（唔自動 rollback）', async () => {
+  it('S5-2：同 key 重試 → 200 replayed:true（只一張新單）', async () => {
+    const r1 = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body(), headers: IDEM }), { params: { id: 'apt-old' } })
+    assert.equal(r1.status, 200)
+    const r2 = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body(), headers: IDEM }), { params: { id: 'apt-old' } })
+    assert.equal(r2.status, 200)
+    const b2 = await r2.json()
+    assert.equal(b2.replayed, true)
+    assert.equal(b2.newApptId, 'apt-new-1')
+    assert.equal(createCallCount(), 1, '重放 = 只一張新單')
+  })
+
+  it('S5-2：新時段被佔 → 409 SLOT_TAKEN + 舊單未郁（零 102）', async () => {
+    const prev = respond
+    respond = (c) => (c.path.includes('checkClash') ? [{ x: 1 }] : prev(c))
+    const res = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body(), headers: IDEM }), { params: { id: 'apt-old' } })
+    assert.equal(res.status, 409)
+    const b = await res.json()
+    assert.equal(b.code, 'SLOT_TAKEN')
+    assert.equal(calls.filter((c) => c.path.includes('updateStatus?status=102')).length, 0, 'clash = 舊單未郁')
+    assert.equal(createCallCount(), 0)
+  })
+
+  it('§6：新單 fail → 502 RESCHEDULE_PARTIAL（帶 oldApptId）+ WriteLog ERROR:create_after_102（唔自動 rollback）', async () => {
     const prev = respond
     respond = (c) => {
       if (c.path.endsWith('/booking-details') && c.method === 'POST') throw new Error('APRICOT_HTTP_422: filled')
       return prev(c)
     }
-    const res = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body() }), { params: { id: 'apt-old' } })
+    const res = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body(), headers: IDEM }), { params: { id: 'apt-old' } })
     assert.equal(res.status, 502)
     const b = await res.json()
-    assert.match(b.code, /^APRICOT_ERROR:/)
+    assert.equal(b.code, 'RESCHEDULE_PARTIAL')
+    assert.equal(b.oldApptId, 'apt-old', '帶 oldApptId 俾 wa-inbox 出 StaffNotice')
     assert.ok([...writeLogs.values()].some((l) => l.status === 'ERROR:create_after_102'))
     // 舊單確實已標 102（殘留態成立）
     assert.ok(calls.some((c) => c.path.includes('updateStatus?status=102')))
@@ -505,7 +617,7 @@ describe('POST /v1/bookings/{id}/reschedule', () => {
 
   it('503 WRITE_DISABLED（flag off）', async () => {
     await withWriteFlag('0', async () => {
-      const res = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body() }), { params: { id: 'apt-old' } })
+      const res = await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', { key: KEY_MAIN, body: body(), headers: IDEM }), { params: { id: 'apt-old' } })
       assert.equal(res.status, 503)
       assert.equal((await res.json()).code, 'WRITE_DISABLED')
     })
@@ -570,6 +682,7 @@ describe('audit 零 PII + WriteLog 全動作有底（§6）', () => {
     await removeRoute.PUT(mkReq('PUT', `/bookings/apt-9/remove?date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }), { params: { id: 'apt-9' } })
     await rescheduleRoute.POST(mkReq('POST', '/bookings/apt-old/reschedule', {
       key: KEY_MAIN,
+      headers: { 'idempotency-key': sha('flow-token-test-0002') },
       body: { v: 1, clinicCode: 'TKW', providerApricotId: 'prov-1', date: addDaysStr(BOOK_DATE, 1), start: '15:00', durationMin: 30, oldDate: BOOK_DATE, patient: { patientApricotId: 'pat-1' } },
     }), { params: { id: 'apt-old' } })
 
@@ -577,9 +690,12 @@ describe('audit 零 PII + WriteLog 全動作有底（§6）', () => {
     for (const a of ['CREATE', 'STATUS_102', 'STATUS_-7', 'REMOVE', 'RESCHEDULE']) {
       assert.ok(actions.has(a), `WriteLog 缺 action：${a}`)
     }
-    // 🔴 零 PII：所有 log row 只白名單欄
+    // 🔴 零 PII：所有 log row 只白名單欄（★ S5-3②：CREATE 路可帶 requestHash）
+    const ALLOWED = new Set(['action', 'apricotApptId', 'createdAt', 'id', 'idempotencyKey', 'requestedBy', 'status', 'requestHash'])
     for (const row of writeLogs.values()) {
-      assert.deepEqual(Object.keys(row).sort(), ['action', 'apricotApptId', 'createdAt', 'id', 'idempotencyKey', 'requestedBy', 'status'])
+      for (const k of Object.keys(row)) {
+        assert.ok(ALLOWED.has(k), `WriteLog row 有白名單外欄：${k}`)
+      }
       assert.equal(typeof row.requestedBy, 'string')
       assert.ok(!JSON.stringify(row).includes('91234567'), 'WriteLog 含電話')
     }

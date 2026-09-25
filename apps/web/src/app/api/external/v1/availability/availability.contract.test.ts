@@ -85,7 +85,9 @@ const fakes = {
     create: async (args: Any) => { auditCreates.push(args.data); return {} },
   },
   clinic: {
-    findFirst: async () => (clinicFound ? { id: 'cl-tkw', shortName: 'TKW' } : null),
+    // ★ cwi-final S5-5：resolveClinicByCode = findUnique(id) 先 → findMany(shortName)
+    findUnique: async ({ where }: Any) => (clinicFound && where.id === 'cl-tkw' ? { id: 'cl-tkw', shortName: 'TKW' } : null),
+    findMany: async ({ where }: Any) => (clinicFound && where.shortName === 'TKW' ? [{ id: 'cl-tkw', shortName: 'TKW' }] : []),
   },
   availabilityCache: {
     findMany: async (args: Any) =>

@@ -27,9 +27,12 @@ import {
 //           patient: { patientApricotId } | { name, phone },
 //           providerApricotId, visitReasonId?, remarks? }
 //
-//   200 { v:1, oldApptId, newApptId, dayRefreshed:true, syncedAt }
-//   409 SLOT_TAKEN（新時段 clash）｜ 422 NEW_PATIENT_DISABLED
-//   503 WRITE_DISABLED ｜ 502 APRICOT_ERROR:{step}
+//   200 { v:1, oldApptId, newApptId, dayRefreshed:true, syncedAt, replayed:false }
+//       （重放：replayed:true，無新寫入）
+//   Header: Idempotency-Key（★ S5-2 必填，8–128 字）
+//   400 參數錯（含缺 Idempotency-Key）｜ 409 SLOT_TAKEN（新時段 clash，舊單未郁）/ IN_PROGRESS
+//   422 NEW_PATIENT_DISABLED ｜ 503 WRITE_DISABLED
+//   502 RESCHEDULE_PARTIAL（102 成功但新單 fail，帶 oldApptId）／ APRICOT_ERROR:{step}
 //
 // 原子性（MD §3/§6）：同一把 lock 內 102（舊單標記）→ create（新單）。
 //   新單 fail → WriteLog ERROR:create_after_102 + alert，**唔自動 rollback**
@@ -49,6 +52,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const oldApricotApptId = params.id
     if (!oldApricotApptId || oldApricotApptId.length > 128 || /[^\w-]/.test(oldApricotApptId)) {
       throw new ExternalApiError(400, 'invalid apricotApptId', 'BAD_REQUEST')
+    }
+
+    // ★ cwi-final S5-2：Idempotency-Key 必填（8–128 字；W 側 F2 送 sha256(flowToken)）—
+    //   reschedule 原子化冪等錨（重放回舊單 / 殘留態 502 MANUAL_RECONCILE）
+    const idemKey = (req.headers.get('Idempotency-Key') ?? '').trim()
+    if (idemKey.length < 8 || idemKey.length > 128) {
+      throw new ExternalApiError(400, 'Idempotency-Key header required (8-128 chars)', 'BAD_REQUEST')
     }
 
     let body: Record<string, unknown>
@@ -99,6 +109,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     try {
       const result = await rescheduleBooking({
         oldApricotApptId,
+        idempotencyKey: idemKey,
         clinicCuid: clinic.id,
         apricotClinicId: clinic.apricotClinicId,
         providerApricotId,

@@ -13,7 +13,7 @@
 
 import { NextRequest } from 'next/server'
 import { ExternalApiError, isValidDateStr } from '@/lib/external-api'
-import { basePrisma } from '@/lib/prisma'
+import { resolveClinicByCode } from '@/lib/external-clinic'
 import { todayHK, addDaysStr } from '@/lib/hk-date'
 import {
   isApricotWriteEnabled,
@@ -47,13 +47,8 @@ export interface ClinicRef {
 
 /** clinicCode = shortName（旺/仁/銅）或 cuid — 同 /v1/availability 口徑 */
 export async function resolveClinic(clinicCode: string): Promise<ClinicRef> {
-  const clinic = await basePrisma.clinic.findFirst({
-    where: { OR: [{ shortName: clinicCode }, { id: clinicCode }] },
-    select: { id: true, shortName: true, apricotClinicId: true },
-  })
-  if (!clinic) {
-    throw new ExternalApiError(404, 'clinic not found', 'CLINIC_NOT_FOUND')
-  }
+  // ★ cwi-final S5-5：cuid 優先 + shortName 重複 → 400 AMBIGUOUS_CLINIC_CODE（唔好隨機揀錯店）
+  const clinic = await resolveClinicByCode(clinicCode)
   const apricotClinicId = clinic.apricotClinicId
   if (!apricotClinicId) {
     throw new ExternalApiError(400, 'clinic has no Apricot mapping', 'BAD_REQUEST')

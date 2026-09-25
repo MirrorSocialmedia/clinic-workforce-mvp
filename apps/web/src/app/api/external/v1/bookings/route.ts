@@ -110,6 +110,9 @@ export async function POST(req: NextRequest) {
         patientCode: result.patientCode,
         dayRefreshed: result.dayRefreshed,
         syncedAt: result.syncedAt,
+        // ★ cwi-final S5-3②/S5-1：replayed 欄補齊（之前 route 冇回）；deduped = 「先查後建」對賬
+        replayed: result.replayed,
+        deduped: result.deduped === true,
       })
     } catch (e) {
       throw mapWriteErrorToExternal(e)

@@ -97,8 +97,14 @@ const fakes = {
         .map(({ phoneHash, ...rest }) => ({ ...rest, syncedAt: apptSyncedAt })),
   },
   clinic: {
-    findMany: async (args: Any) =>
-      [{ id: 'cl-tkw', shortName: 'TKW' }].filter(c => args.where.id?.in?.includes(c.id) ?? false),
+    // ★ cwi-final S5-5：resolveClinicByCode = findUnique(id) 先 → findMany(shortName)
+    findUnique: async ({ where }: Any) =>
+      [{ id: 'cl-tkw', shortName: 'TKW' }].find(c => c.id === where.id) ?? null,
+    findMany: async (args: Any) => {
+      const rows = [{ id: 'cl-tkw', shortName: 'TKW' }]
+      if (args.where.shortName !== undefined) return rows.filter(c => c.shortName === args.where.shortName)
+      return rows.filter(c => args.where.id?.in?.includes(c.id) ?? false)
+    },
   },
 }
 

@@ -39,7 +39,11 @@ let clinicFound = true
 const fakes = {
   externalApiKey: { findMany: async () => KEY_ROWS, update: async () => ({}) },
   externalApiAudit: { create: async (args: Any) => { auditCreates.push(args.data); return {} } },
-  clinic: { findFirst: async () => (clinicFound ? CLINIC : null) },
+  clinic: {
+    // ★ cwi-final S5-5：resolveClinicByCode = findUnique(id) 先 → findMany(shortName)
+    findUnique: async ({ where }: Any) => (clinicFound && where.id === CLINIC.id ? CLINIC : null),
+    findMany: async ({ where }: Any) => (clinicFound && where.shortName === CLINIC.shortName ? [CLINIC] : []),
+  },
   shift: { findMany: async () => EMP_SHIFTS },
   providerShift: { findMany: async () => PROVIDER_SHIFTS },
 }

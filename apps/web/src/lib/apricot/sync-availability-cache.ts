@@ -90,6 +90,8 @@ const PATHNAME = '/api/external/v1/availability' // audit/monitor 識別用（�
 //     0=Booked · 1=Arrived · 102=Rescheduled           → 計佔用
 //     4=Completed/Checkout · -3 · -6 · -7（No Show／取消）→ 已釋放
 //   ⚠️ 只有【明確知道「完咗／唔嚟」】先准入 RELEASED —— 有疑問一律唔加。
+// ★ cwi-final S5-7（W-8）：同 bookable-slots-service.ts ACTIVE_BOOKING_STATUSES=[0,1,102]
+//   同口徑 — 1=已到診仍佔位（黑名單法：1 唔喺 RELEASED → 自動計佔用）。
 const RELEASED_BOOKING_STATUSES = new Set([4, -3, -6, -7])
 const KNOWN_BOOKING_STATUSES = new Set([0, 1, 4, 102, -3, -6, -7])
 

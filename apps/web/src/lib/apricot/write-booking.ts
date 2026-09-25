@@ -21,6 +21,7 @@
 //   - DICTIONARY_PATHS（兩條加 ?size=1024 防預設分頁截斷）
 // ============================================================
 
+import { createHash } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { ExternalApiError } from '@/lib/external-api'
 import { withApricotLock } from './lock'
@@ -79,6 +80,8 @@ export class ApricotWriteError extends Error {
     readonly code: string,
     readonly step: WriteStep | null,
     message: string,
+    /** 額外 metadata（零 PII）— route 層可帶落 response（如 RESCHEDULE_PARTIAL.oldApptId） */
+    readonly extra?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'ApricotWriteError'
@@ -163,6 +166,8 @@ export interface CreateBookingResult {
   syncedAt: string | null
   /** true = 冪等重放（同 apricotApptId，無新寫入、無 cache 重刷） */
   replayed: boolean
+  /** ★ cwi-final S5-1（W-1）：true = 「先查後建」dedup（clash 單係同一病人同一時段 → 對賬回舊單，唔再建） */
+  deduped?: boolean
 }
 
 export interface MutationResult {
@@ -172,6 +177,8 @@ export interface MutationResult {
 
 export interface RescheduleInput {
   oldApricotApptId: string
+  /** ★ cwi-final S5-2：consumer Idempotency-Key（必填，8–128 字）— logKey 基底（廢 Date.now()） */
+  idempotencyKey: string
   clinicCuid: string
   apricotClinicId: string
   providerApricotId: string
@@ -200,18 +207,45 @@ type LogShape = {
   apricotApptId?: string | null
   status: string
   requestedBy: string
+  /** ★ cwi-final S5-3②：payload fingerprint（只有 CREATE 路寫；唔傳 = 唔郁該欄） */
+  requestHash?: string
+}
+
+/** ★ S5-3②：殘留 IN_PROGRESS 超時 = 10 分鐘（之後當 ERROR:create → 502 MANUAL_RECONCILE） */
+const STALE_IN_PROGRESS_MS = 10 * 60 * 1000
+
+/**
+ * ★ S5-3②：請求 hash（同 key 重放 hash 必須一致，唔同 = IDEMPOTENCY_MISMATCH）。
+ * 入 hash：店/醫生/日期/時段/時長/病人 — 落單 payload 全部決定因素。
+ */
+function computeRequestHash(input: CreateBookingInput): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        clinicCuid: input.clinicCuid,
+        providerApricotId: input.providerApricotId,
+        dateHk: input.dateHk,
+        startHk: input.startHk,
+        durationMin: input.durationMin,
+        patient: input.patient,
+      }),
+      'utf8',
+    )
+    .digest('hex')
 }
 
 async function upsertWriteLog(idempotencyKey: string, shape: LogShape): Promise<void> {
+  const hashPart = shape.requestHash !== undefined ? { requestHash: shape.requestHash } : {}
   await prisma.bookingWriteLog.upsert({
     where: { idempotencyKey },
-    update: { action: shape.action, apricotApptId: shape.apricotApptId ?? null, status: shape.status, requestedBy: shape.requestedBy },
+    update: { action: shape.action, apricotApptId: shape.apricotApptId ?? null, status: shape.status, requestedBy: shape.requestedBy, ...hashPart },
     create: {
       idempotencyKey,
       action: shape.action,
       apricotApptId: shape.apricotApptId ?? null,
       status: shape.status,
       requestedBy: shape.requestedBy,
+      ...hashPart,
     },
   })
 }
@@ -313,18 +347,41 @@ export async function createBooking(input: CreateBookingInput, opts: EngineOpts 
 
 /** 唔攞 lock 版（reschedule 喺同一把 lock 內重用；skipDaySync = caller 自己處理日 sync） */
 async function createBookingLocked(input: CreateBookingInput, call: WriteCallFn, opts: { skipDaySync?: boolean } = {}): Promise<CreateBookingResult> {
-  // 1) 冪等查
+  // 1) 冪等查（★ S5-3①②：REMOVED 已消耗 / IN_PROGRESS 並發或殘留 / OK + hash 核對）
   const prior = await prisma.bookingWriteLog.findUnique({ where: { idempotencyKey: input.idempotencyKey } })
   if (prior) {
-    if (prior.status === 'OK' && prior.apricotApptId) {
-      return {
-        apricotApptId: prior.apricotApptId,
-        patientApricotId: null,
-        patientCode: null,
-        dayRefreshed: false,
-        syncedAt: null,
-        replayed: true,
+    // ★ S5-3①：remove 後同 key 唔再回舊單（key 已消耗 — 逼 consumer 用新 key）
+    if (prior.status === 'REMOVED') {
+      throw new ApricotWriteError('IDEMPOTENCY_KEY_CONSUMED', null, 'booking was removed — use a new idempotency key')
+    }
+    // ★ S5-3②：同 key 正喺寫入（並發）— 409 retryable；殘留 > 10 分鐘 → 當 ERROR:create（502）
+    if (prior.status === 'IN_PROGRESS') {
+      if (Date.now() - prior.createdAt.getTime() > STALE_IN_PROGRESS_MS) {
+        throw new ApricotWriteError(
+          'MANUAL_RECONCILE',
+          'create',
+          `idempotency key ${input.idempotencyKey} IN_PROGRESS > 10min (stale) — verify in Apricot manually`,
+        )
       }
+      throw new ApricotWriteError('IN_PROGRESS', 'create', 'same idempotency key write in progress — retry after a few seconds')
+    }
+    if (prior.status === 'OK') {
+      // ★ S5-3②：同 key 同 payload（hash 一致）先回舊單；hash 唔同（包含 legacy 無 hash 行）→ 拒
+      const reqHash = computeRequestHash(input)
+      if (prior.requestHash !== reqHash) {
+        throw new ApricotWriteError('IDEMPOTENCY_MISMATCH', null, 'idempotency key reused with different payload — use a new idempotency key')
+      }
+      if (prior.apricotApptId) {
+        return {
+          apricotApptId: prior.apricotApptId,
+          patientApricotId: null,
+          patientCode: null,
+          dayRefreshed: false,
+          syncedAt: null,
+          replayed: true,
+        }
+      }
+      throw new ApricotWriteError('MANUAL_RECONCILE', null, `idempotency key ${input.idempotencyKey} prior state OK without apricotApptId — verify manually`)
     }
     if (prior.status === 'SLOT_TAKEN') {
       throw new ApricotWriteError('SLOT_TAKEN', 'check_clash', 'slot taken (idempotent replay)')
@@ -347,7 +404,17 @@ async function createBookingLocked(input: CreateBookingInput, call: WriteCallFn,
   }
   const eUtc = hkToUtc(input.dateHk, endHhmm)
 
-  // 3) checkClash
+  // 3) ★ S5-3②：第一道 Apricot call 之前先落 IN_PROGRESS + requestHash（並發錨 + 冪等 hash）
+  const requestHash = computeRequestHash(input)
+  try {
+    await upsertWriteLog(input.idempotencyKey, { action: 'CREATE', status: 'IN_PROGRESS', requestedBy: input.requestedBy, requestHash })
+  } catch (err) {
+    // log 寫唔到就無法保證冪等 → 唔打 Apricot，先停（寧止漏單）
+    console.error('[write-booking] WriteLog(IN_PROGRESS) 失敗 — abort before Apricot call', err)
+    throw new ApricotWriteError('MANUAL_RECONCILE', 'log', 'cannot write IN_PROGRESS write-log — abort before Apricot call')
+  }
+
+  // 4) checkClash
   let clashing = false
   try {
     clashing = await checkClash(input.providerApricotId, input.apricotClinicId, sUtc, eUtc, call)
@@ -359,7 +426,41 @@ async function createBookingLocked(input: CreateBookingInput, call: WriteCallFn,
     throw e
   }
   if (clashing) {
-    await upsertWriteLog(input.idempotencyKey, { action: 'CREATE', status: 'SLOT_TAKEN', requestedBy: input.requestedBy }).catch((err) =>
+    // ★ cwi-final S5-1（W-1）：clash 係同一病人同一時段 → 當已落單（對賬），唔再建
+    //   （上次寫入其實成功、wa-inbox timeout 咗用新 key 重試嘅場合。
+    //   AppointmentIndex 由 day sync 更新 — 未 sync 就照回 SLOT_TAKEN，
+    //   wa-inbox 會顯示「時段已被佔 — 請先喺 Apricot 核對係咪已經有呢位病人嘅單」）
+    if ('apricotId' in input.patient) {
+      const same = await prisma.appointmentIndex.findFirst({
+        where: {
+          providerApricotId: input.providerApricotId,
+          date: input.dateHk,
+          startTime: input.startHk,
+          patientApricotId: input.patient.apricotId,
+          bookingStatus: { in: [0, 1] },
+        },
+        select: { apricotApptId: true },
+      })
+      if (same) {
+        await upsertWriteLog(input.idempotencyKey, {
+          action: 'CREATE',
+          apricotApptId: same.apricotApptId,
+          status: 'OK',
+          requestedBy: input.requestedBy,
+          requestHash,
+        }).catch((err) => console.error('[write-booking] WriteLog(OK dedup) 失敗', err))
+        return {
+          apricotApptId: same.apricotApptId,
+          patientApricotId: input.patient.apricotId,
+          patientCode: null,
+          dayRefreshed: false,
+          syncedAt: null,
+          replayed: true,
+          deduped: true,
+        }
+      }
+    }
+    await upsertWriteLog(input.idempotencyKey, { action: 'CREATE', status: 'SLOT_TAKEN', requestedBy: input.requestedBy, requestHash }).catch((err) =>
       console.error('[write-booking] WriteLog(SLOT_TAKEN) 失敗', err),
     )
     throw new ApricotWriteError('SLOT_TAKEN', 'check_clash', 'slot taken: Apricot checkClash found existing booking')
@@ -394,9 +495,9 @@ async function createBookingLocked(input: CreateBookingInput, call: WriteCallFn,
     throw new ApricotWriteError('MANUAL_RECONCILE', 'create', 'create succeeded but booking id not identifiable in response — verify in Apricot manually')
   }
 
-  // 6) WriteLog(OK) — 冪等錨
+  // 6) WriteLog(OK) — 冪等錨（★ S5-3②：帶 requestHash）
   try {
-    await upsertWriteLog(input.idempotencyKey, { action: 'CREATE', apricotApptId: ext.apricotApptId, status: 'OK', requestedBy: input.requestedBy })
+    await upsertWriteLog(input.idempotencyKey, { action: 'CREATE', apricotApptId: ext.apricotApptId, status: 'OK', requestedBy: input.requestedBy, requestHash })
   } catch {
     // 單已落但 OK 記錄寫唔到 → 留殘留記錄（帶 apricotApptId 俾 ops 對號）再報 MANUAL_RECONCILE
     await upsertWriteLog(input.idempotencyKey, { action: 'CREATE', apricotApptId: ext.apricotApptId, status: 'ERROR:log', requestedBy: input.requestedBy }).catch(() => {})
@@ -443,6 +544,12 @@ export interface StatusMutationOpts extends EngineOpts {
   apricotClinicId: string
   /** 單嘅 HK 日期（single-day sync 用 — consumer 傳入） */
   dateHk: string
+  /**
+   * ★ cwi-final S5-2 對接（W 側 F2）：consumer 傳 Idempotency-Key（8–128 字）→
+   * 做 WriteLog 穩定 key（取代 Date.now() 合成 key）+ OK 重放（唔重複打 Apricot）。
+   * 唔傳 = 舊行為（合成 key，每次新行 — 只留底帳）。
+   */
+  idempotencyKey?: string
 }
 
 /** PUT updateStatus（白名單 102 / -7）。同一把 lock 內：call → WriteLog → 單日 sync */
@@ -452,10 +559,23 @@ export async function updateBookingStatus(apricotApptId: string, status: number,
   }
   const call = opts.callFn ?? defaultCall
   const action = status === 102 ? 'STATUS_102' : 'STATUS_-7'
-  // 合成 key（呢類 action 無 consumer idempotencyKey — 唯一底帳）
-  const logKey = `${action}|${apricotApptId}|${Date.now()}`
+  // 合成 key（consumer 冇傳 idempotencyKey 時 — 唯一底帳；★ S5-2：有傳就用佢，廢 Date.now()）
+  const logKey = opts.idempotencyKey ?? `${action}|${apricotApptId}|${Date.now()}`
 
   const outcome = await withApricotLock(async () => {
+    // ★ S5-2：consumer key 冪等重放 — 同 key 同單同狀態已 OK → 直接回舊結果（唔重複打 Apricot）
+    if (opts.idempotencyKey) {
+      const prior = await prisma.bookingWriteLog.findUnique({ where: { idempotencyKey: logKey } })
+      if (prior) {
+        if (prior.action !== action || prior.apricotApptId !== apricotApptId) {
+          throw new ApricotWriteError('IDEMPOTENCY_MISMATCH', null, 'idempotency key reused for a different status action — use a new key')
+        }
+        if (prior.status === 'OK') {
+          return { bookingStatus: status, dayRefreshed: false, syncedAt: null }
+        }
+        // ERROR:* → 落返去重行（upsert 覆蓋同一行）
+      }
+    }
     try {
       await call(BOOKING_STATUS_PATH(apricotApptId, status))
     } catch (e) {
@@ -475,7 +595,7 @@ export async function updateBookingStatus(apricotApptId: string, status: number,
 /** PUT remove（§0：method 係 PUT，body ["<id>"]）。同一把 lock 內 */
 export async function removeBooking(apricotApptId: string, opts: StatusMutationOpts): Promise<{ removed: true } & MutationResult> {
   const call = opts.callFn ?? defaultCall
-  const logKey = `REMOVE|${apricotApptId}|${Date.now()}`
+  const logKey = opts.idempotencyKey ?? `REMOVE|${apricotApptId}|${Date.now()}`
 
   const outcome = await withApricotLock(async () => {
     try {
@@ -487,6 +607,12 @@ export async function removeBooking(apricotApptId: string, opts: StatusMutationO
     await upsertWriteLog(logKey, { action: 'REMOVE', apricotApptId, status: 'OK', requestedBy: opts.requestedBy }).catch((err) =>
       console.error('[write-booking] WriteLog(OK remove) 失敗', err),
     )
+    // ★ cwi-final S5-3①：remove 成功 → 該單 CREATE key 消耗（同 key 重試 → 409 IDEMPOTENCY_KEY_CONSUMED，
+    //   唔好回舊單 — 舊單已唔存在）
+    await prisma.bookingWriteLog.updateMany({
+      where: { action: 'CREATE', apricotApptId, status: 'OK' },
+      data: { status: 'REMOVED' },
+    }).catch((err) => console.error('[write-booking] WriteLog(REMOVED) 失敗', err))
     const day = await refreshDay(opts, call)
     return { removed: true as const, ...day }
   })
@@ -513,30 +639,100 @@ async function refreshDay(opts: StatusMutationOpts, call: WriteCallFn): Promise<
   }
 }
 
+export interface RescheduleResult {
+  oldApptId: string
+  newApptId: string
+  dayRefreshed: boolean
+  syncedAt: string | null
+  /** true = 冪等重放（同 key 已完成 — 直接回舊結果，無新寫入） */
+  replayed: boolean
+}
+
 /**
- * 改期（MD §3）：同一把 lock 內 102（舊單標記）→ create（新單）。
- * 新單 fail → WriteLog(ERROR:create_after_102) + ALERT，**唔自動 rollback**（已知殘留態，人手跟）。
+ * 改期（★ cwi-final S5-2 原子化 + 冪等）：同一把 lock 內，次序：
+ *   冪等查（key|ok → 重放回舊單；key|after102 → 502 MANUAL_RECONCILE）
+ *   → IN_PROGRESS 底（S5-3② 基建）
+ *   → ① checkClash(新時段)（clash 即 409 — 舊單未郁）
+ *   → ② 舊單標 102（寫 key|after102）
+ *   → ③ create 新單（idempotencyKey: key|create）
+ *   → ④ refresh 兩日
+ *   → ⑤ 寫 key|ok（冪等錨）
+ *
+ *   ② 成功但 ③ 失敗 → ALERT（workforce 現有 alert 機制）+ RESCHEDULE_PARTIAL（wa-inbox StaffNotice）；
+ *   **唔自動 rollback**（已知殘留態，人手跟 — 寧願人手都唔好自動亂郁）。
  */
-export async function rescheduleBooking(input: RescheduleInput, opts: EngineOpts = {}): Promise<{ oldApptId: string; newApptId: string } & MutationResult> {
+export async function rescheduleBooking(input: RescheduleInput, opts: EngineOpts = {}): Promise<RescheduleResult> {
   const call = opts.callFn ?? defaultCall
-  const logKey = `RESCHEDULE|${input.oldApricotApptId}|${Date.now()}`
+  const key = input.idempotencyKey
 
   const outcome = await withApricotLock(async () => {
-    // 1) 舊單標 102（改期標記）
+    // 冪等查：key|ok = 已完成（直接回舊單）；key|after102 = 舊單已 102 但新單狀態未知 → 502
+    const okLog = await prisma.bookingWriteLog.findUnique({ where: { idempotencyKey: `${key}|ok` } })
+    if (okLog && okLog.status === 'OK' && okLog.apricotApptId) {
+      return { oldApptId: input.oldApricotApptId, newApptId: okLog.apricotApptId, dayRefreshed: false, syncedAt: null, replayed: true }
+    }
+    const after102 = await prisma.bookingWriteLog.findUnique({ where: { idempotencyKey: `${key}|after102` } })
+    if (after102) {
+      throw new ApricotWriteError(
+        'MANUAL_RECONCILE',
+        'create',
+        `reschedule ${key}: old booking already 102-marked but final state unknown — verify in Apricot manually`,
+      )
+    }
+    // 進行中／殘留 IN_PROGRESS（S5-3② 口徑：10 分鐘內 = 409 retryable；之後 = 502）
+    const inprog = await prisma.bookingWriteLog.findUnique({ where: { idempotencyKey: key } })
+    if (inprog) {
+      if (inprog.status === 'IN_PROGRESS') {
+        if (Date.now() - inprog.createdAt.getTime() > STALE_IN_PROGRESS_MS) {
+          throw new ApricotWriteError('MANUAL_RECONCILE', null, `reschedule ${key}: IN_PROGRESS > 10min (stale) — verify in Apricot manually`)
+        }
+        throw new ApricotWriteError('IN_PROGRESS', 'check_clash', 'reschedule in progress — retry after a few seconds')
+      }
+      // 其他狀態（SLOT_TAKEN / ERROR:check_clash / ERROR:status）→ 落返去重行（安全：checkClash 係只讀）
+    }
+
+    // ★ 寫入前先落 IN_PROGRESS（S5-3② 基建）
+    await upsertWriteLog(key, { action: 'RESCHEDULE', status: 'IN_PROGRESS', requestedBy: input.requestedBy })
+
+    // 時間（新時段）
+    const sUtc = hkToUtc(input.newDateHk, input.newStartHk)
+    const endHhmm = addMinutesHhmm(input.newStartHk, input.newDurationMin)
+    if (!endHhmm) {
+      throw new ApricotWriteError('INVALID_TIME', null, `reschedule crosses midnight: ${input.newDateHk} ${input.newStartHk} +${input.newDurationMin}m`)
+    }
+    const eUtc = hkToUtc(input.newDateHk, endHhmm)
+
+    // ① checkClash(新時段) — clash 即 409（舊單未郁）
+    let clashing: boolean
+    try {
+      clashing = await checkClash(input.providerApricotId, input.apricotClinicId, sUtc, eUtc, call)
+    } catch (e) {
+      await upsertWriteLog(key, { action: 'RESCHEDULE', status: 'ERROR:check_clash', requestedBy: input.requestedBy }).catch(() => {})
+      throw e
+    }
+    if (clashing) {
+      await upsertWriteLog(key, { action: 'RESCHEDULE', status: 'SLOT_TAKEN', requestedBy: input.requestedBy }).catch(() => {})
+      throw new ApricotWriteError('SLOT_TAKEN', 'check_clash', 'new slot taken — old booking unchanged')
+    }
+
+    // ② 舊單標 102（改期標記）
     try {
       await call(BOOKING_STATUS_PATH(input.oldApricotApptId, 102))
     } catch (e) {
-      await upsertWriteLog(logKey, { action: 'RESCHEDULE', apricotApptId: input.oldApricotApptId, status: 'ERROR:status', requestedBy: input.requestedBy }).catch(() => {})
+      await upsertWriteLog(key, { action: 'RESCHEDULE', apricotApptId: input.oldApricotApptId, status: 'ERROR:status', requestedBy: input.requestedBy }).catch(() => {})
       throw mapCallError(e, 'status')
     }
-    await upsertWriteLog(logKey, { action: 'RESCHEDULE', apricotApptId: input.oldApricotApptId, status: 'OK:102_marked', requestedBy: input.requestedBy }).catch(() => {})
+    // ★ 102 成功 → 先落 |after102 底（重放同 key → 502 MANUAL_RECONCILE，唔會重複打 102）
+    await upsertWriteLog(`${key}|after102`, { action: 'RESCHEDULE', apricotApptId: input.oldApricotApptId, status: 'OK:102_marked', requestedBy: input.requestedBy }).catch((err) =>
+      console.error('[write-booking] WriteLog(|after102) 失敗', err),
+    )
 
-    // 2) 新單（同病人；reuse createBookingLocked — 已經喺 lock 內；獨立子 key 避免覆蓋 102 底）
+    // ③ 新單（同病人；reuse createBookingLocked — 已經喺 lock 內；獨立子 key 避免覆蓋 102 底）
     let newResult: CreateBookingResult
     try {
       newResult = await createBookingLocked(
         {
-          idempotencyKey: `${logKey}|create`,
+          idempotencyKey: `${key}|create`,
           clinicCuid: input.clinicCuid,
           apricotClinicId: input.apricotClinicId,
           providerApricotId: input.providerApricotId,
@@ -552,8 +748,9 @@ export async function rescheduleBooking(input: RescheduleInput, opts: EngineOpts
         { skipDaySync: true },
       )
     } catch (e) {
-      // ★ 已知殘留態：舊單已 102、新單 fail — 記底 + alert，唔自動 rollback
-      await upsertWriteLog(`${logKey}|after102`, {
+      // ★ S5-2：② 成功但 ③ 失敗 → 保持現有殘留態記錄（|after102 升級 ERROR:create_after_102）
+      //   + ALERT（workforce 現有 alert 機制 = console.error ALERT 行）+ RESCHEDULE_PARTIAL（wa-inbox 出 StaffNotice）
+      await upsertWriteLog(`${key}|after102`, {
         action: 'RESCHEDULE',
         apricotApptId: input.oldApricotApptId,
         status: 'ERROR:create_after_102',
@@ -563,10 +760,15 @@ export async function rescheduleBooking(input: RescheduleInput, opts: EngineOpts
         '[write-booking] ⚠️ ALERT reschedule 殘留態：舊單已標 102 但新單失敗 — 人手跟（唔自動 rollback）',
         { oldApptId: input.oldApricotApptId, oldDate: input.oldDateHk, newDate: input.newDateHk },
       )
-      throw e
+      throw new ApricotWriteError(
+        'RESCHEDULE_PARTIAL',
+        'create',
+        'old booking 102-marked but new booking failed — reconcile manually',
+        { oldApptId: input.oldApricotApptId },
+      )
     }
 
-    // 3) 兩日各 refresh 一次（舊日 + 新日；同日就只一次）
+    // ④ 兩日各 refresh 一次（舊日 + 新日；同日就只一次）
     const days = [...new Set([input.oldDateHk, input.newDateHk])]
     let dayRefreshed = false
     let syncedAt: string | null = null
@@ -579,10 +781,12 @@ export async function rescheduleBooking(input: RescheduleInput, opts: EngineOpts
       if (day.syncedAt) syncedAt = day.syncedAt
     }
 
-    // 4) RESCHEDULE OK 底（帶新單 id）
-    await upsertWriteLog(`${logKey}|ok`, { action: 'RESCHEDULE', apricotApptId: newResult.apricotApptId, status: 'OK', requestedBy: input.requestedBy }).catch(() => {})
+    // ⑤ 寫 key|ok（冪等錨 — 同 key 重放直接回呢張單）
+    await upsertWriteLog(`${key}|ok`, { action: 'RESCHEDULE', apricotApptId: newResult.apricotApptId, status: 'OK', requestedBy: input.requestedBy }).catch((err) =>
+      console.error('[write-booking] WriteLog(|ok) 失敗', err),
+    )
 
-    return { oldApptId: input.oldApricotApptId, newApptId: newResult.apricotApptId, dayRefreshed, syncedAt }
+    return { oldApptId: input.oldApricotApptId, newApptId: newResult.apricotApptId, dayRefreshed, syncedAt, replayed: false }
   })
   if (outcome === null) throw new ApricotWriteError('APRICOT_BUSY', null, 'another Apricot call in progress — retry later')
   return outcome
@@ -685,12 +889,19 @@ async function upsertDictionary(kind: DictionaryKind, items: { apricotId: string
 /** ApricotWriteError → ExternalApiError（409/422/503/502 — response 零內文） */
 export function mapWriteErrorToExternal(e: unknown): ExternalApiError {
   if (e instanceof ApricotWriteError) {
-    if (e.code === 'SLOT_TAKEN') return new ExternalApiError(409, 'slot taken', 'SLOT_TAKEN')
-    if (e.code === 'APRICOT_BUSY') return new ExternalApiError(503, 'another Apricot call in progress', 'APRICOT_BUSY')
-    if (e.code === 'MANUAL_RECONCILE') return new ExternalApiError(502, 'apricot error — manual reconcile required', 'APRICOT_ERROR:manual_reconcile')
-    if (e.code === 'INVALID_TIME' || e.code === 'STATUS_NOT_ALLOWED') return new ExternalApiError(400, e.message, 'BAD_REQUEST')
+    if (e.code === 'SLOT_TAKEN') return new ExternalApiError(409, 'slot taken', 'SLOT_TAKEN', e.extra)
+    // ★ cwi-final S5-3①：remove 後同 key → 409（key 已消耗）
+    if (e.code === 'IDEMPOTENCY_KEY_CONSUMED') return new ExternalApiError(409, 'idempotency key consumed (booking removed) — use a new key', 'IDEMPOTENCY_KEY_CONSUMED', e.extra)
+    // ★ cwi-final S5-3②：同 key 並發（retryable）／payload 唔同
+    if (e.code === 'IN_PROGRESS') return new ExternalApiError(409, 'write in progress with same idempotency key — retry after a few seconds', 'IN_PROGRESS', e.extra)
+    if (e.code === 'IDEMPOTENCY_MISMATCH') return new ExternalApiError(409, 'idempotency key reused with different payload — use a new key', 'IDEMPOTENCY_MISMATCH', e.extra)
+    // ★ cwi-final S5-2：102 成功但新單 fail → 502 + 帶 oldApptId（wa-inbox 出 StaffNotice）
+    if (e.code === 'RESCHEDULE_PARTIAL') return new ExternalApiError(502, 'reschedule partial — old booking 102-marked, new booking failed', 'RESCHEDULE_PARTIAL', e.extra)
+    if (e.code === 'APRICOT_BUSY') return new ExternalApiError(503, 'another Apricot call in progress', 'APRICOT_BUSY', e.extra)
+    if (e.code === 'MANUAL_RECONCILE') return new ExternalApiError(502, 'apricot error — manual reconcile required', 'APRICOT_ERROR:manual_reconcile', e.extra)
+    if (e.code === 'INVALID_TIME' || e.code === 'STATUS_NOT_ALLOWED') return new ExternalApiError(400, e.message, 'BAD_REQUEST', e.extra)
     const step = e.step ? `APRICOT_ERROR:${e.step}` : 'APRICOT_ERROR'
-    return new ExternalApiError(502, 'apricot error', step)
+    return new ExternalApiError(502, 'apricot error', step, e.extra)
   }
   return new ExternalApiError(500, 'internal error', 'INTERNAL')
 }

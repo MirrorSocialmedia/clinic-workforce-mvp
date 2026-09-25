@@ -8,6 +8,7 @@ import {
   dateDiffDays,
 } from '@/lib/external-api'
 import { basePrisma } from '@/lib/prisma'
+import { resolveClinicByCode } from '@/lib/external-clinic'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -52,11 +53,7 @@ export async function GET(req: NextRequest) {
     const reasonCodes = params.getAll('reasonCodes').map(s => s.trim()).filter(Boolean)
     const bookingStatuses = params.getAll('bookingStatus').map(s => Number(s)).filter(n => Number.isInteger(n))
 
-    const clinic = await basePrisma.clinic.findFirst({
-      where: { OR: [{ shortName: clinicCode }, { id: clinicCode }] },
-      select: { id: true },
-    })
-    if (!clinic) throw new ExternalApiError(404, 'clinic not found', 'NOT_FOUND')
+    const clinic = await resolveClinicByCode(clinicCode)
 
     const rows = await basePrisma.clinicalRecordIndex.findMany({
       where: {

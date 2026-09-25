@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { requireExternalKey, withExternalAudit, ExternalApiError } from '@/lib/external-api'
 import { basePrisma } from '@/lib/prisma'
+import { resolveClinicByCode } from '@/lib/external-clinic'
 import { todayHK } from '@/lib/hk-date'
 import { jsonNoStore } from '@/lib/api-response'
 
@@ -48,11 +49,7 @@ export async function GET(req: NextRequest) {
       throw new ExternalApiError(400, 'months must be an integer 1..24', 'BAD_REQUEST')
     }
 
-    const clinic = await basePrisma.clinic.findFirst({
-      where: { OR: [{ shortName: clinicCode }, { id: clinicCode }] },
-      select: { id: true },
-    })
-    if (!clinic) throw new ExternalApiError(404, 'clinic not found', 'NOT_FOUND')
+    const clinic = await resolveClinicByCode(clinicCode)
 
     const asOf = todayHK()
     const cutoff = monthsAgoStr(asOf, months)

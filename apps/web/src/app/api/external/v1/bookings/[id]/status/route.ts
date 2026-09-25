@@ -43,6 +43,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     }
     const status = Number(statusParam)
 
+    // ★ cwi-final S5-2 對接（W 側 F2）：選填 Idempotency-Key（102 改期標記送 `resched-<holdId>`）—
+    //   有傳 = 做 WriteLog 穩定 key + OK 重放；唔傳 = 舊行為（合成 key）
+    const idemKey = (req.headers.get('Idempotency-Key') ?? '').trim()
+    if (idemKey && (idemKey.length < 8 || idemKey.length > 128)) {
+      throw new ExternalApiError(400, 'Idempotency-Key must be 8-128 chars', 'BAD_REQUEST')
+    }
+
     const { dateHk, clinic } = await parseMutationQuery(req)
 
     try {
@@ -51,6 +58,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
         clinicCuid: clinic.id,
         apricotClinicId: clinic.apricotClinicId,
         dateHk,
+        ...(idemKey ? { idempotencyKey: idemKey } : {}),
       })
       return jsonNoStore({ v: 1, ...result })
     } catch (e) {

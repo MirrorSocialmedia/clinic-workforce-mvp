@@ -9,6 +9,7 @@ import {
 } from '@/lib/external-api'
 import { STALE_AFTER_MS } from '@/lib/apricot/sync-availability-cache'
 import { basePrisma } from '@/lib/prisma'
+import { resolveClinicByCode } from '@/lib/external-clinic'
 import { jsonNoStore } from '@/lib/api-response'
 
 // ============================================================
@@ -67,14 +68,10 @@ export async function GET(req: NextRequest) {
       throw new ExternalApiError(400, 'date range must be ≤ 38 days (to - from ≤ 37, to >= from)', 'BAD_REQUEST')
     }
 
-    // clinicCode → clinic（shortName ?? id 口徑；同 availability）
+    // clinicCode → clinic（cuid 優先 / shortName 唯一 — cwi-final S5-5 消歧口徑）
     let clinicId: string | null = null
     if (clinicMode) {
-      const clinic = await basePrisma.clinic.findFirst({
-        where: { OR: [{ shortName: clinicCodeRaw }, { id: clinicCodeRaw }] },
-        select: { id: true },
-      })
-      if (!clinic) throw new ExternalApiError(404, 'clinic not found', 'NOT_FOUND')
+      const clinic = await resolveClinicByCode(clinicCodeRaw)
       clinicId = clinic.id
     }
 

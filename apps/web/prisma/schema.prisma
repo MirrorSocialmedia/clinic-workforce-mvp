@@ -1652,8 +1652,9 @@ model BookingWriteLog {
   idempotencyKey String   @unique
   action         String                    // CREATE | STATUS_102 | STATUS_-7 | REMOVE | RESCHEDULE
   apricotApptId  String?
-  status         String                    // OK | SLOT_TAKEN | ERROR:<step>
+  status         String                    // OK | SLOT_TAKEN | IN_PROGRESS | REMOVED | ERROR:<step>（★ cwi-final S5-3：新增 IN_PROGRESS/REMOVED 值，String 欄唔使改 enum）
   requestedBy    String                    // external key name
+  requestHash    String?                   // ★ cwi-final S5-3②：payload fingerprint（sha256；CREATE 路）
   createdAt      DateTime @default(now())
 }
 
