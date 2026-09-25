@@ -37,7 +37,9 @@ import {
   isApricotWriteEnabled,
   isNewPatientWriteEnabled,
   createBooking,
+  type PatientRef,
 } from './apricot/write-booking'
+import { phoneHash } from './phone-hash'
 import { Prisma } from '@prisma/client'
 
 // ★ 佔用口徑同 sync-availability-cache.ts 一致（cwc-rdchain：0=已約 102=改期；
@@ -687,12 +689,17 @@ export async function claimSlot(input: ClaimInput): Promise<ClaimResult> {
 
 /**
  * Apricot write（APRICOT_WRITE=1 先走；任何 skip/fail 都留 HELD — MD §四）。
- * 🔴 patient {name, phone: waId}（HK WA = 電話；MD T4「patient_phone 空=WA 號」）。
+ * ★ cwi-final S5-4②（F4）：寫前先查 PatientIndex（phoneHash 配對，口徑 = sync 寫入
+ *   phone-hash.ts phoneHash 單號）：
+ *   - 1 match → 舊病人 { apricotId }（重用檔案，唔開新檔）
+ *   - 0 match + ALLOW_NEW_PATIENT_WRITE=1 → 新病人 { name, phone: waId }（HK WA = 電話）
+ *   - 0 match + flag off → skip(new_patient_disabled)；同號多人 → skip(ambiguous_patient，
+ *     唔自動揀 — S5-12）
  * visitReasonId：body > env APRICOT_DEFAULT_VISIT_REASON_ID > 缺 → skip（spec gap
  * 註記：MD claim body 冇 visitReasonId；缺時唔硬造，留 HELD 俾前台補）。
  * idempotencyKey = hold-<holdId>（穩定 — replay 自愈）。
  */
-async function maybeWriteApricot(
+export async function maybeWriteApricot(
   clinic: ClinicSlotConfig,
   provider: { id: string; name: string; apricotIds: string[] },
   hold: { id: string; date: string; startMin: number; status: string; apricotRef: string | null },
@@ -703,7 +710,22 @@ async function maybeWriteApricot(
   if (!clinic.apricotClinicId) return { outcome: 'skipped', reason: 'clinic_no_apricot_id' }
   const visitReasonId = input.visitReasonId ?? process.env.APRICOT_DEFAULT_VISIT_REASON_ID?.trim() ?? null
   if (!visitReasonId) return { outcome: 'skipped', reason: 'missing_visit_reason' }
-  if (!isNewPatientWriteEnabled()) return { outcome: 'skipped', reason: 'new_patient_disabled' }
+  // ★ cwi-final S5-4②（F4）：PatientIndex 先查 — 舊病人重用 apricotId（唔開新檔）
+  const ph = phoneHash(input.patientWaId)
+  const matches = await basePrisma.patientIndex.findMany({
+    where: { phoneHash: ph },
+    select: { patientApricotId: true },
+    take: 2,
+  })
+  const patient: PatientRef | null =
+    matches.length === 1
+      ? { apricotId: matches[0].patientApricotId }
+      : matches.length === 0
+        ? isNewPatientWriteEnabled()
+          ? { name: input.patientName ?? '線上預約', phone: input.patientWaId }
+          : null
+        : null // 同號多人 → 唔自動揀（S5-12）
+  if (!patient) return { outcome: 'skipped', reason: matches.length > 1 ? 'ambiguous_patient' : 'new_patient_disabled' }
   // ★ Stage 2：多帳號 — 寫 Apricot 用第一個帳號（主帳號）
   const { apricotIds } = provider
   if (apricotIds.length === 0) return { outcome: 'skipped', reason: 'provider_no_apricot_id' }
@@ -720,7 +742,7 @@ async function maybeWriteApricot(
       startHk: minToHHmm(hold.startMin),
       durationMin: 30,
       visitReasonId,
-      patient: { name: input.patientName ?? '線上預約', phone: input.patientWaId },
+      patient,
       requestedBy: input.requestedBy,
     })
     await basePrisma.providerHold
@@ -815,6 +837,10 @@ export async function releaseHold(holdId: string): Promise<{ holdId: string; sta
 
 /**
  * 預約時間已過（endMin ≤ now，或日期已過）仍 HELD → RELEASED + audit。
+ * ★ cwi-final S5-4①（F4）兩段式：第二組 — 仍 HELD 超過 2×holdTimeoutHours →
+ *   RELEASED + audit PROVIDER_HOLD_TTL_RELEASE。1×holdTimeoutHours 到：唔郁
+ *   （警報側係 wa-inbox hold-sweep — S5-11；CWM 唔加警報）。
+ *   冪等：重複跑已 RELEASED → findMany(status HELD) 0 行 → 唔雙重 audit。
  * lazy：GET bookable-slots / held endpoint 入火（fire-and-forget，唔阻回應）。
  */
 export async function sweepPastHolds(clinicId: string | null, now: Date = new Date()): Promise<number> {
@@ -830,26 +856,64 @@ export async function sweepPastHolds(clinicId: string | null, now: Date = new Da
     take: 200,
     select: { id: true, clinicId: true, providerId: true, date: true, startMin: true, endMin: true },
   })
-  if (past.length === 0) return 0
-  const res = await basePrisma.providerHold.updateMany({
-    where: { id: { in: past.map((h) => h.id) }, status: 'HELD' },
-    data: { status: 'RELEASED' },
-  })
-  if (res.count > 0) {
-    await basePrisma.auditLog
-      .createMany({
-        data: past.map((h) => ({
-          actorId: null,
-          action: 'PROVIDER_HOLD_AUTO_RELEASE',
-          entity: 'ProviderHold',
-          entityId: h.id,
-          clinicId: h.clinicId,
-          notes: JSON.stringify({ date: h.date, startMin: h.startMin, endMin: h.endMin, providerId: h.providerId }),
-        })),
-      })
-      .catch((err) => console.error('[bookable-slots] auto-release audit 寫入失敗', err))
+  let released = 0
+  if (past.length > 0) {
+    const res = await basePrisma.providerHold.updateMany({
+      where: { id: { in: past.map((h) => h.id) }, status: 'HELD' },
+      data: { status: 'RELEASED' },
+    })
+    if (res.count > 0) {
+      released += res.count
+      await basePrisma.auditLog
+        .createMany({
+          data: past.map((h) => ({
+            actorId: null,
+            action: 'PROVIDER_HOLD_AUTO_RELEASE',
+            entity: 'ProviderHold',
+            entityId: h.id,
+            clinicId: h.clinicId,
+            notes: JSON.stringify({ date: h.date, startMin: h.startMin, endMin: h.endMin, providerId: h.providerId }),
+          })),
+        })
+        .catch((err) => console.error('[bookable-slots] auto-release audit 寫入失敗', err))
+    }
   }
-  return res.count
+  // ★ cwi-final S5-4①（F4）第二組：2×holdTimeoutHours 仍 HELD → RELEASED
+  //   （喺 past 組 updateMany 之後先查 — 已被 past 組釋放嘅唔會雙重 audit）
+  const clinics = await basePrisma.clinic.findMany({
+    where: clinicId ? { id: clinicId } : {},
+    select: { id: true, holdTimeoutHours: true },
+  })
+  for (const c of clinics) {
+    const cutoff = new Date(now.getTime() - 2 * (c.holdTimeoutHours ?? 24) * 3600_000)
+    const ttlRows = await basePrisma.providerHold.findMany({
+      where: { clinicId: c.id, status: 'HELD', createdAt: { lt: cutoff } },
+      select: { id: true },
+      take: 200, // 防 backlog（同 past 組）— 剩餘下次 sweep 再收
+    })
+    if (ttlRows.length === 0) continue
+    const res = await basePrisma.providerHold.updateMany({
+      where: { id: { in: ttlRows.map((r) => r.id) }, status: 'HELD' },
+      data: { status: 'RELEASED' },
+    })
+    if (res.count > 0) {
+      released += res.count
+      // audit notes 零 PII — 淨 clinic id / hold id（metadata）
+      await basePrisma.auditLog
+        .createMany({
+          data: ttlRows.map((r) => ({
+            actorId: null,
+            action: 'PROVIDER_HOLD_TTL_RELEASE',
+            entity: 'ProviderHold',
+            entityId: r.id,
+            clinicId: c.id,
+            notes: JSON.stringify({ clinicId: c.id, holdId: r.id, holdTimeoutHours: c.holdTimeoutHours ?? 24 }),
+          })),
+        })
+        .catch((err) => console.error('[bookable-slots] TTL-release audit 寫入失敗', err))
+    }
+  }
+  return released
 }
 
 /** fire-and-forget 版（route 層用） */

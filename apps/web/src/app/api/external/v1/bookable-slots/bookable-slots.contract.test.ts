@@ -78,6 +78,8 @@ const fakes: Any = {
   clinic: {
     findFirst: async () => ({ id: CLINIC.id, shortName: CLINIC.shortName, apricotClinicId: CLINIC.apricotClinicId }),
     findUnique: async () => CLINIC,
+    // ★ cwi-final S5-4①（F4）：sweepPastHolds 第二組逐 clinic 讀 holdTimeoutHours
+    findMany: async ({ where }: Any) => (where?.id && where.id !== CLINIC.id ? [] : [CLINIC]),
   },
   providerClinic: {
     findMany: async () => [{ providerId: PROVIDER.id }],
