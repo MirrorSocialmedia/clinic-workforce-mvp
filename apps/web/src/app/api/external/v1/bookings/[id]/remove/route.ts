@@ -5,6 +5,7 @@ import {
   withExternalAudit,
   ExternalApiError,
 } from '@/lib/external-api'
+import { basePrisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import {
   removeBooking,
@@ -35,6 +36,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       throw new ExternalApiError(400, 'invalid apricotApptId', 'BAD_REQUEST')
     }
     const { dateHk, clinic } = await parseMutationQuery(req)
+
+    // ★ cwi-final S5-14：AppointmentIndex 核對 clinic/date — 同 status 路由同口徑。
+    //   索引無行 → 放行（sync cache 落後 ≠ 錯）。
+    const idx = await basePrisma.appointmentIndex.findUnique({ where: { apricotApptId } })
+    if (idx && (idx.clinicId !== clinic.id || idx.date !== dateHk)) {
+      throw new ExternalApiError(400, 'booking does not match clinic/date in index', 'BOOKING_MISMATCH')
+    }
 
     try {
       const result = await removeBooking(apricotApptId, {

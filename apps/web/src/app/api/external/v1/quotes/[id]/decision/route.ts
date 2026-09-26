@@ -49,6 +49,11 @@ export async function POST(
     const row = await basePrisma.quotedItem.findUnique({ where: { id } })
     if (!row) throw new ExternalApiError(404, 'quote not found', 'QUOTE_NOT_FOUND')
 
+    // ★ cwi-final S5-13①：只准 pending / corrected 落決定（confirmed/discarded 已定案 → 409）
+    if (row.status !== 'pending' && row.status !== 'corrected') {
+      throw new ExternalApiError(409, `quote already ${row.status} — only pending/corrected can be decided`, 'QUOTE_NOT_DECIDABLE')
+    }
+
     const decidedBy = typeof body?.decidedBy === 'string' && body.decidedBy.trim() ? body.decidedBy.trim().slice(0, 60) : 'anonymous'
     const now = new Date()
 
@@ -74,7 +79,7 @@ export async function POST(
         update: {
           nameCn,
           nameEn: typeof t.nameEn === 'string' && t.nameEn.trim() ? t.nameEn.trim().slice(0, 80) : undefined,
-          active: true,
+          // ★ cwi-final S5-13①：唔改 active — 唔好復活 admin 停用咗嘅詞（停用決定權留喺字典管理端）
         },
       })
       termMapUpserted = true
@@ -92,7 +97,13 @@ export async function POST(
       if (typeof f.amountMin === 'number' && Number.isFinite(f.amountMin) && f.amountMin >= 0) update.amountMin = Math.round(f.amountMin)
       if (typeof f.amountMax === 'number' && Number.isFinite(f.amountMax) && f.amountMax >= 0) update.amountMax = Math.round(f.amountMax)
       if (typeof f.text === 'string' && f.text.trim()) update.text = f.text.trim().slice(0, 80)
-      if (typeof f.correctionNote === 'string' && f.correctionNote.trim()) update.correctionNote = f.correctionNote.trim().slice(0, 200)
+      // ★ cwi-final S5-13①：correctionNote 頂層同 fields.correctionNote 都收（頂層優先）
+      const noteRaw = typeof body?.correctionNote === 'string' && body.correctionNote.trim()
+        ? body.correctionNote
+        : typeof f.correctionNote === 'string' && f.correctionNote.trim()
+          ? f.correctionNote
+          : null
+      if (noteRaw) update.correctionNote = noteRaw.trim().slice(0, 200)
       if (f.termShorthand !== undefined) {
         if (f.termShorthand === null) {
           update.termShorthand = null
@@ -110,8 +121,14 @@ export async function POST(
       }
       if (update.amountMin != null && update.amountMax == null) update.amountMax = update.amountMin
     }
-    if (action === 'confirm' && typeof body?.correctionNote === 'string' && body.correctionNote.trim()) {
-      update.correctionNote = body.correctionNote.trim().slice(0, 200)
+    if (action === 'confirm') {
+      // ★ cwi-final S5-13①：confirm 都收 fields.correctionNote（頂層優先）
+      const noteRaw = typeof body?.correctionNote === 'string' && body.correctionNote.trim()
+        ? body.correctionNote
+        : typeof (body?.fields ?? {})?.correctionNote === 'string' && (body.fields.correctionNote as string).trim()
+          ? body.fields.correctionNote
+          : null
+      if (noteRaw) update.correctionNote = noteRaw.trim().slice(0, 200)
     }
 
     await basePrisma.quotedItem.update({ where: { id }, data: update })

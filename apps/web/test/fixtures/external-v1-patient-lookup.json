@@ -1,3 +1,5 @@
 { "v": 1, "matches": [ { "patientApricotId": "...", "patientCode": "TKW001991",
     "patientName": "陳大文", "lastVisit": { "date": "2026-07-12",
-    "providerName": "Dr. Lau", "visitReasons": ["FILLING"] } } ] }
+    "providerName": "Dr. Lau", "visitReasons": ["FILLING"],
+    "clinicId": "cl-tkw000000000000000000001", "clinicCode": "TKW" },
+    "visitedClinicIds": ["cl-tkw000000000000000000001"] } ] }

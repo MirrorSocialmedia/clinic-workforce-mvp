@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
-import { requireExternalKey, withExternalAudit, ExternalApiError } from '@/lib/external-api'
+import { requireExternalKey, withExternalAudit, ExternalApiError, requireStaffId } from '@/lib/external-api'
 import { basePrisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import {
@@ -18,6 +18,7 @@ import { getTestCallFn } from '@/app/api/internal/clinical-index/test-call-fn'
 //   429: { error:'rate limited', code:'RATE_LIMITED', retryAfterSec }
 //   404: PATIENT_NOT_FOUND（無 appointment 又無索引行）
 //   503: { error:'APRICOT_UNAVAILABLE', lastSyncedAt } — 唔扮成功
+//   400: STAFF_ID_REQUIRED（cwi-final S5-14 — X-Staff-Id 必填，唔再 anonymous）
 //
 // 四層保護（§2.8）：層 1/2 = token bucket（同 lib/clinical-index/refresh.ts）；
 // 層 3 = consumer 睇 syncedAt > 24h 自動跑（本端只暴露 syncedAt）；
@@ -39,7 +40,7 @@ export async function POST(
     ctx.setKey(key.name)
 
     const { patientApricotId: cpId } = await params
-    const staffId = (req.headers.get('x-staff-id') ?? '').trim() || 'anonymous'
+    const staffId = requireStaffId(req) // ★ cwi-final S5-14：必填（唔再 anonymous）
 
     // 保護 1+2：token bucket（patient 60s / clinic 20 per min）
     // clinic 層 key：最新索引行嘅 clinic；無行 → 以 cpId 做 key（每人獨立 bucket，唔會繞）

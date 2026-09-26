@@ -138,6 +138,16 @@ export async function requireExternalKey(
 }
 
 /**
+ * ★ cwi-final S5-14：X-Staff-Id 必填守門（patients 臨床 lane：note/visits/refresh）。
+ * 冇 header / 空白 → 400 STAFF_ID_REQUIRED（唔再 anonymous — 臨床內容瀏覽必須可歸屬）。
+ */
+export function requireStaffId(req: KeyHeaderSource): string {
+  const staffId = (req.headers.get('x-staff-id') ?? '').trim()
+  if (!staffId) throw new ExternalApiError(400, 'X-Staff-Id header required', 'STAFF_ID_REQUIRED')
+  return staffId
+}
+
+/**
  * withExternalAudit ctx —— handler 過關後 call setKey(name) 登記 audit 用 key 名。
  * （MD 偏離註記：key 名喺 auth 之後先知道，故用 ctx 而非參數傳入。）
  */

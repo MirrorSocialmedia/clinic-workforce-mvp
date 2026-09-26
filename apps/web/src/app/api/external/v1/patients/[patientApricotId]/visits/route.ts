@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
-import { requireExternalKey, withExternalAudit, ExternalApiError } from '@/lib/external-api'
+import { requireExternalKey, withExternalAudit, ExternalApiError, requireStaffId } from '@/lib/external-api'
 import { basePrisma } from '@/lib/prisma'
 import { todayHK } from '@/lib/hk-date'
 import { firstLineOf } from '@/lib/clinical-index/extract-note-text'
@@ -12,7 +12,8 @@ import { jsonNoStore } from '@/lib/api-response'
 // （MD §2.6 #4 + §2.4 邊界）— cwi-followup-p1-20260915
 //
 //   Query: limit（可選，default 50，max 100）
-//   Header: X-Api-Key（scope: patients）
+//   Header: X-Api-Key（scope: patients）＋ X-Staff-Id（必填 — cwi-final S5-14）
+//   400: STAFF_ID_REQUIRED（冇 X-Staff-Id）
 //
 //   200: { v:1, patientCode, visits:[{ visitId, visitDate, clinicCode,
 //          bookingStatus, visitReasonCodes, providerCode, hasNote, noteKind,
@@ -38,7 +39,7 @@ export async function GET(
 
     const { patientApricotId } = await params
     const limit = Math.min(Math.max(Number(new URL(req.url).searchParams.get('limit') ?? 50) || 50, 1), 100)
-    const staffId = (req.headers.get('x-staff-id') ?? '').trim() || 'anonymous'
+    const staffId = requireStaffId(req) // ★ cwi-final S5-14：必填（唔再 anonymous）
 
     const rows = await basePrisma.clinicalRecordIndex.findMany({
       where: {

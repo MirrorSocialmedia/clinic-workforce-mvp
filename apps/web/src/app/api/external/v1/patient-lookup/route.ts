@@ -13,9 +13,13 @@ import { jsonNoStore } from '@/lib/api-response'
 //   Header: X-Api-Key（scope: patients — §A.2 守門）
 //
 //   200: { v:1, matches:[{ patientApricotId, patientCode, patientName,
-//          lastVisit: { date, providerName, visitReasons } | null }] }
+//          lastVisit: { date, providerName, visitReasons, clinicId, clinicCode } | null,
+//          visitedClinicIds: string[] }] }
 //   多 match 全回（同一 phoneHash 可对应多病人）；零 match → 200 空陣列；
-//   lastVisit = 該病人 AppointmentIndex 最近過去行（date ≤ 今日 HK 日界；冇 → null）。
+//   lastVisit = 該病人 AppointmentIndex 最近過去行（date ≤ 今日 HK 日界；冇 → null）；
+//   visitedClinicIds = 該病人 AppointmentIndex 全部行嘅 distinct clinicId（cuid，排序；S5-13②）；
+//   gender = B-9 稱呼用 — 「有就回」：PatientIndex PII 白名單目前無性別欄
+//   （sanitize 邊界釘住零抽取）→ 現階段永遠無；日後 schema 加欄先自動回。
 //
 // 🔴 Response 只係白名單 v2：id/code/fullName + visitReasons[].des。
 //    raw phoneNum / HKID / address / medicalHistory 永唔出現
@@ -52,24 +56,53 @@ export async function GET(req: NextRequest) {
         patientApricotId: { in: matches.map(m => m.patientApricotId) },
         date: { lte: today },
       },
-      select: { patientApricotId: true, date: true, providerName: true, visitReasons: true, startTime: true },
+      select: { patientApricotId: true, date: true, providerName: true, visitReasons: true, startTime: true, clinicId: true },
       orderBy: [{ date: 'desc' }, { startTime: 'desc' }],
     })
-    const lastByPatient = new Map<string, { date: string; providerName: string; visitReasons: string[] }>()
+    const lastByPatient = new Map<string, { date: string; providerName: string; visitReasons: string[]; clinicId: string }>()
     for (const r of lastRows) {
       if (!lastByPatient.has(r.patientApricotId)) {
-        lastByPatient.set(r.patientApricotId, { date: r.date, providerName: r.providerName, visitReasons: r.visitReasons })
+        lastByPatient.set(r.patientApricotId, { date: r.date, providerName: r.providerName, visitReasons: r.visitReasons, clinicId: r.clinicId })
       }
     }
 
+    // ★ cwi-final S5-13②：visitedClinicIds = 全部行（唔限過去）distinct clinicId —
+    //   W 側 patient-context 判斷「呢位病人未喺本公司診所睇過」用（C-8 唔阻跨公司 match）
+    const allRows = await basePrisma.appointmentIndex.findMany({
+      where: { patientApricotId: { in: matches.map(m => m.patientApricotId) } },
+      select: { patientApricotId: true, clinicId: true },
+    })
+    const visitedByPatient = new Map<string, Set<string>>()
+    for (const r of allRows) {
+      if (!visitedByPatient.has(r.patientApricotId)) visitedByPatient.set(r.patientApricotId, new Set())
+      visitedByPatient.get(r.patientApricotId)!.add(r.clinicId)
+    }
+
+    // clinicId → clinicCode（shortName ?? id — 同其他 external 路由同口徑）
+    const clinicIds = new Set<string>()
+    for (const r of lastRows) clinicIds.add(r.clinicId)
+    for (const s of visitedByPatient.values()) for (const c of s) clinicIds.add(c)
+    const clinics = clinicIds.size ? await basePrisma.clinic.findMany({ where: { id: { in: [...clinicIds] } }, select: { id: true, shortName: true } }) : []
+    const codeById = new Map(clinics.map((c) => [c.id, c.shortName ?? c.id]))
+
     return jsonNoStore({
       v: 1,
-      matches: matches.map(m => ({
-        patientApricotId: m.patientApricotId,
-        patientCode: m.patientCode,
-        patientName: m.patientName,
-        lastVisit: lastByPatient.get(m.patientApricotId) ?? null,
-      })),
+      matches: matches.map(m => {
+        const last = lastByPatient.get(m.patientApricotId) ?? null
+        const visited = [...(visitedByPatient.get(m.patientApricotId) ?? [])].sort()
+        const gender = (m as { gender?: string | null }).gender
+        return {
+          patientApricotId: m.patientApricotId,
+          patientCode: m.patientCode,
+          patientName: m.patientName,
+          lastVisit: last
+            ? { date: last.date, providerName: last.providerName, visitReasons: last.visitReasons, clinicId: last.clinicId, clinicCode: codeById.get(last.clinicId) ?? last.clinicId }
+            : null,
+          visitedClinicIds: visited,
+          // B-9 稱呼：有 gender 就回（PII 白名單未加欄前永遠無 — 見檔頭）
+          ...(typeof gender === 'string' && gender ? { gender } : {}),
+        }
+      }),
     })
   })
 }

@@ -23,20 +23,25 @@ type Any = any
 
 // ── fixture 錨定 ─────────────────────────────────────────────────────
 const FIXTURE_PATH = fileURLToPath(new URL('../../../../../../test/fixtures/external-v1-patient-lookup.json', import.meta.url))
-const FIXTURE_SHA256 = '5db38929d527abcdc32ae17e72e04c2e43ec6b2db10b3e01d9a104324990066e'
+const FIXTURE_SHA256 = '661bb1c4b60cb1e13a5d3d5caa7ecb6f52ae1355809d7cb3d3979e15caf5244d'
 const PII_PATTERNS = ['medicalHistory', 'personalIdentity', 'address', 'phoneNum']
 
 // MD §4.1 200 形狀（zod — strict：多一個 key 就 fail）
+// ★ cwi-final S5-13②：lastVisit 加 clinicId/clinicCode；match 加 visitedClinicIds；gender 有就回（optional）
 const LastVisitSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   providerName: z.string().min(1),
   visitReasons: z.array(z.string()),
+  clinicId: z.string().min(1),
+  clinicCode: z.string().min(1),
 }).strict()
 const MatchSchema = z.object({
   patientApricotId: z.string().min(1),
   patientCode: z.string().min(1),
   patientName: z.string().min(1),
   lastVisit: LastVisitSchema.nullable(),
+  visitedClinicIds: z.array(z.string().min(1)),
+  gender: z.string().min(1).optional(),
 }).strict()
 const PatientLookupV1Schema = z.object({
   v: z.literal(1),
@@ -61,14 +66,19 @@ const HASH_C = 'c'.repeat(64)
 const PATIENT_ROWS: Any[] = [
   { patientApricotId: 'pt-1', patientCode: 'TKW001991', patientName: '陳大文', phoneHash: HASH_A },
   { patientApricotId: 'pt-2', patientCode: 'TKW001992', patientName: '陳小明', phoneHash: HASH_A },
-  { patientApricotId: 'pt-3', patientCode: 'TKW001993', patientName: '張豐', phoneHash: HASH_C },
+  // T824：pt-3 帶 gender（模擬日後 PatientIndex 加欄 — 「有就回」路徑）
+  { patientApricotId: 'pt-3', patientCode: 'TKW001993', patientName: '張豐', phoneHash: HASH_C, gender: 'F' },
 ]
 const APPT_ROWS: Any[] = [
-  // pt-1：兩行過去 → lastVisit 應係最近嗰行（TODAY-2）
-  { patientApricotId: 'pt-1', date: addDaysStr(TODAY, -5), startTime: '10:00', providerName: 'Dr. Tong', visitReasons: ['EXAMINATION'] },
-  { patientApricotId: 'pt-1', date: addDaysStr(TODAY, -2), startTime: '09:00', providerName: 'Dr. Lau', visitReasons: ['FILLING'] },
-  // pt-2：只有未來行 → lastVisit 應係 null（未发生唔算到診）
-  { patientApricotId: 'pt-2', date: addDaysStr(TODAY, +3), startTime: '09:00', providerName: 'Dr. Lau', visitReasons: ['RECALL'] },
+  // pt-1：兩行過去（不同店）→ lastVisit = TODAY-2；visitedClinicIds = 兩店
+  { patientApricotId: 'pt-1', date: addDaysStr(TODAY, -5), startTime: '10:00', providerName: 'Dr. Tong', visitReasons: ['EXAMINATION'], clinicId: 'cl-tkw' },
+  { patientApricotId: 'pt-1', date: addDaysStr(TODAY, -2), startTime: '09:00', providerName: 'Dr. Lau', visitReasons: ['FILLING'], clinicId: 'cl-rsm' },
+  // pt-2：只有未來行 → lastVisit null（未來唔算到診）但 visitedClinicIds 計全部行
+  { patientApricotId: 'pt-2', date: addDaysStr(TODAY, +3), startTime: '09:00', providerName: 'Dr. Lau', visitReasons: ['RECALL'], clinicId: 'cl-tkw' },
+]
+const CLINIC_ROWS: Any[] = [
+  { id: 'cl-tkw', shortName: 'TKW' },
+  { id: 'cl-rsm', shortName: 'RSM' },
 ]
 
 const auditCreates: Any[] = []
@@ -91,6 +101,9 @@ const fakes = {
         .filter(r => args.where.patientApricotId?.in?.includes(r.patientApricotId) ?? false)
         .filter(r => (args.where.date?.lte ? r.date <= args.where.date.lte : true))
         .sort((a, b) => (b.date + b.startTime).localeCompare(a.date + a.startTime)),
+  },
+  clinic: {
+    findMany: async ({ where }: Any) => CLINIC_ROWS.filter((r) => where?.id?.in ? where.id.in.includes(r.id) : true),
   },
 }
 
@@ -161,11 +174,13 @@ describe('§4.1 — 驗收全項（mock）', () => {
     assert.equal(body.matches.length, 2)
     // 排序（patientCode asc）
     assert.deepEqual(body.matches.map((m: Any) => m.patientCode), ['TKW001991', 'TKW001992'])
-    // pt-1：最近過去行 = TODAY-2（唔係 TODAY-5）
+    // pt-1：最近過去行 = TODAY-2（唔係 TODAY-5）+ 回傳該行診所（S5-13②）
     assert.deepEqual(body.matches[0].lastVisit, {
       date: addDaysStr(TODAY, -2),
       providerName: 'Dr. Lau',
       visitReasons: ['FILLING'],
+      clinicId: 'cl-rsm',
+      clinicCode: 'RSM',
     })
     assert.equal(body.matches[0].patientApricotId, 'pt-1')
     assert.equal(body.matches[0].patientName, '陳大文')
@@ -226,5 +241,39 @@ describe('§4.1 — 驗收全項（mock）', () => {
     assert.equal(row.status, 200)
     assert.ok(!String(row.path).includes('?'))
     assert.ok(!String(row.path).includes(HASH_A), 'audit 唔可以含 phoneHash（病人識別）')
+  })
+})
+
+// ── T824：S5-13② patient-lookup 回傳診所 + gender 有就回 ───────────────
+describe('T824 S5-13②：lastVisit 帶店 + visitedClinicIds + gender 條件回傳', () => {
+  it('lastVisit 帶 clinicId + clinicCode（該行所在店）', async () => {
+    const res = await GET(mkReq(`phoneHash=${HASH_A}`, KEY_MAIN))
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    // pt-1 最近過去行喺 cl-rsm（RSM）
+    assert.equal(body.matches[0].lastVisit.clinicId, 'cl-rsm')
+    assert.equal(body.matches[0].lastVisit.clinicCode, 'RSM')
+  })
+
+  it('visitedClinicIds = 全部行（唔限過去）distinct clinicId，排序', async () => {
+    const res = await GET(mkReq(`phoneHash=${HASH_A}`, KEY_MAIN))
+    const body = await res.json()
+    // pt-1：兩行不同店 → 兩 cuid（排序）
+    assert.deepEqual(body.matches[0].visitedClinicIds, ['cl-rsm', 'cl-tkw'])
+    // pt-2：只有未來行 → lastVisit null 但 visitedClinicIds 照計
+    assert.equal(body.matches[1].lastVisit, null)
+    assert.deepEqual(body.matches[1].visitedClinicIds, ['cl-tkw'])
+  })
+
+  it('gender：row 有就回、無就無 key（PII 白名單未加欄前零洩）', async () => {
+    const resA = await GET(mkReq(`phoneHash=${HASH_A}`, KEY_MAIN))
+    const bodyA = await resA.json()
+    // pt-1/pt-2 fake row 無 gender → 無 key（strict zod 已釘：多 key 就 fail）
+    for (const m of bodyA.matches) assert.ok(!('gender' in m), `gender 唔該出現：${m.patientCode}`)
+
+    const resC = await GET(mkReq(`phoneHash=${HASH_C}`, KEY_MAIN))
+    const bodyC = await resC.json()
+    // pt-3 fake row 帶 gender（模擬日後加欄）→ 照回
+    assert.equal(bodyC.matches[0].gender, 'F')
   })
 })

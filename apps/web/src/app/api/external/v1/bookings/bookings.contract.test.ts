@@ -81,6 +81,8 @@ const auditCreates: Any[] = []
 const keyUpdates: Any[] = []
 // ★ cwi-final S5-5：clinic 表可控（S5-5 消歧測試用）
 const clinicRows: Any[] = [{ id: 'cl-tkw', shortName: 'TKW', apricotClinicId: 'apr-clinic-1' }]
+// ★ cwi-final S5-14：AppointmentIndex 可控行（status/remove clinic/date 核對 — T825）
+const indexRows: Any[] = []
 
 const fakes = {
   $queryRaw: async (strings: Any) => {
@@ -101,9 +103,13 @@ const fakes = {
     findMany: async ({ where }: Any) => clinicRows.filter((r) => r.shortName === where.shortName),
   },
   provider: { findMany: async () => [{ id: 'p-1', name: 'Dr. T' }] },
+  // ★ cwi-final S5-14：status/remove 核對用 — 可控 AppointmentIndex 行
+  appointmentIndex: {
+    findFirst: async () => null,
+    findUnique: async ({ where }: Any) => indexRows.find((r) => r.apricotApptId === where.apricotApptId) ?? null,
+  },
   // 單日 sync 會查 provider 帳號映射（Stage 2 口徑）
   apricotPractitioner: { findMany: async () => [{ apricotId: 'prov-1', providerId: 'p-1', kind: 'PROVIDER' }] },
-  appointmentIndex: { findFirst: async () => null },
   patientIndex: { upsert: async () => ({}) },
   bookingWriteLog: {
     findUnique: async ({ where }: Any) => writeLogs.get(where.idempotencyKey) ?? null,
@@ -196,6 +202,7 @@ beforeEach(() => {
   keyUpdates.length = 0
   clinicRows.length = 0
   clinicRows.push({ id: 'cl-tkw', shortName: 'TKW', apricotClinicId: 'apr-clinic-1' })
+  indexRows.length = 0
   locked = true
   respond = (c) => {
     if (c.path.includes('checkClash')) return []
@@ -501,6 +508,47 @@ describe('PUT /v1/bookings/{id}/status', () => {
     const r2 = await statusRoute.PUT(mkReq('PUT', `/bookings/apt-1/status?status=102&date=${BOOK_DATE}`, { key: KEY_MAIN }), { params: { id: 'apt-1' } })
     assert.equal(r2.status, 400)
   })
+
+  // ★ cwi-final S5-14（T825）：AppointmentIndex 核對 clinic/date
+  it('T825 status：index 行 clinic/date 同 request 唔符 → 400 BOOKING_MISMATCH（零 Apricot 寫入）', async () => {
+    indexRows.push({ apricotApptId: 'apt-1', clinicId: 'cl-other', date: BOOK_DATE, patientApricotId: 'pat-1' })
+    const res = await statusRoute.PUT(
+      mkReq('PUT', `/bookings/apt-1/status?status=102&date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }),
+      { params: { id: 'apt-1' } },
+    )
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).code, 'BOOKING_MISMATCH')
+    assert.equal(calls.length, 0, '唔對就唔准打 Apricot')
+  })
+
+  it('T825 status：index 行 date 唔符（店對）→ 400 BOOKING_MISMATCH', async () => {
+    indexRows.push({ apricotApptId: 'apt-1', clinicId: 'cl-tkw', date: addDaysStr(BOOK_DATE, 1), patientApricotId: 'pat-1' })
+    const res = await statusRoute.PUT(
+      mkReq('PUT', `/bookings/apt-1/status?status=102&date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }),
+      { params: { id: 'apt-1' } },
+    )
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).code, 'BOOKING_MISMATCH')
+    assert.equal(calls.length, 0)
+  })
+
+  it('T825 status：index 行 clinic/date 全對 → 200（照舊寫）', async () => {
+    indexRows.push({ apricotApptId: 'apt-1', clinicId: 'cl-tkw', date: BOOK_DATE, patientApricotId: 'pat-1' })
+    const res = await statusRoute.PUT(
+      mkReq('PUT', `/bookings/apt-1/status?status=102&date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }),
+      { params: { id: 'apt-1' } },
+    )
+    assert.equal(res.status, 200)
+    assert.equal((await res.json()).bookingStatus, 102)
+  })
+
+  it('T825 status：index 無行（sync 未追）→ 放行（唔可驗證 ≠ 錯）', async () => {
+    const res = await statusRoute.PUT(
+      mkReq('PUT', `/bookings/apt-nosync/status?status=102&date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }),
+      { params: { id: 'apt-nosync' } },
+    )
+    assert.equal(res.status, 200)
+  })
 })
 
 describe('PUT /v1/bookings/{id}/remove', () => {
@@ -534,6 +582,27 @@ describe('PUT /v1/bookings/{id}/remove', () => {
       assert.equal(res.status, 503)
       assert.equal((await res.json()).code, 'WRITE_DISABLED')
     })
+  })
+
+  it('T825 remove：index 行 clinic/date 唔符 → 400 BOOKING_MISMATCH（零 Apricot 寫入）', async () => {
+    indexRows.push({ apricotApptId: 'apt-9', clinicId: 'cl-other', date: BOOK_DATE, patientApricotId: 'pat-9' })
+    const res = await removeRoute.PUT(
+      mkReq('PUT', `/bookings/apt-9/remove?date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }),
+      { params: { id: 'apt-9' } },
+    )
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).code, 'BOOKING_MISMATCH')
+    assert.equal(calls.filter((c) => c.path.includes('/remove')).length, 0, '唔對就唔准打 Apricot')
+  })
+
+  it('T825 remove：index 行對 → 200（照舊刪）', async () => {
+    indexRows.push({ apricotApptId: 'apt-9', clinicId: 'cl-tkw', date: BOOK_DATE, patientApricotId: 'pat-9' })
+    const res = await removeRoute.PUT(
+      mkReq('PUT', `/bookings/apt-9/remove?date=${BOOK_DATE}&clinicCode=TKW`, { key: KEY_MAIN }),
+      { params: { id: 'apt-9' } },
+    )
+    assert.equal(res.status, 200)
+    assert.equal((await res.json()).removed, true)
   })
 })
 

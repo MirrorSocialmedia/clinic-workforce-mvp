@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
-import { requireExternalKey, withExternalAudit, ExternalApiError } from '@/lib/external-api'
+import { requireExternalKey, withExternalAudit, ExternalApiError, requireStaffId } from '@/lib/external-api'
 import { basePrisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import type { NoteText } from '@/lib/clinical-index/types'
@@ -11,7 +11,8 @@ import type { NoteText } from '@/lib/clinical-index/types'
 //
 //   200: { v:1, visitId, patientApricotId, visitDate, noteKind, note }
 //   404: VISIT_NOT_FOUND / NOTE_NOT_FOUND（hasNote=false）
-//   Header: X-Api-Key（scope: patients）＋ X-Staff-Id（opaque，audit 用）
+//   400: STAFF_ID_REQUIRED（cwi-final S5-14 — X-Staff-Id 必填，唔再 anonymous）
+//   Header: X-Api-Key（scope: patients）＋ X-Staff-Id（opaque，audit 用 — 必填）
 //
 // 🔴🔴 100% AUDIT（MD §2.4 紅線）：每次成功回傳全文**之前**先寫
 //    AuditLog action=EXTERNAL_NOTE_VIEWED（記 staffId + visitId，**零內容**）。
@@ -28,7 +29,7 @@ export async function GET(
     ctx.setKey(key.name)
 
     const { patientApricotId, visitId } = await params
-    const staffId = (req.headers.get('x-staff-id') ?? '').trim() || 'anonymous'
+    const staffId = requireStaffId(req) // ★ cwi-final S5-14：必填（唔再 anonymous）
 
     const row = await basePrisma.clinicalRecordIndex.findUnique({ where: { id: visitId } })
     if (!row || row.patientApricotId !== patientApricotId) {
