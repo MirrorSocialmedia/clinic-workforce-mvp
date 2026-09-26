@@ -60,6 +60,9 @@ export async function GET(req: NextRequest) {
     if (!phoneHashMode && !clinicMode) {
       throw new ExternalApiError(400, 'phoneHash or clinicCode required', 'BAD_REQUEST')
     }
+    if (phoneHashMode && !PHONE_HASH_RE.test(phoneHash)) {
+      throw new ExternalApiError(400, 'phoneHash must be 64-char hex', 'BAD_REQUEST')
+    }
     if (!from || !to || !isValidDateStr(from) || !isValidDateStr(to)) {
       throw new ExternalApiError(400, 'invalid date range', 'BAD_REQUEST')
     }

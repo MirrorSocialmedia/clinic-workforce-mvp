@@ -1,0 +1,115 @@
+name: ci
+
+on: [push, pull_request]
+
+# cwi-final S6-1（audit3 P1-22）— CWM（workforce repo）CI
+# spec 模板為 W 版（wa-clinic-inbox .github/workflows/ci.yml）；CWM 版按本 repo 實際調整：
+#   - pnpm 項目喺 apps/web（root package.json 係 stub）→ install/migrate/tsc/test 全部 working-directory: apps/web
+#   - 無 redis service（全 repo git grep REDIS_URL = 0 命中，2026-09-26 核實）
+#   - 無 db:seed：deterministic subset 全 mock／self-contained（t623 自管數據行 + 零殘留 assert），
+#     唔需要 seed；seed.ts 係 destructive wipe+reseed，唔適合 CI
+#   - 測試 scope = deterministic subset（排除清單見 tests step 註釋）
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: clinic_workforce
+        ports:
+          - "15532:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:pw@localhost:15532/clinic_workforce
+      # t623（llm-proxy contract）用明確 test URL — 規避 Prisma .env auto-load 陷阱
+      # （apps/web/.env 嘅舊 5432 URL 會喺 import 階段污染）
+      CWM_TEST_DATABASE_URL: postgresql://postgres:pw@localhost:15532/clinic_workforce
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4 # = apps/web/package.json packageManager 欄（pnpm@9.15.4）
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install (apps/web)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma migrate deploy + generate
+        working-directory: apps/web
+        run: npx prisma migrate deploy && npx prisma generate
+
+      - name: Typecheck
+        working-directory: apps/web
+        run: npx tsc --noEmit
+
+      - name: Tests — deterministic subset
+        working-directory: apps/web
+        run: |
+          # Scope = contract tests（src/app/api/external/** 全收）+ 非環境依賴 src/lib tests。
+          # 排除（環境依賴 — 2026-09-26 本地基線：全量 691 tests / 33 fail，fail 全部落在呢 6 個檔；
+          #   CI fresh DB 唔會 deterministic，故排除）：
+          #   src/lib/apricot/backfill-appointments.test.ts            — 依賴 dev DB(15532) 數據狀態（assertion 差異）
+          #   src/lib/apricot/sync-availability-cache.test.ts          — 同上（prisma invocation + 數據 assertion）
+          #   src/lib/apricot/sync-availability-cache.single-day.test.ts — 同上
+          #   src/lib/apricot/sync-availability-window.test.ts         — 同上（dev DB 都 fail 3 項 — 數據狀態依賴）
+          #   src/lib/payroll-run-snapshot-route.test.ts               — 6 項 deterministic fail（400!==200，fake prisma vs route 口徑；base b3ac6338 已存在）
+          #   src/lib/payroll-snapshot-asof-write.test.ts              — 要 dev server（next dev -p 3000）+ dev DB 乾淨基線
+          # 另：prisma/test-seed.mjs 硬編 5432（唔喺 test glob，CI 唔會跑 — 記此備忘）。
+          # t623（S2-9 llm-proxy contract）經 CWM_TEST_DATABASE_URL 跑真 DB，自管數據行（零殘留 assert）。
+          # ⚠️ 新增 src/lib test 檔要手動補呢個 list。
+          TZ=UTC npx tsx --test \
+            'src/app/api/external/**/*.test.ts' \
+            src/lib/apricot/availability.test.ts \
+            src/lib/apricot/s5-active-statuses.test.ts \
+            src/lib/apricot/sanitize-availability.v2.test.ts \
+            src/lib/apricot/sync-clinicid.test.ts \
+            src/lib/apricot/sync-force.test.ts \
+            src/lib/apricot/write-booking-paths-guard.test.ts \
+            src/lib/apricot/write-booking.test.ts \
+            src/lib/bookable-slots-s5-4.test.ts \
+            src/lib/bookable-slots.test.ts \
+            src/lib/clinical-index/extract-note-text.test.ts \
+            src/lib/clinical-index/refresh-bucket.test.ts \
+            src/lib/clinical-index/visit-index.test.ts \
+            src/lib/clinical/extract-rx-codes.test.ts \
+            src/lib/clinical/llm-envelope.test.ts \
+            src/lib/clinical/quote-parser.test.ts \
+            src/lib/clinical/t623-llm-proxy-contract.test.ts \
+            src/lib/cost-entry/clinic-prefix.test.ts \
+            src/lib/external-api.test.ts \
+            src/lib/external-clinic.test.ts \
+            src/lib/leave-summary.test.ts \
+            src/lib/my-nav.test.ts \
+            src/lib/payroll-engine.bonus-makeup.test.ts \
+            src/lib/payroll-engine.bonus-rules.test.ts \
+            src/lib/payroll-engine.hourly-eowage.test.ts \
+            src/lib/payroll-engine.pl-marker.test.ts \
+            src/lib/phone-hash.test.ts \
+            src/lib/phone.test.ts \
+            src/lib/pl-mark-route.test.ts \
+            src/lib/provider-availability-grid.test.ts \
+            src/lib/provider-availability-layout.test.ts \
+            src/lib/provider-availability-route.test.ts \
+            src/lib/provider-availability-sync.test.ts \
+            src/lib/provider-availability-view.test.ts \
+            src/lib/provider-cell.test.ts \
+            src/lib/provider-leave.test.ts \
+            src/lib/provider-pattern.test.ts \
+            src/lib/reconciliation/parsePaymentReport.test.ts \
+            src/lib/scheduling-leave-summary-route.test.ts \
+            src/lib/scheduling-memo-route.test.ts \
+            src/lib/staff-by-date.test.ts \
+            src/lib/sync-cooldown.test.ts \
