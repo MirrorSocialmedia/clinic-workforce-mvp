@@ -280,23 +280,6 @@ export default function MySchedulePage() {
     <div>
       <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-4">📅 我的班表</h1>
 
-      {/* ─── Company Overview (read-only) ─── */}
-      <div className="card mb-3" style={{ overflow: 'visible' }}>
-        <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700">🏢 公司全局總覽</span>
-            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, -7))} title="上一週">‹</button>
-            <span className="text-xs text-muted-foreground">{ovWeekStart} 起</span>
-            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, 7))} title="下一週">›</button>
-            <button className="text-xs underline text-muted-foreground hover:text-gray-700" onClick={() => setOvWeekStart(mondayOf(new Date()))}>本週</button>
-          </div>
-          <span className="text-xs text-muted-foreground">唯讀</span>
-        </div>
-        {currentUserId && (
-          <CompanyOverviewTable weekStart={ovWeekStart} currentUserId={currentUserId} />
-        )}
-      </div>
-
       {/* ─── Personal Calendar ─── */}
       <div className="card mb-3">
         <div className="flex items-center justify-between mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
@@ -377,13 +360,18 @@ export default function MySchedulePage() {
                   {dayShiftsList.map(s => {
                     const single = dayShiftsList.length === 1
                     const isTransfer = !!s.secondaryClinicName
+                    // ★ 手機可讀性：月曆格只顯示「地點簡稱 + 更次簡稱」，唔再顯示時間（時間喺「班次詳情」睇）
+                    //   一更：地點 12px 粗 / 更次 11px；多更：11px / 10px，避免撐爆格仔
+                    const placeSize = single ? 12 : 11
+                    const shiftSize = single ? 11 : 10
                     return (
                       <div key={s.id}
-                        className="text-[10px] p-0.5 rounded mb-0.5 truncate"
+                        className="p-0.5 rounded mb-0.5"
                         style={{
                           background: isTransfer ? '#fef3c7' : `${getStatusColor(s.status)}20`,
                           color: isTransfer ? '#92400e' : getStatusColor(s.status),
-                          lineHeight: 1.25,
+                          lineHeight: 1.2,
+                          overflow: 'hidden',
                         }}
                         title={[
                           s.clinicName,
@@ -392,17 +380,15 @@ export default function MySchedulePage() {
                           `${fmtTime(s.startTime)}-${fmtTime(s.endTime)}`,
                         ].filter(Boolean).join(' ')}
                       >
-                        {single ? (
-                          <>
-                            <div className="truncate" style={{ fontSize: 9 }}>
-                              {isTransfer
-                                ? <>{s.clinicShortName}<span style={{ margin: '0 1px' }}>→</span>{s.secondaryClinicShortName}</>
-                                : <>{s.clinicShortName}{s.templateShortName ? `·${s.templateShortName}` : ''}</>}
-                            </div>
-                            <div className="truncate" style={{ fontSize: 9 }}>{fmtTime(s.startTime)}</div>
-                          </>
-                        ) : (
-                          fmtTime(s.startTime)
+                        <div className="truncate" style={{ fontSize: placeSize, fontWeight: 600 }}>
+                          {isTransfer
+                            ? <>{s.clinicShortName}<span style={{ margin: '0 1px' }}>→</span>{s.secondaryClinicShortName}</>
+                            : s.clinicShortName}
+                        </div>
+                        {s.templateShortName && (
+                          <div className="truncate" style={{ fontSize: shiftSize }}>
+                            {s.templateShortName}
+                          </div>
                         )}
                       </div>
                     )
@@ -416,7 +402,7 @@ export default function MySchedulePage() {
 
       {/* Shift cards (mobile-friendly) */}
       {Object.keys(shiftsByDate).length > 0 ? (
-        <div className="card">
+        <div className="card mb-3">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">班次詳情</h2>
           <div className="space-y-2">
             {Object.entries(shiftsByDate)
@@ -487,12 +473,29 @@ export default function MySchedulePage() {
           </div>
         </div>
       ) : (
-        <div className="card">
+        <div className="card mb-3">
           <div className="text-center py-12 text-sm text-muted-foreground">
             本月未有排班
           </div>
         </div>
       )}
+
+      {/* ─── Company Overview (read-only) ─── */}
+      <div className="card mb-3" style={{ overflow: 'visible' }}>
+        <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-700">🏢 公司全局總覽</span>
+            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, -7))} title="上一週">‹</button>
+            <span className="text-xs text-muted-foreground">{ovWeekStart} 起</span>
+            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, 7))} title="下一週">›</button>
+            <button className="text-xs underline text-muted-foreground hover:text-gray-700" onClick={() => setOvWeekStart(mondayOf(new Date()))}>本週</button>
+          </div>
+          <span className="text-xs text-muted-foreground">唯讀</span>
+        </div>
+        {currentUserId && (
+          <CompanyOverviewTable weekStart={ovWeekStart} currentUserId={currentUserId} />
+        )}
+      </div>
     </div>
   )
 }
