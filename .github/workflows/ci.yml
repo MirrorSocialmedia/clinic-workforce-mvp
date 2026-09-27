@@ -55,6 +55,11 @@ jobs:
         working-directory: apps/web
         run: npx tsc --noEmit
 
+      # ★ cwm-attfix-20260927 A.3：rules-of-hooks —— 防 hooks 放喺 early return 之後（P0 死機回歸）
+      - name: Lint — rules of hooks
+        working-directory: apps/web
+        run: pnpm run lint:hooks
+
       - name: Tests — deterministic subset
         working-directory: apps/web
         run: |
@@ -114,4 +119,5 @@ jobs:
             src/lib/scheduling-memo-route.test.ts \
             src/lib/staff-by-date.test.ts \
             src/lib/sync-cooldown.test.ts \
-            src/lib/timebank-makeup-batch-route.test.ts
+            src/lib/timebank-makeup-batch-route.test.ts \
+            src/lib/today-board.test.ts

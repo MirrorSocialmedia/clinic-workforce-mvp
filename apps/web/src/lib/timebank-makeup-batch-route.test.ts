@@ -21,6 +21,8 @@
  *   15 dry-run 全流程 → 零 create（timeBankEntry、auditLog 都冇）；計糧鎖用唯讀 helper
  *   16 同一 request 送兩次 → 第二次全部 SKIPPED
  *   17 寫入時 audit create 失敗 → 該筆 rollback，冇補鐘紀錄
+ *   18 flagIfSelfEdit 寫 audit 時 throw（cwm-attfix-20260927 C.1）→ 仍然 200、summary.success 正確、有 TIMEBANK_MAKEUP_BATCH
+ *   19 第 1 筆 BUSY 後，同一員工第 2 筆唔會再 call lockEmployee，直接 BUSY（cwm-attfix-20260927 C.2）
  */
 import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -49,9 +51,11 @@ interface Fresh {
   basePrismaAudit: Any[]
   callLog: string[]
   invalidateCalls: string[]
+  lockCalls: string[]
   busyEmps: Set<string>
   p2002: Set<string>
   failAudit: boolean
+  failSelfEditAudit: boolean
 }
 
 const fresh = (): Fresh => ({
@@ -69,9 +73,11 @@ const fresh = (): Fresh => ({
   basePrismaAudit: [],
   callLog: [],
   invalidateCalls: [],
+  lockCalls: [],
   busyEmps: new Set(),
   p2002: new Set(),
   failAudit: false,
+  failSelfEditAudit: false,
 })
 
 let state: Fresh = fresh()
@@ -194,6 +200,8 @@ const fakes: Record<string, Any> = {
   auditLog: {
     create: async (args: Any) => {
       state.callLog.push(`prisma.auditLog.create:${args.data.action}`)
+      // case 18：flagIfSelfEdit 寫 SELF_BALANCE_EDIT 時 throw（只限呢個 action，批次總結 audit 照寫）
+      if (state.failSelfEditAudit && args.data.action === 'SELF_BALANCE_EDIT') throw new Error('self-edit audit boom')
       state.committed.push({ kind: 'auditLog', rec: args.data })
       return { id: `al-${++state.seq}` }
     },
@@ -221,10 +229,13 @@ const fakeTx: Any = {
   // tagged template：(strings, ...values)；advisory lock 嘅 value = 'emp:<id>'
   $executeRaw: async (_tpl: Any, ...vals: Any[]) => {
     const lockVal = vals.find((v: Any) => typeof v === 'string' && v.startsWith('emp:'))
-    if (lockVal && state.busyEmps.has(lockVal.slice(4))) {
-      const e: Any = new Error('canceling statement due to lock timeout (SQLSTATE 55P03)')
-      e.code = '55P03'
-      throw e
+    if (lockVal) {
+      state.lockCalls.push(lockVal) // case 19：計 lockEmployee 實際試咗幾多次
+      if (state.busyEmps.has(lockVal.slice(4))) {
+        const e: Any = new Error('canceling statement due to lock timeout (SQLSTATE 55P03)')
+        e.code = '55P03'
+        throw e
+      }
     }
     return 0
   },
@@ -594,5 +605,51 @@ describe('timebank makeup batch route（cwm-attbatch-20260927 spec §8.1）', ()
     assert.equal(state.committed.filter(c => c.kind === 'timeBankEntry').length, 0)
     assert.equal(state.committed.filter(c => c.kind === 'auditLog' && c.rec.action === 'TIMEBANK_MAKEUP').length, 0)
     assert.equal(state.invalidateCalls.length, 0)
+  })
+
+  it('18 flagIfSelfEdit 寫 audit 時 throw → 仍然 200、summary.success 正確、有 TIMEBANK_MAKEUP_BATCH（cwm-attfix-20260927 C.1）', async () => {
+    // actor 改自己：u-manager 嘅 employee = emp1
+    addUser('u-manager'); state.userToEmployee['u-manager'] = 'emp1'
+    addEmployee('emp1'); addShift('emp1', '2026-08-10')
+    state.failSelfEditAudit = true
+    const res = await POST(makeReq(token('u-manager', 'MANAGER'), {
+      batchId: B, dryRun: false, reason: 'x', items: [item('emp1', '2026-08-10')],
+    }) as any)
+    // 審計寫失敗唔應該令已 commit 嘅批次回 500
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.results[0].status, 'SUCCESS')
+    assert.deepEqual(body.summary, { success: 1, skipped: 0, failed: 0 })
+    // 補鐘紀錄照寫、批次總結 audit 照寫
+    assert.equal(state.committed.filter(c => c.kind === 'timeBankEntry').length, 1)
+    assert.equal(state.committed.filter(c => c.kind === 'auditLog' && c.rec.action === 'TIMEBANK_MAKEUP').length, 1)
+    const batchAudit = state.committed.find(c => c.kind === 'auditLog' && c.rec.action === 'TIMEBANK_MAKEUP_BATCH')
+    assert.ok(batchAudit)
+    // SELF_BALANCE_EDIT 本身冇寫到（throw 咗）
+    assert.equal(state.committed.filter(c => c.kind === 'auditLog' && c.rec.action === 'SELF_BALANCE_EDIT').length, 0)
+    assert.equal(state.invalidateCalls.length, 1)
+  })
+
+  it('19 第 1 筆 BUSY 後，同一員工第 2 筆唔會再 call lockEmployee，直接 BUSY（cwm-attfix-20260927 C.2）', async () => {
+    addUser('u-manager')
+    addEmployee('emp1'); addShift('emp1', '2026-08-10'); addShift('emp1', '2026-08-11')
+    addEmployee('emp2'); addShift('emp2', '2026-08-10')
+    state.busyEmps.add('emp1')
+    const res = await POST(makeReq(token('u-manager', 'MANAGER'), {
+      batchId: B, dryRun: false, reason: 'x',
+      items: [item('emp1', '2026-08-10'), item('emp1', '2026-08-11'), item('emp2', '2026-08-10')],
+    }) as any)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    const byEmp1a = body.results.find((r: Any) => r.employeeId === 'emp1' && r.date === '2026-08-10')
+    const byEmp1b = body.results.find((r: Any) => r.employeeId === 'emp1' && r.date === '2026-08-11')
+    assert.equal(byEmp1a.status, 'FAILED'); assert.equal(byEmp1a.code, 'BUSY')
+    // 第二筆：唔好再等 3s 鎖 —— 直接 BUSY
+    assert.equal(byEmp1b.status, 'FAILED'); assert.equal(byEmp1b.code, 'BUSY')
+    // lockEmployee 只實際試咗 1 次（emp1）；emp2 正常成功
+    assert.deepEqual(state.lockCalls.filter(v => v === 'emp:emp1'), ['emp:emp1'])
+    assert.deepEqual(state.lockCalls.filter(v => v === 'emp:emp2'), ['emp:emp2'])
+    assert.equal(body.results.find((r: Any) => r.employeeId === 'emp2').status, 'SUCCESS')
+    assert.deepEqual(body.summary, { success: 1, skipped: 0, failed: 2 })
   })
 })

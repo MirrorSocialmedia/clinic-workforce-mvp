@@ -1,6 +1,6 @@
 import { prisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
-import { matchPunchesToShifts } from './shift-punch-match'
+import { matchPunchesToShifts, type MatchedDay } from './shift-punch-match'
 import { toHKDateStr, leaveCoversDate } from './hk-date'
 
 export type TodayPerson = {
@@ -21,13 +21,30 @@ export async function buildTodayBoard(clinicId: string, todayStart: Date, todayE
     orderBy: { startTime: 'asc' },
   })
   const empIds = [...new Set(shifts.map(s => s.employeeId))]
+  // ★ cwm-attfix-20260927 B：調鋪 —— 一張更有 clinicId（上午店）同 secondaryClinicId（下午店），落班卡通常喺下午店打。
+  //   打卡要攞埋 secondaryClinicId 嗰間店，否則調鋪員工過咗收工就會誤報「漏落班卡」。
+  //   matchPunchesToShifts 會按每張更自己嘅 clinicId／secondaryClinicId 再過濾（shift-punch-match.ts），
+  //   所以唔會誤用同一員工喺第三間店嘅卡。
+  const punchClinicIds = [...new Set([
+    clinicId,
+    ...shifts.map(s => s.secondaryClinicId).filter((v): v is string => !!v),
+  ])]
   const punches = empIds.length
-    ? await getEffectivePunches(todayStart, new Date(todayEnd.getTime() - 1), { employeeIds: empIds, clinicId })
+    ? await getEffectivePunches(todayStart, new Date(todayEnd.getTime() - 1), { employeeIds: empIds, clinicIds: punchClinicIds })
     : []
+  // ★ cwm-attfix-20260927 B：按員工一次過 match 佢今日喺呢間店嘅所有更 —— 同店分更先會用時間窗切開
+  //   （shift-punch-match.ts 分更邏輯）。舊寫法逐張更單獨 match，第二更會攞到第一更嘅上班卡。
+  const matchByShift = new Map<string, MatchedDay>()
+  for (const empId of empIds) {
+    const empShifts = shifts.filter(s => s.employeeId === empId)
+    const mine = punches
+      .filter(p => p.raw?.employeeId === empId)
+      .map(p => ({ effectiveTime: p.effectiveTime, punchType: p.punchType, clinicId: p.clinicId }))
+    for (const md of matchPunchesToShifts(empShifts, mine)) matchByShift.set(md.shiftId, md)
+  }
   const people: TodayPerson[] = []
   for (const s of shifts) {
-    const mine = punches.filter(p => p.raw?.employeeId === s.employeeId)
-    const [m] = matchPunchesToShifts([s], mine.map(p => ({ effectiveTime: p.effectiveTime, punchType: p.punchType, clinicId: p.clinicId })))
+    const m = matchByShift.get(s.id)
     const start = new Date(s.startTime), end = new Date(s.endTime)
     const sinceStart = Math.floor((now.getTime() - start.getTime()) / 60000)
     const sinceEnd = Math.floor((now.getTime() - end.getTime()) / 60000)

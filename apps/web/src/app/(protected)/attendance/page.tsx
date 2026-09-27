@@ -389,6 +389,8 @@ export default function AttendancePage() {
   const [exTypeFilter, setExTypeFilter] = useState<ExTypeFilter>('ALL')
   const [exStatusFilter, setExStatusFilter] = useState<ExStatusFilter>('ALL')
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  // ★ cwm-attfix-20260927 C.3（P3 防雙擊）：一定要喺下方 `if (!user) return` 之前 declare（hooks 次序）
+  const batchSubmittingRef = useRef(false)
   // 批量補鐘 modal：estimating → confirm（試算）→ submitting → done（結果）
   const [batchModal, setBatchModal] = useState<null | {
     phase: 'estimating' | 'confirm' | 'submitting' | 'done'
@@ -398,6 +400,7 @@ export default function AttendancePage() {
     resp?: BatchResponse
     reason: string
     error?: string
+    submitted?: boolean   // ★ cwm-attfix-20260927 C.2：曾經提交過（confirmBatch 送出時設 true）
   }>(null)
 
   // ★ cwm-crossclinic-20260914：異地打卡提醒 tab（當月，純查詢）
@@ -862,16 +865,11 @@ export default function AttendancePage() {
   const showBatchColumn = canMakeup && filteredExceptions.some(isBatchEligible)
   // 可剔選嘅早退行（目前視圖內，已按表格順序）
   const batchEligibleInView = filteredExceptions.filter(ex => ex.type === 'EARLY_LEAVE' && isBatchEligible(ex))
-  // 全選 checkbox 三態（indeterminate 要用 ref 設定）
-  const selectAllRef = useRef<HTMLInputElement | null>(null)
-  useEffect(() => {
-    const el = selectAllRef.current
-    if (!el) return
-    const total = batchEligibleInView.length
-    const sel = batchEligibleInView.filter(ex => selectedKeys.has(batchKey(ex))).length
-    el.checked = total > 0 && sel === total
-    el.indeterminate = sel > 0 && sel < total
-  }, [batchEligibleInView, selectedKeys])
+  // 全選 checkbox 三態 —— ★ cwm-attfix-20260927 A（P0）：用 ref callback 設 indeterminate，唔可以用 useRef/useEffect
+  //   （呢度喺 `if (!user) return` 之後，加 hook 會令 hook 數量前後唔一致 → React #310 死機）
+  const batchSelectedInView = batchEligibleInView.filter(ex => selectedKeys.has(batchKey(ex))).length
+  const batchAllChecked = batchEligibleInView.length > 0 && batchSelectedInView === batchEligibleInView.length
+  const batchIndeterminate = batchSelectedInView > 0 && batchSelectedInView < batchEligibleInView.length
   const toggleSelectAll = (checked: boolean) => {
     if (!checked) {
       setSelectedKeys(prev => {
@@ -948,12 +946,18 @@ export default function AttendancePage() {
     if (!m || !m.dryRun) return
     // 只送試算結果為「可執行」嘅行；第二次 call（dryRun: false，同一個 batchId）
     const ok = m.dryRun.results.filter(r => r.status === 'WOULD_SUCCEED')
-    if (ok.length === 0) return
+    // ★ cwm-attfix-20260927 C.3：防雙擊（早 return 要喺設 true 之前；ref 喺 `if (!user) return` 之前 declare）
+    if (batchSubmittingRef.current) return
+    batchSubmittingRef.current = true
+    if (ok.length === 0) {
+      batchSubmittingRef.current = false
+      return
+    }
     const items = ok.map(r => {
       const it = m.items.find(i => i.employeeId === r.employeeId && i.date === r.date)
       return { employeeId: r.employeeId, date: r.date, minutes: it?.minutes ?? r.minutes }
     })
-    setBatchModal({ ...m, phase: 'submitting' })
+    setBatchModal({ ...m, phase: 'submitting', submitted: true })
     try {
       const res = await fetch('/api/timebank/makeup/batch', {
         method: 'POST', credentials: 'include',
@@ -962,21 +966,25 @@ export default function AttendancePage() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        alert(data.error || '提交失敗')
-        setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, phase: 'confirm' } : prev))
+        // ★ cwm-attfix-20260927 C.2：唔退返 confirm 畫面 —— 重新試算顯示最新狀態（已成功嘅會顯示「已補鐘，會跳過」）
+        alert(`${data.error || '提交失敗'}\n部分項目可能已完成，會重新試算顯示最新狀態。`)
+        runDryRun(m.batchId, m.items)
         return
       }
       setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, phase: 'done', resp: data as BatchResponse } : prev))
     } catch {
-      alert('網絡錯誤 —— 已提交嘅可能已成功，請用審計日誌核實')
-      setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, phase: 'confirm' } : prev))
+      // ★ cwm-attfix-20260927 C.2：同上 —— 重新試算，唔再叫用戶開審計日誌核實
+      alert('網絡錯誤 —— 部分項目可能已完成，會重新試算顯示最新狀態。')
+      runDryRun(m.batchId, m.items)
+    } finally {
+      batchSubmittingRef.current = false
     }
   }
   const retryFailed = () => {
     const m = batchModal
     if (!m?.resp) return
-    // 只重試 BUSY / ERROR；新 batchId 重新跑試算
-    const retry = m.resp.results.filter(r => r.status === 'FAILED' && (r.code === 'BUSY' || r.code === 'ERROR'))
+    // 只重試 BUSY / ERROR / NOT_PROCESSED（★ cwm-attfix-20260927 C.2：NOT_PROCESSED = 45s 期限未到，可重試）；新 batchId 重新跑試算
+    const retry = m.resp.results.filter(r => r.status === 'FAILED' && (r.code === 'BUSY' || r.code === 'ERROR' || r.code === 'NOT_PROCESSED'))
     if (retry.length === 0) return
     const items = retry.map(r => {
       const it = m.items.find(i => i.employeeId === r.employeeId && i.date === r.date)
@@ -988,9 +996,12 @@ export default function AttendancePage() {
   }
   const closeBatchModal = () => {
     const m = batchModal
-    if (m?.phase === 'done' && m.resp) {
-      // 只保留失敗行（例如 BUSY/ERROR 可以稍後重試）
-      setSelectedKeys(new Set(m.resp.results.filter(r => r.status === 'FAILED').map(r => `${r.employeeId}_${r.date}`)))
+    // ★ cwm-attfix-20260927 C.2：只要曾經提交過（submitted）就 refresh，唔再限 phase === 'done'
+    if (m?.submitted) {
+      if (m.phase === 'done' && m.resp) {
+        // 只保留失敗行（例如 BUSY/ERROR/NOT_PROCESSED 可以稍後重試）
+        setSelectedKeys(new Set(m.resp.results.filter(r => r.status === 'FAILED').map(r => `${r.employeeId}_${r.date}`)))
+      }
       notifyDataChanged('attendance', 'timebank')
       fetchExceptions()
     }
@@ -1790,8 +1801,9 @@ export default function AttendancePage() {
                   <tr className="border-b">
                     {showBatchColumn && (
                       <th style={{ width: 36 }} className="p-3">
-                        <input type="checkbox" ref={selectAllRef}
-                          checked={batchEligibleInView.length > 0 && batchEligibleInView.every(ex => selectedKeys.has(batchKey(ex)))}
+                        <input type="checkbox"
+                          ref={el => { if (el) el.indeterminate = batchIndeterminate }}
+                          checked={batchAllChecked}
                           onChange={e => toggleSelectAll(e.target.checked)}
                           title="全選（只選可以批量補鐘嘅早退行）" />
                       </th>

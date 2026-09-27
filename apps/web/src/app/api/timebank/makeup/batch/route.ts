@@ -12,7 +12,7 @@ import { getMonthRange } from '@/lib/hk-date'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 import { computeActualMakeupMinutes, isHourlyForMonth, makeupEntryDate, makeupNote } from '@/lib/timebank-makeup'
 
-type FailCode = 'NOT_FOUND' | 'HOURLY' | 'PAYROLL_LOCKED' | 'NO_SHIFT' | 'NO_EARLY_LEAVE' | 'STALE' | 'BUSY' | 'ERROR'
+type FailCode = 'NOT_FOUND' | 'HOURLY' | 'PAYROLL_LOCKED' | 'NO_SHIFT' | 'NO_EARLY_LEAVE' | 'STALE' | 'BUSY' | 'NOT_PROCESSED' | 'ERROR'
 
 type BatchResult = {
   employeeId: string
@@ -115,6 +115,10 @@ export async function POST(req: NextRequest) {
   const results: BatchResult[] = []
   // 每筆成功 → 記低 employeeId → 最早成功日期（commit 之後 invalidate 用）
   const successByEmp = new Map<string, string>()
+  // ★ cwm-attfix-20260927 C.2（P2）：45s deadline（< nginx proxy_read_timeout 60s，避免前端 504）
+  //   + 同員工 BUSY 去重（第一筆等鎖超時後，同員工其餘筆唔使再等 3s 鎖）
+  const busyEmps = new Set<string>()
+  const deadline = Date.now() + 45_000
 
   for (const it of sortedItems) {
     const base = { employeeId: it.employeeId, date: it.date, minutes: it.minutes }
@@ -128,6 +132,17 @@ export async function POST(req: NextRequest) {
     if (hourlyCache.get(pairKey(it.employeeId, it.date))) {
       results.push({ ...base, status: 'FAILED', code: 'HOURLY', message: '時薪員工不適用' })
       continue
+    }
+    // ★ cwm-attfix-20260927 C.2：寫入模式先檢查（dry-run 唔用鎖、唔應該被 deadline 截斷）
+    if (!dryRun) {
+      if (Date.now() > deadline) {
+        results.push({ ...base, status: 'FAILED', code: 'NOT_PROCESSED', message: '時間不足，未處理，請重試' })
+        continue
+      }
+      if (busyEmps.has(it.employeeId)) {
+        results.push({ ...base, status: 'FAILED', code: 'BUSY', message: '該員工資料正喺度處理緊' })
+        continue
+      }
     }
 
     if (dryRun) {
@@ -238,6 +253,8 @@ export async function POST(req: NextRequest) {
         continue
       }
       if (isLockBusy(e)) {
+        // ★ cwm-attfix-20260927 C.2：記低呢個員工 busy —— 之後同員工嘅筆直接 BUSY，唔再等第二次鎖
+        busyEmps.add(it.employeeId)
         results.push({ ...base, status: 'FAILED', code: 'BUSY', message: '該員工資料正喺度處理緊' })
         continue
       }
@@ -258,15 +275,20 @@ export async function POST(req: NextRequest) {
       }
     }
     // 2) 每筆成功 call flagIfSelfEdit（同單筆 P1-6 口徑）
+    //    ★ cwm-attfix-20260927 C.1（P2）：try/catch —— 審計寫失敗唔應該令已 commit 嘅批次回 500
     for (const r of results) {
       if (r.status !== 'SUCCESS') continue
-      await flagIfSelfEdit({
-        actorUserId: actorId,
-        targetEmployeeId: r.employeeId,
-        what: '批量補鐘',
-        detail: { date: r.date, minutes: -r.minutes, targetType: 'EARLY_LEAVE', batchId },
-        req,
-      })
+      try {
+        await flagIfSelfEdit({
+          actorUserId: actorId,
+          targetEmployeeId: r.employeeId,
+          what: '批量補鐘',
+          detail: { date: r.date, minutes: -r.minutes, targetType: 'EARLY_LEAVE', batchId },
+          req,
+        })
+      } catch (e) {
+        console.error(`[makeup-batch] self-edit flag 失敗 employeeId=${r.employeeId} date=${r.date}`, e)
+      }
     }
   }
 
