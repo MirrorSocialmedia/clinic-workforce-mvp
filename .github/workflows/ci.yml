@@ -83,6 +83,7 @@ jobs:
             src/lib/bookable-slots.test.ts \
             src/lib/clinical-index/extract-note-text.test.ts \
             src/lib/clinical-index/refresh-bucket.test.ts \
+            src/lib/clinical-index/t694-apricot-lock.test.ts \
             src/lib/clinical-index/visit-index.test.ts \
             src/lib/clinical/extract-rx-codes.test.ts \
             src/lib/clinical/llm-envelope.test.ts \
