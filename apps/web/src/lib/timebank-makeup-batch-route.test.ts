@@ -23,6 +23,7 @@
  *   17 寫入時 audit create 失敗 → 該筆 rollback，冇補鐘紀錄
  *   18 flagIfSelfEdit 寫 audit 時 throw（cwm-attfix-20260927 C.1）→ 仍然 200、summary.success 正確、有 TIMEBANK_MAKEUP_BATCH
  *   19 第 1 筆 BUSY 後，同一員工第 2 筆唔會再 call lockEmployee，直接 BUSY（cwm-attfix-20260927 C.2）
+ *   20 超過 BATCH_DEADLINE_MS → 之後嘅項目 NOT_PROCESSED，唔會 call lockEmployee（cwm-deployguard-20260928 P3-3）
  */
 import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -31,6 +32,7 @@ import { prisma, basePrisma } from './prisma'
 import { createToken } from './auth'
 import { POST } from '../app/api/timebank/makeup/batch/route'
 import { toHKDateStr } from './hk-date'
+import { BATCH_DEADLINE_MS } from './timebank-makeup'
 
 type Any = any
 
@@ -651,5 +653,54 @@ describe('timebank makeup batch route（cwm-attbatch-20260927 spec §8.1）', ()
     assert.deepEqual(state.lockCalls.filter(v => v === 'emp:emp2'), ['emp:emp2'])
     assert.equal(body.results.find((r: Any) => r.employeeId === 'emp2').status, 'SUCCESS')
     assert.deepEqual(body.summary, { success: 1, skipped: 0, failed: 2 })
+  })
+
+  it('20 超過 BATCH_DEADLINE_MS → 之後嘅項目 NOT_PROCESSED，唔會 call lockEmployee（cwm-deployguard-20260928 P3-3）', async () => {
+    // 3 筆唔同員工；第 1 筆 entry create 之後先將 Date.now 推到 deadline 之後
+    //（唔用呼叫次數計數推時間：requireAuth 嘅 jwt 驗證路徑可能亦有 Date.now，計數脆）
+    addUser('u-manager')
+    for (const [e, d] of [['emp1', '2026-08-10'], ['emp2', '2026-08-10'], ['emp3', '2026-08-11']] as const) {
+      addEmployee(e); addShift(e, d)
+    }
+    const realNow = Date.now
+    let advanced = false
+    const realCreate = fakeTx.timeBankEntry.create
+    fakeTx.timeBankEntry.create = async (args: Any) => {
+      advanced = true
+      return realCreate(args)
+    }
+    Date.now = () => realNow() + (advanced ? BATCH_DEADLINE_MS + 1_000 : 0)
+    try {
+      const res = await POST(makeReq(token('u-manager', 'MANAGER'), {
+        batchId: B, dryRun: false, reason: 'x',
+        items: [item('emp1', '2026-08-10'), item('emp2', '2026-08-10'), item('emp3', '2026-08-11')],
+      }) as any)
+      assert.equal(res.status, 200)
+      const body = await res.json()
+      // 第 1 筆正常成功；第 2、3 筆 deadline 之後 → NOT_PROCESSED
+      assert.equal(body.results[0].status, 'SUCCESS')
+      assert.equal(body.results[1].status, 'FAILED')
+      assert.equal(body.results[1].code, 'NOT_PROCESSED')
+      assert.equal(body.results[2].status, 'FAILED')
+      assert.equal(body.results[2].code, 'NOT_PROCESSED')
+      // 第 2、3 筆：冇 timeBankEntry.create、冇 advisory lock 呼叫
+      assert.equal(state.committed.filter(c => c.kind === 'timeBankEntry').length, 1)
+      assert.deepEqual(state.lockCalls, ['emp:emp1'])
+      assert.deepEqual(body.summary, { success: 1, skipped: 0, failed: 2 })
+      // 批次總結 audit 嘅 failures 包含兩筆 NOT_PROCESSED
+      const batchAudit = state.committed.find(c => c.kind === 'auditLog' && c.rec.action === 'TIMEBANK_MAKEUP_BATCH')
+      assert.ok(batchAudit)
+      const batchNotes = JSON.parse(batchAudit.rec.notes)
+      assert.equal(batchNotes.requested, 3)
+      assert.equal(batchNotes.success, 1)
+      assert.equal(batchNotes.failed, 2)
+      assert.deepEqual(batchNotes.failures, [
+        { employeeId: 'emp2', date: '2026-08-10', code: 'NOT_PROCESSED' },
+        { employeeId: 'emp3', date: '2026-08-11', code: 'NOT_PROCESSED' },
+      ])
+    } finally {
+      Date.now = realNow
+      fakeTx.timeBankEntry.create = realCreate
+    }
   })
 })

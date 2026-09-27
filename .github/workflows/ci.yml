@@ -60,6 +60,11 @@ jobs:
         working-directory: apps/web
         run: pnpm run lint:hooks
 
+      # ★ cwm-deployguard-20260928：部署守門入 CI —— 同 deploy.sh 共用 scripts/run-guards.sh 清單，防再漂移
+      #   repo 根目錄跑（唔好加 working-directory: apps/web）；check-holiday-coverage 喺 CI 連唔到 clinic_prod 會自動跳過
+      - name: Deploy guards（同 deploy.sh 同一份清單）
+        run: bash scripts/run-guards.sh
+
       - name: Tests — deterministic subset
         working-directory: apps/web
         run: |

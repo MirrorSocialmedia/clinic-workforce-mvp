@@ -968,14 +968,20 @@ export default function AttendancePage() {
       if (!res.ok) {
         // ★ cwm-attfix-20260927 C.2：唔退返 confirm 畫面 —— 重新試算顯示最新狀態（已成功嘅會顯示「已補鐘，會跳過」）
         alert(`${data.error || '提交失敗'}\n部分項目可能已完成，會重新試算顯示最新狀態。`)
-        runDryRun(m.batchId, m.items)
+        // ★ 換新 batchId：之後再提交就係另一個批次，審計唔會兩次提交共用同一個 entityId
+        const retryBatchId = makeBatchId()
+        setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, batchId: retryBatchId, submitted: true } : prev))
+        runDryRun(retryBatchId, m.items)
         return
       }
       setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, phase: 'done', resp: data as BatchResponse } : prev))
     } catch {
       // ★ cwm-attfix-20260927 C.2：同上 —— 重新試算，唔再叫用戶開審計日誌核實
       alert('網絡錯誤 —— 部分項目可能已完成，會重新試算顯示最新狀態。')
-      runDryRun(m.batchId, m.items)
+      // ★ 換新 batchId：同 !res.ok 分支 —— 兩次提交唔共用 entityId
+      const retryBatchId = makeBatchId()
+      setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, batchId: retryBatchId, submitted: true } : prev))
+      runDryRun(retryBatchId, m.items)
     } finally {
       batchSubmittingRef.current = false
     }
@@ -991,7 +997,8 @@ export default function AttendancePage() {
       return { employeeId: r.employeeId, employeeName: it?.employeeName ?? r.employeeId, date: r.date, minutes: it?.minutes ?? r.minutes }
     })
     const newBatchId = makeBatchId()
-    setBatchModal({ phase: 'estimating', batchId: newBatchId, items, reason: m.reason })
+    // ★ 保留 submitted：之前已經提交過，關閉視窗時要 refresh（即使今次重試冇再提交）
+    setBatchModal({ phase: 'estimating', batchId: newBatchId, items, reason: m.reason, submitted: true })
     runDryRun(newBatchId, items)
   }
   const closeBatchModal = () => {

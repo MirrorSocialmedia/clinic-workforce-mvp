@@ -67,3 +67,10 @@ export async function isHourlyForMonth(db: any, employeeId: string, monthStart: 
   })
   try { return JSON.parse(r?.configJson || '{}')?.base_type === 'hourly' } catch { return false }
 }
+
+/**
+ * 批量補鐘：開始處理新項目嘅時間上限。要留位畀：最後一筆 tx（timeout 8s）+ commit 後工序
+ * （每員工 invalidate、最多 200 次 flagIfSelfEdit、批次總結 audit），總數要 < nginx proxy_read_timeout 60s
+ * ★ cwm-deployguard-20260928 P3-3：由 45s 調低到 40s，計入迴圈之後嘅工序
+ */
+export const BATCH_DEADLINE_MS = 40_000

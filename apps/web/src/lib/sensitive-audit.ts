@@ -119,6 +119,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PROVIDER_HOLD_COMMIT', label: '硬保留入 Apricot（commit）' },
   { action: 'PROVIDER_HOLD_RELEASE', label: '放開硬保留（release）' },
   { action: 'PROVIDER_HOLD_AUTO_RELEASE', label: '硬保留逾時自動放開' },
+  // ★ cwi-final S5-4①（F4）：HELD 超過 2×holdTimeoutHours → 系統自動放開（同 AUTO_RELEASE 同級：病人位佔用變動）
+  { action: 'PROVIDER_HOLD_TTL_RELEASE', label: '硬保留超時（2×TTL）自動放開' },
   // ★ cwm-p0sec-20260917 S2：修改員工帳號（電話／密碼／狀態）— User 入 MANUAL_TXN_ENTITIES，extension 唔會記，route 手動記
   { action: 'EMPLOYEE_ACCOUNT_UPDATE', label: '修改員工帳號（電話／密碼／狀態）' },
   // ★ cwm-antitamper-20260917 P1-6：自己改自己假期／時間帳戶（標紅，唔擋）
@@ -145,4 +147,7 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   'PUNCH_CREATE',
   // ★ cwm-payrollsheet-20260921 S3：支票號（純記錄，before/after 只有 chequeNo，唔涉薪資數）
   'PAYROLL_CHEQUE_NO',
+  // ★ cwm-attbatch-20260927：批量補鐘「批次總結」—— 每筆已各自寫 TIMEBANK_MAKEUP（已入 SPEC），
+  //   總結再入 SPEC 會令敏感摘要重複計；呢行只作追溯（batchId／成功／失敗數）
+  'TIMEBANK_MAKEUP_BATCH',
 ])

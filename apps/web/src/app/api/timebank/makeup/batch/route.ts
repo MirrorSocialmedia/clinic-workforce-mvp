@@ -10,7 +10,7 @@ import { assertMonthsUnlockedTx, findLockedMonths } from '@/lib/payroll-lock'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { getMonthRange } from '@/lib/hk-date'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
-import { computeActualMakeupMinutes, isHourlyForMonth, makeupEntryDate, makeupNote } from '@/lib/timebank-makeup'
+import { BATCH_DEADLINE_MS, computeActualMakeupMinutes, isHourlyForMonth, makeupEntryDate, makeupNote } from '@/lib/timebank-makeup'
 
 type FailCode = 'NOT_FOUND' | 'HOURLY' | 'PAYROLL_LOCKED' | 'NO_SHIFT' | 'NO_EARLY_LEAVE' | 'STALE' | 'BUSY' | 'NOT_PROCESSED' | 'ERROR'
 
@@ -115,10 +115,10 @@ export async function POST(req: NextRequest) {
   const results: BatchResult[] = []
   // 每筆成功 → 記低 employeeId → 最早成功日期（commit 之後 invalidate 用）
   const successByEmp = new Map<string, string>()
-  // ★ cwm-attfix-20260927 C.2（P2）：45s deadline（< nginx proxy_read_timeout 60s，避免前端 504）
+  // ★ cwm-attfix-20260927 C.2（P2）：deadline 見 BATCH_DEADLINE_MS（lib/timebank-makeup.ts，40s）
   //   + 同員工 BUSY 去重（第一筆等鎖超時後，同員工其餘筆唔使再等 3s 鎖）
   const busyEmps = new Set<string>()
-  const deadline = Date.now() + 45_000
+  const deadline = Date.now() + BATCH_DEADLINE_MS
 
   for (const it of sortedItems) {
     const base = { employeeId: it.employeeId, date: it.date, minutes: it.minutes }
