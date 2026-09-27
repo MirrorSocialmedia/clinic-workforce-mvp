@@ -3,7 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
-import { diffMinutes } from '@/lib/shift-punch-match'
+import { computeActualMakeupMinutes, makeupEntryDate, makeupNote } from '@/lib/timebank-makeup'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
 import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
@@ -76,47 +76,17 @@ export async function POST(req: NextRequest) {
   }
 
   // 🔒 防呆：補鐘分鐘不可超過該筆異常的實際分鐘
-  {
-    const shift = await prisma.shift.findFirst({
-      where: {
-        employeeId,
-        date: dateStart,
-        status: { not: 'CANCELLED' },
+  // ★ cwm-attbatch-20260927：改用共用模組重算（單筆／批量同一口徑）。
+  //   行為同舊版完全一致：搵唔到更（null）或 actual=0 都唔擋；只有 actual>0 且超出先 400。
+  const actualMinutes = await computeActualMakeupMinutes(prisma, employeeId, date, targetType)
+  if (actualMinutes !== null && actualMinutes > 0 && Math.abs(parseInt(minutes)) > actualMinutes) {
+    return NextResponse.json(
+      {
+        error: `補鐘分鐘(${Math.abs(parseInt(minutes))})超過實際${targetType === 'EARLY_LEAVE' ? '早退' : '遲到'}分鐘(${actualMinutes})`,
+        actualMinutes,
       },
-    })
-    if (shift) {
-      const { getEffectivePunches } = await import('@/lib/punch-query')
-      const dayStart = new Date(date + 'T00:00:00+08:00')
-      const dayEnd = new Date(date + 'T23:59:59+08:00')
-      const dayPunches = await getEffectivePunches(dayStart, dayEnd, { employeeId, db: prisma })
-
-      let actualMinutes = 0
-      if (targetType === 'LATE' || targetType === 'LATE_LUNCH') {
-        const clockIn = dayPunches
-          .filter((ep: any) => ep.punchType === 'CLOCK_IN')
-          .sort((a: any, b: any) => a.effectiveTime.getTime() - b.effectiveTime.getTime())[0]
-        if (clockIn && clockIn.effectiveTime.getTime() > new Date(shift.startTime).getTime()) { // CALC-OK: makeup validation, not general calculation
-          actualMinutes = diffMinutes(clockIn.effectiveTime, new Date(shift.startTime))
-        }
-      } else {
-        const clockOut = dayPunches
-          .filter((ep: any) => ep.punchType === 'CLOCK_OUT')
-          .sort((a: any, b: any) => b.effectiveTime.getTime() - a.effectiveTime.getTime())[0]
-        if (clockOut && clockOut.effectiveTime.getTime() < new Date(shift.endTime).getTime()) {
-          actualMinutes = -diffMinutes(clockOut.effectiveTime, new Date(shift.endTime))
-        }
-      }
-
-      if (actualMinutes > 0 && Math.abs(parseInt(minutes)) > actualMinutes) {
-        return NextResponse.json(
-          {
-            error: `補鐘分鐘(${Math.abs(parseInt(minutes))})超過實際${targetType === 'EARLY_LEAVE' ? '早退' : '遲到'}分鐘(${actualMinutes})`,
-            actualMinutes,
-          },
-          { status: 400 }
-        )
-      }
-    }
+      { status: 400 }
+    )
   }
 
   const beforeBalance = await tbBalance(employeeId)
@@ -129,11 +99,11 @@ export async function POST(req: NextRequest) {
       return tx.timeBankEntry.create({
         data: {
           employeeId,
-          date: new Date(date),
+          date: makeupEntryDate(date),
           type: 'MAKEUP',
           minutes: -Math.abs(parseInt(minutes)),
           targetType, // 現在一定有值
-          note: `補鐘：${targetType === 'EARLY_LEAVE' ? '早退' : '遲到'} ${Math.abs(parseInt(minutes))}分`,
+          note: makeupNote(targetType, Math.abs(parseInt(minutes))),
           createdBy: auth.session.userId,
         },
       })

@@ -214,6 +214,7 @@ function AuditLogsPageInner() {
     // TimeBank / OT actions
     'TIMEBANK_INIT_ADJUST': '初始化時間帳戶',
     'TIMEBANK_MAKEUP': '補鐘',
+    'TIMEBANK_MAKEUP_BATCH': '批量補鐘',
     'TIMEBANK_CONVERT': 'OT換假',
     'TIMEBANK_ABSENT_DEDUCT': '缺勤扣OT',
     'TIMEBANK_REST_TO_ACCOUNT': '休息日轉時間帳戶',
@@ -321,6 +322,7 @@ function AuditLogsPageInner() {
               <option value="CREATE_PUNCH">補登打卡</option>
               <option value="TIMEBANK_INIT_ADJUST">初始化時間帳戶</option>
               <option value="TIMEBANK_MAKEUP">補鐘</option>
+              <option value="TIMEBANK_MAKEUP_BATCH">批量補鐘</option>
               <option value="TIMEBANK_CONVERT">時間帳戶兌換</option>
               <option value="TIMEBANK_ABSENT_DEDUCT">缺勤扣OT鐘</option>
               <option value="TIMEBANK_REST_TO_ACCOUNT">休息日還鐘</option>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
@@ -131,6 +131,28 @@ interface ExceptionRecord {
   earlyOtMinutes?: number
   earlyOtPreview?: number
   earlyOtStale?: boolean
+}
+
+// ★ cwm-attbatch-20260927：異常類型／狀態篩選 + 批量補鐘
+type ExTypeFilter = 'ALL' | 'LATE' | 'EARLY_LEAVE' | 'ABSENT' | 'CORRECTION' | 'EARLY_IN'
+type ExStatusFilter = 'ALL' | 'PENDING' | 'DONE'
+
+// 批量補鐘 API 回應形態（/api/timebank/makeup/batch）
+interface BatchItemResult {
+  employeeId: string
+  date: string
+  minutes: number
+  status: 'SUCCESS' | 'SKIPPED' | 'FAILED' | 'WOULD_SUCCEED'
+  message?: string
+  code?: string
+  actualMinutes?: number | null
+  months?: string[]
+}
+interface BatchResponse {
+  batchId: string
+  dryRun: boolean
+  summary: { success: number; skipped: number; failed: number }
+  results: BatchItemResult[]
 }
 
 // ============================================================
@@ -362,6 +384,21 @@ export default function AttendancePage() {
   const [exLoading, setExLoading] = useState(false)
   const [exClinics, setExClinics] = useState<Array<{ id: string; name: string }>>([])
   const [exEmployees, setExEmployees] = useState<Array<{ id: string; name: string }>>([])
+
+  // ★ cwm-attbatch-20260927：異常類型／狀態篩選 + 批量補鐘剔選
+  const [exTypeFilter, setExTypeFilter] = useState<ExTypeFilter>('ALL')
+  const [exStatusFilter, setExStatusFilter] = useState<ExStatusFilter>('ALL')
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  // 批量補鐘 modal：estimating → confirm（試算）→ submitting → done（結果）
+  const [batchModal, setBatchModal] = useState<null | {
+    phase: 'estimating' | 'confirm' | 'submitting' | 'done'
+    batchId: string
+    items: Array<{ employeeId: string; employeeName: string; date: string; minutes: number }>
+    dryRun?: BatchResponse
+    resp?: BatchResponse
+    reason: string
+    error?: string
+  }>(null)
 
   // ★ cwm-crossclinic-20260914：異地打卡提醒 tab（當月，純查詢）
   const [crossClinicItems, setCrossClinicItems] = useState<CrossClinicItem[]>([])
@@ -597,7 +634,9 @@ export default function AttendancePage() {
   const handleMakeup = async (record: ExceptionRecord) => {
     const minutes = record.lateMinutes || record.earlyMinutes || 0
     if (!minutes || minutes <= 0) { alert('無法確定補鐘分鐘數'); return }
-    if (!confirm(`確定為 ${record.employeeName} 補鐘 ${minutes} 分鐘？將扣其 OT 時間。`)) return
+    // ★ cwm-attbatch-20260927：補鐘文案講清楚：唔計勤工獎、時間帳戶餘額不變（D1）
+    const kindWord = (record.lunchLate ? 'LATE_LUNCH' : record.type) === 'EARLY_LEAVE' ? '早退' : '遲到'
+    if (!confirm(`確定為 ${record.employeeName} 補鐘 ${minutes} 分鐘？補鐘後當日${kindWord}唔計入勤工獎（時間帳戶餘額不變）。`)) return
     try {
       const res = await fetch('/api/timebank/makeup', {
         method: 'POST',
@@ -614,6 +653,8 @@ export default function AttendancePage() {
       const data = await res.json()
       if (!res.ok) { alert(data.error || '補鐘失敗'); return }
       alert('✅ 補鐘成功')
+      // ★ cwm-attbatch-20260927：通知其他 tab／頁面時間帳戶已變
+      notifyDataChanged('attendance', 'timebank')
       fetchExceptions()
     } catch {
       alert('網絡錯誤')
@@ -643,7 +684,8 @@ export default function AttendancePage() {
     switch (type) { case 'LATE': return '#ffc107'; case 'EARLY_LEAVE': return '#fd7e14'; case 'ABSENT': return '#dc3545'; case 'CORRECTION': return '#0dcaf0'; case 'OT': return '#059669'; case 'EARLY_IN': return '#185FA5'; default: return '#888' }
   }
   // 表格用：只排 OT（保留 EARLY_IN，粒批准掣要喺度出）
-  const visibleExceptions = exceptions.filter(e => e.type !== 'OT')
+  // ★ cwm-attbatch-20260927：useMemo —— 否則每次 render 新 array，filteredExceptions 嘅 memo 冇用
+  const visibleExceptions = useMemo(() => exceptions.filter(e => e.type !== 'OT'), [exceptions])
   // 統計用：EARLY_IN 係資訊性，唔算異常
   const nonOtExceptions = visibleExceptions.filter(e => e.type !== 'EARLY_IN')
   const summary = {
@@ -651,6 +693,56 @@ export default function AttendancePage() {
     absent: nonOtExceptions.filter(e => e.type === 'ABSENT').length, correction: nonOtExceptions.filter(e => e.type === 'CORRECTION').length,
     earlyLeave: nonOtExceptions.filter(e => e.type === 'EARLY_LEAVE').length,
   }
+
+  // ★ cwm-attbatch-20260927：類型／狀態篩選（純前端，唔改 API、唔 refetch）
+  //   狀態口徑：時薪行同 CORRECTION 兩者都唔屬於（只喺「全部」出現）
+  const exStatusOf = (ex: ExceptionRecord): 'PENDING' | 'DONE' | null => {
+    if (ex.payType === 'HOURLY' || ex.type === 'CORRECTION') return null
+    if (ex.type === 'LATE' || ex.type === 'EARLY_LEAVE') return ex.madeUp ? 'DONE' : 'PENDING'
+    if (ex.type === 'ABSENT') return ex.otDeducted ? 'DONE' : 'PENDING'
+    if (ex.type === 'EARLY_IN') return ex.earlyOtApproved ? 'DONE' : 'PENDING'
+    return null
+  }
+  const filteredExceptions = useMemo(() => visibleExceptions.filter(ex =>
+    (exTypeFilter === 'ALL' || ex.type === exTypeFilter) &&
+    (exStatusFilter === 'ALL' || exStatusOf(ex) === exStatusFilter)
+  ), [visibleExceptions, exTypeFilter, exStatusFilter])
+  // chips 數字 = 該類型喺 visibleExceptions 入面嘅行數（唔受狀態篩選影響）
+  const typeCounts = useMemo(() => {
+    const c: Record<string, number> = {}
+    visibleExceptions.forEach(e => { c[e.type] = (c[e.type] ?? 0) + 1 })
+    return c
+  }, [visibleExceptions])
+  // ★ cwm-attbatch-20260927：同一人同一日多行早退 → 唔准批量（unique index 每日只容一筆）
+  const batchKey = (ex: ExceptionRecord) => `${ex.employeeId}_${ex.date}`
+  const earlyLeaveKeyCount = useMemo(() => {
+    const m = new Map<string, number>()
+    visibleExceptions.forEach(e => { if (e.type === 'EARLY_LEAVE') m.set(batchKey(e), (m.get(batchKey(e)) ?? 0) + 1) })
+    return m
+  }, [visibleExceptions])
+  // 穩定 row key（手機卡 + 桌面表格）
+  const exKey = (ex: ExceptionRecord) => `${ex.employeeId}_${ex.date}_${ex.type}_${ex.punchTime ?? ''}_${ex.lunchLate ? 'L' : ''}`
+
+  // ★ cwm-attbatch-20260927：篩選／月份／診所／員工變 → 清空剔選
+  useEffect(() => { setSelectedKeys(new Set()) }, [periodMonth, exClinicId, exEmployeeId, exTypeFilter, exStatusFilter])
+  // exceptions 更新（包括 live refresh）→ 剔走已經唔再 eligible 嘅 key（例如其他人啱啱補咗）
+  //   口徑同 isBatchEligible 一致（except canMakeup —— 冇權就根本揀唔到）；!user render 唔入
+  useEffect(() => {
+    if (!user) return
+    setSelectedKeys(prev => {
+      let changed = false
+      const next = new Set<string>()
+      for (const k of prev) {
+        const [empId, date] = k.split('_')
+        const ex = visibleExceptions.find(e => e.employeeId === empId && e.date === date && e.type === 'EARLY_LEAVE')
+        const eligible = !!ex && !ex.madeUp && ex.payType !== 'HOURLY' && (ex.earlyMinutes ?? 0) > 0
+          && visibleExceptions.filter(e2 => e2.type === 'EARLY_LEAVE' && e2.employeeId === empId && e2.date === date).length === 1
+        if (eligible) next.add(k)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [visibleExceptions, user])
 
   // Hash
   const fetchHashClinics = useCallback(async () => {
@@ -758,6 +850,153 @@ export default function AttendancePage() {
   const crossClinicCount = crossClinicItems.length
   // ★ 補鐘 = 時間帳戶操作，唔係考勤管理 —— 同 api/timebank/makeup 用同一個權限。
   const canMakeup = hasPermission(user.role, 'timebank_ops', user.grant, user.deny)
+  // ★ cwm-attbatch-20260927：批量補鐘可剔選（普通 function，render 時先 call，放喺 canMakeup 之後）
+  const isBatchEligible = (ex: ExceptionRecord) =>
+    canMakeup &&
+    ex.type === 'EARLY_LEAVE' &&
+    !ex.madeUp &&
+    ex.payType !== 'HOURLY' &&
+    (ex.earlyMinutes ?? 0) > 0 &&
+    (earlyLeaveKeyCount.get(batchKey(ex)) ?? 0) === 1
+  // 只要至少一行可剔選，剔選格先會顯示；否則成欄唔出，唔改現有版面
+  const showBatchColumn = canMakeup && filteredExceptions.some(isBatchEligible)
+  // 可剔選嘅早退行（目前視圖內，已按表格順序）
+  const batchEligibleInView = filteredExceptions.filter(ex => ex.type === 'EARLY_LEAVE' && isBatchEligible(ex))
+  // 全選 checkbox 三態（indeterminate 要用 ref 設定）
+  const selectAllRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    const el = selectAllRef.current
+    if (!el) return
+    const total = batchEligibleInView.length
+    const sel = batchEligibleInView.filter(ex => selectedKeys.has(batchKey(ex))).length
+    el.checked = total > 0 && sel === total
+    el.indeterminate = sel > 0 && sel < total
+  }, [batchEligibleInView, selectedKeys])
+  const toggleSelectAll = (checked: boolean) => {
+    if (!checked) {
+      setSelectedKeys(prev => {
+        const n = new Set(prev)
+        batchEligibleInView.forEach(ex => n.delete(batchKey(ex)))
+        return n
+      })
+      return
+    }
+    const target = batchEligibleInView.slice(0, 200)
+    setSelectedKeys(prev => {
+      const n = new Set(prev)
+      target.forEach(ex => n.add(batchKey(ex)))
+      return n
+    })
+    if (batchEligibleInView.length > 200) alert('最多一次 200 筆，已選頭 200 筆')
+  }
+  const toggleSelect = (ex: ExceptionRecord, checked: boolean) => {
+    const k = batchKey(ex)
+    setSelectedKeys(prev => {
+      const n = new Set(prev)
+      if (checked) {
+        if (!n.has(k) && n.size >= 200) { alert('最多一次 200 筆'); return prev }
+        n.add(k)
+      } else {
+        n.delete(k)
+      }
+      return n
+    })
+  }
+  // 唔可以剔選嘅早退行 disabled 原因
+  const batchDisabledTitle = (ex: ExceptionRecord): string => {
+    if (ex.madeUp) return '已補鐘'
+    if (ex.payType === 'HOURLY') return '時薪員工唔計時間帳戶'
+    if ((earlyLeaveKeyCount.get(batchKey(ex)) ?? 0) > 1) return '同日有多筆早退，請用單筆補鐘'
+    return ''
+  }
+  // 該員工當月其他未補嘅遲到／早退（唔計今次已選嘅）—— 提示勤工獎風險
+  const remainingUnmade = (empId: string) => visibleExceptions.filter(e =>
+    e.employeeId === empId && (e.type === 'LATE' || e.type === 'EARLY_LEAVE') && !e.madeUp
+    && !(e.type === 'EARLY_LEAVE' && selectedKeys.has(batchKey(e)))
+  ).length
+
+  // ── 批量補鐘 modal 邏輯 ────────────────────────────────────────
+  const makeBatchId = () => `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  const runDryRun = async (batchId: string, items: Array<{ employeeId: string; employeeName: string; date: string; minutes: number }>) => {
+    setBatchModal(m => (m && m.batchId === batchId ? { ...m, phase: 'estimating', error: undefined } : m))
+    try {
+      const res = await fetch('/api/timebank/makeup/batch', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchId, dryRun: true, items: items.map(i => ({ employeeId: i.employeeId, date: i.date, minutes: i.minutes })) }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setBatchModal(m => (m && m.batchId === batchId ? { ...m, phase: 'confirm', error: data.error || `試算失敗 (${res.status})` } : m))
+        return
+      }
+      setBatchModal(m => (m && m.batchId === batchId ? { ...m, phase: 'confirm', dryRun: data as BatchResponse } : m))
+    } catch {
+      setBatchModal(m => (m && m.batchId === batchId ? { ...m, phase: 'confirm', error: '網絡錯誤，請重試' } : m))
+    }
+  }
+  const openBatchModal = () => {
+    const rows = filteredExceptions.filter(ex => ex.type === 'EARLY_LEAVE' && selectedKeys.has(batchKey(ex))).slice(0, 200)
+    if (rows.length === 0) return
+    const batchId = makeBatchId()
+    const items = rows.map(ex => ({ employeeId: ex.employeeId, employeeName: ex.employeeName, date: ex.date, minutes: ex.earlyMinutes ?? 0 }))
+    setBatchModal({ phase: 'estimating', batchId, items, reason: `${periodMonth} 早退批量補鐘` })
+    runDryRun(batchId, items)
+  }
+  const confirmBatch = async () => {
+    const m = batchModal
+    if (!m || !m.dryRun) return
+    // 只送試算結果為「可執行」嘅行；第二次 call（dryRun: false，同一個 batchId）
+    const ok = m.dryRun.results.filter(r => r.status === 'WOULD_SUCCEED')
+    if (ok.length === 0) return
+    const items = ok.map(r => {
+      const it = m.items.find(i => i.employeeId === r.employeeId && i.date === r.date)
+      return { employeeId: r.employeeId, date: r.date, minutes: it?.minutes ?? r.minutes }
+    })
+    setBatchModal({ ...m, phase: 'submitting' })
+    try {
+      const res = await fetch('/api/timebank/makeup/batch', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchId: m.batchId, dryRun: false, reason: m.reason, items }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        alert(data.error || '提交失敗')
+        setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, phase: 'confirm' } : prev))
+        return
+      }
+      setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, phase: 'done', resp: data as BatchResponse } : prev))
+    } catch {
+      alert('網絡錯誤 —— 已提交嘅可能已成功，請用審計日誌核實')
+      setBatchModal(prev => (prev && prev.batchId === m.batchId ? { ...prev, phase: 'confirm' } : prev))
+    }
+  }
+  const retryFailed = () => {
+    const m = batchModal
+    if (!m?.resp) return
+    // 只重試 BUSY / ERROR；新 batchId 重新跑試算
+    const retry = m.resp.results.filter(r => r.status === 'FAILED' && (r.code === 'BUSY' || r.code === 'ERROR'))
+    if (retry.length === 0) return
+    const items = retry.map(r => {
+      const it = m.items.find(i => i.employeeId === r.employeeId && i.date === r.date)
+      return { employeeId: r.employeeId, employeeName: it?.employeeName ?? r.employeeId, date: r.date, minutes: it?.minutes ?? r.minutes }
+    })
+    const newBatchId = makeBatchId()
+    setBatchModal({ phase: 'estimating', batchId: newBatchId, items, reason: m.reason })
+    runDryRun(newBatchId, items)
+  }
+  const closeBatchModal = () => {
+    const m = batchModal
+    if (m?.phase === 'done' && m.resp) {
+      // 只保留失敗行（例如 BUSY/ERROR 可以稍後重試）
+      setSelectedKeys(new Set(m.resp.results.filter(r => r.status === 'FAILED').map(r => `${r.employeeId}_${r.date}`)))
+      notifyDataChanged('attendance', 'timebank')
+      fetchExceptions()
+    }
+    setBatchModal(null)
+  }
+
   const totalPages = Math.ceil(total / pageSize)
 
   return (
@@ -1422,19 +1661,55 @@ export default function AttendancePage() {
           </div>
 
           {/* Summary */}
+          {/* ★ cwm-attbatch-20260927：卡改 button，撳一下 = 揀對應類型 chip；數字維持計成個月（唔跟篩選變） */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-            {[
-              { label: '異常總數', value: summary.total, color: '#495057' },
-              { label: '遲到', value: summary.late, color: '#ffc107' },
-              { label: '早退', value: summary.earlyLeave, color: '#fd7e14' },
-              { label: '缺勤', value: summary.absent, color: '#dc3545' },
-              { label: '補登', value: summary.correction, color: '#0dcaf0' },
-            ].map(card => (
-              <div key={card.label} className="rounded-lg p-4" style={{ background: card.color + '10', borderLeft: `3px solid ${card.color}` }}>
+            {([
+              { label: '異常總數', value: summary.total, color: '#495057', filter: 'ALL' as ExTypeFilter },
+              { label: '遲到', value: summary.late, color: '#ffc107', filter: 'LATE' as ExTypeFilter },
+              { label: '早退', value: summary.earlyLeave, color: '#fd7e14', filter: 'EARLY_LEAVE' as ExTypeFilter },
+              { label: '缺勤', value: summary.absent, color: '#dc3545', filter: 'ABSENT' as ExTypeFilter },
+              { label: '補登', value: summary.correction, color: '#0dcaf0', filter: 'CORRECTION' as ExTypeFilter },
+            ]).map(card => (
+              <button key={card.label} type="button" onClick={() => setExTypeFilter(card.filter)}
+                className={`rounded-lg p-4 text-left border-none cursor-pointer transition-shadow ${exTypeFilter === card.filter ? 'ring-2 ring-brand' : ''}`}
+                style={{ background: card.color + '10', borderLeft: `3px solid ${card.color}` }}>
                 <div className="text-xs text-muted-foreground">{card.label}</div>
                 <div className="text-2xl font-bold" style={{ color: card.color }}>{card.value}</div>
-              </div>
+              </button>
             ))}
+          </div>
+
+          {/* ★ cwm-attbatch-20260927：類型／狀態 chips（手機版一行 overflow-x-auto） */}
+          <div className="mb-4 space-y-2">
+            <div className="flex gap-2 overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: 'none' }}>
+              <span className="text-xs text-muted-foreground shrink-0 pt-1.5">類型</span>
+              {([
+                { key: 'ALL' as ExTypeFilter, label: '全部', count: visibleExceptions.length },
+                { key: 'LATE' as ExTypeFilter, label: '遲到', count: typeCounts['LATE'] ?? 0 },
+                { key: 'EARLY_LEAVE' as ExTypeFilter, label: '早退', count: typeCounts['EARLY_LEAVE'] ?? 0 },
+                { key: 'ABSENT' as ExTypeFilter, label: '缺勤', count: typeCounts['ABSENT'] ?? 0 },
+                { key: 'CORRECTION' as ExTypeFilter, label: '補登', count: typeCounts['CORRECTION'] ?? 0 },
+                { key: 'EARLY_IN' as ExTypeFilter, label: '提早上班', count: typeCounts['EARLY_IN'] ?? 0 },
+              ]).map(c => (
+                <button key={c.key} type="button" onClick={() => setExTypeFilter(c.key)}
+                  className={`shrink-0 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${exTypeFilter === c.key ? 'border-brand text-brand bg-brand/10' : 'border text-muted-foreground'}`}>
+                  {c.label} {c.count}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 overflow-x-auto whitespace-nowrap" style={{ scrollbarWidth: 'none' }}>
+              <span className="text-xs text-muted-foreground shrink-0 pt-1.5">狀態</span>
+              {([
+                { key: 'ALL' as ExStatusFilter, label: '全部' },
+                { key: 'PENDING' as ExStatusFilter, label: '未處理' },
+                { key: 'DONE' as ExStatusFilter, label: '已處理' },
+              ]).map(c => (
+                <button key={c.key} type="button" onClick={() => setExStatusFilter(c.key)}
+                  className={`shrink-0 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${exStatusFilter === c.key ? 'border-brand text-brand bg-brand/10' : 'border text-muted-foreground'}`}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Table */}
@@ -1442,13 +1717,30 @@ export default function AttendancePage() {
             <div className="text-center py-10 text-muted-foreground">查詢中...</div>
           ) : visibleExceptions.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">沒有找到異常記錄 🎉</div>
+          ) : filteredExceptions.length === 0 ? (
+            /* ★ cwm-attbatch-20260927：有數但篩選後冇 —— 唔好顯示 🎉 */
+            <div className="text-center py-10 text-muted-foreground">
+              冇符合篩選嘅異常
+              <div className="mt-3">
+                <button onClick={() => { setExTypeFilter('ALL'); setExStatusFilter('ALL') }}
+                  className="px-4 py-2 rounded-md border text-sm">清除篩選</button>
+              </div>
+            </div>
           ) : (
             <>
               {/* Mobile card view */}
               <div className="md:hidden space-y-2">
-                {visibleExceptions.map((ex, i) => (
-                  <div key={i} className="rounded-xl border shadow-card p-3">
+                {filteredExceptions.map((ex) => (
+                  <div key={exKey(ex)} className="rounded-xl border shadow-card p-3">
                     <div className="flex justify-between items-center mb-1">
+                      {showBatchColumn && (
+                        <input type="checkbox"
+                          className="shrink-0 mr-2"
+                          checked={selectedKeys.has(batchKey(ex))}
+                          disabled={ex.type !== 'EARLY_LEAVE' || !isBatchEligible(ex)}
+                          title={ex.type === 'EARLY_LEAVE' && !isBatchEligible(ex) ? batchDisabledTitle(ex) : ''}
+                          onChange={e => toggleSelect(ex, e.target.checked)} />
+                      )}
                       <span className="font-semibold">{ex.employeeName}</span>
                       <span className="text-xs text-muted-foreground">{ex.date}</span>
                     </div>
@@ -1496,6 +1788,14 @@ export default function AttendancePage() {
                 <table className="w-full">
                 <thead>
                   <tr className="border-b">
+                    {showBatchColumn && (
+                      <th style={{ width: 36 }} className="p-3">
+                        <input type="checkbox" ref={selectAllRef}
+                          checked={batchEligibleInView.length > 0 && batchEligibleInView.every(ex => selectedKeys.has(batchKey(ex)))}
+                          onChange={e => toggleSelectAll(e.target.checked)}
+                          title="全選（只選可以批量補鐘嘅早退行）" />
+                      </th>
+                    )}
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground">員工</th>
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground">診所</th>
                     <th className="text-left p-3 text-sm font-medium text-muted-foreground">日期</th>
@@ -1505,8 +1805,19 @@ export default function AttendancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleExceptions.map((ex, i) => (
-                    <tr key={i} className="border-b hover:bg-gray-50">
+                  {filteredExceptions.map((ex) => (
+                    <tr key={exKey(ex)} className="border-b hover:bg-gray-50">
+                      {showBatchColumn && (
+                        <td className="p-3">
+                          {ex.type === 'EARLY_LEAVE' ? (
+                            <input type="checkbox"
+                              checked={selectedKeys.has(batchKey(ex))}
+                              disabled={!isBatchEligible(ex)}
+                              title={!isBatchEligible(ex) ? batchDisabledTitle(ex) : ''}
+                              onChange={e => toggleSelect(ex, e.target.checked)} />
+                          ) : null}
+                        </td>
+                      )}
                       <td className="p-3 font-medium">{ex.employeeName}</td>
                       <td className="p-3">{ex.clinicName}</td>
                       <td className="p-3">{ex.date}</td>
@@ -1556,6 +1867,23 @@ export default function AttendancePage() {
               </div>
             </>
           )}
+
+          {/* ★ cwm-attbatch-20260927：批量補鐘底部操作列（selectedKeys > 0 先出；bottom 對齊最外層 pb-72px，唔被手機導航遮住） */}
+          {selectedKeys.size > 0 && (() => {
+            const selRows = filteredExceptions.filter(ex => ex.type === 'EARLY_LEAVE' && selectedKeys.has(batchKey(ex)))
+            const empCount = new Set(selRows.map(ex => ex.employeeId)).size
+            const totalMins = selRows.reduce((s, ex) => s + (ex.earlyMinutes ?? 0), 0)
+            return (
+              <div className="sticky z-20 bottom-[calc(72px+env(safe-area-inset-bottom))] md:bottom-4 mt-3
+                              flex items-center justify-between gap-3 rounded-xl border bg-white shadow-card px-4 py-3">
+                <span className="text-sm">已選 <b>{selRows.length}</b> 筆 · {empCount} 位員工 · 共 <b>{totalMins}</b> 分鐘</span>
+                <div className="flex gap-2">
+                  <button onClick={() => setSelectedKeys(new Set())} className="text-sm px-3 py-1.5 rounded-md border">清除</button>
+                  <button onClick={openBatchModal} className="text-sm px-3 py-1.5 rounded-md bg-brand text-white font-semibold">批量補鐘 ({selRows.length})</button>
+                </div>
+              </div>
+            )
+          })()}
         </>
       )}
 
@@ -1981,6 +2309,138 @@ export default function AttendancePage() {
                 {submittingVoid ? '作廢中...' : '確認作廢'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ★ cwm-attbatch-20260927：早退批量補鐘 modal（估算 → 確認 → 結果，同一 modal 換內容） */}
+      {batchModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]"
+          onClick={() => { if (batchModal.phase !== 'submitting') closeBatchModal() }}>
+          <div className="bg-white border rounded-xl shadow-lg w-full mx-4 p-6 relative max-h-[85vh] overflow-y-auto" style={{ maxWidth: '700px' }}
+            onClick={e => e.stopPropagation()}>
+            {batchModal.phase !== 'submitting' && (
+              <button onClick={closeBatchModal}
+                className="absolute top-3 right-3 text-lg text-muted-foreground hover:text-foreground bg-none border-none cursor-pointer">✕</button>
+            )}
+            <h2 className="text-base font-semibold text-foreground mt-0 mb-4">早退批量補鐘</h2>
+
+            {batchModal.phase === 'estimating' && (
+              <div className="py-8 text-center text-muted-foreground">試算中…</div>
+            )}
+
+            {batchModal.phase === 'confirm' && (
+              <>
+                {batchModal.error && (
+                  <div className="mb-3 text-sm text-red-600">⚠️ {batchModal.error}</div>
+                )}
+                <div className="overflow-x-auto mb-4 border rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-gray-50">
+                        <th className="text-left p-2 font-medium">員工</th>
+                        <th className="text-left p-2 font-medium">日期</th>
+                        <th className="text-right p-2 font-medium">補鐘分鐘</th>
+                        <th className="text-left p-2 font-medium">試算結果</th>
+                        <th className="text-left p-2 font-medium">提示</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchModal.items.map(it => {
+                        const r = batchModal.dryRun?.results.find(x => x.employeeId === it.employeeId && x.date === it.date)
+                        const rem = remainingUnmade(it.employeeId)
+                        return (
+                          <tr key={`${it.employeeId}_${it.date}`} className="border-b">
+                            <td className="p-2">{it.employeeName}</td>
+                            <td className="p-2">{it.date}</td>
+                            <td className="p-2 text-right">{it.minutes}</td>
+                            <td className="p-2">
+                              {!r ? <span className="text-muted-foreground">—</span>
+                                : r.status === 'WOULD_SUCCEED' ? <span className="text-emerald-600 font-medium">可執行</span>
+                                : r.status === 'SKIPPED' ? <span className="text-muted-foreground">已補鐘，會跳過</span>
+                                : <span className="text-red-600">{r.message || r.code || '失敗'}</span>}
+                            </td>
+                            <td className="p-2 text-xs text-amber-600">{rem > 0 ? `仍有 ${rem} 筆遲到／早退未補，勤工獎可能照樣取消` : ''}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mb-4">
+                  <label className="block text-xs text-muted-foreground mb-1 font-medium">原因 *（1–200 字）</label>
+                  <input value={batchModal.reason}
+                    onChange={e => setBatchModal({ ...batchModal, reason: e.target.value })}
+                    maxLength={200} placeholder={`${periodMonth} 早退批量補鐘`}
+                    className="w-full px-3 py-2 rounded-md border text-sm focus:outline-none focus:ring-2 focus:ring-brand/30" />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button onClick={closeBatchModal}
+                    className="px-4 py-2 rounded-md border bg-slate-100 hover:bg-slate-200 text-sm transition-colors">取消</button>
+                  {batchModal.error && (
+                    <button onClick={() => runDryRun(batchModal.batchId, batchModal.items)}
+                      className="px-4 py-2 rounded-md border text-sm">重試試算</button>
+                  )}
+                  {(() => {
+                    const okCount = batchModal.dryRun?.results.filter(r => r.status === 'WOULD_SUCCEED').length ?? 0
+                    const reasonOk = batchModal.reason.trim().length > 0 && batchModal.reason.trim().length <= 200
+                    return (
+                      <button onClick={confirmBatch} disabled={okCount === 0 || !reasonOk}
+                        className="px-4 py-2 rounded-md text-sm font-semibold text-white transition-colors bg-brand hover:bg-brand-dark disabled:bg-gray-400 disabled:cursor-default">
+                        確認補鐘 {okCount} 筆
+                      </button>
+                    )
+                  })()}
+                </div>
+              </>
+            )}
+
+            {batchModal.phase === 'submitting' && (
+              <div className="py-10 text-center text-muted-foreground">處理中… 請勿關閉</div>
+            )}
+
+            {batchModal.phase === 'done' && batchModal.resp && (() => {
+              const failedRows = batchModal.resp.results.filter(r => r.status === 'FAILED')
+              const retryable = failedRows.filter(r => r.code === 'BUSY' || r.code === 'ERROR')
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-3 mb-4 text-center">
+                    <div className="rounded-lg p-3 bg-emerald-50 border border-emerald-200">
+                      <div className="text-2xl font-bold text-emerald-600">{batchModal.resp.summary.success}</div>
+                      <div className="text-xs text-muted-foreground">成功</div>
+                    </div>
+                    <div className="rounded-lg p-3 bg-gray-50 border">
+                      <div className="text-2xl font-bold">{batchModal.resp.summary.skipped}</div>
+                      <div className="text-xs text-muted-foreground">跳過</div>
+                    </div>
+                    <div className="rounded-lg p-3 bg-red-50 border border-red-200">
+                      <div className="text-2xl font-bold text-red-600">{batchModal.resp.summary.failed}</div>
+                      <div className="text-xs text-muted-foreground">失敗</div>
+                    </div>
+                  </div>
+                  {failedRows.length > 0 && (
+                    <div className="mb-4 text-sm max-h-40 overflow-y-auto border rounded-lg divide-y">
+                      {failedRows.map(r => {
+                        const it = batchModal.items.find(i => i.employeeId === r.employeeId && i.date === r.date)
+                        return (
+                          <div key={`${r.employeeId}_${r.date}`} className="px-3 py-2 flex justify-between gap-2">
+                            <span>{it?.employeeName ?? r.employeeId} · {r.date}</span>
+                            <span className="text-red-600 text-xs text-right">{r.message || r.code || '失敗'}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <div className="flex gap-2 justify-end">
+                    {retryable.length > 0 && (
+                      <button onClick={retryFailed}
+                        className="px-4 py-2 rounded-md border text-sm">重試失敗項目</button>
+                    )}
+                    <button onClick={closeBatchModal}
+                      className="px-4 py-2 rounded-md text-sm font-semibold text-white bg-brand hover:bg-brand-dark">完成</button>
+                  </div>
+                </>
+              )
+            })()}
           </div>
         </div>
       )}

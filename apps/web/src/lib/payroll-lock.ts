@@ -100,6 +100,27 @@ export function monthsInRange(startHK: string, endHK: string): string[] {
   return out
 }
 
+/**
+ * ★ cwm-attbatch-20260927：唯讀版 —— 回傳已鎖月份（'YYYY-MM'[]），唔寫 audit —— 畀批量補鐘試算用。
+ * 查詢條件同 guardPayrollLock L44–50 完全一致（期月 match + status in [FINALIZED, EXPORTED]
+ * + PayrollItem join 收窄到呢個員工實際入咗嗰張 run），唯一分別係唔寫 PAYROLL_LOCK_BLOCKED。
+ * 注意：dry-run（試算）唔准 call assertMonthsUnlockedTx —— 佢被擋時會喺 tx 外寫 audit。
+ */
+export async function findLockedMonths(employeeId: string, dates: string[]): Promise<string[]> {
+  const pms = [...new Set(dates.map(d => String(d ?? '').slice(0, 7)))].filter(Boolean)
+  if (pms.length === 0) return []
+  const runs = await prisma.payrollRun.findMany({
+    where: {
+      periodMonth: { in: pms.map(pm => hkDateOnly(`${pm}-01`)) },
+      status: { in: ['FINALIZED', 'EXPORTED'] },
+      items: { some: { employeeId } },
+    },
+    select: { id: true, status: true, periodMonth: true },
+  })
+  if (runs.length === 0) return []
+  return [...new Set(runs.map(r => toHKDateStr(r.periodMonth).slice(0, 7)))]
+}
+
 export async function assertMonthsUnlockedTx(
   tx: any,
   p: { actorId: string; employeeId: string; months: Array<string | null | undefined>; what: string },

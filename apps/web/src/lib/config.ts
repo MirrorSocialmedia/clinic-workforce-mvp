@@ -251,6 +251,8 @@ export const CONFIG = {
 
     // Timebank entry routes
     'POST /api/timebank/makeup': ['OWNER', 'MANAGER'],
+    // ★ cwm-attbatch-20260927：早退批量補鐘（同單筆同一權限口徑；漏咗呢行 requireAuth 會全部 403）
+    'POST /api/timebank/makeup/batch': ['OWNER', 'MANAGER'],
     'POST /api/timebank/convert': ['OWNER', 'MANAGER'],
     'POST /api/timebank/init-adjust': ['OWNER'],
     'POST /api/timebank/absent-deduct': ['OWNER', 'MANAGER'],

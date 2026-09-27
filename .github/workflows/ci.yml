@@ -114,3 +114,4 @@ jobs:
             src/lib/scheduling-memo-route.test.ts \
             src/lib/staff-by-date.test.ts \
             src/lib/sync-cooldown.test.ts \
+            src/lib/timebank-makeup-batch-route.test.ts
