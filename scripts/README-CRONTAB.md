@@ -84,9 +84,24 @@ curl -sS -H "x-api-key: $EXTERNAL_KEY" http://127.0.0.1:3000/api/external/v1/cli
 
 ## 5. 生產機 crontab 實彈輸出（對照表）
 
-> ⚠️ **待貼** — 老細喺生產機 `crontab -l` 後補入。補齊前，§1/§2 嘅「建議 cron 行」只係格式參考，唔代表生產機而家真係咁寫。
+> ✅ **已回填**（老細 2026-09-28 18:2x 貼生產機 `crontab -l` 實彈）。
 
+```cron
+# 醫生時間表 Apricot 同步 —— 辦公時間 10 分鐘、其餘每小時
+*/10 8-20 * * * /home/clinicapp/clinic/scripts/sync-availability.sh
+0 21-23,0-7 * * * /home/clinicapp/clinic/scripts/sync-availability.sh
+0 4 * * * /home/clinicapp/clinic/scripts/cleanup-qr-tokens.sh >> /tmp/qr-cleanup.log 2>&1
 ```
-# 待貼：crontab -l 輸出（2026-09-__）
-# （對照：有冇 clinical-index-nightly / clinical-index-backfill 行？幾點跑？key 點傳？）
-```
+
+**審計結論（2026-09-28）**：
+
+| 對照項 | 生產機現況 | 判定 |
+|---|---|---|
+| clinical-index-nightly 行 | **無** | ✅ 符合 spec（「唔會因為 deploy 自動開始」— 尚未啟用，屬預期） |
+| clinical-index-backfill 行 | **無** | ✅ 符合 spec（尚未啟用；啟用 = 一次性 4 晚，收工即刪，見 §2） |
+| sync-availability（既有） | 8–20 點每 10 分鐘 + 其餘時段每小時 | ℹ️ 既有行，經 shell script 傳 key（唔係硬編碼）— 符合 §1 口徑 |
+| cleanup-qr-tokens（既有） | 每日 04:00 | ℹ️ 同 clinical-index 無關 |
+
+**啟用 clinical-index cron 時嘅注意（新）**：
+- 建議嘅 nightly 03:00 / backfill 03:30 時段**同 sync-availability 每小時行重疊** — FX-30 嘅 APRICOT 鎖 + `PAUSED_BUSY` 重試設計正正處理呢個爭用（cursor 唔前進、第二晚續），可接受；但啟用後首幾晚留意 `/var/log/clinical-index-*.log` 有無連續 `PAUSED_BUSY`。
+- key 傳法跟足既有模式：走 script（如 `sync-availability.sh`）或者 `~/.profile` source — **唔好硬編碼入 crontab**（§1）。
