@@ -1656,6 +1656,7 @@ model BookingWriteLog {
   requestedBy    String                    // external key name
   requestHash    String?                   // ★ cwi-final S5-3②：payload fingerprint（sha256；CREATE 路）
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt       // ★ cwi-qa FX-17：stale IN_PROGRESS 判斷用 updatedAt（舊 ERROR 行重用為 IN_PROGRESS 唔會即刻假 stale）
 }
 
 /// Availability slot grid（external API /v1/availability 數據源）。

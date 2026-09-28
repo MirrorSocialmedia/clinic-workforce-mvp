@@ -355,8 +355,10 @@ async function createBookingLocked(input: CreateBookingInput, call: WriteCallFn,
       throw new ApricotWriteError('IDEMPOTENCY_KEY_CONSUMED', null, 'booking was removed — use a new idempotency key')
     }
     // ★ S5-3②：同 key 正喺寫入（並發）— 409 retryable；殘留 > 10 分鐘 → 當 ERROR:create（502）
+    // ★ cwi-qa FX-17：stale 判斷用 updatedAt（舊 ERROR 行重用為 IN_PROGRESS 後 updatedAt 重置 —
+    //   舊口徑 createdAt 會令並發請求即刻假 stale → 假 MANUAL_RECONCILE）
     if (prior.status === 'IN_PROGRESS') {
-      if (Date.now() - prior.createdAt.getTime() > STALE_IN_PROGRESS_MS) {
+      if (Date.now() - prior.updatedAt.getTime() > STALE_IN_PROGRESS_MS) {
         throw new ApricotWriteError(
           'MANUAL_RECONCILE',
           'create',
@@ -683,7 +685,8 @@ export async function rescheduleBooking(input: RescheduleInput, opts: EngineOpts
     const inprog = await prisma.bookingWriteLog.findUnique({ where: { idempotencyKey: key } })
     if (inprog) {
       if (inprog.status === 'IN_PROGRESS') {
-        if (Date.now() - inprog.createdAt.getTime() > STALE_IN_PROGRESS_MS) {
+        // ★ cwi-qa FX-17：stale 判斷用 updatedAt（理由同 CREATE 路 — 見上）
+        if (Date.now() - inprog.updatedAt.getTime() > STALE_IN_PROGRESS_MS) {
           throw new ApricotWriteError('MANUAL_RECONCILE', null, `reschedule ${key}: IN_PROGRESS > 10min (stale) — verify in Apricot manually`)
         }
         throw new ApricotWriteError('IN_PROGRESS', 'check_clash', 'reschedule in progress — retry after a few seconds')
