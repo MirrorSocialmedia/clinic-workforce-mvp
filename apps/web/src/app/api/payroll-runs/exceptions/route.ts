@@ -186,6 +186,17 @@ export async function GET(req: NextRequest) {
     }),
   ])
 
+  // ★ 診所名：先查全部診所，員工冇綁定嗰間店都要顯示到名（調鋪／借調打卡）
+  const clinicNameById = new Map(
+    (await prisma.clinic.findMany({ select: { id: true, name: true } })).map(c => [c.id, c.name]),
+  )
+  const clinicNameOf = (eid: string, cid: string | null | undefined): string => {
+    if (!cid) return '—'
+    return getEmpInfo(eid).clinics.find(c => c.clinicId === cid)?.clinicName
+      || clinicNameById.get(cid)
+      || '—'
+  }
+
   // Build lookup maps from parallel results
   const seen = new Set<string>()
   const hourlyEmpIds = new Set<string>()
@@ -293,20 +304,16 @@ export async function GET(req: NextRequest) {
     if (!existing) {
       empInfo.set(rp.employeeId, {
         name: rp.employee?.user?.name || '—',
-        clinics: rp.employee?.clinics?.map(c => ({ clinicId: c.clinicId, clinicName: c.clinic?.name || c.clinicId })) || [],
+        clinics: rp.employee?.clinics?.map(c => ({ clinicId: c.clinicId, clinicName: c.clinic?.name || '' })) || [],
       })
     }
   }
 
-  const clockIns = effectivePunches.filter(ep => ep.punchType === 'CLOCK_IN')
   const clockOuts = effectivePunches.filter(ep => ep.punchType === 'CLOCK_OUT')
 
   // Helper: get employee info for a given employeeId
   function getEmpInfo(eid: string) {
     return empInfo.get(eid) || { name: '—', clinics: [] }
-  }
-  function getClinicName(eid: string, cid: string) {
-    return getEmpInfo(eid).clinics.find(c => c.clinicId === cid)?.clinicName || cid
   }
 
   // ★ 統一查員工名 —— exceptions / empInfo 都係由「有活動」嘅記錄砌成，
@@ -339,62 +346,51 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // Detect LATE from effective clock-in punches vs shift start
-  for (const ep of clockIns) {
-    const punchDateStr = toHKDateStr(ep.effectiveTime)
-    // ⚠️ TODO: 改用 matchPunchesToShifts（lib/shift-punch-match.ts）——
-    //   而家用 .find() 攞第一張，分更日會配對錯更次。
-    //   同 calculateTimeBank 的結果可能不一致。
-    const matchingShift = shifts.find(s =>
-      s.employeeId === ep.raw.employeeId &&
-      toHKDateStr(new Date(s.date)) === punchDateStr &&
-      (s.clinicId === ep.clinicId || s.secondaryClinicId === ep.clinicId)
-    )
-    if (matchingShift) {
-      const shiftStart = new Date(matchingShift.startTime)
-      if (ep.effectiveTime.getTime() > shiftStart.getTime()) {
-        const lateMins = diffMinutes(ep.effectiveTime, shiftStart)
-        if (lateMins > 0) {
-          exceptions.push({
-            employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
-            clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),
-            date: punchDateStr,
-            type: 'LATE',
-            lateMinutes: lateMins,
-            detail: `遲到 ${lateMins} 分鐘 (排班 ${fmtTime(shiftStart.toISOString())})`,
-            punchTime: ep.effectiveTime.toISOString(),
-          })
-        }
-      }
-    }
+  // ★ 2026-09-28 cwm-exclist：分組由 EARLY_IN 段搬出 —— 遲到／早退／提早上班三段共用
+  const shiftsByEmpDate = new Map<string, typeof shifts>()
+  for (const s of shifts) {
+    const key = `${s.employeeId}|${toHKDateStr(new Date(s.date))}`
+    if (!shiftsByEmpDate.has(key)) shiftsByEmpDate.set(key, [])
+    shiftsByEmpDate.get(key)!.push(s)
   }
 
-  // Detect EARLY_LEAVE from effective clock-out punches vs shift end
-  for (const ep of clockOuts) {
-    const punchDateStr = toHKDateStr(ep.effectiveTime)
-    // ⚠️ TODO: 改用 matchPunchesToShifts（lib/shift-punch-match.ts）——
-    //   而家用 .find() 攞第一張，分更日會配對錯更次。
-    //   同 calculateTimeBank 的結果可能不一致。
-    const matchingShift = shifts.find(s =>
-      s.employeeId === ep.raw.employeeId &&
-      toHKDateStr(new Date(s.date)) === punchDateStr &&
-      (s.clinicId === ep.clinicId || s.secondaryClinicId === ep.clinicId)
-    )
-    if (matchingShift) {
-      const shiftEnd = new Date(matchingShift.endTime)
-      if (ep.effectiveTime.getTime() < shiftEnd.getTime()) {
-        const earlyMins = -diffMinutes(ep.effectiveTime, shiftEnd)
-        if (earlyMins > 0) {
-          exceptions.push({
-            employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
-            clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),
-            date: punchDateStr,
-            type: 'EARLY_LEAVE',
-            earlyMinutes: earlyMins,
-            detail: `早退 ${earlyMins} 分鐘 (${fmtTime(shiftEnd.toISOString())})`,
-            punchTime: ep.effectiveTime.toISOString(),
-          })
-        }
+  const punchesByEmpDate = new Map<string, typeof effectivePunches>()
+  for (const ep of effectivePunches) {
+    const key = `${ep.raw.employeeId}|${toHKDateStr(ep.effectiveTime)}`
+    if (!punchesByEmpDate.has(key)) punchesByEmpDate.set(key, [])
+    punchesByEmpDate.get(key)!.push(ep)
+  }
+
+  // ★ 遲到／早退：每張更一行（同計糧 calculateTimeBank 同一個 matchPunchesToShifts 口徑 ——
+  //   最早上班卡、最遲落班卡、同店分更用時間窗切開）。
+  //   舊寫法逐張打卡出一行 → 同日撳兩次卡就出兩行，批量補鐘因「同日多筆」唔准揀。
+  for (const [key, dayShifts] of shiftsByEmpDate) {
+    const dayPunches = punchesByEmpDate.get(key)
+    if (!dayPunches || dayPunches.length === 0) continue
+    const [empId, dateStr] = key.split('|')
+    const matched = matchPunchesToShifts(dayShifts as any, dayPunches as any)
+    for (const m of matched) {
+      const shift = dayShifts.find(s => s.id === m.shiftId)
+      if (!shift) continue
+      if (m.lateMinutes > 0 && m.clockInAt) {
+        exceptions.push({
+          employeeId: empId, employeeName: empNames.get(empId) ?? '—',
+          clinicName: clinicNameOf(empId, m.clinicId),
+          date: dateStr, type: 'LATE',
+          lateMinutes: m.lateMinutes,
+          detail: `遲到 ${m.lateMinutes} 分鐘 (排班 ${fmtTime(new Date(shift.startTime).toISOString())})`,
+          punchTime: m.clockInAt.toISOString(),
+        })
+      }
+      if (m.earlyMinutes > 0 && m.clockOutAt) {
+        exceptions.push({
+          employeeId: empId, employeeName: empNames.get(empId) ?? '—',
+          clinicName: clinicNameOf(empId, m.clinicId),
+          date: dateStr, type: 'EARLY_LEAVE',
+          earlyMinutes: m.earlyMinutes,
+          detail: `早退 ${m.earlyMinutes} 分鐘 (${fmtTime(new Date(shift.endTime).toISOString())})`,
+          punchTime: m.clockOutAt.toISOString(),
+        })
       }
     }
   }
@@ -506,7 +502,7 @@ export async function GET(req: NextRequest) {
           const displayOt = roundReq > 0 ? Math.floor(otMins / roundReq) * roundReq : otMins
           exceptions.push({
             employeeId: ep.raw.employeeId, employeeName: getEmpInfo(ep.raw.employeeId).name,
-            clinicName: getClinicName(ep.raw.employeeId, ep.clinicId),
+            clinicName: clinicNameOf(ep.raw.employeeId, ep.clinicId),
             date: punchDateStr,
             type: 'OT',
             otMinutes: displayOt,
@@ -678,23 +674,8 @@ export async function GET(req: NextRequest) {
   }
 
   // ★ 2026-08-08: EARLY_IN 偵測 —— 由 matchPunchesToShifts 結果入面攞 earlyInMinutes
+  // ★ 2026-09-28 cwm-exclist：shiftsByEmpDate／punchesByEmpDate 已搬去上方（遲到／早退／提早上班共用）
   try {
-    // Group shifts by employeeId + date for matching
-    const shiftsByEmpDate = new Map<string, typeof shifts>()
-    for (const s of shifts) {
-      const key = `${s.employeeId}|${toHKDateStr(new Date(s.date))}`
-      if (!shiftsByEmpDate.has(key)) shiftsByEmpDate.set(key, [])
-      shiftsByEmpDate.get(key)!.push(s)
-    }
-
-    // Group effective punches by employeeId + date
-    const punchesByEmpDate = new Map<string, typeof effectivePunches>()
-    for (const ep of effectivePunches) {
-      const key = `${ep.raw.employeeId}|${toHKDateStr(ep.effectiveTime)}`
-      if (!punchesByEmpDate.has(key)) punchesByEmpDate.set(key, [])
-      punchesByEmpDate.get(key)!.push(ep)
-    }
-
     // Check for EARLY_IN_OT entries for approval status
     const earlyInEntries = await prisma.timeBankEntry.findMany({
       where: {
@@ -765,10 +746,9 @@ export async function GET(req: NextRequest) {
   }
 
   for (const c of corrections) {
-    const clinic = c.employee?.clinics?.find(cl => cl.clinicId === c.clinicId)?.clinic
     exceptions.push({
       employeeId: c.employeeId, employeeName: empNames.get(c.employeeId) ?? '—',
-      clinicName: clinic?.name || c.clinicId,
+      clinicName: clinicNameOf(c.employeeId, c.clinicId),
       date: toHKDateStr(c.correctedTime), type: 'CORRECTION',
       detail: `補登 ${TYPE_LABEL[c.punchType] || c.punchType} 至 ${fmtTime(c.correctedTime)}${c.reason ? ` (${c.reason})` : ''}`,
       correctionTime: c.correctedTime.toISOString(),
@@ -818,7 +798,12 @@ export async function GET(req: NextRequest) {
     warnings.push(`本月有 ${geoAnomalies} 筆打卡位置異常（超出範圍或拒絕定位）`)
   }
 
-  exceptions.sort((a, b) => b.date.localeCompare(a.date))
+  // ★ 日期新→舊；同日按員工名、類型、時間，保證每次 refetch 次序一樣
+  exceptions.sort((a, b) =>
+    b.date.localeCompare(a.date)
+    || a.employeeName.localeCompare(b.employeeName, 'zh-HK')
+    || a.type.localeCompare(b.type)
+    || String(a.punchTime ?? a.correctionTime ?? '').localeCompare(String(b.punchTime ?? b.correctionTime ?? '')))
 
   // Compute per-employee timebank summaries — include ALL employees with punch/shift data (not just those with exceptions)
   const punchEmpIds = rawPunches.map(p => p.employeeId)
@@ -829,7 +814,7 @@ export async function GET(req: NextRequest) {
   if (employeeId && !uniqueEmployeeIds.includes(employeeId) && !resignedEmpIds.has(employeeId) && !exemptEmpIds.has(employeeId)) {
     uniqueEmployeeIds.push(employeeId)
   }
-  // empNames already defined earlier (after getClinicName) — covers all employees
+  // empNames already defined earlier (above) — covers all employees
   // from shifts, corrections, and raw punches.
 
   // Fix #2a: excluded HOURLY from exception detection; keep them in summaries with payType

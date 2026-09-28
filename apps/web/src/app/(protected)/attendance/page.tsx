@@ -723,8 +723,20 @@ export default function AttendancePage() {
     visibleExceptions.forEach(e => { if (e.type === 'EARLY_LEAVE') m.set(batchKey(e), (m.get(batchKey(e)) ?? 0) + 1) })
     return m
   }, [visibleExceptions])
-  // 穩定 row key（手機卡 + 桌面表格）
-  const exKey = (ex: ExceptionRecord) => `${ex.employeeId}_${ex.date}_${ex.type}_${ex.punchTime ?? ''}_${ex.lunchLate ? 'L' : ''}`
+  // ★ row key 一定要唯一 —— 補登行冇 punchTime、同日重複打卡會令 key 撞（React 重用錯 DOM → 篩選後亂序）
+  //   做法：用內容砌 base key，撞咗就加序號。用 WeakMap 由 ex 物件攞 key，唔改 ExceptionRecord 形狀。
+  const exKeyMap = useMemo(() => {
+    const m = new WeakMap<ExceptionRecord, string>()
+    const seen = new Map<string, number>()
+    for (const ex of visibleExceptions) {
+      const base = `${ex.employeeId}_${ex.date}_${ex.type}_${ex.punchTime ?? ex.correctionTime ?? ''}_${ex.lunchLate ? 'L' : ''}`
+      const n = seen.get(base) ?? 0
+      seen.set(base, n + 1)
+      m.set(ex, n === 0 ? base : `${base}#${n}`)
+    }
+    return m
+  }, [visibleExceptions])
+  const exKey = (ex: ExceptionRecord) => exKeyMap.get(ex) ?? `${ex.employeeId}_${ex.date}_${ex.type}`
 
   // ★ cwm-attbatch-20260927：篩選／月份／診所／員工變 → 清空剔選
   useEffect(() => { setSelectedKeys(new Set()) }, [periodMonth, exClinicId, exEmployeeId, exTypeFilter, exStatusFilter])
