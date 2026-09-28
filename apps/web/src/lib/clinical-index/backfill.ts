@@ -31,11 +31,11 @@ import { resolvePatientDay, upsertVisitIndex, buildClinicMap } from './visit-ind
 import { loadRxCodeEntries } from '@/lib/clinical/extract-rx-codes'
 import { storeQuotesForVisit } from '@/lib/clinical/quote-extract'
 
-export type BackfillPauseReason = 'PAUSED_CALLS' | 'PAUSED_HOURS' | 'PAUSED_RATE_LIMITED' | 'PAUSED_QUOTA' | 'FAILED'
+export type BackfillPauseReason = 'PAUSED_CALLS' | 'PAUSED_HOURS' | 'PAUSED_RATE_LIMITED' | 'PAUSED_BUSY' | 'PAUSED_QUOTA' | 'FAILED'
 
 export interface BackfillOutcome {
-  /** DONE = 365 日跑完；其餘 = 今晚停咗（cursor 已存，第二晚續） */
-  status: 'DONE' | BackfillPauseReason
+  /** DONE = 365 日跑完；ALREADY_DONE = 已跑完且未 ?restart=1（唔會自動開新一輪）；其餘 = 今晚停咗（cursor 已存，第二晚續） */
+  status: 'DONE' | 'ALREADY_DONE' | BackfillPauseReason
   cursorDate: string | null
   processedDays: number
   patients: number
@@ -59,6 +59,8 @@ export async function runClinicalIndexBackfill(opts: {
   maxCalls?: number
   maxHours?: number
   daysPerRun?: number
+  /** ★ cwi-qa FX-30：已有 DONE job 時要重開新一輪 365 日（route 層 cron key 守門） */
+  restart?: boolean
 }): Promise<BackfillOutcome> {
   const t0 = Date.now()
   resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
@@ -82,6 +84,20 @@ export async function runClinicalIndexBackfill(opts: {
     where: { kind: 'BACKFILL', status: { in: ['PENDING', 'RUNNING'] } },
   })
   if (!job) {
+    // ★ cwi-qa FX-30：DONE 唔自動重開 — 舊口徑 cron 每 5 晚又開新一輪 365 日
+    // （每晚最多 3 萬次 Apricot call + 300 次 LLM）。只許 ?restart=1 重開。
+    const doneJob = await basePrisma.clinicalIndexJob.findFirst({
+      where: { kind: 'BACKFILL', status: 'DONE' },
+      orderBy: { finishedAt: 'desc' },
+      select: { id: true },
+    })
+    if (doneJob && !opts.restart) {
+      console.log('[clinical-index-backfill] ALREADY_DONE — 既有 DONE job，唔開新一輪（要重開用 ?restart=1）')
+      return {
+        status: 'ALREADY_DONE', cursorDate: null, processedDays: 0, patients: 0,
+        upserts: 0, apiCalls: 0, errors: 0, lastError: null, durationMs: Date.now() - t0,
+      }
+    }
     job = await basePrisma.clinicalIndexJob.create({
       data: {
         kind: 'BACKFILL',
@@ -117,7 +133,11 @@ export async function runClinicalIndexBackfill(opts: {
       try {
         dayPatients = await searchPatientsForDate(call, day)
       } catch (e) {
-        if (isStopNightError(e)) { pause('PAUSED_RATE_LIMITED', errMsg(e)); break }
+        // ★ cwi-qa FX-30：APRICOT_BUSY（攞唔到 776001 20 次）= 停當晚、cursor 唔前進（獨立 reason 方便運維睇）
+        if (isStopNightError(e)) {
+          pause(errMsg(e) === 'APRICOT_BUSY' ? 'PAUSED_BUSY' : 'PAUSED_RATE_LIMITED', errMsg(e))
+          break
+        }
         // 其他 search 錯 → 停當晚（cursor 唔前進 — 第二晚重試呢日）
         pause('FAILED', errMsg(e))
         break
@@ -160,7 +180,11 @@ export async function runClinicalIndexBackfill(opts: {
         }
           outcome.patients++
         } catch (e) {
-          if (isStopNightError(e)) { pause('PAUSED_RATE_LIMITED', errMsg(e)); midDayStop = true; break }
+          if (isStopNightError(e)) {
+            pause(errMsg(e) === 'APRICOT_BUSY' ? 'PAUSED_BUSY' : 'PAUSED_RATE_LIMITED', errMsg(e))
+            midDayStop = true
+            break
+          }
           outcome.errors++
           outcome.lastError = errMsg(e)
         }
