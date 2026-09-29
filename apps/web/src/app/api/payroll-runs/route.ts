@@ -5,7 +5,8 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolvePayrollScope, getOwnHomeClinicId, getConfidentialScope } from '@/lib/scope-helpers'
 import { generatePayrollRun } from '@/lib/payroll-engine'
-import { getMonthRange } from '@/lib/hk-date'
+import { findPayRuleForMonth } from '@/lib/pay-rule-for-month'
+import { getMonthRange, hkDateStart } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/payroll-runs — List payroll runs
@@ -148,6 +149,23 @@ export async function POST(req: NextRequest) {
         for (const [k, v] of Object.entries(splitPays)) {
           if (typeof v !== 'number' || !isFinite(v) || v < 0) {
             return NextResponse.json({ error: `Invalid splitPay for ${k}: must be a finite non-negative number` }, { status: 400 })
+          }
+        }
+        // ★ cwm-payout S-2（2026-09-29，老細 Q2 = 方案 A）：時薪禁止拆帳（同店舖獎金同一規則）—
+        //   之前時薪拆帳輸入值照寫入 PayrollItem.splitPay（糧單/Excel 顯示有錢，實發冇包）→ 400 擋源頭。
+        const splitEmpIds = Object.keys(splitPays)
+        if (splitEmpIds.length > 0) {
+          const { start: ms, end: me } = getMonthRange(hkDateStart(`${periodMonth}-01`))
+          const rules = await Promise.all(splitEmpIds.map(eid => findPayRuleForMonth(prisma, eid, ms, me)))
+          const hourlyEmp = rules.find((r: any) => {
+            if (!r?.configJson) return false
+            try { return JSON.parse(r.configJson).base_type === 'hourly' } catch { return false }
+          })
+          if (hourlyEmp) {
+            return NextResponse.json(
+              { error: '時薪員工唔可以有拆帳（時薪無拆帳概念 — 同店舖獎金同一規則）。請清空白相關員工嘅拆帳金額後重新提交' },
+              { status: 400 },
+            )
           }
         }
       }

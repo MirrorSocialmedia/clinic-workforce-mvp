@@ -602,18 +602,23 @@ export default function NewPayrollPage() {
                             </td>
                           )}
                           <td className="px-1 py-1.5 text-center">
-                            <input
-                              type="text" inputMode="decimal"
-                              value={splitPayInputs[item.employeeId] ?? ''}
-                              onChange={e => {
-                                const v = e.target.value
-                                if (v === '' || /^\d*\.?\d*$/.test(v)) {
-                                  setSplitPayInputs(s => ({ ...s, [item.employeeId]: v }))
-                                }
-                              }}
-                              onBlur={() => handleSplitPayBlur(item.employeeId)}
-                              className="w-16 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
-                              placeholder="金額" />
+                            {/* ★ cwm-payout S-2（方案 A）：時薪禁止拆帳 — 同店舖獎金一樣，只限 MONTHLY */}
+                            {item.payType === 'MONTHLY' ? (
+                              <input
+                                type="text" inputMode="decimal"
+                                value={splitPayInputs[item.employeeId] ?? ''}
+                                onChange={e => {
+                                  const v = e.target.value
+                                  if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                                    setSplitPayInputs(s => ({ ...s, [item.employeeId]: v }))
+                                  }
+                                }}
+                                onBlur={() => handleSplitPayBlur(item.employeeId)}
+                                className="w-16 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                                placeholder="金額" />
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
                           </td>
                           <td className="px-1 py-1.5 text-center font-semibold font-mono">
                             {(item.totalPayable || 0).toLocaleString()}

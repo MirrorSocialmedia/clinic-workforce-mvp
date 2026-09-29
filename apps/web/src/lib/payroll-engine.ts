@@ -1143,8 +1143,10 @@ export async function generatePayrollRun(
       const payRule = await findPayRuleForMonth(prisma, emp.id, monthStartForRule, monthEndForRule)
 
       let calcResult
+      let empIsHourly = false // ★ cwm-payout S-2（方案 A）：items.push 喺 if 外，需要呢個 flag
       if (payRule?.configJson) {
         const config = JSON.parse(payRule.configJson)
+        empIsHourly = config.base_type === 'hourly'
         if (!config.base_type && !config.modifiers) {
           console.error(`Employee ${emp.id} still has old-format payRule! Run migrate-payrules.`)
           skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
@@ -1198,7 +1200,9 @@ export async function generatePayrollRun(
         absentDays: calcResult.absentDays,
         basePay: calcResult.basePay,
         otPay: calcResult.otPay,
-        splitPay: (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+        // ★ cwm-payout S-2（方案 A）：時薪一律 splitPay: null — 同 L1179 傳引擎同一條件；
+        //   之前輸入值照寫入 PayrollItem（糧單/Excel 顯示有錢，實發冇包）
+        splitPay: !empIsHourly && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
           ? (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id])
           : calcResult.splitPay,
         deduction: calcResult.deduction,
