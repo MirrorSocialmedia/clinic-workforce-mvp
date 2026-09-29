@@ -4240,6 +4240,10 @@ export async function calculatePayrollWithRules(
       + (adwSource ? resolvedAdwAdjustment : 0)
       + maternityPay
       + paternityPay
+      // ★ cwm-payout S-6（MD §4.2）：離職結算同入 grossPay（L3949）— 之前 guard 冇計
+      //   → 離職月份一定報「[grossPay] 逐項加總對唔上」
+      + rsGrossAdd
+      - rsExcessRest
     if (Math.abs(itemised - finalGrossPay) > 0.05) {
       console.warn(
         `[grossPay] 逐項加總對唔上 detail.grossPay：` +
