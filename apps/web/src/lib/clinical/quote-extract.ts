@@ -9,6 +9,8 @@
 //
 // 存儲冪等：同 sourceVisitId 重跑 = 只重建 pending 行；
 //   人手決定（confirmed/corrected/discarded）行保留。
+// ★ cwi-qa FX-31：決定行唔只「保留」— 重跑亦唔會再用（termShorthand, fdiTeeth）
+//   相同嘅 key 重建 pending（舊口徑會令已處理項再返確認隊列）；見 storeQuotesForVisit。
 // ============================================================
 
 import { basePrisma } from '@/lib/prisma'
@@ -188,23 +190,37 @@ export async function storeQuotesForVisit(opts: {
     return { stored: 0 }
   }
   await basePrisma.quotedItem.deleteMany({ where: { sourceVisitId: opts.visitId, status: 'pending' } })
-  await basePrisma.quotedItem.createMany({
-    data: items.map((i) => ({
-      clinicId: opts.clinicId,
-      patientApricotId: opts.patientApricotId,
-      sourceVisitId: opts.visitId,
-      sourceVisitDate: opts.visitDate,
-      text: i.text.slice(0, 80),
-      termShorthand: i.termShorthand,
-      nameCn: i.nameCn,
-      amountMin: i.amountMin,
-      amountMax: i.amountMax,
-      perUnit: i.perUnit,
-      fdiTeeth: i.fdiTeeth,
-      intent: i.intent,
-      certainty: i.certainty,
-      source: i.source,
-    })),
+  // ★ cwi-qa FX-31：重跑唔復活人手決定項（confirmed/corrected/discarded）。
+  //   舊口徑：刪 pending 後 createMany 全部 → 已決定項再建一份 pending → 確認隊列見返已處理嘅嘢。
+  //   跳過 key = (termShorthand, fdiTeeth)：同牙位＋同術語 = 同一項。termShorthand=null
+  //   （orphan 低信心）只同另一 orphan 同牙位先撞 — 照單收（discarded 語義 = 唔再彈出）。
+  const decided = await basePrisma.quotedItem.findMany({
+    where: { sourceVisitId: opts.visitId, status: { not: 'pending' } },
+    select: { termShorthand: true, fdiTeeth: true },
   })
-  return { stored: items.length }
+  const keyOf = (s: string | null, f: string[]) => `${s ?? ''}\u0000${[...f].sort().join(',')}`
+  const decidedKeys = new Set(decided.map((r) => keyOf(r.termShorthand, r.fdiTeeth)))
+  const fresh = items.filter((i) => !decidedKeys.has(keyOf(i.termShorthand, i.fdiTeeth)))
+  if (fresh.length) {
+    await basePrisma.quotedItem.createMany({
+      data: fresh.map((i) => ({
+        clinicId: opts.clinicId,
+        patientApricotId: opts.patientApricotId,
+        sourceVisitId: opts.visitId,
+        sourceVisitDate: opts.visitDate,
+        text: i.text.slice(0, 80),
+        termShorthand: i.termShorthand,
+        nameCn: i.nameCn,
+        amountMin: i.amountMin,
+        amountMax: i.amountMax,
+        perUnit: i.perUnit,
+        fdiTeeth: i.fdiTeeth,
+        intent: i.intent,
+        certainty: i.certainty,
+        source: i.source,
+      })),
+    })
+  }
+  // stored = 實際新建行数（決定項被跳過時 < items.length）
+  return { stored: fresh.length }
 }
