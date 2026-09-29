@@ -967,6 +967,53 @@ function calculateSplit(
 // Full Payroll Run
 // ------------------------------------------------------------------
 
+// ★ cwm-payout S-5（2026-09-29）：ResignSettlement 行 → 引擎注入 snapshot — generatePayrollRun 同
+//   preview 共用（parse 口徑一处；parse 失敗 → 唔注入 + warn，唔靜默出錯數）
+export function parseResignSettlementRow(row: { detailJson: string | null; tbDeduction: unknown; excessRestDeduction: unknown; tbMinutes: unknown; tbAmount: unknown } | null | undefined): {
+  annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null
+} | null {
+  const json = row?.detailJson
+  if (!json) return null
+  try {
+    const parsed = JSON.parse(json)
+    return {
+      annualLeavePay: Number(parsed.annualLeavePay) || 0,
+      noticePay: Number(parsed.noticePay) || 0,
+      // ★ cwm-money-20260917 P2-4：讀 typed 欄（detailJson 係 legacy 對照用）
+      tbDeduction: row!.tbDeduction == null ? null : Number(row!.tbDeduction),
+      excessRestDeduction: row!.excessRestDeduction == null ? null : Number(row!.excessRestDeduction),
+      // ★ ④ 時間帳戶正數折現（MPF 前）—— 餘額 > 0 時 tbAmount 就係折現額
+      tbCashout: Number(row!.tbMinutes) > 0 ? Number(row!.tbAmount) : 0,
+      monthWage: parsed.monthWage ?? null,
+    }
+  } catch (e) {
+    console.warn('[payroll] ResignSettlement parse 失敗，跳過注入:', e)
+    return null
+  }
+}
+
+// ★ cwm-payout S-5（2026-09-29）：preview 同 generatePayrollRun 共用同一 engine options 構建 —
+//   之前 preview 冇傳 storeBonus / splitPay / resignSettlement 入引擎（卻顯示 carried 值）
+//   → 預覽「應付總額」少咗呢幾項，同生成後唔同（MD §4.1）
+export function buildEngineOptions(
+  baseType: string | undefined,
+  empId: string,
+  carried: { storeBonus: Record<string, number>; splitPay: Record<string, number | null>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> },
+  opts: { storeBonuses?: Record<string, number>; splitPays?: Record<string, number>; attendanceBonusOverrides?: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } | undefined,
+  resignSettlement: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null } | null,
+  resignedAtOverride?: Date | null,
+) {
+  const spInput = (opts?.splitPays?.[empId] ?? carried.splitPay[empId]) as number | null | undefined
+  return {
+    ...(baseType !== 'hourly' && (opts?.storeBonuses?.[empId] ?? carried.storeBonus[empId])
+      ? { storeBonus: opts?.storeBonuses?.[empId] ?? carried.storeBonus[empId] } : {}),
+    ...(baseType !== 'hourly' && spInput != null ? { splitPay: spInput } : {}),
+    attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[empId] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[empId]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
+    resignSettlement,
+    resignedAtOverride: resignedAtOverride ?? undefined,
+  }
+}
+
 export async function generatePayrollRun(
   clinicId: string | null,
   periodMonth: string,
@@ -1154,35 +1201,11 @@ export async function generatePayrollRun(
         }
         // ★ 2026-09-05 [cwm-resigv3] 離職結算注入（拍板③）：讀已確認快照，引擎唔重算。
         //   parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。
-        let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null } | null = null
-        // ★ cwm-resignflow-20260911 A4：resignSettlementJson parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。（源頭改由 ResignSettlement.detailJson，結構同舊 JSON）
-        const rsRow = settlementByEmp.get(emp.id)
-        const rsJson = rsRow ? rsRow.detailJson : null
-        if (rsJson) {
-          try {
-            const parsed = JSON.parse(rsJson)
-            resignSettlementOpt = {
-              annualLeavePay: Number(parsed.annualLeavePay) || 0,
-              noticePay: Number(parsed.noticePay) || 0,
-              // ★ cwm-money-20260917 P2-4：改讀 typed 欄（detailJson 係 legacy 對照用）
-              tbDeduction: rsRow!.tbDeduction == null ? null : Number(rsRow!.tbDeduction),
-              excessRestDeduction: rsRow!.excessRestDeduction == null ? null : Number(rsRow!.excessRestDeduction),
-              // ★ ④ 時間帳戶正數折現（MPF 前）—— 餘額 > 0 時 tbAmount 就係折現額
-              tbCashout: Number(rsRow!.tbMinutes) > 0 ? Number(rsRow!.tbAmount) : 0,
-              monthWage: parsed.monthWage ?? null,
-            }
-          } catch (e) {
-            console.warn(`[generatePayrollRun] ${emp.id} resignSettlementJson parse 失敗，跳過注入:`, e)
-          }
-        }
-        calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
-          ...(config.base_type !== 'hourly' && (opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
-            ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
-          ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
-            ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
-          attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
-          resignSettlement: resignSettlementOpt,
-        })
+        // ★ cwm-payout S-5：parse 抽去 parseResignSettlementRow（同 preview 共用，口徑一致）
+        const resignSettlementOpt = parseResignSettlementRow(settlementByEmp.get(emp.id))
+        calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config,
+          // ★ cwm-payout S-5：options 構建同 preview 共用 buildEngineOptions
+          buildEngineOptions(config.base_type, emp.id, carried, opts, resignSettlementOpt))
 
         // ★ Stage 3.4（CA-07）：時間帳戶讀輸入失敗（degraded）→ 唔准靜默出錯數，立即 fail（下次重試）
         if ((calcResult as any)?.detail?.timebank?.degraded) throw new Error('時間帳戶讀取失敗，請重試')
