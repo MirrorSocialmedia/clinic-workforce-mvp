@@ -22,7 +22,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
 import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { resolveMethodRule } from '@/lib/apricot/allocate'
-import { loadDoctorSheetData, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT } from '@/lib/payout/report-data'
+import { loadDoctorSheetData, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT, sumMethodOf } from '@/lib/payout/report-data'
 import { loadClinicMisc } from '@/lib/payout/clinic-misc'
 import { buildCoverSheet, buildDoctorSheet, buildMiscSheet, incomeTotalOf } from '@/lib/payout/xlsx-report'
 
@@ -85,12 +85,14 @@ export async function GET(req: NextRequest) {
     if (!loaded) continue // 理論上唔會發生（run 剛先查過）— 防呆 skip
     const sheetLabel = loaded.provider?.shortName || loaded.provider?.name || '未知'
     loaded.data.sheetNameBase = sheetLabel // sheet 名 = shortName || name（MD C 章）
-    const ws = buildDoctorSheet(wb, loaded.data)
+    // ★ cwm-payout P-1：buildDoctorSheet 返 { ws, payable }（payable 喺 P-4 對數防線用）
+    const { ws } = buildDoctorSheet(wb, loaded.data)
     // ★ cwm-coverrevenue-20260914：用返醫生頁同一個 incomeTotalOf，唔重新計（坑②）
     const revenue = round2(loaded.data.days.reduce(
       (s, day) => s + incomeTotalOf(loaded.data.methods, day.byMethod), 0))
+    // ★ cwm-payout P-1：byMethod key 而家係 colKey（方法|s|d）— 淨方法名 match 會漏，用 sumMethodOf
     const sumMethod = (key: string) => round2(loaded.data.days.reduce(
-      (s, day) => s + Number(day.byMethod[key] ?? 0), 0))
+      (s, day) => s + sumMethodOf(loaded.data.methods, day.byMethod, key), 0))
     doctorEntries.push({
       sheetName: ws.name,
       sheetLabel,
