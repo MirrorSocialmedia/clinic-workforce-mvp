@@ -3339,7 +3339,15 @@ async function calculateSimpleHourlyPay(
   employeeId: string,
   monthDate: Date,
   clinicId: string | null, // ★ 刻意唔用：時薪跨店合計（打卡跟人唔跟店），分單靠 generatePayrollRun 嘅 homeClinicId
-  config: PayRuleConfigModular
+  config: PayRuleConfigModular,
+  // ★ cwm-payout S-4（2026-09-29，老細 Q3）：時薪都要離職結算 — 口徑同月薪路徑一致
+  options?: {
+    resignSettlement?: {
+      annualLeavePay?: number; noticePay?: number; tbCashout?: number;
+      tbDeduction?: number | null; excessRestDeduction?: number | null;
+      monthWage?: { source: string; basePay: number | null } | null
+    } | null
+  }
 ): Promise<PayrollResult> {
   const rate = config.hourly_rate || 0
   // ★ 決定 2：時薪員工同月薪一致，每個有上班卡嘅日子扣午飯
@@ -3475,10 +3483,22 @@ async function calculateSimpleHourlyPay(
   //   之前出糧總表 Salary/Net Pay/MPF 全 0 + 備註「⚠ Net+FARE≠Total」；計糧 Excel/PDF Gross 0、
   //   「其他扣減」變負數（= −實發）。
   //   時薪口徑：工資 = 逐日金額合計（totalPay）；拆帳禁止（S-2 方案 A）；冇 store bonus。
-  const grossPay = totalPay
-  // ★ 老細拍板（2026-09-29，MD §5 Q1）：時薪無 MPF（另處理）— 明寫 0，唔係「唔寫」
+  // ★ cwm-payout S-4（老細 Q3）：離職結算 — 同月薪路徑同一口徑：
+  //   annualLeavePay+noticePay+tbCashout 加落 gross；excessRestDeduction 落 gross（減）；
+  //   tbDeduction（時間帳戶欠款）落 MPF 後 net 扣除。時薪 MPF=0 → 金額全部直接係實發現金。
+  const rsSettle = options?.resignSettlement ?? null
+  const rsTbCashout = rsSettle ? Math.max(0, Number(rsSettle.tbCashout) || 0) : 0
+  const rsGrossAdd = rsSettle
+    ? (Number(rsSettle.annualLeavePay) || 0) + (Number(rsSettle.noticePay) || 0) + rsTbCashout
+    : 0
+  const rsTbDed = rsSettle ? Math.max(0, Number(rsSettle.tbDeduction) || 0) : 0
+  const rsExcessRest = rsSettle ? Math.max(0, Number(rsSettle.excessRestDeduction) || 0) : 0
+
+  const grossPay = Math.round((totalPay + rsGrossAdd - rsExcessRest) * 100) / 100
+  // ★ 老細拍板（2026-09-29，MD §5 Q1）：時薪無 MPF（另處理）— 明寫 0，唔係「唔寫」；
+  //   結算金額全部唔計入 MPF 基數（includedInMpf = false）
   const mpf = 0
-  const netPay = Math.max(0, Math.round((grossPay - mpf) * 100) / 100)
+  const netPay = Math.max(0, Math.round((grossPay - mpf - rsTbDed) * 100) / 100)
 
   const totalPayable = Math.max(0, Math.round((netPay + miscTotal) * 100) / 100)
 
@@ -3518,6 +3538,18 @@ async function calculateSimpleHourlyPay(
         sickDeduction: 0,
         deduction: 0,
       },
+      // ★ cwm-payout S-4：離職結算行（同月薪 detail 同 key；只喺有結算快照時寫入）
+      //   includedInMpf = false — 時薪無 MPF（老細 Q1），結算金額唔計入任何基數
+      resignSettlement: rsSettle ? {
+        annualLeavePay: Math.round((Number(rsSettle.annualLeavePay) || 0) * 100) / 100,
+        noticePay: Math.round((Number(rsSettle.noticePay) || 0) * 100) / 100,
+        tbDeduction: rsTbDed,
+        tbCashout: rsTbCashout,
+        excessRestDeduction: Math.round(rsExcessRest * 100) / 100,
+        grossAdd: Math.round(rsGrossAdd * 100) / 100,
+        includedInMpf: false,
+        monthWage: rsSettle.monthWage ?? null,
+      } : undefined,
       // ★ 2026-08-19: 時薪 bypass 咗全部 modifier 邏輯（見 calculatePayrollWithRules
       //   頂部 base_type === 'hourly' 嘅 early return），所以永遠唔會行到月薪路徑
       //   嗰度（eoWage = finalGrossPay 寫入 detail 嘅位置）。
@@ -3525,7 +3557,9 @@ async function calculateSimpleHourlyPay(
       //   唔寫呢個欄，任何含時薪員工嘅計糧單都永遠 finalize 唔到（生產阻塞）。
       //   EO「工資」＝ 實際支付嘅工資；時薪冇 storeBonus（唯一要剔除嘅項），
       //   所以 eoWage = totalPay（唔好用 basePay —— 語義上「實付總額」先正確）。
-      eoWage: Math.round(totalPay * 100) / 100,
+      eoWage: grossPay, // ★ 2026-08-19 原注：EO「工資」= 實發工資；時薪無 storeBonus 要剔
+      //   ★ cwm-payout S-4：離職結算加落 gross（同月薪 finalGrossPay 同口徑 — 結算屬實發工資）；
+      //     無結算員工 grossPay = totalPay（同之前一樣）
       // ★ cwm-payout S-1：雜項報銷（同月薪 detail 同欄）
       miscAmount: miscTotal,
       miscDetailJson: miscEntries.length > 0 ? JSON.stringify(miscEntries.map((e: any) => ({ amount: e.amount, description: e.description }))) : null,
@@ -3573,7 +3607,9 @@ export async function calculatePayrollWithRules(
 ): Promise<PayrollResult> {
   // ★ Part-time hourly: bypass all modifier logic entirely
   if (config.base_type === 'hourly') {
-    return calculateSimpleHourlyPay(employeeId, monthDate, clinicId, config)
+    // ★ cwm-payout S-4（老細 Q3）：離職結算快照（generatePayrollRun 由 ResignSettlement 表讀入）
+    //   照樣傳落時薪路徑 — 之前時薪直接 bypass → 離職尾糧冇年假折現/代通知金/時間帳戶結算
+    return calculateSimpleHourlyPay(employeeId, monthDate, clinicId, config, options)
   }
 
   const { y: year, m: month } = hkParts(monthDate)
