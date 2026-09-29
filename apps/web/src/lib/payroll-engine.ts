@@ -3317,6 +3317,20 @@ function applyAllowancesModifier(
 // Formula: 有效分鐘 × 時薪 ÷ 60, 早打卡從排班開始起計
 // ------------------------------------------------------------------
 
+// ★ cwm-payout S-1（2026-09-29）：已批核雜項報銷 — 月薪／時薪共用單一 query。
+//   之前只喺月薪路徑查（L3855–3859）→ 時薪員工申請、批核後錢永遠唔出現喺糧單。
+//   口徑：報銷唔屬於 EO「工資」—— 唔入 gross、唔計 MPF，喺 netPay 之後最後加（唯一加入點）。
+export async function loadApprovedMisc(
+  employeeId: string,
+  monthDate: Date,
+): Promise<{ entries: { amount: number; description: string | null }[]; total: number }> {
+  const entries = await prisma.expenseEntry.findMany({
+    where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7), status: 'APPROVED' },
+  })
+  const total = entries.reduce((sum: number, e: any) => sum + Number(e.amount), 0)
+  return { entries, total }
+}
+
 async function calculateSimpleHourlyPay(
   employeeId: string,
   monthDate: Date,
@@ -3449,6 +3463,11 @@ async function calculateSimpleHourlyPay(
     return !byDate.has(ds) || byDate.get(ds)!.length === 0
   }).length
 
+  // ★ cwm-payout S-1（2026-09-29）：已批核雜項報銷（同月薪同一個共用 query、同一個加法位置：
+  //   唔計入工資、最後加）— 之前時薪路徑完全冇查 → 批咗都唔發。
+  const { entries: miscEntries, total: miscTotal } = await loadApprovedMisc(employeeId, monthDate)
+  const totalPayable = Math.round((totalPay + miscTotal) * 100) / 100
+
   return {
     basePay: totalPay,
     otPay: 0,
@@ -3456,7 +3475,7 @@ async function calculateSimpleHourlyPay(
     attendanceBonus: 0,
     attendanceBonusCancelled: false,
     deduction: 0,
-    totalPayable: totalPay,
+    totalPayable,
     absentDays,
     otHours: 0,
     workedHours: Math.round(totalMinutes / 60 * 100) / 100,
@@ -3474,6 +3493,9 @@ async function calculateSimpleHourlyPay(
       //   EO「工資」＝ 實際支付嘅工資；時薪冇 storeBonus（唯一要剔除嘅項），
       //   所以 eoWage = totalPay（唔好用 basePay —— 語義上「實付總額」先正確）。
       eoWage: Math.round(totalPay * 100) / 100,
+      // ★ cwm-payout S-1：雜項報銷（同月薪 detail 同欄）
+      miscAmount: miscTotal,
+      miscDetailJson: miscEntries.length > 0 ? JSON.stringify(miscEntries.map((e: any) => ({ amount: e.amount, description: e.description }))) : null,
       // 時薪冇「剔除天數／剔除工資」概念（月薪先有無薪假／病假扣減），恆為 0。
       // 補上係因為 adw.ts 個 select 有攞呢兩欄，保持 detail 結構一致。
       excludedDays: 0,
@@ -3853,10 +3875,8 @@ export async function calculatePayrollWithRules(
   const mpfRate = mpfConfig.enabled ? (mpfConfig.rate ?? 0.05) : 0
 
   // ★ 雜項報銷 —— 報銷唔屬於 EO「工資」，唔計 MPF，喺 netPay 之後最後加
-  const miscEntries = await prisma.expenseEntry.findMany({
-    where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7), status: 'APPROVED' },
-  })
-  const miscTotal = miscEntries.reduce((sum: number, e: any) => sum + e.amount, 0)
+  // ★ cwm-payout S-1（2026-09-29）：改 call 共用 loadApprovedMisc（同時薪路徑同一 query）
+  const { entries: miscEntries, total: miscTotal } = await loadApprovedMisc(employeeId, monthDate)
   result.totalPayable = netPay
   result.detail = {
     ...result.detail,
