@@ -22,7 +22,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
 import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { resolveMethodRule } from '@/lib/apricot/allocate'
-import { loadDoctorSheetData, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT } from '@/lib/payout/report-data'
+import { loadDoctorSheetData, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT, sumMethodOf } from '@/lib/payout/report-data'
 import { loadClinicMisc } from '@/lib/payout/clinic-misc'
 import { buildCoverSheet, buildDoctorSheet, buildMiscSheet, incomeTotalOf } from '@/lib/payout/xlsx-report'
 
@@ -76,6 +76,8 @@ export async function GET(req: NextRequest) {
 
   // ─── 3. 逐 run 砌醫生頁（共同攞數函數，MD 坑⑥）───────────────────
   const wb = new ExcelJS.Workbook()
+  // ★ cwm-payout P-4（MD §2.3）：對數防線 — 任何一個醫生 Excel 應付 ≠ 系統鎖定 → 成份唔出
+  const exportMismatches: { run: { id: string }; name: string; payable: number; totalAmount: number }[] = []
   const doctorEntries: {
     sheetName: string; sheetLabel: string; status: string
     totalAmount: number; revenue: number; freeSp: number; credit: number; methodCount: number
@@ -85,12 +87,23 @@ export async function GET(req: NextRequest) {
     if (!loaded) continue // 理論上唔會發生（run 剛先查過）— 防呆 skip
     const sheetLabel = loaded.provider?.shortName || loaded.provider?.name || '未知'
     loaded.data.sheetNameBase = sheetLabel // sheet 名 = shortName || name（MD C 章）
-    const ws = buildDoctorSheet(wb, loaded.data)
+    // ★ cwm-payout P-1：buildDoctorSheet 返 { ws, payable }（payable 喺 P-4 對數防線用）
+    const { ws, payable: docPayable } = buildDoctorSheet(wb, loaded.data)
+    // ★ cwm-payout P-4：逐醫生對數（clinic-report 嘅 run 全部係 LOCKED — 見 §1）
+    if (Math.abs(docPayable - Number(loaded.run.totalAmount)) > 0.01) {
+      exportMismatches.push({
+        run: { id: loaded.run.id },
+        name: sheetLabel,
+        payable: docPayable,
+        totalAmount: Number(loaded.run.totalAmount),
+      })
+    }
     // ★ cwm-coverrevenue-20260914：用返醫生頁同一個 incomeTotalOf，唔重新計（坑②）
     const revenue = round2(loaded.data.days.reduce(
       (s, day) => s + incomeTotalOf(loaded.data.methods, day.byMethod), 0))
+    // ★ cwm-payout P-1：byMethod key 而家係 colKey（方法|s|d）— 淨方法名 match 會漏，用 sumMethodOf
     const sumMethod = (key: string) => round2(loaded.data.days.reduce(
-      (s, day) => s + Number(day.byMethod[key] ?? 0), 0))
+      (s, day) => s + sumMethodOf(loaded.data.methods, day.byMethod, key), 0))
     doctorEntries.push({
       sheetName: ws.name,
       sheetLabel,
@@ -101,6 +114,25 @@ export async function GET(req: NextRequest) {
       credit: sumMethod(KEY_CREDIT),
       methodCount: loaded.data.methods.length,
     })
+  }
+
+  // ★ cwm-payout P-4：有醫生對數唔符 → audit + 409（成份唔出；錯誤訊息列明邊個醫生）
+  if (exportMismatches.length > 0) {
+    for (const mm of exportMismatches) {
+      console.error(`[payout-clinic-report] ALERT Excel 應付 ${mm.payable} ≠ 系統鎖定 ${mm.totalAmount}（${mm.name}，run ${mm.run.id}）`)
+      await prisma.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'PAYOUT_EXPORT_MISMATCH',
+          entity: 'PayoutRun',
+          entityId: mm.run.id,
+          notes: `Excel ${mm.payable} vs 系統 ${mm.totalAmount}（${mm.name}）`,
+        },
+      })
+    }
+    return jsonNoStore({
+      error: `以下醫生匯出金額同系統鎖定金額唔一致，已停止匯出，請通知管理員：${exportMismatches.map(m => `${m.name}（Excel ${m.payable} vs 系統 ${m.totalAmount}）`).join('、')}`,
+    }, { status: 409 })
   }
 
   // ─── 4. Clinic 雜項頁（費率口徑 = D2/D3 同一個 resolveMethodRule）──

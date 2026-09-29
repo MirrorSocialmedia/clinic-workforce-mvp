@@ -967,6 +967,53 @@ function calculateSplit(
 // Full Payroll Run
 // ------------------------------------------------------------------
 
+// ★ cwm-payout S-5（2026-09-29）：ResignSettlement 行 → 引擎注入 snapshot — generatePayrollRun 同
+//   preview 共用（parse 口徑一处；parse 失敗 → 唔注入 + warn，唔靜默出錯數）
+export function parseResignSettlementRow(row: { detailJson: string | null; tbDeduction: unknown; excessRestDeduction: unknown; tbMinutes: unknown; tbAmount: unknown } | null | undefined): {
+  annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null
+} | null {
+  const json = row?.detailJson
+  if (!json) return null
+  try {
+    const parsed = JSON.parse(json)
+    return {
+      annualLeavePay: Number(parsed.annualLeavePay) || 0,
+      noticePay: Number(parsed.noticePay) || 0,
+      // ★ cwm-money-20260917 P2-4：讀 typed 欄（detailJson 係 legacy 對照用）
+      tbDeduction: row!.tbDeduction == null ? null : Number(row!.tbDeduction),
+      excessRestDeduction: row!.excessRestDeduction == null ? null : Number(row!.excessRestDeduction),
+      // ★ ④ 時間帳戶正數折現（MPF 前）—— 餘額 > 0 時 tbAmount 就係折現額
+      tbCashout: Number(row!.tbMinutes) > 0 ? Number(row!.tbAmount) : 0,
+      monthWage: parsed.monthWage ?? null,
+    }
+  } catch (e) {
+    console.warn('[payroll] ResignSettlement parse 失敗，跳過注入:', e)
+    return null
+  }
+}
+
+// ★ cwm-payout S-5（2026-09-29）：preview 同 generatePayrollRun 共用同一 engine options 構建 —
+//   之前 preview 冇傳 storeBonus / splitPay / resignSettlement 入引擎（卻顯示 carried 值）
+//   → 預覽「應付總額」少咗呢幾項，同生成後唔同（MD §4.1）
+export function buildEngineOptions(
+  baseType: string | undefined,
+  empId: string,
+  carried: { storeBonus: Record<string, number>; splitPay: Record<string, number | null>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> },
+  opts: { storeBonuses?: Record<string, number>; splitPays?: Record<string, number>; attendanceBonusOverrides?: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } | undefined,
+  resignSettlement: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null } | null,
+  resignedAtOverride?: Date | null,
+) {
+  const spInput = (opts?.splitPays?.[empId] ?? carried.splitPay[empId]) as number | null | undefined
+  return {
+    ...(baseType !== 'hourly' && (opts?.storeBonuses?.[empId] ?? carried.storeBonus[empId])
+      ? { storeBonus: opts?.storeBonuses?.[empId] ?? carried.storeBonus[empId] } : {}),
+    ...(baseType !== 'hourly' && spInput != null ? { splitPay: spInput } : {}),
+    attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[empId] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[empId]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
+    resignSettlement,
+    resignedAtOverride: resignedAtOverride ?? undefined,
+  }
+}
+
 export async function generatePayrollRun(
   clinicId: string | null,
   periodMonth: string,
@@ -1143,8 +1190,10 @@ export async function generatePayrollRun(
       const payRule = await findPayRuleForMonth(prisma, emp.id, monthStartForRule, monthEndForRule)
 
       let calcResult
+      let empIsHourly = false // ★ cwm-payout S-2（方案 A）：items.push 喺 if 外，需要呢個 flag
       if (payRule?.configJson) {
         const config = JSON.parse(payRule.configJson)
+        empIsHourly = config.base_type === 'hourly'
         if (!config.base_type && !config.modifiers) {
           console.error(`Employee ${emp.id} still has old-format payRule! Run migrate-payrules.`)
           skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
@@ -1152,35 +1201,11 @@ export async function generatePayrollRun(
         }
         // ★ 2026-09-05 [cwm-resigv3] 離職結算注入（拍板③）：讀已確認快照，引擎唔重算。
         //   parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。
-        let resignSettlementOpt: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null } | null = null
-        // ★ cwm-resignflow-20260911 A4：resignSettlementJson parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。（源頭改由 ResignSettlement.detailJson，結構同舊 JSON）
-        const rsRow = settlementByEmp.get(emp.id)
-        const rsJson = rsRow ? rsRow.detailJson : null
-        if (rsJson) {
-          try {
-            const parsed = JSON.parse(rsJson)
-            resignSettlementOpt = {
-              annualLeavePay: Number(parsed.annualLeavePay) || 0,
-              noticePay: Number(parsed.noticePay) || 0,
-              // ★ cwm-money-20260917 P2-4：改讀 typed 欄（detailJson 係 legacy 對照用）
-              tbDeduction: rsRow!.tbDeduction == null ? null : Number(rsRow!.tbDeduction),
-              excessRestDeduction: rsRow!.excessRestDeduction == null ? null : Number(rsRow!.excessRestDeduction),
-              // ★ ④ 時間帳戶正數折現（MPF 前）—— 餘額 > 0 時 tbAmount 就係折現額
-              tbCashout: Number(rsRow!.tbMinutes) > 0 ? Number(rsRow!.tbAmount) : 0,
-              monthWage: parsed.monthWage ?? null,
-            }
-          } catch (e) {
-            console.warn(`[generatePayrollRun] ${emp.id} resignSettlementJson parse 失敗，跳過注入:`, e)
-          }
-        }
-        calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config, {
-          ...(config.base_type !== 'hourly' && (opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id])
-            ? { storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] } : {}),
-          ...(config.base_type !== 'hourly' && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
-            ? { splitPay: opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id] } : {}),
-          attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
-          resignSettlement: resignSettlementOpt,
-        })
+        // ★ cwm-payout S-5：parse 抽去 parseResignSettlementRow（同 preview 共用，口徑一致）
+        const resignSettlementOpt = parseResignSettlementRow(settlementByEmp.get(emp.id))
+        calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config,
+          // ★ cwm-payout S-5：options 構建同 preview 共用 buildEngineOptions
+          buildEngineOptions(config.base_type, emp.id, carried, opts, resignSettlementOpt))
 
         // ★ Stage 3.4（CA-07）：時間帳戶讀輸入失敗（degraded）→ 唔准靜默出錯數，立即 fail（下次重試）
         if ((calcResult as any)?.detail?.timebank?.degraded) throw new Error('時間帳戶讀取失敗，請重試')
@@ -1198,7 +1223,9 @@ export async function generatePayrollRun(
         absentDays: calcResult.absentDays,
         basePay: calcResult.basePay,
         otPay: calcResult.otPay,
-        splitPay: (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
+        // ★ cwm-payout S-2（方案 A）：時薪一律 splitPay: null — 同 L1179 傳引擎同一條件；
+        //   之前輸入值照寫入 PayrollItem（糧單/Excel 顯示有錢，實發冇包）
+        splitPay: !empIsHourly && (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id]) != null
           ? (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id])
           : calcResult.splitPay,
         deduction: calcResult.deduction,
@@ -3317,11 +3344,33 @@ function applyAllowancesModifier(
 // Formula: 有效分鐘 × 時薪 ÷ 60, 早打卡從排班開始起計
 // ------------------------------------------------------------------
 
+// ★ cwm-payout S-1（2026-09-29）：已批核雜項報銷 — 月薪／時薪共用單一 query。
+//   之前只喺月薪路徑查（L3855–3859）→ 時薪員工申請、批核後錢永遠唔出現喺糧單。
+//   口徑：報銷唔屬於 EO「工資」—— 唔入 gross、唔計 MPF，喺 netPay 之後最後加（唯一加入點）。
+export async function loadApprovedMisc(
+  employeeId: string,
+  monthDate: Date,
+): Promise<{ entries: { amount: number; description: string | null }[]; total: number }> {
+  const entries = await prisma.expenseEntry.findMany({
+    where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7), status: 'APPROVED' },
+  })
+  const total = entries.reduce((sum: number, e: any) => sum + Number(e.amount), 0)
+  return { entries, total }
+}
+
 async function calculateSimpleHourlyPay(
   employeeId: string,
   monthDate: Date,
   clinicId: string | null, // ★ 刻意唔用：時薪跨店合計（打卡跟人唔跟店），分單靠 generatePayrollRun 嘅 homeClinicId
-  config: PayRuleConfigModular
+  config: PayRuleConfigModular,
+  // ★ cwm-payout S-4（2026-09-29，老細 Q3）：時薪都要離職結算 — 口徑同月薪路徑一致
+  options?: {
+    resignSettlement?: {
+      annualLeavePay?: number; noticePay?: number; tbCashout?: number;
+      tbDeduction?: number | null; excessRestDeduction?: number | null;
+      monthWage?: { source: string; basePay: number | null } | null
+    } | null
+  }
 ): Promise<PayrollResult> {
   const rate = config.hourly_rate || 0
   // ★ 決定 2：時薪員工同月薪一致，每個有上班卡嘅日子扣午飯
@@ -3449,6 +3498,33 @@ async function calculateSimpleHourlyPay(
     return !byDate.has(ds) || byDate.get(ds)!.length === 0
   }).length
 
+  // ★ cwm-payout S-1（2026-09-29）：已批核雜項報銷（同月薪同一個共用 query、同一個加法位置：
+  //   唔計入工資、最後加）— 之前時薪路徑完全冇查 → 批咗都唔發。
+  const { entries: miscEntries, total: miscTotal } = await loadApprovedMisc(employeeId, monthDate)
+
+  // ★ cwm-payout S-3（2026-09-29）：時薪 Salary/Gross/Net 必須寫齊（同月薪同欄）—
+  //   之前出糧總表 Salary/Net Pay/MPF 全 0 + 備註「⚠ Net+FARE≠Total」；計糧 Excel/PDF Gross 0、
+  //   「其他扣減」變負數（= −實發）。
+  //   時薪口徑：工資 = 逐日金額合計（totalPay）；拆帳禁止（S-2 方案 A）；冇 store bonus。
+  // ★ cwm-payout S-4（老細 Q3）：離職結算 — 同月薪路徑同一口徑：
+  //   annualLeavePay+noticePay+tbCashout 加落 gross；excessRestDeduction 落 gross（減）；
+  //   tbDeduction（時間帳戶欠款）落 MPF 後 net 扣除。時薪 MPF=0 → 金額全部直接係實發現金。
+  const rsSettle = options?.resignSettlement ?? null
+  const rsTbCashout = rsSettle ? Math.max(0, Number(rsSettle.tbCashout) || 0) : 0
+  const rsGrossAdd = rsSettle
+    ? (Number(rsSettle.annualLeavePay) || 0) + (Number(rsSettle.noticePay) || 0) + rsTbCashout
+    : 0
+  const rsTbDed = rsSettle ? Math.max(0, Number(rsSettle.tbDeduction) || 0) : 0
+  const rsExcessRest = rsSettle ? Math.max(0, Number(rsSettle.excessRestDeduction) || 0) : 0
+
+  const grossPay = Math.round((totalPay + rsGrossAdd - rsExcessRest) * 100) / 100
+  // ★ 老細拍板（2026-09-29，MD §5 Q1）：時薪無 MPF（另處理）— 明寫 0，唔係「唔寫」；
+  //   結算金額全部唔計入 MPF 基數（includedInMpf = false）
+  const mpf = 0
+  const netPay = Math.max(0, Math.round((grossPay - mpf - rsTbDed) * 100) / 100)
+
+  const totalPayable = Math.max(0, Math.round((netPay + miscTotal) * 100) / 100)
+
   return {
     basePay: totalPay,
     otPay: 0,
@@ -3456,7 +3532,7 @@ async function calculateSimpleHourlyPay(
     attendanceBonus: 0,
     attendanceBonusCancelled: false,
     deduction: 0,
-    totalPayable: totalPay,
+    totalPayable,
     absentDays,
     otHours: 0,
     workedHours: Math.round(totalMinutes / 60 * 100) / 100,
@@ -3466,6 +3542,37 @@ async function calculateSimpleHourlyPay(
       hourlyRate: rate,
       totalMinutes,
       days,
+      // ★ cwm-payout S-3：頂層薪酬欄寫齊（出糧總表/Excel/PDF 讀呢幾欄）— 同月薪同口徑
+      grossPay: Math.round(grossPay * 100) / 100,
+      mpf,
+      mpfEmployer: 0, // ★ 老細拍板：時薪無 MPF（另處理）
+      mpfRate: 0,
+      netPay: Math.round(netPay * 100) / 100,
+      salary: {
+        basePay: totalPay,
+        grossPay: Math.round(grossPay * 100) / 100,
+        mpf,
+        mpfEmployer: 0,
+        mpfRate: 0,
+        netPay: Math.round(netPay * 100) / 100,
+        allowances: 0,
+        otPay: 0,
+        attendanceBonus: 0,
+        sickDeduction: 0,
+        deduction: 0,
+      },
+      // ★ cwm-payout S-4：離職結算行（同月薪 detail 同 key；只喺有結算快照時寫入）
+      //   includedInMpf = false — 時薪無 MPF（老細 Q1），結算金額唔計入任何基數
+      resignSettlement: rsSettle ? {
+        annualLeavePay: Math.round((Number(rsSettle.annualLeavePay) || 0) * 100) / 100,
+        noticePay: Math.round((Number(rsSettle.noticePay) || 0) * 100) / 100,
+        tbDeduction: rsTbDed,
+        tbCashout: rsTbCashout,
+        excessRestDeduction: Math.round(rsExcessRest * 100) / 100,
+        grossAdd: Math.round(rsGrossAdd * 100) / 100,
+        includedInMpf: false,
+        monthWage: rsSettle.monthWage ?? null,
+      } : undefined,
       // ★ 2026-08-19: 時薪 bypass 咗全部 modifier 邏輯（見 calculatePayrollWithRules
       //   頂部 base_type === 'hourly' 嘅 early return），所以永遠唔會行到月薪路徑
       //   嗰度（eoWage = finalGrossPay 寫入 detail 嘅位置）。
@@ -3473,7 +3580,12 @@ async function calculateSimpleHourlyPay(
       //   唔寫呢個欄，任何含時薪員工嘅計糧單都永遠 finalize 唔到（生產阻塞）。
       //   EO「工資」＝ 實際支付嘅工資；時薪冇 storeBonus（唯一要剔除嘅項），
       //   所以 eoWage = totalPay（唔好用 basePay —— 語義上「實付總額」先正確）。
-      eoWage: Math.round(totalPay * 100) / 100,
+      eoWage: grossPay, // ★ 2026-08-19 原注：EO「工資」= 實發工資；時薪無 storeBonus 要剔
+      //   ★ cwm-payout S-4：離職結算加落 gross（同月薪 finalGrossPay 同口徑 — 結算屬實發工資）；
+      //     無結算員工 grossPay = totalPay（同之前一樣）
+      // ★ cwm-payout S-1：雜項報銷（同月薪 detail 同欄）
+      miscAmount: miscTotal,
+      miscDetailJson: miscEntries.length > 0 ? JSON.stringify(miscEntries.map((e: any) => ({ amount: e.amount, description: e.description }))) : null,
       // 時薪冇「剔除天數／剔除工資」概念（月薪先有無薪假／病假扣減），恆為 0。
       // 補上係因為 adw.ts 個 select 有攞呢兩欄，保持 detail 結構一致。
       excludedDays: 0,
@@ -3518,7 +3630,9 @@ export async function calculatePayrollWithRules(
 ): Promise<PayrollResult> {
   // ★ Part-time hourly: bypass all modifier logic entirely
   if (config.base_type === 'hourly') {
-    return calculateSimpleHourlyPay(employeeId, monthDate, clinicId, config)
+    // ★ cwm-payout S-4（老細 Q3）：離職結算快照（generatePayrollRun 由 ResignSettlement 表讀入）
+    //   照樣傳落時薪路徑 — 之前時薪直接 bypass → 離職尾糧冇年假折現/代通知金/時間帳戶結算
+    return calculateSimpleHourlyPay(employeeId, monthDate, clinicId, config, options)
   }
 
   const { y: year, m: month } = hkParts(monthDate)
@@ -3853,10 +3967,8 @@ export async function calculatePayrollWithRules(
   const mpfRate = mpfConfig.enabled ? (mpfConfig.rate ?? 0.05) : 0
 
   // ★ 雜項報銷 —— 報銷唔屬於 EO「工資」，唔計 MPF，喺 netPay 之後最後加
-  const miscEntries = await prisma.expenseEntry.findMany({
-    where: { employeeId, periodMonth: toHKDateStr(monthDate).slice(0, 7), status: 'APPROVED' },
-  })
-  const miscTotal = miscEntries.reduce((sum: number, e: any) => sum + e.amount, 0)
+  // ★ cwm-payout S-1（2026-09-29）：改 call 共用 loadApprovedMisc（同時薪路徑同一 query）
+  const { entries: miscEntries, total: miscTotal } = await loadApprovedMisc(employeeId, monthDate)
   result.totalPayable = netPay
   result.detail = {
     ...result.detail,
@@ -4128,6 +4240,10 @@ export async function calculatePayrollWithRules(
       + (adwSource ? resolvedAdwAdjustment : 0)
       + maternityPay
       + paternityPay
+      // ★ cwm-payout S-6（MD §4.2）：離職結算同入 grossPay（L3949）— 之前 guard 冇計
+      //   → 離職月份一定報「[grossPay] 逐項加總對唔上」
+      + rsGrossAdd
+      - rsExcessRest
     if (Math.abs(itemised - finalGrossPay) > 0.05) {
       console.warn(
         `[grossPay] 逐項加總對唔上 detail.grossPay：` +

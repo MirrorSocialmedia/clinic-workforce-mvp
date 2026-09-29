@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { getConfidentialScope } from '@/lib/scope-helpers'
-import { calculatePayrollWithRules } from '@/lib/payroll-engine'
+import { calculatePayrollWithRules, buildEngineOptions, parseResignSettlementRow } from '@/lib/payroll-engine'
 import { getMonthRange, toHKDateStr, hkParts } from '@/lib/hk-date'
 import { findPayRuleForMonth } from '@/lib/pay-rule-for-month'
 
@@ -107,6 +107,13 @@ export async function POST(req: NextRequest) {
       orderBy: { id: 'asc' },
     })
 
+    // ★ cwm-payout S-5（MD §4.1）：預覽同 generatePayrollRun 同一口徑 — 離職結算快照由
+    //   ResignSettlement 表讀入引擎（之前 preview 完全冇傳 → 預覽應付總額少咗結算項）
+    const settlements = await prisma.resignSettlement.findMany({
+      where: { employeeId: { in: employees.map(e => e.id) }, periodMonth },
+    })
+    const settlementByEmp = new Map(settlements.map(s => [s.employeeId, s]))
+
     // Calculate payroll for each employee WITHOUT writing to DB
     const items = []
     const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
@@ -137,7 +144,13 @@ export async function POST(req: NextRequest) {
             skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '薪酬規則格式過舊，請重新設定' })
             continue
           }
-          result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config, { resignedAtOverride: overrideDate })
+          // ★ cwm-payout S-5：同 generatePayrollRun 共用 buildEngineOptions —
+          //   carried storeBonus / splitPay + 離職結算快照 + resignedAtOverride 全部入引擎，
+          //   預覽「應付總額」先至同生成後一樣（之前只有 resignedAtOverride）
+          result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config,
+            buildEngineOptions(config.base_type, emp.id,
+              { storeBonus: carriedStoreBonus, splitPay: carriedSplitPay, bonusOverride: {} },
+              undefined, parseResignSettlementRow(settlementByEmp.get(emp.id)), overrideDate))
         } else {
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
           skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })
