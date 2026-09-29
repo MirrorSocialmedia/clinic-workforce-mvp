@@ -39,7 +39,26 @@ export async function GET(
 
   // ─── Build workbook（單 sheet，sheet 名 = 醫生名） ─────────────
   const wb = new ExcelJS.Workbook()
-  buildDoctorSheet(wb, data)
+  const { payable } = buildDoctorSheet(wb, data)
+
+  // ★ cwm-payout P-4（MD §2.3）：匯出前同系統鎖定金額對數防線 —
+  //   產生器應付總額 ≠ run.totalAmount（> 0.01）→ 停止匯出 + audit（唔好出咗先發覺）
+  if (run.status === 'LOCKED') {
+    const diff = Math.abs(payable - Number(run.totalAmount))
+    if (diff > 0.01) {
+      console.error(`[payout-export] ALERT Excel 應付 ${payable} ≠ 系統鎖定 ${run.totalAmount}（run ${run.id}）`)
+      await prisma.auditLog.create({
+        data: {
+          actorId: auth.session!.userId,
+          action: 'PAYOUT_EXPORT_MISMATCH',
+          entity: 'PayoutRun',
+          entityId: run.id,
+          notes: `Excel ${payable} vs 系統 ${run.totalAmount}`,
+        },
+      })
+      return jsonNoStore({ error: `匯出金額（${payable}）同系統鎖定金額（${run.totalAmount}）唔一致，已停止匯出，請通知管理員` }, { status: 409 })
+    }
+  }
 
   // Audit log
   await prisma.auditLog.create({
