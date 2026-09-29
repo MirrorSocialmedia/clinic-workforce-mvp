@@ -362,18 +362,36 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
     const patientCode = String(c.patientCode || '')
     const patientName = String(c.patientName || '') // 規則⑤
     if (c.materials.length > 0) {
+      let matSum = 0 // ★ cwm-payout P-3：逐行同寫法器一樣口徑（round2(qty×money(unitPriceUsed))）
       for (const mat of c.materials) {
         // 防呆：DB subtotal 同 qty×單價 唔一致（手改過）→ 公式重算值會偏舊出口徑
         if (Math.abs(num(mat.subtotal) - num(mat.qty) * num(mat.unitPriceUsed)) > 0.005) {
           console.warn(`[payout-export] 材料 subtotal 同 qty×單價 唔一致（case ${c.id}）：subtotal=${mat.subtotal}, qty×price=${num(mat.qty) * num(mat.unitPriceUsed)}`)
         }
+        const unitPrice = money(mat.unitPriceUsed)
+        matSum = round2(matSum + round2(num(mat.qty) * unitPrice))
         implantRows.push({
           patientCode,
           patientName,
           orderedAt: ddMM(c.orderedAt),
           material: mat.note?.trim() || materialName.get(mat.materialItemId) || mat.materialItemId, // ★ 2026-08-22：Other 材料顯示手動填嘅材料名（note 優先）
           qty: mat.qty,
-          unitPrice: money(mat.unitPriceUsed),
+          unitPrice,
+        })
+      }
+      // ★ cwm-payout P-3：Σ 材料 ≠ finalCost（折扣／人手改過）→ 加調整行，
+      //   令病人小計 = finalCost = engine sumByCosts 口徑（C 區總計對返系統）
+      const finalCost = money(c.finalCost)
+      const implAdj = round2(finalCost - matSum)
+      if (Math.abs(implAdj) > 0.005) {
+        console.warn(`[payout-export] Implant case ${c.id}：材料合計 ${matSum} ≠ finalCost ${finalCost} → 加調整行 ${implAdj}`)
+        implantRows.push({
+          patientCode,
+          patientName,
+          orderedAt: ddMM(c.orderedAt),
+          material: '調整（以成本記錄為準）',
+          qty: 1,
+          unitPrice: implAdj,
         })
       }
     } else {
@@ -393,8 +411,10 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
     const bill = sp.billExtId ? billByExt.get(sp.billExtId) : null
     const base = round2((num(sp.listPrice) - num(sp.actualPrice)) * sp.headcount)
     const rate = num(sp.splitPercent) / 100
-    if (Math.abs(round2(base * rate) - num(sp.amount)) > 0.005) {
-      console.warn(`[payout-export] SP ${sp.id} amount=${sp.amount} ≠ base×rate=${round2(base * rate)}（手改過？）`)
+    const amount = money(sp.amount) // ★ cwm-payout P-3：金額欄同小計用 DB amount（engine 同一數）
+    const adjusted = Math.abs(round2(base * rate) - amount) > 0.005
+    if (adjusted) {
+      console.warn(`[payout-export] SP ${sp.id} amount=${sp.amount} ≠ base×rate=${round2(base * rate)}（手改過？）→ 加「已人手調整」標記`)
     }
     return {
       billCode: bill?.code || sp.billExtId,
@@ -403,6 +423,8 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
       desc: String(sp.itemDes || ''),
       base,
       rate,
+      amount,
+      adjusted: adjusted || undefined,
     }
   })
 
@@ -411,8 +433,10 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
     const bill = ref.billExtId ? billByExt.get(ref.billExtId) : null
     const base = ref.unitPrice != null ? round2(num(ref.unitPrice) * ref.qty) : 0
     const rate = num(ref.refPercent) / 100
-    if (Math.abs(round2(base * rate) - num(ref.amount ?? 0)) > 0.005) {
-      console.warn(`[payout-export] REF ${ref.id} amount=${ref.amount} ≠ base×rate=${round2(base * rate)}（手改過？）`)
+    const amount = money(ref.amount ?? 0) // ★ cwm-payout P-3：同 SP — DB amount
+    const adjusted = Math.abs(round2(base * rate) - amount) > 0.005
+    if (adjusted) {
+      console.warn(`[payout-export] REF ${ref.id} amount=${ref.amount} ≠ base×rate=${round2(base * rate)}（手改過？）→ 加「已人手調整」標記`)
     }
     return {
       billCode: ref.billCode || bill?.code || ref.billExtId || '',
@@ -421,6 +445,8 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
       desc: String(ref.itemDes || ''),
       base,
       rate,
+      amount,
+      adjusted: adjusted || undefined,
     }
   })
 

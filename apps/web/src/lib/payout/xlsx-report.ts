@@ -81,8 +81,8 @@ export interface DoctorSheetData {
     qty: number
     unitPrice: number
   }[]
-  spRows: { billCode: string; date: string; patientName: string; desc: string; base: number; rate: number }[]
-  refRows: { billCode: string; date: string; patientName: string; desc: string; base: number; rate: number }[]
+  spRows: { billCode: string; date: string; patientName: string; desc: string; base: number; rate: number; amount: number; adjusted?: boolean }[]
+  refRows: { billCode: string; date: string; patientName: string; desc: string; base: number; rate: number; amount: number; adjusted?: boolean }[]
   adjRows: { refCode: string; date: string; reason: string; note: string; amount: number }[]
   /** 拆帳比例，小數（0.5 = 50%） */
   percentUsed: number
@@ -323,8 +323,8 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): { ws
   const implantTotal = round2(d.implantRows.reduce((s, r) => s + round2(r.qty * r.unitPrice), 0))
   const profit = round2(gross - labTotal - implantTotal)
   const salary = round2(profit * d.percentUsed)
-  const spTotal = round2(d.spRows.reduce((s, r) => s + round2(r.base * r.rate), 0))
-  const refTotal = round2(d.refRows.reduce((s, r) => s + round2(r.base * r.rate), 0))
+  const spTotal = round2(d.spRows.reduce((s, r) => s + round2(r.amount), 0)) // ★ cwm-payout P-3：用 DB amount（人手改過都對）
+  const refTotal = round2(d.refRows.reduce((s, r) => s + round2(r.amount), 0)) // ★ cwm-payout P-3：同上
   const adjTotal = round2(d.adjRows.reduce((s, r) => s + r.amount, 0))
   const payableResult = round2(salary + spTotal + refTotal + adjTotal)
   // A 區 TOTAL 欄只計 income method（同現行 route NON_INCOME 口徑；flag 由 data 帶入）
@@ -522,7 +522,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): { ws
   row++
   const writeSubTable = (
     title: string,
-    rows: { billCode: string; date: string; patientName: string; desc: string; base: number; rate: number }[],
+    rows: { billCode: string; date: string; patientName: string; desc: string; base: number; rate: number; amount: number; adjusted?: boolean }[],
   ): number => {
     setLabel(ws.getCell(row, 1), title, { bold: true })
     for (let i = 2; i <= 7; i++) ws.getCell(row, i).border = thinBorder
@@ -534,15 +534,17 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): { ws
       setData(ws.getCell(row, 1), r.billCode)
       setData(ws.getCell(row, 2), r.date)
       setData(ws.getCell(row, 3), r.patientName)
-      setData(ws.getCell(row, 4), r.desc)
+      // ★ cwm-payout P-3：base×rate 只作展示（底數/比率欄照列俾人睇點計）；
+      //   金額欄用 DB amount（人手改過都出對數）；改過嘅行尾加「（已人手調整）」
+      setData(ws.getCell(row, 4), r.adjusted ? `${r.desc}（已人手調整）` : r.desc)
       setData(ws.getCell(row, 5), round2(r.base), { fmt: MONEY_FMT })
       setData(ws.getCell(row, 6), r.rate, { fmt: PCT_FMT })
-      setFormula(ws.getCell(row, 7), `E${row}*F${row}`, { fmt: MONEY_FMT, result: round2(r.base * r.rate) }) // 底數×比率
+      setData(ws.getCell(row, 7), round2(r.amount), { fmt: MONEY_FMT }) // ★ P-3：DB amount，唔再 E×F 公式
       row++
     }
     setLabel(ws.getCell(row, 1), `${title} 小計`, { bold: true })
     for (let i = 2; i <= 6; i++) ws.getCell(row, i).border = thinBorder
-    if (rows.length > 0) setFormula(ws.getCell(row, 7), `SUM(G${first}:G${row - 1})`, { fmt: MONEY_FMT, bold: true, result: round2(rows.reduce((s, r) => s + round2(r.base * r.rate), 0)) })
+    if (rows.length > 0) setFormula(ws.getCell(row, 7), `SUM(G${first}:G${row - 1})`, { fmt: MONEY_FMT, bold: true, result: round2(rows.reduce((s, r) => s + round2(r.amount), 0)) })
     else setData(ws.getCell(row, 7), 0, { fmt: MONEY_FMT, gray: true })
     const subRow = row
     row++
