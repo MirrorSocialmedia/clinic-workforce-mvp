@@ -3466,7 +3466,17 @@ async function calculateSimpleHourlyPay(
   // ★ cwm-payout S-1（2026-09-29）：已批核雜項報銷（同月薪同一個共用 query、同一個加法位置：
   //   唔計入工資、最後加）— 之前時薪路徑完全冇查 → 批咗都唔發。
   const { entries: miscEntries, total: miscTotal } = await loadApprovedMisc(employeeId, monthDate)
-  const totalPayable = Math.round((totalPay + miscTotal) * 100) / 100
+
+  // ★ cwm-payout S-3（2026-09-29）：時薪 Salary/Gross/Net 必須寫齊（同月薪同欄）—
+  //   之前出糧總表 Salary/Net Pay/MPF 全 0 + 備註「⚠ Net+FARE≠Total」；計糧 Excel/PDF Gross 0、
+  //   「其他扣減」變負數（= −實發）。
+  //   時薪口徑：工資 = 逐日金額合計（totalPay）；拆帳禁止（S-2 方案 A）；冇 store bonus。
+  const grossPay = totalPay
+  // ★ 老細拍板（2026-09-29，MD §5 Q1）：時薪無 MPF（另處理）— 明寫 0，唔係「唔寫」
+  const mpf = 0
+  const netPay = Math.max(0, Math.round((grossPay - mpf) * 100) / 100)
+
+  const totalPayable = Math.max(0, Math.round((netPay + miscTotal) * 100) / 100)
 
   return {
     basePay: totalPay,
@@ -3485,6 +3495,25 @@ async function calculateSimpleHourlyPay(
       hourlyRate: rate,
       totalMinutes,
       days,
+      // ★ cwm-payout S-3：頂層薪酬欄寫齊（出糧總表/Excel/PDF 讀呢幾欄）— 同月薪同口徑
+      grossPay: Math.round(grossPay * 100) / 100,
+      mpf,
+      mpfEmployer: 0, // ★ 老細拍板：時薪無 MPF（另處理）
+      mpfRate: 0,
+      netPay: Math.round(netPay * 100) / 100,
+      salary: {
+        basePay: totalPay,
+        grossPay: Math.round(grossPay * 100) / 100,
+        mpf,
+        mpfEmployer: 0,
+        mpfRate: 0,
+        netPay: Math.round(netPay * 100) / 100,
+        allowances: 0,
+        otPay: 0,
+        attendanceBonus: 0,
+        sickDeduction: 0,
+        deduction: 0,
+      },
       // ★ 2026-08-19: 時薪 bypass 咗全部 modifier 邏輯（見 calculatePayrollWithRules
       //   頂部 base_type === 'hourly' 嘅 early return），所以永遠唔會行到月薪路徑
       //   嗰度（eoWage = finalGrossPay 寫入 detail 嘅位置）。
