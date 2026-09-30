@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { getConfidentialScope } from '@/lib/scope-helpers'
-import { calculatePayrollWithRules, buildEngineOptions, parseResignSettlementRow } from '@/lib/payroll-engine'
+import { calculatePayrollWithRules, buildEngineOptions, parseResignSettlementRow, resolveStoreBonus, resolveBonusOverride } from '@/lib/payroll-engine'
 import { getMonthRange, toHKDateStr, hkParts } from '@/lib/hk-date'
 import { findPayRuleForMonth } from '@/lib/pay-rule-for-month'
 
@@ -55,16 +55,20 @@ export async function POST(req: NextRequest) {
 
     const carriedStoreBonus: Record<string, number> = {}
     const carriedSplitPay: Record<string, number> = {}
+    // ★ 2026-09-30 [cwm-resignfull]：勤工獎覆蓋都要 carry（同 generatePayrollRun 口徑）— 之前預覽永遠當 AUTO
+    const carriedBonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> = {}
     if (existing) {
       const oldItems = await prisma.payrollItem.findMany({
         where: { runId: existing.id },
-        select: { employeeId: true, storeBonus: true, splitPay: true },
+        select: { employeeId: true, storeBonus: true, splitPay: true, attendanceBonusOverride: true },
       })
       for (const oi of oldItems) {
         if (oi.storeBonus) carriedStoreBonus[oi.employeeId] = oi.storeBonus
         if (oi.splitPay != null) carriedSplitPay[oi.employeeId] = oi.splitPay
+        if (oi.attendanceBonusOverride === 'FORCE_ON' || oi.attendanceBonusOverride === 'FORCE_OFF') carriedBonusOverride[oi.employeeId] = oi.attendanceBonusOverride
       }
     }
+    const carried = { storeBonus: carriedStoreBonus, splitPay: carriedSplitPay, bonusOverride: carriedBonusOverride }
 
     // Get employees — use homeClinicId instead of EmployeeClinic to avoid multi-clinic duplicates
     // ★ 2026-09-04 [cwm-resigpay-20260904]：同 generatePayrollRun 口徑一致（拍板⑤）——
@@ -137,6 +141,7 @@ export async function POST(req: NextRequest) {
         }
 
         let result
+        const rsOpt = parseResignSettlementRow(settlementByEmp.get(emp.id))
         if (payRule?.configJson) {
           const config = JSON.parse(payRule.configJson)
           if (!config.base_type && !config.modifiers) {
@@ -148,9 +153,8 @@ export async function POST(req: NextRequest) {
           //   carried storeBonus / splitPay + 離職結算快照 + resignedAtOverride 全部入引擎，
           //   預覽「應付總額」先至同生成後一樣（之前只有 resignedAtOverride）
           result = await calculatePayrollWithRules(emp.id, monthDate, clinicId || null, config,
-            buildEngineOptions(config.base_type, emp.id,
-              { storeBonus: carriedStoreBonus, splitPay: carriedSplitPay, bonusOverride: {} },
-              undefined, parseResignSettlementRow(settlementByEmp.get(emp.id)), overrideDate))
+            buildEngineOptions(config.base_type, emp.id, carried,
+              undefined, rsOpt, overrideDate))
         } else {
           console.warn(`Employee ${emp.id} has no payRule, skipping`)
           skipped.push({ employeeId: emp.id, name: emp.user.name, reason: '未設定薪酬規則' })
@@ -175,7 +179,9 @@ export async function POST(req: NextRequest) {
           totalPayable: result.totalPayable,
           detail: result.detail,
           // ★ Carry over existing draft values for pre-fill
-          storeBonus: carriedStoreBonus[emp.id] ?? (result.detail as any)?.storeBonus ?? 0,
+          // ★ cwm-resignfull：離職結算揀咗店舖獎金／勤工獎 → 預填計糧頁（生成時會原樣送返）
+          storeBonus: resolveStoreBonus(emp.id, carried, undefined, rsOpt) ?? (result.detail as any)?.storeBonus ?? 0,
+          attendanceBonusOverride: resolveBonusOverride(emp.id, carried, undefined, rsOpt),
           splitPay: carriedSplitPay[emp.id] != null ? carriedSplitPay[emp.id] : result.splitPay,
         })
       } catch (err: any) {

@@ -23,6 +23,7 @@ import { calcRestDayDebt } from './settlement-utils'
 import { restDayBalanceAsOf } from './leave-balance-as-of'
 import { futureAnnualLeaveDays } from './resign-cutoff'
 import { findPayRuleForMonth } from './pay-rule-for-month'
+import { pickResignChoice, toEngineBonusOverride, type ResignMonthItems, type BonusOverride, type SettlementBonusChoice } from './settlement-utils'
 
 export interface ResignSettlementCalc {
   monthlySalary: number
@@ -53,6 +54,17 @@ export interface ResignSettlementCalc {
   }
   // ★ cwm-resigv3：當月工資（讀唔算 — 三段 fallback）
   monthWage: { source: 'payrollItem' | 'preview' | 'none'; basePay: number | null }
+  // ★ 2026-09-30 [cwm-resignfull]：當月全部項目（引擎直算，用結算揀嘅勤工獎／店舖獎金）— 同月結同一條數。
+  //   null = 算唔到（fallback 舊口徑：淨係 basePay）
+  monthItems: ResignMonthItems | null
+  // ★ cwm-resignfull：今次用緊嘅揀法 + 來源（settlement = 結算卡揀；payroll = 舊計糧單 carry）
+  choices: {
+    attendanceBonusOverride: BonusOverride | null          // 引擎實際用（null = 自動）
+    attendanceBonusChoice: SettlementBonusChoice | null     // 結算卡揀（null = 冇揀 → 跟計糧單）
+    attendanceBonusSource: 'settlement' | 'payroll' | null
+    storeBonus: number | null
+    storeBonusSource: 'settlement' | 'payroll' | null
+  }
   // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日，含頭含尾），分母 = 當月曆日數）— 結算寫入 monthWageRatio 用
   monthWageRatio: { value: number; numerator: number; denominator: number } | null
   // ★ 2026-09-30 [cwm-restdebt]：⑤ 超額休息日扣款（伺服器側單一來源 — 預填 + 引擎注入同口徑）
@@ -103,6 +115,8 @@ export async function resolveMonthWage(
   // ★ 2026-09-05 [cwm-resignroster]：離職預覽 lastDay（「最後工作日翌日 HK 午夜」口徑）—
   //   員工未辦理離職時 DB resignedAt = NULL，唔傳 override 引擎會當做足全月。
   resignedAtOverride?: Date,
+  // ★ cwm-resignfull：caller 已經直算過（computeResignSettlement）→ 唔好再跑多次引擎
+  precomputedDirect?: { basePay: number | null; ratioDetail: { value: number; numerator: number; denominator: number } | null },
 ): Promise<{ source: 'payrollItem' | 'preview' | 'none'; basePay: number | null; ratioDetail: { value: number; numerator: number; denominator: number } | null }> {
   // ★ 2026-09-05 [cwm-resignroster]：有 override 但 run 口徑唔配 preview lastDay 時，run 嘅數係舊嘅 → 跳過 ①。
   //   兩種 stale：(a) 員工未辦理離職（DB resignedAt = NULL → run 係全月 ratio 1）；
@@ -144,7 +158,7 @@ export async function resolveMonthWage(
   }
 
   // ② 引擎直算（fallback）
-  const direct = await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId, resignedAtOverride)
+  const direct = precomputedDirect ?? await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId, resignedAtOverride)
   if (direct.basePay != null) {
     return { source: 'preview', basePay: direct.basePay, ratioDetail: direct.ratioDetail }
   }
@@ -166,7 +180,9 @@ async function resolveMonthWageDirect(
   periodMonth: string,
   clinicId: string | null,
   resignedAtOverride?: Date,
-): Promise<{ basePay: number | null; ratioDetail: { value: number; numerator: number; denominator: number } | null }> {
+  // ★ cwm-resignfull：同 buildEngineOptions 同口徑（勤工獎覆蓋／店舖獎金／拆帳）— 唔傳離職結算項（結算卡另外加）
+  engineOpts?: { attendanceBonusOverride?: BonusOverride | null; storeBonus?: number | null; splitPay?: number | null },
+): Promise<{ basePay: number | null; ratioDetail: { value: number; numerator: number; denominator: number } | null; monthItems: ResignMonthItems | null }> {
   try {
     // ★ cwm-money P2-6：單一來源（active 覆蓋本月 → 退回經 POST 停用且有 effectiveTo 嘅舊規則）
     const { start: _rsMonthStart, end: _rsMonthEnd } = getMonthRange(new Date(`${periodMonth}-01T00:00:00+08:00`))
@@ -175,20 +191,66 @@ async function resolveMonthWageDirect(
       const config = JSON.parse(payRule.configJson)
       if (config.base_type || config.modifiers) {
         const monthDate = new Date(`${periodMonth}-01T00:00:00+08:00`)
-        const result = await calculatePayrollWithRules(empId, monthDate, clinicId, config, { resignedAtOverride })
+        const hourly = config.base_type === 'hourly'
+        const result = await calculatePayrollWithRules(empId, monthDate, clinicId, config, {
+          resignedAtOverride,
+          attendanceBonusOverride: engineOpts?.attendanceBonusOverride ?? null,
+          // 同 buildEngineOptions：時薪冇店舖獎金／拆帳；店舖獎金 0 = 唔傳
+          ...(!hourly && engineOpts?.storeBonus ? { storeBonus: engineOpts.storeBonus } : {}),
+          ...(!hourly && engineOpts?.splitPay != null ? { splitPay: engineOpts.splitPay } : {}),
+        })
         if (!result.error && typeof result.basePay === 'number' && Number.isFinite(result.basePay)) {
           const rd = (result.detail as any)?.employedRatioDetail
           const ratioDetail = rd && typeof rd.value === 'number' && typeof rd.numerator === 'number' && typeof rd.denominator === 'number'
             ? { value: rd.value, numerator: rd.numerator, denominator: rd.denominator }
             : null
-          return { basePay: result.basePay, ratioDetail }
+          return { basePay: result.basePay, ratioDetail, monthItems: toMonthItems(result, hourly) }
         }
       }
     }
   } catch (e) {
     console.error('[resolveMonthWageDirect] calculatePayrollWithRules 失敗', e)
   }
-  return { basePay: null, ratioDetail: null }
+  return { basePay: null, ratioDetail: null, monthItems: null }
+}
+
+/**
+ * ★ 2026-09-30 [cwm-resignfull]：引擎結果 → 結算卡逐行（口徑同 engine grossPay 逐項式）。
+ * otherAdjust = grossPay − 逐項 —— 正常係 0；將來引擎加新項目冇同步呢度，都唔會令加總走樣。
+ */
+export function toMonthItems(result: { basePay: number; otPay: number; splitPay: number | null; attendanceBonus: number; attendanceBonusReason?: string; deduction: number; detail: any }, hourly: boolean): ResignMonthItems {
+  const d = result.detail ?? {}
+  const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100
+  const basePay = r2(result.basePay)
+  const attendanceBonus = r2(result.attendanceBonus)
+  const otPay = r2(result.otPay)
+  const splitPay = r2(result.splitPay ?? 0)
+  const storeBonus = r2(d.storeBonus ?? 0)
+  const allowances = r2(d.salary?.allowances ?? d.totalAllowances ?? 0)
+  const deduction = r2(result.deduction)
+  const sickDeduction = r2(d.sickDeduction ?? 0)
+  const adwAdjustment = r2(d.adwAdjustment ?? 0)
+  const maternityPay = r2(d.maternityPay ?? 0)
+  const paternityPay = r2(d.paternityPay ?? 0)
+  const grossPay = r2(d.grossPay ?? d.salary?.grossPay ?? basePay)
+  const itemised = basePay + attendanceBonus + otPay + splitPay + storeBonus + allowances - deduction - sickDeduction + adwAdjustment + maternityPay + paternityPay
+  const otherAdjust = Math.abs(grossPay - itemised) > 0.01 ? r2(grossPay - itemised) : 0
+  let miscEntries: ResignMonthItems['miscEntries'] = []
+  try {
+    const arr = d.miscDetailJson ? JSON.parse(d.miscDetailJson) : []
+    if (Array.isArray(arr)) miscEntries = arr.map((e: any) => ({ amount: r2(e?.amount), description: e?.description ?? null }))
+  } catch { /* 壞 JSON → 只顯示總數 */ }
+  return {
+    payType: hourly ? 'HOURLY' : 'MONTHLY',
+    basePay, attendanceBonus,
+    attendanceBonusReason: result.attendanceBonusReason ?? d.attendanceBonusReason ?? null,
+    otPay, splitPay, storeBonus, allowances, deduction, sickDeduction, adwAdjustment, maternityPay, paternityPay,
+    otherAdjust, grossPay,
+    miscAmount: r2(d.miscAmount ?? 0),
+    miscEntries,
+    // 同 engine：時薪 MPF 0；月薪 mpfRate 0 = 規則冇開 MPF
+    mpfEnabled: !hourly && (Number(d.mpfRate) || 0) > 0,
+  }
 }
 
 export async function computeResignSettlement(
@@ -198,7 +260,8 @@ export async function computeResignSettlement(
   noticeDays?: number | null,
   clinicId?: string | null,
   // ★ 2026-09-05 [cwm-resignroster]：預覽/結算嘅 lastDay（「最後工作日翌日 HK 午夜」）— 傳落引擎當 resignedAtOverride
-  opts?: { resignedAtOverride?: Date },
+  // ★ 2026-09-30 [cwm-resignfull]：attendanceBonusOverride／storeBonus = 結算卡揀（null/undefined = 跟舊計糧單）
+  opts?: { resignedAtOverride?: Date; attendanceBonusOverride?: SettlementBonusChoice | null; storeBonus?: number | null },
 ): Promise<ResignSettlementCalc> {
   // ★ cutoff = 最後工作日**結束**（翌日 HK 午夜）—— 同 resign/route.ts `${lastDay}T16:00:00Z` 口徑一致
   const cutoff = new Date(hkDateStart(lastDay).getTime() + 86400000)
@@ -288,8 +351,30 @@ export async function computeResignSettlement(
   //   run 口徑對唔上 preview lastDay 時 resolveMonthWage 會自動跳過 ① 走引擎直算。
   //   ratio 快照另走引擎直算 + override（跟今次 lastDay）
   const periodMonth = lastDay.slice(0, 7)
-  const monthWage = await resolveMonthWage(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
-  const ratioDirect = await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
+  // ★ 2026-09-30 [cwm-resignfull]：揀法優先次序同 generatePayrollRun 一樣（結算卡 > 舊計糧單 carry）——
+  //   結算卡顯示嘅當月數 = 重新生成計糧之後嘅數
+  const { start: _pmStart, end: _pmEnd } = getMonthRange(new Date(`${periodMonth}-01T00:00:00+08:00`))
+  const carriedItem = await prisma.payrollItem.findFirst({
+    where: { employeeId: empId, run: { periodMonth: { gte: _pmStart, lte: _pmEnd } } },
+    select: { storeBonus: true, splitPay: true, attendanceBonusOverride: true },
+  })
+  const carriedOverride: BonusOverride | null = carriedItem?.attendanceBonusOverride === 'FORCE_ON' || carriedItem?.attendanceBonusOverride === 'FORCE_OFF'
+    ? carriedItem.attendanceBonusOverride : null
+  const carriedStoreBonus = carriedItem?.storeBonus ? carriedItem.storeBonus : null
+  const attendanceBonusOverride = toEngineBonusOverride(pickResignChoice<SettlementBonusChoice>(opts?.attendanceBonusOverride, null, carriedOverride))
+  const storeBonus = pickResignChoice(opts?.storeBonus, null, carriedStoreBonus)
+  const choices: ResignSettlementCalc['choices'] = {
+    attendanceBonusOverride,
+    attendanceBonusChoice: opts?.attendanceBonusOverride ?? null,
+    attendanceBonusSource: opts?.attendanceBonusOverride != null ? 'settlement' : carriedOverride != null ? 'payroll' : null,
+    storeBonus,
+    storeBonusSource: opts?.storeBonus != null ? 'settlement' : carriedStoreBonus != null ? 'payroll' : null,
+  }
+  const ratioDirect = await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride, {
+    attendanceBonusOverride, storeBonus, splitPay: carriedItem?.splitPay ?? null,
+  })
+  const monthWage = await resolveMonthWage(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride, ratioDirect)
+  const monthItems = ratioDirect.monthItems
 
   // ★ 2026-09-30 [cwm-restdebt]：超額休息日 = 休息日帳截至最後工作日嘅透支（見 settlement-utils calcRestDayDebt）
   //   時薪唔發休息日（grant-restdays:52）→ 唔計
@@ -365,7 +450,9 @@ export async function computeResignSettlement(
   // ★ cwm-resigv3 #8（生死格）：上限基底 = prorate 後當月工資（讀引擎）+ 未放年假薪酬。
   //   source='none' 時 fallback 回全月薪（前端確認掣 disabled + route 400 攔截）。
   //   用全月薪會令月中離職嘅 1/4 上限高估 2.7 倍 → 可能扣超法定上限。
-  const finalPeriodWage = Math.round(((monthWage.basePay ?? monthlySalary) + leavePayout) * 100) / 100
+  // ★ 2026-09-30 [cwm-resignfull]：當月 Gross（連勤工獎／OT／津貼／店舖獎金、扣咗缺勤）先係「該工資期工資」；
+  //   算唔到先退返 basePay（舊口徑）
+  const finalPeriodWage = Math.round(((monthItems?.grossPay ?? monthWage.basePay ?? monthlySalary) + leavePayout) * 100) / 100
   const quarterCap = Math.round((finalPeriodWage / 4) * 100) / 100
   const halfCap = Math.round((finalPeriodWage / 2) * 100) / 100
 
@@ -393,6 +480,8 @@ export async function computeResignSettlement(
       entries: tbEntries as ResignSettlementCalc['tb']['entries'],
     },
     monthWage,
+    monthItems,
+    choices,
     // ★ cwm-resignroster：比例快照（跟今次 lastDay 引擎直算；時薪/算唔到 → null）
     monthWageRatio: ratioDirect.ratioDetail,
     // ★ cwm-excessrest：⑤ 超額休息日扣款（預填 = 計算值；拍板①）
