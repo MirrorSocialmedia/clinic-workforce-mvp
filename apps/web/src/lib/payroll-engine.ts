@@ -1397,7 +1397,7 @@ interface WorkData {
   // ★ 2026-09-04 [cwm-resigpay-20260904]：受僱比例（月中入職／離職 prorate；完整月 = 1）
   employedRatio?: number
   // ★ 2026-09-05 [cwm-resignroster]：比例快照（分子 = 實際排更日數，分母 = 該月工作日常額）
-  employedRatioDetail?: { value: number; numerator: number; denominator: number }
+  employedRatioDetail?: { value: number; numerator: number; denominator: number; from?: string | null; to?: string | null }
   lateRecords: Array<{ date: string; minutes: number }>
   earlyLeaveRecords: Array<{ date: string; minutes: number }>
   leaveRecords: Array<{ isPlanned: boolean; days: number; cancelsBonus: boolean; name: string }>
@@ -3762,6 +3762,9 @@ export async function calculatePayrollWithRules(
       value: workData.employedRatio,
       numerator: ep.from > ep.to ? 0 : countHKDaysInclusive(ep.from, ep.to),
       denominator: hkDaysInMonth(monthDate),
+      // ★ 2026-09-30 [cwm-rosterjoin]：受僱起訖（HK 日，含頭含尾）— 計糧明細「底薪點計」顯示用
+      from: ep.from > ep.to ? null : toHKDateStr(ep.from),
+      to: ep.from > ep.to ? null : toHKDateStr(ep.to),
     } }
 
   // 2. Run base module

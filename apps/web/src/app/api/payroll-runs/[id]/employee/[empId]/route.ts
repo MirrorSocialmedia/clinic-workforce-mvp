@@ -37,6 +37,9 @@ export async function GET(
         select: {
           payConfidential: true,
           homeClinicId: true,
+          // ★ 2026-09-30 [cwm-rosterjoin]：舊 run（冇 employedRatioDetail.from/to）顯示底薪明細嘅 fallback
+          joinDate: true,
+          resignedAt: true,
           user: { select: { id: true, name: true, phone: true, fullName: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
           // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（lib/pay-rule-latest）

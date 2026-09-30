@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmtDateTime, fmtDate, fmtTime, toHKDateStr, getMonthRange, fmtDMY, periodMonthKey } from '@/lib/hk-date'
+import { describeBasePay } from '@/lib/base-pay-breakdown'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
@@ -46,6 +47,8 @@ interface PayrollItemData {
   employee: {
     user: { id: string; name: string; phone: string; fullName?: string | null }
     clinics: { clinicId: string; clinic: { name: string } }[]
+    joinDate?: string | null   // ★ cwm-rosterjoin：底薪明細 fallback（舊 run 冇 employedRatioDetail.from/to）
+    resignedAt?: string | null
     payRules: Array<{ payType: string; configJson: string | null }>
   }
 }
@@ -241,6 +244,18 @@ export default function EmployeePayrollDetailPage() {
 
   // Salary breakdown
   const basePay = salaryDetail.basePay ?? item.basePay
+  // ★ 2026-09-30 [cwm-rosterjoin]：底薪明細 —— 月中入職／離職點解唔係全月薪（月薪 × 受僱曆日 ÷ 當月曆日）
+  const basePayBreakdown = payType === 'MONTHLY'
+    ? describeBasePay({
+        basePay,
+        monthlySalary: detail.monthlySalary,
+        multiplier: detail.monthlyPayMultiplier,
+        ratioDetail: detail.employedRatioDetail ?? null,
+        periodMonth: data.periodMonth,
+        joinDate: item.employee?.joinDate ?? null,
+        resignedAt: item.employee?.resignedAt ?? null,
+      })
+    : null
   const deduction = salaryDetail.deduction ?? item.deduction
   // ★ 冇 salaryDetail.dailyWage 就唔好估 —— 顯示 0 令人知道係缺資料，
   //   basePay ÷ scheduledDays 唔係扣薪日率（差 50%），估錯比唔顯示更差
@@ -632,6 +647,24 @@ export default function EmployeePayrollDetailPage() {
               <span className="text-sm">基本薪資</span>
               <span className="font-mono font-medium">{fmtCurrency(basePay)}</span>
             </div>
+            {basePayBreakdown && (
+              <div className="text-xs text-muted-foreground" style={{ marginTop: -4 }}>
+                {basePayBreakdown.full ? (
+                  <>月薪 {fmtCurrency(basePayBreakdown.monthlySalary)}{basePayBreakdown.multiplier !== 1 ? ` × ${basePayBreakdown.multiplier}` : ''}（全月受僱）</>
+                ) : (
+                  <>
+                    月薪 {fmtCurrency(basePayBreakdown.monthlySalary)}{basePayBreakdown.multiplier !== 1 ? ` × ${basePayBreakdown.multiplier}` : ''}
+                    {' × '}受僱 {basePayBreakdown.employedDays} 日
+                    {basePayBreakdown.from && basePayBreakdown.to ? `（${basePayBreakdown.from} 至 ${basePayBreakdown.to}，含休息日）` : ''}
+                    {' ÷ '}當月 {basePayBreakdown.monthDays} 日 = {fmtCurrency(basePayBreakdown.computed)}
+                    <div>月中入職／離職按受僱曆日比例計；缺勤另外扣，唔會重複扣。</div>
+                  </>
+                )}
+                {!basePayBreakdown.matches && (
+                  <div style={{ color: '#b45309' }}>⚠️ 按上面算係 {fmtCurrency(basePayBreakdown.computed)}，同糧單唔一致（可能月中調薪或者計糧後改過入職日）— 請重新生成計糧核對</div>
+                )}
+              </div>
+            )}
 
             {deduction > 0 && (
               <div className="flex justify-between items-start text-red-500">

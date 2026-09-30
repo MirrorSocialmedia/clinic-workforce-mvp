@@ -89,6 +89,7 @@ jobs:
             src/lib/apricot/sync-force.test.ts \
             src/lib/apricot/write-booking-paths-guard.test.ts \
             src/lib/apricot/write-booking.test.ts \
+            src/lib/base-pay-breakdown.test.ts \
             src/lib/bookable-slots-s5-4.test.ts \
             src/lib/bookable-slots.test.ts \
             src/lib/clinical-index/extract-note-text.test.ts \
