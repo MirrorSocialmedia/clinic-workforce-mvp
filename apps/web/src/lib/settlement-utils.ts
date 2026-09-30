@@ -33,40 +33,32 @@ export function prefillTbDeduction(debtAmount: number, quarterCap: number): numb
 }
 
 /**
- * ★ 2026-09-07 [cwm-excessrest]：超額休息日扣款（離職當月，⑤ — MPF 之前）。
- *
- * ⚠️ 休息日單已隨離職取消 → 「實放日數」由「受僱曆日 − 工作日」反推（唔存在 LeaveRequest）。
- * ⚠️ 日率用【曆日】口徑（月薪 ÷ 當月曆日），同當月工資 ① 一致；唔可以用扣薪日率（÷22 應出勤日）。
- * ⚠️ 非工作日要扣走已批年假／病假／公眾假期 —— 嗰啲唔算休息日。
- * ⚠️ `max(0, …)` —— 做足月／少放休息日 → 唔會出現負扣款（變成加錢）。
- *
- * ★ 完整月份（無入職無離職）→ employedDays >= monthDays → 應得 = 全額 → excess = 0；
- *   同 resolveEmployedRatio 一樣加短路（安全網，正常完整月 actualRestDays 都會 ≤ 應得）。
+ * ★ 2026-09-30 [cwm-restdebt]：離職超額休息日 = 休息日帳（REST_DAY LeaveBalance）截至最後工作日嘅透支。
+ *   舊版只倒推最後一個月（受僱曆日 − 有更日 − 年假／病假 − 公眾假期）+ 做足月短路：
+ *   ① 之前月份預支（「下個月還」）永遠追唔返（CC2 −2 日 → $0）
+ *   ② 無薪假／生日假／補假／空白日被當休息日 → 雙重扣
+ *   ③ 發放額度包公眾假期、倒推剔走公眾假期 → 少扣
+ *   新版只讀休息日帳（同排班「上月剩」、薪資明細同一個 helper），同次序無關。
+ * ⚠️ 當月發放係月頭一次過入帳；最後一個月未做完嘅部分按曆日比例唔應得。
+ * ⚠️ max(0, …) —— 冇透支唔會變加錢（休息日唔換錢，EO s.17，MD §4.3）。
  */
-export function calcExcessRestDayDeduction(args: {
-  employedDays: number          // 受僱曆日（含頭含尾；完整月 = 當月全月）
+export function calcRestDayDebt(a: {
+  entitledAsOf: number          // restDayBalanceAsOf.entitled（已剔走最後工作日之後嘅發放）
+  usedAsOf: number              // restDayBalanceAsOf.used（已剔走最後工作日之後嘅休息日／換鐘）
+  monthlyRestGrantDays: number  // 最後工作日當月 RESTDAY_GRANT 日數
+  employedDays: number          // 當月受僱曆日（含頭含尾）
   monthDays: number             // 當月曆日
-  workedDays: number            // 受僱期內 Shift 唯一日期（status ≠ CANCELLED）
-  paidLeaveDays: number         // 受僱期內已批年假／病假（非休息日）
-  publicHolidayDays: number     // 受僱期內公眾假期
-  monthlyRestGrantDays: number  // 當月 RESTDAY_GRANT 日數（TimeBankEntry minutes/1440；唔好由 rest_days config 推算）
   monthlySalary: number
-}): { actualRestDays: number; entitledRestDays: number; excessDays: number; amount: number } {
-  // ★ 完整月份短路（MD §2.2）：應得 = 全額發放 → 超額 0
-  if (args.employedDays >= args.monthDays) {
-    const actualRestDays = Math.max(0,
-      args.employedDays - args.workedDays - args.paidLeaveDays - args.publicHolidayDays)
-    return { actualRestDays, entitledRestDays: args.monthlyRestGrantDays, excessDays: 0, amount: 0 }
-  }
-  const actualRestDays = Math.max(0,
-    args.employedDays - args.workedDays - args.paidLeaveDays - args.publicHolidayDays)
-  const entitledRestDays = args.monthDays > 0
-    ? Math.round(args.monthlyRestGrantDays * args.employedDays / args.monthDays * 100) / 100
+}): { entitledRestDays: number; usedRestDays: number; unearnedThisMonth: number; excessDays: number; amount: number } {
+  const r2 = (n: number) => Math.round(n * 100) / 100
+  const unearnedThisMonth = a.monthDays > 0 && a.employedDays < a.monthDays
+    ? r2(a.monthlyRestGrantDays * (a.monthDays - a.employedDays) / a.monthDays)
     : 0
-  const excessDays = Math.max(0, Math.round((actualRestDays - entitledRestDays) * 100) / 100)
-  const dailyRate = args.monthDays > 0 ? args.monthlySalary / args.monthDays : 0
-  return { actualRestDays, entitledRestDays, excessDays,
-           amount: Math.round(excessDays * dailyRate * 100) / 100 }
+  const entitledRestDays = r2(a.entitledAsOf - unearnedThisMonth)
+  const usedRestDays = r2(a.usedAsOf)
+  const excessDays = Math.max(0, r2(usedRestDays - entitledRestDays))
+  const dailyRate = a.monthDays > 0 ? a.monthlySalary / a.monthDays : 0
+  return { entitledRestDays, usedRestDays, unearnedThisMonth, excessDays, amount: r2(excessDays * dailyRate) }
 }
 
 // ── MPF 顯示（2026-09-06 [cwm-mpf60-20260906]，MD §3.2）──────────────────

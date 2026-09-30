@@ -59,6 +59,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
   { action: 'EMPLOYEE_RESIGN_SETTLE', label: '離職結算確認（寫入薪金／時間帳戶扣除）' },
+  { action: 'EMPLOYEE_RESIGN_SETTLE_REVOKE', label: '撤銷離職結算（刪除結算行 — 影響尾糧）' },
   { action: 'FACE_ENROLL_APPROVE', label: '批准人臉登記' },
   { action: 'FACE_ENROLL_REJECT', label: '拒絕人臉登記' },
   { action: 'PAY_RULE_UPDATE', label: '更新計薪規則' },

@@ -105,12 +105,10 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
           const pre = prefillTbDeduction(calcTimebankDebtAmount(t.debtMinutes, adv).tbAmount, t.caps.quarter)
           setTbDeduction(pre > 0 ? pre.toFixed(2) : '')
         }
-        // ★ 2026-09-07 [cwm-excessrest] 拍板①：⑤ 預填計算值（用戶動過掣就唔覆蓋）；無超額 → 清空（行隱藏）
+        // ★ 2026-09-30 [cwm-restdebt]：⑤ 只喺 excess > 0 時預填；否則保留空白（唔再清走人手輸入 — RS-19）
         const xr = data.settlement?.excessRest
-        if (xr && xr.excessDays > 0) {
-          if (!excessTouchedRef.current) setExcessDeduction(xr.amount > 0 ? xr.amount.toFixed(2) : '')
-        } else {
-          setExcessDeduction('')
+        if (xr && xr.excessDays > 0 && !excessTouchedRef.current) {
+          setExcessDeduction(xr.amount > 0 ? xr.amount.toFixed(2) : '')
         }
       } else if (res.status !== 404) {
         const err = await res.json().catch(() => ({}))
@@ -168,8 +166,8 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
     try {
       const body: any = { lastDay, noticeDays: noticeDaysVal }
       if (tbDeduction !== '' && Number.isFinite(Number(tbDeduction))) body.tbDeduction = Number(tbDeduction)
-      // ★ 2026-09-07 [cwm-excessrest]：⑤ 預填即實扣（空白 = 計算值；拍板①）
-      if (xr && xr.excessDays > 0) body.excessDeduction = excessDed
+      // ★ 2026-09-30 [cwm-restdebt]：人手填咗就送（空白 = 伺服器計算值 — 行永遠顯示，RS-19）
+      if (xr && excessDeduction !== '' && Number.isFinite(Number(excessDeduction))) body.excessDeduction = Number(excessDeduction)
       const res = await fetch(`/api/employees/${employee.employeeId}/resign-settle`, {
         method: 'POST',
         credentials: 'include',
@@ -222,10 +220,12 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
 
   const currency = (n: number | null | undefined) => n == null ? '—' : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   const tbDeductionVal = tbDeduction !== '' && Number.isFinite(Number(tbDeduction)) ? Number(tbDeduction) : null
-  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日（拍板①：空白 → 預填計算值）
+  // ★ 2026-09-30 [cwm-restdebt]：⑤ 超額休息日（空白 → 伺服器計算值；行永遠顯示，人手填得）
   const xr = st?.excessRest ?? null
+  // ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支年假／生日假 — 只顯示唔扣
+  const al = st?.advanceLeave ?? null
   const excessDeductionVal = excessDeduction !== '' && Number.isFinite(Number(excessDeduction)) ? Number(excessDeduction) : null
-  const excessDed = xr && xr.excessDays > 0 ? (excessDeductionVal ?? xr.amount) : 0
+  const excessDed = xr ? (excessDeductionVal ?? xr.amount) : 0
   // ★ cwm-resigv3 拍板②：欠款金額 + 預填（min(欠款, 1/4 上限)；正數餘額預填 0）— lib 純函數
   const tbDebtAmount = tb && tb.debtMinutes > 0 && st && st.adw.value > 0
     ? calcTimebankDebtAmount(tb.debtMinutes, st.adw.value).tbAmount
@@ -441,16 +441,21 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                     <span style={{ color: '#059669' }}>+{currency(tbPositiveCashout).slice(1)}</span>
                   </div>
                 )}
-                {/* ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（喺 MPF 之【前】— 位置唔可以擺錯；拍板① 預填計算值可改） */}
-                {xr && xr.excessDays > 0 && (
+                {/* ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（喺 MPF 之【前】— 位置唔可以擺錯；拍板① 預填計算值可改）
+                    ★ 2026-09-30 [cwm-restdebt]：行永遠顯示（冇透支都可以人手填 — RS-19） */}
+                {xr && (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
                       <span>超額休息日扣款（{xr.excessDays} 日 × 月薪÷{xr.monthDays}）</span>
                       <span style={{ color: '#dc2626' }}>−{currency(excessDed).slice(1)}</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                      實放 {xr.actualRestDays} 日 − 按比例應得 {xr.entitledRestDays} 日（{xr.monthlyRestGrantDays} × {xr.employedDays}/{xr.monthDays}）
+                      休息日帳截至 {lastDay}：已用 {xr.usedRestDays} 日 − 應得 {xr.entitledRestDays} 日
+                      {xr.unearnedThisMonth > 0 && `（已扣當月未做完 ${xr.unearnedThisMonth} 日：${xr.monthlyRestGrantDays} × ${xr.monthDays - xr.employedDays}/${xr.monthDays}）`}
                     </div>
+                    {!xr.hasBalanceRow && <div style={{ fontSize: 11, color: '#b45309' }}>⚠️ 冇休息日帳記錄 —— 請核對後人手填</div>}
+                    {xr.monthlyRestGrantDays === 0 && <div style={{ fontSize: 11, color: '#b45309' }}>⚠️ 當月未發放休息日 —— 應得可能偏低，請核對</div>}
+                    {xr.prevYearRemaining != null && <div style={{ fontSize: 11, color: '#b45309' }}>⚠️ 上年休息日帳仍欠 {-xr.prevYearRemaining} 日（未計入，請人手決定）</div>}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: 12, color: '#7f1d1d' }}>本次扣除（預填，可改）</span>
                       <input type="number" min="0" step="0.01"
@@ -461,6 +466,12 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                     </div>
                     <div style={{ fontSize: 10, color: '#b45309' }}>⚠️ MPF 之前扣（減低供款基數）；空白 = 用計算值。歸類待勞工處確認（s.32(2)(a)）。</div>
                   </>
+                )}
+                {/* ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支年假／生日假 — 只顯示唔扣（EO s.32 可扣項，老闆決定） */}
+                {al && (al.annual > 0 || al.birthday > 0) && (
+                  <div style={{ fontSize: 11, color: '#b45309' }}>
+                    ⚠️ 年假預支 {al.annual} 日{al.birthday > 0 ? `、生日假預支 ${al.birthday} 日` : ''}（未追 — 如要扣請人手加入時間帳戶扣除／同員工協議）
+                  </div>
                 )}
                 {/* ★ 2026-09-07 [cwm-excessrest]：有關入息（MPF 基數）小計行 — 證明 ⑤ 喺前、⑥ 喺後 */}
                 <div style={{ borderTop: '1px solid #fbbf24', margin: '4px 0', paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
@@ -608,13 +619,14 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                 <td style={{ textAlign: 'right', padding: '6px 8px' }}>{currency(tbPositiveCashout)}</td>
               </tr>
             )}
-            {/* ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（喺 MPF 之前 — 同畫面一致） */}
-            {xr && xr.excessDays > 0 && (
+            {/* ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（喺 MPF 之前 — 同畫面一致；★ 2026-09-30 [cwm-restdebt]：行永遠顯示） */}
+            {xr && (
               <tr>
                 <td style={{ padding: '6px 8px' }}>
                   超額休息日扣款（{xr.excessDays} 日 × 月薪÷{xr.monthDays}）
                   <div style={{ fontSize: 10, color: '#666' }}>
-                    實放 {xr.actualRestDays} 日 − 按比例應得 {xr.entitledRestDays} 日（{xr.monthlyRestGrantDays} × {xr.employedDays}/{xr.monthDays}）
+                    休息日帳截至 {lastDay}：已用 {xr.usedRestDays} 日 − 應得 {xr.entitledRestDays} 日
+                    {xr.unearnedThisMonth > 0 && `（已扣當月未做完 ${xr.unearnedThisMonth} 日：${xr.monthlyRestGrantDays} × ${xr.monthDays - xr.employedDays}/${xr.monthDays}）`}
                   </div>
                 </td>
                 <td style={{ textAlign: 'right', padding: '6px 8px' }}>−{currency(excessDed).slice(1)}</td>

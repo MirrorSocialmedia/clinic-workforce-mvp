@@ -13,13 +13,15 @@
  *   改用 prorate 後嘅當月工資（MD §2.3 #8 — 全月薪會高估上限 2.7 倍）
  */
 import { PrismaClient } from '@prisma/client'
-import { hkDateStart, toHKDateStr, periodMonthKey, getMonthRange, hkDaysInMonth, countHKDaysInclusive } from './hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr, periodMonthKey, getMonthRange, hkDaysInMonth, countHKDaysInclusive } from './hk-date'
 import { calculatePayrollWithRules, calculateTimeBank, timeBankCacheKey } from './payroll-engine'
 import { settleLeaveOnResign, totalAccruedLeave, serviceMonths } from './leave-calculation'
 import { LEAVE_SYSTEM_KEYS } from './leave-types'
 import { getEffectiveADW } from './adw'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
-import { calcExcessRestDayDeduction } from './settlement-utils'
+import { calcRestDayDebt } from './settlement-utils'
+import { restDayBalanceAsOf } from './leave-balance-as-of'
+import { futureAnnualLeaveDays } from './resign-cutoff'
 import { findPayRuleForMonth } from './pay-rule-for-month'
 
 export interface ResignSettlementCalc {
@@ -53,22 +55,25 @@ export interface ResignSettlementCalc {
   monthWage: { source: 'payrollItem' | 'preview' | 'none'; basePay: number | null }
   // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日，含頭含尾），分母 = 當月曆日數）— 結算寫入 monthWageRatio 用
   monthWageRatio: { value: number; numerator: number; denominator: number } | null
-  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（伺服器側單一來源 — 預填 + 引擎注入同口徑）
-  //   休息日單已隨離職取消 → 實放日數由「受僱曆日 − 工作日」反推（MD §2.1 易錯位 #1）
+  // ★ 2026-09-30 [cwm-restdebt]：⑤ 超額休息日扣款（伺服器側單一來源 — 預填 + 引擎注入同口徑）
+  //   改用休息日帳（REST_DAY LeaveBalance）截至最後工作日嘅透支 —— 之前月份預支得追、
+  //   無薪假／生日假／空白日唔會雙重扣、同次序無關（RS-01/02/03/04）。
   excessRest: {
-    actualRestDays: number        // 實放休息日（反推）
-    entitledRestDays: number      // 按比例應得 = 當月 RESTDAY_GRANT × 受僱曆日 ÷ 當月曆日
-    excessDays: number            // max(0, 實放 − 應得)
-    monthlyRestGrantDays: number  // 當月 RESTDAY_GRANT 日數（TimeBankEntry minutes/1440）
-    employedDays: number          // 受僱曆日（含頭含尾；入職日晚於月初 → 由入職日計）
-    monthDays: number             // 當月曆日
-    workedDays: number            // 受僱期內 Shift 唯一日期（≠ CANCELLED）
-    paidLeaveDays: number         // 已批年假／病假（唔算休息日）
-    publicHolidayDays: number     // 公眾假期（唔算休息日）
-    amount: number                // 預填扣款 = excessDays × 月薪 ÷ 當月曆日（曆日口徑）
+    entitledRestDays: number      // 截至最後工作日應得（已扣當月未做完部分）
+    usedRestDays: number          // 截至最後工作日已用（休息日 + 換鐘）
+    unearnedThisMonth: number     // 當月發放 × 未受僱曆日 ÷ 當月曆日
+    excessDays: number
+    monthlyRestGrantDays: number
+    employedDays: number
+    monthDays: number
+    hasBalanceRow: boolean        // 冇 REST_DAY 帳 → false（UI 提示）
+    prevYearRemaining: number | null  // 上年帳仍為負 → 顯示警告（RS-14）
+    amount: number
   } | null
   /** ⑤ 預填扣款值（excessRest.amount；null → 0）— 拍板① */
   excessRestDeduction: number
+  // ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支年假／生日假（餘額 < 0）— 只顯示唔扣（EO s.32 可扣項要老細拍板）
+  advanceLeave: { annual: number; birthday: number }
   // EO s.32 上限基底（★ v3：prorate 後當月工資 + 年假薪酬，唔再用全月薪）
   finalPeriodWage: number
   quarterCap: number
@@ -199,22 +204,16 @@ export async function computeResignSettlement(
   const cutoff = new Date(hkDateStart(lastDay).getTime() + 86400000)
   const cutoffStr = lastDay
 
-  const emp = await prisma.employee.findUnique({
-    where: { id: empId },
-    include: {
-      payRules: {
-        where: { isActive: true },
-        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-        take: 1,
-      },
-    },
-  })
+  const emp = await prisma.employee.findUnique({ where: { id: empId } })
   if (!emp) throw new Error('EMP_NOT_FOUND')
 
+  // ★ 2026-09-30 [cwm-restdebt] RS-12：月薪用「最後工作日當月生效」嘅規則（同計糧 findPayRuleForMonth 同一來源）——
+  //   舊版用「最新 active 規則」：離職前已停用規則 → 月薪 0 → ADW fallback 0 → 年假薪酬／超額扣款全 0；月中調薪 → 計錯
+  const { start: _rsLastMonthStart, end: _rsLastMonthEnd } = getMonthRange(hkDateStart(lastDay))
+  const payRule = await findPayRuleForMonth(prisma, empId, _rsLastMonthStart, _rsLastMonthEnd)
   let monthlySalary = 0
   try {
-    const cfg = JSON.parse(emp.payRules[0]?.configJson || '{}')
-    monthlySalary = Number(cfg?.monthly_salary) || 0
+    monthlySalary = Number(JSON.parse(payRule?.configJson || '{}')?.monthly_salary) || 0
   } catch { /* 壞 JSON 當 0 */ }
 
   // ★ 拍板②：未放年假薪酬／代通知金一律用系統既有 Effective ADW
@@ -237,6 +236,8 @@ export async function computeResignSettlement(
   let leave: ResignSettlementCalc['leave'] = null
   let unusedDays = 0
   let leavePayout = 0
+  // ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支年假／生日假 — 只顯示唔扣（EO s.32 可扣項要老細拍板）
+  const advanceLeave: { annual: number; birthday: number } = { annual: 0, birthday: 0 }
   if (emp.joinDate) {
     const annualType = await prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.ANNUAL } })
     const bal = annualType
@@ -246,7 +247,15 @@ export async function computeResignSettlement(
           },
         })
       : null
-    const usedDays = bal?.used ?? 0
+    const usedRaw = bal?.used ?? 0
+    // ★ 2026-09-30 [cwm-restdebt] RS-05/06：扣走最後工作日之後嘅已批年假（包括跨過離職日嘅部分）——
+    //   結算同「確認離職」撳邊個先都一樣（同次序無關）；跨日假按曆日比例拆（純函數可獨立測）
+    const lastDayEnd = hkDateEnd(lastDay)
+    const future = annualType ? await prisma.leaveRequest.findMany({
+      where: { employeeId: empId, leaveTypeId: annualType.id, status: 'APPROVED', endDate: { gt: lastDayEnd } },
+      select: { startDate: true, endDate: true, days: true },
+    }) : []
+    const usedDays = Math.max(0, Math.round((usedRaw - futureAnnualLeaveDays(future, lastDay)) * 100) / 100)
     const s = settleLeaveOnResign(new Date(emp.joinDate), cutoff, monthlySalary, usedDays)
     unusedDays = s.unused
     leavePayout = Math.round(s.unused * adwValue * 100) / 100
@@ -259,6 +268,19 @@ export async function computeResignSettlement(
       unused: s.unused,
       payout: leavePayout,
     }
+    // ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支 = 餘額 < 0 嘅絕對值。
+    //   年假用累積行（year 0）；生日假用最後工作日曆年行（NEGATIVE_ALLOWED_KEYS 准預支）。
+    //   只顯示唔入任何金額 —— 追唔追涉及 EO s.32 可扣項目，由老闆決定（人手加時間帳戶扣除／同員工協議）。
+    const annualRem = bal ? bal.entitled - bal.used : 0
+    if (annualRem < 0) advanceLeave.annual = Math.round(-annualRem * 100) / 100
+    const birthdayType = await prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.BIRTHDAY } })
+    if (birthdayType) {
+      const bBal = await prisma.leaveBalance.findUnique({
+        where: { employeeId_leaveTypeId_year: { employeeId: empId, leaveTypeId: birthdayType.id, year: Number(lastDay.slice(0, 4)) } },
+      })
+      const bRem = bBal ? bBal.entitled - bBal.used : 0
+      if (bRem < 0) advanceLeave.birthday = Math.round(-bRem * 100) / 100
+    }
   }
 
   // ★ cwm-resigv3：當月工資（讀唔算；periodMonth = 最後工作日當月）
@@ -269,56 +291,38 @@ export async function computeResignSettlement(
   const monthWage = await resolveMonthWage(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
   const ratioDirect = await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
 
-  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（伺服器側計算 — 結算卡預填 + 月底計糧注入同一來源）
-  //   受僱期 = max(入職日, 最後工作日當月 1 日) → 最後工作日（含頭含尾曆日）
-  //   ⚠️ monthlyRestGrantDays 由當月 TimeBankEntry(RESTDAY_GRANT) minutes/1440 —— 唔好用 rest_days config 推算（MD §2.1 #3）
+  // ★ 2026-09-30 [cwm-restdebt]：超額休息日 = 休息日帳截至最後工作日嘅透支（見 settlement-utils calcRestDayDebt）
+  //   時薪唔發休息日（grant-restdays:52）→ 唔計
   let excessRest: ResignSettlementCalc['excessRest'] = null
   let excessRestDeduction = 0
-  if (emp.joinDate) {
+  // ★ 2026-09-30 [cwm-restdebt] RS-12：isHourly 同月薪同一來源（最後工作日當月規則）
+  const isHourly = payRule?.payType === 'HOURLY'
+  if (emp.joinDate && !isHourly) {
     const { start: mStart, end: mEnd } = getMonthRange(hkDateStart(lastDay))
-    const periodStart = (emp.joinDate > mStart ? new Date(emp.joinDate) : new Date(mStart))
+    const periodStart = emp.joinDate > mStart ? new Date(emp.joinDate) : new Date(mStart)
     const periodEnd = hkDateStart(lastDay)
-    // ★ 受僱期「日末」口徑：shift 存喺 09:00、PH 表存喺 16:00（HK 視角）— lte 午夜會漏走最後一日
-    const periodEndIncl = new Date(periodEnd.getTime() + 86399999)
     const employedDays = countHKDaysInclusive(periodStart, periodEnd)
     const monthDays = hkDaysInMonth(periodEnd)
-    const shifts = await prisma.shift.findMany({
-      where: { employeeId: empId, status: { not: 'CANCELLED' }, date: { gte: periodStart, lte: periodEndIncl } },
-      select: { date: true },
-    })
-    const workedDays = new Set(shifts.map(s => toHKDateStr(s.date))).size
-    // 已批年假／病假（覆蓋受僱期嘅曆日）—— 嗰啲唔算休息日（MD §2.1 #2）
-    const [annualType, sickType] = await Promise.all([
-      prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.ANNUAL } }),
-      prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.SICK } }),
-    ])
-    const paidTypes = [annualType?.id, sickType?.id].filter((x): x is string => Boolean(x))
-    let paidLeaveDays = 0
-    if (paidTypes.length > 0) {
-      const lrs = await prisma.leaveRequest.findMany({
-        where: { employeeId: empId, status: 'APPROVED', leaveTypeId: { in: paidTypes } },
-        select: { startDate: true, endDate: true },
-      })
-      for (const r of lrs) {
-        const s = r.startDate > periodStart ? new Date(r.startDate) : new Date(periodStart)
-        const e = r.endDate < periodEnd ? new Date(r.endDate) : new Date(periodEnd)
-        if (s <= e) paidLeaveDays += countHKDaysInclusive(s, e)
-      }
-    }
-    // 公眾假期（同 engine getPublicHolidayDays 同口徑：instant range 查詢，日末口徑）
-    const phs = await prisma.hKPublicHoliday.findMany({ where: { date: { gte: periodStart, lte: periodEndIncl } } })
-    // 當月 RESTDAY_GRANT 發放日數（TimeBankEntry minutes/1440；1 日 = 1440 分）
-    const grants = await prisma.timeBankEntry.findMany({
-      where: { employeeId: empId, type: 'RESTDAY_GRANT', date: { gte: mStart, lte: mEnd } },
-      select: { minutes: true },
-    })
-    const monthlyRestGrantDays = Math.round((grants.reduce((s, g) => s + g.minutes, 0) / 1440) * 100) / 100
-    excessRest = {
-      ...calcExcessRestDayDeduction({
-        employedDays, monthDays, workedDays, paidLeaveDays,
-        publicHolidayDays: phs.length, monthlyRestGrantDays, monthlySalary,
+    const [balMap, grants, prevBalMap] = await Promise.all([
+      restDayBalanceAsOf(prisma, [empId], lastDay),
+      prisma.timeBankEntry.findMany({
+        where: { employeeId: empId, type: 'RESTDAY_GRANT', date: { gte: mStart, lte: mEnd } },
+        select: { minutes: true },
       }),
-      monthlyRestGrantDays, employedDays, monthDays, workedDays, paidLeaveDays, publicHolidayDays: phs.length,
+      restDayBalanceAsOf(prisma, [empId], `${Number(lastDay.slice(0, 4)) - 1}-12-31`),
+    ])
+    const bal = balMap.get(empId) ?? null
+    const monthlyRestGrantDays = Math.round((grants.reduce((s, g) => s + g.minutes, 0) / 1440) * 100) / 100
+    const d = calcRestDayDebt({
+      entitledAsOf: bal?.entitled ?? 0,
+      usedAsOf: bal?.used ?? 0,
+      monthlyRestGrantDays, employedDays, monthDays, monthlySalary,
+    })
+    const prev = prevBalMap.get(empId)
+    excessRest = {
+      ...d, monthlyRestGrantDays, employedDays, monthDays,
+      hasBalanceRow: bal != null,
+      prevYearRemaining: prev && prev.remaining < 0 ? prev.remaining : null,
     }
     excessRestDeduction = excessRest.amount
   }
@@ -394,6 +398,7 @@ export async function computeResignSettlement(
     // ★ cwm-excessrest：⑤ 超額休息日扣款（預填 = 計算值；拍板①）
     excessRest,
     excessRestDeduction,
+    advanceLeave,
     finalPeriodWage,
     quarterCap,
     halfCap,

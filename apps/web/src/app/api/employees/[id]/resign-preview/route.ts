@@ -24,6 +24,9 @@ export async function GET(
   const lastDay = new URL(req.url).searchParams.get('lastDay')
   if (!lastDay)
     return NextResponse.json({ error: 'lastDay 必填' }, { status: 400 })
+  // ★ 2026-09-30 [cwm-restdebt] RS-18：格式驗證 —— 舊版 lastDay=abc → hkDateStart throw → 500
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDay))
+    return NextResponse.json({ error: 'lastDay 必須係 YYYY-MM-DD' }, { status: 400 })
 
   // ★ cwm-p0sec-20260917：保密員工 —— 預覽含薪金，一律 403（同一個 canSeeConfidential helper）
   const empConf = await prisma.employee.findUnique({
