@@ -342,10 +342,14 @@ export async function POST(req: NextRequest) {
 
           // ② Replace old leave requests — refund balance + delete
           if (replaceLeaveIds?.length) {
+            const dayStr = toHKDateStr(times.date)
             const victimLeaves = await tx.leaveRequest.findMany({
               where: {
                 id: { in: replaceLeaveIds },
                 employeeId,
+                // ★ 2026-09-30 S-01：只准替換「覆蓋呢日」嘅假（同 checkShiftLeaveConflict 同一條件）
+                startDate: { lte: new Date(`${dayStr}T23:59:59.999+08:00`) },
+                endDate: { gte: new Date(`${dayStr}T00:00:00+08:00`) },
                 ...(actorVisibleClinicIds ? {
                   employee: { clinics: { some: { clinicId: { in: actorVisibleClinicIds } } } },
                 } : {}),
@@ -353,7 +357,14 @@ export async function POST(req: NextRequest) {
               include: { leaveType: true },
             })
             if (victimLeaves.length !== replaceLeaveIds.length) {
-              throw new HttpError(409, '要替換嘅假期已被改動／刪除，請重新整理')
+              throw new HttpError(409, '要替換嘅假期已被改動／刪除，或者唔係呢日嘅假期，請重新整理')
+            }
+            // ★ S-01：多日假唔可以喺排班直接替換 —— 舊版會整段刪走、整段退餘額
+            const multi = victimLeaves.find(vl => toHKDateStr(vl.startDate) !== toHKDateStr(vl.endDate))
+            if (multi) {
+              throw new HttpError(409,
+                `${multi.leaveType?.name ?? '假期'}（${toHKDateStr(multi.startDate)}–${toHKDateStr(multi.endDate)}，共 ${multi.days} 日）係多日假期，唔可以喺排班直接替換。請先喺假期頁改短假期，再排更。`,
+                { code: 'MULTI_DAY_LEAVE' })
             }
             // Refund balance (skip unapproved — only APPROVED leaves had balance deducted)
             for (const vl of victimLeaves) {
