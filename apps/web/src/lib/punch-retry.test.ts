@@ -15,7 +15,7 @@ function hangingFetch() {
   let count = 0
   const fetchImpl = (_url: string, init: any) => {
     count++
-    return new Promise((_resolve, reject) => {
+    return new Promise<Response>((_resolve, reject) => {
       const onAbort = () => {
         const e = new Error('The operation was aborted')
         e.name = 'AbortError'
