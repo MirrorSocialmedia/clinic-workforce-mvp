@@ -153,9 +153,13 @@ export async function POST(
 
   const emp = await prisma.employee.findUnique({
     where: { id: empId },
-    select: { id: true, userId: true, status: true },
+    select: { id: true, userId: true, status: true, joinDate: true },
   })
   if (!emp) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+  // ★ 2026-09-30 [cwm-restdebt] RS-18：最後工作日早過入職日 → 400
+  if (emp.joinDate && lastDay < toHKDateStr(emp.joinDate)) {
+    return NextResponse.json({ error: '最後工作日早過入職日' }, { status: 400 })
+  }
 
   const settlementData = {
     noticeDays,

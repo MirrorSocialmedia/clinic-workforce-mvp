@@ -6,7 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { jsonNoStore } from '@/lib/api-response'
 import { canSeeConfidential } from '@/lib/scope-helpers'
-import { hkDateOnly, hkTodayStr } from '@/lib/hk-date'
+import { hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
 import { applyResignCutoff } from '@/lib/resign-cutoff'
 
 // GET /api/employees/[id] — employee detail
@@ -115,6 +115,16 @@ export async function PUT(
       const lastDayStr = typeof body.lastDay === 'string' && body.lastDay ? body.lastDay : hkTodayStr()
       if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDayStr)) {
         return NextResponse.json({ error: 'lastDay 必須係 YYYY-MM-DD' }, { status: 400 })
+      }
+      // ★ 2026-09-30 [cwm-restdebt] F5（RS-09/18）：最後工作日未到唔准停帳號（同 /resign 同一口徑）
+      if (lastDayStr > hkTodayStr()) {
+        return NextResponse.json(
+          { error: `最後工作日 ${lastDayStr} 未到，請喺當日或之後先辦理（期間員工要照常打卡）` },
+          { status: 400 },
+        )
+      }
+      if (employee.joinDate && lastDayStr < toHKDateStr(employee.joinDate)) {
+        return NextResponse.json({ error: '最後工作日早過入職日' }, { status: 400 })
       }
       resignLastDay = lastDayStr
     }

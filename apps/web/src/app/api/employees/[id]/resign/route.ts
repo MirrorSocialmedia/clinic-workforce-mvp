@@ -7,6 +7,7 @@ import { shiftDeletedMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
 import { toHttpResponse } from '@/lib/emp-lock'
 import { applyResignCutoff } from '@/lib/resign-cutoff'
+import { hkTodayStr, toHKDateStr } from '@/lib/hk-date'
 
 export async function POST(
   req: NextRequest,
@@ -26,6 +27,21 @@ export async function POST(
   })
 
   if (!emp) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+
+  // ── 驗證（★ 2026-09-30 [cwm-restdebt] F5 / RS-09/18）──────────────────
+  if (typeof lastDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(lastDay)) {
+    return NextResponse.json({ error: 'lastDay (YYYY-MM-DD) 必填' }, { status: 400 })
+  }
+  // ★ RS-09：最後工作日未到就停帳號 → 員工之後幾日打唔到卡（盡量唔擋打卡）
+  if (lastDay > hkTodayStr()) {
+    return NextResponse.json(
+      { error: `最後工作日 ${lastDay} 未到，請喺當日或之後先辦理（期間員工要照常打卡）` },
+      { status: 400 },
+    )
+  }
+  if (emp.joinDate && lastDay < toHKDateStr(emp.joinDate)) {
+    return NextResponse.json({ error: '最後工作日早過入職日' }, { status: 400 })
+  }
 
   let result
   try {
