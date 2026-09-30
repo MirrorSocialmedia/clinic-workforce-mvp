@@ -157,6 +157,7 @@ export const CONFIG = {
     'PUT /api/punches/:id': ['OWNER', 'MANAGER'],
     'POST /api/punches/:id/void': ['OWNER', 'MANAGER'],
     'GET /api/punch/my-records': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/punch/client-error': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'], // ★ 2026-09-30 C5
     // ★ cwm-crossclinic-20260914：異地打卡提醒（純查詢）。★ 唔加 ACCOUNTANT —— 佢哋唔改排班。
     'GET /api/attendance/cross-clinic': ['OWNER', 'MANAGER'],
 

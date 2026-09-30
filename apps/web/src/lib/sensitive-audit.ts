@@ -151,4 +151,6 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // ★ cwm-attbatch-20260927：批量補鐘「批次總結」—— 每筆已各自寫 TIMEBANK_MAKEUP（已入 SPEC），
   //   總結再入 SPEC 會令敏感摘要重複計；呢行只作追溯（batchId／成功／失敗數）
   'TIMEBANK_MAKEUP_BATCH',
+  // ★ 2026-09-30 C2/C5：網絡失敗自動補登（PENDING，敏感嘅係之後嘅批核）+ 客戶端錯誤上報（常規／自動）
+  'PUNCH_CLIENT_ERROR', 'PUNCH_NETWORK_EVIDENCE',
 ])

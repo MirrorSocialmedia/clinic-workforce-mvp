@@ -40,7 +40,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      NODE_OPTIONS: --max-old-space-size=2048
+      NODE_OPTIONS: --max-old-space-size=1152     # ★ 2026-09-30 C6：同 container 上限 1536m 對齊（原 2048 大過上限 → 記憶體升時未 GC 就被 OOM kill）
       DATABASE_URL: postgresql://clinic:${DB_PASSWORD}@db:5432/clinic_prod?connection_limit=15&pool_timeout=20
       JWT_SECRET: ${JWT_SECRET}
       SESSION_SECRET: ${JWT_SECRET}
