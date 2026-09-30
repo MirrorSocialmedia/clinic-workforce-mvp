@@ -3,7 +3,8 @@ import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { computeResignSettlement, calcNoticePay, calcTimebankDebtAmount } from '@/lib/resign-settlement'
-import { addDaysStr, hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
+import { hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
+import { applyResignCutoff } from '@/lib/resign-cutoff'
 
 /**
  * POST /api/employees/[id]/resign-settle — 確認離職結算，寫入 ResignSettlement 表
@@ -141,7 +142,6 @@ export async function POST(
   // ★ B1：結算 + 員工狀態 + 停用帳號 + audit —— 四樣同一個 interactive transaction
   //   （結算寫咗但狀態冇寫，就係之前嘅亂源）
   const lastDayDate = hkDateOnly(lastDay)                         // 9/9 00:00+08:00 = 最後工作日
-  const effectiveDate = hkDateOnly(addDaysStr(lastDay, 1))        // 9/10 — resignedAt 語義 = 最後工作日 + 1（唔准改）
 
   const emp = await prisma.employee.findUnique({
     where: { id: empId },
@@ -165,21 +165,17 @@ export async function POST(
   }
 
   const settlementId = await prisma.$transaction(async (tx) => {
+    // ★ 2026-09-30 [cwm-restdebt] F2：共用 cutoff 喺 ① upsert 之前 ——
+    //   Employee RESIGNED + leaveDate + resignedAt、User RESIGNED + tokenVersion+1（踢登入）、
+    //   取消之後更／假 + 還額、跨過離職日嘅假截斷還差額（RS-06）、停人臉模板（RS-21：三條路同一口徑）
+    const cutoffResult = await applyResignCutoff(tx, empId, lastDay)
+
     // ① 結算（upsert —— 改最後工作日 = 覆蓋同一筆；periodMonth 跟住變 → 舊月自動冇、新月自動有）
     const row = await tx.resignSettlement.upsert({
       where: { employeeId: empId },
       create: { employeeId: empId, lastDay: lastDayDate, periodMonth, ...settlementData },
       update: { lastDay: lastDayDate, periodMonth, ...settlementData, settledAt: new Date() },
     })
-
-    // ② 員工狀態：leaveDate = 最後工作日；resignedAt = 生效日 = 最後工作日 + 1（語義唔准改）
-    await tx.employee.update({
-      where: { id: empId },
-      data: { status: 'RESIGNED', leaveDate: lastDayDate, resignedAt: effectiveDate },
-    })
-
-    // ③ ★★★ 帳號停用 —— login/route.ts:71 驗 User.status，唔寫呢句佢照樣登入到
-    await tx.user.update({ where: { id: emp.userId }, data: { status: 'RESIGNED' } })
 
     // ④ audit
     await tx.auditLog.create({
@@ -189,7 +185,7 @@ export async function POST(
         entity: 'ResignSettlement',
         entityId: row.id,
         targetEmployeeId: empId,
-        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號`,
+        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號｜取消班次=${cutoffResult.shiftsCancelled} 取消假期=${cutoffResult.leavesCancelled} 跨日假截斷=${cutoffResult.leavesTruncated}`,
         ipAddress: null,
         userAgent: null,
       } as any,

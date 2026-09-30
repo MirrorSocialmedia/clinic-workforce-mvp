@@ -13,7 +13,7 @@
  *   改用 prorate 後嘅當月工資（MD §2.3 #8 — 全月薪會高估上限 2.7 倍）
  */
 import { PrismaClient } from '@prisma/client'
-import { hkDateStart, toHKDateStr, periodMonthKey, getMonthRange, hkDaysInMonth, countHKDaysInclusive } from './hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr, periodMonthKey, getMonthRange, hkDaysInMonth, countHKDaysInclusive } from './hk-date'
 import { calculatePayrollWithRules, calculateTimeBank, timeBankCacheKey } from './payroll-engine'
 import { settleLeaveOnResign, totalAccruedLeave, serviceMonths } from './leave-calculation'
 import { LEAVE_SYSTEM_KEYS } from './leave-types'
@@ -21,6 +21,7 @@ import { getEffectiveADW } from './adw'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 import { calcRestDayDebt } from './settlement-utils'
 import { restDayBalanceAsOf } from './leave-balance-as-of'
+import { futureAnnualLeaveDays } from './resign-cutoff'
 import { findPayRuleForMonth } from './pay-rule-for-month'
 
 export interface ResignSettlementCalc {
@@ -248,7 +249,15 @@ export async function computeResignSettlement(
           },
         })
       : null
-    const usedDays = bal?.used ?? 0
+    const usedRaw = bal?.used ?? 0
+    // ★ 2026-09-30 [cwm-restdebt] RS-05/06：扣走最後工作日之後嘅已批年假（包括跨過離職日嘅部分）——
+    //   結算同「確認離職」撳邊個先都一樣（同次序無關）；跨日假按曆日比例拆（純函數可獨立測）
+    const lastDayEnd = hkDateEnd(lastDay)
+    const future = annualType ? await prisma.leaveRequest.findMany({
+      where: { employeeId: empId, leaveTypeId: annualType.id, status: 'APPROVED', endDate: { gt: lastDayEnd } },
+      select: { startDate: true, endDate: true, days: true },
+    }) : []
+    const usedDays = Math.max(0, Math.round((usedRaw - futureAnnualLeaveDays(future, lastDay)) * 100) / 100)
     const s = settleLeaveOnResign(new Date(emp.joinDate), cutoff, monthlySalary, usedDays)
     unusedDays = s.unused
     leavePayout = Math.round(s.unused * adwValue * 100) / 100

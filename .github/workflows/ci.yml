@@ -124,6 +124,7 @@ jobs:
             src/lib/provider-leave.test.ts \
             src/lib/provider-pattern.test.ts \
             src/lib/reconciliation/parsePaymentReport.test.ts \
+            src/lib/resign-cutoff.test.ts \
             src/lib/scheduling-leave-summary-route.test.ts \
             src/lib/scheduling-memo-route.test.ts \
             src/lib/settlement-utils.test.ts \

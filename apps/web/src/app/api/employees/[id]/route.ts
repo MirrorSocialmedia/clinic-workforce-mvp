@@ -6,7 +6,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { jsonNoStore } from '@/lib/api-response'
 import { canSeeConfidential } from '@/lib/scope-helpers'
-import { hkDateOnly, hkTodayStr, addDaysStr } from '@/lib/hk-date'
+import { hkDateOnly, hkTodayStr } from '@/lib/hk-date'
+import { applyResignCutoff } from '@/lib/resign-cutoff'
 
 // GET /api/employees/[id] — employee detail
 export async function GET(
@@ -105,20 +106,23 @@ export async function PUT(
     if (notes !== undefined) employeeUpdateData.notes = notes
     // ★ cwm-attexempt-20260914 F：免考勤開關（會計等）—— 只影響考勤路徑，計糧/MPF/年假照常
     if (attendanceExempt !== undefined) employeeUpdateData.attendanceExempt = !!attendanceExempt
-    // ★ cwm-resignflow-20260911 E1：同 resign-settle 寫同一組欄，否則兩條路數據形狀唔同。
-    //   剷咗 `&& !employee.leaveDate` — 呢個條件令「改最後工作日」永遠唔生效（第一次寫咗就再唔會更新）。
+    // ★ cwm-resignflow-20260911 E1：標記離職同 resign-settle 寫同一組欄（兩條路數據形狀唔可走樣）。
+    // ★ 2026-09-30 [cwm-restdebt] F2：改行共用 applyResignCutoff（RS-21）—— leaveDate/resignedAt、
+    //   User RESIGNED + tokenVersion+1、取消之後更／假 + 還額、跨日假截斷、停人臉模板，三條路同一口徑。
     //   lastDay 由 body 收（前端 prompt）；冇傳就當今日（後備路徑，冇結算）。
+    let resignLastDay: string | null = null
     if (status === 'RESIGNED') {
       const lastDayStr = typeof body.lastDay === 'string' && body.lastDay ? body.lastDay : hkTodayStr()
       if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDayStr)) {
         return NextResponse.json({ error: 'lastDay 必須係 YYYY-MM-DD' }, { status: 400 })
       }
-      employeeUpdateData.leaveDate = hkDateOnly(lastDayStr)                    // 最後工作日
-      employeeUpdateData.resignedAt = hkDateOnly(addDaysStr(lastDayStr, 1))    // 生效日 = +1（語義寫死）
-      userUpdateData.status = 'RESIGNED'   // ★★★ 停用帳號（login:71 驗 User.status）
+      resignLastDay = lastDayStr
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      // ★ 2026-09-30 [cwm-restdebt] F2：標記離職 → 共用 cutoff（E-11 lockEmployee 喺函數內，先於其他寫入）
+      if (resignLastDay) await applyResignCutoff(tx, employee.id, resignLastDay)
+
       if (Object.keys(userUpdateData).length > 0) {
         await tx.user.update({
           where: { id: employee.userId },
