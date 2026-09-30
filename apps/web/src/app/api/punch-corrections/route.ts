@@ -9,6 +9,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { jsonNoStore } from '@/lib/api-response'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+import { assertNoDupPunchTx } from '@/lib/punch-dup'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 // ============================================================
@@ -208,6 +209,11 @@ export async function POST(req: NextRequest) {
             })
 
             // 2. Create new punchRecord with new type
+            // ★ 2026-09-30 F-08：唔准造出同日同類重複卡（原卡先至作廢，void: null 自動排除佢）
+            await assertNoDupPunchTx(tx, {
+              employeeId: employee.id, clinicId,
+              punchType: punchType as any, punchTime: correctedTime,
+            })
             const newRecord = await tx.punchRecord.create({
               data: {
                 employeeId: employee.id,
@@ -273,37 +279,48 @@ export async function POST(req: NextRequest) {
 
         // If APPROVED and no original punchRecord exists → create one (source=CORRECTION)
         if (isManager && !punchRecordId && !newPunchRecordId) {
-          const pr = await tx.punchRecord.create({
-            data: {
-              employeeId: employee.id,
-              clinicId,
-              punchTime: new Date(date),
-              punchType: punchType as any,
-              source: 'MANUAL_CORRECTION' as const,
-            },
+          // ★ 2026-09-30 F-08：鎖內再查（預查喺鎖外，期間員工可能已經 QR 打咗）—— 有就 link，唔再建
+          const lateExisting = await tx.punchRecord.findFirst({
+            where: { employeeId: employee.id, clinicId, punchType: punchType as any,
+                     punchTime: { gte: dayStart, lte: dayEnd }, void: { is: null } },
+            orderBy: [{ punchTime: 'asc' }, { id: 'asc' }],
+            select: { id: true },
           })
-          // Backfill correction's punchRecordId
-          await tx.punchCorrection.update({
-            where: { id: c.id },
-            data: { punchRecordId: pr.id },
-          })
+          if (lateExisting) {
+            await tx.punchCorrection.update({ where: { id: c.id }, data: { punchRecordId: lateExisting.id } })
+          } else {
+            const pr = await tx.punchRecord.create({
+              data: {
+                employeeId: employee.id,
+                clinicId,
+                punchTime: new Date(date),
+                punchType: punchType as any,
+                source: 'MANUAL_CORRECTION' as const,
+              },
+            })
+            // Backfill correction's punchRecordId
+            await tx.punchCorrection.update({
+              where: { id: c.id },
+              data: { punchRecordId: pr.id },
+            })
 
-          // Audit: new punch record via correction
-          await tx.auditLog.create({
-            data: {
-              actorId: session.userId,
-              action: 'CREATE_PUNCH',
-              entity: 'PunchRecord',
-              entityId: pr.id,
-              targetEmployeeId: employee.id,
-              clinicId,
-              beforeJson: null,
-              afterJson: JSON.stringify({ punchType: pr.punchType, punchTime: pr.punchTime, employeeId: pr.employeeId, reason: body.reason }),
-              notes: `補登 ${punchLabel(pr.punchType)} ${body.reason || ''}`,
-              ipAddress: req.headers.get('x-forwarded-for') || null,
-              userAgent: req.headers.get('user-agent') || null,
-            },
-          })
+            // Audit: new punch record via correction
+            await tx.auditLog.create({
+              data: {
+                actorId: session.userId,
+                action: 'CREATE_PUNCH',
+                entity: 'PunchRecord',
+                entityId: pr.id,
+                targetEmployeeId: employee.id,
+                clinicId,
+                beforeJson: null,
+                afterJson: JSON.stringify({ punchType: pr.punchType, punchTime: pr.punchTime, employeeId: pr.employeeId, reason: body.reason }),
+                notes: `補登 ${punchLabel(pr.punchType)} ${body.reason || ''}`,
+                ipAddress: req.headers.get('x-forwarded-for') || null,
+                userAgent: req.headers.get('user-agent') || null,
+              },
+            })
+          }
         }
 
         // ★ Stage 2.4：失效 + OT 撤回入 tx（失敗 = rollback，唔再只 log）

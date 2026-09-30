@@ -16,6 +16,11 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
+  // ★ 2026-09-30 F-09：角色白名單放行唔等於有權限 —— 被 deny attendance_manage 嘅經理要擋
+  if (!(auth.perms ?? []).includes('attendance_manage')) {
+    return NextResponse.json({ error: 'Forbidden (missing permission: attendance_manage)' }, { status: 403 })
+  }
+
   const { reason } = await req.json()
   const id = ctx.params.id
 
@@ -47,6 +52,10 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json({ error: '此打卡記錄已被作廢' }, { status: 400 })
   }
 
+  // ★ 2026-09-30 F-07：自己作廢自己張卡 → 敏感 audit（唔擋）
+  const actorEmp = await prisma.employee.findUnique({ where: { userId: session.userId }, select: { id: true } })
+  const selfVoid = actorEmp?.id === punch.employeeId
+
   try {
     await prisma.$transaction(async (tx) => {
       await lockEmployee(tx, punch.employeeId)
@@ -66,6 +75,14 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
         targetEmployeeId: punch.employeeId,
         afterJson: JSON.stringify({ reason, autoRejectedCorrections: pendingIds }),
         notes: `作廢打卡：${reason}${pendingIds.length ? `（自動拒絕待批修正 ${pendingIds.length} 張）` : ''}` } })
+      if (selfVoid) {
+        await tx.auditLog.create({ data: {
+          actorId: session.userId, action: 'PUNCH_SELF_VOID', entity: 'PunchRecord', entityId: id,
+          targetEmployeeId: punch.employeeId,
+          afterJson: JSON.stringify({ reason }),
+          notes: `自己作廢自己打卡：${reason}`,
+        } })
+      }
       if (pendingIds.length > 0) {
         await tx.punchCorrection.updateMany({
           where: { id: { in: pendingIds }, status: 'PENDING' },

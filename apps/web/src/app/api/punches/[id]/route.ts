@@ -8,6 +8,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { getMonthRange, toHKDateStr } from '@/lib/hk-date'
 import { lockEmployee, toHttpResponse } from '@/lib/emp-lock'
+import { assertNoDupPunchTx } from '@/lib/punch-dup'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 import { createNotification } from '@/lib/notification'
 
@@ -97,6 +98,11 @@ export async function PUT(
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
 
+  // ★ 2026-09-30 F-09：角色白名單放行唔等於有權限 —— 被 deny attendance_manage 嘅經理要擋
+  if (!(auth.perms ?? []).includes('attendance_manage')) {
+    return NextResponse.json({ error: 'Forbidden (missing permission: attendance_manage)' }, { status: 403 })
+  }
+
   const body = await req.json().catch(() => ({}))
   const { punchTime, punchType, notes, reason } = body
 
@@ -107,6 +113,10 @@ export async function PUT(
   if (!reason || String(reason).trim().length < 2) return NextResponse.json({ error: '請填寫修改原因' }, { status: 400 })
   if (punchTime && (isNaN(new Date(punchTime).getTime()) || new Date(punchTime).getTime() > Date.now() + 60_000)) {
     return NextResponse.json({ error: '時間無效' }, { status: 400 })
+  }
+  // ★ 2026-09-30 F-08：類型白名單
+  if (punchType && !['CLOCK_IN', 'CLOCK_OUT', 'LUNCH_START', 'LUNCH_END'].includes(punchType)) {
+    return NextResponse.json({ error: 'punchType 無效' }, { status: 400 })
   }
 
   // ★ IDOR: MANAGER 只可以改自己店嘅打卡
@@ -122,6 +132,10 @@ export async function PUT(
   // 檢查是否已被 void
   const existingVoid = await prisma.punchVoid.findUnique({ where: { punchRecordId: params.id } })
   if (existingVoid) return NextResponse.json({ error: '此記錄已被作廢' }, { status: 400 })
+
+  // ★ 2026-09-30 F-07：自己改自己張卡 → 敏感 audit（唔擋）
+  const actorEmp = await prisma.employee.findUnique({ where: { userId: session.userId }, select: { id: true } })
+  const selfEdit = actorEmp?.id === oldRecord.employeeId
 
   // 在 transaction 內執行三步（★ Stage 4A（D1 硬鎖）：先鎖人 + 新舊兩個月份都查）
   let newRecord
@@ -160,6 +174,12 @@ export async function PUT(
         }
       }
       // ② 建新筆
+      // ★ 2026-09-30 F-08：唔准造出同日同類重複卡（舊筆已喺同一 tx 作廢，void: null 自動排除佢）
+      await assertNoDupPunchTx(tx, {
+        employeeId: oldRecord.employeeId, clinicId: oldRecord.clinicId,
+        punchType: punchType || oldRecord.punchType,
+        punchTime: punchTime ? new Date(punchTime) : oldRecord.punchTime,
+      })
       const nr = await tx.punchRecord.create({
         data: {
           employeeId: oldRecord.employeeId,
@@ -191,6 +211,14 @@ export async function PUT(
           userAgent: req.headers.get('user-agent') || null,
         },
       })
+      if (selfEdit) {
+        await tx.auditLog.create({ data: {
+          actorId: session.userId, action: 'PUNCH_SELF_EDIT', entity: 'PunchRecord', entityId: params.id,
+          targetEmployeeId: oldRecord.employeeId,
+          afterJson: JSON.stringify({ old: { punchTime: oldRecord.punchTime, punchType: oldRecord.punchType }, new: { punchTime, punchType }, reason }),
+          notes: `自己改自己打卡：${reason}`,
+        } })
+      }
       // ★ Stage 2.4：改 punchTime / punchType 直接影響遲到／早退／OT 配對，快取失效 + OT 撤回入 tx（失敗 = rollback）
       // ⚠️ 新舊時間所屬月份【兩個都要清】—— 由 5/31 改去 6/1，兩個月嘅數字都變咗。
       await invalidateTimeBankFrom(oldRecord.employeeId, oldRecord.punchTime, tx)

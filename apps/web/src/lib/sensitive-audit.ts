@@ -14,6 +14,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'CREATE', entity: 'PunchCorrection', label: '補登申請（改時間）' },
   { action: 'UPDATE', entity: 'PunchCorrection', label: '批核補登申請' },
   { action: 'CORRECTION_SELF_APPROVE', label: '⚠️ 自批補登' },
+  // ★ 2026-09-30 F-07：自己改／作廢自己張卡（唔擋，同自批補登一致）
+  { action: 'PUNCH_SELF_EDIT', label: '⚠️ 自己改自己打卡' },
+  { action: 'PUNCH_SELF_VOID', label: '⚠️ 自己作廢自己打卡' },
   { action: 'EARLY_OT_APPROVE', label: '批准提早上班OT' },
   { action: 'EARLY_OT_CANCEL', label: '取消提早上班OT' },
   { action: 'EARLY_OT_AUTO_REVOKE', label: '⚠️ 打卡改動·自動撤回提早OT' },
