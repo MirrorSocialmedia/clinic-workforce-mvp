@@ -476,7 +476,7 @@ export default function EmployeePayrollDetailPage() {
                     </td>
                     <td className="p-2">{d.note ? '' : fmtTime24(d.out)}</td>
                     <td className="text-right p-2">
-                      {d.lunchDeduct != null ? `${d.lunchDeduct} 分` : '—'}
+                      {d.lunchDeduct != null ? `${d.lunchDeduct} 分${d.lunchOverride ? '（已調整）' : ''}` : '—'}
                     </td>
                     <td className="text-right p-2">{d.minutes} 分</td>
                     <td className="text-right p-2 font-medium">${d.amount.toFixed(2)}</td>
@@ -505,7 +505,7 @@ export default function EmployeePayrollDetailPage() {
                     <div className="text-xs space-y-0.5">
                       <div>上班: {fmtTime24(d.in)}{d.clamped && <span className="text-muted-foreground ml-1">(早到, 從排班{fmtTime24(d.shiftStart)}起計)</span>}</div>
                       <div>下班: {fmtTime24(d.out)} · 有效: {d.minutes} 分</div>
-                      {d.lunchDeduct != null && <div>午休: {d.lunchDeduct} 分</div>}
+                      {d.lunchDeduct != null && <div>午休: {d.lunchDeduct} 分{d.lunchOverride ? '（已調整）' : ''}</div>}
                       {d.lunchOt && <div style={{ color: '#059669' }}>少休 +{d.lunchOt} 分（已計薪）</div>}
                       {d.lunchLate && <div style={{ color: '#dc2626' }}>超休 −{d.lunchLate} 分</div>}
                       {d.filledFromShift && <div style={{ color: '#d97706' }}>⚠️ 缺下班卡，按更次收工計</div>}

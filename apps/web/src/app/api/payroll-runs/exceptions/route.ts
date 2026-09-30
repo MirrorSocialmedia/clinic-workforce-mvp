@@ -248,6 +248,16 @@ export async function GET(req: NextRequest) {
     )
   } catch { /* 舊 client 無該表 → 當冇扣減 */ }
 
+  // ★ 2026-09-30：有午飯扣減人手調整嘅日子 → 唔再報午飯 OT／午飯遲到（同引擎一致）
+  let lunchOverrideKeys = new Set<string>()
+  try {
+    const los = await prisma.lunchDeductOverride.findMany({
+      where: { employeeId: { in: allShiftAndPunchEmpIds }, workDate: { gte: monthStart, lte: monthEnd } },
+      select: { employeeId: true, workDate: true },
+    })
+    lunchOverrideKeys = new Set(los.map(o => `${o.employeeId}|${toHKDateStr(o.workDate)}`))
+  } catch { /* 舊 client 無該表 → 當冇調整 */ }
+
   const leaveDateSet = new Set<string>()
   for (const lv of leaves) {
     let cur = toHKDateStr(lv.startDate)
@@ -435,6 +445,7 @@ export async function GET(req: NextRequest) {
   }
 
   for (const [key, lunchPunches] of lunchPunchesByEmpDate) {
+    if (lunchOverrideKeys.has(key)) continue
     const [empId, dateStr] = key.split('|')
     // ★ 2026-08-07: deductLunch gate — skip lunch OT/LATE detection if day doesn't deduct
     const dayDed = empDateDeductsLunch.get(`${empId}|${dateStr}`) ?? true

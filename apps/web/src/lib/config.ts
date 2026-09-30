@@ -236,6 +236,10 @@ export const CONFIG = {
     'GET /api/holiday-ot-adjustments': ['OWNER'],
     'PUT /api/holiday-ot-adjustments': ['OWNER'],
     'DELETE /api/holiday-ot-adjustments/:id': ['OWNER'],
+    // ★ 2026-09-30：午飯扣減人手調整 —— 同假期 OT 調整一樣只 OWNER；RBAC_PERM_OVERRIDES 唔加
+    'GET /api/lunch-overrides': ['OWNER'],
+    'PUT /api/lunch-overrides': ['OWNER'],
+    'DELETE /api/lunch-overrides': ['OWNER'],
 
     // Account management routes
     'GET /api/accounts': ['OWNER'],

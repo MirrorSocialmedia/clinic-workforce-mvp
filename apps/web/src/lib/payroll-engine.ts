@@ -28,7 +28,7 @@ import { findPayRuleForMonth } from './pay-rule-for-month'
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-export const TIMEBANK_ENGINE_VERSION = 8 // v8: S3b 按月規則 + S4B 凍結期末接駁 + degraded 向上傳（H1-6／E-1）；v7: 時薪路徑 deductLunch gate [cwm-lunchgate-20260902]
+export const TIMEBANK_ENGINE_VERSION = 9 // v9: 午飯扣減人手調整 [2026-09-30]；v8: S3b 按月規則 + S4B 凍結期末接駁 + degraded 向上傳（H1-6／E-1）；v7: 時薪路徑 deductLunch gate [cwm-lunchgate-20260902]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -95,6 +95,17 @@ export async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Da
     hoFp = `${agg2?._count?._all ?? 0}:${agg2?._sum?.deductMinutes ?? 0}`
   } catch { /* 同上：舊 client / 測試 stub → 當冇指紋 */ }
 
+  // ★ 2026-09-30：午飯扣減調整一樣要入指紋（佢改 lunchDeduct／lunchOt／lunchLate，唔係 TimeBankEntry）
+  let loFp = '0:0'
+  try {
+    const agg3 = await db.lunchDeductOverride.aggregate({ // AGG-OK: cache fingerprint
+      where: { employeeId, workDate: { gte: monthStart, lte: monthEnd } },
+      _count: { _all: true },
+      _sum: { lunchMinutes: true },
+    })
+    loFp = `${agg3?._count?._all ?? 0}:${agg3?._sum?.lunchMinutes ?? 0}`
+  } catch { /* 同上：舊 client / 測試 stub → 當冇指紋 */ }
+
   // ★ Stage 3：DB trigger 維護嘅「髒水位」—— 本月或之前任何輸入（打卡/作廢/補登/假期/更/entry）一改，seq 就變
   //   用 <= ym：chain 語義（N-2 月改咗，N 月 cache 都要失效）；key 喺計算【之前】讀 → race 期間寫入嘅舊值下次自動失配
   let dirtyFp = '0'
@@ -113,6 +124,7 @@ export async function timeBankCacheKey(db: any, employeeId: string, monthEnd: Da
     rest: cfg?.working_days?.rest_days ?? null,
     tb: tbFp,
     ho: hoFp, // ★ cwm-holidayot-20260911：加咗新欄 → 全部舊 cacheKey 即時失效，首次計糧全體重算（一次性）
+    lo: loFp, // ★ 2026-09-30：午飯扣減調整入指紋（同上：全部舊 cacheKey 即時失效，一次性）
   })
 }
 
@@ -1784,6 +1796,16 @@ export async function calculateTimeBank(
     include: { template: { select: { deductLunch: true } } }, // ★ 2026-08-07
   })
 
+  // ★ 2026-09-30：午飯扣減人手調整（一日一筆）
+  let lunchOverrideByDate = new Map<string, number>()
+  try {
+    const los = await db.lunchDeductOverride.findMany({
+      where: { employeeId, workDate: { gte: monthStart, lte: monthEnd } },
+      select: { workDate: true, lunchMinutes: true },
+    })
+    lunchOverrideByDate = new Map(los.map((o: { workDate: Date; lunchMinutes: number }) => [toHKDateStr(o.workDate), o.lunchMinutes]))
+  } catch { /* 舊 client 無該表 → 當冇調整 */ }
+
   // Compare each shift day against effective punches
   let otMinutes = 0
   let lateMinutes = 0
@@ -1894,6 +1916,10 @@ export async function calculateTimeBank(
           }
         }
       }
+
+      // ★ 2026-09-30：人手調整以佢為準，唔再計午飯 OT／午飯遲到
+      const lunchOv = lunchOverrideByDate.get(shiftDateStr)
+      if (lunchOv != null) { lunchDeduct = lunchOv; dayLunchOt = 0; dayLunchLate = 0 }
 
       totalLunchDeductMinutes += lunchDeduct
       lunchDeductedDates.add(shiftDateStr)
@@ -3394,6 +3420,15 @@ async function calculateSimpleHourlyPay(
   // Use effective punches (corrections applied, voided excluded)
   const effectivePunches = await getEffectivePunches(monthStart, monthEnd, { employeeId })
 
+  // ★ 2026-09-30：午飯扣減人手調整（例：即日離職、未食飯就走）
+  const lunchOverrides = await prisma.lunchDeductOverride.findMany({
+    where: { employeeId, workDate: { gte: monthStart, lte: monthEnd } },
+    select: { workDate: true, lunchMinutes: true },
+  })
+  const lunchOverrideByDate = new Map<string, number>(
+    lunchOverrides.map((o: { workDate: Date; lunchMinutes: number }) => [toHKDateStr(o.workDate), o.lunchMinutes]),
+  )
+
   const days: any[] = []
   let totalMinutes = 0
   let totalPay = 0
@@ -3467,6 +3502,9 @@ async function calculateSimpleHourlyPay(
       }
     }
 
+    const lunchOv = dayDeductsLunch ? lunchOverrideByDate.get(dateStr) : undefined
+    if (lunchOv != null) { lunchDeduct = lunchOv; lunchOtMinutes = 0; lunchLateMinutes = 0 }
+
     const minutes = Math.max(0, spanMinutes - lunchDeduct)
     const amount = Math.round(minutes * rate / 60 * 100) / 100
 
@@ -3486,6 +3524,7 @@ async function calculateSimpleHourlyPay(
       ...(filledFromShift ? { filledFromShift: true, warning: '缺下班卡，按更次收工時間計' } : {}),
       ...(lunchOtMinutes > 0 ? { lunchOt: lunchOtMinutes } : {}),
       ...(lunchLateMinutes > 0 ? { lunchLate: lunchLateMinutes } : {}),
+      ...(lunchOv != null ? { lunchOverride: true } : {}),
       ...(noShift ? { noShift: true, warning: '冇排更次，全日打卡照計薪' } : {}),
     })
   }
