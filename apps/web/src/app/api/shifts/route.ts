@@ -116,10 +116,15 @@ export async function GET(req: NextRequest) {
       punchKeys.add(`${p.employeeId}|${p.clinicId}|${toHKDateStr(p.punchTime)}`)
     }
 
-    shiftsWithPunch = shifts.map((s: any) => ({
-      ...s,
-      hasPunch: punchKeys.has(`${s.employeeId}|${s.clinicId}|${toHKDateStr(s.date)}`),
-    }))
+    shiftsWithPunch = shifts.map((s: any) => {
+      const d = toHKDateStr(s.date)
+      return {
+        ...s,
+        // ★ 2026-09-30 S-07：調鋪店嘅打卡亦算（員工下半日喺調鋪店打卡）
+        hasPunch: punchKeys.has(`${s.employeeId}|${s.clinicId}|${d}`)
+          || (!!s.secondaryClinicId && punchKeys.has(`${s.employeeId}|${s.secondaryClinicId}|${d}`)),
+      }
+    })
   }
 
   return NextResponse.json(
