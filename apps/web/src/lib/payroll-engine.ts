@@ -20,6 +20,7 @@ import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
 import { getMpfExemption, adjustMpfMinForPeriod } from './mpf-exemption'
 import { calcMpfEmployer } from './mpf-employer'
 import { findPayRuleForMonth } from './pay-rule-for-month'
+import { pickResignChoice, toEngineBonusOverride, type SettlementBonusChoice } from './settlement-utils'
 
 // ------------------------------------------------------------------
 // TimeBank Engine Version + Cache Key
@@ -981,9 +982,13 @@ function calculateSplit(
 
 // ★ cwm-payout S-5（2026-09-29）：ResignSettlement 行 → 引擎注入 snapshot — generatePayrollRun 同
 //   preview 共用（parse 口徑一处；parse 失敗 → 唔注入 + warn，唔靜默出錯數）
-export function parseResignSettlementRow(row: { detailJson: string | null; tbDeduction: unknown; excessRestDeduction: unknown; tbMinutes: unknown; tbAmount: unknown } | null | undefined): {
+export type ParsedResignSettlement = {
   annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null
-} | null {
+  // ★ 2026-09-30 [cwm-resignfull]：結算卡揀嘅勤工獎覆蓋／店舖獎金（null = 冇揀 → 跟計糧頁／舊計糧單）
+  attendanceBonusOverride: SettlementBonusChoice | null
+  storeBonus: number | null
+}
+export function parseResignSettlementRow(row: { detailJson: string | null; tbDeduction: unknown; excessRestDeduction: unknown; tbMinutes: unknown; tbAmount: unknown } | null | undefined): ParsedResignSettlement | null {
   const json = row?.detailJson
   if (!json) return null
   try {
@@ -997,6 +1002,10 @@ export function parseResignSettlementRow(row: { detailJson: string | null; tbDed
       // ★ ④ 時間帳戶正數折現（MPF 前）—— 餘額 > 0 時 tbAmount 就係折現額
       tbCashout: Number(row!.tbMinutes) > 0 ? Number(row!.tbAmount) : 0,
       monthWage: parsed.monthWage ?? null,
+      attendanceBonusOverride: ['FORCE_ON', 'FORCE_OFF', 'AUTO'].includes(parsed.attendanceBonusOverride)
+        ? parsed.attendanceBonusOverride as SettlementBonusChoice : null,
+      storeBonus: typeof parsed.storeBonus === 'number' && Number.isFinite(parsed.storeBonus) && parsed.storeBonus >= 0
+        ? parsed.storeBonus : null,
     }
   } catch (e) {
     console.warn('[payroll] ResignSettlement parse 失敗，跳過注入:', e)
@@ -1007,20 +1016,33 @@ export function parseResignSettlementRow(row: { detailJson: string | null; tbDed
 // ★ cwm-payout S-5（2026-09-29）：preview 同 generatePayrollRun 共用同一 engine options 構建 —
 //   之前 preview 冇傳 storeBonus / splitPay / resignSettlement 入引擎（卻顯示 carried 值）
 //   → 預覽「應付總額」少咗呢幾項，同生成後唔同（MD §4.1）
+type CarriedChoices = { storeBonus: Record<string, number>; splitPay: Record<string, number | null>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> }
+type RunChoiceOpts = { storeBonuses?: Record<string, number>; splitPays?: Record<string, number>; attendanceBonusOverrides?: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } | undefined
+
+// ★ 2026-09-30 [cwm-resignfull]：店舖獎金／勤工獎覆蓋 — 計糧頁今次輸入 > 離職結算已存 > 舊計糧單 carry
+//   （engine options、PayrollItem 寫入、preview 三處同一口徑；之前結算卡冇得揀，月結同結算書兩條數）
+export function resolveStoreBonus(empId: string, carried: CarriedChoices, opts: RunChoiceOpts, rs: Pick<ParsedResignSettlement, 'storeBonus'> | null): number | null {
+  return pickResignChoice(opts?.storeBonuses?.[empId], rs?.storeBonus, carried.storeBonus[empId])
+}
+//   結算 'AUTO' = 明確自動（蓋過舊計糧單 FORCE_*）→ 引擎 null
+export function resolveBonusOverride(empId: string, carried: CarriedChoices, opts: RunChoiceOpts, rs: Pick<ParsedResignSettlement, 'attendanceBonusOverride'> | null): 'FORCE_ON' | 'FORCE_OFF' | null {
+  return toEngineBonusOverride(pickResignChoice<SettlementBonusChoice>(opts?.attendanceBonusOverrides?.[empId], rs?.attendanceBonusOverride, carried.bonusOverride[empId]))
+}
+
 export function buildEngineOptions(
   baseType: string | undefined,
   empId: string,
-  carried: { storeBonus: Record<string, number>; splitPay: Record<string, number | null>; bonusOverride: Record<string, 'FORCE_ON' | 'FORCE_OFF'> },
-  opts: { storeBonuses?: Record<string, number>; splitPays?: Record<string, number>; attendanceBonusOverrides?: Record<string, 'FORCE_ON' | 'FORCE_OFF'> } | undefined,
-  resignSettlement: { annualLeavePay: number; noticePay: number; tbDeduction: number | null; excessRestDeduction: number | null; tbCashout: number; monthWage: { source: string; basePay: number | null } | null } | null,
+  carried: CarriedChoices,
+  opts: RunChoiceOpts,
+  resignSettlement: ParsedResignSettlement | null,
   resignedAtOverride?: Date | null,
 ) {
   const spInput = (opts?.splitPays?.[empId] ?? carried.splitPay[empId]) as number | null | undefined
+  const sb = resolveStoreBonus(empId, carried, opts, resignSettlement)
   return {
-    ...(baseType !== 'hourly' && (opts?.storeBonuses?.[empId] ?? carried.storeBonus[empId])
-      ? { storeBonus: opts?.storeBonuses?.[empId] ?? carried.storeBonus[empId] } : {}),
+    ...(baseType !== 'hourly' && sb ? { storeBonus: sb } : {}),
     ...(baseType !== 'hourly' && spInput != null ? { splitPay: spInput } : {}),
-    attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[empId] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[empId]) ?? (null as 'FORCE_ON' | 'FORCE_OFF' | null | undefined),
+    attendanceBonusOverride: resolveBonusOverride(empId, carried, opts, resignSettlement) as 'FORCE_ON' | 'FORCE_OFF' | null | undefined,
     resignSettlement,
     resignedAtOverride: resignedAtOverride ?? undefined,
   }
@@ -1205,6 +1227,8 @@ export async function generatePayrollRun(
       const payRule = await findPayRuleForMonth(prisma, emp.id, monthStartForRule, monthEndForRule)
 
       let calcResult
+      // ★ cwm-resignfull：提早 parse — items.push 寫 storeBonus／attendanceBonusOverride 都要讀結算揀法
+      const resignSettlementOpt = parseResignSettlementRow(settlementByEmp.get(emp.id))
       let empIsHourly = false // ★ cwm-payout S-2（方案 A）：items.push 喺 if 外，需要呢個 flag
       if (payRule?.configJson) {
         const config = JSON.parse(payRule.configJson)
@@ -1217,7 +1241,6 @@ export async function generatePayrollRun(
         // ★ 2026-09-05 [cwm-resigv3] 離職結算注入（拍板③）：讀已確認快照，引擎唔重算。
         //   parse 失敗 → 唔注入（只 warn）— 結算快照損壞唔好靜默出錯數。
         // ★ cwm-payout S-5：parse 抽去 parseResignSettlementRow（同 preview 共用，口徑一致）
-        const resignSettlementOpt = parseResignSettlementRow(settlementByEmp.get(emp.id))
         calcResult = await calculatePayrollWithRules(emp.id, monthDate, clinicId, config,
           // ★ cwm-payout S-5：options 構建同 preview 共用 buildEngineOptions
           buildEngineOptions(config.base_type, emp.id, carried, opts, resignSettlementOpt))
@@ -1244,7 +1267,7 @@ export async function generatePayrollRun(
           ? (opts?.splitPays?.[emp.id] ?? carried.splitPay[emp.id])
           : calcResult.splitPay,
         deduction: calcResult.deduction,
-        storeBonus: opts?.storeBonuses?.[emp.id] ?? carried.storeBonus[emp.id] ?? ((calcResult.detail as any)?.storeBonus ?? 0),
+        storeBonus: resolveStoreBonus(emp.id, carried, opts, resignSettlementOpt) ?? ((calcResult.detail as any)?.storeBonus ?? 0),
         totalPayable: calcResult.totalPayable,
         miscAmount: (calcResult.detail as any)?.miscAmount ?? 0,
         miscDetailJson: (calcResult.detail as any)?.miscDetailJson ?? null,
@@ -1259,7 +1282,7 @@ export async function generatePayrollRun(
         resignSettlementJson: settlementByEmp.has(emp.id)
           ? JSON.stringify(toLegacyShape(settlementByEmp.get(emp.id)!))
           : null,
-        attendanceBonusOverride: ((opts?.attendanceBonusOverrides?.[emp.id] as 'FORCE_ON' | 'FORCE_OFF' | undefined) ?? carried.bonusOverride[emp.id]) ?? null,
+        attendanceBonusOverride: resolveBonusOverride(emp.id, carried, opts, resignSettlementOpt),
         // ★ cwm-payrollsheet-20260921 S3：支票號 carry-forward（重算保留已填值）
         chequeNo: carried.chequeNo[emp.id] ?? null,
       })

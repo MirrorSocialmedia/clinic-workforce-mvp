@@ -123,3 +123,71 @@ export function calcMpfDisplay(
   }
   return { employee: Math.round(Math.min(relevantIncome, MPF_MAX) * MPF_RATE * 100) / 100, employedDays, inExemptPeriod: false, zeroReason: null }
 }
+
+// ── 離職結算 = 月結同一條數（2026-09-30 [cwm-resignfull]）────────────────
+// 舊版結算卡「當月工資」只讀 basePay → 勤工獎／OT／津貼／店舖獎金／扣減／雜項報銷全部唔見，
+// 結算書「預估應付」同月結「實發」對唔上（CC2：$15,586.68 vs $16,163.08，差 = 勤工獎 500 − MPF 25 + 雜項 101.40）。
+// 而家當月各項由引擎出（resign-settlement.ts monthItems），加總口徑同 engine grossPay／netPay 一模一樣。
+
+export type BonusOverride = 'FORCE_ON' | 'FORCE_OFF'
+/** 結算卡揀法：'AUTO' = 明確「按考勤自動」（蓋過舊計糧單嘅 FORCE_*）；null = 冇揀（跟計糧單） */
+export type SettlementBonusChoice = BonusOverride | 'AUTO'
+/** 'AUTO' → 引擎 null（自動）；其餘原樣 */
+export function toEngineBonusOverride(v: SettlementBonusChoice | null | undefined): BonusOverride | null {
+  return v === 'FORCE_ON' || v === 'FORCE_OFF' ? v : null
+}
+
+/**
+ * 勤工獎覆蓋／店舖獎金嘅揀法優先次序（計糧生成、計糧預覽、結算卡三處共用）：
+ *   計糧頁今次輸入 > 離職結算已存 > 舊計糧單 carry-forward > 冇
+ * null／undefined = 「冇揀」→ 落去下一層；0 係有效值（店舖獎金填 0 = 唔發）。
+ */
+export function pickResignChoice<T>(explicit: T | null | undefined, settlement: T | null | undefined, carried: T | null | undefined): T | null {
+  return explicit ?? settlement ?? carried ?? null
+}
+
+/** 當月各項（引擎直算，未計離職結算項）— 結算卡／結算書逐行顯示 */
+export interface ResignMonthItems {
+  payType: 'MONTHLY' | 'HOURLY'
+  basePay: number
+  attendanceBonus: number
+  attendanceBonusReason: string | null
+  otPay: number
+  splitPay: number
+  storeBonus: number
+  allowances: number
+  deduction: number        // 缺勤扣減（正數 = 扣）
+  sickDeduction: number    // 病假扣減（正數 = 扣）
+  adwAdjustment: number    // 法定假日／年假 ADW 補足（可正可負）
+  maternityPay: number
+  paternityPay: number
+  otherAdjust: number      // 引擎 grossPay − 上面逐項（正常 0；防將來新項目漏行）
+  grossPay: number         // 當月 Gross（未計年假／通知金／折現／超額休息日）
+  miscAmount: number       // 雜項報銷（MPF 之後加，唔屬工資）
+  miscEntries: Array<{ amount: number; description: string | null }>
+  mpfEnabled: boolean      // 薪酬規則有冇開 MPF（時薪 = false，同引擎一致）
+}
+
+/**
+ * 預估應付（同 engine 月薪／時薪路徑同一條式）：
+ *   有關入息 = 當月 Gross + 年假薪酬 + 代通知金 + 時間帳戶正數折現 − 超額休息日
+ *   淨額     = max(0, 有關入息 − MPF(僱員) − 時間帳戶欠款扣除)
+ *   應付     = 淨額 + 雜項報銷
+ */
+export function calcResignPayable(a: {
+  monthGross: number
+  annualLeavePay: number
+  noticePay: number
+  tbCashout: number
+  excessRest: number
+  mpfEmployee: number
+  tbDeduction: number
+  misc: number
+}): { relevantIncome: number; net: number; payable: number } {
+  const r2 = (n: number) => Math.round(n * 100) / 100
+  const n = (v: number) => Number(v) || 0
+  const relevantIncome = r2(n(a.monthGross) + n(a.annualLeavePay) + n(a.noticePay) + Math.max(0, n(a.tbCashout)) - Math.max(0, n(a.excessRest)))
+  const net = Math.max(0, r2(relevantIncome - n(a.mpfEmployee) - Math.max(0, n(a.tbDeduction))))
+  const payable = Math.max(0, r2(net + n(a.misc)))
+  return { relevantIncome, net, payable }
+}

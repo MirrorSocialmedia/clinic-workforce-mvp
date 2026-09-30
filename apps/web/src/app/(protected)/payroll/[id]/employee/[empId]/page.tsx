@@ -264,6 +264,8 @@ export default function EmployeePayrollDetailPage() {
   const rsTbDed = resignSettle ? Math.max(0, Number(resignSettle.tbDeduction) || 0) : 0
   // ★ cwm-tbcashout-20260917：④ 時間帳戶正數折現（已計入 grossPay 同 MPF 基數）
   const rsTbCashout = resignSettle ? Math.max(0, Number(resignSettle.tbCashout) || 0) : 0
+  // ★ 2026-09-30 [cwm-resignfull]：⑤ 超額休息日扣款（引擎已喺 gross 扣、MPF 之前）— 之前冇出行，Gross 對唔上明細
+  const rsExcessRest = resignSettle ? Math.max(0, Number(resignSettle.excessRestDeduction) || 0) : 0
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
   const miscAmount = (item as any).miscAmount ?? 0
@@ -778,8 +780,9 @@ export default function EmployeePayrollDetailPage() {
                 <div className="text-xs font-medium" style={{ color: '#6d28d9' }}>離職結算（已確認結算直讀）</div>
                 {resignSettle.monthWage?.basePay != null && (
                   <div className="flex justify-between">
-                    <span className="text-sm">當月工資（{resignSettle.monthWage.source === 'payrollItem' ? '已生成計糧' : '預覽值'}）</span>
-                    <span className="font-mono text-sm">{fmtCurrency(resignSettle.monthWage.basePay)}</span>
+                    {/* ★ cwm-resignfull：純參考（結算當時嘅底薪快照）— 當月工資已喺上面逐項計，唔會重複加 */}
+                    <span className="text-xs text-muted-foreground">結算時當月底薪快照（參考，唔重複計）</span>
+                    <span className="font-mono text-xs text-muted-foreground">{fmtCurrency(resignSettle.monthWage.basePay)}</span>
                   </div>
                 )}
                 <div className="flex justify-between">
@@ -790,9 +793,15 @@ export default function EmployeePayrollDetailPage() {
                   <span className="text-sm">代通知金</span>
                   <span className="font-mono font-medium text-green-600">+{fmtCurrency(resignSettle.noticePay)}</span>
                 </div>
+                {rsExcessRest > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm">超額休息日扣款（MPF 前）</span>
+                    <span className="font-mono font-medium text-red-600">−{fmtCurrency(rsExcessRest)}</span>
+                  </div>
+                )}
                 {rsTbDed > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-sm">時間帳戶扣除（由尾糧扣）</span>
+                    <span className="text-sm">時間帳戶扣除（MPF 後，由尾糧扣）</span>
                     <span className="font-mono font-medium text-red-600">−{fmtCurrency(rsTbDed)}</span>
                   </div>
                 )}
@@ -817,6 +826,8 @@ export default function EmployeePayrollDetailPage() {
                 + (storeBonus ?? 0) + (item.splitPay ?? 0) + (item.otPay ?? 0)
                 - (sickDeduction ?? 0) - (item.deduction ?? 0) + (allowances ?? 0)
                 + (maternityPay ?? 0) + (paternityPay ?? 0) + rsGrossAdd
+                // ★ cwm-resignfull：同引擎 grossPay 式 — ④ 折現加、⑤ 超額休息日減（之前漏，離職月一定報對唔上）
+                + rsTbCashout - rsExcessRest
               const diff = Math.abs(shown - (grossPay ?? 0))
               return diff > 0.05
                 ? <div className="text-xs text-red-600 mt-1">⚠️ 明細對不上 Gross，差 ${diff.toFixed(2)}</div>

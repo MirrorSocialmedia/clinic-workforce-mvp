@@ -6,6 +6,7 @@ import { computeResignSettlement, calcNoticePay, calcTimebankDebtAmount } from '
 import { hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
 import { applyResignCutoff } from '@/lib/resign-cutoff'
 import { guardPayrollLock } from '@/lib/payroll-lock'
+import type { SettlementBonusChoice } from '@/lib/settlement-utils'
 
 /**
  * POST /api/employees/[id]/resign-settle — 確認離職結算，寫入 ResignSettlement 表
@@ -36,7 +37,7 @@ export async function POST(
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'body 必填 (JSON)' }, { status: 400 })
-  const { lastDay, noticeDays, tbDeduction, excessDeduction } = body
+  const { lastDay, noticeDays, tbDeduction, excessDeduction, attendanceBonusOverride, storeBonus } = body
 
   // ── 驗證 ──────────────────────────────────────────────
   if (typeof lastDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(lastDay) || isNaN(Date.parse(`${lastDay}T00:00:00+08:00`))) {
@@ -70,12 +71,28 @@ export async function POST(
     excessDeductionVal = Math.round(excessDeduction * 100) / 100
   }
 
+  // ★ 2026-09-30 [cwm-resignfull]：勤工獎／店舖獎金揀法（null = 跟計糧單）— 存入結算，月底計糧照用
+  //   （優先次序：計糧頁今次輸入 > 結算 > 舊計糧單 carry；見 payroll-engine resolveBonusOverride）
+  if (attendanceBonusOverride != null && !['AUTO', 'FORCE_ON', 'FORCE_OFF'].includes(attendanceBonusOverride)) {
+    return NextResponse.json({ error: 'attendanceBonusOverride 必須係 AUTO / FORCE_ON / FORCE_OFF' }, { status: 400 })
+  }
+  const bonusChoice: SettlementBonusChoice | null = attendanceBonusOverride ?? null
+  let storeBonusVal: number | null = null
+  if (storeBonus != null) {
+    if (typeof storeBonus !== 'number' || !Number.isFinite(storeBonus) || storeBonus < 0 || storeBonus > 1_000_000) {
+      return NextResponse.json({ error: 'storeBonus 必須 ≥ 0' }, { status: 400 })
+    }
+    storeBonusVal = Math.round(storeBonus * 100) / 100
+  }
+
   // ── 伺服器側重算（同 preview 同一 lib）─────────────────
   let calc
   // ★ 2026-09-05 [cwm-resignroster]：cutoff = 最後工作日翌日 HK 午夜（同 resign/route.ts:29 口徑）
   const cutoffDate = new Date(`${lastDay}T16:00:00Z`)
   try {
-    calc = await computeResignSettlement(prisma, empId, lastDay, undefined, undefined, { resignedAtOverride: cutoffDate })
+    calc = await computeResignSettlement(prisma, empId, lastDay, undefined, undefined, {
+      resignedAtOverride: cutoffDate, attendanceBonusOverride: bonusChoice, storeBonus: storeBonusVal,
+    })
   } catch (e: any) {
     if (e?.message === 'EMP_NOT_FOUND') return NextResponse.json({ error: '員工不存在' }, { status: 404 })
     throw e
@@ -150,6 +167,10 @@ export async function POST(
     adwUsed: calc.adwValue,
     // ★ cwm-resigv3：當月工資快照（讀引擎 — 月底計糧注入時展示／審計用；金額以快照為準）
     monthWage: { source: calc.monthWage.source, basePay: calc.monthWage.basePay },
+    // ★ 2026-09-30 [cwm-resignfull]：揀法（parseResignSettlementRow 讀返 → 月底計糧注入）+ 當月各項快照（審計／對數用）
+    attendanceBonusOverride: bonusChoice,
+    storeBonus: storeBonusVal,
+    monthItems: calc.monthItems,
     // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日），分母 = 當月曆日數）
     monthWageRatio: calc.monthWageRatio
       ? { ...calc.monthWageRatio, lastDay, computedAt: new Date().toISOString() }
@@ -208,7 +229,7 @@ export async function POST(
         entity: 'ResignSettlement',
         entityId: row.id,
         targetEmployeeId: empId,
-        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號｜取消班次=${cutoffResult.shiftsCancelled} 取消假期=${cutoffResult.leavesCancelled} 跨日假截斷=${cutoffResult.leavesTruncated}`,
+        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, 勤工獎=${bonusChoice ?? '跟計糧單'}, 店舖獎金=${storeBonusVal ?? '跟計糧單'}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號｜取消班次=${cutoffResult.shiftsCancelled} 取消假期=${cutoffResult.leavesCancelled} 跨日假截斷=${cutoffResult.leavesTruncated}`,
         ipAddress: null,
         userAgent: null,
       } as any,

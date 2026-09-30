@@ -150,12 +150,18 @@ export default function NewPayrollPage() {
     if (!previewResult?.items?.length) return
     const sb: Record<string, string> = {}
     const sp: Record<string, string> = {}
+    // ★ 2026-09-30 [cwm-resignfull]：勤工獎覆蓋都預填（舊計糧單／離職結算已揀）— 之前永遠顯示「自動」，
+    //   生成時送 {} → 靠 carry；而家顯示同實際一致，人手改咗照優先
+    const bo: Record<string, 'FORCE_ON' | 'FORCE_OFF'> = {}
     for (const it of previewResult.items) {
       if ((it as any).storeBonus) sb[it.employeeId] = String((it as any).storeBonus)
       if ((it as any).splitPay != null) sp[it.employeeId] = String((it as any).splitPay)
+      const ov = (it as any).attendanceBonusOverride
+      if (ov === 'FORCE_ON' || ov === 'FORCE_OFF') bo[it.employeeId] = ov
     }
     if (Object.keys(sb).length) setStoreBonusInputs(prev => ({ ...sb, ...prev }))
     if (Object.keys(sp).length) setSplitPayInputs(prev => ({ ...sp, ...prev }))
+    if (Object.keys(bo).length) setBonusOverrides(prev => ({ ...bo, ...prev }))
   }, [previewResult?.items])
 
   // ★ DB-03：換店／換月 → 手動輸入全部作廢（否則上個月獎金會寫入今個月 run）
