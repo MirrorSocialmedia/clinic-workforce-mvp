@@ -1128,6 +1128,9 @@ export async function generatePayrollRun(
       // ★ cwm-consist S6 CA-04：regenerate 時舊 run 有 item 嘅員工都必須入名單 ——
       //   否則員工已唔 ACTIVE 同本月無 punch/shift 時就漏咗，寫入 tx deleteMany 後冇人重寫 → 靜默清走
       ...(existing ? [{ payrollItems: { some: { runId: existing.id } } }] : []),
+      // ★ 2026-09-30 [cwm-restdebt] RS-07：有離職結算嘅員工一定要入名單 —— 當月冇更冇卡（月頭即走／長病假後離職）
+      //   舊版會漏，年假薪酬＋代通知金冇出糧（EO s.25 7 日內付清）
+      { resignSettlement: { is: { periodMonth } } },
     ],
   }
   if (clinicId) where.homeClinicId = clinicId
