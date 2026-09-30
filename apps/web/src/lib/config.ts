@@ -91,6 +91,8 @@ export const CONFIG = {
     'POST /api/employees/:id/resign': ['OWNER'],
     // ★ 2026-09-04 [cwm-rbacfix-20260904] resign-settle 補登記（deploy blocker）
     'POST /api/employees/:id/resign-settle': ['OWNER'],
+    // ★ 2026-09-30 [cwm-restdebt] F6：撤銷離職結算（RS-10 配套出路）
+    'DELETE /api/employees/:id/resign-settle': ['OWNER'],
     'POST /api/employees/:id/rehire': ['OWNER'],
 
     // Shift rule config routes

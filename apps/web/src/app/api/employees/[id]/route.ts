@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
 import { jsonNoStore } from '@/lib/api-response'
-import { canSeeConfidential } from '@/lib/scope-helpers'
+import { canSeeConfidential, getOwnCompanyClinicIds } from '@/lib/scope-helpers'
 import { hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
 import { applyResignCutoff } from '@/lib/resign-cutoff'
 
@@ -89,6 +89,16 @@ export async function PUT(
       return NextResponse.json({ error: '唔可以修改管理層帳號，請搵負責人' }, { status: 403 })
     }
 
+    // ★ 2026-09-30 [cwm-restdebt] RS-11：公司範圍 —— 非 OWNER 只可以改自己公司嘅員工
+    //   （同計糧 homeOnly 口徑：getOwnCompanyClinicIds；fail-closed [] → 403；
+    //   舊版 MANAGER 可以改任何公司嘅 EMPLOYEE 帳號姓名／電話／密碼／狀態 → 帳號接管）
+    if (session.role !== 'OWNER') {
+      const myClinics = await getOwnCompanyClinicIds(session.userId)
+      if (!employee.homeClinicId || !myClinics.includes(employee.homeClinicId)) { // ROLE-OK: 公司邊界
+        return NextResponse.json({ error: '只可以修改自己公司嘅員工' }, { status: 403 })
+      }
+    }
+
     const userUpdateData: any = {}
     if (name) userUpdateData.name = name
     if (email !== undefined) userUpdateData.email = email
@@ -106,6 +116,22 @@ export async function PUT(
     if (notes !== undefined) employeeUpdateData.notes = notes
     // ★ cwm-attexempt-20260914 F：免考勤開關（會計等）—— 只影響考勤路徑，計糧/MPF/年假照常
     if (attendanceExempt !== undefined) employeeUpdateData.attendanceExempt = !!attendanceExempt
+
+    // ★ 2026-09-30 [cwm-restdebt] RS-10：離職／復職涉及結算同帳號，同 /resign、/resign-settle 一樣只准 OWNER
+    //   （舊版 RBAC 開咗 OWNER+MANAGER，route 層冇擋改 status → 經理可以繞過 OWNER-only 標記離職）
+    const statusChanging = status !== undefined && status !== employee.status
+    if (statusChanging && (status === 'RESIGNED' || employee.status === 'RESIGNED') && session.role !== 'OWNER') { // ROLE-OK
+      return NextResponse.json({ error: '只有老闆可以辦理離職／復職' }, { status: 403 })
+    }
+    // ★ 2026-09-30 [cwm-restdebt] RS-10：復職要清乾淨 —— 舊資料唔清 → 復職員工照被當離職計糧、
+    //   ResignSettlement 仲喺度 → 該月計糧再發一次年假薪酬＋代通知金
+    if (statusChanging && employee.status === 'RESIGNED' && status === 'ACTIVE') {
+      const rs = await prisma.resignSettlement.findUnique({ where: { employeeId: employee.id }, select: { id: true } })
+      if (rs) return NextResponse.json({ error: '呢位員工已有離職結算，請先撤銷結算再復職' }, { status: 409 })
+      employeeUpdateData.leaveDate = null
+      employeeUpdateData.resignedAt = null
+      userUpdateData.status = 'ACTIVE'
+    }
     // ★ cwm-resignflow-20260911 E1：標記離職同 resign-settle 寫同一組欄（兩條路數據形狀唔可走樣）。
     // ★ 2026-09-30 [cwm-restdebt] F2：改行共用 applyResignCutoff（RS-21）—— leaveDate/resignedAt、
     //   User RESIGNED + tokenVersion+1、取消之後更／假 + 還額、跨日假截斷、停人臉模板，三條路同一口徑。

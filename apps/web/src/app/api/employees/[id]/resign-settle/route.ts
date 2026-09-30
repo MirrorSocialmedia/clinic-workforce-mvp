@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { computeResignSettlement, calcNoticePay, calcTimebankDebtAmount } from '@/lib/resign-settlement'
@@ -206,4 +206,56 @@ export async function POST(
   })
 
   return NextResponse.json({ ok: true, settlementId, settlement })
+}
+
+/**
+ * DELETE /api/employees/:id/resign-settle — 撤銷離職結算
+ *
+ * ★ 2026-09-30 [cwm-restdebt] F6（RS-10 配套）：
+ * - OWNER-only（RBAC 登記 + route 內 ROLE-OK 雙重）
+ * - guardPayrollLock：結算月份計糧已確認／已匯出 → 409（撤銷會令已出糧單同結算唱反調）
+ * - 刪 ResignSettlement + audit EMPLOYEE_RESIGN_SETTLE_REVOKE（入敏感摘要）
+ *
+ * 用途：算錯／要復職時嘅出路（復職 route 有結算會 409，先撤銷先復職）。
+ * ⚠️ 撤銷只刪結算行，唔還喺 cutoff 時取消咗嘅更／假（嗰啲有歷史記錄，人手處理）。
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  const auth = await requireAuth(_req, 'DELETE', _req.url)
+  if (isAuthError(auth)) return auth.error
+  if (auth.session.role !== 'OWNER') // ROLE-OK：撤銷結算涉及薪金
+    return NextResponse.json({ error: '僅老闆可撤銷離職結算' }, { status: 403 })
+
+  const resolvedParams = await params
+  const empId = resolvedParams.id
+
+  const row = await prisma.resignSettlement.findUnique({
+    where: { employeeId: empId },
+    select: { id: true, lastDay: true, periodMonth: true },
+  })
+  if (!row) return NextResponse.json({ error: '冇離職結算記錄' }, { status: 404 })
+
+  // ★ RS-08 同一守衛：結算月份已鎖 → 撤銷會同已確認糧單唱反調
+  const locked = await guardPayrollLock(auth.session, empId, [toHKDateStr(row.lastDay)], '撤銷離職結算')
+  if (locked) return locked
+
+  await prisma.$transaction(async (tx) => {
+    await tx.resignSettlement.delete({ where: { id: row.id } })
+    await tx.auditLog.create({
+      data: {
+        actorId: auth.session.userId,
+        action: 'EMPLOYEE_RESIGN_SETTLE_REVOKE',
+        entity: 'ResignSettlement',
+        entityId: row.id,
+        targetEmployeeId: empId,
+        notes: `撤銷離職結算：lastDay=${toHKDateStr(row.lastDay)}, periodMonth=${row.periodMonth}｜結算行已刪除（喺 cutoff 取消嘅更／假唔會自動還 — 有歷史記錄）`,
+        ipAddress: null,
+        userAgent: null,
+      } as any,
+    })
+  })
+
+  return NextResponse.json({ ok: true })
 }
