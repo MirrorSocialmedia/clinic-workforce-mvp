@@ -152,6 +152,7 @@ interface Shift {
   templateId?: string
   hasPunch?: boolean
   secondaryClinicId?: string | null
+  updatedAt?: string
   employee?: { user: { name: string } }
   clinic?: { name: string }
   template?: { name: string; shortName?: string | null }
@@ -7187,6 +7188,7 @@ function getShiftCode(shift: Shift): string {
                         role: role || null,
                         status,
                         secondaryClinicId,
+                        expectedUpdatedAt: editingShift.updatedAt,
                       }),
                     })
 

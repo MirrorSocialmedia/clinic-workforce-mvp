@@ -113,6 +113,13 @@ export async function PUT(
     try {
       shift = await prisma.$transaction(async (tx) => {
         await lockEmployees(tx, [existing.employeeId, updateData.employeeId])
+        // ★ 2026-09-30 S-04：樂觀鎖 —— body.expectedUpdatedAt = 前端開 modal 時嘅 shift.updatedAt；唔帶 = 舊行為
+        if (body.expectedUpdatedAt) {
+          const cur = await tx.shift.findUnique({ where: { id: existing.id }, select: { updatedAt: true } })
+          if (!cur || cur.updatedAt.getTime() !== new Date(body.expectedUpdatedAt).getTime()) {
+            throw new HttpError(409, '呢張更啱啱被其他人改咗，請重新整理再改', { code: 'STALE' })
+          }
+        }
         // ★ D1 拍板：排更維持「警告照改」，唔加硬鎖（靠 4B 凍結期末兜底）—— Stage 4 只收窄下面警告嘅範圍
         const empId = updateData.employeeId ?? existing.employeeId
         // overlap：喺鎖入面再驗（排除自己）
