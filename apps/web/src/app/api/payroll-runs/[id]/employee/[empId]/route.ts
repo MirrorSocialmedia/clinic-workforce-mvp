@@ -4,9 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolvePayrollScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
-import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
-import { estimateScheduledHours } from '@/lib/shift-punch-match'
+import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
 import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
+import { computeRosterHours } from '@/lib/roster-hours'
 // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder（同員工總覽同一把尺）
 import { buildTimeBankLedger, type LedgerMonth } from '@/lib/timebank-ledger'
 
@@ -99,7 +99,7 @@ export async function GET(
     orderBy: { correctedTime: 'asc' },
   })
 
-  // ★ 2026-08-15: 編更差額資料（改用 estimateScheduledHours 扣午飯）
+  // ★ 2026-08-15: 編更差額資料（扣午飯 — 計法見 lib/roster-hours）
   const [shifts, payRules] = await Promise.all([
     prisma.shift.findMany({
       where: { employeeId: params.empId, date: { gte: periodStart, lte: periodEnd }, status: { not: 'CANCELLED' } },
@@ -125,35 +125,17 @@ export async function GET(
     }
   }
 
-  // 取 APPROVED 假期（去重）
-  const periodStartStr = toHKDateStr(periodStart)
-  const periodEndStr = toHKDateStr(periodEnd)
-  const leaveDates = new Set<string>()
-  for (const lr of leaves) {
-    let d = toHKDateStr(lr.startDate)
-    const end = toHKDateStr(lr.endDate)
-    while (d <= end) {
-      if (d >= periodStartStr && d <= periodEndStr) leaveDates.add(d)
-      d = addDaysStr(d, 1)
-    }
-  }
-
-  const daysInMonth = hkDaysInMonth(periodStart)
-  const expectedMinutes = (daysInMonth - leaveDates.size) * 9 * 60 // 9h default
-
-  const leaveDateSet = new Set(
-    Array.from(leaveDates).map(d => `${params.empId}:${d}`)
-  )
-
-  const perDay = estimateScheduledHours(shifts as any, id => lunchMinutesMap.get(id) ?? 60)
-  let rosterSpanMinutes = 0
-  for (const [, days] of perDay) {
-    for (const d of days) {
-      if (leaveDateSet.has(`${params.empId}:${d.date}`)) continue
-      rosterSpanMinutes += d.hours * 60
-    }
-  }
-  rosterSpanMinutes = Math.round(rosterSpanMinutes)
+  const pmKey = periodMonthKey(item.run.periodMonth)
+  // ★ 2026-09-30 [cwm-rosterjoin]：改用共用 computeRosterHours（同入帳／排班／儀表板同一條式）——
+  //   舊版呢度自己計「整月曆日 − 假期」，月中入職／離職嘅員工冇排班嗰啲日都算「應返」
+  //   （例：9/16 入職 → 應返 198h vs 已編 135h，差額 −63h 係假嘅）
+  const rh = (await computeRosterHours([params.empId], pmKey, prisma, {
+    shifts,
+    lunchMinutes: lunchMinutesMap,
+  })).get(params.empId)
+  const expectedMinutes = rh?.expectedMinutes ?? 0
+  const rosterSpanMinutes = rh?.rosterMinutes ?? 0
+  const rosterDiffMinutes = rh?.diffMinutes ?? 0
 
   // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder ——
   //   舊嘅「自己查 TimeBankEntry（TB_DISPLAY_TYPES）＋ live TimeBank 對數」兩套並存 = 坑②，此處收埋。
@@ -162,7 +144,6 @@ export async function GET(
   //   · 冇 snapshot → buildTimeBankLedger 即時算（frozen:false）＝舊 live 口徑（未 finalize 月行為不變）。
   //   帳本行齊晒：推導行（原始遲到/早退，同糧單七種一致）＋實體行（RESTDAY_GRANT 唔喺 ledger，
   //   假期另一本帳）＋informational 0 分行（遲到/早退補鐘已抵銷）＋RECONCILE 未分類差額。
-  const pmKey = periodMonthKey(item.run.periodMonth)
   let ledger: LedgerMonth | null = null
   try {
     // ★ 補丁A：時薪唔設時間帳戶 → ledger 維持 null（UI 卡片 fallback 返 detailJson、新行唔渲染）。
@@ -215,7 +196,7 @@ export async function GET(
     // ★ 編更差額
     rosterSpanMinutes,
     expectedMinutes,
-    rosterDiffMinutes: rosterSpanMinutes - expectedMinutes,
+    rosterDiffMinutes,
     // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶帳本（snapshot 優先 + 對數行 reconciles）
     timeBankLedger: ledger,
   }, {
