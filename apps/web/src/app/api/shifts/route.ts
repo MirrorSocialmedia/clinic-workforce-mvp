@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart, hkDateEnd, toHKDateStr, getMonthRange } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr, getMonthRange, todayHK } from '@/lib/hk-date'
 import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
 import { writeAuditLog } from '@/lib/prisma'
@@ -10,10 +10,18 @@ import { resolveClinicScope } from '@/lib/scope-helpers'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
-import { shiftReplacedMsg, buildNotification } from '@/lib/notification-messages'
+import { shiftReplacedMsg, shiftAddedMsg, shiftRestoredMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
 import { balanceYearFor, consumesQuota } from '@/lib/leave-types'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+
+// ★ 2026-09-30 S-02：新增更只通知 7 日內嘅（遠期排更睇排班表，唔好每拖一格就彈通知）
+const NOTIFY_WITHIN_DAYS = 7
+const isSoon = (d: Date) => {
+  const t0 = hkDateStart(todayHK()).getTime()
+  const t = new Date(d).getTime()
+  return t >= t0 && t < t0 + NOTIFY_WITHIN_DAYS * 86400000
+}
 
 // ============================================================
 // GET /api/shifts — list shifts with filters
@@ -253,6 +261,10 @@ export async function POST(req: NextRequest) {
           }
           // ★ Stage 2.4：排班影響遲到／早退／OT 判斷 → 快取失效入 tx（批量排班用最早日期）
           const earliest = new Date(Math.min(...planned.map(p => new Date(p.times.date).getTime())))
+          // ★ 2026-09-30 S-02：批量新增更 — 只通知 7 日內嘅
+          const soonItems = out.filter(s => s.status === 'CONFIRMED' && isSoon(s.date))
+            .map(s => shiftAddedMsg(s, () => s.clinic?.name ?? ''))
+          if (soonItems.length > 0) await createNotification(buildNotification(employeeId, soonItems), tx)
           await invalidateTimeBankFrom(employeeId, earliest, tx)
           return out
         }, { timeout: 30_000 })
@@ -431,17 +443,15 @@ export async function POST(req: NextRequest) {
           })
 
           // ★ Stage 2.3：victim 通知入 tx（同狀態同生死）
-          // ★ Notify employee if replaced shifts were CONFIRMED
-          if (victims.length > 0) {
-            const clinics = await tx.clinic.findMany({ select: { id: true, name: true } })
-            const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
-            const confirmedItems = victims
-              .filter(v => v.status === 'CONFIRMED')
-              .map(v => shiftReplacedMsg(v, (cid) => clinicNameMap.get(cid) ?? ''))
-            if (confirmedItems.length > 0) {
-              await createNotification(buildNotification(employeeId, confirmedItems, created.id), tx)
-            }
+          // ★ 2026-09-30 S-02：victim 取代 + 新增/還原合併做一張通知
+          const clinics = await tx.clinic.findMany({ select: { id: true, name: true } })
+          const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
+          const nameOf = (cid: string) => clinicNameMap.get(cid) ?? ''
+          const items = victims.filter(v => v.status === 'CONFIRMED').map(v => shiftReplacedMsg(v, nameOf))
+          if (created.status === 'CONFIRMED' && (body.restoredFromUndo || items.length > 0 || isSoon(created.date))) {
+            items.push(body.restoredFromUndo ? shiftRestoredMsg(created, nameOf) : shiftAddedMsg(created, nameOf))
           }
+          if (items.length > 0) await createNotification(buildNotification(employeeId, items, created.id), tx)
 
           // ★ Stage 2.4：deleteMany bypasses DELETE handler hooks —— 被取代更嘅 OT 撤回 + 快取失效入 tx（失敗 = rollback）
           if (replacedShiftDates.length > 0) {

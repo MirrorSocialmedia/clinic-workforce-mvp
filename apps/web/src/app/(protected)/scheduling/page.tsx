@@ -1826,6 +1826,10 @@ function getShiftCode(shift: Shift): string {
         startTime: s.startTime,
         endTime: s.endTime,
         templateId: s.templateId,
+        role: s.role ?? null,                          // ★ S-03：舊版漏咗
+        secondaryClinicId: s.secondaryClinicId ?? null, // ★ S-03：調鋪
+        status: s.status,                              // ★ S-03：DRAFT 唔好變 CONFIRMED
+        restoredFromUndo: true,                        // ★ S-03：伺服器發「已恢復」通知
       }
       const res = await fetch(`/api/shifts/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
