@@ -8,6 +8,7 @@ import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
 import { toHKDateStr, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+import { assertNoDupPunchTx } from '@/lib/punch-dup'
 import { assertMonthsUnlockedTx } from '@/lib/payroll-lock'
 
 // PUT /api/punch-corrections/[id] — Approve/reject a correction
@@ -18,6 +19,11 @@ export async function PUT(
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, scope } = auth
+
+  // ★ 2026-09-30 F-09：角色白名單放行唔等於有權限 —— 被 deny attendance_manage 嘅經理要擋
+  if (!(auth.perms ?? []).includes('attendance_manage')) {
+    return NextResponse.json({ error: 'Forbidden (missing permission: attendance_manage)' }, { status: 403 })
+  }
 
   const auditCtx = {
     actorId: session.userId,
@@ -133,6 +139,11 @@ export async function PUT(
               ? `類型變更: ${linked.punchType} → ${correction.punchType}`
               : `修正跨日: ${linkedDay} → ${corrDay}`
             await tx.punchVoid.create({ data: { punchRecordId: linked.id, voidedBy: session.userId, reason: `批核補登 #${correction.id}：${note}` } })
+            // ★ 2026-09-30 F-08：唔准造出同日同類重複卡（原卡先至作廢，void: null 自動排除佢）
+            await assertNoDupPunchTx(tx, {
+              employeeId: correction.employeeId, clinicId: correction.clinicId,
+              punchType: correction.punchType, punchTime: correction.correctedTime,
+            })
             const nr = await tx.punchRecord.create({
               data: {
                 employeeId: correction.employeeId,

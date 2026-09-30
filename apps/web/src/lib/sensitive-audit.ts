@@ -14,6 +14,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'CREATE', entity: 'PunchCorrection', label: '補登申請（改時間）' },
   { action: 'UPDATE', entity: 'PunchCorrection', label: '批核補登申請' },
   { action: 'CORRECTION_SELF_APPROVE', label: '⚠️ 自批補登' },
+  // ★ 2026-09-30 F-07：自己改／作廢自己張卡（唔擋，同自批補登一致）
+  { action: 'PUNCH_SELF_EDIT', label: '⚠️ 自己改自己打卡' },
+  { action: 'PUNCH_SELF_VOID', label: '⚠️ 自己作廢自己打卡' },
   { action: 'EARLY_OT_APPROVE', label: '批准提早上班OT' },
   { action: 'EARLY_OT_CANCEL', label: '取消提早上班OT' },
   { action: 'EARLY_OT_AUTO_REVOKE', label: '⚠️ 打卡改動·自動撤回提早OT' },
@@ -36,6 +39,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減（改時間帳戶餘額，間接影響離職結算）
   { action: 'HOLIDAY_OT_ADJUST', label: '假期返工OT扣減' },
   { action: 'HOLIDAY_OT_ADJUST_DELETE', label: '移除假期返工OT扣減' },
+  // ★ 2026-09-30：午飯扣減人手調整（改當日工時 → 時薪＝工資／月薪＝午飯 OT 遲到）
+  { action: 'LUNCH_OVERRIDE', label: '午飯扣減調整' },
+  { action: 'LUNCH_OVERRIDE_DELETE', label: '移除午飯扣減調整' },
   // ★ 2026-08-05: Additional sensitive actions from coverage scan
   { action: 'ACCOUNT_DELETE', label: '刪除帳戶' },
   { action: 'ACCOUNT_PURGE', label: '⚠️ 徹底清除帳號' },
@@ -151,4 +157,6 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // ★ cwm-attbatch-20260927：批量補鐘「批次總結」—— 每筆已各自寫 TIMEBANK_MAKEUP（已入 SPEC），
   //   總結再入 SPEC 會令敏感摘要重複計；呢行只作追溯（batchId／成功／失敗數）
   'TIMEBANK_MAKEUP_BATCH',
+  // ★ 2026-09-30 C2/C5：網絡失敗自動補登（PENDING，敏感嘅係之後嘅批核）+ 客戶端錯誤上報（常規／自動）
+  'PUNCH_CLIENT_ERROR', 'PUNCH_NETWORK_EVIDENCE',
 ])

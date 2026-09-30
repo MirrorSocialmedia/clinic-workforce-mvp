@@ -1,6 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import type { ScanOutcome } from '@/lib/punch-retry'
 
 const QrScannerClient = dynamic(() => import('./qr-scanner-client'), {
   ssr: false,
@@ -8,7 +9,7 @@ const QrScannerClient = dynamic(() => import('./qr-scanner-client'), {
 })
 
 interface QrScannerProps {
-  onScan: (token: string) => Promise<boolean>
+  onScan: (token: string) => Promise<ScanOutcome>
   onScannerReady?: (stop: () => Promise<void> | void) => void
 }
 

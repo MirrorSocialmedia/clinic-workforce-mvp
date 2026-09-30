@@ -5,20 +5,33 @@ import { useRouter } from 'next/navigation'
 import QRCode from 'qrcode'
 import { QR_REFRESH_SECONDS } from '@/lib/qr-constants'
 
+// ★ 2026-09-30 F-01：iPad 斷線唔可以靜默顯示過期碼（之前成間診所一齊打唔到卡，員工仲以為自己掃錯）
+//   · 攞碼失敗 → 退避重試 2s/4s/8s/10s（唔再等 12 秒）
+//   · 用伺服器 expiresAt 判斷過期；過期 → 紅屏，唔顯示舊碼
+//   · 未過期但連線失敗 → 照顯示 QR（仲用得），加黃色提示（盡量唔擋打卡）
+//   · 401 → 去登入；403（例如 IP 白名單）→ 紅屏顯示伺服器原文
+//   · 返前台／網絡恢復 → 即刻攞新碼
+const FETCH_TIMEOUT_MS = 8000
+const RETRY_STEPS_MS = [2000, 4000, 8000, 10000]
+
 export default function ClinicQRPage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [token, setToken] = useState('')
   const [shortCode, setShortCode] = useState('')
+  const [expiresAt, setExpiresAt] = useState(0) // ★ 伺服器 expiresAt（ms）；0 = 未有碼
   const [clinicId, setClinicId] = useState('')
   const [clinics, setClinics] = useState<any[]>([])
   const [selectedClinic, setSelectedClinic] = useState<{ id: string; name: string } | null>(null)
-  const [countdown, setCountdown] = useState(30)
+  const [now, setNow] = useState(() => Date.now())
   const [error, setError] = useState('')
   const [isKiosk, setIsKiosk] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState('')
   const prevTokenRef = useRef('')
+  const nextFetchAtRef = useRef(0) // 0 = 即刻攞；Infinity = 攞緊
+  const failCountRef = useRef(0)
+  const genRef = useRef(0)         // 轉診所時作廢舊請求
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -42,29 +55,30 @@ export default function ClinicQRPage() {
     } catch {}
   }, [])
 
-  const fetchToken = useCallback(async () => {
-    if (!clinicId) return
-
+  const fetchToken = useCallback(async (gen: number): Promise<boolean> => {
+    if (!clinicId) return false
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
     try {
+      const res = await fetch(`/api/qr-tokens?clinicId=${clinicId}`, { credentials: 'include', cache: 'no-store', signal: ctrl.signal })
+      if (gen !== genRef.current) return false
+      if (res.status === 401) { window.location.href = '/login'; return false }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data.error || `攞 QR 失敗（HTTP ${res.status}）`); return false }
       setError('')
-      const res = await fetch(`/api/qr-tokens?clinicId=${clinicId}`, { credentials: 'include' })
-      if (!res.ok) {
-        const data = await res.json()
-        setError(data.error || 'Failed to generate token')
-        return
-      }
-      const data = await res.json()
-      const newToken = data.token
-      setToken(newToken)
+      setToken(data.token)
       setShortCode(data.shortCode || '')
-      setCountdown(QR_REFRESH_SECONDS)
+      setExpiresAt(Date.parse(data.expiresAt))
       // Only reset kiosk if token actually changed
-      if (prevTokenRef.current !== newToken && prevTokenRef.current) {
-        setIsKiosk(true)
-      }
-      prevTokenRef.current = newToken
+      if (prevTokenRef.current !== data.token && prevTokenRef.current) setIsKiosk(true)
+      prevTokenRef.current = data.token
+      return true
     } catch (err: any) {
-      setError(err.message || 'Failed to generate token')
+      if (gen !== genRef.current) return false
+      setError(err?.name === 'AbortError' ? '連線逾時' : (err?.message || '網絡錯誤'))
+      return false
+    } finally {
+      clearTimeout(t)
     }
   }, [clinicId])
 
@@ -73,30 +87,57 @@ export default function ClinicQRPage() {
   }, [fetchUserData])
 
   useEffect(() => {
-    if (user) {
-      fetchClinics()
-      fetchToken()
-    }
-  }, [user, fetchClinics, fetchToken])
+    if (user) fetchClinics() // ★ 攞碼交俾下面嘅排程，唔喺度直接 call
+  }, [user, fetchClinics])
 
   useEffect(() => {
     if (user) setLoading(false)
   }, [user])
 
-  // Countdown timer — refresh when hitting 0
+  // ★ 每秒 tick + 返前台／網絡恢復即刻攞碼
   useEffect(() => {
-    if (!token) return
-    const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          fetchToken()
-          return QR_REFRESH_SECONDS
-        }
-        return prev - 1
-      })
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [token, clinicId])
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    const kick = () => {
+      if (document.visibilityState !== 'visible') return
+      if (Number.isFinite(nextFetchAtRef.current)) nextFetchAtRef.current = 0 // 攞緊（Infinity）就唔好再開多個請求
+      setNow(Date.now())
+    }
+    document.addEventListener('visibilitychange', kick)
+    window.addEventListener('online', kick)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', kick)
+      window.removeEventListener('online', kick)
+    }
+  }, [])
+
+  // ★ 轉診所 → 作廢舊請求、即刻攞新碼（一定要喺下面個排程 effect 之前）
+  useEffect(() => {
+    genRef.current++
+    nextFetchAtRef.current = 0
+    failCountRef.current = 0
+    setExpiresAt(0)
+  }, [clinicId])
+
+  // ★ 排程：到鐘先攞；成功 → 12 秒後再攞；失敗 → 退避重試（唔 reset 倒數扮正常）
+  useEffect(() => {
+    if (!user || !clinicId) return
+    if (now < nextFetchAtRef.current) return
+    nextFetchAtRef.current = Infinity
+    const gen = genRef.current
+    fetchToken(gen).then(ok => {
+      if (gen !== genRef.current) return
+      if (ok) {
+        failCountRef.current = 0
+        nextFetchAtRef.current = Date.now() + QR_REFRESH_SECONDS * 1000
+      } else {
+        const i = Math.min(failCountRef.current, RETRY_STEPS_MS.length - 1)
+        failCountRef.current++
+        nextFetchAtRef.current = Date.now() + RETRY_STEPS_MS[i]
+      }
+      setNow(Date.now())
+    })
+  }, [now, user, clinicId, fetchToken])
 
   // Update selectedClinic when clinicId changes
   useEffect(() => {
@@ -120,7 +161,6 @@ export default function ClinicQRPage() {
     }).then(setQrDataUrl).catch(console.error)
   }, [qrDisplayText])
 
-  // Enter fullscreen
   const handleFullscreen = async () => {
     try {
       await document.documentElement.requestFullscreen()
@@ -128,6 +168,11 @@ export default function ClinicQRPage() {
       // ignore
     }
   }
+
+  const nextAt = nextFetchAtRef.current
+  const countdown = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - now) / 1000)) : 0
+  const expired = expiresAt > 0 && now >= expiresAt
+  const validSecLeft = expiresAt > 0 ? Math.max(0, Math.ceil((expiresAt - now) / 1000)) : 0
 
   if (loading) return (
     <div className="flex justify-center items-center min-h-screen bg-gray-950 text-gray-400">
@@ -140,7 +185,6 @@ export default function ClinicQRPage() {
   if (isKiosk && qrDataUrl) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white select-none">
-        {/* Exit kiosk hint */}
         <button
           onClick={() => setIsKiosk(false)}
           className="absolute top-4 right-4 text-gray-500 hover:text-white text-xs px-3 py-1 rounded border border-gray-700"
@@ -148,34 +192,44 @@ export default function ClinicQRPage() {
           ✕ 退出全屏
         </button>
 
-        {/* Clinic name */}
         <h1 className="text-3xl font-bold mb-8 text-center">
           {selectedClinic?.name || '診所'}
         </h1>
 
-        {/* QR Code — 320px */}
-        <div className="bg-white rounded-2xl p-6 shadow-2xl">
-          <img
-            src={qrDataUrl}
-            alt="QR Code"
-            className="w-[320px] h-[320px] rounded-xl"
-          />
-        </div>
+        {expired ? (
+          // ★ F-01：過期就唔好再顯示舊碼 —— 員工掃咗都係失敗，仲會以為自己掃錯
+          <div className="w-[368px] h-[368px] rounded-2xl bg-red-700 flex flex-col items-center justify-center text-center p-6 shadow-2xl">
+            <div className="text-6xl mb-4">⚠️</div>
+            <div className="text-2xl font-bold">QR 暫時用唔到</div>
+            <div className="mt-3 text-red-100">iPad 連唔到伺服器，{countdown} 秒後自動再試…</div>
+            {error && <div className="mt-3 text-xs text-red-200 break-all">{error}</div>}
+            <div className="mt-4 text-xs text-red-200">持續出現請檢查 iPad Wi-Fi，或者重新開呢頁</div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl p-6 shadow-2xl">
+            <img src={qrDataUrl} alt="QR Code" className="w-[320px] h-[320px] rounded-xl" />
+          </div>
+        )}
 
-        {/* Short code display — 手動輸入用 */}
-        {shortCode && (
+        {!expired && error && (
+          <div className="mt-4 text-amber-300 text-sm">
+            ⚠️ 連線唔穩定，重試中…（呢個碼仲有效 {validSecLeft} 秒）
+          </div>
+        )}
+
+        {!expired && shortCode && (
           <div className="mt-4 bg-gray-800/60 rounded-lg px-6 py-3">
             <span className="text-gray-400 text-sm">手動輸入碼：</span>
             <span className="text-2xl font-mono tracking-[0.5em] text-white ml-2 uppercase">{shortCode}</span>
           </div>
         )}
 
-        {/* Countdown */}
-        <div className="mt-8 text-xl text-gray-300 font-mono">
-          ⏱️ {countdown} 秒後自動刷新
-        </div>
+        {!expired && (
+          <div className="mt-8 text-xl text-gray-300 font-mono">
+            ⏱️ {countdown} 秒後自動刷新
+          </div>
+        )}
 
-        {/* Decorative line */}
         <div className="mt-12 text-sm text-gray-600">
           請用手機掃描 QR 碼打卡
         </div>
@@ -226,6 +280,7 @@ export default function ClinicQRPage() {
             alt="QR Code"
             className="w-[240px] h-[240px] mx-auto rounded-lg mb-4"
           />
+          {expired && <div className="text-red-400 text-sm mb-2">⚠️ 碼已過期，重新連線中…</div>}
           <div className="text-green-400 font-semibold text-lg mb-1">
             ⏱️ {countdown} 秒後自動刷新
           </div>

@@ -265,6 +265,7 @@ model Employee {
   status    EmployeeStatus   @default(ACTIVE)
   resignSettlement ResignSettlement?
   holidayOtAdjustments HolidayOtAdjustment[] // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減
+  lunchDeductOverrides LunchDeductOverride[] // ★ 2026-09-30：午飯扣減人手調整
   payConfidential Boolean @default(false) // 薪資保密 — 非 OWNER 的計糧 API 遮蔽金額
 
   /// ★ cwm-attexempt-20260914：免考勤員工（會計等）。
@@ -1065,6 +1066,27 @@ model HolidayOtAdjustment {
   updatedAt     DateTime @updatedAt
 
   /// ★★★ 拍板⑥「唔可以重複輸入」嘅【結構性】保證 —— 唔係靠 UI 檢查
+  @@unique([employeeId, workDate])
+  @@index([employeeId, workDate])
+}
+
+/// ★ 2026-09-30：午飯扣減人手調整（一日一筆）
+///   情境：時薪員工即日離職、已排扣飯鐘嘅更、未食飯就走 → 引擎照扣 60 分。
+///   lunchMinutes = 當日實際扣幾多分鐘午飯（0 = 唔扣），API 限 0 ≤ x ≤ 規則預設值。
+///   有呢筆 → 引擎用佢，唔再計午飯 OT／午飯遲到。
+model LunchDeductOverride {
+  id           String   @id @default(cuid())
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// HK 日期 00:00+08:00
+  workDate     DateTime
+  lunchMinutes Int
+  reason       String
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedBy    String?
+  updatedAt    DateTime @updatedAt
+
   @@unique([employeeId, workDate])
   @@index([employeeId, workDate])
 }

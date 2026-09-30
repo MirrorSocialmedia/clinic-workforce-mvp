@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveQrToken } from '@/lib/qr-token'
+import { maybeCreateNetworkCorrection } from '@/lib/punch-evidence'
 import { todayHK, hkDateStart } from '@/lib/hk-date'
 import { distanceMeters } from '@/lib/geo'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
@@ -22,6 +23,13 @@ function getTodayStartHK(): Date {
   return hkDateStart(todayHK())
 }
 
+// ★ 2026-09-30 C3：body 清洗 —— 壞值當「冇」，唔 reject（盡量唔擋打卡；舊版 lat:"abc" 會 500）
+const finiteNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+// ★ 2026-09-30 C4：GPS 硬擋預設關（盡量唔擋打卡）—— 越界照標 OUT_OF_RANGE 俾考勤頁睇。
+//   要開返「距離 > radius×3 就擋」：PUNCH_GEO_HARD_BLOCK=1
+const GEO_HARD_BLOCK = process.env.PUNCH_GEO_HARD_BLOCK === '1'
+
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
@@ -36,7 +44,13 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { token: qrToken, deviceInfo, lat, lng, geoFlag, geoAcc } = body
+      const { token: qrToken, geoFlag, firstToken, firstScanAt } = body
+      const lat = finiteNum(body.lat)
+      const lng = finiteNum(body.lng)
+      const hasLatLng = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+      const geoAccRaw = finiteNum(body.geoAcc)
+      const deviceInfo = typeof body.deviceInfo === 'string' ? body.deviceInfo.slice(0, 300) : null
+      // ⚠️ body.notes 唔再接受：前端從來冇送，舊版照寫入 PunchRecord.notes（員工可以自己塞「經理已批」之類）
 
       // Accept optional explicit punchType (CLOCK_IN/CLOCK_OUT/LUNCH_START/LUNCH_END)
       const explicitPunchType = body.punchType
@@ -63,14 +77,15 @@ export async function POST(req: NextRequest) {
       let tokenValid: boolean | null = true
       let crossClinic = false
       let tokenIdForUsage: string | null = null
+      let qrLateSec = 0 // ★ C1：QR 過期寬限內接受 → 標記秒數（考勤頁 ❌）
 
       // ★ Token + clinic resolution: token-first, explicit-fallback
       if (qrToken) {
-        const tokenCheck = await resolveQrToken(qrToken)
+        const tokenCheck = await resolveQrToken(String(qrToken))
         if (!tokenCheck.valid) {
           return NextResponse.json({
             error: tokenCheck.reason === 'EXPIRED'
-              ? 'QR 碼已過期，請等 iPad 更新後再掃（今次未打到卡）'
+              ? 'QR 碼已過期，請掃 iPad 上最新嘅 QR（今次未打到卡）。如果 iPad 個碼一直冇轉，請通知同事檢查 iPad 網絡'
               : 'QR 碼無效，請掃診所 iPad 上最新嘅 QR（今次未打到卡）',
             code: tokenCheck.reason,
           }, { status: 400 })
@@ -81,6 +96,8 @@ export async function POST(req: NextRequest) {
         }
         clinicId = tokenCheck.clinicId
         tokenIdForUsage = tokenCheck.tokenId
+        qrLateSec = tokenCheck.lateSec
+        tokenValid = qrLateSec === 0 // ★ C1：寬限期內接受嘅過期碼 → false（考勤頁 ❌），唔擋
 
         // ★ 決定（2026-08-01）：借調係常態，唔擋跨店打卡。
         // 排班嗰邊已經唔檢查 EmployeeClinic（2026-07-28 全店排班權），
@@ -149,27 +166,23 @@ export async function POST(req: NextRequest) {
       let distanceM: number | null = null
       let locationFlag: string | null =
         ALLOWED_GEO_FLAGS.includes(geoFlag) ? geoFlag : null
-      const geoAccuracy: number | null = geoAcc != null ? Math.round(geoAcc) : null
+      const geoAccuracy: number | null = geoAccRaw != null ? Math.max(0, Math.round(geoAccRaw)) : null
 
-      if (lat != null && lng != null) {
+      if (hasLatLng) {
         punchLat = lat
         punchLng = lng
         const clinic = await prisma.clinic.findUnique({
-          where: { id: clinicId },
+          where: { id: clinicId! },
           select: { latitude: true, longitude: true, geoRadius: true },
         })
         if (clinic?.latitude != null && clinic?.longitude != null) {
-          distanceM = distanceMeters(lat, lng, clinic.latitude, clinic.longitude)
+          distanceM = distanceMeters(lat!, lng!, clinic.latitude, clinic.longitude)
           const radius = clinic.geoRadius ?? Number(process.env.GEO_DEFAULT_RADIUS || 200)
-
           if (distanceM > radius) locationFlag = 'OUT_OF_RANGE'
-
-          // ★ 明顯唔喺附近（radius × 3）先硬擋。
-          // 唔用 radius 直接擋 —— GPS 室內／大廈密集会飄幾十米，会誤擋真員工。
-          // geoAccuracy 差嗰陣（定位本身唔準）唔擋。
+          // ★ C4：硬擋預設關（見 GEO_HARD_BLOCK）
           const hardLimit = radius * 3
           const accOk = geoAccuracy == null || geoAccuracy < 100
-          if (distanceM > hardLimit && accOk) {
+          if (GEO_HARD_BLOCK && distanceM > hardLimit && accOk) {
             return NextResponse.json({
               error: `距離診所 ${Math.round(distanceM)} 米，超出打卡範圍。如喺診所內請重新定位再試。`,
               distanceM: Math.round(distanceM),
@@ -199,15 +212,16 @@ export async function POST(req: NextRequest) {
             punchType: punchType as any,
             source: source as any,
             tokenValid,
-            deviceInfo: deviceInfo || null,
+            deviceInfo,
             punchLat,
             punchLng,
             distanceM,
             locationFlag,
             geoAccuracy,
-            notes: crossClinic
-              ? `跨店打卡（非指派診所）${body.notes ? ' · ' + body.notes : ''}`
-              : (body.notes || null),
+            notes: [
+              crossClinic ? '跨店打卡（非指派診所）' : null,
+              qrLateSec > 0 ? `QR 過期 ${qrLateSec} 秒（寬限內接受）` : null,
+            ].filter(Boolean).join(' · ') || null,
           },
         })
         // ★ cwm-antitamper P1-2：每張卡入 audit（入 SENSITIVE_AUDIT_EXEMPT，唔入敏感摘要）
@@ -219,7 +233,7 @@ export async function POST(req: NextRequest) {
             entityId: record.id,
             targetEmployeeId: employee.id,
             clinicId,
-            afterJson: JSON.stringify({ punchType, locationFlag, distanceM, crossClinic }),
+            afterJson: JSON.stringify({ punchType, locationFlag, distanceM, crossClinic, qrLateSec }),
             ipAddress: req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || null,
             userAgent: req.headers.get('user-agent') || null,
           },
@@ -229,11 +243,24 @@ export async function POST(req: NextRequest) {
         return record
       })
 
+      // ★ C2：網絡失敗證據 → 自動補登申請（best-effort：任何錯誤都唔影響今次打卡結果）
+      let autoCorrectionAt: string | null = null
+      try {
+        const at = await maybeCreateNetworkCorrection({
+          employeeId: employee.id, clinicId: clinicId!, recordId: result.id,
+          punchType, punchTime: result.punchTime, firstToken, firstScanAt, userId: session.userId,
+        })
+        autoCorrectionAt = at ? at.toISOString() : null
+      } catch (e) {
+        console.error('[punch] network evidence 失敗（唔影響打卡）', e)
+      }
+
       return NextResponse.json({
         success: true,
         recordId: result.id,
         punchTime: result.punchTime.toISOString(),
         punchType,
+        autoCorrectionAt,
       })
     } catch (error: any) {
       if (error instanceof HttpError) {
