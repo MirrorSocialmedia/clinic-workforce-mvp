@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { computeResignSettlement, calcNoticePay, calcTimebankDebtAmount } from '@/lib/resign-settlement'
 import { hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
 import { applyResignCutoff } from '@/lib/resign-cutoff'
+import { guardPayrollLock } from '@/lib/payroll-lock'
 
 /**
  * POST /api/employees/[id]/resign-settle — 確認離職結算，寫入 ResignSettlement 表
@@ -98,6 +99,14 @@ export async function POST(
     )
   }
 
+  // ★ 2026-09-30 [cwm-restdebt] RS-08：該月計糧已確認／已匯出 → 結算唔會入糧單，唔准靜靜寫入
+  //   （重結算改咗 lastDay → periodMonth 變時，舊月份如果已鎖都要擋）
+  const prev = await prisma.resignSettlement.findUnique({ where: { employeeId: empId } })
+  const lockDates = [lastDay]
+  if (prev) lockDates.push(toHKDateStr(prev.lastDay))
+  const locked = await guardPayrollLock(auth.session, empId, lockDates, '離職結算')
+  if (locked) return locked
+
   // 時間帳戶換算（MD §五）：|tbMinutes| ÷ 9 小時工作日 日 × 今日 ADW
   const { tbAmount } = calcTimebankDebtAmount(calc.tb.balanceMinutes, calc.adwValue)
 
@@ -107,9 +116,8 @@ export async function POST(
   const periodMonth = lastDay.slice(0, 7)
 
   // ★ 2026-09-05 [cwm-resignroster] 拍板③a：改最後工作日 → 重新確認結算，直接覆蓋同一筆，
-  //   但要 audit 記低變更（唔准「改咗最後工作日但用舊 ratio」）— 舊值改由新表讀
+  //   但要 audit 記低變更（唔准「改咗最後工作日但用舊 ratio」）— 舊值喺上面已讀（prev）
   let lastDayChangeNote = ''
-  const prev = await prisma.resignSettlement.findUnique({ where: { employeeId: empId } })
   const prevLastDay = prev ? toHKDateStr(prev.lastDay) : null
   if (prevLastDay && prevLastDay !== lastDay) {
     lastDayChangeNote = `｜最後工作日由 ${prevLastDay} 改為 ${lastDay}，ratio 重算`
