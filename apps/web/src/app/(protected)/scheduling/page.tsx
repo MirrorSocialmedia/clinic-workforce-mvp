@@ -152,6 +152,7 @@ interface Shift {
   templateId?: string
   hasPunch?: boolean
   secondaryClinicId?: string | null
+  updatedAt?: string
   employee?: { user: { name: string } }
   clinic?: { name: string }
   template?: { name: string; shortName?: string | null }
@@ -1826,6 +1827,10 @@ function getShiftCode(shift: Shift): string {
         startTime: s.startTime,
         endTime: s.endTime,
         templateId: s.templateId,
+        role: s.role ?? null,                          // ★ S-03：舊版漏咗
+        secondaryClinicId: s.secondaryClinicId ?? null, // ★ S-03：調鋪
+        status: s.status,                              // ★ S-03：DRAFT 唔好變 CONFIRMED
+        restoredFromUndo: true,                        // ★ S-03：伺服器發「已恢復」通知
       }
       const res = await fetch(`/api/shifts/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
@@ -2422,10 +2427,16 @@ function getShiftCode(shift: Shift): string {
           x: r.x + r.width, y: r.y,
           conflict: {
             kind: 'leave',
-            existing: dayLeaves.map(lr => ({
-              id: lr.id,
-              label: lr.leaveType?.name ?? '假期',
-            })),
+            existing: dayLeaves.map(lr => {
+              const s = toHKDateStr(new Date(lr.startDate))
+              const e = toHKDateStr(new Date(lr.endDate || lr.startDate))
+              return {
+                id: lr.id,
+                label: s === e
+                  ? (lr.leaveType?.name ?? '假期')
+                  : `${lr.leaveType?.name ?? '假期'}（${s.slice(5)}–${e.slice(5)}，共 ${lr.days} 日 — 多日假唔可以直接替換）`,
+              }
+            }),
             pending: {
               templateId: tpl.id,
               clinicId: tc.primaryClinicId,
@@ -2489,10 +2500,16 @@ function getShiftCode(shift: Shift): string {
           x: r.x + r.width, y: r.y,
           conflict: {
             kind: 'leave',
-            existing: dayLeaves.map(lr => ({
-              id: lr.id,
-              label: lr.leaveType?.name ?? '假期',
-            })),
+            existing: dayLeaves.map(lr => {
+              const s = toHKDateStr(new Date(lr.startDate))
+              const e = toHKDateStr(new Date(lr.endDate || lr.startDate))
+              return {
+                id: lr.id,
+                label: s === e
+                  ? (lr.leaveType?.name ?? '假期')
+                  : `${lr.leaveType?.name ?? '假期'}（${s.slice(5)}–${e.slice(5)}，共 ${lr.days} 日 — 多日假唔可以直接替換）`,
+              }
+            }),
             pending: {
               templateId: tpl.id,
               clinicId: targetClinicId ?? selectedClinicId ?? '',
@@ -7171,6 +7188,7 @@ function getShiftCode(shift: Shift): string {
                         role: role || null,
                         status,
                         secondaryClinicId,
+                        expectedUpdatedAt: editingShift.updatedAt,
                       }),
                     })
 

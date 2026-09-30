@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart, hkDateEnd, toHKDateStr, getMonthRange } from '@/lib/hk-date'
-import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
+import { hkDateStart, hkDateEnd, toHKDateStr, getMonthRange, todayHK } from '@/lib/hk-date'
+import { buildShiftFromInput, buildShiftTimes, hkTimeOf, isValidDateStr, SHIFT_STATUS_WRITABLE, shiftTimesError } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
 import { writeAuditLog } from '@/lib/prisma'
 import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
@@ -10,10 +10,18 @@ import { resolveClinicScope } from '@/lib/scope-helpers'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
-import { shiftReplacedMsg, buildNotification } from '@/lib/notification-messages'
+import { shiftReplacedMsg, shiftAddedMsg, shiftRestoredMsg, buildNotification } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
 import { balanceYearFor, consumesQuota } from '@/lib/leave-types'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+
+// ★ 2026-09-30 S-02：新增更只通知 7 日內嘅（遠期排更睇排班表，唔好每拖一格就彈通知）
+const NOTIFY_WITHIN_DAYS = 7
+const isSoon = (d: Date) => {
+  const t0 = hkDateStart(todayHK()).getTime()
+  const t = new Date(d).getTime()
+  return t >= t0 && t < t0 + NOTIFY_WITHIN_DAYS * 86400000
+}
 
 // ============================================================
 // GET /api/shifts — list shifts with filters
@@ -108,10 +116,15 @@ export async function GET(req: NextRequest) {
       punchKeys.add(`${p.employeeId}|${p.clinicId}|${toHKDateStr(p.punchTime)}`)
     }
 
-    shiftsWithPunch = shifts.map((s: any) => ({
-      ...s,
-      hasPunch: punchKeys.has(`${s.employeeId}|${s.clinicId}|${toHKDateStr(s.date)}`),
-    }))
+    shiftsWithPunch = shifts.map((s: any) => {
+      const d = toHKDateStr(s.date)
+      return {
+        ...s,
+        // ★ 2026-09-30 S-07：調鋪店嘅打卡亦算（員工下半日喺調鋪店打卡）
+        hasPunch: punchKeys.has(`${s.employeeId}|${s.clinicId}|${d}`)
+          || (!!s.secondaryClinicId && punchKeys.has(`${s.employeeId}|${s.secondaryClinicId}|${d}`)),
+      }
+    })
   }
 
   return NextResponse.json(
@@ -158,6 +171,15 @@ export async function POST(req: NextRequest) {
           { error: 'employeeId, clinicId, date, startTime, and endTime are required' },
           { status: 400 }
         )
+      }
+
+      // ★ 2026-09-30 S-06：日期/status/批量上限 驗證
+      if (!isValidDateStr(date)) return NextResponse.json({ error: `日期錯誤：${date}` }, { status: 400 })
+      if (!SHIFT_STATUS_WRITABLE.includes(status)) return NextResponse.json({ error: `status 只可以係 ${SHIFT_STATUS_WRITABLE.join('/')}` }, { status: 400 })
+      if (Array.isArray(bulkDates)) {
+        if (bulkDates.length > 62) return NextResponse.json({ error: '批量排更一次最多 62 日' }, { status: 400 })
+        const bad = bulkDates.find((d: unknown) => !isValidDateStr(d))
+        if (bad !== undefined) return NextResponse.json({ error: `日期錯誤：${bad}` }, { status: 400 })
       }
 
       // Validate clinic access + employee belongs to clinic (OWNER can bypass)
@@ -210,6 +232,9 @@ export async function POST(req: NextRequest) {
         const planned: Array<{ d: string; times: ReturnType<typeof buildShiftTimes> }> = []
         for (const d of bulkDates) {
           const times = buildShiftTimes(d, hkTimeOf(origStart), hkTimeOf(origEnd))
+          // ★ 2026-09-30 S-06：時長合理性
+          const te = shiftTimesError(times)
+          if (te) return NextResponse.json({ error: te }, { status: 400 })
 
           const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
           if (overlap) {
@@ -253,6 +278,10 @@ export async function POST(req: NextRequest) {
           }
           // ★ Stage 2.4：排班影響遲到／早退／OT 判斷 → 快取失效入 tx（批量排班用最早日期）
           const earliest = new Date(Math.min(...planned.map(p => new Date(p.times.date).getTime())))
+          // ★ 2026-09-30 S-02：批量新增更 — 只通知 7 日內嘅
+          const soonItems = out.filter(s => s.status === 'CONFIRMED' && isSoon(s.date))
+            .map(s => shiftAddedMsg(s, () => s.clinic?.name ?? ''))
+          if (soonItems.length > 0) await createNotification(buildNotification(employeeId, soonItems), tx)
           await invalidateTimeBankFrom(employeeId, earliest, tx)
           return out
         }, { timeout: 30_000 })
@@ -285,6 +314,9 @@ export async function POST(req: NextRequest) {
       } else {
         // Parse date as HK midnight to avoid UTC midnight issue
         const times = buildShiftFromInput(date, startTime, endTime)
+        // ★ 2026-09-30 S-06：時長合理性（end ≤ start 會當跨夜 +1 日 → 16h 上限擋）
+        const te = shiftTimesError(times)
+        if (te) return NextResponse.json({ error: te }, { status: 400 })
 
         // ★ Separate gates: replace shifts only skips overlap check; replace leaves only skips leave conflict
         if (!replaceShiftIds?.length) {
@@ -342,10 +374,14 @@ export async function POST(req: NextRequest) {
 
           // ② Replace old leave requests — refund balance + delete
           if (replaceLeaveIds?.length) {
+            const dayStr = toHKDateStr(times.date)
             const victimLeaves = await tx.leaveRequest.findMany({
               where: {
                 id: { in: replaceLeaveIds },
                 employeeId,
+                // ★ 2026-09-30 S-01：只准替換「覆蓋呢日」嘅假（同 checkShiftLeaveConflict 同一條件）
+                startDate: { lte: new Date(`${dayStr}T23:59:59.999+08:00`) },
+                endDate: { gte: new Date(`${dayStr}T00:00:00+08:00`) },
                 ...(actorVisibleClinicIds ? {
                   employee: { clinics: { some: { clinicId: { in: actorVisibleClinicIds } } } },
                 } : {}),
@@ -353,7 +389,14 @@ export async function POST(req: NextRequest) {
               include: { leaveType: true },
             })
             if (victimLeaves.length !== replaceLeaveIds.length) {
-              throw new HttpError(409, '要替換嘅假期已被改動／刪除，請重新整理')
+              throw new HttpError(409, '要替換嘅假期已被改動／刪除，或者唔係呢日嘅假期，請重新整理')
+            }
+            // ★ S-01：多日假唔可以喺排班直接替換 —— 舊版會整段刪走、整段退餘額
+            const multi = victimLeaves.find(vl => toHKDateStr(vl.startDate) !== toHKDateStr(vl.endDate))
+            if (multi) {
+              throw new HttpError(409,
+                `${multi.leaveType?.name ?? '假期'}（${toHKDateStr(multi.startDate)}–${toHKDateStr(multi.endDate)}，共 ${multi.days} 日）係多日假期，唔可以喺排班直接替換。請先喺假期頁改短假期，再排更。`,
+                { code: 'MULTI_DAY_LEAVE' })
             }
             // Refund balance (skip unapproved — only APPROVED leaves had balance deducted)
             for (const vl of victimLeaves) {
@@ -420,17 +463,15 @@ export async function POST(req: NextRequest) {
           })
 
           // ★ Stage 2.3：victim 通知入 tx（同狀態同生死）
-          // ★ Notify employee if replaced shifts were CONFIRMED
-          if (victims.length > 0) {
-            const clinics = await tx.clinic.findMany({ select: { id: true, name: true } })
-            const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
-            const confirmedItems = victims
-              .filter(v => v.status === 'CONFIRMED')
-              .map(v => shiftReplacedMsg(v, (cid) => clinicNameMap.get(cid) ?? ''))
-            if (confirmedItems.length > 0) {
-              await createNotification(buildNotification(employeeId, confirmedItems, created.id), tx)
-            }
+          // ★ 2026-09-30 S-02：victim 取代 + 新增/還原合併做一張通知
+          const clinics = await tx.clinic.findMany({ select: { id: true, name: true } })
+          const clinicNameMap = new Map(clinics.map(c => [c.id, c.name]))
+          const nameOf = (cid: string) => clinicNameMap.get(cid) ?? ''
+          const items = victims.filter(v => v.status === 'CONFIRMED').map(v => shiftReplacedMsg(v, nameOf))
+          if (created.status === 'CONFIRMED' && (body.restoredFromUndo || items.length > 0 || isSoon(created.date))) {
+            items.push(body.restoredFromUndo ? shiftRestoredMsg(created, nameOf) : shiftAddedMsg(created, nameOf))
           }
+          if (items.length > 0) await createNotification(buildNotification(employeeId, items, created.id), tx)
 
           // ★ Stage 2.4：deleteMany bypasses DELETE handler hooks —— 被取代更嘅 OT 撤回 + 快取失效入 tx（失敗 = rollback）
           if (replacedShiftDates.length > 0) {
