@@ -202,22 +202,16 @@ export async function computeResignSettlement(
   const cutoff = new Date(hkDateStart(lastDay).getTime() + 86400000)
   const cutoffStr = lastDay
 
-  const emp = await prisma.employee.findUnique({
-    where: { id: empId },
-    include: {
-      payRules: {
-        where: { isActive: true },
-        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-        take: 1,
-      },
-    },
-  })
+  const emp = await prisma.employee.findUnique({ where: { id: empId } })
   if (!emp) throw new Error('EMP_NOT_FOUND')
 
+  // ★ 2026-09-30 [cwm-restdebt] RS-12：月薪用「最後工作日當月生效」嘅規則（同計糧 findPayRuleForMonth 同一來源）——
+  //   舊版用「最新 active 規則」：離職前已停用規則 → 月薪 0 → ADW fallback 0 → 年假薪酬／超額扣款全 0；月中調薪 → 計錯
+  const { start: _rsLastMonthStart, end: _rsLastMonthEnd } = getMonthRange(hkDateStart(lastDay))
+  const payRule = await findPayRuleForMonth(prisma, empId, _rsLastMonthStart, _rsLastMonthEnd)
   let monthlySalary = 0
   try {
-    const cfg = JSON.parse(emp.payRules[0]?.configJson || '{}')
-    monthlySalary = Number(cfg?.monthly_salary) || 0
+    monthlySalary = Number(JSON.parse(payRule?.configJson || '{}')?.monthly_salary) || 0
   } catch { /* 壞 JSON 當 0 */ }
 
   // ★ 拍板②：未放年假薪酬／代通知金一律用系統既有 Effective ADW
@@ -284,7 +278,8 @@ export async function computeResignSettlement(
   //   時薪唔發休息日（grant-restdays:52）→ 唔計
   let excessRest: ResignSettlementCalc['excessRest'] = null
   let excessRestDeduction = 0
-  const isHourly = emp.payRules[0]?.payType === 'HOURLY'
+  // ★ 2026-09-30 [cwm-restdebt] RS-12：isHourly 同月薪同一來源（最後工作日當月規則）
+  const isHourly = payRule?.payType === 'HOURLY'
   if (emp.joinDate && !isHourly) {
     const { start: mStart, end: mEnd } = getMonthRange(hkDateStart(lastDay))
     const periodStart = emp.joinDate > mStart ? new Date(emp.joinDate) : new Date(mStart)
