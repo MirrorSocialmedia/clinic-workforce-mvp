@@ -19,7 +19,8 @@ import { settleLeaveOnResign, totalAccruedLeave, serviceMonths } from './leave-c
 import { LEAVE_SYSTEM_KEYS } from './leave-types'
 import { getEffectiveADW } from './adw'
 import { TIMEBANK_MINUTES_PER_DAY } from './timebank-constants'
-import { calcExcessRestDayDeduction } from './settlement-utils'
+import { calcRestDayDebt } from './settlement-utils'
+import { restDayBalanceAsOf } from './leave-balance-as-of'
 import { findPayRuleForMonth } from './pay-rule-for-month'
 
 export interface ResignSettlementCalc {
@@ -53,19 +54,20 @@ export interface ResignSettlementCalc {
   monthWage: { source: 'payrollItem' | 'preview' | 'none'; basePay: number | null }
   // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日，含頭含尾），分母 = 當月曆日數）— 結算寫入 monthWageRatio 用
   monthWageRatio: { value: number; numerator: number; denominator: number } | null
-  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（伺服器側單一來源 — 預填 + 引擎注入同口徑）
-  //   休息日單已隨離職取消 → 實放日數由「受僱曆日 − 工作日」反推（MD §2.1 易錯位 #1）
+  // ★ 2026-09-30 [cwm-restdebt]：⑤ 超額休息日扣款（伺服器側單一來源 — 預填 + 引擎注入同口徑）
+  //   改用休息日帳（REST_DAY LeaveBalance）截至最後工作日嘅透支 —— 之前月份預支得追、
+  //   無薪假／生日假／空白日唔會雙重扣、同次序無關（RS-01/02/03/04）。
   excessRest: {
-    actualRestDays: number        // 實放休息日（反推）
-    entitledRestDays: number      // 按比例應得 = 當月 RESTDAY_GRANT × 受僱曆日 ÷ 當月曆日
-    excessDays: number            // max(0, 實放 − 應得)
-    monthlyRestGrantDays: number  // 當月 RESTDAY_GRANT 日數（TimeBankEntry minutes/1440）
-    employedDays: number          // 受僱曆日（含頭含尾；入職日晚於月初 → 由入職日計）
-    monthDays: number             // 當月曆日
-    workedDays: number            // 受僱期內 Shift 唯一日期（≠ CANCELLED）
-    paidLeaveDays: number         // 已批年假／病假（唔算休息日）
-    publicHolidayDays: number     // 公眾假期（唔算休息日）
-    amount: number                // 預填扣款 = excessDays × 月薪 ÷ 當月曆日（曆日口徑）
+    entitledRestDays: number      // 截至最後工作日應得（已扣當月未做完部分）
+    usedRestDays: number          // 截至最後工作日已用（休息日 + 換鐘）
+    unearnedThisMonth: number     // 當月發放 × 未受僱曆日 ÷ 當月曆日
+    excessDays: number
+    monthlyRestGrantDays: number
+    employedDays: number
+    monthDays: number
+    hasBalanceRow: boolean        // 冇 REST_DAY 帳 → false（UI 提示）
+    prevYearRemaining: number | null  // 上年帳仍為負 → 顯示警告（RS-14）
+    amount: number
   } | null
   /** ⑤ 預填扣款值（excessRest.amount；null → 0）— 拍板① */
   excessRestDeduction: number
@@ -269,56 +271,37 @@ export async function computeResignSettlement(
   const monthWage = await resolveMonthWage(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
   const ratioDirect = await resolveMonthWageDirect(prisma, empId, periodMonth, clinicId ?? null, opts?.resignedAtOverride)
 
-  // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（伺服器側計算 — 結算卡預填 + 月底計糧注入同一來源）
-  //   受僱期 = max(入職日, 最後工作日當月 1 日) → 最後工作日（含頭含尾曆日）
-  //   ⚠️ monthlyRestGrantDays 由當月 TimeBankEntry(RESTDAY_GRANT) minutes/1440 —— 唔好用 rest_days config 推算（MD §2.1 #3）
+  // ★ 2026-09-30 [cwm-restdebt]：超額休息日 = 休息日帳截至最後工作日嘅透支（見 settlement-utils calcRestDayDebt）
+  //   時薪唔發休息日（grant-restdays:52）→ 唔計
   let excessRest: ResignSettlementCalc['excessRest'] = null
   let excessRestDeduction = 0
-  if (emp.joinDate) {
+  const isHourly = emp.payRules[0]?.payType === 'HOURLY'
+  if (emp.joinDate && !isHourly) {
     const { start: mStart, end: mEnd } = getMonthRange(hkDateStart(lastDay))
-    const periodStart = (emp.joinDate > mStart ? new Date(emp.joinDate) : new Date(mStart))
+    const periodStart = emp.joinDate > mStart ? new Date(emp.joinDate) : new Date(mStart)
     const periodEnd = hkDateStart(lastDay)
-    // ★ 受僱期「日末」口徑：shift 存喺 09:00、PH 表存喺 16:00（HK 視角）— lte 午夜會漏走最後一日
-    const periodEndIncl = new Date(periodEnd.getTime() + 86399999)
     const employedDays = countHKDaysInclusive(periodStart, periodEnd)
     const monthDays = hkDaysInMonth(periodEnd)
-    const shifts = await prisma.shift.findMany({
-      where: { employeeId: empId, status: { not: 'CANCELLED' }, date: { gte: periodStart, lte: periodEndIncl } },
-      select: { date: true },
-    })
-    const workedDays = new Set(shifts.map(s => toHKDateStr(s.date))).size
-    // 已批年假／病假（覆蓋受僱期嘅曆日）—— 嗰啲唔算休息日（MD §2.1 #2）
-    const [annualType, sickType] = await Promise.all([
-      prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.ANNUAL } }),
-      prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.SICK } }),
-    ])
-    const paidTypes = [annualType?.id, sickType?.id].filter((x): x is string => Boolean(x))
-    let paidLeaveDays = 0
-    if (paidTypes.length > 0) {
-      const lrs = await prisma.leaveRequest.findMany({
-        where: { employeeId: empId, status: 'APPROVED', leaveTypeId: { in: paidTypes } },
-        select: { startDate: true, endDate: true },
-      })
-      for (const r of lrs) {
-        const s = r.startDate > periodStart ? new Date(r.startDate) : new Date(periodStart)
-        const e = r.endDate < periodEnd ? new Date(r.endDate) : new Date(periodEnd)
-        if (s <= e) paidLeaveDays += countHKDaysInclusive(s, e)
-      }
-    }
-    // 公眾假期（同 engine getPublicHolidayDays 同口徑：instant range 查詢，日末口徑）
-    const phs = await prisma.hKPublicHoliday.findMany({ where: { date: { gte: periodStart, lte: periodEndIncl } } })
-    // 當月 RESTDAY_GRANT 發放日數（TimeBankEntry minutes/1440；1 日 = 1440 分）
-    const grants = await prisma.timeBankEntry.findMany({
-      where: { employeeId: empId, type: 'RESTDAY_GRANT', date: { gte: mStart, lte: mEnd } },
-      select: { minutes: true },
-    })
-    const monthlyRestGrantDays = Math.round((grants.reduce((s, g) => s + g.minutes, 0) / 1440) * 100) / 100
-    excessRest = {
-      ...calcExcessRestDayDeduction({
-        employedDays, monthDays, workedDays, paidLeaveDays,
-        publicHolidayDays: phs.length, monthlyRestGrantDays, monthlySalary,
+    const [balMap, grants, prevBalMap] = await Promise.all([
+      restDayBalanceAsOf(prisma, [empId], lastDay),
+      prisma.timeBankEntry.findMany({
+        where: { employeeId: empId, type: 'RESTDAY_GRANT', date: { gte: mStart, lte: mEnd } },
+        select: { minutes: true },
       }),
-      monthlyRestGrantDays, employedDays, monthDays, workedDays, paidLeaveDays, publicHolidayDays: phs.length,
+      restDayBalanceAsOf(prisma, [empId], `${Number(lastDay.slice(0, 4)) - 1}-12-31`),
+    ])
+    const bal = balMap.get(empId) ?? null
+    const monthlyRestGrantDays = Math.round((grants.reduce((s, g) => s + g.minutes, 0) / 1440) * 100) / 100
+    const d = calcRestDayDebt({
+      entitledAsOf: bal?.entitled ?? 0,
+      usedAsOf: bal?.used ?? 0,
+      monthlyRestGrantDays, employedDays, monthDays, monthlySalary,
+    })
+    const prev = prevBalMap.get(empId)
+    excessRest = {
+      ...d, monthlyRestGrantDays, employedDays, monthDays,
+      hasBalanceRow: bal != null,
+      prevYearRemaining: prev && prev.remaining < 0 ? prev.remaining : null,
     }
     excessRestDeduction = excessRest.amount
   }
