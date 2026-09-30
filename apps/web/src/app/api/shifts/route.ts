@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd, toHKDateStr, getMonthRange, todayHK } from '@/lib/hk-date'
-import { buildShiftFromInput, buildShiftTimes, hkTimeOf } from '@/lib/shift-write'
+import { buildShiftFromInput, buildShiftTimes, hkTimeOf, isValidDateStr, SHIFT_STATUS_WRITABLE, shiftTimesError } from '@/lib/shift-write'
 import { runWithAudit } from '@/lib/audit-context'
 import { writeAuditLog } from '@/lib/prisma'
 import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
@@ -168,6 +168,15 @@ export async function POST(req: NextRequest) {
         )
       }
 
+      // ★ 2026-09-30 S-06：日期/status/批量上限 驗證
+      if (!isValidDateStr(date)) return NextResponse.json({ error: `日期錯誤：${date}` }, { status: 400 })
+      if (!SHIFT_STATUS_WRITABLE.includes(status)) return NextResponse.json({ error: `status 只可以係 ${SHIFT_STATUS_WRITABLE.join('/')}` }, { status: 400 })
+      if (Array.isArray(bulkDates)) {
+        if (bulkDates.length > 62) return NextResponse.json({ error: '批量排更一次最多 62 日' }, { status: 400 })
+        const bad = bulkDates.find((d: unknown) => !isValidDateStr(d))
+        if (bad !== undefined) return NextResponse.json({ error: `日期錯誤：${bad}` }, { status: 400 })
+      }
+
       // Validate clinic access + employee belongs to clinic (OWNER can bypass)
       if (scope !== 'all') {
         // ★ 用 resolveClinicScope 取代 assertClinicAccess ——
@@ -218,6 +227,9 @@ export async function POST(req: NextRequest) {
         const planned: Array<{ d: string; times: ReturnType<typeof buildShiftTimes> }> = []
         for (const d of bulkDates) {
           const times = buildShiftTimes(d, hkTimeOf(origStart), hkTimeOf(origEnd))
+          // ★ 2026-09-30 S-06：時長合理性
+          const te = shiftTimesError(times)
+          if (te) return NextResponse.json({ error: te }, { status: 400 })
 
           const overlap = await checkShiftOverlap(employeeId, times.date, times.startTime, times.endTime)
           if (overlap) {
@@ -297,6 +309,9 @@ export async function POST(req: NextRequest) {
       } else {
         // Parse date as HK midnight to avoid UTC midnight issue
         const times = buildShiftFromInput(date, startTime, endTime)
+        // ★ 2026-09-30 S-06：時長合理性（end ≤ start 會當跨夜 +1 日 → 16h 上限擋）
+        const te = shiftTimesError(times)
+        if (te) return NextResponse.json({ error: te }, { status: 400 })
 
         // ★ Separate gates: replace shifts only skips overlap check; replace leaves only skips leave conflict
         if (!replaceShiftIds?.length) {

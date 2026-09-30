@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
-import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
+import { rebuildShiftDate, buildShiftFromInput, isValidDateStr, shiftTimesError } from '@/lib/shift-write'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
@@ -71,6 +71,14 @@ export async function PUT(
     const beforeJson = JSON.stringify(existing)
     const updateData: any = {}
 
+    // ★ 2026-09-30 S-06：日期/status 驗證（PUT 要准晒四個：編輯 modal 可以揀「已完成／已取消」）
+    if (body.date !== undefined && !isValidDateStr(body.date)) {
+      return NextResponse.json({ error: `日期錯誤：${body.date}` }, { status: 400 })
+    }
+    if (body.status !== undefined && !['DRAFT', 'CONFIRMED', 'COMPLETED', 'CANCELLED'].includes(body.status)) {
+      return NextResponse.json({ error: 'status 只可以係 DRAFT/CONFIRMED/COMPLETED/CANCELLED' }, { status: 400 })
+    }
+
     if (body.employeeId !== undefined) updateData.employeeId = body.employeeId
     if (body.clinicId !== undefined) updateData.clinicId = body.clinicId
 
@@ -96,6 +104,12 @@ export async function PUT(
     if (body.status !== undefined) updateData.status = body.status
     if (body.templateId !== undefined) updateData.templateId = body.templateId
     if (body.secondaryClinicId !== undefined) updateData.secondaryClinicId = body.secondaryClinicId || null
+
+    // ★ 2026-09-30 S-06：時長合理性（updateData.startTime 有值 = 時分被改過）
+    if (updateData.startTime !== undefined) {
+      const te = shiftTimesError(updateData)
+      if (te) return NextResponse.json({ error: te }, { status: 400 })
+    }
 
     // ★ D1: check collision before writing
     const targetStart = updateData.startTime ?? existing.startTime
