@@ -98,6 +98,17 @@ export async function POST(
       { status: 400 },
     )
   }
+  // ★ 2026-09-30 [cwm-restdebt] RS-15：總扣款（時間帳戶 + 超額休息日）唔得超過該工資期工資 1/2——
+  //   界面寫「扣除總額唔得超過 1/2」但舊版伺服器只驗 1/4（tb）→ 前端繞得過就係非法扣薪。
+  //   OPEN-FLAG：超額休息日歸類 s.32(2)(a) 缺勤扣除（唔受 1/4）；1/2 總限制係咪連佢一齊計要老細最終確認，
+  //   現行採嚴解（總和 > 1/2 → 400）；如老細拍板 ⑤ 唔受 1/2 限制，改返只驗 tbDeduction ≤ halfCap。
+  const totalDeduction = (tbDeductionVal ?? 0) + (excessDeductionVal ?? calc.excessRestDeduction)
+  if (totalDeduction > calc.halfCap) {
+    return NextResponse.json(
+      { error: `總扣款 $${totalDeduction.toFixed(2)} 超過該工資期工資 1/2（$${calc.halfCap.toFixed(2)}）` },
+      { status: 400 },
+    )
+  }
 
   // ★ 2026-09-30 [cwm-restdebt] RS-08：該月計糧已確認／已匯出 → 結算唔會入糧單，唔准靜靜寫入
   //   （重結算改咗 lastDay → periodMonth 變時，舊月份如果已鎖都要擋）

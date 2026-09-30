@@ -280,9 +280,6 @@ export const CONFIG = {
     // Leave balance refresh
     'POST /api/leave-balance/refresh': ['OWNER', 'MANAGER'],
 
-    // Leave settlement (resignation)
-    'POST /api/leave-settlement': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
-
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'POST /api/consultation-revenue': ['OWNER'],
@@ -462,7 +459,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'PUT /api/clinics/:id/shift-rule-config': ['scheduling'],
 
   // —— 離職結算：有 leave_approve 或 payroll_generate 權限可以觸發 ——
-  'POST /api/leave-settlement': ['leave_approve', 'payroll_generate'],
+  // ★ 2026-09-30 [cwm-restdebt] RS-16：舊 /api/leave-settlement 已刪（另一套口徑：前端傳月薪、日薪=月薪×12÷365、唔讀 LeaveBalance；前端冇用）
   'POST /api/employees/:id/resign-settle': ['payroll_generate'],
 
   // —— 發放休息日：有 scheduling 權限就可以發放（grant-restdays route 改用 scheduling 權限） ——

@@ -3563,7 +3563,11 @@ async function calculateSimpleHourlyPay(
   // ★ 老細拍板（2026-09-29，MD §5 Q1）：時薪無 MPF（另處理）— 明寫 0，唔係「唔寫」；
   //   結算金額全部唔計入 MPF 基數（includedInMpf = false）
   const mpf = 0
-  const netPay = Math.max(0, Math.round((grossPay - mpf - rsTbDed) * 100) / 100)
+  // ★ 2026-09-30 [cwm-restdebt] RS-15：扣款大過應付時 netPay 唔准靜靜變 0 —— warn + netClamped 標記俾對數用
+  const netPayRawH = Math.round((grossPay - mpf - rsTbDed) * 100) / 100
+  const netClampedH = netPayRawH < 0
+  if (netClampedH) console.warn(`[payroll-engine] ⚠️ RS-15 HOURLY netPay clamped to 0（扣款大過應付）：emp=${employeeId} month=${monthDate} gross=${grossPay} mpf=${mpf} rsTbDed=${rsTbDed} raw=${netPayRawH}`)
+  const netPay = Math.max(0, netPayRawH)
 
   const totalPayable = Math.max(0, Math.round((netPay + miscTotal) * 100) / 100)
 
@@ -3590,6 +3594,7 @@ async function calculateSimpleHourlyPay(
       mpfEmployer: 0, // ★ 老細拍板：時薪無 MPF（另處理）
       mpfRate: 0,
       netPay: Math.round(netPay * 100) / 100,
+      netClamped: netClampedH, // ★ 2026-09-30 [cwm-restdebt] RS-15：netPay 被 clamp 到 0 嘅標記（對數用）
       salary: {
         basePay: totalPay,
         grossPay: Math.round(grossPay * 100) / 100,
@@ -4002,7 +4007,11 @@ export async function calculatePayrollWithRules(
   const mpfBase = MPF_INCLUDE_SETTLEMENT ? grossPay : grossPay - rsGrossAdd
   const mpf = calcMPF(mpfBase, mpfConfig, mpfCtx)
   // ★ cwm-resigv3：tbDeduction 落 MPF 後 net 扣除（EO s.32 上限已喺 resign-settle route 驗過）
-  const netPay = Math.max(0, grossPay - mpf - rsTbDed)
+  // ★ 2026-09-30 [cwm-restdebt] RS-15：扣款大過應付時 netPay 唔准靜靜變 0 —— warn + netClamped 標記俾對數用
+  const netPayRawM = grossPay - mpf - rsTbDed
+  const netClampedM = netPayRawM < 0
+  if (netClampedM) console.warn(`[payroll-engine] ⚠️ RS-15 MONTHLY netPay clamped to 0（扣款大過應付）：emp=${employeeId} month=${monthDate} gross=${grossPay} mpf=${mpf} rsTbDed=${rsTbDed} raw=${netPayRawM}`)
+  const netPay = Math.max(0, netPayRawM)
   // ★ 2026-09-01 (cwm-mpf-20260902, MD #11)：MPF disabled 時 mpfRate 顯示 0 ——
   //   config.mpf 可以係 {enabled:false, rate:0.05}（UI 取消勾選喺度寫 rate），
   //   直接 .rate ?? 0.05 會令「唔扣但顯示 5%」，主管對數會以為系統壞。
@@ -4021,6 +4030,7 @@ export async function calculatePayrollWithRules(
     mpfEmployer: calcMpfEmployer(mpfBase, mpfConfig, mpfCtx),
     mpfRate: mpfRate,
     netPay: Math.round(netPay * 100) / 100,
+    netClamped: netClampedM, // ★ 2026-09-30 [cwm-restdebt] RS-15：netPay 被 clamp 到 0 嘅標記（對數用）
     sickDeduction: sickDeduction.amount,
     sickEpisodes: sickDeduction.episodes,
     miscAmount: miscTotal,
