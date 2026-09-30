@@ -72,6 +72,8 @@ export interface ResignSettlementCalc {
   } | null
   /** ⑤ 預填扣款值（excessRest.amount；null → 0）— 拍板① */
   excessRestDeduction: number
+  // ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支年假／生日假（餘額 < 0）— 只顯示唔扣（EO s.32 可扣項要老細拍板）
+  advanceLeave: { annual: number; birthday: number }
   // EO s.32 上限基底（★ v3：prorate 後當月工資 + 年假薪酬，唔再用全月薪）
   finalPeriodWage: number
   quarterCap: number
@@ -234,6 +236,8 @@ export async function computeResignSettlement(
   let leave: ResignSettlementCalc['leave'] = null
   let unusedDays = 0
   let leavePayout = 0
+  // ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支年假／生日假 — 只顯示唔扣（EO s.32 可扣項要老細拍板）
+  const advanceLeave: { annual: number; birthday: number } = { annual: 0, birthday: 0 }
   if (emp.joinDate) {
     const annualType = await prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.ANNUAL } })
     const bal = annualType
@@ -263,6 +267,19 @@ export async function computeResignSettlement(
       used: s.used,
       unused: s.unused,
       payout: leavePayout,
+    }
+    // ★ 2026-09-30 [cwm-restdebt] F8（RS-13）：預支 = 餘額 < 0 嘅絕對值。
+    //   年假用累積行（year 0）；生日假用最後工作日曆年行（NEGATIVE_ALLOWED_KEYS 准預支）。
+    //   只顯示唔入任何金額 —— 追唔追涉及 EO s.32 可扣項目，由老闆決定（人手加時間帳戶扣除／同員工協議）。
+    const annualRem = bal ? bal.entitled - bal.used : 0
+    if (annualRem < 0) advanceLeave.annual = Math.round(-annualRem * 100) / 100
+    const birthdayType = await prisma.leaveType.findUnique({ where: { systemKey: LEAVE_SYSTEM_KEYS.BIRTHDAY } })
+    if (birthdayType) {
+      const bBal = await prisma.leaveBalance.findUnique({
+        where: { employeeId_leaveTypeId_year: { employeeId: empId, leaveTypeId: birthdayType.id, year: Number(lastDay.slice(0, 4)) } },
+      })
+      const bRem = bBal ? bBal.entitled - bBal.used : 0
+      if (bRem < 0) advanceLeave.birthday = Math.round(-bRem * 100) / 100
     }
   }
 
@@ -381,6 +398,7 @@ export async function computeResignSettlement(
     // ★ cwm-excessrest：⑤ 超額休息日扣款（預填 = 計算值；拍板①）
     excessRest,
     excessRestDeduction,
+    advanceLeave,
     finalPeriodWage,
     quarterCap,
     halfCap,
