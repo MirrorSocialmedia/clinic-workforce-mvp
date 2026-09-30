@@ -15,6 +15,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
+  // ownership-ok: OWNER-only（老闆跨公司，同 resign-settle 一致）；員工範圍寫入喺 applyResignCutoff（按 employeeId）
   if (auth.session.role !== 'OWNER') // ROLE-OK
     return NextResponse.json({ error: '僅老闆可辦理離職' }, { status: 403 })
 

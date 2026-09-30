@@ -92,7 +92,7 @@ export async function PUT(
     // ★ 2026-09-30 [cwm-restdebt] RS-11：公司範圍 —— 非 OWNER 只可以改自己公司嘅員工
     //   （同計糧 homeOnly 口徑：getOwnCompanyClinicIds；fail-closed [] → 403；
     //   舊版 MANAGER 可以改任何公司嘅 EMPLOYEE 帳號姓名／電話／密碼／狀態 → 帳號接管）
-    if (session.role !== 'OWNER') {
+    if (session.role !== 'OWNER') { // ROLE-OK: 公司邊界 —— OWNER 跨公司（resolveClinicScope 同一口徑），其餘限自己公司
       const myClinics = await getOwnCompanyClinicIds(session.userId)
       if (!employee.homeClinicId || !myClinics.includes(employee.homeClinicId)) { // ROLE-OK: 公司邊界
         return NextResponse.json({ error: '只可以修改自己公司嘅員工' }, { status: 403 })
