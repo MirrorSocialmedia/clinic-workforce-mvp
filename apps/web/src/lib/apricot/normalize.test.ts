@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeMethod, apricotMethod } from './normalize'
+import { normalizeMethod, apricotMethod, ruleKeyForRaw } from './normalize'
 
 describe('normalizeMethod', () => {
   it('原有英文名照舊', () => {
@@ -45,5 +45,21 @@ describe('apricotMethod（code → des fallback）', () => {
   it('兩樣都認唔到 → UNKNOWN，methodRaw 用 des 方便人睇', () => {
     assert.deepEqual(apricotMethod({ code: '002', des: '信用卡' }), { methodRaw: '信用卡', methodNorm: 'UNKNOWN' })
     assert.deepEqual(apricotMethod({ code: '002', des: '' }), { methodRaw: '002', methodNorm: 'UNKNOWN' })
+  })
+})
+
+describe('cheque + 規則同名 fallback（2026-10-01）', () => {
+  it('cheque／CHEQUE／支票 → CHEQUE', () => {
+    assert.equal(normalizeMethod('cheque'), 'CHEQUE')
+    assert.equal(normalizeMethod('CHEQUE'), 'CHEQUE')
+    assert.equal(normalizeMethod('支票'), 'CHEQUE')
+    assert.deepEqual(apricotMethod({ code: '001', des: 'cheque' }), { methodRaw: 'cheque', methodNorm: 'CHEQUE' })
+  })
+  it('ruleKeyForRaw：對照表冇但規則頁有同名（唔理大細楷／空白）→ 用規則 key；冇 → null', () => {
+    const rules = [{ method: 'CHEQUE' }, { method: 'cheque' }, { method: 'Bank Transfer' }]
+    assert.equal(ruleKeyForRaw('cheque', rules), 'CHEQUE')       // 同名兩條 → 字母序第一個
+    assert.equal(ruleKeyForRaw(' bank  transfer ', rules), 'Bank Transfer')
+    assert.equal(ruleKeyForRaw('信用卡', rules), null)
+    assert.equal(ruleKeyForRaw('', rules), null)
   })
 })

@@ -13,6 +13,7 @@ const METHOD_MAP: Record<string, string> = {
   'PAYME': 'PAYME',
   'CCF': 'CCF',
   'FREE SP': 'FREE_SP',
+  'CHEQUE': 'CHEQUE', // ★ 2026-10-01：青衣有 cheque（之前唔喺表 → 永遠 UNKNOWN，規則配唔到）
 }
 
 /**
@@ -30,6 +31,7 @@ const ALIAS_MAP: Record<string, string> = {
   'UNIONPAY': 'UNIONPAY', '銀聯': 'UNIONPAY', '银联': 'UNIONPAY', '銀聯卡': 'UNIONPAY',
   '八達通': 'OCTOPUS', '八达通': 'OCTOPUS',
   'WECHAT': 'WECHAT', 'WECHATPAY': 'WECHAT', '微信': 'WECHAT', '微信支付': 'WECHAT', '微信支付HK': 'WECHAT',
+  '支票': 'CHEQUE', 'CHECK': 'CHEQUE',
 }
 
 export function normalizeMethod(raw: string): string {
@@ -56,4 +58,17 @@ export function apricotMethod(
     if (norm !== 'UNKNOWN') return { methodRaw: v, methodNorm: norm }
   }
   return { methodRaw: des || code, methodNorm: 'UNKNOWN' }
+}
+
+/**
+ * ★ 2026-10-01：對照表認唔到嘅方式 → 睇吓「付款方式規則」有冇同名（唔理大細楷／空白）嘅規則；
+ * 有 = 用該規則嘅 method 做 key（老闆喺規則頁加咗就即刻生效，唔使等改 code）；冇 = null（照舊 UNKNOWN）。
+ * 同名多條（例如 cheque／CHEQUE）→ 揀字母序第一個（決定性）。
+ */
+export function ruleKeyForRaw(raw: string | null | undefined, rules: Array<{ method: string }>): string | null {
+  const k = (s: string) => s.trim().toUpperCase().replace(/\s+/g, ' ')
+  const key = raw ? k(raw) : ''
+  if (!key) return null
+  const hits = [...new Set(rules.map(r => r.method).filter(m => k(m) === key))].sort()
+  return hits[0] ?? null
 }

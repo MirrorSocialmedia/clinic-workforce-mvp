@@ -1,7 +1,7 @@
 import { Prisma, PaymentMethodRule } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { toHKDateStr } from '@/lib/hk-date'
-import { normalizeMethod } from './normalize'
+import { normalizeMethod, ruleKeyForRaw } from './normalize'
 
 interface PaymentAllocationRow {
   paymentExtId: string
@@ -109,6 +109,10 @@ export async function allocatePayment(
   allRefs: Array<{ billExtId: string }>, // ★ C3: 無 default，逼 caller 傳
   allRules: PaymentMethodRule[],
 ): Promise<PaymentAllocationRow[]> {
+  // ★ 2026-10-01：對照表認唔到（UNKNOWN）但規則頁有同名規則 → 用規則 key（例如 cheque）
+  methods = methods.map(m => m.methodNorm === 'UNKNOWN'
+    ? { ...m, methodNorm: ruleKeyForRaw(m.methodRaw, allRules) ?? 'UNKNOWN' }
+    : m)
   const allocations: PaymentAllocationRow[] = []
   const paidAt = new Date(payment.paymentTime)
   const periodMonth = toHKDateStr(payment.paymentTime).slice(0, 7)
@@ -163,7 +167,8 @@ export async function allocatePayment(
         // Group recon by method description
         const reconByMethod = new Map<string, number>()
         for (const rd of reconDetails) {
-          const norm = normalizeMethod(rd.des)
+          const n0 = normalizeMethod(rd.des)
+          const norm = n0 === 'UNKNOWN' ? (ruleKeyForRaw(rd.des, allRules) ?? 'UNKNOWN') : n0
           reconByMethod.set(norm, (reconByMethod.get(norm) ?? 0) + rd.amt)
         }
 
