@@ -63,7 +63,7 @@ export function sanitizeBill(raw: any): any {
 }
 
 // ★ MD-F: Clean patient list (PII whitelist: extId, code, fullName only)
-export type CleanPatient = { extId: string; code: string; fullName: string }
+export type CleanPatient = { extId: string; code: string; fullName: string; account?: string } // ★ cwm-apricotty：account = Apricot 帳號（非 PII）
 
 // ★ 只准三個欄。clinic-patients response 有 medicalHistory / personalIdentifier /
 // address / phoneNum / dateOfBirth / gender / bloodType —— 全部唔准出。

@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { APRICOT_ACCOUNT_RE } from '@/lib/apricot/account'
 import { runClinicalIndexBackfill } from '@/lib/clinical-index/backfill'
 import { runExclusive } from '@/lib/clinical-index/job-lock'
 import { getTestCallFn } from '../clinical-index/test-call-fn'
@@ -40,8 +41,14 @@ export async function POST(req: NextRequest) {
   const now = nowHeader ? new Date(nowHeader) : new Date()
   // ★ cwi-qa FX-30：?restart=1 先開新一輪（喺 cron key 守門之後先讀 — 無 key 觸發唔到）
   const restart = req.nextUrl.searchParams.get('restart') === '1'
+  // ★ cwm-apricotty-20261001：?account=TY → 青衣帳號（各自 job／cursor）；唔傳 = MAIN
+  const accountRaw = req.nextUrl.searchParams.get('account')
+  if (accountRaw != null && !APRICOT_ACCOUNT_RE.test(accountRaw.toUpperCase())) {
+    return NextResponse.json({ error: 'account 格式錯（例如 TY）' }, { status: 400 })
+  }
+  const account = accountRaw ?? undefined
   const r = await runExclusive('BACKFILL', () =>
-    runClinicalIndexBackfill(hook ? { callFn: hook, now, restart } : { now, restart }),
+    runClinicalIndexBackfill(hook ? { callFn: hook, now, restart, account } : { now, restart, account }),
   )
   if (r.running) {
     return NextResponse.json({ error: 'ALREADY_RUNNING' }, { status: 409 })

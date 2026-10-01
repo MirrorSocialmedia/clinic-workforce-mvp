@@ -15,6 +15,7 @@ import {
   requireWriteEnabled,
   requireNewPatientEnabled,
   resolveClinic,
+  assertSameApricotAccount,
   parsePatient,
   parseSlotFields,
 } from '../../guards'
@@ -105,6 +106,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const patient = parsePatient(body.patient)
     requireNewPatientEnabled(patient)
     const clinic = await resolveClinic(clinicCode)
+    // ★ cwm-apricotty-20261001：跨帳號防呆（同 create）
+    await assertSameApricotAccount(clinic, patient, visitReasonId)
 
     try {
       const result = await rescheduleBooking({

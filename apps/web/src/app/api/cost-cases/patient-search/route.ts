@@ -3,6 +3,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { withApricotLockRetry, searchPatients } from '@/lib/apricot/client'
 import { toCleanPatients, assertNoPiiPatient, type CleanPatient } from '@/lib/apricot/sanitize'
+import { listApricotAccounts, withApricotAccount } from '@/lib/apricot/account'
 
 // ============================================================
 // GET /api/cost-cases/patient-search — Search Apricot patients
@@ -22,10 +23,24 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const raw = await withApricotLockRetry(() => searchPatients(keyword))
-    const patients: CleanPatient[] = toCleanPatients(raw)
-    assertNoPiiPatient(patients)
-    return jsonNoStore({ patients })
+    // ★ cwm-apricotty-20261001：逐個 Apricot 帳號搵（青衣病人喺另一個帳號）—— 每個病人標 account，
+    //   之後 bill-search 帶返同一個帳號。一個帳號失敗（例如青衣 token 未寫）唔阻其他帳號；全部失敗先報錯。
+    const accounts = await listApricotAccounts()
+    const patients: CleanPatient[] = []
+    const errors: unknown[] = []
+    for (const account of accounts) {
+      try {
+        const raw = await withApricotAccount(account, () => withApricotLockRetry(() => searchPatients(keyword)))
+        for (const p of toCleanPatients(raw)) patients.push({ ...p, account })
+      } catch (e) {
+        errors.push(e)
+        console.warn(`[patient-search] 帳號 ${account} 搜尋失敗`, (e as any)?.message)
+      }
+    }
+    if (errors.length === accounts.length) throw errors[0]
+    const top = patients.slice(0, 20)
+    assertNoPiiPatient(top)
+    return jsonNoStore({ patients: top })
   } catch (e: any) {
     const msg = e.message || ''
     if (msg === 'APRICOT_BUSY') {

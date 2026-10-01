@@ -154,6 +154,12 @@ model Clinic {
   longitude Float?   // 店舖經度
   geoRadius Int?     // 允許半徑(米),null = 用全局預設 200
   apricotClinicId String? @unique // ★ Apricot 嘅 clinicId
+  /// ★ cwm-apricotty-20261001：呢間店屬邊個 Apricot 帳號（登入 cookie）— MAIN = 原有帳號；青衣 = TY。
+  ///   token 存 ExternalCredential（MAIN → provider 'APRICOT'；其他 → 'APRICOT:<帳號>'）。
+  apricotAccount  String  @default("MAIN")
+  /// ★ cwm-apricotty-20261001：醫生月結由邊個月開始用系統計（'YYYY-MM'；null = 冇限制）。
+  ///   新接 Apricot 嘅店（青衣）之前月份人手處理過 — 防重複計。
+  apricotPayoutFrom String?
   config    String?  // JSON string for SQLite compat
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1658,8 +1664,11 @@ model ApricotDictionary {
   des       String
   isRemoved Boolean  @default(false)
   syncedAt  DateTime
+  /// ★ cwm-apricotty-20261001：每個帳號有自己一套就診原因／預約類型（id 唔同）
+  apricotAccount String @default("MAIN")
 
   @@index([kind, isRemoved])
+  @@index([apricotAccount, kind, isRemoved])
 }
 
 /// Apricot 寫入底帳（冪等 + 審計）。
@@ -1731,6 +1740,8 @@ model PatientIndex {
   patientName      String
   phoneHash        String
   lastSeenAt       DateTime
+  /// ★ cwm-apricotty-20261001：病人屬邊個 Apricot 帳號（visits／note／balance／refresh 按呢個揀 token）
+  apricotAccount   String   @default("MAIN")
   @@index([phoneHash])
 }
 
@@ -1769,6 +1780,7 @@ model ClinicalRecordIndex {
 model ClinicalIndexJob {                        // 回填／夜跑進度
   id         String   @id @default(cuid())
   kind       String                             // NIGHTLY | BACKFILL
+  account    String   @default("MAIN")          // ★ cwm-apricotty-20261001：逐 Apricot 帳號各自 cursor
   rangeFrom  DateTime @db.Date
   rangeTo    DateTime @db.Date
   cursorDate DateTime? @db.Date

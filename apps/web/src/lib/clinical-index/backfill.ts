@@ -17,6 +17,7 @@
 // ============================================================
 
 import { basePrisma } from '@/lib/prisma'
+import { withApricotAccount, normalizeApricotAccount } from '@/lib/apricot/account'
 import { toHKDateStr, addDaysStr } from '@/lib/hk-date'
 import { llmStats, resetLlmStats } from '@/lib/clinical/llm-client'
 import {
@@ -53,7 +54,13 @@ const d = (s: string) => new Date(`${s}T00:00:00Z`)
 /** YYYY-MM-DD 字典序 = 時間序。 */
 const minDateStr = (a: string, b: string) => (a < b ? a : b)
 
-export async function runClinicalIndexBackfill(opts: {
+/** ★ cwm-apricotty-20261001：逐 Apricot 帳號回填（各自 job／cursor；青衣 = TY）。account 唔傳 = MAIN（舊行為）。 */
+export async function runClinicalIndexBackfill(opts: Parameters<typeof runClinicalIndexBackfillImpl>[0] & { account?: string }): Promise<BackfillOutcome> {
+  const account = normalizeApricotAccount(opts.account)
+  return withApricotAccount(account, () => runClinicalIndexBackfillImpl(opts, account))
+}
+
+async function runClinicalIndexBackfillImpl(opts: {
   callFn?: ClinicalCallFn
   now?: Date
   maxCalls?: number
@@ -61,7 +68,7 @@ export async function runClinicalIndexBackfill(opts: {
   daysPerRun?: number
   /** ★ cwi-qa FX-30：已有 DONE job 時要重開新一輪 365 日（route 層 cron key 守門） */
   restart?: boolean
-}): Promise<BackfillOutcome> {
+}, account: string): Promise<BackfillOutcome> {
   const t0 = Date.now()
   resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
   // ★ cwi-final S2-9b：backfill LLM 限流 — 每次打 LLM 之後 GAP（預設 1500ms）+ 每 job 上限（預設 300，超過停打 — log backfill_cap）
@@ -81,18 +88,18 @@ export async function runClinicalIndexBackfill(opts: {
 
   // Job 行（首次跑 create：rangeFrom = 首次嘅 today-365；之後續跑用既有行）
   let job = await basePrisma.clinicalIndexJob.findFirst({
-    where: { kind: 'BACKFILL', status: { in: ['PENDING', 'RUNNING'] } },
+    where: { kind: 'BACKFILL', account, status: { in: ['PENDING', 'RUNNING'] } },
   })
   if (!job) {
     // ★ cwi-qa FX-30：DONE 唔自動重開 — 舊口徑 cron 每 5 晚又開新一輪 365 日
     // （每晚最多 3 萬次 Apricot call + 300 次 LLM）。只許 ?restart=1 重開。
     const doneJob = await basePrisma.clinicalIndexJob.findFirst({
-      where: { kind: 'BACKFILL', status: 'DONE' },
+      where: { kind: 'BACKFILL', account, status: 'DONE' },
       orderBy: { finishedAt: 'desc' },
       select: { id: true },
     })
     if (doneJob && !opts.restart) {
-      console.log('[clinical-index-backfill] ALREADY_DONE — 既有 DONE job，唔開新一輪（要重開用 ?restart=1）')
+      console.log(`[clinical-index-backfill] ALREADY_DONE（帳號 ${account}）— 既有 DONE job，唔開新一輪（要重開用 ?restart=1）`)
       return {
         status: 'ALREADY_DONE', cursorDate: null, processedDays: 0, patients: 0,
         upserts: 0, apiCalls: 0, errors: 0, lastError: null, durationMs: Date.now() - t0,
@@ -101,6 +108,7 @@ export async function runClinicalIndexBackfill(opts: {
     job = await basePrisma.clinicalIndexJob.create({
       data: {
         kind: 'BACKFILL',
+        account,
         rangeFrom: d(addDaysStr(today, -BACKFILL_RANGE_DAYS)),
         rangeTo: d(rangeTo),
         status: 'RUNNING',

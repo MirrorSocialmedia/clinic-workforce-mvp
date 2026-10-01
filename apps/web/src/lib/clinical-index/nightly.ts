@@ -17,6 +17,7 @@
 // ============================================================
 
 import { basePrisma } from '@/lib/prisma'
+import { withApricotAccount, normalizeApricotAccount } from '@/lib/apricot/account'
 import { toHKDateStr, addDaysStr } from '@/lib/hk-date'
 import { llmStats, resetLlmStats } from '@/lib/clinical/llm-client'
 import {
@@ -69,7 +70,13 @@ function futureDays(appointments: any[], today: string): string[] {
   return [...s].sort()
 }
 
-export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; now?: Date }): Promise<NightlyOutcome> {
+/** ★ cwm-apricotty-20261001：逐 Apricot 帳號夜跑（各自 job；青衣 = TY）。account 唔傳 = MAIN（舊行為）。 */
+export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; now?: Date; account?: string }): Promise<NightlyOutcome> {
+  const account = normalizeApricotAccount(opts.account)
+  return withApricotAccount(account, () => runClinicalIndexNightlyImpl(opts, account))
+}
+
+async function runClinicalIndexNightlyImpl(opts: { callFn?: ClinicalCallFn; now?: Date }, account: string): Promise<NightlyOutcome> {
   const t0 = Date.now()
   resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
   const now = opts.now ?? new Date()
@@ -94,7 +101,7 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
   const STALE_RUNNING_MS = 6 * 3_600_000
   const staleCutoff = new Date(now.getTime() - STALE_RUNNING_MS)
   const abandoned = await basePrisma.clinicalIndexJob.findMany({
-    where: { kind: 'NIGHTLY', status: 'RUNNING', startedAt: { lt: staleCutoff } },
+    where: { kind: 'NIGHTLY', account, status: 'RUNNING', startedAt: { lt: staleCutoff } },
     select: { id: true, rangeFrom: true },
   })
   const scanDates = new Set<string>([yesterday])
@@ -113,7 +120,7 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
   const datesToScan = [...scanDates].sort()
 
   const job = await basePrisma.clinicalIndexJob.create({
-    data: { kind: 'NIGHTLY', rangeFrom: d(datesToScan[0]), rangeTo: d(yesterday), status: 'RUNNING', startedAt: new Date() },
+    data: { kind: 'NIGHTLY', account, rangeFrom: d(datesToScan[0]), rangeTo: d(yesterday), status: 'RUNNING', startedAt: new Date() },
   })
 
   const stop = (reason: string, e: unknown) => {

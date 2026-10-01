@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { APRICOT_ACCOUNT_RE } from '@/lib/apricot/account'
 import { runClinicalIndexNightly } from '@/lib/clinical-index/nightly'
 import { runExclusive } from '@/lib/clinical-index/job-lock'
 import { getTestCallFn } from '../clinical-index/test-call-fn'
@@ -40,8 +41,14 @@ export async function POST(req: NextRequest) {
   const nowHeader = req.headers.get('x-cron-now')
   const now = nowHeader ? new Date(nowHeader) : new Date()
   // ★ cwi-qa FX-30：job 級排他鎖 — 並發（cron + 手動 curl）→ 409 ALREADY_RUNNING
+  // ★ cwm-apricotty-20261001：?account=TY → 青衣帳號；唔傳 = MAIN
+  const accountRaw = req.nextUrl.searchParams.get('account')
+  if (accountRaw != null && !APRICOT_ACCOUNT_RE.test(accountRaw.toUpperCase())) {
+    return NextResponse.json({ error: 'account 格式錯（例如 TY）' }, { status: 400 })
+  }
+  const account = accountRaw ?? undefined
   const r = await runExclusive('NIGHTLY', () =>
-    runClinicalIndexNightly(hook ? { callFn: hook, now } : { now }),
+    runClinicalIndexNightly(hook ? { callFn: hook, now, account } : { now, account }),
   )
   if (r.running) {
     return NextResponse.json({ error: 'ALREADY_RUNNING' }, { status: 409 })

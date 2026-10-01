@@ -82,6 +82,28 @@ curl -sS -H "x-api-key: $EXTERNAL_KEY" http://127.0.0.1:3000/api/external/v1/cli
   - 最穩：部署選 07:00 之後。
 - **唔好同時手動 curl + cron 打同一 endpoint**（FX-30 之後第二個 = 409 安全失敗，但唔好依賴呢個）。
 
+## 4b. 青衣（第二個 Apricot 帳號 TY）— cwm-apricotty-20261001
+
+青衣係另一個 Apricot 帳號（另一套登入 cookie）。店級 sync（時間表／可約時段／預約索引／收款）
+**唔使加 cron** — 現有 cron 已經逐店跑，青衣店會自動用 TY token。只有「按日子掃全帳號」嘅臨床索引要另加：
+
+```cron
+# 青衣臨床索引夜跑（錯開原帳號 03:00）
+15 4 * * * curl -sS -X POST -H "x-cron-key: $APRICOT_CRON_KEY" "http://127.0.0.1:3000/api/internal/clinical-index-nightly?account=TY" >> /var/log/clinical-index-nightly-ty.log 2>&1
+# 青衣 12 個月回填（一次性；回 status:"DONE" 即刻刪呢行）
+45 4 * * * curl -sS -X POST -H "x-cron-key: $APRICOT_CRON_KEY" "http://127.0.0.1:3000/api/internal/clinical-index-backfill?account=TY" >> /var/log/clinical-index-backfill-ty.log 2>&1
+```
+
+- 兩個帳號共用同一把 job 鎖（NIGHTLY=776003 / BACKFILL=776002）同 Apricot 全局鎖（776001）— 時間要錯開，撞到 = `409`。
+- 進度：`/api/external/v1/clinical-index/status` 嘅 `accounts[]`（頂層欄位仍然係原帳號）。
+
+**啟用步驟（一次性）：**
+1. 寫入青衣 token：`node scripts/apricot-set-token.mjs --access '…' --refresh '…' --iat '…' --account TY`
+2. 店舖管理 → 青衣：填 Apricot 診所 ID、帳號 `TY`、月結起計月份（例如 `2026-11`）
+3. 收款同步（青衣店）同其他店一樣跑；月結起計月份之前嘅月份會被 gate 擋住（之前人手處理）
+4. 「未綁帳號」頁：將青衣出現嘅醫生 practitioner 綁返現有醫生（同一個醫生可以有兩個帳號）
+5. 加上面兩行 cron
+
 ## 5. 生產機 crontab 實彈輸出（對照表）
 
 > ✅ **已回填**（老細 2026-09-28 18:2x 貼生產機 `crontab -l` 實彈）。

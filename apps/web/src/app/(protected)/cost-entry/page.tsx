@@ -50,6 +50,7 @@ interface CleanPatient {
   extId: string
   code: string
   fullName: string
+  account?: string // ★ cwm-apricotty-20261001：Apricot 帳號（青衣 = TY）
 }
 
 interface BillItem {
@@ -601,15 +602,16 @@ export default function CostEntryPage() {
   const selectPatient = (patient: CleanPatient) => {
     setSelectedPatient(patient)
     setPickerStep(1)
-    loadBills(patient.extId)
+    loadBills(patient.extId, patient.account)
   }
 
-  const loadBills = async (patientExtId: string) => {
+  const loadBills = async (patientExtId: string, account?: string) => {
     setSearchingBills(true)
     setBills([])
     setApricotBusy(false)
     try {
-      const data: any = await apiFetch(`/api/cost-cases/bill-search?patientExtId=${encodeURIComponent(patientExtId)}&months=12`)
+      // ★ cwm-apricotty-20261001：帶返病人所屬 Apricot 帳號（青衣病人喺另一個帳號）
+      const data: any = await apiFetch(`/api/cost-cases/bill-search?patientExtId=${encodeURIComponent(patientExtId)}&months=12${account ? `&account=${encodeURIComponent(account)}` : ''}`)
       setBills(data.bills || [])
     } catch (e: any) {
       if (e?.status === 503) setApricotBusy(true)

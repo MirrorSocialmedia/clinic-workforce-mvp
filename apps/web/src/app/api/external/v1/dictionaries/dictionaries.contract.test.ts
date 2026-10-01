@@ -45,6 +45,13 @@ const DICT_ROWS: Any[] = [
   { kind: 'VISIT_REASON', apricotId: 'fix00000000000000000008', code: '0008', des: 'SP', isRemoved: false },
   { kind: 'VISIT_REASON', apricotId: 'fix00000000000000000021', code: '0021', des: 'CONSULTATION', isRemoved: false },
   { kind: 'VISIT_REASON', apricotId: 'fix00000000000000000056', code: '0056', des: 'DEBOND', isRemoved: true }, // 已撤 → 要剔走
+  // ★ cwm-apricotty-20261001：青衣（TY）帳號自己一套 —— 唔帶 clinicCode 唔可以出現
+  { kind: 'VISIT_REASON', apricotId: 'ty0000000000000000000001', code: '0001', des: 'TY FILLING', isRemoved: false, apricotAccount: 'TY' },
+]
+// 店：TY 店（青衣）→ 帳號 TY；MF → MAIN
+const CLINICS: Any[] = [
+  { id: 'cl-ty', shortName: 'TY', apricotClinicId: 'a'.repeat(24), apricotAccount: 'TY' },
+  { id: 'cl-mf', shortName: 'MF', apricotClinicId: 'b'.repeat(24), apricotAccount: 'MAIN' },
 ]
 
 const auditCreates: Any[] = []
@@ -57,10 +64,15 @@ const fakes = {
   externalApiAudit: {
     create: async (args: Any) => { auditCreates.push(args.data); return {} },
   },
+  clinic: {
+    findUnique: async ({ where }: Any) => CLINICS.find((c) => c.id === where.id) ?? null,
+    findMany: async ({ where }: Any) => CLINICS.filter((c) => c.shortName === where.shortName).slice(0, 2),
+  },
   apricotDictionary: {
     findMany: async (args: Any) =>
-      DICT_ROWS.filter((r) => r.kind === args.where.kind && (args.where.isRemoved === undefined ? true : r.isRemoved === args.where.isRemoved))
-        .map(({ isRemoved, ...rest }) => rest)
+      DICT_ROWS.filter((r) => r.kind === args.where.kind && (args.where.isRemoved === undefined ? true : r.isRemoved === args.where.isRemoved)
+        && (args.where.apricotAccount === undefined ? true : (r.apricotAccount ?? 'MAIN') === args.where.apricotAccount))
+        .map(({ isRemoved, apricotAccount, ...rest }) => rest)
         .sort((a, b) => a.code.localeCompare(b.code)),
   },
 }
@@ -112,6 +124,23 @@ describe('route 行為', () => {
     const res = await GET(mkReq('kind=VISIT_REASON', KEY_BOOKINGS))
     const body = await res.json()
     assert.ok(!body.items.some((i: Any) => i.apricotId === 'fix00000000000000000056'))
+  })
+
+  // ★ cwm-apricotty-20261001
+  it('唔帶 clinicCode → 只回原帳號（MAIN）字典，response 形狀不變', async () => {
+    const body = await (await GET(mkReq('kind=VISIT_REASON', KEY_BOOKINGS))).json()
+    assert.ok(!body.items.some((i: Any) => i.apricotId.startsWith('ty')))
+    assert.equal('apricotAccount' in body, false)
+  })
+
+  it('clinicCode=TY → 回青衣帳號字典 + apricotAccount；MF → MAIN；搵唔到店 → 404', async () => {
+    const ty = await (await GET(mkReq('kind=VISIT_REASON&clinicCode=TY', KEY_BOOKINGS))).json()
+    assert.equal(ty.apricotAccount, 'TY')
+    assert.deepEqual(ty.items.map((i: Any) => i.apricotId), ['ty0000000000000000000001'])
+    const mf = await (await GET(mkReq('kind=VISIT_REASON&clinicCode=MF', KEY_BOOKINGS))).json()
+    assert.equal(mf.apricotAccount, 'MAIN')
+    assert.deepEqual(mf.items.map((i: Any) => i.code), ['0008', '0012', '0021'])
+    assert.equal((await GET(mkReq('kind=VISIT_REASON&clinicCode=NOPE', KEY_BOOKINGS))).status, 404)
   })
 
   it('400 — kind 錯 / 缺', async () => {

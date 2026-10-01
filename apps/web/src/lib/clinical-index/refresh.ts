@@ -21,6 +21,7 @@
 // ============================================================
 
 import { basePrisma } from '@/lib/prisma'
+import { withApricotAccount, accountForPatient } from '@/lib/apricot/account'
 import { toHKDateStr } from '@/lib/hk-date'
 import { llmStats, resetLlmStats } from '@/lib/clinical/llm-client'
 import {
@@ -111,7 +112,15 @@ export type RefreshResult =
  * 索引行（≤ today 最新）；都冇 → NOT_FOUND（route 回 404）。
  * Apricot 限速/認證/未配置 → throw ApricotUnavailableError（route 回 503）。
  */
+/** ★ cwm-apricotty-20261001：用病人所屬 Apricot 帳號（青衣病人 → TY token） */
 export async function refreshPatientIndex(
+  cpId: string,
+  opts: { callFn?: ClinicalCallFn; now?: Date } = {},
+): Promise<RefreshResult> {
+  return withApricotAccount(await accountForPatient(cpId), () => refreshPatientIndexImpl(cpId, opts))
+}
+
+async function refreshPatientIndexImpl(
   cpId: string,
   opts: { callFn?: ClinicalCallFn; now?: Date } = {},
 ): Promise<RefreshResult> {
