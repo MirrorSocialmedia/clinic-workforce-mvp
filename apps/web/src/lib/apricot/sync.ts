@@ -4,7 +4,7 @@ import { apricotCall } from './client'
 import { withApricotLock } from './lock'
 import { withApricotAccount, accountForApricotClinic } from './account'
 import { sanitizePayment, sanitizeBill, assertNoPii } from './sanitize'
-import { normalizeMethod } from './normalize'
+import { apricotMethod } from './normalize'
 import { allocatePayment, upsertAllocations } from './allocate'
 
 // ─── MD-Q: Job helpers ─────────────────────────────────────────────
@@ -130,8 +130,8 @@ function collectBillIds(allPayments: any[]): string[] {
 
 async function upsertPayment(p: any, clinicExtId: string) {
   const methods = (p.paymentMethods || []).map((m: any) => ({
-    methodRaw: (m.code || m.des || '').trim(),
-    methodNorm: normalizeMethod(m.code || m.des || ''),
+    // ★ cwm-apricotty-20261001：code 認唔到（青衣數字 code）→ 用 des（中文名）
+    ...apricotMethod(m),
     amount: new Prisma.Decimal(String(m.amt ?? 0)),
     payType: m.payType || '',
   }))
@@ -461,8 +461,9 @@ async function syncClinicForJobImpl(
     const p = allPayments[idx]
 
     const methods = (p.paymentMethods || []).map((m: any) => ({
+      // ★ cwm-apricotty-20261001：同 upsertPayment 同一口徑（code → des）
       methodRaw: m.des ?? '',
-      methodNorm: normalizeMethod(m.des ?? ''),
+      methodNorm: apricotMethod(m, 'des').methodNorm,
       amount: m.amt ?? 0,
       payType: m.payType ?? '',
     }))
@@ -609,8 +610,9 @@ async function syncPaymentsImpl(clinicExtId: string, fromISO: string, toISO: str
     let allocRows = 0
     for (const p of allPayments) {
       const methods = (p.paymentMethods || []).map((m: any) => ({
+        // ★ cwm-apricotty-20261001：同 upsertPayment 同一口徑（code → des）
         methodRaw: m.des ?? '',
-        methodNorm: normalizeMethod(m.des ?? ''),
+        methodNorm: apricotMethod(m, 'des').methodNorm,
         amount: m.amt ?? 0,
         payType: m.payType ?? '',
       }))

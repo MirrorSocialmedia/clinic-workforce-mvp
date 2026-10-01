@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // apricot-set-token.mjs — 首次寫入 Apricot token 到 DB
 // 用法: node scripts/apricot-set-token.mjs --access '<token>' --refresh '<token>' --iat '<unix_seconds>' [--account TY]
+// ★ 生產（2026-10-01）：image 係 Next standalone，container 入面冇 scripts/ —— 喺 host 經 stdin 傳入：
+//   docker exec -i clinic-prod-app node --input-type=module - --access '…' --refresh '…' --iat '…' --account TY \
+//     < /home/clinicapp/clinic/scripts/apricot-set-token.mjs
+//   寫入後唔使重啟 app（token 每次 call 都由 DB 讀）
 // ★ cwm-apricotty-20261001：--account 唔傳 = MAIN（原帳號，provider 'APRICOT'）；
 //   青衣：--account TY → provider 'APRICOT:TY'（同 lib/apricot/account.ts credentialProviderKey 一致）
 
