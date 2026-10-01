@@ -36,6 +36,7 @@ export const METHOD_LABELS: Record<string, string> = {
   CCF: 'CCF',
   CREDIT: 'Credit',
   FREE_SP: 'Free SP',
+  CHEQUE: 'Cheque',
 }
 // ★ cwm-payout P-1：舊 run fallback 用 — breakdown 快照冇 countAsIncome 欄時
 //   推 storeIncome（2026-09-14 前嘅寫死口徑：CREDIT/FREE_SP 唔計店舖營收）。
