@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { ExternalApiError } from '@/lib/external-api'
 import { withApricotLock } from './lock'
+import { withApricotAccount, listApricotAccounts, accountForApricotClinic, APRICOT_MAIN } from './account'
 import { apricotCall, withApricotLockRetry } from './client'
 import { toHKDateStr } from '@/lib/hk-date'
 import {
@@ -336,7 +337,12 @@ function extractCreateResult(res: any): { apricotApptId: string | null; patientA
  *   - ERROR:check_clash / ERROR:create_rejected → 安全重試（單從來唔曾 reach Apricot / 確決被拒）
  *   - 其他（ERROR:create / ERROR:log / ...）→ 502 MANUAL_RECONCILE（殘留態人手跟，唔自動重試）
  */
+// ★ cwm-apricotty-20261001：寫入用該店 Apricot 帳號 token（由 apricotClinicId 搵）
 export async function createBooking(input: CreateBookingInput, opts: EngineOpts = {}): Promise<CreateBookingResult> {
+  return withApricotAccount(await accountForApricotClinic(input.apricotClinicId), () => createBookingImpl(input, opts))
+}
+
+async function createBookingImpl(input: CreateBookingInput, opts: EngineOpts = {}): Promise<CreateBookingResult> {
   const call = opts.callFn ?? defaultCall
   const outcome = await withApricotLock(() => createBookingLocked(input, call, opts.skipDaySync ? { skipDaySync: true } : undefined))
   if (outcome === null) {
@@ -555,7 +561,12 @@ export interface StatusMutationOpts extends EngineOpts {
 }
 
 /** PUT updateStatus（白名單 102 / -7）。同一把 lock 內：call → WriteLog → 單日 sync */
+// ★ cwm-apricotty-20261001：寫入用該店 Apricot 帳號 token（由 apricotClinicId 搵）
 export async function updateBookingStatus(apricotApptId: string, status: number, opts: StatusMutationOpts): Promise<{ bookingStatus: number } & MutationResult> {
+  return withApricotAccount(await accountForApricotClinic(opts.apricotClinicId), () => updateBookingStatusImpl(apricotApptId, status, opts))
+}
+
+async function updateBookingStatusImpl(apricotApptId: string, status: number, opts: StatusMutationOpts): Promise<{ bookingStatus: number } & MutationResult> {
   if (!ALLOWED_STATUS_VALUES.includes(status as 102 | -7)) {
     throw new ApricotWriteError('STATUS_NOT_ALLOWED', 'status', `status ${status} not in whitelist (102 / -7)`)
   }
@@ -595,7 +606,12 @@ export async function updateBookingStatus(apricotApptId: string, status: number,
 }
 
 /** PUT remove（§0：method 係 PUT，body ["<id>"]）。同一把 lock 內 */
+// ★ cwm-apricotty-20261001：寫入用該店 Apricot 帳號 token（由 apricotClinicId 搵）
 export async function removeBooking(apricotApptId: string, opts: StatusMutationOpts): Promise<{ removed: true } & MutationResult> {
+  return withApricotAccount(await accountForApricotClinic(opts.apricotClinicId), () => removeBookingImpl(apricotApptId, opts))
+}
+
+async function removeBookingImpl(apricotApptId: string, opts: StatusMutationOpts): Promise<{ removed: true } & MutationResult> {
   const call = opts.callFn ?? defaultCall
   const logKey = opts.idempotencyKey ?? `REMOVE|${apricotApptId}|${Date.now()}`
 
@@ -663,7 +679,12 @@ export interface RescheduleResult {
  *   ② 成功但 ③ 失敗 → ALERT（workforce 現有 alert 機制）+ RESCHEDULE_PARTIAL（wa-inbox StaffNotice）；
  *   **唔自動 rollback**（已知殘留態，人手跟 — 寧願人手都唔好自動亂郁）。
  */
+// ★ cwm-apricotty-20261001：寫入用該店 Apricot 帳號 token（由 apricotClinicId 搵）
 export async function rescheduleBooking(input: RescheduleInput, opts: EngineOpts = {}): Promise<RescheduleResult> {
+  return withApricotAccount(await accountForApricotClinic(input.apricotClinicId), () => rescheduleBookingImpl(input, opts))
+}
+
+async function rescheduleBookingImpl(input: RescheduleInput, opts: EngineOpts = {}): Promise<RescheduleResult> {
   const call = opts.callFn ?? defaultCall
   const key = input.idempotencyKey
 
@@ -803,6 +824,8 @@ export const DICTIONARY_KINDS: DictionaryKind[] = ['VISIT_REASON', 'BOOKING_TYPE
 export interface DictionarySyncResult {
   synced: Partial<Record<DictionaryKind, number>>
   skipped: string[]
+  /** ★ cwm-apricotty-20261001：MAIN 以外帳號（青衣 TY…）嘅結果；頂層 synced/skipped = MAIN（舊口徑） */
+  accounts?: Record<string, { synced: Partial<Record<DictionaryKind, number>>; skipped: string[] }>
 }
 
 /**
@@ -813,7 +836,28 @@ export interface DictionarySyncResult {
  */
 export async function syncDictionaries(opts: { callFn?: WriteCallFn; force?: boolean; now?: Date } = {}): Promise<DictionarySyncResult> {
   const call = opts.callFn ?? defaultCall
+  // ★ cwm-apricotty-20261001：每個帳號一套字典（青衣嘅就診原因／預約類型 id 唔同）
+  const accounts = await listApricotAccounts().catch(() => [APRICOT_MAIN])
   const outcome = await withApricotLock(async () => {
+    const perAccount: Record<string, { synced: Partial<Record<DictionaryKind, number>>; skipped: string[] }> = {}
+    for (const account of accounts) {
+      perAccount[account] = await withApricotAccount(account, () => syncDictionariesForAccount(account, call, opts))
+    }
+    return perAccount
+  })
+  if (outcome === null) return { synced: {}, skipped: ['lock busy'] }
+  const main = outcome[APRICOT_MAIN] ?? { synced: {}, skipped: [] }
+  const others = Object.fromEntries(Object.entries(outcome).filter(([a]) => a !== APRICOT_MAIN))
+  return { ...main, ...(Object.keys(others).length > 0 ? { accounts: others } : {}) }
+}
+
+/** 單一帳號字典 sync（caller 已攞 lock + 已設帳號 context） */
+async function syncDictionariesForAccount(
+  account: string,
+  call: WriteCallFn,
+  opts: { force?: boolean; now?: Date },
+): Promise<{ synced: Partial<Record<DictionaryKind, number>>; skipped: string[] }> {
+  {
     const now = opts.now ?? new Date()
     const hkDay = toHKDateStr(now)
     const synced: Partial<Record<DictionaryKind, number>> = {}
@@ -822,7 +866,7 @@ export async function syncDictionaries(opts: { callFn?: WriteCallFn; force?: boo
     for (const kind of DICTIONARY_KINDS) {
       if (!opts.force) {
         const last = await prisma.apricotDictionary.findFirst({
-          where: { kind },
+          where: { kind, apricotAccount: account },
           orderBy: { syncedAt: 'desc' },
           select: { syncedAt: true },
         })
@@ -835,23 +879,21 @@ export async function syncDictionaries(opts: { callFn?: WriteCallFn; force?: boo
       try {
         data = await withApricotLockRetry(() => call(DICTIONARY_PATHS[kind]))
       } catch (e) {
-        console.error('[write-booking] 字典 sync 失敗（留舊 cache）— metadata only', { kind, err: e instanceof Error ? e.message : String(e) })
+        console.error('[write-booking] 字典 sync 失敗（留舊 cache）— metadata only', { account, kind, err: e instanceof Error ? e.message : String(e) })
         skipped.push(kind)
         continue
       }
       const items = extractDictionaryItems(data)
       if (items.length === 0) {
-        console.warn('[write-booking] 字典 sync 0 行（response 形狀可能變 — 留舊 cache）', { kind })
+        console.warn('[write-booking] 字典 sync 0 行（response 形狀可能變 — 留舊 cache）', { account, kind })
         skipped.push(kind)
         continue
       }
-      await upsertDictionary(kind, items, now)
+      await upsertDictionary(kind, items, now, account)
       synced[kind] = items.length
     }
     return { synced, skipped }
-  })
-  if (outcome === null) return { synced: {}, skipped: ['lock busy'] }
-  return outcome
+  }
 }
 
 /** 白名單 pickup（字典係代碼表 — apricotId/code/des/isRemoved；response 唔 log） */
@@ -875,13 +917,13 @@ function extractDictionaryItems(raw: any): { apricotId: string; code: string; de
   return out
 }
 
-async function upsertDictionary(kind: DictionaryKind, items: { apricotId: string; code: string; des: string; isRemoved: boolean }[], now: Date): Promise<void> {
+async function upsertDictionary(kind: DictionaryKind, items: { apricotId: string; code: string; des: string; isRemoved: boolean }[], now: Date, account: string): Promise<void> {
   await prisma.$transaction(
     items.map((it) =>
       prisma.apricotDictionary.upsert({
         where: { apricotId: it.apricotId },
-        update: { kind, code: it.code, des: it.des, isRemoved: it.isRemoved, syncedAt: now },
-        create: { kind, apricotId: it.apricotId, code: it.code, des: it.des, isRemoved: it.isRemoved, syncedAt: now },
+        update: { kind, code: it.code, des: it.des, isRemoved: it.isRemoved, syncedAt: now, apricotAccount: account },
+        create: { kind, apricotId: it.apricotId, code: it.code, des: it.des, isRemoved: it.isRemoved, syncedAt: now, apricotAccount: account },
       }),
     ),
   )

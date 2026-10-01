@@ -14,6 +14,7 @@ import {
   requireWriteEnabled,
   requireNewPatientEnabled,
   resolveClinic,
+  assertSameApricotAccount,
   parsePatient,
   parseSlotFields,
 } from './guards'
@@ -84,6 +85,8 @@ export async function POST(req: NextRequest) {
     requireNewPatientEnabled(patient)
 
     const clinic = await resolveClinic(clinicCode)
+    // ★ cwm-apricotty-20261001：青衣（TY）店唔准用原帳號病人／就診原因 id（反之亦然）
+    await assertSameApricotAccount(clinic, patient, visitReasonId)
 
     try {
       const result = await createBooking({

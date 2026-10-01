@@ -21,6 +21,8 @@ export interface ResolvedClinic {
   id: string
   shortName: string | null
   apricotClinicId: string | null
+  /** ★ cwm-apricotty-20261001：Apricot 帳號（舊 fake／舊 row 冇 = 當 MAIN） */
+  apricotAccount?: string
 }
 
 /**
@@ -30,13 +32,13 @@ export interface ResolvedClinic {
 export async function resolveClinicByCode(code: string): Promise<ResolvedClinic> {
   const byId = await basePrisma.clinic.findUnique({
     where: { id: code },
-    select: { id: true, shortName: true, apricotClinicId: true },
+    select: { id: true, shortName: true, apricotClinicId: true, apricotAccount: true },
   })
   if (byId) return byId
 
   const rows = await basePrisma.clinic.findMany({
     where: { shortName: code },
-    select: { id: true, shortName: true, apricotClinicId: true },
+    select: { id: true, shortName: true, apricotClinicId: true, apricotAccount: true },
     take: 2,
   })
   if (rows.length === 0) {

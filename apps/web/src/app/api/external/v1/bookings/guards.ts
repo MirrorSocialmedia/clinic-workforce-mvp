@@ -14,6 +14,8 @@
 import { NextRequest } from 'next/server'
 import { ExternalApiError, isValidDateStr } from '@/lib/external-api'
 import { resolveClinicByCode } from '@/lib/external-clinic'
+import { normalizeApricotAccount } from '@/lib/apricot/account'
+import { basePrisma } from '@/lib/prisma'
 import { todayHK, addDaysStr } from '@/lib/hk-date'
 import {
   isApricotWriteEnabled,
@@ -43,6 +45,8 @@ export interface ClinicRef {
   id: string
   shortName: string | null
   apricotClinicId: string
+  /** ★ cwm-apricotty-20261001：店嘅 Apricot 帳號（MAIN／TY） */
+  apricotAccount?: string
 }
 
 /** clinicCode = shortName（旺/仁/銅）或 cuid — 同 /v1/availability 口徑 */
@@ -53,7 +57,37 @@ export async function resolveClinic(clinicCode: string): Promise<ClinicRef> {
   if (!apricotClinicId) {
     throw new ExternalApiError(400, 'clinic has no Apricot mapping', 'BAD_REQUEST')
   }
-  return { id: clinic.id, shortName: clinic.shortName, apricotClinicId }
+  return { id: clinic.id, shortName: clinic.shortName, apricotClinicId, apricotAccount: normalizeApricotAccount(clinic.apricotAccount) }
+}
+
+/**
+ * ★ cwm-apricotty-20261001：跨帳號防呆 —— 青衣店唔准用原帳號嘅病人 id／就診原因 id 落單（反之亦然）。
+ * 只喺本系統【確知】病人／字典屬另一帳號先擋（409）；未入索引（例如啱啱新開嘅病人）→ 放行俾 Apricot 判斷。
+ * lookup 出錯 → 放行（呢個係額外保護，唔可以因為佢令原本得嘅落單失敗）。
+ */
+export async function assertSameApricotAccount(clinic: ClinicRef, patient: PatientRef | null, visitReasonId?: string): Promise<void> {
+  const account = normalizeApricotAccount(clinic.apricotAccount)
+  let patientAccount: string | null = null
+  let reasonAccount: string | null = null
+  try {
+    if (patient && 'apricotId' in patient && patient.apricotId) {
+      const p = await basePrisma.patientIndex.findUnique({ where: { patientApricotId: patient.apricotId }, select: { apricotAccount: true } })
+      patientAccount = p ? normalizeApricotAccount(p.apricotAccount) : null
+    }
+    if (visitReasonId) {
+      const d = await basePrisma.apricotDictionary.findUnique({ where: { apricotId: visitReasonId }, select: { apricotAccount: true } })
+      reasonAccount = d ? normalizeApricotAccount(d.apricotAccount) : null
+    }
+  } catch (e) {
+    console.warn('[bookings] 跨帳號檢查 lookup 失敗 — 放行', (e as Error)?.message)
+    return
+  }
+  if (patientAccount && patientAccount !== account) {
+    throw new ExternalApiError(409, `patient belongs to another Apricot account (${patientAccount}) than clinic (${account})`, 'PATIENT_ACCOUNT_MISMATCH')
+  }
+  if (reasonAccount && reasonAccount !== account) {
+    throw new ExternalApiError(409, `visitReasonId belongs to another Apricot account (${reasonAccount}) than clinic (${account}) — fetch dictionaries with clinicCode`, 'VISIT_REASON_ACCOUNT_MISMATCH')
+  }
 }
 
 /**

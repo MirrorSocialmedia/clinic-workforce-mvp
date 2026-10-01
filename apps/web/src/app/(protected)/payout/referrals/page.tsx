@@ -183,7 +183,8 @@ export default function ReferralsPage() {
     setBillSearching(true)
     setBillSearchError(null)
     try {
-      const res = await apiFetch<any>(`/api/cost-cases/bill-search?patientExtId=${patient.extId}&months=12`)
+      // ★ cwm-apricotty-20261001：帶返病人所屬 Apricot 帳號
+      const res = await apiFetch<any>(`/api/cost-cases/bill-search?patientExtId=${patient.extId}&months=12${patient.account ? `&account=${encodeURIComponent(patient.account)}` : ''}`)
       if ((res as any).error) {
         setBillSearchError((res as any).error)
         setBillSearchResults([])

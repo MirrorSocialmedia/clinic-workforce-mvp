@@ -30,12 +30,12 @@ export async function GET(req: NextRequest) {
 
     const [job, backfillJob] = await Promise.all([
       basePrisma.clinicalIndexJob.findFirst({
-        where: { kind: 'NIGHTLY' },
+        where: { kind: 'NIGHTLY', account: 'MAIN' }, // ★ cwm-apricotty：頂層 = 原帳號（舊口徑）；其他帳號見 accounts[]
         orderBy: { finishedAt: 'desc' },
         select: { status: true, finishedAt: true, startedAt: true, errors: true, lastError: true },
       }),
       basePrisma.clinicalIndexJob.findFirst({
-        where: { kind: 'BACKFILL' },
+        where: { kind: 'BACKFILL', account: 'MAIN' },
         orderBy: { startedAt: 'desc' },
         select: {
           status: true, rangeFrom: true, rangeTo: true, cursorDate: true,
@@ -84,8 +84,32 @@ export async function GET(req: NextRequest) {
       basePrisma.clinicalRecordIndex.count({ where: { phoneHashes: { isEmpty: false } } }),
     ])
 
+    // ★ cwm-apricotty-20261001：其他 Apricot 帳號（青衣 TY…）摘要 — additive，舊 consumer 唔受影響
+    const otherAccounts = (await basePrisma.clinicalIndexJob.findMany({
+      where: { account: { not: 'MAIN' } }, select: { account: true }, distinct: ['account'],
+    })).map(r => r.account)
+    const accounts = await Promise.all(otherAccounts.map(async (account) => {
+      const [n, b] = await Promise.all([
+        basePrisma.clinicalIndexJob.findFirst({
+          where: { kind: 'NIGHTLY', account }, orderBy: { finishedAt: 'desc' },
+          select: { status: true, finishedAt: true, startedAt: true, errors: true, lastError: true },
+        }),
+        basePrisma.clinicalIndexJob.findFirst({
+          where: { kind: 'BACKFILL', account }, orderBy: { startedAt: 'desc' },
+          select: { status: true, cursorDate: true, rangeFrom: true, rangeTo: true, patients: true, lastError: true },
+        }),
+      ])
+      const nStale = n && n.status === 'RUNNING' && n.startedAt && Date.now() - n.startedAt.getTime() > STALE_RUNNING_MS
+      return {
+        account,
+        lastNightly: n ? { status: nStale ? 'FAILED' : n.status, finishedAt: iso(n.finishedAt), errors: n.errors, lastError: nStale ? 'ABANDONED (RUNNING > 6h)' : n.lastError } : null,
+        backfill: b ? { status: b.status, rangeFrom: iso(b.rangeFrom), rangeTo: iso(b.rangeTo), cursorDate: iso(b.cursorDate), patients: b.patients, lastError: b.lastError } : null,
+      }
+    }))
+
     return jsonNoStore({
       v: 1,
+      accounts,
       lastNightly: job
         ? {
             status: nightlyStatus,

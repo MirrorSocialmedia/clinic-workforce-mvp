@@ -41,6 +41,9 @@ const MatchSchema = z.object({
   patientName: z.string().min(1),
   lastVisit: LastVisitSchema.nullable(),
   visitedClinicIds: z.array(z.string().min(1)),
+  // ★ cwm-apricotty-20261001：Apricot 帳號（MAIN／TY）；帶 clinicCode 先有 sameAccount
+  apricotAccount: z.string().regex(/^[A-Z][A-Z0-9_]{0,15}$/).optional(), // fixture（hash 錨定）係舊版樣本 — optional
+  sameAccount: z.boolean().optional(),
   gender: z.string().min(1).optional(),
 }).strict()
 const PatientLookupV1Schema = z.object({

@@ -82,6 +82,7 @@ jobs:
           # ⚠️ 新增 src/lib test 檔要手動補呢個 list。
           TZ=UTC npx tsx --test \
             'src/app/api/external/**/*.test.ts' \
+            src/lib/apricot/account.test.ts \
             src/lib/apricot/availability.test.ts \
             src/lib/apricot/s5-active-statuses.test.ts \
             src/lib/apricot/sanitize-availability.v2.test.ts \

@@ -133,6 +133,11 @@ export async function pickCommission(
 
 // ─── Gates ───────────────────────────────────────────────────────────────────
 
+/** ★ cwm-apricotty-20261001：periodMonth（YYYY-MM）早過店嘅月結起計月份？（null = 冇限制） */
+export function isBeforePayoutStart(periodMonth: string, payoutFrom: string | null | undefined): boolean {
+  return !!payoutFrom && /^\d{4}-\d{2}$/.test(payoutFrom) && periodMonth < payoutFrom
+}
+
 interface GateErrors {
   errors: string[]
   warnings: string[]
@@ -155,6 +160,12 @@ export async function runGates(
   const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } })
   if (!clinic?.apricotClinicId) {
     errors.push(`診所「${clinic?.name ?? clinicId}」未對應 Apricot ID，無法生成月結`)
+    return { errors, warnings }
+  }
+  // ★ cwm-apricotty-20261001：新接 Apricot 嘅店（青衣）由指定月份先用系統計月結 ——
+  //   之前月份人手處理過，再計會重複出糧。
+  if (isBeforePayoutStart(periodMonth, clinic.apricotPayoutFrom)) {
+    errors.push(`診所「${clinic.name}」醫生月結由 ${clinic.apricotPayoutFrom} 開始用系統計；${periodMonth} 唔會生成（之前月份人手處理）`)
     return { errors, warnings }
   }
 

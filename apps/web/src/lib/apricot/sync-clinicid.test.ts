@@ -70,7 +70,8 @@ const fakes: Record<string, any> = {
   // B 空數據路徑會行到呢三條
   apricotPaymentRef: { findMany: async () => [] },
   paymentMethodRule: { findMany: async () => [] },
-  clinic: { findFirst: async () => ({ name: '測試診所' }) },
+  // ★ cwm-apricotty：findUnique = 帳號 lookup（null → MAIN）
+  clinic: { findFirst: async () => ({ name: '測試診所' }), findUnique: async () => null },
   externalCredential: {
     findUnique: async () => FAKE_CREDS_ROW,
     update: async () => ({}),
