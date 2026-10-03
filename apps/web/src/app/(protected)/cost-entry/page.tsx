@@ -50,7 +50,30 @@ interface CleanPatient {
   extId: string
   code: string
   fullName: string
-  account?: string // ★ cwm-apricotty-20261001：Apricot 帳號（青衣 = TY）
+  account?: string // ★ cwm-apricotty-20261001：Apricot 帳號（青衣 = TY）—— 內部用，唔顯示
+  clinicId?: string | null // ★ cwm-patientsearch-20261003：推斷到嘅診所
+  clinicLabel?: string // ★ 顯示用診所名
+}
+// ★ cwm-patientsearch-20261003：每個資料來源嘅搜尋狀態（失敗／冇結果唔再靜靜消失）
+interface SearchSource { label: string; ok: boolean; found: number; error?: string }
+
+/** 病人搜尋結果下面嘅來源狀態：只喺有來源失敗或者 0 筆時顯示 */
+function SourceStatusLine({ sources }: { sources: SearchSource[] }) {
+  const notable = sources.filter(s => !s.ok || s.found === 0)
+  if (!notable.length) return null
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs mt-1">
+      {notable.map(s => s.ok
+        ? <span key={s.label} className="text-gray-400">{s.label}：冇結果</span>
+        : <span key={s.label} className="text-red-600">⚠ {s.label}：{s.error ?? '連線失敗'}</span>)}
+    </div>
+  )
+}
+
+/** 結果行嘅診所標籤 */
+function ClinicChip({ label }: { label?: string }) {
+  if (!label) return null
+  return <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">{label}</span>
 }
 
 interface BillItem {
@@ -186,6 +209,7 @@ export default function CostEntryPage() {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchingPatients, setSearchingPatients] = useState(false)
   const [patients, setPatients] = useState<CleanPatient[]>([])
+  const [patientSources, setPatientSources] = useState<SearchSource[]>([])
   const [apricotBusy, setApricotBusy] = useState(false)
 
   // Step 1: bill search
@@ -230,9 +254,10 @@ export default function CostEntryPage() {
   const [manualPatientQuery, setManualPatientQuery] = useState('')
   const [manualPatientSearching, setManualPatientSearching] = useState(false)
   const [manualPatients, setManualPatients] = useState<CleanPatient[]>([])
+  const [manualSources, setManualSources] = useState<SearchSource[]>([])
 
   // ★ 2026-08-25：由病人編號前綴推斷診所嘅提示（拍板⑤：建議唔強制）
-  const [clinicGuess, setClinicGuess] = useState<{ prefix: string } | null>(null)
+  const [clinicGuess, setClinicGuess] = useState<{ prefix: string; label?: string } | null>(null)
 
   // ★ 2026-08-25 拍板③：修改模式（重用「手動新增」modal）
   const [editingCase, setEditingCase] = useState<CostCase | null>(null)
@@ -588,10 +613,12 @@ export default function CostEntryPage() {
   const searchPatientsApi = async (keyword: string) => {
     setSearchingPatients(true)
     setPatients([])
+    setPatientSources([])
     setApricotBusy(false)
     try {
       const data: any = await apiFetch(`/api/cost-cases/patient-search?keyword=${encodeURIComponent(keyword)}`)
       setPatients(data.patients || [])
+      setPatientSources(data.sources || [])
     } catch (e: any) {
       if (e?.status === 503) setApricotBusy(true)
     } finally {
@@ -727,10 +754,12 @@ export default function CostEntryPage() {
     }
     setManualPatientSearching(true)
     setManualPatients([])
+    setManualSources([])
     setApricotBusy(false)
     try {
       const data: any = await apiFetch(`/api/cost-cases/patient-search?keyword=${encodeURIComponent(kw)}`)
       setManualPatients(data.patients || [])
+      setManualSources(data.sources || [])
     } catch (e: any) {
       if (e?.status === 503) setApricotBusy(true)
       else setLoadError(e?.message || '搜尋失敗')
@@ -749,9 +778,16 @@ export default function CostEntryPage() {
       clinics: clinics.map((c: any) => ({ id: c.id, shortName: c.shortName ?? null })),
     })
     setCostForm(prev => ({ ...prev, patientCode: r.patientCode, patientName: r.patientName }))
-    setSelectedClinicInternalId(r.clinicId)
-    setClinicGuess(r.guessed && r.prefix ? { prefix: r.prefix } : null)
+    // ★ cwm-patientsearch-20261003：編號前綴推唔到（例：青衣純數字編號）→ 用搜尋結果帶返嘅診所（來源只服務一間）
+    if (!r.guessed && !selectedClinicInternalId && p.clinicId) {
+      setSelectedClinicInternalId(p.clinicId)
+      setClinicGuess({ prefix: '', label: p.clinicLabel })
+    } else {
+      setSelectedClinicInternalId(r.clinicId)
+      setClinicGuess(r.guessed && r.prefix ? { prefix: r.prefix } : null)
+    }
     setManualPatients([])
+    setManualSources([])
   }
 
   // ── ★ 2026-08-25 拍板③：修改模式（重用 manual modal）─────────────────────
@@ -1467,12 +1503,13 @@ export default function CostEntryPage() {
                 {searchingPatients && <div className="flex items-center gap-2 text-sm text-gray-500 py-4"><Loader2 size={16} className="animate-spin" /> 搜尋中…</div>}
                 {apricotBusy && <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded"><AlertTriangle size={16} /> Apricot 忙碌，請稍後重試</div>}
                 {!searchingPatients && !apricotBusy && patients.length === 0 && searchKeyword.length >= 6 && <div className="text-sm text-gray-400 py-4 text-center">冇搵到病人</div>}
+                {!searchingPatients && <SourceStatusLine sources={patientSources} />}
 
                 <div className="space-y-1 max-h-60 overflow-auto">
                   {patients.map(p => (
-                    <button key={p.extId} onClick={() => selectPatient(p)}
+                    <button key={`${p.account ?? ''}|${p.extId}`} onClick={() => selectPatient(p)}
                       className="w-full text-left px-3 py-2 rounded hover:bg-blue-50 text-sm flex items-center justify-between border border-transparent hover:border-blue-200">
-                      <span><span className="font-mono font-medium">{p.code}</span><span className="ml-2 text-gray-600">{p.fullName}</span></span>
+                      <span><span className="font-mono font-medium">{p.code}</span><span className="ml-2 text-gray-600">{p.fullName}</span><ClinicChip label={p.clinicLabel} /></span>
                       <span className="text-xs text-gray-400">{p.extId.slice(0, 8)}</span>
                     </button>
                   ))}
@@ -1615,7 +1652,9 @@ export default function CostEntryPage() {
                       </select>
                       {/* ★ 2026-08-25 §3.4：由病人編號前綴推斷嘅提示（建議唔強制，可改） */}
                       {clinicGuess && selectedClinicInternalId && (
-                        <div className="text-xs text-emerald-600 mt-1">✓ 由病人編號「{clinicGuess.prefix}」推斷，可自行更改</div>
+                        <div className="text-xs text-emerald-600 mt-1">
+                          {clinicGuess.prefix ? `✓ 由病人編號「${clinicGuess.prefix}」推斷，可自行更改` : `✓ 由病人資料推斷（${clinicGuess.label ?? '診所'}），可自行更改`}
+                        </div>
                       )}
                     </div>
                     <div>
@@ -1653,12 +1692,13 @@ export default function CostEntryPage() {
                         </button>
                       </div>
                       {manualPatientSearching && <div className="flex items-center gap-2 text-sm text-gray-500 mt-2"><Loader2 size={14} className="animate-spin" /> 搜尋中…</div>}
+                      {!manualPatientSearching && <SourceStatusLine sources={manualSources} />}
                       {!manualPatientSearching && manualPatients.length > 0 && (
                         <div className="mt-2 space-y-1 max-h-40 overflow-auto border rounded">
                           {manualPatients.map(p => (
-                            <button key={p.extId} type="button" onClick={() => pickManualPatient(p)}
+                            <button key={`${p.account ?? ''}|${p.extId}`} type="button" onClick={() => pickManualPatient(p)}
                               className="w-full text-left px-3 py-1.5 rounded hover:bg-blue-50 text-sm flex items-center justify-between border border-transparent hover:border-blue-200">
-                              <span><span className="font-mono font-medium">{p.code}</span><span className="ml-2 text-gray-600">{p.fullName}</span></span>
+                              <span><span className="font-mono font-medium">{p.code}</span><span className="ml-2 text-gray-600">{p.fullName}</span><ClinicChip label={p.clinicLabel} /></span>
                               <span className="text-xs text-gray-400">{p.extId.slice(0, 8)}</span>
                             </button>
                           ))}

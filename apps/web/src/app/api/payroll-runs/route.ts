@@ -100,7 +100,11 @@ export async function POST(req: NextRequest) {
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { periodMonth, clinicId, storeBonuses, splitPays, attendanceBonusOverrides } = body
+      const { periodMonth, clinicId, storeBonuses, splitPays, attendanceBonusOverrides, employeeId } = body
+      // ★ cwm-payrollsingle-20261003：生成頁揀咗員工 = 只計嗰個人（之前照出晒成間店）
+      if (employeeId !== undefined && employeeId !== null && typeof employeeId !== 'string') {
+        return NextResponse.json({ error: 'employeeId 必須係 string' }, { status: 400 })
+      }
 
       if (!periodMonth) {
         return NextResponse.json({ error: 'periodMonth (YYYY-MM) is required' }, { status: 400 })
@@ -188,6 +192,7 @@ export async function POST(req: NextRequest) {
       const result = await generatePayrollRun(clinicId || null, periodMonth, auditCtx, {
         storeBonuses, splitPays, attendanceBonusOverrides: attendanceBonusOverrides as Record<string, 'FORCE_ON' | 'FORCE_OFF'> | undefined,
         excludeConfidential,
+        ...(employeeId ? { onlyEmployeeIds: [employeeId] } : {}),
       })
 
       // FIX #2: If result has error field (e.g., CONFIRMED blocked), return 409

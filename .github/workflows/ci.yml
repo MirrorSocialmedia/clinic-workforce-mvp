@@ -111,6 +111,7 @@ jobs:
             src/lib/my-nav.test.ts \
             src/lib/payout-xlsx-engine-parity.test.ts \
             src/lib/payout/daily-report.test.ts \
+            src/lib/patient-search.test.ts \
             src/lib/payroll-engine.bonus-makeup.test.ts \
             src/lib/payroll-engine.bonus-rules.test.ts \
             src/lib/payroll-engine.hourly-eowage.test.ts \

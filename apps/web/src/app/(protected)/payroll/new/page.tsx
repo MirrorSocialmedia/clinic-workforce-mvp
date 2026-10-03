@@ -213,11 +213,15 @@ export default function NewPayrollPage() {
         const checkData = await checkRes.json()
         const existingDraft = (checkData.runs || [])[0]
         if (existingDraft) {
-          const ok = confirm(
-            `該月已有草稿（${existingDraft._count?.items ?? '?'} 位員工）。\n\n` +
-            `重新生成會用最新嘅打卡／補登／假期重算，\n` +
-            `已輸入嘅店舖獎金同拆帳會保留。\n\n` +
-            `確定重新生成？`
+          const empName = employees.find(e => e.id === selectedEmployee)?.name
+          const ok = confirm(selectedEmployee
+            // ★ cwm-payrollsingle-20261003：只重算揀嗰個人
+            ? `該月已有草稿（${existingDraft._count?.items ?? '?'} 位員工）。\n\n` +
+              `只會重算「${empName ?? '所選員工'}」（佢唔喺單入面就加入），其他員工唔郁。\n\n確定？`
+            : `該月已有草稿（${existingDraft._count?.items ?? '?'} 位員工）。\n\n` +
+              `重新生成會用最新嘅打卡／補登／假期重算【全部員工】，\n` +
+              `已輸入嘅店舖獎金同拆帳會保留。\n\n` +
+              `確定重新生成？`
           )
           if (!ok) return
         }
@@ -261,6 +265,8 @@ export default function NewPayrollPage() {
           storeBonuses: storeBonusPayload,
           splitPays: splitPayPayload,
           attendanceBonusOverrides: bonusOverrides,
+          // ★ cwm-payrollsingle-20261003：揀咗員工 = 只計嗰個人（已有草稿：其他人唔郁；未有：開一張得佢嘅草稿）
+          ...(selectedEmployee ? { employeeId: selectedEmployee } : {}),
         }),
       })
 
@@ -360,7 +366,7 @@ export default function NewPayrollPage() {
           disabled={generating || !periodMonth || !selectedClinic}
           className={`w-full py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${generating || !periodMonth || !selectedClinic ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}
         >
-          {generating ? '計算中...' : '生成計糧'}
+          {generating ? '計算中...' : (selectedEmployee ? '只計呢個員工' : '生成計糧')}
         </button>
 
         {error && (
@@ -372,8 +378,13 @@ export default function NewPayrollPage() {
         {result && (
           <div className="mt-4 p-4 rounded-lg bg-emerald-50 text-emerald-700 text-sm border border-emerald-200">
             <div className="mb-2 font-semibold">✅ 計糧生成成功！</div>
-            <div>員工數: {result.itemCount}</div>
-            <div>應付總額: HK${result.totalPayable.toLocaleString()}</div>
+            {selectedEmployee ? (
+              // ★ cwm-payrollsingle-20261003：只計咗揀嗰個人 —— 計糧單其他員工唔郁
+              <div>只計「{employees.find(e => e.id === selectedEmployee)?.name ?? '所選員工'}」：HK${result.totalPayable.toLocaleString()}（計糧單入面其他員工唔郁）</div>
+            ) : (<>
+              <div>員工數: {result.itemCount}</div>
+              <div>應付總額: HK${result.totalPayable.toLocaleString()}</div>
+            </>)}
             {result.notice && (
               <div className="mt-2 p-2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                 ⚠️ {result.notice}
