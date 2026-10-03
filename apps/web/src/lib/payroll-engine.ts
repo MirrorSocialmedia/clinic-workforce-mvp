@@ -1058,6 +1058,11 @@ export async function generatePayrollRun(
     splitPays?: Record<string, number>
     attendanceBonusOverrides?: Record<string, 'FORCE_ON' | 'FORCE_OFF'>  // ★ 三態覆蓋
     excludeConfidential?: boolean // ★ 新增：非 OWNER 排除保密員工
+    /**
+     * ★ cwm-payrollsingle-20261003：只重算呢幾個員工（草稿單限定）——
+     *   其他員工嘅 item 一行都唔郁；呢幾個嘅舊 item 刪咗再寫（唔再合資格 = 刪咗唔寫，入 removed[]）。
+     */
+    onlyEmployeeIds?: string[]
   },
 ): Promise<
   | { runId: string; itemCount: number; totalPayable: number; skipped?: Array<{ employeeId: string; name: string; reason: string }>; removed?: Array<{ employeeId: string; name: string }>; failed?: Array<{ employeeId: string; name: string; error: string }>; transitionWarning?: string | null }
@@ -1086,6 +1091,11 @@ export async function generatePayrollRun(
     return { error: clinicId ? '本月已有「全部診所」計糧單，唔可以再開分店單' : '本月已有分店計糧單，唔可以再開全部診所單', runId: conflicting.id, status: conflicting.status }
   }
 
+  const only = opts?.onlyEmployeeIds?.length ? new Set(opts.onlyEmployeeIds) : null
+  if (only && !existing) {
+    return { error: '個別員工重算只適用於已存在嘅草稿計糧單', runId: '', status: 'NONE' }
+  }
+
   // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋／離職結算 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
   const isRecalculation = !!existing
@@ -1109,14 +1119,16 @@ export async function generatePayrollRun(
     })
     // ★ E-13：冇保密權限（MANAGER）重算一張有保密員工嘅 run → 舊 items 會被 deleteMany、新 items 又排除保密員工
     //   = 保密員工成條糧靜靜消失（finalize 已經擋 MANAGER，重算都要擋，同一口徑）
-    if (opts?.excludeConfidential && oldItems.some(oi => oi.employee?.payConfidential)) {
+    if (opts?.excludeConfidential && oldItems.some(oi => oi.employee?.payConfidential && (!only || only.has(oi.employeeId)))) {
       return {
         error: '此計糧單包含薪酬保密員工，只可以由負責人重算',
         runId: existing.id,
         status: existing.status,
       }
     }
-    oldEmps = oldItems.map(oi => ({ id: oi.employeeId, name: oi.employee?.user?.name ?? '(unknown)' }))
+    oldEmps = oldItems
+      .filter(oi => !only || only.has(oi.employeeId))
+      .map(oi => ({ id: oi.employeeId, name: oi.employee?.user?.name ?? '(unknown)' }))
     for (const oi of oldItems) {
       if (oi.storeBonus) carried.storeBonus[oi.employeeId] = oi.storeBonus
       if (oi.splitPay != null) carried.splitPay[oi.employeeId] = oi.splitPay
@@ -1167,6 +1179,7 @@ export async function generatePayrollRun(
     }],
   }
   if (clinicId) where.homeClinicId = clinicId
+  if (only) where.id = { in: [...only] } // ★ cwm-payrollsingle-20261003
 
   const employees = await prisma.employee.findMany({
     where,
@@ -1336,7 +1349,8 @@ export async function generatePayrollRun(
       throw Object.assign(new Error('計算期間計糧單已被確認，今次生成已取消'), { httpStatus: 409 })   // ★ E-3：409 唔係 500
     }
     if (isRecalculation) {
-      await tx.payrollItem.deleteMany({ where: { runId: run!.id } })
+      // ★ cwm-payrollsingle-20261003：個別重算只刪嗰幾個人嘅 item
+      await tx.payrollItem.deleteMany({ where: { runId: run!.id, ...(only ? { employeeId: { in: [...only] } } : {}) } })
     }
     if (items.length > 0) {
       await tx.payrollItem.createMany({
@@ -1350,7 +1364,9 @@ export async function generatePayrollRun(
           action: 'CREATE_PAYROLL_RUN',
           entity: 'PayrollRun',
           entityId: run!.id,
-          notes: `Generated payroll for ${periodMonth}: ${items.length} employees${isRecalculation ? ' (recalculation)' : ''}`,
+          notes: only
+            ? `Recalculated ${items.length} employee(s) in payroll ${periodMonth}: ${[...only].join(',')}`
+            : `Generated payroll for ${periodMonth}: ${items.length} employees${isRecalculation ? ' (recalculation)' : ''}`,
           ipAddress: auditCtx.ip || null,
           userAgent: auditCtx.ua || null,
         },

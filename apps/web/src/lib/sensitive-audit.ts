@@ -100,6 +100,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'APRICOT_ACCOUNT_BIND', label: 'Apricot 帳號綁定' },
   { action: 'PAYMENT_METHOD_RULE_CREATE', label: '新增付款方式規則' },
   // ★ MD-D: Payout Engine
+  { action: 'PAYROLL_ITEM_REMOVE', label: '由草稿計糧單移除員工' }, // ★ cwm-payrollsingle-20261003
+  { action: 'PAYROLL_BULK_PDF_EXPORT', label: '一鍵匯出全部薪資明細 PDF' }, // ★ cwm-bulkpayslip-20261003
   { action: 'PAYOUT_RUN_LOCK', label: '鎖定月結單' },
   { action: 'PAYOUT_RUN_UNLOCK', label: '⚠️ 解鎖月結單' },
   { action: 'PAYOUT_RUN_DELETE', label: '⚠️ 刪除月結單草稿' },

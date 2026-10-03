@@ -1,8 +1,9 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolvePayrollScope, canSeeConfidential } from '@/lib/scope-helpers'
+import { prisma, basePrisma } from '@/lib/prisma'
+import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
+import { resolvePayrollScope, canSeeConfidential, getConfidentialScope } from '@/lib/scope-helpers'
+import { generatePayrollRun } from '@/lib/payroll-engine'
 import { runWithAudit } from '@/lib/audit-context'
 import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
 import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
@@ -40,6 +41,7 @@ export async function GET(
           // ★ 2026-09-30 [cwm-rosterjoin]：舊 run（冇 employedRatioDetail.from/to）顯示底薪明細嘅 fallback
           joinDate: true,
           resignedAt: true,
+          attendanceExempt: true, // ★ cwm-tbpreview-20261003：編更差額預覽要同 finalize 同一個 filter
           user: { select: { id: true, name: true, phone: true, fullName: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
           // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（lib/pay-rule-latest）
@@ -180,6 +182,18 @@ export async function GET(
     console.error('[payroll-emp-detail] timebank ledger 解析失敗，明細區塊退化隱藏', e)
   }
 
+  // ★ cwm-tbpreview-20261003：草稿「時間帳戶月結預覽」——
+  //   確認計糧（payroll-runs/[id] PUT FINALIZED）先真正寫 ROSTER_DIFF 入時間帳戶；
+  //   草稿時用【同一條式、同一個 filter】（月薪、非免考勤、Math.round(diffMinutes) ≠ 0）預先計出嚟，
+  //   只回傳俾頁面顯示，一行 DB 都唔寫。帳本已有 ROSTER_DIFF（已確認／凍結）就唔再預覽。
+  let rosterDiffPreview: { minutes: number; projectedClosing: number } | null = null
+  if (item.run.status === 'DRAFT' && ledger && !ledger.frozen
+    && item.employee.payRules?.[0]?.payType === 'MONTHLY' && item.employee.attendanceExempt !== true
+    && !ledger.lines.some(l => l.type === 'ROSTER_DIFF')) {
+    const m = Math.round(rosterDiffMinutes)
+    if (m !== 0) rosterDiffPreview = { minutes: m, projectedClosing: ledger.closing + m }
+  }
+
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
   const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]
   const clinicsMap = new Map<string, { name: string; shortName: string | null }>()
@@ -202,6 +216,7 @@ export async function GET(
     rosterDiffMinutes,
     // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶帳本（snapshot 優先 + 對數行 reconciles）
     timeBankLedger: ledger,
+    rosterDiffPreview,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })
@@ -296,4 +311,109 @@ export async function PATCH(
     })
     return NextResponse.json({ ok: true, changed: true, chequeNo: updated.chequeNo })
   })
+}
+
+// ============================================================
+// ★ cwm-payrollsingle-20261003：草稿計糧單「單個員工」重算／移除
+//   之前改一個人要成張草稿刪咗重生成。權限 = 生成計糧（payroll_generate），
+//   診所範圍、保密守衛同 POST /api/payroll-runs 同一口徑。
+// ============================================================
+async function guardDraftItem(req: NextRequest, runId: string, empId: string) {
+  const auth = await requirePerm(req, 'payroll_generate')
+  if (isAuthError(auth)) return { error: auth.error }
+  const { session } = auth
+  const perms = auth.perms ?? []
+
+  const run = await prisma.payrollRun.findUnique({ where: { id: runId }, select: { id: true, status: true, clinicId: true, periodMonth: true } })
+  if (!run) return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
+  if (run.status !== 'DRAFT') return { error: NextResponse.json({ error: '只可以喺草稿計糧單改個別員工（已確認要先退回草稿）' }, { status: 409 }) }
+
+  const allowedClinics = await resolvePayrollScope(session, perms, { homeOnly: ['payroll_generate'] })
+  if (allowedClinics !== null && (!run.clinicId || !allowedClinics.includes(run.clinicId))) {
+    return { error: NextResponse.json({ error: '你冇權限處理呢間診所嘅計糧單' }, { status: 403 }) }
+  }
+
+  const emp = await prisma.employee.findUnique({ where: { id: empId }, select: { id: true, payConfidential: true, homeClinicId: true, user: { select: { name: true } } } })
+  if (!emp) return { error: NextResponse.json({ error: '員工不存在' }, { status: 404 }) }
+  if (!(await canSeeConfidential(session, perms, emp))) {
+    return { error: NextResponse.json({ error: '此員工薪資已設保密，只可以由負責人處理' }, { status: 403 }) }
+  }
+  return { auth, session, perms, run, emp }
+}
+
+/** POST — 重算呢個員工（唔喺單入面嘅都得：新加入／之前被移除） */
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string; empId: string } }
+) {
+  const g = await guardDraftItem(req, params.id, params.empId)
+  if ('error' in g) return g.error
+  const { session, perms, run, emp } = g
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
+  }
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const cScope = await getConfidentialScope(session, perms)
+      const excludeConfidential = cScope !== null && !(run.clinicId && cScope.includes(run.clinicId))
+      const result = await generatePayrollRun(run.clinicId, periodMonthKey(run.periodMonth), auditCtx, {
+        excludeConfidential,
+        onlyEmployeeIds: [emp.id],
+      })
+      if ((result as any).error) return NextResponse.json(result, { status: 409 })
+      const r = result as Exclude<typeof result, { error: string }>
+      const ok = r.itemCount > 0 && !(r.failed ?? []).length
+      return NextResponse.json({
+        ok,
+        employee: emp.user?.name ?? emp.id,
+        recalculated: r.itemCount,
+        skipped: r.skipped ?? [],
+        removed: r.removed ?? [],
+        failed: r.failed ?? [],
+      })
+    } catch (e: any) {
+      if (e?.httpStatus === 409) return NextResponse.json({ error: e.message }, { status: 409 })
+      console.error('[payroll-item POST recalc]', { runId: params.id, empId: params.empId, message: e?.message })
+      return NextResponse.json({ error: '重算失敗，請重試' }, { status: 500 })
+    }
+  })
+}
+
+/** DELETE — 由草稿計糧單移除呢個員工（成張重新生成會再加返） */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string; empId: string } }
+) {
+  const g = await guardDraftItem(req, params.id, params.empId)
+  if ('error' in g) return g.error
+  const { session, run, emp } = g
+  try {
+    await basePrisma.$transaction(async (tx) => {
+      // ★ RC-11 同款：鎖 run 再查狀態，期間被確認就取消
+      const locked = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "PayrollRun" WHERE id = ${run.id} FOR UPDATE`
+      if (locked[0]?.status !== 'DRAFT') throw Object.assign(new Error('計糧單狀態已改變'), { httpStatus: 409 })
+      const { count } = await tx.payrollItem.deleteMany({ where: { runId: run.id, employeeId: emp.id } })
+      if (count === 0) throw Object.assign(new Error('呢個員工唔喺呢張計糧單'), { httpStatus: 404 })
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'PAYROLL_ITEM_REMOVE',
+          entity: 'PayrollItem',
+          entityId: run.id,
+          targetEmployeeId: emp.id,
+          clinicId: run.clinicId,
+          notes: `由草稿計糧單 ${periodMonthKey(run.periodMonth)} 移除：${emp.user?.name ?? emp.id}`,
+          ipAddress: req.headers.get('x-forwarded-for') || null,
+          userAgent: req.headers.get('user-agent') || null,
+        },
+      })
+    })
+    return NextResponse.json({ ok: true })
+  } catch (e: any) {
+    if (e?.httpStatus) return NextResponse.json({ error: e.message }, { status: e.httpStatus })
+    console.error('[payroll-item DELETE]', { runId: params.id, empId: params.empId, message: e?.message })
+    return NextResponse.json({ error: '移除失敗，請重試' }, { status: 500 })
+  }
 }
