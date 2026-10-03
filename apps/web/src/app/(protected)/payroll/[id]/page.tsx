@@ -313,6 +313,52 @@ export default function PayrollDetailPage() {
 
   const isOwner = userRole === 'OWNER' // ROLE-OK: 保密員工薪金隔離，刻意用 role 唔用權限
   const canFinalize = isOwner || hasPermission(userRole as any, 'payroll_finalize', grant, deny)
+  // ★ cwm-payrollsingle-20261003：草稿單「單個員工」重算／移除／加入（同生成計糧同一權限）
+  const canGenerate = isOwner || hasPermission(userRole as any, 'payroll_generate', grant, deny)
+  const [itemBusy, setItemBusy] = useState<string | null>(null)
+  const [addEmpId, setAddEmpId] = useState('')
+  const [addable, setAddable] = useState<{ id: string; name: string }[]>([])
+  useEffect(() => {
+    if (!run || run.status !== 'DRAFT' || !canGenerate) { setAddable([]); return }
+    api('/api/employees?all=1')
+      .then(r => (r.ok ? r.json() : { employees: [] }))
+      .then(d => {
+        const inRun = new Set(run.items.map(i => i.employeeId))
+        setAddable((d.employees || [])
+          .filter((e: any) => !inRun.has(e.id) && (!run.clinicId || e.homeClinicId === run.clinicId))
+          .map((e: any) => ({ id: e.id, name: e.user?.name ?? e.id })))
+      })
+      .catch(() => setAddable([]))
+  }, [run, canGenerate])
+  const handleItemRecalc = async (empId: string, name: string) => {
+    if (!confirm(`重新計算「${name}」？只會重算呢個員工，其他人唔郁。`)) return
+    setItemBusy(empId)
+    try {
+      const res = await api(`/api/payroll-runs/${runId}/employee/${empId}`, { method: 'POST' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { alert(d.error || `重算失敗（${res.status}）`); return }
+      const notes = [
+        ...(d.skipped ?? []).map((x: any) => `略過：${x.reason}`),
+        ...(d.failed ?? []).map((x: any) => `失敗：${x.error}`),
+        ...(d.removed?.length ? ['呢個員工本月唔再合資格，已由計糧單移除'] : []),
+      ]
+      if (notes.length) alert(`「${name}」：\n${notes.join('\n')}`)
+      setAddEmpId('')
+      fetchRun()
+      notifyDataChanged('payroll')
+    } finally { setItemBusy(null) }
+  }
+  const handleItemRemove = async (empId: string, name: string) => {
+    if (!confirm(`由呢張草稿計糧單移除「${name}」？\n（之後可以用「加入／重算員工」加返；成張重新生成都會加返）`)) return
+    setItemBusy(empId)
+    try {
+      const res = await api(`/api/payroll-runs/${runId}/employee/${empId}`, { method: 'DELETE' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { alert(d.error || `移除失敗（${res.status}）`); return }
+      fetchRun()
+      notifyDataChanged('payroll')
+    } finally { setItemBusy(null) }
+  }
 
   // ★ cwm-payrollsheet-20260921 S3：支票號填寫（blur 時 PATCH；同 canFinalize 同一個權限）
   const handleChequeNoBlur = async (item: PayrollItem, raw: string) => {
@@ -624,6 +670,24 @@ export default function PayrollDetailPage() {
         </div>
       </div>
 
+      {/* ★ cwm-payrollsingle-20261003：加入／重算個別員工（草稿限定） */}
+      {run.status === 'DRAFT' && canGenerate && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 16px', fontSize: 13 }}>
+          <span style={{ color: '#555' }}>加入員工（只計呢一個人）：</span>
+          <select value={addEmpId} onChange={e => setAddEmpId(e.target.value)}
+            style={{ padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6, minWidth: 160 }}>
+            <option value="">{addable.length ? '揀員工…' : '（冇未入單嘅員工）'}</option>
+            {addable.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+          <button type="button" disabled={!addEmpId || itemBusy !== null}
+            onClick={() => { const e = addable.find(x => x.id === addEmpId); if (e) handleItemRecalc(e.id, e.name) }}
+            style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #b45309', background: '#fff', color: '#b45309', cursor: addEmpId ? 'pointer' : 'not-allowed' }}>
+            {itemBusy && itemBusy === addEmpId ? '計算中…' : '加入並計算'}
+          </button>
+          <span style={{ color: '#888', fontSize: 12 }}>每行「重算」只重算嗰個人，其他人唔郁。</span>
+        </div>
+      )}
+
       {/* Summary Cards */}
       {summary && (
         <div>
@@ -898,6 +962,16 @@ export default function PayrollDetailPage() {
                           style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 12 }}>
                           查看
                         </Link>
+                        {run.status === 'DRAFT' && canGenerate && (<>
+                          <button type="button" disabled={itemBusy !== null} onClick={() => handleItemRecalc(item.employeeId, item.employee?.user?.name ?? '')}
+                            style={{ color: '#b45309', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                            {itemBusy === item.employeeId ? '處理中…' : '重算'}
+                          </button>
+                          <button type="button" disabled={itemBusy !== null} onClick={() => handleItemRemove(item.employeeId, item.employee?.user?.name ?? '')}
+                            style={{ color: '#dc2626', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                            移除
+                          </button>
+                        </>)}
                         <Link href={`/accounts/${item.employeeId}/wage-history`}
                           style={{ color: '#059669', textDecoration: 'none', fontSize: 12 }}>
                           工資歷史
@@ -1010,6 +1084,16 @@ export default function PayrollDetailPage() {
                         style={{ color: '#059669', textDecoration: 'none', fontSize: 12 }}>
                         工資歷史
                       </Link>
+                      {run.status === 'DRAFT' && canGenerate && (<>
+                        <button type="button" disabled={itemBusy !== null} onClick={() => handleItemRecalc(item.employeeId, item.employee?.user?.name ?? '')}
+                          style={{ color: '#b45309', fontSize: 13, background: 'none', border: 'none', minHeight: 36 }}>
+                          {itemBusy === item.employeeId ? '處理中…' : '重算'}
+                        </button>
+                        <button type="button" disabled={itemBusy !== null} onClick={() => handleItemRemove(item.employeeId, item.employee?.user?.name ?? '')}
+                          style={{ color: '#dc2626', fontSize: 13, background: 'none', border: 'none', minHeight: 36 }}>
+                          移除
+                        </button>
+                      </>)}
                       <Link href={`/payroll/${runId}/employee/${item.employeeId}`}
                         style={{ color: '#0d6efd', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
                         明細 →

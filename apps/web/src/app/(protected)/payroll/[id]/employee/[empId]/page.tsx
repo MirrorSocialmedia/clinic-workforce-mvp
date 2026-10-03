@@ -10,6 +10,7 @@ import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
+import { buildPayslipPdf, PAYSLIP_EMBED_KEY, type PayslipEmbedHandle } from '@/lib/payslip-pdf'
 
 
 // ★ cwm-tbledger-20260909 S5（F 章）：人手 entry 文案表已剷 —— 顯示文案由 lib/timebank-ledger.ts
@@ -86,6 +87,12 @@ export default function EmployeePayrollDetailPage() {
 
   const printRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
+  // ★ cwm-bulkpayslip-20261003：?embed=1 = 一鍵匯出用嘅隱藏 iframe（唔跳頁、齊數據後掛 handle）
+  const [embed, setEmbed] = useState(false)
+  const [leaveLoaded, setLeaveLoaded] = useState(false)
+  useEffect(() => {
+    try { setEmbed(new URLSearchParams(window.location.search).get('embed') === '1') } catch { /* SSR／舊瀏覽器 */ }
+  }, [])
 
   // ★ 2026-08-31 cwm-leaveasof：該薪資月月底（YYYY-MM-DD，HK）—— 假期餘額「截至」呢日。
   //   periodMonth 存 HK 午夜 UTC，periodMonthKey 保證 HK 視角取年月（同 payroll-engine 寫入一致）。
@@ -104,6 +111,11 @@ export default function EmployeePayrollDetailPage() {
       const res = await fetch(`/api/payroll-runs/${runId}/employee/${empId}`)
       if (!res.ok) {
         if (res.status === 403) { setForbidden(true); return }
+        const isEmbed = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('embed') === '1'
+        if (isEmbed) {
+          ;(window as any)[PAYSLIP_EMBED_KEY] = { state: 'error', message: `HTTP ${res.status}` } satisfies PayslipEmbedHandle
+          return
+        }
         if (res.status === 404) router.push(`/payroll/${runId}`)
         return
       }
@@ -133,7 +145,26 @@ export default function EmployeePayrollDetailPage() {
       .then(r => r.ok ? r.json() : { leaveBalances: [] })
       .then(d => setLeaveBalances(d.leaveBalances || []))
       .catch(() => setLeaveBalances([]))
+      .finally(() => setLeaveLoaded(true))
   }, [empId, periodMonthEnd])
+
+  // ★ cwm-bulkpayslip-20261003：embed 模式 —— 數據＋假期餘額齊、等版面畫好先掛 handle
+  useEffect(() => {
+    if (!embed) return
+    const w = window as any
+    if (forbidden) { w[PAYSLIP_EMBED_KEY] = { state: 'forbidden' } satisfies PayslipEmbedHandle; return }
+    if (!data || !leaveLoaded) return
+    // ★ 唔用 requestAnimationFrame —— 瀏覽器會暫停畫面外 iframe 嘅 rAF（一鍵匯出嘅隱藏 iframe 永遠等唔到）
+    const t = setTimeout(() => {
+      if (!printRef.current) { w[PAYSLIP_EMBED_KEY] = { state: 'error', message: '版面未畫好' }; return }
+      w[PAYSLIP_EMBED_KEY] = {
+        state: 'ready',
+        name: data?.item?.employee?.user?.name ?? empId,
+        build: async () => (await buildPayslipPdf(printRef.current!)).output('blob'),
+      } satisfies PayslipEmbedHandle
+    }, 300)
+    return () => clearTimeout(t)
+  }, [embed, forbidden, data, leaveLoaded, empId])
 
   if (loading) {
     return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
@@ -186,41 +217,12 @@ export default function EmployeePayrollDetailPage() {
   // ★ Pay Date = PayrollRun.payDate（人手填，可 null → 顯示 —）
   const payDateDMY = item.run?.payDate ? fmtDMY(item.run.payDate) : '—'
 
-  // PDF export via html2canvas
+  // PDF export via html2canvas（★ cwm-bulkpayslip-20261003：邏輯搬去 lib/payslip-pdf，一鍵匯出共用）
   const exportPdf = async () => {
     if (!printRef.current) return
     setExporting(true)
     try {
-      const { default: html2canvas } = await import('html2canvas')
-      const { jsPDF } = await import('jspdf')
-
-      const canvas = await html2canvas(printRef.current, {
-        scale: 2, backgroundColor: '#ffffff',
-        onclone: (doc) => {
-          doc.querySelectorAll('.no-print').forEach(el => (el as HTMLElement).style.display = 'none')
-        },
-      })
-
-      // ★ 2026-08-25：留 12mm 邊距 — 原本 x=0 / 闊 210mm 貼死邊界，列印會切到
-      const pdf = new jsPDF('p', 'mm', 'a4')
-      const MARGIN = 12
-      const pageW = 210, pageH = 297
-      const contentW = pageW - MARGIN * 2      // 186
-      const contentH = pageH - MARGIN * 2      // 273
-      const imgH = (canvas.height * contentW) / canvas.width
-      const imgData = canvas.toDataURL('image/jpeg', 0.92)   // ★ 提出迴圈外，唔好每頁重新編碼
-      let offset = 0
-      while (offset < imgH) {
-        if (offset > 0) pdf.addPage()
-        pdf.addImage(imgData, 'JPEG', MARGIN, MARGIN - offset, contentW, imgH)
-        // ★ 2026-08-27 cwm-costarrival：jsPDF 唔會 clip —— 圖會畫入上下 margin，令每頁多顯示 24mm
-        //   → 下一頁由 offset 開始就會重複嗰 24mm（分頁重疊）。
-        //   用白矩形遮住上下 margin，令每頁真係只顯示 contentH。（左右唔使遮 — contentW 已限闊）
-        pdf.setFillColor(255, 255, 255)
-        pdf.rect(0, 0, pageW, MARGIN, 'F')
-        pdf.rect(0, pageH - MARGIN, pageW, MARGIN, 'F')
-        offset += contentH                     // ★ 用 contentH 唔係 pageH
-      }
+      const pdf = await buildPayslipPdf(printRef.current)
       pdf.save(`薪資明細_${employeeName}_${periodMonth}.pdf`)
     } finally {
       setExporting(false)
