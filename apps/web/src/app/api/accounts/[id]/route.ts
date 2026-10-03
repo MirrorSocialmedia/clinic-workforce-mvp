@@ -201,7 +201,7 @@ export async function PUT(
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId, permissionsJson, ipAllowlist, fullName } = body
+      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, attendanceExempt, homeClinicId, permissionsJson, ipAllowlist, fullName } = body
 
       const existing = await prisma.user.findUnique({
         where: { id: params.id },
@@ -300,10 +300,11 @@ export async function PUT(
       // Update employee if exists (may have just been backfilled above)
       let homeClinicCleared = false
       let empUpdate: any = {} // ★ declared here so AuditLog can reference it after the block
-      if (employee && (employeeStatus !== undefined || payConfidential !== undefined || homeClinicId !== undefined || joinDate !== undefined && joinDate !== '')) {
+      if (employee && (employeeStatus !== undefined || payConfidential !== undefined || attendanceExempt !== undefined || homeClinicId !== undefined || joinDate !== undefined && joinDate !== '')) {
         empUpdate = {}
         if (employeeStatus !== undefined) empUpdate.status = employeeStatus
         if (payConfidential !== undefined) empUpdate.payConfidential = payConfidential
+        if (typeof attendanceExempt === 'boolean') empUpdate.attendanceExempt = attendanceExempt // ★ cwm-attexempt：帳號管理入口
 
         // ★ joinDate 之前只在建立新 Employee 時用（:235），更新現有員工完全冇處理 ——
         //   前端改了入職日、API 回 200，但 DB 冇變（Prisma 對缺欄係「唔更新」唔係報錯）。
