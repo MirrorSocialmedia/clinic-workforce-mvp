@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
+import { hkDateStart, toHKDateStr, getMonthRange, todayHK } from '@/lib/hk-date'
+import { resignedDateError } from '@/lib/employment-scope'
 import { rebuildShiftDate, buildShiftFromInput, isValidDateStr, shiftTimesError } from '@/lib/shift-write'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
@@ -109,6 +110,18 @@ export async function PUT(
     if (updateData.startTime !== undefined) {
       const te = shiftTimesError(updateData)
       if (te) return NextResponse.json({ error: te }, { status: 400 })
+    }
+
+    // ★ cwm-resignsweep-20261003：改人／改日唔准落去已離職員工嘅離職生效日或之後（取消更照准）
+    if ((body.employeeId !== undefined || body.date !== undefined) && (updateData.status ?? existing.status) !== 'CANCELLED') {
+      const targetEmpId = updateData.employeeId ?? existing.employeeId
+      const empRow = await prisma.employee.findUnique({
+        where: { id: targetEmpId },
+        select: { status: true, resignedAt: true, leaveDate: true },
+      })
+      if (!empRow) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+      const resignErr = resignedDateError(empRow, [body.date ?? toHKDateStr(existing.date)], todayHK())
+      if (resignErr) return NextResponse.json({ error: resignErr }, { status: 400 })
     }
 
     // ★ D1: check collision before writing

@@ -57,6 +57,12 @@ export async function POST(req: NextRequest) {
     const skipped: Array<{ employeeId: string; name: string; reason: string }> = []
 
     for (const emp of targetEmployees as any[]) {
+      // ★ cwm-resignsweep-20261003：已離職唔再累積 —— 年假已喺離職結算計到最後工作日；
+      //   用 now 重算會令餘額喺離職後繼續增長（帳號管理改入職日／單人重算都會行到呢度）。
+      if (emp.status === 'RESIGNED') {
+        skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: '已離職（年假由離職結算處理）' })
+        continue
+      }
       if (!emp.joinDate) {
         skipped.push({ employeeId: emp.id, name: emp.user?.name ?? '?', reason: '未設定入職日期' })
         continue

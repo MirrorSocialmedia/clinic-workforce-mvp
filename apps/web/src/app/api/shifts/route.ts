@@ -14,6 +14,7 @@ import { shiftReplacedMsg, shiftAddedMsg, shiftRestoredMsg, buildNotification } 
 import { createNotification } from '@/lib/notification'
 import { balanceYearFor, consumesQuota } from '@/lib/leave-types'
 import { lockEmployee, HttpError, toHttpResponse } from '@/lib/emp-lock'
+import { resignedDateError } from '@/lib/employment-scope'
 
 // ★ 2026-09-30 S-02：新增更只通知 7 日內嘅（遠期排更睇排班表，唔好每拖一格就彈通知）
 const NOTIFY_WITHIN_DAYS = 7
@@ -180,6 +181,18 @@ export async function POST(req: NextRequest) {
         if (bulkDates.length > 62) return NextResponse.json({ error: '批量排更一次最多 62 日' }, { status: 400 })
         const bad = bulkDates.find((d: unknown) => !isValidDateStr(d))
         if (bad !== undefined) return NextResponse.json({ error: `日期錯誤：${bad}` }, { status: 400 })
+      }
+
+      // ★ cwm-resignsweep-20261003：已離職員工唔准排離職生效日或之後嘅更（UI 已隱藏，API 兜底 —— 複製／批量等路徑）
+      {
+        const empRow = await prisma.employee.findUnique({
+          where: { id: employeeId },
+          select: { status: true, resignedAt: true, leaveDate: true },
+        })
+        if (!empRow) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+        const targetDates = Array.isArray(bulkDates) && bulkDates.length > 0 ? bulkDates as string[] : [date]
+        const resignErr = resignedDateError(empRow, targetDates, todayHK())
+        if (resignErr) return NextResponse.json({ error: resignErr }, { status: 400 })
       }
 
       // Validate clinic access + employee belongs to clinic (OWNER can bypass)

@@ -1,137 +1,16 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { fmtTime, toHKDateStr, addDays, hkDayOfWeek } from '@/lib/hk-date'
+import { fmtTime, toHKDateStr } from '@/lib/hk-date'
 import { useLatestRequest } from '@/lib/use-latest-request'
 import { useLiveRefresh } from '@/lib/live-refresh'
+import MonthOverviewTable, { MyLeaveBalanceStrip } from '@/components/my-month-overview'
 
-/* ─────────── Company Overview Table (read-only) ─────────── */
-function CompanyOverviewTable({
-  weekStart,
-  currentUserId,
-}: {
-  weekStart: string
-  currentUserId: string
-}) {
-  const [data, setData] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    if (!weekStart) return
-    setLoading(true)
-    fetch(`/api/my/company-overview?weekStart=${weekStart}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : Promise.resolve(null))
-      .then(d => { setData(d); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [weekStart])
-
-  if (loading) return <div className="text-xs text-muted-foreground py-2">載入公司總覽...</div>
-  if (!data || !data.employees?.length) return <div className="text-xs text-muted-foreground py-2">無公司總覽資料</div>
-
-  const { days, employees } = data
-
-  return (
-    <div>
-      <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
-        <table style={{
-          borderCollapse: 'separate', borderSpacing: 0,
-          tableLayout: 'fixed',
-          fontSize: 11, minWidth: 724, width: '100%',
-        }}>
-          <colgroup>
-            <col style={{ width: 80 }} />
-            {days.map((d: string) => <col key={d} style={{ width: 92 }} />)}
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb', position: 'sticky', left: 0, background: '#f9fafb', zIndex: 2, fontWeight: 600 }}>員工</th>
-              {days.map((d: string, i: number) => {
-                const dayNames = ['日', '一', '二', '三', '四', '五', '六']
-                const dayOfWeek = new Date(d + 'T00:00:00+08:00').getDay()
-                return (
-                  <th key={i} style={{ textAlign: 'center', padding: '4px 4px', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>
-                    <div style={{ fontWeight: 600 }}>{d.slice(5)}</div>
-                    <div style={{ color: '#888', fontSize: 10 }}>{dayNames[dayOfWeek]}</div>
-                  </th>
-                )
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {employees.map((emp: any) => {
-              const isMe = emp.userId === currentUserId
-              const shiftsByDay = emp.shifts?.reduce((acc: Record<string, any>, s: any) => { acc[s.date] = s; return acc }, {}) || {}
-              return (
-                <tr key={emp.id} style={{ background: isMe ? '#f0fdfa' : 'transparent' }}>
-                  <td style={{
-                    position: 'sticky', left: 0, zIndex: 1,
-                    background: isMe ? '#f0fdfa' : '#fff',
-                    padding: '4px 6px', fontWeight: isMe ? 700 : 500,
-                    borderBottom: '1px solid #f3f4f6',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{emp.name}</td>
-                  {days.map((d: string) => {
-                    const ds = shiftsByDay[d]
-                    return (
-                      <td key={d} style={{ padding: '3px 3px', verticalAlign: 'top', borderBottom: '1px solid #f3f4f6', overflow: 'hidden', borderLeft: '1px solid #f3f4f6' }}>
-                        {ds && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            {ds.shifts?.map((s: any) => (
-                              <span
-                                key={s.id}
-                                style={{
-                                  display: 'block', maxWidth: '100%', verticalAlign: 'top',
-                                  borderRadius: 4, padding: '2px 4px', fontSize: 10, lineHeight: 1.35,
-                                  background: s.isTransfer ? '#fef3c7' : '#e0f2fe',
-                                  color: s.isTransfer ? '#92400e' : '#0369a1',
-                                  border: s.isTransfer ? '0.5px solid #fcd34d' : 'none',
-                                }}
-                                title={[
-                                  s.clinicName,
-                                  s.isTransfer && s.secondaryClinicName ? `→ ${s.secondaryClinicName}` : '',
-                                  s.templateName,
-                                  `${s.startTime}-${s.endTime}`,
-                                ].filter(Boolean).join(' ')}
-                              >
-                                <span style={{ display: 'block', fontSize: 10, fontWeight: 500,
-                                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  {s.clinicShortName}
-                                  {s.isTransfer && s.secondaryClinicShortName && (
-                                    <><span style={{ margin: '0 1px' }}>→</span>{s.secondaryClinicShortName}</>
-                                  )}
-                                </span>
-                                <span style={{ display: 'block', fontSize: 9, opacity: 0.8,
-                                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  {s.templateShortName ? `${s.templateShortName} · ` : ''}{s.startTime}-{s.endTime}
-                                </span>
-                              </span>
-                            ))}
-                            {ds.leaves?.map((l: string, li: number) => (
-                              <span
-                                key={li}
-                                style={{
-                                  display: 'block', maxWidth: '100%', overflow: 'hidden',
-                                  textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                  background: '#fef3c7', color: '#92400e',
-                                  borderRadius: 4, padding: '1px 4px', fontSize: 10,
-                                }}
-                              >
-                                🏖 {l}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
+// ★ cwm-mobilemonth-20261003：「整月總覽」（同電腦版月視圖）／「我的日曆」切換，記住上次揀嘅（純本機方便）
+type ScheduleView = 'month' | 'mine'
+const VIEW_KEY = 'my-schedule-view'
+function readView(): ScheduleView {
+  try { return localStorage.getItem(VIEW_KEY) === 'mine' ? 'mine' : 'month' } catch { return 'month' }
 }
 
 /* ─────────── Main Page ─────────── */
@@ -150,14 +29,12 @@ export default function MySchedulePage() {
   // Current user ID for highlighting own row in overview
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
-  // Week start for company overview: defaults to "this week" Monday (HK perspective)
-  const mondayOf = (d: Date) => {
-    const dow = hkDayOfWeek(d)
-    const offset = dow === 0 ? -6 : 1 - dow
-    const base = toHKDateStr(d)
-    return addDays(base, offset)
+  const [view, setViewState] = useState<ScheduleView>('month')
+  useEffect(() => { setViewState(readView()) }, [])
+  const setView = (v: ScheduleView) => {
+    setViewState(v)
+    try { localStorage.setItem(VIEW_KEY, v) } catch { /* 私密模式等 —— 唔記都照用 */ }
   }
-  const [ovWeekStart, setOvWeekStart] = useState(() => mondayOf(new Date()))
 
   // Fetch current user
   useEffect(() => {
@@ -278,28 +155,34 @@ export default function MySchedulePage() {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-4">📅 我的班表</h1>
+      <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-3">📅 我的班表</h1>
 
+      {/* ─── 月份 + 檢視切換 ─── */}
+      <div className="flex items-center justify-between mb-2">
+        <button className="btn btn-sm" style={{ background: '#f0f0f0', minWidth: 44, minHeight: 40 }} onClick={() => goToMonth(-1)} aria-label="上個月">◀</button>
+        <span className="text-base font-semibold">{month.replace('-', ' 年 ')} 月</span>
+        <button className="btn btn-sm" style={{ background: '#f0f0f0', minWidth: 44, minHeight: 40 }} onClick={() => goToMonth(1)} aria-label="下個月">▶</button>
+      </div>
+      <div style={{ display: 'flex', border: '1px solid #c3cbd4', borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
+        {([['month', '整月總覽'], ['mine', '我的日曆']] as [ScheduleView, string][]).map(([v, label]) => (
+          <button key={v} type="button" onClick={() => setView(v)} style={{
+            flex: 1, height: 40, border: 0, fontSize: 14,
+            background: view === v ? '#1F4E79' : '#fff', color: view === v ? '#fff' : '#1f2933',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {view === 'month' && currentUserId && (
+        <div className="mb-3">
+          <MonthOverviewTable month={month} currentUserId={currentUserId} />
+          <MyLeaveBalanceStrip />
+        </div>
+      )}
+
+      {view === 'mine' && (<>
       {/* ─── Personal Calendar ─── */}
       <div className="card mb-3">
         <div className="flex items-center justify-between mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
-          <div className="flex items-center gap-3">
-            <button
-              className="btn btn-sm"
-              style={{ background: '#f0f0f0' }}
-              onClick={() => goToMonth(-1)}
-            >
-              ◀
-            </button>
-            <span className="text-base font-semibold">{month}</span>
-            <button
-              className="btn btn-sm"
-              style={{ background: '#f0f0f0' }}
-              onClick={() => goToMonth(1)}
-            >
-              ▶
-            </button>
-          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {/* Coworker toggle */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -480,22 +363,7 @@ export default function MySchedulePage() {
         </div>
       )}
 
-      {/* ─── Company Overview (read-only) ─── */}
-      <div className="card mb-3" style={{ overflow: 'visible' }}>
-        <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700">🏢 公司全局總覽</span>
-            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, -7))} title="上一週">‹</button>
-            <span className="text-xs text-muted-foreground">{ovWeekStart} 起</span>
-            <button className="text-base hover:text-gray-900" onClick={() => setOvWeekStart(w => addDays(w, 7))} title="下一週">›</button>
-            <button className="text-xs underline text-muted-foreground hover:text-gray-700" onClick={() => setOvWeekStart(mondayOf(new Date()))}>本週</button>
-          </div>
-          <span className="text-xs text-muted-foreground">唯讀</span>
-        </div>
-        {currentUserId && (
-          <CompanyOverviewTable weekStart={ovWeekStart} currentUserId={currentUserId} />
-        )}
-      </div>
+      </>)}
     </div>
   )
 }
