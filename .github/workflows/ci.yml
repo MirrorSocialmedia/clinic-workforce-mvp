@@ -118,6 +118,7 @@ jobs:
             src/lib/phone-hash.test.ts \
             src/lib/phone.test.ts \
             src/lib/pl-mark-route.test.ts \
+            src/lib/probation.test.ts \
             src/lib/punch-evidence.test.ts \
             src/lib/punch-retry.test.ts \
             src/lib/provider-availability-grid.test.ts \

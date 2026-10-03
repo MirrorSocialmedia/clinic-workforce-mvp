@@ -5,8 +5,23 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { getMonthRange, toHKDateStr } from '@/lib/hk-date'
 import { PAY_RULE_SELECT } from '@/lib/pay-rule-latest'
 import { jsonNoStore } from '@/lib/api-response'
+import { estimateScheduledHours } from '@/lib/shift-punch-match'
+import { employedFromWhere } from '@/lib/employment-scope'
 
-// GET /api/dashboard/labour-cost?month=YYYY-MM — ★ cwm-ownerdash-20260917：OWNER-only 本月人工
+/**
+ * GET /api/dashboard/labour-cost?month=YYYY-MM — ★ cwm-ownerdash-20260917：OWNER-only 人工卡
+ *
+ * ★ cwm-labourfix-20261003：舊版只計「本月」糧單 —— 但糧單係月尾／下月初先出，
+ *   成個月大部分時間本月都未有糧單 → 卡永遠 $0。而家分兩部分：
+ *   ① latest：最近一期有糧單嘅月份（≤ 本月）實數（Gross／Net／僱員 MPF），同再上一期已確認比較
+ *   ② estimate：本月未入糧單嘅人預計 —— 月薪 = 底薪；時薪 = 本月排更鐘數 × 時薪
+ *      （未計 OT／津貼／扣款／MPF；本月糧單出咗嘅人唔重複估）
+ */
+const prevMonth = (ym: string) => {
+  const [y, m] = ym.split('-').map(Number)
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
@@ -15,7 +30,7 @@ export async function GET(req: NextRequest) {
   }
   const ym = new URL(req.url).searchParams.get('month') || toHKDateStr(new Date()).slice(0, 7)
   if (!/^\d{4}-\d{2}$/.test(ym)) return NextResponse.json({ error: 'month 格式 YYYY-MM' }, { status: 400 })
-  const prevYm = (() => { const [y, m] = ym.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}` })()
+  const { start: monthStart, end: monthEnd } = getMonthRange(new Date(`${ym}-01T00:00:00+08:00`))
 
   const summarize = async (month: string) => {
     const { start, end } = getMonthRange(new Date(`${month}-01T00:00:00+08:00`))
@@ -27,8 +42,11 @@ export async function GET(req: NextRequest) {
     const byRun = runs.map(r => {
       let gross = 0, mpf = 0
       for (const it of r.items) {
-        try { const d = JSON.parse(it.detailJson || '{}'); gross += Number(d.grossPay) || 0; mpf += Number(d.mpf) || 0 }
-        catch (e) { console.error('[labour-cost] bad detailJson', r.id, e) }
+        try {
+          const d = JSON.parse(it.detailJson || '{}')
+          gross += Number(d.grossPay ?? d.salary?.grossPay) || 0
+          mpf += Number(d.mpf ?? d.salary?.mpf) || 0
+        } catch (e) { console.error('[labour-cost] bad detailJson', r.id, e) }
       }
       const net = r.items.reduce((s, it) => s + (it.totalPayable ?? 0), 0)
       return { runId: r.id, clinicName: r.clinic?.name ?? '全部診所', status: r.status, headcount: r.items.length,
@@ -39,29 +57,67 @@ export async function GET(req: NextRequest) {
     return { month, runs: byRun, totals: { gross: sum('gross'), net: sum('net'), mpfEmployee: sum('mpfEmployee') }, inRun }
   }
 
-  const cur = await summarize(ym)
-  const prev = await summarize(prevYm)
+  // ① 最近一期有糧單嘅月份（≤ 本月）
+  const latestRun = await prisma.payrollRun.findFirst({
+    where: { periodMonth: { lte: monthEnd } },
+    orderBy: { periodMonth: 'desc' },
+    select: { periodMonth: true },
+  })
+  const latestYm = latestRun ? toHKDateStr(latestRun.periodMonth).slice(0, 7) : null
+  const latest = latestYm ? await summarize(latestYm) : null
+  const beforeLatest = latestYm ? await summarize(prevMonth(latestYm)) : null
+  const current = latestYm === ym ? latest! : await summarize(ym)
 
-  // 未入糧單嘅在職員工 → 底薪估算（月薪）／時薪人數（唔估）
+  // ② 本月預計（未入本月糧單、本月仍受僱、本月或之前入職）
   const emps = await prisma.employee.findMany({
-    where: { status: { not: 'RESIGNED' } },
+    where: { AND: [employedFromWhere(monthStart), { joinDate: { lte: monthEnd } }] },
     select: { id: true, payRules: PAY_RULE_SELECT },
   })
-  let baseSalary = 0, monthlyN = 0, hourlyN = 0, noRuleN = 0
+  const hourlyRate = new Map<string, number>()
+  const lunchMin = new Map<string, number>()
+  let monthlyBase = 0, monthlyN = 0, noRuleN = 0
   for (const e of emps) {
-    if (cur.inRun.has(e.id)) continue
+    if (current.inRun.has(e.id)) continue
     const r = (e as any).payRules?.[0]
     if (!r) { noRuleN++; continue }
     let cfg: any = {}
     try { cfg = JSON.parse(r.configJson || '{}') } catch (err) { console.error('[labour-cost] bad configJson', e.id, err) }
-    if (cfg.base_type === 'hourly') hourlyN++
-    else { monthlyN++; baseSalary += Number(cfg.monthly_salary) || 0 }
+    if (cfg.base_type === 'hourly' || r.payType === 'HOURLY') {
+      hourlyRate.set(e.id, Number(cfg.hourly_rate) || 0)
+      lunchMin.set(e.id, cfg?.modifiers?.lunch_break?.defaultMinutes ?? 60)
+    } else {
+      monthlyN++
+      monthlyBase += Number(cfg.monthly_salary) || 0
+    }
   }
+  let hourlyAmount = 0, hourlyHours = 0, hourlyN = 0
+  if (hourlyRate.size > 0) {
+    const shifts = await prisma.shift.findMany({
+      where: { employeeId: { in: [...hourlyRate.keys()] }, status: { not: 'CANCELLED' }, date: { gte: monthStart, lte: monthEnd } },
+      select: { employeeId: true, date: true, startTime: true, endTime: true, status: true, template: { select: { deductLunch: true } } },
+    })
+    const est = estimateScheduledHours(shifts, id => lunchMin.get(id) ?? 60)
+    for (const [empId, days] of est) {
+      const h = days.reduce((s, d) => s + d.hours, 0)
+      if (h <= 0) continue
+      hourlyN++
+      hourlyHours += h
+      hourlyAmount += h * (hourlyRate.get(empId) ?? 0)
+    }
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100
 
   return jsonNoStore({
     month: ym,
-    current: { runs: cur.runs, totals: cur.totals },
-    notInRun: { monthlyN, hourlyN, noRuleN, baseSalaryEstimate: Math.round(baseSalary) },
-    previous: { month: prevYm, runs: prev.runs, totals: prev.totals },
+    latest: latest ? { month: latest.month, runs: latest.runs, totals: latest.totals } : null,
+    beforeLatest: beforeLatest ? { month: beforeLatest.month, runs: beforeLatest.runs, totals: beforeLatest.totals } : null,
+    estimate: {
+      month: ym,
+      inRunN: current.inRun.size,
+      monthlyN, monthlyBase: r2(monthlyBase),
+      hourlyN, hourlyHours: Math.round(hourlyHours * 10) / 10, hourlyAmount: r2(hourlyAmount),
+      noRuleN,
+      total: r2(monthlyBase + hourlyAmount),
+    },
   })
 }
