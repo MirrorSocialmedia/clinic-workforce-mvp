@@ -78,7 +78,7 @@ export default function DailyRevenuePage() {
     setFrom(`${today.slice(0, 7)}-01`); setTo(today)
   }
 
-  const th: React.CSSProperties = { border: '1px solid #d9dee4', padding: '7px 9px', background: '#f3f5f8', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12 }
+  const th: React.CSSProperties = { border: '1px solid #d9dee4', padding: '7px 9px', background: '#f3f5f8', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12, textTransform: 'none', letterSpacing: 'normal' }
   const td = (color: string, extra: React.CSSProperties = {}): React.CSSProperties => ({
     border: '1px solid #d9dee4', padding: '7px 9px', textAlign: 'right', whiteSpace: 'nowrap',
     fontVariantNumeric: 'tabular-nums', color, ...extra,
