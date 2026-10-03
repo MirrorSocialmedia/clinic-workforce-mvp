@@ -1059,8 +1059,9 @@ export async function generatePayrollRun(
     attendanceBonusOverrides?: Record<string, 'FORCE_ON' | 'FORCE_OFF'>  // ★ 三態覆蓋
     excludeConfidential?: boolean // ★ 新增：非 OWNER 排除保密員工
     /**
-     * ★ cwm-payrollsingle-20261003：只重算呢幾個員工（草稿單限定）——
-     *   其他員工嘅 item 一行都唔郁；呢幾個嘅舊 item 刪咗再寫（唔再合資格 = 刪咗唔寫，入 removed[]）。
+     * ★ cwm-payrollsingle-20261003：只計呢幾個員工 ——
+     *   已有草稿：其他員工嘅 item 一行都唔郁；呢幾個嘅舊 item 刪咗再寫（唔再合資格 = 刪咗唔寫，入 removed[]）。
+     *   未有計糧單：開一張只有呢幾個員工嘅草稿（之後可以逐個「加入員工」）。
      */
     onlyEmployeeIds?: string[]
   },
@@ -1092,9 +1093,6 @@ export async function generatePayrollRun(
   }
 
   const only = opts?.onlyEmployeeIds?.length ? new Set(opts.onlyEmployeeIds) : null
-  if (only && !existing) {
-    return { error: '個別員工重算只適用於已存在嘅草稿計糧單', runId: '', status: 'NONE' }
-  }
 
   // ★ 重新生成前先記低手動輸入嘅獎金／拆帳／勤工獎覆蓋／離職結算 —— 唔記低就會被 deleteMany 一齊清走
   let run: any = existing
@@ -1186,6 +1184,11 @@ export async function generatePayrollRun(
     include: { user: { select: { name: true } } },
     orderBy: { id: 'asc' },
   })
+  // ★ cwm-payrollsingle-20261003：揀咗員工但佢唔屬呢間店／本月唔合資格 → 唔好開空單／靜靜乜都唔做
+  //   （佢本身喺單入面但而家唔合資格 = 正常移除，照行落去，入 removed[]）
+  if (only && employees.length === 0 && oldEmps.length === 0) {
+    return { error: '揀咗嘅員工唔屬於呢間店，或者本月冇計糧資料', runId: '', status: 'NONE' }
+  }
 
   // ★ cwm-money P2-3：同月已喺其他計糧單出現嘅員工一律跳過
   const inOtherRun = new Map<string, string>()

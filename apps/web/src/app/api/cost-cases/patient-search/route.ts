@@ -1,15 +1,14 @@
 import { NextRequest } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { withApricotLockRetry, searchPatients } from '@/lib/apricot/client'
-import { toCleanPatients, assertNoPiiPatient, type CleanPatient } from '@/lib/apricot/sanitize'
-import { listApricotAccounts, withApricotAccount } from '@/lib/apricot/account'
+import { assertNoPiiPatient } from '@/lib/apricot/sanitize'
+import { searchPatientsAllSources } from '@/lib/patient-search'
 
 // ============================================================
 // GET /api/cost-cases/patient-search — Search Apricot patients
 // Perms: cost_entry | provider_payout (Y4)
 // Query: ?keyword=
-// ★ keyword min 6 chars; max 20 results; PII whitelist only
+// ★ keyword min 6 chars; max 30 results（各來源公平合併）; PII whitelist only
 // ============================================================
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -23,24 +22,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // ★ cwm-apricotty-20261001：逐個 Apricot 帳號搵（青衣病人喺另一個帳號）—— 每個病人標 account，
-    //   之後 bill-search 帶返同一個帳號。一個帳號失敗（例如青衣 token 未寫）唔阻其他帳號；全部失敗先報錯。
-    const accounts = await listApricotAccounts()
-    const patients: CleanPatient[] = []
-    const errors: unknown[] = []
-    for (const account of accounts) {
-      try {
-        const raw = await withApricotAccount(account, () => withApricotLockRetry(() => searchPatients(keyword)))
-        for (const p of toCleanPatients(raw)) patients.push({ ...p, account })
-      } catch (e) {
-        errors.push(e)
-        console.warn(`[patient-search] 帳號 ${account} 搜尋失敗`, (e as any)?.message)
-      }
-    }
-    if (errors.length === accounts.length) throw errors[0]
-    const top = patients.slice(0, 20)
-    assertNoPiiPatient(top)
-    return jsonNoStore({ patients: top })
+    // ★ cwm-patientsearch-20261003：統一病人搜尋 —— 全部來源（含青衣）＋本地索引，公平合併，
+    //   每個結果帶診所，每個來源回報狀態（之前某來源失敗／冇結果都靜靜消失）
+    const { patients, sources } = await searchPatientsAllSources(keyword)
+    assertNoPiiPatient(patients)
+    return jsonNoStore({ patients, sources })
   } catch (e: any) {
     const msg = e.message || ''
     if (msg === 'APRICOT_BUSY') {
