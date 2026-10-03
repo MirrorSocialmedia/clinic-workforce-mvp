@@ -6,6 +6,7 @@ import { todayHK, hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
 import { estimateScheduledHours } from '@/lib/shift-punch-match'
 import { buildTodayBoard } from '@/lib/today-board'
 import { computeRosterHours, rosterDiffNoteFilter } from '@/lib/roster-hours'
+import { NOT_RESIGNED_WHERE } from '@/lib/employment-scope'
 
 /** Get start/end of today in HK (UTC+8) */
 function hkTodayBounds() {
@@ -79,6 +80,7 @@ export async function GET(req: NextRequest) {
   const allEmployeeClinics = await prisma.employeeClinic.findMany({
     where: {
       clinicId: { in: clinics.map(c => c.id) },
+      employee: NOT_RESIGNED_WHERE, // ★ cwm-resignsweep-20261003：員工數唔計已離職
     },
     select: { employeeId: true },
   })

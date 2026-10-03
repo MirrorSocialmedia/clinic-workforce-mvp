@@ -8,6 +8,7 @@ import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
 import { hkDateEnd } from '@/lib/hk-date'
 import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
+import { NOT_RESIGNED_WHERE } from '@/lib/employment-scope'
 
 // ============================================================
 // GET /api/leave-balance — Get leave balance
@@ -57,7 +58,9 @@ export async function GET(req: NextRequest) {
       targetEmployeeId = employeeId
     }
 
-    const where: any = targetEmployeeId ? { employeeId: targetEmployeeId } : {}
+    // ★ cwm-resignsweep-20261003：列全部（假期管理「全部員工」、儀表板）唔包已離職；
+    //   指定 employeeId（帳號管理、薪資明細、離職結算）照回 —— 結算／翻查要見到。
+    const where: any = targetEmployeeId ? { employeeId: targetEmployeeId } : { employee: NOT_RESIGNED_WHERE }
     if (year) where.year = parseInt(year)
 
     const balances = await prisma.leaveBalance.findMany({

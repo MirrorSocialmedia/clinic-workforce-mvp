@@ -209,6 +209,13 @@ export async function PUT(
       })
       if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+      // ★ cwm-resignsweep-20261003：離職／復職唔准喺度直接改 status —— 會跳過 applyResignCutoff
+      //   （冇 resignedAt、之後嘅更／假唔取消、帳號仲登入得），要行「辦理離職」／「復職」。
+      if (employeeStatus !== undefined && employeeStatus !== (existing.employee?.status ?? null)
+        && (employeeStatus === 'RESIGNED' || existing.employee?.status === 'RESIGNED')) {
+        return NextResponse.json({ error: '離職／復職請用「辦理離職」或「復職」功能' }, { status: 400 })
+      }
+
       const userUpdate: any = {}
       if (name !== undefined) userUpdate.name = name
       if (phone !== undefined) userUpdate.phone = phone
@@ -330,7 +337,8 @@ export async function PUT(
         // ★ 入職日直接決定年假累積額度（totalAccruedLeave）——
         //   改了要即刻重算，否則 LeaveBalance 一直用舊值，
         //   要等有人手動撳「重新計算假期」先反映。
-        if (empUpdate.joinDate) {
+        // ★ cwm-resignsweep-20261003：已離職唔重算（年假由離職結算定死；用 now 計會喺離職後繼續累積）
+        if (empUpdate.joinDate && employee.status !== 'RESIGNED') {
           const annualType = await prisma.leaveType.findUnique({
             where: { systemKey: 'ANNUAL_LEAVE' },
           })

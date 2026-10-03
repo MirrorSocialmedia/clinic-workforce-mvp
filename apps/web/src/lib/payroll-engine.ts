@@ -21,6 +21,7 @@ import { getMpfExemption, adjustMpfMinForPeriod } from './mpf-exemption'
 import { calcMpfEmployer } from './mpf-employer'
 import { findPayRuleForMonth } from './pay-rule-for-month'
 import { pickResignChoice, toEngineBonusOverride, type SettlementBonusChoice } from './settlement-utils'
+import { employedFromWhere } from './employment-scope'
 
 // ------------------------------------------------------------------
 // TimeBank Engine Version + Cache Key
@@ -1154,6 +1155,16 @@ export async function generatePayrollRun(
       //   舊版會漏，年假薪酬＋代通知金冇出糧（EO s.25 7 日內付清）
       { resignSettlement: { is: { periodMonth } } },
     ],
+    // ★ cwm-resignsweep-20261003：之前月份已離職嘅唔入名單 —— 離職時取消咗嘅之後更（CANCELLED）
+    //   會令「該月有排更」條件成立，離職員工喺之後月份出一條 0 糧。
+    //   本月仲有返工日／本月有結算／重算時舊 run 有 item 嘅照入（CA-04 / RS-07 唔受影響）。
+    AND: [{
+      OR: [
+        employedFromWhere(monthStart),
+        { resignSettlement: { is: { periodMonth } } },
+        ...(existing ? [{ payrollItems: { some: { runId: existing.id } } }] : []),
+      ],
+    }],
   }
   if (clinicId) where.homeClinicId = clinicId
 

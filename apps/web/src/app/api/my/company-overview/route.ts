@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { toHKDateStr, fmtTime, leaveCoversDate } from '@/lib/hk-date'
+import { employedFromWhere } from '@/lib/employment-scope'
 
 // ============================================================
 // GET /api/my/company-overview — Company-wide schedule overview for a week
@@ -58,8 +59,9 @@ export async function GET(req: NextRequest) {
   const allClinicIds = allClinics.map(c => c.id)
 
   // 3. Get all employees in those clinics
+  // ★ cwm-resignsweep-20261003：已離職員工只喺本週仲有返工日先出現（離職之後嘅週撤走空行）
   const allEmployeeClinics = await prisma.employeeClinic.findMany({
-    where: { clinicId: { in: allClinicIds } },
+    where: { clinicId: { in: allClinicIds }, employee: employedFromWhere(weekStart) },
     include: {
       employee: {
         include: {

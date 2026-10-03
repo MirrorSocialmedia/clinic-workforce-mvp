@@ -6,6 +6,7 @@ import { getConfidentialScope } from '@/lib/scope-helpers'
 import { calculatePayrollWithRules, buildEngineOptions, parseResignSettlementRow, resolveStoreBonus, resolveBonusOverride } from '@/lib/payroll-engine'
 import { getMonthRange, toHKDateStr, hkParts } from '@/lib/hk-date'
 import { findPayRuleForMonth } from '@/lib/pay-rule-for-month'
+import { employedFromWhere } from '@/lib/employment-scope'
 
 // ============================================================
 // POST /api/payroll-runs/preview — Preview payroll calculation
@@ -91,9 +92,22 @@ export async function POST(req: NextRequest) {
               },
             },
           },
+          // ★ cwm-resignsweep-20261003：同 engine RS-07 —— 有本月離職結算嘅一定入
+          { resignSettlement: { is: { periodMonth } } },
         ],
       },
     ]
+    // ★ cwm-resignsweep-20261003：同 generatePayrollRun —— 之前月份已離職嘅唔入（取消咗嘅之後更會令「有排更」成立）。
+    //   指定 employeeId（離職結算預覽）唔過濾。
+    if (!employeeId) {
+      andClauses.push({
+        OR: [
+          employedFromWhere(monthStart),
+          { resignSettlement: { is: { periodMonth } } },
+          ...(existing ? [{ payrollItems: { some: { runId: existing.id } } }] : []),
+        ],
+      })
+    }
     if (clinicId) andClauses.push({ homeClinicId: clinicId })
     if (employeeId) andClauses.push({ id: employeeId })
 

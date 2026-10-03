@@ -103,6 +103,7 @@ jobs:
             src/lib/clinical/quote-parser.test.ts \
             src/lib/clinical/t623-llm-proxy-contract.test.ts \
             src/lib/cost-entry/clinic-prefix.test.ts \
+            src/lib/employment-scope.test.ts \
             src/lib/exceptions-late-early.test.ts \
             src/lib/external-api.test.ts \
             src/lib/external-clinic.test.ts \

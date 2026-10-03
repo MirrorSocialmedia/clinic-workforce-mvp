@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
+import { NOT_RESIGNED_WHERE } from '@/lib/employment-scope'
 
 // ============================================================
 // POST /api/leave-balance/init — Batch initialize leave balances
@@ -54,7 +55,8 @@ export async function POST(req: NextRequest) {
     }
 
     const targets = employeeId === 'all'
-      ? (await prisma.employee.findMany()).map(e => e.id)
+      // ★ cwm-resignsweep-20261003：「全部員工」唔包已離職
+      ? (await prisma.employee.findMany({ where: NOT_RESIGNED_WHERE, select: { id: true } })).map(e => e.id)
       : [employeeId]
 
     // 取得假期類型名稱
