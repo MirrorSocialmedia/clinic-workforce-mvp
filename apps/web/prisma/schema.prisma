@@ -92,24 +92,24 @@ enum LeaveStatus {
 
 // Company entity — parent of clinics
 model Company {
-  id        String   @id @default(cuid())
-  name      String
+  id                String   @id @default(cuid())
+  name              String
   /// ★ 法定名稱（薪俸結算書公司印鑑用）—— 同 display name 可以唔同
-  legalName String?
-  logoData  String?  // data URL (image/png;base64,...)
+  legalName         String?
+  logoData          String? // data URL (image/png;base64,...)
   /// ★ 2026-09-10 cwm-payrollui 拍板⑤：計糧詳情頁顯示設定（全公司統一）
   /// { cards: string[], columns: string[] } —— 存【要顯示】嘅 key；null = 預設
-  payrollViewJson String?
+  payrollViewJson   String?
   /// ★ cwm-payrollcols-20260918 拍板②：Excel 匯出欄位設定（同顯示欄位分兩份，唔共用）
   /// JSON array string（要匯出嘅 key）；null = EXPORT_COLS_DEFAULT
   payrollExportCols String?
-  createdAt DateTime @default(now())
+  createdAt         DateTime @default(now())
 
-  clinics       Clinic[]
-  shiftTemplates ShiftTemplate[]
-  scheduleNotes  ScheduleNote[]
+  clinics         Clinic[]
+  shiftTemplates  ShiftTemplate[]
+  scheduleNotes   ScheduleNote[]
   schedulingMemos SchedulingMemo[]
-  providers      Provider[]
+  providers       Provider[]
 }
 
 // ★ 2026-08-04: 排班每日備註 —— 按公司，每日一條（上限 20 字）
@@ -117,9 +117,9 @@ model ScheduleNote {
   id        String   @id @default(cuid())
   companyId String
   company   Company  @relation(fields: [companyId], references: [id])
-  date      String   // ★ HK date string YYYY-MM-DD, not DateTime
-  row       Int      @default(0)   // 0 = 表頭原有嗰行；1-5 = 底部五行
-  text      String   // max 20 chars
+  date      String // ★ HK date string YYYY-MM-DD, not DateTime
+  row       Int      @default(0) // 0 = 表頭原有嗰行；1-5 = 底部五行
+  text      String // max 20 chars
   createdBy String
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
@@ -134,7 +134,7 @@ model SchedulingMemo {
   id          String   @id @default(cuid())
   companyId   String
   company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  periodMonth String   // 'YYYY-MM'（HK）
+  periodMonth String // 'YYYY-MM'（HK）
   text        String
   updatedBy   String
   updatedAt   DateTime @updatedAt
@@ -145,42 +145,45 @@ model SchedulingMemo {
 
 // Clinic entity
 model Clinic {
-  id        String   @id @default(cuid())
-  name      String
-  shortName String?  // 店鋪簡稱（1-2字：旺/仁/銅/荃/元/沙）
-  color     String?  // 更表膠囊顏色 #RRGGBB，null = 灰色預設
-  address   String?
-  latitude  Float?   // 店舖緯度
-  longitude Float?   // 店舖經度
-  geoRadius Int?     // 允許半徑(米),null = 用全局預設 200
-  apricotClinicId String? @unique // ★ Apricot 嘅 clinicId
+  id                  String   @id @default(cuid())
+  name                String
+  shortName           String? // 店鋪簡稱（1-2字：旺/仁/銅/荃/元/沙）
+  color               String? // 更表膠囊顏色 #RRGGBB，null = 灰色預設
+  address             String?
+  latitude            Float? // 店舖緯度
+  longitude           Float? // 店舖經度
+  geoRadius           Int? // 允許半徑(米),null = 用全局預設 200
+  apricotClinicId     String?  @unique // ★ Apricot 嘅 clinicId
   /// ★ cwm-apricotty-20261001：呢間店屬邊個 Apricot 帳號（登入 cookie）— MAIN = 原有帳號；青衣 = TY。
   ///   token 存 ExternalCredential（MAIN → provider 'APRICOT'；其他 → 'APRICOT:<帳號>'）。
-  apricotAccount  String  @default("MAIN")
+  apricotAccount      String   @default("MAIN")
   /// ★ cwm-apricotty-20261001：醫生月結由邊個月開始用系統計（'YYYY-MM'；null = 冇限制）。
   ///   新接 Apricot 嘅店（青衣）之前月份人手處理過 — 防重複計。
-  apricotPayoutFrom String?
-  config    String?  // JSON string for SQLite compat
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  apricotPayoutFrom   String?
+  /// ★ cwm-datasource-20261003：呢間店嘅病人編號前綴（逗號分隔，例 "TW" 或 "TKW,TK"）；
+  ///   null = 用 shortName 推斷（舊行為）；純數字編號嘅店留空即可（來源只得一間店就直接歸佢）
+  patientCodePrefix   String?
+  config              String? // JSON string for SQLite compat
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
   // ★ providerslot-20260830 T1：可約時段（線上預約）設定 — 逐店，全行有 default
-  capacityPerProvider Int @default(3)  // 按醫生同時上限（MD 建議 3；15m 數據 30m 出位）
-  leadTimeMin         Int @default(30) // 最早可約 = now + N 分鐘（老細拍板 30）
-  flowWindowDays      Int @default(30) // Flow 出位窗口（同 BOOKING_WINDOW_DAYS=30）
-  holdTimeoutHours    Int @default(24) // HELD 逾時警報用（12h MEDIUM / 24h HIGH — inbox T3 用）
+  capacityPerProvider Int      @default(3) // 按醫生同時上限（MD 建議 3；15m 數據 30m 出位）
+  leadTimeMin         Int      @default(30) // 最早可約 = now + N 分鐘（老細拍板 30）
+  flowWindowDays      Int      @default(30) // Flow 出位窗口（同 BOOKING_WINDOW_DAYS=30）
+  holdTimeoutHours    Int      @default(24) // HELD 逾時警報用（12h MEDIUM / 24h HIGH — inbox T3 用）
 
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
 
-  users     UserClinic[]
-  employees EmployeeClinic[]
-  shifts    Shift[]
-  punches   PunchRecord[]
-  qrTokens  QRToken[]
-  dailyHashes DailyHash[]
+  users           UserClinic[]
+  employees       EmployeeClinic[]
+  shifts          Shift[]
+  punches         PunchRecord[]
+  qrTokens        QRToken[]
+  dailyHashes     DailyHash[]
   payrollRuns     PayrollRun[]
   expenseEntries  ExpenseEntry[]
-  homeEmployees   Employee[] @relation("HomeClinic")
+  homeEmployees   Employee[]              @relation("HomeClinic")
   providerShifts  ProviderShift[]
   providerClinics ProviderClinic[]
   availabilities  ProviderAvailability[]
@@ -193,26 +196,26 @@ model Clinic {
 
 // User entity — system login account
 model User {
-  id        String       @id @default(cuid())
+  id        String     @id @default(cuid())
   name      String
   /// 身份證全名 —— 純記錄用，會喺薪資明細顯示。唔用於登入或搜尋。
   fullName  String?
-  phone     String       @unique
+  phone     String     @unique
   email     String?
-  password  String       // bcrypt hash
-  role      UserRole     @default(EMPLOYEE)
-  status    UserStatus   @default(ACTIVE)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  password  String // bcrypt hash
+  role      UserRole   @default(EMPLOYEE)
+  status    UserStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
-  clinics   UserClinic[]
-  employee  Employee?
-  auditLogs       AuditLog[]   @relation("ActorLogs")
-  resetToken      String?
+  clinics          UserClinic[]
+  employee         Employee?
+  auditLogs        AuditLog[]   @relation("ActorLogs")
+  resetToken       String?
   resetTokenExpiry DateTime?
-  permissionsJson String? // JSON: { "grant": [...], "deny": [...] }
-  tokenVersion   Int      @default(0)
-  ipAllowlist    String?  // comma-separated IPs or prefixes (KIOSK only)
+  permissionsJson  String? // JSON: { "grant": [...], "deny": [...] }
+  tokenVersion     Int          @default(0)
+  ipAllowlist      String? // comma-separated IPs or prefixes (KIOSK only)
 
   @@index([role])
   @@index([status])
@@ -236,30 +239,30 @@ model UserClinic {
 
 // Employee entity
 model Employee {
-  id        String           @id @default(cuid())
-  userId    String           @unique
-  user      User             @relation(fields: [userId], references: [id])
-  clinics   EmployeeClinic[]
-  homeClinicId String?
-  homeClinic Clinic? @relation("HomeClinic", fields: [homeClinicId], references: [id])
-  payRules  PayRule[]
-  shifts           Shift[]
-  punches          PunchRecord[]
-  punchCorrections PunchCorrection[]
-  changeRequestsFrom ShiftChangeRequest[] @relation("ChangeFrom")
-  changeRequestsTo   ShiftChangeRequest[] @relation("ChangeTo")
-  changeRequestsAsApprover ShiftChangeRequest[] @relation("ChangeApprover")
-  leaveRequests LeaveRequest[]
-  leaveBalances LeaveBalance[]
-  leaveBalanceSnapshots LeaveBalanceSnapshot[]
-  timeBankRecords TimeBank[]
-  timeBankEntries TimeBankEntry[]
-  timeBankLedgers TimeBankLedgerSnapshot[]
-  payrollItems    PayrollItem[]
-  expenseEntries  ExpenseEntry[]
-  faceTemplates   FaceTemplate[]
-  auditTargets    AuditLog[] @relation("AuditTarget")
-  joinDate  DateTime
+  id                       String                   @id @default(cuid())
+  userId                   String                   @unique
+  user                     User                     @relation(fields: [userId], references: [id])
+  clinics                  EmployeeClinic[]
+  homeClinicId             String?
+  homeClinic               Clinic?                  @relation("HomeClinic", fields: [homeClinicId], references: [id])
+  payRules                 PayRule[]
+  shifts                   Shift[]
+  punches                  PunchRecord[]
+  punchCorrections         PunchCorrection[]
+  changeRequestsFrom       ShiftChangeRequest[]     @relation("ChangeFrom")
+  changeRequestsTo         ShiftChangeRequest[]     @relation("ChangeTo")
+  changeRequestsAsApprover ShiftChangeRequest[]     @relation("ChangeApprover")
+  leaveRequests            LeaveRequest[]
+  leaveBalances            LeaveBalance[]
+  leaveBalanceSnapshots    LeaveBalanceSnapshot[]
+  timeBankRecords          TimeBank[]
+  timeBankEntries          TimeBankEntry[]
+  timeBankLedgers          TimeBankLedgerSnapshot[]
+  payrollItems             PayrollItem[]
+  expenseEntries           ExpenseEntry[]
+  faceTemplates            FaceTemplate[]
+  auditTargets             AuditLog[]               @relation("AuditTarget")
+  joinDate                 DateTime
 
   /// ★ cwm-resignflow-20260911：離職【最後工作日】（例：9/9），唔係標記當日。
   ///   寫入口：resign-settle 結算確認 / employees PUT 標記離職（body.lastDay）。純顯示 reader。
@@ -267,22 +270,22 @@ model Employee {
 
   /// ★ cwm-resignflow-20260911：離職【生效日】= 最後工作日 + 1（例：9/10）。語義唔准改 ——
   ///   payroll-runs/preview 嘅 resignedAtOverride 會傳落引擎算受僱曆日比例，改咗就係改錢。
-  resignedAt DateTime?
-  status    EmployeeStatus   @default(ACTIVE)
-  resignSettlement ResignSettlement?
+  resignedAt           DateTime?
+  status               EmployeeStatus        @default(ACTIVE)
+  resignSettlement     ResignSettlement?
   holidayOtAdjustments HolidayOtAdjustment[] // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減
   lunchDeductOverrides LunchDeductOverride[] // ★ 2026-09-30：午飯扣減人手調整
-  payConfidential Boolean @default(false) // 薪資保密 — 非 OWNER 的計糧 API 遮蔽金額
+  payConfidential      Boolean               @default(false) // 薪資保密 — 非 OWNER 的計糧 API 遮蔽金額
 
   /// ★ cwm-attexempt-20260914：免考勤員工（會計等）。
   ///   true = 唔打卡、唔排更、唔計 OT／遲到／編更差額，只按月薪出糧。
   ///   ⚠️ 計糧、MPF、年假、法定權利【一律照常】—— 佢係正式員工。
   ///   ⚠️ 唔好用 status=RESIGNED 或者停用帳號嚟代替 —— 佢仲要出糧。
-  attendanceExempt Boolean @default(false)
-  notes     String?
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  wageHistory   WageHistory[]
+  attendanceExempt Boolean       @default(false)
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  wageHistory      WageHistory[]
 }
 
 // Join table: Employee ↔ Clinic
@@ -302,43 +305,43 @@ model EmployeeClinic {
 
 // Pay rule
 model PayRule {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   employeeId    String
-  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   payType       PayType
   baseAmount    Float?
-  configJson    String?  // JSON string for SQLite compat
+  configJson    String? // JSON string for SQLite compat
   effectiveFrom DateTime
   effectiveTo   DateTime?
-  isActive      Boolean  @default(true)
+  isActive      Boolean   @default(true)
   createdBy     String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([employeeId, isActive, effectiveFrom])
 }
 
 // Shift template — reusable shift definitions (scoped to company)
 model ShiftTemplate {
-  id          String   @id @default(cuid())
-  name        String
-  startHour   Int      // hour of day start (0-23)
-  startMinute Int      // minute of day start (0-59)
-  endHour     Int      // hour of day end (0-23)
-  endMinute   Int      // minute of day end (0-59)
-  isNightShift Boolean @default(false) // true if end crosses midnight
-  shortName     String?  // 總覽顯示用簡稱（如「早」「夜」「A」），null 用 name
-  shade         Int?     // 更次深淺（0 = 最深，FIXED_STEPS-1 = 最淺）。null = 沿用舊行為（按模板順序自動算）。
-  isDefault   Boolean  @default(false) // system default template
-  isActive    Boolean  @default(true)
-  deductLunch Boolean  @default(true) // ★ 2026-08-07 false = 唔扣午飯鐘
-  createdBy   String?
-  companyId   String?
-  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  name         String
+  startHour    Int // hour of day start (0-23)
+  startMinute  Int // minute of day start (0-59)
+  endHour      Int // hour of day end (0-23)
+  endMinute    Int // minute of day end (0-59)
+  isNightShift Boolean  @default(false) // true if end crosses midnight
+  shortName    String? // 總覽顯示用簡稱（如「早」「夜」「A」），null 用 name
+  shade        Int? // 更次深淺（0 = 最深，FIXED_STEPS-1 = 最淺）。null = 沿用舊行為（按模板順序自動算）。
+  isDefault    Boolean  @default(false) // system default template
+  isActive     Boolean  @default(true)
+  deductLunch  Boolean  @default(true) // ★ 2026-08-07 false = 唔扣午飯鐘
+  createdBy    String?
+  companyId    String?
+  company      Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  shifts      Shift[]
+  shifts Shift[]
 
   @@index([isDefault])
   @@index([companyId])
@@ -346,62 +349,62 @@ model ShiftTemplate {
 
 // Shift — links employee to a date/time at a clinic
 model Shift {
-  id          String      @id @default(cuid())
-  employeeId  String
-  clinicId    String
-  date        DateTime
-  startTime   DateTime
-  endTime     DateTime
-  role        String?
-  status      ShiftStatus @default(CONFIRMED)
-  templateId  String?
+  id                String      @id @default(cuid())
+  employeeId        String
+  clinicId          String
+  date              DateTime
+  startTime         DateTime
+  endTime           DateTime
+  role              String?
+  status            ShiftStatus @default(CONFIRMED)
+  templateId        String?
   secondaryClinicId String? // ★ 調鋪：當日第二間店（時間唔確定，唔分段）
-  createdBy   String
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdBy         String
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
-  employee    Employee    @relation(fields: [employeeId], references: [id])
-  clinic      Clinic      @relation(fields: [clinicId], references: [id])
-  template    ShiftTemplate? @relation(fields: [templateId], references: [id])
+  employee       Employee             @relation(fields: [employeeId], references: [id])
+  clinic         Clinic               @relation(fields: [clinicId], references: [id])
+  template       ShiftTemplate?       @relation(fields: [templateId], references: [id])
   changeRequests ShiftChangeRequest[]
 
+  @@unique([employeeId, clinicId, startTime], name: "uniq_emp_clinic_start")
   @@index([employeeId, date])
   @@index([clinicId, date])
   @@index([status])
   @@index([secondaryClinicId])
   @@index([employeeId, startTime])
-  @@unique([employeeId, clinicId, startTime], name: "uniq_emp_clinic_start")
 }
 
 // ── 醫生／應診者 ──────────────────────────────────────────
 // 刻意同 Employee 完全分離：醫生唔打卡、唔計糧、唔放假期額度。
 model Provider {
-  id        String   @id @default(cuid())
-  name      String
-  shortName String?
-  phone     String?
-  color     String?
+  id              String   @id @default(cuid())
+  name            String
+  shortName       String?
+  phone           String?
+  color           String?
   // ★ cwm-apricotacct-20260913 I 章：apricotId 已剷走 — 唯一來源係 ApricotPractitioner 表（可多帳號）。
   //   ⚠️ apricotUserId 係 Apricot 登入帳號，另一樣嘢，保留。
-  apricotUserId String?  // Apricot 登入帳號 id，參考用
-  companyId     String?
-  company   Company? @relation(fields: [companyId], references: [id])
-  isActive  Boolean  @default(true)
-  sortOrder Int      @default(0)
+  apricotUserId   String? // Apricot 登入帳號 id，參考用
+  companyId       String?
+  company         Company? @relation(fields: [companyId], references: [id])
+  isActive        Boolean  @default(true)
+  sortOrder       Int      @default(0)
   // ★ cwm-costentry-20260827 §1：成本錄入下拉隱藏開關（列表本身唔 filter，當值表／月結零影響）
-  showInCostEntry Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  showInCostEntry Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  shifts      ProviderShift[]
-  clinics     ProviderClinic[]
-  leaves      ProviderLeave[]
-  commissions ProviderCommission[]
+  shifts          ProviderShift[]
+  clinics         ProviderClinic[]
+  leaves          ProviderLeave[]
+  commissions     ProviderCommission[]
   reconciliations ReconciliationImport[]
-  availabilities ProviderAvailability[]
-  bookings       ProviderBooking[]
-  weeklyPatterns ProviderWeeklyPattern[]
-  holds          ProviderHold[]
+  availabilities  ProviderAvailability[]
+  bookings        ProviderBooking[]
+  weeklyPatterns  ProviderWeeklyPattern[]
+  holds           ProviderHold[]
   apricotAccounts ApricotPractitioner[]
 
   @@index([companyId, isActive])
@@ -410,30 +413,30 @@ model Provider {
 /// ★ cwm-apricotacct-20260913：Apricot practitioner 帳號 → 本系統個體。
 ///   一個醫生／一間診所可以有多個帳號 → 呢張表做【唯一來源】。
 enum ApricotAccountKind {
-  PROVIDER   // 醫生（一個醫生可以有多行）
-  CLINIC     // 診所收款身分
-  UNKNOWN    // 知道存在、知道有錢，但未確認 —— 唔准當醫生計拆帳
+  PROVIDER // 醫生（一個醫生可以有多行）
+  CLINIC // 診所收款身分
+  UNKNOWN // 知道存在、知道有錢，但未確認 —— 唔准當醫生計拆帳
 }
 
 model ApricotPractitioner {
-  id         String             @id @default(cuid())
+  id        String             @id @default(cuid())
   /// = PaymentAllocation.providerExtId
-  apricotId  String             @unique
+  apricotId String             @unique
   /// Apricot 顯示名
-  name       String
-  kind       ApricotAccountKind
+  name      String
+  kind      ApricotAccountKind
 
   providerId String?
-  provider   Provider?          @relation(fields: [providerId], references: [id])
+  provider   Provider? @relation(fields: [providerId], references: [id])
 
   /// ★★★ 通用「Clinic」帳號一定要留 null —— 佢喺每間店都係同一個 ID，
   ///    實際邊間由該筆 allocation 嘅 clinicExtId 決定。
-  clinicId   String?
-  clinic     Clinic?            @relation(fields: [clinicId], references: [id])
+  clinicId String?
+  clinic   Clinic? @relation(fields: [clinicId], references: [id])
 
-  note       String?
-  createdAt  DateTime           @default(now())
-  updatedAt  DateTime           @updatedAt
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([kind])
   @@index([providerId])
@@ -484,8 +487,8 @@ model ProviderWeeklyPattern {
   provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
   clinicId   String
   clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  weekday    Int      // 0=日 … 6=六（同 JS getDay 一致）
-  slot       String   // 'FULL' | 'AM' | 'PM'
+  weekday    Int // 0=日 … 6=六（同 JS getDay 一致）
+  slot       String // 'FULL' | 'AM' | 'PM'
   updatedBy  String
   updatedAt  DateTime @updatedAt
 
@@ -510,57 +513,57 @@ model ProviderLeave {
 
 // 醫生拆帳設定（append-only：改 % 就開新一條，唔准改舊記錄）
 model ProviderCommission {
-  id             String   @id @default(cuid())
-  providerId     String
-  provider       Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  clinicId       String?
-  percent        Decimal  @db.Decimal(5,2)
-  basis          String   // 'GROSS' | 'NET' | 'CONSULT_ONLY'
-  minGuarantee   Decimal? @db.Decimal(12,2)
-  effectiveFrom  DateTime
-  effectiveTo    DateTime?
-  isActive       Boolean  @default(true)
-  note           String?
-  createdBy      String
-  createdAt      DateTime @default(now())
+  id            String    @id @default(cuid())
+  providerId    String
+  provider      Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  clinicId      String?
+  percent       Decimal   @db.Decimal(5, 2)
+  basis         String // 'GROSS' | 'NET' | 'CONSULT_ONLY'
+  minGuarantee  Decimal?  @db.Decimal(12, 2)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  isActive      Boolean   @default(true)
+  note          String?
+  createdBy     String
+  createdAt     DateTime  @default(now())
 
   @@index([providerId, effectiveFrom])
 }
 
 // Punch record — APPEND ONLY (no UPDATE/DELETE API)
 model PunchRecord {
-  id          String      @id @default(cuid())
-  employeeId  String
-  clinicId    String
-  punchTime   DateTime
-  punchType   PunchType
-  source      PunchSource
-  tokenValid  Boolean?
-  deviceInfo  String?
-  notes       String?
-  faceStatus    String? // PASS | FAIL | NOT_ENROLLED | SKIPPED
-  faceScore     Float?
-  faceLiveness  Float?
-  faceFramePath String? // 只有 FAIL 有值；30 天清
-  faceReviewedAt DateTime?
-  faceReviewedBy String?
+  id               String      @id @default(cuid())
+  employeeId       String
+  clinicId         String
+  punchTime        DateTime
+  punchType        PunchType
+  source           PunchSource
+  tokenValid       Boolean?
+  deviceInfo       String?
+  notes            String?
+  faceStatus       String? // PASS | FAIL | NOT_ENROLLED | SKIPPED
+  faceScore        Float?
+  faceLiveness     Float?
+  faceFramePath    String? // 只有 FAIL 有值；30 天清
+  faceReviewedAt   DateTime?
+  faceReviewedBy   String?
   faceReviewAction String? // 'CONFIRMED' | 'FLAGGED'
-  faceReason     String? // 異常原因代碼
+  faceReason       String? // 異常原因代碼
 
   // GPS location verification (shadow mode — observation only)
-  punchLat      Float?   // 打卡當下緯度
-  punchLng      Float?   // 打卡當下經度
-  distanceM     Int?     // 距店距離(米)
-  locationFlag  String?  // null=正常 / 'OUT_OF_RANGE' / 'NO_GPS' / 'DENIED'
-  geoAccuracy   Int?     // 定位精度(米)
+  punchLat     Float? // 打卡當下緯度
+  punchLng     Float? // 打卡當下經度
+  distanceM    Int? // 距店距離(米)
+  locationFlag String? // null=正常 / 'OUT_OF_RANGE' / 'NO_GPS' / 'DENIED'
+  geoAccuracy  Int? // 定位精度(米)
 
-  createdAt   DateTime    @default(now())
+  createdAt DateTime @default(now())
 
-  employee    Employee    @relation(fields: [employeeId], references: [id])
-  clinic      Clinic      @relation(fields: [clinicId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+  clinic   Clinic   @relation(fields: [clinicId], references: [id])
 
   corrections PunchCorrection[] // corrections referencing this record
-  void        PunchVoid?        // void record (null = active)
+  void        PunchVoid? // void record (null = active)
 
   @@index([employeeId, punchTime])
   @@index([clinicId, punchTime])
@@ -572,29 +575,29 @@ model PunchVoid {
   id            String      @id @default(cuid())
   punchRecordId String      @unique
   punchRecord   PunchRecord @relation(fields: [punchRecordId], references: [id])
-  voidedBy      String      // userId who voided
-  reason        String      // void reason (required)
+  voidedBy      String // userId who voided
+  reason        String // void reason (required)
   createdAt     DateTime    @default(now())
 }
 
 // Punch correction — overlay on top of punch records (never modifies originals)
 model PunchCorrection {
-  id             String           @id @default(cuid())
-  punchRecordId  String?          // null = no original record exists
-  employeeId     String
-  clinicId       String
-  correctedTime  DateTime
-  punchType      PunchType
-  reason         String?
-  requestedBy    String           // userId of requester
-  approvedBy     String?          // userId of approver
-  status         CorrectionStatus @default(PENDING)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id            String           @id @default(cuid())
+  punchRecordId String? // null = no original record exists
+  employeeId    String
+  clinicId      String
+  correctedTime DateTime
+  punchType     PunchType
+  reason        String?
+  requestedBy   String // userId of requester
+  approvedBy    String? // userId of approver
+  status        CorrectionStatus @default(PENDING)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   // References
-  punchRecord    PunchRecord?     @relation(fields: [punchRecordId], references: [id])
-  employee       Employee         @relation(fields: [employeeId], references: [id])
+  punchRecord PunchRecord? @relation(fields: [punchRecordId], references: [id])
+  employee    Employee     @relation(fields: [employeeId], references: [id])
 
   @@index([employeeId, createdAt])
   @@index([status])
@@ -603,20 +606,20 @@ model PunchCorrection {
 
 // QR token — short-lived dynamic tokens for punch verification
 model QRToken {
-  id        String   @id @default(cuid())
-  clinicId  String
-  token     String   @unique
-  shortCode String?  // 8字元短碼，QR碼只顯示它（降密度）
-  issuedByUserId String?  // ★ cwm-antitamper：發碼裝置登入者（KIOSK／經理）
-  issuedAt  DateTime
-  expiresAt DateTime
-  used      Boolean  @default(false) // ★ DEPRECATED: 新流程用 QRTokenUsage，此欄永遠 false
-  usedBy    String?  // ★ DEPRECATED
-  usedAt    DateTime? // ★ DEPRECATED
-  createdAt DateTime @default(now())
+  id             String    @id @default(cuid())
+  clinicId       String
+  token          String    @unique
+  shortCode      String? // 8字元短碼，QR碼只顯示它（降密度）
+  issuedByUserId String? // ★ cwm-antitamper：發碼裝置登入者（KIOSK／經理）
+  issuedAt       DateTime
+  expiresAt      DateTime
+  used           Boolean   @default(false) // ★ DEPRECATED: 新流程用 QRTokenUsage，此欄永遠 false
+  usedBy         String? // ★ DEPRECATED
+  usedAt         DateTime? // ★ DEPRECATED
+  createdAt      DateTime  @default(now())
 
-  clinic    Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  usages    QRTokenUsage[] // ★ 每人對每碼一次的 usage 記錄
+  clinic Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  usages QRTokenUsage[] // ★ 每人對每碼一次的 usage 記錄
 
   @@index([clinicId, expiresAt])
   @@index([token])
@@ -639,11 +642,11 @@ model DailyHash {
   id          String   @id @default(cuid())
   clinicId    String
   date        DateTime // YYYY-01-01 format (date only)
-  hash        String   // SHA-256 hex string
+  hash        String // SHA-256 hex string
   recordCount Int
   createdAt   DateTime @default(now())
 
-  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
 
   @@unique([clinicId, date])
   @@index([clinicId, date])
@@ -651,21 +654,21 @@ model DailyHash {
 
 // Audit log — APPEND ONLY
 model AuditLog {
-  id          String   @id @default(cuid())
-  actorId     String?  // null for system-generated entries (e.g. ADW policy cap)
-  action      String   // CREATE, UPDATE, DELETE, CORRECT, APPROVE, REJECT
-  entity      String
-  entityId    String
+  id               String   @id @default(cuid())
+  actorId          String? // null for system-generated entries (e.g. ADW policy cap)
+  action           String // CREATE, UPDATE, DELETE, CORRECT, APPROVE, REJECT
+  entity           String
+  entityId         String
   targetEmployeeId String? // ★ 這條操作針對哪個員工
-  clinicId    String?
-  beforeJson  String?  // JSON string for SQLite compat
-  afterJson   String?  // JSON string for SQLite compat
-  notes       String?
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
+  clinicId         String?
+  beforeJson       String? // JSON string for SQLite compat
+  afterJson        String? // JSON string for SQLite compat
+  notes            String?
+  ipAddress        String?
+  userAgent        String?
+  createdAt        DateTime @default(now())
 
-  actor       User?    @relation("ActorLogs", fields: [actorId], references: [id], onDelete: Restrict)
+  actor          User?     @relation("ActorLogs", fields: [actorId], references: [id], onDelete: Restrict)
   targetEmployee Employee? @relation("AuditTarget", fields: [targetEmployeeId], references: [id])
 
   @@index([actorId, createdAt])
@@ -676,7 +679,7 @@ model AuditLog {
 // Shift change request — swap/cover/report
 model ShiftChangeRequest {
   id             String       @id @default(cuid())
-  shiftId        String?      // ★ Stage 1.10（D4）：更被刪 → SetNull，保留歷史申請、唔再鎖死刪更
+  shiftId        String? // ★ Stage 1.10（D4）：更被刪 → SetNull，保留歷史申請、唔再鎖死刪更
   shift          Shift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
   fromEmployeeId String
   fromEmployee   Employee     @relation("ChangeFrom", fields: [fromEmployeeId], references: [id])
@@ -699,43 +702,43 @@ model ShiftChangeRequest {
 // Leave type — 年假/病假/無薪假 etc.
 model LeaveType {
   id           String   @id @default(cuid())
-  clinicId     String?  // null = global type
-  name         String   // 年假/病假/無薪假
+  clinicId     String? // null = global type
+  name         String // 年假/病假/無薪假
   systemKey    String?  @unique // 'REST_DAY' | 'ANNUAL_LEAVE' | 'OT_LEAVE' | 'SICK' | 'MATERNITY' | 'PATERNITY' | 'WORK_INJURY' | null
   isPaid       Boolean  @default(true)
-  annualQuota  Float?   // 年度額度（天）
-  color        String?  // UI 顏色標記
-  quantity     Int?     // 預設額度（nullable = 無限制）
+  annualQuota  Float? // 年度額度（天）
+  color        String? // UI 顏色標記
+  quantity     Int? // 預設額度（nullable = 無限制）
   isActive     Boolean  @default(true)
   cancelsBonus Boolean  @default(false) // 請此假當月取消勤工獎
   createdAt    DateTime @default(now())
 
-  requests     LeaveRequest[]
-  balances     LeaveBalance[]
+  requests         LeaveRequest[]
+  balances         LeaveBalance[]
   // ★ 2026-08-22 §6.2：Prisma 強制反向 relation（LeaveBalanceSnapshot.leaveType）
   balanceSnapshots LeaveBalanceSnapshot[]
 }
 
 // Leave request — employee applies for leave
 model LeaveRequest {
-  id          String         @id @default(cuid())
-  employeeId  String
-  employee    Employee       @relation(fields: [employeeId], references: [id])
-  leaveTypeId String
-  leaveType   LeaveType      @relation(fields: [leaveTypeId], references: [id])
-  startDate   DateTime
-  endDate     DateTime
-  days        Float
-  reason      String?
-  status      LeaveStatus    @default(PENDING)
-  approverId  String?
-  approvedAt  DateTime?
-  isPlanned   Boolean        @default(true) // false=臨時/當天假 → 影響勤工
+  id                  String      @id @default(cuid())
+  employeeId          String
+  employee            Employee    @relation(fields: [employeeId], references: [id])
+  leaveTypeId         String
+  leaveType           LeaveType   @relation(fields: [leaveTypeId], references: [id])
+  startDate           DateTime
+  endDate             DateTime
+  days                Float
+  reason              String?
+  status              LeaveStatus @default(PENDING)
+  approverId          String?
+  approvedAt          DateTime?
+  isPlanned           Boolean     @default(true) // false=臨時/當天假 → 影響勤工
   /// ★ PL 標記 —— 員工自己申請嘅休息日（純顯示，唔影響計糧／額度／時間帳戶）
   /// ⚠️ 只會喺 leaveType.systemKey === 'REST_DAY' 嘅 row 出現
-  isEmployeeRequested Boolean @default(false)
-  clinicId    String?        // 新增：在哪個店排的假（排班跨店過濾）
-  createdAt   DateTime       @default(now())
+  isEmployeeRequested Boolean     @default(false)
+  clinicId            String? // 新增：在哪個店排的假（排班跨店過濾）
+  createdAt           DateTime    @default(now())
 
   @@index([employeeId, status])
   @@index([leaveTypeId])
@@ -754,7 +757,7 @@ model LeaveBalance {
   /// 年份。★ 年假（ANNUAL_LEAVE）採累積制，固定用 0 代表「由入職累計」（2026-07-31 決定）；
   /// 其餘假期類型（休息日、OT補假）用曆年。
   year        Int
-  entitled    Float     // 總額
+  entitled    Float // 總額
   used        Float     @default(0)
   remaining   Float     @default(0)
   updatedAt   DateTime  @updatedAt
@@ -786,24 +789,24 @@ model LeaveBalanceSnapshot {
 
 // Notification — in-app notifications
 model Notification {
-  id             String   @id @default(cuid())
-  employeeId     String
-  type           String   // LEAVE_APPROVED, LEAVE_REJECTED, SHIFT_CHANGED, CORRECTION_APPROVED
-  content        String
-  relatedEntity  String?  // LeaveRequest, Shift, PunchCorrection
-  relatedId      String?
-  details        String?  // JSON array of strings — 合併通知嘅逐項明細
-  isRead         Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  id            String   @id @default(cuid())
+  employeeId    String
+  type          String // LEAVE_APPROVED, LEAVE_REJECTED, SHIFT_CHANGED, CORRECTION_APPROVED
+  content       String
+  relatedEntity String? // LeaveRequest, Shift, PunchCorrection
+  relatedId     String?
+  details       String? // JSON array of strings — 合併通知嘅逐項明細
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   @@index([employeeId, isRead, createdAt])
 }
 
 // HK Public Holiday
 model HKPublicHoliday {
-  id    String   @id @default(cuid())
-  date  DateTime @unique
-  name  String
+  id   String   @id @default(cuid())
+  date DateTime @unique
+  name String
 }
 
 // ============================================================
@@ -817,42 +820,42 @@ enum RunStatus {
 }
 
 model PayrollRun {
-  id           String       @id @default(cuid())
-  clinicId     String?      // null = all clinics (cross-clinic)
-  clinic       Clinic?      @relation(fields: [clinicId], references: [id])
-  periodMonth  DateTime     // YYYY-MM-01 format
+  id          String        @id @default(cuid())
+  clinicId    String? // null = all clinics (cross-clinic)
+  clinic      Clinic?       @relation(fields: [clinicId], references: [id])
+  periodMonth DateTime // YYYY-MM-01 format
   /// ★ 發薪日期（薪俸結算書「Pay Date」）—— 人手填，唔自動推算（HK 午夜）
-  payDate      DateTime?
-  status       RunStatus    @default(DRAFT)
-  generatedAt  DateTime     @default(now())
-  notes        String?
-  items        PayrollItem[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  payDate     DateTime?
+  status      RunStatus     @default(DRAFT)
+  generatedAt DateTime      @default(now())
+  notes       String?
+  items       PayrollItem[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   @@unique([clinicId, periodMonth])
   @@index([periodMonth])
 }
 
 model PayrollItem {
-  id           String      @id @default(cuid())
-  runId        String
-  run          PayrollRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
-  employeeId   String
-  employee     Employee    @relation(fields: [employeeId], references: [id])
-  workedHours  Float       @default(0)
-  otHours      Float       @default(0)
-  leaveDays    Float       @default(0)
-  absentDays   Float       @default(0)
-  basePay      Float       @default(0)
-  otPay        Float       @default(0)
-  splitPay     Float?      // 拆帳（醫生）
-  deduction    Float       @default(0)
-  storeBonus   Float       @default(0) // 店舖營業額獎金（手動輸入，月薪限定）
-  totalPayable Float       @default(0)
-  miscAmount   Float       @default(0) // 雜項報銷（從 ExpenseEntry 匯總）
-  miscDetailJson String?    // JSON: [{ amount, description }]
-  detailJson   String?     // JSON string for SQLite compat
+  id             String     @id @default(cuid())
+  runId          String
+  run            PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee   @relation(fields: [employeeId], references: [id])
+  workedHours    Float      @default(0)
+  otHours        Float      @default(0)
+  leaveDays      Float      @default(0)
+  absentDays     Float      @default(0)
+  basePay        Float      @default(0)
+  otPay          Float      @default(0)
+  splitPay       Float? // 拆帳（醫生）
+  deduction      Float      @default(0)
+  storeBonus     Float      @default(0) // 店舖營業額獎金（手動輸入，月薪限定）
+  totalPayable   Float      @default(0)
+  miscAmount     Float      @default(0) // 雜項報銷（從 ExpenseEntry 匯總）
+  miscDetailJson String? // JSON: [{ amount, description }]
+  detailJson     String? // JSON string for SQLite compat
 
   /// @deprecated cwm-resignflow-20260911 — 已搬去 ResignSettlement 表。
   ///   保留做過渡對照，確認新表穩定後（建議一個計糧周期）先另開 migration 剷。
@@ -863,24 +866,24 @@ model PayrollItem {
   resignSettlementJson String?
 
   /// ★ EO 定義的「工資」總額（供 ADW 用；不含雜項報銷、不含 MPF 僱主供款）
-  eoWage        Float       @default(0)
+  eoWage       Float  @default(0)
   /// ★ 該月剔除天數與款額（713 條例要求）
-  excludedDays  Int         @default(0)
-  excludedWage  Float       @default(0)
+  excludedDays Int    @default(0)
+  excludedWage Float  @default(0)
   /// ★ 計算時實際使用的 ADW（存檔備查）
-  adwUsed       Float?
+  adwUsed      Float?
   /// ★ 產假 / 侍產假薪酬
-  maternityPay  Float       @default(0)
-  paternityPay  Float       @default(0)
+  maternityPay Float  @default(0)
+  paternityPay Float  @default(0)
 
   /// 勤工獎覆蓋：null = 自動判斷；'FORCE_ON' = 強制發放；'FORCE_OFF' = 強制取消
   attendanceBonusOverride String?
 
   /// ★ cwm-payrollsheet-20260921：支票號碼（出糧後人手填；純記錄，唔影響計算）
   ///   String 唔用 Int — 前導零 + 唔做運算
-  chequeNo      String?
+  chequeNo String?
 
-  createdAt    DateTime    @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([runId, employeeId])
   @@index([employeeId, createdAt])
@@ -891,31 +894,31 @@ model PayrollItem {
 ///   而 EO s.25 係終止僱傭後【7 日內】要付清，流程上注定遲。
 ///   獨立成表之後：唔使等計糧、冇打卡都結算到、唔會跟住 PayrollItem 被刪。
 model ResignSettlement {
-  id                  String   @id @default(cuid())
-  employeeId          String   @unique   // ★ 一個員工一筆；改最後工作日 = update 同一筆
-  employee            Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String   @unique // ★ 一個員工一筆；改最後工作日 = update 同一筆
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   /// 最後工作日（HK 日期，00:00+08:00）
-  lastDay             DateTime
+  lastDay     DateTime
   /// 由 lastDay 導出嘅 'YYYY-MM' —— 計糧引擎用呢個欄搵返該月要注入邊筆
-  periodMonth         String
+  periodMonth String
 
   noticeDays          Int
-  noticePay           Decimal  @db.Decimal(12,2)
-  annualLeaveDays     Decimal  @db.Decimal(6,2)
-  annualLeavePay      Decimal  @db.Decimal(12,2)
+  noticePay           Decimal  @db.Decimal(12, 2)
+  annualLeaveDays     Decimal  @db.Decimal(6, 2)
+  annualLeavePay      Decimal  @db.Decimal(12, 2)
   tbMinutes           Int
-  tbAmount            Decimal  @db.Decimal(12,2)
-  tbDeduction         Decimal? @db.Decimal(12,2)
-  excessRestDeduction Decimal? @db.Decimal(12,2)
-  quarterCap          Decimal  @db.Decimal(12,2)
-  adwUsed             Decimal  @db.Decimal(12,2)
+  tbAmount            Decimal  @db.Decimal(12, 2)
+  tbDeduction         Decimal? @db.Decimal(12, 2)
+  excessRestDeduction Decimal? @db.Decimal(12, 2)
+  quarterCap          Decimal  @db.Decimal(12, 2)
+  adwUsed             Decimal  @db.Decimal(12, 2)
 
   /// 快照 JSON：monthWage / monthWageRatio / excessRest 明細（結構同舊 resignSettlementJson）
-  detailJson          String
+  detailJson String
 
-  settledAt           DateTime @default(now())
-  settledBy           String
+  settledAt DateTime @default(now())
+  settledBy String
 
   @@index([periodMonth])
 }
@@ -925,25 +928,25 @@ model ResignSettlement {
 // ============================================================
 
 model ExpenseEntry {
-  id           String   @id @default(cuid())
-  employeeId   String
-  clinicId     String?
-  periodMonth  String   // "2026-07"
-  amount       Float
-  description  String   // 自由文字: 車費 / 買文具 / 跨店補貼
-  createdBy    String   // 記錄人 userId
-  createdAt    DateTime @default(now())
+  id          String   @id @default(cuid())
+  employeeId  String
+  clinicId    String?
+  periodMonth String // "2026-07"
+  amount      Float
+  description String // 自由文字: 車費 / 買文具 / 跨店補貼
+  createdBy   String // 記錄人 userId
+  createdAt   DateTime @default(now())
 
   // ★ 審批流程欄位
-  status       String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED
   submittedBy  String?
   reviewedBy   String?
   reviewedAt   DateTime?
   rejectReason String?
-  receiptUrl   String?  // 留位，第一版唔做上載
+  receiptUrl   String? // 留位，第一版唔做上載
 
-  employee     Employee @relation(fields: [employeeId], references: [id])
-  clinic       Clinic?  @relation(fields: [clinicId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+  clinic   Clinic?  @relation(fields: [clinicId], references: [id])
 
   @@index([employeeId, periodMonth])
   @@index([periodMonth, clinicId])
@@ -956,14 +959,14 @@ model ExpenseEntry {
 // ============================================================
 
 model ConsultationRevenue {
-  id          String   @id @default(cuid())
-  employeeId  String
-  clinicId    String
-  month       DateTime // YYYY-MM-01 format
-  amount      Float
-  source      String?  // Source note (e.g., "billing system export")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(cuid())
+  employeeId String
+  clinicId   String
+  month      DateTime // YYYY-MM-01 format
+  amount     Float
+  source     String? // Source note (e.g., "billing system export")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@unique([employeeId, clinicId, month])
   @@index([employeeId, month])
@@ -989,7 +992,7 @@ model TimeBank {
   carriedFrom       Int      @default(0) // 上月結轉
   /// 計算時的 pay rule config 指紋 + 引擎版本，不夾就重算
   cacheKey          String?
-  monthEndNote      String?  // 月底結算備註
+  monthEndNote      String? // 月底結算備註
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -1003,11 +1006,11 @@ model TimeBankEntry {
   employeeId String
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   date       DateTime
-  type       String   // 'OT' | 'LATE' | 'EARLY' | 'MAKEUP' | 'LEAVE_CONVERT' | 'LEAVE_SWAP_BACK'
-  minutes    Int      // 正=進帳(OT/換回)，負=出帳(補鐘/換假)
+  type       String // 'OT' | 'LATE' | 'EARLY' | 'MAKEUP' | 'LEAVE_CONVERT' | 'LEAVE_SWAP_BACK'
+  minutes    Int // 正=進帳(OT/換回)，負=出帳(補鐘/換假)
   note       String?
-  createdBy  String?  // 補鐘/換假記誰做的
-  targetType String?  // 'LATE' | 'EARLY_LEAVE' | 'ABSENT'（MAKEUP 類型用，按類型標記避免連坐）
+  createdBy  String? // 補鐘/換假記誰做的
+  targetType String? // 'LATE' | 'EARLY_LEAVE' | 'ABSENT'（MAKEUP 類型用，按類型標記避免連坐）
   createdAt  DateTime @default(now())
 
   // ★ cwm-money P2-1：Prisma schema 表達唔到 partial index，raw migration 兜底
@@ -1029,7 +1032,7 @@ model TimeBankLedgerSnapshot {
   id            String   @id @default(cuid())
   employeeId    String
   employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  periodMonth   String   // 'YYYY-MM'
+  periodMonth   String // 'YYYY-MM'
   opening       Int
   closing       Int
   /// LedgerLine[] 序列化（lib/timebank-ledger.ts）
@@ -1102,28 +1105,29 @@ model LunchDeductOverride {
 // ============================================================
 
 model FaceTemplate {
-  id              String   @id @default(cuid())
-  employeeId      String
-  employee        Employee @relation(fields: [employeeId], references: [id])
-  embedding       String   // Float32[512] 的 JSON 字串
-  active          Boolean  @default(true)
-  enrolledAt      DateTime @default(now())
-  enrolledBy      String
-  consentAt       DateTime
-  consentVersion  String
-  approvedAt      DateTime?
-  approvedBy      String?      // userId of approver
-  refFrameId      String?      // face-service 上參考照的檔名 key
+  id             String    @id @default(cuid())
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id])
+  embedding      String // Float32[512] 的 JSON 字串
+  active         Boolean   @default(true)
+  enrolledAt     DateTime  @default(now())
+  enrolledBy     String
+  consentAt      DateTime
+  consentVersion String
+  approvedAt     DateTime?
+  approvedBy     String? // userId of approver
+  refFrameId     String? // face-service 上參考照的檔名 key
+
   @@index([employeeId, active])
 }
 
 model FaceEnrollCode {
-  id          String   @id @default(cuid())
-  employeeId  String
-  code        String   @unique
-  expiresAt   DateTime
-  usedAt      DateTime?
-  createdBy   String
+  id         String    @id @default(cuid())
+  employeeId String
+  code       String    @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdBy  String
 }
 
 // ============================================================
@@ -1133,27 +1137,27 @@ model FaceEnrollCode {
 /// 系統啟用前的歷史工資記錄（供 ADW 計算用）
 /// 只在客戶上線時由 OWNER 初始化填入，之後由 PayrollItem 自動累積
 model WageHistory {
-  id          String   @id @default(cuid())
+  id          String @id @default(cuid())
   employeeId  String
-  periodMonth String   // "2025-08"
+  periodMonth String // "2025-08"
 
   /// 該月「工資」總額（EO 定義：底薪+佣金+拆帳+獎金+津貼，不含 MPF 僱主供款）
-  totalWage    Float
+  totalWage Float
 
   /// 該月「不計算在內」的天數（休息日+法定假日+年假+病假+產假等）
-  excludedDays Int      @default(0)
+  excludedDays Int   @default(0)
   /// 該月「不計算在內」的款額（上述期間已支付的款項）
-  excludedWage Float    @default(0)
+  excludedWage Float @default(0)
 
   /// 該月曆日數（28-31，用於分母）
   calendarDays Int
 
-  note        String?   // 資料來源備註（如「由舊系統匯入」）
-  createdBy   String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  note      String? // 資料來源備註（如「由舊系統匯入」）
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, periodMonth])
   @@index([employeeId, periodMonth])
@@ -1166,7 +1170,7 @@ model WageHistory {
 model ExternalCredential {
   id            String    @id @default(cuid())
   provider      String    @unique // 'APRICOT'
-  cipherText    String    // AES-256-GCM: base64(iv || tag || ct)
+  cipherText    String // AES-256-GCM: base64(iv || tag || ct)
   // 明文 = { accessToken, refreshToken, iat }
   refreshExpiry DateTime? // 由 Set-Cookie 個 Expires 解出
   lastOkAt      DateTime?
@@ -1182,12 +1186,12 @@ model ExternalCredential {
 
 // Lab 主檔
 model Lab {
-  id        String  @id @default(cuid())
-  name      String  @unique
-  isActive  Boolean @default(true)
-  sortOrder Int     @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String               @id @default(cuid())
+  name      String               @unique
+  isActive  Boolean              @default(true)
+  sortOrder Int                  @default(0)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
   cases     CostCase[]
   discounts LabMonthlyDiscount[]
 }
@@ -1197,8 +1201,8 @@ model LabMonthlyDiscount {
   id          String   @id @default(cuid())
   labId       String
   lab         Lab      @relation(fields: [labId], references: [id], onDelete: Cascade)
-  periodMonth String   // '2026-07'
-  discountPct Decimal  @db.Decimal(5,2) // 8.50 = 8.5%
+  periodMonth String // '2026-07'
+  discountPct Decimal  @db.Decimal(5, 2) // 8.50 = 8.5%
   note        String?
   createdBy   String
   createdAt   DateTime @default(now())
@@ -1208,38 +1212,38 @@ model LabMonthlyDiscount {
 
 // 材料主檔
 model MaterialItem {
-  id          String   @id @default(cuid())
-  name        String
-  unitPrice   Decimal? @db.Decimal(12,2) // ★ nullable: 部分材料冇定價（如 collon plug）
+  id            String    @id @default(cuid())
+  name          String
+  unitPrice     Decimal?  @db.Decimal(12, 2) // ★ nullable: 部分材料冇定價（如 collon plug）
   effectiveFrom DateTime
-  effectiveTo DateTime?
-  isActive    Boolean  @default(true)
+  effectiveTo   DateTime?
+  isActive      Boolean   @default(true)
 
   @@index([name, effectiveFrom])
 }
 
 // 成本 case
 model CostCase {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   providerId    String
   clinicId      String
-  category      String   // 'LAB' | 'IMPLANT' | 'INVISALIGN'
+  category      String // 'LAB' | 'IMPLANT' | 'INVISALIGN'
   patientCode   String
   patientName   String?
   orderedAt     DateTime
-  itemType      String?  // Crown / Bridge / …
-  itemTypeOther String?  // Others 時嘅自由輸入
+  itemType      String? // Crown / Bridge / …
+  itemTypeOther String? // Others 時嘅自由輸入
   labId         String?
-  lab           Lab?     @relation(fields: [labId], references: [id])
-  labOther      String?  // ★ H5: 揀 Others 時嘅自由輸入
+  lab           Lab?      @relation(fields: [labId], references: [id])
+  labOther      String? // ★ H5: 揀 Others 時嘅自由輸入
   labOrderNo    String?
   dsaName       String?
-  baseCost      Decimal? @db.Decimal(12,2) // ★ nullable = 未有價
-  discountPct   Decimal? @db.Decimal(5,2) // 快照
-  finalCost     Decimal? @db.Decimal(12,2) // ★ 引擎實際用呢個
+  baseCost      Decimal?  @db.Decimal(12, 2) // ★ nullable = 未有價
+  discountPct   Decimal?  @db.Decimal(5, 2) // 快照
+  finalCost     Decimal?  @db.Decimal(12, 2) // ★ 引擎實際用呢個
   receivedAt    DateTime?
   appointmentAt DateTime?
-  status        String   @default("PENDING") // PENDING | PRICED | DONE | VOID | REDO
+  status        String    @default("PENDING") // PENDING | PRICED | DONE | VOID | REDO
   /// ★ 2026-09-02 cwm-costnote：自由備註（例：補做上排、等病人 confirm 色）— 最多 200 字（API validate）
   note          String?
   /// ★ 重做（Lab 做壞要重做）—— 拍板①改原本嗰筆，唔開新 row
@@ -1250,13 +1254,13 @@ model CostCase {
   periodMonth   String?
   lockedByRunId String?
   createdBy     String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   billExtId     String? // ★ MD-F: 連連 Apricot bill
   billCode      String? // ★ MD-F: bill 編號
   billItemEleId String? // ★ MD-F: 帳單項目 eleId
-  source        String   @default("BILL_LINKED") // MANUAL | BILL_LINKED
+  source        String  @default("BILL_LINKED") // MANUAL | BILL_LINKED
 
   materials CostCaseMaterial[]
 
@@ -1273,9 +1277,9 @@ model CostCaseMaterial {
   costCase          CostCase @relation(fields: [costCaseId], references: [id], onDelete: Cascade)
   materialItemId    String
   qty               Int
-  unitPriceUsed     Decimal  @db.Decimal(12,2) // ★ 快照
+  unitPriceUsed     Decimal  @db.Decimal(12, 2) // ★ 快照
   isPriceOverridden Boolean  @default(false) // ★ MD-K: 用戶改過單價
-  subtotal          Decimal  @db.Decimal(12,2)
+  subtotal          Decimal  @db.Decimal(12, 2)
   note              String? // ★ 2026-08-22：揀「Other」時手動填嘅材料名
 
   @@index([costCaseId])
@@ -1286,18 +1290,18 @@ model CostCaseMaterial {
 // ============================================================
 
 model ApricotPayment {
-  id          String           @id @default(cuid())
-  extId       String           @unique
+  id          String   @id @default(cuid())
+  extId       String   @unique
   code        String
   clinicExtId String
   paidAt      DateTime
-  totalAmt    Decimal          @db.Decimal(12,2)
-  isVoid      Boolean          @default(false)
+  totalAmt    Decimal  @db.Decimal(12, 2)
+  isVoid      Boolean  @default(false)
   payerType   String
-  syncedAt    DateTime         @default(now())
+  syncedAt    DateTime @default(now())
 
-  methods     ApricotPaymentMethod[]
-  refs        ApricotPaymentRef[]
+  methods ApricotPaymentMethod[]
+  refs    ApricotPaymentRef[]
 
   @@index([clinicExtId, paidAt])
   @@index([paidAt])
@@ -1309,8 +1313,9 @@ model ApricotPaymentMethod {
   payment    ApricotPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   methodRaw  String
   methodNorm String
-  amount     Decimal        @db.Decimal(12,2)
+  amount     Decimal        @db.Decimal(12, 2)
   payType    String
+
   @@index([paymentId])
 }
 
@@ -1320,14 +1325,15 @@ model ApricotPaymentRef {
   payment   ApricotPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   billExtId String
   billCode  String
-  amount    Decimal        @db.Decimal(12,2)
+  amount    Decimal        @db.Decimal(12, 2)
+
   @@index([paymentId])
   @@index([billExtId])
 }
 
 model ApricotBill {
-  id            String           @id @default(cuid())
-  extId         String           @unique
+  id            String   @id @default(cuid())
+  extId         String   @unique
   code          String
   billTime      DateTime
   providerExtId String?
@@ -1335,16 +1341,16 @@ model ApricotBill {
   ///   （2026-09-13 花咗成日）。個名本身就喺 bill payload 隔籬，白丟咗。
   providerName  String?
   clinicExtId   String
-  amt           Decimal          @db.Decimal(12,2)
-  ttlAmt        Decimal          @db.Decimal(12,2)
-  paidAmt       Decimal          @db.Decimal(12,2)
-  osAmt         Decimal          @db.Decimal(12,2)
-  isVoid        Boolean          @default(false)
-  isRefunded    Boolean          @default(false)
+  amt           Decimal  @db.Decimal(12, 2)
+  ttlAmt        Decimal  @db.Decimal(12, 2)
+  paidAmt       Decimal  @db.Decimal(12, 2)
+  osAmt         Decimal  @db.Decimal(12, 2)
+  isVoid        Boolean  @default(false)
+  isRefunded    Boolean  @default(false)
   refundRefId   String?
-  syncedAt      DateTime         @default(now())
+  syncedAt      DateTime @default(now())
 
-  items         ApricotBillItem[]
+  items ApricotBillItem[]
 
   @@index([providerExtId, billTime])
   @@index([clinicExtId, billTime])
@@ -1358,14 +1364,14 @@ model ApricotBillItem {
   feeItemCode String
   feeItemDes  String
   qty         Int
-  unitPrice   Decimal    @db.Decimal(12,2)
-  discPer     Decimal    @db.Decimal(5,2)
-  discAmt     Decimal    @db.Decimal(12,2)
-  ttlDisc     Decimal    @db.Decimal(12,2)
-  amt         Decimal    @db.Decimal(12,2)
-  ttlAmt      Decimal    @db.Decimal(12,2)
+  unitPrice   Decimal     @db.Decimal(12, 2)
+  discPer     Decimal     @db.Decimal(5, 2)
+  discAmt     Decimal     @db.Decimal(12, 2)
+  ttlDisc     Decimal     @db.Decimal(12, 2)
+  amt         Decimal     @db.Decimal(12, 2)
+  ttlAmt      Decimal     @db.Decimal(12, 2)
   reconJson   Json
-  isSp2p      Boolean    @default(false) // ★ MD-K: 2人SP 偵測（remarks 含 2p1k）
+  isSp2p      Boolean     @default(false) // ★ MD-K: 2人SP 偵測（remarks 含 2p1k）
 
   @@unique([billId, eleId])
   @@index([feeItemDes, isSp2p])
@@ -1373,13 +1379,13 @@ model ApricotBillItem {
 
 // ★ MD-K: 標準價目表（SP 補貼用）
 model FeeItemListPrice {
-  id          String   @id @default(cuid())
-  feeItemCode String
-  label       String
-  listPrice   Decimal  @db.Decimal(12,2)
+  id            String    @id @default(cuid())
+  feeItemCode   String
+  label         String
+  listPrice     Decimal   @db.Decimal(12, 2)
   effectiveFrom DateTime
-  effectiveTo DateTime?
-  createdBy   String
+  effectiveTo   DateTime?
+  createdBy     String
 
   @@index([feeItemCode, effectiveFrom])
 }
@@ -1393,9 +1399,9 @@ model PaymentAllocation {
   paidAt         DateTime
   periodMonth    String
   methodNorm     String
-  amount         Decimal  @db.Decimal(12,2)
-  feePercentUsed Decimal  @db.Decimal(5,3)
-  netAmount      Decimal  @db.Decimal(12,2)
+  amount         Decimal  @db.Decimal(12, 2)
+  feePercentUsed Decimal  @db.Decimal(5, 3)
+  netAmount      Decimal  @db.Decimal(12, 2)
   countAsIncome  Boolean
   allocationMode String
   needsReview    Boolean  @default(false)
@@ -1409,17 +1415,17 @@ model PaymentAllocation {
 }
 
 model PaymentMethodRule {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   method        String
   label         String
-  feePercent    Decimal  @db.Decimal(5,3) @default(0)
-  countAsIncome Boolean  @default(true)
+  feePercent    Decimal   @default(0) @db.Decimal(5, 3)
+  countAsIncome Boolean   @default(true)
   effectiveFrom DateTime
   effectiveTo   DateTime?
   createdBy     String
 
-  @@index([method, effectiveFrom])
   @@unique([method, effectiveFrom])
+  @@index([method, effectiveFrom])
 }
 
 // ============================================================
@@ -1431,21 +1437,21 @@ model PaymentMethodRule {
 // 轉介記錄 — 醫生 A 轉病人去醫生 B，A 收 2%
 model ProviderReferral {
   id             String   @id @default(cuid())
-  fromProviderId String   // 轉介出去嘅醫生（收 2% 嗰個）
-  toProviderId   String?  // 接手嘅醫生
-  clinicId       String?  // ★ 診所快照（由被轉介張單解出）
-  billExtId      String?  // ★ MD-U: nullable — 草稿可以冇 bill
-  billCode       String?  // ★ MD-U: nullable
-  billItemEleId  String?  // ★ MD-U: nullable — 草稿未揀 bill item
-  itemDes        String?  // ★ MD-U: nullable
-  unitPrice      Decimal? @db.Decimal(12,2) // ★ MD-U: nullable
+  fromProviderId String // 轉介出去嘅醫生（收 2% 嗰個）
+  toProviderId   String? // 接手嘅醫生
+  clinicId       String? // ★ 診所快照（由被轉介張單解出）
+  billExtId      String? // ★ MD-U: nullable — 草稿可以冇 bill
+  billCode       String? // ★ MD-U: nullable
+  billItemEleId  String? // ★ MD-U: nullable — 草稿未揀 bill item
+  itemDes        String? // ★ MD-U: nullable
+  unitPrice      Decimal? @db.Decimal(12, 2) // ★ MD-U: nullable
   qty            Int      @default(1)
-  refPercent     Decimal  @db.Decimal(5,2) @default(2)
-  amount         Decimal? @db.Decimal(12,2) // ★ MD-U: nullable — 草稿可以冇金額
+  refPercent     Decimal  @default(2) @db.Decimal(5, 2)
+  amount         Decimal? @db.Decimal(12, 2) // ★ MD-U: nullable — 草稿可以冇金額
   periodMonth    String
   note           String?
   status         String?  @default("CONFIRMED") // ★ MD-U: DRAFT | CONFIRMED
-  patientNote    String?  // ★ MD-U: 草稿時記低係邊個病人
+  patientNote    String? // ★ MD-U: 草稿時記低係邊個病人
   lockedByRunId  String?
   createdBy      String
   createdAt      DateTime @default(now())
@@ -1460,23 +1466,23 @@ model ProviderReferral {
 
 // 2人 SP 補貼記錄 — 原價 vs 優惠價之差 × 拆帳% × 人數
 model SpSubsidy {
-  id           String   @id @default(cuid())
-  providerId   String
-  clinicId     String?  // ★ 診所快照（由 bill 解出）
-  billExtId    String
+  id            String  @id @default(cuid())
+  providerId    String
+  clinicId      String? // ★ 診所快照（由 bill 解出）
+  billExtId     String
   billItemEleId String
-  itemDes      String   // 'SCALING & POLISHING'
-  listPrice    Decimal  @db.Decimal(12,2) // 原價 580
-  actualPrice  Decimal  @db.Decimal(12,2) // 優惠價 500
-  headcount    Int      @default(1)
-  splitPercent Decimal  @db.Decimal(5,2) // 快照：50
-  amount       Decimal  @db.Decimal(12,2) // (listPrice − actualPrice) × splitPercent% × headcount
-  source       String   @default("AUTO") // AUTO | MANUAL
-  status       String   @default("PENDING") // PENDING | CONFIRMED | SKIPPED
-  hasMarker    Boolean  @default(true) // true = 有 2P1K 標記，false = 只靠金額吻合
-  confirmedBy  String?  // ★ AUTO 要人確認先入數
-  needsReview  Boolean  @default(false) // ★ MD-K: 三態 review flag
-  periodMonth  String
+  itemDes       String // 'SCALING & POLISHING'
+  listPrice     Decimal @db.Decimal(12, 2) // 原價 580
+  actualPrice   Decimal @db.Decimal(12, 2) // 優惠價 500
+  headcount     Int     @default(1)
+  splitPercent  Decimal @db.Decimal(5, 2) // 快照：50
+  amount        Decimal @db.Decimal(12, 2) // (listPrice − actualPrice) × splitPercent% × headcount
+  source        String  @default("AUTO") // AUTO | MANUAL
+  status        String  @default("PENDING") // PENDING | CONFIRMED | SKIPPED
+  hasMarker     Boolean @default(true) // true = 有 2P1K 標記，false = 只靠金額吻合
+  confirmedBy   String? // ★ AUTO 要人確認先入數
+  needsReview   Boolean @default(false) // ★ MD-K: 三態 review flag
+  periodMonth   String
   lockedByRunId String?
 
   @@unique([billItemEleId])
@@ -1485,28 +1491,28 @@ model SpSubsidy {
 
 // 月結單 — 鎖定後不可改；★ 粒度：醫生 × 診所 × 月
 model PayoutRun {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   providerId     String
-  clinicId       String   // ★ 診所粒度
+  clinicId       String // ★ 診所粒度
   periodMonth    String
-  grossAmount    Decimal  @db.Decimal(12,2) // 扣手續費後
-  rawAmount      Decimal  @db.Decimal(12,2) // 扣手續費前（對數用）
-  labCost        Decimal  @db.Decimal(12,2)
-  implantCost    Decimal  @db.Decimal(12,2)
-  invisalignCost Decimal  @db.Decimal(12,2)
-  profitAmount   Decimal  @db.Decimal(12,2)
-  percentUsed    Decimal  @db.Decimal(5,2) // ★ 快照
-  salaryAmount   Decimal  @db.Decimal(12,2)
-  spSubsidy      Decimal  @db.Decimal(12,2)
-  refAmount      Decimal  @db.Decimal(12,2)
-  adjustAmount   Decimal  @db.Decimal(12,2) @default(0)
-  totalAmount    Decimal  @db.Decimal(12,2)
-  breakdownJson  Json     // 逐方式 / 逐成本項快照
-  status         String   @default("DRAFT") // DRAFT | LOCKED
+  grossAmount    Decimal   @db.Decimal(12, 2) // 扣手續費後
+  rawAmount      Decimal   @db.Decimal(12, 2) // 扣手續費前（對數用）
+  labCost        Decimal   @db.Decimal(12, 2)
+  implantCost    Decimal   @db.Decimal(12, 2)
+  invisalignCost Decimal   @db.Decimal(12, 2)
+  profitAmount   Decimal   @db.Decimal(12, 2)
+  percentUsed    Decimal   @db.Decimal(5, 2) // ★ 快照
+  salaryAmount   Decimal   @db.Decimal(12, 2)
+  spSubsidy      Decimal   @db.Decimal(12, 2)
+  refAmount      Decimal   @db.Decimal(12, 2)
+  adjustAmount   Decimal   @default(0) @db.Decimal(12, 2)
+  totalAmount    Decimal   @db.Decimal(12, 2)
+  breakdownJson  Json // 逐方式 / 逐成本項快照
+  status         String    @default("DRAFT") // DRAFT | LOCKED
   lockedAt       DateTime?
   createdBy      String
 
-  adjustments    PayoutAdjustment[]
+  adjustments PayoutAdjustment[]
 
   @@unique([providerId, clinicId, periodMonth])
   @@index([clinicId, periodMonth])
@@ -1514,39 +1520,39 @@ model PayoutRun {
 
 // 上期調整 — void 回沖 / 手動調整
 model PayoutAdjustment {
-  id           String   @id @default(cuid())
-  runId        String?  // 落喺邊個 run（null = 未指派）
-  run          PayoutRun? @relation(fields: [runId], references: [id])
-  providerId   String
-  clinicId     String?  // ★ 診所快照
-  periodMonth  String   // 落喺邊個月
-  sourceMonth  String   // 原本屬邊個月
-  reason       String   // 'VOID' | 'REFUND' | 'MANUAL'
-  refCode      String?  // 202607050007
-  amount       Decimal  @db.Decimal(12,2) // ★ 可負
-  note         String
-  createdBy    String
-  createdAt    DateTime @default(now())
+  id          String     @id @default(cuid())
+  runId       String? // 落喺邊個 run（null = 未指派）
+  run         PayoutRun? @relation(fields: [runId], references: [id])
+  providerId  String
+  clinicId    String? // ★ 診所快照
+  periodMonth String // 落喺邊個月
+  sourceMonth String // 原本屬邊個月
+  reason      String // 'VOID' | 'REFUND' | 'MANUAL'
+  refCode     String? // 202607050007
+  amount      Decimal    @db.Decimal(12, 2) // ★ 可負
+  note        String
+  createdBy   String
+  createdAt   DateTime   @default(now())
 
   @@index([providerId, periodMonth])
 }
 
 // ★ MD-Q: Apricot Sync Job — async sync progress tracking
 model ApricotSyncJob {
-  id              String   @id @default(cuid())
-  clinicExtId     String?  // null = 全部診所
+  id              String    @id @default(cuid())
+  clinicExtId     String? // null = 全部診所
   fromDate        DateTime
   toDate          DateTime
-  status          String   @default("RUNNING") // RUNNING | DONE | FAILED | CANCELLED
-  totalClinics    Int      @default(1)
-  doneClinics     Int      @default(0)
-  paymentsSynced  Int      @default(0)
-  billsChecked    Int      @default(0)
-  allocRows       Int      @default(0)
-  currentStep     String?  // '拉付款 第 3 頁' / '拉帳單 45/120'
-  cancelRequested Boolean  @default(false)
+  status          String    @default("RUNNING") // RUNNING | DONE | FAILED | CANCELLED
+  totalClinics    Int       @default(1)
+  doneClinics     Int       @default(0)
+  paymentsSynced  Int       @default(0)
+  billsChecked    Int       @default(0)
+  allocRows       Int       @default(0)
+  currentStep     String? // '拉付款 第 3 頁' / '拉帳單 45/120'
+  cancelRequested Boolean   @default(false)
   errorMessage    String?
-  startedAt       DateTime @default(now())
+  startedAt       DateTime  @default(now())
   heartbeatAt     DateTime? // ★ cwm-syncstuck-20260918 E3-3：背景每個 checkpoint 都刷 — stale 偵測用
   endedAt         DateTime?
   createdBy       String
@@ -1557,27 +1563,27 @@ model ApricotSyncJob {
 // ★ MD-E: Monthly Payment Report Reconciliation (月報對數)
 // 月報 xlsx → Apricot 官方嘅數（裁判） vs 你系統嘅數（主資料）
 model ReconciliationImport {
-  id           String   @id @default(cuid())
-  providerId   String
-  provider     Provider @relation(fields: [providerId], references: [id])
-  clinicId     String?  // ★ 診所粒度
-  periodMonth  String
-  fileName     String
-  rowCount     Int
-  reportTotal  Decimal  @db.Decimal(12,2) // 報表加總
-  systemTotal  Decimal  @db.Decimal(12,2) // 系統 rawAmount
-  difference   Decimal  @db.Decimal(12,2)
-  status       String   // MATCH | MISMATCH | ERROR
-  detailJson   Json     // 逐日 / 逐方式 對比
-  reportCharges Decimal? @db.Decimal(12,2) // ★ 新增：收費（Total Charges）
-  chargesVsPaid Decimal? @db.Decimal(12,2) // ★ 新增：收費 − 實收
-  uploadedBy   String
-  uploadedAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  providerId    String
+  provider      Provider @relation(fields: [providerId], references: [id])
+  clinicId      String? // ★ 診所粒度
+  periodMonth   String
+  fileName      String
+  rowCount      Int
+  reportTotal   Decimal  @db.Decimal(12, 2) // 報表加總
+  systemTotal   Decimal  @db.Decimal(12, 2) // 系統 rawAmount
+  difference    Decimal  @db.Decimal(12, 2)
+  status        String // MATCH | MISMATCH | ERROR
+  detailJson    Json // 逐日 / 逐方式 對比
+  reportCharges Decimal? @db.Decimal(12, 2) // ★ 新增：收費（Total Charges）
+  chargesVsPaid Decimal? @db.Decimal(12, 2) // ★ 新增：收費 − 實收
+  uploadedBy    String
+  uploadedAt    DateTime @default(now())
 
-  @@index([providerId, periodMonth])
   // ★ cwm-recon-clinic-20260909 E：同一醫生+診所+月再上載 = 覆蓋（upsert）
   //   注意：clinicId 係 nullable，Postgres NULL 唔等於 NULL → 舊 NULL 記錄唔受保護（生產預清見 progress）
   @@unique([providerId, clinicId, periodMonth])
+  @@index([providerId, periodMonth])
 }
 
 // ★ cw-pa: Apricot 醫生時間表（P1 資料層）
@@ -1585,15 +1591,15 @@ model ReconciliationImport {
 // 預約 = 每日十幾筆可重疊（Int 分鐘數，要 overlap 合併）。
 /// Apricot 開診時段（零 PII）
 model ProviderAvailability {
-  id          String   @id @default(cuid())
-  clinicId    String
-  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  providerId  String
-  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  date        String   // 'YYYY-MM-DD'（HK）
-  startTime   String   // 'HH:mm'
-  endTime     String   // 'HH:mm'
-  syncedAt    DateTime @default(now())
+  id         String   @id @default(cuid())
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  date       String // 'YYYY-MM-DD'（HK）
+  startTime  String // 'HH:mm'
+  endTime    String // 'HH:mm'
+  syncedAt   DateTime @default(now())
 
   @@unique([clinicId, providerId, date, startTime])
   @@index([clinicId, date])
@@ -1602,16 +1608,16 @@ model ProviderAvailability {
 /// Apricot 預約時段（🔴 零病人資料 —— 只有時間同狀態）
 /// ⚠️ 呢張表【永遠】唔准加病人／病情／員工姓名任何欄
 model ProviderBooking {
-  id          String   @id @default(cuid())
-  clinicId    String
-  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  providerId  String
-  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  date        String   // 'YYYY-MM-DD'（HK）
-  startMin    Int      // 由 00:00 起嘅分鐘數（09:30 → 570）
-  endMin      Int
-  status      Int      // Apricot bookingStatus；實見 0（已約）/ 4（已完成）
-  syncedAt    DateTime @default(now())
+  id         String   @id @default(cuid())
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  date       String // 'YYYY-MM-DD'（HK）
+  startMin   Int // 由 00:00 起嘅分鐘數（09:30 → 570）
+  endMin     Int
+  status     Int // Apricot bookingStatus；實見 0（已約）/ 4（已完成）
+  syncedAt   DateTime @default(now())
 
   @@index([clinicId, date])
   @@index([providerId, date])
@@ -1627,9 +1633,9 @@ model ProviderBooking {
 /// DB 只存 sha256 hash。零 PII — name 只係系統代號（如 "wa-clinic-inbox"）。
 model ExternalApiKey {
   id         String    @id @default(cuid())
-  name       String    @unique          // "wa-clinic-inbox"
-  keyHash    String                    // sha256(key) — 明文只喺生成嗰刻顯示一次
-  scopes     String[]                  // ["availability","duty-roster","bookings","patients","appointments","bookable-slots"]（cwc-rdchain-20260823-b1: +patients/appointments；providerslot-20260830-T1: +bookable-slots）
+  name       String    @unique // "wa-clinic-inbox"
+  keyHash    String // sha256(key) — 明文只喺生成嗰刻顯示一次
+  scopes     String[] // ["availability","duty-roster","bookings","patients","appointments","bookable-slots"]（cwc-rdchain-20260823-b1: +patients/appointments；providerslot-20260830-T1: +bookable-slots）
   active     Boolean   @default(true)
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -1657,15 +1663,15 @@ model ExternalApiAudit {
 /// Apricot 字典快取（VISIT_REASON / BOOKING_TYPE）— nightly sync（掛現有 cron tick）。
 /// 🔴 零病人資料 — 只係代碼表（apricotId/code/des）。/v1/dictionaries 只回 isRemoved=false。
 model ApricotDictionary {
-  id        String   @id @default(cuid())
-  kind      String                       // "VISIT_REASON" | "BOOKING_TYPE"
-  apricotId String   @unique
-  code      String
-  des       String
-  isRemoved Boolean  @default(false)
-  syncedAt  DateTime
+  id             String   @id @default(cuid())
+  kind           String // "VISIT_REASON" | "BOOKING_TYPE"
+  apricotId      String   @unique
+  code           String
+  des            String
+  isRemoved      Boolean  @default(false)
+  syncedAt       DateTime
   /// ★ cwm-apricotty-20261001：每個帳號有自己一套就診原因／預約類型（id 唔同）
-  apricotAccount String @default("MAIN")
+  apricotAccount String   @default("MAIN")
 
   @@index([kind, isRemoved])
   @@index([apricotAccount, kind, isRemoved])
@@ -1681,13 +1687,13 @@ model ApricotDictionary {
 model BookingWriteLog {
   id             String   @id @default(cuid())
   idempotencyKey String   @unique
-  action         String                    // CREATE | STATUS_102 | STATUS_-7 | REMOVE | RESCHEDULE
+  action         String // CREATE | STATUS_102 | STATUS_-7 | REMOVE | RESCHEDULE
   apricotApptId  String?
-  status         String                    // OK | SLOT_TAKEN | IN_PROGRESS | REMOVED | ERROR:<step>（★ cwi-final S5-3：新增 IN_PROGRESS/REMOVED 值，String 欄唔使改 enum）
-  requestedBy    String                    // external key name
-  requestHash    String?                   // ★ cwi-final S5-3②：payload fingerprint（sha256；CREATE 路）
+  status         String // OK | SLOT_TAKEN | IN_PROGRESS | REMOVED | ERROR:<step>（★ cwi-final S5-3：新增 IN_PROGRESS/REMOVED 值，String 欄唔使改 enum）
+  requestedBy    String // external key name
+  requestHash    String? // ★ cwi-final S5-3②：payload fingerprint（sha256；CREATE 路）
   createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt       // ★ cwi-qa FX-17：stale IN_PROGRESS 判斷用 updatedAt（舊 ERROR 行重用為 IN_PROGRESS 唔會即刻假 stale）
+  updatedAt      DateTime @updatedAt // ★ cwi-qa FX-17：stale IN_PROGRESS 判斷用 updatedAt（舊 ERROR 行重用為 IN_PROGRESS 唔會即刻假 stale）
 }
 
 /// Availability slot grid（external API /v1/availability 數據源）。
@@ -1697,11 +1703,11 @@ model AvailabilityCache {
   id                String   @id @default(cuid())
   clinicId          String
   providerApricotId String
-  providerName      String                        // 快照（Flow 選項要顯示醫生名）
-  date              String                        // YYYY-MM-DD（HK 日界，照現有 hkDateStart/hkDateEnd 邏輯）
-  startTime         String                        // HH:mm
+  providerName      String // 快照（Flow 選項要顯示醫生名）
+  date              String // YYYY-MM-DD（HK 日界，照現有 hkDateStart/hkDateEnd 邏輯）
+  startTime         String // HH:mm
   endTime           String
-  isOpen            Boolean                       // practitionerOpenSchs 有開診 = true
+  isOpen            Boolean // practitionerOpenSchs 有開診 = true
   bookedCount       Int
   syncedAt          DateTime
 
@@ -1714,20 +1720,21 @@ model AvailabilityCache {
 model AppointmentIndex {
   id                String   @id @default(cuid())
   apricotApptId     String   @unique
-  clinicId          String                     // 本系統 Clinic.id
+  clinicId          String // 本系統 Clinic.id
   providerApricotId String
   providerName      String
-  date              String                     // YYYY-MM-DD（HK 日界，跟現有 hkDateStart/hkDateEnd）
-  startTime         String                     // HH:mm
+  date              String // YYYY-MM-DD（HK 日界，跟現有 hkDateStart/hkDateEnd）
+  startTime         String // HH:mm
   endTime           String
   bookingStatus     Int
   patientApricotId  String
   patientCode       String
   patientName       String
   phoneHash         String
-  visitReasons      String[]                   // 白名單 v2
-  remarks           String?                    // 白名單 v2（A 級待遇）
+  visitReasons      String[] // 白名單 v2
+  remarks           String? // 白名單 v2（A 級待遇）
   syncedAt          DateTime
+
   @@index([phoneHash])
   @@index([patientApricotId, date])
   @@index([clinicId, date])
@@ -1742,6 +1749,7 @@ model PatientIndex {
   lastSeenAt       DateTime
   /// ★ cwm-apricotty-20261001：病人屬邊個 Apricot 帳號（visits／note／balance／refresh 按呢個揀 token）
   apricotAccount   String   @default("MAIN")
+
   @@index([phoneHash])
 }
 
@@ -1752,42 +1760,43 @@ model PatientIndex {
 // 原始電話唔過界：phoneHashes[]（§1.2 phoneHashes，多號）。
 // ============================================================
 model ClinicalRecordIndex {
-  id                String   @id @default(cuid())
-  clinicId          String
-  patientApricotId  String                     // cpId
-  patientCode       String?                    // YL000556
-  phoneHashes       String[]                   // ★ 可多個（§1.2）
-  visitDate         DateTime @db.Date          // conTime／checkInTime 嘅 HK 日
-  apricotApptId     String?
-  apricotNoteId     String?
-  bookingStatus     Int                        // 0/1/4/102/-3/負數
-  visitReasonCodes  String[]                   // ["0017"]
-  providerCode      String?
-  hasNote           Boolean  @default(false)
-  noteKind          String?                    // STANDARD | TEMPLATE
-  noteJson          Json?                      // ★ 見 2.4 邊界
-  quotedItems       Json?                      // E 類：[{text, amount}]
-  rxCodes           String[]                   // 藥物 code（術後判斷）
-  billTtlAmt        Int?
-  billOsAmt         Int?                       // 病人層欠款（F 類）
-  syncedAt          DateTime
-  parseVersion      Int      @default(1)       // 解析器版本（改版可重跑）
+  id               String   @id @default(cuid())
+  clinicId         String
+  patientApricotId String // cpId
+  patientCode      String? // YL000556
+  phoneHashes      String[] // ★ 可多個（§1.2）
+  visitDate        DateTime @db.Date // conTime／checkInTime 嘅 HK 日
+  apricotApptId    String?
+  apricotNoteId    String?
+  bookingStatus    Int // 0/1/4/102/-3/負數
+  visitReasonCodes String[] // ["0017"]
+  providerCode     String?
+  hasNote          Boolean  @default(false)
+  noteKind         String? // STANDARD | TEMPLATE
+  noteJson         Json? // ★ 見 2.4 邊界
+  quotedItems      Json? // E 類：[{text, amount}]
+  rxCodes          String[] // 藥物 code（術後判斷）
+  billTtlAmt       Int?
+  billOsAmt        Int? // 病人層欠款（F 類）
+  syncedAt         DateTime
+  parseVersion     Int      @default(1) // 解析器版本（改版可重跑）
+
   @@unique([patientApricotId, visitDate, apricotApptId])
   @@index([clinicId, visitDate])
   @@index([clinicId, bookingStatus, visitDate])
 }
 
-model ClinicalIndexJob {                        // 回填／夜跑進度
-  id         String   @id @default(cuid())
-  kind       String                             // NIGHTLY | BACKFILL
-  account    String   @default("MAIN")          // ★ cwm-apricotty-20261001：逐 Apricot 帳號各自 cursor
-  rangeFrom  DateTime @db.Date
-  rangeTo    DateTime @db.Date
+model ClinicalIndexJob {
+  id         String    @id @default(cuid())
+  kind       String // NIGHTLY | BACKFILL
+  account    String    @default("MAIN") // ★ cwm-apricotty-20261001：逐 Apricot 帳號各自 cursor
+  rangeFrom  DateTime  @db.Date
+  rangeTo    DateTime  @db.Date
   cursorDate DateTime? @db.Date
-  status     String   @default("PENDING")       // PENDING|RUNNING|DONE|FAILED
-  patients   Int      @default(0)
-  apiCalls   Int      @default(0)
-  errors     Int      @default(0)
+  status     String    @default("PENDING") // PENDING|RUNNING|DONE|FAILED
+  patients   Int       @default(0)
+  apiCalls   Int       @default(0)
+  errors     Int       @default(0)
   lastError  String?
   startedAt  DateTime?
   finishedAt DateTime?
@@ -1798,10 +1807,10 @@ model ClinicalIndexJob {                        // 回填／夜跑進度
 // 解析規則（FDI 牙位／金額／意向詞）唔可編輯 — 只詞表可改（MD §5.3）。
 model ClinicalTermMap {
   id        String   @id @default(cuid())
-  shorthand String   @unique   // 速記（x / rsd / br / implant / SP / INV / FILLING…）
-  nameCn    String            // 標準名稱（拔牙 / 牙根刮治 / 牙橋…）
-  nameEn    String?           // extraction / root planing / bridge…
-  usedFor   String[]          // 用喺（顯示用）：after_treatment / quote_extraction / recall
+  shorthand String   @unique // 速記（x / rsd / br / implant / SP / INV / FILLING…）
+  nameCn    String // 標準名稱（拔牙 / 牙根刮治 / 牙橋…）
+  nameEn    String? // extraction / root planing / bridge…
+  usedFor   String[] // 用喺（顯示用）：after_treatment / quote_extraction / recall
   active    Boolean  @default(true)
   updatedAt DateTime @updatedAt
 
@@ -1812,10 +1821,10 @@ model ClinicalTermMap {
 // note 文本對 nameEn/nameCn 匹配 → 存 code 入 ClinicalRecordIndex.rxCodes。
 model ClinicalRxCode {
   id           String   @id @default(cuid())
-  code         String   @unique   // AMOX / METRO / CIPRO / IBU…
-  nameEn       String            // AMOXICILLIN（匹配用，case-insensitive）
-  nameCn       String?           // 阿莫西林
-  isAntibiotic Boolean  @default(false)   // C 類：rxCodes 有抗生素判定
+  code         String   @unique // AMOX / METRO / CIPRO / IBU…
+  nameEn       String // AMOXICILLIN（匹配用，case-insensitive）
+  nameCn       String? // 阿莫西林
+  isAntibiotic Boolean  @default(false) // C 類：rxCodes 有抗生素判定
   active       Boolean  @default(true)
   updatedAt    DateTime @updatedAt
 
@@ -1825,27 +1834,27 @@ model ClinicalRxCode {
 // E 類報價抽取存儲（cwi-followup-p4-20260916 S3 — MD §5.2 兩層 + 確認隊列）
 // 冪等口徑：重跑（夜跑/回填/刷新）只重建 pending 行；人手決定（confirmed/corrected/discarded）保留。
 model QuotedItem {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   clinicId         String
   patientApricotId String
-  sourceVisitId    String?                    // ClinicalRecordIndex.id
-  sourceVisitDate  DateTime @db.Date          // 報價日（E 類 7 日窗口起點）
-  text             String                     // 原始匹配文字（速記／orphan 短句）
-  termShorthand    String?                    // 術語表 code（LLM 輸出必須落返字典 — 鐵律）
-  nameCn           String?                    // 標準名稱（顯示用）
+  sourceVisitId    String? // ClinicalRecordIndex.id
+  sourceVisitDate  DateTime  @db.Date // 報價日（E 類 7 日窗口起點）
+  text             String // 原始匹配文字（速記／orphan 短句）
+  termShorthand    String? // 術語表 code（LLM 輸出必須落返字典 — 鐵律）
+  nameCn           String? // 標準名稱（顯示用）
   amountMin        Int?
-  amountMax        Int?                       // range（5-6K → 5000..6000）
-  perUnit          Boolean  @default(false)
-  fdiTeeth         String[]                   // FDI 11–48（只標記唔判斷）
-  intent           String   @default("unknown")  // not_done（quoted/suggest/consider/TCA — §6.5）｜unknown
-  certainty        String   @default("low")      // high（字典命中）｜low（LLM／orphan）
-  source           String   @default("parser")   // parser｜llm｜manual
-  status           String   @default("pending")  // pending｜confirmed｜corrected｜discarded
+  amountMax        Int? // range（5-6K → 5000..6000）
+  perUnit          Boolean   @default(false)
+  fdiTeeth         String[] // FDI 11–48（只標記唔判斷）
+  intent           String    @default("unknown") // not_done（quoted/suggest/consider/TCA — §6.5）｜unknown
+  certainty        String    @default("low") // high（字典命中）｜low（LLM／orphan）
+  source           String    @default("parser") // parser｜llm｜manual
+  status           String    @default("pending") // pending｜confirmed｜corrected｜discarded
   correctionNote   String?
-  decidedBy        String?                    // opaque staff id（零 PII）
+  decidedBy        String? // opaque staff id（零 PII）
   decidedAt        DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([patientApricotId, status])
   @@index([clinicId, sourceVisitDate])
@@ -1866,13 +1875,13 @@ model ProviderHold {
   id          String    @id @default(cuid())
   clinicId    String
   providerId  String
-  date        String    // 'YYYY-MM-DD'（HK）
-  startMin    Int       // 由 00:00 起分鐘數（30 分鐘對齊 :00/:30）
+  date        String // 'YYYY-MM-DD'（HK）
+  startMin    Int // 由 00:00 起分鐘數（30 分鐘對齊 :00/:30）
   endMin      Int
-  patientWaId String    // 🔴 PII — 內部用，external 零回顯
-  patientName String?   // 🔴 PII — 內部用，external 零回顯
-  source      String    // 'whatsapp_flow' | 'staff'
-  status      String    // 'HELD' | 'IN_APRICOT' | 'RELEASED'
+  patientWaId String // 🔴 PII — 內部用，external 零回顯
+  patientName String? // 🔴 PII — 內部用，external 零回顯
+  source      String // 'whatsapp_flow' | 'staff'
+  status      String // 'HELD' | 'IN_APRICOT' | 'RELEASED'
   apricotRef  String?
   flowToken   String?   @unique // Flow 冪等鍵（Meta 重試 → 同 hold）
   createdAt   DateTime  @default(now())
@@ -1898,12 +1907,12 @@ model MiscIncome {
   clinicId    String
   clinic      Clinic   @relation(fields: [clinicId], references: [id])
   incomeAt    DateTime
-  category    String   // PRODUCT | DEPOSIT | OTHER
+  category    String // PRODUCT | DEPOSIT | OTHER
   itemName    String
   note        String?
   /// ★ 同 PaymentAllocation.methodNorm 同一口徑（lib/apricot/normalize.ts）
   methodNorm  String
-  amount      Decimal  @db.Decimal(12,2)
+  amount      Decimal  @db.Decimal(12, 2)
   /// ★ 由 incomeAt 導出（HK 時區）—— 同 CostCase.periodMonth 同一慣例
   periodMonth String
   isVoid      Boolean  @default(false)
@@ -1912,4 +1921,19 @@ model MiscIncome {
   updatedAt   DateTime @updatedAt
 
   @@index([clinicId, periodMonth])
+}
+
+/// ★ cwm-datasource-20261003：Apricot 資料來源（= 一個 Apricot 帳號）設定 —— SaaS 化第二期。
+///   account 同 Clinic.apricotAccount／ExternalCredential.provider（credentialProviderKey）對應；
+///   冇 row = 用佢服務嘅診所名做顯示名（舊行為），所以呢個 table 空都照行。
+///   ⚠️ 帳號代號（MAIN／TY）係內部用，唔顯示俾員工 —— 員工只見 displayName／診所名。
+model ApricotSource {
+  id                 String   @id @default(cuid())
+  account            String   @unique
+  displayName        String
+  /// 病人編號格式：'NUMERIC'（純數字，例 003213）／'PREFIXED'（英文前綴＋數字，例 TW007446）／null（不限）
+  ///   只用嚟排序（輸入格式吻合嘅來源排前），唔會跳過任何來源
+  patientCodePattern String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }

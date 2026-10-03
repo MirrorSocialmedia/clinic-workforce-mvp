@@ -8,6 +8,7 @@ import { ITEM_TYPES } from '@/lib/payout/constants'
 import { applyPatientPick } from '@/lib/cost-entry/clinic-prefix'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { SourceStatusLine, ClinicChip, type SearchSource } from '@/components/patient-search-ui'
 import { Plus, RefreshCw, Loader2, AlertTriangle, Search, ArrowLeft, Check, X, Trash2, Package, Percent, Coins } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────
@@ -54,28 +55,6 @@ interface CleanPatient {
   clinicId?: string | null // ★ cwm-patientsearch-20261003：推斷到嘅診所
   clinicLabel?: string // ★ 顯示用診所名
 }
-// ★ cwm-patientsearch-20261003：每個資料來源嘅搜尋狀態（失敗／冇結果唔再靜靜消失）
-interface SearchSource { label: string; ok: boolean; found: number; error?: string }
-
-/** 病人搜尋結果下面嘅來源狀態：只喺有來源失敗或者 0 筆時顯示 */
-function SourceStatusLine({ sources }: { sources: SearchSource[] }) {
-  const notable = sources.filter(s => !s.ok || s.found === 0)
-  if (!notable.length) return null
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs mt-1">
-      {notable.map(s => s.ok
-        ? <span key={s.label} className="text-gray-400">{s.label}：冇結果</span>
-        : <span key={s.label} className="text-red-600">⚠ {s.label}：{s.error ?? '連線失敗'}</span>)}
-    </div>
-  )
-}
-
-/** 結果行嘅診所標籤 */
-function ClinicChip({ label }: { label?: string }) {
-  if (!label) return null
-  return <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">{label}</span>
-}
-
 interface BillItem {
   eleId: string
   feeItem: { id: string; code: string; des: string } | null

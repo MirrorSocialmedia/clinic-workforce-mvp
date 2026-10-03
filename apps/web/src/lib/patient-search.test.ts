@@ -37,13 +37,23 @@ describe('mergeHits', () => {
     // p1 完全吻合排頭；其餘同分（頭尾吻合）按各來源第 N 筆輪流：m1（主第 1）→ m2（主第 2）／p2（青衣第 2）
     assert.deepEqual(r.map(x => x.extId), ['p1', 'm1', 'm2', 'p2'])
   })
+  it('第二期：來源編號格式同字眼吻合 → 同分排前（唔吻合都照出，唔會被跳過）', () => {
+    const main = [h('MAIN', 'TW003213', 'm1')]
+    const ty = [h('TY', '0032130', 'p1')]
+    const r = mergeHits('003213', [main, ty], 30, x => x.account === 'TY')
+    assert.deepEqual(r.map(x => x.extId), ['p1', 'm1'])
+  })
 })
 
 describe('sourceLabel / sourceErrorText', () => {
   it('用診所名，唔出現帳號代號', () => {
-    assert.equal(sourceLabel([{ name: '青衣', shortName: 'TY' }]), '青衣')
-    assert.equal(sourceLabel([{ name: '旺角', shortName: 'MK' }, { name: '大圍', shortName: 'TW' }]), '旺角、大圍')
-    assert.equal(sourceLabel([{ name: '元朗', shortName: null }, { name: '大圍', shortName: null }, { name: '美孚', shortName: null }]), '元朗等 3 間')
+    assert.equal(sourceLabel([{ name: '青衣' }]), '青衣')
+    assert.equal(sourceLabel([{ name: '旺角' }, { name: '大圍' }]), '旺角、大圍')
+    assert.equal(sourceLabel([{ name: '元朗' }, { name: '大圍' }, { name: '美孚' }]), '元朗等 3 間')
+  })
+  it('設定咗顯示名就用顯示名', () => {
+    assert.equal(sourceLabel([{ name: '青衣' }], '菁薈（青衣）'), '菁薈（青衣）')
+    assert.equal(sourceLabel([{ name: '青衣' }], '  '), '青衣')
   })
   it('錯誤轉人話', () => {
     assert.equal(sourceErrorText(new Error('APRICOT_AUTH_EXPIRED')), '憑證失效，需要重新授權')

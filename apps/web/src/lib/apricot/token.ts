@@ -52,3 +52,18 @@ export async function markError(msg: string, account: string = currentApricotAcc
     .update({ where: { provider: credentialProviderKey(account) }, data: { lastError: msg.slice(0, 500) } })
     .catch(e => console.error('[apricot] markError 失敗', e))
 }
+
+/**
+ * ★ cwm-datasource-20261003：設定頁人手貼入新憑證（取代 docker exec 跑 apricot-set-token.mjs）。
+ *   upsert（新來源都得）；lastOkAt 清空 = 「未驗證」—— 由隨後嘅測試連線成功先寫返。
+ *   ⚠️ 呢度唔 log、唔 audit 憑證內容（audit 由 route 寫，只記「更新咗」）。
+ */
+export async function setCredsManually(c: ApricotCreds, account: string) {
+  const provider = credentialProviderKey(account)
+  const cipherText = enc(JSON.stringify(c))
+  await prisma.externalCredential.upsert({
+    where: { provider },
+    update: { cipherText, lastOkAt: null, lastError: null, refreshExpiry: null, rotationCount: 0 },
+    create: { provider, cipherText },
+  })
+}
