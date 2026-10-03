@@ -340,6 +340,9 @@ export default function EmployeePayrollDetailPage() {
   const closingVal: number | null = typeof tbLedger?.closing === 'number' ? tbLedger.closing : null
   // ★ 對數行：builder 自己對數（opening + Σ lines === closing），加唔埋會補 UNEXPLAINED 行 + reconciles=false
   const tbMismatch = tbLedger != null && tbLedger.reconciles === false
+  // ★ cwm-tbpreview-20261003：草稿「時間帳戶月結預覽」—— 編更差額未入帳，只顯示（確認計糧後先真正寫入）
+  const tbPreview: { minutes: number; projectedClosing: number } | null = data?.rosterDiffPreview ?? null
+  const periodEndLabel = periodMonthEnd ? `${periodMonthEnd.slice(8, 10)}/${periodMonthEnd.slice(5, 7)}` : '月尾'
 
   // Daily punch/shift summary for collapsible detail
   const fmtTime24 = fmtTime
@@ -1148,7 +1151,7 @@ export default function EmployeePayrollDetailPage() {
                 // ★ cwm-tbledger-20260909 補丁A：餘額 = 帳本期末（freeze 時序啱）。detailJson 嗰個
                 //   timeAccountMinutes 凍結喺 run 生成時（ROSTER_DIFF 寫入之前），必然缺一行；
                 //   ledger=null（時薪／即時算失敗）先 fallback 返 detailJson 舊值。
-                const timeAccount = tbLedger ? tbLedger.closing : (tb.timeAccountMinutes ?? '—')
+                const timeAccount = tbLedger ? (tbPreview ? tbPreview.projectedClosing : tbLedger.closing) : (tb.timeAccountMinutes ?? '—')
                 if (typeof timeAccount !== 'number') {
                   return (
                     <div className="rounded-lg border p-3">
@@ -1159,12 +1162,15 @@ export default function EmployeePayrollDetailPage() {
                 }
                 return (
                   <div className="rounded-lg border p-3" style={{
-                    borderColor: timeAccount >= 0 ? '#10b981' : '#dc2626',
+                    borderColor: tbPreview ? '#f59e0b' : (timeAccount >= 0 ? '#10b981' : '#dc2626'),
                     borderWidth: 2,
+                    ...(tbPreview ? { borderStyle: 'dashed' as const } : {}),
                   }}>
-                    <div className="text-xs text-muted-foreground">時間帳戶</div>
+                    <div className="text-xs text-muted-foreground">
+                      {tbPreview ? <>時間帳戶 · <b style={{ color: '#b45309' }}>月結預覽</b>（未入帳）</> : '時間帳戶'}
+                    </div>
                     <div className="text-xl font-bold mt-1" style={{ color: timeAccount >= 0 ? '#059669' : '#dc2626' }}>
-                      {timeAccount >= 0 ? '+' : '−'}{Math.abs(timeAccount)} 分鐘
+                      {tbPreview && '預計 '}{timeAccount >= 0 ? '+' : '−'}{Math.abs(timeAccount)} 分鐘
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
                       {timeAccount > 0 && `可換假 ${Math.floor(timeAccount / 540)} 天（餘 ${timeAccount % 540} 分）`}
@@ -1184,7 +1190,13 @@ export default function EmployeePayrollDetailPage() {
                       {' = '}{tb.timeAccountMinutes} <span className="opacity-70">（run 生成時口徑）</span></>}
                     </div>
                     {/* ★ cwm-tbledger-20260909 補丁A：期初＋逐筆＝期末（帳本口徑；上方「本月實得」行係 OT 拆解，兩行講唔同嘢，都要留） */}
-                    {tbLedger && (
+                    {tbLedger && tbPreview && (
+                      <div className="text-[10px] mt-1" style={{ color: '#92400e' }}>
+                        期初 {tbLedger.opening} ＋ 本月逐筆 {tbLedger.closing - tbLedger.opening} ＋ 編更差額 {tbPreview.minutes > 0 ? '+' : ''}{tbPreview.minutes}（預覽）＝ <b>預計 {tbPreview.projectedClosing}</b>
+                        <br />編更差額喺「確認計糧」之後先真正入時間帳戶；而家員工總覽／下個月結轉仲係 {tbLedger.closing}
+                      </div>
+                    )}
+                    {tbLedger && !tbPreview && (
                       <div className="text-[10px] text-muted-foreground mt-1">
                         期初 {tbLedger.opening} ＋ 本月逐筆 {tbLedger.closing - tbLedger.opening} ＝ <b>{tbLedger.closing}</b>
                         {tbLedger.frozen && tbLedger.frozenAt
@@ -1230,7 +1242,7 @@ export default function EmployeePayrollDetailPage() {
         </div>
 
         {/* ⏱ 時間帳戶明細 */}
-        {tbLedger && allDetailRows.length > 0 && (
+        {tbLedger && (allDetailRows.length > 0 || tbPreview) && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">⏱ 時間帳戶明細</h3>
             <div className="rounded-xl border shadow-card p-4 mt-3">
@@ -1255,12 +1267,19 @@ export default function EmployeePayrollDetailPage() {
                     ))}
                     {/* ★ cwm-tbledger-20260909 S5（F 章）：對數行 —— 逐行 ＋ 期初 = 餘額（builder 已對數；
                         加唔埋會補「未分類差額」紅字行，reconciles=false → 收口行標紅） */}
+                    {tbPreview && (
+                      <tr style={{ background: '#fffbeb', color: '#92400e', outline: '1px dashed #f59e0b', outlineOffset: -1 }}>
+                        <td className="py-2 pl-1">{periodEndLabel}</td>
+                        <td className="text-right">編更差額（預覽 · 確認計糧後先入帳）</td>
+                        <td className="text-right font-semibold pr-1">{tbPreview.minutes > 0 ? '+' : ''}{tbPreview.minutes} 分</td>
+                      </tr>
+                    )}
                     <tr className="border-t-2 font-semibold" style={tbMismatch ? { color: '#dc2626' } : undefined}>
-                      <td className="py-2">合計</td>
+                      <td className="py-2">{tbPreview ? '預計月結' : '合計'}</td>
                       <td className="text-right text-xs text-muted-foreground">
-                        逐行 {rowsTotal} ＋ 期初 {openingVal}
+                        逐行 {rowsTotal + (tbPreview?.minutes ?? 0)} ＋ 期初 {openingVal}
                       </td>
-                      <td className="text-right">{closingVal ?? (rowsTotal + openingVal)} 分</td>
+                      <td className="text-right">{tbPreview ? tbPreview.projectedClosing : (closingVal ?? (rowsTotal + openingVal))} 分</td>
                     </tr>
                     {tbMismatch && (
                       <tr><td colSpan={3} className="py-2 text-xs text-red-600">
@@ -1281,9 +1300,15 @@ export default function EmployeePayrollDetailPage() {
                   </div>
                 ))}
                 {/* ★ cwm-tbledger-20260909 S5（F 章）：對數行（mobile） */}
+                {tbPreview && (
+                  <div className="flex justify-between text-sm p-2 rounded" style={{ background: '#fffbeb', color: '#92400e', border: '1px dashed #f59e0b' }}>
+                    <span>{periodEndLabel} 編更差額（預覽 · 確認計糧後先入帳）</span>
+                    <span className="font-medium">{tbPreview.minutes > 0 ? '+' : ''}{tbPreview.minutes} 分</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm p-2 font-semibold border-t-2" style={tbMismatch ? { color: '#dc2626' } : undefined}>
-                  <span>合計 <span className="text-xs font-normal text-muted-foreground">逐行 {rowsTotal} ＋ 期初 {openingVal}</span></span>
-                  <span>{closingVal ?? (rowsTotal + openingVal)} 分</span>
+                  <span>{tbPreview ? '預計月結' : '合計'} <span className="text-xs font-normal text-muted-foreground">逐行 {rowsTotal + (tbPreview?.minutes ?? 0)} ＋ 期初 {openingVal}</span></span>
+                  <span>{tbPreview ? tbPreview.projectedClosing : (closingVal ?? (rowsTotal + openingVal))} 分</span>
                 </div>
                 {tbMismatch && (
                   <div className="p-2 text-xs text-red-600">

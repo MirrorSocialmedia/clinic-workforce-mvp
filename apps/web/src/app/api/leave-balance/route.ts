@@ -24,6 +24,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const employeeId = searchParams.get('employeeId')
     const year = searchParams.get('year')
+    // ★ cwm-resignsweep-20261003：mine=1 = 只要自己（員工手機「我嘅假期結餘」）——
+    //   老闆／經理 scope=all，唔加會攞晒全公司餘額（2026-10-03 撞到：手機卡出咗一堆同事嘅休息日）
+    const mine = searchParams.get('mine') === '1'
 
     // ★ 2026-08-31 cwm-leaveasof：asOf = 'YYYY-MM-DD'（HK）。
     //   傳咗就重算「截至嗰日」嘅 entitled / used；唔傳照回 LeaveBalance 即時值
@@ -42,7 +45,11 @@ export async function GET(req: NextRequest) {
     let targetEmployeeId: string | undefined
 
     // Employees only see their own balance
-    if (scope === 'self') {
+    if (mine) {
+      const emp = await prisma.employee.findUnique({ where: { userId: session.userId }, select: { id: true } })
+      if (!emp) return jsonNoStore({ leaveBalances: [] })
+      targetEmployeeId = emp.id
+    } else if (scope === 'self') {
       const emp = await prisma.employee.findUnique({
         where: { userId: session.userId },
       })

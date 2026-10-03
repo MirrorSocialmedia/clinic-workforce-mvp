@@ -207,7 +207,7 @@ export function MyLeaveBalanceStrip() {
   const [items, setItems] = useState<{ id: string; name: string; remaining: number }[] | null>(null)
   useEffect(() => {
     const year = Number(toHKDateStr(new Date()).slice(0, 4))
-    fetch('/api/leave-balance', { credentials: 'include', cache: 'no-store' })
+    fetch('/api/leave-balance?mine=1', { credentials: 'include', cache: 'no-store' }) // ★ 只要自己（老闆／經理唔加會攞晒全公司）
       .then(r => (r.ok ? r.json() : { leaveBalances: [] }))
       .then(d => {
         const list = (d.leaveBalances || [])

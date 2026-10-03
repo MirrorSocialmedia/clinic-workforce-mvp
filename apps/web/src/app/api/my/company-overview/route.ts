@@ -72,7 +72,8 @@ export async function GET(req: NextRequest) {
   // 3. Get all employees in those clinics
   // ★ cwm-resignsweep-20261003：已離職員工只喺呢段期間（週／月）仲有返工日先出現（離職之後撤走空行）
   const allEmployeeClinics = await prisma.employeeClinic.findMany({
-    where: { clinicId: { in: allClinicIds }, employee: employedFromWhere(weekStart) },
+    // ★ cwm-attexempt：免考勤（會計／行政）唔出現喺更表 —— 同電腦版排班口徑一致
+    where: { clinicId: { in: allClinicIds }, employee: { ...employedFromWhere(weekStart), attendanceExempt: false } },
     include: {
       employee: {
         include: {

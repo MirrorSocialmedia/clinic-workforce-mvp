@@ -2,6 +2,7 @@ import { prisma } from './prisma'
 import { getEffectivePunches } from './punch-query'
 import { matchPunchesToShifts, type MatchedDay } from './shift-punch-match'
 import { toHKDateStr, leaveCoversDate } from './hk-date'
+import { employedFromWhere } from '@/lib/employment-scope'
 
 export type TodayPerson = {
   employeeId: string; name: string
@@ -15,7 +16,8 @@ const MISSING_OUT_GRACE_MIN = 30
 /** ★ cwm-ownerdash-20260917：單一診所今日出勤看板 */
 export async function buildTodayBoard(clinicId: string, todayStart: Date, todayEnd: Date, now = new Date()) {
   const shifts = await prisma.shift.findMany({
-    where: { clinicId, date: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED', 'DRAFT'] } },
+    // ★ cwm-resignsweep-20261003：已離職（生效日 ≤ 今日）嘅人唔入看板 —— 舊數據離職時冇取消之後嘅更，會一直報「未到」
+    where: { clinicId, date: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED', 'DRAFT'] }, employee: employedFromWhere(todayStart) },
     select: { id: true, employeeId: true, startTime: true, endTime: true, clinicId: true, secondaryClinicId: true, date: true, status: true,
       employee: { select: { user: { select: { name: true } } } } },
     orderBy: { startTime: 'asc' },
@@ -65,7 +67,7 @@ export async function buildTodayBoard(clinicId: string, todayStart: Date, todayE
     where: {
       status: 'APPROVED',
       startDate: { lte: todayEnd }, endDate: { gte: new Date(todayStart.getTime() - 86400000) },
-      employee: { homeClinicId: clinicId },
+      employee: { homeClinicId: clinicId, ...employedFromWhere(todayStart) },
     },
     select: { startDate: true, endDate: true, employee: { select: { id: true, user: { select: { name: true } } } }, leaveType: { select: { name: true } } },
   })

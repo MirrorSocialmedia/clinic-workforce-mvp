@@ -41,6 +41,7 @@ export async function GET(
           // ★ 2026-09-30 [cwm-rosterjoin]：舊 run（冇 employedRatioDetail.from/to）顯示底薪明細嘅 fallback
           joinDate: true,
           resignedAt: true,
+          attendanceExempt: true, // ★ cwm-tbpreview-20261003：編更差額預覽要同 finalize 同一個 filter
           user: { select: { id: true, name: true, phone: true, fullName: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
           // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（lib/pay-rule-latest）
@@ -181,6 +182,18 @@ export async function GET(
     console.error('[payroll-emp-detail] timebank ledger 解析失敗，明細區塊退化隱藏', e)
   }
 
+  // ★ cwm-tbpreview-20261003：草稿「時間帳戶月結預覽」——
+  //   確認計糧（payroll-runs/[id] PUT FINALIZED）先真正寫 ROSTER_DIFF 入時間帳戶；
+  //   草稿時用【同一條式、同一個 filter】（月薪、非免考勤、Math.round(diffMinutes) ≠ 0）預先計出嚟，
+  //   只回傳俾頁面顯示，一行 DB 都唔寫。帳本已有 ROSTER_DIFF（已確認／凍結）就唔再預覽。
+  let rosterDiffPreview: { minutes: number; projectedClosing: number } | null = null
+  if (item.run.status === 'DRAFT' && ledger && !ledger.frozen
+    && item.employee.payRules?.[0]?.payType === 'MONTHLY' && item.employee.attendanceExempt !== true
+    && !ledger.lines.some(l => l.type === 'ROSTER_DIFF')) {
+    const m = Math.round(rosterDiffMinutes)
+    if (m !== 0) rosterDiffPreview = { minutes: m, projectedClosing: ledger.closing + m }
+  }
+
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
   const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]
   const clinicsMap = new Map<string, { name: string; shortName: string | null }>()
@@ -203,6 +216,7 @@ export async function GET(
     rosterDiffMinutes,
     // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶帳本（snapshot 優先 + 對數行 reconciles）
     timeBankLedger: ledger,
+    rosterDiffPreview,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })

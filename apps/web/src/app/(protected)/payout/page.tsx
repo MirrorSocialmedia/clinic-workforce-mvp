@@ -339,7 +339,14 @@ function PayoutRunsPageInner() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">醫生月結單</h1>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
+        <h1 className="text-2xl font-bold">醫生月結單</h1>
+        {/* ★ cwm-dailyrev-20261003：每日大數 —— 右上角膠囊掣（揀日期睇某醫生／某診所，同 Excel A 區一樣） */}
+        <a href="/payout/daily"
+          className="inline-flex items-center gap-1.5 rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 hover:border-blue-400 transition-colors">
+          <CalendarDays size={16} /> 每日大數
+        </a>
+      </div>
 
       {/* ★ cwm-apricotacct Stage 2（E4）：未綁帳號入口提示 */}
       {unassigned.length > 0 && (
@@ -355,10 +362,6 @@ function PayoutRunsPageInner() {
 
       {/* Entry links */}
       <div className="flex gap-4 flex-wrap mb-4">
-        {/* ★ cwm-dailyrev-20261003：每日大數（揀日期睇某醫生／某診所，同 Excel A 區一樣） */}
-        <a href="/payout/daily" className="text-sm text-blue-600 hover:underline flex items-center gap-1 font-semibold">
-          <CalendarDays size={14} /> 每日大數
-        </a>
         <a href="/payout/adjustments" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
           <SlidersHorizontal size={14} /> 手動調整錄入
         </a>
