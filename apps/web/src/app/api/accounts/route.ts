@@ -92,6 +92,7 @@ export async function GET(req: NextRequest) {
       employeeStatus: emp?.status || null,
       resignedAt: emp?.resignedAt ? emp.resignedAt.toISOString() : null,
       payConfidential: emp?.payConfidential || false,
+      attendanceExempt: emp?.attendanceExempt === true,
       joinDate: emp?.joinDate ? toHKDateStr(new Date(emp.joinDate)) : null,
       payType: payRule?.payType || null,
       baseAmount: payRule?.baseAmount || null,
