@@ -6,7 +6,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { employedFromWhere, resignedFromDateStr, resignedDateError } from './employment-scope'
+import { employedFromWhere, resignedFromDateStr, resignedDateError, employedOnOrAfterStr } from './employment-scope'
 
 const hk = (d: string) => new Date(`${d}T00:00:00+08:00`)
 // 9/9 最後工作日 → resignedAt = 9/10 HK 00:00
@@ -53,5 +53,22 @@ describe('employedFromWhere', () => {
       { resignedAt: { gt: from } },
       { resignedAt: null, leaveDate: { gte: from } },
     ])
+  })
+})
+
+describe('employedOnOrAfterStr', () => {
+  it('9/9 離職：9 月照顯示，10 月撤走', () => {
+    assert.equal(employedOnOrAfterStr(RESIGNED, '2026-09-01'), true)
+    assert.equal(employedOnOrAfterStr(RESIGNED, '2026-09-09'), true)
+    assert.equal(employedOnOrAfterStr(RESIGNED, '2026-09-10'), false)
+    assert.equal(employedOnOrAfterStr(RESIGNED, '2026-10-01'), false)
+  })
+  it('API 回 ISO 字串都得', () => {
+    assert.equal(employedOnOrAfterStr({ status: 'RESIGNED', resignedAt: '2026-09-09T16:00:00.000Z', leaveDate: null }, '2026-09-07'), true)
+  })
+  it('舊數據只有 leaveDate；兩樣都冇 = 撤走；未離職 = 照顯示', () => {
+    assert.equal(employedOnOrAfterStr({ status: 'RESIGNED', resignedAt: null, leaveDate: hk('2026-09-05') }, '2026-09-01'), true)
+    assert.equal(employedOnOrAfterStr({ status: 'RESIGNED', resignedAt: null, leaveDate: null }, '2026-09-01'), false)
+    assert.equal(employedOnOrAfterStr({ status: 'ACTIVE' }, '2099-01-01'), true)
   })
 })

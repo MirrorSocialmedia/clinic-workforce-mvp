@@ -54,3 +54,17 @@ export function resignedDateError(
   if (!bad) return null
   return `員工已離職（${from} 起唔再受僱），唔可以喺 ${bad} 排更／請假`
 }
+
+/**
+ * 前端／純函數版 employedFromWhere：員工喺 fromStr（HK YYYY-MM-DD）當日或之後仲有冇受僱日。
+ * 排班總覽用 —— 離職當月照顯示，之後先撤走。
+ */
+export function employedOnOrAfterStr(
+  emp: { status: string; resignedAt?: Date | string | null; leaveDate?: Date | string | null },
+  fromStr: string,
+): boolean {
+  if (emp.status !== 'RESIGNED') return true
+  if (emp.resignedAt) return toHKDateStr(emp.resignedAt) > fromStr
+  if (emp.leaveDate) return toHKDateStr(emp.leaveDate) >= fromStr
+  return false
+}
