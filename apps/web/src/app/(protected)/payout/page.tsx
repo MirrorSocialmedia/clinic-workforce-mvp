@@ -11,7 +11,7 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download } from 'lucide-react'
+import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download, CalendarDays } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 interface PayoutRun {
@@ -355,6 +355,10 @@ function PayoutRunsPageInner() {
 
       {/* Entry links */}
       <div className="flex gap-4 flex-wrap mb-4">
+        {/* ★ cwm-dailyrev-20261003：每日大數（揀日期睇某醫生／某診所，同 Excel A 區一樣） */}
+        <a href="/payout/daily" className="text-sm text-blue-600 hover:underline flex items-center gap-1 font-semibold">
+          <CalendarDays size={14} /> 每日大數
+        </a>
         <a href="/payout/adjustments" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
           <SlidersHorizontal size={14} /> 手動調整錄入
         </a>
