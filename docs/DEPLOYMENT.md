@@ -140,6 +140,19 @@ crontab -l
 0 4 * * * rclone sync /backups/clinic-mvp/offsite/ remote:clinic-backups/
 ```
 
+### Lab 單據存檔（cwm-labdoc P1，§4/§4.5）
+
+- **volume**：`docker-compose.yml` app service 已掛 `lab_docs:/data/lab-docs`（env `LAB_DOC_DIR=/data/lab-docs`）——deploy 時 volume 自動建立；`docker volume ls` 記低實際名（通常 `clinic_lab_docs`）。
+- **加密 key**（🔴 與 APRICOT_ENC_KEY 同級別）：
+  ```bash
+  openssl rand -base64 32   # → LAB_DOC_ENC_KEY
+  ```
+  `LAB_DOC_ENC_KEY` 同 `APRICOT_ENC_KEY` 一樣要**離線另存一份**（密碼庫／實體媒體）——檔全部 AES-256-GCM 加密落地，**冇 key 備份檔冇用**。`LAB_DOC_ENC_KID` 預設 `k1`；換 key 時新檔用新 kid，舊 kid 加 base64 入 `LAB_DOC_ENC_KEYS_OLD`（`k1:base64,…`），舊檔解到 purge 為止。
+- **volume 備份**：`backup.sh` 已內含 labdoc 步（每日 `rclone copy $LAB_DOC_VOLUME_PATH offsite:clinic-backups/lab-docs/`；每月 1 號 `rclone sync --max-delete 500` 同步已到期清除）。喺 crontab／環境設 `LAB_DOC_VOLUME_PATH=/var/lib/docker/volumes/clinic_lab_docs/data`（以 `docker volume ls` 為準）。
+- **purge cron（每晚 03:30）**：見 `scripts/README-CRONTAB.md`「Lab 單據保留 purge」——`POST /api/internal/labdoc-purge`（x-cron-key 守門）：7 年到期刪檔＋清姓名（金額／單號／病人編號／配對紀錄保留）＋孤兒 sweep；冪等，中途死可重跑。
+- **restore drill**：`scripts/restore-drill.sh` 已內含 labdoc 段（隨機抽 5 個 LabFile → 由備份源拉返 → 解密 → 比 sha256）。本地 drill：`LAB_DOC_BACKUP_SOURCE=<本地備份目錄> LAB_DOC_PSQL='psql -h 127.0.0.1 -p 15532 -U cw_dev -d cwm_labdoc' LAB_DOC_ENC_KEY=... bash scripts/restore-drill.sh`（需要 host node ≥18）。
+- **容量**：每日約 30 張 × 0.6 MB ≈ 18 MB/日 ≈ 6.5 GB/年 ≈ 45 GB/7 年——`README-CRONTAB.md` 嘅 disk-alert（08:00，>85%）照用；`/api/lab-docs/stats`（P4）會回總容量。
+
 ## 日誌管理
 
 ```bash

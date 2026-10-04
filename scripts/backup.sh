@@ -151,6 +151,28 @@ else
   echo "⚠️ 未設定 age／rclone —— 今次冇異地備份"; exit 1
 fi
 
+# ★ cwm-labdoc P1（§4.5）：lab_docs volume —— 檔已 AES-256-GCM 加密落地，唔使再 age。
+#   copy（唔用 sync）防誤刪傳播；每月 1 號額外 sync --max-delete 500，
+#   令已到期 purge 咗嘅檔喺 offsite 都同步刪除（跟 7 年保留）。
+LAB_DOC_VOLUME_PATH="${LAB_DOC_VOLUME_PATH:-}"
+RCLONE_REMOTE="${RCLONE_REMOTE:-offsite}"
+if [ -n "${LAB_DOC_VOLUME_PATH}" ]; then
+  if [ ! -d "${LAB_DOC_VOLUME_PATH}" ]; then
+    echo "❌ LAB_DOC_VOLUME_PATH 唔存在：${LAB_DOC_VOLUME_PATH}"
+    exit 1
+  fi
+  rclone copy "${LAB_DOC_VOLUME_PATH}" "${RCLONE_REMOTE}:clinic-backups/lab-docs/" \
+    || { echo "❌ lab-docs 異地備份失敗"; exit 1; }
+  echo "✅ lab-docs 已 copy 落 ${RCLONE_REMOTE}:clinic-backups/lab-docs/"
+  if [ "$(date +%d)" = "01" ]; then
+    rclone sync --max-delete 500 "${LAB_DOC_VOLUME_PATH}" "${RCLONE_REMOTE}:clinic-backups/lab-docs/" \
+      || { echo "❌ lab-docs 月度 sync 失敗"; exit 1; }
+    echo "✅ lab-docs 月度 sync 完成（--max-delete 500）"
+  fi
+else
+  echo "ℹ️ LAB_DOC_VOLUME_PATH 未設 —— 跳過 lab-docs 備份（labdoc 未部署？）"
+fi
+
 # Clean up old backups beyond retention period
 find "${BACKUP_DIR}" -maxdepth 1 -name "clinic_prod_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
 find "${BACKUP_DIR}" -maxdepth 1 -name "clinic_prod_*.sha256" -mtime +"${RETENTION_DAYS}" -delete
@@ -159,7 +181,7 @@ find "${BACKUP_DIR}" -maxdepth 1 -name ".tmp_*.sql" -mtime +1 -delete
 find "${BACKUP_DIR}" -maxdepth 1 -name ".err_*.log" -mtime +30 -delete
 echo "🧹 Old backups cleaned (retention: ${RETENTION_DAYS} days)"
 
-echo "★ 提醒：.env 需要另外備份至 offsite（含 APRICOT_ENC_KEY，冇咗解唔到 Apricot token）"
+echo "★ 提醒：.env 需要另外備份至 offsite（含 APRICOT_ENC_KEY、LAB_DOC_ENC_KEY —— 冇咗解唔到 Apricot token／Lab 單據原檔）"
 echo ""
 echo "🎉 [$(date)] Backup complete"
 echo ""

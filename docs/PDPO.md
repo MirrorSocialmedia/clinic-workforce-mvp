@@ -49,6 +49,8 @@ This document outlines how the Clinic Workforce Management System complies with 
 | Resigned employee data | 7 years post-leave | Legal compliance |
 | Lab invoice / statement originals | 7 years | Accounting records (Inland Revenue Ordinance); on expiry delete files and clear patient names |
 
+> **Lab 單據備份保留（§4.5）**：lab_docs volume（原檔已 AES-256-GCM 加密落地）每日 `rclone copy` 備份至 `offsite:clinic-backups/lab-docs/`，offsite 跟同一個 7 年保留期（每月 1 號 `rclone sync --max-delete 500` 令已到期清除嘅檔喺 offsite 同步刪）。加密 key `LAB_DOC_ENC_KEY` 同 `APRICOT_ENC_KEY` 一樣離線另存一份——冇 key 備份檔無法解密。Purge 後保留：金額、單號、病人編號、配對紀錄（只清姓名欄）。
+
 **Configuration**: `DATA_RETENTION_DAYS` environment variable controls automated cleanup.
 
 ## 4. Data Subject Rights (Part IV of PDPO)

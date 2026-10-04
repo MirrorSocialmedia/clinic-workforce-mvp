@@ -16,13 +16,14 @@ export class LabDocAuditPIIError extends Error {
   }
 }
 
-/** 病人姓名欄 blacklist（key 名，遞迴匹配） */
-const PII_NAME_KEYS = new Set([
+/** 病人姓名欄 blacklist（key 名，遞迴匹配）— purge 清姓名（§4.4）共用同一份 */
+export const NAME_FIELD_KEYS = new Set([
   'patientNameRaw',
   'patientRaw',
   'patientName',
   'patientFullName',
 ])
+const PII_NAME_KEYS = NAME_FIELD_KEYS
 
 /**
  * 遞迴掃描 object／array，回傳第一個命中 PII_NAME_KEYS 嘅 path；冇命中回 null。

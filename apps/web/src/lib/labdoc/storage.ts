@@ -83,11 +83,16 @@ export async function readEncrypted(storageKey: string): Promise<Buffer> {
   return decrypt(buf).plain
 }
 
-export async function deleteEncrypted(storageKey: string): Promise<void> {
+/** 刪加密檔；回傳真 = 真刪咗、假 = 原本唔存在（ENOENT 容忍 — purge 冪等重試用） */
+export async function deleteEncrypted(storageKey: string): Promise<boolean> {
   const abs = keyToPath(storageKey)
-  await fs.unlink(abs).catch((e) => {
+  try {
+    await fs.unlink(abs)
+    return true
+  } catch (e: any) {
     if (e.code !== 'ENOENT') throw e
-  })
+    return false
+  }
 }
 
 export async function fileExists(storageKey: string): Promise<boolean> {
