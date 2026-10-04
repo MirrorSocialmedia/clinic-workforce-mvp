@@ -113,7 +113,10 @@ export async function GET(req: NextRequest) {
       companyId: run.clinic?.company?.id ?? null, companyName: run.clinic?.company?.name ?? '全部診所',
     }
     const confItems = filterConfidentialItems(run.items as any[], confScope)
+    // ★ cwm-chequeexcl-20261004：模版剔走嘅員工唔匯出（LEGACY 冇清單 = 全部照出）
+    const excluded = new Set(config.excludedEmployeeIds)
     for (const item of confItems as any[]) {
+      if (excluded.has(item.employee?.id)) continue
       const p = payerByEmp.get(item.employee?.id)
       const payer = (p?.payerClinicId && clinicById.get(p.payerClinicId)) || home
       rows.push(sheetRowFrom(item, { home, payer, groupBy: config.groupBy, sortOrder: p?.sortOrder ?? null }))

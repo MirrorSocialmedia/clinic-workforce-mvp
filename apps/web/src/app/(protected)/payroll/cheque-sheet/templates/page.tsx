@@ -11,6 +11,8 @@ import Link from 'next/link'
 import { apiFetch } from '@/lib/api-client'
 import { BackButton } from '@/components/BackButton'
 import { SHEET_COLS, SHEET_COL_MAP, NEW_TEMPLATE_DEFAULT, describeConfig, type SheetConfig } from '@/lib/cheque-sheet/config'
+import { excludeHint } from '@/lib/cheque-sheet/exclude-hint'
+import { toHKDateStr } from '@/lib/hk-date'
 
 interface Tpl { id: string; name: string; config: SheetConfig }
 
@@ -189,6 +191,80 @@ export default function ChequeSheetTemplatesPage() {
           </div>
         </div>
       </div>
+
+      {/* ★ cwm-chequeexcl-20261004：每個模版各自揀唔匯出嘅員工（系統唔自動剔，只提示試用期） */}
+      <ExcludeEmployees
+        excluded={cfg.excludedEmployeeIds}
+        onChange={ids => setCfg(c => ({ ...c, excludedEmployeeIds: ids }))}
+      />
+    </div>
+  )
+}
+
+interface ExEmp { id: string; name: string; resigned: boolean; joinDate: string | null; homeClinicId: string | null; payerClinicId: string | null }
+
+/** 匯出邊啲員工：按出糧診所分組；剔走 = 呢個模版唔出（新員工預設照出） */
+function ExcludeEmployees({ excluded, onChange }: { excluded: string[]; onChange: (ids: string[]) => void }) {
+  const [emps, setEmps] = useState<ExEmp[]>([])
+  const [clinics, setClinics] = useState<{ id: string; title: string }[]>([])
+  useEffect(() => {
+    apiFetch<any>('/api/cheque-sheet-payers')
+      .then(d => { setEmps(d.employees || []); setClinics(d.clinics || []) })
+      .catch(() => setEmps([]))
+  }, [])
+  const ex = useMemo(() => new Set(excluded), [excluded])
+  const groups = useMemo(() => {
+    const titleOf = (id: string | null) => clinics.find(c => c.id === id)?.title ?? '（冇所屬診所）'
+    const m = new Map<string, ExEmp[]>()
+    for (const e of emps) { const t = titleOf(e.payerClinicId ?? e.homeClinicId); m.set(t, [...(m.get(t) ?? []), e]) }
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh-HK'))
+      .map(([title, list]) => ({ title, list: list.sort((a, b) => a.name.localeCompare(b.name, 'en')) }))
+  }, [emps, clinics])
+  const toggle = (id: string, on: boolean) => onChange(on ? excluded.filter(x => x !== id) : [...excluded, id])
+  const offCount = emps.filter(e => ex.has(e.id)).length
+
+  return (
+    <div className="mt-6 bg-white border rounded-lg">
+      <div className="px-4 py-3 border-b flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <div className="font-semibold">匯出邊啲員工</div>
+        <div className="text-xs text-muted-foreground">每個模版各自揀；剔走嘅人呢個模版唔出，其他模版照出。系統唔會自動剔，只會提示。</div>
+        <div className="flex-1" />
+        <div className="text-sm text-muted-foreground">匯出 {emps.length - offCount} 人 · 唔匯出 {offCount} 人</div>
+      </div>
+      <div className="px-4 py-2 flex flex-wrap gap-4 text-xs text-muted-foreground border-b">
+        <span><span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300">試用期中（3 個月）</span> 入職未滿 3 個月</span>
+        <span><span className="px-2 py-0.5 rounded-full bg-red-50 text-red-800 border border-red-300">已過試用期</span> 但仲剔走緊，記得剔返</span>
+      </div>
+      <div className="p-4 grid gap-4 lg:grid-cols-2">
+        {groups.map(g => (
+          <div key={g.title} className="border rounded-lg overflow-hidden">
+            <div className="px-3 py-2 bg-slate-50 text-sm font-semibold flex justify-between">
+              <span>{g.title}</span>
+              <span className="font-normal text-xs text-muted-foreground">匯出 {g.list.filter(e => !ex.has(e.id)).length} / {g.list.length}</span>
+            </div>
+            {g.list.map(e => {
+              const on = !ex.has(e.id)
+              const h = excludeHint(e.joinDate, !on)
+              return (
+                <label key={e.id} className={`flex items-center gap-3 px-3 py-2 border-t text-sm cursor-pointer ${on ? '' : 'bg-slate-50'}`}>
+                  <input type="checkbox" checked={on} onChange={ev => toggle(e.id, ev.target.checked)} className="w-4 h-4" aria-label={`匯出 ${e.name}`} />
+                  <span className={`w-28 ${on ? '' : 'text-slate-500 line-through'}`}>{e.name}{e.resigned && <span className="ml-1 text-xs text-muted-foreground no-underline">（已離職）</span>}</span>
+                  <span className="text-xs text-slate-500 w-32 whitespace-nowrap">{e.joinDate ? `入職 ${toHKDateStr(e.joinDate)}` : ''}</span>
+                  {h?.kind === 'PROBATION' && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300">
+                      試用期中（3 個月，至 {h.lastDay}）{h.dayNo > 0 ? ` · 入職第 ${h.dayNo} 日` : ' · 未入職'}
+                    </span>
+                  )}
+                  {h?.kind === 'PASSED_EXCLUDED' && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-800 border border-red-300">已過試用期（{h.lastDay}），仲係唔匯出</span>
+                  )}
+                </label>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="px-4 pb-3 text-xs text-muted-foreground">改完記得撳上面「儲存模版」。</div>
     </div>
   )
 }

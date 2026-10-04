@@ -12,3 +12,7 @@ face-service
 # Nested .env files (e.g. apps/web/.env) — bare filenames only match root
 **/.env
 **/.env.*
+
+# ★ 2026-10-04：任何一層嘅 node_modules／.next 都唔入 build context（防覆蓋 image 入面裝好嘅依賴、亦令 context 細啲）
+**/node_modules
+**/.next
