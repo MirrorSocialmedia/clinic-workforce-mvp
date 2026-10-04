@@ -70,6 +70,9 @@ export interface SheetConfig {
   monthRow: boolean
   draftRow: boolean
   totalRow: boolean
+  /** ★ cwm-chequeexcl-20261004：呢個模版唔匯出嘅員工（老闆手動揀；例如 MPF 表唔出入職未夠 60 日嘅人）。
+   *  每個模版各自一份；新員工預設照出（唔喺清單入面） */
+  excludedEmployeeIds: string[]
 }
 
 const col = (key: string) => ({ key, header: SHEET_COL_MAP.get(key)!.header })
@@ -84,6 +87,7 @@ export const LEGACY_CONFIG: SheetConfig = {
   monthRow: true,
   draftRow: true,
   totalRow: true,
+  excludedEmployeeIds: [],
 }
 
 /** 新模版預設（老闆拍板：按出糧診所、小計、每組一張 Sheet） */
@@ -122,13 +126,16 @@ export function normalizeSheetConfig(raw: unknown): SheetConfig {
     monthRow: bool(r.monthRow, d.monthRow),
     draftRow: false, // ★ cwm-chequetpl-20261004 fix：老闆話草稿警告唔要 —— 模版一律唔出（舊格式 LEGACY 照出）
     totalRow: bool(r.totalRow, d.totalRow),
+    excludedEmployeeIds: Array.isArray(r.excludedEmployeeIds)
+      ? [...new Set(r.excludedEmployeeIds.filter((x: unknown): x is string => typeof x === 'string' && x.length > 0 && x.length <= 64))].slice(0, 5000)
+      : [],
   }
 }
 
 /** 模版卡片副題：「10 欄 · 按出糧診所」 */
 export function describeConfig(c: SheetConfig): string {
   const g = c.groupBy === 'CLINIC' ? '按出糧診所' : c.groupBy === 'COMPANY' ? '按出糧公司' : '唔分組'
-  return `${c.columns.length} 欄 · ${g}`
+  return `${c.columns.length} 欄 · ${g}${c.excludedEmployeeIds.length ? ` · 唔出 ${c.excludedEmployeeIds.length} 人` : ''}`
 }
 
 /** 模版名：1–30 字 */

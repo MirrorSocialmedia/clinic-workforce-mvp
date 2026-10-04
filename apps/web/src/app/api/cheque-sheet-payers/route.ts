@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       prisma.employee.findMany({
         where: { OR: [NOT_RESIGNED_WHERE, { id: { in: payers.map(p => p.employeeId) } }] },
         select: {
-          id: true, status: true, homeClinicId: true,
+          id: true, status: true, homeClinicId: true, joinDate: true,
           user: { select: { name: true, fullName: true } },
           homeClinic: { select: { name: true, company: { select: { name: true } } } },
         },
@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
           id: e.id,
           name: e.user?.name ?? '',
           resigned: e.status === 'RESIGNED',
+          joinDate: e.joinDate, // ★ cwm-chequeexcl-20261004：模版設定頁試用期提示用
           homeClinicId: e.homeClinicId,
           homeTitle: placeTitle(e.homeClinic as any),
           payerClinicId: p?.payerClinicId ?? null,

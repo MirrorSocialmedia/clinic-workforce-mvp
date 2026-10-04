@@ -114,6 +114,7 @@ jobs:
             src/lib/patient-search.test.ts \
             src/lib/apricot/source-pure.test.ts \
             src/lib/cheque-sheet/build.test.ts \
+            src/lib/cheque-sheet/exclude-hint.test.ts \
             src/lib/payroll-engine.bonus-makeup.test.ts \
             src/lib/payroll-engine.bonus-rules.test.ts \
             src/lib/payroll-engine.hourly-eowage.test.ts \
