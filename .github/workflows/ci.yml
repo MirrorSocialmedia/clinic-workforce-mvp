@@ -10,6 +10,35 @@ on: [push, pull_request]
 #     唔需要 seed；seed.ts 係 destructive wipe+reseed，唔適合 CI
 #   - 測試 scope = deterministic subset（排除清單見 tests step 註釋）
 jobs:
+  # cwm-labdoc P1 第一步（施工單 §17）：node:22-alpine 試裝 sharp / pdfjs-dist / @napi-rs/canvas
+  # 並渲染 test/fixtures/labdoc/*.pdf 做證明。
+  # 本機 dev 冇 docker 權 → 呢個 job 用 GH runner 嘅 docker 跑真 node:22-alpine。
+  # 版本跟 apps/web/package.json 行鎖（CI 用呢兩行讀，唔會跟 lockfile 漂移）。
+  # ⚠️ 呢個 job 紅 = alpine 裝唔到/渲染唔到 → Dockerfile 改 node:22-slim 並喺 PR 寫明（施工單 §17 P1）。
+  labdoc-alpine-render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Alpine render proof (node:22-alpine, 真 container)
+        run: |
+          VER_SHARP=$(node -p "require('./apps/web/package.json').dependencies.sharp")
+          VER_PDFJS=$(node -p "require('./apps/web/package.json').dependencies['pdfjs-dist']")
+          VER_CANVAS=$(node -p "require('./apps/web/package.json').dependencies['@napi-rs/canvas']")
+          echo "sharp@${VER_SHARP}  pdfjs-dist@${VER_PDFJS}  @napi-rs/canvas@${VER_CANVAS}"
+          docker run --rm \
+            -e VER_SHARP="${VER_SHARP}" -e VER_PDFJS="${VER_PDFJS}" -e VER_CANVAS="${VER_CANVAS}" \
+            -v "$PWD/apps/web/package.json:/app/package.json:ro" \
+            -v "$PWD/apps/web/scripts/labdoc-render-check.mjs:/app/render-check.mjs:ro" \
+            -v "$PWD/apps/web/test/fixtures/labdoc:/app/fixtures:ro" \
+            node:22-alpine sh -c '
+              set -e
+              echo "alpine install: sharp@${VER_SHARP} pdfjs-dist@${VER_PDFJS} @napi-rs/canvas@${VER_CANVAS}"
+              cd /app && npm init -y >/dev/null
+              # --no-audit --no-fund 省時；版本由 host 經 env 傳入（= package.json 行鎖）
+              npm install --no-audit --no-fund \
+                "sharp@${VER_SHARP}" "pdfjs-dist@${VER_PDFJS}" "@napi-rs/canvas@${VER_CANVAS}"
+              node /app/render-check.mjs /app/fixtures
+            '
   test:
     runs-on: ubuntu-latest
     services:
