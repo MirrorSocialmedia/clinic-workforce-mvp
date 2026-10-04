@@ -320,13 +320,14 @@ export default function PayrollDetailPage() {
   const [addable, setAddable] = useState<{ id: string; name: string }[]>([])
   useEffect(() => {
     if (!run || run.status !== 'DRAFT' || !canGenerate) { setAddable([]); return }
-    api('/api/employees?all=1')
+    // ★ cwm-payrolllist-20261004：計糧月份仲有受僱嘅員工（含當月離職）都可以加入
+    api(`/api/employees?all=1&employedFrom=${periodMonthKey(run.periodMonth)}-01`)
       .then(r => (r.ok ? r.json() : { employees: [] }))
       .then(d => {
         const inRun = new Set(run.items.map(i => i.employeeId))
         setAddable((d.employees || [])
           .filter((e: any) => !inRun.has(e.id) && (!run.clinicId || e.homeClinicId === run.clinicId))
-          .map((e: any) => ({ id: e.id, name: e.user?.name ?? e.id })))
+          .map((e: any) => ({ id: e.id, name: `${e.user?.name ?? e.id}${e.status === 'RESIGNED' ? '（已離職）' : ''}` })))
       })
       .catch(() => setAddable([]))
   }, [run, canGenerate])

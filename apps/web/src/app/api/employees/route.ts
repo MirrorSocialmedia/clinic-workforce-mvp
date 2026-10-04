@@ -6,6 +6,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, getConfidentialScope } from '@/lib/scope-helpers'
 import { buildDefaultPayConfig } from '@/lib/pay-rule-defaults'
+import { employedFromWhere } from '@/lib/employment-scope'
 import { boolParam } from '@/lib/query-params'
 
 // ============================================================
@@ -23,6 +24,11 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status')
   const search = searchParams.get('search')
   const includeResigned = boolParam(searchParams, 'includeResigned')
+  // ★ cwm-payrolllist-20261004：employedFrom=YYYY-MM-DD → 該日（含）之後仲有受僱嘅員工（含嗰個月離職嘅人）
+  //   生成計糧揀員工用：離職員工喺佢最後工作月份仲要揀得（之前一離職就喺下拉消失）
+  const employedFromRaw = searchParams.get('employedFrom')
+  const employedFrom = employedFromRaw && /^\d{4}-\d{2}-\d{2}$/.test(employedFromRaw)
+    ? new Date(`${employedFromRaw}T00:00:00+08:00`) : null
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1)
   const pageSize = Math.min(200, Math.max(1, parseInt(searchParams.get('pageSize') || '20', 10) || 20))
   const skip = (page - 1) * pageSize
@@ -34,8 +40,11 @@ export async function GET(req: NextRequest) {
   const where: any = {}
 
   // Default: exclude RESIGNED employees unless explicitly requested
-  if (!includeResigned) {
+  if (!includeResigned && !employedFrom) {
     where.status = { not: 'RESIGNED' }
+  }
+  if (employedFrom && !status) {
+    where.AND = [...(where.AND ?? []), employedFromWhere(employedFrom)]
   }
 
   if (clinicId) {
@@ -49,7 +58,7 @@ export async function GET(req: NextRequest) {
     } else {
       where.status = status === 'RESIGNED' ? 'RESIGNED' : { not: 'RESIGNED' }
     }
-  } else if (!includeResigned) {
+  } else if (!includeResigned && !employedFrom) {
     // Ensure not-RESIGNED is set (already set above, but be explicit)
     where.status = { not: 'RESIGNED' }
   }
