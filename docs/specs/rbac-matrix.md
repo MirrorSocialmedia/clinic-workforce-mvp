@@ -139,7 +139,7 @@
 
 | 操作 | OWNER | MANAGER | ACCOUNTANT | EMPLOYEE |
 |------|:-----:|:-------:|:----------:|:--------:|
-| 上傳 invoice／月結單、檔案庫、睇檔、下載原檔 | ✅ | ✅ | ❌ | ✅（grant lab_invoice 或 lab_statement） |
+| 上傳 invoice／月結單、檔案庫、睇檔、下載原檔、待處理（§9） | ✅ | ✅ | ❌ | ✅（grant lab_invoice 或 lab_statement） |
 | 確認 invoice 頭部、對成本、確認到貨 | ✅ | ✅ | ❌ | ✅（grant lab_invoice） |
 | 作廢 invoice（冇配對時） | ✅ | ✅ | ❌ | ✅（grant lab_invoice） |
 | 月結單分段：識別、處理差異、確認、取代舊版 | ✅ | ✅ | ❌ | ✅（grant lab_statement） |

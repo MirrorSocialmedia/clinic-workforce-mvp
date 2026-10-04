@@ -123,6 +123,15 @@ export default function MobileMorePage() {
       perm: 'cost_entry',
     },
     {
+      // ★ cwm-labdoc P1（§10.5）：Lab 單據（到貨單＋檔案庫，手機優先）
+      // ⚠️ 唔好將 EMPLOYEE 加去 roles — filter 會繞過 perm 檢查（同 layout.tsx）
+      label: 'Lab 單據',
+      href: '/lab-docs',
+      icon: Receipt,
+      roles: ['OWNER', 'MANAGER'],
+      perm: ['lab_invoice', 'lab_statement'],
+    },
+    {
       label: '醫生月結',
       href: '/payout',
       icon: Receipt,
