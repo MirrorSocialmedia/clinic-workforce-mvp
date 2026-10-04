@@ -48,7 +48,7 @@ export default function NewPayrollPage({ searchParams }: { searchParams?: NewPay
     // ★ cwm-money P2-6 E：月中調薪提示（active 規則本月 2 號或之後生效）
     midMonthRuleChanges?: Array<{ name: string; effectiveFrom: string }>;
   } | null>(null)
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([])
+  const [employees, setEmployees] = useState<{ id: string; name: string; homeClinicId: string | null; lastDay: string | null }[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<string>(() => (typeof searchParams?.employee === 'string' ? searchParams.employee : ''))
 
   // Pre-check modal state
@@ -128,15 +128,27 @@ export default function NewPayrollPage({ searchParams }: { searchParams?: NewPay
       setGrant(Array.isArray(d.user?.grant) ? d.user.grant : [])
       setDeny(Array.isArray(d.user?.deny) ? d.user.deny : [])
     })
-    fetch('/api/employees?all=1').then(async r => {
-      if (!r.ok) return
+  }, [fetchClinics])
+
+  // ★ cwm-payrolllist-20261004：員工下拉跟計糧月份 —— 嗰個月仲有受僱嘅員工都出（包括當月離職，
+  //   之前一離職就消失、計唔到佢最後一個月）；過咗嗰個月先唔出
+  useEffect(() => {
+    if (!/^\d{4}-\d{2}$/.test(periodMonth)) return
+    let alive = true
+    fetch(`/api/employees?all=1&employedFrom=${periodMonth}-01`).then(async r => {
+      if (!r.ok || !alive) return
       const d = await r.json()
       setEmployees((d.employees || []).map((e: any) => ({
         id: e.id,
         name: e.user?.name || e.id,
+        homeClinicId: e.homeClinicId ?? null,
+        lastDay: e.status === 'RESIGNED' && e.leaveDate ? toHKDateStr(e.leaveDate) : null,
       })))
     })
-  }, [fetchClinics])
+    return () => { alive = false }
+  }, [periodMonth])
+  // 只列揀咗嗰間店（計糧按主屬店分單）嘅員工；URL 帶入嘅員工照留
+  const employeeOptions = employees.filter(e => !selectedClinic || e.homeClinicId === selectedClinic || e.id === selectedEmployee)
 
   // Redirect if no payroll_generate permission
   const canGenerate = userRole ? hasPermission(userRole, 'payroll_generate', grant, deny) : true
@@ -372,8 +384,8 @@ export default function NewPayrollPage({ searchParams }: { searchParams?: NewPay
             className="w-full px-3 py-2.5 rounded-md g border text-base focus:outline-none focus:ring-2 focus:ring-brand/30"
           >
             <option value="">全部員工</option>
-            {employees.map(emp => (
-              <option key={emp.id} value={emp.id}>{emp.name}</option>
+            {employeeOptions.map(emp => (
+              <option key={emp.id} value={emp.id}>{emp.name}{emp.lastDay ? `（已離職，最後一日 ${emp.lastDay}）` : ''}</option>
             ))}
           </select>
         </div>
