@@ -27,6 +27,7 @@ export default function ChequeSheetTemplatesPage() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [loaded, setLoaded] = useState(false) // 模版載入完先顯示員工清單（防剔咗之後俾載入結果覆蓋）
 
   const load = useCallback(async (pick?: string) => {
     try {
@@ -36,7 +37,7 @@ export default function ChequeSheetTemplatesPage() {
       const t = list.find(x => x.id === pick) ?? list[0]
       if (t) { setSelId(t.id); setName(t.name); setCfg(clone(t.config)) }
       else { setSelId(null); setName('支票表'); setCfg(clone(NEW_TEMPLATE_DEFAULT)) }
-    } catch (e: any) { setLoadError(e?.message || '載入失敗') }
+    } catch (e: any) { setLoadError(e?.message || '載入失敗') } finally { setLoaded(true) }
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -193,15 +194,15 @@ export default function ChequeSheetTemplatesPage() {
       </div>
 
       {/* ★ cwm-chequeexcl-20261004：每個模版各自揀唔匯出嘅員工（系統唔自動剔，只提示試用期） */}
-      <ExcludeEmployees
+      {loaded && <ExcludeEmployees
         excluded={cfg.excludedEmployeeIds}
         onChange={ids => setCfg(c => ({ ...c, excludedEmployeeIds: ids }))}
-      />
+      />}
     </div>
   )
 }
 
-interface ExEmp { id: string; name: string; resigned: boolean; joinDate: string | null; homeClinicId: string | null; payerClinicId: string | null }
+interface ExEmp { id: string; name: string; resigned: boolean; lastDay?: string | null; joinDate: string | null; homeClinicId: string | null; payerClinicId: string | null }
 
 /** 匯出邊啲員工：按出糧診所分組；剔走 = 呢個模版唔出（新員工預設照出） */
 function ExcludeEmployees({ excluded, onChange }: { excluded: string[]; onChange: (ids: string[]) => void }) {
@@ -244,11 +245,12 @@ function ExcludeEmployees({ excluded, onChange }: { excluded: string[]; onChange
             </div>
             {g.list.map(e => {
               const on = !ex.has(e.id)
-              const h = excludeHint(e.joinDate, !on)
+              // 已離職：唔使試用期提示（剔走佢係正常）
+              const h = e.resigned ? null : excludeHint(e.joinDate, !on)
               return (
                 <label key={e.id} className={`flex items-center gap-3 px-3 py-2 border-t text-sm cursor-pointer ${on ? '' : 'bg-slate-50'}`}>
                   <input type="checkbox" checked={on} onChange={ev => toggle(e.id, ev.target.checked)} className="w-4 h-4" aria-label={`匯出 ${e.name}`} />
-                  <span className={`w-28 ${on ? '' : 'text-slate-500 line-through'}`}>{e.name}{e.resigned && <span className="ml-1 text-xs text-muted-foreground no-underline">（已離職）</span>}</span>
+                  <span className={`w-28 ${on ? '' : 'text-slate-500 line-through'}`}>{e.name}</span>
                   <span className="text-xs text-slate-500 w-32 whitespace-nowrap">{e.joinDate ? `入職 ${toHKDateStr(e.joinDate)}` : ''}</span>
                   {h?.kind === 'PROBATION' && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300">
@@ -258,6 +260,7 @@ function ExcludeEmployees({ excluded, onChange }: { excluded: string[]; onChange
                   {h?.kind === 'PASSED_EXCLUDED' && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-800 border border-red-300">已過試用期（{h.lastDay}），仲係唔匯出</span>
                   )}
+                  {e.resigned && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300 whitespace-nowrap">已離職{e.lastDay ? `（最後一日 ${e.lastDay}）` : ''}</span>}
                 </label>
               )
             })}

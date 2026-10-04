@@ -11,7 +11,7 @@ import Link from 'next/link'
 import { apiFetch } from '@/lib/api-client'
 import { BackButton } from '@/components/BackButton'
 
-interface Emp { id: string; name: string; resigned: boolean; homeClinicId: string | null; homeTitle: string; payerClinicId: string | null; sortOrder: number | null }
+interface Emp { id: string; name: string; resigned: boolean; lastDay?: string | null; homeClinicId: string | null; homeTitle: string; payerClinicId: string | null; sortOrder: number | null }
 interface ClinicOpt { id: string; title: string }
 
 export default function ChequeSheetPayersPage() {
@@ -102,7 +102,7 @@ export default function ChequeSheetPayersPage() {
                 onDrop={() => { if (drag && drag.group === g.key) reorder(g.key, drag.idx, i); setDrag(null) }}
                 className={`grid grid-cols-[28px_1fr_52px] sm:grid-cols-[28px_1fr_1fr_240px_52px] gap-3 items-center px-4 py-1.5 border-t text-sm ${e.payerClinicId ? 'bg-amber-50' : ''}`}>
                 <span className="cursor-grab text-slate-400 select-none" aria-hidden>⋮⋮</span>
-                <span>{e.name}{e.resigned && <span className="ml-1 text-xs text-muted-foreground">（已離職）</span>}</span>
+                <span>{e.name}{e.resigned && <span className="ml-1 text-xs text-muted-foreground">（已離職{e.lastDay ? `，最後一日 ${e.lastDay}` : ''}）</span>}</span>
                 <span className="hidden sm:block text-slate-600">{e.homeTitle}</span>
                 <span className="col-span-3 sm:col-span-1 flex items-center gap-2 order-last sm:order-none">
                   <select value={effective(e)} onChange={ev => setPayer(e.id, ev.target.value)} aria-label={`${e.name} 出糧診所`}
