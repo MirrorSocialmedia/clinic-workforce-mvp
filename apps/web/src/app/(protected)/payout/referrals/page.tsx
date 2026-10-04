@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { SourceStatusLine, ClinicChip, type SearchSource } from '@/components/patient-search-ui'
 import {
   Plus, Trash2, ArrowLeft, Search, Check, RotateCcw, FileText, ClipboardList,
   ChevronDown, ChevronRight, Users,
@@ -76,6 +77,7 @@ export default function ReferralsPage() {
   const [patientSearch, setPatientSearch] = useState('')
   const [patientResults, setPatientResults] = useState<any[] | null>(null)
   const [patientSearching, setPatientSearching] = useState(false)
+  const [patientSources, setPatientSources] = useState<SearchSource[]>([]) // ★ cwm-datasource-20261003
   const [patientSearchError, setPatientSearchError] = useState<string | null>(null)
   const [selectedPatient, setSelectedPatient] = useState<any | null>(null)
   const [billSearchResults, setBillSearchResults] = useState<any[] | null>(null)
@@ -153,6 +155,7 @@ export default function ReferralsPage() {
     setPatientSearching(true)
     setPatientSearchError(null)
     setPatientResults(null)
+    setPatientSources([])
     try {
       const res = await apiFetch<any>(`/api/cost-cases/patient-search?keyword=${encodeURIComponent(patientSearch.trim())}`)
       if ((res as any).error) {
@@ -160,6 +163,7 @@ export default function ReferralsPage() {
         setPatientResults([])
       } else {
         setPatientResults(res.patients || [])
+        setPatientSources(res.sources || [])
         if (res.patients?.length === 0) {
           setPatientSearchError(`揾唔到病人編號 ${patientSearch.trim()}`)
         }
@@ -859,6 +863,8 @@ export default function ReferralsPage() {
                   {patientSearchError}
                 </div>
               )}
+              {/* ★ cwm-datasource-20261003：邊個來源失敗／冇結果（之前靜靜消失） */}
+              {!patientSearching && !selectedPatient && <SourceStatusLine sources={patientSources} />}
 
               {/* Step 1: Patient results */}
               {patientResults !== null && patientResults.length > 0 && !selectedPatient && (
@@ -873,12 +879,12 @@ export default function ReferralsPage() {
                     <tbody>
                       {patientResults.map((p: any) => (
                         <tr
-                          key={p.extId}
+                          key={`${p.account ?? ''}|${p.extId}`}
                           className="border-b last:border-0 hover:bg-blue-50 cursor-pointer"
                           onClick={() => selectPatient(p)}
                         >
                           <td className="py-2 px-3 font-mono text-xs">{p.code}</td>
-                          <td className="py-2 px-3">{p.fullName || '—'}</td>
+                          <td className="py-2 px-3">{p.fullName || '—'}<ClinicChip label={p.clinicLabel} /></td>
                         </tr>
                       ))}
                     </tbody>

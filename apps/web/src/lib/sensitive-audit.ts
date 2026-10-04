@@ -98,6 +98,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },
   // ★ cwm-apricotacct-20260913 E 章：Apricot 帳號綁定（影響月結歸屬，必須審計）
   { action: 'APRICOT_ACCOUNT_BIND', label: 'Apricot 帳號綁定' },
+  // ★ cwm-datasource-20261003：資料來源設定（顯示名／編號規則／店歸屬）同憑證更新（只記「更新咗」，唔記內容）
+  { action: 'APRICOT_SOURCE_UPDATE', label: 'Apricot 資料來源設定變更' },
+  { action: 'APRICOT_CREDENTIAL_UPDATE', label: '⚠️ Apricot 憑證更新（網頁貼入）' },
   { action: 'PAYMENT_METHOD_RULE_CREATE', label: '新增付款方式規則' },
   // ★ MD-D: Payout Engine
   { action: 'PAYROLL_ITEM_REMOVE', label: '由草稿計糧單移除員工' }, // ★ cwm-payrollsingle-20261003

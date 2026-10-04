@@ -12,6 +12,7 @@ import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { useTodoCount } from '@/lib/use-todo-count'
 import { LabourCostCard } from '@/components/dashboard/LabourCostCard'
 import { ProbationDueCard } from '@/components/dashboard/ProbationDueCard'
+import { DataSourceAlertCard } from '@/components/dashboard/DataSourceAlertCard'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -216,6 +217,9 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground mt-1">角色: {roleLabels[data.role]}</p>
         </div>
       </div>
+
+      {/* ★ cwm-datasource-20261003：Apricot 憑證失效／就快過期（OWNER-only；冇問題唔出） */}
+      {data.role === 'OWNER' /* ROLE-OK: 憑證管理只限負責人，同 API RBAC 一致 */ && <DataSourceAlertCard />}
 
       {/* ── Today's Attendance Board — cwm-ownerdash-20260917（時間感知；名單只俾管理層） ── */}
       <Card>

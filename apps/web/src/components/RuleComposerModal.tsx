@@ -282,7 +282,11 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
         setSubmitting(false)
         return
       }
-      const isEditing = !!ruleId && !salaryChanged
+      // ★ cwm-ruleversion-20261004：生效日期揀遲過現行規則 = 由嗰日起用新規則（例如 9 月起改 MPF）→
+      //   一律新增規則，舊月份（可能已確認計糧）照用舊規則。之前只有改薪先新增，其他改動原地改 →
+      //   撞「已用於已確認計糧」被擋。
+      const startsLater = !!ruleId && !!o && effectiveFrom > o.effectiveFrom
+      const isEditing = !!ruleId && !salaryChanged && !startsLater
       const url = isEditing
         ? `/api/employees/${employeeId}/pay-rules/${ruleId}`
         : `/api/employees/${employeeId}/pay-rules`
@@ -1506,6 +1510,10 @@ export function RuleComposerModal({ employeeId, ruleId: initialRuleId, onClose, 
                 onChange={(e) => setEffectiveFrom(e.target.value)}
               />
               {ruleId && <p style={{ fontSize: 11, color: '#6b7280' }}>改月薪／時薪會新增一條規則，舊規則保留到新生效日前一日</p>}
+              {/* ★ cwm-ruleversion-20261004 */}
+              {ruleId && originalRef.current && effectiveFrom > originalRef.current.effectiveFrom
+                ? <p style={{ fontSize: 12, color: '#047857' }}>✓ 由 {effectiveFrom} 起用新規則（會新增一條）；之前月份照用舊規則，已確認計糧唔受影響</p>
+                : ruleId && <p style={{ fontSize: 11, color: '#6b7280' }}>想由某個月起先改（例如 9 月起改 MPF）：將生效日期改做嗰個月 1 號</p>}
             </div>
           </div>
 

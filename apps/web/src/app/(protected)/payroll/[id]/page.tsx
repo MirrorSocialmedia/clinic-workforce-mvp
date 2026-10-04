@@ -348,6 +348,13 @@ export default function PayrollDetailPage() {
       notifyDataChanged('payroll')
     } finally { setItemBusy(null) }
   }
+  // ★ cwm-payrolladd-20261004：加入／重算 → 去「生成計糧」頁只計呢個人（同第一次生成一樣可以輸入店舖獎金、勤工獎、拆帳）
+  //   跨店 run（clinicId null）生成頁揀唔到店 → 照舊直接重算
+  const openSingleEmployee = (empId: string, name: string) => {
+    if (!run?.clinicId) { handleItemRecalc(empId, name); return }
+    const qs = new URLSearchParams({ clinic: run.clinicId, month: periodMonthKey(run.periodMonth), employee: empId, run: runId })
+    router.push(`/payroll/new?${qs}`)
+  }
   const handleItemRemove = async (empId: string, name: string) => {
     if (!confirm(`由呢張草稿計糧單移除「${name}」？\n（之後可以用「加入／重算員工」加返；成張重新生成都會加返）`)) return
     setItemBusy(empId)
@@ -680,11 +687,11 @@ export default function PayrollDetailPage() {
             {addable.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
           <button type="button" disabled={!addEmpId || itemBusy !== null}
-            onClick={() => { const e = addable.find(x => x.id === addEmpId); if (e) handleItemRecalc(e.id, e.name) }}
+            onClick={() => { const e = addable.find(x => x.id === addEmpId); if (e) openSingleEmployee(e.id, e.name) }}
             style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #b45309', background: '#fff', color: '#b45309', cursor: addEmpId ? 'pointer' : 'not-allowed' }}>
-            {itemBusy && itemBusy === addEmpId ? '計算中…' : '加入並計算'}
+            {itemBusy && itemBusy === addEmpId ? '計算中…' : '加入 → 輸入獎金並計算'}
           </button>
-          <span style={{ color: '#888', fontSize: 12 }}>每行「重算」只重算嗰個人，其他人唔郁。</span>
+          <span style={{ color: '#888', fontSize: 12 }}>每行「重算」都可以改店舖獎金／勤工獎／拆帳，只計嗰個人，其他人唔郁。</span>
         </div>
       )}
 
@@ -963,7 +970,7 @@ export default function PayrollDetailPage() {
                           查看
                         </Link>
                         {run.status === 'DRAFT' && canGenerate && (<>
-                          <button type="button" disabled={itemBusy !== null} onClick={() => handleItemRecalc(item.employeeId, item.employee?.user?.name ?? '')}
+                          <button type="button" disabled={itemBusy !== null} onClick={() => openSingleEmployee(item.employeeId, item.employee?.user?.name ?? '')}
                             style={{ color: '#b45309', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                             {itemBusy === item.employeeId ? '處理中…' : '重算'}
                           </button>
@@ -1085,7 +1092,7 @@ export default function PayrollDetailPage() {
                         工資歷史
                       </Link>
                       {run.status === 'DRAFT' && canGenerate && (<>
-                        <button type="button" disabled={itemBusy !== null} onClick={() => handleItemRecalc(item.employeeId, item.employee?.user?.name ?? '')}
+                        <button type="button" disabled={itemBusy !== null} onClick={() => openSingleEmployee(item.employeeId, item.employee?.user?.name ?? '')}
                           style={{ color: '#b45309', fontSize: 13, background: 'none', border: 'none', minHeight: 36 }}>
                           {itemBusy === item.employeeId ? '處理中…' : '重算'}
                         </button>

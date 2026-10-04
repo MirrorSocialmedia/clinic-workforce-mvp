@@ -382,6 +382,15 @@ export const CONFIG = {
     //   ★★★ 唔加 RBAC_PERM_OVERRIDES（坑⑧）。
     'GET /api/apricot-accounts/unassigned': ['OWNER'],
     'PUT /api/apricot-accounts': ['OWNER'],
+    // ★ cwm-datasource-20261003：資料來源設定 + 憑證（貼 token）—— 憑證等同 Apricot 登入，只准 OWNER。
+    //   ★★★ 唔加 RBAC_PERM_OVERRIDES（有 apricot_sync 權限都唔應該換得到登入憑證）。
+    'GET /api/apricot-sources': ['OWNER'],
+    'POST /api/apricot-sources': ['OWNER'],
+    'PUT /api/apricot-sources': ['OWNER'],
+    'PUT /api/apricot-sources/clinic': ['OWNER'],
+    'PUT /api/apricot-sources/credential': ['OWNER'],
+    'POST /api/apricot-sources/test': ['OWNER'],
+    'GET /api/apricot-sources/health': ['OWNER'],
     'GET /api/payment-method-rules': ['OWNER', 'MANAGER'],
     'POST /api/payment-method-rules': ['OWNER'],
 

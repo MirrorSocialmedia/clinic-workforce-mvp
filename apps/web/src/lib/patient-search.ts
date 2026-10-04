@@ -11,12 +11,16 @@
 //   ④ 每個結果帶診所（編號前綴推斷；來源只服務一間診所就直接用嗰間）
 //   ⑤ 每個來源回報狀態（成功幾多筆／失敗原因）—— 畫面顯示，log 亦記低（只記筆數同欄位名，唔記病人資料）
 //
-// 第二期（另做）：來源設定化（顯示名、編號格式、前綴規則入 DB），轉介／SP／wa-inbox 共用。
+// ★ 第二期 cwm-datasource-20261003：來源設定化 ——
+//   顯示名 = ApricotSource.displayName（冇設 = 診所名）；診所推斷用 Clinic.patientCodePrefix（冇設 = shortName）；
+//   來源嘅編號格式同搜尋字眼吻合 → 同分時排前（唔會跳過任何來源）。
 // ============================================================
 import { prisma } from '@/lib/prisma'
 import { withApricotLockRetry, searchPatients } from '@/lib/apricot/client'
 import { listApricotAccounts, withApricotAccount, normalizeApricotAccount } from '@/lib/apricot/account'
 import { guessClinicByPatientCode } from '@/lib/cost-entry/clinic-prefix'
+import { defaultSourceName, effectivePrefixes } from '@/lib/apricot/sources'
+import { keywordPattern, normalizeCodePattern } from '@/lib/apricot/source-pure'
 
 export interface PatientHit {
   extId: string
@@ -34,7 +38,7 @@ export interface SourceStatus {
   error?: string
 }
 
-type SourceClinic = { id: string; name: string; shortName: string | null; account: string }
+type SourceClinic = { id: string; name: string; prefixes: string[]; account: string }
 
 const ERROR_TEXT: Record<string, string> = {
   APRICOT_AUTH_EXPIRED: '憑證失效，需要重新授權',
@@ -48,12 +52,9 @@ export function sourceErrorText(e: unknown): string {
   return '連線失敗'
 }
 
-/** 來源顯示名：佢服務嘅診所（1–2 間直接列名；多過 2 間 =「旺角等 5 間」） */
-export function sourceLabel(clinics: { name: string; shortName: string | null }[]): string {
-  const names = clinics.map(c => c.name)
-  if (names.length === 0) return '其他'
-  if (names.length <= 2) return names.join('、')
-  return `${names[0]}等 ${names.length} 間`
+/** 來源顯示名：設定頁嘅顯示名；冇設 = 佢服務嘅診所（1–2 間直接列名；多過 2 間 =「旺角等 5 間」） */
+export function sourceLabel(clinics: { name: string }[], displayName?: string | null): string {
+  return displayName?.trim() || defaultSourceName(clinics.map(c => c.name))
 }
 
 /** 0 = 編號完全吻合；1 = 編號頭／尾吻合；2 = 編號包含；3 = 姓名包含；4 = 其他（Apricot 自己 match 到） */
@@ -68,29 +69,33 @@ export function matchScore(keyword: string, code: string, name: string): number 
   return 4
 }
 
-/** 合併：同一病人（account+extId）去重；按分數，同分按來源輪流；最多 limit 個 */
-export function mergeHits(keyword: string, bySource: PatientHit[][], limit = 30): PatientHit[] {
+/**
+ * 合併：同一病人（account+extId）去重；按分數 → 來源編號格式同字眼吻合者先 → 同分按來源輪流；最多 limit 個
+ * @param preferred 該結果嘅來源編號格式係咪同搜尋字眼吻合（第二期；冇傳 = 全部一樣）
+ */
+export function mergeHits(keyword: string, bySource: PatientHit[][], limit = 30, preferred?: (h: PatientHit) => boolean): PatientHit[] {
   const seen = new Set<string>()
-  const scored: { h: PatientHit; score: number; src: number; idx: number }[] = []
+  const scored: { h: PatientHit; score: number; pref: number; src: number; idx: number }[] = []
   bySource.forEach((hits, src) => hits.forEach((h, idx) => {
     const key = `${h.account}|${h.extId}`
     if (seen.has(key)) return
     seen.add(key)
-    scored.push({ h, score: matchScore(keyword, h.code, h.fullName), src, idx })
+    scored.push({ h, score: matchScore(keyword, h.code, h.fullName), pref: preferred?.(h) ? 0 : 1, src, idx })
   }))
-  scored.sort((a, b) => a.score - b.score || a.idx - b.idx || a.src - b.src)
+  scored.sort((a, b) => a.score - b.score || a.pref - b.pref || a.idx - b.idx || a.src - b.src)
   return scored.slice(0, limit).map(x => x.h)
 }
 
-function clinicFor(code: string, account: string, clinics: SourceClinic[]): { clinicId: string | null; clinicLabel: string } {
+function clinicFor(code: string, account: string, clinics: SourceClinic[], labelOf: (account: string) => string): { clinicId: string | null; clinicLabel: string } {
   const mine = clinics.filter(c => c.account === account)
-  const byPrefix = guessClinicByPatientCode(code, mine.map(c => ({ id: c.id, shortName: c.shortName })))
+  // 一間店可以有幾個前綴 → 攤開逐個前綴一行（guessClinicByPatientCode 本身由長到短 match）
+  const byPrefix = guessClinicByPatientCode(code, mine.flatMap(c => c.prefixes.map(p => ({ id: c.id, shortName: p }))))
   const hit = byPrefix ? mine.find(c => c.id === byPrefix) : (mine.length === 1 ? mine[0] : null)
-  return hit ? { clinicId: hit.id, clinicLabel: hit.name } : { clinicId: null, clinicLabel: sourceLabel(mine) }
+  return hit ? { clinicId: hit.id, clinicLabel: hit.name } : { clinicId: null, clinicLabel: labelOf(account) }
 }
 
 /** Apricot 回嘅病人 → PatientHit（只攞 id／編號／姓名三欄，PII 白名單同 toCleanPatients 一致） */
-function toHits(raw: unknown, account: string, clinics: SourceClinic[]): PatientHit[] {
+function toHits(raw: unknown, account: string, clinics: SourceClinic[], labelOf: (account: string) => string): PatientHit[] {
   const arr = Array.isArray(raw) ? raw : []
   return arr.slice(0, 20).map((p: any) => {
     const code = String(p.code ?? '')
@@ -99,19 +104,25 @@ function toHits(raw: unknown, account: string, clinics: SourceClinic[]): Patient
       code,
       fullName: String(p.fullName ?? p.chiFullName ?? ''),
       account,
-      ...clinicFor(code, account, clinics),
+      ...clinicFor(code, account, clinics, labelOf),
     }
   }).filter(p => p.extId && p.code)
 }
 
 export async function searchPatientsAllSources(keyword: string): Promise<{ patients: PatientHit[]; sources: SourceStatus[] }> {
-  const clinicRows = await prisma.clinic.findMany({
-    where: { apricotClinicId: { not: null } },
-    select: { id: true, name: true, shortName: true, apricotAccount: true },
-    orderBy: { name: 'asc' },
-  })
-  const clinics: SourceClinic[] = clinicRows.map(c => ({ id: c.id, name: c.name, shortName: c.shortName, account: normalizeApricotAccount(c.apricotAccount) }))
-  const labelOf = (account: string) => sourceLabel(clinics.filter(c => c.account === account))
+  const [clinicRows, settings] = await Promise.all([
+    prisma.clinic.findMany({
+      where: { apricotClinicId: { not: null } },
+      select: { id: true, name: true, shortName: true, apricotAccount: true, patientCodePrefix: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.apricotSource.findMany({ select: { account: true, displayName: true, patientCodePattern: true } }),
+  ])
+  const clinics: SourceClinic[] = clinicRows.map(c => ({ id: c.id, name: c.name, prefixes: effectivePrefixes(c), account: normalizeApricotAccount(c.apricotAccount) }))
+  const settingOf = (account: string) => settings.find(r => normalizeApricotAccount(r.account) === account)
+  const labelOf = (account: string) => sourceLabel(clinics.filter(c => c.account === account), settingOf(account)?.displayName)
+  const kwPattern = keywordPattern(keyword)
+  const preferred = (h: PatientHit) => !!kwPattern && normalizeCodePattern(settingOf(h.account)?.patientCodePattern) === kwPattern
 
   const bySource: PatientHit[][] = []
   const sources: SourceStatus[] = []
@@ -126,7 +137,7 @@ export async function searchPatientsAllSources(keyword: string): Promise<{ patie
     })
     bySource.push(local.map(p => {
       const account = normalizeApricotAccount(p.apricotAccount)
-      return { extId: p.patientApricotId, code: p.patientCode, fullName: p.patientName, account, ...clinicFor(p.patientCode, account, clinics) }
+      return { extId: p.patientApricotId, code: p.patientCode, fullName: p.patientName, account, ...clinicFor(p.patientCode, account, clinics, labelOf) }
     }))
   } catch (e) {
     console.warn('[patient-search] 本地索引查詢失敗', (e as any)?.message)
@@ -137,7 +148,7 @@ export async function searchPatientsAllSources(keyword: string): Promise<{ patie
     const label = labelOf(account)
     try {
       const raw = await withApricotAccount(account, () => withApricotLockRetry(() => searchPatients(keyword)))
-      const hits = toHits(raw, account, clinics)
+      const hits = toHits(raw, account, clinics, labelOf)
       const rawCount = Array.isArray(raw) ? raw.length : -1
       // ★ 診斷：只記筆數；Apricot 有回但全部被濾走 → 記低第一筆嘅【欄位名】（唔記值，唔會漏 PII）
       console.info(`[patient-search] 來源=${label} raw=${rawCount} kept=${hits.length}`)
@@ -154,7 +165,7 @@ export async function searchPatientsAllSources(keyword: string): Promise<{ patie
     }
   }
 
-  const patients = mergeHits(keyword, bySource)
+  const patients = mergeHits(keyword, bySource, 30, preferred)
   // 全部 Apricot 來源失敗而本地都冇 → 照舊拋錯（route 轉 503／401／502）
   if (patients.length === 0 && errors.length > 0 && errors.length === sources.length) throw errors[0]
   return { patients, sources }

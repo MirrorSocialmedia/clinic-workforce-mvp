@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // apricot-set-token.mjs — 首次寫入 Apricot token 到 DB
+// ★ cwm-datasource-20261003：日常更新請用網頁「資料來源」頁（貼 cookie → 自動測試）；呢個腳本只係後備
 // 用法: node scripts/apricot-set-token.mjs --access '<token>' --refresh '<token>' --iat '<unix_seconds>' [--account TY]
 // ★ 生產（2026-10-01）：image 係 Next standalone，container 入面冇 scripts/ —— 喺 host 經 stdin 傳入：
 //   docker exec -i clinic-prod-app node --input-type=module - --access '…' --refresh '…' --iat '…' --account TY \
