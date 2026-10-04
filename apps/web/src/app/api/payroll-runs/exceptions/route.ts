@@ -49,10 +49,13 @@ export async function GET(req: NextRequest) {
   // ⚠️ 如果將來加咗金額欄位，就要分開兩個用途。
   let scopedClinicId: string | undefined = clinicId || undefined
   let scopedClinicIds: string[] | undefined
-  const allowedClinics = await resolvePayrollScope(session, auth.perms ?? [], {
-    companyWide: ['attendance_manage', 'scheduling'],
-    homeOnly: ['payroll_view', 'payroll_generate'],
-  })
+  // ★ 2026-10-04：拆兩次 call（之前同一次填齊 companyWide + homeOnly，每次開報表都 console.warn 洗 log）。
+  //   結果同舊一樣：考勤／排班權限 → 全部診所；淨係計糧權限 → 主屬店（會計 → 所屬公司）。
+  const scopePerms = auth.perms ?? []
+  const wideScope = await resolvePayrollScope(session, scopePerms, { companyWide: ['attendance_manage', 'scheduling'] })
+  const allowedClinics = wideScope === null || wideScope.length > 0
+    ? wideScope
+    : await resolvePayrollScope(session, scopePerms, { homeOnly: ['payroll_view', 'payroll_generate'] })
 
   if (allowedClinics !== null) {
     // OWNER/MANAGER 以外嘅範圍限制
