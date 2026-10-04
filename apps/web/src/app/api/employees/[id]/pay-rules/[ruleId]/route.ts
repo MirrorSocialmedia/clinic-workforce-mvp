@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { getMonthRange } from '@/lib/hk-date'
+import { getMonthRange, toHKDateStr } from '@/lib/hk-date'
 
 // PUT /api/employees/:id/pay-rules/:ruleId — update existing pay rule
 export async function PUT(
@@ -48,9 +48,12 @@ export async function PUT(
   const salaryKey = (c: any) => `${c?.base_type}|${c?.monthly_salary ?? ''}|${c?.hourly_rate ?? ''}|${c?.split_ratio ?? ''}`
   let beforeCfg: any = {}
   try { beforeCfg = JSON.parse(before.configJson || '{}') } catch (e) { console.error('[pay-rule PUT] bad configJson', e) }
+  // ★ cwm-ruleversion-20261004：生效日按【香港日期】比較（舊資料可能唔係 HK 00:00，原地改 MPF 都會誤判做「改生效日」）；
+  //   有 modularConfig 就以 config 入面嘅薪金判斷（舊規則 baseAmount 可能係 null，同 config 唔一致會誤判做「改薪」）
+  const dateChanged = !!effectiveFrom && effectiveFrom !== toHKDateStr(before.effectiveFrom)
   const touched =
-    (baseAmount !== undefined && Number(baseAmount) !== Number(before.baseAmount)) ||
-    (!!effectiveFrom && new Date(`${effectiveFrom}T00:00:00+08:00`).getTime() !== before.effectiveFrom.getTime()) ||
+    (!modularConfig && baseAmount !== undefined && Number(baseAmount) !== Number(before.baseAmount ?? 0)) ||
+    dateChanged ||
     (!!modularConfig && salaryKey(modularConfig) !== salaryKey(beforeCfg))
   if (touched) {
     const used = await prisma.payrollItem.findFirst({
@@ -60,7 +63,7 @@ export async function PUT(
       },
       select: { id: true },
     })
-    if (used) return NextResponse.json({ error: '呢條規則已用於已確認計糧，改薪請揀新生效日期（會新增規則）' }, { status: 409 })
+    if (used) return NextResponse.json({ error: '呢條規則已用於已確認計糧，唔可以原地改薪或者改早生效日期。如要由某月起改，請將生效日期改做嗰個月 1 號（會新增一條規則，之前月份唔受影響）' }, { status: 409 })
   }
 
   const rule = await prisma.payRule.update({
@@ -69,7 +72,7 @@ export async function PUT(
       ...(payType ? { payType } : {}),
       ...(baseAmount !== undefined ? { baseAmount } : {}),
       ...(modularConfig ? { configJson: JSON.stringify(modularConfig) } : {}),
-      ...(effectiveFrom ? { effectiveFrom: new Date(`${effectiveFrom}T00:00:00+08:00`) } : {}),
+      ...(dateChanged ? { effectiveFrom: new Date(`${effectiveFrom}T00:00:00+08:00`) } : {}),
     },
   })
 

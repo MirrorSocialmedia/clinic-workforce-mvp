@@ -13,11 +13,17 @@ interface Clinic {
   name: string
 }
 
-export default function NewPayrollPage() {
+// ★ cwm-payrolladd-20261004：由草稿計糧單「加入員工／重算」過嚟 —— ?clinic=&month=&employee=&run=
+//   預先揀好店／月／員工，試算表只得嗰個人（同第一次生成一樣可以輸入店舖獎金、勤工獎、拆帳），計完返回計糧單
+type NewPayrollSearch = { clinic?: string; month?: string; employee?: string; run?: string }
+
+export default function NewPayrollPage({ searchParams }: { searchParams?: NewPayrollSearch }) {
   const router = useRouter()
+  const fromRunId = typeof searchParams?.run === 'string' ? searchParams.run : ''
   const [clinics, setClinics] = useState<Clinic[]>([])
-  const [selectedClinic, setSelectedClinic] = useState<string>('')
+  const [selectedClinic, setSelectedClinic] = useState<string>(() => (typeof searchParams?.clinic === 'string' ? searchParams.clinic : ''))
   const [periodMonth, setPeriodMonth] = useState(() => {
+    if (typeof searchParams?.month === 'string' && /^\d{4}-\d{2}$/.test(searchParams.month)) return searchParams.month
     const ym = toHKDateStr(new Date()).slice(0, 7)
     const [y, m] = ym.split('-').map(Number)
     return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
@@ -43,7 +49,7 @@ export default function NewPayrollPage() {
     midMonthRuleChanges?: Array<{ name: string; effectiveFrom: string }>;
   } | null>(null)
   const [employees, setEmployees] = useState<{ id: string; name: string }[]>([])
-  const [selectedEmployee, setSelectedEmployee] = useState<string>('')
+  const [selectedEmployee, setSelectedEmployee] = useState<string>(() => (typeof searchParams?.employee === 'string' ? searchParams.employee : ''))
 
   // Pre-check modal state
   const [showPrecheckModal, setShowPrecheckModal] = useState(false)
@@ -212,7 +218,7 @@ export default function NewPayrollPage() {
       if (checkRes.ok) {
         const checkData = await checkRes.json()
         const existingDraft = (checkData.runs || [])[0]
-        if (existingDraft) {
+        if (existingDraft && !(fromRunId && selectedEmployee)) {
           const empName = employees.find(e => e.id === selectedEmployee)?.name
           const ok = confirm(selectedEmployee
             // ★ cwm-payrollsingle-20261003：只重算揀嗰個人
@@ -285,6 +291,10 @@ export default function NewPayrollPage() {
         setShowPrecheckModal(true)
       }
       setResult(data)
+      // ★ cwm-payrolladd-20261004：由計糧單過嚟、冇略過／失敗 → 直接返回計糧單
+      if (fromRunId && selectedEmployee && !data.skipped?.length && !data.failed?.length) {
+        router.push(`/payroll/${data.runId || fromRunId}`)
+      }
     } catch (err: any) {
       setError(err.message || '生成失敗')
     } finally {
@@ -306,8 +316,15 @@ export default function NewPayrollPage() {
 
   return (
     <div className="p-6" style={{ maxWidth: '1800px' }}>
-      <BackButton to="/payroll" label="返回計糧" />
-      <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>+ 生成計糧</h1>
+      <BackButton to={fromRunId ? `/payroll/${fromRunId}` : '/payroll'} label={fromRunId ? '返回計糧單' : '返回計糧'} />
+      <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>
+        {fromRunId && selectedEmployee ? `計算員工：${employees.find(e => e.id === selectedEmployee)?.name ?? '…'}` : '+ 生成計糧'}
+      </h1>
+      {fromRunId && selectedEmployee && (
+        <div className="mb-4 p-3 rounded-md text-sm" style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', maxWidth: 720 }}>
+          只計呢一個員工：喺下面試算表輸入店舖獎金／勤工獎／拆帳，再撳「只計呢個員工」。計糧單入面其他員工唔郁，計完自動返回計糧單。
+        </div>
+      )}
 
       <div style={{ maxWidth: 500 }}>
         <div style={{ marginBottom: 20 }}>
