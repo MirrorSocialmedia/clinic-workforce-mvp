@@ -342,6 +342,9 @@ export default function EmployeePayrollDetailPage() {
   const tbMismatch = tbLedger != null && tbLedger.reconciles === false
   // ★ cwm-tbpreview-20261003：草稿「時間帳戶月結預覽」—— 編更差額未入帳，只顯示（確認計糧後先真正寫入）
   const tbPreview: { minutes: number; projectedClosing: number } | null = data?.rosterDiffPreview ?? null
+  // ★ cwm-resigntb-20261004：離職結算確認後考勤有改 → 時間帳戶同結算時唔同（月結照用結算數，提示重新確認）
+  const resignTbCheck: { settledMinutes: number; nowMinutes: number } | null = data?.resignTbCheck ?? null
+  const resignTbChanged = resignTbCheck != null && resignTbCheck.settledMinutes !== resignTbCheck.nowMinutes
   const periodEndLabel = periodMonthEnd ? `${periodMonthEnd.slice(8, 10)}/${periodMonthEnd.slice(5, 7)}` : '月尾'
 
   // Daily punch/shift summary for collapsible detail
@@ -816,6 +819,12 @@ export default function EmployeePayrollDetailPage() {
             {resignSettle && (
               <div className="mt-1 rounded-md p-2 space-y-1" style={{ background: '#f5f3ff', border: '1px solid #ddd6fe' }}>
                 <div className="text-xs font-medium" style={{ color: '#6d28d9' }}>離職結算（已確認結算直讀）</div>
+                {resignTbChanged && (
+                  <div className="text-xs rounded px-2 py-1.5" style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e' }}>
+                    ⚠️ 時間帳戶同結算時唔同：結算時 {resignTbCheck!.settledMinutes.toLocaleString()} 分，而家 {resignTbCheck!.nowMinutes.toLocaleString()} 分
+                    （結算後考勤／更表有改）。糧單照用結算數；如要更新，請喺員工頁「離職結算」重新確認，再重算呢位員工。
+                  </div>
+                )}
                 {resignSettle.monthWage?.basePay != null && (
                   <div className="flex justify-between">
                     {/* ★ cwm-resignfull：純參考（結算當時嘅底薪快照）— 當月工資已喺上面逐項計，唔會重複加 */}
@@ -935,7 +944,7 @@ export default function EmployeePayrollDetailPage() {
             {/* MPF */}
             {mpf > 0 && (
               <div className="flex justify-between items-center text-orange-600">
-                <span className="text-sm">強積金 (MPF {((salaryDetail.mpfRate ?? 0.05) * 100).toFixed(0)}%) 扣除</span>
+                <span className="text-sm">{salaryDetail.mpfManual ? '強積金（離職結算人手輸入）扣除' : `強積金 (MPF ${((salaryDetail.mpfRate ?? 0.05) * 100).toFixed(0)}%) 扣除`}</span>
                 <span className="font-mono font-medium">-{fmtCurrency(mpf)}</span>
               </div>
             )}

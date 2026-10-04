@@ -43,7 +43,8 @@ export async function computeRosterHours(
   employeeIds: string[],
   periodMonth: string, // 'YYYY-MM'
   db: any,
-  opts?: { shifts?: any[]; lunchMinutes?: Map<string, number> },
+  // ★ cwm-resigntb-20261004：lastWorkDay = 最後工作日覆寫（離職結算確認前 DB 未有 resignedAt）
+  opts?: { shifts?: any[]; lunchMinutes?: Map<string, number>; lastWorkDay?: Map<string, string> },
 ): Promise<Map<string, { expectedMinutes: number; rosterMinutes: number; diffMinutes: number; unscheduled: boolean }>> {
   const [py, pmNum] = periodMonth.split('-').map(Number)
   const monthStart = new Date(`${periodMonth}-01T00:00:00+08:00`)
@@ -69,7 +70,8 @@ export async function computeRosterHours(
     empMeta.set(e.id, {
       joinStr: e.joinDate ? toHKDateStr(e.joinDate) : null,
       // ★ cwm-rosterjoin：resignedAt = 最後工作日翌日 → −1 日先係最後工作日
-      lastWorkDayStr: e.resignedAt ? toHKDateStr(new Date(e.resignedAt.getTime() - 86400000)) : null,
+      lastWorkDayStr: opts?.lastWorkDay?.get(e.id)
+        ?? (e.resignedAt ? toHKDateStr(new Date(e.resignedAt.getTime() - 86400000)) : null),
     })
   }
 
@@ -137,8 +139,11 @@ export async function computeRosterHours(
   const rosterMap = new Map<string, number>()
   for (const [empId, days] of perDay) {
     let mins = 0
+    const lastWork = empMeta.get(empId)?.lastWorkDayStr ?? null
     for (const d of days) {
       if (leaveKeySet.has(`${empId}:${d.date}`)) continue // ★ 假期日唔計
+      // ★ cwm-resigntb-20261004：最後工作日之後嘅更唔計（應返都只計到最後工作日；確認離職前嗰啲更仲未取消）
+      if (lastWork && d.date > lastWork) continue
       mins += d.hours * 60
     }
     rosterMap.set(empId, Math.round(mins))

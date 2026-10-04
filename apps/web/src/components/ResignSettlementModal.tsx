@@ -638,6 +638,15 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
               {/* 時間帳戶（拍板②：人手輸入扣除） */}
               {tb && (
                 <div style={{ marginTop: 10, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 10, fontSize: 12 }}>
+                  {/* ★ cwm-resigntb-20261004：同月結確認時一樣 —— 帳戶（含當月考勤）＋當月編更差額（確認計糧先入帳，呢度預先計） */}
+                  {typeof tb.rosterDiffMinutes === 'number' && tb.rosterDiffMinutes !== 0 && (
+                    <div style={{ color: '#374151', marginBottom: 6 }}>
+                      帳戶 {tb.accountMinutes >= 0 ? '+' : ''}{Number(tb.accountMinutes).toLocaleString()} 分
+                      ＋ 本月編更差額 {tb.rosterDiffMinutes > 0 ? '+' : ''}{tb.rosterDiffMinutes.toLocaleString()} 分
+                      ＝ <b>{tb.balanceMinutes >= 0 ? '+' : ''}{tb.balanceMinutes.toLocaleString()} 分</b>
+                      <span style={{ color: '#6b7280' }}>（同月結確認時一樣計法；結算確認後固定）</span>
+                    </div>
+                  )}
                   {tb.debtMinutes > 0 ? (
                     <>
                       <div style={{ fontWeight: 600, color: '#b91c1c', marginBottom: 4 }}>

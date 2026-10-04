@@ -23,6 +23,7 @@ import { calcRestDayDebt } from './settlement-utils'
 import { restDayBalanceAsOf } from './leave-balance-as-of'
 import { futureAnnualLeaveDays } from './resign-cutoff'
 import { findPayRuleForMonth } from './pay-rule-for-month'
+import { computeRosterHours } from './roster-hours'
 import { pickResignChoice, toEngineBonusOverride, type ResignMonthItems, type BonusOverride, type SettlementBonusChoice } from './settlement-utils'
 
 export interface ResignSettlementCalc {
@@ -48,6 +49,9 @@ export interface ResignSettlementCalc {
   tb: {
     latestPeriod: string | null
     balanceMinutes: number
+    /** ★ cwm-resigntb-20261004：balanceMinutes = accountMinutes（帳戶，截至最後一個月）＋ rosterDiffMinutes（當月編更差額，未入帳嘅預先計） */
+    accountMinutes: number
+    rosterDiffMinutes: number
     debtMinutes: number
     debtDays: number
     entries: Array<{ date: Date; type: string; minutes: number; note: string | null }>
@@ -436,6 +440,29 @@ export async function computeResignSettlement(
       tbBalance = fresh.balance
     }
   }
+  // ★ cwm-resigntb-20261004（老闆拍板：時間帳戶折現以離職結算為準）—— 結算用同月結一樣嘅計法：
+  //   ① 最後一個月帳戶即場計（含當月加班／遲到；之前當月未生成計糧就只得上月餘額 → 同月結對唔上）
+  //   ② ＋當月編更差額（ROSTER_DIFF：確認計糧先入帳，呢度用同一條式預先計，只計到最後工作日；已入帳就唔再加）
+  //   確認後固定；月結照用結算數，之後考勤再改由計糧明細頁提示重新確認
+  let tbAccountMinutes = tbBalance
+  let tbRosterDiffMinutes = 0
+  if (!tbLatest || periodMonthKey(tbLatest.periodMonth) < cutoffMonth) {
+    let cutCfg: any = {}
+    try { cutCfg = JSON.parse(payRule?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
+    const fresh = await calculateTimeBank(empId, _rsLastMonthStart, { negative_carry: 'reset', ...(cutCfg?.modifiers?.time_bank ?? {}) }, prisma)
+    if ((fresh as any).degraded) throw new Error('時間帳戶讀取失敗，離職結算暫停，請重試')
+    tbAccountMinutes = fresh.balance
+  }
+  if (payRule?.payType === 'MONTHLY' && (emp as any).attendanceExempt !== true) {
+    const posted = await prisma.timeBankEntry.count({
+      where: { employeeId: empId, type: 'ROSTER_DIFF', date: { gte: _rsLastMonthStart, lte: _rsLastMonthEnd } },
+    })
+    if (posted === 0) {
+      const rh = await computeRosterHours([empId], cutoffMonth, prisma, { lastWorkDay: new Map([[empId, lastDay]]) })
+      tbRosterDiffMinutes = Math.round(rh.get(empId)?.diffMinutes ?? 0)
+    }
+  }
+  tbBalance = tbAccountMinutes + tbRosterDiffMinutes
   const tbDebt = tbBalance < 0 ? -tbBalance : 0
   const tbDebtDays = Math.round((tbDebt / TIMEBANK_MINUTES_PER_DAY) * 100) / 100 // 9 小時工作日 = 1 日
   const tbEntries = tbDebt > 0
@@ -473,8 +500,10 @@ export async function computeResignSettlement(
     unusedDays,
     leavePayout,
     tb: {
-      latestPeriod: tbLatest ? periodMonthKey(tbLatest.periodMonth) : null,
+      latestPeriod: cutoffMonth,
       balanceMinutes: tbBalance,
+      accountMinutes: tbAccountMinutes,
+      rosterDiffMinutes: tbRosterDiffMinutes,
       debtMinutes: tbDebt,
       debtDays: tbDebtDays,
       entries: tbEntries as ResignSettlementCalc['tb']['entries'],
