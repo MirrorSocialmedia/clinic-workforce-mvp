@@ -2,12 +2,13 @@
 /**
  * gen-labdoc-fixtures.mjs — 生成 test/fixtures/labdoc/ 嘅 sample PDF（cwm-labdoc P1）
  *
- *   sample-text.pdf  — 2 頁，有文字層（Helvetica 文字流；pdfjs 可以抽到文字）
+ *   sample-text.pdf  — 2 頁，有文字層（**嵌入 subset TrueType 字體**：FontFile2 + /Widths
+ *                      + /ToUnicode CMap；pdfjs 可以抽文字、alpine 無系統 font 都渲染得到）
  *   sample-scan.pdf  — 2 頁，冇文字層（DCTDecode JPEG，模擬掃描/拍照 PDF）
  *
- * 冪等：每次執行重寫兩個檔（內容 deterministic — scan JPEG 係 embedded base64，
- * 非隨機生成）。fixture 已 commit；呢個 script 只係留低「點嚟嘅」記錄。
- * Run: node scripts/gen-labdoc-fixtures.mjs
+ * 冪等：每次執行重寫兩個檔（內容 deterministic — scan JPEG 係 embedded base64，非隨機生成；
+ * text 嘅字體/widths/cmap 全部讀自 committed subset ttf）。fixture 已 commit；呢個 script
+ * 只係留低「點嚟嘅」記錄。Run: node scripts/gen-labdoc-fixtures.mjs
  *
  * 建造歷史（防同類 bug 重演）：
  *   - gen1 v1：base64 文字直接當 DCTDecode stream 內容＋/Length 用解碼後長度 → 雙重
@@ -18,9 +19,17 @@
  *     （FFD8…FFD9）先入 stream，/Length = jpeg.length 精確。
  *   - gen2（2026-10-04）：加 selfCheck（header/startxref/xref offset 自驗）＋JPEG
  *     marker/SOFn 尺寸校驗；實測 pdfinfo/pdftotext/gs 全過（text 每頁 ≥20 字、scan 零文字）。
+ *   - gen3（2026-10-05，alpine 渲染 RED 根治）：sample-text.pdf 由 base-14 Helvetica（未嵌入）
+ *     改為嵌入 subset TrueType 字體。根因：base-14 Helvetica 無 FontFile → pdf.js 落回系統字體；
+ *     glibc runner 有 DejaVu fallback 所以渲染到，node:22-alpine 零 font 包 → 文字全白。
+ *     字體來源：test/fixtures/labdoc/noto-sans-cjk-tc.subset.ttf（Noto Sans CJK TC 子集，
+ *     SIL OFL 1.1，由 scripts/gen-labdoc-font-subset.py 生成 — 點解唔係原指定嘅
+ *     DroidSansFallbackFull 見該 script 頭部：2016 build cmap 無 Latin glyph）。純 Node
+ *     解析 TTF（cmap/hmtx/head/hhea/OS2），零依賴、deterministic；content stream 字節不變。
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 
 const OUT = path.join(import.meta.dirname, '..', 'test', 'fixtures', 'labdoc')
 fs.mkdirSync(OUT, { recursive: true })
@@ -87,9 +96,162 @@ function jpegDim(jpg) {
 }
 
 // ---------------------------------------------------------------
-// sample-text.pdf — 2 頁文字
-// object 圖：1 Catalog / 2 Pages / 3 Page1 / 4 Contents1 / 5 Page2 / 6 Contents2 / 7 Font
+// TTF parser（hand-rolled，零依賴）— 只讀 subset 字體入 PDF 所需：
+//   cmap(3,1) format4 → unicode→gid；hmtx → advance；head → upm + bbox；
+//   hhea → ascent/descent；OS/2 → sCapHeight。唔解析 glyf（pdf.js 自己 parse）。
 // ---------------------------------------------------------------
+function parseTtf(buf) {
+  const u16 = (o) => buf.readUInt16BE(o)
+  const i16 = (o) => buf.readInt16BE(o)
+  const u32 = (o) => buf.readUInt32BE(o)
+  if (u32(0) !== 0x00010000) throw new Error('subset ttf: 唔係 TrueType（header magic 錯）')
+  const numTables = u16(4)
+  const tables = {}
+  for (let i = 0; i < numTables; i++) {
+    const o = 12 + i * 16
+    tables[buf.toString('binary', o, o + 4)] = { offset: u32(o + 8), length: u32(o + 12) }
+  }
+  // cmap：搵 (platform 3, encoding 1) format 4 subtable
+  const cm = tables.cmap
+  let unicodeToGid = null
+  if (cm) {
+    const nSub = u16(cm.offset + 2)
+    for (let i = 0; i < nSub; i++) {
+      const so = cm.offset + 4 + i * 8
+      if (u16(so) !== 3 || u16(so + 2) !== 1) continue
+      const p = cm.offset + u32(so + 4)
+      if (u16(p) !== 4) continue
+      const segCount = u16(p + 6) >> 1
+      const end = [], start = [], delta = [], offArr = []
+      // format 4 layout（14-byte header 之後）：endCode[sc] @+14, reservedPad(2), startCode[sc], idDelta[sc], idRangeOffset[sc], glyphIdArray
+      for (let s = 0; s < segCount; s++) end.push(u16(p + 14 + s * 2))
+      for (let s = 0; s < segCount; s++) start.push(u16(p + 16 + segCount * 2 + s * 2))
+      for (let s = 0; s < segCount; s++) delta.push(i16(p + 16 + segCount * 4 + s * 2))
+      for (let s = 0; s < segCount; s++) offArr.push(u16(p + 16 + segCount * 6 + s * 2))
+      unicodeToGid = {}
+      for (let s = 0; s < segCount; s++) {
+        // 標準 catch-all（start=end=0xFFFF）跳過
+        if (start[s] === 0xffff && end[s] === 0xffff) continue
+        for (let c = start[s]; c <= end[s]; c++) {
+          let gid
+          if (offArr[s] === 0) gid = (c + delta[s]) & 0xffff
+          // spec：idRangeOffset 係相對「該 segment 自己個 idRangeOffset entry 位置」嘅 byte offset
+          else gid = (u16(p + 16 + segCount * 6 + s * 2 + offArr[s] + (c - start[s]) * 2) + delta[s]) & 0xffff
+          // 0 / 0xFFFF 都係「唔映射」（format 4 規定）
+          if (gid !== 0 && gid !== 0xffff) unicodeToGid[c] = gid
+        }
+      }
+      break
+    }
+  }
+  if (!unicodeToGid) throw new Error('subset ttf: 缺 cmap (3,1) format 4 subtable')
+  // hmtx：numberOfHMetrics 個 advance（hhea.numberOfHMetrics@34；subset 全部 glyph 都有 metric）
+  const hhea = tables.hhea
+  const numMetrics = u16(hhea.offset + 34)
+  const hm = tables.hmtx
+  const advances = []
+  for (let i = 0; i < numMetrics; i++) advances.push(u16(hm.offset + i * 4))
+  // head：upm@18, bbox@36..42
+  const head = tables.head
+  const upm = u16(head.offset + 18)
+  const bbox = [i16(head.offset + 36), i16(head.offset + 38), i16(head.offset + 40), i16(head.offset + 42)]
+  // hhea：ascent@4, descent@6
+  const ascent = i16(hhea.offset + 4)
+  const descent = i16(hhea.offset + 6)
+  // OS/2：sCapHeight@88（layout：…usWinAscent@74, usWinDescent@76, ulCodePageRange1@78, ulCodePageRange2@82,
+  // sxHeight@86, sCapHeight@88 — 實測同 fontTools 對齊）
+  const os2 = tables['OS/2']
+  const capHeight = os2 && u16(os2.offset) >= 1 ? i16(os2.offset + 88) : Math.round(ascent * 0.7)
+  return { unicodeToGid, advances, upm, bbox, ascent, descent, capHeight }
+}
+// 6-char A-Z subset tag（deterministic：sha1(subset bytes) 前 3 byte → hex 6 位 → A-J/K-P）
+function fontTag(buf) {
+  const hex = crypto.createHash('sha1').update(buf).digest('hex').slice(0, 6)
+  let tag = ''
+  for (const ch of hex) {
+    const v = parseInt(ch, 16)
+    tag += String.fromCharCode(v < 10 ? 65 + v : 75 + (v - 10))
+  }
+  return tag
+}
+
+// ---------------------------------------------------------------
+// sample-text.pdf — 2 頁文字，嵌入 subset TrueType（FontFile2 + /Widths + /ToUnicode）
+// object 圖：1 Catalog / 2 Pages / 3 Page1 / 4 Contents1 / 5 Page2 / 6 Contents2
+//            7 Font / 8 FontDescriptor / 9 ToUnicode CMap / 10 FontFile2 (subset ttf)
+// subset 字體 = committed test/fixtures/labdoc/noto-sans-cjk-tc.subset.ttf
+// （生成：scripts/gen-labdoc-font-subset.py；字符集必須覆蓋兩頁全部字符，缺失即 throw）
+// ---------------------------------------------------------------
+const SUBSET_TTF = path.join(import.meta.dirname, '..', 'test', 'fixtures', 'labdoc', 'noto-sans-cjk-tc.subset.ttf')
+
+function buildTextPdf(lines1, lines2, fontBuf) {
+  const ttf = parseTtf(fontBuf)
+  const allText = [...lines1, ...lines2].join('')
+  const codes = [...new Set([...allText].map((ch) => ch.charCodeAt(0)))].sort((a, b) => a - b)
+  for (const c of codes) {
+    if (!ttf.unicodeToGid[c]) {
+      throw new Error('subset 字體缺 U+' + c.toString(16).toUpperCase().padStart(4, '0') + '（' + String.fromCharCode(c) + '）— 用 scripts/gen-labdoc-font-subset.py 重新生成 subset')
+    }
+  }
+  const firstChar = codes[0]
+  const lastChar = codes[codes.length - 1]
+  const widths = []
+  for (let c = firstChar; c <= lastChar; c++) {
+    const gid = ttf.unicodeToGid[c]
+    widths.push(gid ? Math.round((ttf.advances[gid] * 1000) / ttf.upm) : 0)
+  }
+  const baseFont = fontTag(fontBuf) + '+NotoSansCJKtc'
+  const h1000 = (v) => Math.round((v * 1000) / ttf.upm)
+  // ToUnicode CMap：單一 byte code space，每字符一個 bfchar 映射（WinAnsi 低位 = Unicode 同值）
+  const bfchar = codes.map((c) => '<' + c.toString(16).padStart(2, '0') + '> <' + c.toString(16).padStart(4, '0') + '>')
+  const cmapStream = [
+    '/CIDInit /ProcSet findresource begin',
+    '12 dict begin',
+    'begincmap',
+    '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def',
+    '/CMapName /Adobe-Identity-UCS def',
+    '/CMapType 2 def',
+    '1 begincodespacerange',
+    '<00> <FF>',
+    'endcodespacerange',
+    codes.length + ' beginbfchar',
+    ...bfchar,
+    'endbfchar',
+    'endcmap',
+    'CMapName currentdict /CMap defineresource pop',
+    'end',
+    'end',
+  ].join('\n')
+  const fontDict =
+    '<< /Type /Font /Subtype /TrueType /BaseFont /' + baseFont +
+    ' /FirstChar ' + firstChar + ' /LastChar ' + lastChar +
+    ' /Widths [' + widths.join(' ') + ']' +
+    ' /Encoding /WinAnsiEncoding' +
+    ' /FontDescriptor 8 0 R /ToUnicode 9 0 R >>'
+  const fontDescDict =
+    '<< /Type /FontDescriptor /FontName /' + baseFont +
+    ' /Flags 32' +  // 32 = Nonsymbolic（pdf.js FontFlags）
+    ' /FontBBox [' + ttf.bbox.join(' ') + ']' +
+    ' /ItalicAngle 0' +
+    ' /Ascent ' + h1000(ttf.ascent) + ' /Descent ' + h1000(ttf.descent) +
+    ' /CapHeight ' + h1000(ttf.capHeight) +
+    ' /StemV 120 /FontFile2 10 0 R >>'
+  const fontFileStream = ['<< /Length ' + fontBuf.length + ' >>\nstream\n', fontBuf, '\nendstream']
+  const objects = [null,
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>',
+    textStream(textPageContent(lines1)),
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>',
+    textStream(textPageContent(lines2)),
+    fontDict,
+    fontDescDict,
+    textStream(cmapStream),
+    fontFileStream,
+  ]
+  return { buf: buildPdf(objects), codes, baseFont }
+}
+
 const page1Lines = [
   'SAMPLE DENTAL LAB INVOICE - TEXT LAYER PAGE 1',
   '',
@@ -126,19 +288,11 @@ const page2Lines = [
   'Every page must contain at least 20 characters.',
 ]
 {
-  const objects = [null,
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>',
-    textStream(textPageContent(page1Lines)),
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>',
-    textStream(textPageContent(page2Lines)),
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  ]
-  const buf = buildPdf(objects)
+  const fontBuf = fs.readFileSync(SUBSET_TTF)
+  const { buf, codes, baseFont } = buildTextPdf(page1Lines, page2Lines, fontBuf)
   selfCheck(buf, 'sample-text.pdf')
   fs.writeFileSync(path.join(OUT, 'sample-text.pdf'), buf)
-  console.log('sample-text.pdf  ' + buf.length + ' bytes')
+  console.log('sample-text.pdf  ' + buf.length + ' bytes  (font ' + baseFont + ', ' + codes.length + ' codes, subset ' + fontBuf.length + ' bytes)')
 }
 
 // ---------------------------------------------------------------
