@@ -148,6 +148,17 @@ export function safeSheetName(name: string, used: Set<string>): string {
   return s
 }
 
+/** Excel 顯示寬度（字元）：金額按 #,##0.00；中日韓全形字當兩格 */
+export function displayWidth(v: CellVal | undefined, money: boolean): number {
+  if (v === null || v === undefined || v === '') return 0
+  const s = typeof v === 'number'
+    ? (money ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(v))
+    : String(v)
+  let w = 0
+  for (const ch of s) w += (ch.codePointAt(0) ?? 0) >= 0x2e80 ? 2 : 1
+  return w
+}
+
 /** 一張工作表（rows 已排好序） */
 function buildSheet(rows: SheetRow[], config: SheetConfig, meta: { monthAbbr: string; anyDraft: boolean }, grouped: boolean): XLSX.WorkSheet {
   const cols = config.columns
@@ -168,8 +179,10 @@ function buildSheet(rows: SheetRow[], config: SheetConfig, meta: { monthAbbr: st
     aoa.push(r)
   }
   aoa.push(cols.map(c => c.header))
+  const spanRows = new Set<number>() // 只喺第一格寫長文字、溢入隔籬嘅行（唔計欄闊）
   if (config.draftRow && meta.anyDraft) {
     const r = empty(); r[0] = '⚠️ 包含未確認計糧單（DRAFT）—— 數字未必最終'; aoa.push(r)
+    spanRows.add(aoa.length - 1)
   }
   const firstDataR = aoa.length
 
@@ -194,6 +207,7 @@ function buildSheet(rows: SheetRow[], config: SheetConfig, meta: { monthAbbr: st
       closeGroup()
       lastKey = row.groupKey
       const r = empty(); r[0] = `── ${row.groupTitle} `; aoa.push(r)
+      spanRows.add(aoa.length - 1)
       gStart = aoa.length; gRows = []
     }
     gRows.push(row)
@@ -209,6 +223,17 @@ function buildSheet(rows: SheetRow[], config: SheetConfig, meta: { monthAbbr: st
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa)
+  // ★ cwm-chequetpl-20261004 fix：欄闊按內容計（之前冇設 → 小計／合計 99,999.90 顯示 ########）
+  const fval = new Map(formulas.map(f => [`${f.r}:${f.c}`, f.v]))
+  ws['!cols'] = cols.map((_, c) => {
+    let w = 0
+    aoa.forEach((row, r) => {
+      if (spanRows.has(r)) return
+      const v = fval.get(`${r}:${c}`) ?? row[c]
+      w = Math.max(w, displayWidth(v, moneyCols.includes(c)))
+    })
+    return { wch: Math.min(Math.max(w + (moneyCols.includes(c) ? 3 : 2), 6), 50) }
+  })
   for (const f of formulas) {
     ws[XLSX.utils.encode_cell({ r: f.r, c: f.c })] = { t: 'n', f: f.f, v: f.v, ...(moneyCols.includes(f.c) ? { z: '#,##0.00' } : {}) }
   }
