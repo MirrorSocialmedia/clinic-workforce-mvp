@@ -1937,3 +1937,22 @@ model ApricotSource {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }
+
+/// ★ cwm-chequetpl-20261004：出糧總表自訂模版（只限老闆；只影響出糧總表 Excel）
+///   configJson = lib/cheque-sheet/config.ts SheetConfig（欄＋表頭、分組、小計、分 Sheet、排列…）
+model ChequeSheetTemplate {
+  id         String   @id @default(cuid())
+  name       String
+  configJson String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/// ★ cwm-chequetpl-20261004：出糧總表「出糧診所」同組內次序（每個員工一行；冇 row = 用計糧單所屬診所）
+///   ⚠️ 只決定佢喺出糧總表出現喺邊組 —— 計糧、排更、考勤、所屬診所全部唔郁，所以刻意唔做 relation
+model ChequeSheetPayer {
+  employeeId    String   @id
+  payerClinicId String?
+  sortOrder     Int?
+  updatedAt     DateTime @updatedAt
+}

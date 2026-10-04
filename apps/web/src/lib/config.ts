@@ -233,6 +233,13 @@ export const CONFIG = {
     'DELETE /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER'], // ★ cwm-payrollsingle-20261003：草稿單個員工移除
     // ★ cwm-payrollsheet-20260921 S4：月度出糧總表（保密過濾同 export 同一把尺）
     'GET /api/payroll-runs/cheque-sheet': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    // ★ cwm-chequetpl-20261004：出糧總表自訂模版／出糧診所 —— 老闆拍板「只俾老闆用」，★★★ 唔加 RBAC_PERM_OVERRIDES
+    'GET /api/cheque-sheet-templates': ['OWNER'],
+    'POST /api/cheque-sheet-templates': ['OWNER'],
+    'PUT /api/cheque-sheet-templates/:id': ['OWNER'],
+    'DELETE /api/cheque-sheet-templates/:id': ['OWNER'],
+    'GET /api/cheque-sheet-payers': ['OWNER'],
+    'PUT /api/cheque-sheet-payers': ['OWNER'],
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/allowed-clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 

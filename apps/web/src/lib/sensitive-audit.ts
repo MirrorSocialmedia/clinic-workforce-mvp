@@ -56,6 +56,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PAYROLL_EXPORT', label: '匯出計糧' },
   // ★ cwm-payrollsheet-20260921 S4：月度出糧總表匯出（同 PAYROLL_EXPORT 同級 — 敏感摘要）
   { action: 'PAYROLL_CHEQUE_SHEET', label: '匯出月度出糧總表' },
+  { action: 'CHEQUE_SHEET_TEMPLATE_UPDATE', label: '出糧總表模版新增／修改／刪除' }, // ★ cwm-chequetpl-20261004
+  { action: 'CHEQUE_SHEET_PAYER_UPDATE', label: '出糧總表出糧診所／次序變更' }, // ★ cwm-chequetpl-20261004
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
   { action: 'EMPLOYEE_RESIGN_SETTLE', label: '離職結算確認（寫入薪金／時間帳戶扣除）' },
