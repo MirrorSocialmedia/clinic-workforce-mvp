@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { calcResignPayable, pickResignChoice, toEngineBonusOverride } from './settlement-utils'
-import { resolveBonusOverride, resolveStoreBonus, buildEngineOptions, parseResignSettlementRow } from './payroll-engine'
+import { resolveBonusOverride, resolveStoreBonus, buildEngineOptions, parseResignSettlementRow, manualMpf } from './payroll-engine'
 import { toMonthItems } from './resign-settlement'
 
 const CC2 = {
@@ -80,7 +80,7 @@ describe('勤工獎／店舖獎金揀法優先次序：計糧頁 > 結算 > 舊�
   })
 
   it('buildEngineOptions：結算店舖獎金入引擎；時薪唔入；0 唔傳', () => {
-    const r = { annualLeavePay: 0, noticePay: 0, tbDeduction: null, excessRestDeduction: null, tbCashout: 0, monthWage: null, attendanceBonusOverride: 'FORCE_OFF' as const, storeBonus: 450 }
+    const r = { annualLeavePay: 0, noticePay: 0, tbDeduction: null, excessRestDeduction: null, tbCashout: 0, monthWage: null, attendanceBonusOverride: 'FORCE_OFF' as const, storeBonus: 450, mpfEmployee: null }
     const m = buildEngineOptions('monthly', 'e2', { storeBonus: {}, splitPay: {}, bonusOverride: {} }, undefined, r)
     assert.equal((m as any).storeBonus, 450)
     assert.equal(m.attendanceBonusOverride, 'FORCE_OFF')
@@ -129,5 +129,22 @@ describe('toMonthItems（引擎結果 → 結算卡逐行）', () => {
     assert.equal(m.mpfEnabled, false)
     assert.deepEqual(m.miscEntries, [])
     assert.equal(m.miscAmount, 20)
+  })
+})
+
+// ★ cwm-resignmpf-20261004：離職結算人手 MPF（僱員）
+describe('cwm-resignmpf：人手 MPF', () => {
+  it('parse：數字 ≥ 0 先收；冇 = null（照系統計）', () => {
+    const row = (d: any) => ({ detailJson: JSON.stringify(d), tbDeduction: null, excessRestDeduction: null, tbMinutes: 0, tbAmount: 0 })
+    assert.equal(parseResignSettlementRow(row({ mpfEmployee: 210 }))!.mpfEmployee, 210)
+    assert.equal(parseResignSettlementRow(row({ mpfEmployee: 0 }))!.mpfEmployee, 0)
+    assert.equal(parseResignSettlementRow(row({ mpfEmployee: -1 }))!.mpfEmployee, null)
+    assert.equal(parseResignSettlementRow(row({}))!.mpfEmployee, null)
+  })
+  it('manualMpf：0 係有效人手值（唔係「冇填」）；四捨五入到仙', () => {
+    assert.equal(manualMpf({ mpfEmployee: 0 }), 0)
+    assert.equal(manualMpf({ mpfEmployee: 123.456 }), 123.46)
+    assert.equal(manualMpf({ mpfEmployee: null }), null)
+    assert.equal(manualMpf(null), null)
   })
 })

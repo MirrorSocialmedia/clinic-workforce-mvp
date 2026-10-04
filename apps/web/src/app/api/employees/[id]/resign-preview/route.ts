@@ -61,12 +61,14 @@ export async function GET(
     where: { employeeId: empId },
     select: { lastDay: true, noticeDays: true, tbDeduction: true, excessRestDeduction: true, settledAt: true, detailJson: true },
   })
-  let saved: { attendanceBonusOverride: SettlementBonusChoice | null; storeBonus: number | null } = { attendanceBonusOverride: null, storeBonus: null }
+  let saved: { attendanceBonusOverride: SettlementBonusChoice | null; storeBonus: number | null; mpfEmployee: number | null } = { attendanceBonusOverride: null, storeBonus: null, mpfEmployee: null }
   try {
     const d = existing?.detailJson ? JSON.parse(existing.detailJson) : null
     saved = {
       attendanceBonusOverride: ['AUTO', 'FORCE_ON', 'FORCE_OFF'].includes(d?.attendanceBonusOverride) ? d.attendanceBonusOverride : null,
       storeBonus: typeof d?.storeBonus === 'number' && Number.isFinite(d.storeBonus) ? d.storeBonus : null,
+      // ★ cwm-resignmpf-20261004：已存嘅人手 MPF（重開時預填）
+      mpfEmployee: typeof d?.mpfEmployee === 'number' && Number.isFinite(d.mpfEmployee) && d.mpfEmployee >= 0 ? d.mpfEmployee : null,
     }
   } catch { /* 壞 JSON → 當冇揀 */ }
   const bonusChoice: SettlementBonusChoice | null = bonusRaw == null ? saved.attendanceBonusOverride
@@ -132,6 +134,7 @@ export async function GET(
         noticeDays: existing.noticeDays,
         tbDeduction: existing.tbDeduction == null ? null : Number(existing.tbDeduction),
         excessRestDeduction: existing.excessRestDeduction == null ? null : Number(existing.excessRestDeduction),
+        mpfEmployee: saved.mpfEmployee,
         settledAt: existing.settledAt,
       } : null,
       // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（結算卡顯示「受僱 X 日（含休息日）÷ 當月 Y 日」做證明；老舊 run → null）
