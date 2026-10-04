@@ -19,8 +19,9 @@ WORKDIR /app/apps/web
 ENV DATABASE_URL="postgresql://build:build@build:5432/build" \
  JWT_SECRET="build-time-placeholder-0123456789abcdefghij" \
  NODE_OPTIONS="--max-old-space-size=4096"
-# ★ 2026-10-04 快 deploy：保留 Next 編譯快取（BuildKit cache mount，唔入 image）→ 細改動唔使全部重新編譯
-RUN --mount=type=cache,id=cwm-next-cache,target=/app/apps/web/.next/cache pnpm build
+# ⚠️ 2026-10-04：唔好用 `RUN --mount=type=cache`（BuildKit 專用）—— production server 用舊式 builder，
+#   會報「the --mount option requires BuildKit」令 deploy 停喺 build。依賴層 cache（上面）兩種 builder 都得。
+RUN pnpm build
 
 # Stage 2: Runner
 FROM node:22-alpine AS runner
