@@ -11,7 +11,15 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { handleRoute } from '@/lib/api-guard'
-import { NOT_RESIGNED_WHERE } from '@/lib/employment-scope'
+import { employedFromWhere } from '@/lib/employment-scope'
+import { toHKDateStr, addDaysStr } from '@/lib/hk-date'
+
+/** 上兩個月嘅 1 號（HK）—— 即包今個月＋之前兩個計糧月 */
+function recentMonthsStart(): Date {
+  const [y, m] = toHKDateStr(new Date()).split('-').map(Number)
+  const t = (y * 12 + (m - 1)) - 2
+  return new Date(`${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}-01T00:00:00+08:00`)
+}
 
 const placeTitle = (c: { name: string; company: { name: string } | null } | null) =>
   c ? `${c.company?.name ?? '全部診所'} · ${c.name}` : '（冇所屬診所）'
@@ -23,9 +31,11 @@ export async function GET(req: NextRequest) {
     const payers = await prisma.chequeSheetPayer.findMany()
     const [employees, clinics] = await Promise.all([
       prisma.employee.findMany({
-        where: { OR: [NOT_RESIGNED_WHERE, { id: { in: payers.map(p => p.employeeId) } }] },
+        // ★ cwm-chequeexcl-20261004 fix：近 3 個計糧月內仲有返工嘅已離職員工都要列（當月出糧總表照有佢哋，
+        //   支票模版要揀得）；之前只列在職 → 已離職嘅人揀唔到
+        where: { OR: [employedFromWhere(recentMonthsStart()), { id: { in: payers.map(p => p.employeeId) } }] },
         select: {
-          id: true, status: true, homeClinicId: true, joinDate: true,
+          id: true, status: true, homeClinicId: true, joinDate: true, leaveDate: true, resignedAt: true,
           user: { select: { name: true, fullName: true } },
           homeClinic: { select: { name: true, company: { select: { name: true } } } },
         },
@@ -43,6 +53,10 @@ export async function GET(req: NextRequest) {
           id: e.id,
           name: e.user?.name ?? '',
           resigned: e.status === 'RESIGNED',
+          // 最後工作日（leaveDate；舊數據冇就 resignedAt − 1 日）
+          lastDay: e.status === 'RESIGNED'
+            ? (e.leaveDate ? toHKDateStr(e.leaveDate) : e.resignedAt ? addDaysStr(toHKDateStr(e.resignedAt), -1) : null)
+            : null,
           joinDate: e.joinDate, // ★ cwm-chequeexcl-20261004：模版設定頁試用期提示用
           homeClinicId: e.homeClinicId,
           homeTitle: placeTitle(e.homeClinic as any),
