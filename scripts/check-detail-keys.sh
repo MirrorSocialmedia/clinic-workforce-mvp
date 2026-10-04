@@ -15,6 +15,7 @@ READERS=(
   "apps/web/src/app/api/payroll-runs/[id]/export/route.ts"
   "apps/web/src/app/api/payroll-runs/[id]/route.ts"
   "apps/web/src/app/api/payroll-runs/cheque-sheet/route.ts"
+  "apps/web/src/lib/cheque-sheet/build.ts"
 )
 FAIL=0
 
