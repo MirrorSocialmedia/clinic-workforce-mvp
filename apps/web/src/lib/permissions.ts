@@ -15,6 +15,9 @@ export const PERMISSIONS = {
   provider_schedule: '醫生當值排更',
   provider_payout: '醫生拆帳',
   cost_entry: '成本錄入（Lab / Implant / Invisalign）',
+  // ★ cwm-labdoc（§10.1）：Lab 單據對數
+  lab_invoice: 'Lab 單據（上傳、對 invoice、檔案庫）',
+  lab_statement: 'Lab 月結單對數（確認、改系統、Lab 設定）',
   // ★ 2026-08-22：Apricot 同步獨立 key —— 讀（睇 job 進度）同寫（發起／取消同步）分開
   //   唔喺任何 ROLE_DEFAULTS：OWNER 自動有（Object.keys(PERMISSIONS)），其餘人手 grant
   apricot_sync: 'Apricot 同步（帳單／付款／預約）',
@@ -30,7 +33,7 @@ export const MGMT_PERMS = ['scheduling', 'attendance_manage', 'payroll_view', 'p
 
 export const ROLE_DEFAULTS: Record<string, PermKey[]> = {
   OWNER: Object.keys(PERMISSIONS) as PermKey[],
-  MANAGER: ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops', 'employee_overview', 'provider_schedule', 'cost_entry'],
+  MANAGER: ['scheduling', 'attendance_manage', 'payroll_view', 'payroll_generate', 'leave_approve', 'timebank_ops', 'employee_overview', 'provider_schedule', 'cost_entry', 'lab_invoice', 'lab_statement'],
   ACCOUNTANT: ['payroll_view'],
   EMPLOYEE: [],
   KIOSK: ['provider_schedule'],

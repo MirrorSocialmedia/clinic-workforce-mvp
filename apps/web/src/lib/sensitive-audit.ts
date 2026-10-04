@@ -125,6 +125,23 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'EMPLOYEE_ACCOUNT_UPDATE', label: '修改員工帳號（電話／密碼／狀態）' },
   // ★ cwm-antitamper-20260917 P1-6：自己改自己假期／時間帳戶（標紅，唔擋）
   { action: 'SELF_BALANCE_EDIT', label: '⚠️ 自己改自己假期／時間帳戶' },
+  // ★ cwm-labdoc（§14）：Lab 單據對數
+  { action: 'LAB_DOC_CONFIRM', label: 'Lab 單據頭部確認（含金額改動）' },
+  { action: 'LAB_DOC_VOID', label: 'Lab 單據作廢' },
+  { action: 'LAB_DOC_LINE_MATCH', label: 'Lab 明細行配對成本' },
+  { action: 'LAB_DOC_LINE_UNMATCH', label: 'Lab 明細行解除配對' },
+  { action: 'LAB_DOC_PRICE_UPDATE', label: 'Lab 價格／折扣修改' },
+  { action: 'LAB_DOC_CASE_CREATE', label: 'Lab 成本個案建立' },
+  { action: 'LAB_DOC_AMOUNT_REVIEW', label: '人手改數覆核' },
+  { action: 'LAB_DOC_PAYEE', label: 'Lab 收款人記住／標記可疑' },
+  { action: 'LAB_ALIAS_LEARN', label: 'Lab alias 學習' },
+  { action: 'LAB_ALIAS_DELETE', label: 'Lab alias 刪除' },
+  { action: 'LAB_PROFILE_UPDATE', label: 'Lab 設定更新' },
+  { action: 'LAB_STATEMENT_SECTION_ASSIGN', label: '月結單分段診所／醫生指派' },
+  { action: 'LAB_STATEMENT_RESOLVE', label: '月結單行差異處理' },
+  { action: 'LAB_STATEMENT_ADJUST', label: '⚠️ 月結單改數（以月結單為準）' },
+  { action: 'LAB_STATEMENT_RECONCILE', label: '月結單對數' },
+  { action: 'LAB_STATEMENT_SUPERSEDE', label: '⚠️ 月結單取代舊版' },
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([
@@ -150,4 +167,7 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // ★ cwm-attbatch-20260927：批量補鐘「批次總結」—— 每筆已各自寫 TIMEBANK_MAKEUP（已入 SPEC），
   //   總結再入 SPEC 會令敏感摘要重複計；呢行只作追溯（batchId／成功／失敗數）
   'TIMEBANK_MAKEUP_BATCH',
+  // ★ cwm-labdoc（§14）：Lab 單據 metadata-only audit（零姓名 — labdocAudit() guard 兜底）
+  'LAB_DOC_UPLOAD', 'LAB_DOC_MERGE', 'LAB_DOC_LINE_IGNORE',
+  'LAB_DOC_FILE_DOWNLOAD', 'LAB_DOC_IMAGE_PURGE',
 ])

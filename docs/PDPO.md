@@ -47,6 +47,7 @@ This document outlines how the Clinic Workforce Management System complies with 
 | Audit logs | Configurable (default: 730 days / 2 years) | Legal + operational audit |
 | Daily hash chain | Indefinite (append-only, immutable) | Anti-tampering integrity |
 | Resigned employee data | 7 years post-leave | Legal compliance |
+| Lab invoice / statement originals | 7 years | Accounting records (Inland Revenue Ordinance); on expiry delete files and clear patient names |
 
 **Configuration**: `DATA_RETENTION_DAYS` environment variable controls automated cleanup.
 
