@@ -128,7 +128,8 @@ export async function POST(
   //   OPEN-FLAG：超額休息日歸類 s.32(2)(a) 缺勤扣除（唔受 1/4）；1/2 總限制係咪連佢一齊計要老細最終確認，
   //   現行採嚴解（總和 > 1/2 → 400）；如老細拍板 ⑤ 唔受 1/2 限制，改返只驗 tbDeduction ≤ halfCap。
   const totalDeduction = (tbDeductionVal ?? 0) + (excessDeductionVal ?? calc.excessRestDeduction)
-  if (totalDeduction > calc.halfCap) {
+  // ★ 2026-10-04：冇扣款就唔使驗（工資期工資因缺勤扣減變負數時，舊版連 $0 扣款都會 400）
+  if (totalDeduction > 0 && totalDeduction > calc.halfCap) {
     return NextResponse.json(
       { error: `總扣款 $${totalDeduction.toFixed(2)} 超過該工資期工資 1/2（$${calc.halfCap.toFixed(2)}）` },
       { status: 400 },

@@ -194,6 +194,23 @@ export async function GET(
     if (m !== 0) rosterDiffPreview = { minutes: m, projectedClosing: ledger.closing + m }
   }
 
+  // ★ cwm-resigntb-20261004（老闆拍板：時間帳戶折現以離職結算為準）：
+  //   草稿時對比「結算確認時嘅時間帳戶」同「而家（帳本＋未入帳編更差額，同結算同一計法）」——
+  //   唔同 = 結算後考勤有改，提示重新確認離職結算（月結照用結算數，唔會自動改）
+  let resignTbCheck: { settledMinutes: number; nowMinutes: number } | null = null
+  if (item.run.status === 'DRAFT' && ledger) {
+    const rs = await prisma.resignSettlement.findUnique({
+      where: { employeeId: params.empId },
+      select: { periodMonth: true, tbMinutes: true },
+    })
+    if (rs && rs.periodMonth === pmKey) {
+      const rosterPosted = ledger.lines.some(l => l.type === 'ROSTER_DIFF')
+      const applyRoster = !rosterPosted && item.employee.payRules?.[0]?.payType === 'MONTHLY' && item.employee.attendanceExempt !== true
+      const nowMinutes = ledger.closing + (applyRoster ? Math.round(rosterDiffMinutes) : 0)
+      resignTbCheck = { settledMinutes: Number(rs.tbMinutes), nowMinutes }
+    }
+  }
+
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
   const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]
   const clinicsMap = new Map<string, { name: string; shortName: string | null }>()
@@ -217,6 +234,7 @@ export async function GET(
     // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶帳本（snapshot 優先 + 對數行 reconciles）
     timeBankLedger: ledger,
     rosterDiffPreview,
+    resignTbCheck,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })

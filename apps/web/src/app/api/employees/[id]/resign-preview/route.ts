@@ -155,6 +155,8 @@ export async function GET(
       timebank: {
         latestPeriod: calc.tb.latestPeriod,
         balanceMinutes: calc.tb.balanceMinutes,
+        accountMinutes: calc.tb.accountMinutes,       // ★ cwm-resigntb-20261004
+        rosterDiffMinutes: calc.tb.rosterDiffMinutes, // 當月編更差額（未入帳，預先計）
         debtMinutes: calc.tb.debtMinutes,
         debtDays: calc.tb.debtDays,
         entries: calc.tb.entries,
