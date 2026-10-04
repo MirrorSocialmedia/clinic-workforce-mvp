@@ -53,6 +53,8 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const [storeBonusInput, setStoreBonusInput] = useState<string | null>(null)
   const [storeBonusApplied, setStoreBonusApplied] = useState<string | null>(null) // blur 先 refetch（唔好逐粒字跑引擎）
   const existingInitRef = useRef(false) // 已確認結算 → 重開時預填一次
+  // ★ cwm-resignmpf-20261004：人手 MPF（僱員）—— 空白 = 系統計；填 0 = 明確唔扣
+  const [mpfInput, setMpfInput] = useState('')
   const [preview, setPreview] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [resignLoading, setResignLoading] = useState(false)
@@ -122,6 +124,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
           }
           if (ex.tbDeduction != null) { tbTouchedRef.current = true; setTbDeduction(ex.tbDeduction > 0 ? Number(ex.tbDeduction).toFixed(2) : '') }
           if (ex.excessRestDeduction != null) { excessTouchedRef.current = true; setExcessDeduction(Number(ex.excessRestDeduction).toFixed(2)) }
+          if (ex.mpfEmployee != null) setMpfInput(Number(ex.mpfEmployee).toFixed(2))
         }
         // ★ cwm-resigv3 拍板②：預填 min(欠款, 1/4 上限)（用戶動過掣就唔覆蓋；lib 純函數同一來源）
         const t = data.settlement?.timebank
@@ -188,6 +191,7 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
       (mi && mi.payType === 'MONTHLY' ? `勤工獎：${BONUS_LABEL[bonusShown] ?? '跟計糧單'}（${currency(mi.attendanceBonus)}）\n` : '') +
       (mi && mi.storeBonus > 0 ? `店舖獎金：${currency(mi.storeBonus)}\n` : '') +
       (excessDed > 0 ? `⚠️ 超額休息日扣款 $${excessDed.toFixed(2)}（MPF 之前）\n` : '') +
+      (mpfManualVal != null ? `MPF（僱員，人手輸入）：$${mpfManualVal.toFixed(2)}（系統計 $${mpfAuto.toFixed(2)}）\n` : '') +
       (amt > 0 ? `⚠️ 將由尾糧扣除 $${amt.toFixed(2)}（時間帳戶欠款）\n` : '') +
       `寫入之後，月底計糧會直接讀呢份結算。`,
     )) return
@@ -200,6 +204,8 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
       // ★ 2026-09-30 [cwm-resignfull]：揀法存入結算（'' = 跟計糧單 → null）
       body.attendanceBonusOverride = bonusShown || null
       body.storeBonus = storeBonusShown !== '' && Number.isFinite(Number(storeBonusShown)) ? Number(storeBonusShown) : null
+      // ★ cwm-resignmpf-20261004：人手 MPF（空白 = null = 系統計）
+      body.mpfEmployee = mpfManualVal
       const res = await fetch(`/api/employees/${employee.employeeId}/resign-settle`, {
         method: 'POST',
         credentials: 'include',
@@ -288,7 +294,10 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
   const mpfDisplay = calcMpfDisplay(s?.joinDate ?? null, lastDay, mpfRelevantIncome)
   // ★ cwm-resignfull：同引擎 — 時薪 MPF 0、規則冇開 MPF → 0（舊版一律按 5% 顯示，同月結唔一致）
   const mpfOff = mi != null && !mi.mpfEnabled
-  const mpfEmployee = st && !mpfOff ? mpfDisplay.employee : 0
+  const mpfAuto = st && !mpfOff ? mpfDisplay.employee : 0
+  const mpfManualVal = mpfInput.trim() !== '' && Number.isFinite(Number(mpfInput)) && Number(mpfInput) >= 0
+    ? Math.round(Number(mpfInput) * 100) / 100 : null
+  const mpfEmployee = st ? (mpfManualVal ?? mpfAuto) : 0
   const mpfZeroReason = mpfOff
     ? (mi!.payType === 'HOURLY' ? '時薪員工 MPF 另行處理（同月結一致）' : '薪酬規則未啟用 MPF（同月結一致）')
     : mpfDisplay.zeroReason
@@ -310,7 +319,8 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
       : (st.monthWage?.basePay ?? 0)
     const _lineSum = _month + (st.unusedLeave?.payout ?? 0) + (st.notice?.pay ?? 0)
       + tbPositiveCashout - excessDed - (tbDeductionVal ?? 0) - mpfEmployee + miscTotal
-    if (Math.abs(_lineSum - estPayable) > 0.01) {
+    // ★ cwm-resignmpf-20261004：容差 1.5 仙 —— 逐項未捨入相加 vs 有關入息先捨入（人手 MPF 時會差半仙以上，唔係錯數）
+    if (Math.abs(_lineSum - estPayable) > 0.015) {
       console.error(`[resign-settlement] ⛔ 逐行加總 ${_lineSum} ≠ 預估應付 ${estPayable}`)
     }
   }
@@ -601,13 +611,27 @@ export default function ResignSettlementModal({ employee, userRole, onClose, onR
                 </div>
                 {/* ★ 2026-09-06 [cwm-mpf60] (MD §3.2)：MPF 行（僱員 5%）+ 零理由（拍板②：僱主供款唔顯示） */}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>強積金（僱員 5%）</span>
+                  <span>強積金（僱員{mpfManualVal != null ? '，人手輸入' : ' 5%'}）</span>
                   <span style={{ color: mpfEmployee > 0 ? '#dc2626' : '#94a3b8' }}>
                     {mpfEmployee > 0 ? `−${currency(mpfEmployee)}` : currency(0)}
                   </span>
                 </div>
-                {mpfEmployee === 0 && mpfZeroReason && (
+                {mpfManualVal == null && mpfEmployee === 0 && mpfZeroReason && (
                   <div style={{ fontSize: 11, color: '#94a3b8' }}>{mpfZeroReason}</div>
+                )}
+                {/* ★ cwm-resignmpf-20261004：人手輸入 MPF（僱員）—— 存入結算，月底計糧照用 */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label htmlFor="resign-mpf-manual" style={{ fontSize: 12, color: '#7f1d1d' }}>MPF 人手輸入（空白 = 系統計 {currency(mpfAuto)}）</label>
+                  <input id="resign-mpf-manual" type="number" min="0" step="0.01"
+                    value={mpfInput}
+                    onChange={e => setMpfInput(e.target.value)}
+                    placeholder={mpfAuto.toFixed(2)}
+                    style={{ width: 110, padding: '3px 8px', border: `1px solid ${mpfManualVal != null ? '#d97706' : '#d1d5db'}`, borderRadius: 6, fontSize: 12, textAlign: 'right' }} />
+                </div>
+                {mpfManualVal != null && (
+                  <div style={{ fontSize: 11, color: '#b45309' }}>
+                    ✎ 用人手數 {currency(mpfManualVal)}（系統計 {currency(mpfAuto)}）—— 只改僱員供款，僱主供款照系統計；確認後月底計糧都用呢個數
+                  </div>
                 )}
               </div>
 

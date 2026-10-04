@@ -37,7 +37,7 @@ export async function POST(
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'body 必填 (JSON)' }, { status: 400 })
-  const { lastDay, noticeDays, tbDeduction, excessDeduction, attendanceBonusOverride, storeBonus } = body
+  const { lastDay, noticeDays, tbDeduction, excessDeduction, attendanceBonusOverride, storeBonus, mpfEmployee } = body
 
   // ── 驗證 ──────────────────────────────────────────────
   if (typeof lastDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(lastDay) || isNaN(Date.parse(`${lastDay}T00:00:00+08:00`))) {
@@ -83,6 +83,14 @@ export async function POST(
       return NextResponse.json({ error: 'storeBonus 必須 ≥ 0' }, { status: 400 })
     }
     storeBonusVal = Math.round(storeBonus * 100) / 100
+  }
+  // ★ cwm-resignmpf-20261004：人手 MPF（僱員）—— null = 系統計；0 = 明確唔扣
+  let mpfEmployeeVal: number | null = null
+  if (mpfEmployee != null) {
+    if (typeof mpfEmployee !== 'number' || !Number.isFinite(mpfEmployee) || mpfEmployee < 0 || mpfEmployee > 100_000) {
+      return NextResponse.json({ error: 'MPF 必須係 0 或以上嘅數字' }, { status: 400 })
+    }
+    mpfEmployeeVal = Math.round(mpfEmployee * 100) / 100
   }
 
   // ── 伺服器側重算（同 preview 同一 lib）─────────────────
@@ -170,6 +178,8 @@ export async function POST(
     // ★ 2026-09-30 [cwm-resignfull]：揀法（parseResignSettlementRow 讀返 → 月底計糧注入）+ 當月各項快照（審計／對數用）
     attendanceBonusOverride: bonusChoice,
     storeBonus: storeBonusVal,
+    // ★ cwm-resignmpf-20261004：人手 MPF（僱員；parseResignSettlementRow 讀返 → 月底計糧用）；null = 系統計
+    mpfEmployee: mpfEmployeeVal,
     monthItems: calc.monthItems,
     // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日），分母 = 當月曆日數）
     monthWageRatio: calc.monthWageRatio
@@ -229,7 +239,7 @@ export async function POST(
         entity: 'ResignSettlement',
         entityId: row.id,
         targetEmployeeId: empId,
-        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, 勤工獎=${bonusChoice ?? '跟計糧單'}, 店舖獎金=${storeBonusVal ?? '跟計糧單'}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號｜取消班次=${cutoffResult.shiftsCancelled} 取消假期=${cutoffResult.leavesCancelled} 跨日假截斷=${cutoffResult.leavesTruncated}`,
+        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, 勤工獎=${bonusChoice ?? '跟計糧單'}, 店舖獎金=${storeBonusVal ?? '跟計糧單'}, MPF（僱員）=${mpfEmployeeVal ?? '系統計'}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號｜取消班次=${cutoffResult.shiftsCancelled} 取消假期=${cutoffResult.leavesCancelled} 跨日假截斷=${cutoffResult.leavesTruncated}`,
         ipAddress: null,
         userAgent: null,
       } as any,

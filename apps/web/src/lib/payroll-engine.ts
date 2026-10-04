@@ -988,7 +988,15 @@ export type ParsedResignSettlement = {
   // ★ 2026-09-30 [cwm-resignfull]：結算卡揀嘅勤工獎覆蓋／店舖獎金（null = 冇揀 → 跟計糧頁／舊計糧單）
   attendanceBonusOverride: SettlementBonusChoice | null
   storeBonus: number | null
+  // ★ cwm-resignmpf-20261004：結算卡人手輸入嘅 MPF（僱員）；null = 系統計
+  mpfEmployee: number | null
 }
+/** ★ cwm-resignmpf-20261004：離職結算人手 MPF（僱員）—— 冇 / 唔合法 = null（照系統計） */
+export function manualMpf(rs: { mpfEmployee?: number | null } | null | undefined): number | null {
+  const v = rs?.mpfEmployee
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v * 100) / 100 : null
+}
+
 export function parseResignSettlementRow(row: { detailJson: string | null; tbDeduction: unknown; excessRestDeduction: unknown; tbMinutes: unknown; tbAmount: unknown } | null | undefined): ParsedResignSettlement | null {
   const json = row?.detailJson
   if (!json) return null
@@ -1007,6 +1015,8 @@ export function parseResignSettlementRow(row: { detailJson: string | null; tbDed
         ? parsed.attendanceBonusOverride as SettlementBonusChoice : null,
       storeBonus: typeof parsed.storeBonus === 'number' && Number.isFinite(parsed.storeBonus) && parsed.storeBonus >= 0
         ? parsed.storeBonus : null,
+      mpfEmployee: typeof parsed.mpfEmployee === 'number' && Number.isFinite(parsed.mpfEmployee) && parsed.mpfEmployee >= 0
+        ? parsed.mpfEmployee : null,
     }
   } catch (e) {
     console.warn('[payroll] ResignSettlement parse 失敗，跳過注入:', e)
@@ -3451,6 +3461,7 @@ async function calculateSimpleHourlyPay(
       annualLeavePay?: number; noticePay?: number; tbCashout?: number;
       tbDeduction?: number | null; excessRestDeduction?: number | null;
       monthWage?: { source: string; basePay: number | null } | null
+      mpfEmployee?: number | null // ★ cwm-resignmpf-20261004：人手 MPF（僱員）
     } | null
   }
 ): Promise<PayrollResult> {
@@ -3615,7 +3626,8 @@ async function calculateSimpleHourlyPay(
   const grossPay = Math.round((totalPay + rsGrossAdd - rsExcessRest) * 100) / 100
   // ★ 老細拍板（2026-09-29，MD §5 Q1）：時薪無 MPF（另處理）— 明寫 0，唔係「唔寫」；
   //   結算金額全部唔計入 MPF 基數（includedInMpf = false）
-  const mpf = 0
+  // ★ cwm-resignmpf-20261004：離職結算卡人手輸入咗 MPF → 用人手數（老闆要求）；冇就照舊 0
+  const mpf = manualMpf(rsSettle) ?? 0
   // ★ 2026-09-30 [cwm-restdebt] RS-15：扣款大過應付時 netPay 唔准靜靜變 0 —— warn + netClamped 標記俾對數用
   const netPayRawH = Math.round((grossPay - mpf - rsTbDed) * 100) / 100
   const netClampedH = netPayRawH < 0
@@ -3721,7 +3733,7 @@ export async function calculatePayrollWithRules(
     //     ⚠️ 同 ⑥ tbDeduction 方向相反 ——【嚴禁合併】。
     //   ★★⑤⑥ 方向相反（一個少供、一個唔減基數）嚴禁合併（cwm-excessrest 生死格 #14）。
     //   in-service 員工傳 null/唔傳 → 零改動。
-    resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbCashout?: number; tbDeduction?: number | null; excessRestDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null } | null
+    resignSettlement?: { annualLeavePay?: number; noticePay?: number; tbCashout?: number; tbDeduction?: number | null; excessRestDeduction?: number | null; monthWage?: { source: string; basePay: number | null } | null; mpfEmployee?: number | null } | null
     // ★ 2026-09-05 [cwm-resignroster] 離職預覽 lastDay —「最後工作日翌日 HK 午夜」
     //   （同 resign/route.ts `${lastDay}T16:00:00Z` 口徑）；优先於 DB resignedAt。
     //   ⚠️ 只准收窄（route 側驗證唔得遲過實際離職日）— 唔准用嚟延長受僱期。
@@ -4061,7 +4073,9 @@ export async function calculatePayrollWithRules(
   }
   // ★ cwm-payrollcols-20260918 B2：mpfBase 拎出嚟做名 — 僱主 MPF 一定要用同一個基數（同 :3741 一模一樣）
   const mpfBase = MPF_INCLUDE_SETTLEMENT ? grossPay : grossPay - rsGrossAdd
-  const mpf = calcMPF(mpfBase, mpfConfig, mpfCtx)
+  // ★ cwm-resignmpf-20261004：離職結算卡人手輸入咗 MPF（僱員）→ 用人手數，唔再自動計（僱主供款照計）
+  const rsMpfManual = manualMpf(rsSettle)
+  const mpf = rsMpfManual ?? calcMPF(mpfBase, mpfConfig, mpfCtx)
   // ★ cwm-resigv3：tbDeduction 落 MPF 後 net 扣除（EO s.32 上限已喺 resign-settle route 驗過）
   // ★ 2026-09-30 [cwm-restdebt] RS-15：扣款大過應付時 netPay 唔准靜靜變 0 —— warn + netClamped 標記俾對數用
   const netPayRawM = grossPay - mpf - rsTbDed
@@ -4149,7 +4163,7 @@ export async function calculatePayrollWithRules(
     //   唔同步會將 tbDeduction 洗走（此區塊覆寫 netPay）。
     // ★ cwm-payrollcols-20260918 B2：OT 重算後 base 同 main path 一樣拎出嚟做名
     const newMpfBase = MPF_INCLUDE_SETTLEMENT ? newGrossPay : newGrossPay - rsGrossAdd
-    const newMpf = calcMPF(newMpfBase, mpfConfig, mpfCtx)
+    const newMpf = rsMpfManual ?? calcMPF(newMpfBase, mpfConfig, mpfCtx)
     // ★ cwm-payrollcols-20260918 坑⑥：OT 重算後僱主 MPF 都要同步（否則保留舊值）
     const newMpfEmployer = calcMpfEmployer(newMpfBase, mpfConfig, mpfCtx)
     const newNetPay = Math.max(0, newGrossPay - newMpf - rsTbDed)
@@ -4234,6 +4248,7 @@ export async function calculatePayrollWithRules(
       // ★ cwm-payrollcols-20260918：salary 段同步寫僱主（跟 finalMpf 同一模式）
       mpfEmployer: Math.round(finalMpfEmployer * 100) / 100,
       mpfRate: mpfRate,
+      mpfManual: rsMpfManual != null, // ★ cwm-resignmpf-20261004：MPF 係離職結算人手輸入
       netPay: Math.round(finalNetPay * 100) / 100,
     },
     // 假期與 OT
