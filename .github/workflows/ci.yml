@@ -12,33 +12,39 @@ on: [push, pull_request]
 jobs:
   # cwm-labdoc P1 第一步（施工單 §17）：node:22-alpine 試裝 sharp / pdfjs-dist / @napi-rs/canvas
   # 並渲染 test/fixtures/labdoc/*.pdf 做證明。
-  # 本機 dev 冇 docker 權 → 呢個 job 用 GH runner 嘅 docker 跑真 node:22-alpine。
-  # 版本跟 apps/web/package.json 行鎖（CI 用呢兩行讀，唔會跟 lockfile 漂移）。
+  # 本機 dev 冇 docker 權 → 呢個 job 用 GH runner 跑真 node:22-alpine（container job）。
+  # 版本跟 apps/web/package.json 行鎖（CI 讀呢三行，唔會跟 lockfile 漂移）。
+  # 獨立目錄（$RUNNER_TEMP）安裝：唔碰 app 嘅 pnpm-lock.yaml／node_modules，
+  # 只裝三個 render 依賴（唔裝全 app 樹）。本 job 只證明渲染路徑（唔跑 tsc/test）。
   # ⚠️ 呢個 job 紅 = alpine 裝唔到/渲染唔到 → Dockerfile 改 node:22-slim 並喺 PR 寫明（施工單 §17 P1）。
+  # （gen2 fix 2026-10-05：舊版 ro mount app package.json + npm init → EROFS，
+  #   而 npm install <pkgs> 會連全 app 樹一齊裝 → 改獨立目錄 + 精確版本安裝）
   labdoc-alpine-render:
     runs-on: ubuntu-latest
+    container: node:22-alpine
     steps:
       - uses: actions/checkout@v4
-      - name: Alpine render proof (node:22-alpine, 真 container)
+
+      - name: Install render deps in isolated dir (musl prebuilt, versions = apps/web/package.json)
         run: |
-          VER_SHARP=$(node -p "require('./apps/web/package.json').dependencies.sharp")
-          VER_PDFJS=$(node -p "require('./apps/web/package.json').dependencies['pdfjs-dist']")
-          VER_CANVAS=$(node -p "require('./apps/web/package.json').dependencies['@napi-rs/canvas']")
-          echo "sharp@${VER_SHARP}  pdfjs-dist@${VER_PDFJS}  @napi-rs/canvas@${VER_CANVAS}"
-          docker run --rm \
-            -e VER_SHARP="${VER_SHARP}" -e VER_PDFJS="${VER_PDFJS}" -e VER_CANVAS="${VER_CANVAS}" \
-            -v "$PWD/apps/web/package.json:/app/package.json:ro" \
-            -v "$PWD/apps/web/scripts/labdoc-render-check.mjs:/app/render-check.mjs:ro" \
-            -v "$PWD/apps/web/test/fixtures/labdoc:/app/fixtures:ro" \
-            node:22-alpine sh -c '
-              set -e
-              echo "alpine install: sharp@${VER_SHARP} pdfjs-dist@${VER_PDFJS} @napi-rs/canvas@${VER_CANVAS}"
-              cd /app && npm init -y >/dev/null
-              # --no-audit --no-fund 省時；版本由 host 經 env 傳入（= package.json 行鎖）
-              npm install --no-audit --no-fund \
-                "sharp@${VER_SHARP}" "pdfjs-dist@${VER_PDFJS}" "@napi-rs/canvas@${VER_CANVAS}"
-              node /app/render-check.mjs /app/fixtures
-            '
+          set -eu
+          PKG="$GITHUB_WORKSPACE/apps/web/package.json"
+          VER_SHARP=$(node -p "require('$PKG').dependencies.sharp")
+          VER_PDFJS=$(node -p "require('$PKG').dependencies['pdfjs-dist']")
+          VER_CANVAS=$(node -p "require('$PKG').dependencies['@napi-rs/canvas']")
+          echo "alpine install: sharp@${VER_SHARP} pdfjs-dist@${VER_PDFJS} @napi-rs/canvas@${VER_CANVAS}"
+          mkdir -p "$RUNNER_TEMP/render-check"
+          cd "$RUNNER_TEMP/render-check"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --loglevel=error \
+            "sharp@${VER_SHARP}" "pdfjs-dist@${VER_PDFJS}" "@napi-rs/canvas@${VER_CANVAS}"
+
+      - name: Render labdoc fixtures in node:22-alpine (assert PASS + non-blank pages)
+        run: |
+          set -eu
+          cd "$RUNNER_TEMP/render-check"
+          cp "$GITHUB_WORKSPACE/apps/web/scripts/labdoc-render-check.mjs" .
+          node labdoc-render-check.mjs "$GITHUB_WORKSPACE/apps/web/test/fixtures/labdoc"
   test:
     runs-on: ubuntu-latest
     services:
@@ -155,3 +161,4 @@ jobs:
             src/lib/sync-cooldown.test.ts \
             src/lib/timebank-makeup-batch-route.test.ts \
             src/lib/today-board.test.ts
+

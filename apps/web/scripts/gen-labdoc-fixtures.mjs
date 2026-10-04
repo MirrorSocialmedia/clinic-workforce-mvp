@@ -8,6 +8,16 @@
  * 冪等：每次執行重寫兩個檔（內容 deterministic — scan JPEG 係 embedded base64，
  * 非隨機生成）。fixture 已 commit；呢個 script 只係留低「點嚟嘅」記錄。
  * Run: node scripts/gen-labdoc-fixtures.mjs
+ *
+ * 建造歷史（防同類 bug 重演）：
+ *   - gen1 v1：base64 文字直接當 DCTDecode stream 內容＋/Length 用解碼後長度 → 雙重
+ *     mismatch，圖 render 唔到；另外 Buffer.byteLength 冇指定 encoding（預設 UTF-8），
+ *     header 4 個 0x80+ 字元令 xref offset 全部漂移 +4。
+ *   - gen1 終版（本檔底本）：Buffer-parts builder — 每個 part 係 Buffer（明確 encoding），
+ *     xref offset = 前面 part 長度總和（同 encoding 無關）；JPEG 運行時解成 raw bytes
+ *     （FFD8…FFD9）先入 stream，/Length = jpeg.length 精確。
+ *   - gen2（2026-10-04）：加 selfCheck（header/startxref/xref offset 自驗）＋JPEG
+ *     marker/SOFn 尺寸校驗；實測 pdfinfo/pdftotext/gs 全過（text 每頁 ≥20 字、scan 零文字）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -53,6 +63,27 @@ function textPageContent(lines, startX = 50, startY = 780, leading = 18) {
   }
   parts.push('ET')
   return parts.join('\n')
+}
+// 寫完自檢：header、startxref 指向真 xref（防再次靜默產出壞檔）
+function selfCheck(buf, name) {
+  const s = buf.toString('binary')
+  if (!s.startsWith('%PDF-')) throw new Error(name + ': 缺 PDF header')
+  const m = s.match(/startxref\n(\d+)\n%%EOF\n$/)
+  if (!m) throw new Error(name + ': 缺 startxref/%%EOF')
+  if (s.slice(Number(m[1]), Number(m[1]) + 4) !== 'xref') throw new Error(name + ': xref offset 唔對')
+}
+// JPEG SOFn marker（FFC0/FFC1/FFC2/FFC3）入面嘅 width/height
+function jpegDim(jpg) {
+  let off = 2
+  while (off + 9 <= jpg.length) {
+    if (jpg[off] !== 0xff) { off++; continue }
+    const marker = jpg[off + 1]
+    if (marker >= 0xc0 && marker <= 0xc3) {
+      return { h: jpg.readUInt16BE(off + 5), w: jpg.readUInt16BE(off + 7) }
+    }
+    off += 2 + jpg.readUInt16BE(off + 2)
+  }
+  throw new Error('JPEG 搵唔到 SOFn marker')
 }
 
 // ---------------------------------------------------------------
@@ -105,6 +136,7 @@ const page2Lines = [
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   ]
   const buf = buildPdf(objects)
+  selfCheck(buf, 'sample-text.pdf')
   fs.writeFileSync(path.join(OUT, 'sample-text.pdf'), buf)
   console.log('sample-text.pdf  ' + buf.length + ' bytes')
 }
@@ -121,7 +153,14 @@ const SCAN_P2_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0
 {
   const jpeg1 = Buffer.from(SCAN_P1_B64, 'base64')
   const jpeg2 = Buffer.from(SCAN_P2_B64, 'base64')
-  const imgObj = (jpeg, n) => [
+  for (const [name, jpg] of [['scan-p1', jpeg1], ['scan-p2', jpeg2]]) {
+    if (jpg.subarray(0, 2).toString('hex') !== 'ffd8' || jpg.subarray(-2).toString('hex') !== 'ffd9') {
+      throw new Error(name + ': 唔係有效 JPEG（缺 FFD8/FFD9 marker）')
+    }
+    const d = jpegDim(jpg)
+    if (d.w !== SCAN_W || d.h !== SCAN_H) throw new Error(name + ': 尺寸 ' + d.w + 'x' + d.h + ' 唔同 PDF ' + SCAN_W + 'x' + SCAN_H)
+  }
+  const imgObj = (jpeg) => [
     `<< /Type /XObject /Subtype /Image /Width ${SCAN_W} /Height ${SCAN_H} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
     jpeg,
     '\nendstream',
@@ -130,14 +169,15 @@ const SCAN_P2_B64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0
   const objects = [null,
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [7 0 R 8 0 R] /Count 2 >>',
-    imgObj(jpeg1, 3),
-    imgObj(jpeg2, 4),
+    imgObj(jpeg1),
+    imgObj(jpeg2),
     textStream(cm('Im1')),
     textStream(cm('Im2')),
     `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${SCAN_W} ${SCAN_H}] /Resources << /XObject << /Im1 3 0 R >> >> /Contents 5 0 R >>`,
     `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${SCAN_W} ${SCAN_H}] /Resources << /XObject << /Im2 4 0 R >> >> /Contents 6 0 R >>`,
   ]
   const buf = buildPdf(objects)
+  selfCheck(buf, 'sample-scan.pdf')
   fs.writeFileSync(path.join(OUT, 'sample-scan.pdf'), buf)
   console.log('sample-scan.pdf  ' + buf.length + ' bytes')
 }
