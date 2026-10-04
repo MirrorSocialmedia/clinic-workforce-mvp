@@ -3,8 +3,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 DC="docker compose -p clinic -f $ROOT/docker-compose.yml"
-# ★ 2026-10-04 快 deploy：Dockerfile 用咗 BuildKit cache mount（Next 編譯快取）—— 確保用 BuildKit build
-export DOCKER_BUILDKIT=1
 
 echo "== 備份 =="
 BK="$ROOT/backups/clinic_$(date +%F_%H%M).sql.gz"
