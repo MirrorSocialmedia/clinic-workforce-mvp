@@ -178,7 +178,6 @@ export default function ChequeSheetTemplatesPage() {
           <fieldset className="flex flex-col gap-2">
             <legend className="font-semibold text-sm mb-1">表頭</legend>
             {check('第一行月份（例：SEP）', cfg.monthRow, v => setCfg(c => ({ ...c, monthRow: v })))}
-            {check('草稿警告行', cfg.draftRow, v => setCfg(c => ({ ...c, draftRow: v })))}
             {check('最尾合計', cfg.totalRow, v => setCfg(c => ({ ...c, totalRow: v })))}
           </fieldset>
           {msg && <div className={`text-sm ${msg.includes('✓') ? 'text-green-700' : 'text-red-600'}`}>{msg}</div>}

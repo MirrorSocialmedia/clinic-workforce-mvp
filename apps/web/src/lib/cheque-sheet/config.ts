@@ -92,6 +92,7 @@ export const NEW_TEMPLATE_DEFAULT: SheetConfig = {
   groupBy: 'CLINIC',
   subtotals: true,
   sheetPerGroup: true,
+  draftRow: false, // ★ 老闆：草稿警告行唔要（模版一律唔出）
 }
 
 const MAX_HEADER = 40
@@ -119,7 +120,7 @@ export function normalizeSheetConfig(raw: unknown): SheetConfig {
     sheetPerGroup: bool(r.sheetPerGroup, d.sheetPerGroup),
     sort: pick(r.sort, ['NICK', 'FULL', 'CUSTOM'] as const, d.sort),
     monthRow: bool(r.monthRow, d.monthRow),
-    draftRow: bool(r.draftRow, d.draftRow),
+    draftRow: false, // ★ cwm-chequetpl-20261004 fix：老闆話草稿警告唔要 —— 模版一律唔出（舊格式 LEGACY 照出）
     totalRow: bool(r.totalRow, d.totalRow),
   }
 }

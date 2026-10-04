@@ -179,3 +179,28 @@ describe('normalizeSheetConfig / safeSheetName', () => {
     assert.equal(safeSheetName('x'.repeat(40), used).length, 31)
   })
 })
+
+describe('fix：欄闊＋草稿警告', () => {
+  it('每欄夠闊放得落最長值（合計唔會出 ########）', () => {
+    const cfg = normalizeSheetConfig(NEW_TEMPLATE_DEFAULT)
+    const wb = buildChequeWorkbook(newRows(RUNS, 'CLINIC'), cfg, { monthAbbr: 'SEP', anyDraft: true })
+    const ws = wb.Sheets['全部（合計）']
+    const totalCol = cfg.columns.findIndex(c => c.key === 'totalPayable')
+    const aoa = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: null })
+    const totalR = aoa.findIndex(r => r[0] === '合計')
+    const shown = ws[XLSX.utils.encode_cell({ r: totalR, c: totalCol })].v.toLocaleString('en-US', { minimumFractionDigits: 2 })
+    assert.ok(ws['!cols']![totalCol].wch! >= shown.length + 1, `wch ${ws['!cols']![totalCol].wch} < ${shown}`)
+    assert.ok(ws['!cols']!.every((c: any) => c.wch >= 6 && c.wch <= 50))
+  })
+  it('模版一律唔出草稿警告行（舊格式照出）', () => {
+    const cfg = normalizeSheetConfig({ ...NEW_TEMPLATE_DEFAULT, draftRow: true })
+    assert.equal(cfg.draftRow, false)
+    const wb = buildChequeWorkbook(newRows(RUNS, 'CLINIC'), cfg, { monthAbbr: 'SEP', anyDraft: true })
+    for (const n of wb.SheetNames) {
+      const aoa = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[n], { header: 1, defval: null })
+      assert.ok(!aoa.some(r => String(r[0] ?? '').includes('DRAFT')), n)
+    }
+    const legacy = buildChequeWorkbook(newRows(RUNS, 'COMPANY'), LEGACY_CONFIG, { monthAbbr: 'SEP', anyDraft: true })
+    assert.ok(XLSX.utils.sheet_to_json<any[]>(legacy.Sheets['出糧總表'], { header: 1, defval: null }).some(r => String(r[0] ?? '').includes('DRAFT')))
+  })
+})
