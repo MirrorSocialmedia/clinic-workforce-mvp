@@ -36,6 +36,8 @@ interface Props {
 export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Props) {
   const [clinicNames, setClinicNames] = useState<Record<string, string>>({})
   const [providerNames, setProviderNames] = useState<Record<string, string>>({})
+  // §12.1：待處理分頁 badge = 用戶有權處理嘅總數（API 已按權限過濾）
+  const [pendingTotal, setPendingTotal] = useState<number | null>(null)
 
   // 名稱對照（graceful：失敗就「未識別」）
   useEffect(() => {
@@ -45,6 +47,10 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
       .catch(() => { /* graceful */ })
     apiFetch<{ providers: Array<{ id: string; name: string }> }>('/api/providers')
       .then((d) => alive && setProviderNames(Object.fromEntries((d.providers || []).map((p) => [p.id, p.name]))))
+      .catch(() => { /* graceful */ })
+    // 待處理 badge（graceful：失敗 = 冇 badge，唔阻頁面）
+    apiFetch<{ total: number }>('/api/lab-docs/pending')
+      .then((d) => alive && setPendingTotal(d?.total ?? 0))
       .catch(() => { /* graceful */ })
     return () => { alive = false }
   }, [])
@@ -91,7 +97,7 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
           檔案庫
         </button>
         <button className={tabCls(tab === 'pending')} onClick={() => onTabChange('pending')}>
-          待處理
+          待處理{pendingTotal !== null && pendingTotal > 0 ? `（${pendingTotal}）` : ''}
         </button>
       </div>
 
