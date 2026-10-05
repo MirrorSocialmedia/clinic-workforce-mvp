@@ -168,6 +168,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
 ]
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([
+  // ★ cwm-labdoc P2（2026-10-05）：check-sensitive-coverage 誤報 — reconcile.ts 嘅 LineAction 值
+  // 'MATCH'/'UNMATCH' 係行配對嘅 action token（純函數回傳值，唔係 AuditLog action）
+  'MATCH', 'UNMATCH',
   'LOGIN', 'LOGOUT', 'PASSWORD_CHANGE', 'PASSWORD_RESET',
   'FACE_VERIFY', 'FACE_FRAME_VIEW', 'FACE_REF_VIEW',
   'WAGE_SNAPSHOT', 'MUTATE', 'UPSERT',

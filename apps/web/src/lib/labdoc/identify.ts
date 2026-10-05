@@ -24,37 +24,18 @@ export function toHalfWidth(s: string): string {
 }
 
 /**
- * §6.1 Lab 名正規化：細階 → 全形轉半形 → 去標點同空格（留 CJK＋英數）
- * → 去 limited|ltd|co|company|laboratory|lab|dental|solutions|有限公司|牙科器材|牙科。
- * 去 token 按「長 token 優先」repeat-until-stable（防 'co' 先食咗 'company' 開頭）。
+ * §6.1 Lab 名正規化：細階 → 全形轉半形 → 去公司尾詞（英文用 word boundary，防 'Sodental' 俾 'dental' 食）
+ * → 去標點同空格（留 CJK＋英數）。
+ * CJK 詞：有限公司／牙科器材／牙科（無 word boundary，按字串）。
  */
 export function normLabName(s: string | null): string {
   if (!s) return ''
-  let t = toHalfWidth(s).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '')
-  const DROP = [
-    '有限公司',
-    '牙科器材',
-    'laboratory',
-    'solutions',
-    'company',
-    'dental',
-    'limited',
-    '牙科',
-    'ltd',
-    'lab',
-    'co',
-  ]
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const d of DROP) {
-      if (t.includes(d)) {
-        t = t.split(d).join('')
-        changed = true
-      }
-    }
+  let t = toHalfWidth(s).toLowerCase()
+  t = t.replace(/有限公司/g, '').replace(/牙科器材/g, '').replace(/牙科/g, '')
+  for (const d of ['laboratory', 'solutions', 'company', 'limited', 'dental', 'ltd', 'lab', 'co']) {
+    t = t.replace(new RegExp(`\\b${d}\\b`, 'g'), '')
   }
-  return t
+  return t.replace(/[^a-z0-9\u4e00-\u9fff]/g, '')
 }
 
 /**

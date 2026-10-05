@@ -36,6 +36,10 @@ export async function GET(
     where: { id },
     include: {
       lab: { select: { id: true, name: true, isActive: true } },
+      lines: {
+        orderBy: [{ groupIndex: 'asc' }, { lineIndex: 'asc' }],
+        include: { costCase: { select: { id: true, itemType: true, itemTypeOther: true, baseCost: true, status: true, providerId: true } } },
+      },
       pages: {
         orderBy: { sortOrder: 'asc' },
         include: {
@@ -118,5 +122,31 @@ export async function GET(
         purgedAt: p.file.purgedAt,
       },
     })),
+    // ★ P2 §7.1：行（確認 UI 用）— groups = 行嘅分組集合（含空分組由 groupCount 帶）
+    lines: doc.lines.map((l) => ({
+      id: l.id,
+      groupIndex: l.groupIndex,
+      lineIndex: l.lineIndex,
+      description: l.description,
+      toothRaw: l.toothRaw,
+      qty: l.qty == null ? null : Number(l.qty),
+      unitPrice: l.unitPrice == null ? null : Number(l.unitPrice),
+      listPrice: l.listPrice == null ? null : Number(l.listPrice),
+      discountRaw: l.discountRaw,
+      amount: Number(l.amount),
+      isZero: l.isZero,
+      status: l.status,
+      ignoreReason: l.ignoreReason,
+      patientCodeRaw: l.patientCodeRaw,
+      patientCode: l.patientCode,
+      patientNameRaw: l.patientNameRaw,
+      labCaseRef: l.labCaseRef,
+      costCaseId: l.costCaseId,
+      linkType: l.linkType,
+      costCase: l.costCase
+        ? { id: l.costCase.id, itemType: l.costCase.itemType, itemTypeOther: l.costCase.itemTypeOther, baseCost: l.costCase.baseCost == null ? null : Number(l.costCase.baseCost), status: l.costCase.status, providerId: l.costCase.providerId }
+        : null,
+    })),
+    groupCount: doc.lines.reduce((m, l) => Math.max(m, l.groupIndex + 1), 0),
   })
 }
