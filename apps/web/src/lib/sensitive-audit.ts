@@ -132,6 +132,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'SP_SUBSIDY_BULK_CONFIRM', label: '批量確認 SP 補貼' },
   { action: 'SP_SUBSIDY_SKIP', label: '跳過 SP 補貼' },
   { action: 'SP_SUBSIDY_RESET', label: '取消確認 SP 補貼' },
+  { action: 'SP_SUBSIDY_SCAN', label: '掃描 2人SP 候選' },
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },

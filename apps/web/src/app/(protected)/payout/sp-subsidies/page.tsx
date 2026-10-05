@@ -74,6 +74,15 @@ export default function SpSubsidiesPage() {
   // S8: 排序 state
   const [sortBy, setSortBy] = useState<'review' | 'date' | 'amount'>('review')
 
+  // ★ cwm-sppreview-20261006：月結預覽「去 2人SP 確認」帶 ?month=&provider=<醫生名>&clinic=<診所名>（掛載後讀一次，避免 SSR hydration 唔一致）
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const m = sp.get('month')
+    if (m && /^\d{4}-(0[1-9]|1[0-2])$/.test(m)) { setMonth(m); setScanningMonth(m) }
+    if (sp.get('provider')) setFilterProvider(sp.get('provider')!)
+    if (sp.get('clinic')) setFilterClinic(sp.get('clinic')!)
+  }, [])
+
   useEffect(() => {
     loadSubsidies()
   }, [month])
