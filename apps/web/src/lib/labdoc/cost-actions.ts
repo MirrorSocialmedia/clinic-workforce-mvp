@@ -8,6 +8,8 @@
  * T7 相鄰：成本已鎖（lockedByRunId）改價 → PriceLockedError（409）。
  */
 import { assertAuditInputClean } from './audit-pii'
+import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
+import { recomputeInvoiceDocStatus } from './reconcile'
 
 export class LineTakenError extends Error {
   constructor(lineId: string) {
@@ -65,12 +67,13 @@ export async function matchLine(
 
 /**
  * §7.8 step 4（UNMATCH 方向）：行解除（只喺未連或連住同一筆時 — 避免兩邊同時改）。
+ * 影響 0 行（load 之後被人改咗）→ LineTakenError（rollback，409）。
  */
 export async function unmatchLine(
   tx: any,
   args: { lineId: string; expectedCostCaseId: string | null; actorId: string },
 ): Promise<void> {
-  await tx.labDocumentLine.updateMany({
+  const r = await tx.labDocumentLine.updateMany({
     where: {
       id: args.lineId,
       costCaseId: args.expectedCostCaseId === null ? null : args.expectedCostCaseId,
@@ -83,6 +86,7 @@ export async function unmatchLine(
       matchedAt: null,
     },
   })
+  if (r.count === 0) throw new LineTakenError(args.lineId)
 }
 
 /**
@@ -181,6 +185,111 @@ export async function applyPriceUpdate(tx: any, args: PriceUpdateArgs): Promise<
       notes: `經 Lab 單據改價 lines=[${args.lineIds.join(',')}] doc=${args.docId}`,
     },
   })
+}
+
+/**
+ * §7.7 到貨確認（cost-action 原語）：寫 receivedAt + periodMonth（LAB 月 = 到貨月）。
+ * 規則：已出月結（lockedByRunId != null）→ PriceLockedError（409）；取消到貨 → periodMonth 返 NULL。
+ * audit COST_CASE_UPDATE（entityId = costCaseId；before/after receivedAt、periodMonth）。
+ */
+export async function applyReceivedConfirm(
+  tx: any,
+  args: { costCaseId: string; receivedAt: Date | null; actorId: string; docId: string },
+): Promise<void> {
+  const cc = await tx.costCase.findUnique({ where: { id: args.costCaseId } })
+  if (!cc) throw new CostInvalidError('成本唔存在')
+  const dstr = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null)
+  if (cc.lockedByRunId != null && cc.receivedAt != null && dstr(cc.receivedAt) === dstr(args.receivedAt)) {
+    return // 冇改動
+  }
+  if (cc.lockedByRunId != null) throw new PriceLockedError(cc.id)
+  const periodMonth = args.receivedAt == null ? null : deriveCostPeriod(cc.category, cc.orderedAt, args.receivedAt).periodMonth
+  await tx.costCase.update({ where: { id: cc.id }, data: { receivedAt: args.receivedAt, periodMonth } })
+  assertAuditInputClean({
+    before: { receivedAt: dstr(cc.receivedAt), periodMonth: cc.periodMonth },
+    after: { receivedAt: dstr(args.receivedAt), periodMonth },
+    notes: `到貨確認（經 Lab 單據 ${args.docId}）`,
+  })
+  await tx.auditLog.create({
+    data: {
+      actorId: args.actorId,
+      action: 'COST_CASE_UPDATE',
+      entity: 'CostCase',
+      entityId: cc.id,
+      clinicId: cc.clinicId,
+      beforeJson: JSON.stringify({ receivedAt: dstr(cc.receivedAt), periodMonth: cc.periodMonth }),
+      afterJson: JSON.stringify({ receivedAt: dstr(args.receivedAt), periodMonth }),
+      notes: `到貨確認（經 Lab 單據 ${args.docId}）`,
+    },
+  })
+}
+
+/**
+ * §7.9 / §7.10：解除某成本嘅所有配對（行 → UNMATCHED，清 costCaseId/linkType/matchedAt）。
+ * 返回受影響嘅 documentId／lineId 清單（route 自己重算文件狀態）。
+ */
+export async function unmatchAllForCost(
+  tx: any,
+  args: { costCaseId: string; actorId: string; docId: string },
+): Promise<{ docIds: string[]; lineIds: string[] }> {
+  const matched: Array<{ id: string; documentId: string; groupIndex: number; description: string }> = await tx.labDocumentLine.findMany({
+    where: { costCaseId: args.costCaseId, status: 'MATCHED' },
+    select: { id: true, documentId: true, groupIndex: true, description: true },
+  })
+  if (matched.length === 0) return { docIds: [], lineIds: [] }
+  await tx.labDocumentLine.updateMany({
+    where: { costCaseId: args.costCaseId, status: 'MATCHED' },
+    data: { status: 'UNMATCHED', costCaseId: null, linkType: null, matchedBy: null, matchedAt: null },
+  })
+  assertAuditInputClean({
+    before: { costCaseId: args.costCaseId, lines: matched.map((l) => `${l.groupIndex}:${l.description}`) },
+    after: { costCaseId: null },
+    notes: `解除配對（經 Lab 單據 ${args.docId}）`,
+  })
+  await tx.auditLog.create({
+    data: {
+      actorId: args.actorId,
+      action: 'COST_CASE_LINE_UNMATCH',
+      entity: 'CostCase',
+      entityId: args.costCaseId,
+      clinicId: null,
+      beforeJson: JSON.stringify({ costCaseId: args.costCaseId, lines: matched.map((l) => `${l.groupIndex}:${l.description}`) }),
+      afterJson: JSON.stringify({ costCaseId: null }),
+      notes: `解除配對（經 Lab 單據 ${args.docId}）`,
+    },
+  })
+  return { docIds: [...new Set(matched.map((l) => l.documentId))], lineIds: matched.map((l) => l.id) }
+}
+
+/**
+ * §7.8 step 9 / §7.9 / §7.10：文件狀態重算＋audit（reconcile 單一來源）。
+ * 唔加 version（version 由 route 加一次）。
+ */
+export async function recomputeDocStatus(
+  tx: any,
+  args: { docId: string; actorId: string },
+): Promise<string> {
+  const doc = await tx.labDocument.findUnique({ where: { id: args.docId } })
+  if (!doc) return ''
+  const lines: Array<{ status: string }> = await tx.labDocumentLine.findMany({ where: { documentId: args.docId }, select: { status: true } })
+  const status = recomputeInvoiceDocStatus(lines.map((l) => l.status))
+  if (status !== doc.status) {
+    await tx.labDocument.update({ where: { id: args.docId }, data: { status } })
+    assertAuditInputClean({ before: { status: doc.status }, after: { status }, notes: `文件狀態重算（經 Lab 單據 ${args.docId}）` })
+    await tx.auditLog.create({
+      data: {
+        actorId: args.actorId,
+        action: 'LAB_DOC_UPDATE',
+        entity: 'LabDocument',
+        entityId: args.docId,
+        clinicId: doc.clinicId,
+        beforeJson: JSON.stringify({ status: doc.status }),
+        afterJson: JSON.stringify({ status }),
+        notes: `文件狀態重算（經 Lab 單據 ${args.docId}）`,
+      },
+    })
+  }
+  return status
 }
 
 /**

@@ -153,6 +153,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_DOC_VOID', label: 'Lab 單據作廢' },
   { action: 'LAB_DOC_LINE_MATCH', label: 'Lab 明細行配對成本' },
   { action: 'LAB_DOC_LINE_UNMATCH', label: 'Lab 明細行解除配對' },
+  { action: 'COST_CASE_LINE_UNMATCH', label: '成本作廢・解除 Lab 行配對' }, // ★ cwm-labdoc P2 §7.9/T13（cost-actions.ts）
   { action: 'LAB_DOC_PRICE_UPDATE', label: 'Lab 價格／折扣修改' },
   { action: 'LAB_DOC_CASE_CREATE', label: 'Lab 成本個案建立' },
   { action: 'LAB_DOC_AMOUNT_REVIEW', label: '人手改數覆核' },
@@ -169,8 +170,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
 
 export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // ★ cwm-labdoc P2（2026-10-05）：check-sensitive-coverage 誤報 — reconcile.ts 嘅 LineAction 值
-  // 'MATCH'/'UNMATCH' 係行配對嘅 action token（純函數回傳值，唔係 AuditLog action）
-  'MATCH', 'UNMATCH',
+  // 'MATCH'/'UNMATCH'/'IGNORE' 係行配對嘅 action token（純函數回傳值／wire body 欄，唔係 AuditLog action）
+  'MATCH', 'UNMATCH', 'IGNORE',
   'LOGIN', 'LOGOUT', 'PASSWORD_CHANGE', 'PASSWORD_RESET',
   'FACE_VERIFY', 'FACE_FRAME_VIEW', 'FACE_REF_VIEW',
   'WAGE_SNAPSHOT', 'MUTATE', 'UPSERT',
@@ -196,6 +197,7 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // ★ cwm-labdoc（§14）：Lab 單據 metadata-only audit（零姓名 — labdocAudit() guard 兜底）
   'LAB_DOC_UPLOAD', 'LAB_DOC_MERGE', 'LAB_DOC_LINE_IGNORE',
   'LAB_DOC_FILE_DOWNLOAD', 'LAB_DOC_IMAGE_PURGE',
+  'LAB_DOC_UPDATE', // ★ cwm-labdoc P2：文件狀態重算（before/after 只係 status — metadata-only）
   // ★ 2026-09-30 C2/C5：網絡失敗自動補登（PENDING，敏感嘅係之後嘅批核）+ 客戶端錯誤上報（常規／自動）
   'PUNCH_CLIENT_ERROR', 'PUNCH_NETWORK_EVIDENCE',
 ])
