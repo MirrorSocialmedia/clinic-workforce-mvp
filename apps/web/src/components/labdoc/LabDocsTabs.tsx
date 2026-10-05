@@ -15,8 +15,9 @@ import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import InvoiceList from './InvoiceList'
 import ArchiveList from './ArchiveList'
+import PendingList from './PendingList'
 
-export type LabDocTab = 'invoices' | 'archive'
+export type LabDocTab = 'invoices' | 'archive' | 'pending'
 
 export interface LabDocsMe {
   role: string
@@ -89,10 +90,15 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
         <button className={tabCls(tab === 'archive')} onClick={() => onTabChange('archive')}>
           檔案庫
         </button>
+        <button className={tabCls(tab === 'pending')} onClick={() => onTabChange('pending')}>
+          待處理
+        </button>
       </div>
 
       {tab === 'invoices' ? (
         <InvoiceList clinicNames={clinicNames} providerNames={providerNames} />
+      ) : tab === 'pending' ? (
+        <PendingList me={me} clinicNames={clinicNames} />
       ) : (
         <ArchiveList clinicNames={clinicNames} providerNames={providerNames} />
       )}

@@ -17,7 +17,7 @@ const LS_KEY = 'labdocs-tab'
 function readStoredTab(): LabDocTab | null {
   try {
     const s = localStorage.getItem(LS_KEY)
-    return s === 'archive' || s === 'invoices' ? s : null
+    return s === 'archive' || s === 'invoices' || s === 'pending' ? s : null
   } catch {
     return null
   }
@@ -30,7 +30,13 @@ function Body({ mode }: { mode: 'main' | 'archive' }) {
   const [meErr, setMeErr] = useState(false)
 
   const urlTab: LabDocTab | null =
-    sp?.get('tab') === 'archive' ? 'archive' : sp?.get('tab') === 'invoices' ? 'invoices' : null
+    sp?.get('tab') === 'archive'
+      ? 'archive'
+      : sp?.get('tab') === 'invoices'
+        ? 'invoices'
+        : sp?.get('tab') === 'pending'
+          ? 'pending'
+          : null
 
   const [tab, setTab] = useState<LabDocTab>(() =>
     mode === 'archive' ? 'archive' : urlTab ?? readStoredTab() ?? 'invoices',
@@ -69,6 +75,7 @@ function Body({ mode }: { mode: 'main' | 'archive' }) {
       }
       // ?tab= 保持 URL 與顯示一致（deep-linkable）
       if (t === 'archive') router.replace('/lab-docs?tab=archive')
+      else if (t === 'pending') router.replace('/lab-docs?tab=pending')
       else router.replace('/lab-docs')
     },
     [mode, router],

@@ -464,6 +464,11 @@ export const CONFIG = {
     'POST /api/lab-docs/:id/new-case': ['OWNER', 'MANAGER'],
     'DELETE /api/lab-docs/:id': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/merge': ['OWNER', 'MANAGER'],
+    //   P2 CHUNK 5：待處理 7 類別（§9）— 列表（lab_invoice 或 lab_statement 睇到；類別級再過濾）
+    'GET /api/lab-docs/pending': ['OWNER', 'MANAGER'],
+    //   P2 CHUNK 5：待處理 resolve（§11 per-doc；lab_statement）
+    'POST /api/lab-docs/:id/review-amount': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/payee': ['OWNER', 'MANAGER'],
     //   候選 route：normalizeRoute 唔將 1–2 位 group index 變 :id → 逐個登記 0–10
     //   （>10 分組 = matrix miss → 403 fail-closed；decision log）
     'GET /api/lab-docs/:id/groups/0/candidates': ['OWNER', 'MANAGER'],
@@ -767,6 +772,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/lab-docs/:id': ['lab_invoice', 'lab_statement'],
   // ★ cwm-labdoc P2：再讀 = lab_invoice（§11）
   'POST /api/lab-docs/:id/retry': ['lab_invoice'],
+  // ★ cwm-labdoc P2 CHUNK 5：待處理（§9）— 列表 = lab_invoice 或 lab_statement；
+  //   resolve = lab_statement（AMOUNT_REVIEW／NEW_PAYEE）
+  'GET /api/lab-docs/pending': ['lab_invoice', 'lab_statement'],
+  //   P2 CHUNK 5：待處理 resolve（§11 per-doc = lab_statement）
+  'POST /api/lab-docs/:id/review-amount': ['lab_statement'],
+  'POST /api/lab-docs/:id/payee': ['lab_statement'],
   // ★ cwm-labdoc P2 §7：確認／對成本 = lab_invoice
   'PUT /api/lab-docs/:id/header': ['lab_invoice'],
   'POST /api/lab-docs/:id/new-case': ['lab_invoice'],
