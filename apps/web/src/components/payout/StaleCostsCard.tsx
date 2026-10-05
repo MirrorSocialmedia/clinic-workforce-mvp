@@ -16,7 +16,7 @@ interface Row {
   providerName: string; clinicName: string
 }
 
-const CAT: Record<string, string> = { LAB: 'Lab', INVISALIGN: 'Invisalign', IMPLANT: 'Implant' }
+const CAT: Record<string, string> = { LAB: 'Lab', INVISALIGN: 'Invisalign（舊）', IMPLANT: '植牙' }
 const KEY = 'payout.staleCosts.collapsed'
 const money = (n: number | null) => (n == null ? '未有價錢' : n.toLocaleString('en-US', { minimumFractionDigits: 2 }))
 const linkOf = (r: Row) => `/cost-entry?${new URLSearchParams({ month: r.orderedAt.slice(0, 7), dateMode: 'ordered', q: r.patientCode })}`

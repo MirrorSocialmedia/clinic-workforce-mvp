@@ -423,7 +423,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): { ws
   for (const r of d.labRows) vendorTotals.set(r.vendor || '（未命名）', (vendorTotals.get(r.vendor || '（未命名）') ?? 0) + r.amount)
   const vendors = [...vendorTotals.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0])
 
-  sectionTitle(ws, row, 'B  Lab 成本（含 Invisalign）', lastCol)
+  sectionTitle(ws, row, 'B  Lab 成本', lastCol)
   row++
   headerRow(ws, row, ['工場', '落單日', '病人編號', '病人姓名', '項目', '金額'])
   row++
@@ -457,18 +457,18 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): { ws
   }
   const bTotalRow = row
   if (d.labRows.length > 0) {
-    setLabel(ws.getCell(row, 1), 'B 總計（Lab+Invisalign）', { bold: true })
+    setLabel(ws.getCell(row, 1), 'B 總計（Lab）', { bold: true })
     for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
     setFormula(ws.getCell(row, 6), `SUM(${bSubtotalCells.map(r => `F${r}`).join(',')})`, { fmt: MONEY_FMT, bold: true, result: round2(bSubtotalVals.reduce((s, x) => s + x, 0)) })
   } else {
-    setLabel(ws.getCell(row, 1), 'B 總計（Lab+Invisalign）', { bold: true })
+    setLabel(ws.getCell(row, 1), 'B 總計（Lab）', { bold: true })
     for (let i = 2; i <= 5; i++) ws.getCell(row, i).border = thinBorder
     setData(ws.getCell(row, 6), 0, { fmt: MONEY_FMT, gray: true })
   }
   row += 2
 
   // ── C 區：Implant（規則②：單價逐筆快照；規則⑤：病人姓名）────
-  sectionTitle(ws, row, 'C  Implant 材料', lastCol)
+  sectionTitle(ws, row, 'C  植牙材料', lastCol)
   row++
   headerRow(ws, row, ['病人編號', '病人姓名', '落單日', '材料', '數量', '單價', '金額'])
   row++
@@ -512,7 +512,7 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): { ws
   }
   flushGroup(groupKey)
   const cTotalRow = row
-  setLabel(ws.getCell(row, 1), 'C 總計（Implant）', { bold: true })
+  setLabel(ws.getCell(row, 1), 'C 總計（植牙）', { bold: true })
   for (let i = 2; i <= 6; i++) ws.getCell(row, i).border = thinBorder
   if (d.implantRows.length > 0) setFormula(ws.getCell(row, 7), `SUM(${cSubtotalCells.map(r => `G${r}`).join(',')})`, { fmt: MONEY_FMT, bold: true, result: round2(cSubtotalVals.reduce((s, x) => s + x, 0)) })
   else setData(ws.getCell(row, 7), 0, { fmt: MONEY_FMT, gray: true })
@@ -641,8 +641,8 @@ export function buildDoctorSheet(wb: ExcelJS.Workbook, d: DoctorSheetData): { ws
   }
 
   // F4/F5 成本（負數行，B/C 區合計引用）
-  const fLabRow = singleRow('Lab/Invisalign 成本', c => setFormula(c, `-${'F'}${bTotalRow}`, { fmt: MONEY_FMT, result: -labTotal }))
-  const fImplantRow = singleRow('Implant 成本', c => setFormula(c, `-${'G'}${cTotalRow}`, { fmt: MONEY_FMT, result: -implantTotal }))
+  const fLabRow = singleRow('Lab 成本', c => setFormula(c, `-${'F'}${bTotalRow}`, { fmt: MONEY_FMT, result: -labTotal }))
+  const fImplantRow = singleRow('植牙成本', c => setFormula(c, `-${'G'}${cTotalRow}`, { fmt: MONEY_FMT, result: -implantTotal }))
   // ↑ F4/F5 成本（負數行，B/C 區合計引用）；公式一律唔帶前綴 =（OOXML <f> 規格）— 2026-09-10 S1 修：原 `=-F...` 寫法係現有 bug，部分 reader（Google Sheets/手機預覽）解析失敗會空白
   const fProfitRow = singleRow(
     '利潤',
@@ -969,7 +969,7 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
 
   const notes = [
     'TOTAL = 店舖營收（只計計入營收嘅付款方式）；灰字欄唔計店舖營收。',
-    `醫生分成 = 收入淨額 × 拆帳比例${d.percent != null ? `（${d.percent}%）` : ''}；未扣 Lab／Implant／Invisalign 成本，未計 SP 補貼／轉介／調整 —— 以月結單為準。`,
+    `醫生分成 = 收入淨額 × 拆帳比例${d.percent != null ? `（${d.percent}%）` : ''}；未扣 Lab／植牙成本，未計 SP 補貼／轉介／調整 —— 以月結單為準。`,
     ...(d.missingCommission.length ? [`未設拆帳：${d.missingCommission.join('、')}`] : []),
   ]
   for (const n of notes) {
