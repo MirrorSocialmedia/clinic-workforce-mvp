@@ -106,10 +106,11 @@ const fakes = {
     upsert: async ({ where, update, create }: Any) => {
       const key = where.idempotencyKey
       const existing = writeLogs.get(key)
+      const now = new Date()
       if (existing) {
-        Object.assign(existing, update)
+        Object.assign(existing, update, { updatedAt: now }) // ★ cwi-qa FX-17：@updatedAt 語義（update 必刷 updatedAt）
       } else {
-        const row = { id: `log-${key}`, createdAt: new Date(), ...create }
+        const row = { id: `log-${key}`, createdAt: now, updatedAt: now, ...create }
         writeLogs.set(key, row)
       }
       return writeLogs.get(key)
@@ -323,7 +324,7 @@ describe('createBooking', () => {
     assert.equal(log.apricotApptId, 'apt-new-1')
     assert.equal(log.requestedBy, 'contract-key')
     // 🔴 零 PII：log row 只有白名單欄（★ S5-3②：CREATE 路多 requestHash）
-    assert.deepEqual(Object.keys(log).sort(), ['action', 'apricotApptId', 'createdAt', 'id', 'idempotencyKey', 'requestHash', 'requestedBy', 'status'])
+    assert.deepEqual(Object.keys(log).sort(), ['action', 'apricotApptId', 'createdAt', 'id', 'idempotencyKey', 'requestHash', 'requestedBy', 'status', 'updatedAt'])
     assert.match(log.requestHash, /^[0-9a-f]{64}$/)
   })
 
@@ -516,6 +517,7 @@ describe('cwi-final S5-3② requestHash 冪等（T813）', () => {
     const savedRow = { ...row }
     row.status = 'IN_PROGRESS'
     row.createdAt = new Date()
+    row.updatedAt = new Date()
     await assert.rejects(createBooking(baseInput()), (e: Any) => e instanceof ApricotWriteError && e.code === 'IN_PROGRESS')
     assert.equal(createCallCount(), 1, '並發寫入中 = 唔會再打 Apricot')
 
@@ -534,8 +536,10 @@ describe('cwi-final S5-3② requestHash 冪等（T813）', () => {
     const savedRow = { ...row }
 
     // stale IN_PROGRESS（> 10 min）→ 當殘留態
+    // ★ cwi-qa FX-17：stale 口徑改 updatedAt — createdAt 11 分鐘前但 updatedAt 新 = 唔係 stale
     row.status = 'IN_PROGRESS'
     row.createdAt = new Date(Date.now() - 11 * 60 * 1000)
+    row.updatedAt = new Date(Date.now() - 11 * 60 * 1000)
     await assert.rejects(createBooking(baseInput()), (e: Any) => e instanceof ApricotWriteError && e.code === 'MANUAL_RECONCILE')
 
     // 還原 OK 底 + 唔同 payload（時段改咗）→ hash mismatch
@@ -549,6 +553,73 @@ describe('cwi-final S5-3② requestHash 冪等（T813）', () => {
     // 同 payload 照樣重放得
     const r2 = await createBooking(baseInput())
     assert.equal(r2.replayed, true)
+  })
+})
+
+// ── cwi-qa FX-17 (QA-17)：stale 判斷用 updatedAt ─────────────────────────
+describe('cwi-qa FX-17 (QA-17) stale IN_PROGRESS 用 updatedAt', () => {
+  it('舊 ERROR 行（11 分鐘前）重用寫 IN_PROGRESS → 並發第二請求 = 409 IN_PROGRESS（唔係 502 MANUAL_RECONCILE）', async () => {
+    const key = 'fx17-stale-key'
+    const old = new Date(Date.now() - 11 * 60 * 1000)
+    // 預建舊 ERROR 行（上次寫入被拒；createdAt = updatedAt = 11 分鐘前）
+    // ERROR:create_rejected = 可重用路（重試會 upsert 覆蓋同一行做 IN_PROGRESS）
+    writeLogs.set(key, {
+      id: `log-${key}`,
+      idempotencyKey: key,
+      action: 'CREATE',
+      status: 'ERROR:create_rejected',
+      requestedBy: 'contract-key',
+      createdAt: old,
+      updatedAt: old,
+    })
+
+    // 第一請求：Apricot create gate 住（in-flight）
+    let release: (() => void) | null = null
+    const gate = new Promise<void>((res) => { release = res as () => void })
+    const defRespond = respond
+    respond = (c: Call) =>
+      c.path.endsWith('/booking-details') && c.method === 'POST'
+        ? gate.then(() => ({ id: 'apt-fx17', clinicPatient: { id: 'pat-1', code: 'P0001' } }))
+        : defRespond(c)
+
+    const p1 = createBooking(baseInput({ idempotencyKey: key }))
+
+    // 等第一請求落到 IN_PROGRESS 態（fake 全 in-memory，poll 住得）
+    for (let i = 0; i < 100 && writeLogs.get(key)!.status !== 'IN_PROGRESS'; i++) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    const row = writeLogs.get(key)!
+    assert.equal(row.status, 'IN_PROGRESS')
+    assert.ok(row.updatedAt.getTime() > old.getTime(), 'IN_PROGRESS upsert 必刷 updatedAt')
+    assert.equal(row.createdAt.getTime(), old.getTime(), 'upsert 唔改 createdAt')
+
+    // 並發第二請求 → 409 IN_PROGRESS（舊口徑會睇 createdAt 11 分鐘 → 假 502 MANUAL_RECONCILE）
+    await assert.rejects(
+      createBooking(baseInput({ idempotencyKey: key })),
+      (e: Any) => e instanceof ApricotWriteError && e.code === 'IN_PROGRESS',
+    )
+    assert.equal(createCallCount(), 1, '並發請求唔會再打 Apricot create')
+
+    // 放 gate → 第一請求完成 OK
+    release!()
+    const r1 = await p1
+    assert.equal(r1.replayed, false)
+    assert.equal(r1.apricotApptId, 'apt-fx17')
+    assert.equal(createCallCount(), 1)
+
+    // 完成後同 key 重試 = 冪等重放（同一單，唔再打 create）
+    const r2 = await createBooking(baseInput({ idempotencyKey: key }))
+    assert.equal(r2.replayed, true)
+    assert.equal(r2.apricotApptId, 'apt-fx17')
+    assert.equal(createCallCount(), 1)
+
+    // 真 stale 仍然有效：IN_PROGRESS 且 updatedAt > 10 分鐘 → MANUAL_RECONCILE
+    row.status = 'IN_PROGRESS'
+    row.updatedAt = new Date(Date.now() - 11 * 60 * 1000)
+    await assert.rejects(
+      createBooking(baseInput({ idempotencyKey: key })),
+      (e: Any) => e instanceof ApricotWriteError && e.code === 'MANUAL_RECONCILE',
+    )
   })
 })
 

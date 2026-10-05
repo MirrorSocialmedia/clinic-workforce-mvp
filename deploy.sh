@@ -24,6 +24,7 @@ else
 fi
 git worktree remove --force "$GUARD_DIR"
 [ "$GUARD_FAIL" = 0 ] || { echo "❌ guard 未過 — 未 reset，host 保持舊版"; exit 1; }
+OLD_HEAD="$(git rev-parse HEAD)"
 git reset --hard origin/main
 
 # Wiring check — info only, does not block deploy
@@ -59,7 +60,11 @@ echo "== 上線 app =="
 $DC up -d app
 
 echo "── Face service（warn-only，永不擋主站）──"
-if $DC build face && $DC up -d face; then
+# ★ 2026-10-04 快 deploy：face-service／docker-compose.yml 冇改、container 又喺度行 → 唔使重 build、唔使等 15 秒
+FACE_RUNNING="$($DC ps -q --status running face 2>/dev/null || true)"
+if [ -n "$FACE_RUNNING" ] && git diff --quiet "$OLD_HEAD" HEAD -- face-service docker-compose.yml 2>/dev/null; then
+ echo "⏭️  face-service 冇改，略過"
+elif $DC build face && $DC up -d face; then
  sleep 15
  if $DC exec app node -e "fetch('http://face:8000/health').then(r=>r.json()).then(d=>{if(!d.ok)process.exit(1)}).catch(()=>process.exit(1))" 2>/dev/null; then
   echo "✅ face service 健康"

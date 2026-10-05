@@ -4,11 +4,13 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmtDateTime, fmtDate, fmtTime, toHKDateStr, getMonthRange, fmtDMY, periodMonthKey } from '@/lib/hk-date'
+import { describeBasePay } from '@/lib/base-pay-breakdown'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
 import { Card } from '@/components/ui/card'
 import { BackButton } from '@/components/BackButton'
+import { buildPayslipPdf, PAYSLIP_EMBED_KEY, type PayslipEmbedHandle } from '@/lib/payslip-pdf'
 
 
 // ★ cwm-tbledger-20260909 S5（F 章）：人手 entry 文案表已剷 —— 顯示文案由 lib/timebank-ledger.ts
@@ -46,6 +48,8 @@ interface PayrollItemData {
   employee: {
     user: { id: string; name: string; phone: string; fullName?: string | null }
     clinics: { clinicId: string; clinic: { name: string } }[]
+    joinDate?: string | null   // ★ cwm-rosterjoin：底薪明細 fallback（舊 run 冇 employedRatioDetail.from/to）
+    resignedAt?: string | null
     payRules: Array<{ payType: string; configJson: string | null }>
   }
 }
@@ -83,6 +87,12 @@ export default function EmployeePayrollDetailPage() {
 
   const printRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
+  // ★ cwm-bulkpayslip-20261003：?embed=1 = 一鍵匯出用嘅隱藏 iframe（唔跳頁、齊數據後掛 handle）
+  const [embed, setEmbed] = useState(false)
+  const [leaveLoaded, setLeaveLoaded] = useState(false)
+  useEffect(() => {
+    try { setEmbed(new URLSearchParams(window.location.search).get('embed') === '1') } catch { /* SSR／舊瀏覽器 */ }
+  }, [])
 
   // ★ 2026-08-31 cwm-leaveasof：該薪資月月底（YYYY-MM-DD，HK）—— 假期餘額「截至」呢日。
   //   periodMonth 存 HK 午夜 UTC，periodMonthKey 保證 HK 視角取年月（同 payroll-engine 寫入一致）。
@@ -101,6 +111,11 @@ export default function EmployeePayrollDetailPage() {
       const res = await fetch(`/api/payroll-runs/${runId}/employee/${empId}`)
       if (!res.ok) {
         if (res.status === 403) { setForbidden(true); return }
+        const isEmbed = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('embed') === '1'
+        if (isEmbed) {
+          ;(window as any)[PAYSLIP_EMBED_KEY] = { state: 'error', message: `HTTP ${res.status}` } satisfies PayslipEmbedHandle
+          return
+        }
         if (res.status === 404) router.push(`/payroll/${runId}`)
         return
       }
@@ -130,7 +145,26 @@ export default function EmployeePayrollDetailPage() {
       .then(r => r.ok ? r.json() : { leaveBalances: [] })
       .then(d => setLeaveBalances(d.leaveBalances || []))
       .catch(() => setLeaveBalances([]))
+      .finally(() => setLeaveLoaded(true))
   }, [empId, periodMonthEnd])
+
+  // ★ cwm-bulkpayslip-20261003：embed 模式 —— 數據＋假期餘額齊、等版面畫好先掛 handle
+  useEffect(() => {
+    if (!embed) return
+    const w = window as any
+    if (forbidden) { w[PAYSLIP_EMBED_KEY] = { state: 'forbidden' } satisfies PayslipEmbedHandle; return }
+    if (!data || !leaveLoaded) return
+    // ★ 唔用 requestAnimationFrame —— 瀏覽器會暫停畫面外 iframe 嘅 rAF（一鍵匯出嘅隱藏 iframe 永遠等唔到）
+    const t = setTimeout(() => {
+      if (!printRef.current) { w[PAYSLIP_EMBED_KEY] = { state: 'error', message: '版面未畫好' }; return }
+      w[PAYSLIP_EMBED_KEY] = {
+        state: 'ready',
+        name: data?.item?.employee?.user?.name ?? empId,
+        build: async () => (await buildPayslipPdf(printRef.current!)).output('blob'),
+      } satisfies PayslipEmbedHandle
+    }, 300)
+    return () => clearTimeout(t)
+  }, [embed, forbidden, data, leaveLoaded, empId])
 
   if (loading) {
     return <div className="flex justify-center items-center py-12 text-muted-foreground">載入中...</div>
@@ -183,41 +217,12 @@ export default function EmployeePayrollDetailPage() {
   // ★ Pay Date = PayrollRun.payDate（人手填，可 null → 顯示 —）
   const payDateDMY = item.run?.payDate ? fmtDMY(item.run.payDate) : '—'
 
-  // PDF export via html2canvas
+  // PDF export via html2canvas（★ cwm-bulkpayslip-20261003：邏輯搬去 lib/payslip-pdf，一鍵匯出共用）
   const exportPdf = async () => {
     if (!printRef.current) return
     setExporting(true)
     try {
-      const { default: html2canvas } = await import('html2canvas')
-      const { jsPDF } = await import('jspdf')
-
-      const canvas = await html2canvas(printRef.current, {
-        scale: 2, backgroundColor: '#ffffff',
-        onclone: (doc) => {
-          doc.querySelectorAll('.no-print').forEach(el => (el as HTMLElement).style.display = 'none')
-        },
-      })
-
-      // ★ 2026-08-25：留 12mm 邊距 — 原本 x=0 / 闊 210mm 貼死邊界，列印會切到
-      const pdf = new jsPDF('p', 'mm', 'a4')
-      const MARGIN = 12
-      const pageW = 210, pageH = 297
-      const contentW = pageW - MARGIN * 2      // 186
-      const contentH = pageH - MARGIN * 2      // 273
-      const imgH = (canvas.height * contentW) / canvas.width
-      const imgData = canvas.toDataURL('image/jpeg', 0.92)   // ★ 提出迴圈外，唔好每頁重新編碼
-      let offset = 0
-      while (offset < imgH) {
-        if (offset > 0) pdf.addPage()
-        pdf.addImage(imgData, 'JPEG', MARGIN, MARGIN - offset, contentW, imgH)
-        // ★ 2026-08-27 cwm-costarrival：jsPDF 唔會 clip —— 圖會畫入上下 margin，令每頁多顯示 24mm
-        //   → 下一頁由 offset 開始就會重複嗰 24mm（分頁重疊）。
-        //   用白矩形遮住上下 margin，令每頁真係只顯示 contentH。（左右唔使遮 — contentW 已限闊）
-        pdf.setFillColor(255, 255, 255)
-        pdf.rect(0, 0, pageW, MARGIN, 'F')
-        pdf.rect(0, pageH - MARGIN, pageW, MARGIN, 'F')
-        offset += contentH                     // ★ 用 contentH 唔係 pageH
-      }
+      const pdf = await buildPayslipPdf(printRef.current)
       pdf.save(`薪資明細_${employeeName}_${periodMonth}.pdf`)
     } finally {
       setExporting(false)
@@ -241,6 +246,18 @@ export default function EmployeePayrollDetailPage() {
 
   // Salary breakdown
   const basePay = salaryDetail.basePay ?? item.basePay
+  // ★ 2026-09-30 [cwm-rosterjoin]：底薪明細 —— 月中入職／離職點解唔係全月薪（月薪 × 受僱曆日 ÷ 當月曆日）
+  const basePayBreakdown = payType === 'MONTHLY'
+    ? describeBasePay({
+        basePay,
+        monthlySalary: detail.monthlySalary,
+        multiplier: detail.monthlyPayMultiplier,
+        ratioDetail: detail.employedRatioDetail ?? null,
+        periodMonth: data.periodMonth,
+        joinDate: item.employee?.joinDate ?? null,
+        resignedAt: item.employee?.resignedAt ?? null,
+      })
+    : null
   const deduction = salaryDetail.deduction ?? item.deduction
   // ★ 冇 salaryDetail.dailyWage 就唔好估 —— 顯示 0 令人知道係缺資料，
   //   basePay ÷ scheduledDays 唔係扣薪日率（差 50%），估錯比唔顯示更差
@@ -264,6 +281,8 @@ export default function EmployeePayrollDetailPage() {
   const rsTbDed = resignSettle ? Math.max(0, Number(resignSettle.tbDeduction) || 0) : 0
   // ★ cwm-tbcashout-20260917：④ 時間帳戶正數折現（已計入 grossPay 同 MPF 基數）
   const rsTbCashout = resignSettle ? Math.max(0, Number(resignSettle.tbCashout) || 0) : 0
+  // ★ 2026-09-30 [cwm-resignfull]：⑤ 超額休息日扣款（引擎已喺 gross 扣、MPF 之前）— 之前冇出行，Gross 對唔上明細
+  const rsExcessRest = resignSettle ? Math.max(0, Number(resignSettle.excessRestDeduction) || 0) : 0
   const otPay = salaryDetail.otPay ?? item.otPay
   const allowances = salaryDetail.allowances ?? detail.totalAllowances ?? 0
   const miscAmount = (item as any).miscAmount ?? 0
@@ -321,6 +340,12 @@ export default function EmployeePayrollDetailPage() {
   const closingVal: number | null = typeof tbLedger?.closing === 'number' ? tbLedger.closing : null
   // ★ 對數行：builder 自己對數（opening + Σ lines === closing），加唔埋會補 UNEXPLAINED 行 + reconciles=false
   const tbMismatch = tbLedger != null && tbLedger.reconciles === false
+  // ★ cwm-tbpreview-20261003：草稿「時間帳戶月結預覽」—— 編更差額未入帳，只顯示（確認計糧後先真正寫入）
+  const tbPreview: { minutes: number; projectedClosing: number } | null = data?.rosterDiffPreview ?? null
+  // ★ cwm-resigntb-20261004：離職結算確認後考勤有改 → 時間帳戶同結算時唔同（月結照用結算數，提示重新確認）
+  const resignTbCheck: { settledMinutes: number; nowMinutes: number } | null = data?.resignTbCheck ?? null
+  const resignTbChanged = resignTbCheck != null && resignTbCheck.settledMinutes !== resignTbCheck.nowMinutes
+  const periodEndLabel = periodMonthEnd ? `${periodMonthEnd.slice(8, 10)}/${periodMonthEnd.slice(5, 7)}` : '月尾'
 
   // Daily punch/shift summary for collapsible detail
   const fmtTime24 = fmtTime
@@ -476,7 +501,7 @@ export default function EmployeePayrollDetailPage() {
                     </td>
                     <td className="p-2">{d.note ? '' : fmtTime24(d.out)}</td>
                     <td className="text-right p-2">
-                      {d.lunchDeduct != null ? `${d.lunchDeduct} 分` : '—'}
+                      {d.lunchDeduct != null ? `${d.lunchDeduct} 分${d.lunchOverride ? '（已調整）' : ''}` : '—'}
                     </td>
                     <td className="text-right p-2">{d.minutes} 分</td>
                     <td className="text-right p-2 font-medium">${d.amount.toFixed(2)}</td>
@@ -505,7 +530,7 @@ export default function EmployeePayrollDetailPage() {
                     <div className="text-xs space-y-0.5">
                       <div>上班: {fmtTime24(d.in)}{d.clamped && <span className="text-muted-foreground ml-1">(早到, 從排班{fmtTime24(d.shiftStart)}起計)</span>}</div>
                       <div>下班: {fmtTime24(d.out)} · 有效: {d.minutes} 分</div>
-                      {d.lunchDeduct != null && <div>午休: {d.lunchDeduct} 分</div>}
+                      {d.lunchDeduct != null && <div>午休: {d.lunchDeduct} 分{d.lunchOverride ? '（已調整）' : ''}</div>}
                       {d.lunchOt && <div style={{ color: '#059669' }}>少休 +{d.lunchOt} 分（已計薪）</div>}
                       {d.lunchLate && <div style={{ color: '#dc2626' }}>超休 −{d.lunchLate} 分</div>}
                       {d.filledFromShift && <div style={{ color: '#d97706' }}>⚠️ 缺下班卡，按更次收工計</div>}
@@ -630,6 +655,24 @@ export default function EmployeePayrollDetailPage() {
               <span className="text-sm">基本薪資</span>
               <span className="font-mono font-medium">{fmtCurrency(basePay)}</span>
             </div>
+            {basePayBreakdown && (
+              <div className="text-xs text-muted-foreground" style={{ marginTop: -4 }}>
+                {basePayBreakdown.full ? (
+                  <>月薪 {fmtCurrency(basePayBreakdown.monthlySalary)}{basePayBreakdown.multiplier !== 1 ? ` × ${basePayBreakdown.multiplier}` : ''}（全月受僱）</>
+                ) : (
+                  <>
+                    月薪 {fmtCurrency(basePayBreakdown.monthlySalary)}{basePayBreakdown.multiplier !== 1 ? ` × ${basePayBreakdown.multiplier}` : ''}
+                    {' × '}受僱 {basePayBreakdown.employedDays} 日
+                    {basePayBreakdown.from && basePayBreakdown.to ? `（${basePayBreakdown.from} 至 ${basePayBreakdown.to}，含休息日）` : ''}
+                    {' ÷ '}當月 {basePayBreakdown.monthDays} 日 = {fmtCurrency(basePayBreakdown.computed)}
+                    <div>月中入職／離職按受僱曆日比例計；缺勤另外扣，唔會重複扣。</div>
+                  </>
+                )}
+                {!basePayBreakdown.matches && (
+                  <div style={{ color: '#b45309' }}>⚠️ 按上面算係 {fmtCurrency(basePayBreakdown.computed)}，同糧單唔一致（可能月中調薪或者計糧後改過入職日）— 請重新生成計糧核對</div>
+                )}
+              </div>
+            )}
 
             {deduction > 0 && (
               <div className="flex justify-between items-start text-red-500">
@@ -776,10 +819,17 @@ export default function EmployeePayrollDetailPage() {
             {resignSettle && (
               <div className="mt-1 rounded-md p-2 space-y-1" style={{ background: '#f5f3ff', border: '1px solid #ddd6fe' }}>
                 <div className="text-xs font-medium" style={{ color: '#6d28d9' }}>離職結算（已確認結算直讀）</div>
+                {resignTbChanged && (
+                  <div className="text-xs rounded px-2 py-1.5" style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e' }}>
+                    ⚠️ 時間帳戶同結算時唔同：結算時 {resignTbCheck!.settledMinutes.toLocaleString()} 分，而家 {resignTbCheck!.nowMinutes.toLocaleString()} 分
+                    （結算後考勤／更表有改）。糧單照用結算數；如要更新，請喺員工頁「離職結算」重新確認，再重算呢位員工。
+                  </div>
+                )}
                 {resignSettle.monthWage?.basePay != null && (
                   <div className="flex justify-between">
-                    <span className="text-sm">當月工資（{resignSettle.monthWage.source === 'payrollItem' ? '已生成計糧' : '預覽值'}）</span>
-                    <span className="font-mono text-sm">{fmtCurrency(resignSettle.monthWage.basePay)}</span>
+                    {/* ★ cwm-resignfull：純參考（結算當時嘅底薪快照）— 當月工資已喺上面逐項計，唔會重複加 */}
+                    <span className="text-xs text-muted-foreground">結算時當月底薪快照（參考，唔重複計）</span>
+                    <span className="font-mono text-xs text-muted-foreground">{fmtCurrency(resignSettle.monthWage.basePay)}</span>
                   </div>
                 )}
                 <div className="flex justify-between">
@@ -790,9 +840,15 @@ export default function EmployeePayrollDetailPage() {
                   <span className="text-sm">代通知金</span>
                   <span className="font-mono font-medium text-green-600">+{fmtCurrency(resignSettle.noticePay)}</span>
                 </div>
+                {rsExcessRest > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm">超額休息日扣款（MPF 前）</span>
+                    <span className="font-mono font-medium text-red-600">−{fmtCurrency(rsExcessRest)}</span>
+                  </div>
+                )}
                 {rsTbDed > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-sm">時間帳戶扣除（由尾糧扣）</span>
+                    <span className="text-sm">時間帳戶扣除（MPF 後，由尾糧扣）</span>
                     <span className="font-mono font-medium text-red-600">−{fmtCurrency(rsTbDed)}</span>
                   </div>
                 )}
@@ -817,6 +873,8 @@ export default function EmployeePayrollDetailPage() {
                 + (storeBonus ?? 0) + (item.splitPay ?? 0) + (item.otPay ?? 0)
                 - (sickDeduction ?? 0) - (item.deduction ?? 0) + (allowances ?? 0)
                 + (maternityPay ?? 0) + (paternityPay ?? 0) + rsGrossAdd
+                // ★ cwm-resignfull：同引擎 grossPay 式 — ④ 折現加、⑤ 超額休息日減（之前漏，離職月一定報對唔上）
+                + rsTbCashout - rsExcessRest
               const diff = Math.abs(shown - (grossPay ?? 0))
               return diff > 0.05
                 ? <div className="text-xs text-red-600 mt-1">⚠️ 明細對不上 Gross，差 ${diff.toFixed(2)}</div>
@@ -886,7 +944,7 @@ export default function EmployeePayrollDetailPage() {
             {/* MPF */}
             {mpf > 0 && (
               <div className="flex justify-between items-center text-orange-600">
-                <span className="text-sm">強積金 (MPF {((salaryDetail.mpfRate ?? 0.05) * 100).toFixed(0)}%) 扣除</span>
+                <span className="text-sm">{salaryDetail.mpfManual ? '強積金（離職結算人手輸入）扣除' : `強積金 (MPF ${((salaryDetail.mpfRate ?? 0.05) * 100).toFixed(0)}%) 扣除`}</span>
                 <span className="font-mono font-medium">-{fmtCurrency(mpf)}</span>
               </div>
             )}
@@ -1102,7 +1160,7 @@ export default function EmployeePayrollDetailPage() {
                 // ★ cwm-tbledger-20260909 補丁A：餘額 = 帳本期末（freeze 時序啱）。detailJson 嗰個
                 //   timeAccountMinutes 凍結喺 run 生成時（ROSTER_DIFF 寫入之前），必然缺一行；
                 //   ledger=null（時薪／即時算失敗）先 fallback 返 detailJson 舊值。
-                const timeAccount = tbLedger ? tbLedger.closing : (tb.timeAccountMinutes ?? '—')
+                const timeAccount = tbLedger ? (tbPreview ? tbPreview.projectedClosing : tbLedger.closing) : (tb.timeAccountMinutes ?? '—')
                 if (typeof timeAccount !== 'number') {
                   return (
                     <div className="rounded-lg border p-3">
@@ -1113,12 +1171,15 @@ export default function EmployeePayrollDetailPage() {
                 }
                 return (
                   <div className="rounded-lg border p-3" style={{
-                    borderColor: timeAccount >= 0 ? '#10b981' : '#dc2626',
+                    borderColor: tbPreview ? '#f59e0b' : (timeAccount >= 0 ? '#10b981' : '#dc2626'),
                     borderWidth: 2,
+                    ...(tbPreview ? { borderStyle: 'dashed' as const } : {}),
                   }}>
-                    <div className="text-xs text-muted-foreground">時間帳戶</div>
+                    <div className="text-xs text-muted-foreground">
+                      {tbPreview ? <>時間帳戶 · <b style={{ color: '#b45309' }}>月結預覽</b>（未入帳）</> : '時間帳戶'}
+                    </div>
                     <div className="text-xl font-bold mt-1" style={{ color: timeAccount >= 0 ? '#059669' : '#dc2626' }}>
-                      {timeAccount >= 0 ? '+' : '−'}{Math.abs(timeAccount)} 分鐘
+                      {tbPreview && '預計 '}{timeAccount >= 0 ? '+' : '−'}{Math.abs(timeAccount)} 分鐘
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
                       {timeAccount > 0 && `可換假 ${Math.floor(timeAccount / 540)} 天（餘 ${timeAccount % 540} 分）`}
@@ -1138,7 +1199,13 @@ export default function EmployeePayrollDetailPage() {
                       {' = '}{tb.timeAccountMinutes} <span className="opacity-70">（run 生成時口徑）</span></>}
                     </div>
                     {/* ★ cwm-tbledger-20260909 補丁A：期初＋逐筆＝期末（帳本口徑；上方「本月實得」行係 OT 拆解，兩行講唔同嘢，都要留） */}
-                    {tbLedger && (
+                    {tbLedger && tbPreview && (
+                      <div className="text-[10px] mt-1" style={{ color: '#92400e' }}>
+                        期初 {tbLedger.opening} ＋ 本月逐筆 {tbLedger.closing - tbLedger.opening} ＋ 編更差額 {tbPreview.minutes > 0 ? '+' : ''}{tbPreview.minutes}（預覽）＝ <b>預計 {tbPreview.projectedClosing}</b>
+                        <br />編更差額喺「確認計糧」之後先真正入時間帳戶；而家員工總覽／下個月結轉仲係 {tbLedger.closing}
+                      </div>
+                    )}
+                    {tbLedger && !tbPreview && (
                       <div className="text-[10px] text-muted-foreground mt-1">
                         期初 {tbLedger.opening} ＋ 本月逐筆 {tbLedger.closing - tbLedger.opening} ＝ <b>{tbLedger.closing}</b>
                         {tbLedger.frozen && tbLedger.frozenAt
@@ -1184,7 +1251,7 @@ export default function EmployeePayrollDetailPage() {
         </div>
 
         {/* ⏱ 時間帳戶明細 */}
-        {tbLedger && allDetailRows.length > 0 && (
+        {tbLedger && (allDetailRows.length > 0 || tbPreview) && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">⏱ 時間帳戶明細</h3>
             <div className="rounded-xl border shadow-card p-4 mt-3">
@@ -1209,12 +1276,19 @@ export default function EmployeePayrollDetailPage() {
                     ))}
                     {/* ★ cwm-tbledger-20260909 S5（F 章）：對數行 —— 逐行 ＋ 期初 = 餘額（builder 已對數；
                         加唔埋會補「未分類差額」紅字行，reconciles=false → 收口行標紅） */}
+                    {tbPreview && (
+                      <tr style={{ background: '#fffbeb', color: '#92400e', outline: '1px dashed #f59e0b', outlineOffset: -1 }}>
+                        <td className="py-2 pl-1">{periodEndLabel}</td>
+                        <td className="text-right">編更差額（預覽 · 確認計糧後先入帳）</td>
+                        <td className="text-right font-semibold pr-1">{tbPreview.minutes > 0 ? '+' : ''}{tbPreview.minutes} 分</td>
+                      </tr>
+                    )}
                     <tr className="border-t-2 font-semibold" style={tbMismatch ? { color: '#dc2626' } : undefined}>
-                      <td className="py-2">合計</td>
+                      <td className="py-2">{tbPreview ? '預計月結' : '合計'}</td>
                       <td className="text-right text-xs text-muted-foreground">
-                        逐行 {rowsTotal} ＋ 期初 {openingVal}
+                        逐行 {rowsTotal + (tbPreview?.minutes ?? 0)} ＋ 期初 {openingVal}
                       </td>
-                      <td className="text-right">{closingVal ?? (rowsTotal + openingVal)} 分</td>
+                      <td className="text-right">{tbPreview ? tbPreview.projectedClosing : (closingVal ?? (rowsTotal + openingVal))} 分</td>
                     </tr>
                     {tbMismatch && (
                       <tr><td colSpan={3} className="py-2 text-xs text-red-600">
@@ -1235,9 +1309,15 @@ export default function EmployeePayrollDetailPage() {
                   </div>
                 ))}
                 {/* ★ cwm-tbledger-20260909 S5（F 章）：對數行（mobile） */}
+                {tbPreview && (
+                  <div className="flex justify-between text-sm p-2 rounded" style={{ background: '#fffbeb', color: '#92400e', border: '1px dashed #f59e0b' }}>
+                    <span>{periodEndLabel} 編更差額（預覽 · 確認計糧後先入帳）</span>
+                    <span className="font-medium">{tbPreview.minutes > 0 ? '+' : ''}{tbPreview.minutes} 分</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm p-2 font-semibold border-t-2" style={tbMismatch ? { color: '#dc2626' } : undefined}>
-                  <span>合計 <span className="text-xs font-normal text-muted-foreground">逐行 {rowsTotal} ＋ 期初 {openingVal}</span></span>
-                  <span>{closingVal ?? (rowsTotal + openingVal)} 分</span>
+                  <span>{tbPreview ? '預計月結' : '合計'} <span className="text-xs font-normal text-muted-foreground">逐行 {rowsTotal + (tbPreview?.minutes ?? 0)} ＋ 期初 {openingVal}</span></span>
+                  <span>{tbPreview ? tbPreview.projectedClosing : (closingVal ?? (rowsTotal + openingVal))} 分</span>
                 </div>
                 {tbMismatch && (
                   <div className="p-2 text-xs text-red-600">

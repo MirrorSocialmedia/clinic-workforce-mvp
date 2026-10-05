@@ -9,6 +9,8 @@ import { hasPermission } from '@/lib/permissions'
 import { toHKDateStr, fmtDateTime } from '@/lib/hk-date'
 import { useLatestRequest } from '@/lib/use-latest-request'
 import { useLiveRefresh } from '@/lib/live-refresh'
+import { BulkPayslipExport } from '@/components/payroll/BulkPayslipExport'
+import { ChequeSheetExport } from '@/components/payroll/ChequeSheetExport'
 
 type RunStatus = 'DRAFT' | 'FINALIZED' | 'EXPORTED'
 
@@ -240,8 +242,18 @@ export default function PayrollListPage() {
             📋 考勤異常報表
           </Link>
         )}
+        {/* ★ cwm-bulkpayslip-20261003：一鍵匯出全部糧單（每間診所一個文件夾，每人一份 PDF） */}
+        {(canGenerate || canView) && (() => {
+          const ms = [...new Set([toHKDateStr(new Date()).slice(0, 7), ...runs.map(r => fmtPeriodMonth(r.periodMonth))])].filter(Boolean).sort().reverse()
+          const latest = runs.length ? [...runs.map(r => fmtPeriodMonth(r.periodMonth))].sort().reverse()[0] : ms[0]
+          return <BulkPayslipExport months={ms} defaultMonth={latest} />
+        })()}
         {/* ★ cwm-payrollsheet-20260921 S4：月度出糧總表（權限同考勤異常報表） */}
-        {(canGenerate || canView) && (
+        {/* ★ cwm-chequetpl-20261004：老闆可以揀自訂模版（其他人照舊） */}
+        {userRole === 'OWNER' /* ROLE-OK: 老闆拍板「出糧總表模版只俾老闆用」，同 API RBAC 一致 */ && (
+          <ChequeSheetExport months={[...new Set(runs.map(r => fmtPeriodMonth(r.periodMonth)))].filter(Boolean).sort().reverse()} />
+        )}
+        {(canGenerate || canView) && userRole !== 'OWNER' /* ROLE-OK: 同上 */ && (
           <div className="flex items-center gap-1">
             <select
               defaultValue=""

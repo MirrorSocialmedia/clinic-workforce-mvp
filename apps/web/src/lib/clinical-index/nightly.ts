@@ -17,6 +17,7 @@
 // ============================================================
 
 import { basePrisma } from '@/lib/prisma'
+import { withApricotAccount, normalizeApricotAccount } from '@/lib/apricot/account'
 import { toHKDateStr, addDaysStr } from '@/lib/hk-date'
 import { llmStats, resetLlmStats } from '@/lib/clinical/llm-client'
 import {
@@ -40,6 +41,8 @@ export interface NightlyOutcome {
   status: 'DONE' | 'FAILED'
   stopReason: string | null
   scanDate: string
+  /** ★ cwi-qa FX-30：除昨日外補掃嘅日（殘留 RUNNING 嗰晚） */
+  extraScanDates: string[]
   patientsFound: number
   patientsProcessed: number
   upserts: number
@@ -67,7 +70,13 @@ function futureDays(appointments: any[], today: string): string[] {
   return [...s].sort()
 }
 
-export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; now?: Date }): Promise<NightlyOutcome> {
+/** ★ cwm-apricotty-20261001：逐 Apricot 帳號夜跑（各自 job；青衣 = TY）。account 唔傳 = MAIN（舊行為）。 */
+export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; now?: Date; account?: string }): Promise<NightlyOutcome> {
+  const account = normalizeApricotAccount(opts.account)
+  return withApricotAccount(account, () => runClinicalIndexNightlyImpl(opts, account))
+}
+
+async function runClinicalIndexNightlyImpl(opts: { callFn?: ClinicalCallFn; now?: Date }, account: string): Promise<NightlyOutcome> {
   const t0 = Date.now()
   resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
   const now = opts.now ?? new Date()
@@ -79,14 +88,39 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
   const rxCodeEntries = await loadRxCodeEntries()
 
   const outcome: NightlyOutcome = {
-    status: 'DONE', stopReason: null, scanDate: yesterday,
+    status: 'DONE', stopReason: null, scanDate: yesterday, extraScanDates: [],
     patientsFound: 0, patientsProcessed: 0, upserts: 0, rescanned: 0,
     apiCalls: 0, errors: 0, lastError: null, durationMs: 0,
   }
 
   const d = (s: string) => new Date(`${s}T00:00:00Z`)
+
+  // ★ cwi-qa FX-30：殘留 RUNNING 補掃 — deploy（up -d app）殺 request → finally 冇行
+  // → job 永遠 RUNNING、昨日到診永遠唔補。RUNNING > 6 小時 = 已死 → 標 FAILED(ABANDONED) + 補掃佢嗰日。
+  // （活緊嘅 RUNNING 唔會喺度出現 — route 層 job 級鎖先擋；呢度專捉「被殺」殘留。）
+  const STALE_RUNNING_MS = 6 * 3_600_000
+  const staleCutoff = new Date(now.getTime() - STALE_RUNNING_MS)
+  const abandoned = await basePrisma.clinicalIndexJob.findMany({
+    where: { kind: 'NIGHTLY', account, status: 'RUNNING', startedAt: { lt: staleCutoff } },
+    select: { id: true, rangeFrom: true },
+  })
+  const scanDates = new Set<string>([yesterday])
+  for (const a of abandoned) {
+    await basePrisma.clinicalIndexJob.update({
+      where: { id: a.id },
+      data: { status: 'FAILED', lastError: 'ABANDONED (stale RUNNING > 6h)', finishedAt: new Date() },
+    })
+    const abandonedDay = toHKDateStr(a.rangeFrom)
+    if (abandonedDay < today) scanDates.add(abandonedDay) // 未來日防衛性跳過
+  }
+  if (abandoned.length > 0) {
+    outcome.extraScanDates = [...scanDates].filter((s) => s !== yesterday).sort()
+    console.warn(`[clinical-index-nightly] 補掃殘留 RUNNING 殘骸 ${abandoned.length} 個：${outcome.extraScanDates.join(', ')}`)
+  }
+  const datesToScan = [...scanDates].sort()
+
   const job = await basePrisma.clinicalIndexJob.create({
-    data: { kind: 'NIGHTLY', rangeFrom: d(yesterday), rangeTo: d(yesterday), status: 'RUNNING', startedAt: new Date() },
+    data: { kind: 'NIGHTLY', account, rangeFrom: d(datesToScan[0]), rangeTo: d(yesterday), status: 'RUNNING', startedAt: new Date() },
   })
 
   const stop = (reason: string, e: unknown) => {
@@ -96,48 +130,53 @@ export async function runClinicalIndexNightly(opts: { callFn?: ClinicalCallFn; n
   }
 
   try {
-    // 1) 掃昨日
-    let patients: any[] = []
-    try {
-      patients = await searchPatientsForDate(call, yesterday)
-    } catch (e) {
-      if (isStopNightError(e)) stop('APRICOT_UNAVAILABLE', e)
-      else stop('SEARCH_FAILED', e)
-    }
-    outcome.patientsFound = patients.length
-
-    // 2) 逐病人 3 call + upsert（含未來 7 日）
-    for (const p of patients) {
+    // 1) 掃昨日（+ ★ FX-30 補掃殘留 RUNNING 嗰啲日 — 每晚一個 date）
+    for (const scanDate of datesToScan) {
       if (outcome.status !== 'DONE') break
+      let patients: any[] = []
       try {
-        const data = await fetchPatientData(call, p.cpId ?? p.id, yesterday)
-        const v = resolvePatientDay({ patient: p, ...data, day: yesterday, clinicMap, phoneKey, rxCodeEntries })
-        if (v) {
-          await upsertVisitIndex(v); outcome.upserts++
-          if (v.hasNote && v.noteJson) {
-            try {
-              const row = await basePrisma.clinicalRecordIndex.findUnique({
-                where: { patientApricotId_visitDate_apricotApptId: { patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), apricotApptId: v.apricotApptId as string } },
-                select: { id: true },
-              })
-              if (row) await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), note: v.noteJson as any })
-            } catch (e) {
-              console.error('[quote-extract] 存儲失敗（唔阻 pipeline）:', e)
+        patients = await searchPatientsForDate(call, scanDate)
+      } catch (e) {
+        // ★ cwi-qa FX-30：APRICOT_BUSY 都係停當晚（isStopNightError 已含 BUSY）— cursor/日期唔會當完成
+        if (isStopNightError(e)) stop('APRICOT_UNAVAILABLE', e)
+        else stop('SEARCH_FAILED', e)
+        break
+      }
+      outcome.patientsFound += patients.length
+
+      // 2) 逐病人 3 call + upsert（含未來 7 日）
+      for (const p of patients) {
+        if (outcome.status !== 'DONE') break
+        try {
+          const data = await fetchPatientData(call, p.cpId ?? p.id, scanDate)
+          const v = resolvePatientDay({ patient: p, ...data, day: scanDate, clinicMap, phoneKey, rxCodeEntries })
+          if (v) {
+            await upsertVisitIndex(v); outcome.upserts++
+            if (v.hasNote && v.noteJson) {
+              try {
+                const row = await basePrisma.clinicalRecordIndex.findUnique({
+                  where: { patientApricotId_visitDate_apricotApptId: { patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), apricotApptId: v.apricotApptId as string } },
+                  select: { id: true },
+                })
+                if (row) await storeQuotesForVisit({ visitId: row.id, clinicId: v.clinicId, patientApricotId: v.patientApricotId, visitDate: new Date(`${v.visitDate}T00:00:00Z`), note: v.noteJson as any })
+              } catch (e) {
+                console.error('[quote-extract] 存儲失敗（唔阻 pipeline）:', e)
+              }
             }
           }
+          // 3) 未來 7 日（B 類）— notes/bills 唔計（hasNote=false、bill null）
+          for (const fd of futureDays(data.appointments, today)) {
+            const fv = resolvePatientDay({ patient: p, appointments: data.appointments, notes: [], bills: [], day: fd, clinicMap, phoneKey, rxCodeEntries })
+            if (fv) { await upsertVisitIndex(fv); outcome.upserts++ }
+          }
+          outcome.patientsProcessed++
+        } catch (e) {
+          if (isStopNightError(e)) { stop('APRICOT_UNAVAILABLE', e); break }
+          outcome.errors++
+          outcome.lastError = errMsg(e)
         }
-        // 3) 未來 7 日（B 類）— notes/bills 唔計（hasNote=false、bill null）
-        for (const fd of futureDays(data.appointments, today)) {
-          const fv = resolvePatientDay({ patient: p, appointments: data.appointments, notes: [], bills: [], day: fd, clinicMap, phoneKey, rxCodeEntries })
-          if (fv) { await upsertVisitIndex(fv); outcome.upserts++ }
         }
-        outcome.patientsProcessed++
-      } catch (e) {
-        if (isStopNightError(e)) { stop('APRICOT_UNAVAILABLE', e); break }
-        outcome.errors++
-        outcome.lastError = errMsg(e)
       }
-    }
 
     // 4) 重掃過去 7 日 hasNote=false（只更新 note 欄 — MD §2.3）
     if (outcome.status === 'DONE') {

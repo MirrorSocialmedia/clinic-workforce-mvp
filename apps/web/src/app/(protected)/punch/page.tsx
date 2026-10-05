@@ -9,7 +9,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { notifyDataChanged } from '@/lib/live-refresh'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import QrScanner from './components/qr-scanner'
-import { fmtTime, fmtDateTime, todayHK } from '@/lib/hk-date'
+import { fmtTime, fmtDateTime, todayHK, toHKDateStr } from '@/lib/hk-date'
+import { postPunchWithRetry, failureOutcome, isRescueMatch, type ScanOutcome } from '@/lib/punch-retry'
 import { useFaceCapture } from '@/lib/use-face-capture'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
@@ -62,6 +63,59 @@ function playBeep() {
   }
 }
 
+// ============================================================
+// ★ 2026-09-30 C2：網絡失敗證據 —— 記低「第一次掃到但打唔到」嗰個 QR
+//   下一次成功打卡時一齊送，伺服器核實嗰個碼真係 iPad 發出、喺咩時間窗口 → 自動開待批補登。
+//   存 sessionStorage：頁面 reload 都唔會唔見；私密模式／storage 唔用得 → 冇證據，唔影響打卡。
+// ============================================================
+const FA_KEY = 'punch.firstAttempt'
+const FA_MAX_AGE_MS = 10 * 60_000
+type FirstAttempt = { token: string; at: number; type: string | null }
+
+function loadFirstAttempt(type: string | null): FirstAttempt | null {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(FA_KEY) || 'null')
+    if (v && v.type === type && typeof v.token === 'string' && Date.now() - v.at < FA_MAX_AGE_MS) return v
+  } catch { /* storage 唔用得 → 當冇證據 */ }
+  return null
+}
+function rememberFirstAttempt(type: string | null, token: string, at: number) {
+  if (loadFirstAttempt(type)) return // ★ 保留最早嗰次
+  try { sessionStorage.setItem(FA_KEY, JSON.stringify({ token, at, type })) } catch { /* 同上 */ }
+}
+function clearFirstAttempt() {
+  try { sessionStorage.removeItem(FA_KEY) } catch { /* 同上 */ }
+}
+
+// ★ 2026-09-30 C5：失敗記錄排隊，下一次成功先上報（失敗嗰陣網絡本身就唔通）
+const CE_KEY = 'punch.clientErrors'
+function queueClientError(e: Record<string, unknown>) {
+  try {
+    const arr = JSON.parse(sessionStorage.getItem(CE_KEY) || '[]').slice(-9)
+    arr.push({
+      ...e,
+      at: Date.now(),
+      online: navigator.onLine,
+      standalone: window.matchMedia?.('(display-mode: standalone)').matches ?? false,
+      conn: (navigator as any).connection?.effectiveType ?? null,
+    })
+    sessionStorage.setItem(CE_KEY, JSON.stringify(arr))
+  } catch { /* storage 唔用得 → 唔上報，唔影響打卡 */ }
+}
+function flushClientErrors() {
+  let arr: any[] = []
+  try {
+    arr = JSON.parse(sessionStorage.getItem(CE_KEY) || '[]')
+    sessionStorage.removeItem(CE_KEY)
+  } catch { return }
+  if (!arr.length) return
+  fetch('/api/punch/client-error', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ events: arr }),
+  }).catch(() => { /* 上報失敗唔緊要 */ })
+}
+
 export default function PunchPage() {
   const router = useRouter()
   const [user, setUser] = useState<{ role: Role; clinics: string[] } | null>(null)
@@ -74,7 +128,10 @@ export default function PunchPage() {
     type: string
     time: string
     clinicName?: string
+    note?: string   // ★ C2：自動補登提示
   } | null>(null)
+
+  const [recordsLoaded, setRecordsLoaded] = useState(false) // ★ A2.10：未成功載入就唔好彈「未打上班卡」確認
 
   // ★ Countdown for auto-redirect
   const [countdown, setCountdown] = useState(3)
@@ -139,12 +196,13 @@ export default function PunchPage() {
 
   const fetchRecords = useCallback(async () => {
     try {
-      const res = await fetch('/api/punch/my-records', { credentials: 'include' })
+      const res = await fetch('/api/punch/my-records', { credentials: 'include', cache: 'no-store' })
       if (res.ok) {
         const data = await res.json()
         setRecords(data.records || [])
+        setRecordsLoaded(true)
       }
-    } catch {}
+    } catch { /* 網絡唔通：保留舊 records */ }
   }, [])
 
   useEffect(() => {
@@ -157,6 +215,17 @@ export default function PunchPage() {
       setLoading(false)
     }
   }, [user, fetchRecords])
+
+  // ★ 返到前台（喺路上開咗頁、鎖機、到診所再開）→ 先用 GET 建立新連線，打卡 POST 唔使撞死連線
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible') fetchRecords() }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('online', fetchRecords)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('online', fetchRecords)
+    }
+  }, [fetchRecords])
 
   // ★ 背景預熱偵測器(wasm+模型)，打卡時已是熱的
   // ★ warmup 失敗唔好吞：PWA chunk 404 會死喺呢度
@@ -252,100 +321,156 @@ export default function PunchPage() {
     ])
   }
 
-  // ★ Punch handler — returns boolean for success/failure feedback
-  const handleScan = useCallback(async (token: string): Promise<boolean> => {
-    // ★ Anti-spam: 30s cooldown + in-flight lock
-    if (punchingRef.current) return false
+  // ★ 網絡斷咗／重試失敗之後確認：「今次」嘅卡其實入咗庫未
+  //   /api/punch/my-records 已按 punchTime desc 回傳完整紀錄（id、punchType、punchTime），唔使改 API
+  const findRecentPunch = useCallback(async (type: string | null, scanStartedAt: number) => {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 5000)
+    try {
+      const res = await fetch('/api/punch/my-records', { credentials: 'include', cache: 'no-store', signal: ctrl.signal })
+      if (!res.ok) return null
+      const { records = [] } = await res.json()
+      setRecords(records)
+      setRecordsLoaded(true)
+      return records.find((x: any) => isRescueMatch(x, type, scanStartedAt)) ?? null
+    } catch {
+      return null
+    } finally {
+      clearTimeout(t)
+    }
+  }, [])
+
+  // ★ 打卡成功後嘅所有回饋（正常成功 + 網絡斷咗但查到已入庫，兩條路共用）
+  //   ⚠️ 普通 function（唔係 useCallback）：handleScan 會用到佢嘅 closure；入面只准用 ref／setter／穩定 callback，唔好讀 state
+  async function onPunchSuccess(rec: { id?: string; punchType: string; punchTime: string }, note?: string) {
+    navigator.vibrate?.([80, 40, 80])
+    playBeep()
+
+    setPunchResult({
+      type: rec.punchType === 'CLOCK_IN' ? '上工' : rec.punchType === 'CLOCK_OUT' ? '落班' : rec.punchType === 'LUNCH_START' ? '午休開始' : '午休結束',
+      time: fmtTime(rec.punchTime),
+      note,
+    })
+    setCountdown(3)
+    notifyDataChanged('attendance')
+    fetchRecords()
+    await scannerStopRef.current?.()
+
+    setPendingType(null)
+    lastPunchRef.current = Date.now()
+
+    let fs = faceStatusRef.current
+    if (!fs) {
+      try {
+        const r = await fetch('/api/face/my-status', { credentials: 'include' })
+        fs = (await r.json()).status
+        faceStatusRef.current = fs
+      } catch {}
+    }
+    const willVerify = !!rec.id && fs === 'ACTIVE'
+    setFaceDone(!willVerify)
+    if (rec.id) {
+      if (willVerify) {
+        runFaceVerify(rec.id)
+      } else {
+        const fd = new FormData(); fd.append('punchId', rec.id)
+        fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+      }
+    }
+  }
+
+  // ★ Punch handler — 回傳 ScanOutcome（ok / rejected / retry），掃描器據此決定停、封鎖碼、定自動再試
+  const handleScan = useCallback(async (token: string): Promise<ScanOutcome> => {
+    // ★ in-flight：回 retry（原本回 false 會令掃描器封鎖一個其實有效嘅碼）
+    if (punchingRef.current) return 'retry'
     if (Date.now() - lastPunchRef.current < 30000) {
-      setErrorInfo(false)
+      setErrorInfo(true)
       setError('剛打過卡，請稍候')
-      return false
+      return 'rejected'
     }
     punchingRef.current = true
     setErrorInfo(false)
     setError(null)
+    const scanStartedAt = Date.now()
+    const type = pendingType
+    const fa = loadFirstAttempt(type) // ★ C2：之前失敗嗰次嘅證據
 
     try {
       // ★ GPS location (shadow mode — never blocks punch; 3s max timeout)
       const loc = await getPunchLocationForPunch()
 
-      const res = await fetch('/api/punch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          token,
-          deviceInfo: navigator.userAgent,
-          lat: loc.lat,
-          lng: loc.lng,
-          geoFlag: loc.flag,
-          geoAcc: loc.acc,
-          punchType: pendingType, // ★ 全員必帶
-        }),
+      const r = await postPunchWithRetry({
+        token,
+        deviceInfo: navigator.userAgent,
+        lat: loc.lat,
+        lng: loc.lng,
+        geoFlag: loc.flag,
+        geoAcc: loc.acc,
+        punchType: type, // ★ 全員必帶
+        ...(fa && fa.token !== token ? { firstToken: fa.token, firstScanAt: fa.at } : {}),
       })
 
-      const data = await res.json().catch(() => ({}))
+      // ① 兩次都收唔到回應 → 先查頭先有冇入庫
+      if (r.kind === 'network') {
+        const landed = await findRecentPunch(type, scanStartedAt)
+        if (landed) { clearFirstAttempt(); await onPunchSuccess(landed); return 'ok' }
+        rememberFirstAttempt(type, token, scanStartedAt)
+        queueClientError({ stage: 'network', errName: r.errName, elapsedMs: Date.now() - scanStartedAt, type })
+        setErrorInfo(false)
+        setError('網絡唔穩定，今次未確認打到卡。請繼續對住 QR（會自動再試，唔使等換碼）')
+        return 'retry'
+      }
+
+      const { res, data, attempt } = r
       if (!res.ok) {
-        const punchErr: any = new Error(data.error || '打卡失敗')
-        punchErr.code = data.code   // ★ 透傳至 catch（例：ALREADY_PUNCHED）
-        throw punchErr
-      }
-
-      // ★ 三重回饋：震動 + 嗶聲 + 全螢幕
-      navigator.vibrate?.([80, 40, 80])
-      playBeep()
-
-      setPunchResult({
-        type: data.punchType === 'CLOCK_IN' ? '上工' : data.punchType === 'CLOCK_OUT' ? '落班' : data.punchType === 'LUNCH_START' ? '午休開始' : '午休結束',
-        time: fmtTime(data.punchTime),
-      })
-      setCountdown(3)
-      notifyDataChanged('attendance')
-      fetchRecords()
-      await scannerStopRef.current?.()
-
-      // ★ Reset type selection after successful punch
-      setPendingType(null)
-      lastPunchRef.current = Date.now()
-
-      // ★ 判斷是否要驗證臉部(只ACTIVE才開鏡頭)
-      // 用 ref 讀當下值 + 現場兜底，防狀態競速
-      let fs = faceStatusRef.current
-      if (!fs) {
-        try {
-          const r = await fetch('/api/face/my-status', { credentials: 'include' })
-          fs = (await r.json()).status
-          faceStatusRef.current = fs
-        } catch {}
-      }
-      const willVerify = !!data.recordId && fs === 'ACTIVE'
-      setFaceDone(!willVerify) // 要驗證 → 扣住倒數
-      if (data.recordId) {
-        if (willVerify) {
-          runFaceVerify(data.recordId)
-        } else {
-          // 未登記/審核中:不開鏡頭、零等待,送無幀請求讓 server 標 NOT_ENROLLED/PENDING_ENROLL
-          const fd = new FormData(); fd.append('punchId', data.recordId)
-          fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+        // ② 重試過（第一次冇回應）→ 第一次可能其實成功咗。
+        //    唔好只睇 ALREADY_PUNCHED：route 先驗 token，碼啱啱過期會回 EXPIRED 蓋過「已打」。
+        if (attempt > 1) {
+          // BUSY = 第一次仲揸住員工鎖（lock_timeout 3s），等佢 commit 先查
+          if (data.code === 'BUSY') await new Promise(x => setTimeout(x, 1500))
+          const landed = await findRecentPunch(type, scanStartedAt)
+          if (landed) { clearFirstAttempt(); await onPunchSuccess(landed); return 'ok' }
         }
+        const outcome = failureOutcome(res.status, data.code)
+        if (outcome === 'retry') {
+          rememberFirstAttempt(type, token, scanStartedAt)
+          queueClientError({ stage: `http_${res.status}`, errName: data.code ?? '', elapsedMs: Date.now() - scanStartedAt, type })
+        }
+        fetchRecords() // ★ DB-07：失敗都 refetch
+        setErrorInfo(data.code === 'ALREADY_PUNCHED')
+        setError(
+          data.code === 'ALREADY_PUNCHED' ? '今日已打過呢種卡（上次已成功）'
+          : data.error ? data.error
+          : res.status >= 500 ? '伺服器暫時連唔到，今次未打到卡，請繼續對住 QR'
+          : '打卡失敗'
+        )
+        return outcome
       }
-      return true
+
+      clearFirstAttempt()
+      flushClientErrors()
+      await onPunchSuccess(
+        { id: data.recordId, punchType: data.punchType, punchTime: data.punchTime },
+        data.autoCorrectionAt ? `網絡問題：系統已自動提交補登（${fmtTime(data.autoCorrectionAt)}），等主管批核` : undefined,
+      )
+      return 'ok'
     } catch (e: any) {
-      fetchRecords()   // ★ DB-07：失敗都 refetch（卡可能已成功入庫）
-      setErrorInfo(e.code === 'ALREADY_PUNCHED')
-      setError(e.code === 'ALREADY_PUNCHED' ? '今日已打過呢種卡（上次已成功）' : (e.message || '打卡失敗'))
-      return false
+      // 正常唔會嚟到呢度（網絡錯誤已喺 postPunchWithRetry 處理）
+      fetchRecords()
+      setErrorInfo(false)
+      setError(e?.message || '打卡失敗')
+      return 'retry' // ★ 未知錯誤唔封鎖碼（盡量唔擋）
     } finally {
       punchingRef.current = false
     }
-  }, [fetchRecords, faceEnrollStatus, pendingType])
+  }, [fetchRecords, faceEnrollStatus, pendingType, findRecentPunch])
 
   // Keep ref stable for scanner
   const handleScanRef = useRef(handleScan)
   useEffect(() => { handleScanRef.current = handleScan }, [handleScan])
 
   // Wrap in a stable function for scanner prop
-  const stableOnScan = useCallback(async (token: string): Promise<boolean> => {
+  const stableOnScan = useCallback(async (token: string): Promise<ScanOutcome> => {
     return handleScanRef.current(token)
   }, [])
 
@@ -510,6 +635,20 @@ export default function PunchPage() {
     return () => clearInterval(t)
   }, [punchResult, faceDone, router])
 
+  // ★ 2026-09-30 F-04：未打上班卡揀「下班」／未打午休開始揀「午休結束」→ 問一句（只提示，撳確定照打）
+  //   records 未成功載入（離線）就唔問 —— 唔可以因為資料唔齊而阻住人
+  function pickType(t: 'CLOCK_IN' | 'CLOCK_OUT' | 'LUNCH_START' | 'LUNCH_END') {
+    if (recordsLoaded) {
+      const today = todayHK()
+      const has = new Set(records.filter(r => toHKDateStr(r.punchTime) === today).map(r => r.punchType))
+      if (t === 'CLOCK_OUT' && !has.has('CLOCK_IN')
+        && !confirm('你今日仲未打「上班」卡。\n\n確定而家要打「下班」？\n（啱啱返工請撳「取消」，再揀「上班打卡」）')) return
+      if (t === 'LUNCH_END' && !has.has('LUNCH_START')
+        && !confirm('你今日仲未打「午休開始」。\n\n確定而家要打「午休結束」？')) return
+    }
+    setPendingType(t)
+  }
+
   if (loading) return <div className="flex justify-center items-center min-h-[200px] text-muted-foreground">載入中...</div>
   if (!user) return null
 
@@ -542,14 +681,14 @@ export default function PunchPage() {
               <div className="text-center text-sm font-medium text-muted-foreground mb-3">請選擇打卡類型</div>
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => setPendingType('CLOCK_IN')}
+                  onClick={() => pickType('CLOCK_IN')}
                   className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
                   style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }}
                 >
                   🟢 上班打卡
                 </button>
                 <button
-                  onClick={() => setPendingType('CLOCK_OUT')}
+                  onClick={() => pickType('CLOCK_OUT')}
                   className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
                   style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }}
                 >
@@ -557,7 +696,7 @@ export default function PunchPage() {
                 </button>
                 {lunchEnabled && (
                   <button
-                    onClick={() => setPendingType('LUNCH_START')}
+                    onClick={() => pickType('LUNCH_START')}
                     className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
                     style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
                   >
@@ -566,7 +705,7 @@ export default function PunchPage() {
                 )}
                 {lunchEnabled && (
                   <button
-                    onClick={() => setPendingType('LUNCH_END')}
+                    onClick={() => pickType('LUNCH_END')}
                     className="py-4 px-4 rounded-xl font-semibold text-sm transition-all active:scale-95"
                     style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }}
                   >
@@ -598,12 +737,12 @@ export default function PunchPage() {
         >
           <XCircle className={`h-5 w-5 ${errorInfo ? 'text-amber-600' : 'text-red-600'} flex-shrink-0 mt-0.5`} />
           <div className="flex-1">
-            <div className={`font-semibold ${errorInfo ? 'text-amber-800 dark:text-amber-200' : 'text-red-800 dark:text-red-200'} text-sm`}>{errorInfo ? '已打過卡' : '打卡失敗'}</div>
+            <div className={`font-semibold ${errorInfo ? 'text-amber-800 dark:text-amber-200' : 'text-red-800 dark:text-red-200'} text-sm`}>{errorInfo ? '提示' : '打卡失敗'}</div>
             <div className={`text-sm mt-0.5 ${errorInfo ? 'text-amber-700 dark:text-amber-300' : 'text-red-700 dark:text-red-300'}`}>{error}</div>
           </div>
           <button
             onClick={() => setError(null)}
-            className="text-red-500 hover:text-red-700 flex-shrink-0 p-1 rounded hover:bg-red-100"
+            className={`flex-shrink-0 p-1 rounded ${errorInfo ? 'text-amber-600 hover:text-amber-700 hover:bg-amber-100' : 'text-red-500 hover:text-red-700 hover:bg-red-100'}`}
             aria-label="關閉"
           >
             ✕
@@ -712,6 +851,10 @@ export default function PunchPage() {
           <div className="text-emerald-100 text-xl mt-2 font-mono">
             {punchResult.time}
           </div>
+
+          {punchResult.note && (
+            <div className="text-emerald-50 text-sm mt-4 px-6 text-center">{punchResult.note}</div>
+          )}
 
           <button
             onClick={() => router.push('/dashboard')}

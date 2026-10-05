@@ -23,6 +23,7 @@ interface Account {
   baseAmount: number | null
   configJson: string | null
   payConfidential: boolean
+  attendanceExempt?: boolean
   homeClinicId: string | null
   resignedAt: string | null
   permissionsJson: string | null
@@ -81,6 +82,7 @@ export default function AccountsPage() {
     configJson: null as string | null,
     assignEmployee: true,
     payConfidential: false,
+    attendanceExempt: false,
     fullName: '',
     employeeId: null as string | null,
     homeClinicId: '',
@@ -162,6 +164,7 @@ export default function AccountsPage() {
         }
         body.assignEmployee = form.assignEmployee
         body.payConfidential = form.payConfidential
+        body.attendanceExempt = form.attendanceExempt // ★ cwm-attexempt：帳號管理入口（之前只喺冇連結嘅 /employees/[id]）
         body.fullName = form.fullName
         body.homeClinicId = form.assignEmployee ? form.homeClinicId || null : undefined
       }
@@ -199,7 +202,7 @@ export default function AccountsPage() {
   const resetForm = () => {
     setForm({ name: '', phone: '', email: '', password: '', role: 'EMPLOYEE',
       clinicIds: [], joinDate: '', payType: 'HOURLY', baseAmount: '', configJson: null, assignEmployee: true,
-      payConfidential: false, fullName: '', employeeId: null, homeClinicId: '',
+      payConfidential: false, attendanceExempt: false, fullName: '', employeeId: null, homeClinicId: '',
       permGrant: [], permDeny: [] })
     setShowForm(false); setEditingId(null); setShowPwd(false)
   }
@@ -222,6 +225,7 @@ export default function AccountsPage() {
       baseAmount: acc.baseAmount?.toString() || '', configJson: acc.configJson || null,
       assignEmployee: !!acc.employeeId,
       payConfidential: acc.payConfidential || false,
+      attendanceExempt: acc.attendanceExempt === true,
       fullName: acc.fullName || '', employeeId: acc.employeeId,
       homeClinicId: acc.homeClinicId || '', permGrant: grant, permDeny: deny })
     setEditingId(acc.id)
@@ -687,6 +691,18 @@ export default function AccountsPage() {
                     <input type="checkbox" checked={form.payConfidential}
                       onChange={e => setForm({ ...form, payConfidential: e.target.checked })} />
                     🔒 薪資保密（經理在計糧中看不到此員工的金額）
+                  </label>
+
+                  {/* ★ cwm-attexempt-20260914 F：免考勤開關（2026-10-03 加到帳號管理 —— 舊入口 /employees/[id] 冇連結） */}
+                  <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!form.attendanceExempt} style={{ marginTop: 3 }}
+                      onChange={e => setForm({ ...form, attendanceExempt: e.target.checked })} />
+                    <span>
+                      免考勤（會計／行政）
+                      <span style={{ display: 'block', fontSize: 12, color: '#666' }}>
+                        開咗之後唔會出現喺排班表、工時概覽、考勤異常、編更差額；計糧、MPF、年假、法定權利一律照常。
+                      </span>
+                    </span>
                   </label>
                 </>
               )}

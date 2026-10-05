@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { currentApricotAccount, credentialProviderKey } from './account'
 
 function requireKey(): Buffer {
   const k = Buffer.from(process.env.APRICOT_ENC_KEY ?? '', 'base64')
@@ -26,15 +27,16 @@ function dec(b64: string) {
 }
 
 // ★ 唔做 module-level memo —— rotation 之後 memo 會過期
-export async function loadCreds(): Promise<ApricotCreds | null> {
-  const row = await prisma.externalCredential.findUnique({ where: { provider: 'APRICOT' } })
+// ★ cwm-apricotty-20261001：逐帳號（預設 = 而家嘅帳號 context；MAIN = 舊 provider 'APRICOT'）
+export async function loadCreds(account: string = currentApricotAccount()): Promise<ApricotCreds | null> {
+  const row = await prisma.externalCredential.findUnique({ where: { provider: credentialProviderKey(account) } })
   if (!row) return null
   return JSON.parse(dec(row.cipherText))
 }
 
-export async function saveCreds(c: ApricotCreds, refreshExpiry?: Date) {
+export async function saveCreds(c: ApricotCreds, refreshExpiry?: Date, account: string = currentApricotAccount()) {
   await prisma.externalCredential.update({
-    where: { provider: 'APRICOT' },
+    where: { provider: credentialProviderKey(account) },
     data: {
       cipherText: enc(JSON.stringify(c)),
       ...(refreshExpiry ? { refreshExpiry } : {}),
@@ -45,8 +47,23 @@ export async function saveCreds(c: ApricotCreds, refreshExpiry?: Date) {
   })
 }
 
-export async function markError(msg: string) {
+export async function markError(msg: string, account: string = currentApricotAccount()) {
   await prisma.externalCredential
-    .update({ where: { provider: 'APRICOT' }, data: { lastError: msg.slice(0, 500) } })
+    .update({ where: { provider: credentialProviderKey(account) }, data: { lastError: msg.slice(0, 500) } })
     .catch(e => console.error('[apricot] markError 失敗', e))
+}
+
+/**
+ * ★ cwm-datasource-20261003：設定頁人手貼入新憑證（取代 docker exec 跑 apricot-set-token.mjs）。
+ *   upsert（新來源都得）；lastOkAt 清空 = 「未驗證」—— 由隨後嘅測試連線成功先寫返。
+ *   ⚠️ 呢度唔 log、唔 audit 憑證內容（audit 由 route 寫，只記「更新咗」）。
+ */
+export async function setCredsManually(c: ApricotCreds, account: string) {
+  const provider = credentialProviderKey(account)
+  const cipherText = enc(JSON.stringify(c))
+  await prisma.externalCredential.upsert({
+    where: { provider },
+    update: { cipherText, lastOkAt: null, lastError: null, refreshExpiry: null, rotationCount: 0 },
+    create: { provider, cipherText },
+  })
 }

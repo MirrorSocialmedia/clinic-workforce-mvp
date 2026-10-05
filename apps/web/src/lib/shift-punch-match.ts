@@ -27,6 +27,9 @@ export type MatchedDay = {
   hasClockIn: boolean
   hasClockOut: boolean
   isPartial: boolean // 有 IN 冇 OUT
+  /** ★ 配對到嘅最早上班卡／最遲落班卡時間（冇就 undefined）—— 異常列表顯示用 */
+  clockInAt?: Date
+  clockOutAt?: Date
 }
 
 /**
@@ -142,6 +145,8 @@ export function matchPunchesToShifts(
       hasClockIn: !!clockIn,
       hasClockOut: !!clockOut,
       isPartial: !!clockIn && !clockOut,
+      clockInAt: clockIn?.effectiveTime,
+      clockOutAt: clockOut?.effectiveTime,
     })
   }
 

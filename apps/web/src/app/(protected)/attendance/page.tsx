@@ -381,6 +381,7 @@ export default function AttendancePage() {
   const [exceptions, setExceptions] = useState<ExceptionRecord[]>([])
   // ★ cwm-holidayot-20260911: 假期返工 OT 調整 modal（只喺「假期返工 OT」＋ OWNER 先開到）
   const [otAdjustTarget, setOtAdjustTarget] = useState<{ empId: string; empName: string; date: string } | null>(null)
+  const [lunchAdjustTarget, setLunchAdjustTarget] = useState<{ empId: string; empName: string; date: string } | null>(null) // ★ 2026-09-30：午飯扣減調整
   const [exLoading, setExLoading] = useState(false)
   const [exClinics, setExClinics] = useState<Array<{ id: string; name: string }>>([])
   const [exEmployees, setExEmployees] = useState<Array<{ id: string; name: string }>>([])
@@ -723,8 +724,20 @@ export default function AttendancePage() {
     visibleExceptions.forEach(e => { if (e.type === 'EARLY_LEAVE') m.set(batchKey(e), (m.get(batchKey(e)) ?? 0) + 1) })
     return m
   }, [visibleExceptions])
-  // 穩定 row key（手機卡 + 桌面表格）
-  const exKey = (ex: ExceptionRecord) => `${ex.employeeId}_${ex.date}_${ex.type}_${ex.punchTime ?? ''}_${ex.lunchLate ? 'L' : ''}`
+  // ★ row key 一定要唯一 —— 補登行冇 punchTime、同日重複打卡會令 key 撞（React 重用錯 DOM → 篩選後亂序）
+  //   做法：用內容砌 base key，撞咗就加序號。用 WeakMap 由 ex 物件攞 key，唔改 ExceptionRecord 形狀。
+  const exKeyMap = useMemo(() => {
+    const m = new WeakMap<ExceptionRecord, string>()
+    const seen = new Map<string, number>()
+    for (const ex of visibleExceptions) {
+      const base = `${ex.employeeId}_${ex.date}_${ex.type}_${ex.punchTime ?? ex.correctionTime ?? ''}_${ex.lunchLate ? 'L' : ''}`
+      const n = seen.get(base) ?? 0
+      seen.set(base, n + 1)
+      m.set(ex, n === 0 ? base : `${base}#${n}`)
+    }
+    return m
+  }, [visibleExceptions])
+  const exKey = (ex: ExceptionRecord) => exKeyMap.get(ex) ?? `${ex.employeeId}_${ex.date}_${ex.type}`
 
   // ★ cwm-attbatch-20260927：篩選／月份／診所／員工變 → 清空剔選
   useEffect(() => { setSelectedKeys(new Set()) }, [periodMonth, exClinicId, exEmployeeId, exTypeFilter, exStatusFilter])
@@ -1499,7 +1512,18 @@ export default function AttendancePage() {
                         ) : (
                           <>
                             {showLate && <span style={{ color: '#d97706', fontWeight: 600 }}>遲到 {showLate.lateMinutes || 0} 分</span>}
-                            {showEarly && <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {showEarly.earlyMinutes || 0} 分</span>}
+                            {showEarly && (
+                              <>
+                                <span style={{ color: '#dc2626', fontWeight: 600 }}>早退 {showEarly.earlyMinutes || 0} 分</span>
+                                {user?.role === 'OWNER' && ( // ROLE-OK: 同假期 OT 調整一樣只 OWNER
+                                  <button
+                                    onClick={() => setLunchAdjustTarget({ empId: showEarly.employeeId, empName: showEarly.employeeName, date: showEarly.date })}
+                                    style={{ fontSize: 11, color: '#2563eb', marginLeft: 6, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                                    🍱 午飯扣減
+                                  </button>
+                                )}
+                              </>
+                            )}
                             {showOt && (
                               <>
                                 <span style={{ color: '#059669', fontWeight: 600 }}>OT {showOt.otMinutes || 0} 分</span>
@@ -2473,6 +2497,15 @@ export default function AttendancePage() {
           onSaved={() => { fetchRecordExceptions(); fetchExceptions() }}
         />
       )}
+      {lunchAdjustTarget && (
+        <LunchOverrideModal
+          empId={lunchAdjustTarget.empId}
+          empName={lunchAdjustTarget.empName}
+          workDate={lunchAdjustTarget.date}
+          onClose={() => setLunchAdjustTarget(null)}
+          onSaved={() => { fetchRecordExceptions(); fetchExceptions() }}
+        />
+      )}
     </div>
   )
 }
@@ -2593,6 +2626,133 @@ function HolidayOtAdjustModal({ empId, empName, workDate, onClose, onSaved }: {
                   disabled={busy}
                   style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid #fca5a5', color: '#b91c1c', background: '#fff', cursor: 'pointer' }}>
                   移除扣減
+                </button>
+              )}
+              <button onClick={() => submit('save')} disabled={!canSave || busy}
+                style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: 'none', background: canSave && !busy ? '#2563eb' : '#93c5fd', color: '#fff', cursor: canSave && !busy ? 'pointer' : 'default', fontWeight: 600 }}>
+                {busy ? '處理中…' : '儲存'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// ★ 2026-09-30：午飯扣減調整 modal（OWNER only）
+//   例：即日離職、未食飯就走 → 設 0。一日一筆（再入係改）。成功後 refetch —— 引擎重算先係真值。
+// ============================================================
+function LunchOverrideModal({ empId, empName, workDate, onClose, onSaved }: {
+  empId: string
+  empName: string
+  workDate: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [info, setInfo] = useState<{
+    override: { lunchMinutes: number; reason: string } | null
+    lunchDefault: number
+    dayDeductsLunch: boolean
+    hasClockIn: boolean
+    firstIn: string | null
+    lastOut: string | null
+  } | null>(null)
+  const [mins, setMins] = useState('')
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    fetch(`/api/lunch-overrides?employeeId=${encodeURIComponent(empId)}&workDate=${workDate}`, { credentials: 'include', cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(d => {
+        if (!alive) return
+        setInfo(d)
+        setMins(d.override ? String(d.override.lunchMinutes) : '0')
+        setReason(d.override?.reason ?? '')
+      })
+      .catch(e => { if (alive) { alert('讀取失敗：' + (e instanceof Error ? e.message : String(e))); onClose() } })
+    return () => { alive = false }
+  }, [empId, workDate])
+
+  const fmtHK = (iso: string | null) => iso
+    ? new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit' })
+    : '—'
+  const n = Number(mins)
+  const canSave = !!info && info.hasClockIn && info.dayDeductsLunch
+    && mins.trim() !== '' && Number.isInteger(n) && n >= 0 && n <= info.lunchDefault
+    && reason.trim().length > 0
+
+  const submit = async (mode: 'save' | 'delete') => {
+    if (!info) return
+    setBusy(true)
+    try {
+      const url = `/api/lunch-overrides?employeeId=${encodeURIComponent(empId)}&workDate=${workDate}`
+      const res = mode === 'delete'
+        ? await fetch(url, { method: 'DELETE', credentials: 'include' })
+        : await fetch('/api/lunch-overrides', {
+            method: 'PUT', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ employeeId: empId, workDate, lunchMinutes: n, reason: reason.trim() }),
+          })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { alert(data.error || '操作失敗'); return }
+      onSaved()
+      onClose()
+    } catch { alert('網路錯誤') }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+         onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{ background: '#fff', borderRadius: 10, padding: '18px 20px', width: 420, maxWidth: '92vw', boxShadow: '0 8px 30px rgba(0,0,0,0.2)' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#111827', marginBottom: 12 }}>
+          午飯扣減調整 —— {empName} · {workDate}
+        </div>
+        {info === null ? (
+          <div style={{ fontSize: 12, color: '#6b7280' }}>載入中…</div>
+        ) : !info.hasClockIn ? (
+          <div style={{ fontSize: 12, color: '#b91c1c' }}>嗰日冇上班卡，冇午飯扣減可以調整。</div>
+        ) : !info.dayDeductsLunch ? (
+          <div style={{ fontSize: 12, color: '#6b7280' }}>嗰日更次已設定「不扣飯鐘」，唔使調整。</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#6b7280' }}>上班 → 下班</span>
+              <span style={{ fontWeight: 600 }}>{fmtHK(info.firstIn)} → {fmtHK(info.lastOut)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#6b7280' }}>規則預設扣</span>
+              <span>{info.lunchDefault} 分</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label style={{ color: '#6b7280' }}>當日實際扣（分鐘）</label>
+              <input type="number" min={0} max={info.lunchDefault} value={mins} onChange={e => setMins(e.target.value)}
+                style={{ width: 90, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12 }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label style={{ color: '#6b7280' }}>原因（必填）</label>
+              <input type="text" value={reason} onChange={e => setReason(e.target.value)} placeholder="例：即日離職，未食飯已走"
+                style={{ width: 200, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12 }} />
+            </div>
+            {!info.lastOut && (
+              <div style={{ fontSize: 11, color: '#b91c1c' }}>
+                ⚠️ 嗰日冇下班卡：時薪會按更次收工時間計錢，請先補登實際下班時間。
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '6px 8px' }}>
+              ⚠️ 會改當日工時（時薪＝工資；月薪＝午飯 OT／遲到），並記入操作記錄。一日只有一筆（再入係改）。已確認嘅計糧要先退回草稿。
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 2 }}>
+              <button onClick={onClose} disabled={busy} style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>取消</button>
+              {info.override && (
+                <button onClick={() => { if (confirm(`移除 ${workDate} 嘅午飯扣減調整（回復扣 ${info.lunchDefault} 分）？`)) submit('delete') }}
+                  disabled={busy}
+                  style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid #fca5a5', color: '#b91c1c', background: '#fff', cursor: 'pointer' }}>
+                  移除調整
                 </button>
               )}
               <button onClick={() => submit('save')} disabled={!canSave || busy}

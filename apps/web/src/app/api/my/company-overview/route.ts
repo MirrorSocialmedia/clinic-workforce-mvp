@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { toHKDateStr, fmtTime, leaveCoversDate } from '@/lib/hk-date'
+import { employedFromWhere } from '@/lib/employment-scope'
 
 // ============================================================
-// GET /api/my/company-overview — Company-wide schedule overview for a week
+// GET /api/my/company-overview — Company-wide schedule overview for a week / month
 // All roles. Uses employee's clinics → company → all clinics in company.
-// Query: ?weekStart=2026-07-13
+// Query: ?weekStart=2026-07-13  或  ?month=2026-10（★ cwm-mobilemonth-20261003：手機整月總覽，同電腦版月視圖）
 // ============================================================
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -15,14 +16,25 @@ export async function GET(req: NextRequest) {
   const { session } = auth
 
   const { searchParams } = new URL(req.url)
-  const weekStartStr = searchParams.get('weekStart')
-  if (!weekStartStr) {
+  const monthStr = searchParams.get('month')
+  const weekStartStr = monthStr ? `${monthStr}-01` : searchParams.get('weekStart')
+  if (monthStr && !/^\d{4}-(0[1-9]|1[0-2])$/.test(monthStr)) {
+    return NextResponse.json({ error: 'month 格式要 YYYY-MM' }, { status: 400 })
+  }
+  if (!weekStartStr || !/^\d{4}-\d{2}-\d{2}$/.test(weekStartStr)) {
     return NextResponse.json({ error: 'weekStart is required (YYYY-MM-DD)' }, { status: 400 })
   }
 
+  // ★ 變數名沿用 weekStart/weekEnd（週模式）；月模式 = 該月 1 號 → 下月 1 號（HK）
   const weekStart = new Date(weekStartStr + 'T00:00:00+08:00')
   const weekEnd = new Date(weekStart)
-  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7)
+  if (monthStr) {
+    const [y, m] = monthStr.split('-').map(Number)
+    weekEnd.setTime(new Date(`${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-01T00:00:00+08:00`).getTime())
+  } else {
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 7)
+  }
+  const dayCount = Math.round((weekEnd.getTime() - weekStart.getTime()) / 86400000)
 
   // 1. Find employee → clinics → companyIds
   const employee = await prisma.employee.findUnique({
@@ -58,12 +70,16 @@ export async function GET(req: NextRequest) {
   const allClinicIds = allClinics.map(c => c.id)
 
   // 3. Get all employees in those clinics
+  // ★ cwm-resignsweep-20261003：已離職員工只喺呢段期間（週／月）仲有返工日先出現（離職之後撤走空行）
   const allEmployeeClinics = await prisma.employeeClinic.findMany({
-    where: { clinicId: { in: allClinicIds } },
+    // ★ cwm-attexempt：免考勤（會計／行政）唔出現喺更表 —— 同電腦版排班口徑一致
+    where: { clinicId: { in: allClinicIds }, employee: { ...employedFromWhere(weekStart), attendanceExempt: false } },
     include: {
       employee: {
         include: {
           user: { select: { id: true, name: true } },
+          // ★ cwm-mobilemonth-20261003：全職／兼職分組（同電腦版月視圖：HOURLY = 兼職）
+          payRules: { where: { isActive: true }, orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }], take: 1, select: { payType: true } },
         },
       },
     },
@@ -74,6 +90,7 @@ export async function GET(req: NextRequest) {
     userId: string
     name: string
     clinics: { id: string; name: string }[]
+    partTime: boolean
   }>()
 
   for (const ec of allEmployeeClinics) {
@@ -86,6 +103,7 @@ export async function GET(req: NextRequest) {
         userId: emp.userId,
         name: user.name || '(unknown)',
         clinics: [],
+        partTime: emp.payRules?.[0]?.payType === 'HOURLY',
       })
     }
     employees.get(key)!.clinics.push({ id: ec.clinicId, name: '' })
@@ -152,17 +170,19 @@ export async function GET(req: NextRequest) {
 
   // Build per-day data
   const days: Date[] = []
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < dayCount; i++) {
     const d = new Date(weekStart)
     d.setUTCDate(d.getUTCDate() + i)
     days.push(d)
   }
 
-  // Group shifts by employeeId+date+clinicId
+  // Group shifts by employeeId+date
+  // ★ cwm-mobilemonth-20261003：唔再按員工「已綁定診所」過濾 —— 臨時去未綁定嘅店返工（電腦版照顯示）
+  //   之前會喺手機總覽靜靜消失。shifts 已經收窄到本公司診所。
   const shiftsMap = new Map<string, any[]>()
   for (const s of shifts) {
     const dateKey = toHKDateStr(new Date(s.startTime))
-    const key = `${s.employeeId}::${dateKey}::${s.clinicId}`
+    const key = `${s.employeeId}::${dateKey}`
     if (!shiftsMap.has(key)) shiftsMap.set(key, [])
     shiftsMap.get(key)!.push(s)
   }
@@ -185,6 +205,7 @@ export async function GET(req: NextRequest) {
 
   const result = {
     weekStart: weekStartStr,
+    ...(monthStr ? { month: monthStr } : {}),
     days: days.map(d => toHKDateStr(d)),
     currentUserId,
     employees: employeeList.map(emp => ({
@@ -192,12 +213,11 @@ export async function GET(req: NextRequest) {
       userId: emp.userId,
       name: emp.name,
       clinics: emp.clinics,
+      partTime: emp.partTime,
       shifts: days.map(day => {
         const dateKey = toHKDateStr(day)
-        const shiftsForDay = emp.clinics.flatMap(c => {
-          const key = `${emp.id}::${dateKey}::${c.id}`
-          return shiftsMap.get(key) || []
-        })
+        const shiftsForDay = [...(shiftsMap.get(`${emp.id}::${dateKey}`) || [])]
+          .sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
         const leaveForDay = leaveMap.get(`${emp.id}::${dateKey}`) || []
 
         return {

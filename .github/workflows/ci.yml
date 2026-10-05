@@ -117,13 +117,16 @@ jobs:
           # ⚠️ 新增 src/lib test 檔要手動補呢個 list。
           TZ=UTC npx tsx --test \
             'src/app/api/external/**/*.test.ts' \
+            src/lib/apricot/account.test.ts \
             src/lib/apricot/availability.test.ts \
+            src/lib/apricot/normalize.test.ts \
             src/lib/apricot/s5-active-statuses.test.ts \
             src/lib/apricot/sanitize-availability.v2.test.ts \
             src/lib/apricot/sync-clinicid.test.ts \
             src/lib/apricot/sync-force.test.ts \
             src/lib/apricot/write-booking-paths-guard.test.ts \
             src/lib/apricot/write-booking.test.ts \
+            src/lib/base-pay-breakdown.test.ts \
             src/lib/bookable-slots-s5-4.test.ts \
             src/lib/bookable-slots.test.ts \
             src/lib/clinical-index/extract-note-text.test.ts \
@@ -135,10 +138,19 @@ jobs:
             src/lib/clinical/quote-parser.test.ts \
             src/lib/clinical/t623-llm-proxy-contract.test.ts \
             src/lib/cost-entry/clinic-prefix.test.ts \
+            src/lib/employment-scope.test.ts \
+            src/lib/exceptions-late-early.test.ts \
             src/lib/external-api.test.ts \
             src/lib/external-clinic.test.ts \
             src/lib/leave-summary.test.ts \
             src/lib/my-nav.test.ts \
+            src/lib/payout-xlsx-engine-parity.test.ts \
+            src/lib/payout/daily-report.test.ts \
+            src/lib/roster-hours.resign.test.ts \
+            src/lib/patient-search.test.ts \
+            src/lib/apricot/source-pure.test.ts \
+            src/lib/cheque-sheet/build.test.ts \
+            src/lib/cheque-sheet/exclude-hint.test.ts \
             src/lib/payroll-engine.bonus-makeup.test.ts \
             src/lib/payroll-engine.bonus-rules.test.ts \
             src/lib/payroll-engine.hourly-eowage.test.ts \
@@ -146,6 +158,9 @@ jobs:
             src/lib/phone-hash.test.ts \
             src/lib/phone.test.ts \
             src/lib/pl-mark-route.test.ts \
+            src/lib/probation.test.ts \
+            src/lib/punch-evidence.test.ts \
+            src/lib/punch-retry.test.ts \
             src/lib/provider-availability-grid.test.ts \
             src/lib/provider-availability-layout.test.ts \
             src/lib/provider-availability-route.test.ts \
@@ -155,8 +170,13 @@ jobs:
             src/lib/provider-leave.test.ts \
             src/lib/provider-pattern.test.ts \
             src/lib/reconciliation/parsePaymentReport.test.ts \
+            src/lib/resign-cutoff.test.ts \
+            src/lib/resign-full-settlement.test.ts \
+            src/lib/roster-diff.test.ts \
             src/lib/scheduling-leave-summary-route.test.ts \
             src/lib/scheduling-memo-route.test.ts \
+            src/lib/settlement-utils.test.ts \
+            src/lib/shift-write.test.ts \
             src/lib/staff-by-date.test.ts \
             src/lib/sync-cooldown.test.ts \
             src/lib/timebank-makeup-batch-route.test.ts \

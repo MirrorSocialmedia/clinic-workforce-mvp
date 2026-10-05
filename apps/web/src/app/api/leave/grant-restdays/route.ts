@@ -3,7 +3,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { grantMonthlyRestDays, countMonthlyLeaveDays, getPublicHolidayDays } from '@/lib/payroll-engine'
-import { hkParts, toHKDateStr } from '@/lib/hk-date'
+import { hkParts, toHKDateStr, hkTodayStr } from '@/lib/hk-date'
+import { resignedDateError } from '@/lib/employment-scope'
 import { lockEmployee, isLockBusy } from '@/lib/emp-lock'
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -37,8 +38,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (employeeScope === 'all') {
     emps = await prisma.employee.findMany({ where: { status: 'ACTIVE' }, select: { id: true } })
   } else if (employeeScope) {
-    const emp = await prisma.employee.findUnique({ where: { id: employeeScope }, select: { id: true } })
-    emps = emp ? [emp] : []
+    const emp = await prisma.employee.findUnique({ where: { id: employeeScope }, select: { id: true, status: true, resignedAt: true, leaveDate: true } })
+    // ★ cwm-resignsweep-20261003：目標月 1 號之前已離職 → 唔發（全員路徑本身只揀 ACTIVE）
+    if (emp && resignedDateError(emp, [toHKDateStr(target)], hkTodayStr())) {
+      return NextResponse.json({ error: '員工已離職，唔會再發放休息日' }, { status: 400 })
+    }
+    emps = emp ? [{ id: emp.id }] : []
   } else {
     emps = []
   }

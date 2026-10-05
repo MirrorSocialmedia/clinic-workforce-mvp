@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { toHKDateStr } from '@/lib/hk-date'
 import { useTodoCount } from '@/lib/use-todo-count'
 import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
+import { ProbationDueCard } from '@/components/dashboard/ProbationDueCard'
 
 /* ── Types ── */
 
@@ -279,6 +280,9 @@ export default function TodoPage() {
           </p>
         </div>
       </div>
+
+      {/* ── ★ cwm-probation-20261003：試用期將滿（提醒，唔計入待辦數） ── */}
+      {canReviewFace && <ProbationDueCard compact />}
 
       {/* ── Empty State ── */}
       {!hasItems && (

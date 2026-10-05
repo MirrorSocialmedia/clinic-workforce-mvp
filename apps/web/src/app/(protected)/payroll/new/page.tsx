@@ -13,11 +13,17 @@ interface Clinic {
   name: string
 }
 
-export default function NewPayrollPage() {
+// ★ cwm-payrolladd-20261004：由草稿計糧單「加入員工／重算」過嚟 —— ?clinic=&month=&employee=&run=
+//   預先揀好店／月／員工，試算表只得嗰個人（同第一次生成一樣可以輸入店舖獎金、勤工獎、拆帳），計完返回計糧單
+type NewPayrollSearch = { clinic?: string; month?: string; employee?: string; run?: string }
+
+export default function NewPayrollPage({ searchParams }: { searchParams?: NewPayrollSearch }) {
   const router = useRouter()
+  const fromRunId = typeof searchParams?.run === 'string' ? searchParams.run : ''
   const [clinics, setClinics] = useState<Clinic[]>([])
-  const [selectedClinic, setSelectedClinic] = useState<string>('')
+  const [selectedClinic, setSelectedClinic] = useState<string>(() => (typeof searchParams?.clinic === 'string' ? searchParams.clinic : ''))
   const [periodMonth, setPeriodMonth] = useState(() => {
+    if (typeof searchParams?.month === 'string' && /^\d{4}-\d{2}$/.test(searchParams.month)) return searchParams.month
     const ym = toHKDateStr(new Date()).slice(0, 7)
     const [y, m] = ym.split('-').map(Number)
     return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
@@ -42,8 +48,8 @@ export default function NewPayrollPage() {
     // ★ cwm-money P2-6 E：月中調薪提示（active 規則本月 2 號或之後生效）
     midMonthRuleChanges?: Array<{ name: string; effectiveFrom: string }>;
   } | null>(null)
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([])
-  const [selectedEmployee, setSelectedEmployee] = useState<string>('')
+  const [employees, setEmployees] = useState<{ id: string; name: string; homeClinicId: string | null; lastDay: string | null }[]>([])
+  const [selectedEmployee, setSelectedEmployee] = useState<string>(() => (typeof searchParams?.employee === 'string' ? searchParams.employee : ''))
 
   // Pre-check modal state
   const [showPrecheckModal, setShowPrecheckModal] = useState(false)
@@ -122,15 +128,27 @@ export default function NewPayrollPage() {
       setGrant(Array.isArray(d.user?.grant) ? d.user.grant : [])
       setDeny(Array.isArray(d.user?.deny) ? d.user.deny : [])
     })
-    fetch('/api/employees?all=1').then(async r => {
-      if (!r.ok) return
+  }, [fetchClinics])
+
+  // ★ cwm-payrolllist-20261004：員工下拉跟計糧月份 —— 嗰個月仲有受僱嘅員工都出（包括當月離職，
+  //   之前一離職就消失、計唔到佢最後一個月）；過咗嗰個月先唔出
+  useEffect(() => {
+    if (!/^\d{4}-\d{2}$/.test(periodMonth)) return
+    let alive = true
+    fetch(`/api/employees?all=1&employedFrom=${periodMonth}-01`).then(async r => {
+      if (!r.ok || !alive) return
       const d = await r.json()
       setEmployees((d.employees || []).map((e: any) => ({
         id: e.id,
         name: e.user?.name || e.id,
+        homeClinicId: e.homeClinicId ?? null,
+        lastDay: e.status === 'RESIGNED' && e.leaveDate ? toHKDateStr(e.leaveDate) : null,
       })))
     })
-  }, [fetchClinics])
+    return () => { alive = false }
+  }, [periodMonth])
+  // 只列揀咗嗰間店（計糧按主屬店分單）嘅員工；URL 帶入嘅員工照留
+  const employeeOptions = employees.filter(e => !selectedClinic || e.homeClinicId === selectedClinic || e.id === selectedEmployee)
 
   // Redirect if no payroll_generate permission
   const canGenerate = userRole ? hasPermission(userRole, 'payroll_generate', grant, deny) : true
@@ -150,12 +168,18 @@ export default function NewPayrollPage() {
     if (!previewResult?.items?.length) return
     const sb: Record<string, string> = {}
     const sp: Record<string, string> = {}
+    // ★ 2026-09-30 [cwm-resignfull]：勤工獎覆蓋都預填（舊計糧單／離職結算已揀）— 之前永遠顯示「自動」，
+    //   生成時送 {} → 靠 carry；而家顯示同實際一致，人手改咗照優先
+    const bo: Record<string, 'FORCE_ON' | 'FORCE_OFF'> = {}
     for (const it of previewResult.items) {
       if ((it as any).storeBonus) sb[it.employeeId] = String((it as any).storeBonus)
       if ((it as any).splitPay != null) sp[it.employeeId] = String((it as any).splitPay)
+      const ov = (it as any).attendanceBonusOverride
+      if (ov === 'FORCE_ON' || ov === 'FORCE_OFF') bo[it.employeeId] = ov
     }
     if (Object.keys(sb).length) setStoreBonusInputs(prev => ({ ...sb, ...prev }))
     if (Object.keys(sp).length) setSplitPayInputs(prev => ({ ...sp, ...prev }))
+    if (Object.keys(bo).length) setBonusOverrides(prev => ({ ...bo, ...prev }))
   }, [previewResult?.items])
 
   // ★ DB-03：換店／換月 → 手動輸入全部作廢（否則上個月獎金會寫入今個月 run）
@@ -206,12 +230,16 @@ export default function NewPayrollPage() {
       if (checkRes.ok) {
         const checkData = await checkRes.json()
         const existingDraft = (checkData.runs || [])[0]
-        if (existingDraft) {
-          const ok = confirm(
-            `該月已有草稿（${existingDraft._count?.items ?? '?'} 位員工）。\n\n` +
-            `重新生成會用最新嘅打卡／補登／假期重算，\n` +
-            `已輸入嘅店舖獎金同拆帳會保留。\n\n` +
-            `確定重新生成？`
+        if (existingDraft && !(fromRunId && selectedEmployee)) {
+          const empName = employees.find(e => e.id === selectedEmployee)?.name
+          const ok = confirm(selectedEmployee
+            // ★ cwm-payrollsingle-20261003：只重算揀嗰個人
+            ? `該月已有草稿（${existingDraft._count?.items ?? '?'} 位員工）。\n\n` +
+              `只會重算「${empName ?? '所選員工'}」（佢唔喺單入面就加入），其他員工唔郁。\n\n確定？`
+            : `該月已有草稿（${existingDraft._count?.items ?? '?'} 位員工）。\n\n` +
+              `重新生成會用最新嘅打卡／補登／假期重算【全部員工】，\n` +
+              `已輸入嘅店舖獎金同拆帳會保留。\n\n` +
+              `確定重新生成？`
           )
           if (!ok) return
         }
@@ -255,6 +283,8 @@ export default function NewPayrollPage() {
           storeBonuses: storeBonusPayload,
           splitPays: splitPayPayload,
           attendanceBonusOverrides: bonusOverrides,
+          // ★ cwm-payrollsingle-20261003：揀咗員工 = 只計嗰個人（已有草稿：其他人唔郁；未有：開一張得佢嘅草稿）
+          ...(selectedEmployee ? { employeeId: selectedEmployee } : {}),
         }),
       })
 
@@ -273,6 +303,10 @@ export default function NewPayrollPage() {
         setShowPrecheckModal(true)
       }
       setResult(data)
+      // ★ cwm-payrolladd-20261004：由計糧單過嚟、冇略過／失敗 → 直接返回計糧單
+      if (fromRunId && selectedEmployee && !data.skipped?.length && !data.failed?.length) {
+        router.push(`/payroll/${data.runId || fromRunId}`)
+      }
     } catch (err: any) {
       setError(err.message || '生成失敗')
     } finally {
@@ -294,8 +328,15 @@ export default function NewPayrollPage() {
 
   return (
     <div className="p-6" style={{ maxWidth: '1800px' }}>
-      <BackButton to="/payroll" label="返回計糧" />
-      <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>+ 生成計糧</h1>
+      <BackButton to={fromRunId ? `/payroll/${fromRunId}` : '/payroll'} label={fromRunId ? '返回計糧單' : '返回計糧'} />
+      <h1 className="text-2xl font-bold text-foreground tracking-tight" style={{ margin: '0 0 24px' }}>
+        {fromRunId && selectedEmployee ? `計算員工：${employees.find(e => e.id === selectedEmployee)?.name ?? '…'}` : '+ 生成計糧'}
+      </h1>
+      {fromRunId && selectedEmployee && (
+        <div className="mb-4 p-3 rounded-md text-sm" style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', maxWidth: 720 }}>
+          只計呢一個員工：喺下面試算表輸入店舖獎金／勤工獎／拆帳，再撳「只計呢個員工」。計糧單入面其他員工唔郁，計完自動返回計糧單。
+        </div>
+      )}
 
       <div style={{ maxWidth: 500 }}>
         <div style={{ marginBottom: 20 }}>
@@ -343,8 +384,8 @@ export default function NewPayrollPage() {
             className="w-full px-3 py-2.5 rounded-md g border text-base focus:outline-none focus:ring-2 focus:ring-brand/30"
           >
             <option value="">全部員工</option>
-            {employees.map(emp => (
-              <option key={emp.id} value={emp.id}>{emp.name}</option>
+            {employeeOptions.map(emp => (
+              <option key={emp.id} value={emp.id}>{emp.name}{emp.lastDay ? `（已離職，最後一日 ${emp.lastDay}）` : ''}</option>
             ))}
           </select>
         </div>
@@ -354,7 +395,7 @@ export default function NewPayrollPage() {
           disabled={generating || !periodMonth || !selectedClinic}
           className={`w-full py-3 rounded-md border-none text-base font-semibold text-white transition-colors ${generating || !periodMonth || !selectedClinic ? 'bg-gray-400 cursor-default' : 'bg-brand hover:bg-brand-dark cursor-pointer'}`}
         >
-          {generating ? '計算中...' : '生成計糧'}
+          {generating ? '計算中...' : (selectedEmployee ? '只計呢個員工' : '生成計糧')}
         </button>
 
         {error && (
@@ -366,8 +407,13 @@ export default function NewPayrollPage() {
         {result && (
           <div className="mt-4 p-4 rounded-lg bg-emerald-50 text-emerald-700 text-sm border border-emerald-200">
             <div className="mb-2 font-semibold">✅ 計糧生成成功！</div>
-            <div>員工數: {result.itemCount}</div>
-            <div>應付總額: HK${result.totalPayable.toLocaleString()}</div>
+            {selectedEmployee ? (
+              // ★ cwm-payrollsingle-20261003：只計咗揀嗰個人 —— 計糧單其他員工唔郁
+              <div>只計「{employees.find(e => e.id === selectedEmployee)?.name ?? '所選員工'}」：HK${result.totalPayable.toLocaleString()}（計糧單入面其他員工唔郁）</div>
+            ) : (<>
+              <div>員工數: {result.itemCount}</div>
+              <div>應付總額: HK${result.totalPayable.toLocaleString()}</div>
+            </>)}
             {result.notice && (
               <div className="mt-2 p-2 rounded bg-amber-50 text-amber-700 border border-amber-200">
                 ⚠️ {result.notice}
@@ -602,18 +648,23 @@ export default function NewPayrollPage() {
                             </td>
                           )}
                           <td className="px-1 py-1.5 text-center">
-                            <input
-                              type="text" inputMode="decimal"
-                              value={splitPayInputs[item.employeeId] ?? ''}
-                              onChange={e => {
-                                const v = e.target.value
-                                if (v === '' || /^\d*\.?\d*$/.test(v)) {
-                                  setSplitPayInputs(s => ({ ...s, [item.employeeId]: v }))
-                                }
-                              }}
-                              onBlur={() => handleSplitPayBlur(item.employeeId)}
-                              className="w-16 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
-                              placeholder="金額" />
+                            {/* ★ cwm-payout S-2（方案 A）：時薪禁止拆帳 — 同店舖獎金一樣，只限 MONTHLY */}
+                            {item.payType === 'MONTHLY' ? (
+                              <input
+                                type="text" inputMode="decimal"
+                                value={splitPayInputs[item.employeeId] ?? ''}
+                                onChange={e => {
+                                  const v = e.target.value
+                                  if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                                    setSplitPayInputs(s => ({ ...s, [item.employeeId]: v }))
+                                  }
+                                }}
+                                onBlur={() => handleSplitPayBlur(item.employeeId)}
+                                className="w-16 text-center px-1 py-0.5 rounded border text-xs focus:outline-none focus:ring-1 focus:ring-brand/30"
+                                placeholder="金額" />
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
                           </td>
                           <td className="px-1 py-1.5 text-center font-semibold font-mono">
                             {(item.totalPayable || 0).toLocaleString()}

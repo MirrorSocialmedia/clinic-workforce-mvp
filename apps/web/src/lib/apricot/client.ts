@@ -1,11 +1,15 @@
 import { loadCreds, saveCreds, markError, type ApricotCreds } from './token'
+import { currentApricotAccount } from './account'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 
 // ★ 2026-08-25：本地 e2e 可指去 mock Apricot（APRICOT_BASE env）；default 係生產 URL
 const BASE = process.env.APRICOT_BASE || 'https://apricotvita.com'
 
 export async function apricotCall(path: string, init?: RequestInit): Promise<any> {
-  const creds = await loadCreds()
+  // ★ cwm-apricotty-20261001：帳號由 context 決定（withApricotAccount；冇設 = MAIN）——
+  //   成個 request 用同一個帳號（load → rotation save → markError 三步唔准中途變）
+  const account = currentApricotAccount()
+  const creds = await loadCreds(account)
   if (!creds) throw new Error('APRICOT_NOT_CONFIGURED')
 
   const res = await fetch(`${BASE}${path}`, {
@@ -42,16 +46,16 @@ export async function apricotCall(path: string, init?: RequestInit): Promise<any
     }
     if (changed) {
       // ★ 寫入失敗一定要 throw
-      await saveCreds(next, refreshExpiry)
+      await saveCreds(next, refreshExpiry, account)
     }
   }
 
   if (res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400)) {
-    await markError(`auth failed HTTP ${res.status}`)
+    await markError(`auth failed HTTP ${res.status}`, account)
     throw new Error('APRICOT_AUTH_EXPIRED') // ★ 唔重試
   }
   if (res.status === 429) {
-    await markError('rate limited 429')
+    await markError('rate limited 429', account)
     throw new Error('APRICOT_RATE_LIMITED') // ★ 唔重試
   }
   if (!res.ok) {

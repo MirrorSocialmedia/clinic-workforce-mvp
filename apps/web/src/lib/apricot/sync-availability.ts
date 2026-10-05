@@ -18,6 +18,7 @@ import { prisma } from '@/lib/prisma'
 import { toHKDateStr } from '@/lib/hk-date'
 import { apricotCall, withApricotLockRetry } from './client'
 import { withApricotLock } from './lock'
+import { withApricotAccount, isAccountDeadError } from './account'
 import { extractOpenSch, extractBookings } from './availability'
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -223,30 +224,36 @@ export async function runAvailabilitySync(
   const result = await withApricotLock(async () => {
     const clinics = await prisma.clinic.findMany({
       where: { apricotClinicId: { not: null } }, // §2.2：只 sync 有接通嘅
-      select: { id: true, name: true, apricotClinicId: true },
+      select: { id: true, name: true, apricotClinicId: true, apricotAccount: true },
       orderBy: { name: 'asc' },
     })
 
     const results: AvailabilityRunResult['results'] = []
+    // ★ cwm-apricotty-20261001：逐帳號判斷失效 —— 青衣 token 過期唔應該連累原帳號嘅店
+    const deadAccounts = new Set<string>()
     for (const c of clinics) {
       // where 已 filter not null — 運行時多一層防禦（Prisma 型別唔會窄化）
       if (!c.apricotClinicId) continue
+      if (deadAccounts.has(c.apricotAccount)) {
+        results.push({ clinic: c.name, clinicId: c.id, error: `APRICOT_AUTH_EXPIRED（帳號 ${c.apricotAccount} 已失效，今次跳過）` })
+        continue
+      }
       const clinicRef = { id: c.id, name: c.name, apricotClinicId: c.apricotClinicId }
       try {
         results.push({
           clinic: c.name,
           clinicId: c.id,
           // ★ callFn 傳 undefined 行預設（真 Apricot）；from: start 保證窗口同外層一致
-          ...(await syncAvailability(clinicRef, callFn, { from: start })),
+          ...(await withApricotAccount(c.apricotAccount, () => syncAvailability(clinicRef, callFn, { from: start }))),
         })
       } catch (e: any) {
         const msg = e?.message ?? String(e)
         console.error(`[availability] ${c.name} 失敗：`, msg)
         results.push({ clinic: c.name, clinicId: c.id, error: msg })
-        if (msg.includes('AUTH_EXPIRED')) {
-          // ★ spec §3.4 + 任務鐵律：AUTH_EXPIRED 唔會重試 —— 停手，唔好循環撞
-          console.error('[availability] Apricot 認證失效 —— 剩餘診所唔再打，bot 帳號要重新登入（報 CEO）')
-          break
+        if (isAccountDeadError(msg)) {
+          // ★ spec §3.4 + 任務鐵律：AUTH_EXPIRED 唔會重試 —— 停手，唔好循環撞（只停同一帳號）
+          console.error(`[availability] Apricot 帳號 ${c.apricotAccount} 認證失效／未設定 —— 同帳號剩餘診所唔再打，要重新登入（報 CEO）`)
+          deadAccounts.add(c.apricotAccount)
         }
       }
       await new Promise((r) => setTimeout(r, CLINIC_DELAY_MS))

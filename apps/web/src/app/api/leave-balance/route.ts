@@ -8,6 +8,7 @@ import { LEAVE_SYSTEM_KEYS, allowsNegativeBalance } from '@/lib/leave-types'
 import { hkDateEnd } from '@/lib/hk-date'
 import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 import { flagIfSelfEdit } from '@/lib/self-edit-flag'
+import { NOT_RESIGNED_WHERE } from '@/lib/employment-scope'
 
 // ============================================================
 // GET /api/leave-balance — Get leave balance
@@ -23,6 +24,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const employeeId = searchParams.get('employeeId')
     const year = searchParams.get('year')
+    // ★ cwm-resignsweep-20261003：mine=1 = 只要自己（員工手機「我嘅假期結餘」）——
+    //   老闆／經理 scope=all，唔加會攞晒全公司餘額（2026-10-03 撞到：手機卡出咗一堆同事嘅休息日）
+    const mine = searchParams.get('mine') === '1'
 
     // ★ 2026-08-31 cwm-leaveasof：asOf = 'YYYY-MM-DD'（HK）。
     //   傳咗就重算「截至嗰日」嘅 entitled / used；唔傳照回 LeaveBalance 即時值
@@ -41,7 +45,11 @@ export async function GET(req: NextRequest) {
     let targetEmployeeId: string | undefined
 
     // Employees only see their own balance
-    if (scope === 'self') {
+    if (mine) {
+      const emp = await prisma.employee.findUnique({ where: { userId: session.userId }, select: { id: true } })
+      if (!emp) return jsonNoStore({ leaveBalances: [] })
+      targetEmployeeId = emp.id
+    } else if (scope === 'self') {
       const emp = await prisma.employee.findUnique({
         where: { userId: session.userId },
       })
@@ -57,7 +65,9 @@ export async function GET(req: NextRequest) {
       targetEmployeeId = employeeId
     }
 
-    const where: any = targetEmployeeId ? { employeeId: targetEmployeeId } : {}
+    // ★ cwm-resignsweep-20261003：列全部（假期管理「全部員工」、儀表板）唔包已離職；
+    //   指定 employeeId（帳號管理、薪資明細、離職結算）照回 —— 結算／翻查要見到。
+    const where: any = targetEmployeeId ? { employeeId: targetEmployeeId } : { employee: NOT_RESIGNED_WHERE }
     if (year) where.year = parseInt(year)
 
     const balances = await prisma.leaveBalance.findMany({

@@ -91,6 +91,8 @@ export const CONFIG = {
     'POST /api/employees/:id/resign': ['OWNER'],
     // ★ 2026-09-04 [cwm-rbacfix-20260904] resign-settle 補登記（deploy blocker）
     'POST /api/employees/:id/resign-settle': ['OWNER'],
+    // ★ 2026-09-30 [cwm-restdebt] F6：撤銷離職結算（RS-10 配套出路）
+    'DELETE /api/employees/:id/resign-settle': ['OWNER'],
     'POST /api/employees/:id/rehire': ['OWNER'],
 
     // Shift rule config routes
@@ -157,6 +159,7 @@ export const CONFIG = {
     'PUT /api/punches/:id': ['OWNER', 'MANAGER'],
     'POST /api/punches/:id/void': ['OWNER', 'MANAGER'],
     'GET /api/punch/my-records': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'],
+    'POST /api/punch/client-error': ['OWNER', 'MANAGER', 'ACCOUNTANT', 'EMPLOYEE'], // ★ 2026-09-30 C5
     // ★ cwm-crossclinic-20260914：異地打卡提醒（純查詢）。★ 唔加 ACCOUNTANT —— 佢哋唔改排班。
     'GET /api/attendance/cross-clinic': ['OWNER', 'MANAGER'],
 
@@ -221,12 +224,22 @@ export const CONFIG = {
     'PUT /api/payroll-runs/:id': ['OWNER'],
     'DELETE /api/payroll-runs/:id': ['OWNER'],
     'POST /api/payroll-runs/:id/export': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/payroll-runs/bulk-export-audit': ['OWNER', 'MANAGER', 'ACCOUNTANT'], // ★ cwm-bulkpayslip-20261003
     'POST /api/payroll-runs/preview': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     // ★ cwm-payrollsheet-20260921 S3：支票號填寫（出糧後人手填；純記錄）
     'PATCH /api/payroll-runs/:id/employee/:id': ['OWNER'],
+    'POST /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER'], // ★ cwm-payrollsingle-20261003：草稿單個員工重算
+    'DELETE /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER'], // ★ cwm-payrollsingle-20261003：草稿單個員工移除
     // ★ cwm-payrollsheet-20260921 S4：月度出糧總表（保密過濾同 export 同一把尺）
     'GET /api/payroll-runs/cheque-sheet': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    // ★ cwm-chequetpl-20261004：出糧總表自訂模版／出糧診所 —— 老闆拍板「只俾老闆用」，★★★ 唔加 RBAC_PERM_OVERRIDES
+    'GET /api/cheque-sheet-templates': ['OWNER'],
+    'POST /api/cheque-sheet-templates': ['OWNER'],
+    'PUT /api/cheque-sheet-templates/:id': ['OWNER'],
+    'DELETE /api/cheque-sheet-templates/:id': ['OWNER'],
+    'GET /api/cheque-sheet-payers': ['OWNER'],
+    'PUT /api/cheque-sheet-payers': ['OWNER'],
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/allowed-clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
@@ -235,6 +248,10 @@ export const CONFIG = {
     'GET /api/holiday-ot-adjustments': ['OWNER'],
     'PUT /api/holiday-ot-adjustments': ['OWNER'],
     'DELETE /api/holiday-ot-adjustments/:id': ['OWNER'],
+    // ★ 2026-09-30：午飯扣減人手調整 —— 同假期 OT 調整一樣只 OWNER；RBAC_PERM_OVERRIDES 唔加
+    'GET /api/lunch-overrides': ['OWNER'],
+    'PUT /api/lunch-overrides': ['OWNER'],
+    'DELETE /api/lunch-overrides': ['OWNER'],
 
     // Account management routes
     'GET /api/accounts': ['OWNER'],
@@ -272,9 +289,6 @@ export const CONFIG = {
 
     // Leave balance refresh
     'POST /api/leave-balance/refresh': ['OWNER', 'MANAGER'],
-
-    // Leave settlement (resignation)
-    'POST /api/leave-settlement': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
     // Consultation revenue routes
     'GET /api/consultation-revenue': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
@@ -375,6 +389,15 @@ export const CONFIG = {
     //   ★★★ 唔加 RBAC_PERM_OVERRIDES（坑⑧）。
     'GET /api/apricot-accounts/unassigned': ['OWNER'],
     'PUT /api/apricot-accounts': ['OWNER'],
+    // ★ cwm-datasource-20261003：資料來源設定 + 憑證（貼 token）—— 憑證等同 Apricot 登入，只准 OWNER。
+    //   ★★★ 唔加 RBAC_PERM_OVERRIDES（有 apricot_sync 權限都唔應該換得到登入憑證）。
+    'GET /api/apricot-sources': ['OWNER'],
+    'POST /api/apricot-sources': ['OWNER'],
+    'PUT /api/apricot-sources': ['OWNER'],
+    'PUT /api/apricot-sources/clinic': ['OWNER'],
+    'PUT /api/apricot-sources/credential': ['OWNER'],
+    'POST /api/apricot-sources/test': ['OWNER'],
+    'GET /api/apricot-sources/health': ['OWNER'],
     'GET /api/payment-method-rules': ['OWNER', 'MANAGER'],
     'POST /api/payment-method-rules': ['OWNER'],
 
@@ -393,6 +416,7 @@ export const CONFIG = {
     'DELETE /api/payout-runs/:id': ['OWNER'], // ★ AA4: 刪除草稿月結單
     'GET /api/payout-runs/:id/export': ['OWNER'], // ★ AA3: Excel 匯出
     'GET /api/payout-runs/clinic-report': ['OWNER'], // ★ cwm-payoutxlsx C: 全店月報（MD 坑⑧）
+    'GET /api/payout-runs/daily': ['OWNER'], // ★ cwm-dailyrev-20261003: 每日大數（同月結單同一權限）
     'GET /api/payout-runs/:id/vendor-summary': ['OWNER'], // ★ 2026-08-26: 工廠總覽（跨醫生）
     'POST /api/payout-runs/clinics': ['OWNER'],
     'GET /api/provider-referrals': ['OWNER'],
@@ -492,7 +516,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'PUT /api/clinics/:id/shift-rule-config': ['scheduling'],
 
   // —— 離職結算：有 leave_approve 或 payroll_generate 權限可以觸發 ——
-  'POST /api/leave-settlement': ['leave_approve', 'payroll_generate'],
+  // ★ 2026-09-30 [cwm-restdebt] RS-16：舊 /api/leave-settlement 已刪（另一套口徑：前端傳月薪、日薪=月薪×12÷365、唔讀 LeaveBalance；前端冇用）
   'POST /api/employees/:id/resign-settle': ['payroll_generate'],
 
   // —— 發放休息日：有 scheduling 權限就可以發放（grant-restdays route 改用 scheduling 權限） ——
@@ -523,9 +547,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/payroll-runs/:id/employee/:id': ['payroll_view', 'payroll_generate'],
   // ★ cwm-payrollsheet-20260921 S3：同「確認計糧」（PUT :id）同一個權限 —— 會計開咗 payroll_finalize 就填得到
   'PATCH /api/payroll-runs/:id/employee/:id': ['payroll_finalize'],
+  'POST /api/payroll-runs/:id/employee/:id': ['payroll_generate'], // ★ cwm-payrollsingle-20261003
+  'DELETE /api/payroll-runs/:id/employee/:id': ['payroll_generate'], // ★ cwm-payrollsingle-20261003
   // ★ cwm-payrollsheet-20260921 S4：同考勤異常報表同一級（payroll_view）
   'GET /api/payroll-runs/cheque-sheet': ['payroll_view'],
   'POST /api/payroll-runs/:id/export': ['payroll_view', 'payroll_generate'],
+  'POST /api/payroll-runs/bulk-export-audit': ['payroll_view', 'payroll_generate'], // ★ cwm-bulkpayslip-20261003
   'GET /api/payroll-runs/exceptions': ['payroll_view', 'payroll_generate', 'attendance_manage'],
   'POST /api/payroll-runs/preview': ['payroll_view', 'payroll_generate'],
   // ★ 生成／預檢限 payroll_generate（淨係 payroll_view 唔夠）
@@ -663,6 +690,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'DELETE /api/payout-runs/:id': ['provider_payout'], // ★ AA4
   'GET /api/payout-runs/:id/export': ['provider_payout'], // ★ AA3
   'GET /api/payout-runs/clinic-report': ['provider_payout'], // ★ cwm-payoutxlsx C: 全店月報（同單張匯出同一套權限）
+  'GET /api/payout-runs/daily': ['provider_payout'], // ★ cwm-dailyrev-20261003
   'GET /api/payout-runs/:id/vendor-summary': ['provider_payout'], // ★ 2026-08-26: 工廠總覽（同月結單同一權限，MD §3.3）
   'POST /api/payout-runs/clinics': ['provider_payout'],
   'GET /api/provider-referrals': ['provider_payout'],

@@ -20,6 +20,8 @@ interface Clinic {
   longitude: number | null
   geoRadius: number | null
   apricotClinicId: string | null
+  apricotAccount?: string
+  apricotPayoutFrom?: string | null
   // ★ providerslot-20260830 T2：可約時段四欄（DB default 3/30/30/24）
   capacityPerProvider: number
   leadTimeMin: number
@@ -310,6 +312,11 @@ function ClinicsPageInner() {
     if (newRadius === null) return
     const newApricotId = prompt('Apricot 診所 ID（留空 = 清除）：', clinic.apricotClinicId || '')
     if (newApricotId === null) return
+    // ★ cwm-apricotty-20261001：Apricot 帳號（原帳號 MAIN；青衣 TY）+ 醫生月結起計月份
+    const newAccount = prompt('Apricot 帳號（原帳號 = MAIN；青衣 = TY）：', clinic.apricotAccount || 'MAIN')
+    if (newAccount === null) return
+    const newPayoutFrom = prompt('醫生月結由邊個月開始計（YYYY-MM；留空 = 冇限制）：', clinic.apricotPayoutFrom || '')
+    if (newPayoutFrom === null) return
     setAutoLat(null) // reset auto location after use
     setAutoLng(null)
 
@@ -322,6 +329,8 @@ function ClinicsPageInner() {
     body.longitude = newLng?.trim() ? Number(newLng.trim()) : null
     body.geoRadius = newRadius?.trim() ? Number(newRadius.trim()) : null
     body.apricotClinicId = newApricotId?.trim() || null
+    body.apricotAccount = newAccount.trim().toUpperCase() || 'MAIN'
+    body.apricotPayoutFrom = newPayoutFrom.trim() || null
 
     const res = await fetch(`/api/clinics/${clinic.id}`, {
       method: 'PUT',
@@ -330,7 +339,7 @@ function ClinicsPageInner() {
       body: JSON.stringify(body),
     })
     if (res.ok) fetchAll()
-    else alert('修改失敗')
+    else { const e = await res.json().catch(() => ({})); alert(e.error || '修改失敗') }
   }
 
   if (loading) return <div>載入中...</div>
@@ -601,6 +610,12 @@ function ClinicsPageInner() {
                       {clinic.apricotClinicId
                         ? <code className="text-xs">{clinic.apricotClinicId}</code>
                         : <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">未綁定</span>}
+                      {clinic.apricotAccount && clinic.apricotAccount !== 'MAIN' && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-sky-100 text-sky-700 ml-1">帳號 {clinic.apricotAccount}</span>
+                      )}
+                      {clinic.apricotPayoutFrom && (
+                        <span className="text-xs text-muted-foreground ml-1">月結由 {clinic.apricotPayoutFrom}</span>
+                      )}
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

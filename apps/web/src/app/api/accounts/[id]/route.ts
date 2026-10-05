@@ -201,13 +201,20 @@ export async function PUT(
   return runWithAudit(auditCtx, async () => {
     try {
       const body = await req.json()
-      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, homeClinicId, permissionsJson, ipAllowlist, fullName } = body
+      const { name, phone, email, role, status, clinicIds, payType, baseAmount, configJson, effectiveFrom, employeeStatus, newPassword, assignEmployee, joinDate, payConfidential, attendanceExempt, homeClinicId, permissionsJson, ipAllowlist, fullName } = body
 
       const existing = await prisma.user.findUnique({
         where: { id: params.id },
         include: { employee: true },
       })
       if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+      // ★ cwm-resignsweep-20261003：離職／復職唔准喺度直接改 status —— 會跳過 applyResignCutoff
+      //   （冇 resignedAt、之後嘅更／假唔取消、帳號仲登入得），要行「辦理離職」／「復職」。
+      if (employeeStatus !== undefined && employeeStatus !== (existing.employee?.status ?? null)
+        && (employeeStatus === 'RESIGNED' || existing.employee?.status === 'RESIGNED')) {
+        return NextResponse.json({ error: '離職／復職請用「辦理離職」或「復職」功能' }, { status: 400 })
+      }
 
       const userUpdate: any = {}
       if (name !== undefined) userUpdate.name = name
@@ -293,10 +300,11 @@ export async function PUT(
       // Update employee if exists (may have just been backfilled above)
       let homeClinicCleared = false
       let empUpdate: any = {} // ★ declared here so AuditLog can reference it after the block
-      if (employee && (employeeStatus !== undefined || payConfidential !== undefined || homeClinicId !== undefined || joinDate !== undefined && joinDate !== '')) {
+      if (employee && (employeeStatus !== undefined || payConfidential !== undefined || attendanceExempt !== undefined || homeClinicId !== undefined || joinDate !== undefined && joinDate !== '')) {
         empUpdate = {}
         if (employeeStatus !== undefined) empUpdate.status = employeeStatus
         if (payConfidential !== undefined) empUpdate.payConfidential = payConfidential
+        if (typeof attendanceExempt === 'boolean') empUpdate.attendanceExempt = attendanceExempt // ★ cwm-attexempt：帳號管理入口
 
         // ★ joinDate 之前只在建立新 Employee 時用（:235），更新現有員工完全冇處理 ——
         //   前端改了入職日、API 回 200，但 DB 冇變（Prisma 對缺欄係「唔更新」唔係報錯）。
@@ -330,7 +338,8 @@ export async function PUT(
         // ★ 入職日直接決定年假累積額度（totalAccruedLeave）——
         //   改了要即刻重算，否則 LeaveBalance 一直用舊值，
         //   要等有人手動撳「重新計算假期」先反映。
-        if (empUpdate.joinDate) {
+        // ★ cwm-resignsweep-20261003：已離職唔重算（年假由離職結算定死；用 now 計會喺離職後繼續累積）
+        if (empUpdate.joinDate && employee.status !== 'RESIGNED') {
           const annualType = await prisma.leaveType.findUnique({
             where: { systemKey: 'ANNUAL_LEAVE' },
           })

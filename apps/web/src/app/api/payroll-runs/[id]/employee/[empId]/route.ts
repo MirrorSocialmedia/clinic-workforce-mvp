@@ -1,12 +1,13 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolvePayrollScope, canSeeConfidential } from '@/lib/scope-helpers'
+import { prisma, basePrisma } from '@/lib/prisma'
+import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
+import { resolvePayrollScope, canSeeConfidential, getConfidentialScope } from '@/lib/scope-helpers'
+import { generatePayrollRun } from '@/lib/payroll-engine'
 import { runWithAudit } from '@/lib/audit-context'
-import { getMonthRange, periodMonthKey, toHKDateStr, hkDaysInMonth, addDaysStr } from '@/lib/hk-date'
-import { estimateScheduledHours } from '@/lib/shift-punch-match'
+import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
 import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
+import { computeRosterHours } from '@/lib/roster-hours'
 // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder（同員工總覽同一把尺）
 import { buildTimeBankLedger, type LedgerMonth } from '@/lib/timebank-ledger'
 
@@ -37,6 +38,10 @@ export async function GET(
         select: {
           payConfidential: true,
           homeClinicId: true,
+          // ★ 2026-09-30 [cwm-rosterjoin]：舊 run（冇 employedRatioDetail.from/to）顯示底薪明細嘅 fallback
+          joinDate: true,
+          resignedAt: true,
+          attendanceExempt: true, // ★ cwm-tbpreview-20261003：編更差額預覽要同 finalize 同一個 filter
           user: { select: { id: true, name: true, phone: true, fullName: true } },
           clinics: { select: { clinicId: true, clinic: { select: { name: true } } } },
           // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（lib/pay-rule-latest）
@@ -99,7 +104,7 @@ export async function GET(
     orderBy: { correctedTime: 'asc' },
   })
 
-  // ★ 2026-08-15: 編更差額資料（改用 estimateScheduledHours 扣午飯）
+  // ★ 2026-08-15: 編更差額資料（扣午飯 — 計法見 lib/roster-hours）
   const [shifts, payRules] = await Promise.all([
     prisma.shift.findMany({
       where: { employeeId: params.empId, date: { gte: periodStart, lte: periodEnd }, status: { not: 'CANCELLED' } },
@@ -125,35 +130,17 @@ export async function GET(
     }
   }
 
-  // 取 APPROVED 假期（去重）
-  const periodStartStr = toHKDateStr(periodStart)
-  const periodEndStr = toHKDateStr(periodEnd)
-  const leaveDates = new Set<string>()
-  for (const lr of leaves) {
-    let d = toHKDateStr(lr.startDate)
-    const end = toHKDateStr(lr.endDate)
-    while (d <= end) {
-      if (d >= periodStartStr && d <= periodEndStr) leaveDates.add(d)
-      d = addDaysStr(d, 1)
-    }
-  }
-
-  const daysInMonth = hkDaysInMonth(periodStart)
-  const expectedMinutes = (daysInMonth - leaveDates.size) * 9 * 60 // 9h default
-
-  const leaveDateSet = new Set(
-    Array.from(leaveDates).map(d => `${params.empId}:${d}`)
-  )
-
-  const perDay = estimateScheduledHours(shifts as any, id => lunchMinutesMap.get(id) ?? 60)
-  let rosterSpanMinutes = 0
-  for (const [, days] of perDay) {
-    for (const d of days) {
-      if (leaveDateSet.has(`${params.empId}:${d.date}`)) continue
-      rosterSpanMinutes += d.hours * 60
-    }
-  }
-  rosterSpanMinutes = Math.round(rosterSpanMinutes)
+  const pmKey = periodMonthKey(item.run.periodMonth)
+  // ★ 2026-09-30 [cwm-rosterjoin]：改用共用 computeRosterHours（同入帳／排班／儀表板同一條式）——
+  //   舊版呢度自己計「整月曆日 − 假期」，月中入職／離職嘅員工冇排班嗰啲日都算「應返」
+  //   （例：9/16 入職 → 應返 198h vs 已編 135h，差額 −63h 係假嘅）
+  const rh = (await computeRosterHours([params.empId], pmKey, prisma, {
+    shifts,
+    lunchMinutes: lunchMinutesMap,
+  })).get(params.empId)
+  const expectedMinutes = rh?.expectedMinutes ?? 0
+  const rosterSpanMinutes = rh?.rosterMinutes ?? 0
+  const rosterDiffMinutes = rh?.diffMinutes ?? 0
 
   // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder ——
   //   舊嘅「自己查 TimeBankEntry（TB_DISPLAY_TYPES）＋ live TimeBank 對數」兩套並存 = 坑②，此處收埋。
@@ -162,7 +149,6 @@ export async function GET(
   //   · 冇 snapshot → buildTimeBankLedger 即時算（frozen:false）＝舊 live 口徑（未 finalize 月行為不變）。
   //   帳本行齊晒：推導行（原始遲到/早退，同糧單七種一致）＋實體行（RESTDAY_GRANT 唔喺 ledger，
   //   假期另一本帳）＋informational 0 分行（遲到/早退補鐘已抵銷）＋RECONCILE 未分類差額。
-  const pmKey = periodMonthKey(item.run.periodMonth)
   let ledger: LedgerMonth | null = null
   try {
     // ★ 補丁A：時薪唔設時間帳戶 → ledger 維持 null（UI 卡片 fallback 返 detailJson、新行唔渲染）。
@@ -196,6 +182,35 @@ export async function GET(
     console.error('[payroll-emp-detail] timebank ledger 解析失敗，明細區塊退化隱藏', e)
   }
 
+  // ★ cwm-tbpreview-20261003：草稿「時間帳戶月結預覽」——
+  //   確認計糧（payroll-runs/[id] PUT FINALIZED）先真正寫 ROSTER_DIFF 入時間帳戶；
+  //   草稿時用【同一條式、同一個 filter】（月薪、非免考勤、Math.round(diffMinutes) ≠ 0）預先計出嚟，
+  //   只回傳俾頁面顯示，一行 DB 都唔寫。帳本已有 ROSTER_DIFF（已確認／凍結）就唔再預覽。
+  let rosterDiffPreview: { minutes: number; projectedClosing: number } | null = null
+  if (item.run.status === 'DRAFT' && ledger && !ledger.frozen
+    && item.employee.payRules?.[0]?.payType === 'MONTHLY' && item.employee.attendanceExempt !== true
+    && !ledger.lines.some(l => l.type === 'ROSTER_DIFF')) {
+    const m = Math.round(rosterDiffMinutes)
+    if (m !== 0) rosterDiffPreview = { minutes: m, projectedClosing: ledger.closing + m }
+  }
+
+  // ★ cwm-resigntb-20261004（老闆拍板：時間帳戶折現以離職結算為準）：
+  //   草稿時對比「結算確認時嘅時間帳戶」同「而家（帳本＋未入帳編更差額，同結算同一計法）」——
+  //   唔同 = 結算後考勤有改，提示重新確認離職結算（月結照用結算數，唔會自動改）
+  let resignTbCheck: { settledMinutes: number; nowMinutes: number } | null = null
+  if (item.run.status === 'DRAFT' && ledger) {
+    const rs = await prisma.resignSettlement.findUnique({
+      where: { employeeId: params.empId },
+      select: { periodMonth: true, tbMinutes: true },
+    })
+    if (rs && rs.periodMonth === pmKey) {
+      const rosterPosted = ledger.lines.some(l => l.type === 'ROSTER_DIFF')
+      const applyRoster = !rosterPosted && item.employee.payRules?.[0]?.payType === 'MONTHLY' && item.employee.attendanceExempt !== true
+      const nowMinutes = ledger.closing + (applyRoster ? Math.round(rosterDiffMinutes) : 0)
+      resignTbCheck = { settledMinutes: Number(rs.tbMinutes), nowMinutes }
+    }
+  }
+
   // ★ PunchCorrection has clinicId but no Clinic relation — fetch clinic names separately
   const clinicIds = [...new Set(corrections.map((c: any) => c.clinicId).filter(Boolean))]
   const clinicsMap = new Map<string, { name: string; shortName: string | null }>()
@@ -215,9 +230,11 @@ export async function GET(
     // ★ 編更差額
     rosterSpanMinutes,
     expectedMinutes,
-    rosterDiffMinutes: rosterSpanMinutes - expectedMinutes,
+    rosterDiffMinutes,
     // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶帳本（snapshot 優先 + 對數行 reconciles）
     timeBankLedger: ledger,
+    rosterDiffPreview,
+    resignTbCheck,
   }, {
     headers: { 'Cache-Control': 'no-store, must-revalidate' },
   })
@@ -312,4 +329,109 @@ export async function PATCH(
     })
     return NextResponse.json({ ok: true, changed: true, chequeNo: updated.chequeNo })
   })
+}
+
+// ============================================================
+// ★ cwm-payrollsingle-20261003：草稿計糧單「單個員工」重算／移除
+//   之前改一個人要成張草稿刪咗重生成。權限 = 生成計糧（payroll_generate），
+//   診所範圍、保密守衛同 POST /api/payroll-runs 同一口徑。
+// ============================================================
+async function guardDraftItem(req: NextRequest, runId: string, empId: string) {
+  const auth = await requirePerm(req, 'payroll_generate')
+  if (isAuthError(auth)) return { error: auth.error }
+  const { session } = auth
+  const perms = auth.perms ?? []
+
+  const run = await prisma.payrollRun.findUnique({ where: { id: runId }, select: { id: true, status: true, clinicId: true, periodMonth: true } })
+  if (!run) return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
+  if (run.status !== 'DRAFT') return { error: NextResponse.json({ error: '只可以喺草稿計糧單改個別員工（已確認要先退回草稿）' }, { status: 409 }) }
+
+  const allowedClinics = await resolvePayrollScope(session, perms, { homeOnly: ['payroll_generate'] })
+  if (allowedClinics !== null && (!run.clinicId || !allowedClinics.includes(run.clinicId))) {
+    return { error: NextResponse.json({ error: '你冇權限處理呢間診所嘅計糧單' }, { status: 403 }) }
+  }
+
+  const emp = await prisma.employee.findUnique({ where: { id: empId }, select: { id: true, payConfidential: true, homeClinicId: true, user: { select: { name: true } } } })
+  if (!emp) return { error: NextResponse.json({ error: '員工不存在' }, { status: 404 }) }
+  if (!(await canSeeConfidential(session, perms, emp))) {
+    return { error: NextResponse.json({ error: '此員工薪資已設保密，只可以由負責人處理' }, { status: 403 }) }
+  }
+  return { auth, session, perms, run, emp }
+}
+
+/** POST — 重算呢個員工（唔喺單入面嘅都得：新加入／之前被移除） */
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string; empId: string } }
+) {
+  const g = await guardDraftItem(req, params.id, params.empId)
+  if ('error' in g) return g.error
+  const { session, perms, run, emp } = g
+  const auditCtx = {
+    actorId: session.userId,
+    ip: req.headers.get('x-forwarded-for') || undefined,
+    ua: req.headers.get('user-agent') || undefined,
+  }
+  return runWithAudit(auditCtx, async () => {
+    try {
+      const cScope = await getConfidentialScope(session, perms)
+      const excludeConfidential = cScope !== null && !(run.clinicId && cScope.includes(run.clinicId))
+      const result = await generatePayrollRun(run.clinicId, periodMonthKey(run.periodMonth), auditCtx, {
+        excludeConfidential,
+        onlyEmployeeIds: [emp.id],
+      })
+      if ((result as any).error) return NextResponse.json(result, { status: 409 })
+      const r = result as Exclude<typeof result, { error: string }>
+      const ok = r.itemCount > 0 && !(r.failed ?? []).length
+      return NextResponse.json({
+        ok,
+        employee: emp.user?.name ?? emp.id,
+        recalculated: r.itemCount,
+        skipped: r.skipped ?? [],
+        removed: r.removed ?? [],
+        failed: r.failed ?? [],
+      })
+    } catch (e: any) {
+      if (e?.httpStatus === 409) return NextResponse.json({ error: e.message }, { status: 409 })
+      console.error('[payroll-item POST recalc]', { runId: params.id, empId: params.empId, message: e?.message })
+      return NextResponse.json({ error: '重算失敗，請重試' }, { status: 500 })
+    }
+  })
+}
+
+/** DELETE — 由草稿計糧單移除呢個員工（成張重新生成會再加返） */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string; empId: string } }
+) {
+  const g = await guardDraftItem(req, params.id, params.empId)
+  if ('error' in g) return g.error
+  const { session, run, emp } = g
+  try {
+    await basePrisma.$transaction(async (tx) => {
+      // ★ RC-11 同款：鎖 run 再查狀態，期間被確認就取消
+      const locked = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "PayrollRun" WHERE id = ${run.id} FOR UPDATE`
+      if (locked[0]?.status !== 'DRAFT') throw Object.assign(new Error('計糧單狀態已改變'), { httpStatus: 409 })
+      const { count } = await tx.payrollItem.deleteMany({ where: { runId: run.id, employeeId: emp.id } })
+      if (count === 0) throw Object.assign(new Error('呢個員工唔喺呢張計糧單'), { httpStatus: 404 })
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'PAYROLL_ITEM_REMOVE',
+          entity: 'PayrollItem',
+          entityId: run.id,
+          targetEmployeeId: emp.id,
+          clinicId: run.clinicId,
+          notes: `由草稿計糧單 ${periodMonthKey(run.periodMonth)} 移除：${emp.user?.name ?? emp.id}`,
+          ipAddress: req.headers.get('x-forwarded-for') || null,
+          userAgent: req.headers.get('user-agent') || null,
+        },
+      })
+    })
+    return NextResponse.json({ ok: true })
+  } catch (e: any) {
+    if (e?.httpStatus) return NextResponse.json({ error: e.message }, { status: e.httpStatus })
+    console.error('[payroll-item DELETE]', { runId: params.id, empId: params.empId, message: e?.message })
+    return NextResponse.json({ error: '移除失敗，請重試' }, { status: 500 })
+  }
 }

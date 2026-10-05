@@ -1,7 +1,9 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { APRICOT_ACCOUNT_RE } from '@/lib/apricot/account'
 import { runClinicalIndexNightly } from '@/lib/clinical-index/nightly'
+import { runExclusive } from '@/lib/clinical-index/job-lock'
 import { getTestCallFn } from '../clinical-index/test-call-fn'
 
 // ============================================================
@@ -11,6 +13,8 @@ import { getTestCallFn } from '../clinical-index/test-call-fn'
 // 昨日 scan（page size 50 固定）+ 逐病人 3 call + 未來 7 日 + 7 日重掃。
 // 守門同 sync-availability-history 完全一致（x-cron-key / APRICOT_CRON_KEY；
 // key 未設 = 503 fail closed，唔啱 = 403）。
+// ★ cwi-qa FX-30：job 級排他鎖 — 並發（cron + 手動 curl）→ 409 ALREADY_RUNNING；
+//   殘留 RUNNING（deploy 殺 request 遺留）開頭標 FAILED(ABANDONED) + 補掃嗰日。
 // 🔴 只回結構統計 — 零病人資料（零原始電話、零 note 內容）。
 // ============================================================
 
@@ -36,6 +40,18 @@ export async function POST(req: NextRequest) {
   // e2e/dev hook：x-cron-now（只在已過 cron key 守門之後先生效；生產 cron 唔傳）
   const nowHeader = req.headers.get('x-cron-now')
   const now = nowHeader ? new Date(nowHeader) : new Date()
-  const outcome = await runClinicalIndexNightly(hook ? { callFn: hook, now } : { now })
-  return NextResponse.json(outcome)
+  // ★ cwi-qa FX-30：job 級排他鎖 — 並發（cron + 手動 curl）→ 409 ALREADY_RUNNING
+  // ★ cwm-apricotty-20261001：?account=TY → 青衣帳號；唔傳 = MAIN
+  const accountRaw = req.nextUrl.searchParams.get('account')
+  if (accountRaw != null && !APRICOT_ACCOUNT_RE.test(accountRaw.toUpperCase())) {
+    return NextResponse.json({ error: 'account 格式錯（例如 TY）' }, { status: 400 })
+  }
+  const account = accountRaw ?? undefined
+  const r = await runExclusive('NIGHTLY', () =>
+    runClinicalIndexNightly(hook ? { callFn: hook, now, account } : { now, account }),
+  )
+  if (r.running) {
+    return NextResponse.json({ error: 'ALREADY_RUNNING' }, { status: 409 })
+  }
+  return NextResponse.json(r.result)
 }

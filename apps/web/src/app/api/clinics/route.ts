@@ -79,15 +79,28 @@ export async function POST(req: NextRequest) {
     } catch (error) {
       if ((error as any)?.code === 'P2002') {
         const target = (error as any)?.meta?.target
-        const isApricot = Array.isArray(target)
-          ? target.includes('apricotClinicId')
-          : String(target ?? '').includes('apricotClinicId')
-        return NextResponse.json(
-          { error: isApricot
-            ? `Apricot 診所 ID「${apricotClinicId}」已經綁咗另一間診所`
-            : '資料重複' },
-          { status: 409 }
-        )
+        const targets = Array.isArray(target) ? target : String(target ?? '').split(',')
+        const isApricot = targets.some((t: string) => t.includes('apricotClinicId'))
+        if (isApricot) {
+          return NextResponse.json(
+            { error: `Apricot 診所 ID「${apricotClinicId}」已經綁咗另一間診所` },
+            { status: 409 }
+          )
+        }
+        // cwi-qa FX-18 (S5-5 ④): shortName 撞 Clinic_shortName_unique → log.error + 唔建店（唔好 500）
+        if (targets.some((t: string) => t.includes('shortName'))) {
+          console.error('[clinics] 建店失敗：shortName 重複（Clinic_shortName_unique），已放棄建店', {
+            shortName,
+            name,
+            companyId,
+            actorId: session.userId,
+          })
+          return NextResponse.json(
+            { error: `診所簡稱「${shortName}」已經有另一間診所使用，請改用其他簡稱` },
+            { status: 409 }
+          )
+        }
+        return NextResponse.json({ error: '資料重複' }, { status: 409 })
       }
       console.error('Create clinic error:', error)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

@@ -4,6 +4,8 @@ import { requireExternalKey, withExternalAudit, ExternalApiError } from '@/lib/e
 import { basePrisma } from '@/lib/prisma'
 import { toHKDateStr } from '@/lib/hk-date'
 import { jsonNoStore } from '@/lib/api-response'
+import { resolveClinicByCode } from '@/lib/external-clinic'
+import { normalizeApricotAccount } from '@/lib/apricot/account'
 
 // ============================================================
 // GET /api/external/v1/patient-lookup?phoneHash= — 病人查詢 API（read-chain MD §4.1）
@@ -12,6 +14,8 @@ import { jsonNoStore } from '@/lib/api-response'
 //   Query: phoneHash（必填，64-hex HMAC-SHA256 — 同 wa-inbox 用同一條 PHONE_HASH_KEY）
 //   Header: X-Api-Key（scope: patients — §A.2 守門）
 //
+//   ★ cwm-apricotty-20261001：每個 match 加 apricotAccount（MAIN／TY）；帶 &clinicCode= →
+//     再加 sameAccount（病人同該店係咪同一個 Apricot 帳號 — 同一電話兩邊都有檔案時，釘選要揀同帳號嗰個）
 //   200: { v:1, matches:[{ patientApricotId, patientCode, patientName,
 //          lastVisit: { date, providerName, visitReasons, clinicId, clinicCode } | null,
 //          visitedClinicIds: string[] }] }
@@ -41,12 +45,16 @@ export async function GET(req: NextRequest) {
 
     const matches = await basePrisma.patientIndex.findMany({
       where: { phoneHash },
-      select: { patientApricotId: true, patientCode: true, patientName: true },
+      select: { patientApricotId: true, patientCode: true, patientName: true, apricotAccount: true },
       orderBy: [{ patientCode: 'asc' }, { patientApricotId: 'asc' }],
     })
     if (matches.length === 0) {
       return jsonNoStore({ v: 1, matches: [] })
     }
+    const clinicCode = params.get('clinicCode')
+    const clinicAccount = clinicCode
+      ? normalizeApricotAccount((await resolveClinicByCode(clinicCode)).apricotAccount)
+      : null
 
     // lastVisit = 該病人最近過去行（date ≤ 今日，HK 日界 — date 欄本身係 HK YYYY-MM-DD）
     // 一 query 攞全部 match 嘅過去行，group by patient（避免 N+1）
@@ -95,6 +103,8 @@ export async function GET(req: NextRequest) {
           patientApricotId: m.patientApricotId,
           patientCode: m.patientCode,
           patientName: m.patientName,
+          apricotAccount: normalizeApricotAccount(m.apricotAccount),
+          ...(clinicAccount ? { sameAccount: normalizeApricotAccount(m.apricotAccount) === clinicAccount } : {}),
           lastVisit: last
             ? { date: last.date, providerName: last.providerName, visitReasons: last.visitReasons, clinicId: last.clinicId, clinicCode: codeById.get(last.clinicId) ?? last.clinicId }
             : null,

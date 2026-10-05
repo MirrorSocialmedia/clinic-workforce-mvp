@@ -33,6 +33,12 @@ export const shiftDeletedMsg = (s: any, clinicName: (id: string) => string) =>
 export const shiftReplacedMsg = (s: any, clinicName: (id: string) => string) =>
   `${md(s.date)} ${clinicName(s.clinicId)} ${fmtHM(s.startTime)}-${fmtHM(s.endTime)} 更次已被新更次取代`
 
+export const shiftAddedMsg = (s: any, clinicName: (id: string) => string) =>
+  `${md(s.date)} ${clinicName(s.clinicId)} ${fmtHM(s.startTime)}-${fmtHM(s.endTime)} 新增更次`
+
+export const shiftRestoredMsg = (s: any, clinicName: (id: string) => string) =>
+  `${md(s.date)} ${clinicName(s.clinicId)} ${fmtHM(s.startTime)}-${fmtHM(s.endTime)} 更次已恢復（請忽略頭先嘅取消通知）`
+
 // ★ 合併通知 builder
 export function buildNotification(empId: string, items: string[], relatedId?: string) {
   return {

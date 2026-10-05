@@ -1,4 +1,24 @@
-import { hkDateStart } from './hk-date'
+import { hkDateStart, toHKDateStr } from './hk-date'
+
+export const MAX_SHIFT_MINUTES = 16 * 60
+export const SHIFT_STATUS_WRITABLE = ['DRAFT', 'CONFIRMED'] as const
+
+/** ★ 2026-09-30 S-06：YYYY-MM-DD 而且係真日期（2026-02-30 唔准靜靜滾去 03-02） */
+export function isValidDateStr(d: unknown): d is string {
+  if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false
+  try { return toHKDateStr(hkDateStart(d)) === d } catch { return false }
+}
+
+/** ★ 2026-09-30 S-06：時長合理性；冇問題回 null */
+export function shiftTimesError(t: { startTime: Date; endTime: Date }): string | null {
+  const s = t.startTime.getTime()
+  const e = t.endTime.getTime()
+  if (!Number.isFinite(s) || !Number.isFinite(e)) return '時間格式錯誤（需要 HH:MM）'
+  const mins = (e - s) / 60000
+  if (mins <= 0) return '收工時間要遲過開工時間'
+  if (mins > MAX_SHIFT_MINUTES) return `更次長 ${Math.round(mins / 60)} 小時，超過 16 小時上限（開工同收工係咪打錯？）`
+  return null
+}
 
 export const hkTimeOf = (d: Date) =>
   new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit', hour12: false }).format(d)

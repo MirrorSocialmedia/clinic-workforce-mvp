@@ -1,8 +1,9 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { hkDateStart, toHKDateStr, getMonthRange } from '@/lib/hk-date'
-import { rebuildShiftDate, buildShiftFromInput } from '@/lib/shift-write'
+import { hkDateStart, toHKDateStr, getMonthRange, todayHK } from '@/lib/hk-date'
+import { resignedDateError } from '@/lib/employment-scope'
+import { rebuildShiftDate, buildShiftFromInput, isValidDateStr, shiftTimesError } from '@/lib/shift-write'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { runWithAudit } from '@/lib/audit-context'
@@ -10,7 +11,7 @@ import { writeAuditLog } from '@/lib/prisma'
 import { checkShiftLeaveConflict } from '@/lib/shift-validator'
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
 import { revokeStaleEarlyOt } from '@/lib/early-in-ot'
-import { describeShiftChange, buildNotification, shiftDeletedMsg } from '@/lib/notification-messages'
+import { describeShiftChange, buildNotification, shiftDeletedMsg, shiftAddedMsg } from '@/lib/notification-messages'
 import { createNotification } from '@/lib/notification'
 import { lockEmployee, lockEmployees, HttpError, toHttpResponse } from '@/lib/emp-lock'
 
@@ -71,6 +72,14 @@ export async function PUT(
     const beforeJson = JSON.stringify(existing)
     const updateData: any = {}
 
+    // ★ 2026-09-30 S-06：日期/status 驗證（PUT 要准晒四個：編輯 modal 可以揀「已完成／已取消」）
+    if (body.date !== undefined && !isValidDateStr(body.date)) {
+      return NextResponse.json({ error: `日期錯誤：${body.date}` }, { status: 400 })
+    }
+    if (body.status !== undefined && !['DRAFT', 'CONFIRMED', 'COMPLETED', 'CANCELLED'].includes(body.status)) {
+      return NextResponse.json({ error: 'status 只可以係 DRAFT/CONFIRMED/COMPLETED/CANCELLED' }, { status: 400 })
+    }
+
     if (body.employeeId !== undefined) updateData.employeeId = body.employeeId
     if (body.clinicId !== undefined) updateData.clinicId = body.clinicId
 
@@ -97,6 +106,24 @@ export async function PUT(
     if (body.templateId !== undefined) updateData.templateId = body.templateId
     if (body.secondaryClinicId !== undefined) updateData.secondaryClinicId = body.secondaryClinicId || null
 
+    // ★ 2026-09-30 S-06：時長合理性（updateData.startTime 有值 = 時分被改過）
+    if (updateData.startTime !== undefined) {
+      const te = shiftTimesError(updateData)
+      if (te) return NextResponse.json({ error: te }, { status: 400 })
+    }
+
+    // ★ cwm-resignsweep-20261003：改人／改日唔准落去已離職員工嘅離職生效日或之後（取消更照准）
+    if ((body.employeeId !== undefined || body.date !== undefined) && (updateData.status ?? existing.status) !== 'CANCELLED') {
+      const targetEmpId = updateData.employeeId ?? existing.employeeId
+      const empRow = await prisma.employee.findUnique({
+        where: { id: targetEmpId },
+        select: { status: true, resignedAt: true, leaveDate: true },
+      })
+      if (!empRow) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+      const resignErr = resignedDateError(empRow, [body.date ?? toHKDateStr(existing.date)], todayHK())
+      if (resignErr) return NextResponse.json({ error: resignErr }, { status: 400 })
+    }
+
     // ★ D1: check collision before writing
     const targetStart = updateData.startTime ?? existing.startTime
     const targetEnd = updateData.endTime ?? existing.endTime
@@ -113,6 +140,13 @@ export async function PUT(
     try {
       shift = await prisma.$transaction(async (tx) => {
         await lockEmployees(tx, [existing.employeeId, updateData.employeeId])
+        // ★ 2026-09-30 S-04：樂觀鎖 —— body.expectedUpdatedAt = 前端開 modal 時嘅 shift.updatedAt；唔帶 = 舊行為
+        if (body.expectedUpdatedAt) {
+          const cur = await tx.shift.findUnique({ where: { id: existing.id }, select: { updatedAt: true } })
+          if (!cur || cur.updatedAt.getTime() !== new Date(body.expectedUpdatedAt).getTime()) {
+            throw new HttpError(409, '呢張更啱啱被其他人改咗，請重新整理再改', { code: 'STALE' })
+          }
+        }
         // ★ D1 拍板：排更維持「警告照改」，唔加硬鎖（靠 4B 凍結期末兜底）—— Stage 4 只收窄下面警告嘅範圍
         const empId = updateData.employeeId ?? existing.employeeId
         // overlap：喺鎖入面再驗（排除自己）
@@ -144,6 +178,27 @@ export async function PUT(
           },
         })
 
+        // ★ 2026-09-30 S-02：通知入 tx，而且要通知對嘅人
+        const nameOf = (cid: string) => clinicNameMap.get(cid) ?? ''
+        const newEmp = updateData.employeeId ?? existing.employeeId
+        if (newEmp !== existing.employeeId) {
+          // 換人：舊員工收「取消」、新員工收「新增」（舊版只通知新員工，內容仲係「更次已更新」）
+          if (existing.status === 'CONFIRMED') {
+            await createNotification(buildNotification(existing.employeeId, [shiftDeletedMsg(existing, nameOf)]), tx)
+          }
+          if (updated.status === 'CONFIRMED') {
+            await createNotification(buildNotification(newEmp, [shiftAddedMsg(updated, nameOf)], updated.id), tx)
+          }
+        } else if (wasConfirmed && updated.status === 'CANCELLED') {
+          // 編輯 modal 揀「已取消」：講清楚係取消（舊版會出「更次已更新」）
+          await createNotification(buildNotification(updated.employeeId, [shiftDeletedMsg(existing, nameOf)]), tx)
+        } else if (wasConfirmed) {
+          await createNotification(buildNotification(updated.employeeId, [describeShiftChange(beforeSnapshot, updated, nameOf)], updated.id), tx)
+        } else if (updated.status === 'CONFIRMED') {
+          // 草稿 → 確認（舊版冇通知）
+          await createNotification(buildNotification(updated.employeeId, [shiftAddedMsg(updated, nameOf)], updated.id), tx)
+        }
+
         // ★ Stage 2.4：排班變更影響遲到／早退／OT 判斷 → 快取失效 + OT 撤回入 tx（失敗 = rollback）
         //   PUT 換員工：**新舊員工 × 新舊日期**都做（改期會影響兩個月）
         const newEmpId = updateData.employeeId ?? existing.employeeId
@@ -163,12 +218,6 @@ export async function PUT(
       // ★ L-6：P2002 用返舊訊息（toHttpResponse 預設「已處理（重複提交）」會誤導）
       { const r = toHttpResponse(error, '該時段已有相同排班（可能重複提交）'); if (r) return r }
       throw error
-    }
-
-    // ★ Notify employee if shift was CONFIRMED and changed
-    if (wasConfirmed) {
-      const msg = describeShiftChange(beforeSnapshot, shift, (cid) => clinicNameMap.get(cid) ?? '')
-      await createNotification(buildNotification(shift.employeeId, [msg], shift.id))
     }
 
     // ★ 已出糧警告：檢查新日期/診所嘅月份有冇已 FINALIZED/EXPORTED 嘅糧單（§四.E）

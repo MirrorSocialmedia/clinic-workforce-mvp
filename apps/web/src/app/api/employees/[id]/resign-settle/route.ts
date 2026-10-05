@@ -1,9 +1,12 @@
 export const dynamic = 'force-dynamic'
-import { requirePerm, isAuthError } from '@/lib/require-auth'
+import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { computeResignSettlement, calcNoticePay, calcTimebankDebtAmount } from '@/lib/resign-settlement'
-import { addDaysStr, hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
+import { hkDateOnly, hkTodayStr, toHKDateStr } from '@/lib/hk-date'
+import { applyResignCutoff } from '@/lib/resign-cutoff'
+import { guardPayrollLock } from '@/lib/payroll-lock'
+import type { SettlementBonusChoice } from '@/lib/settlement-utils'
 
 /**
  * POST /api/employees/[id]/resign-settle — 確認離職結算，寫入 ResignSettlement 表
@@ -34,7 +37,7 @@ export async function POST(
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'body 必填 (JSON)' }, { status: 400 })
-  const { lastDay, noticeDays, tbDeduction, excessDeduction } = body
+  const { lastDay, noticeDays, tbDeduction, excessDeduction, attendanceBonusOverride, storeBonus, mpfEmployee } = body
 
   // ── 驗證 ──────────────────────────────────────────────
   if (typeof lastDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(lastDay) || isNaN(Date.parse(`${lastDay}T00:00:00+08:00`))) {
@@ -68,12 +71,36 @@ export async function POST(
     excessDeductionVal = Math.round(excessDeduction * 100) / 100
   }
 
+  // ★ 2026-09-30 [cwm-resignfull]：勤工獎／店舖獎金揀法（null = 跟計糧單）— 存入結算，月底計糧照用
+  //   （優先次序：計糧頁今次輸入 > 結算 > 舊計糧單 carry；見 payroll-engine resolveBonusOverride）
+  if (attendanceBonusOverride != null && !['AUTO', 'FORCE_ON', 'FORCE_OFF'].includes(attendanceBonusOverride)) {
+    return NextResponse.json({ error: 'attendanceBonusOverride 必須係 AUTO / FORCE_ON / FORCE_OFF' }, { status: 400 })
+  }
+  const bonusChoice: SettlementBonusChoice | null = attendanceBonusOverride ?? null
+  let storeBonusVal: number | null = null
+  if (storeBonus != null) {
+    if (typeof storeBonus !== 'number' || !Number.isFinite(storeBonus) || storeBonus < 0 || storeBonus > 1_000_000) {
+      return NextResponse.json({ error: 'storeBonus 必須 ≥ 0' }, { status: 400 })
+    }
+    storeBonusVal = Math.round(storeBonus * 100) / 100
+  }
+  // ★ cwm-resignmpf-20261004：人手 MPF（僱員）—— null = 系統計；0 = 明確唔扣
+  let mpfEmployeeVal: number | null = null
+  if (mpfEmployee != null) {
+    if (typeof mpfEmployee !== 'number' || !Number.isFinite(mpfEmployee) || mpfEmployee < 0 || mpfEmployee > 100_000) {
+      return NextResponse.json({ error: 'MPF 必須係 0 或以上嘅數字' }, { status: 400 })
+    }
+    mpfEmployeeVal = Math.round(mpfEmployee * 100) / 100
+  }
+
   // ── 伺服器側重算（同 preview 同一 lib）─────────────────
   let calc
   // ★ 2026-09-05 [cwm-resignroster]：cutoff = 最後工作日翌日 HK 午夜（同 resign/route.ts:29 口徑）
   const cutoffDate = new Date(`${lastDay}T16:00:00Z`)
   try {
-    calc = await computeResignSettlement(prisma, empId, lastDay, undefined, undefined, { resignedAtOverride: cutoffDate })
+    calc = await computeResignSettlement(prisma, empId, lastDay, undefined, undefined, {
+      resignedAtOverride: cutoffDate, attendanceBonusOverride: bonusChoice, storeBonus: storeBonusVal,
+    })
   } catch (e: any) {
     if (e?.message === 'EMP_NOT_FOUND') return NextResponse.json({ error: '員工不存在' }, { status: 404 })
     throw e
@@ -96,6 +123,26 @@ export async function POST(
       { status: 400 },
     )
   }
+  // ★ 2026-09-30 [cwm-restdebt] RS-15：總扣款（時間帳戶 + 超額休息日）唔得超過該工資期工資 1/2——
+  //   界面寫「扣除總額唔得超過 1/2」但舊版伺服器只驗 1/4（tb）→ 前端繞得過就係非法扣薪。
+  //   OPEN-FLAG：超額休息日歸類 s.32(2)(a) 缺勤扣除（唔受 1/4）；1/2 總限制係咪連佢一齊計要老細最終確認，
+  //   現行採嚴解（總和 > 1/2 → 400）；如老細拍板 ⑤ 唔受 1/2 限制，改返只驗 tbDeduction ≤ halfCap。
+  const totalDeduction = (tbDeductionVal ?? 0) + (excessDeductionVal ?? calc.excessRestDeduction)
+  // ★ 2026-10-04：冇扣款就唔使驗（工資期工資因缺勤扣減變負數時，舊版連 $0 扣款都會 400）
+  if (totalDeduction > 0 && totalDeduction > calc.halfCap) {
+    return NextResponse.json(
+      { error: `總扣款 $${totalDeduction.toFixed(2)} 超過該工資期工資 1/2（$${calc.halfCap.toFixed(2)}）` },
+      { status: 400 },
+    )
+  }
+
+  // ★ 2026-09-30 [cwm-restdebt] RS-08：該月計糧已確認／已匯出 → 結算唔會入糧單，唔准靜靜寫入
+  //   （重結算改咗 lastDay → periodMonth 變時，舊月份如果已鎖都要擋）
+  const prev = await prisma.resignSettlement.findUnique({ where: { employeeId: empId } })
+  const lockDates = [lastDay]
+  if (prev) lockDates.push(toHKDateStr(prev.lastDay))
+  const locked = await guardPayrollLock(auth.session, empId, lockDates, '離職結算')
+  if (locked) return locked
 
   // 時間帳戶換算（MD §五）：|tbMinutes| ÷ 9 小時工作日 日 × 今日 ADW
   const { tbAmount } = calcTimebankDebtAmount(calc.tb.balanceMinutes, calc.adwValue)
@@ -106,9 +153,8 @@ export async function POST(
   const periodMonth = lastDay.slice(0, 7)
 
   // ★ 2026-09-05 [cwm-resignroster] 拍板③a：改最後工作日 → 重新確認結算，直接覆蓋同一筆，
-  //   但要 audit 記低變更（唔准「改咗最後工作日但用舊 ratio」）— 舊值改由新表讀
+  //   但要 audit 記低變更（唔准「改咗最後工作日但用舊 ratio」）— 舊值喺上面已讀（prev）
   let lastDayChangeNote = ''
-  const prev = await prisma.resignSettlement.findUnique({ where: { employeeId: empId } })
   const prevLastDay = prev ? toHKDateStr(prev.lastDay) : null
   if (prevLastDay && prevLastDay !== lastDay) {
     lastDayChangeNote = `｜最後工作日由 ${prevLastDay} 改為 ${lastDay}，ratio 重算`
@@ -130,6 +176,12 @@ export async function POST(
     adwUsed: calc.adwValue,
     // ★ cwm-resigv3：當月工資快照（讀引擎 — 月底計糧注入時展示／審計用；金額以快照為準）
     monthWage: { source: calc.monthWage.source, basePay: calc.monthWage.basePay },
+    // ★ 2026-09-30 [cwm-resignfull]：揀法（parseResignSettlementRow 讀返 → 月底計糧注入）+ 當月各項快照（審計／對數用）
+    attendanceBonusOverride: bonusChoice,
+    storeBonus: storeBonusVal,
+    // ★ cwm-resignmpf-20261004：人手 MPF（僱員；parseResignSettlementRow 讀返 → 月底計糧用）；null = 系統計
+    mpfEmployee: mpfEmployeeVal,
+    monthItems: calc.monthItems,
     // ★ 2026-09-06 [cwm-caldayratio]：受僱比例快照（分子 = 受僱曆日（含休息日），分母 = 當月曆日數）
     monthWageRatio: calc.monthWageRatio
       ? { ...calc.monthWageRatio, lastDay, computedAt: new Date().toISOString() }
@@ -141,13 +193,16 @@ export async function POST(
   // ★ B1：結算 + 員工狀態 + 停用帳號 + audit —— 四樣同一個 interactive transaction
   //   （結算寫咗但狀態冇寫，就係之前嘅亂源）
   const lastDayDate = hkDateOnly(lastDay)                         // 9/9 00:00+08:00 = 最後工作日
-  const effectiveDate = hkDateOnly(addDaysStr(lastDay, 1))        // 9/10 — resignedAt 語義 = 最後工作日 + 1（唔准改）
 
   const emp = await prisma.employee.findUnique({
     where: { id: empId },
-    select: { id: true, userId: true, status: true },
+    select: { id: true, userId: true, status: true, joinDate: true },
   })
   if (!emp) return NextResponse.json({ error: '員工不存在' }, { status: 404 })
+  // ★ 2026-09-30 [cwm-restdebt] RS-18：最後工作日早過入職日 → 400
+  if (emp.joinDate && lastDay < toHKDateStr(emp.joinDate)) {
+    return NextResponse.json({ error: '最後工作日早過入職日' }, { status: 400 })
+  }
 
   const settlementData = {
     noticeDays,
@@ -165,21 +220,17 @@ export async function POST(
   }
 
   const settlementId = await prisma.$transaction(async (tx) => {
+    // ★ 2026-09-30 [cwm-restdebt] F2：共用 cutoff 喺 ① upsert 之前 ——
+    //   Employee RESIGNED + leaveDate + resignedAt、User RESIGNED + tokenVersion+1（踢登入）、
+    //   取消之後更／假 + 還額、跨過離職日嘅假截斷還差額（RS-06）、停人臉模板（RS-21：三條路同一口徑）
+    const cutoffResult = await applyResignCutoff(tx, empId, lastDay)
+
     // ① 結算（upsert —— 改最後工作日 = 覆蓋同一筆；periodMonth 跟住變 → 舊月自動冇、新月自動有）
     const row = await tx.resignSettlement.upsert({
       where: { employeeId: empId },
       create: { employeeId: empId, lastDay: lastDayDate, periodMonth, ...settlementData },
       update: { lastDay: lastDayDate, periodMonth, ...settlementData, settledAt: new Date() },
     })
-
-    // ② 員工狀態：leaveDate = 最後工作日；resignedAt = 生效日 = 最後工作日 + 1（語義唔准改）
-    await tx.employee.update({
-      where: { id: empId },
-      data: { status: 'RESIGNED', leaveDate: lastDayDate, resignedAt: effectiveDate },
-    })
-
-    // ③ ★★★ 帳號停用 —— login/route.ts:71 驗 User.status，唔寫呢句佢照樣登入到
-    await tx.user.update({ where: { id: emp.userId }, data: { status: 'RESIGNED' } })
 
     // ④ audit
     await tx.auditLog.create({
@@ -189,7 +240,7 @@ export async function POST(
         entity: 'ResignSettlement',
         entityId: row.id,
         targetEmployeeId: empId,
-        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號`,
+        notes: `離職結算：lastDay=${lastDay}, noticeDays=${noticeDays}, noticePay=${noticePay}, 年假=${calc.unusedDays}日/$${calc.leavePayout}, tb=${calc.tb.balanceMinutes}分/扣${tbDeductionVal ?? 0}, 超額休息日=${calc.excessRest?.excessDays ?? 0}日/扣${settlement.excessRestDeduction ?? 0}, 勤工獎=${bonusChoice ?? '跟計糧單'}, 店舖獎金=${storeBonusVal ?? '跟計糧單'}, MPF（僱員）=${mpfEmployeeVal ?? '系統計'}, ADW=${calc.adwValue}${lastDayChangeNote}｜已同步標記離職 + 停用帳號｜取消班次=${cutoffResult.shiftsCancelled} 取消假期=${cutoffResult.leavesCancelled} 跨日假截斷=${cutoffResult.leavesTruncated}`,
         ipAddress: null,
         userAgent: null,
       } as any,
@@ -198,4 +249,56 @@ export async function POST(
   })
 
   return NextResponse.json({ ok: true, settlementId, settlement })
+}
+
+/**
+ * DELETE /api/employees/:id/resign-settle — 撤銷離職結算
+ *
+ * ★ 2026-09-30 [cwm-restdebt] F6（RS-10 配套）：
+ * - OWNER-only（RBAC 登記 + route 內 ROLE-OK 雙重）
+ * - guardPayrollLock：結算月份計糧已確認／已匯出 → 409（撤銷會令已出糧單同結算唱反調）
+ * - 刪 ResignSettlement + audit EMPLOYEE_RESIGN_SETTLE_REVOKE（入敏感摘要）
+ *
+ * 用途：算錯／要復職時嘅出路（復職 route 有結算會 409，先撤銷先復職）。
+ * ⚠️ 撤銷只刪結算行，唔還喺 cutoff 時取消咗嘅更／假（嗰啲有歷史記錄，人手處理）。
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  const auth = await requireAuth(_req, 'DELETE', _req.url)
+  if (isAuthError(auth)) return auth.error
+  if (auth.session.role !== 'OWNER') // ROLE-OK：撤銷結算涉及薪金
+    return NextResponse.json({ error: '僅老闆可撤銷離職結算' }, { status: 403 })
+
+  const resolvedParams = await params
+  const empId = resolvedParams.id
+
+  const row = await prisma.resignSettlement.findUnique({
+    where: { employeeId: empId },
+    select: { id: true, lastDay: true, periodMonth: true },
+  })
+  if (!row) return NextResponse.json({ error: '冇離職結算記錄' }, { status: 404 })
+
+  // ★ RS-08 同一守衛：結算月份已鎖 → 撤銷會同已確認糧單唱反調
+  const locked = await guardPayrollLock(auth.session, empId, [toHKDateStr(row.lastDay)], '撤銷離職結算')
+  if (locked) return locked
+
+  await prisma.$transaction(async (tx) => {
+    await tx.resignSettlement.delete({ where: { id: row.id } })
+    await tx.auditLog.create({
+      data: {
+        actorId: auth.session.userId,
+        action: 'EMPLOYEE_RESIGN_SETTLE_REVOKE',
+        entity: 'ResignSettlement',
+        entityId: row.id,
+        targetEmployeeId: empId,
+        notes: `撤銷離職結算：lastDay=${toHKDateStr(row.lastDay)}, periodMonth=${row.periodMonth}｜結算行已刪除（喺 cutoff 取消嘅更／假唔會自動還 — 有歷史記錄）`,
+        ipAddress: null,
+        userAgent: null,
+      } as any,
+    })
+  })
+
+  return NextResponse.json({ ok: true })
 }

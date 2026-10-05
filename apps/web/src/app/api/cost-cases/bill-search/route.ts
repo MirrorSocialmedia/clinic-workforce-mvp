@@ -4,6 +4,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { withApricotLockRetry, searchBillsByPatient } from '@/lib/apricot/client'
 import { sanitizeBill } from '@/lib/apricot/sanitize'
 import { prisma } from '@/lib/prisma'
+import { withApricotAccount, accountForPatient, normalizeApricotAccount } from '@/lib/apricot/account'
 
 // ============================================================
 // GET /api/cost-cases/bill-search — Search bills by patient
@@ -26,7 +27,10 @@ export async function GET(req: NextRequest) {
   const months = Math.min(24, Math.max(1, monthsRaw ? parseInt(monthsRaw, 10) : 12))
 
   try {
-    const rawBills = await withApricotLockRetry(() => searchBillsByPatient(patientExtId, months))
+    // ★ cwm-apricotty-20261001：用病人所屬帳號（前端由 patient-search 帶返 account；冇帶 → PatientIndex；再冇 → MAIN）
+    const accountParam = searchParams.get('account')
+    const account = accountParam ? normalizeApricotAccount(accountParam) : await accountForPatient(patientExtId)
+    const rawBills = await withApricotAccount(account, () => withApricotLockRetry(() => searchBillsByPatient(patientExtId, months)))
 
     // Sanitize each bill + collect extIds for cost count lookup
     const bills = rawBills.map((b: any) => sanitizeBill(b))

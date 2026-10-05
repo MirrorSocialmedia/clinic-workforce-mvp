@@ -50,10 +50,17 @@ export function makeThrottledCallFn(base: ClinicalCallFn = defaultCall): {
   return { call, calls: () => n }
 }
 
-/** 判斷係咪「停當晚」級錯誤（限速／認證）— 觸發 cursor 續。 */
+/** 判斷係咪「停當晚」級錯誤（限速／認證／鎖搶唔到）— 觸發 cursor 續。
+ * ★ cwi-qa FX-30：加 APRICOT_BUSY（攞唔到 776001 20 次重試後）— 舊口徑當單個病人錯誤跳過，
+ * 嗰日照當完成 + cursor 前進 → 病人永久漏。而家 = 停當晚，cursor 唔前進。 */
 export function isStopNightError(e: unknown): boolean {
   const msg = (e as { message?: string })?.message ?? ''
-  return msg === 'APRICOT_RATE_LIMITED' || msg === 'APRICOT_AUTH_EXPIRED' || msg === 'APRICOT_NOT_CONFIGURED'
+  return (
+    msg === 'APRICOT_RATE_LIMITED' ||
+    msg === 'APRICOT_AUTH_EXPIRED' ||
+    msg === 'APRICOT_NOT_CONFIGURED' ||
+    msg === 'APRICOT_BUSY'
+  )
 }
 
 /**

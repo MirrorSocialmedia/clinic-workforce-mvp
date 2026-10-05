@@ -2,8 +2,9 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { apricotCall } from './client'
 import { withApricotLock } from './lock'
+import { withApricotAccount, accountForApricotClinic } from './account'
 import { sanitizePayment, sanitizeBill, assertNoPii } from './sanitize'
-import { normalizeMethod } from './normalize'
+import { apricotMethod } from './normalize'
 import { allocatePayment, upsertAllocations } from './allocate'
 
 // ─── MD-Q: Job helpers ─────────────────────────────────────────────
@@ -129,8 +130,8 @@ function collectBillIds(allPayments: any[]): string[] {
 
 async function upsertPayment(p: any, clinicExtId: string) {
   const methods = (p.paymentMethods || []).map((m: any) => ({
-    methodRaw: (m.code || m.des || '').trim(),
-    methodNorm: normalizeMethod(m.code || m.des || ''),
+    // ★ cwm-apricotty-20261001：code 認唔到（青衣數字 code）→ 用 des（中文名）
+    ...apricotMethod(m),
     amount: new Prisma.Decimal(String(m.amt ?? 0)),
     payType: m.payType || '',
   }))
@@ -274,8 +275,13 @@ export async function maybeAlertUnknownPractitioners(
   }
 }
 
-/** 同步一間診所，支援 shouldCancel 檢查。傳入 jobId 用於追蹤進度。 */
-export async function syncClinicForJob(
+/** 同步一間診所，支援 shouldCancel 檢查。傳入 jobId 用於追蹤進度。
+ * ★ cwm-apricotty-20261001：按 clinicExtId 搵該店 Apricot 帳號，成個同步用該帳號 token。 */
+export async function syncClinicForJob(...args: Parameters<typeof syncClinicForJobImpl>) {
+  return withApricotAccount(await accountForApricotClinic(args[0]), () => syncClinicForJobImpl(...args))
+}
+
+async function syncClinicForJobImpl(
   clinicExtId: string,
   fromISO: string,
   toISO: string,
@@ -455,8 +461,9 @@ export async function syncClinicForJob(
     const p = allPayments[idx]
 
     const methods = (p.paymentMethods || []).map((m: any) => ({
+      // ★ cwm-apricotty-20261001：同 upsertPayment 同一口徑（code → des）
       methodRaw: m.des ?? '',
-      methodNorm: normalizeMethod(m.des ?? ''),
+      methodNorm: apricotMethod(m, 'des').methodNorm,
       amount: m.amt ?? 0,
       payType: m.payType ?? '',
     }))
@@ -492,8 +499,13 @@ export async function syncClinicForJob(
   return finish(false, billsChecked, allocRows)
 }
 
-/** 舊版入口 — 被 withApricotLock 包起，保持原有同步行為 */
+/** 舊版入口 — 被 withApricotLock 包起，保持原有同步行為
+ * ★ cwm-apricotty-20261001：按 clinicExtId 搵該店 Apricot 帳號 */
 export async function syncPayments(clinicExtId: string, fromISO: string, toISO: string) {
+  return withApricotAccount(await accountForApricotClinic(clinicExtId), () => syncPaymentsImpl(clinicExtId, fromISO, toISO))
+}
+
+async function syncPaymentsImpl(clinicExtId: string, fromISO: string, toISO: string) {
   // ★ H1: 唔理 caller 送咩格式（+08:00 / 裸日期 / Z），一律轉成 Apricot 收嘅 UTC Z
   const startUtc = new Date(fromISO)
   const endUtc = new Date(toISO)
@@ -598,8 +610,9 @@ export async function syncPayments(clinicExtId: string, fromISO: string, toISO: 
     let allocRows = 0
     for (const p of allPayments) {
       const methods = (p.paymentMethods || []).map((m: any) => ({
+        // ★ cwm-apricotty-20261001：同 upsertPayment 同一口徑（code → des）
         methodRaw: m.des ?? '',
-        methodNorm: normalizeMethod(m.des ?? ''),
+        methodNorm: apricotMethod(m, 'des').methodNorm,
         amount: m.amt ?? 0,
         payType: m.payType ?? '',
       }))

@@ -1,6 +1,7 @@
 // ownership-ok: IDCR: [id] 直接係 clinic ID，RBAC matrix 控制
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
+import { APRICOT_ACCOUNT_RE } from '@/lib/apricot/account'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runWithAudit } from '@/lib/audit-context'
@@ -46,7 +47,16 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   return runWithAudit(auditCtx, async () => {
     const id = params.id
     const { name, address, config, shortName, companyId, latitude, longitude, geoRadius, color, apricotClinicId,
-      capacityPerProvider, leadTimeMin, flowWindowDays, holdTimeoutHours } = await req.json()
+      capacityPerProvider, leadTimeMin, flowWindowDays, holdTimeoutHours, apricotAccount, apricotPayoutFrom } = await req.json()
+
+    // ★ cwm-apricotty-20261001：Apricot 帳號（MAIN／TY…）+ 月結起計月份（YYYY-MM；null/'' = 冇限制）
+    if (apricotAccount !== undefined && !APRICOT_ACCOUNT_RE.test(String(apricotAccount ?? '').trim().toUpperCase())) {
+      return NextResponse.json({ error: 'apricotAccount 只准大楷英文／數字／底線（例如 MAIN、TY）' }, { status: 400 })
+    }
+    if (apricotPayoutFrom !== undefined && apricotPayoutFrom !== null && apricotPayoutFrom !== ''
+      && !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(apricotPayoutFrom))) {
+      return NextResponse.json({ error: 'apricotPayoutFrom 必須係 YYYY-MM' }, { status: 400 })
+    }
 
     const HEX = /^#[0-9a-fA-F]{6}$/
     if (color !== undefined && color !== null && !HEX.test(String(color))) {
@@ -84,6 +94,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
           ...(longitude !== undefined && { longitude: longitude != null ? Number(longitude) : null }),
           ...(geoRadius !== undefined && { geoRadius: geoRadius != null ? Number(geoRadius) : null }),
           ...(apricotClinicId !== undefined && { apricotClinicId: apricotClinicId?.trim() || null }),
+          ...(apricotAccount !== undefined && { apricotAccount: String(apricotAccount).trim().toUpperCase() }),
+          ...(apricotPayoutFrom !== undefined && { apricotPayoutFrom: apricotPayoutFrom || null }),
           ...intData,
         },
       })

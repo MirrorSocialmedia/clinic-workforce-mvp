@@ -14,6 +14,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'CREATE', entity: 'PunchCorrection', label: '補登申請（改時間）' },
   { action: 'UPDATE', entity: 'PunchCorrection', label: '批核補登申請' },
   { action: 'CORRECTION_SELF_APPROVE', label: '⚠️ 自批補登' },
+  // ★ 2026-09-30 F-07：自己改／作廢自己張卡（唔擋，同自批補登一致）
+  { action: 'PUNCH_SELF_EDIT', label: '⚠️ 自己改自己打卡' },
+  { action: 'PUNCH_SELF_VOID', label: '⚠️ 自己作廢自己打卡' },
   { action: 'EARLY_OT_APPROVE', label: '批准提早上班OT' },
   { action: 'EARLY_OT_CANCEL', label: '取消提早上班OT' },
   { action: 'EARLY_OT_AUTO_REVOKE', label: '⚠️ 打卡改動·自動撤回提早OT' },
@@ -36,6 +39,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   // ★ cwm-holidayot-20260911：假期返工 OT 人手扣減（改時間帳戶餘額，間接影響離職結算）
   { action: 'HOLIDAY_OT_ADJUST', label: '假期返工OT扣減' },
   { action: 'HOLIDAY_OT_ADJUST_DELETE', label: '移除假期返工OT扣減' },
+  // ★ 2026-09-30：午飯扣減人手調整（改當日工時 → 時薪＝工資／月薪＝午飯 OT 遲到）
+  { action: 'LUNCH_OVERRIDE', label: '午飯扣減調整' },
+  { action: 'LUNCH_OVERRIDE_DELETE', label: '移除午飯扣減調整' },
   // ★ 2026-08-05: Additional sensitive actions from coverage scan
   { action: 'ACCOUNT_DELETE', label: '刪除帳戶' },
   { action: 'ACCOUNT_PURGE', label: '⚠️ 徹底清除帳號' },
@@ -50,9 +56,12 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PAYROLL_EXPORT', label: '匯出計糧' },
   // ★ cwm-payrollsheet-20260921 S4：月度出糧總表匯出（同 PAYROLL_EXPORT 同級 — 敏感摘要）
   { action: 'PAYROLL_CHEQUE_SHEET', label: '匯出月度出糧總表' },
+  { action: 'CHEQUE_SHEET_TEMPLATE_UPDATE', label: '出糧總表模版新增／修改／刪除' }, // ★ cwm-chequetpl-20261004
+  { action: 'CHEQUE_SHEET_PAYER_UPDATE', label: '出糧總表出糧診所／次序變更' }, // ★ cwm-chequetpl-20261004
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
   { action: 'EMPLOYEE_RESIGN_SETTLE', label: '離職結算確認（寫入薪金／時間帳戶扣除）' },
+  { action: 'EMPLOYEE_RESIGN_SETTLE_REVOKE', label: '撤銷離職結算（刪除結算行 — 影響尾糧）' },
   { action: 'FACE_ENROLL_APPROVE', label: '批准人臉登記' },
   { action: 'FACE_ENROLL_REJECT', label: '拒絕人臉登記' },
   { action: 'PAY_RULE_UPDATE', label: '更新計薪規則' },
@@ -91,13 +100,20 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'APRICOT_SYNC', label: 'Apricot 同步觸發' },
   // ★ cwm-apricotacct-20260913 E 章：Apricot 帳號綁定（影響月結歸屬，必須審計）
   { action: 'APRICOT_ACCOUNT_BIND', label: 'Apricot 帳號綁定' },
+  // ★ cwm-datasource-20261003：資料來源設定（顯示名／編號規則／店歸屬）同憑證更新（只記「更新咗」，唔記內容）
+  { action: 'APRICOT_SOURCE_UPDATE', label: 'Apricot 資料來源設定變更' },
+  { action: 'APRICOT_CREDENTIAL_UPDATE', label: '⚠️ Apricot 憑證更新（網頁貼入）' },
   { action: 'PAYMENT_METHOD_RULE_CREATE', label: '新增付款方式規則' },
   // ★ MD-D: Payout Engine
+  { action: 'PAYROLL_ITEM_REMOVE', label: '由草稿計糧單移除員工' }, // ★ cwm-payrollsingle-20261003
+  { action: 'PAYROLL_BULK_PDF_EXPORT', label: '一鍵匯出全部薪資明細 PDF' }, // ★ cwm-bulkpayslip-20261003
   { action: 'PAYOUT_RUN_LOCK', label: '鎖定月結單' },
   { action: 'PAYOUT_RUN_UNLOCK', label: '⚠️ 解鎖月結單' },
   { action: 'PAYOUT_RUN_DELETE', label: '⚠️ 刪除月結單草稿' },
   { action: 'PAYOUT_EXPORT', label: '匯出月結單' },
+  { action: 'PAYOUT_EXPORT_MISMATCH', label: '⚠️ 月結單匯出金額對數唔符（已停止匯出）' }, // ★ cwm-payout P-4（MD §2.3）
   { action: 'PAYOUT_CLINIC_REPORT_EXPORT', label: '匯出全店月度收入報表（含病人姓名）' }, // ★ cwm-payoutxlsx C（MD 坑⑦）
+  { action: 'PAYOUT_DAILY_EXPORT', label: '匯出每日大數' }, // ★ cwm-dailyrev-20261003
   { action: 'REFERRAL_CREATE', label: '新增轉介記錄' },
   { action: 'REFERRAL_DELETE', label: '刪除轉介記錄' },
   { action: 'REFERRAL_BATCH_CREATE', label: '批次新增轉介' },
@@ -170,4 +186,6 @@ export const SENSITIVE_AUDIT_EXEMPT = new Set([
   // ★ cwm-labdoc（§14）：Lab 單據 metadata-only audit（零姓名 — labdocAudit() guard 兜底）
   'LAB_DOC_UPLOAD', 'LAB_DOC_MERGE', 'LAB_DOC_LINE_IGNORE',
   'LAB_DOC_FILE_DOWNLOAD', 'LAB_DOC_IMAGE_PURGE',
+  // ★ 2026-09-30 C2/C5：網絡失敗自動補登（PENDING，敏感嘅係之後嘅批核）+ 客戶端錯誤上報（常規／自動）
+  'PUNCH_CLIENT_ERROR', 'PUNCH_NETWORK_EVIDENCE',
 ])

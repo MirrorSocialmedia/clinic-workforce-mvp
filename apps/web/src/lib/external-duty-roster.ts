@@ -18,6 +18,7 @@ import { basePrisma } from '@/lib/prisma'
 import { ExternalApiError } from '@/lib/external-api'
 import { resolveClinicByCode } from '@/lib/external-clinic'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { employedFromWhere } from '@/lib/employment-scope'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -77,6 +78,8 @@ export async function fetchDutyRoster(
         clinicId: clinic.id,
         date: { gte: dayStart, lte: dayEnd },
         status: { not: 'CANCELLED' },
+        // ★ cwm-resignsweep-20261003：已離職（生效日 ≤ 當日）嘅舊數據更唔出
+        employee: employedFromWhere(dayStart),
       },
       select: {
         startTime: true,

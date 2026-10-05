@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { boolParam } from '@/lib/query-params'
+import { resignedDateError } from '@/lib/employment-scope'
 
 // ============================================================
 // GET /api/my/schedule — My upcoming schedule
@@ -135,7 +136,9 @@ export async function GET(req: NextRequest) {
         coworkerSecMap = new Map(coworkerSecClinics.map(c => [c.id, c]))
       }
 
-      coworkerShifts = allShifts.map(s => {
+      // ★ cwm-resignsweep-20261003：同事離職生效日或之後嘅更（舊數據冇取消）唔顯示
+      const todayStr = toHKDateStr(new Date())
+      coworkerShifts = allShifts.filter(s => !resignedDateError(s.employee, [toHKDateStr(new Date(s.startTime))], todayStr)).map(s => {
         const sec = s.secondaryClinicId ? coworkerSecMap.get(s.secondaryClinicId) : null
         return {
           id: s.id,

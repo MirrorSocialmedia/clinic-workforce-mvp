@@ -14,6 +14,7 @@ import zhcn from '@fullcalendar/core/locales/zh-cn'
 import type { DatesSetArg, EventContentArg, EventMountArg } from '@fullcalendar/core'
 const FullCalendarCmp = FullCalendar as unknown as React.ComponentType<any>
 import { toHKDateStr, fmtTime, leaveCoversDate, hkDateStart, fmtDateTime, todayHK, addDaysStr, hkDayOfWeek } from '@/lib/hk-date'
+import { employedOnOrAfterStr } from '@/lib/employment-scope'
 import { useLatestRequest } from '@/lib/use-latest-request'
 import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
 import { aggregateRestPl } from '@/lib/leave-summary'
@@ -57,16 +58,27 @@ const r1 = (n: number) => Math.round(n * 10) / 10
 function HomeTag({ emp, scopeClinicIds, shortName, crossCompany }: {
   emp: any; scopeClinicIds: Set<string> | null; shortName?: string; crossCompany?: boolean
 }) {
-  if (!scopeClinicIds) return null
+  // ★ cwm-resignsweep-20261003：離職當月照顯示嘅行加「離職 M/D」（最後工作日）
+  const resignTag = emp.status === 'RESIGNED' ? (() => {
+    const last = emp.leaveDate ? toHKDateStr(emp.leaveDate)
+      : emp.resignedAt ? addDaysStr(toHKDateStr(emp.resignedAt), -1) : null
+    return <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, background: '#f3e8ff', color: '#7e22ce', border: '1px solid #d8b4fe' }}>
+      離職{last ? ` ${Number(last.slice(5, 7))}/${Number(last.slice(8, 10))}` : ''}
+    </span>
+  })() : null
+  if (!scopeClinicIds) return resignTag
   const home = emp.homeClinicId && scopeClinicIds.has(emp.homeClinicId)
   const tone = home
     ? { background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
     : crossCompany
       ? { background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }
       : { background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }
-  return <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, ...tone }}>
-    {home ? shortName : `調入·${shortName || '未設'}`}
-  </span>
+  return <>
+    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, marginLeft: 4, ...tone }}>
+      {home ? shortName : `調入·${shortName || '未設'}`}
+    </span>
+    {resignTag}
+  </>
 }
 
 const byName = (a: any, b: any) => {
@@ -114,6 +126,8 @@ interface Employee {
   homeClinicId?: string | null
   // ★ cwm-attexempt-20260914：免考勤員工（會計）唔出現喺排班（optional：舊資料可能冇呢個欄）
   attendanceExempt?: boolean
+  resignedAt?: string | null
+  leaveDate?: string | null
 }
 
 interface Clinic {
@@ -152,6 +166,7 @@ interface Shift {
   templateId?: string
   hasPunch?: boolean
   secondaryClinicId?: string | null
+  updatedAt?: string
   employee?: { user: { name: string } }
   clinic?: { name: string }
   template?: { name: string; shortName?: string | null }
@@ -485,6 +500,9 @@ export default function SchedulingPage() {
     [clinics]
   )
   const [employees, setEmployees] = useState<Employee[]>([])
+  // ★ cwm-resignsweep-20261003：已離職員工另載 —— 只喺總覽（週／月）離職當月照顯示（唯讀行），之後撤走。
+  //   唔併入 employees：排更下拉、調鋪、工時等全部照舊只見在職。
+  const [resignedEmployees, setResignedEmployees] = useState<Employee[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
 
   const [templates, setTemplates] = useState<ShiftTemplate[]>([])
@@ -1210,6 +1228,11 @@ function getShiftCode(shift: Shift): string {
         getJSON('/api/employees?all=1'),
         getJSON('/api/shift-changes'),
       ])
+      // ★ cwm-resignsweep-20261003：已離職（總覽離職當月顯示用）—— 失敗唔阻主流程
+      getJSON('/api/employees?all=1&includeResigned=1&status=RESIGNED')
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => setResignedEmployees(d?.employees ?? []))
+        .catch(() => {})
 
       if (meRes.ok) {
         const meData = await meRes.json()
@@ -1493,7 +1516,15 @@ function getShiftCode(shift: Shift): string {
   const ovEmployees = useMemo(() => {
     // ★ cwm-resignflow-20260911 D：白名單改黑名單
     // ★ cwm-attexempt-20260914：免考勤員工（會計）唔出現喺排班
-    const activeEmployees = employees.filter(emp => emp.status !== 'RESIGNED' && emp.attendanceExempt !== true)
+    // ★ cwm-resignsweep-20261003：已離職員工喺離職當月（週視圖：當週）照顯示，之後先撤走
+    const rangeStart = viewRange?.start // 週：星期一；月：1 號（HK YYYY-MM-DD）
+    const stillShown = rangeStart
+      ? resignedEmployees.filter(emp => emp.attendanceExempt !== true && employedOnOrAfterStr(emp, rangeStart))
+      : []
+    const activeEmployees = [
+      ...employees.filter(emp => emp.status !== 'RESIGNED' && emp.attendanceExempt !== true),
+      ...stillShown,
+    ]
     let scoped = activeEmployees
     if (scopeClinicIds) {
       // ★ 2026-08-06 拍板：綁定 → 主屬＋更次三條件（圖示確認）
@@ -1524,7 +1555,7 @@ function getShiftCode(shift: Shift): string {
     const full = scoped.filter(e => e.payRules?.[0]?.payType !== 'HOURLY').sort(byHomeGroupThenRoleName)
     const part = scoped.filter(e => e.payRules?.[0]?.payType === 'HOURLY').sort(byHomeGroupThenRoleName)
     return { full, part, ordered: [...full, ...part] }
-  }, [employees, scopeClinicIds, shifts, ovMonthShifts, mobileShifts, homeOrder])
+  }, [employees, resignedEmployees, viewRange, scopeClinicIds, shifts, ovMonthShifts, mobileShifts, homeOrder])
 
   // Step 7: Overview shifts (filtered by scope)
   const ovShifts = useMemo(() => {
@@ -1826,6 +1857,10 @@ function getShiftCode(shift: Shift): string {
         startTime: s.startTime,
         endTime: s.endTime,
         templateId: s.templateId,
+        role: s.role ?? null,                          // ★ S-03：舊版漏咗
+        secondaryClinicId: s.secondaryClinicId ?? null, // ★ S-03：調鋪
+        status: s.status,                              // ★ S-03：DRAFT 唔好變 CONFIRMED
+        restoredFromUndo: true,                        // ★ S-03：伺服器發「已恢復」通知
       }
       const res = await fetch(`/api/shifts/${id}`, { method: 'DELETE', credentials: 'include' })
       if (!res.ok) { alert('刪除失敗'); return }
@@ -2422,10 +2457,16 @@ function getShiftCode(shift: Shift): string {
           x: r.x + r.width, y: r.y,
           conflict: {
             kind: 'leave',
-            existing: dayLeaves.map(lr => ({
-              id: lr.id,
-              label: lr.leaveType?.name ?? '假期',
-            })),
+            existing: dayLeaves.map(lr => {
+              const s = toHKDateStr(new Date(lr.startDate))
+              const e = toHKDateStr(new Date(lr.endDate || lr.startDate))
+              return {
+                id: lr.id,
+                label: s === e
+                  ? (lr.leaveType?.name ?? '假期')
+                  : `${lr.leaveType?.name ?? '假期'}（${s.slice(5)}–${e.slice(5)}，共 ${lr.days} 日 — 多日假唔可以直接替換）`,
+              }
+            }),
             pending: {
               templateId: tpl.id,
               clinicId: tc.primaryClinicId,
@@ -2489,10 +2530,16 @@ function getShiftCode(shift: Shift): string {
           x: r.x + r.width, y: r.y,
           conflict: {
             kind: 'leave',
-            existing: dayLeaves.map(lr => ({
-              id: lr.id,
-              label: lr.leaveType?.name ?? '假期',
-            })),
+            existing: dayLeaves.map(lr => {
+              const s = toHKDateStr(new Date(lr.startDate))
+              const e = toHKDateStr(new Date(lr.endDate || lr.startDate))
+              return {
+                id: lr.id,
+                label: s === e
+                  ? (lr.leaveType?.name ?? '假期')
+                  : `${lr.leaveType?.name ?? '假期'}（${s.slice(5)}–${e.slice(5)}，共 ${lr.days} 日 — 多日假唔可以直接替換）`,
+              }
+            }),
             pending: {
               templateId: tpl.id,
               clinicId: targetClinicId ?? selectedClinicId ?? '',
@@ -7171,6 +7218,7 @@ function getShiftCode(shift: Shift): string {
                         role: role || null,
                         status,
                         secondaryClinicId,
+                        expectedUpdatedAt: editingShift.updatedAt,
                       }),
                     })
 

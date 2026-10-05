@@ -20,6 +20,7 @@ import { prisma } from '@/lib/prisma'
 import { toHKDateStr, addDaysStr, hkParts } from '@/lib/hk-date'
 import { apricotCall, withApricotLockRetry } from './client'
 import { withApricotLock } from './lock'
+import { withApricotAccount, isAccountDeadError } from './account'
 import { syncAvailabilityCacheForClinic } from './sync-availability-cache'
 import type { CacheCallFn } from './sync-availability-cache'
 
@@ -114,36 +115,38 @@ export async function runAppointmentIndexBackfill(
   const result = await withApricotLock(async () => {
     const clinics = await prisma.clinic.findMany({
       where: { apricotClinicId: { not: null } },
-      select: { id: true, name: true, apricotClinicId: true },
+      select: { id: true, name: true, apricotClinicId: true, apricotAccount: true },
       orderBy: { name: 'asc' },
     })
 
     const results: BackfillRunResult['results'] = []
-    let aborted = false
+    // ★ cwm-apricotty-20261001：逐帳號中止（青衣 token 失效唔中止原帳號嘅回填）
+    const deadAccounts = new Set<string>()
     for (const w of windows) {
       for (const c of clinics) {
         if (!c.apricotClinicId) continue // where 已 filter；運行時多一層防御
+        if (deadAccounts.has(c.apricotAccount)) continue
+        const clinicRef = { id: c.id, name: c.name, apricotClinicId: c.apricotClinicId }
         try {
-          const r = await syncAvailabilityCacheForClinic(
-            { id: c.id, name: c.name, apricotClinicId: c.apricotClinicId },
+          const r = await withApricotAccount(c.apricotAccount, () => syncAvailabilityCacheForClinic(
+            clinicRef,
             opts.callFn ?? defaultCall,
             { now: nowDate, start: w.ws, end: w.we, indexOnly: true },
-          )
+          ))
           results.push({ clinic: c.name, clinicId: c.id, month: w.month, indexRows: r.indexRows })
         } catch (e: any) {
           const msg = e?.message ?? String(e)
           // 🔴 只 log 錯誤訊息（Apricot error 無病人資料）— raw response 絕對唔入 log
           console.error(`[backfill-appointments] ${c.name} ${w.month} 失敗：`, msg)
           results.push({ clinic: c.name, clinicId: c.id, month: w.month, error: msg })
-          if (msg.includes('AUTH_EXPIRED')) {
-            console.error('[backfill-appointments] Apricot 認證失效 —— 中止（重跑安全：upsert 冪等）')
-            aborted = true
+          if (isAccountDeadError(msg)) {
+            console.error(`[backfill-appointments] Apricot 帳號 ${c.apricotAccount} 認證失效／未設定 —— 該帳號中止（重跑安全：upsert 冪等）`)
+            deadAccounts.add(c.apricotAccount)
           }
         }
-        if (aborted) break
         await new Promise(r => setTimeout(r, delayMs))
       }
-      if (aborted) break
+      if (deadAccounts.size > 0 && clinics.every(c => deadAccounts.has(c.apricotAccount))) break
     }
     return { results }
   })

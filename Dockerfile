@@ -3,14 +3,24 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache openssl
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+# ★ 2026-10-04 快 deploy：先淨係 copy 依賴清單 → 裝依賴（layer cache）→ 再 copy 源碼。
+#   之前 `COPY . .` 喺 install 前面 → 改一個字都令 pnpm install 由頭嚟過；
+#   而家 package.json／pnpm-lock.yaml／schema 冇改，install 同 prisma generate 直接用 cache。
+#   （install 只喺 apps/web 做，同之前一樣冇 pnpm-workspace.yaml）
+COPY apps/web/package.json apps/web/pnpm-lock.yaml /app/apps/web/
+WORKDIR /app/apps/web
+RUN pnpm install --frozen-lockfile
+COPY apps/web/prisma ./prisma
+RUN npx prisma generate
+WORKDIR /app
 COPY . .
 RUN rm -f pnpm-workspace.yaml apps/web/pnpm-workspace.yaml
 WORKDIR /app/apps/web
-RUN pnpm install --frozen-lockfile
-RUN npx prisma generate
 ENV DATABASE_URL="postgresql://build:build@build:5432/build" \
  JWT_SECRET="build-time-placeholder-0123456789abcdefghij" \
  NODE_OPTIONS="--max-old-space-size=4096"
+# ⚠️ 2026-10-04：唔好用 `RUN --mount=type=cache`（BuildKit 專用）—— production server 用舊式 builder，
+#   會報「the --mount option requires BuildKit」令 deploy 停喺 build。依賴層 cache（上面）兩種 builder 都得。
 RUN pnpm build
 
 # Stage 2: Runner

@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, todayHK } from '@/lib/hk-date'
+import { resignedDateError } from '@/lib/employment-scope'
 import { runWithAudit } from '@/lib/audit-context'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { createNotification } from '@/lib/notification'
@@ -136,6 +137,16 @@ export async function POST(req: NextRequest) {
 
       if (!employee) {
         return NextResponse.json({ error: 'Employee profile not found' }, { status: 400 })
+      }
+
+      // ★ cwm-resignsweep-20261003：已離職員工唔准開離職生效日或之後嘅假（UI 已隱藏，API 兜底）
+      {
+        const resignErr = resignedDateError(
+          employee,
+          [toHKDateStr(new Date(startDate)), toHKDateStr(new Date(endDate))],
+          todayHK(),
+        )
+        if (resignErr) return NextResponse.json({ error: resignErr }, { status: 400 })
       }
 
       const leaveType = await prisma.leaveType.findUnique({ where: { id: leaveTypeId } })

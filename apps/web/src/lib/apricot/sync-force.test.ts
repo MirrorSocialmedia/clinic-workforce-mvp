@@ -108,7 +108,8 @@ const fakes: Record<string, any> = {
   // 呢三條 test 路径唔應該行到 allocation / sweep —— 真觸及即爆
   $transaction: async () => { throw new Error('test 唔應該行到 $transaction') },
   paymentAllocation: { findMany: async () => { throw new Error('test 唔應該行到 paymentAllocation') }, upsert: async () => { throw new Error('no') } },
-  clinic: { findFirst: async () => { throw new Error('test 唔應該行到 clinic.findFirst') } },
+  // ★ cwm-apricotty：findUnique = 帳號 lookup（null → MAIN）
+  clinic: { findFirst: async () => { throw new Error('test 唔應該行到 clinic.findFirst') }, findUnique: async () => null },
 }
 
 const realFetch = globalThis.fetch

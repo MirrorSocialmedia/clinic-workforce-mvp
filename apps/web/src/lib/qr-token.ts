@@ -28,9 +28,9 @@ export async function generateQRToken(clinicId: string, issuedByUserId?: string)
   const issuedAt = new Date()
   const expiresAt = new Date(issuedAt.getTime() + TOKEN_TTL_SECONDS * 1000)
 
-  // ★ 2026-08-06: retry-on-conflict — shortCode 48-bit 空間極低衝突，
-  // 但 cleanup 同 generate 之間有 race window（舊碼先刪、新碼重覆）
-  // 三次未中 → 加時間戳擴容（8+3=11 chars），理論 zero collision
+  // ★ 2026-08-06: retry-on-conflict — shortCode 40-bit（32 字 × 5 bit）空間低衝突，
+  // 但 shortCode 冇 unique index：P2002 只會在 token 撞時觸發（cleanup 同 generate 之間嘅 race window）
+  // 三次未中 → 換新 token + shortCode 再試，理論上 zero collision
   let maxRetries = 3
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -129,20 +129,38 @@ export async function validateAndMarkTokenUsed(
  * punch route 改咗「先檢查後消耗」—— 所有守衛通過先消耗 token（失敗唔食碼）。
  * 消耗喺 route 嘅 $transaction 第一句（QRTOKEN_USAGE 冪等 → 同碼第二次 = P2002 → 409 ALREADY_USED）。
  */
+// ★ 2026-09-30 C1：過期寬限（盡量唔擋打卡）。寬限內照收，但 punch route 會標 tokenValid=false（考勤頁顯示 ❌）。
+//   只影響「接受」，唔延長 iPad 顯示／TTL。設 QR_EXPIRED_GRACE_SECONDS=0 = 回復舊行為。
+//   代價：影相轉發 QR 嘅有效窗口由 ≤24 秒變 ≤84 秒 —— 但會留 ❌ 標記，事後查得到。
+const QR_GRACE_MS = Math.max(0, Number(process.env.QR_EXPIRED_GRACE_SECONDS ?? 60) || 0) * 1000
+
 export async function resolveQrToken(scanned: string): Promise<
-  | { valid: true; tokenId: string; clinicId: string; issuedByUserId: string | null }
+  | { valid: true; tokenId: string; clinicId: string; issuedByUserId: string | null; lateSec: number }
   | { valid: false; reason: 'NOT_FOUND' | 'EXPIRED' }
 > {
+  const now = Date.now()
+  const code = scanned.trim().toUpperCase()
   let record = await prisma.qRToken.findUnique({ where: { token: scanned } })
   if (!record) {
     record = await prisma.qRToken.findFirst({
-      where: { shortCode: scanned.trim().toUpperCase(), expiresAt: { gt: new Date() } },
+      where: { shortCode: code, expiresAt: { gt: new Date(now - QR_GRACE_MS) } },
       orderBy: { issuedAt: 'desc' },
     })
   }
-  if (!record) return { valid: false, reason: 'NOT_FOUND' }
-  if (new Date() > record.expiresAt) return { valid: false, reason: 'EXPIRED' }
-  return { valid: true, tokenId: record.id, clinicId: record.clinicId, issuedByUserId: record.issuedByUserId ?? null }
+  if (!record) {
+    // ★ 分返「過期」同「唔存在」—— 舊版 shortCode 過期一律話「無效」，iPad 斷線時員工以為自己掃錯
+    const old = await prisma.qRToken.findFirst({ where: { shortCode: code }, select: { id: true } })
+    return { valid: false, reason: old ? 'EXPIRED' : 'NOT_FOUND' }
+  }
+  const lateMs = now - record.expiresAt.getTime()
+  if (lateMs > QR_GRACE_MS) return { valid: false, reason: 'EXPIRED' }
+  return {
+    valid: true,
+    tokenId: record.id,
+    clinicId: record.clinicId,
+    issuedByUserId: record.issuedByUserId ?? null,
+    lateSec: lateMs > 0 ? Math.ceil(lateMs / 1000) : 0,
+  }
 }
 
 /**

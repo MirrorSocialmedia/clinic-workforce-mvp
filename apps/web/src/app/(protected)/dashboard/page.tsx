@@ -11,6 +11,8 @@ import { punchLabel } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
 import { useTodoCount } from '@/lib/use-todo-count'
 import { LabourCostCard } from '@/components/dashboard/LabourCostCard'
+import { ProbationDueCard } from '@/components/dashboard/ProbationDueCard'
+import { DataSourceAlertCard } from '@/components/dashboard/DataSourceAlertCard'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE'
 
@@ -216,6 +218,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ★ cwm-datasource-20261003：Apricot 憑證失效／就快過期（OWNER-only；冇問題唔出） */}
+      {data.role === 'OWNER' /* ROLE-OK: 憑證管理只限負責人，同 API RBAC 一致 */ && <DataSourceAlertCard />}
+
       {/* ── Today's Attendance Board — cwm-ownerdash-20260917（時間感知；名單只俾管理層） ── */}
       <Card>
         <CardHeader className="pb-2">
@@ -304,6 +309,8 @@ export default function DashboardPage() {
 
       {/* 人工卡（OWNER-only）— cwm-ownerdash-20260917 */}
       {data.role === 'OWNER' /* ROLE-OK: 全公司人工只限負責人 */ && <LabourCostCard />}
+      {/* ★ cwm-probation-20261003：試用期將滿（冇人就唔出） */}
+      {(data.role === 'OWNER' || data.role === 'MANAGER') /* ROLE-OK: 同待辦頁一樣，管理層先睇 */ && <ProbationDueCard />}
 
       {/* ── Mobile-first cards: Face anomaly + Todo ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
