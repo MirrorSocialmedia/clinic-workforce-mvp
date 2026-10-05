@@ -66,6 +66,7 @@ interface LineRow {
 interface CostRow {
   id: string
   clinicId: string
+  providerId: string
   status: string
   lockedByRunId: string | null
   baseCost: number | null
@@ -79,6 +80,12 @@ interface CostRow {
   labId: string | null
   patientCodeNorm: string | null
 }
+interface PayoutRunRow {
+  providerId: string
+  clinicId: string
+  periodMonth: string
+  status: string
+}
 interface State {
   doc: any
   lines: LineRow[]
@@ -88,6 +95,7 @@ interface State {
   writeLog: Map<string, any>
   created: number
   serFailTimes: number
+  payoutRuns: PayoutRunRow[]
 }
 
 function mkLine(id: string, over: Partial<LineRow> = {}): LineRow {
@@ -112,6 +120,7 @@ function mkCost(id: string, over: Partial<CostRow> = {}): CostRow {
   return {
     id,
     clinicId: CLINIC_1,
+    providerId: 'p'.repeat(25),
     status: 'PENDING',
     lockedByRunId: null,
     baseCost: null,
@@ -259,6 +268,16 @@ function makeFake(state: State) {
         ) ?? null,
     },
     clinic: { findUnique: async () => ({ id: CLINIC_1, name: '大圍', shortName: 'TW' }) },
+    payoutRun: {
+      findFirst: async ({ where }: any) =>
+        (state.payoutRuns ?? []).find(
+          (r) =>
+            (where.providerId === undefined || r.providerId === where.providerId) &&
+            (where.clinicId === undefined || r.clinicId === where.clinicId) &&
+            r.periodMonth === where.periodMonth &&
+            (where.status ? r.status === where.status : true),
+        ) ?? null,
+    },
     auditLog: { create: async (a: any) => state.audits.push(a.data) },
     labDocWriteLog: {
       findUnique: async ({ where }: any) => state.writeLog.get(where.idempotencyKey) ?? null,
@@ -329,6 +348,7 @@ function baseState(over: Partial<State> = {}): State {
     writeLog: new Map(),
     created: 0,
     serFailTimes: 0,
+    payoutRuns: [],
     ...over,
   }
 }
@@ -508,6 +528,64 @@ test('§7.7 到貨確認：receivedAt＋periodMonth（到貨月）；已出月�
     )
     assert.strictEqual(r.status, 409)
   }
+})
+
+test('§7.7 T3：到貨日落喺目標月（醫生×診所×月）PayoutRun 已 LOCKED → 409＋零寫入', async () => {
+  const state = baseState()
+  state.lines[0] = mkLine(LINE_A, { status: 'MATCHED', costCaseId: CC_1, linkType: 'MAIN' })
+  // CC_1 自身未鎖（未到貨、periodMonth=null）— 但目標月 2026-09 已有 LOCKED run
+  state.payoutRuns = [{ providerId: 'p'.repeat(25), clinicId: CLINIC_1, periodMonth: '2026-09', status: 'LOCKED' }]
+  reset(state)
+  const r = await POST(
+    makeReq(URL_0, tokenFor(OWNER, 'OWNER'), {
+      idempotencyKey: KEY_1,
+      version: 1,
+      lines: [{ lineId: LINE_A, action: 'MATCH', costCaseId: CC_1, linkType: 'MAIN', receivedAt: '2026-09-15' }],
+    }) as any,
+    { params: { id: DOC_ID, g: '0' } } as any,
+  )
+  assert.strictEqual(r.status, 409)
+  const body = await r.json()
+  assert.match(body.error, /2026-09 已出月結/)
+  // 零寫入：receivedAt/periodMonth 未動、無 COST_CASE_UPDATE audit、文件狀態未動
+  const cc = state.costs.find((c) => c.id === CC_1)!
+  assert.strictEqual(cc.receivedAt, null)
+  assert.strictEqual(cc.periodMonth, null)
+  assert.strictEqual(state.audits.find((a) => a.action === 'COST_CASE_UPDATE'), undefined)
+  assert.strictEqual(state.doc.status, 'CONFIRMED')
+})
+
+test('T14 補收費：已有 MAIN（其他單 $1,000）嘅成本再連呢張單 SUPPLEMENT $80 → 改價 baseCost = 1,080', async () => {
+  const state = baseState()
+  const LINE_OTHER = 'x'.repeat(25)
+  state.docs2[DOC_2] = { id: DOC_2, kind: 'INVOICE', status: 'RECONCILED', docNo: 'INV-MAIN-OTHER', clinicId: CLINIC_1 }
+  state.lines = [
+    mkLine(LINE_A, { amount: 80, description: 'Crown (supp)' }),
+    mkLine(LINE_OTHER, { documentId: DOC_2, amount: 1000, status: 'MATCHED', costCaseId: CC_1, linkType: 'MAIN', matchedBy: OWNER, matchedAt: new Date() }),
+  ]
+  state.costs[0] = mkCost(CC_1, { baseCost: 1000, finalCost: 1000, status: 'PRICED', labInvoiceLinked: true, receivedAt: new Date('2026-09-10T00:00:00Z'), periodMonth: '2026-09' })
+  reset(state)
+  const r = await POST(
+    makeReq(URL_0, tokenFor(OWNER, 'OWNER'), {
+      idempotencyKey: KEY_1,
+      version: 1,
+      lines: [{ lineId: LINE_A, action: 'MATCH', costCaseId: CC_1, linkType: 'SUPPLEMENT' }],
+      priceUpdates: [{ costCaseId: CC_1 }],
+    }) as any,
+    { params: { id: DOC_ID, g: '0' } } as any,
+  )
+  assert.strictEqual(r.status, 200)
+  const cc = state.costs.find((c) => c.id === CC_1)!
+  assert.strictEqual(cc.baseCost, 1080) // 主單 1,000 + 補收費 80（§7.5：baseCost = linkedSum 全部 MATCHED 行）
+  assert.strictEqual(cc.finalCost, 1080)
+  assert.strictEqual(cc.discountPct, null) // B4
+  const audit = state.audits.find((a) => a.action === 'LAB_DOC_PRICE_UPDATE')
+  assert.ok(audit)
+  assert.strictEqual(JSON.parse(audit.afterJson).baseCost, 1080)
+  // LINE_OTHER（其他單 MAIN）未被碰
+  const other = state.lines.find((l) => l.id === LINE_OTHER)!
+  assert.strictEqual(other.status, 'MATCHED')
+  assert.strictEqual(other.linkType, 'MAIN')
 })
 
 test('§7.5 改價：baseCost = linkedSum（含今次 MATCH 行）＋discountPct=null＋PRICED＋audit', async () => {

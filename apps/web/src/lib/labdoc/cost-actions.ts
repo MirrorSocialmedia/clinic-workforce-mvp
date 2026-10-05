@@ -32,6 +32,13 @@ export class PriceLockedError extends Error {
   }
 }
 
+export class ReceivedMonthLockedError extends Error {
+  constructor(periodMonth: string) {
+    super(`RECEIVED_MONTH_LOCKED:${periodMonth}`)
+    this.name = 'ReceivedMonthLockedError'
+  }
+}
+
 export class CostInvalidError extends Error {
   constructor(msg: string) {
     super(msg)
@@ -204,6 +211,16 @@ export async function applyReceivedConfirm(
   }
   if (cc.lockedByRunId != null) throw new PriceLockedError(cc.id)
   const periodMonth = args.receivedAt == null ? null : deriveCostPeriod(cc.category, cc.orderedAt, args.receivedAt).periodMonth
+  // ★ cwm-labdoc P2 §7.7/T3：目標月（醫生×診所×月）已 LOCKED → throw（route 轉 409，零寫入）。
+  //   同 cost-cases PUT 守衛③一致：成本自身 lockedByRunId 只涵蓋「已入月結」；
+  //   未到貨成本（periodMonth=null、無 lock）確認到貨時，到貨日可能落喺已 LOCKED 月 → 必查 PayoutRun。
+  if (periodMonth) {
+    const lockedRun = await tx.payoutRun.findFirst({
+      where: { providerId: cc.providerId, clinicId: cc.clinicId, periodMonth, status: 'LOCKED' },
+      select: { id: true },
+    })
+    if (lockedRun) throw new ReceivedMonthLockedError(periodMonth)
+  }
   await tx.costCase.update({ where: { id: cc.id }, data: { receivedAt: args.receivedAt, periodMonth } })
   assertAuditInputClean({
     before: { receivedAt: dstr(cc.receivedAt), periodMonth: cc.periodMonth },
