@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { parseMoney } from './guards'
 
 export interface MaterialInput {
   materialName: string
@@ -69,7 +70,8 @@ export async function resolveMaterials(
   for (const mat of materials) {
     const resolved = priceMap.get(mat.materialName)!
     const masterPrice = resolved.price
-    const userPrice = mat.unitPrice != null ? Number(mat.unitPrice) : null
+    // ★ cwm-costguard-20261006：人手單價要係 0 至上限嘅數字（之前負數／亂碼都收）；拋 Error → caller 回 400
+    const userPrice = parseMoney(mat.unitPrice, `材料「${mat.materialName}」單價`)
 
     let unitPriceUsed: number
     let isPriceOverridden = false

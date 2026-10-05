@@ -4,6 +4,8 @@ import { handleRoute } from '@/lib/api-guard'
 import { prisma } from '@/lib/prisma'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
+import { CostGuardError, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
+import { todayHK } from '@/lib/hk-date'
 
 // ============================================================
 // POST /api/cost-cases/implant — Create IMPLANT cost case with materials
@@ -51,7 +53,18 @@ export async function POST(req: NextRequest) {
   //      原本邏輯會俾 null，periodMonth 變 null，成本永遠唔入月結（engine.ts:390 撈唔到）。
   //   ⚠️ 覆診日（appointmentAt）一律 null —— 全 repo 只有成本錄入頁顯示，冇引擎 consumer。
   //   （取代 2026-08-27 拍板①嘅「跟到貨日」—— 只針對 IMPLANT；LAB 路徑唔受影響。）
+  // ★ cwm-costguard-20261006：日期、診所範圍、已鎖月份（植牙以落單日計）
+  try {
+    checkCostDates(parseDay(orderedAt, '落單')!, null, todayHK())
+    assertClinicAllowed(session, clinicId)
+  } catch (e) {
+    if (e instanceof CostGuardError) return NextResponse.json({ error: e.message }, { status: e.status })
+    throw e
+  }
   const { receivedAt: effectiveReceivedAt, periodMonth } = deriveCostPeriod('IMPLANT', orderedAt, _ignoredReceivedAt)
+  if (await lockedRunFor(prisma, providerId, clinicId, periodMonth)) {
+    return NextResponse.json({ error: lockedMonthMessage(periodMonth!) }, { status: 409 })
+  }
 
   // ★ B1 + cwm-payoutcost-20260908 C2：材料單價按 name + orderedAt resolve（抽咗共用 lib，
   //   同 cost-cases/[id] PUT 共享同一套行為 — 單一來源）

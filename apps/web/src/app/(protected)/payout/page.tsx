@@ -329,7 +329,8 @@ function PayoutRunsPageInner() {
         alert(e.message)
         handlePreview()
       } else if (e.status === 409) {
-        alert(`月結單已存在`)
+        // 月結單已存在／生成期間成本有改動（server 訊息已講清楚）
+        alert(e.message || '月結單已存在')
       } else if (e.status === 400) {
         alert(`生成失敗: ${e.message}`)
       } else {

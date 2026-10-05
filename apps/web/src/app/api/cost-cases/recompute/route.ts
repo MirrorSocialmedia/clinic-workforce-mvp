@@ -34,6 +34,10 @@ export async function POST(req: NextRequest) {
   }
 
   const discountPct = Number(discount.discountPct)
+  // ★ cwm-costguard-20261006：舊資料可能有超出範圍嘅折扣 → 唔重算
+  if (!(discountPct >= 0 && discountPct <= 100)) {
+    return jsonNoStore({ error: `折扣 ${discountPct}% 唔合理（要 0–100%），請先改返折扣設定` }, { status: 400 })
+  }
 
   // Find all unpriced/unlocked cases for this lab + month
   const cases = await prisma.costCase.findMany({
@@ -50,23 +54,28 @@ export async function POST(req: NextRequest) {
   let recomputedCount = 0
   let totalDiff = 0
 
+  // ★ cwm-costguard-20261006：一齊成功一齊失敗（之前逐筆 update，中途出錯會改咗一半）；
+  //   寫入時再驗 lockedByRunId: null —— 撈完之後先被鎖嘅單唔會被改
+  const updates: Array<{ id: string; finalCost: number }> = []
   for (const c of cases) {
     const baseCost = Number(c.baseCost!)
     const newFinalCost = Number((baseCost * (100 - discountPct) / 100).toFixed(2))
     const oldFinalCost = c.finalCost ? Number(c.finalCost) : 0
-
     if (newFinalCost !== oldFinalCost) {
-      await prisma.costCase.update({
-        where: { id: c.id },
-        data: {
-          discountPct: discountPct,
-          finalCost: newFinalCost,
-        },
-      })
-      recomputedCount++
+      updates.push({ id: c.id, finalCost: newFinalCost })
       totalDiff += newFinalCost - oldFinalCost
     }
   }
+  await prisma.$transaction(async tx => {
+    for (const u of updates) {
+      const r = await tx.costCase.updateMany({
+        where: { id: u.id, lockedByRunId: null },
+        data: { discountPct, finalCost: u.finalCost },
+      })
+      if (r.count !== 1) throw new Error('有成本記錄喺重算期間被鎖定，請重新試')
+    }
+  })
+  recomputedCount = updates.length
 
   totalDiff = Number(totalDiff.toFixed(2))
 

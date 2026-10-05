@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, requirePerm, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
+import { CostGuardError, parseDiscountPct, isMonthStr } from '@/lib/cost-entry/guards'
 
 // ============================================================
 // GET /api/lab-discounts — List lab monthly discounts
@@ -53,7 +54,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'labId, periodMonth, discountPct are required' }, { status: 400 })
   }
 
-  const discountPctNum = Number(discountPct)
+  // ★ cwm-costguard-20261006：折扣要 0–100%（之前 150% 都收 → 重算後成本變負數）；月份格式；Lab 要存在
+  let discountPctNum: number
+  try { discountPctNum = parseDiscountPct(discountPct) } catch (e) {
+    if (e instanceof CostGuardError) return NextResponse.json({ error: e.message }, { status: e.status })
+    throw e
+  }
+  if (!isMonthStr(periodMonth)) return NextResponse.json({ error: '月份格式要 YYYY-MM' }, { status: 400 })
+  if (!(await prisma.lab.count({ where: { id: labId } }))) return NextResponse.json({ error: '搵唔到呢間 Lab' }, { status: 404 })
 
   // Count unpriced unlocked cases that will be affected
   const affectedCount = await prisma.costCase.count({

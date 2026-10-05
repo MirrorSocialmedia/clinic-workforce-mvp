@@ -166,5 +166,28 @@ export async function staleCostCases(todayStr: string, clinicIds: string[] | nul
   return rows.map(r => ({ ...toRow(r, todayStr), providerName: pName.get(r.providerId) ?? '', clinicName: cName.get(r.clinicId) ?? '' }))
 }
 
+/**
+ * ★ cwm-costguard-20261006：已鎖月結月份入面、但冇被鎖定嘅成本 —— 即係鎖咗之後先入／取消作廢，
+ *   冇計入任何月結（錢漏咗）。新守衛之後唔會再有新嘅，呢度係搵返舊資料入面已經發生咗嘅。
+ */
+export async function orphanCostCases(clinicIds: string[] | null): Promise<StaleRow[]> {
+  const hits: Array<{ id: string }> = await prisma.$queryRaw`
+    SELECT c.id FROM "CostCase" c
+    JOIN "PayoutRun" r ON r."providerId" = c."providerId" AND r."clinicId" = c."clinicId"
+      AND r."periodMonth" = c."periodMonth" AND r.status = 'LOCKED'
+    WHERE c.status <> 'VOID' AND c."lockedByRunId" IS NULL`
+  if (hits.length === 0) return []
+  const where: any = { id: { in: hits.map(h => h.id) } }
+  if (clinicIds) where.clinicId = { in: clinicIds }
+  const rows = await prisma.costCase.findMany({ where, select: { ...SELECT, providerId: true, clinicId: true }, orderBy: { orderedAt: 'asc' } })
+  const [providers, clinics] = await Promise.all([
+    prisma.provider.findMany({ where: { id: { in: Array.from(new Set(rows.map(r => r.providerId))) } }, select: { id: true, name: true, shortName: true } }),
+    prisma.clinic.findMany({ where: { id: { in: Array.from(new Set(rows.map(r => r.clinicId))) } }, select: { id: true, name: true, shortName: true } }),
+  ])
+  const pName = new Map(providers.map(p => [p.id, p.shortName || p.name]))
+  const cName = new Map(clinics.map(c => [c.id, c.shortName || c.name]))
+  return rows.map(r => ({ ...toRow(r), providerName: pName.get(r.providerId) ?? '', clinicName: cName.get(r.clinicId) ?? '' }))
+}
+
 /** 鎖定前要剔「我已檢查」嘅總提醒數 */
 export const totalReminders = (d: CostDetail) => COST_CATEGORIES.reduce((s, c) => s + d[c].reminders, 0)

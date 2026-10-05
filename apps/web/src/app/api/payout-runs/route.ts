@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jsonNoStore } from '@/lib/api-response'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
-import { runGates, computePayout, lockPayoutRun } from '@/lib/payout/engine'
+import { runGates, computePayout, lockPayoutRun, CostChangedDuringLockError } from '@/lib/payout/engine'
 import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
 import { todayHK } from '@/lib/hk-date'
 
@@ -117,13 +117,20 @@ export async function POST(req: NextRequest) {
   }
 
   // Lock
-  const run = await lockPayoutRun(
-    providerId,
-    periodMonth,
-    payout,
-    auth.session!.userId,
-    clinicId,
-  )
+  let run: Awaited<ReturnType<typeof lockPayoutRun>>
+  try {
+    run = await lockPayoutRun(
+      providerId,
+      periodMonth,
+      payout,
+      auth.session!.userId,
+      clinicId,
+    )
+  } catch (e) {
+    // ★ cwm-costguard-20261006：鎖定期間成本有改動 → transaction 已回滾
+    if (e instanceof CostChangedDuringLockError) return NextResponse.json({ error: e.message }, { status: 409 })
+    throw e
+  }
 
   return NextResponse.json({
     run: {
