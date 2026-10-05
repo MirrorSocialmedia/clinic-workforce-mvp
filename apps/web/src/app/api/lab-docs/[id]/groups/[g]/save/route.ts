@@ -33,6 +33,7 @@ import {
   LineTakenError,
   MainTakenError,
   PriceLockedError,
+  ReceivedMonthLockedError,
   CostInvalidError,
 } from '@/lib/labdoc/cost-actions'
 import { acquireWriteLog, completeWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
@@ -423,6 +424,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     }
     if (e instanceof PriceLockedError) {
       return NextResponse.json({ error: '成本已出月結 — 唔可以改價／到貨日' }, { status: 409 })
+    }
+    if (e instanceof ReceivedMonthLockedError) {
+      // §7.7/T3：到貨日落喺已 LOCKED 月（醫生×診所×月）
+      return NextResponse.json({ error: `${e.message.split(':')[1]} 已出月結，唔可以填呢個到貨日` }, { status: 409 })
     }
     if (e instanceof CostInvalidError) return NextResponse.json({ error: e.message }, { status: 400 })
     console.error('[labdoc] group save failed', { docId: id, groupIndex, err: e?.message })
