@@ -44,6 +44,12 @@ interface DocRow {
   labNameRaw: string | null
   payeeRaw: string | null
   payeeIsNew: boolean
+  clinicId: string | null
+  clinicBasis: string | null
+  clinicEvidence: string | null
+  providerId: string | null
+  providerBasis: string | null
+  providerEvidence: string | null
   customerNoRaw: string | null
   docNo: string | null
   docNoKind: string | null
@@ -83,7 +89,7 @@ const nextId = (p: string) => `${p}${String(++state.seq).padStart(21, '0')}`
 function freshDoc(id: string, over: Partial<DocRow> = {}): DocRow {
   return {
     id, kind: 'INVOICE', status: 'UPLOADED', labId: null, labBasis: null, labNameRaw: null,
-    payeeRaw: null, payeeIsNew: false, customerNoRaw: null, docNo: null, docNoKind: null,
+    payeeRaw: null, payeeIsNew: false, clinicId: null, clinicBasis: null, clinicEvidence: null, providerId: null, providerBasis: null, providerEvidence: null, customerNoRaw: null, docNo: null, docNoKind: null,
     docDate: null, deliveryDate: null, orderReceivedDate: null, statementMonth: null,
     subtotal: null, total: null, extractedJson: null, readIssues: [], extractSource: null,
     extractError: null, extractAttempts: 0, heartbeatAt: null, duplicateOfId: null,
@@ -135,6 +141,11 @@ const fakes: Record<string, Any> = {
     findUnique: async ({ where }: Any) => state.labs[where.id] ?? null,
     findMany: async () => Object.values(state.labs),
   },
+  labCustomerNo: { findFirst: async () => null },
+  clinicNameAlias: { findFirst: async () => null },
+  providerNameAlias: { findFirst: async () => null },
+  clinic: { findMany: async () => [], findUnique: async () => null },
+  provider: { findMany: async () => [] },
   labDocWriteLog: {
     findUnique: async ({ where }: Any) => state.writeLogs[where.idempotencyKey] ?? null,
     upsert: async ({ where, create, update }: Any) => {

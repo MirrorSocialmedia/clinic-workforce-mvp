@@ -67,6 +67,84 @@ export function normDocNo(raw: string | null): string | null {
   return s === '' ? null : s
 }
 
+/**
+ * §6.2 診所名正規化（ClinicNameAlias.rawNorm 同 NAME 比較共用 — 學習側 CHUNK 3 必須用同一個）。
+ * 細階＋全形轉半形＋去標點同空格（留 CJK＋英數）。
+ */
+export function normClinicName(s: string | null): string {
+  if (!s) return ''
+  return toHalfWidth(s).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '')
+}
+
+/**
+ * §6.3 醫生名正規化：細階、去 dr｜dr.｜doctor｜醫生、去標點同空格。
+ * （long-first repeat-until-stable，防 'dr' 先食咗 'dr.' 開頭。）
+ */
+export function normDoctor(s: string | null): string {
+  if (!s) return ''
+  let t = toHalfWidth(s).toLowerCase()
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const d of ['doctor', 'dr.', 'dr', '醫生']) {
+      if (t.includes(d)) {
+        t = t.split(d).join('')
+        changed = true
+      }
+    }
+  }
+  return t.replace(/[^a-z0-9\u4e00-\u9fff]/g, '')
+}
+
+/** 客戶編號正規化：全形轉半形＋去空格＋大階（EC-101 / ec 101 → EC-101）。 */
+export function normCustomerNo(s: string | null): string {
+  if (!s) return ''
+  const t = toHalfWidth(s).replace(/\s+/g, '').toUpperCase()
+  return t
+}
+
+/** 地址正規化（§6.2 ADDRESS 比較用）：小階＋全形轉半形＋去標點空格（留 CJK＋英數）。 */
+function normAddress(s: string | null): string {
+  if (!s) return ''
+  return toHalfWidth(s).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '')
+}
+
+/**
+ * §6.2.3：由地址抽「街道名＋門牌號」。
+ * 中：`(.+?[路道街])(\d+)號`；英：`(\d+)\s+([A-Za-z ]+(Road|Street|Avenue))`。
+ * 回 { street, num }（都已 norm）— 比較時街道 substring ＋ 門牌號獨立 token（防 418 食咗 18）。
+ */
+function extractStreetNo(addressRaw: string | null): { street: string; num: string } | null {
+  if (!addressRaw) return null
+  const s = toHalfWidth(addressRaw).trim()
+  const zh = s.match(/([^\d]+?[路道街])(\d+)號/)
+  if (zh) return { street: normAddress(zh[1]), num: zh[2] }
+  const en = s.match(/(\d+)\s+([A-Za-z ]+(?:Road|Street|Avenue))/i)
+  if (en) return { street: normAddress(en[2]), num: en[1] }
+  return null
+}
+
+/** 門牌號作獨立 token 出現（前後唔係數字）— 防 shop 418 食咗 18。 */
+function hasNumToken(normAddr: string, num: string): boolean {
+  return new RegExp(`(^|[^0-9])${num}([^0-9]|$)`).test(normAddr)
+}
+
+/**
+ * §6.2.5：由 Clinic.name 抽地區名（末尾 （...）／(...) 分組；例「臻善牙科（大圍）」→「大圍」）。
+ * 「滙樂牙科（AEGIS DENTAL)（土瓜湾）」→ 取最後一個分組「土瓜湾」。
+ */
+export function clinicDistrict(name: string): string | null {
+  const m = name.match(/[（(]([^（）()]+)[）)]\s*$/)
+  if (!m) return null
+  const d = m[1].trim()
+  return d.length >= 2 ? d : null
+}
+
+/** 地區名比較正規化：湾→灣（簡繁）＋小階＋去標點空格。 */
+function normDistrict(s: string): string {
+  return toHalfWidth(s).replace(/湾/g, '灣').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '')
+}
+
 // ------------------------------------------------------------------
 // §6.1 Lab
 // ------------------------------------------------------------------
@@ -178,7 +256,217 @@ export async function identifyDocNo(
 }
 
 // ------------------------------------------------------------------
-// 組合入口（runner §5.1 用；CHUNK 2 喺呢度加 clinic/provider/lines.patientCode）
+// §6.2 診所（依次，搵到就停；**唔准**用上傳者主屬店）
+// ------------------------------------------------------------------
+
+export type ClinicBasis = 'CUSTOMER_NO' | 'CLINIC_ALIAS' | 'ADDRESS' | 'SHORT_CODE' | 'NAME' | 'MANUAL'
+
+export interface ClinicIdentifyResult {
+  clinicId: string | null
+  clinicBasis: ClinicBasis
+  /** 命中原文片段（寫 clinicEvidence，≤120 字） */
+  evidence: string | null
+  /** §6.2.1：CUSTOMER_NO 命中同時帶出 providerId（如有） */
+  providerIdFromCustomerNo: string | null
+}
+
+/** STATEMENT：section 層嘅 clinic 資料（§6.2 用「billTo 或 section.clinicRaw」）。 */
+interface ClinicSources {
+  customerNoRaw: string | null
+  nameCandidates: string[]
+  addressRaw: string | null
+  shortCodeRaw: string | null
+}
+
+function clinicSources(result: LabDocResult): ClinicSources {
+  const b = result.billTo
+  const first = result.sections[0]
+  const names = [b.nameRaw, ...result.sections.map((s) => s.clinicRaw)].filter(
+    (s): s is string => typeof s === 'string' && s.trim() !== '',
+  )
+  return {
+    customerNoRaw: b.customerNoRaw ?? first?.customerNoRaw ?? null,
+    nameCandidates: [...new Set(names)],
+    addressRaw: b.addressRaw ?? first?.addressRaw ?? null,
+    shortCodeRaw: b.shortCodeRaw ?? null,
+  }
+}
+
+/**
+ * §6.2 識別診所（只讀；alias 學習喺 §7.1 確認時 — CHUNK 3）。
+ * 順序：CUSTOMER_NO → CLINIC_ALIAS → ADDRESS → SHORT_CODE → NAME（地區名）→ MANUAL。
+ * 「只有一間中先揀」= ADDRESS/SHORT_CODE/NAME 多間中 → 落回下一步／MANUAL。
+ */
+export async function identifyClinic(
+  prisma: any,
+  result: LabDocResult,
+  opts: { labId: string | null },
+): Promise<ClinicIdentifyResult> {
+  const src = clinicSources(result)
+  const manual: ClinicIdentifyResult = { clinicId: null, clinicBasis: 'MANUAL', evidence: null, providerIdFromCustomerNo: null }
+
+  // 1) CUSTOMER_NO（需要 labId — 冇 lab 冇得比 LabCustomerNo）
+  if (src.customerNoRaw && opts.labId) {
+    const c = await prisma.labCustomerNo.findFirst({
+      where: { labId: opts.labId, customerNo: normCustomerNo(src.customerNoRaw) },
+      select: { clinicId: true, providerId: true },
+    })
+    if (c) {
+      return {
+        clinicId: c.clinicId,
+        clinicBasis: 'CUSTOMER_NO',
+        evidence: src.customerNoRaw.slice(0, 120),
+        providerIdFromCustomerNo: c.providerId ?? null,
+      }
+    }
+  }
+
+  // 2) CLINIC_ALIAS（rawNorm 全庫 unique）
+  for (const raw of src.nameCandidates) {
+    const alias = await prisma.clinicNameAlias.findFirst({
+      where: { rawNorm: normClinicName(raw) },
+      select: { clinicId: true },
+    })
+    if (alias) {
+      return { clinicId: alias.clinicId, clinicBasis: 'CLINIC_ALIAS', evidence: raw.slice(0, 120), providerIdFromCustomerNo: null }
+    }
+  }
+
+  // 本地比較用嘅 clinics（3/4/5 共用一次 query）
+  const clinics: Array<{ id: string; name: string; shortName: string | null; address: string | null; addressEn: string | null }> =
+    await prisma.clinic.findMany({ select: { id: true, name: true, shortName: true, address: true, addressEn: true } })
+
+  // 3) ADDRESS（街道 substring ＋ 門牌號 token；只有一間中）
+  if (src.addressRaw) {
+    const sn = extractStreetNo(src.addressRaw)
+    if (sn && sn.street) {
+      const hits = clinics.filter((c) => {
+        const na = normAddress(c.address)
+        const ne = normAddress(c.addressEn)
+        const inA = na.includes(sn.street) && hasNumToken(na, sn.num)
+        const inE = ne.includes(sn.street) && hasNumToken(ne, sn.num)
+        return inA || inE
+      })
+      if (hits.length === 1) {
+        return { clinicId: hits[0].id, clinicBasis: 'ADDRESS', evidence: src.addressRaw.slice(0, 120), providerIdFromCustomerNo: null }
+      }
+    }
+  }
+
+  // 4) SHORT_CODE（大階完全一樣；只有一間）
+  if (src.shortCodeRaw) {
+    const code = src.shortCodeRaw.trim().toUpperCase()
+    const hits = clinics.filter((c) => c.shortName && c.shortName.toUpperCase() === code)
+    if (hits.length === 1) {
+      return { clinicId: hits[0].id, clinicBasis: 'SHORT_CODE', evidence: src.shortCodeRaw.slice(0, 120), providerIdFromCustomerNo: null }
+    }
+  }
+
+  // 5) NAME（clinic 名嘅地區名喺 raw 入面；簡繁 湾→灣；只有一間中）
+  const rawNorms = src.nameCandidates.map((r) => normDistrict(r)).filter(Boolean)
+  if (rawNorms.length > 0) {
+    const hitClinics = new Map<string, string>() // clinicId → 命中嘅 raw（evidence）
+    for (const raw of src.nameCandidates) {
+      const rn = normDistrict(raw)
+      if (!rn) continue
+      for (const c of clinics) {
+        if (hitClinics.has(c.id)) continue
+        const district = clinicDistrict(c.name)
+        if (!district) continue
+        const nd = normDistrict(district)
+        if (nd && rn.includes(nd)) hitClinics.set(c.id, raw)
+      }
+    }
+    if (hitClinics.size === 1) {
+      const [clinicId, raw] = [...hitClinics.entries()][0]
+      return { clinicId, clinicBasis: 'NAME', evidence: raw.slice(0, 120), providerIdFromCustomerNo: null }
+    }
+  }
+
+  // 6) MANUAL
+  return manual
+}
+
+// ------------------------------------------------------------------
+// §6.3 醫生（B2）
+// ------------------------------------------------------------------
+
+export type ProviderBasis = 'CUSTOMER_NO' | 'DOCTOR_ALIAS' | 'NAME' | 'MANUAL'
+
+export interface ProviderIdentifyResult {
+  providerId: string | null
+  providerBasis: ProviderBasis
+  evidence: string | null
+}
+
+/**
+ * provider 英文名嘅字（去 honorific dr｜dr.｜doctor；唔去空格 — 先抽字先核）。
+ * 例「Dr.Ho Ka Chun 何嘉俊醫生」→ ['ho','ka','chun']（Dr 唔算名）。
+ */
+function providerEnglishWords(pName: string): string[] {
+  let t = toHalfWidth(pName).toLowerCase()
+  for (const d of ['doctor', 'dr.', 'dr']) {
+    t = t.split(d).join('')
+  }
+  return t.match(/[a-z]+/g) ?? []
+}
+
+/** §6.3.3：doctorRaw 包含 provider 英文名全部字（要 ≥2 字；例「Ho Ka Chun」⊂「Dr.Ho Ka Chun 何嘉俊醫生」）。 */
+function providerWordsContained(pName: string, normRaw: string): boolean {
+  const words = providerEnglishWords(pName).filter((w) => w.length >= 2)
+  return words.length >= 2 && words.every((w) => normRaw.includes(w))
+}
+
+/**
+ * §6.3 識別醫生（只讀；ProviderNameAlias 學習喺確認時 — CHUNK 3）。
+ * 順序：CUSTOMER_NO（§6.2.1 帶出）→ DOCTOR_ALIAS → NAME（相等／英文名全字包含；只有一個 active provider 中）→ MANUAL。
+ * INVOICE 冇醫生名 → MANUAL（確認時必填 — CHUNK 3）。
+ */
+export async function identifyProvider(
+  prisma: any,
+  result: LabDocResult,
+  opts: { customerNoProviderId: string | null; customerNoRaw: string | null },
+): Promise<ProviderIdentifyResult> {
+  const doctorRaw = result.billTo.doctorRaw ?? result.sections[0]?.doctorRaw ?? null
+  const manual: ProviderIdentifyResult = { providerId: null, providerBasis: 'MANUAL', evidence: doctorRaw ? doctorRaw.slice(0, 120) : null }
+
+  // 1) CUSTOMER_NO（§6.2.1 帶出嘅 providerId）
+  if (opts.customerNoProviderId) {
+    return { providerId: opts.customerNoProviderId, providerBasis: 'CUSTOMER_NO', evidence: (doctorRaw ?? opts.customerNoRaw ?? '').slice(0, 120) }
+  }
+  if (!doctorRaw) return manual
+
+  // 2) DOCTOR_ALIAS
+  const alias = await prisma.providerNameAlias.findFirst({
+    where: { rawNorm: normDoctor(doctorRaw) },
+    select: { providerId: true },
+  })
+  if (alias) {
+    return { providerId: alias.providerId, providerBasis: 'DOCTOR_ALIAS', evidence: doctorRaw.slice(0, 120) }
+  }
+
+  // 3) NAME：norm 後相等（name／shortName）或者英文名全部字包含；只有一個中
+  const providers: Array<{ id: string; name: string; shortName: string | null }> = await prisma.provider.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true, shortName: true },
+  })
+  const normRaw = normDoctor(doctorRaw)
+  const hits = providers.filter((p) => {
+    if (!normRaw) return false
+    const nName = normDoctor(p.name)
+    const nShort = p.shortName ? normDoctor(p.shortName) : ''
+    if (nName && normRaw === nName) return true
+    if (nShort && normRaw === nShort) return true
+    return providerWordsContained(p.name, normRaw)
+  })
+  if (hits.length === 1) {
+    return { providerId: hits[0].id, providerBasis: 'NAME', evidence: doctorRaw.slice(0, 120) }
+  }
+  return manual
+}
+
+// ------------------------------------------------------------------
+// 組合入口（runner §5.1 用）
 // ------------------------------------------------------------------
 
 export interface IdentifyOutcome {
@@ -188,6 +476,12 @@ export interface IdentifyOutcome {
   docNo: string | null
   docNoKind: 'INVOICE_NO' | 'CASE_NO' | null
   duplicateOfId: string | null
+  clinicId: string | null
+  clinicBasis: ClinicBasis
+  clinicEvidence: string | null
+  providerId: string | null
+  providerBasis: ProviderBasis
+  providerEvidence: string | null
 }
 
 export interface IdentifyDocumentOpts {
@@ -211,6 +505,13 @@ export async function identifyDocument(
   const lab = await identifyLab(prisma, result)
   const labId = lab.labId ?? opts.uploadLabId ?? null
   const payeeIsNew = lab.labId ? lab.payeeIsNew : false
+  // §6.2 診所（CUSTOMER_NO 路徑需要 labId；唔到 lab 就冇呢個 basis）
+  const clinic = await identifyClinic(prisma, result, { labId })
+  // §6.3 醫生（CUSTOMER_NO 用 §6.2.1 帶出嘅 providerId）
+  const provider = await identifyProvider(prisma, result, {
+    customerNoProviderId: clinic.providerIdFromCustomerNo,
+    customerNoRaw: result.billTo.customerNoRaw ?? result.sections[0]?.customerNoRaw ?? null,
+  })
   const docNo = await identifyDocNo(prisma, result, {
     selfDocId: opts.selfDocId,
     labId,
@@ -221,6 +522,12 @@ export async function identifyDocument(
     // upload 預選唔係 §6.1 basis（ALIAS/NAME）— 確認時先定 basis
     labBasis: lab.labBasis,
     payeeIsNew,
+    clinicId: clinic.clinicId,
+    clinicBasis: clinic.clinicBasis,
+    clinicEvidence: clinic.evidence,
+    providerId: provider.providerId,
+    providerBasis: provider.providerBasis,
+    providerEvidence: provider.evidence,
     docNo: docNo.docNo,
     docNoKind: docNo.docNoKind,
     duplicateOfId: docNo.duplicateOfId,

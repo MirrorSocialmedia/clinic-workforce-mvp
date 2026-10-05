@@ -48,6 +48,12 @@ interface DocRow {
   labNameRaw: string | null
   payeeRaw: string | null
   payeeIsNew: boolean
+  clinicId: string | null
+  clinicBasis: string | null
+  clinicEvidence: string | null
+  providerId: string | null
+  providerBasis: string | null
+  providerEvidence: string | null
   customerNoRaw: string | null
   docNo: string | null
   docNoKind: string | null
@@ -86,6 +92,11 @@ interface State {
   labs: Array<{ id: string; name: string; isActive: boolean }>
   profiles: Record<string, Any>
   lines: Any[]
+  clinics: Any[]
+  providers: Any[]
+  clinicAliases: Array<{ id: string; rawNorm: string; clinicId: string }>
+  providerAliases: Array<{ id: string; rawNorm: string; providerId: string }>
+  customerNos: Array<{ id: string; labId: string; customerNo: string; clinicId: string; providerId: string | null }>
   p2002ForDocId: string | null
   suppressDupPreflight: boolean
   dupFindSeq: number
@@ -103,6 +114,12 @@ function freshDoc(id: string, over: Partial<DocRow> = {}): DocRow {
     labNameRaw: null,
     payeeRaw: null,
     payeeIsNew: false,
+    clinicId: null,
+    clinicBasis: null,
+    clinicEvidence: null,
+    providerId: null,
+    providerBasis: null,
+    providerEvidence: null,
     customerNoRaw: null,
     docNo: null,
     docNoKind: null,
@@ -232,6 +249,27 @@ const fakes: Record<string, Any> = {
   lab: {
     findMany: async () => state.labs.filter((l) => l.isActive),
   },
+  labCustomerNo: {
+    findFirst: async ({ where }: Any) =>
+      state.customerNos.find(
+        (c) => (!where.labId || c.labId === where.labId) && (!where.customerNo || c.customerNo === where.customerNo),
+      ) ?? null,
+  },
+  clinicNameAlias: {
+    findFirst: async ({ where }: Any) =>
+      state.clinicAliases.find((a) => a.rawNorm === where.rawNorm) ?? null,
+  },
+  providerNameAlias: {
+    findFirst: async ({ where }: Any) =>
+      state.providerAliases.find((a) => a.rawNorm === where.rawNorm) ?? null,
+  },
+  clinic: {
+    findMany: async () => state.clinics,
+    findUnique: async ({ where }: Any) => state.clinics.find((c) => c.id === where.id) ?? null,
+  },
+  provider: {
+    findMany: async () => state.providers.filter((p) => p.isActive),
+  },
   labProfile: {
     findUnique: async ({ where }: Any) => state.profiles[where.labId] ?? null,
   },
@@ -317,6 +355,11 @@ beforeEach(() => {
     labs: [{ id: 'labexcel0000000000000000001', name: 'Excel', isActive: true }],
     profiles: {},
     lines: [],
+    clinics: [],
+    providers: [],
+    clinicAliases: [],
+    providerAliases: [],
+    customerNos: [],
     p2002ForDocId: null,
     suppressDupPreflight: false,
     dupFindSeq: 0,

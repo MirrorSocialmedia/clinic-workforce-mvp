@@ -29,6 +29,7 @@ import { filterSensitiveNumbers } from './sensitive-filter'
 import { checkExtracted } from './validate-extract'
 import { identifyDocument } from './identify'
 import { buildPageKey, readEncrypted } from './storage'
+import { normPatientCode } from '../cost-entry/patient-code'
 
 /** §5.1：三次失敗先 EXTRACT_FAILED */
 export const LABDOC_MAX_ATTEMPTS = 3
@@ -311,7 +312,7 @@ export function runExtractionAfterClaim(docId: string, opts: RunOpts = {}): void
     runClaimed(docId, opts).catch((e) => {
       console.error('[labdoc/extract] unexpected error', { docId, err: String(e?.message ?? e) })
       prisma.labDocument
-        .update({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected' } })
+        .updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected' } })
         .catch(() => undefined)
     }),
   )
@@ -399,21 +400,22 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
       }
 
       // §5.1.4：失敗記 extractError + attempts++
-      await prisma.labDocument.update({
+      // updateMany（唔係 update）：doc 喺途被刪（merge/split/手動）→ 0 行靜默，唔係 P2025 轟炸
+      await prisma.labDocument.updateMany({
         where: { id: docId },
         data: { extractAttempts: { increment: 1 }, extractError: fail.slice(0, 200) },
       })
       if (attempt < maxAttempts) await sleep(retryDelayMs)
     }
     // = 3 → EXTRACT_FAILED（sweep 唔會再自動試；人手 retry 先重置 attempts）
-    await prisma.labDocument.update({ where: { id: docId }, data: { status: 'EXTRACT_FAILED' } })
+    await prisma.labDocument.updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED' } })
   } finally {
     clearInterval(hb)
   }
 }
 
 async function failFinal(docId: string, reason: string): Promise<void> {
-  await prisma.labDocument.update({
+  await prisma.labDocument.updateMany({
     where: { id: docId },
     data: { status: 'EXTRACT_FAILED', extractError: reason, extractAttempts: { increment: 1 } },
   })
@@ -448,6 +450,13 @@ async function finishSuccess(
   const readIssues = unionStrings([...filtered.readIssues, ...checks.readIssues, ...removedFields.map((f) => `SENSITIVE_REMOVED:${f}`)])
   const ymdToDate = (s: string | null): Date | undefined => (s ? new Date(`${s}T00:00:00Z`) : undefined)
 
+  // §6.5：INVOICE 行 patientCode 正規化需要診所 shortName（純數字編號補前綴；§6.5.3）
+  const clinicRow = identified.clinicId
+    ? await prisma.clinic.findUnique({ where: { id: identified.clinicId }, select: { shortName: true } })
+    : null
+  const normLinePatientCode = (raw: string | null): string | null =>
+    normPatientCode(raw, clinicRow?.shortName ?? null)
+
   const headerData: Record<string, unknown> = {
     status: 'NEEDS_REVIEW',
     extractedJson: filtered,
@@ -459,6 +468,12 @@ async function finishSuccess(
     labNameRaw: filtered.lab.nameRaw,
     payeeRaw: filtered.lab.payeeRaw,
     payeeIsNew: identified.payeeIsNew,
+    clinicId: identified.clinicId,
+    clinicBasis: identified.clinicBasis,
+    clinicEvidence: identified.clinicEvidence,
+    providerId: identified.providerId,
+    providerBasis: identified.providerBasis,
+    providerEvidence: identified.providerEvidence,
     customerNoRaw: filtered.billTo.customerNoRaw,
     docNo: identified.docNo,
     docNoKind: identified.docNoKind,
@@ -473,6 +488,7 @@ async function finishSuccess(
   if (ord) headerData.orderReceivedDate = ord
   if (filtered.kind === 'STATEMENT') {
     headerData.statementMonth = filtered.statementMonth ?? doc.statementMonth
+    headerData.statementKind = labProfile?.statementKind ?? null
   }
 
   // §5.1.6：寫 docNo 撞 partial unique index（Prisma P2002）→ DUPLICATE + duplicateOfId。
@@ -500,6 +516,7 @@ async function finishSuccess(
                 lineIndex: li,
                 patientNameRaw: g.patientNameRaw,
                 patientCodeRaw: g.patientCodeRaw,
+                patientCode: normLinePatientCode(g.patientCodeRaw),
                 labCaseRef: g.labCaseRef,
                 description: l.description,
                 toothRaw: l.toothRaw,
@@ -571,7 +588,7 @@ export async function runLabDocSweep(now: Date = new Date(), opts: RunOpts = {})
     res.staleExtracting++
     const attempts = d.extractAttempts + 1
     if (attempts >= LABDOC_MAX_ATTEMPTS) {
-      await prisma.labDocument.update({
+      await prisma.labDocument.updateMany({
         where: { id: d.id },
         data: { status: 'EXTRACT_FAILED', extractAttempts: attempts, extractError: 'stale_heartbeat' },
       })
@@ -579,7 +596,7 @@ export async function runLabDocSweep(now: Date = new Date(), opts: RunOpts = {})
     } else {
       // 回 UPLOADED（再觸發資格）＋ 30 秒後重讀（process 仲活）；
       // process 死咗嘅話呢個 timer 冇咗，下次 sweep 再兜
-      await prisma.labDocument.update({
+      await prisma.labDocument.updateMany({
         where: { id: d.id },
         data: { status: 'UPLOADED', extractAttempts: attempts, extractError: 'stale_heartbeat' },
       })
