@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
+import { CostGuardError, assertClinicAllowed } from '@/lib/cost-entry/guards'
 
 // ============================================================
 // PATCH /api/cost-cases/:id/status — 成本個案「已完成」綠剔（2026-09-02 cwm-costnote）
@@ -38,6 +39,11 @@ export async function PATCH(
   }
   if (existing.status === 'VOID') {
     return jsonNoStore({ error: '已作廢個案唔可以改狀態' }, { status: 400 })
+  }
+  // ★ cwm-costguard-20261006：MANAGER 只可以改所屬診所
+  try { assertClinicAllowed(session, existing.clinicId) } catch (e) {
+    if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+    throw e
   }
 
   const updated = await prisma.costCase.update({

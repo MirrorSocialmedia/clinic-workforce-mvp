@@ -43,6 +43,14 @@ function sumByCosts(costs: any[], category: string): number {
 // ★ 2026-08-26：labId / labOther 都冇嘅 case 統一顯示字串（畫面/Excel/API 三邊共用）
 export const UNNAMED_VENDOR = '（未指定工廠）'
 
+/** ★ cwm-costguard-20261006：生成月結期間成本有改動（鎖定時加總對唔到數）→ 回滾，請重新預覽 */
+export class CostChangedDuringLockError extends Error {
+  constructor(detail: string) {
+    super(`成本喺生成月結期間有改動（${detail}），已取消鎖定，請重新預覽再試`)
+    this.name = 'CostChangedDuringLockError'
+  }
+}
+
 export interface VendorCost {
   vendor: string // Lab.name ／ labOther ／ UNNAMED_VENDOR
   amount: number
@@ -601,6 +609,20 @@ export async function lockPayoutRun(
       where: lockCostWhere,
       data: { lockedByRunId: run.id },
     })
+
+    // ★ cwm-costguard-20261006：計數（computePayout）同鎖定唔喺同一個 transaction ——
+    //   中間有人新增／改成本，會被鎖住但冇計入。鎖完再按類別加總對數，唔一致就成個 transaction 回滾。
+    const lockedSums = await tx.costCase.groupBy({
+      by: ['category'],
+      where: { lockedByRunId: run.id, status: { not: 'VOID' }, finalCost: { not: null } },
+      _sum: { finalCost: true },
+    })
+    const sumOf = (cat: string) => round2(Number(lockedSums.find((g: any) => g.category === cat)?._sum.finalCost ?? 0))
+    const mismatch = ([['LAB', payout.labCost], ['IMPLANT', payout.implantCost], ['INVISALIGN', payout.invisalignCost]] as Array<[string, number]>)
+      .filter(([cat, expected]) => Math.abs(sumOf(cat) - round2(expected)) > 0.005)
+    if (mismatch.length > 0) {
+      throw new CostChangedDuringLockError(mismatch.map(([cat, expected]) => `${cat} 計 ${round2(expected)}／鎖 ${sumOf(cat)}`).join('；'))
+    }
 
     // c. Lock ProviderReferral
     const lockRefWhere: any = {

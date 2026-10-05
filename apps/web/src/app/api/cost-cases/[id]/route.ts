@@ -4,6 +4,10 @@ import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
+import { CostGuardError, parseMoney, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
+import { todayHK } from '@/lib/hk-date'
+
+const PUT_STATUSES = ['PENDING', 'PRICED', 'DONE', 'REDO', 'VOID']
 
 // ============================================================
 // PUT /api/cost-cases/:id — Update a cost case
@@ -38,7 +42,9 @@ export async function PUT(
   const {
     patientCode, patientName, orderedAt, itemType,
     labId, labOrderNo, dsaName,
-    baseCost, receivedAt, appointmentAt, status,
+    // ★ cwm-costguard-20261006：之前冇接 → 改 Others 工廠名／項目名靜靜冇儲存
+    labOther, itemTypeOther,
+    baseCost: rawBaseCost, receivedAt, appointmentAt, status,
     // ★ 2026-08-25 拍板③：全欄可改 — providerId / clinicId / category
     //   ⚠️ 呢三個直接改變【拆帳歸屬】同【成本分類】，一定要入 audit
     providerId, clinicId, category,
@@ -49,6 +55,19 @@ export async function PUT(
     // ★ C2：材料明細（只對 IMPLANT 有效；undefined = 唔改）
     materials,
   } = body
+
+  // ★ cwm-costguard-20261006：金額、狀態、診所範圍（MANAGER 只可以改所屬診所，搬去其他診所都唔得）
+  let baseCost: number | null | undefined
+  try {
+    baseCost = rawBaseCost === undefined ? undefined : parseMoney(rawBaseCost)
+    assertClinicAllowed(session, existing.clinicId, ...(clinicId !== undefined ? [clinicId] : []))
+  } catch (e) {
+    if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+    throw e
+  }
+  if (status !== undefined && !PUT_STATUSES.includes(status)) {
+    return jsonNoStore({ error: 'status 唔合法' }, { status: 400 })
+  }
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
   const effectiveLabId = labId !== undefined ? (labId || null) : existing.labId
@@ -63,6 +82,18 @@ export async function PUT(
   const { periodMonth: effectivePeriodMonth } = deriveCostPeriod(
     effCategory, effOrderedAt, effectiveReceivedAt,
   )
+  // ★ cwm-costguard-20261006：日期合理性（將來日子／到貨早過落單 → 成本跑去錯月份）
+  //   只喺有改日期先驗，舊資料淨係改備註唔會被擋
+  if (orderedAt !== undefined || receivedAt !== undefined) {
+    try {
+      checkCostDates(parseDay(effOrderedAt, '落單')!, effCategory === 'IMPLANT' ? null : parseDay(effectiveReceivedAt, '到貨'), todayHK())
+    } catch (e) {
+      if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+      throw e
+    }
+  }
+  // ★ cwm-costguard-20261006：到貨月變咗 → 折扣要跟新月份（之前直接打 API 唔送 labId／baseCost 會保留舊月折扣）
+  const monthChanged = effectivePeriodMonth !== existing.periodMonth
 
   // ★ 2026-08-25 守衛①：改醫生／診所要驗存在性（FK 撞 = 400 唔係 500）
   if (providerId !== undefined && providerId !== existing.providerId) {
@@ -219,7 +250,7 @@ export async function PUT(
   //   完全唔行工場折扣線（implant 唔套折扣，同 implant/route.ts 一致）
   if (resolvedMaterials) {
     finalCost = resolvedMaterials.totalBaseCost
-  } else if (baseCost !== undefined || labId !== undefined) {
+  } else if (baseCost !== undefined || labId !== undefined || monthChanged) {
     // ★ baseCost 明確傳 null = 清空；undefined = 冇改動先 fallback
     const bc = baseCost !== undefined
       ? (baseCost != null ? Number(baseCost) : null)
@@ -227,7 +258,7 @@ export async function PUT(
     // ★ 2026-08-27：periodMonth null（未到貨）→ 冇月度折扣，finalCost = baseCost；
     //   個案仲喺月份入面先 fallback 去 existing 快照（防表行缺漏靜靜變零折扣）
     const dp = effectivePeriodMonth
-      ? (labId !== undefined
+      ? ((labId !== undefined || monthChanged)
         ? discountPctNum
         : (existing.discountPct ? Number(existing.discountPct) : discountPctNum))
       : null
@@ -254,6 +285,8 @@ export async function PUT(
   if (itemType !== undefined) data.itemType = itemType
   if (labId !== undefined) data.labId = labId
   if (labOrderNo !== undefined) data.labOrderNo = labOrderNo
+  if (labOther !== undefined) data.labOther = (typeof labOther === 'string' && labOther.trim()) || null
+  if (itemTypeOther !== undefined) data.itemTypeOther = (typeof itemTypeOther === 'string' && itemTypeOther.trim()) || null
   if (dsaName !== undefined) data.dsaName = dsaName
   if (baseCost !== undefined) data.baseCost = baseCost != null ? Number(baseCost) : null
   // ★ C2：材料合計覆寫 body.baseCost（前端對植牙唔應該送 baseCost，兜底）
@@ -265,8 +298,10 @@ export async function PUT(
   // ★ cwm-costentry-20260827 #22：只喺 labId 有傳（工場有變）先同步 — 新工场跟新表折扣；
   //   PUT 唔傳 labId = discountPct 欄保持原值（唔郁）
   // ★ P2-3：植牙材料有改時上面 `data.discountPct = null` 已經寫咗 null，唔准俾呢行蓋返（坑①後蓋前；UI 觸發唔到，直接打 API 送 materials+labId 就中）
-  if (!resolvedMaterials && labId !== undefined && discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
-  if (finalCost !== existing.finalCost?.toNumber()) data.finalCost = finalCost != null ? finalCost : null
+  if (!resolvedMaterials && (labId !== undefined || monthChanged) && discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
+  // ★ cwm-costguard-20261006：舊值 null 時之前 `null !== undefined` 永遠當有改 → 統一做 number | null 先比
+  const oldFinalCost = existing.finalCost != null ? existing.finalCost.toNumber() : null
+  if (finalCost !== oldFinalCost) data.finalCost = finalCost != null ? finalCost : null
   if (receivedAt !== undefined) data.receivedAt = receivedAt ? new Date(receivedAt) : null
   if (appointmentAt !== undefined) data.appointmentAt = appointmentAt ? new Date(appointmentAt) : null
   // ★ cwm-implantdate-20260913：IMPLANT：receivedAt 一律寫返 = 落單日；appointmentAt 一律清空。
@@ -284,6 +319,20 @@ export async function PUT(
   if (redoReason !== undefined) data.redoReason = redoReason || null
   // ★ 2026-09-02 cwm-costnote：備註（undefined = 唔改；null/空字串 → null）
   if (note !== undefined) data.note = note?.trim() || null
+
+  // ★ cwm-costguard-20261006：會改到錢嘅修改（金額、歸屬、類別、作廢／取消作廢），目標月份已鎖定就擋。
+  //   lockedByRunId 守衛（上面）只擋「鎖定時已經喺度」嘅單；鎖定之後先入／取消作廢嘅單冇 lockedByRunId，
+  //   之前可以靜靜改，已鎖月結唔會知。
+  const affectsMoney = movedRun
+    || ('finalCost' in data)
+    || ('category' in data && data.category !== existing.category)
+    || ('status' in data && (data.status === 'VOID') !== (existing.status === 'VOID'))
+  if (affectsMoney) {
+    const targetMonth = effectivePeriodMonth ?? existing.periodMonth
+    if (await lockedRunFor(prisma, effectiveProviderId, effectiveClinicId, targetMonth)) {
+      return jsonNoStore({ error: lockedMonthMessage(targetMonth!) }, { status: 409 })
+    }
+  }
 
   // ★ P2-5 (cwm-payoutcost-fix-20260908 S7)：category 由 IMPLANT 轉走 → 舊材料行成孤兒
   //   （轉走時 materials 唔送 → 唔會刪）→ 轉返 IMPLANT 會由孤兒行預填。呢度一併清走。
@@ -433,6 +482,11 @@ export async function DELETE(
 
   if (existing.status === 'VOID') {
     return jsonNoStore({ error: '已經係 VOID 狀態' }, { status: 409 })
+  }
+  // ★ cwm-costguard-20261006：MANAGER 只可以作廢所屬診所嘅成本
+  try { assertClinicAllowed(session, existing.clinicId) } catch (e) {
+    if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+    throw e
   }
 
   const updated = await prisma.costCase.update({

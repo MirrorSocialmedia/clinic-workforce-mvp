@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
+import { CostGuardError, parseMoney, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
+import { todayHK } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -257,12 +259,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
   }
 
+  // ★ cwm-costguard-20261006：金額、日期、診所範圍、已鎖月份（詳見 lib/cost-entry/guards.ts）
+  let baseCostNum: number | null
+  try {
+    baseCostNum = parseMoney(baseCost)
+    const od = parseDay(orderedAt, '落單')!
+    checkCostDates(od, parseDay(receivedAt, '到貨'), todayHK())
+    assertClinicAllowed(session, clinicId)
+  } catch (e) {
+    if (e instanceof CostGuardError) return NextResponse.json({ error: e.message }, { status: e.status })
+    throw e
+  }
+
   // ★ cwm-implantdate-20260913：IMPLANT 強制跟落單日；LAB/INVISALIGN 維持跟到貨日（未到貨 = null）。
   //   （2026-08-27 拍板①嘅「跟到貨日」只保留畀 LAB/INVISALIGN：落單 7/25、到貨 8/5 → 計 8 月；
   //    未到貨（receivedAt null）→ periodMonth = null → 唔入任何月結，等補咗到貨日先計。）
   //   ⚠️ 上方 guard 而家會擋住 IMPLANT（400 導流去 /api/cost-cases/implant），
   //      呢個 IMPLANT branch 係 defensive（MD A3 要求三 route 導出邏輯統一）。
   const { receivedAt: effectiveReceivedAt, periodMonth } = deriveCostPeriod(category, orderedAt, receivedAt)
+
+  // ★ cwm-costguard-20261006：該醫生 × 診所 × 月已鎖定 → 擋（之前會靜靜入咗已鎖月份，唔計入任何月結）
+  if (await lockedRunFor(prisma, providerId, clinicId, periodMonth)) {
+    return NextResponse.json({ error: lockedMonthMessage(periodMonth!) }, { status: 409 })
+  }
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
   //   ★ 2026-08-27：periodMonth null（未到貨）→ 冇月度折扣，finalCost = baseCost
@@ -278,7 +297,6 @@ export async function POST(req: NextRequest) {
   // ★ labOther（Others）冇折扣 —— 要折扣就正式建一個 Lab
 
   // Compute finalCost
-  const baseCostNum = baseCost != null ? Number(baseCost) : null
   let finalCostNum: number | null = null
   if (baseCostNum != null && discountPctNum != null) {
     finalCostNum = Number((baseCostNum * (100 - discountPctNum) / 100).toFixed(2))

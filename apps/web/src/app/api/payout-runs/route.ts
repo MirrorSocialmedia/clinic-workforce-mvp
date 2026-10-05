@@ -6,7 +6,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jsonNoStore } from '@/lib/api-response'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
-import { runGates, computePayout, lockPayoutRun } from '@/lib/payout/engine'
+import { runGates, computePayout, lockPayoutRun, CostChangedDuringLockError } from '@/lib/payout/engine'
+import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
+import { todayHK } from '@/lib/hk-date'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -95,6 +97,17 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // ★ cwm-costdetail-20261006：有「當月未計入」成本 → 要喺預覽剔「我已檢查」先可以鎖（老闆拍板）
+  if (body.costReviewAck !== true) {
+    const reminders = totalReminders(await costDetail(providerId, clinicId, periodMonth, todayHK()))
+    if (reminders > 0) {
+      return NextResponse.json(
+        { error: `有 ${reminders} 項成本當月未計入，請先預覽檢查，剔「我已檢查」再鎖定`, code: 'COST_REVIEW_REQUIRED', reminders },
+        { status: 409 },
+      )
+    }
+  }
+
   // Compute payout
   let payout: any
   try {
@@ -104,13 +117,20 @@ export async function POST(req: NextRequest) {
   }
 
   // Lock
-  const run = await lockPayoutRun(
-    providerId,
-    periodMonth,
-    payout,
-    auth.session!.userId,
-    clinicId,
-  )
+  let run: Awaited<ReturnType<typeof lockPayoutRun>>
+  try {
+    run = await lockPayoutRun(
+      providerId,
+      periodMonth,
+      payout,
+      auth.session!.userId,
+      clinicId,
+    )
+  } catch (e) {
+    // ★ cwm-costguard-20261006：鎖定期間成本有改動 → transaction 已回滾
+    if (e instanceof CostChangedDuringLockError) return NextResponse.json({ error: e.message }, { status: 409 })
+    throw e
+  }
 
   return NextResponse.json({
     run: {
