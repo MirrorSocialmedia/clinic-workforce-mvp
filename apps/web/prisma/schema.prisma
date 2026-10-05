@@ -150,6 +150,8 @@ model Clinic {
   shortName           String? // 店鋪簡稱（1-2字：旺/仁/銅/荃/元/沙）
   color               String? // 更表膠囊顏色 #RRGGBB，null = 灰色預設
   address             String?
+  /// ★ cwm-labdoc（§6.2）：英文地址 — lab 單地址識別用（大圍 seed：Shop 418, Wai Fong, 18 Che Kung Miu Road, Tai Wai）
+  addressEn           String?
   latitude            Float? // 店舖緯度
   longitude           Float? // 店舖經度
   geoRadius           Int? // 允許半徑(米),null = 用全局預設 200
@@ -1194,6 +1196,10 @@ model Lab {
   updatedAt DateTime             @updatedAt
   cases     CostCase[]
   discounts LabMonthlyDiscount[]
+  /// ★ cwm-labdoc：單據設定（§2.3）
+  profile   LabProfile?
+  aliases   LabAlias[]
+  documents LabDocument[]
 }
 
 // Universal 月度折扣
@@ -1263,11 +1269,17 @@ model CostCase {
   source        String  @default("BILL_LINKED") // MANUAL | BILL_LINKED
 
   materials CostCaseMaterial[]
+  /// ★ cwm-labdoc：大階、去空格、前綴＋6 位（§6.5）。配對用呢欄（P1 backfill 一次）
+  patientCodeNorm String?
+  /// ★ cwm-labdoc B4：有任何 MATCHED invoice 行 → true → 唔套 LabMonthlyDiscount（P2 生效）
+  labInvoiceLinked Boolean @default(false)
+  labLines LabDocumentLine[]
 
   @@index([providerId, periodMonth])
   @@index([status])
   @@index([patientCode])
   @@index([billExtId])
+  @@index([patientCodeNorm])
 }
 
 // IMPLANT 材料明細
@@ -1921,6 +1933,222 @@ model MiscIncome {
   updatedAt   DateTime @updatedAt
 
   @@index([clinicId, periodMonth])
+}
+
+// ============================================================
+// cwm-labdoc P1: Lab 單據對數 — 存底＋上傳（§3 資料模型 P1 份）
+// migration: 20261005000000_labdoc_core
+// ★ 偏離記錄（P1）：
+//   - LabDocument.sections 關係留到 P3（20261012000000_labdoc_statement 先有
+//     LabStatementSection 表）— P1 唔建 statement 兩表。
+//   - LabDocumentLine / LabDocWriteLog 喺 P1 core（§3.1）：T16 purge 要清
+//     LabDocumentLine.patientNameRaw；P2 無獨立 migration 名；B15 冪等鍵 P1 upload 就用。
+// ============================================================
+
+/// ★ cwm-labdoc：Lab 單據原檔（存底）。內容加密存喺 LAB_DOC_DIR；DB 只存 metadata。
+model LabFile {
+  id           String   @id @default(cuid())
+  sha256       String // 原檔（加密前）hash；同一檔重複上傳偵測
+  mime         String // image/jpeg | application/pdf
+  sizeBytes    Int
+  pageCount    Int
+  hasTextLayer Boolean  @default(false) // PDF 每頁都有文字 → true
+  storageKey   String   @unique // 相對 LAB_DOC_DIR：'2026/10/<id>.bin'
+  encKeyId     String // 'k1'（換 key 用）
+  pagesJson    Json // [{ page:1, displayKey, thumbKey, width, height, textChars }]
+  originalName String? // 已清理：只留副檔名前 80 字，去路徑
+  uploadedBy   String
+  uploadedAt   DateTime @default(now())
+  purgeAt      DateTime // uploadedAt + 7 年（B8）
+  purgedAt     DateTime?
+  pages        LabDocumentPage[]
+
+  @@index([sha256])
+  @@index([purgeAt, purgedAt])
+}
+
+/// 單據由邊幾頁組成（一個 PDF 可以拆成幾張 invoice；幾張相可以合併做一張）
+model LabDocumentPage {
+  id         String      @id @default(cuid())
+  documentId String
+  document   LabDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fileId     String
+  file       LabFile     @relation(fields: [fileId], references: [id])
+  pageNo     Int // 1-based，原檔入面第幾頁
+  sortOrder  Int
+
+  @@unique([documentId, fileId, pageNo])
+  @@index([fileId])
+}
+
+model LabDocument {
+  id       String   @id @default(cuid())
+  kind     String // INVOICE | STATEMENT
+  status   String   @default("UPLOADED")
+  // UPLOADED | EXTRACTING | EXTRACT_FAILED | NEEDS_REVIEW | CONFIRMED | PARTIAL | RECONCILED | DUPLICATE | VOID
+  // STATEMENT 用：UPLOADED | EXTRACTING | EXTRACT_FAILED | NEEDS_REVIEW | IN_PROGRESS | RECONCILED | SUPERSEDED | VOID
+
+  // —— 頭部（AI 值寫入後可被員工改；AI 原值留喺 extractedJson）——
+  labId            String?
+  lab              Lab?      @relation(fields: [labId], references: [id])
+  labNameRaw       String?
+  labBasis         String? // ALIAS | NAME | MANUAL
+  clinicId         String?
+  clinicBasis      String? // CUSTOMER_NO | CLINIC_ALIAS | ADDRESS | SHORT_CODE | NAME | MANUAL
+  clinicEvidence   String? // 原文片段（≤120 字）
+  providerId       String? // INVOICE 用；STATEMENT 每段自己有
+  providerBasis    String? // CUSTOMER_NO | DOCTOR_ALIAS | NAME | MANUAL
+  providerEvidence String?
+  customerNoRaw    String?
+  docNo            String? // 正規化（§6.4）
+  docNoKind        String? // INVOICE_NO | CASE_NO
+  docDate          DateTime? @db.Date
+  deliveryDate     DateTime? @db.Date
+  orderReceivedDate DateTime? @db.Date
+  statementMonth   String? // 'YYYY-MM'（STATEMENT）
+  statementKind    String? // DETAIL | INVOICE_LIST | OUTSTANDING（STATEMENT，抄 LabProfile）
+  subtotal         Decimal?  @db.Decimal(12,2)
+  total            Decimal?  @db.Decimal(12,2)
+  payeeRaw         String?
+  payeeIsNew       Boolean   @default(false) // 同 LabAlias(PAYEE) 對唔到
+
+  // —— 讀單 ——
+  extractSource    String? // TEXT | VISION | MANUAL
+  extractedJson    Json? // AI 原始輸出（寫一次，唔改；B8 到期清姓名）
+  readIssues       String[]  @default([])
+  extractAttempts  Int       @default(0)
+  extractError     String?
+  heartbeatAt      DateTime?
+  manualAmountEdit Boolean   @default(false) // 員工改過任何金額／總數（F-05）→ 入待處理「人手改數待覆核」
+  amountReviewedBy String?
+  amountReviewedAt DateTime?
+
+  // —— 生命週期 ——
+  version          Int       @default(0) // 樂觀鎖：每次寫 +1；請求要帶
+  duplicateOfId    String? // DUPLICATE 時指去原本嗰張
+  supersededById   String? // STATEMENT 取代舊版
+  voidReason       String?
+  voidedBy         String?
+  voidedAt         DateTime?
+  uploadedBy       String
+  confirmedBy      String?
+  confirmedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  pages LabDocumentPage[]
+  lines LabDocumentLine[]
+  // ★ P3 先加：sections LabStatementSection[]（20261012000000_labdoc_statement）
+
+  @@index([kind, status])
+  @@index([labId, clinicId, providerId, docDate])
+  @@index([labId, statementMonth])
+  // raw SQL（migration 20261005000000_labdoc_core 管住 — Prisma 唔支援 partial index WHERE 子句）：
+  // CREATE UNIQUE INDEX "LabDocument_invoice_docNo_active" ON "LabDocument"("labId","docNo")
+  //   WHERE "kind"='INVOICE' AND "docNoKind"='INVOICE_NO' AND "docNo" IS NOT NULL
+  //     AND "labId" IS NOT NULL AND "status" NOT IN ('VOID','DUPLICATE');
+}
+
+/// INVOICE 嘅行
+model LabDocumentLine {
+  id             String      @id @default(cuid())
+  documentId     String
+  document       LabDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  groupIndex     Int // 病人分組
+  lineIndex      Int
+  patientNameRaw String? // B8 到期清走
+  patientCodeRaw String? // 原文（含字母前綴）
+  patientCode    String? // 正規化（§6.5），例 TW007159
+  labCaseRef     String?
+  description    String
+  toothRaw       String?
+  qty            Decimal?  @db.Decimal(10,2)
+  unitPrice      Decimal?  @db.Decimal(12,2)
+  listPrice      Decimal?  @db.Decimal(12,2)
+  discountRaw    String?
+  amount         Decimal   @db.Decimal(12,2) // 可以負數（貸項）
+  isZero         Boolean   @default(false)
+  status         String   @default("UNMATCHED") // UNMATCHED | MATCHED | IGNORED
+  ignoreReason   String? // ZERO | NOT_OURS | OTHER:<text>
+  costCaseId     String?
+  costCase       CostCase?   @relation(fields: [costCaseId], references: [id])
+  linkType       String? // MAIN | SUPPLEMENT | REDO（B7）
+  matchedBy      String?
+  matchedAt      DateTime?
+
+  @@unique([documentId, groupIndex, lineIndex])
+  @@index([costCaseId])
+  @@index([patientCode])
+}
+
+/// 每間 Lab 嘅單據設定（§2.3 seed）
+model LabProfile {
+  labId                       String  @id
+  lab                         Lab     @relation(fields: [labId], references: [id], onDelete: Cascade)
+  statementKind               String  @default("INVOICE_LIST")
+  statementDocNoSameAsInvoice Boolean @default(true)
+  defaultDocNoKind            String  @default("INVOICE_NO")
+  extractionHint              String? // ≤500 字，加入 prompt（例：「名後 4 位係病人編號，最後 7 位係 Lab 編號」）
+  updatedBy                   String
+  updatedAt                   DateTime @updatedAt
+}
+
+/// Lab 名／收款人別名（確認一次就記住）
+model LabAlias {
+  id        String   @id @default(cuid())
+  labId     String
+  lab       Lab      @relation(fields: [labId], references: [id], onDelete: Cascade)
+  kind      String // NAME_EN | NAME_CN | PAYEE（PAYEE 唔用嚟認 Lab，只用嚟判斷「新收款人」）
+  rawNorm   String
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@unique([kind, rawNorm])
+  @@index([labId])
+}
+
+/// Lab 客戶編號 → 診所（＋醫生）。Modern 嘅客戶編號跟醫生。
+model LabCustomerNo {
+  id         String   @id @default(cuid())
+  labId      String
+  customerNo String
+  clinicId   String
+  providerId String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@unique([labId, customerNo])
+}
+
+/// 單上診所文字 → 診所（例：「臻善牙科（大圍2）」、「滙樂牙科（AEGIS DENTAL)（土瓜湾）」）
+model ClinicNameAlias {
+  id        String   @id @default(cuid())
+  rawNorm   String   @unique
+  clinicId  String
+  createdBy String
+  createdAt DateTime @default(now())
+}
+
+/// 單上醫生文字 → 醫生（例：「dr.esmond tong」、「姚子晴 yiu tsz ching」）
+model ProviderNameAlias {
+  id         String   @id @default(cuid())
+  rawNorm    String   @unique
+  providerId String
+  createdBy  String
+  createdAt  DateTime @default(now())
+}
+
+/// 冪等鍵（B15）。同 BookingWriteLog 做法一樣：key + requestHash。
+model LabDocWriteLog {
+  idempotencyKey String   @id
+  requestHash    String
+  route          String
+  status         String // IN_PROGRESS | DONE
+  responseJson   Json?
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 /// ★ cwm-datasource-20261003：Apricot 資料來源（= 一個 Apricot 帳號）設定 —— SaaS 化第二期。

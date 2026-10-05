@@ -54,6 +54,13 @@ services:
       WA_INBOX_LLM_URL: ${WA_INBOX_LLM_URL:-}
       INTERNAL_LLM_SECRET: ${INTERNAL_LLM_SECRET:-}
       INTERNAL_LLM_KID: ${INTERNAL_LLM_KID:-k1}
+      # ★ cwm-labdoc P1：Lab 單據存檔（§4）— 加密 key 要離線另存一份（DEPLOYMENT.md）
+      LAB_DOC_DIR: /data/lab-docs
+      LAB_DOC_ENC_KEY: ${LAB_DOC_ENC_KEY}
+      LAB_DOC_ENC_KID: ${LAB_DOC_ENC_KID:-k1}
+      LAB_DOC_ENC_KEYS_OLD: ${LAB_DOC_ENC_KEYS_OLD:-}
+    volumes:
+      - lab_docs:/data/lab-docs
     networks: [clinic_net]
     # ★ 2026-08-28 cwm-costfix：log 輪轉（同上）
     logging:
@@ -122,3 +129,5 @@ volumes:
     name: clinic_clinic_prod_dbdata
   face_models:
   face_frames:
+  lab_docs:
+    name: clinic_lab_docs

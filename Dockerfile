@@ -27,7 +27,9 @@ RUN pnpm build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache openssl
+# labdoc 渲染：中文單據需要 CJK 字型（font-noto-cjk）；fontconfig 提供 fallback 機制
+# （base-14 非嵌入字體都靠 system fallback；嵌入 subset 字體唔受影響 — 見 gen-labdoc-fixtures.mjs gen3 註記）
+RUN apk add --no-cache openssl fontconfig font-noto-cjk
 RUN npm i -g prisma@6.19.3
 RUN addgroup --system --gid 1001 nodejs && \
  adduser --system --uid 1001 nextjs

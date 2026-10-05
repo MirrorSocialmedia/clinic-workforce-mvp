@@ -1,0 +1,109 @@
+/**
+ * cwm-labdoc P1 — 加密層（§4.1）
+ *
+ * 每個檔用 AES-256-GCM 加密後先寫碟：
+ *   檔頭：magic 'LDOC1'(5) | kid(2 bytes) | iv(12) | tag(16) | ciphertext
+ *
+ * Key 管理（全 env，唔落 DB／唔落檔）：
+ *   LAB_DOC_ENC_KEY      — 現行 key，32 bytes base64
+ *   LAB_DOC_ENC_KID      — 現行 kid（預設 'k1'，≤2 字）
+ *   LAB_DOC_ENC_KEYS_OLD — 'kid:base64,kid2:base64,…'（換 key 後舊 kid 留呢度）
+ *
+ * 換 key：新檔用新 kid；讀舊檔用舊 kid 解。
+ */
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+
+const MAGIC = Buffer.from('LDOC1', 'ascii')
+const MAGIC_LEN = MAGIC.length
+const KID_LEN = 2
+const IV_LEN = 12
+const TAG_LEN = 16
+const HEADER_LEN = MAGIC_LEN + KID_LEN + IV_LEN + TAG_LEN
+
+export class LabDocCryptoError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LabDocCryptoError'
+  }
+}
+
+/** kid → key（Buffer 32 bytes）。現行 kid 由 LAB_DOC_ENC_KEY；舊 kid 由 LAB_DOC_ENC_KEYS_OLD。 */
+export function getKeyForKid(kid: string): Buffer | null {
+  if (kid === getCurrentKid()) {
+    const cur = process.env.LAB_DOC_ENC_KEY
+    if (cur) {
+      const buf = Buffer.from(cur, 'base64')
+      if (buf.length === 32) return buf
+    }
+    return null
+  }
+  const old = process.env.LAB_DOC_ENC_KEYS_OLD
+  if (!old) return null
+  for (const part of old.split(',')) {
+    const idx = part.indexOf(':')
+    if (idx <= 0) continue
+    if (part.slice(0, idx).trim() !== kid) continue
+    const buf = Buffer.from(part.slice(idx + 1).trim(), 'base64')
+    if (buf.length === 32) return buf
+  }
+  return null
+}
+
+export function getCurrentKid(): string {
+  return process.env.LAB_DOC_ENC_KID || 'k1'
+}
+
+/** 初始化 guard：開機／第一次用前 call 一次（dev/CI 方便 fail fast）。 */
+export function assertEncryptionConfigured(): void {
+  const kid = getCurrentKid()
+  if (!getKeyForKid(kid)) {
+    throw new LabDocCryptoError(
+      'LAB_DOC_ENC_KEY 未設（或 base64 解出唔係 32 bytes）— 存底功能唔可運作',
+    )
+  }
+}
+
+/** 加密：plain → LDOC1|kid|iv|tag|ciphertext */
+export function encrypt(plain: Buffer, kid?: string): Buffer {
+  const k = kid ?? getCurrentKid()
+  const key = getKeyForKid(k)
+  if (!key) throw new LabDocCryptoError(`key for kid "${k}" 未設`)
+  if (k.length > KID_LEN) throw new LabDocCryptoError(`kid "${k}" 超過 ${KID_LEN} 字`)
+
+  const iv = randomBytes(IV_LEN)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const ciphertext = Buffer.concat([cipher.update(plain), cipher.final()])
+  const tag = cipher.getAuthTag() // 16 bytes
+  const kidBuf = Buffer.from(k.padEnd(KID_LEN, '\u0000'), 'ascii').subarray(0, KID_LEN)
+
+  return Buffer.concat([MAGIC, kidBuf, iv, tag, ciphertext])
+}
+
+export interface DecryptedFile {
+  plain: Buffer
+  kid: string
+}
+
+/** 解密：LDOC1|kid|iv|tag|ciphertext → plain（tag 驗證失敗 = 檔壞/key 錯 → throw） */
+export function decrypt(buf: Buffer): DecryptedFile {
+  if (buf.length < HEADER_LEN) throw new LabDocCryptoError('file too small for LDOC1 header')
+  if (!buf.subarray(0, MAGIC_LEN).equals(MAGIC)) {
+    throw new LabDocCryptoError('bad magic (唔係 LDOC1 檔)')
+  }
+  const kid = buf.subarray(MAGIC_LEN, MAGIC_LEN + KID_LEN).toString('ascii').replace(/\0+$/g, '').trim()
+  const iv = buf.subarray(MAGIC_LEN + KID_LEN, MAGIC_LEN + KID_LEN + IV_LEN)
+  const tag = buf.subarray(MAGIC_LEN + KID_LEN + IV_LEN, HEADER_LEN)
+  const ciphertext = buf.subarray(HEADER_LEN)
+
+  const key = getKeyForKid(kid)
+  if (!key) throw new LabDocCryptoError(`key for kid "${kid}" 未設（換 key 後 LAB_DOC_ENC_KEYS_OLD 未補？）`)
+
+  const decipher = createDecipheriv('aes-256-gcm', key, iv)
+  decipher.setAuthTag(tag)
+  try {
+    const plain = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+    return { plain, kid }
+  } catch {
+    throw new LabDocCryptoError('GCM tag 驗證失敗（檔損壞或 key 錯）')
+  }
+}

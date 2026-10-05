@@ -198,6 +198,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { path: '/reconciliation', label: '月報對數', icon: CreditCard, roles: ['OWNER'], perm: 'provider_payout' },
     // ★ P3-deploy: 成本錄入 (MANAGER + OWNER) + 醫生月結 (OWNER only)
     { path: '/cost-entry', label: '成本錄入', icon: FileText, roles: ['OWNER', 'MANAGER'], perm: 'cost_entry' },
+    // ★ cwm-labdoc P1（§10.5）：Lab 單據（到貨單＋檔案庫）
+    //   OWNER/MANAGER 預設有 lab_invoice＋lab_statement；EMPLOYEE 唔預設，
+    //   經理喺帳號管理 grant lab_invoice/lab_statement 先見到（perm 支線 ③）
+    //   ⚠️ roles 唔可以加 'EMPLOYEE' — filter ① role 白名單會繞過 perm 檢查
+    { path: '/lab-docs', label: 'Lab 單據', icon: Receipt, roles: ['OWNER', 'MANAGER'], perm: ['lab_invoice', 'lab_statement'] },
     { path: '/payout', label: '醫生月結', icon: Receipt, roles: ['OWNER'], perm: 'provider_payout' },
   ]
 
