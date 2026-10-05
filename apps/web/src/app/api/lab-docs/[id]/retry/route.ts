@@ -12,16 +12,27 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
+import { resolveClinicScope } from '@/lib/scope-helpers'
 import { runExtractionAfterClaim } from '@/lib/labdoc/extract'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
+  const { session, perms } = auth
   const { id } = params
 
-  const doc = await prisma.labDocument.findUnique({ where: { id: id }, select: { id: true, status: true } })
+  // §10.3 fail-closed（跟 P1 [id] 口徑）：lab 權限 = 全集團；其餘按診所範圍
+  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  if (scope !== null && scope.length === 0) {
+    return NextResponse.json({ error: '冇任何診所範圍，唔可以再讀單據' }, { status: 403, headers: { 'cache-control': 'no-store' } })
+  }
+
+  const doc = await prisma.labDocument.findUnique({ where: { id: id }, select: { id: true, status: true, clinicId: true } })
   if (!doc) {
-    return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
+    return NextResponse.json({ error: '單據唔存在' }, { status: 404, headers: { 'cache-control': 'no-store' } })
+  }
+  if (scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
+    return NextResponse.json({ error: '冇權限操作呢間診所嘅單據' }, { status: 403, headers: { 'cache-control': 'no-store' } })
   }
 
   // §11：讀單服務未設定 → 503（只喺「再讀」時回）

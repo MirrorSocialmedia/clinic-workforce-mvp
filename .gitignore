@@ -49,3 +49,4 @@ apps/web/.dev/
 
 # DB backups —— 絕不可入 repo
 backups/
+.dev-labdoc-p2/
