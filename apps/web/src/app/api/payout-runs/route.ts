@@ -141,6 +141,8 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     // ★ cwm-costguard-20261006：鎖定期間成本有改動 → transaction 已回滾
     if (e instanceof CostChangedDuringLockError) return NextResponse.json({ error: e.message }, { status: 409 })
+    // ★ cwm-payaudit-20261006：兩個人同時生成同一張（unique providerId+clinicId+periodMonth）→ 409，唔好 500
+    if ((e as any)?.code === 'P2002') return NextResponse.json({ error: '呢張月結單啱啱已經有人生成咗，請重新整理' }, { status: 409 })
     throw e
   }
 

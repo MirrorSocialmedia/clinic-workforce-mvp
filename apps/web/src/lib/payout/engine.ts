@@ -6,6 +6,7 @@
  * ★ 2026-08-17: 粒度改為「醫生 × 診所 × 月」
  */
 
+import { lockPeriod } from './period-lock'
 import { Prisma, PaymentAllocation } from '@prisma/client'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
@@ -562,6 +563,8 @@ export async function lockPayoutRun(
   clinicId: string,
 ): Promise<any> {
   return await basePrisma.$transaction(async (tx: any) => {
+    // ★ cwm-payaudit-20261006：期間鎖（同成本／SP／轉介／調整寫入一前一後，見 period-lock.ts）
+    await lockPeriod(tx, providerId, clinicId, periodMonth)
     // a. Create PayoutRun with LOCKED status
     const run = await tx.payoutRun.create({
       data: {
@@ -677,6 +680,12 @@ export async function lockPayoutRun(
       where: lockAdjWhere,
       data: { runId: run.id },
     })
+    // ★ cwm-payaudit-20261006：計數之後先入嘅調整會被歸入但冇計錢 → 對數，唔夾就回滾
+    const lockedAdj = await tx.payoutAdjustment.aggregate({ where: { runId: run.id }, _sum: { amount: true } })
+    const adjLocked = round2(Number(lockedAdj._sum.amount ?? 0))
+    if (Math.abs(adjLocked - round2(payout.adjustAmount)) > 0.005) {
+      throw new CostChangedDuringLockError(`上期調整 計 ${round2(payout.adjustAmount)}／鎖 ${adjLocked}`)
+    }
 
     // f. Write audit log
     await tx.auditLog.create({
@@ -1008,8 +1017,9 @@ export async function createVoidAdjustment(
   note: string,
   createdBy: string,
   clinicId: string,
+  db: any = prisma,
 ): Promise<any> {
-  return await prisma.payoutAdjustment.create({
+  return await db.payoutAdjustment.create({
     data: {
       providerId,
       clinicId,

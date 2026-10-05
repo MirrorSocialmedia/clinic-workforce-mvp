@@ -592,7 +592,7 @@ export default function SpSubsidiesPage() {
 interface BulkResultView {
   confirmed: Array<{ id: string; amount: number }>
   already: string[]
-  rejected: Array<{ id: string; reason: 'AMOUNT_CHANGED' | 'LOCKED' | 'NOT_FOUND' | 'NOT_PENDING'; billCode?: string | null; providerName?: string | null; amount?: number; expected: number }>
+  rejected: Array<{ id: string; reason: 'AMOUNT_CHANGED' | 'LOCKED' | 'MONTH_LOCKED' | 'NOT_FOUND' | 'NOT_PENDING'; billCode?: string | null; providerName?: string | null; amount?: number; expected: number }>
 }
 
 function round2(n: number) { return Math.round(n * 100) / 100 }
@@ -652,6 +652,7 @@ function BulkConfirmDialog({ rows, month, busy, onCancel, onConfirm }: {
 const REJECT_LABEL: Record<string, (r: BulkResultView['rejected'][number]) => string> = {
   AMOUNT_CHANGED: r => `金額由 $${r.expected} 變咗 $${r.amount}（有人重新掃描），請睇過再確認`,
   LOCKED: () => '呢個月結已經鎖定，改唔到',
+  MONTH_LOCKED: () => '該月月結已經鎖定（呢筆係鎖完先掃到），確認咗都唔會計入；請用手動調整喺下期補',
   NOT_FOUND: () => '呢筆已經唔存在（可能已刪除）',
   NOT_PENDING: () => '已經被跳過，冇確認',
 }

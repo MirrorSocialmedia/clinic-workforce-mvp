@@ -5,7 +5,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { lockPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { toHKDateStr } from '@/lib/hk-date'
+import { round2 } from '@/lib/payout/engine'
+import { lockedRunFor } from '@/lib/cost-entry/guards'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -19,6 +22,12 @@ export async function POST(req: NextRequest) {
       { error: 'fromProviderId, billExtId, items required' },
       { status: 400 },
     )
+  }
+
+  // ★ cwm-payaudit-20261006：轉介 % 要係 0–100 嘅數（之前 Number(undefined) ?? 2 = NaN）
+  const pct = Number(refPercent ?? 2)
+  if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+    return NextResponse.json({ error: '轉介 % 要喺 0 至 100 之間' }, { status: 400 })
   }
 
   try {
@@ -42,6 +51,10 @@ export async function POST(req: NextRequest) {
       })
       if (clinic) clinicId = clinic.id
     }
+    // ★ cwm-payaudit-20261006：冇診所 = 唔會計入任何月結（同 complete 一樣擋）
+    if (!clinicId) {
+      return NextResponse.json({ error: `帳單所屬診所（${bill.clinicExtId}）未對應，請去診所管理設定` }, { status: 400 })
+    }
 
     // Validate quantities against bill items
     const billItems = await prisma.apricotBillItem.findMany({
@@ -56,6 +69,9 @@ export async function POST(req: NextRequest) {
           { error: `項目 ${item.eleId} 唔存在` },
           { status: 404 },
         )
+      }
+      if (!Number.isInteger(Number(item.qty)) || Number(item.qty) < 1) {
+        return NextResponse.json({ error: '數量要係正整數' }, { status: 400 })
       }
       if (Number(item.qty) > billItem.qty) {
         return NextResponse.json(
@@ -90,16 +106,26 @@ export async function POST(req: NextRequest) {
     // Derive periodMonth from bill time (HK timezone)
     const periodMonth = toHKDateStr(bill.billTime).slice(0, 7)
 
+    // ★ cwm-payaudit-20261006：該月月結已鎖 → 新轉介唔會計入，醫生收唔到 —— 擋
+    if (await lockedRunFor(prisma, fromProviderId, clinicId, periodMonth)) {
+      return NextResponse.json({ error: `${periodMonth} 嘅月結已經鎖定，新轉介唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, { status: 409 })
+    }
+
     // Transaction — 全入或全唔入
     // ★ 改用 function-based transaction，入面可加重複檢查
     const referrals = await prisma.$transaction(async (tx) => {
+      // ★ cwm-payaudit-20261006：期間鎖 + 再查一次（同鎖月結一前一後）
+      await lockPeriod(tx, fromProviderId, clinicId, periodMonth)
+      if (await lockedRunFor(tx, fromProviderId, clinicId, periodMonth)) throw new PeriodLockedError(periodMonth)
       const results = []
       for (const item of items) {
-        const unitPrice = Number(item.unitPrice)
+        // ★ cwm-payaudit-20261006：單價以帳單為準（唔信 request）；金額 round2 ——
+        //   舊寫法 Math.round(x/100)*100 會四捨五入去【$100】：$1,200 × 2% = $24 存咗 $0
+        const billItem = billItemMap.get(item.eleId)!
+        const unitPrice = Number(billItem.unitPrice)
         const qty = Number(item.qty)
-        const refPct = Number(refPercent) ?? 2
-        const amt = unitPrice * qty
-        const amount = Math.round(amt * refPct / 100 / 100) * 100
+        const refPct = pct
+        const amount = round2(unitPrice * qty * refPct / 100)
 
         const ref = await tx.providerReferral.create({
           data: {
@@ -108,7 +134,7 @@ export async function POST(req: NextRequest) {
             billExtId,
             billCode: bill.code,
             billItemEleId: item.eleId,
-            itemDes: item.itemDes ?? '',
+            itemDes: billItem.feeItemDes,
             unitPrice: unitPrice,
             qty,
             refPercent: refPct,
@@ -144,6 +170,10 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     )
   } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? 'Batch failed' }, { status: 500 })
+    // ★ 同時兩個人轉介同一項目 → partial unique index（CONFIRMED + billItemEleId）擋
+    if (e instanceof PeriodLockedError) return NextResponse.json({ error: `${e.periodMonth} 嘅月結已經鎖定，新轉介唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, { status: 409 })
+    if (e?.code === 'P2002') return NextResponse.json({ error: '呢個項目啱啱已經有人轉介咗，請重新整理' }, { status: 409 })
+    console.error('[provider-referrals/batch] failed', e)
+    return NextResponse.json({ error: '批次轉介失敗，冇任何一筆寫入，請重試' }, { status: 500 })
   }
 }
