@@ -3,7 +3,7 @@
 //   問題（本地 DB 實測重現）：
 //     ① 新增／改成本落「已鎖定月結」嘅月份 → 唔計入任何月結（錢靜靜漏咗）
 //     ② 成本負數、亂碼（"abc" → 存 null 但狀態 PRICED）
-//     ③ 到貨日早過落單日、將來日子（打錯年份 → 成本跑去錯月份）
+//     ③ 到貨日早過落單日、打錯年份（成本跑去錯月份）；預填預計到貨日照收（6 個月內）
 //     ④ MANAGER 寫入冇限所屬診所（讀取有限，寫入冇）
 //   純函數放呢度（有單元測試）；查 DB 嘅 lockedRunFor 都喺度，三條寫入 route 共用。
 // ============================================================
@@ -33,14 +33,20 @@ export function parseDay(v: unknown, label: string): string | null {
   return toHKDateStr(d)
 }
 
+/** 到貨日最多可以預填幾多日之後（老闆：經常預先填預計到貨日；再遠多數係打錯年份） */
+export const MAX_RECEIVED_AHEAD_DAYS = 183
+
 /**
- * 日期合理性：落單日／到貨日唔可以係將來（打錯年份會令成本跑去將來月份）；
- * 到貨日唔可以早過落單日。
+ * 日期合理性：
+ *   落單日唔可以係將來；
+ *   到貨日可以預填將來（預計到貨日），但唔可以超過 6 個月後（打錯年份會令成本跑去將來月份）；
+ *   到貨日唔可以早過落單日。
  */
 export function checkCostDates(orderedDay: string, receivedDay: string | null, todayDay: string): void {
   if (orderedDay > todayDay) throw new CostGuardError(400, `落單日（${orderedDay}）唔可以係將來`)
   if (receivedDay) {
-    if (receivedDay > todayDay) throw new CostGuardError(400, `到貨日（${receivedDay}）唔可以係將來`)
+    const limit = new Date(Date.parse(`${todayDay}T00:00:00Z`) + MAX_RECEIVED_AHEAD_DAYS * 86400000).toISOString().slice(0, 10)
+    if (receivedDay > limit) throw new CostGuardError(400, `到貨日（${receivedDay}）太遠，係咪打錯年份？（最多預填到 ${limit}）`)
     if (receivedDay < orderedDay) throw new CostGuardError(400, `到貨日（${receivedDay}）早過落單日（${orderedDay}）`)
   }
 }
