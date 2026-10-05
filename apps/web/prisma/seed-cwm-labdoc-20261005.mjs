@@ -41,7 +41,7 @@ const LABS = [
     dbPatterns: ['%kea%'],
     profile: {
       statementKind: 'INVOICE_LIST',
-      statementDocNoSameAsInvoice: true,
+      statementDocNoSameAsInvoice: true,       // §2.3：未核實 → 預設 true（待 P3 真 KEA 月結單核實）
       defaultDocNoKind: 'CASE_NO',             // 冇 invoice 單號；Case No. 0254131
       extractionHint: "D/C % 係收費百分比（80 = 收 80%）；amount 用 U'Price／Amount 欄。",
     },
