@@ -291,7 +291,7 @@ export type ClaimResult = 'claimed' | 'skipped'
 export async function runLabDocExtract(docId: string, opts: RunOpts = {}): Promise<ClaimResult> {
   const claimed = await prisma.labDocument.updateMany({
     where: { id: docId, status: { in: ['UPLOADED', 'EXTRACT_FAILED'] } },
-    data: { status: 'EXTRACTING', heartbeatAt: new Date() },
+    data: { status: 'EXTRACTING', heartbeatAt: new Date(), version: { increment: 1 } },
   })
   if (claimed.count === 0) return 'skipped'
   track(
@@ -312,7 +312,7 @@ export function runExtractionAfterClaim(docId: string, opts: RunOpts = {}): void
     runClaimed(docId, opts).catch((e) => {
       console.error('[labdoc/extract] unexpected error', { docId, err: String(e?.message ?? e) })
       prisma.labDocument
-        .updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected' } })
+        .updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected', version: { increment: 1 } } })
         .catch(() => undefined)
     }),
   )
@@ -403,12 +403,12 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
       // updateMany（唔係 update）：doc 喺途被刪（merge/split/手動）→ 0 行靜默，唔係 P2025 轟炸
       await prisma.labDocument.updateMany({
         where: { id: docId },
-        data: { extractAttempts: { increment: 1 }, extractError: fail.slice(0, 200) },
+        data: { extractAttempts: { increment: 1 }, extractError: fail.slice(0, 200), version: { increment: 1 } },
       })
       if (attempt < maxAttempts) await sleep(retryDelayMs)
     }
     // = 3 → EXTRACT_FAILED（sweep 唔會再自動試；人手 retry 先重置 attempts）
-    await prisma.labDocument.updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED' } })
+    await prisma.labDocument.updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', version: { increment: 1 } } })
   } finally {
     clearInterval(hb)
   }
@@ -417,7 +417,7 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
 async function failFinal(docId: string, reason: string): Promise<void> {
   await prisma.labDocument.updateMany({
     where: { id: docId },
-    data: { status: 'EXTRACT_FAILED', extractError: reason, extractAttempts: { increment: 1 } },
+    data: { status: 'EXTRACT_FAILED', extractError: reason, extractAttempts: { increment: 1 }, version: { increment: 1 } },
   })
 }
 
@@ -459,6 +459,7 @@ async function finishSuccess(
 
   const headerData: Record<string, unknown> = {
     status: 'NEEDS_REVIEW',
+    version: { increment: 1 }, // §7.1 樂觀鎖：每次寫 +1（讀單寫頭部 = 寫）
     extractedJson: filtered,
     readIssues,
     extractSource: mode,
@@ -590,7 +591,7 @@ export async function runLabDocSweep(now: Date = new Date(), opts: RunOpts = {})
     if (attempts >= LABDOC_MAX_ATTEMPTS) {
       await prisma.labDocument.updateMany({
         where: { id: d.id },
-        data: { status: 'EXTRACT_FAILED', extractAttempts: attempts, extractError: 'stale_heartbeat' },
+        data: { status: 'EXTRACT_FAILED', extractAttempts: attempts, extractError: 'stale_heartbeat', version: { increment: 1 } },
       })
       res.failed++
     } else {
@@ -598,7 +599,7 @@ export async function runLabDocSweep(now: Date = new Date(), opts: RunOpts = {})
       // process 死咗嘅話呢個 timer 冇咗，下次 sweep 再兜
       await prisma.labDocument.updateMany({
         where: { id: d.id },
-        data: { status: 'UPLOADED', extractAttempts: attempts, extractError: 'stale_heartbeat' },
+        data: { status: 'UPLOADED', extractAttempts: attempts, extractError: 'stale_heartbeat', version: { increment: 1 } },
       })
       staleBackToUploaded.push(d.id)
       const p = sleep(opts.retryDelayMs ?? LABDOC_RETRY_MS).then(() => runLabDocExtract(d.id, opts))
