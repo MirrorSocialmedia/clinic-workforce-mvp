@@ -10,6 +10,8 @@ export interface ParsedRow {
 	charges: number | null // ★ AA2: Total Charges
 	paid: number | null // ★ AA2: Total Paid
 	method: string // ★ cwm-recon-clinic-20260909 C1：Payment Method 欄（舊格式冇呢欄 = ''）
+	/** ★ cwm-reconclinic-20261006：全店報表逐行 Practitioner（例「Dr. Ho Ka Chun」）；單一醫生報表冇呢欄 = '' */
+	practitioner: string
 }
 
 export interface ParsedReport {
@@ -19,6 +21,8 @@ export interface ParsedReport {
 	skipped: number
 	// ★ cwm-recon-clinic-20260909 B3: 冇 Transaction Code 嘅空行 — 同 skipped 分開計（「空行」唔係警告）
 	blankRows: number
+	/** ★ cwm-reconclinic-20261006：有逐行 Practitioner 欄（全店報表） */
+	hasPractitionerColumn: boolean
 }
 
 export function parsePaymentReport(buf: Buffer): ParsedReport {
@@ -44,6 +48,7 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 	//   第二行只有金額、Date 格係空 → 承接上一行日期（lastDate）。
 	const rows: ParsedRow[] = []
 	let lastDate: string | null = null
+	let lastPractitioner = '' // ★ cwm-reconclinic：拆分行 Practitioner 格可能空 → 承接上一行（同日期一樣）
 	let skipped = 0
 	let blankRows = 0 // ★ cwm-recon-clinic-20260909 B3
 	for (let i = headerRow + 1; i < raw.length; i++) {
@@ -65,11 +70,13 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 				// ★ B2：一定要清 lastDate —— 唔清嘅話，呢一行嘅【拆分行】（空日期）
 				//   會承接上一張單嘅日期，靜靜入錯日而且唔會計入 skipped
 				lastDate = null
+				lastPractitioner = ''
 				skipped++
 				continue
 			}
 			date = parsed
 			lastDate = parsed
+			lastPractitioner = cols.practitioner !== undefined ? String(r[cols.practitioner] ?? '').trim() : ''
 		} else if (lastDate) {
 			date = lastDate // ★ 空日期 = 上一筆付款嘅分拆行
 		} else {
@@ -87,6 +94,9 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 			paid: cols.paid !== undefined ? parseAmount(r[cols.paid]) : null,
 			// ★ C1：冇呢欄嘅舊格式照 parse 得（method = ''，compare 側自然計 0）
 			method: cols.method !== undefined ? String(r[cols.method] ?? '').trim() : '',
+			practitioner: cols.practitioner !== undefined
+				? (String(r[cols.practitioner] ?? '').trim() || lastPractitioner)
+				: '',
 		})
 	}
 
@@ -96,7 +106,7 @@ export function parsePaymentReport(buf: Buffer): ParsedReport {
 		throw new Error('REPORT_CONTRACT_BROKEN: 有資料行但零行解析成功')
 	}
 
-	return { meta, rows, skipped, blankRows }
+	return { meta, rows, skipped, blankRows, hasPractitionerColumn: cols.practitioner !== undefined }
 }
 
 // parseAmount: 處理千分位逗號、$ 符號、括號負數、空白、/
@@ -165,8 +175,8 @@ function extractMeta(
 	return { practitioner, clinic, month }
 }
 
-function mapColumns(headerRow: any[]): { date: number; code: number; amount: number; charges?: number; paid?: number; method?: number } {
-	const cols: { date?: number; code?: number; amount?: number; charges?: number; paid?: number; method?: number } = {}
+function mapColumns(headerRow: any[]): { date: number; code: number; amount: number; charges?: number; paid?: number; method?: number; practitioner?: number } {
+	const cols: { date?: number; code?: number; amount?: number; charges?: number; paid?: number; method?: number; practitioner?: number } = {}
 	headerRow.forEach((c: any, i: number) => {
 		const s = String(c).trim()
 		if (s === 'Date') cols.date = i
@@ -178,6 +188,7 @@ function mapColumns(headerRow: any[]): { date: number; code: number; amount: num
 		}
 		if (s === 'Total Paid') cols.paid = i
 		if (s === 'Payment Method') cols.method = i // ★ C1
+		if (s === 'Practitioner') cols.practitioner = i // ★ cwm-reconclinic：全店報表
 	})
 	if (cols.date === undefined || cols.code === undefined) {
 		throw new Error('REPORT_FORMAT_CHANGED: 缺少 Date 或 Transaction Code 欄')
@@ -188,5 +199,5 @@ function mapColumns(headerRow: any[]): { date: number; code: number; amount: num
 	if (cols.amount === undefined && cols.charges !== undefined) {
 		cols.amount = cols.charges
 	}
-	return cols as { date: number; code: number; amount: number; charges?: number; paid?: number; method?: number }
+	return cols as { date: number; code: number; amount: number; charges?: number; paid?: number; method?: number; practitioner?: number }
 }

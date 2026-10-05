@@ -177,6 +177,7 @@ jobs:
             src/lib/provider-leave.test.ts \
             src/lib/provider-pattern.test.ts \
             src/lib/reconciliation/parsePaymentReport.test.ts \
+            src/lib/reconciliation/clinic-report.test.ts \
             src/lib/resign-cutoff.test.ts \
             src/lib/resign-full-settlement.test.ts \
             src/lib/roster-diff.test.ts \

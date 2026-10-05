@@ -8,6 +8,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { parsePaymentReport, type ParsedRow } from '@/lib/reconciliation/parsePaymentReport'
 import { compareReport } from '@/lib/reconciliation/compare'
 import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
+import { resolveClinic } from '@/lib/reconciliation/resolve-clinic'
+import { groupByPractitioner, resolvePractitioners, missingProviders, SKIP_PROVIDER, BLANK_PRACTITIONER } from '@/lib/reconciliation/clinic-report'
 
 export async function POST(req: NextRequest) {
 	const auth = await requireAuth(req, 'POST', req.url)
@@ -34,13 +36,23 @@ export async function POST(req: NextRequest) {
 	try {
 		// 解析
 		const buf = Buffer.from(await file.arrayBuffer())
-		const { meta, rows, skipped, blankRows } = parsePaymentReport(buf)
+		const { meta, rows, skipped, blankRows, hasPractitionerColumn } = parsePaymentReport(buf)
 
 		// 月份驗證：UI 傳入嘅月份要同報表一致
 		if (periodMonth && meta.month !== periodMonth) {
 			return NextResponse.json({
 				error: `報表月份（${meta.month}）同你揀嘅月份（${periodMonth}）唔同，請確認上載咗正確嘅檔案`,
 			}, { status: 422 })
+		}
+
+		// ★ cwm-reconclinic-20261006：全店報表（逐行 Practitioner、頂部冇 Practitioner）→ 逐個醫生對
+		if (hasPractitionerColumn && !meta.practitioner.trim() && !providerId) {
+			return await handleClinicWide({
+				fileName: file.name, meta, rows, skipped, blankRows,
+				mappingRaw: formData.get('mapping') as string | null,
+				remember: formData.get('remember') === '1',
+				actorId: session.userId,
+			})
 		}
 
 		// 搵 provider（由 meta.practitioner 配對 Provider.name）
@@ -144,6 +156,111 @@ export async function POST(req: NextRequest) {
 	}
 }
 
+/**
+ * ★ cwm-reconclinic-20261006：全店報表 —— 按 Practitioner 分組，每個醫生照用 compareReport，結果逐個醫生存（同單一醫生上載一樣）。
+ *   名 → 醫生：已記住（ProviderReportName）優先；其餘要 mapping（UI 用單號建議預填），未齊 → 409 NEEDS_MAPPING，唔會靜靜跳過。
+ *   「唔屬任何醫生」（SKIP）嘅組唔對數，但金額照列返出嚟。
+ */
+async function handleClinicWide(input: {
+	fileName: string
+	meta: { practitioner: string; clinic: string; month: string }
+	rows: ParsedRow[]
+	skipped: number
+	blankRows: number
+	mappingRaw: string | null
+	remember: boolean
+	actorId: string
+}) {
+	const { fileName, meta, rows, skipped, blankRows, actorId } = input
+	const clinic = await resolveClinic(meta.clinic)
+	const groups = groupByPractitioner(rows)
+	const resolved = await resolvePractitioners(groups)
+
+	let mapping: Record<string, string> = {}
+	if (input.mappingRaw) {
+		try { mapping = JSON.parse(input.mappingRaw) ?? {} } catch { throw new Error('REPORT_MAPPING_INVALID: 醫生對應資料格式唔啱') }
+	}
+	const chosen = new Map<string, string>() // nameNorm → providerId | SKIP
+	for (const r of resolved) {
+		const pick = r.providerId ?? mapping[r.nameNorm]
+		if (pick) chosen.set(r.nameNorm, pick)
+	}
+	const missingNames = resolved.filter(r => !chosen.has(r.nameNorm))
+	if (missingNames.length > 0) {
+		return NextResponse.json({
+			error: `報表入面有 ${missingNames.length} 個名未對應醫生`,
+			code: 'NEEDS_MAPPING', practitioners: resolved, clinic: clinic.shortName || clinic.name, month: meta.month,
+		}, { status: 409 })
+	}
+	const providerIds = Array.from(new Set(Array.from(chosen.values()).filter(v => v !== SKIP_PROVIDER)))
+	const providers = await prisma.provider.findMany({ where: { id: { in: providerIds } }, select: { id: true, name: true, shortName: true } })
+	if (providers.length !== providerIds.length) throw new Error('REPORT_MAPPING_INVALID: 揀咗嘅醫生唔存在')
+	const providerById = new Map(providers.map(p => [p.id, p]))
+	// 寫任何嘢之前先擋：冇綁 Apricot 帳號嘅醫生對唔到數（唔好對咗一半先爆）
+	const bound = await prisma.apricotPractitioner.findMany({
+		where: { providerId: { in: providerIds }, kind: 'PROVIDER' }, select: { providerId: true },
+	})
+	const unbound = providers.filter(p => !bound.some(b => b.providerId === p.id))
+	if (unbound.length) {
+		throw new Error(`REPORT_PROVIDER_NO_APRICOT_ID: ${unbound.map(p => p.name).join('、')} 未綁 Apricot 帳號，請先喺醫生管理補返，或者揀「唔屬任何醫生」`)
+	}
+
+	// 記住新對應（只記人手確認／建議嘅；已記住嘅唔郁；SKIP 唔記）
+	if (input.remember) {
+		for (const r of resolved) {
+			const pid = chosen.get(r.nameNorm)
+			if (r.providerId || !pid || pid === SKIP_PROVIDER || r.name === BLANK_PRACTITIONER) continue
+			await prisma.providerReportName.upsert({
+				where: { nameNorm: r.nameNorm },
+				create: { nameNorm: r.nameNorm, name: r.name, providerId: pid, createdBy: actorId },
+				update: {},
+			})
+		}
+	}
+
+	const results: any[] = []
+	for (const pid of providerIds) {
+		const names = groups.filter(g => chosen.get(g.nameNorm) === pid)
+		const pRows = names.flatMap(g => g.rows)
+		const result = await compareReport(pid, meta.month, pRows, clinic.apricotClinicId!)
+		const detail = { ...buildDetail(result, 0, 0), clinicWide: true, reportNames: names.map(g => g.name) }
+		const data = {
+			fileName, rowCount: pRows.length, reportTotal: result.reportTotal, systemTotal: result.systemTotal,
+			difference: result.difference, status: result.status, detailJson: detail,
+			reportCharges: result.reportCharges, chargesVsPaid: result.chargesVsPaid, uploadedBy: actorId,
+		}
+		const record = await prisma.reconciliationImport.upsert({
+			where: { providerId_clinicId_periodMonth: { providerId: pid, clinicId: clinic.id, periodMonth: meta.month } },
+			update: { ...data, uploadedAt: new Date() },
+			create: { providerId: pid, clinicId: clinic.id, periodMonth: meta.month, ...data },
+		})
+		await prisma.auditLog.create({
+			data: {
+				actorId, action: 'RECONCILIATION_IMPORT', entity: 'ReconciliationImport', entityId: record.id,
+				notes: `上載月報對數（全店）: ${clinic.shortName || clinic.name} ${meta.month} ${providerById.get(pid)?.name ?? ''} — ${result.status}`,
+				afterJson: JSON.stringify({ providerId: pid, clinicId: clinic.id, periodMonth: meta.month, reportTotal: result.reportTotal, systemTotal: result.systemTotal, difference: result.difference, status: result.status }),
+			},
+		})
+		results.push({
+			providerId: pid, providerName: providerById.get(pid)?.name ?? '', reportNames: names.map(g => g.name),
+			status: result.status, reportTotal: result.reportTotal, systemTotal: result.systemTotal, difference: result.difference,
+		})
+	}
+
+	const skippedGroups = groups.filter(g => chosen.get(g.nameNorm) === SKIP_PROVIDER).map(g => ({ name: g.name, total: g.total, count: g.rows.length }))
+	const missing = await missingProviders(clinic.apricotClinicId!, meta.month, new Set(providerIds))
+	const round2 = (n: number) => Math.round(n * 100) / 100
+	return NextResponse.json({
+		success: true, mode: 'CLINIC', clinic: clinic.shortName || clinic.name, month: meta.month,
+		results, skippedGroups, missing, skipped, blankRows,
+		totals: {
+			report: round2(results.reduce((a, r) => a + r.reportTotal, 0)),
+			system: round2(results.reduce((a, r) => a + r.systemTotal, 0) + missing.reduce((a, m) => a + m.systemTotal, 0)),
+			skippedReport: round2(skippedGroups.reduce((a, g) => a + g.total, 0)),
+		},
+	})
+}
+
 // 由 Practitioner 名稱配對 Provider
 async function resolveProvider(practitionerName: string, hintProviderId?: string) {
 	// ① UI 有畀 providerId 就直接用（最可靠）
@@ -168,42 +285,6 @@ async function resolveProvider(practitionerName: string, hintProviderId?: string
 	if (matches.length === 0) throw new Error(`REPORT_PROVIDER_NOT_FOUND: ${code}`)
 	if (matches.length > 1) throw new Error(`REPORT_PROVIDER_AMBIGUOUS: ${code} 對到 ${matches.length} 個醫生`)
 	return matches[0]
-}
-
-/**
- * ★ cwm-recon-clinic-20260909 A2：由報表 meta.clinic 搵返 Clinic。
- * ★★★ 搵唔到／冇 apricotClinicId 一律 throw —— 【唔准】fallback 去「全部診所」。
- *    今次個 bug 就係因為 meta.clinic 讀咗但冇用，靜靜對晒全部診所，
- *    畫面照樣出一個「差異」數字，冇人知係口徑錯。寧願上載失敗都唔好出錯數。
- * ★ 錯誤訊息用 REPORT_ 開頭 → upload catch 會當用戶錯誤回 422，唔會當 500。
- */
-async function resolveClinic(metaClinic: string) {
-	const key = (metaClinic || '').trim()
-	if (!key) {
-		throw new Error('REPORT_CLINIC_MISSING: 報表冇 Clinic 欄，判斷唔到係邊間診所嘅數')
-	}
-	const clinics = await prisma.clinic.findMany({
-		select: { id: true, name: true, shortName: true, apricotClinicId: true },
-	})
-	const norm = (s: string | null) => (s ?? '').trim().toLowerCase()
-	const hit =
-		clinics.find(c => c.apricotClinicId && norm(c.apricotClinicId) === norm(key)) ??
-		clinics.find(c => c.shortName && norm(c.shortName) === norm(key)) ??
-		clinics.find(c => norm(c.name) === norm(key))
-
-	if (!hit) {
-		throw new Error(
-			`REPORT_CLINIC_UNKNOWN: 報表寫住 Clinic「${key}」，但系統搵唔到對應診所。` +
-			`已知診所：${clinics.map(c => c.shortName || c.name).join('／')}`,
-		)
-	}
-	if (!hit.apricotClinicId) {
-		throw new Error(
-			`REPORT_CLINIC_NO_APRICOT_ID: 診所「${hit.shortName || hit.name}」冇設定 apricotClinicId，` +
-			`對唔到 PaymentAllocation.clinicExtId。請先喺診所設定補返。`,
-		)
-	}
-	return hit
 }
 
 function buildDetail(result: {
