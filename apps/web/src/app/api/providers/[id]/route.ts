@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { findDuplicateProviderAccounts } from '@/lib/apricot-accounts'
+import { normName } from '@/lib/reconciliation/clinic-report'
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePerm(req, 'scheduling')
@@ -10,7 +11,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params
   const body = await req.json().catch(() => ({} as any))
-  const { name, shortName, nameZh, phone, color, apricotAccounts, apricotUserId, companyId, sortOrder, isActive, clinicIds, showInCostEntry } = body
+  const { name, shortName, nameZh, phone, color, apricotAccounts, apricotUserId, companyId, sortOrder, isActive, clinicIds, showInCostEntry, reportNames } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
@@ -26,6 +27,33 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const dup = await findDuplicateProviderAccounts(prisma, accounts, id)
     if (dup) {
       return NextResponse.json({ error: dup }, { status: 409 })
+    }
+  }
+
+  // ★ cwm-reconclinic-20261006：Apricot 報表名（set semantics：傳咗就全量替換；冇傳 = 唔郁）
+  //   同一個名（正規化後）唔可以屬兩個醫生
+  let names: Array<{ name: string; nameNorm: string }> | undefined
+  if (reportNames !== undefined) {
+    if (!Array.isArray(reportNames) || reportNames.some((n: unknown) => typeof n !== 'string')) {
+      return NextResponse.json({ error: 'reportNames 格式錯' }, { status: 400 })
+    }
+    const seen = new Map<string, string>()
+    for (const raw of reportNames as string[]) {
+      const n = raw.replace(/\s+/g, ' ').trim().slice(0, 100)
+      if (n && !seen.has(normName(n))) seen.set(normName(n), n)
+    }
+    names = Array.from(seen.entries()).map(([nameNorm, n]) => ({ name: n, nameNorm }))
+    if (names.length) {
+      const taken = await prisma.providerReportName.findMany({
+        where: { nameNorm: { in: names.map(x => x.nameNorm) }, providerId: { not: id } },
+        select: { name: true, provider: { select: { name: true } } },
+      })
+      if (taken.length) {
+        return NextResponse.json(
+          { error: `報表名已屬其他醫生：${taken.map(t => `${t.name}（${t.provider.name}）`).join('、')}` },
+          { status: 409 }
+        )
+      }
     }
   }
 
@@ -80,6 +108,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         }
       }
 
+      if (names !== undefined) {
+        await tx.providerReportName.deleteMany({
+          where: { providerId: id, nameNorm: { notIn: names.map(x => x.nameNorm) } },
+        })
+        for (const x of names) {
+          await tx.providerReportName.upsert({
+            where: { nameNorm: x.nameNorm },
+            create: { ...x, providerId: id, createdBy: auth.session!.userId },
+            update: { name: x.name, providerId: id },
+          })
+        }
+      }
+
       // Set semantics: only update clinic bindings when clinicIds is explicitly provided
       if (clinicIds !== undefined) {
         await tx.providerClinic.deleteMany({ where: { providerId: id } })
@@ -101,7 +142,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         entity: 'Provider',
         entityId: id,
         notes: `更新醫生：${provider.name}${isActive === false ? '（停用）' : ''}`,
-        afterJson: JSON.stringify({ id, name: provider.name, nameZh: provider.nameZh, isActive: provider.isActive }),
+        afterJson: JSON.stringify({ id, name: provider.name, nameZh: provider.nameZh, isActive: provider.isActive, ...(names !== undefined ? { reportNames: names.map(x => x.name) } : {}) }),
       },
     }).catch(e => console.error('[providers] audit failed', e))
 
@@ -111,6 +152,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       include: {
         clinics: { select: { clinicId: true } },
         apricotAccounts: { where: { kind: 'PROVIDER' }, select: { apricotId: true, name: true } },
+        reportNames: { select: { name: true }, orderBy: { createdAt: 'asc' } },
       },
     })
     return NextResponse.json({
@@ -118,6 +160,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         ...withRelations!,
         clinicIds: withRelations!.clinics.map(c => c.clinicId),
         apricotAccounts: withRelations!.apricotAccounts.map(({ apricotId, name: acctName }) => ({ apricotId, name: acctName })),
+        reportNames: withRelations!.reportNames.map(r => r.name),
         clinics: undefined,
       },
     })

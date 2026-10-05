@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
         select: { apricotId: true, name: true },
         orderBy: { apricotId: 'asc' },
       },
+      // ★ cwm-reconclinic-20261006：Apricot 全店報表 Practitioner 名（月報對數認醫生）
+      reportNames: { select: { name: true }, orderBy: { createdAt: 'asc' } },
     },
   })
   // Map to flat clinicIds for frontend
@@ -31,6 +33,7 @@ export async function GET(req: NextRequest) {
     ...p,
     clinicIds: p.clinics.map(c => c.clinicId),
     apricotAccounts: p.apricotAccounts.map(({ apricotId, name: acctName }) => ({ apricotId, name: acctName })),
+    reportNames: p.reportNames.map(r => r.name),
   }))
   // Remove nested clinics from output
   const output = result.map(({ clinics, ...rest }) => rest)

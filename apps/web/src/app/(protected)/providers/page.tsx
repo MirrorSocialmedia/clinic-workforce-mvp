@@ -17,6 +17,8 @@ export default function ProvidersPage() {
   const [clinics, setClinics] = useState<Clinic[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const [form, setForm] = useState<any>({})
+  // ★ cwm-reconclinic-20261006：Apricot 報表名輸入框（未撳 Enter 嘅字，儲存時一併加）
+  const [nameDraft, setNameDraft] = useState('')
   const [loading, setLoading] = useState(true)
   const [showInactive, setShowInactive] = useState(false)
 
@@ -110,7 +112,8 @@ export default function ProvidersPage() {
 
   function startEdit(p: any) {
     setEditing(p.id)
-    setForm({ ...p, clinicIds: p.clinicIds || [], apricotAccounts: p.apricotAccounts || [] })
+    setForm({ ...p, clinicIds: p.clinicIds || [], apricotAccounts: p.apricotAccounts || [], reportNames: p.reportNames || [] })
+    setNameDraft('')
   }
 
   function toggleClinic(cid: string) {
@@ -152,6 +155,31 @@ export default function ProvidersPage() {
     )
   }
 
+  // ★ cwm-reconclinic-20261006：Apricot 全店報表 Practitioner 名（一個醫生可以有幾個；同名唔可以屬兩個醫生 —— server 擋）
+  function addReportName(raw: string) {
+    const n = raw.replace(/\s+/g, ' ').trim()
+    const cur: string[] = form.reportNames || []
+    if (n && !cur.some(x => x.toLowerCase() === n.toLowerCase())) setForm({ ...form, reportNames: [...cur, n] })
+    setNameDraft('')
+  }
+  function renderReportNameInputs() {
+    const names: string[] = form.reportNames || []
+    return (
+      <div className="flex flex-wrap gap-1 items-center min-w-[180px]">
+        {names.map(n => (
+          <span key={n} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200">
+            {n}
+            <button type="button" aria-label={`刪除 ${n}`} onClick={() => setForm({ ...form, reportNames: names.filter(x => x !== n) })} className="text-muted-foreground hover:text-red-600">×</button>
+          </span>
+        ))}
+        <Input value={nameDraft} onChange={e => setNameDraft(e.target.value)} aria-label="Apricot 報表名"
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addReportName(nameDraft) } }}
+          onBlur={() => nameDraft.trim() && addReportName(nameDraft)}
+          placeholder="＋ 例：Dr. Ho Ka Chun" className="h-7 text-xs w-40" />
+      </div>
+    )
+  }
+
   async function save() {
     if (!form.name?.trim()) return alert('名稱必填')
     try {
@@ -161,6 +189,13 @@ export default function ProvidersPage() {
       payload.apricotAccounts = (form.apricotAccounts || [])
         .filter((a: any) => a.apricotId && a.apricotId.trim()) // ApricotPractitioner 帳號輸入
         .map((a: any) => ({ apricotId: a.apricotId.trim(), name: a.name?.trim() || undefined })) // ApricotPractitioner 帳號輸入
+      // 報表名：未撳 Enter 嘅字都計埋；新醫生唔送（對數時確認先記低）
+      if (editing === '__new__' || !Array.isArray(form.reportNames)) delete payload.reportNames
+      else {
+        const draft = nameDraft.replace(/\s+/g, ' ').trim()
+        payload.reportNames = draft && !form.reportNames.some((x: string) => x.toLowerCase() === draft.toLowerCase())
+          ? [...form.reportNames, draft] : form.reportNames
+      }
       if (editing === '__new__') {
         const res = await apiFetch<any>('/api/providers', { method: 'POST', body: JSON.stringify(payload) })
         setProviders(prev => [...prev, res.provider].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)))
@@ -251,6 +286,7 @@ export default function ProvidersPage() {
               <th className="text-left p-3">電話</th>
               <th className="text-left p-3">Apricot ID</th>
               <th className="text-left p-3">Apricot UserID</th>
+              <th className="text-left p-3" title="Apricot 全店 Payment Report 嘅 Practitioner 名；月報對數用嚟認醫生">Apricot 報表名（英文）</th>
               <th className="text-left p-3">顏色</th>
               <th className="text-left p-3">排序</th>
               <th className="text-left p-3">應診診所</th>
@@ -271,6 +307,7 @@ export default function ProvidersPage() {
                 <td className="p-2">
                   <Input value={form.apricotUserId || ''} onChange={e => setForm({ ...form, apricotUserId: e.target.value.trim() })} placeholder="userId（參考用，唔影響計算）" />
                 </td>
+                <td className="p-2 text-xs text-muted-foreground">儲存後先加（或者對數時確認）</td>
                 <td className="p-2"><Input type="color" value={form.color || '#888888'} onChange={e => setForm({ ...form, color: e.target.value })} /></td>
                 <td className="p-2"><Input type="number" value={form.sortOrder ?? 0} onChange={e => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} className="w-20" /></td>
                 <td className="p-2">
@@ -303,6 +340,7 @@ export default function ProvidersPage() {
                 <td className="p-2">
                   <Input value={form.apricotUserId || ''} onChange={e => setForm({ ...form, apricotUserId: e.target.value.trim() })} placeholder="userId（參考用，唔影響計算）" />
                 </td>
+                <td className="p-2">{renderReportNameInputs()}</td>
                 <td className="p-2"><Input type="color" value={form.color || '#888888'} onChange={e => setForm({ ...form, color: e.target.value })} /></td>
                 <td className="p-2"><Input type="number" value={form.sortOrder ?? 0} onChange={e => setForm({ ...form, sortOrder: parseInt(e.target.value) || 0 })} className="w-20" /></td>
                 <td className="p-2">
@@ -349,6 +387,11 @@ export default function ProvidersPage() {
                     : <span className="text-xs text-muted-foreground">—</span>}
                 </td>
                 <td className="p-3">
+                  {(p.reportNames || []).length > 0
+                    ? <div className="flex flex-wrap gap-1">{p.reportNames.map((n: string) => <span key={n} className="text-xs px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 whitespace-nowrap">{n}</span>)}</div>
+                    : <span className="text-xs text-muted-foreground" title="第一次上載全店報表時確認，系統會自動記低">—</span>}
+                </td>
+                <td className="p-3">
                   {p.color ? <span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: 4, background: p.color, border: '1px solid #ccc' }} /> : '—'}
                 </td>
                 <td className="p-3">{p.sortOrder ?? 0}</td>
@@ -373,7 +416,7 @@ export default function ProvidersPage() {
               </tr>
             ))}
             {!loading && providers.length === 0 && (
-              <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
+              <tr><td colSpan={13} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
             )}
           </tbody>
         </table>
