@@ -549,10 +549,13 @@ function PayoutRunsPageInner() {
                 {/* ★ cwm-costdetail-20261006：成本可撳開 —— 已計入＋當月未計入提醒 */}
                 <CostDetailRow label="Lab 成本" amount={previewData.preview.labCost ?? 0} detail={previewData.costDetail?.LAB}
                   providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased />
-                <CostDetailRow label="Implant 成本" amount={previewData.preview.implantCost ?? 0} detail={previewData.costDetail?.IMPLANT}
+                <CostDetailRow label="植牙成本" amount={previewData.preview.implantCost ?? 0} detail={previewData.costDetail?.IMPLANT}
                   providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased={false} />
-                <CostDetailRow label="Invisalign 成本" amount={previewData.preview.invisalignCost ?? 0} detail={previewData.costDetail?.INVISALIGN}
-                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased />
+                {/* ★ cwm-invismerge-20261006：隱形矯正已併入 LAB —— 只喺舊資料（已鎖定月份重新預覽）有數先顯示 */}
+                {((previewData.preview.invisalignCost ?? 0) !== 0 || (previewData.costDetail?.INVISALIGN?.counted?.length ?? 0) > 0) && (
+                  <CostDetailRow label="Invisalign 成本（舊類別）" amount={previewData.preview.invisalignCost ?? 0} detail={previewData.costDetail?.INVISALIGN}
+                    providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased />
+                )}
                 <div className="flex justify-between font-semibold"><span>利潤</span><span>${previewData.preview.profitAmount?.toFixed(2)}</span></div>
                 <div className="flex justify-between text-blue-600"><span>拆帳 ({previewData.preview.percentUsed}%)</span><span>${previewData.preview.salaryAmount?.toFixed(2)}</span></div>
                 <div className="flex justify-between text-green-600"><span>SP 補貼</span><span>+$ {previewData.preview.spSubsidy?.toFixed(2)}</span></div>

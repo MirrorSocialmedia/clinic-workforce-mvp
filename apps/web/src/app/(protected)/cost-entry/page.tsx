@@ -104,7 +104,7 @@ const STATUSES = ['PENDING', 'PRICED', 'DONE', 'REDO'] as const
 const CATEGORY_LABELS: Record<string, string> = {
   LAB: 'LAB', // ★ 2026-08-22：改 label（唔再係「牙醫化驗」）
   IMPLANT: '植牙',
-  INVISALIGN: '隱形矯正',
+  INVISALIGN: '隱形矯正（舊）', // ★ cwm-invismerge-20261006：已併入 LAB，只剩已鎖定舊資料
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {

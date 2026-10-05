@@ -109,6 +109,10 @@ export async function PUT(
   if (category !== undefined && !['LAB', 'IMPLANT', 'INVISALIGN'].includes(category)) {
     return jsonNoStore({ error: 'category 唔合法' }, { status: 400 })
   }
+  // ★ cwm-invismerge-20261006：隱形矯正已併入 LAB —— 唔可以再改做 INVISALIGN（舊資料保持原樣照收）
+  if (category === 'INVISALIGN' && existing.category !== 'INVISALIGN') {
+    return jsonNoStore({ error: '隱形矯正已併入 LAB：類別揀 LAB，項目揀 Invisalign' }, { status: 400 })
+  }
 
   // ★ 2026-09-02 cwm-costnote：備註最多 200 字（前端 maxLength 繞得過，後端兜底）
   if (note != null && String(note).length > 200) {

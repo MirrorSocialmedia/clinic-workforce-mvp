@@ -222,7 +222,7 @@ export async function GET(req: NextRequest) {
 }
 
 // ============================================================
-// POST /api/cost-cases — Create a cost case (LAB / INVISALIGN)
+// POST /api/cost-cases — Create a cost case (LAB；隱形矯正已併入 LAB，cwm-invismerge-20261006)
 // Roles: OWNER, MANAGER
 // Body: { providerId, clinicId, category, patientCode, patientName?,
 //         orderedAt, itemType?, labId?, labOrderNo?, dsaName?,
@@ -250,7 +250,10 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  if (!['LAB', 'INVISALIGN'].includes(category)) {
+  if (category === 'INVISALIGN') {
+    return NextResponse.json({ error: '隱形矯正已併入 LAB：類別揀 LAB，項目揀 Invisalign' }, { status: 400 })
+  }
+  if (category !== 'LAB') {
     return NextResponse.json({ error: 'IMPLANT 請用 POST /api/cost-cases/implant' }, { status: 400 })
   }
 
