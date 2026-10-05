@@ -5,54 +5,12 @@
  * `labdocAudit()` 係 labdoc 唯一 audit 寫入口：寫入前遞迴掃描 payload，
  * 發現病人姓名欄就 throw（防手誤把姓名帶入 audit JSON）。
  *
- * scripts/check-pii.sh 嘅 test-labdoc-audit-pii.ts 驗呢個 guard。
+ * guard 本身喺 audit-pii.ts（純函數）；scripts/check-pii.sh（test-patient-pii.ts）驗佢。
  */
 import { prisma } from '@/lib/prisma'
+import { assertAuditInputClean } from './audit-pii'
 
-export class LabDocAuditPIIError extends Error {
-  constructor(path: string) {
-    super(`labdocAudit: payload 含病人姓名欄（${path}）— §14 禁止姓名入 audit`)
-    this.name = 'LabDocAuditPIIError'
-  }
-}
-
-/** 病人姓名欄 blacklist（key 名，遞迴匹配）— purge 清姓名（§4.4）共用同一份 */
-export const NAME_FIELD_KEYS = new Set([
-  'patientNameRaw',
-  'patientRaw',
-  'patientName',
-  'patientFullName',
-])
-const PII_NAME_KEYS = NAME_FIELD_KEYS
-
-/**
- * 遞迴掃描 object／array，回傳第一個命中 PII_NAME_KEYS 嘅 path；冇命中回 null。
- * （string/number 等 primitive 值唔 scan — 欄位名先係規則。）
- */
-export function findNameFieldPath(value: unknown, path = '$'): string | null {
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const hit = findNameFieldPath(value[i], `${path}[${i}]`)
-      if (hit) return hit
-    }
-    return null
-  }
-  if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (PII_NAME_KEYS.has(k)) return `${path}.${k}`
-      const hit = findNameFieldPath(v, `${path}.${k}`)
-      if (hit) return hit
-    }
-  }
-  return null
-}
-
-/** 寫入前 guard：payload 任何位置有姓名欄 → throw */
-export function assertNoNameFields(payload: unknown, label = 'payload'): void {
-  const hit = findNameFieldPath(payload)
-  if (hit) throw new LabDocAuditPIIError(hit)
-  void label
-}
+export { LabDocAuditPIIError, NAME_FIELD_KEYS, findNameFieldPath, assertNoNameFields, assertAuditInputClean } from './audit-pii'
 
 export interface LabDocAuditInput {
   action: string
@@ -73,14 +31,7 @@ export interface LabDocAuditInput {
  * before/after 會 JSON.stringify 前 scan；notes 要人手淨化（名字一律唔准入）。
  */
 export async function labdocAudit(input: LabDocAuditInput): Promise<void> {
-  // notes 先 scan（string 內含姓名欄字串都會被 check-pii 視作洩漏風險 — 用 includes 粗檢）
-  if (input.notes) {
-    for (const k of PII_NAME_KEYS) {
-      if (input.notes.includes(k)) throw new LabDocAuditPIIError('notes 含姓名欄名')
-    }
-  }
-  if (input.before !== undefined) assertNoNameFields(input.before, 'before')
-  if (input.after !== undefined) assertNoNameFields(input.after, 'after')
+  assertAuditInputClean(input)
 
   await prisma.auditLog.create({
     data: {

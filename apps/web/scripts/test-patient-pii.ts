@@ -50,8 +50,10 @@ console.log('✅ patient PII 測試通過 — 所有 PII 已清除，fullName �
 // ★ cwm-labdoc（§14）：labdocAudit PII guard — 收到含姓名欄嘅 object 要 throw
 // ============================================================
 async function testLabdocAuditPiiGuard() {
-  const { findNameFieldPath, assertNoNameFields, labdocAudit, LabDocAuditPIIError } =
-    await import('../src/lib/labdoc/audit')
+  // ⚠️ 只可以 import 純函數（audit-pii.ts）：deploy.sh 喺冇 node_modules 嘅 worktree 跑呢個 script，
+  //    import audit.ts 會拉 @prisma/client → MODULE_NOT_FOUND
+  const { findNameFieldPath, assertNoNameFields, assertAuditInputClean, LabDocAuditPIIError } =
+    await import('../src/lib/labdoc/audit-pii')
 
   // 1) findNameFieldPath：巢狀姓名欄一定要捉到
   const hit1 = findNameFieldPath({ a: { patientNameRaw: '陳大文' } })
@@ -67,19 +69,32 @@ async function testLabdocAuditPiiGuard() {
   // 2) assertNoNameFields：乾淨 object 唔 throw
   assertNoNameFields({ fileIds: ['a'], kind: 'INVOICE', sha256Prefix: ['abc123'] })
 
-  // 3) labdocAudit：before/after 含姓名欄 → 一定要 throw（guard 喺 prisma 寫入前）
+  // 3) labdocAudit 寫入前檢查：before/after/notes 含姓名欄 → 一定要 throw
   for (const payload of [
-    { action: 'LAB_DOC_CONFIRM', entity: 'LabDocument', entityId: 'x', after: { patientNameRaw: '陳大文' } },
-    { action: 'LAB_DOC_CONFIRM', entity: 'LabDocument', entityId: 'x', before: { lines: [{ patientRaw: 'x' }] } },
+    { after: { patientNameRaw: '陳大文' } },
+    { before: { lines: [{ patientRaw: 'x' }] } },
+    { notes: 'patientNameRaw=陳大文' },
   ]) {
     let threw = false
     try {
-      await labdocAudit(payload as any)
+      assertAuditInputClean(payload)
     } catch (e) {
       if (e instanceof LabDocAuditPIIError) threw = true
       else throw e
     }
-    if (!threw) throw new Error(`labdocAudit 應該 throw（payload 含姓名欄）：${JSON.stringify(payload)}`)
+    if (!threw) throw new Error(`labdocAudit guard 應該 throw（payload 含姓名欄）：${JSON.stringify(payload)}`)
+  }
+  assertAuditInputClean({ notes: '上傳 2 個檔', after: { fileIds: ['a'] } })
+
+  // 4) labdocAudit 一定要喺寫 DB 之前叫 guard（讀 source，唔使 import prisma）
+  const { readFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const src = readFileSync(join(__dirname, '../src/lib/labdoc/audit.ts'), 'utf8')
+  const fn = src.slice(src.indexOf('export async function labdocAudit'))
+  const guardAt = fn.indexOf('assertAuditInputClean(input)')
+  const writeAt = fn.indexOf('prisma.auditLog.create')
+  if (guardAt < 0 || writeAt < 0 || guardAt > writeAt) {
+    throw new Error('labdocAudit 要喺 prisma.auditLog.create 之前叫 assertAuditInputClean(input)')
   }
 
   console.log('✅ labdocAudit PII guard 測試通過 — 姓名欄進 audit 前必 throw')
