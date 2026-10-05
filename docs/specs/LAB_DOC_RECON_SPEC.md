@@ -1,6 +1,6 @@
 # 施工單：Lab 單據對數（cwm-labdoc）
 
-> 版本：v1.1（2026-10-04，§5.2 時限修正）· 基準 commit：`58872f9`（branch `claude/qa-agent-workflow-simulation-fee31s`）
+> 版本：v1.2（2026-10-05，§5.2 加 reason 對照：truncated／BUSY）· 基準 commit：`58872f9`（branch `claude/qa-agent-workflow-simulation-fee31s`）
 > 前置文件：
 > - 模擬規格 `docs/simulations/lab-invoice-reconciliation-simulation.md`
 > - QA 模擬報告 `docs/simulations/2026-09-28-lab-invoice-reconciliation-qa-report.md`（下稱「QA 報告」，F-xx 指嗰度嘅 finding）
@@ -540,7 +540,9 @@ model Lab {
 - wa-inbox 唔寫 DB、唔寫檔、唔 log 原文（同 2026-09-17 決定一樣）；body 上限 12 MB。
 - ⚠️ **時限（v1.1 修正）**：workforce → wa-inbox 經 Cloudflare，Cloudflare 預設等 origin 回應 **100 秒**就回 524（唔係密文）。所以 wa-inbox 成個 LLM 步驟（包括 chatWithFallback 內部重試同 fallback）要有**總時限 85 秒**（用 `opts.signal = AbortSignal.timeout(85_000)`，唔好淨係設單次 `timeoutMs`）；workforce client **timeout 95 秒**。v1 寫嘅 110／120 秒作廢。
 - VISION：invoice **一次一頁**（1 張圖）；月結單優先 TEXT（PDF 文字層）。月結單太長（> 40 行）→ workforce 逐頁或逐段分開叫，再合併 sections，避免輸出超過 `max_tokens`。
-- workforce 側 `src/lib/labdoc/llm-client.ts`：複製 `extractViaWaInbox` 結構（429 重試、每次重試**重新 seal**（nonce 用過就作廢）、`NullReason`），**timeout 95 秒**；`result != null` 就當成功（AI_MOCK 時 `reason = "mock"` 但有 result）；env `WA_INBOX_LABDOC_URL`（未設 → 全部 EXTRACT_FAILED，`extractError='not_configured'`，畫面提示「讀單服務未設定，請人手輸入」）。
+- workforce 側 `src/lib/labdoc/llm-client.ts`：複製 `extractViaWaInbox` 結構（429 重試、每次重試**重新 seal**（nonce 用過就作廢）、`NullReason`），**timeout 95 秒**；`result != null` 就當成功（AI_MOCK 時 `reason = "mock"` 但有 result）；
+  - **reason 對照（wa-inbox `cwi-labdoc-extract` 已實作）**：`llm_error`／`breaker_open` → 照 §5.1 重試計次；`parse_error`／`bad_response` → 計一次失敗；**`truncated`（輸出撞 max_tokens）→ 唔好原樣重試**：STATEMENT 改為逐頁（`<<<PAGE n>>>` 切開）或逐段再叫，再合併 sections；單頁 INVOICE 都 truncated → EXTRACT_FAILED（`extractError='truncated'`），畫面提示人手輸入。
+  - wa-inbox 回 429 BUSY 時**冇消耗 nonce**（M-1）；不過信封 `ts` 只有 ±60 秒有效，所以重試照樣每次重新 seal 最穩陣。env `WA_INBOX_LABDOC_URL`（未設 → 全部 EXTRACT_FAILED，`extractError='not_configured'`，畫面提示「讀單服務未設定，請人手輸入」）。
 - 測試用 `__setLabDocExtractFn(fn)` stub（同 `__setExtractFn`）。
 
 ### 5.3 Prompt（`src/lib/labdoc/prompt.ts`，wa-inbox 側用同一份文字；兩邊 fixture 對比防漂移）
