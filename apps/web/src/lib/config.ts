@@ -457,6 +457,8 @@ export const CONFIG = {
     'POST /api/lab-docs/upload': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs/:id': ['OWNER', 'MANAGER'],
+    //   P2：再讀（§11；EMPLOYEE 經 RBAC_PERM_OVERRIDES 嘅 lab_invoice 放行）
+    'POST /api/lab-docs/:id/retry': ['OWNER', 'MANAGER'],
     //   頁圖 route：normalizeRoute 唔會將 1–2 位頁碼變 :id → 逐頁登記（1–30 = PDF_MAX_PAGES）
     'GET /api/lab-docs/files/:id/pages/1': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs/files/:id/pages/2': ['OWNER', 'MANAGER'],
@@ -726,6 +728,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/lab-docs/upload': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/:id': ['lab_invoice', 'lab_statement'],
+  // ★ cwm-labdoc P2：再讀 = lab_invoice（§11）
+  'POST /api/lab-docs/:id/retry': ['lab_invoice'],
   'GET /api/lab-docs/files/:id/pages/1': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/files/:id/pages/2': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/files/:id/pages/3': ['lab_invoice', 'lab_statement'],

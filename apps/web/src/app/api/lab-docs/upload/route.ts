@@ -19,6 +19,7 @@ import { LabDocProcessError, processUploadFile, type ProcessedFile } from '@/lib
 import { assertEncryptionConfigured } from '@/lib/labdoc/crypto'
 import { buildPageKey, buildStorageKey, saveEncrypted } from '@/lib/labdoc/storage'
 import { labdocAudit } from '@/lib/labdoc/audit'
+import { runLabDocExtract } from '@/lib/labdoc/extract'
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024
 const MAX_FILES = 20
@@ -314,6 +315,17 @@ export async function POST(req: NextRequest) {
         sha256Prefix: prepared.map((p) => p.raw.sha256.slice(0, 12)),
       },
     })
+
+    // §5.1：建完單據即回應；同一 request 尾背景讀單（同 apricot/sync/route.ts 做法）。
+    // 未設 WA_INBOX_LABDOC_URL → 每張單會行完 3 次後 EXTRACT_FAILED（extractError='not_configured'，
+    // 畫面提示「讀單服務未設定，請人手輸入」）；唔會卡上傳回應。
+    // INVOICE/STATEMENT 都觸發（§5.1 唔分 kind；月結單對數業務係 §8/P3，但讀單結果 P2 照存 —
+    // 見 decision log 2026-10-05 P2-C1 STATEMENT 觸發口徑）。
+    for (const d of documents) {
+      void runLabDocExtract(d.id).catch((e) => {
+        console.error('[labdoc/upload] 背景讀單失敗', { docId: d.id, err: String((e as Error)?.message ?? e) })
+      })
+    }
 
     return NextResponse.json(response, { status: 201 })
   } catch (e: any) {
