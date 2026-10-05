@@ -49,6 +49,12 @@ export interface CandidateView {
   mainLink: CandidateLink | null
   /** 補收費／重做連結（已連咗邊幾張單） */
   otherLinks: CandidateLink[]
+  /** §7.5 linkedSum(cc) 原料：該成本所有 MATCHED 行金額總和（包括其他單） */
+  linkedSum: number
+  /** 主單連結嘅行金額總和 */
+  mainLinkedSum: number
+  /** 補收費／重做連結嘅行金額總和 */
+  otherLinkedSum: number
 }
 
 export interface GroupCandidatesPayload {
@@ -168,7 +174,7 @@ export async function getCandidatesForGroup(
         prisma.clinic.findMany({ where: { id: { in: rows.map((r) => r.clinicId) } }, select: { id: true, name: true } }),
         prisma.labDocumentLine.findMany({
           where: { costCaseId: { in: ids }, status: 'MATCHED' },
-          select: { costCaseId: true, linkType: true, documentId: true },
+          select: { costCaseId: true, linkType: true, documentId: true, amount: true },
         }),
       ])
       const provById = new Map(providers.map((p) => [p.id, p.name]))
@@ -177,6 +183,7 @@ export async function getCandidatesForGroup(
       const docs = docIds.length > 0 ? await prisma.labDocument.findMany({ where: { id: { in: docIds } }, select: { id: true, docNo: true } }) : []
       const docById = new Map(docs.map((d) => [d.id, d.docNo]))
       const linksByCase = new Map<string, CandidateLink[]>()
+      const amountsByCase = new Map<string, { main: number; other: number }>()
       for (const l of links) {
         const lt = (l.linkType as string | null) ?? 'MAIN'
         if (!['MAIN', 'SUPPLEMENTARY', 'REDO'].includes(lt)) continue
@@ -184,6 +191,11 @@ export async function getCandidatesForGroup(
         const arr = linksByCase.get(l.costCaseId) ?? []
         arr.push({ docId: l.documentId, docNo: docById.get(l.documentId) ?? null, linkType: lt as CandidateLink['linkType'] })
         linksByCase.set(l.costCaseId, arr)
+        const amt = Number(l.amount || 0)
+        const a = amountsByCase.get(l.costCaseId) ?? { main: 0, other: 0 }
+        if (lt === 'MAIN') a.main += amt
+        else a.other += amt
+        amountsByCase.set(l.costCaseId, a)
       }
       // §7.3 排序（reconcile 單一邏輯來源）
       const ordered = rankCandidateIds(
@@ -217,6 +229,9 @@ export async function getCandidatesForGroup(
           lockedByRunId: !!r.lockedByRunId,
           mainLink: links.find((l) => l.linkType === 'MAIN') ?? null,
           otherLinks: links.filter((l) => l.linkType !== 'MAIN'),
+          linkedSum: round2((amountsByCase.get(cid)?.main ?? 0) + (amountsByCase.get(cid)?.other ?? 0)),
+          mainLinkedSum: round2(amountsByCase.get(cid)?.main ?? 0),
+          otherLinkedSum: round2(amountsByCase.get(cid)?.other ?? 0),
         })
       }
     }

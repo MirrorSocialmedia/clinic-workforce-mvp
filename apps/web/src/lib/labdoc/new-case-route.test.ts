@@ -113,7 +113,14 @@ function makeFake(state: State) {
             : null,
     },
     labDocument: {
-      findUnique: async ({ where }: any) => (state.doc && where.id === state.doc.id ? { ...state.doc, lines: [...state.doc.lines] } : null),
+      findUnique: async ({ where, include }: any) => {
+        if (!state.doc || where.id !== state.doc.id) return null
+        let lines: any[] = [...state.doc.lines]
+        // 模擬 Prisma include.lines.where.groupIndex（route 真 DB 用呢個 filter）
+        const gi = include?.lines?.where?.groupIndex
+        if (gi !== undefined) lines = lines.filter((l: any) => l.groupIndex === gi)
+        return { ...state.doc, lines }
+      },
     },
     clinic: {
       findUnique: async ({ where }: any) => state.clinics.find((c) => c.id === where.id) ?? null,

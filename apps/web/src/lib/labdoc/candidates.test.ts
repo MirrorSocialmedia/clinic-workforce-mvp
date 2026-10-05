@@ -94,7 +94,7 @@ interface State {
   clinics: Array<{ id: string; name: string; shortName: string | null }>
   providers: Array<{ id: string; name: string }>
   cases: any[]
-  links: Array<{ costCaseId: string; linkType: string | null; documentId: string; status: string }>
+  links: Array<{ costCaseId: string; linkType: string | null; documentId: string; status: string; amount: number }>
   patients: Array<{ patientCode: string; patientName: string | null }>
 }
 
@@ -185,8 +185,8 @@ test('§7.3 排序 + labId/VOID 過濾 + mainLink/otherLinks', async () => {
     ],
     cases,
     links: [
-      { costCaseId: 'cb'.padEnd(25, '0'), linkType: 'MAIN', documentId: DOC_2, status: 'MATCHED' },
-      { costCaseId: 'cb'.padEnd(25, '0'), linkType: 'SUPPLEMENTARY', documentId: DOC_3, status: 'MATCHED' },
+      { costCaseId: 'cb'.padEnd(25, '0'), linkType: 'MAIN', documentId: DOC_2, status: 'MATCHED', amount: 200 },
+      { costCaseId: 'cb'.padEnd(25, '0'), linkType: 'SUPPLEMENTARY', documentId: DOC_3, status: 'MATCHED', amount: 300 },
     ],
     patients: [{ patientCode: 'TW007159', patientName: 'CHAN, TOM' }],
   })
@@ -210,6 +210,12 @@ test('§7.3 排序 + labId/VOID 過濾 + mainLink/otherLinks', async () => {
   assert.strictEqual(cb.otherLinks.length, 1)
   assert.strictEqual(cb.otherLinks[0].docId, DOC_3)
   assert.strictEqual(cb.otherLinks[0].linkType, 'SUPPLEMENTARY')
+  // §7.5 linkedSum 原料：200（主單）+ 300（補收費）= 500
+  assert.strictEqual(cb.linkedSum, 500)
+  assert.strictEqual(cb.mainLinkedSum, 200)
+  assert.strictEqual(cb.otherLinkedSum, 300)
+  const ca = res!.candidates[1]
+  assert.strictEqual(ca.linkedSum, 0)
   // 預設：>1 筆候選 → 剛好一筆 = groupSum 且無 MAIN（cb 有 MAIN 出局）→ 揀 ca
   assert.strictEqual(res!.defaults.selectedCostCaseId, 'ca'.padEnd(25, '0'))
 })
@@ -264,7 +270,7 @@ test('§7.4 預設：候選 >1 → 剛好一筆 = groupSum（無 MAIN）先揀',
       mkCase('cb'.padEnd(25, '0'), { patientCodeNorm: 'TW007159', baseCost: 500 }),
       mkCase('cc'.padEnd(25, '0'), { patientCodeNorm: 'TW007159', baseCost: 100 }),
     ],
-    links: [{ costCaseId: 'cb'.padEnd(25, '0'), linkType: 'MAIN', documentId: DOC_2, status: 'MATCHED' }],
+    links: [{ costCaseId: 'cb'.padEnd(25, '0'), linkType: 'MAIN', documentId: DOC_2, status: 'MATCHED', amount: 100 }],
     patients: [],
   })
   const res = await getCandidatesForGroup(DOC_ID, 0, { clinicShortName: 'TW', codeOverride: null })

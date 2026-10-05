@@ -27,7 +27,7 @@ const DOC_ID_RE = /^[a-z0-9]{25}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const CODE_RE = /^[A-Z]{1,4}\d{1,6}$/
 const KEY_RE = /^[a-zA-Z0-9:_-]{1,128}$/
-const CONFIRMABLE = new Set(['NEEDS_REVIEW', 'CONFIRMED', 'PARTIAL', 'RECONCILED'])
+const RECONCILE_READY = new Set(['CONFIRMED', 'PARTIAL', 'RECONCILED'])
 const ROUTE_TAG = 'POST /api/lab-docs/:id/new-case'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     )
   }
 
-  // —— 載入文件 ——
+  // —— 載入文件（只要呢個分組嘅行）——
   const doc = await prisma.labDocument.findUnique({
     where: { id },
     include: { lines: { where: { groupIndex }, orderBy: { lineIndex: 'asc' } } },
@@ -114,8 +114,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
     return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
   }
-  if (!CONFIRMABLE.has(doc.status)) {
-    return NextResponse.json({ error: `單據狀態 ${doc.status} 未可以新增成本（要先確認）` }, { status: 400 })
+  if (!RECONCILE_READY.has(doc.status)) {
+    return NextResponse.json({ error: `單據狀態 ${doc.status} 未可以新增成本（要先確認頭部）` }, { status: 400 })
   }
   if (!doc.clinicId) {
     return NextResponse.json({ error: '先要確認 invoice 診所（新增成本需要診所）' }, { status: 400 })
