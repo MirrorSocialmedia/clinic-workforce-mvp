@@ -3,7 +3,8 @@
 // ============================================================
 // ★ cwm-costdetail-20261006：醫生月結頁「成本異常」（全部醫生、診所）
 //   ① 已鎖月結之後先入嘅成本（cwm-costguard-20261006）：月份月結已鎖，但呢筆冇計入 → 錢漏咗
-//   ② 落單超過 2 個月仍未到貨
+//   ② 已到貨超過一個月仍未有價錢（cwm-lastmonth-20261006）
+//   ③ 落單超過 2 個月仍未到貨
 //   冇異常就成格唔出；可以收埋（記住喺 localStorage，try/catch）
 // ============================================================
 import { useEffect, useState } from 'react'
@@ -13,7 +14,7 @@ import { apiFetch } from '@/lib/api-client'
 interface Row {
   id: string; category: string; orderedAt: string; receivedAt: string | null; periodMonth: string | null
   patientCode: string; vendor: string; item: string; amount: number | null; daysWaiting?: number
-  providerName: string; clinicName: string
+  providerName: string; clinicName: string; periodLocked?: boolean
 }
 
 const CAT: Record<string, string> = { LAB: 'Lab', INVISALIGN: 'Invisalign（舊）', IMPLANT: '植牙' }
@@ -24,17 +25,18 @@ const linkOf = (r: Row) => `/cost-entry?${new URLSearchParams({ month: r.ordered
 export function StaleCostsCard() {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [orphans, setOrphans] = useState<Row[]>([])
+  const [unpriced, setUnpriced] = useState<Row[]>([])
   const [days, setDays] = useState(60)
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     try { setCollapsed(localStorage.getItem(KEY) === '1') } catch { /* 冇 storage 都照出 */ }
-    apiFetch<{ days: number; rows: Row[]; orphans?: Row[] }>('/api/payout-runs/stale-costs')
-      .then(d => { setRows(d.rows); setOrphans(d.orphans ?? []); setDays(d.days) })
+    apiFetch<{ days: number; rows: Row[]; orphans?: Row[]; unpriced?: Row[] }>('/api/payout-runs/stale-costs')
+      .then(d => { setRows(d.rows); setOrphans(d.orphans ?? []); setUnpriced(d.unpriced ?? []); setDays(d.days) })
       .catch(() => setRows([]))
   }, [])
 
-  if (!rows || (rows.length === 0 && orphans.length === 0)) return null
+  if (!rows || (rows.length === 0 && orphans.length === 0 && unpriced.length === 0)) return null
   const toggle = () => {
     const next = !collapsed
     setCollapsed(next)
@@ -43,15 +45,16 @@ export function StaleCostsCard() {
   const months = Math.round(days / 30)
   const summary = [
     orphans.length > 0 ? `${orphans.length} 單成本冇計入已鎖月結` : null,
+    unpriced.length > 0 ? `${unpriced.length} 單已到貨超過一個月仍未有價錢` : null,
     rows.length > 0 ? `${rows.length} 單落單超過 ${months} 個月仍未到貨` : null,
   ].filter(Boolean).join('；')
 
   return (
-    <div className={`border rounded-lg bg-white mb-4 overflow-hidden ${orphans.length ? 'border-red-300' : 'border-amber-300'}`} role="region" aria-label="成本異常">
-      <div className={`flex items-start justify-between gap-3 px-4 py-3 ${orphans.length ? 'bg-red-50' : 'bg-amber-50'}`}>
+    <div className={`border rounded-lg bg-white mb-4 overflow-hidden ${(orphans.length || unpriced.length) ? 'border-red-300' : 'border-amber-300'}`} role="region" aria-label="成本異常">
+      <div className={`flex items-start justify-between gap-3 px-4 py-3 ${(orphans.length || unpriced.length) ? 'bg-red-50' : 'bg-amber-50'}`}>
         <div className="flex gap-2">
-          <AlertTriangle className={`h-4 w-4 shrink-0 mt-0.5 ${orphans.length ? 'text-red-700' : 'text-amber-700'}`} />
-          <div className={`text-sm font-semibold ${orphans.length ? 'text-red-800' : 'text-amber-800'}`}>成本異常：{summary}</div>
+          <AlertTriangle className={`h-4 w-4 shrink-0 mt-0.5 ${(orphans.length || unpriced.length) ? 'text-red-700' : 'text-amber-700'}`} />
+          <div className={`text-sm font-semibold ${(orphans.length || unpriced.length) ? 'text-red-800' : 'text-amber-800'}`}>成本異常：{summary}</div>
         </div>
         <button type="button" onClick={toggle} className="text-xs border border-amber-300 rounded px-2 py-1 bg-white text-amber-800 shrink-0">{collapsed ? '展開 ▾' : '收埋 ▴'}</button>
       </div>
@@ -61,6 +64,12 @@ export function StaleCostsCard() {
             <Section tone="red" title={`已鎖月結之後先入嘅成本（${orphans.length}）`}
               hint="呢啲單所屬月份嘅月結已經鎖定，但單係之後先入（或者取消作廢），所以冇計入任何月結。請用「手動調整」喺下期補返，或者解鎖該月月結重新生成；入錯就作廢。">
               <Table rows={orphans} first={['計入月份', r => r.periodMonth ?? '—']} />
+            </Section>
+          )}
+          {unpriced.length > 0 && (
+            <Section tone="red" title={`已到貨超過一個月、仍未有價錢（${unpriced.length}）`}
+              hint="到貨嗰個月嘅月結當咗 $0。月結未鎖：補價後重新生成嗰個月；已鎖：補價唔會自動計，要用「手動調整」喺下期補。上月嘅喺月結預覽「上月落單、仍未完成」提醒。">
+              <Table rows={unpriced} first={['到貨月份', r => `${r.periodMonth ?? '—'}${r.periodLocked ? '（已鎖）' : ''}`]} />
             </Section>
           )}
           {rows.length > 0 && (
