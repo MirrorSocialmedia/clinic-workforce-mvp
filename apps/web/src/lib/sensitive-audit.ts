@@ -153,7 +153,6 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_DOC_VOID', label: 'Lab 單據作廢' },
   { action: 'LAB_DOC_LINE_MATCH', label: 'Lab 明細行配對成本' },
   { action: 'LAB_DOC_LINE_UNMATCH', label: 'Lab 明細行解除配對' },
-  { action: 'COST_CASE_LINE_UNMATCH', label: '成本作廢・解除 Lab 行配對' }, // ★ cwm-labdoc P2 §7.9/T13（cost-actions.ts）
   { action: 'LAB_DOC_PRICE_UPDATE', label: 'Lab 價格／折扣修改' },
   { action: 'LAB_DOC_CASE_CREATE', label: 'Lab 成本個案建立' },
   { action: 'LAB_DOC_AMOUNT_REVIEW', label: '人手改數覆核' },

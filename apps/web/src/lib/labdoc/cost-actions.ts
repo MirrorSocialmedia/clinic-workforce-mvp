@@ -243,11 +243,12 @@ export async function applyReceivedConfirm(
 
 /**
  * §7.9 / §7.10：解除某成本嘅所有配對（行 → UNMATCHED，清 costCaseId/linkType/matchedAt）。
+ * audit action 用 spec §14 嘅 `LAB_DOC_LINE_UNMATCH`（單一來源 — group-save UNMATCH 同成本作廢都用呢個 action）。
  * 返回受影響嘅 documentId／lineId 清單（route 自己重算文件狀態）。
  */
 export async function unmatchAllForCost(
   tx: any,
-  args: { costCaseId: string; actorId: string; docId: string },
+  args: { costCaseId: string; actorId: string; docId?: string; clinicId?: string | null; notes?: string },
 ): Promise<{ docIds: string[]; lineIds: string[] }> {
   const matched: Array<{ id: string; documentId: string; groupIndex: number; description: string }> = await tx.labDocumentLine.findMany({
     where: { costCaseId: args.costCaseId, status: 'MATCHED' },
@@ -258,21 +259,22 @@ export async function unmatchAllForCost(
     where: { costCaseId: args.costCaseId, status: 'MATCHED' },
     data: { status: 'UNMATCHED', costCaseId: null, linkType: null, matchedBy: null, matchedAt: null },
   })
+  const notes = args.notes ?? `解除配對（經 Lab 單據 ${args.docId}）`
   assertAuditInputClean({
     before: { costCaseId: args.costCaseId, lines: matched.map((l) => `${l.groupIndex}:${l.description}`) },
     after: { costCaseId: null },
-    notes: `解除配對（經 Lab 單據 ${args.docId}）`,
+    notes,
   })
   await tx.auditLog.create({
     data: {
       actorId: args.actorId,
-      action: 'COST_CASE_LINE_UNMATCH',
+      action: 'LAB_DOC_LINE_UNMATCH',
       entity: 'CostCase',
       entityId: args.costCaseId,
-      clinicId: null,
+      clinicId: args.clinicId ?? null,
       beforeJson: JSON.stringify({ costCaseId: args.costCaseId, lines: matched.map((l) => `${l.groupIndex}:${l.description}`) }),
       afterJson: JSON.stringify({ costCaseId: null }),
-      notes: `解除配對（經 Lab 單據 ${args.docId}）`,
+      notes,
     },
   })
   return { docIds: [...new Set(matched.map((l) => l.documentId))], lineIds: matched.map((l) => l.id) }

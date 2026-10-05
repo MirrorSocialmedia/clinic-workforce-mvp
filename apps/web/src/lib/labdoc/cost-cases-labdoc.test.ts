@@ -8,7 +8,7 @@
  *  - PUT §13：patientCode／clinicId 改 → patientCodeNorm 重算（用新診所 shortName）
  *  - PUT 並發：updateMany(lockedByRunId null) 0 行 → 409（零寫入、零 audit）
  *  - DELETE（T13）：作廢已連 invoice 嘅成本 → MATCHED 行 UNMATCHED（costCaseId/linkType 清）、
- *    文件狀態重算（RECONCILED → PARTIAL）、audit COST_CASE_LINE_UNMATCH + COST_CASE_VOID；
+ *    文件狀態重算（RECONCILED → PARTIAL）、audit LAB_DOC_LINE_UNMATCH（單一來源 helper，notes「作廢成本」）+ COST_CASE_VOID；
  *    無配對行 → 淨 void；已鎖 → 409；已 VOID → 409
  *  - POST §13（F-26）：目標月（醫生×診所×月）PayoutRun 已 LOCKED → 409＋零寫入；
  *    未鎖 → 201＋patientCodeNorm 寫入
@@ -359,9 +359,10 @@ test('T13：作廢已連 invoice 嘅成本 → 行 UNMATCHED＋文件 RECONCILED
   assert.strictEqual(state.docs[DOC].status, 'PARTIAL')
   // 成本 VOID
   assert.strictEqual(state.costs[CC].status, 'VOID')
-  // audit
-  const un = state.audits.find((a) => a.action === 'COST_CASE_LINE_UNMATCH')
+  // audit（單一來源 helper：action = spec §14 嘅 LAB_DOC_LINE_UNMATCH，notes「作廢成本」）
+  const un = state.audits.find((a) => a.action === 'LAB_DOC_LINE_UNMATCH')
   assert.ok(un)
+  assert.strictEqual(un.notes, '作廢成本')
   assert.match(un.beforeJson, /Crown/)
   const voidA = state.audits.find((a) => a.action === 'COST_CASE_VOID')
   assert.ok(voidA)
@@ -376,7 +377,7 @@ test('DELETE：無配對行 → 淨 void（無 LINE_UNMATCH audit、文件未動
   const body = await r.json()
   assert.deepStrictEqual(body.releasedLines, [])
   assert.strictEqual(state.docs[DOC].status, 'RECONCILED', '文件未動')
-  assert.strictEqual(state.audits.find((a) => a.action === 'COST_CASE_LINE_UNMATCH'), undefined)
+  assert.strictEqual(state.audits.find((a) => a.action === 'LAB_DOC_LINE_UNMATCH'), undefined)
   assert.ok(state.audits.find((a) => a.action === 'COST_CASE_VOID'))
 })
 

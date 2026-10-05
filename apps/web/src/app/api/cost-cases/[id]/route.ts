@@ -5,7 +5,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 import { normPatientCode } from '@/lib/cost-entry/patient-code'
-import { recomputeDocStatus } from '@/lib/labdoc/cost-actions'
+import { recomputeDocStatus, unmatchAllForCost } from '@/lib/labdoc/cost-actions'
 
 // ============================================================
 // PUT /api/cost-cases/:id — Update a cost case
@@ -466,39 +466,18 @@ export async function DELETE(
 
   // ★ cwm-labdoc P2 §7.9：同一 transaction 解除晒配對行（包括 void 單度嘅配對行），再 void
   const result = await prisma.$transaction(async tx => {
-    const matched = await tx.labDocumentLine.findMany({
-      where: { costCaseId: id, status: 'MATCHED' },
-      select: { id: true, documentId: true, groupIndex: true, description: true, document: { select: { docNo: true } } },
+    // 單一來源：unmatchAllForCost（行 → UNMATCHED + audit LAB_DOC_LINE_UNMATCH（notes「作廢成本」））
+    const unmatch = await unmatchAllForCost(tx, {
+      costCaseId: id,
+      actorId: session.userId,
+      clinicId: existing.clinicId,
+      notes: '作廢成本',
     })
-    if (matched.length > 0) {
-      await tx.labDocumentLine.updateMany({
-        where: { costCaseId: id, status: 'MATCHED' },
-        data: { status: 'UNMATCHED', costCaseId: null, linkType: null, matchedBy: null, matchedAt: null },
-      })
-    }
     const upd = await tx.costCase.update({ where: { id }, data: { status: 'VOID' } })
 
     // 受影響文件狀態重算（reconcile 單一來源；audit 由 recomputeDocStatus 寫）
-    for (const docId of [...new Set(matched.map((m: any) => m.documentId))]) {
+    for (const docId of unmatch.docIds) {
       await recomputeDocStatus(tx, { docId, actorId: session.userId })
-    }
-
-    if (matched.length > 0) {
-      await tx.auditLog.create({
-        data: {
-          actorId: session.userId,
-          action: 'COST_CASE_LINE_UNMATCH',
-          entity: 'CostCase',
-          entityId: id,
-          clinicId: existing.clinicId,
-          beforeJson: JSON.stringify({
-            costCaseId: id,
-            lines: matched.map((l: any) => `${l.groupIndex}:${l.description}`),
-          }),
-          afterJson: JSON.stringify({ costCaseId: null }),
-          notes: `作廢成本 — 解除 ${matched.length} 條配對行（單號：${[...new Set(matched.map((m: any) => m.document.docNo ?? null).filter(Boolean))].join(', ')}）`,
-        },
-      } as any)
     }
 
     await tx.auditLog.create({
@@ -514,14 +493,14 @@ export async function DELETE(
           finalCost: existing.finalCost ? Number(existing.finalCost) : null,
         }),
         afterJson: JSON.stringify({ status: 'VOID' }),
-        notes: `作廢成本記錄: ${existing.category} ${existing.patientCode} (${existing.periodMonth})${matched.length > 0 ? `（已解除 ${matched.length} 條配對）` : ''}`,
+        notes: `作廢成本記錄: ${existing.category} ${existing.patientCode} (${existing.periodMonth})${unmatch.lineIds.length > 0 ? `（已解除 ${unmatch.lineIds.length} 條配對）` : ''}`,
       },
     } as any)
 
     return {
       updated: upd,
-      releasedLines: matched.map((l: any) => l.id),
-      releasedDocs: [...new Set(matched.map((m: any) => m.documentId))],
+      releasedLines: unmatch.lineIds,
+      releasedDocs: unmatch.docIds,
     }
   })
 
