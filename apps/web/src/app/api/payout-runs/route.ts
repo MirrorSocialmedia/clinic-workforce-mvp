@@ -8,6 +8,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { runGates, computePayout, lockPayoutRun, CostChangedDuringLockError } from '@/lib/payout/engine'
 import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
+import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
 import { todayHK } from '@/lib/hk-date'
 
 export async function GET(req: NextRequest) {
@@ -105,6 +106,17 @@ export async function POST(req: NextRequest) {
         { error: `有 ${reminders} 項成本當月未計入，請先預覽檢查，剔「我已檢查」再鎖定`, code: 'COST_REVIEW_REQUIRED', reminders },
         { status: 409 },
       )
+    }
+  }
+
+  // ★ cwm-sppreview-20261006：仲有未確認 2人SP，或者成間店未掃描 → 要喺預覽剔「我知道」先鎖得
+  if (body.spReviewAck !== true) {
+    const sp = await spReview(providerId, clinicId, periodMonth)
+    if (spReviewNeeded(sp)) {
+      const msg = sp.pending.length > 0
+        ? `仲有 ${sp.pending.length} 筆 2人SP 未確認（$${sp.pendingTotal}），請先預覽，剔「我知道」再鎖定`
+        : `${sp.clinicName} ${periodMonth} 仲未掃描 2人SP，請先預覽，剔「我知道」再鎖定`
+      return NextResponse.json({ error: msg, code: 'SP_REVIEW_REQUIRED' }, { status: 409 })
     }
   }
 
