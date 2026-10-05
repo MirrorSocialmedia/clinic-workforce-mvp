@@ -42,6 +42,8 @@ export async function POST(req: NextRequest) {
       periodMonth,
       category: { in: ['LAB', 'INVISALIGN'] },
       lockedByRunId: null,
+      // ★ cwm-labdoc P2 §13（B4）：已連 Lab invoice 嘅成本唔套月度折扣
+      labInvoiceLinked: false,
       status: { not: 'VOID' },
       baseCost: { not: null },
     },
