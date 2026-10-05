@@ -186,7 +186,7 @@ test('§7.3 排序 + labId/VOID 過濾 + mainLink/otherLinks', async () => {
     cases,
     links: [
       { costCaseId: 'cb'.padEnd(25, '0'), linkType: 'MAIN', documentId: DOC_2, status: 'MATCHED', amount: 200 },
-      { costCaseId: 'cb'.padEnd(25, '0'), linkType: 'SUPPLEMENTARY', documentId: DOC_3, status: 'MATCHED', amount: 300 },
+      { costCaseId: 'cb'.padEnd(25, '0'), linkType: 'SUPPLEMENT', documentId: DOC_3, status: 'MATCHED', amount: 300 },
     ],
     patients: [{ patientCode: 'TW007159', patientName: 'CHAN, TOM' }],
   })
@@ -209,7 +209,7 @@ test('§7.3 排序 + labId/VOID 過濾 + mainLink/otherLinks', async () => {
   assert.strictEqual(cb.mainLink?.docNo, 'INV-2')
   assert.strictEqual(cb.otherLinks.length, 1)
   assert.strictEqual(cb.otherLinks[0].docId, DOC_3)
-  assert.strictEqual(cb.otherLinks[0].linkType, 'SUPPLEMENTARY')
+  assert.strictEqual(cb.otherLinks[0].linkType, 'SUPPLEMENT')
   // §7.5 linkedSum 原料：200（主單）+ 300（補收費）= 500
   assert.strictEqual(cb.linkedSum, 500)
   assert.strictEqual(cb.mainLinkedSum, 200)

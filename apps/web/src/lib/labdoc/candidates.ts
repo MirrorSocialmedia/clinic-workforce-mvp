@@ -23,7 +23,7 @@ const CODE_RE = /^[A-Z]{1,4}\d{6}$/
 export interface CandidateLink {
   docId: string
   docNo: string | null
-  linkType: 'MAIN' | 'SUPPLEMENTARY' | 'REDO'
+  linkType: 'MAIN' | 'SUPPLEMENT' | 'REDO'
 }
 
 export interface CandidateView {
@@ -186,7 +186,7 @@ export async function getCandidatesForGroup(
       const amountsByCase = new Map<string, { main: number; other: number }>()
       for (const l of links) {
         const lt = (l.linkType as string | null) ?? 'MAIN'
-        if (!['MAIN', 'SUPPLEMENTARY', 'REDO'].includes(lt)) continue
+        if (!['MAIN', 'SUPPLEMENT', 'REDO'].includes(lt)) continue
         if (l.costCaseId === null) continue
         const arr = linksByCase.get(l.costCaseId) ?? []
         arr.push({ docId: l.documentId, docNo: docById.get(l.documentId) ?? null, linkType: lt as CandidateLink['linkType'] })
