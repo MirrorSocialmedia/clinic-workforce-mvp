@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card'
 import { Plus, Edit2, EyeOff, Check, X, Wallet, Download, AlertTriangle } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 import { toHKDateStr, todayHK } from '@/lib/hk-date'
+import { duplicateNameIds } from '@/lib/provider-label'
 
 interface Clinic { id: string; name: string; shortName?: string | null }
 
@@ -104,7 +105,7 @@ export default function ProvidersPage() {
   function startAdd() {
     setEditing('__new__')
     // ★ F 章：單一 apricotId 欄 → 多帳號 apricotAccounts 陣列（name 可選，server 缺省用醫生名）
-    setForm({ name: '', shortName: '', phone: '', apricotAccounts: [], apricotUserId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [], showInCostEntry: true })
+    setForm({ name: '', nameZh: '', shortName: '', phone: '', apricotAccounts: [], apricotUserId: '', color: '', isActive: true, sortOrder: 0, clinicIds: [], showInCostEntry: true })
   }
 
   function startEdit(p: any) {
@@ -183,9 +184,12 @@ export default function ProvidersPage() {
     }
   }
 
+  // ★ cwm-chequerec-20261005：同名（簡稱正規化後一樣）醫生 → 提示填中文全名
+  const dupIds = duplicateNameIds(providers.map(p => ({ id: p.id, name: p.name || '' })))
+
   // ★ D10: CSV Export
   function exportCSV() {
-    const headers = ['名稱', '簡稱', '電話', 'Apricot ID', '應診診所', '狀態']
+    const headers = ['名稱', '中文全名', '簡稱', '電話', 'Apricot ID', '應診診所', '狀態']
     const rows = providers.map(p => {
       const clinicNames = (p.clinicIds || []).map((cid: string) => {
         const clinic = clinics.find(c => c.id === cid)
@@ -193,6 +197,7 @@ export default function ProvidersPage() {
       }).join('、')
       return [
         p.name || '',
+        p.nameZh || '',
         p.shortName || '',
         p.phone || '',
         (p.apricotAccounts || []).map(({ apricotId }: any) => apricotId || '').join('; ') || '',
@@ -241,6 +246,7 @@ export default function ProvidersPage() {
           <thead>
             <tr className="border-b bg-muted/50">
               <th className="text-left p-3">名稱</th>
+              <th className="text-left p-3">中文全名</th>
               <th className="text-left p-3">簡稱</th>
               <th className="text-left p-3">電話</th>
               <th className="text-left p-3">Apricot ID</th>
@@ -257,6 +263,8 @@ export default function ProvidersPage() {
             {editing === '__new__' && (
               <tr className="bg-yellow-50 border-b">
                 <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
+                {/* ★ cwm-chequerec-20261005：中文全名（唔必填；同姓醫生靠佢分） */}
+                <td className="p-2"><Input value={form.nameZh || ''} onChange={e => setForm({ ...form, nameZh: e.target.value })} placeholder="陳大文" aria-label="中文全名" /></td>
                 <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
                 <td className="p-2"><Input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="電話" /></td>
                 <td className="p-2">{renderAccountInputs()}</td>
@@ -287,6 +295,8 @@ export default function ProvidersPage() {
             {providers.map(p => p.id === editing ? (
               <tr key={p.id} className="bg-yellow-50 border-b">
                 <td className="p-2"><Input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="陳大文醫生" /></td>
+                {/* ★ cwm-chequerec-20261005：中文全名（唔必填；同姓醫生靠佢分） */}
+                <td className="p-2"><Input value={form.nameZh || ''} onChange={e => setForm({ ...form, nameZh: e.target.value })} placeholder="陳大文" aria-label="中文全名" /></td>
                 <td className="p-2"><Input value={form.shortName || ''} onChange={e => setForm({ ...form, shortName: e.target.value })} placeholder="陳" /></td>
                 <td className="p-2"><Input value={form.phone || ''} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="電話" /></td>
                 <td className="p-2">{renderAccountInputs()}</td>
@@ -315,7 +325,11 @@ export default function ProvidersPage() {
               </tr>
             ) : (
               <tr key={p.id} className="border-b hover:bg-muted/30">
-                <td className="p-3 font-medium">{p.name}</td>
+                <td className="p-3 font-medium">
+                  {p.name}
+                  {dupIds.has(p.id) && <span className="ml-1 text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800" title="有另一個醫生用同一個名稱 —— 請填中文全名分辨">同名</span>}
+                </td>
+                <td className="p-3">{p.nameZh || <span className="text-xs px-2 py-0.5 rounded bg-amber-50 text-amber-700">未填中文名</span>}</td>
                 <td className="p-3">{p.shortName || '—'}</td>
                 <td className="p-3">{p.phone || '—'}</td>
                 <td className="p-3">
@@ -359,7 +373,7 @@ export default function ProvidersPage() {
               </tr>
             ))}
             {!loading && providers.length === 0 && (
-              <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
+              <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">暫時未新增醫生</td></tr>
             )}
           </tbody>
         </table>

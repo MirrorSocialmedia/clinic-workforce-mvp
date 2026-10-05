@@ -247,6 +247,9 @@ export const CONFIG = {
     'PUT /api/cheques/payees': ['OWNER'],
     'PUT /api/cheques/layouts/:id': ['OWNER'],
     'GET /api/cheques/center': ['OWNER'],
+    // ★ cwm-chequerec-20261005：支票紀錄（連作廢）＋ Excel 匯出 —— 只限老闆
+    'GET /api/cheques/records': ['OWNER'],
+    'GET /api/cheques/records/export': ['OWNER'],
     'PUT /api/cheques/lab-amounts': ['OWNER'],
     'POST /api/cheques/issue': ['OWNER'],
     'PATCH /api/cheques/:id': ['OWNER'],

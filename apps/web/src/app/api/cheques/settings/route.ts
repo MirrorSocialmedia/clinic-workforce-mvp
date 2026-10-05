@@ -10,6 +10,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { handleRoute } from '@/lib/api-guard'
 import { formatNo, listLayouts } from '@/lib/cheque-print/server'
+import { providerLabel, missingNameZh } from '@/lib/provider-label'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
       prisma.chequeAccount.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] }),
       prisma.chequeAccountClinic.findMany(),
       prisma.clinic.findMany({ select: { id: true, name: true, company: { select: { name: true } } }, orderBy: { name: 'asc' } }),
-      prisma.provider.findMany({ where: { isActive: true }, select: { id: true, name: true, shortName: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+      prisma.provider.findMany({ where: { isActive: true }, select: { id: true, name: true, nameZh: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
       prisma.lab.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
       prisma.chequePayee.findMany(),
     ])
@@ -36,7 +37,8 @@ export async function GET(req: NextRequest) {
         clinicIds: links.filter(l => l.accountId === a.id).map(l => l.clinicId),
       })),
       clinics: clinics.map(c => ({ id: c.id, name: c.name, companyName: c.company?.name ?? '', accountId: accountOf.get(c.id) ?? null })),
-      providers: providers.map(p => ({ id: p.id, name: p.shortName || p.name, payee: payee('PROVIDER', p.id) })),
+      // ★ cwm-chequerec-20261005：「Dr.Ho · 何嘉俊」；未填中文全名 → nameZhMissing（UI 黃色提示）
+      providers: providers.map(p => ({ id: p.id, name: providerLabel(p), nameZhMissing: missingNameZh(p), payee: payee('PROVIDER', p.id) })),
       labs: labs.map(l => ({ id: l.id, name: l.name, payee: payee('LAB', l.id) })),
     })
   })
