@@ -58,6 +58,13 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PAYROLL_CHEQUE_SHEET', label: '匯出月度出糧總表' },
   { action: 'CHEQUE_SHEET_TEMPLATE_UPDATE', label: '出糧總表模版新增／修改／刪除' }, // ★ cwm-chequetpl-20261004
   { action: 'CHEQUE_SHEET_PAYER_UPDATE', label: '出糧總表出糧診所／次序變更' }, // ★ cwm-chequetpl-20261004
+  // ★ cwm-chequeprint-20261005：支票打印
+  { action: 'CHEQUE_ISSUE', label: '出支票（攞號碼）' },
+  { action: 'CHEQUE_CONFIRM', label: '確認支票印得好' },
+  { action: 'CHEQUE_VOID', label: '⚠️ 作廢支票' },
+  { action: 'CHEQUE_RELEASE', label: '支票送唔到打印機・退號' },
+  { action: 'CHEQUE_SETTING_UPDATE', label: '支票設定（戶口／版面／抬頭）' },
+  { action: 'LAB_CHEQUE_AMOUNT_UPDATE', label: 'Lab 月結金額（支票用）' },
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
   { action: 'EMPLOYEE_RESIGN_SETTLE', label: '離職結算確認（寫入薪金／時間帳戶扣除）' },
