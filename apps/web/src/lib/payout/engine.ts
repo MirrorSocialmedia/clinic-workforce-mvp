@@ -46,7 +46,7 @@ export const UNNAMED_VENDOR = '（未指定工廠）'
 /** ★ cwm-costguard-20261006：生成月結期間成本有改動（鎖定時加總對唔到數）→ 回滾，請重新預覽 */
 export class CostChangedDuringLockError extends Error {
   constructor(detail: string) {
-    super(`成本喺生成月結期間有改動（${detail}），已取消鎖定，請重新預覽再試`)
+    super(`成本／補貼喺生成月結期間有改動（${detail}），已取消鎖定，請重新預覽再試`)
     this.name = 'CostChangedDuringLockError'
   }
 }
@@ -648,6 +648,24 @@ export async function lockPayoutRun(
       data: { lockedByRunId: run.id },
     })
 
+    // ★ cwm-spbulk-20261006：2人SP／轉介同成本一樣 —— 計數同鎖定之間有人確認／取消確認，
+    //   會被鎖住但冇計錢（或者計咗但冇鎖）。鎖完按「已確認」再加總，唔夾就成個 transaction 回滾。
+    const lockedSp = await tx.spSubsidy.aggregate({
+      where: { lockedByRunId: run.id, status: 'CONFIRMED' },
+      _sum: { amount: true },
+    })
+    const lockedRef = await tx.providerReferral.aggregate({
+      where: { lockedByRunId: run.id, status: 'CONFIRMED' },
+      _sum: { amount: true },
+    })
+    const spLocked = round2(Number(lockedSp._sum.amount ?? 0))
+    const refLocked = round2(Number(lockedRef._sum.amount ?? 0))
+    const otherMismatch = ([['2人SP', payout.spSubsidy, spLocked], ['轉介', payout.refAmount, refLocked]] as Array<[string, number, number]>)
+      .filter(([, expected, locked]) => Math.abs(locked - round2(expected)) > 0.005)
+    if (otherMismatch.length > 0) {
+      throw new CostChangedDuringLockError(otherMismatch.map(([k, expected, locked]) => `${k} 計 ${round2(expected)}／鎖 ${locked}`).join('；'))
+    }
+
     // e. Assign unassigned PayoutAdjustment
     const lockAdjWhere: any = {
       providerId,
@@ -930,10 +948,12 @@ export async function scanSpSubsidies(
       if (missing.length) throw new Error(`SpSubsidy 缺必填欄：${missing.join(', ')}`)
 
       if (existing) {
-        await prisma.spSubsidy.update({
-          where: { billItemEleId: item.eleId },
+        // ★ cwm-spbulk-20261006：條件寫入 —— 讀完 existing 之後有人鎖咗月結，唔准改已鎖定嘅金額
+        const res = await prisma.spSubsidy.updateMany({
+          where: { billItemEleId: item.eleId, lockedByRunId: null },
           data: updateData,
         })
+        if (res.count === 0) { skippedLocked++; continue }
         updated++
       } else {
         await prisma.spSubsidy.create({
