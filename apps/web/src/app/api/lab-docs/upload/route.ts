@@ -77,8 +77,11 @@ export async function POST(req: NextRequest) {
   const statementMonth = (form.get('statementMonth') as string) || ''
   const force = form.get('force') === 'true' || form.get('force') === '1'
   const idempotencyKey = (form.get('idempotencyKey') as string) || ''
-  // splitPdfPages：P2 功能（拆頁另開單）；P1 接受但忽略（最保守：1 檔 = 1 單據）
-  void form.get('splitPdfPages')
+  // ★ cwm-labdoc P2 §7.11（D9）：拆頁 — invoice 預設每頁一張（splitPdfPages 唔傳 / true / 1）；
+  //   「全部一張」= splitPdfPages=false（讀完之前可以用 merge 改返）。STATEMENT 永遠一張。
+  const splitPdfPagesRaw = (form.get('splitPdfPages') as string) || ''
+  const splitPdfPages =
+    kind === 'INVOICE' && (splitPdfPagesRaw === '' || splitPdfPagesRaw === 'true' || splitPdfPagesRaw === '1')
 
   if (force && !(perms ?? []).includes('lab_statement')) {
     return NextResponse.json({ error: '強制重傳需要 lab_statement 權限' }, { status: 403 })
@@ -267,24 +270,42 @@ export async function POST(req: NextRequest) {
               purgeAt,
             },
           })
-          const doc = await tx.labDocument.create({
-            data: {
-              kind,
-              status: 'UPLOADED',
-              labId,
-              statementMonth: kind === 'STATEMENT' ? statementMonth || null : null,
-              uploadedBy: session.userId,
-            },
-          })
-          await tx.labDocumentPage.createMany({
-            data: pf.pagesJson.map((p, idx) => ({
-              documentId: doc.id,
-              fileId: pf.fileId,
-              pageNo: p.page,
-              sortOrder: idx,
-            })),
-          })
-          out.push({ id: doc.id, status: doc.status })
+          // ★ cwm-labdoc P2 §7.11（D9）：拆頁 — 每頁一張單據（共用同一 file）
+          if (splitPdfPages && pf.pagesJson.length > 1) {
+            for (const p of pf.pagesJson) {
+              const doc = await tx.labDocument.create({
+                data: {
+                  kind,
+                  status: 'UPLOADED',
+                  labId,
+                  uploadedBy: session.userId,
+                },
+              })
+              await tx.labDocumentPage.create({
+                data: { documentId: doc.id, fileId: pf.fileId, pageNo: p.page, sortOrder: 0 },
+              })
+              out.push({ id: doc.id, status: doc.status })
+            }
+          } else {
+            const doc = await tx.labDocument.create({
+              data: {
+                kind,
+                status: 'UPLOADED',
+                labId,
+                statementMonth: kind === 'STATEMENT' ? statementMonth || null : null,
+                uploadedBy: session.userId,
+              },
+            })
+            await tx.labDocumentPage.createMany({
+              data: pf.pagesJson.map((p, idx) => ({
+                documentId: doc.id,
+                fileId: pf.fileId,
+                pageNo: p.page,
+                sortOrder: idx,
+              })),
+            })
+            out.push({ id: doc.id, status: doc.status })
+          }
         }
         return out
       },

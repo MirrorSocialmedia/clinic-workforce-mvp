@@ -347,6 +347,7 @@ function uploadForm(kind = 'INVOICE', key = 'key-1'): FormData {
   f.append('kind', kind)
   f.append('idempotencyKey', key)
   f.append('files', new File([PDF_BUF], 'sample-text.pdf', { type: 'application/pdf' }))
+  f.append('splitPdfPages', 'false') // ★ P2 D9：預設拆頁；P1 測試行「全部一張」
   return f
 }
 
