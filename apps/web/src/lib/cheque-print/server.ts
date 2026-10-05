@@ -10,6 +10,8 @@ import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hk-date'
 import { HSBC_DEFAULT_FIELDS, HSBC_DEFAULT_OFFSET, normalizeFields, type LayoutFields, type PrinterMode } from './layout'
 import { cleanPayee } from './content'
+import { providerLabel } from '@/lib/provider-label'
+import { missingPayouts, missingSourceId, MISSING_PAYOUT_BLOCKER } from './missing-payouts'
 
 export type SourceType = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT'
 export const SOURCE_TYPES: SourceType[] = ['PAYROLL_ITEM', 'PAYOUT_RUN', 'LAB_AMOUNT']
@@ -68,6 +70,8 @@ export interface CenterRow {
   cheque: { id: string; chequeNo: string; status: string; confirmed: boolean; chequeDate: string } | null
   /** Lab 先有：人手輸入嘅資料 */
   lab?: { labId: string; statementRef: string | null; note: string | null; systemCost: number }
+  /** ★ cwm-chequerec-20261005：醫生未生成月結嘅佔位行（唔計入分頁數字、出唔到票） */
+  missing?: boolean
 }
 
 /** 戶口用緊嘅診所 */
@@ -133,17 +137,25 @@ export async function loadCenter(month: string, accountId: string): Promise<{ em
   empRows.forEach(r => { r.cheque = chequeDTO(empCheques.get(r.sourceId)) })
 
   // ---------- 醫生（月結，每醫生每診所） ----------
-  const [payouts, providerPayees] = await Promise.all([
+  const [payouts, providerPayees, assignments] = await Promise.all([
     clinicIds.length ? prisma.payoutRun.findMany({
       where: { periodMonth: month, clinicId: { in: clinicIds } },
       select: { id: true, providerId: true, clinicId: true, totalAmount: true, status: true },
     }) : Promise.resolve([]),
     prisma.chequePayee.findMany({ where: { kind: 'PROVIDER' } }),
+    // ★ cwm-chequerec-20261005：喺呢個戶口診所執業嘅 active 醫生 → 未生成月結都要列出（灰色）
+    clinicIds.length ? prisma.providerClinic.findMany({
+      where: { clinicId: { in: clinicIds }, provider: { isActive: true } },
+      select: { providerId: true, clinicId: true },
+    }) : Promise.resolve([]),
   ])
-  const providers = payouts.length
-    ? await prisma.provider.findMany({ where: { id: { in: payouts.map(p => p.providerId) } }, select: { id: true, name: true, shortName: true } })
+  const missing = missingPayouts({ clinicIds, assignments, payouts })
+  const providerIds = [...new Set([...payouts.map(p => p.providerId), ...missing.map(m => m.providerId)])]
+  const providers = providerIds.length
+    ? await prisma.provider.findMany({ where: { id: { in: providerIds } }, select: { id: true, name: true, nameZh: true } })
     : []
-  const provName = new Map(providers.map(p => [p.id, p.shortName || p.name]))
+  // ★ cwm-chequerec-20261005：顯示「Dr.Ho · 何嘉俊」（同姓醫生分得開）；唔再用 shortName（更表單字）
+  const provName = new Map(providers.map(p => [p.id, providerLabel(p)]))
   const provPayee = new Map(providerPayees.map(p => [p.refId, p.payeeName]))
   const provRows: CenterRow[] = payouts.map(p => {
     const amount = Number(p.totalAmount)
@@ -158,6 +170,14 @@ export async function loadCenter(month: string, accountId: string): Promise<{ em
   })
   const provCheques = await activeCheques('PAYOUT_RUN', provRows.map(r => r.sourceId))
   provRows.forEach(r => { r.cheque = chequeDTO(provCheques.get(r.sourceId)) })
+  for (const m of missing) {
+    provRows.push({
+      sourceType: 'PAYOUT_RUN', sourceId: missingSourceId(m.providerId, m.clinicId), clinicId: m.clinicId,
+      clinicName: clinicName.get(m.clinicId) ?? '', payee: provPayee.get(m.providerId) ?? null,
+      label: provName.get(m.providerId) ?? '', detail: `醫生月結 · ${clinicName.get(m.clinicId) ?? ''}`,
+      amount: 0, blocker: MISSING_PAYOUT_BLOCKER, cheque: null, missing: true,
+    })
+  }
 
   // ---------- Lab（人手輸入月結金額） ----------
   const [labs, labPayees, amounts, costs] = await Promise.all([
@@ -196,7 +216,7 @@ export async function loadCenter(month: string, accountId: string): Promise<{ em
   labRows.forEach(r => { r.cheque = chequeDTO(labCheques.get(r.sourceId)) })
 
   const byClinicThenLabel = (a: CenterRow, b: CenterRow) => a.clinicName.localeCompare(b.clinicName, 'zh-Hant') || a.label.localeCompare(b.label, 'zh-Hant')
-  return { employees: empRows.sort(byClinicThenLabel), providers: provRows.sort(byClinicThenLabel), labs: labRows.sort(byClinicThenLabel) }
+  return { employees: empRows.sort(byClinicThenLabel), providers: provRows.sort((a, b) => Number(!!a.missing) - Number(!!b.missing) || byClinicThenLabel(a, b)), labs: labRows.sort(byClinicThenLabel) }
 }
 
 /** 由來源搵返收款人同金額（出票時重新讀，唔信 client） */

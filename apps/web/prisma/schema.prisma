@@ -384,6 +384,9 @@ model Provider {
   id              String   @id @default(cuid())
   name            String
   shortName       String?
+  /// ★ cwm-chequerec-20261005：中文全名（例「何嘉俊」）— 同姓醫生（Dr.Ho／Dr.Ho Pak Hei）靠佢分；
+  ///   唔必填（老闆拍板）；顯示一律「name · nameZh」（lib/provider-label.ts）。支票抬頭另外設（ChequePayee）。
+  nameZh          String?
   phone           String?
   color           String?
   // ★ cwm-apricotacct-20260913 I 章：apricotId 已剷走 — 唯一來源係 ApricotPractitioner 表（可多帳號）。

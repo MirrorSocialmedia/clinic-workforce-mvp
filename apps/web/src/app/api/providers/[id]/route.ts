@@ -10,7 +10,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params
   const body = await req.json().catch(() => ({} as any))
-  const { name, shortName, phone, color, apricotAccounts, apricotUserId, companyId, sortOrder, isActive, clinicIds, showInCostEntry } = body
+  const { name, shortName, nameZh, phone, color, apricotAccounts, apricotUserId, companyId, sortOrder, isActive, clinicIds, showInCostEntry } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
@@ -52,6 +52,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         data: {
           name: name.trim(),
           shortName: shortName?.trim() || null,
+          // ★ cwm-chequerec-20261005：中文全名（唔必填；冇傳 = 唔郁，空字串 = 清空）
+          ...(nameZh !== undefined ? { nameZh: typeof nameZh === 'string' && nameZh.trim() ? nameZh.trim().slice(0, 50) : null } : {}),
           phone: phone?.trim() || null,
           color,
           ...(apricotUserId !== undefined && { apricotUserId: apricotUserId?.trim() || null }),
@@ -99,7 +101,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         entity: 'Provider',
         entityId: id,
         notes: `更新醫生：${provider.name}${isActive === false ? '（停用）' : ''}`,
-        afterJson: JSON.stringify({ id, name: provider.name, isActive: provider.isActive }),
+        afterJson: JSON.stringify({ id, name: provider.name, nameZh: provider.nameZh, isActive: provider.isActive }),
       },
     }).catch(e => console.error('[providers] audit failed', e))
 
