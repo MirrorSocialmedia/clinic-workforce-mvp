@@ -9,6 +9,8 @@
  *   - T17：stub timeout ×3 → EXTRACT_FAILED（attempts=3、extractError='timeout'）；sweep 唔會再自動試
  *   - not_configured（真 client 路徑，env 未設）→ 3 次 → EXTRACT_FAILED 'not_configured'
  *   - 成功：TEXT 合併 call → NEEDS_REVIEW；識別（NAME）、docNo 正規化、行寫入、readIssues 合併
+ *   - §6.2/§6.3/§6.5 wiring：CUSTOMER_NO 帶出 clinic+provider；CLINIC_ALIAS+DOCTOR_ALIAS；
+ *     patientCode 純數字補前綴（TW007159）／字母前綴補零（TKW002004）
  *   - T18（runner 層）：lab.nameRaw 含銀行帳號 → extractedJson null 化 + SENSITIVE_REMOVED；docNoRaw 保留
  *   - truncated → 自動分頁再叫（唔計失敗）
  *   - bad_response（zod 再驗證）→ 3 次 → EXTRACT_FAILED
@@ -32,6 +34,7 @@ import {
   type RunOpts,
 } from './extract'
 import { buildPageKey, buildStorageKey, saveEncrypted } from './storage'
+import { normClinicName, normDoctor } from './identify'
 
 type Any = any
 
@@ -588,6 +591,67 @@ describe('runner — 成功路徑', () => {
     await __drainLabDocExtractions()
     assert.equal(calls[0].labHint, 'Modern 名後 4 位係病人編號')
     assert.equal(state.docs[docId].status, 'NEEDS_REVIEW')
+  })
+
+  it('§6.2/§6.3/§6.5 wiring：CUSTOMER_NO 命中 → clinic+provider 同時帶出；純數字 patientCode 補 shortName 前綴', async () => {
+    const docId = await seedDoc()
+    state.customerNos = [
+      { id: 'cn010000000000000000001', labId: 'labexcel0000000000000000001', customerNo: 'EC-101', clinicId: 'clintw0000000000000000001', providerId: 'provho0000000000000000001' },
+    ]
+    state.clinics = [
+      { id: 'clintw0000000000000000001', name: '臻善牙科（大圍）', shortName: 'TW', address: '大圍道1號', addressEn: null },
+    ]
+    const r1 = structuredClone(OK_RESULT)
+    r1.groups[0].patientCodeRaw = '7159'
+    __setLabDocExtractFn(async () => ({ outcome: { result: r1, reason: null }, nullReason: null }))
+    await runLabDocExtract(docId, RUN_FAST)
+    await __drainLabDocExtractions()
+
+    const d = state.docs[docId]
+    assert.equal(d.status, 'NEEDS_REVIEW')
+    // §6.2.1：CUSTOMER_NO 係第一優先 → clinic 同 provider 一次過帶出
+    assert.equal(d.clinicId, 'clintw0000000000000000001')
+    assert.equal(d.clinicBasis, 'CUSTOMER_NO')
+    assert.equal(d.clinicEvidence, 'EC-101')
+    assert.equal(d.providerId, 'provho0000000000000000001')
+    assert.equal(d.providerBasis, 'CUSTOMER_NO')
+    assert.equal(d.providerEvidence, 'Dr Ho Ka Chun')
+    // §6.5：純數字 '7159' + 命中 clinic shortName 'TW' → TW007159（補零 6 位）
+    const lines = state.lines.filter((l) => l.documentId === docId)
+    assert.equal(lines.length, 1)
+    assert.equal(lines[0].patientCodeRaw, '7159')
+    assert.equal(lines[0].patientCode, 'TW007159')
+  })
+
+  it('§6.2/§6.3 wiring：CLINIC_ALIAS + DOCTOR_ALIAS 命中；字母前綴 patientCode 去前置 0 補 6 位', async () => {
+    const docId = await seedDoc()
+    state.clinicAliases = [
+      { id: 'cal000000000000000000001', rawNorm: normClinicName('臻善牙科（大圍）'), clinicId: 'clinty0000000000000000001' },
+    ]
+    state.providerAliases = [
+      { id: 'pal000000000000000000001', rawNorm: normDoctor('Dr Ho Ka Chun'), providerId: 'provyiu0000000000000000001' },
+    ]
+    state.clinics = [
+      { id: 'clinty0000000000000000001', name: '屯門牙科診所', shortName: 'TY', address: null, addressEn: null },
+    ]
+    const r2 = structuredClone(OK_RESULT)
+    r2.groups[0].patientCodeRaw = 'TKW02004'
+    __setLabDocExtractFn(async () => ({ outcome: { result: r2, reason: null }, nullReason: null }))
+    await runLabDocExtract(docId, RUN_FAST)
+    await __drainLabDocExtractions()
+
+    const d = state.docs[docId]
+    assert.equal(d.status, 'NEEDS_REVIEW')
+    assert.equal(d.clinicId, 'clinty0000000000000000001')
+    assert.equal(d.clinicBasis, 'CLINIC_ALIAS')
+    assert.equal(d.clinicEvidence, '臻善牙科（大圍）')
+    assert.equal(d.providerId, 'provyiu0000000000000000001')
+    assert.equal(d.providerBasis, 'DOCTOR_ALIAS')
+    assert.equal(d.providerEvidence, 'Dr Ho Ka Chun')
+    // §6.5：字母前綴 + 前置 0 正規化 → TKW002004
+    const lines = state.lines.filter((l) => l.documentId === docId)
+    assert.equal(lines[0].patientCodeRaw, 'TKW02004')
+    assert.equal(lines[0].patientCode, 'TKW002004')
   })
 })
 
