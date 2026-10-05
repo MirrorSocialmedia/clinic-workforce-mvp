@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
-import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard, Receipt } from 'lucide-react'
+import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard, Receipt, Printer } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
 import { MY_NAV } from '@/lib/my-nav'
@@ -204,6 +204,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     //   ⚠️ roles 唔可以加 'EMPLOYEE' — filter ① role 白名單會繞過 perm 檢查
     { path: '/lab-docs', label: 'Lab 單據', icon: Receipt, roles: ['OWNER', 'MANAGER'], perm: ['lab_invoice', 'lab_statement'] },
     { path: '/payout', label: '醫生月結', icon: Receipt, roles: ['OWNER'], perm: 'provider_payout' },
+    // ★ cwm-chequeprint-20261005：支票打印 —— 老闆拍板只俾老闆用（同 API RBAC 一致，冇 perm 放行）
+    { path: '/cheques', label: '支票打印', icon: Printer, roles: ['OWNER'] },
   ]
 
   const visibleNav = navItems.filter(item => {

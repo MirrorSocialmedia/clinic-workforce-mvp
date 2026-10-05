@@ -240,6 +240,16 @@ export const CONFIG = {
     'DELETE /api/cheque-sheet-templates/:id': ['OWNER'],
     'GET /api/cheque-sheet-payers': ['OWNER'],
     'PUT /api/cheque-sheet-payers': ['OWNER'],
+    // ★ cwm-chequeprint-20261005：支票打印 —— 老闆拍板只俾老闆用，★★★ 唔加 RBAC_PERM_OVERRIDES
+    'GET /api/cheques/settings': ['OWNER'],
+    'POST /api/cheques/accounts': ['OWNER'],
+    'PUT /api/cheques/accounts/:id': ['OWNER'],
+    'PUT /api/cheques/payees': ['OWNER'],
+    'PUT /api/cheques/layouts/:id': ['OWNER'],
+    'GET /api/cheques/center': ['OWNER'],
+    'PUT /api/cheques/lab-amounts': ['OWNER'],
+    'POST /api/cheques/issue': ['OWNER'],
+    'PATCH /api/cheques/:id': ['OWNER'],
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/allowed-clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
