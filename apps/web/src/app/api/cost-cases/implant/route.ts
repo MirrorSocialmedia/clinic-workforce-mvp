@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { handleRoute } from '@/lib/api-guard'
 import { prisma } from '@/lib/prisma'
+import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 import { CostGuardError, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
@@ -78,7 +79,10 @@ export async function POST(req: NextRequest) {
   const { totalBaseCost, materialData, auditRecords } = resolved
 
   // Create cost case with materials in a transaction
-  const caseData = await prisma.costCase.create({
+  let caseData: any
+  try {
+    // ★ cwm-payaudit-20261006：期間鎖 —— 同「鎖月結」一前一後，唔會入咗已鎖月份又唔計錢
+    caseData = await writeInPeriod(prisma, { providerId, clinicId, periodMonth }, (tx: any) => tx.costCase.create({
     data: {
       providerId,
       clinicId,
@@ -108,7 +112,11 @@ export async function POST(req: NextRequest) {
     include: {
       materials: true,
     },
-  })
+  }))
+  } catch (e) {
+    if (e instanceof PeriodLockedError) return NextResponse.json({ error: lockedMonthMessage(e.periodMonth) }, { status: 409 })
+    throw e
+  }
 
   // ★ MD-K: Audit log with material override details
   await prisma.auditLog.create({
@@ -133,7 +141,7 @@ export async function POST(req: NextRequest) {
     ...caseData,
     baseCost: caseData.baseCost ? Number(caseData.baseCost) : null,
     finalCost: caseData.finalCost ? Number(caseData.finalCost) : null,
-    materials: caseData.materials.map(m => ({
+    materials: caseData.materials.map((m: any) => ({
       ...m,
       unitPriceUsed: Number(m.unitPriceUsed),
       isPriceOverridden: m.isPriceOverridden,

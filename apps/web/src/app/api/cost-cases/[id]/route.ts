@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { lockPeriod } from '@/lib/payout/period-lock'
 import { jsonNoStore } from '@/lib/api-response'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
@@ -349,8 +350,23 @@ export async function PUT(
   // ★ C2：材料要「刪晒再建」—— CostCaseMaterial 冇業務主鍵，diff 更新冇著數，
   //   而且 onDelete: Cascade 只綁 costCase，刪行要自己做 → 一齊成功一齊失敗
   // ★ P2-5：離 IMPLANT case 都入同一個 transaction（原子：唔會「category 改咗但材料行未清」）
-  const updated = (resolvedMaterials || isImplantToOther)
-    ? await prisma.$transaction(async tx => {
+  // ★ cwm-payaudit-20261006：上面「未鎖定」係先讀後寫 —— 兩步之間月結鎖咗，舊寫法照改已鎖定嘅成本。
+  //   而家喺 transaction 入面 SELECT … FOR UPDATE 鎖住呢行再驗一次（鎖月結嘅 updateMany 會等我哋），
+  //   會改到錢嘅再查一次目標月份有冇鎖。
+  let updated: any
+  try {
+    updated = await prisma.$transaction(async tx => {
+      const rows = await tx.$queryRaw<Array<{ lockedByRunId: string | null }>>`SELECT "lockedByRunId" FROM "CostCase" WHERE id = ${id} FOR UPDATE`
+      if (!rows.length) throw new CostGuardError(404, '搵唔到記錄')
+      if (rows[0].lockedByRunId != null) throw new CostGuardError(409, '已出月結，請用下期調整')
+      if (affectsMoney) {
+        const targetMonth = effectivePeriodMonth ?? existing.periodMonth
+        if (targetMonth) await lockPeriod(tx, effectiveProviderId, effectiveClinicId, targetMonth)
+        if (await lockedRunFor(tx, effectiveProviderId, effectiveClinicId, targetMonth)) {
+          throw new CostGuardError(409, lockedMonthMessage(targetMonth!))
+        }
+      }
+      if (resolvedMaterials || isImplantToOther) {
         // P2-5：離 IMPLANT 只刪唔建；材料有改：刪晒再建
         await tx.costCaseMaterial.deleteMany({ where: { costCaseId: id } })
         if (resolvedMaterials) {
@@ -363,14 +379,19 @@ export async function PUT(
           data,
           include: { lab: { select: { id: true, name: true } }, materials: true },
         })
-      })
-    : await prisma.costCase.update({
+      }
+      return await tx.costCase.update({
         where: { id },
         data,
         include: {
           lab: { select: { id: true, name: true } },
         },
       })
+    })
+  } catch (e) {
+    if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+    throw e
+  }
 
   // Audit log
   await prisma.auditLog.create({
@@ -493,10 +514,15 @@ export async function DELETE(
     throw e
   }
 
-  const updated = await prisma.costCase.update({
-    where: { id },
+  // ★ cwm-payaudit-20261006：條件寫入 —— 讀完之後先被鎖／已經被人作廢，唔再寫（唔重複 audit）
+  const res = await prisma.costCase.updateMany({
+    where: { id, lockedByRunId: null, status: { not: 'VOID' } },
     data: { status: 'VOID' },
   })
+  if (res.count === 0) {
+    return jsonNoStore({ error: '呢筆成本啱啱已經被鎖定或者作廢，請重新整理' }, { status: 409 })
+  }
+  const updated = await prisma.costCase.findUnique({ where: { id } })
 
   // Audit log
   await prisma.auditLog.create({

@@ -7,6 +7,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
+import { lockedRunFor } from '@/lib/cost-entry/guards'
 import { toHKDateStr } from '@/lib/hk-date'
 
 export async function PUT(
@@ -107,10 +109,27 @@ export async function PUT(
     }
   }
 
-  const updated = await prisma.providerReferral.update({
-    where: { id: params.id },
-    data: updateData,
-  })
+  // ★ cwm-payaudit-20261006：改完係 CONFIRMED 而該月月結已鎖 → 唔會計入（醫生收唔到）—— 擋
+  const finalStatus = updateData.status ?? referral.status
+  const finalClinic = updateData.clinicId ?? referral.clinicId
+  const finalMonth = updateData.periodMonth ?? referral.periodMonth
+  if (finalStatus === 'CONFIRMED' && finalClinic && finalMonth
+    && await lockedRunFor(prisma, referral.fromProviderId, finalClinic, finalMonth)) {
+    return NextResponse.json({ error: `${finalMonth} 嘅月結已經鎖定，轉介改咗都唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, { status: 409 })
+  }
+
+  // ★ 條件寫入：讀完之後先被鎖嘅轉介唔准改
+  let updated: any
+  try {
+    updated = await writeInPeriod(prisma,
+      { providerId: referral.fromProviderId, clinicId: finalStatus === 'CONFIRMED' ? finalClinic : null, periodMonth: finalMonth },
+      (tx: any) => tx.providerReferral.update({ where: { id: params.id, lockedByRunId: null }, data: updateData }))
+  } catch (e: any) {
+    if (e instanceof PeriodLockedError) return NextResponse.json({ error: `${e.periodMonth} 嘅月結已經鎖定，轉介改咗都唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, { status: 409 })
+    if (e?.code === 'P2025') return NextResponse.json({ error: '該轉介已鎖定喺月結單中，無法修改' }, { status: 409 })
+    if (e?.code === 'P2002') return NextResponse.json({ error: '呢個項目已經轉介過，唔可以重複' }, { status: 409 })
+    throw e
+  }
 
   // W4: Audit log
   await prisma.auditLog.create({
@@ -160,9 +179,15 @@ export async function DELETE(
     )
   }
 
-  await prisma.providerReferral.delete({
-    where: { id: params.id },
-  })
+  try {
+    await prisma.providerReferral.delete({
+      // ★ cwm-payaudit-20261006：條件刪除 —— 讀完之後先被鎖嘅唔准刪
+      where: { id: params.id, lockedByRunId: null },
+    })
+  } catch (e: any) {
+    if (e?.code === 'P2025') return NextResponse.json({ error: '該轉介已鎖定喺月結單中，無法刪除' }, { status: 409 })
+    throw e
+  }
 
   // Audit
   await prisma.auditLog.create({

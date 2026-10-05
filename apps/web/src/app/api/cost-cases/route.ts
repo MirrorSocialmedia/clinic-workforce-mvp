@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { jsonNoStore } from '@/lib/api-response'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
@@ -310,7 +311,10 @@ export async function POST(req: NextRequest) {
   // If no baseCost, status stays PENDING
   const status = baseCostNum != null ? 'PRICED' : 'PENDING'
 
-  const caseData = await prisma.costCase.create({
+  let caseData: any
+  try {
+    // ★ cwm-payaudit-20261006：期間鎖 —— 同「鎖月結」一前一後，唔會入咗已鎖月份又唔計錢
+    caseData = await writeInPeriod(prisma, { providerId, clinicId, periodMonth }, (tx: any) => tx.costCase.create({
     data: {
       providerId,
       clinicId,
@@ -342,7 +346,11 @@ export async function POST(req: NextRequest) {
     include: {
       lab: { select: { id: true, name: true } },
     },
-  })
+  }))
+  } catch (e) {
+    if (e instanceof PeriodLockedError) return NextResponse.json({ error: lockedMonthMessage(e.periodMonth) }, { status: 409 })
+    throw e
+  }
 
   // Audit log
   await prisma.auditLog.create({

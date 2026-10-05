@@ -5,8 +5,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { lockPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { toHKDateStr } from '@/lib/hk-date'
 import { round2 } from '@/lib/payout/engine'
+import { lockedRunFor } from '@/lib/cost-entry/guards'
 
 export async function POST(
   req: NextRequest,
@@ -43,6 +45,11 @@ export async function POST(
 
     const periodMonth = toHKDateStr(bill.billTime).slice(0, 7)
     const pct = Number(refPercent ?? draft.refPercent ?? 2)
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return NextResponse.json({ error: '轉介 % 要喺 0 至 100 之間' }, { status: 400 })
+    // ★ cwm-payaudit-20261006：該月月結已鎖 → 補完都唔會計入 —— 擋
+    if (await lockedRunFor(prisma, draft.fromProviderId, clinic.id, periodMonth)) {
+      return NextResponse.json({ error: `${periodMonth} 嘅月結已經鎖定，轉介唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, { status: 409 })
+    }
 
     // 4. Per-item validation (before transaction)
     const billItems = await prisma.apricotBillItem.findMany({
@@ -54,6 +61,7 @@ export async function POST(
     for (const it of items) {
       const bi = byEle.get(it.eleId)
       if (!bi) return NextResponse.json({ error: `項目 ${it.eleId} 唔喺呢張帳單` }, { status: 400 })
+      if (!Number.isInteger(Number(it.qty)) || Number(it.qty) < 1) return NextResponse.json({ error: '數量要係正整數' }, { status: 400 })
       if (Number(it.qty) > bi.qty) return NextResponse.json({ error: `「${bi.feeItemDes}」數量唔可以多過帳單嘅 ${bi.qty}` }, { status: 400 })
       if (Number(bi.unitPrice) < 0) return NextResponse.json({ error: `「${bi.feeItemDes}」係負數項目，唔可以轉介` }, { status: 400 })
     }
@@ -71,10 +79,15 @@ export async function POST(
 
     // 6. $transaction — one draft → N referrals
     const created = await prisma.$transaction(async (tx) => {
+      // ★ cwm-payaudit-20261006：期間鎖 + 再查一次（同鎖月結一前一後）
+      await lockPeriod(tx, draft.fromProviderId, clinic.id, periodMonth)
+      if (await lockedRunFor(tx, draft.fromProviderId, clinic.id, periodMonth)) throw new PeriodLockedError(periodMonth)
       const out: any[] = []
       for (let i = 0; i < items.length; i++) {
         const it = items[i]
-        const amount = round2(Number(it.unitPrice) * Number(it.qty) * pct / 100)
+        // ★ cwm-payaudit-20261006：單價以帳單為準（唔信 request）
+        const bi = byEle.get(it.eleId)!
+        const amount = round2(Number(bi.unitPrice) * Number(it.qty) * pct / 100)
         const data = {
           fromProviderId: draft.fromProviderId,
           toProviderId: draft.toProviderId,
@@ -82,8 +95,8 @@ export async function POST(
           billExtId,
           billCode,
           billItemEleId: it.eleId,
-          itemDes: it.itemDes,
-          unitPrice: Number(it.unitPrice),
+          itemDes: bi.feeItemDes,
+          unitPrice: Number(bi.unitPrice),
           qty: Number(it.qty),
           refPercent: pct,
           amount,
@@ -94,7 +107,8 @@ export async function POST(
           createdBy: auth.session!.userId,
         }
         if (i === 0) {
-          out.push(await tx.providerReferral.update({ where: { id: draft.id }, data }))
+          // ★ cwm-payaudit-20261006：條件寫入 —— 連撳兩下／兩個人同時補，第二個唔會再改同一張草稿
+          out.push(await tx.providerReferral.update({ where: { id: draft.id, status: 'DRAFT', lockedByRunId: null }, data }))
         } else {
           out.push(await tx.providerReferral.create({ data }))
         }
@@ -117,6 +131,9 @@ export async function POST(
 
     return NextResponse.json({ referrals: created, count: created.length })
   } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? 'Complete failed' }, { status: 500 })
+    if (e instanceof PeriodLockedError) return NextResponse.json({ error: `${e.periodMonth} 嘅月結已經鎖定，轉介唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, { status: 409 })
+    if (e?.code === 'P2025' || e?.code === 'P2002') return NextResponse.json({ error: '呢張草稿啱啱已經補咗／項目已經轉介過，請重新整理' }, { status: 409 })
+    console.error('[provider-referrals/complete] failed', e)
+    return NextResponse.json({ error: '補上帳單失敗，冇任何一筆寫入，請重試' }, { status: 500 })
   }
 }

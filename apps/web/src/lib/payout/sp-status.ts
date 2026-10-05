@@ -7,6 +7,8 @@
 // ============================================================
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { lockPeriod } from '@/lib/payout/period-lock'
+import { lockedRunFor } from '@/lib/cost-entry/guards'
 
 export type SpStatus = 'PENDING' | 'CONFIRMED' | 'SKIPPED'
 
@@ -22,6 +24,7 @@ export type SetStatusResult =
   | { kind: 'ok'; row: any }
   | { kind: 'noop'; row: any }
   | { kind: 'locked' }
+  | { kind: 'monthLocked'; periodMonth: string }
   | { kind: 'notfound' }
 
 function auditData(row: any, to: SpStatus, actorId: string) {
@@ -39,6 +42,15 @@ function auditData(row: any, to: SpStatus, actorId: string) {
 /** 單筆狀態轉換（條件寫入＋audit 同一個 transaction） */
 export async function setSpStatus(id: string, to: SpStatus, actorId: string): Promise<SetStatusResult> {
   return prisma.$transaction(async (tx: any): Promise<SetStatusResult> => {
+    // ★ cwm-payaudit-20261006：該月月結已經鎖定（呢筆係鎖完先掃到）→ 確認咗都唔會計入任何月結，
+    //   醫生收唔到、匯出又會因為對唔到數而停 —— 擋（跳過／取消唔影響錢，照准）
+    if (to === 'CONFIRMED') {
+      const cur = await tx.spSubsidy.findUnique({ where: { id }, select: { providerId: true, clinicId: true, periodMonth: true, lockedByRunId: true } })
+      if (cur?.clinicId) await lockPeriod(tx, cur.providerId, cur.clinicId, cur.periodMonth)
+      if (cur && !cur.lockedByRunId && cur.clinicId && await lockedRunFor(tx, cur.providerId, cur.clinicId, cur.periodMonth)) {
+        return { kind: 'monthLocked', periodMonth: cur.periodMonth }
+      }
+    }
     const res = await tx.spSubsidy.updateMany({
       where: { id, lockedByRunId: null, status: { not: to } },
       data: { status: to, confirmedBy: to === 'CONFIRMED' ? actorId : null },
@@ -55,7 +67,7 @@ export async function setSpStatus(id: string, to: SpStatus, actorId: string): Pr
 }
 
 export interface BulkItem { id: string; amount: number }
-export type BulkReason = 'AMOUNT_CHANGED' | 'LOCKED' | 'NOT_FOUND' | 'NOT_PENDING'
+export type BulkReason = 'AMOUNT_CHANGED' | 'LOCKED' | 'MONTH_LOCKED' | 'NOT_FOUND' | 'NOT_PENDING'
 export interface BulkResult {
   confirmed: Array<{ id: string; amount: number }>
   already: string[]
@@ -88,7 +100,18 @@ export async function bulkConfirmSp(items: BulkItem[], actorId: string): Promise
   return prisma.$transaction(async (tx: any) => {
     const out: BulkResult = { confirmed: [], already: [], rejected: [] }
     const audits: any[] = []
+    const monthLockedCache = new Map<string, boolean>()
     for (const it of items) {
+      // ★ cwm-payaudit-20261006：該月月結已鎖 → 唔確認（同單筆一樣）
+      const cur = await tx.spSubsidy.findUnique({ where: { id: it.id }, select: { providerId: true, clinicId: true, periodMonth: true, lockedByRunId: true, status: true, amount: true } })
+      if (cur && !cur.lockedByRunId && cur.status === 'PENDING' && cur.clinicId) {
+        const key = `${cur.providerId}|${cur.clinicId}|${cur.periodMonth}`
+        if (!monthLockedCache.has(key)) {
+          await lockPeriod(tx, cur.providerId, cur.clinicId, cur.periodMonth)
+          monthLockedCache.set(key, !!(await lockedRunFor(tx, cur.providerId, cur.clinicId, cur.periodMonth)))
+        }
+        if (monthLockedCache.get(key)) { out.rejected.push({ id: it.id, reason: 'MONTH_LOCKED', amount: Number(cur.amount), expected: it.amount }); continue }
+      }
       const res = await tx.spSubsidy.updateMany({
         where: { id: it.id, status: 'PENDING', lockedByRunId: null, amount: money(it.amount) },
         data: { status: 'CONFIRMED', confirmedBy: actorId },
@@ -142,6 +165,7 @@ export async function bulkConfirmSp(items: BulkItem[], actorId: string): Promise
 export function spStatusResponse(r: SetStatusResult): { body: any; status: number } {
   if (r.kind === 'notfound') return { body: { error: 'Not found' }, status: 404 }
   if (r.kind === 'locked') return { body: { error: '該補貼已鎖定喺月結單中，無法修改' }, status: 409 }
+  if (r.kind === 'monthLocked') return { body: { error: `${r.periodMonth} 嘅月結已經鎖定，確認咗都唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, status: 409 }
   const s = r.row
   return {
     body: {
