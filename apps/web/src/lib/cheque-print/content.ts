@@ -1,8 +1,9 @@
 // ============================================================
 // ★ cwm-chequeprint-20261005：由收款人＋金額＋日期砌一張支票嘅內容，順手驗證塞唔塞得落
+//   v2：塞唔落就自動用細啲字距（10 → 12 → 15 cpi，只限 ESC/P）
 // ============================================================
 import { amountFigures, amountInWords, splitWords } from './words'
-import { fieldChars, type ChequeContent, type LayoutFields, type PrinterMode } from './layout'
+import { charsFit, cpiChoices, type ChequeContent, type Cpi, type LayoutFields, type PrinterMode } from './layout'
 
 export const hasNonAscii = (s: string) => /[^\x20-\x7e]/.test(s)
 
@@ -25,13 +26,29 @@ export function buildContent(input: { payee: string; amount: number | string; da
   } catch (e: any) {
     return { ok: false, error: e?.message || '金額有問題' }
   }
-  const fit = fieldChars(f, mode)
-  // 抬頭前後加 ** 防加字；塞唔落就唔加星
-  const starred = `** ${payee} **`
-  const payeeText = starred.length <= fit.payee ? starred : payee
-  if (!hasNonAscii(payee) && payeeText.length > fit.payee) return { ok: false, error: `抬頭太長（${payee.length} 字，最多 ${fit.payee}）` }
-  if (figures.length > fit.amount) return { ok: false, error: '金額數字塞唔落金額格' }
-  const lines = splitWords(words, fit.words1, fit.words2)
-  if (!lines) return { ok: false, error: '英文大寫兩行都塞唔落，請喺版面設定調闊或者改細字（12 cpi）' }
-  return { ok: true, content: { date: input.date, payee: payeeText, words: lines, figures } }
+
+  // 抬頭：前後加 ** 防加字；中文用點陣（闊度由瀏覽器量，呢度唔驗）
+  let payeeText: string | null = null
+  let payeeCpi: Cpi = f.payee.cpi
+  if (hasNonAscii(payee)) {
+    payeeText = `** ${payee} **`
+  } else {
+    outer: for (const text of [`** ${payee} **`, payee]) {
+      for (const c of cpiChoices(f.payee.cpi, mode)) {
+        if (text.length <= charsFit(f.payee.width, c)) { payeeText = text; payeeCpi = c; break outer }
+      }
+    }
+    if (!payeeText) return { ok: false, error: `抬頭太長（${payee.length} 字），請喺版面調闊抬頭欄` }
+  }
+
+  let amountCpi: Cpi | null = null
+  for (const c of cpiChoices(f.amount.cpi, mode)) if (figures.length <= charsFit(f.amount.width, c)) { amountCpi = c; break }
+  if (!amountCpi) return { ok: false, error: '金額數字塞唔落金額格' }
+
+  // 大寫兩行用同一個字距
+  for (const c of cpiChoices(f.words1.cpi, mode)) {
+    const lines = splitWords(words, charsFit(f.words1.width, c), charsFit(f.words2.width, c))
+    if (lines) return { ok: true, content: { date: input.date, payee: payeeText, words: lines, figures, cpi: { payee: payeeCpi, words: c, amount: amountCpi } } }
+  }
+  return { ok: false, error: '英文大寫兩行都塞唔落，請喺版面調闊大寫欄' }
 }

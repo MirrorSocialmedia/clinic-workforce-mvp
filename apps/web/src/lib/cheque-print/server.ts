@@ -8,7 +8,7 @@
 // ============================================================
 import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hk-date'
-import { HSBC_DEFAULT_FIELDS, normalizeFields, type LayoutFields, type PrinterMode } from './layout'
+import { HSBC_DEFAULT_FIELDS, HSBC_DEFAULT_OFFSET, normalizeFields, type LayoutFields, type PrinterMode } from './layout'
 import { cleanPayee } from './content'
 
 export type SourceType = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT'
@@ -23,18 +23,33 @@ export function formatNo(n: number, width: number): string {
 
 export interface LayoutDTO { id: string; name: string; fields: LayoutFields; offsetXmm: number; offsetYmm: number; printerMode: PrinterMode }
 
-/** 冇版面就開一個「匯豐商業支票」預設 */
+/**
+ * 冇版面就開一個「匯豐商業支票」預設。
+ * 舊版（v1：估算 180×88mm、日期一組）自動換做 v2 預設（按實物支票量度）＋打印機起點偏移；
+ * 打印機模式保留。
+ */
 export async function listLayouts(): Promise<LayoutDTO[]> {
   let rows = await prisma.chequeLayout.findMany({ orderBy: { createdAt: 'asc' } })
   if (rows.length === 0) {
-    await prisma.chequeLayout.create({ data: { name: '匯豐商業支票', fieldsJson: JSON.stringify(HSBC_DEFAULT_FIELDS) } })
+    await prisma.chequeLayout.create({
+      data: { name: '匯豐商業支票', fieldsJson: JSON.stringify(HSBC_DEFAULT_FIELDS), offsetXmm: HSBC_DEFAULT_OFFSET.x, offsetYmm: HSBC_DEFAULT_OFFSET.y },
+    })
     rows = await prisma.chequeLayout.findMany({ orderBy: { createdAt: 'asc' } })
   }
-  return rows.map(r => {
-    let fields = HSBC_DEFAULT_FIELDS
-    try { fields = normalizeFields(JSON.parse(r.fieldsJson)) } catch { /* 壞咗用預設 */ }
-    return { id: r.id, name: r.name, fields, offsetXmm: r.offsetXmm, offsetYmm: r.offsetYmm, printerMode: r.printerMode === 'TEXT' ? 'TEXT' : 'ESCP' }
-  })
+  const out: LayoutDTO[] = []
+  for (const r of rows) {
+    let fields: LayoutFields | null = null
+    try { fields = normalizeFields(JSON.parse(r.fieldsJson)) } catch { /* 壞咗當舊版 */ }
+    let { offsetXmm, offsetYmm } = r
+    if (!fields) {
+      fields = HSBC_DEFAULT_FIELDS
+      offsetXmm = HSBC_DEFAULT_OFFSET.x
+      offsetYmm = HSBC_DEFAULT_OFFSET.y
+      await prisma.chequeLayout.update({ where: { id: r.id }, data: { fieldsJson: JSON.stringify(fields), offsetXmm, offsetYmm } })
+    }
+    out.push({ id: r.id, name: r.name, fields, offsetXmm, offsetYmm, printerMode: r.printerMode === 'TEXT' ? 'TEXT' : 'ESCP' })
+  }
+  return out
 }
 
 export interface CenterRow {

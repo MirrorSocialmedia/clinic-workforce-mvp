@@ -381,7 +381,7 @@ function PrintSession({ rows, layout, accountId, accountLabel, month, chequeDate
                 <div className="text-3xl font-bold font-mono my-1">#{phase.cheque.chequeNo}</div>
                 <div>{phase.content.payee} · <span className="font-mono">HK${money(phase.row.amount)}</span></div>
               </div>
-              <ChequePreview fields={layout.fields} items={layoutItems(layout.fields, phase.content, off, layout.printerMode)} mode={layout.printerMode} offset={off} width={680} />
+              <ChequePreview fields={layout.fields} items={layoutItems(layout.fields, phase.content, { x: 0, y: 0 }, layout.printerMode)} mode={layout.printerMode} width={680} />
               <div className="text-sm font-semibold">印好之後，#{phase.cheque.chequeNo} 印成點？</div>
               <div className="flex gap-3">
                 <button type="button" disabled={busy} onClick={good} className="flex-1 h-12 rounded-lg bg-green-700 text-white font-bold disabled:opacity-50">印得好，{queue.length ? '下一張' : '完成'}</button>
