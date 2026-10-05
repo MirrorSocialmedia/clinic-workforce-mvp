@@ -156,6 +156,7 @@ jobs:
             src/lib/provider-label.test.ts \
             src/lib/cheque-print/words.test.ts \
             src/lib/cheque-print/encode.test.ts \
+            src/lib/payout/cost-detail.test.ts \
             src/lib/payroll-engine.bonus-makeup.test.ts \
             src/lib/payroll-engine.bonus-rules.test.ts \
             src/lib/payroll-engine.hourly-eowage.test.ts \
