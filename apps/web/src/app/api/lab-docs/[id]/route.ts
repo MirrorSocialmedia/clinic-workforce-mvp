@@ -150,3 +150,82 @@ export async function GET(
     groupCount: doc.lines.reduce((m, l) => Math.max(m, l.groupIndex + 1), 0),
   })
 }
+
+// ★ cwm-labdoc P2 §7.10：DELETE /api/lab-docs/:id — 作廢 invoice
+// 冇 MATCHED 行先得（有要先解除配對）；要原因（≤200 字）；status = VOID；
+// 原檔保留（purge 係月度 job 嘅事）；docNo 可以再用（重複檢查排除 VOID）；audit LAB_DOC_VOID。
+// 權限：lab_invoice（§10.2；角色白名單 OWNER/MANAGER）
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  const { id } = params
+  if (!DOC_ID_RE.test(id)) {
+    return NextResponse.json({ error: '單據 ID 格式錯誤' }, { status: 400 })
+  }
+
+  const auth = await requireAuth(req, 'DELETE', req.url)
+  if (isAuthError(auth)) return auth.error
+  const { session, perms } = auth
+
+  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  if (scope !== null && scope.length === 0) {
+    return NextResponse.json({ error: '冇任何診所範圍，唔可以作廢單據' }, { status: 403 })
+  }
+
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    body = {}
+  }
+  const reason: unknown = typeof body === 'object' && body !== null ? body.reason : undefined
+  if (typeof reason !== 'string' || reason.trim().length === 0 || reason.trim().length > 200) {
+    return NextResponse.json({ error: 'reason 必填（1–200 字）' }, { status: 400 })
+  }
+
+  const doc = await prisma.labDocument.findUnique({ where: { id } })
+  if (!doc || doc.id !== id) return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
+  if (scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
+    return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
+  }
+  if (doc.kind !== 'INVOICE') {
+    return NextResponse.json({ error: '月結單作廢屬 P3 範圍' }, { status: 400 })
+  }
+  if (doc.status === 'VOID') {
+    return NextResponse.json({ error: '單據已經作廢咗' }, { status: 400 })
+  }
+
+  const matched = await prisma.labDocumentLine.count({ where: { documentId: id, status: 'MATCHED' } })
+  if (matched > 0) {
+    return NextResponse.json({ error: `呢張單仲有 ${matched} 條已配對行 — 要先解除配對（或作廢成本）先可以作廢` }, { status: 409 })
+  }
+
+  const updated = await prisma.$transaction(async (tx: any) => {
+    const r = await tx.labDocument.update({
+      where: { id },
+      data: {
+        status: 'VOID',
+        voidReason: reason.trim(),
+        voidedBy: session.userId,
+        voidedAt: new Date(),
+        version: { increment: 1 },
+      },
+    })
+    await tx.auditLog.create({
+      data: {
+        actorId: session.userId,
+        action: 'LAB_DOC_VOID',
+        entity: 'LabDocument',
+        entityId: id,
+        clinicId: doc.clinicId,
+        beforeJson: JSON.stringify({ status: doc.status, docNo: doc.docNo }),
+        afterJson: JSON.stringify({ status: 'VOID', voidReason: reason.trim() }),
+        notes: `作廢單據 ${doc.docNo ?? '(no docNo)'}`,
+      },
+    })
+    return r
+  })
+
+  return jsonNoStore({ document: { id: updated.id, status: updated.status, version: updated.version } })
+}
