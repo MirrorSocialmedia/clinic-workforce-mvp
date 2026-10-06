@@ -33,6 +33,7 @@ const COST_LOCKED_EQ = 'e2'.padEnd(25, '0')
 const LAB_A = 'g'.repeat(25)
 const LAB_B = 'h'.repeat(25)
 const CLINIC_A = 'k'.repeat(25)
+const CLINIC_B = 'j'.repeat(25)
 
 function tokenFor(userId: string, role: string, grant: string[] = []): string {
   return jwt.sign({ userId, role, clinics: [], tokenVersion: 0 }, CONFIG.JWT_SECRET, { expiresIn: '1h' })
@@ -46,7 +47,7 @@ function makeReq(url: string, method: string, tok: string | null, body?: unknown
 }
 
 import { prisma } from '../prisma'
-import { csvGuardCell, csvRow, monthRange, visibleCategories } from './pending'
+import { csvGuardCell, csvRow, monthRange, visibleCategories, nextMonthStr, intersectNotOnStatement } from './pending'
 import { GET as pendingGET } from '../../app/api/lab-docs/pending/route'
 import { POST as reviewAmountPOST } from '../../app/api/lab-docs/[id]/review-amount/route'
 import { POST as payeePOST } from '../../app/api/lab-docs/[id]/payee/route'
@@ -72,6 +73,38 @@ test('csvGuardCell：普通值原樣；逗號／引號／換行 → 引號包埋
   assert.strictEqual(csvGuardCell(undefined), '')
 })
 
+// ─── ★ P3 pure：nextMonthStr / intersectNotOnStatement ────────────────
+
+test('nextMonthStr：月份進位', () => {
+  assert.strictEqual(nextMonthStr('2026-09'), '2026-10')
+  assert.strictEqual(nextMonthStr('2026-12'), '2027-01')
+  assert.strictEqual(nextMonthStr('2026-01'), '2026-02')
+  assert.strictEqual(nextMonthStr('2026-9'), null)
+  assert.strictEqual(nextMonthStr('bogus'), null)
+})
+
+test('intersectNotOnStatement：M∩M+1（docId key）＋過濾', () => {
+  const mk = (docId: string, over: Record<string, unknown> = {}): any => ({
+    docId, docNo: docId.toUpperCase(), docDate: '2026-09-05', total: 100, clinicId: CLINIC_A, providerId: null, labId: LAB_A, labName: '禾呈', ...over,
+  })
+  const byMonth = new Map<string, any[]>([
+    ['2026-09', [mk('a'.repeat(25)), mk('b'.repeat(25)), mk('c'.repeat(25), { clinicId: CLINIC_B })]],
+    ['2026-10', [mk('a'.repeat(25)), mk('c'.repeat(25), { clinicId: CLINIC_B })]],
+    ['2026-11', [mk('d'.repeat(25))]], // 冇 2026-12 → 唔計
+  ])
+  const items = intersectNotOnStatement(byMonth)
+  assert.strictEqual(items.length, 2, 'a 同 c 交（d 冇 M+1）')
+  assert.ok(items.every((i) => i.refType === 'DOC'))
+  // month 參數：只計 M=2026-09
+  assert.strictEqual(intersectNotOnStatement(byMonth, { month: '2026-09' }).length, 2)
+  assert.strictEqual(intersectNotOnStatement(byMonth, { month: '2026-11' }).length, 0)
+  // clinic 過濾
+  assert.strictEqual(intersectNotOnStatement(byMonth, { clinicId: CLINIC_B }).length, 1)
+  // scope 收窄
+  assert.strictEqual(intersectNotOnStatement(byMonth, { scope: [CLINIC_B] }).length, 1)
+  assert.strictEqual(intersectNotOnStatement(byMonth, { scope: [CLINIC_A] }).length, 1)
+})
+
 test('csvRow：全欄經 csvGuardCell', () => {
   assert.strictEqual(csvRow(['a', '=x', null, 'q"z']), 'a,\'=x,,"q""z"')
 })
@@ -89,9 +122,9 @@ test('monthRange：YYYY-MM → [月初, 下月初) UTC；格式錯 → null', ()
 
 test('visibleCategories：按類別權限過濾', () => {
   assert.deepStrictEqual(visibleCategories(['lab_invoice']).sort(), [
-    'EXTRACT_FAILED', 'LOCKED_ADJUST', 'NOT_RECEIVED', 'RECEIVED_NO_INVOICE', 'UNMATCHED_LINE',
+    'EXTRACT_FAILED', 'LOCKED_ADJUST', 'MISSING_IN_SYSTEM', 'NOT_RECEIVED', 'RECEIVED_NO_INVOICE', 'UNMATCHED_LINE',
   ])
-  assert.deepStrictEqual(visibleCategories(['lab_statement']).sort(), ['AMOUNT_REVIEW', 'NEW_PAYEE'])
+  assert.deepStrictEqual(visibleCategories(['lab_statement']).sort(), ['AMOUNT_REVIEW', 'NEW_PAYEE', 'NOT_ON_STATEMENT', 'STATEMENT_DIFF'])
   assert.deepStrictEqual(visibleCategories(['provider_payout']), ['LOCKED_ADJUST'])
   assert.strictEqual(visibleCategories([]).length, 0)
 })
@@ -102,6 +135,8 @@ interface GetState {
   unmatchLines: any[]
   costs: any[]
   docs: any[]
+  /** ★ P3：月結單行（STATEMENT_DIFF／MISSING_IN_SYSTEM） */
+  stmtLines?: any[]
 }
 
 function mkCost(over: Record<string, unknown> = {}): any {
@@ -160,6 +195,11 @@ function matchDoc(d: any, where: any): boolean {
   if (where.manualAmountEdit !== undefined && d.manualAmountEdit !== where.manualAmountEdit) return false
   if (where.amountReviewedAt === null && d.amountReviewedAt !== null) return false
   if (where.payeeIsNew !== undefined && d.payeeIsNew !== where.payeeIsNew) return false
+  if (where.statementMonth !== undefined) {
+    if (where.statementMonth.in && !where.statementMonth.in.includes(d.statementMonth)) return false
+    if (where.statementMonth.gte && !(d.statementMonth && d.statementMonth >= where.statementMonth.gte)) return false
+    if (typeof where.statementMonth === 'string' && d.statementMonth !== where.statementMonth) return false
+  }
   return true
 }
 
@@ -181,8 +221,35 @@ function makeGetFake(state: GetState, users: any[] = []) {
       count: async ({ where }: any) => state.costs.filter((c) => matchCost(c, where)).length,
     },
     labDocument: {
-      findMany: async ({ where, take }: any) => state.docs.filter((d) => matchDoc(d, where)).slice(0, take ?? 500),
+      findMany: async ({ where, take }: any) =>
+        state.docs.filter((d) => matchDoc(d, where)).map((d) => ({ ...d, sections: d.sections ?? [] })).slice(0, take ?? 500),
       count: async ({ where }: any) => state.docs.filter((d) => matchDoc(d, where)).length,
+    },
+    // ★ P3：月結單行 fake（按 where.OR／單 where 過濾 result＋resolution＋followUpClosedAt）
+    labStatementLine: {
+      findMany: async ({ where, take }: any) => {
+        const matchCond = (l: any, c: any): boolean => {
+          let ok = true
+          if (c.result?.in) ok = ok && c.result.in.includes(l.result)
+          else if (c.result !== undefined) ok = ok && l.result === c.result
+          if (c.resolution !== undefined) ok = ok && (l.resolution ?? null) === c.resolution
+          if (c.followUpClosedAt !== undefined) ok = ok && (l.followUpClosedAt ?? null) === c.followUpClosedAt
+          return ok
+        }
+        const rows = (state.stmtLines ?? []).filter((l) => (where?.OR ? where.OR.some((c: any) => matchCond(l, c)) : matchCond(l, where ?? {})))
+        return rows.slice(0, take ?? 100)
+      },
+      count: async ({ where }: any) => {
+        const matchCond = (l: any, c: any): boolean => {
+          let ok = true
+          if (c.result?.in) ok = ok && c.result.in.includes(l.result)
+          else if (c.result !== undefined) ok = ok && l.result === c.result
+          if (c.resolution !== undefined) ok = ok && (l.resolution ?? null) === c.resolution
+          if (c.followUpClosedAt !== undefined) ok = ok && (l.followUpClosedAt ?? null) === c.followUpClosedAt
+          return ok
+        }
+        return (state.stmtLines ?? []).filter((l) => (where?.OR ? where.OR.some((c: any) => matchCond(l, c)) : matchCond(l, where ?? {}))).length
+      },
     },
   }
 }
@@ -200,7 +267,7 @@ const EMP_INV_USER = {
 let savedPrisma: Record<string, any> = {}
 
 before(() => {
-  for (const k of ['user', 'labDocumentLine', 'costCase', 'labDocument', 'labAlias', 'auditLog']) {
+  for (const k of ['user', 'labDocumentLine', 'costCase', 'labDocument', 'labStatementLine', 'labAlias', 'auditLog']) {
     savedPrisma[k] = (prisma as any)[k]
   }
 })
@@ -220,6 +287,7 @@ function installGetFake(state: GetState, users: any[] = [OWNER_USER]) {
   Object.defineProperty(prisma, 'labDocumentLine', { value: makeGetFake(state).labDocumentLine, configurable: true, writable: true })
   Object.defineProperty(prisma, 'costCase', { value: makeGetFake(state).costCase, configurable: true, writable: true })
   Object.defineProperty(prisma, 'labDocument', { value: makeGetFake(state).labDocument, configurable: true, writable: true })
+  Object.defineProperty(prisma, 'labStatementLine', { value: makeGetFake(state).labStatementLine, configurable: true, writable: true })
 }
 
 // ─── GET /api/lab-docs/pending ──────────────────────────────────────
@@ -292,7 +360,7 @@ test('GET pending（OWNER）：7 類別 badge＋items；LOCKED_ADJUST 只計 lin
   const res = await pendingGET(makeReq('http://x/api/lab-docs/pending', 'GET', tokenFor(OWNER, 'OWNER')))
   assert.strictEqual(res.status, 200)
   const body: any = await res.json()
-  assert.strictEqual(body.categories.length, 7)
+  assert.strictEqual(body.categories.length, 10)
   const byKey = Object.fromEntries(body.categories.map((c: any) => [c.key, c]))
   assert.strictEqual(byKey.UNMATCHED_LINE.count, 1, '只有 5 日嗰行')
   assert.strictEqual(byKey.UNMATCHED_LINE.items[0].id, LINE_A)
@@ -308,6 +376,72 @@ test('GET pending（OWNER）：7 類別 badge＋items；LOCKED_ADJUST 只計 lin
   assert.strictEqual(byKey.NEW_PAYEE.items[0].extra, "HONESTY GIFTS INT'L LIMITED")
   assert.strictEqual(byKey.EXTRACT_FAILED.count, 1)
   assert.strictEqual(body.total, 7)
+})
+
+test('GET pending（P3 三類）：STATEMENT_DIFF／MISSING_IN_SYSTEM／NOT_ON_STATEMENT', async () => {
+  const SID = 's'.repeat(25)
+  const STMT_DOC_1 = 'm'.repeat(25)
+  const STMT_DOC_2 = 'n'.repeat(25)
+  const SYS_INV_1 = 'q'.repeat(25)
+  const SYS_INV_2 = 'w'.repeat(25)
+  const state: GetState = {
+    unmatchLines: [],
+    costs: [],
+    stmtLines: [
+      { id: 'sd1'.padEnd(25, '0'), docNo: 'INV-9', date: new Date('2026-09-15T00:00:00Z'), amount: 250, description: '全鋯', result: 'AMOUNT_DIFF', resolution: null, patientCode: null, section: { document: { id: STMT_DOC_1, statementMonth: '2026-09', updatedAt: new Date(), clinicId: CLINIC_A, providerId: null, lab: { name: '禾呈' } } } },
+      { id: 'sd2'.padEnd(25, '0'), docNo: 'INV-10', date: new Date('2026-09-16T00:00:00Z'), amount: 100, description: '根管', result: 'MATCHED', resolution: 'INVOICE_WINS', patientCode: null, section: { document: { id: STMT_DOC_1, statementMonth: '2026-09', updatedAt: new Date(), clinicId: CLINIC_A, providerId: null, lab: { name: '禾呈' } } } },
+      { id: 'sd3'.padEnd(25, '0'), docNo: 'INV-11', date: new Date('2026-09-17T00:00:00Z'), amount: 80, description: '已處理', result: 'AMOUNT_DIFF', resolution: 'STATEMENT_WINS', patientCode: null, section: { document: { id: STMT_DOC_1, statementMonth: '2026-09', updatedAt: new Date(), clinicId: CLINIC_A, providerId: null, lab: { name: '禾呈' } } } },
+      { id: 'ms1'.padEnd(25, '0'), docNo: 'INV-12', date: new Date('2026-09-18T00:00:00Z'), amount: 60, description: '補牙', result: 'MISSING_IN_SYSTEM', resolution: null, patientCode: 'TW001111', section: { document: { id: STMT_DOC_1, statementMonth: '2026-09', updatedAt: new Date(), clinicId: CLINIC_A, providerId: null, lab: { name: '禾呈' } } } },
+    ],
+    docs: [
+      // M=2026-09 已確認月結單：反向有 INV-1、INV-2
+      { id: STMT_DOC_1, kind: 'STATEMENT', status: 'RECONCILED', labId: LAB_A, clinicId: CLINIC_A, providerId: null, statementMonth: '2026-09', docNo: null, docDate: null, total: null, manualAmountEdit: false, amountReviewedAt: null, payeeIsNew: false, updatedAt: new Date(), createdAt: new Date(), lab: { name: '禾呈' }, extractError: null, extractAttempts: 0,
+        sections: [{ id: SID, status: 'CONFIRMED', resultJson: { notOnStatement: [{ docId: SYS_INV_1, docNo: 'INV-1', docDate: '2026-09-05', total: 100 }, { docId: SYS_INV_2, docNo: 'INV-2', docDate: '2026-09-06', total: 200 }] }, clinicId: CLINIC_A, providerId: null, document: { labId: LAB_A, lab: { name: '禾呈' } } }] },
+      // M+1=2026-10 已確認：反向只有 INV-1（INV-2 喺 10 月單上面 → 唔計）
+      { id: STMT_DOC_2, kind: 'STATEMENT', status: 'RECONCILED', labId: LAB_A, clinicId: CLINIC_A, providerId: null, statementMonth: '2026-10', docNo: null, docDate: null, total: null, manualAmountEdit: false, amountReviewedAt: null, payeeIsNew: false, updatedAt: new Date(), createdAt: new Date(), lab: { name: '禾呈' }, extractError: null, extractAttempts: 0,
+        sections: [{ id: SID, status: 'CONFIRMED', resultJson: { notOnStatement: [{ docId: SYS_INV_1, docNo: 'INV-1', docDate: '2026-09-05', total: 100 }] }, clinicId: CLINIC_A, providerId: null, document: { labId: LAB_A, lab: { name: '禾呈' } } }] },
+    ],
+  }
+  installGetFake(state)
+
+  const res = await pendingGET(makeReq('http://x/api/lab-docs/pending', 'GET', tokenFor(OWNER, 'OWNER')))
+  assert.strictEqual(res.status, 200)
+  const body: any = await res.json()
+  const byKey = Object.fromEntries(body.categories.map((c: any) => [c.key, c]))
+  assert.strictEqual(byKey.STATEMENT_DIFF.count, 2, 'AMOUNT_DIFF 未處理 + INVOICE_WINS 跟進中（已 STATEMENT_WINS 唔計）')
+  assert.ok(byKey.STATEMENT_DIFF.items.some((i: any) => i.extra === 'INVOICE_WINS 跟進中'))
+  assert.ok(byKey.STATEMENT_DIFF.items.every((i: any) => i.docId === STMT_DOC_1))
+  assert.strictEqual(byKey.MISSING_IN_SYSTEM.count, 1)
+  assert.strictEqual(byKey.MISSING_IN_SYSTEM.items[0].patientCode, 'TW001111')
+  assert.strictEqual(byKey.NOT_ON_STATEMENT.count, 1, '只計 M∩M+1（INV-1）')
+  assert.strictEqual(byKey.NOT_ON_STATEMENT.items[0].id, SYS_INV_1)
+  assert.strictEqual(byKey.NOT_ON_STATEMENT.items[0].docNo, 'INV-1')
+  assert.ok(byKey.NOT_ON_STATEMENT.items[0].extra.includes('2026-09'))
+  assert.ok(byKey.NOT_ON_STATEMENT.items[0].extra.includes('2026-10'))
+})
+
+test('GET pending：month 參數收窄 NOT_ON_STATEMENT（M=month）＋CSV 含新類', async () => {
+  const SID = 's'.repeat(25)
+  const SYS_INV = 'q'.repeat(25)
+  const mkStmt = (month: string): any => ({
+    id: (month === '2026-09' ? 'm' : 'n').repeat(25), kind: 'STATEMENT', status: 'RECONCILED', labId: LAB_A, clinicId: CLINIC_A, providerId: null, statementMonth: month, docNo: null, docDate: null, total: null, manualAmountEdit: false, amountReviewedAt: null, payeeIsNew: false, updatedAt: new Date(), createdAt: new Date(), lab: { name: '禾呈' }, extractError: null, extractAttempts: 0,
+    sections: [{ id: SID, status: 'CONFIRMED', resultJson: { notOnStatement: [{ docId: SYS_INV, docNo: 'INV-1', docDate: '2026-09-05', total: 100 }] }, clinicId: CLINIC_A, providerId: null, document: { labId: LAB_A, lab: { name: '禾呈' } } }],
+  })
+  const state: GetState = { unmatchLines: [], costs: [], docs: [mkStmt('2026-09'), mkStmt('2026-10')] }
+  installGetFake(state)
+
+  const r1 = await pendingGET(makeReq('http://x/api/lab-docs/pending?month=2026-09', 'GET', tokenFor(OWNER, 'OWNER')))
+  const b1: any = await r1.json()
+  assert.strictEqual(b1.categories.find((c: any) => c.key === 'NOT_ON_STATEMENT').count, 1, 'M=2026-09 計')
+  const r2 = await pendingGET(makeReq('http://x/api/lab-docs/pending?month=2026-10', 'GET', tokenFor(OWNER, 'OWNER')))
+  const b2: any = await r2.json()
+  assert.strictEqual(b2.categories.find((c: any) => c.key === 'NOT_ON_STATEMENT').count, 0, 'M=2026-10 冇 M+1 → 唔計')
+
+  // CSV 含 NOT_ON_STATEMENT item（extra 以中文開頭，無注入）
+  const r3 = await pendingGET(makeReq('http://x/api/lab-docs/pending?format=csv', 'GET', tokenFor(OWNER, 'OWNER')))
+  const csv = new TextDecoder('utf-8').decode(new Uint8Array(await r3.arrayBuffer()))
+  assert.ok(csv.includes('NOT_ON_STATEMENT'))
+  assert.ok(csv.includes('INV-1'))
 })
 
 test('GET pending：category 過濾＋csv 匯出（公式注入守門）＋400 參數驗證＋401', async () => {

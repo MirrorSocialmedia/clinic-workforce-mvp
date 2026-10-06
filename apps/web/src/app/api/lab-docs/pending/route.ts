@@ -1,5 +1,6 @@
 // ★ cwm-labdoc P2 CHUNK 5：GET /api/lab-docs/pending — §9 待處理 7 類別
-// 全部係查詢（唔建表）；每類有數字 badge；P3 三類（STATEMENT_DIFF 等）唔喺呢度。
+// ★ cwm-labdoc P3：加 3 類（STATEMENT_DIFF／MISSING_IN_SYSTEM／NOT_ON_STATEMENT）
+// 全部係查詢（唔建表）；每類有數字 badge。
 // 權限：route 層 = lab_invoice 或 lab_statement（RBAC matrix + perm override 雙登記）；
 //   類別級：按 PENDING_CATEGORY_PERMS 過濾（LOCKED_ADJUST = lab_invoice 或 provider_payout）。
 // scope：resolveClinicScope companyWide（B16）— 有 lab 權限 = 全集團；
@@ -16,9 +17,12 @@ import { jsonNoStore } from '@/lib/api-response'
 import {
   PENDING_CATEGORIES,
   PENDING_CATEGORY_PERMS,
+  type NotOnStatementEntry,
   type PendingCategory,
   type PendingItem,
   monthRange,
+  nextMonthStr,
+  intersectNotOnStatement,
   visibleCategories,
   csvRow,
 } from '@/lib/labdoc/pending'
@@ -80,6 +84,15 @@ async function main(req: NextRequest): Promise<NextResponse> {
     w.clinicId = clinicId ?? (scope !== null ? { in: scope } : undefined)
     if (providerId) w.providerId = providerId
     if (mRange) w.docDate = { gte: mRange.gte, lt: mRange.lt }
+    return w
+  }
+  // ★ P3：月結單 doc where（month 參數 → statementMonth）
+  const stmtWhere = (): Record<string, unknown> => {
+    const w: Record<string, unknown> = { kind: 'STATEMENT', status: { notIn: ['VOID', 'SUPERSEDED'] } }
+    if (labId) w.labId = labId
+    w.clinicId = clinicId ?? (scope !== null ? { in: scope } : undefined)
+    if (providerId) w.providerId = providerId
+    if (month) w.statementMonth = month
     return w
   }
   // 共同 cost where
@@ -361,6 +374,151 @@ async function main(req: NextRequest): Promise<NextResponse> {
         extra: r.extractError ? `${r.extractError}（attempts=${r.extractAttempts}）` : `attempts=${r.extractAttempts}`,
       })),
     })
+  }
+
+  // ── ★ P3 STATEMENT_DIFF：月結單行 *_DIFF／NEEDS_MANUAL 未處理；或 INVOICE_WINS 未跟進完成 ──
+  {
+    const where = {
+      OR: [
+        { result: { in: ['QTY_DIFF', 'PRICE_DIFF', 'AMOUNT_DIFF', 'NEEDS_MANUAL'] }, resolution: null },
+        { resolution: 'INVOICE_WINS', followUpClosedAt: null },
+      ],
+      section: { document: stmtWhere() },
+    }
+    const rows = await prisma.labStatementLine.findMany({
+      where,
+      select: {
+        id: true,
+        docNo: true,
+        date: true,
+        amount: true,
+        description: true,
+        result: true,
+        resolution: true,
+        patientCode: true,
+        section: {
+          select: { document: { select: { id: true, statementMonth: true, updatedAt: true, clinicId: true, providerId: true, ...labSel } } },
+        },
+      },
+      orderBy: { section: { document: { updatedAt: 'asc' } } },
+      take: limit,
+    })
+    const count = await prisma.labStatementLine.count({ where })
+    results.set('STATEMENT_DIFF', {
+      count,
+      items: rows.map((r) => ({
+        id: r.id,
+        refType: 'LINE' as const,
+        docId: r.section.document.id,
+        labName: r.section.document.lab?.name ?? null,
+        clinicId: r.section.document.clinicId,
+        providerId: r.section.document.providerId,
+        docNo: r.docNo,
+        date: toDayStr(r.date),
+        amount: Number(r.amount),
+        patientCode: r.patientCode,
+        days: daysBetween(now, r.section.document.updatedAt),
+        extra: r.resolution === 'INVOICE_WINS' ? 'INVOICE_WINS 跟進中' : `${r.result}${r.description ? `｜${r.description}` : ''}`,
+      })),
+    })
+  }
+
+  // ── ★ P3 MISSING_IN_SYSTEM：月結單行 MISSING_IN_SYSTEM 未有 resolution（補上傳）──
+  {
+    const where = {
+      result: 'MISSING_IN_SYSTEM',
+      resolution: null,
+      section: { document: stmtWhere() },
+    }
+    const rows = await prisma.labStatementLine.findMany({
+      where,
+      select: {
+        id: true,
+        docNo: true,
+        date: true,
+        amount: true,
+        description: true,
+        patientCode: true,
+        section: { select: { document: { select: { id: true, updatedAt: true, clinicId: true, providerId: true, ...labSel } } } },
+      },
+      orderBy: { section: { document: { updatedAt: 'asc' } } },
+      take: limit,
+    })
+    const count = await prisma.labStatementLine.count({ where })
+    results.set('MISSING_IN_SYSTEM', {
+      count,
+      items: rows.map((r) => ({
+        id: r.id,
+        refType: 'LINE' as const,
+        docId: r.section.document.id,
+        labName: r.section.document.lab?.name ?? null,
+        clinicId: r.section.document.clinicId,
+        providerId: r.section.document.providerId,
+        docNo: r.docNo,
+        date: toDayStr(r.date),
+        amount: Number(r.amount),
+        patientCode: r.patientCode,
+        days: daysBetween(now, r.section.document.updatedAt),
+        extra: r.description ?? null,
+      })),
+    })
+  }
+
+  // ── ★ P3 NOT_ON_STATEMENT：§8.2 反向，M 同 M+1 都確認咗仍然冇 ──
+  {
+    const monthWhere: Record<string, unknown> = {}
+    if (month) {
+      const nx = nextMonthStr(month)
+      monthWhere.statementMonth = nx ? { in: [month, nx] } : month
+    } else {
+      // badge 口徑：近 24 個月
+      const idx = now.getUTCFullYear() * 12 + now.getUTCMonth() - 24 // month = 0-based → 減 24 個月
+      const by = Math.floor(idx / 12)
+      const bmo = (idx % 12) + 1
+      monthWhere.statementMonth = { gte: `${by}-${String(bmo).padStart(2, '0')}` }
+    }
+    const stmtDocs = await prisma.labDocument.findMany({
+      where: { kind: 'STATEMENT', status: 'RECONCILED', ...monthWhere },
+      select: {
+        statementMonth: true,
+        sections: {
+          where: { status: 'CONFIRMED' },
+          select: {
+            resultJson: true,
+            clinicId: true,
+            providerId: true,
+            document: { select: { labId: true, lab: { select: { name: true } } } },
+          },
+        },
+      },
+      orderBy: { statementMonth: 'asc' },
+    })
+    const byMonth = new Map<string, NotOnStatementEntry[]>()
+    for (const d of stmtDocs) {
+      if (!d.statementMonth) continue
+      const arr = byMonth.get(d.statementMonth) ?? []
+      for (const s of d.sections) {
+        const nj = (s.resultJson ?? null) as any
+        const nos = Array.isArray(nj?.notOnStatement) ? nj.notOnStatement : []
+        for (const e of nos) {
+          if (e && typeof e.docId === 'string') {
+            arr.push({
+              docId: e.docId,
+              docNo: typeof e.docNo === 'string' ? e.docNo : null,
+              docDate: typeof e.docDate === 'string' ? e.docDate : null,
+              total: e.total == null ? null : Number(e.total),
+              clinicId: s.clinicId,
+              providerId: s.providerId,
+              labId: s.document.labId,
+              labName: s.document.lab?.name ?? null,
+            })
+          }
+        }
+      }
+      byMonth.set(d.statementMonth, arr)
+    }
+    const items = intersectNotOnStatement(byMonth, { month, labId, clinicId, providerId, scope })
+    results.set('NOT_ON_STATEMENT', { count: items.length, items: items.slice(0, limit) })
   }
 
   // ── 按權限過濾 + 收縮 ────────────────────────────────────

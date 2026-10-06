@@ -30,6 +30,9 @@ export type PendingCategory =
   | 'AMOUNT_REVIEW'
   | 'NEW_PAYEE'
   | 'EXTRACT_FAILED'
+  | 'STATEMENT_DIFF'
+  | 'MISSING_IN_SYSTEM'
+  | 'NOT_ON_STATEMENT'
 
 /** 持有其中一個權限就見到呢類（OWNER 有全部權限 — 由 perms 計算自然覆蓋）。 */
 export const PENDING_CATEGORY_PERMS: Record<PendingCategory, string[]> = {
@@ -41,6 +44,10 @@ export const PENDING_CATEGORY_PERMS: Record<PendingCategory, string[]> = {
   AMOUNT_REVIEW: ['lab_statement'],
   NEW_PAYEE: ['lab_statement'],
   EXTRACT_FAILED: ['lab_invoice'],
+  // ★ P3 §9 三類
+  STATEMENT_DIFF: ['lab_statement'],
+  MISSING_IN_SYSTEM: ['lab_invoice'],
+  NOT_ON_STATEMENT: ['lab_statement'],
 }
 
 export const PENDING_CATEGORIES: PendingCategory[] = [
@@ -51,6 +58,9 @@ export const PENDING_CATEGORIES: PendingCategory[] = [
   'AMOUNT_REVIEW',
   'NEW_PAYEE',
   'EXTRACT_FAILED',
+  'STATEMENT_DIFF',
+  'MISSING_IN_SYSTEM',
+  'NOT_ON_STATEMENT',
 ]
 
 export const PENDING_CATEGORY_LABELS: Record<PendingCategory, string> = {
@@ -61,6 +71,9 @@ export const PENDING_CATEGORY_LABELS: Record<PendingCategory, string> = {
   AMOUNT_REVIEW: '人手改數待覆核',
   NEW_PAYEE: '新收款人',
   EXTRACT_FAILED: '讀單失敗',
+  STATEMENT_DIFF: '月結單差異未處理',
+  MISSING_IN_SYSTEM: '系統未有單',
+  NOT_ON_STATEMENT: '月結單未有',
 }
 
 /** 單一 item 形狀（所有類別共用 — UI／CSV 簡單）。 */
@@ -99,6 +112,85 @@ export function monthRange(month: string): { gte: Date; lt: Date } | null {
   const gte = new Date(Date.UTC(y, mo - 1, 1))
   const lt = new Date(Date.UTC(y, mo, 1))
   return { gte, lt }
+}
+
+// ------------------------------------------------------------------
+// ★ P3：NOT_ON_STATEMENT（§8.2 反向）— M 同 M+1 都確認咗仍然冇
+// ------------------------------------------------------------------
+
+/** resultJson.notOnStatement 元素（CHUNK 3 快照形狀）。 */
+export interface NotOnStatementEntry {
+  docId: string
+  docNo: string | null
+  docDate: string | null
+  total: number | null
+  clinicId: string | null
+  providerId: string | null
+  labId: string | null
+  labName: string | null
+}
+
+/** 'YYYY-MM' → 下月 'YYYY-MM'；格式錯 → null。 */
+export function nextMonthStr(month: string): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(month)
+  if (!m) return null
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  if (mo < 1 || mo > 12) return null
+  return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`
+}
+
+export interface NotOnStatementFilter {
+  month?: string
+  labId?: string
+  clinicId?: string
+  providerId?: string
+  /** 診所 scope（收窄時）— null/undefined = 全集團 */
+  scope?: string[] | null
+}
+
+/**
+ * M ∩ M+1（按 docId）：系統 invoice 喺 M 月同 M+1 月兩份已確認月結單嘅反向清單都出現
+ * → 真係月結單冇（「睇單、同 Lab 跟進」）。純函數 — byMonth 由 route 從 RECONCILED
+ * 文件 CONFIRMED 分段嘅 resultJson.notOnStatement 撈。
+ */
+export function intersectNotOnStatement(
+  byMonth: Map<string, NotOnStatementEntry[]>,
+  f: NotOnStatementFilter = {},
+): PendingItem[] {
+  const items: PendingItem[] = []
+  for (const [m, arr] of byMonth) {
+    if (f.month && m !== f.month) continue
+    const next = nextMonthStr(m)
+    if (!next) continue
+    const nextArr = byMonth.get(next)
+    if (!nextArr) continue
+    const nextIds = new Set(nextArr.map((x) => x.docId))
+    const seen = new Set<string>()
+    for (const e of arr) {
+      if (!e.docId || seen.has(e.docId) || !nextIds.has(e.docId)) continue
+      if (f.labId && e.labId !== f.labId) continue
+      if (f.clinicId && e.clinicId !== f.clinicId) continue
+      if (f.providerId && e.providerId !== f.providerId) continue
+      if (f.scope && (!e.clinicId || !f.scope.includes(e.clinicId))) continue
+      seen.add(e.docId)
+      items.push({
+        id: e.docId,
+        refType: 'DOC',
+        docId: e.docId,
+        labName: e.labName,
+        clinicId: e.clinicId,
+        providerId: e.providerId,
+        docNo: e.docNo,
+        date: e.docDate,
+        amount: e.total,
+        patientCode: null,
+        days: null,
+        extra: `${m} 同 ${next} 兩份月結單都確認咗，仍然冇`,
+      })
+    }
+  }
+  return items.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
 }
 
 // ------------------------------------------------------------------
