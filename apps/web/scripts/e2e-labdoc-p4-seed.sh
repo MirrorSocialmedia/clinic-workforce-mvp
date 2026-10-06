@@ -75,6 +75,10 @@ SOD08LN7='e2ep4sod08stml70000000000'
 COST='e2ep4costcase100000000000'
 DISC='e2ep4disc0100000000000000'
 
+# contract-lock extractionHint（P3 seed:39 逐字，494 字 ≤ 500 硬限 — route HINT_MAX / prompt cap）
+# P3 17:00 E2E2 34/34 綠 = 「有契約鎖 + 真 pipeline」證據；Qwen3.8-27B-FP8 無 hint 必漂移（P4 run1/3 實測）
+CONTRACT_HINT='所有key必現(冇值填null,禁省略); lineType正常行=INVOICE; 欄名逐字: kind, lab{nameRaw,nameCnRaw,payeeRaw}, billTo{nameRaw,addressRaw,customerNoRaw,shortCodeRaw,doctorRaw}, docNoRaw, docNoLabel, dateRaw, date, deliveryDate, orderReceivedDate, statementMonth, sections[{clinicRaw,doctorRaw,customerNoRaw,addressRaw,pageFrom,pageTo,total,currentTotal,lines[{lineType,docNoRaw,date,patientRaw,patientCodeRaw,labCaseRef,description,toothRaw,qty,unitPrice,amount,agingBucket}]}], subtotal, total, readIssues[], groups[]'
+
 # bcrypt hash（'e2e-pass'）— JWT 流程唔使登入；唔印
 BCH=$(node -e "console.log(require('bcryptjs').hashSync('e2e-pass', 10))")
 
@@ -126,10 +130,12 @@ INSERT INTO "Provider" (id, name, "isActive", "createdAt", "updatedAt") VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ── LabProfile（§12.6 三型）──────────────────────────────────────────
+-- 三間 lab 全帶 contract-lock hint：LLM 讀單時 W prompt 必收到契約（extract.ts 讀 DB → labHint → W payload）。
+-- 原 Sodental 專屬 hint「單號欄喺最左」+ 契約 = 504 字 > 500 硬限 → 按工單保留契約部分（P3 已用逐字版 34/34 綠）。
 INSERT INTO "LabProfile" ("labId", "statementKind", "statementDocNoSameAsInvoice", "defaultDocNoKind", "extractionHint", "updatedBy", "updatedAt") VALUES
- ('$LAB_SOD', 'DETAIL', true, 'INVOICE_NO', 'lineType正常行=INVOICE; 單號欄喺最左', '$OWN', now()),
- ('$LAB_EXC', 'OUTSTANDING', true, 'INVOICE_NO', NULL, '$OWN', now()),
- ('$LAB_MOD', 'INVOICE_LIST', false, 'INVOICE_NO', NULL, '$OWN', now())
+ ('$LAB_SOD', 'DETAIL', true, 'INVOICE_NO', '$CONTRACT_HINT', '$OWN', now()),
+ ('$LAB_EXC', 'OUTSTANDING', true, 'INVOICE_NO', '$CONTRACT_HINT', '$OWN', now()),
+ ('$LAB_MOD', 'INVOICE_LIST', false, 'INVOICE_NO', '$CONTRACT_HINT', '$OWN', now())
 ON CONFLICT ("labId") DO NOTHING;
 
 -- ── customer no + aliases（P4 alias API live 數據）──────────────────

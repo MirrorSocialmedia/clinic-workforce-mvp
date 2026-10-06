@@ -80,6 +80,10 @@ const COST = 'e2ep4costcase100000000000'
 const PDF_V1 = '/tmp/openclaw-e2e-sodental-statement-2026-09.pdf'
 const PDF_V2 = '/tmp/openclaw-e2e-sodental-statement-2026-09-v2.pdf'
 
+// contract-lock 契約（P3 seed:39 逐字，494 字 ≤ 500）— 必同 seed.sh CONTRACT_HINT 逐字一致
+// Qwen3.8-27B-FP8 無 hint 必漂移（bad_response）；有 hint = P3 34/34 綠通道
+const CONTRACT_HINT = '所有key必現(冇值填null,禁省略); lineType正常行=INVOICE; 欄名逐字: kind, lab{nameRaw,nameCnRaw,payeeRaw}, billTo{nameRaw,addressRaw,customerNoRaw,shortCodeRaw,doctorRaw}, docNoRaw, docNoLabel, dateRaw, date, deliveryDate, orderReceivedDate, statementMonth, sections[{clinicRaw,doctorRaw,customerNoRaw,addressRaw,pageFrom,pageTo,total,currentTotal,lines[{lineType,docNoRaw,date,patientRaw,patientCodeRaw,labCaseRef,description,toothRaw,qty,unitPrice,amount,agingBucket}]}], subtotal, total, readIssues[], groups[]'
+
 let pass = 0, fail = 0
 const log = (tag, msg) => console.log(`[${tag}] ${msg}`)
 const ok = (cond, msg) => { if (cond) { pass++; log('PASS', msg) } else { fail++; log('FAIL', msg) } }
@@ -164,11 +168,13 @@ if (doPhase('0')) {
   r = await api('PUT', `/api/lab-profiles/${LAB_SOD}`, { body: { updatedAt: t0, extractionHint: 'stale' } })
   ok(r.status === 409, `profile PUT stale lock → 409（${r.status}）`)
 
-  // 還原 hint
+  // 還原 hint → contract-lock（P3 seed:39 逐字）— LLM phase（C）讀單時 DB 必須有契約鎖
   const after = await api('GET', `/api/lab-profiles/${LAB_SOD}`)
-  await api('PUT', `/api/lab-profiles/${LAB_SOD}`, { body: { updatedAt: after.json.updatedAt, extractionHint: null, payees: ['honestygifts'] } })
+  const restoreRes = await api('PUT', `/api/lab-profiles/${LAB_SOD}`, { body: { updatedAt: after.json.updatedAt, extractionHint: CONTRACT_HINT, payees: ['honestygifts'] } })
   const restored = await api('GET', `/api/lab-profiles/${LAB_SOD}`)
-  ok(restored.json.extractionHint === null && restored.json.payees.length === 1, `profile 還原（hint=null, payees=${restored.json.payees.length}）`)
+  ok(restoreRes.status === 200 && restored.json.extractionHint === CONTRACT_HINT && restored.json.payees.length === 1,
+    `profile 還原契約鎖（hint=${(restored.json.extractionHint ?? '').length}字, payees=${restored.json.payees.length}）`)
+  ev.phases.contractLock = { afterP0: restored.json.extractionHint === CONTRACT_HINT, hintLen: (restored.json.extractionHint ?? '').length }
 
   // aliases GET
   r = await api('GET', '/api/lab-aliases')
@@ -258,6 +264,12 @@ if (doPhase('B')) {
 log('STEP', 'PC 上傳 Sodental 09 statement v1（真 LLM 讀單）…')
 let docV1 = null
 if (doPhase('C')) {
+  // 契約鎖護目鏡：LLM 讀單前 DB hint 必 = P3 逐字契約（extract.ts 讀 DB → labHint → W payload → prompt）
+  const profNow = await api('GET', `/api/lab-profiles/${LAB_SOD}`)
+  ok(profNow.json.extractionHint === CONTRACT_HINT,
+    `契約鎖就位（DB hint=${(profNow.json.extractionHint ?? '').length}字，${profNow.json.extractionHint === CONTRACT_HINT ? '= P3 契約' : '≠ 契約 — LLM 無保護'}）`)
+  ev.phases.contractLock = { ...(ev.phases.contractLock ?? {}), beforeC: profNow.json.extractionHint === CONTRACT_HINT }
+
   const up = await upload(TOKEN, PDF_V1, { kind: 'STATEMENT', labId: LAB_SOD, statementMonth: '2026-09' })
   ok(up.status === 201 || up.status === 200, `upload v1 → ${up.status} ${up.text.slice(0, 100)}`)
   docV1 = up.json?.documents?.[0]?.id ?? up.json?.id
