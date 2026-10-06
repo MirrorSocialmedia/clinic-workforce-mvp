@@ -13,7 +13,7 @@
  *
  * 錯誤回 { ok:false, code }，唔 throw（auto-trigger 可 best-effort 吞）。
  */
-import { matchSection, type MatchOutcome, type SectionCtx, type StatementLineRow, type SystemInvoice, type SystemLine } from './statement-match'
+import { matchSection, type MatchOutcome, type NotOnStatement, type SectionCtx, type StatementLineRow, type SystemInvoice, type SystemLine, type VirtualLine } from './statement-match'
 import { labdocAudit } from './audit'
 
 const SYSTEM_DOC_STATUSES = ['CONFIRMED', 'PARTIAL', 'RECONCILED']
@@ -44,7 +44,7 @@ export interface ReconcileSuccess {
   notOnStatementCount: number
 }
 
-function monthBounds(month: string): { from: Date; to: Date; lastDay: Date } {
+export function monthBounds(month: string): { from: Date; to: Date; lastDay: Date } {
   const [y, m] = month.split('-').map(Number)
   const first = new Date(Date.UTC(y, m - 1, 1))
   const lastDay = new Date(Date.UTC(y, m, 0)) // 月尾（UTC）
@@ -69,6 +69,62 @@ function lineContribution(
     return inv && inv.total !== null ? inv.total : 0
   }
   return 0
+}
+
+/**
+ * 寫入後重算 section 總數＋狀態（reconcile 同 STATEMENT_WINS 共用）：
+ * - systemTotal = 最終行狀態嘅 MATCHED/*_DIFF 貢獻
+ * - status = 冇「未解決」問題行 而且 stated = systemTotal → OK，否則 DIFF
+ * - resultJson 快照（§8.2.5）
+ * @returns null = section 已唔存在／唔屬呢個 doc
+ */
+export async function saveSectionTotals(
+  tx: any,
+  args: {
+    sectionId: string
+    documentId: string
+    /** 全數行最終狀態（含 resolution） */
+    finalLines: Array<{ result: string; matchedDocumentId: string | null; matchedLineId: string | null; resolution: string | null }>
+    systemInvoices: SystemInvoice[]
+    statedTotal: number | null
+    statedCurrent: number | null
+    /** OUTSTANDING 先使 statedCurrent，其他使 statedTotal */
+    useCurrent: boolean
+    source: string
+    virtualLines: VirtualLine[]
+    notOnStatement: NotOnStatement[]
+  },
+): Promise<{ status: 'OK' | 'DIFF'; systemTotal: number; counts: Record<string, number>; resultJson: Record<string, unknown> } | null> {
+  const invoiceById = new Map<string, SystemInvoice>(args.systemInvoices.map((s) => [s.id, s]))
+  const sysLineById = new Map<string, SystemLine>()
+  for (const s of args.systemInvoices) for (const l of s.lines) sysLineById.set(l.id, l)
+  const systemTotal = Math.round(
+    args.finalLines.reduce((sum, f) => sum + lineContribution(f, invoiceById, sysLineById), 0) * 100,
+  ) / 100
+  const unresolvedProblem = args.finalLines.some(
+    (f) => !f.resolution && l_result_isProblem(f.result),
+  )
+  const statedForCheck = args.useCurrent ? args.statedCurrent : args.statedTotal
+  const totalsOk = statedForCheck !== null && Math.abs(statedForCheck - systemTotal) <= AMT_EPS
+  const status: 'OK' | 'DIFF' = !unresolvedProblem && totalsOk ? 'OK' : 'DIFF'
+  const counts: Record<string, number> = {}
+  for (const f of args.finalLines) counts[f.result] = (counts[f.result] ?? 0) + 1
+  const resultJson: Record<string, unknown> = {
+    runAt: new Date().toISOString(),
+    source: args.source,
+    statedTotal: args.useCurrent ? args.statedCurrent : args.statedTotal,
+    statedCurrent: args.statedCurrent,
+    systemTotal,
+    totalsOk,
+    counts,
+    virtualLines: args.virtualLines,
+    notOnStatement: args.notOnStatement,
+  }
+  const upd = await tx.labStatementSection.updateMany({
+    where: { id: args.sectionId, documentId: args.documentId },
+    data: { status, systemTotal, resultJson },
+  })
+  return upd.count > 0 ? { status, systemTotal, counts, resultJson } : null
 }
 
 export async function reconcileSection(
@@ -126,9 +182,6 @@ export async function reconcileSection(
       patientCode: l.patientCode ?? null,
     })),
   }))
-  const invoiceById = new Map<string, SystemInvoice>(systemInvoices.map((s) => [s.id, s]))
-  const sysLineById = new Map<string, SystemLine>()
-  for (const s of systemInvoices) for (const l of s.lines) sysLineById.set(l.id, l)
 
   // 3. 之前已確認分段 MATCHED 過嘅單號（C 型用）
   let previouslyMatchedDocNos = new Set<string>()
@@ -171,7 +224,7 @@ export async function reconcileSection(
 
   // 5. 寫回（tx）：無 resolution 行先覆寫；已有 resolution 保留
   const result = await client.$transaction(async (tx: any) => {
-    const finalLines: Array<{ result: string; matchedDocumentId: string | null; matchedLineId: string | null }> = []
+    const finalLines: Array<{ result: string; matchedDocumentId: string | null; matchedLineId: string | null; resolution: string | null }> = []
     for (const l of section.lines) {
       const o = outcomeByLineId.get(l.id)
       if (!o) continue
@@ -185,50 +238,34 @@ export async function reconcileSection(
             matchedLineId: o.matchedLineId,
           },
         })
-        finalLines.push({ result: o.result, matchedDocumentId: o.matchedDocumentId, matchedLineId: o.matchedLineId })
+        finalLines.push({ result: o.result, matchedDocumentId: o.matchedDocumentId, matchedLineId: o.matchedLineId, resolution: null })
       } else {
         // 保留舊 matched*（DB 現值）
-        finalLines.push({ result: l.result, matchedDocumentId: l.matchedDocumentId, matchedLineId: l.matchedLineId })
+        finalLines.push({ result: l.result, matchedDocumentId: l.matchedDocumentId, matchedLineId: l.matchedLineId, resolution: l.resolution })
       }
     }
-    // 最終 systemTotal（含保留 resolution 行）
-    const systemTotal = Math.round(
-      finalLines.reduce((sum, f) => sum + lineContribution(f, invoiceById, sysLineById), 0) * 100,
-    ) / 100
-    // 最終 OK/DIFF：冇「未解決」嘅問題行 而且 stated = systemTotal
-    const unresolvedProblem = section.lines.some(
-      (l: any) =>
-        !l.resolution &&
-        l_result_isProblem(outcomeByLineId.get(l.id)?.result ?? l.result),
-    )
-    const statedForCheck = ctx.kind === 'OUTSTANDING'
-      ? (section.statedCurrent === null || section.statedCurrent === undefined ? null : Number(section.statedCurrent))
-      : (section.statedTotal === null || section.statedTotal === undefined ? null : Number(section.statedTotal))
-    const totalsOk = statedForCheck !== null && Math.abs(statedForCheck - systemTotal) <= AMT_EPS
-    const sectionStatus: 'OK' | 'DIFF' = !unresolvedProblem && totalsOk ? 'OK' : 'DIFF'
-    const counts: Record<string, number> = {}
-    for (const f of finalLines) counts[f.result] = (counts[f.result] ?? 0) + 1
-    const resultJson = {
-      runAt: new Date().toISOString(),
-      source: args.source,
-      statedTotal: statedForCheck,
+    const saved = await saveSectionTotals(tx, {
+      sectionId: section.id,
+      documentId: doc.id,
+      finalLines,
+      systemInvoices,
+      statedTotal: section.statedTotal === null || section.statedTotal === undefined ? null : Number(section.statedTotal),
       statedCurrent: section.statedCurrent === null || section.statedCurrent === undefined ? null : Number(section.statedCurrent),
-      systemTotal,
-      totalsOk,
-      counts,
+      useCurrent: ctx.kind === 'OUTSTANDING',
+      source: args.source,
       virtualLines: summary.virtualLines,
       notOnStatement: summary.notOnStatement,
-    }
-    const upd = await tx.labStatementSection.updateMany({
-      where: { id: section.id, documentId: doc.id },
-      data: { status: sectionStatus, systemTotal, resultJson },
     })
-    return upd.count > 0 ? { systemTotal, sectionStatus, counts, statedForCheck, resultJson } : null
+    return saved
   }, { timeout: 30_000 })
 
   if (result === null) {
     return { ok: false, code: 'NOT_FOUND', message: '分段已变动（版本衝突）' }
   }
+
+  const statedForCheck = ctx.kind === 'OUTSTANDING'
+    ? (section.statedCurrent === null || section.statedCurrent === undefined ? null : Number(section.statedCurrent))
+    : (section.statedTotal === null || section.statedTotal === undefined ? null : Number(section.statedTotal))
 
   // 6. audit（tx 後 — 跟 assign/supersede 口徑；失敗唔倒撳 reconcile）
   try {
@@ -242,10 +279,10 @@ export async function reconcileSection(
       userAgent: args.userAgent ?? null,
       notes: `reconcile ${args.source}（doc ${doc.id}）`,
       after: {
-        sectionStatus: result.sectionStatus,
-        statedTotal: result.statedForCheck,
+        sectionStatus: result.status,
+        statedTotal: statedForCheck,
         systemTotal: result.systemTotal,
-        delta: result.statedForCheck !== null ? Math.round((result.statedForCheck - result.systemTotal) * 100) / 100 : null,
+        delta: statedForCheck !== null ? Math.round((statedForCheck - result.systemTotal) * 100) / 100 : null,
         counts: result.counts,
         virtualLines: result.resultJson.virtualLines.length,
         notOnStatement: result.resultJson.notOnStatement.length,
@@ -259,9 +296,9 @@ export async function reconcileSection(
     ok: true,
     sectionId: section.id,
     documentId: doc.id,
-    sectionStatus: result.sectionStatus,
+    sectionStatus: result.status,
     systemTotal: result.systemTotal,
-    statedForCheck: result.statedForCheck,
+    statedForCheck,
     counts: result.counts,
     virtualLinesCount: result.resultJson.virtualLines.length,
     notOnStatementCount: result.resultJson.notOnStatement.length,

@@ -240,7 +240,7 @@ function matchInvoiceListLine(
 // ------------------------------------------------------------------
 
 /** 分級 DIFF：qty → unitPrice → amount（先比先中）。 */
-function gradeLinePair(sl: SystemLine, sline: StatementLineRow): MatchResult {
+export function gradeLinePair(sl: SystemLine, sline: StatementLineRow): MatchResult {
   if (!dimEq(sl.qty, sline.qty)) return 'QTY_DIFF'
   if (!dimEq(sl.unitPrice, sline.unitPrice)) return 'PRICE_DIFF'
   if (!eq(sl.amount, sline.amount)) return 'AMOUNT_DIFF'
