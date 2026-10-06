@@ -163,23 +163,41 @@ docker exec -e EXTERNAL_KEY="$EXTERNAL_KEY" clinic-prod-app node -e "fetch('http
 - 建議嘅 nightly 03:00 / backfill 03:30 時段**同 sync-availability 每小時行重疊** — FX-30 嘅 APRICOT 鎖 + `PAUSED_BUSY` 重試設計正正處理呢個爭用（cursor 唔前進、第二晚續），可接受；但啟用後首幾晚留意 `/var/log/clinical-index-*.log` 有無連續 `PAUSED_BUSY`。
 - key 傳法跟足既有模式：走 script（`sync-availability.sh`／`clinical-index.sh` — docker exec 讀 container env）— **唔好硬編碼入 crontab**，亦唔好用 host curl（冇 map port，§1）。
 
-## 6. Lab 單據（cwm-labdoc P1）— 保留 purge、讀單 sweep、volume 備份
+## 6. Lab 單據（cwm-labdoc P1，P4 補 sweep/disk-alert）— 保留 purge、讀單 sweep、volume 備份
 
 > ⚠️ 呢啲 cron 係喺**生產 host** 手動裝（repo 只存文檔）。生產 host **冇 map app port**（§1）——
 > 唔好用 host `curl 127.0.0.1:<port>`；要 `docker exec` 入 `clinic-prod-app` 打，key 由 container env 讀。
 
-**保留 purge（§4.4）**：
+**保留 purge（§4.4，每晚 03:30）**：
 
 ```cron
-# Lab 單據 7 年到期刪檔＋孤兒檔 sweep（避開 03:00 clinical-index／03:30 sync-availability-history）
-45 3 * * * docker exec clinic-prod-app node -e "fetch('http://localhost:3000/api/internal/labdoc-purge',{method:'POST',headers:{'x-cron-key':process.env.APRICOT_CRON_KEY}}).then(async r=>console.log(new Date().toISOString(), r.status, await r.text()))" >> /tmp/labdoc-purge.log 2>&1
+# Lab 單據 7 年到期刪檔＋孤兒檔 sweep（spec §4.4 定 03:30；P4 起對齊 spec）
+30 3 * * * docker exec clinic-prod-app node -e "fetch('http://localhost:3000/api/internal/labdoc-purge',{method:'POST',headers:{'x-cron-key':process.env.APRICOT_CRON_KEY}}).then(async r=>console.log(new Date().toISOString(), r.status, await r.text()))" >> /tmp/labdoc-purge.log 2>&1
+```
+
+> ℹ️ P1 曾寫 03:45（避 03:30 嘅 sync-availability-history）；spec §4.4／§11 一直係 03:30，P4 改返 03:30 對齊。現行生產 03:30 無已啟用 cron（sync-availability-history 屬建議未裝；clinical-index-backfill 一次性收工即刪）——日後若喺 03:30 啟用 sync-availability-history，兩 cron 可並行（purge 冪等、APRICOT 鎖域獨立），或將 availability-history 挪 03:20。
+
+**讀單 heartbeat sweep（§5.1，每 5 分鐘）**：
+
+```cron
+# Lab 讀單 heartbeat：EXTRACTING 卡死重試 / 孤兒檔清理（冪等；P2 新增）
+*/5 * * * * docker exec clinic-prod-app node -e "fetch('http://localhost:3000/api/internal/labdoc-sweep',{method:'POST',headers:{'x-cron-key':process.env.APRICOT_CRON_KEY}}).then(async r=>console.log(new Date().toISOString(), r.status, await r.text()))" >> /tmp/labdoc-sweep.log 2>&1
 ```
 
 - `purgeAt = uploadedAt + 7 年` 到期嘅 LabFile 逐個刪碟上全部 key（原檔＋顯示圖＋縮圖，AES-256-GCM 加密落地）→ `purgedAt = now`
 - 單據**所有頁**檔都 purged 先清 PII 姓名欄（`extractedJson`／行 `patientNameRaw`／P3 `patientRaw`）；**金額、單號、病人編號、配對紀錄保留**
 - 孤兒檔 sweep（碟有、DB 冇、>24h）併入同一 cron（§4.1）
 - 冪等：逐個檔條件 commit，中途死咗下次接住做；audit `LAB_DOC_IMAGE_PURGE`（只數量，零姓名）
-- P2 新增讀單 heartbeat sweep（每 5 分鐘），同樣用 `docker exec` 打 `/api/internal/labdoc-sweep`
+
+**disk-alert（08:00，P4 補）**：
+
+```cron
+# disk-alert：docker 所喺碟 >85% → 入 log（lab_docs 7 年 ≈ 45GB 基線；詳細容量看 GET /api/lab-docs/stats）
+0 8 * * * df -P /var/lib/docker | awk 'NR==2{u=$5+0; if (u>85) print "[disk-alert] " strftime("%F %T") " docker disk " $5 " (>85%) — lab_docs 7年≈45GB，睇 /api/lab-docs/stats 容量"; else print "[disk-ok] " strftime("%F %T") " docker disk " $5}' >> /tmp/disk-alert.log 2>&1
+```
+
+- 容量口徑（spec §5）：每日約 30 張 × 0.6 MB ≈ 18 MB/日 ≈ 6.5 GB/年 ≈ 45 GB/7 年
+- P4 起 `GET /api/lab-docs/stats`（lab_statement）回未 purge 檔案總容量＋各狀態數量——設定頁頂部容量統計卡同用；disk-alert 觸發後可開設定頁對容量分佈
 
 **Volume 備份（§4.5）**：
 
@@ -187,5 +205,5 @@ docker exec -e EXTERNAL_KEY="$EXTERNAL_KEY" clinic-prod-app node -e "fetch('http
   - `LAB_DOC_VOLUME_PATH` = host 上 `lab_docs` volume 嘅實際路徑（compose named volume，名跟 project 前綴，通常 `/var/lib/docker/volumes/clinic_lab_docs/_data` — 實際以 `docker volume inspect` 為準），喺 crontab／`.env` 設一次
   - **copy 唔用 sync**（防誤刪傳播）；每月 1 號額外 `rclone sync --max-delete 500`，令已到期 purge 嘅檔喺 offsite 都同步刪（跟 7 年保留）
   - 檔已加密落地，唔使再 age；🔴 `LAB_DOC_ENC_KEY` 要同 `APRICOT_ENC_KEY` 一樣**離線另存一份**——冇 key 備份檔冇用
-- 容量估算：每日約 30 張 × 0.6 MB ≈ 18 MB/日 ≈ 6.5 GB/年 ≈ 45 GB/7 年 → 留意磁碟用量
+- 容量估算：每日約 30 張 × 0.6 MB ≈ 18 MB/日 ≈ 6.5 GB/年 ≈ 45 GB/7 年 → 睇「disk-alert（08:00）」（P4 補）
 - Restore drill：`scripts/restore-drill.sh` 已內含 labdoc 段——隨機抽 5 個未 purge 嘅 LabFile，由備份源拉返、解密、比 sha256（`LAB_DOC_BACKUP_SOURCE` 指本地目錄可離 offsite drill）

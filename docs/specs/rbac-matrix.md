@@ -147,6 +147,16 @@
 | 「以月結單為準」、覆核人手改數、Lab 設定、alias 管理 | ✅ | ✅ | ❌ | ✅（grant lab_statement） |
 | 成本錄入頁直接改成本（現有） | ✅ | ✅ | ❌ | ✅（grant cost_entry） |
 
+#### 10.1 P4 補充：Lab 設定頁 + 容量統計（spec §12.6／§11）
+
+| 操作 | OWNER | MANAGER | ACCOUNTANT | EMPLOYEE |
+|------|:-----:|:-------:|:----------:|:--------:|
+| 設定頁 `/lab-docs/settings`（月結單讀法／別名／客戶編號表，手機優先每 Lab 一卡） | ✅ | ✅ | ❌ | ✅（grant lab_statement） |
+| Lab 設定 API（`GET/PUT /api/lab-profiles/:labId`；PUT optimistic lock 409；audit `LAB_PROFILE_UPDATE`） | ✅ | ✅ | ❌ | ✅（grant lab_statement） |
+| 別名 list／刪除（`GET /api/lab-aliases?type=`、`DELETE /api/lab-aliases/:id?type=`；audit `LAB_ALIAS_DELETE`） | ✅ | ✅ | ❌ | ✅（grant lab_statement） |
+| 容量統計（`GET /api/lab-docs/stats`：未 purge 檔案總容量＋各狀態數量） | ✅ | ✅ | ❌ | ✅（grant lab_statement） |
+| 睇 Lab 清單（`GET /api/labs` — P4 加 `lab_statement` override，設定頁要 lab 清單；lab 名非敏感數據） | ✅ | ✅ | ❌ | ✅（grant cost_entry 或 lab_statement） |
+
 > ⚠️ `lab_invoice` 經對數流程可以改成本價；人手改過金額嘅單一律入「人手改數待覆核」（P2）。
 
 ---
