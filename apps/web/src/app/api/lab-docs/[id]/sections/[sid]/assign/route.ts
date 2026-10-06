@@ -21,6 +21,7 @@ import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { normClinicName, normCustomerNo, normDoctor } from '@/lib/labdoc/identify'
 import { labdocAudit } from '@/lib/labdoc/audit'
+import { autoReconcileIfReady } from '@/lib/labdoc/statement-reconcile'
 
 const SECTION_ID_RE = /^[a-z0-9]{25}$/
 const DOC_ID_RE = /^[a-z0-9]{25}$/
@@ -221,6 +222,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       notes: a.type,
       after: { type: a.type, rawNorm: a.rawNorm, targetId: a.targetId, prevTargetId: a.prevTargetId },
     })
+  }
+  // ★ P3 §8.1：指派後分段齊（Lab＋診所＋醫生）→ 自動 reconcile（best-effort；失敗留 PENDING）
+  if (complete) {
+    await autoReconcileIfReady(prisma, params.sid, session.userId, 'auto', '[labdoc:assign]')
   }
   return NextResponse.json({ ok: true, id: params.sid, clinicId: finalClinic, providerId: finalProvider, status: complete ? 'PENDING' : section.status, documentStatus: upd, aliasesWritten })
 }

@@ -3,7 +3,7 @@
  *
  * 覆蓋：
  *  - 200：VOID＋voidReason＋audit LAB_DOC_VOID＋version+1
- *  - 400：reason 缺失／>200；已 VOID；STATEMENT（P3）
+ *  - 400：reason 缺失／>200；已 VOID
  *  - 409：有 MATCHED 行（要先解除配對／作廢成本）
  *  - 404：唔存在；401 無 token；403 EMPLOYEE
  */
@@ -131,8 +131,13 @@ test('§7.10 400 家族', async () => {
   reset(mk({ status: 'VOID' }))
   assert.strictEqual((await DELETE(makeReq(tokenFor(OWNER, 'OWNER'), { reason: '再作廢' }) as any, { params: { id: DOC_ID } } as any)).status, 400)
 
-  reset(mk({ kind: 'STATEMENT' }))
-  assert.strictEqual((await DELETE(makeReq(tokenFor(OWNER, 'OWNER'), { reason: '作廢月結單' }) as any, { params: { id: DOC_ID } } as any)).status, 400)
+  const stmtState = mk({ kind: 'STATEMENT' })
+  reset(stmtState)
+  // P3 §11：月結單作廢 = lab_statement（OWNER 有）→ 200
+  const rStmt = await DELETE(makeReq(tokenFor(OWNER, 'OWNER'), { reason: '作廢月結單' }) as any, { params: { id: DOC_ID } } as any)
+  assert.strictEqual(rStmt.status, 200)
+  assert.strictEqual(stmtState.doc.status, 'VOID')
+  assert.strictEqual(stmtState.doc.voidReason, '作廢月結單')
 })
 
 test('§7.10 409：有 MATCHED 行', async () => {

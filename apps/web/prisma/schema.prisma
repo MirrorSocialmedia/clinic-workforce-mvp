@@ -2108,6 +2108,7 @@ model LabStatementSection {
   confirmedBy   String?
   confirmedAt   DateTime?
   note          String? // ≤200
+  resultJson    Json? // §8.2.5：最近一次 reconcile 結果快照（virtualLines／notOnStatement／counts／runAt）
   lines         LabStatementLine[]
 
   @@unique([documentId, sectionIndex])

@@ -34,6 +34,7 @@ import {
   resolveStatementMonth,
   sectionDuplicateIssue,
 } from './statement-sections'
+import { autoReconcileIfReady } from './statement-reconcile'
 import { buildPageKey, readEncrypted } from './storage'
 import { normPatientCode } from '../cost-entry/patient-code'
 
@@ -467,6 +468,7 @@ async function finishSuccess(
   const finalLabId = identified.labId ?? doc.labId
   let sectionIdents: Array<import('./identify').SectionIdentifyResult> = []
   let sectionClinicShortNames: Array<string | null> = []
+  let createdSectionIds: string[] = []
   if (filtered.kind === 'STATEMENT') {
     sectionIdents = await Promise.all(
       filtered.sections.map((s) =>
@@ -588,7 +590,7 @@ async function finishSuccess(
           // 重讀場景兜底：清舊分段（行 cascade）再重建
           await tx.labStatementLine.deleteMany({ where: { section: { documentId: docId } } })
           await tx.labStatementSection.deleteMany({ where: { documentId: docId } })
-          await createStatementSections(tx, docId, {
+          createdSectionIds = await createStatementSections(tx, docId, {
             sections: filtered.sections,
             idents: sectionIdents,
             clinicShortNames: sectionClinicShortNames,
@@ -619,6 +621,14 @@ async function finishSuccess(
       return
     }
     throw e
+  }
+
+  // ★ P3 §8.1：識別齊（Lab＋診所＋醫生）嘅分段 → 自動 reconcile（best-effort；失敗分段留 PENDING 人手可重跑）
+  if (filtered.kind === 'STATEMENT' && createdSectionIds.length > 0) {
+    for (let si = 0; si < createdSectionIds.length; si++) {
+      if (!sectionIdents[si]?.complete) continue
+      await autoReconcileIfReady(prisma, createdSectionIds[si], doc.uploadedBy ?? null, 'auto', '[labdoc:extract]')
+    }
   }
 }
 
