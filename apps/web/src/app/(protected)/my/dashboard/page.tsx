@@ -573,13 +573,19 @@ export default function MyDashboardPage() {
                                         <div className="text-[11px] text-muted-foreground">本月無入帳記錄</div>
                                       ) : (
                                         m.lines.map((l: any, i: number) => (
-                                          <div key={`${m.periodMonth}-${i}`} className="flex justify-between text-[11px] py-0.5">
-                                            <span className="text-muted-foreground">
-                                              {String(l.date).slice(5)}　{l.label}{l.note ? `（${l.note}）` : ''}
-                                            </span>
-                                            <span style={{ color: l.minutes > 0 ? '#059669' : l.minutes < 0 ? '#dc2626' : '#6b7280' }}>
-                                              {l.minutes > 0 ? `+${l.minutes}` : l.minutes}
-                                            </span>
+                                          <div key={`${m.periodMonth}-${i}`} className="py-0.5">
+                                            <div className="flex justify-between text-[11px]">
+                                              <span className="text-muted-foreground">
+                                                {String(l.date).slice(5)}　{l.label}{l.note ? `（${l.note}）` : ''}
+                                              </span>
+                                              <span style={{ color: l.minutes > 0 ? '#059669' : l.minutes < 0 ? '#dc2626' : '#6b7280' }}>
+                                                {l.minutes > 0 ? `+${l.minutes}` : l.minutes}
+                                              </span>
+                                            </div>
+                                            {/* ★ cwm-ledgerpunch-20261006：當日打卡時間（同一日多行只喺第一行顯示） */}
+                                            {ledger?.punchByDate?.[String(l.date).slice(0, 10)] && (i === 0 || String(m.lines[i - 1].date).slice(0, 10) !== String(l.date).slice(0, 10)) && (
+                                              <div className="text-[11px] tabular-nums" style={{ color: '#059669' }}>{ledger.punchByDate[String(l.date).slice(0, 10)]}</div>
+                                            )}
                                           </div>
                                         ))
                                       )}
