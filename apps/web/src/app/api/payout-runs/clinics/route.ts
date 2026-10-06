@@ -8,6 +8,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { ACTIVE_ALLOCATION } from '@/lib/payout/engine'
 import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
+import { incomeProviderIds } from '@/lib/payout/clinic-income-providers'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -184,44 +185,8 @@ async function providersForClinic(
   })
   if (!clinic) return NextResponse.json({ error: 'Clinic not found' }, { status: 404 })
 
-  // 1. 有付款收入（經 apricotClinicId ↔ clinicExtId）
-  let allocExtIds: string[] = []
-  if (clinic.apricotClinicId) {
-    const rows = await prisma.paymentAllocation.findMany({
-      where: {
-        clinicExtId: clinic.apricotClinicId,
-        periodMonth,
-        ...ACTIVE_ALLOCATION,
-      },
-      select: { providerExtId: true },
-      distinct: ['providerExtId'],
-    })
-    allocExtIds = rows.map(r => r.providerExtId).filter(Boolean) as string[]
-  }
-  // ★ C 章：反查改經 ApricotPractitioner（Provider 舊 apricotId 欄已剷走）——
-  //   只認 kind=PROVIDER 嘅帳號；CLINIC／UNKNOWN 帳號唔係醫生，唔好當醫生計。
-  const allocPractitioners = allocExtIds.length > 0
-    ? await prisma.apricotPractitioner.findMany({
-        where: { apricotId: { in: allocExtIds }, kind: 'PROVIDER' },
-        select: { providerId: true },
-      })
-    : []
-  const allocProviderIds = [...new Set(allocPractitioners.map(p => p.providerId).filter(Boolean))] as string[]
-  const allocProviders = allocProviderIds.length > 0
-    ? await prisma.provider.findMany({
-        where: { id: { in: allocProviderIds } },
-        select: { id: true, name: true, shortName: true },
-      })
-    : []
-  const allocIds = new Set(allocProviders.map(p => p.id))
-
-  // 2. 有轉介收入（ProviderReferral.clinicId = 實際做／收錢嗰間，2026-08-16 拍板）
-  const refRows = await prisma.providerReferral.findMany({
-    where: { clinicId, periodMonth },
-    select: { fromProviderId: true },
-    distinct: ['fromProviderId'],
-  })
-  const refIds = new Set(refRows.map(r => r.fromProviderId))
+  // 1–2. 有付款收入／轉介收入 —— ★ cwm-draftreport-20261006：抽去 lib（全店月報共用，唯一來源）
+  const { allocIds, refIds } = await incomeProviderIds(prisma, clinic, periodMonth)
 
   // 3. 綁咗呢間店
   const boundRows = await prisma.providerClinic.findMany({
