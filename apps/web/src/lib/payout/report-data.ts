@@ -90,8 +90,17 @@ export function ddMyy(v: string | Date | null | undefined): string {
   return d.toLocaleDateString('en-GB', { timeZone: 'Asia/Hong_Kong' })
 }
 
+/**
+ * ★ cwm-draftreport-20261006：醫生頁只需要 run 呢幾個欄 —— 未鎖定醫生（全店月報草稿頁）
+ * 由 computePayout 即時結果砌一個「草稿 run」傳入，同已鎖定 run 行同一條攞數路（MD 坑⑥）。
+ */
+export type DoctorSheetRun = Pick<
+  PayoutRun,
+  'id' | 'providerId' | 'clinicId' | 'periodMonth' | 'status' | 'lockedAt' | 'breakdownJson' | 'percentUsed' | 'totalAmount'
+>
+
 export interface DoctorSheetLoad {
-  run: PayoutRun
+  run: DoctorSheetRun
   provider: { id: string; name: string; shortName: string | null } | null
   clinic: { id: string; name: string; shortName: string | null; apricotClinicId: string | null } | null
   data: DoctorSheetData
@@ -105,7 +114,19 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
   // ★ cwm-payout P-1 test：db 可選注入（parity test 用 fake prisma；預設 singleton 行為唔變）
   const run = await db.payoutRun.findUnique({ where: { id: runId } })
   if (!run) return null
+  return loadDoctorSheetDataForRun(run, db)
+}
 
+/**
+ * ★ cwm-draftreport-20261006：由 run（或即時計嘅草稿 run）砌醫生頁。
+ * liveDraft = run 唔喺 DB（computePayout 即時結果）→ 上期調整攞「未掛 run」嗰批
+ * （同 engine ⑦ 同一條件：providerId + periodMonth + clinicId + runId=null），否則照 runId。
+ */
+export async function loadDoctorSheetDataForRun(
+  run: DoctorSheetRun,
+  db: any = prisma,
+  opts: { liveDraft?: boolean } = {},
+): Promise<DoctorSheetLoad> {
   const provider = await db.provider.findUnique({
     where: { id: run.providerId },
     select: { id: true, name: true, shortName: true },
@@ -249,8 +270,11 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
   if (run.clinicId) refWhere.clinicId = run.clinicId
   const refConfirmed: any[] = await db.providerReferral.findMany({ where: refWhere, orderBy: { createdAt: 'asc' } })
 
+  const adjWhere: any = opts.liveDraft
+    ? { providerId: run.providerId, periodMonth: run.periodMonth, runId: null, ...(run.clinicId ? { clinicId: run.clinicId } : {}) }
+    : { runId: run.id }
   const adjustments: any[] = await db.payoutAdjustment.findMany({
-    where: { runId: run.id },
+    where: adjWhere,
     orderBy: { createdAt: 'asc' },
   })
 
@@ -276,6 +300,24 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
     if (!t) continue
     const dk = toHKDateStr(new Date(t))
     spCountByDay.set(dk, (spCountByDay.get(dk) ?? 0) + 1)
+  }
+
+  // ★ cwm-feefmt-20261006：同一付款方式月中轉過費率 → 反解出嚟係加權平均（例如 2% 同 0% 溝埋），
+  //   照用嚟計（同 engine 淨額一致），但喺格仔加註明實際各費率，唔好俾人以為費率就係嗰個數
+  const ratesOf = new Map<string, Map<number, number>>() // colKey → 費率% → 筆數
+  for (const b of allRows) {
+    const m = String(b.method ?? '').trim()
+    if (!m || b.feePercentUsed == null) continue
+    const k = colKey(m, !!b.storeIncome, !!b.doctorIncome)
+    const mm = ratesOf.get(k) ?? new Map<number, number>()
+    const r = Math.round(Number(b.feePercentUsed) * 1000) / 1000
+    mm.set(r, (mm.get(r) ?? 0) + 1)
+    ratesOf.set(k, mm)
+  }
+  const feeNoteFor = (k: string): string | undefined => {
+    const mm = ratesOf.get(k)
+    if (!mm || mm.size <= 1) return undefined
+    return `月中費率有變：${[...mm.entries()].map(([r, n]) => `${r}%（${n} 筆）`).join('、')}；呢格係加權平均，淨額按逐筆實際費率計`
   }
 
   // ─── 費率（F 區手續費率行）：由 allocation 快照反解（見 export route 檔頭註） ───
@@ -468,7 +510,11 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
     status:
       run.status === 'LOCKED' && run.lockedAt
         ? `LOCKED（已鎖定 ${ddMyy(run.lockedAt)}）`
-        : 'DRAFT（草稿 — 數字可能會變）',
+        : opts.liveDraft
+          ? '草稿（未鎖定）— 按今日資料即時計，數字可能會變，以鎖定後為準'
+          : 'DRAFT（草稿 — 數字可能會變）',
+    // ★ cwm-draftreport-20261006：未鎖定 → 醫生頁狀態行黃底＋分頁標籤黃色
+    draft: run.status !== 'LOCKED',
     // ★ cwm-payout P-1：雙旗入 methods —
     //   countAsIncome（store）= A 區 TOTAL（店舖營收）口徑；
     //   countForDoctor = F 區（醫生收入）口徑，同 engine.ts L391-401 一致。
@@ -479,6 +525,7 @@ export async function loadDoctorSheetData(runId: string, db: any = prisma): Prom
         key: k,
         label: (METHOD_LABELS[m] || m) + (d === '0' ? '（不計醫生收入）' : s === '0' ? '（不計店舖營收）' : ''),
         feePercent: feeFor(k),
+        feeNote: feeNoteFor(k),
         countAsIncome: s === '1', // A 區 TOTAL（店舖營收）用
         countForDoctor: d === '1', // F 區（醫生收入）用
       }

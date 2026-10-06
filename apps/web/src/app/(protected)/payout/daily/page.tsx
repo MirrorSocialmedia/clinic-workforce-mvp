@@ -8,7 +8,7 @@
  * 顏色跟 Excel：藍字 = 系統帶入，黑字粗體 = 合計，灰字 = 唔計，黃底 = 最終金額。
  * 數字同 Excel 匯出同一個 API（/api/payout-runs/daily），唔准前端自己計。
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -49,10 +49,21 @@ export default function DailyRevenuePage() {
         const cl = (c.clinics || []).filter((x: any) => x.apricotClinicId)
         setClinics(cl)
         setProviders((p.providers || []).filter((x: any) => x.isActive !== false))
-        if (cl.length && !clinicId) setClinicId(cl[0].id)
+        if (cl.length && !deepLinked.current) setClinicId(prev => prev || cl[0].id)
       })
       .catch(e => setError(e.message))
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ★ cwm-dailyreview-20261006：醫生月結預覽「去每日大數核對」帶 ?clinicId=&from=&to=（掛載後讀一次，避免 SSR hydration 唔一致）
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const re = /^\d{4}-\d{2}-\d{2}$/
+    const f = sp.get('from'), t = sp.get('to'), c = sp.get('clinicId')
+    if (f && re.test(f)) setFrom(f)
+    if (t && re.test(t)) setTo(t)
+    if (c) { setClinicId(c); deepLinked.current = true }
   }, [])
 
   const query = useMemo(() => {

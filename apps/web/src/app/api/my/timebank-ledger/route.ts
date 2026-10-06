@@ -7,6 +7,9 @@ import { buildTimeBankLedger, type LedgerMonth } from '@/lib/timebank-ledger'
 import { getTimeAccountSummary } from '@/lib/timebank-summary'
 import { toHKDateStr } from '@/lib/hk-date'
 import { PAY_RULE_SELECT } from '@/lib/pay-rule-latest'
+import { getEffectivePunches } from '@/lib/punch-query'
+import { summarizePunchDays, punchLine } from '@/lib/punch-day-summary'
+import { hkDateStart } from '@/lib/hk-date'
 
 // ★ 呢條 route 只可以呼叫 lib/ 嘅共用函數，唔可以自己由原始表格砌計算（同管理端帳本同一 builder，坑②）。
 //
@@ -101,8 +104,19 @@ export async function GET(req: NextRequest) {
   const balanceMatchesLatestClosing = currentBalance !== null && lastMonth !== undefined
     && currentBalance === lastMonth.closing
 
+  // ★ cwm-ledgerpunch-20261006：逐日明細嘅打卡時間（只限自己；有效打卡 = 已計更正、已排除作廢）
+  //   只回帳本有行嘅日子；一日多次：上班最早、放工最遲、午膳出最早、午膳入最遲
+  const lineDates = new Set(out.flatMap(m => m.lines.map(l => String(l.date).slice(0, 10))))
+  const punchByDate: Record<string, string> = {}
+  if (lineDates.size > 0) {
+    const punches = await getEffectivePunches(hkDateStart(`${monthKeys[0]}-01`), new Date(), { employeeId: emp.id })
+    const days = summarizePunchDays(punches)
+    for (const d of lineDates) punchByDate[d] = punchLine(days[d])
+  }
+
   return jsonNoStore({
     employeeId: emp.id,
+    punchByDate,
     notApplicable,
     reconciled,
     months: out,

@@ -4,8 +4,11 @@
  * 一個 workbook：封面 │ <醫生 shortName> × N │ Clinic 雜項
  *  - 醫生頁 = loadDoctorSheetData（同單張匯出同一個共同函數，MD 坑⑥）+ buildDoctorSheet 同一把尺
  *  - 冇 run（LOCKED/FINALIZED）嘅醫生唔出頁（唔出全零頁）
+ *  - ★ cwm-draftreport-20261006：有收入但未鎖定嘅醫生 → 用 computePayout 即時計出「草稿頁」
+ *    （同預覽同一個引擎，唔讀解鎖後殘留嘅 DRAFT run 舊快照），醫生頁＋封面行淺黃底；
+ *    封面合計拆「已鎖定／草稿」；計唔到（gate 唔過）嘅列名＋原因。草稿唔寫任何嘢落 DB。
  *  - Clinic 雜項頁 = buildMiscSheet（A 步產生器）；費率口徑 = D2/D3 同一個 resolveMethodRule
- *    （逐行 resolve → 逐行 round2 加總 → 匯總有效費率，同 D3 頁底部三行天然一致）
+ *    （逐行 resolve → 逐行費率＋手續費列出 → 合計／手續費合計／淨額，同 D3 頁底部三行天然一致）
  *  - 封面 = buildCoverSheet：逐醫生「店舖營收／應付醫生」兩欄（綠字跨 sheet 連結）＋合計
  *    ＋三層結算（店舖總收入 = 營收合計＋雜項淨額；診所淨收入 = 店舖總收入−應付合計，黃底）
  *    ＋Free SP／Credit 備註區（cwm-coverrevenue-20260914）
@@ -22,7 +25,9 @@ import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
 import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { resolveMethodRule } from '@/lib/apricot/allocate'
-import { loadDoctorSheetData, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT, sumMethodOf } from '@/lib/payout/report-data'
+import { loadDoctorSheetData, loadDoctorSheetDataForRun, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT, sumMethodOf, type DoctorSheetLoad } from '@/lib/payout/report-data'
+import { computePayout, runGates, isBeforePayoutStart } from '@/lib/payout/engine'
+import { incomeProviderIds } from '@/lib/payout/clinic-income-providers'
 import { loadClinicMisc } from '@/lib/payout/clinic-misc'
 import { buildCoverSheet, buildDoctorSheet, buildMiscSheet, incomeTotalOf } from '@/lib/payout/xlsx-report'
 
@@ -54,7 +59,7 @@ export async function GET(req: NextRequest) {
 
   const clinic = await prisma.clinic.findUnique({
     where: { id: clinicId },
-    select: { id: true, name: true, shortName: true, apricotClinicId: true },
+    select: { id: true, name: true, shortName: true, apricotClinicId: true, apricotPayoutFrom: true },
   })
   if (!clinic) return jsonNoStore({ error: '診所不存在' }, { status: 404 })
   const clinicShort = clinic.shortName || clinic.name
@@ -70,7 +75,47 @@ export async function GET(req: NextRequest) {
   //     診所雜費其實一直喺 Apricot 收（CLINIC 帳號），MiscIncome 只係退路。
   const miscRows = await loadClinicMisc(clinicId, clinic.apricotClinicId, periodMonth)
 
-  if (runs.length === 0 && miscRows.length === 0) {
+  // ─── 2b. ★ cwm-draftreport-20261006：有收入但未鎖定嘅醫生 → 即時計草稿 ──────
+  //   名單 = clinics route 同一個 incomeProviderIds（付款＋轉介）；已有 LOCKED run 嘅剔走。
+  //   未開始用系統計月結嘅店（apricotPayoutFrom 之前）→ 唔計草稿（之前月份人手處理，計咗會誤導）。
+  const lockedProviderIds = new Set(runs.map(r => r.providerId))
+  const drafts: { providerId: string; totalAmount: number; loaded: DoctorSheetLoad }[] = []
+  const failures: { providerName: string; reason: string }[] = []
+  if (!isBeforePayoutStart(periodMonth, clinic.apricotPayoutFrom)) {
+    const { allocIds, refIds } = await incomeProviderIds(prisma, clinic, periodMonth)
+    const draftIds = [...new Set([...allocIds, ...refIds])].filter(id => !lockedProviderIds.has(id))
+    const draftProviders = draftIds.length > 0
+      ? await prisma.provider.findMany({ where: { id: { in: draftIds } }, select: { id: true, name: true, shortName: true } })
+      : []
+    for (const p of draftProviders) {
+      const label = p.shortName || p.name
+      try {
+        const { errors } = await runGates(p.id, periodMonth, clinicId)
+        if (errors.length > 0) {
+          failures.push({ providerName: label, reason: errors.join('；') })
+          continue
+        }
+        const payout = await computePayout(p.id, periodMonth, clinicId)
+        const loaded = await loadDoctorSheetDataForRun({
+          id: `draft:${p.id}`,
+          providerId: p.id,
+          clinicId,
+          periodMonth,
+          status: 'DRAFT',
+          lockedAt: null,
+          breakdownJson: { allocations: payout.breakdown } as never,
+          percentUsed: payout.percentUsed as never,
+          totalAmount: payout.totalAmount as never,
+        }, prisma, { liveDraft: true })
+        drafts.push({ providerId: p.id, totalAmount: payout.totalAmount, loaded })
+      } catch (e) {
+        failures.push({ providerName: label, reason: e instanceof Error ? e.message : String(e) })
+      }
+    }
+    drafts.sort((a, b) => b.totalAmount - a.totalAmount)
+  }
+
+  if (runs.length === 0 && drafts.length === 0 && failures.length === 0 && miscRows.length === 0) {
     return jsonNoStore({ error: `該診所 ${periodMonth} 冇月結單／雜項收入` }, { status: 404 })
   }
 
@@ -79,21 +124,25 @@ export async function GET(req: NextRequest) {
   // ★ cwm-payout P-4（MD §2.3）：對數防線 — 任何一個醫生 Excel 應付 ≠ 系統鎖定 → 成份唔出
   const exportMismatches: { run: { id: string }; name: string; payable: number; totalAmount: number }[] = []
   const doctorEntries: {
-    sheetName: string; sheetLabel: string; status: string
+    sheetName: string; sheetLabel: string; status: string; draft: boolean
     totalAmount: number; revenue: number; freeSp: number; credit: number; methodCount: number
   }[] = []
-  for (const run of runs) {
-    const loaded = await loadDoctorSheetData(run.id)
+  // 已鎖定（totalAmount 大→細）先，草稿（同樣大→細）排後
+  const sheetLoads: { loaded: DoctorSheetLoad | null; draft: boolean }[] = []
+  for (const run of runs) sheetLoads.push({ loaded: await loadDoctorSheetData(run.id), draft: false })
+  for (const d of drafts) sheetLoads.push({ loaded: d.loaded, draft: true })
+  for (const { loaded, draft } of sheetLoads) {
     if (!loaded) continue // 理論上唔會發生（run 剛先查過）— 防呆 skip
     const sheetLabel = loaded.provider?.shortName || loaded.provider?.name || '未知'
     loaded.data.sheetNameBase = sheetLabel // sheet 名 = shortName || name（MD C 章）
     // ★ cwm-payout P-1：buildDoctorSheet 返 { ws, payable }（payable 喺 P-4 對數防線用）
     const { ws, payable: docPayable } = buildDoctorSheet(wb, loaded.data)
-    // ★ cwm-payout P-4：逐醫生對數（clinic-report 嘅 run 全部係 LOCKED — 見 §1）
+    // ★ cwm-payout P-4：逐醫生對數（LOCKED run 對鎖定金額；★ 草稿對 computePayout 即時總額 —
+    //   兩者都係同一把尺，唔一致 = 報表產生器同引擎分歧，一樣成份唔出）
     if (Math.abs(docPayable - Number(loaded.run.totalAmount)) > 0.01) {
       exportMismatches.push({
         run: { id: loaded.run.id },
-        name: sheetLabel,
+        name: draft ? `${sheetLabel}（草稿）` : sheetLabel,
         payable: docPayable,
         totalAmount: Number(loaded.run.totalAmount),
       })
@@ -107,7 +156,8 @@ export async function GET(req: NextRequest) {
     doctorEntries.push({
       sheetName: ws.name,
       sheetLabel,
-      status: loaded.data.status,
+      status: draft ? '草稿（未鎖定）' : loaded.data.status,
+      draft,
       totalAmount: Number(loaded.run.totalAmount),
       revenue,
       freeSp: sumMethod(KEY_FREE_SP),
@@ -138,22 +188,21 @@ export async function GET(req: NextRequest) {
   // ─── 4. Clinic 雜項頁（費率口徑 = D2/D3 同一個 resolveMethodRule）──
   const allRules = await prisma.paymentMethodRule.findMany()
   // 逐行 resolve（needsReview = 規則已刪 → 0，同 D3 頁「按 0 計」口徑）
-  const feeOf = (r: { methodNorm: string; incomeAt: Date; amount: number | unknown }): number => {
+  // ★ cwm-feefmt-20261006：逐行費率＋手續費（唔再用加權平均「費率」—— Octopus 2% + FPS 0% 會顯示成 0.2%）
+  const rateOf = (r: { methodNorm: string; incomeAt: Date }): number => {
     const rule = resolveMethodRule(r.methodNorm, r.incomeAt, allRules)
-    if (rule.needsReview) return 0
-    return round2(Number(r.amount) * rule.feePercent / 100)
+    return rule.needsReview ? 0 : Number(rule.feePercent) / 100
   }
+  const feeOf = (r: { methodNorm: string; incomeAt: Date; amount: number | unknown }): number =>
+    round2(Number(r.amount) * rateOf(r))
   const activeMisc = miscRows.filter(r => !r.isVoid)
   const miscTotal = round2(activeMisc.reduce((s, r) => s + Number(r.amount), 0))
   const miscFee = round2(activeMisc.reduce((s, r) => s + feeOf(r), 0))
   const miscNet = round2(miscTotal - miscFee)
-  // 匯總有效費率 → 產生器 淨額 = 合計×(1−費率) 同 D3 頁 淨額 = 合計−Σ逐行費 完全一致
-  const miscRate = miscTotal > 0 ? miscFee / miscTotal : 0
 
   const miscWs = buildMiscSheet(wb, {
     clinicName: clinicShort,
     periodMonth,
-    feePercent: miscRate,
     rows: miscRows.map(r => ({
       incomeAt: toHKDateStr(r.incomeAt),
       category: r.category,
@@ -163,6 +212,8 @@ export async function GET(req: NextRequest) {
       amount: Number(r.amount),
       isVoid: r.isVoid,
       source: r.source,
+      feePercent: rateOf(r),
+      fee: feeOf(r),
     })),
   })
 
@@ -174,6 +225,7 @@ export async function GET(req: NextRequest) {
       providerName: d.sheetLabel,
       sheetName: d.sheetName,
       status: d.status,
+      draft: d.draft,
       totalAmount: d.totalAmount,
       revenue: d.revenue,
       freeSp: d.freeSp,
@@ -182,6 +234,7 @@ export async function GET(req: NextRequest) {
     })),
     miscSheetName: miscWs.name,
     miscNet,
+    failures,
   })
 
   // ─── 6. 頁序：封面 │ 醫生 × N │ Clinic 雜項（ExcelJS 按 orderNo 排序；types 冇暴露，cast）──
@@ -197,7 +250,9 @@ export async function GET(req: NextRequest) {
       entityId: clinicId,
       clinicId,
       // ★ 醫生頁 B/C 區列病人姓名（2026-09-08 拍板）— 審計要查得返
-      notes: `匯出全店月度收入報表：${clinicShort} ${periodMonth}（${runs.length} 份月結單＋Clinic 雜項，包含病人姓名）`,
+      notes: `匯出全店月度收入報表：${clinicShort} ${periodMonth}（${runs.length} 份已鎖定月結單`
+        + `${drafts.length ? `＋${drafts.length} 份草稿（未鎖定，即時計）` : ''}`
+        + `${failures.length ? `＋${failures.length} 位未能計算` : ''}＋Clinic 雜項，包含病人姓名）`,
     },
   })
 

@@ -15,6 +15,7 @@ import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, 
 import { hasPermission } from '@/lib/permissions'
 import { CostDetailRow } from '@/components/payout/CostDetailRow'
 import { SpReviewRow } from '@/components/payout/SpReviewRow'
+import { DailyReviewRow } from '@/components/payout/DailyReviewRow'
 import { StaleCostsCard } from '@/components/payout/StaleCostsCard'
 
 interface PayoutRun {
@@ -89,6 +90,8 @@ function PayoutRunsPageInner() {
   const [costAck, setCostAck] = useState(false)
   // ★ cwm-sppreview-20261006：未確認 2人SP／未掃描 → 要剔「我知道」
   const [spAck, setSpAck] = useState(false)
+  // ★ cwm-dailyreview-20261006：每日收款有未核對／有變 → 要剔「我知道」
+  const [dailyAck, setDailyAck] = useState(false)
   const [previewWarnings, setPreviewWarnings] = useState<string[]>([])
 
   // 「有收入但未生成」提示
@@ -285,6 +288,7 @@ function PayoutRunsPageInner() {
       setPreviewWarnings(res.warnings || [])
       setCostAck(false)
       setSpAck(false)
+      setDailyAck(false)
       setShowPreview(true)
     } catch (e: any) {
       if (e.status === 400) {
@@ -298,7 +302,7 @@ function PayoutRunsPageInner() {
     }
   }
 
-  async function handleGenerate(costReviewAck = false, spReviewAck = false) {
+  async function handleGenerate(costReviewAck = false, spReviewAck = false, dailyReviewAck = false) {
     if (!selectedProvider || !selectedMonth || !selectedClinic) {
       alert('請選擇醫生、診所和月份')
       return
@@ -315,6 +319,7 @@ function PayoutRunsPageInner() {
           clinicId: selectedClinic || undefined,
           costReviewAck,
           spReviewAck,
+          dailyReviewAck,
         }),
       })
       alert(`月結單已生成 (總額: $${res.run.totalAmount})`)
@@ -329,7 +334,7 @@ function PayoutRunsPageInner() {
         loadAvailableClinics(selectedProvider, selectedMonth)
       }
     } catch (e: any) {
-      if (e.status === 409 && (e.body?.code === 'COST_REVIEW_REQUIRED' || e.body?.code === 'SP_REVIEW_REQUIRED')) {
+      if (e.status === 409 && (e.body?.code === 'COST_REVIEW_REQUIRED' || e.body?.code === 'SP_REVIEW_REQUIRED' || e.body?.code === 'DAILY_REVIEW_REQUIRED')) {
         // ★ cwm-costdetail-20261006：直接撳「生成並鎖定」但有未計入成本 → 開預覽俾人檢查
         alert(e.message)
         handlePreview()
@@ -550,6 +555,10 @@ function PayoutRunsPageInner() {
             {previewData.preview && (
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between"><span>原始收入</span><span>${previewData.preview.rawAmount?.toFixed(2)}</span></div>
+                {/* ★ cwm-dailyreview-20261006：每日收款＋護士核對狀態 */}
+                <DailyReviewRow review={previewData.dailyReview} clinicId={selectedClinic} month={selectedMonth}
+                  clinicLabel={allClinics.find(c => c.id === selectedClinic)?.shortName || allClinics.find(c => c.id === selectedClinic)?.name || ''}
+                  onRecompute={handlePreview} busy={previewLoading} />
                 <div className="flex justify-between"><span>收入（扣手續費後）</span><span>${previewData.preview.grossAmount?.toFixed(2)}</span></div>
                 {/* ★ cwm-costdetail-20261006：成本可撳開 —— 已計入＋當月未計入提醒 */}
                 <CostDetailRow label="Lab 成本" amount={previewData.preview.labCost ?? 0} detail={previewData.costDetail?.LAB}
@@ -595,10 +604,16 @@ function PayoutRunsPageInner() {
                   : `我知道 ${previewData.spReview.clinicName} 今個月未掃描 2人SP，今次冇 SP 補貼`}
               </label>
             )}
+            {previewData.dailyReview?.needsAck && (
+              <label className="flex items-center gap-2 mt-2 p-3 rounded border border-amber-300 bg-amber-50 text-sm text-amber-900">
+                <input type="checkbox" checked={dailyAck} onChange={e => setDailyAck(e.target.checked)} className="h-4 w-4" />
+                我知道每日收款仲有 {previewData.dailyReview.counts.unchecked} 日未核對、{previewData.dailyReview.counts.changed} 日核對後有變
+              </label>
+            )}
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setShowPreview(false)}>關閉</Button>
-              <Button onClick={() => handleGenerate(costAck, spAck)}
-                disabled={generating || ((previewData.costReminders ?? 0) > 0 && !costAck) || (!!previewData.spReview?.needsAck && !spAck)}>
+              <Button onClick={() => handleGenerate(costAck, spAck, dailyAck)}
+                disabled={generating || ((previewData.costReminders ?? 0) > 0 && !costAck) || (!!previewData.spReview?.needsAck && !spAck) || (!!previewData.dailyReview?.needsAck && !dailyAck)}>
                 {generating ? '生成中...' : '確認並鎖定'}
               </Button>
             </div>

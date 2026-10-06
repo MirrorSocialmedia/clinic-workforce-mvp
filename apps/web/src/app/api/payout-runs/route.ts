@@ -9,6 +9,7 @@ import { prisma } from '@/lib/prisma'
 import { runGates, computePayout, lockPayoutRun, CostChangedDuringLockError } from '@/lib/payout/engine'
 import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
 import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
+import { dailyReview } from '@/lib/payout/daily-review'
 import { todayHK } from '@/lib/hk-date'
 
 export async function GET(req: NextRequest) {
@@ -117,6 +118,17 @@ export async function POST(req: NextRequest) {
         ? `仲有 ${sp.pending.length} 筆 2人SP 未確認（$${sp.pendingTotal}），請先預覽，剔「我知道」再鎖定`
         : `${sp.clinicName} ${periodMonth} 仲未掃描 2人SP，請先預覽，剔「我知道」再鎖定`
       return NextResponse.json({ error: msg, code: 'SP_REVIEW_REQUIRED' }, { status: 409 })
+    }
+  }
+
+  // ★ cwm-dailyreview-20261006：每日收款有未核對／核對後有變 → 要喺預覽剔「我知道」先鎖得
+  if (body.dailyReviewAck !== true) {
+    const d = await dailyReview(providerId, clinicId, periodMonth)
+    if (d.needsAck) {
+      return NextResponse.json({
+        error: `每日收款仲有 ${d.counts.unchecked} 日未核對、${d.counts.changed} 日核對後有變，請先預覽，剔「我知道」再鎖定`,
+        code: 'DAILY_REVIEW_REQUIRED',
+      }, { status: 409 })
     }
   }
 
