@@ -147,6 +147,7 @@ jobs:
             src/lib/payout-xlsx-engine-parity.test.ts \
             src/lib/payout/daily-report.test.ts \
             src/lib/payout/draft-report.test.ts \
+            src/lib/pay-rule-for-month.test.ts \
             src/lib/roster-hours.resign.test.ts \
             src/lib/patient-search.test.ts \
             src/lib/apricot/source-pure.test.ts \

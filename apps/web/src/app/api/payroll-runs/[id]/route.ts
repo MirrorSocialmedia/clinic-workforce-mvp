@@ -8,6 +8,7 @@ import { snapshotWagesForADW } from '@/lib/adw'
 import { hkDateStart, periodMonthKey } from '@/lib/hk-date'
 // ★ cwm-tbfix-20260910 P1-2：最新生效 pay rule 統一口徑（P0-2 / 坑②）
 import { PAY_RULE_SELECT } from '@/lib/pay-rule-latest'
+import { findPayRulesForMonth, rosterDiffApplies } from '@/lib/pay-rule-for-month'
 import { computeRosterHours, rosterDiffNote, rosterDiffNoteFilter } from '@/lib/roster-hours'
 // ★ cwm-tbcache-rosterdiff-20260909：寫／刪 TimeBankEntry 一定要 invalidate 快取（坑④）
 import { invalidateTimeBankFrom } from '@/lib/punch-query'
@@ -319,12 +320,17 @@ export async function PUT(
           // 月尾 = 下月 1 號減 1 毫秒（同 hk-date.ts getMonthRange 一致）
           const monthEndDate = new Date(nextMonthStart.getTime() - 1)
           const monthStart = new Date(`${pm}-01T00:00:00+08:00`)
+          // ★ cwm-tbmonthrule-20261006：用【嗰個月生效】嘅規則（同計糧引擎 findPayRuleForMonth 同一揀法），
+          //   唔准用最新規則 —— 9 月兼職、10 月轉全職，9 月確認計糧時最新規則已係月薪 →
+          //   扣咗 9 月成個月「應返」（實例 −4,620 分鐘）。批量兩條 query，唔逐人查（N+1 撞 timeout）。
+          const monthRules = await findPayRulesForMonth(tx, items.map(i => i.employee.id), monthStart, monthEndDate)
+          // 冇規則覆蓋本月（理論上計唔到糧）→ 退返最新規則，同舊行為一樣
+          const ruleOf = (i: (typeof items)[number]) => monthRules.get(i.employee.id) ?? i.employee.payRules[0]
           // ★ 提到迴圈外 — 防止 N+1 query 撞 transaction timeout（2026-08-15）
           const empIds = items
             // ★ cwm-attexempt-20260914：免考勤員工冇更表，計「編更差額」冇意義。
             //   ⚠️ roster-hours.ts:136 只擋到「冇更【又】冇假」—— 一放公眾假期就會出 −15,660。
-            .filter(i => i.employee.payRules[0]?.payType === 'MONTHLY'
-              && i.employee.attendanceExempt !== true)
+            .filter(i => rosterDiffApplies(ruleOf(i), i.employee.attendanceExempt))
             .map(i => i.employee.id)
 
           const rosterHours = await computeRosterHours(empIds, pm, tx)
@@ -334,8 +340,7 @@ export async function PUT(
           //   一次 deleteMany；2026-08-15 逐人發 query 撞過 transaction timeout）。
           const touchedEmpIds: string[] = []
           for (const item of items) {
-            const payRule = item.employee.payRules[0]
-            if (!payRule || payRule.payType !== 'MONTHLY') continue
+            if (!rosterDiffApplies(ruleOf(item), item.employee.attendanceExempt)) continue
             const empId = item.employee.id
 
             const rh = rosterHours.get(empId)
@@ -379,7 +384,8 @@ export async function PUT(
           for (const item of items) {
             const empId = item.employee.id
             let cfg: any = {}
-            try { cfg = JSON.parse(item.employee.payRules?.[0]?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
+            // ★ cwm-tbmonthrule-20261006：同上 —— 嗰個月時薪（兼職）就唔凍結時間帳戶，唔睇最新規則
+            try { cfg = JSON.parse(ruleOf(item)?.configJson || '{}') } catch { /* 壞 JSON 當冇 config */ }
             if (cfg?.base_type === 'hourly') continue          // ★ 時薪／兼職唔設時間帳戶
 
             const ledger = await buildTimeBankLedger(tx, empId, pm, cfg)
