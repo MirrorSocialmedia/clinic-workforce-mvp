@@ -13,6 +13,9 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download, CalendarDays } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
+import { CostDetailRow } from '@/components/payout/CostDetailRow'
+import { SpReviewRow } from '@/components/payout/SpReviewRow'
+import { StaleCostsCard } from '@/components/payout/StaleCostsCard'
 
 interface PayoutRun {
   id: string
@@ -82,6 +85,10 @@ function PayoutRunsPageInner() {
   const [previewData, setPreviewData] = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  // ★ cwm-costdetail-20261006：有「當月未計入」成本 → 要剔「我已檢查」先可以鎖
+  const [costAck, setCostAck] = useState(false)
+  // ★ cwm-sppreview-20261006：未確認 2人SP／未掃描 → 要剔「我知道」
+  const [spAck, setSpAck] = useState(false)
   const [previewWarnings, setPreviewWarnings] = useState<string[]>([])
 
   // 「有收入但未生成」提示
@@ -276,6 +283,8 @@ function PayoutRunsPageInner() {
       })
       setPreviewData(res)
       setPreviewWarnings(res.warnings || [])
+      setCostAck(false)
+      setSpAck(false)
       setShowPreview(true)
     } catch (e: any) {
       if (e.status === 400) {
@@ -289,7 +298,7 @@ function PayoutRunsPageInner() {
     }
   }
 
-  async function handleGenerate() {
+  async function handleGenerate(costReviewAck = false, spReviewAck = false) {
     if (!selectedProvider || !selectedMonth || !selectedClinic) {
       alert('請選擇醫生、診所和月份')
       return
@@ -304,6 +313,8 @@ function PayoutRunsPageInner() {
           providerId: selectedProvider,
           periodMonth: selectedMonth,
           clinicId: selectedClinic || undefined,
+          costReviewAck,
+          spReviewAck,
         }),
       })
       alert(`月結單已生成 (總額: $${res.run.totalAmount})`)
@@ -318,8 +329,13 @@ function PayoutRunsPageInner() {
         loadAvailableClinics(selectedProvider, selectedMonth)
       }
     } catch (e: any) {
-      if (e.status === 409) {
-        alert(`月結單已存在`)
+      if (e.status === 409 && (e.body?.code === 'COST_REVIEW_REQUIRED' || e.body?.code === 'SP_REVIEW_REQUIRED')) {
+        // ★ cwm-costdetail-20261006：直接撳「生成並鎖定」但有未計入成本 → 開預覽俾人檢查
+        alert(e.message)
+        handlePreview()
+      } else if (e.status === 409) {
+        // 月結單已存在／生成期間成本有改動（server 訊息已講清楚）
+        alert(e.message || '月結單已存在')
       } else if (e.status === 400) {
         alert(`生成失敗: ${e.message}`)
       } else {
@@ -359,6 +375,9 @@ function PayoutRunsPageInner() {
           <a href="/apricot-accounts" className="font-medium underline shrink-0">去處理 →</a>
         </div>
       )}
+
+      {/* ★ cwm-costdetail-20261006：成本異常（落單超過 2 個月仍未到貨） */}
+      {canPayout && <StaleCostsCard />}
 
       {/* Entry links */}
       <div className="flex gap-4 flex-wrap mb-4">
@@ -445,7 +464,7 @@ function PayoutRunsPageInner() {
               預覽
             </Button>
             <Button
-              onClick={handleGenerate}
+              onClick={() => handleGenerate()}
               disabled={generating || !selectedProvider || !selectedMonth || !selectedClinic}
             >
               {generating ? '生成中...' : '生成並鎖定'}
@@ -532,12 +551,21 @@ function PayoutRunsPageInner() {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between"><span>原始收入</span><span>${previewData.preview.rawAmount?.toFixed(2)}</span></div>
                 <div className="flex justify-between"><span>收入（扣手續費後）</span><span>${previewData.preview.grossAmount?.toFixed(2)}</span></div>
-                <div className="flex justify-between text-red-600"><span>Lab 成本</span><span>-${previewData.preview.labCost?.toFixed(2)}</span></div>
-                <div className="flex justify-between text-red-600"><span>Implant 成本</span><span>-${previewData.preview.implantCost?.toFixed(2)}</span></div>
-                <div className="flex justify-between text-red-600"><span>Invisalign 成本</span><span>-${previewData.preview.invisalignCost?.toFixed(2)}</span></div>
+                {/* ★ cwm-costdetail-20261006：成本可撳開 —— 已計入＋當月未計入提醒 */}
+                <CostDetailRow label="Lab 成本" amount={previewData.preview.labCost ?? 0} detail={previewData.costDetail?.LAB}
+                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased />
+                <CostDetailRow label="植牙成本" amount={previewData.preview.implantCost ?? 0} detail={previewData.costDetail?.IMPLANT}
+                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased={false} />
+                {/* ★ cwm-invismerge-20261006：隱形矯正已併入 LAB —— 只喺舊資料（已鎖定月份重新預覽）有數先顯示 */}
+                {((previewData.preview.invisalignCost ?? 0) !== 0 || (previewData.costDetail?.INVISALIGN?.counted?.length ?? 0) > 0) && (
+                  <CostDetailRow label="Invisalign 成本（舊類別）" amount={previewData.preview.invisalignCost ?? 0} detail={previewData.costDetail?.INVISALIGN}
+                    providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased />
+                )}
                 <div className="flex justify-between font-semibold"><span>利潤</span><span>${previewData.preview.profitAmount?.toFixed(2)}</span></div>
                 <div className="flex justify-between text-blue-600"><span>拆帳 ({previewData.preview.percentUsed}%)</span><span>${previewData.preview.salaryAmount?.toFixed(2)}</span></div>
-                <div className="flex justify-between text-green-600"><span>SP 補貼</span><span>+$ {previewData.preview.spSubsidy?.toFixed(2)}</span></div>
+                {/* ★ cwm-sppreview-20261006：未確認 2人SP／未掃描 → 黃框提示 */}
+                <SpReviewRow amount={previewData.preview.spSubsidy ?? 0} sp={previewData.spReview} month={selectedMonth}
+                  onRecompute={handlePreview} busy={previewLoading} />
                 <div className="flex justify-between text-green-600"><span>轉介</span><span>+$ {previewData.preview.refAmount?.toFixed(2)}</span></div>
                 <div className="flex justify-between text-green-600"><span>上期調整</span><span>+$ {previewData.preview.adjustAmount?.toFixed(2)}</span></div>
                 <hr />
@@ -553,9 +581,24 @@ function PayoutRunsPageInner() {
                 ))}
               </div>
             )}
+            {(previewData.costReminders ?? 0) > 0 && (
+              <label className="flex items-center gap-2 mt-4 p-3 rounded border border-amber-300 bg-amber-50 text-sm text-amber-900">
+                <input type="checkbox" checked={costAck} onChange={e => setCostAck(e.target.checked)} className="h-4 w-4" />
+                我已檢查「當月未計入」嘅 {previewData.costReminders} 項，冇漏
+              </label>
+            )}
+            {previewData.spReview?.needsAck && (
+              <label className="flex items-center gap-2 mt-2 p-3 rounded border border-amber-300 bg-amber-50 text-sm text-amber-900">
+                <input type="checkbox" checked={spAck} onChange={e => setSpAck(e.target.checked)} className="h-4 w-4" />
+                {previewData.spReview.pending.length > 0
+                  ? `我知道仲有 ${previewData.spReview.pending.length} 筆 2人SP 未確認（$${previewData.spReview.pendingTotal}），今次唔計入`
+                  : `我知道 ${previewData.spReview.clinicName} 今個月未掃描 2人SP，今次冇 SP 補貼`}
+              </label>
+            )}
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setShowPreview(false)}>關閉</Button>
-              <Button onClick={handleGenerate} disabled={generating}>
+              <Button onClick={() => handleGenerate(costAck, spAck)}
+                disabled={generating || ((previewData.costReminders ?? 0) > 0 && !costAck) || (!!previewData.spReview?.needsAck && !spAck)}>
                 {generating ? '生成中...' : '確認並鎖定'}
               </Button>
             </div>

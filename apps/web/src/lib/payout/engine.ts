@@ -6,6 +6,7 @@
  * ★ 2026-08-17: 粒度改為「醫生 × 診所 × 月」
  */
 
+import { lockPeriod } from './period-lock'
 import { Prisma, PaymentAllocation } from '@prisma/client'
 import { prisma, basePrisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
@@ -42,6 +43,14 @@ function sumByCosts(costs: any[], category: string): number {
 
 // ★ 2026-08-26：labId / labOther 都冇嘅 case 統一顯示字串（畫面/Excel/API 三邊共用）
 export const UNNAMED_VENDOR = '（未指定工廠）'
+
+/** ★ cwm-costguard-20261006：生成月結期間成本有改動（鎖定時加總對唔到數）→ 回滾，請重新預覽 */
+export class CostChangedDuringLockError extends Error {
+  constructor(detail: string) {
+    super(`成本／補貼喺生成月結期間有改動（${detail}），已取消鎖定，請重新預覽再試`)
+    this.name = 'CostChangedDuringLockError'
+  }
+}
 
 export interface VendorCost {
   vendor: string // Lab.name ／ labOther ／ UNNAMED_VENDOR
@@ -554,6 +563,8 @@ export async function lockPayoutRun(
   clinicId: string,
 ): Promise<any> {
   return await basePrisma.$transaction(async (tx: any) => {
+    // ★ cwm-payaudit-20261006：期間鎖（同成本／SP／轉介／調整寫入一前一後，見 period-lock.ts）
+    await lockPeriod(tx, providerId, clinicId, periodMonth)
     // a. Create PayoutRun with LOCKED status
     const run = await tx.payoutRun.create({
       data: {
@@ -602,6 +613,20 @@ export async function lockPayoutRun(
       data: { lockedByRunId: run.id },
     })
 
+    // ★ cwm-costguard-20261006：計數（computePayout）同鎖定唔喺同一個 transaction ——
+    //   中間有人新增／改成本，會被鎖住但冇計入。鎖完再按類別加總對數，唔一致就成個 transaction 回滾。
+    const lockedSums = await tx.costCase.groupBy({
+      by: ['category'],
+      where: { lockedByRunId: run.id, status: { not: 'VOID' }, finalCost: { not: null } },
+      _sum: { finalCost: true },
+    })
+    const sumOf = (cat: string) => round2(Number(lockedSums.find((g: any) => g.category === cat)?._sum.finalCost ?? 0))
+    const mismatch = ([['LAB', payout.labCost], ['IMPLANT', payout.implantCost], ['INVISALIGN', payout.invisalignCost]] as Array<[string, number]>)
+      .filter(([cat, expected]) => Math.abs(sumOf(cat) - round2(expected)) > 0.005)
+    if (mismatch.length > 0) {
+      throw new CostChangedDuringLockError(mismatch.map(([cat, expected]) => `${cat} 計 ${round2(expected)}／鎖 ${sumOf(cat)}`).join('；'))
+    }
+
     // c. Lock ProviderReferral
     const lockRefWhere: any = {
       fromProviderId: providerId,
@@ -626,6 +651,24 @@ export async function lockPayoutRun(
       data: { lockedByRunId: run.id },
     })
 
+    // ★ cwm-spbulk-20261006：2人SP／轉介同成本一樣 —— 計數同鎖定之間有人確認／取消確認，
+    //   會被鎖住但冇計錢（或者計咗但冇鎖）。鎖完按「已確認」再加總，唔夾就成個 transaction 回滾。
+    const lockedSp = await tx.spSubsidy.aggregate({
+      where: { lockedByRunId: run.id, status: 'CONFIRMED' },
+      _sum: { amount: true },
+    })
+    const lockedRef = await tx.providerReferral.aggregate({
+      where: { lockedByRunId: run.id, status: 'CONFIRMED' },
+      _sum: { amount: true },
+    })
+    const spLocked = round2(Number(lockedSp._sum.amount ?? 0))
+    const refLocked = round2(Number(lockedRef._sum.amount ?? 0))
+    const otherMismatch = ([['2人SP', payout.spSubsidy, spLocked], ['轉介', payout.refAmount, refLocked]] as Array<[string, number, number]>)
+      .filter(([, expected, locked]) => Math.abs(locked - round2(expected)) > 0.005)
+    if (otherMismatch.length > 0) {
+      throw new CostChangedDuringLockError(otherMismatch.map(([k, expected, locked]) => `${k} 計 ${round2(expected)}／鎖 ${locked}`).join('；'))
+    }
+
     // e. Assign unassigned PayoutAdjustment
     const lockAdjWhere: any = {
       providerId,
@@ -637,6 +680,12 @@ export async function lockPayoutRun(
       where: lockAdjWhere,
       data: { runId: run.id },
     })
+    // ★ cwm-payaudit-20261006：計數之後先入嘅調整會被歸入但冇計錢 → 對數，唔夾就回滾
+    const lockedAdj = await tx.payoutAdjustment.aggregate({ where: { runId: run.id }, _sum: { amount: true } })
+    const adjLocked = round2(Number(lockedAdj._sum.amount ?? 0))
+    if (Math.abs(adjLocked - round2(payout.adjustAmount)) > 0.005) {
+      throw new CostChangedDuringLockError(`上期調整 計 ${round2(payout.adjustAmount)}／鎖 ${adjLocked}`)
+    }
 
     // f. Write audit log
     await tx.auditLog.create({
@@ -908,10 +957,12 @@ export async function scanSpSubsidies(
       if (missing.length) throw new Error(`SpSubsidy 缺必填欄：${missing.join(', ')}`)
 
       if (existing) {
-        await prisma.spSubsidy.update({
-          where: { billItemEleId: item.eleId },
+        // ★ cwm-spbulk-20261006：條件寫入 —— 讀完 existing 之後有人鎖咗月結，唔准改已鎖定嘅金額
+        const res = await prisma.spSubsidy.updateMany({
+          where: { billItemEleId: item.eleId, lockedByRunId: null },
           data: updateData,
         })
+        if (res.count === 0) { skippedLocked++; continue }
         updated++
       } else {
         await prisma.spSubsidy.create({
@@ -966,8 +1017,9 @@ export async function createVoidAdjustment(
   note: string,
   createdBy: string,
   clinicId: string,
+  db: any = prisma,
 ): Promise<any> {
-  return await prisma.payoutAdjustment.create({
+  return await db.payoutAdjustment.create({
     data: {
       providerId,
       clinicId,

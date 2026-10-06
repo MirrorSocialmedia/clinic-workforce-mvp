@@ -16,7 +16,7 @@ interface Account {
   nextNoText: string | null; remaining: number | null; clinicIds: string[]
 }
 interface Clinic { id: string; name: string; companyName: string; accountId: string | null }
-interface Payee { id: string; name: string; payee: string }
+interface Payee { id: string; name: string; payee: string; nameZhMissing?: boolean }
 interface Layout { id: string; name: string }
 interface Settings { accounts: Account[]; clinics: Clinic[]; providers: Payee[]; labs: Payee[]; layouts: Layout[] }
 
@@ -168,8 +168,12 @@ function PayeeList({ title, hint, list, onSave }: { title: string; hint: string;
         const v = vals[p.id] ?? ''
         const dirty = v.trim().toUpperCase() !== p.payee
         return (
-          <div key={p.id} className="grid grid-cols-[110px_1fr_56px] gap-2 items-center px-4 py-2 border-t text-sm">
-            <span>{p.name}</span>
+          <div key={p.id} className="grid grid-cols-[minmax(110px,180px)_1fr_56px] gap-2 items-center px-4 py-2 border-t text-sm">
+            <span>
+              {p.name}
+              {/* ★ cwm-chequerec-20261005：同姓醫生靠中文全名分（去「醫生管理」填） */}
+              {p.nameZhMissing && <><br /><Link href="/providers" className="text-xs text-amber-700 underline">未填中文名</Link></>}
+            </span>
             <input value={v} placeholder={hint} aria-label={`${p.name} 支票抬頭`}
               onChange={e => setVals({ ...vals, [p.id]: e.target.value })}
               className={`border rounded px-2 py-1 text-sm uppercase ${!p.payee ? 'border-amber-400' : ''}`} />

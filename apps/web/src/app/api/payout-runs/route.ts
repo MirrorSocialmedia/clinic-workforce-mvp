@@ -6,7 +6,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jsonNoStore } from '@/lib/api-response'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
-import { runGates, computePayout, lockPayoutRun } from '@/lib/payout/engine'
+import { runGates, computePayout, lockPayoutRun, CostChangedDuringLockError } from '@/lib/payout/engine'
+import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
+import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
+import { todayHK } from '@/lib/hk-date'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -95,6 +98,28 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // ★ cwm-costdetail-20261006：有「當月未計入」成本 → 要喺預覽剔「我已檢查」先可以鎖（老闆拍板）
+  if (body.costReviewAck !== true) {
+    const reminders = totalReminders(await costDetail(providerId, clinicId, periodMonth, todayHK()))
+    if (reminders > 0) {
+      return NextResponse.json(
+        { error: `有 ${reminders} 項成本當月未計入，請先預覽檢查，剔「我已檢查」再鎖定`, code: 'COST_REVIEW_REQUIRED', reminders },
+        { status: 409 },
+      )
+    }
+  }
+
+  // ★ cwm-sppreview-20261006：仲有未確認 2人SP，或者成間店未掃描 → 要喺預覽剔「我知道」先鎖得
+  if (body.spReviewAck !== true) {
+    const sp = await spReview(providerId, clinicId, periodMonth)
+    if (spReviewNeeded(sp)) {
+      const msg = sp.pending.length > 0
+        ? `仲有 ${sp.pending.length} 筆 2人SP 未確認（$${sp.pendingTotal}），請先預覽，剔「我知道」再鎖定`
+        : `${sp.clinicName} ${periodMonth} 仲未掃描 2人SP，請先預覽，剔「我知道」再鎖定`
+      return NextResponse.json({ error: msg, code: 'SP_REVIEW_REQUIRED' }, { status: 409 })
+    }
+  }
+
   // Compute payout
   let payout: any
   try {
@@ -104,13 +129,22 @@ export async function POST(req: NextRequest) {
   }
 
   // Lock
-  const run = await lockPayoutRun(
-    providerId,
-    periodMonth,
-    payout,
-    auth.session!.userId,
-    clinicId,
-  )
+  let run: Awaited<ReturnType<typeof lockPayoutRun>>
+  try {
+    run = await lockPayoutRun(
+      providerId,
+      periodMonth,
+      payout,
+      auth.session!.userId,
+      clinicId,
+    )
+  } catch (e) {
+    // ★ cwm-costguard-20261006：鎖定期間成本有改動 → transaction 已回滾
+    if (e instanceof CostChangedDuringLockError) return NextResponse.json({ error: e.message }, { status: 409 })
+    // ★ cwm-payaudit-20261006：兩個人同時生成同一張（unique providerId+clinicId+periodMonth）→ 409，唔好 500
+    if ((e as any)?.code === 'P2002') return NextResponse.json({ error: '呢張月結單啱啱已經有人生成咗，請重新整理' }, { status: 409 })
+    throw e
+  }
 
   return NextResponse.json({
     run: {

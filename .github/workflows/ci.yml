@@ -151,8 +151,15 @@ jobs:
             src/lib/apricot/source-pure.test.ts \
             src/lib/cheque-sheet/build.test.ts \
             src/lib/cheque-sheet/exclude-hint.test.ts \
+            src/lib/cheque-print/missing-payouts.test.ts \
+            src/lib/cheque-print/records-build.test.ts \
+            src/lib/provider-label.test.ts \
             src/lib/cheque-print/words.test.ts \
             src/lib/cheque-print/encode.test.ts \
+            src/lib/payout/cost-detail.test.ts \
+            src/lib/payout/sp-status.test.ts \
+            src/lib/payout/sp-review.test.ts \
+            src/lib/cost-entry/guards.test.ts \
             src/lib/payroll-engine.bonus-makeup.test.ts \
             src/lib/payroll-engine.bonus-rules.test.ts \
             src/lib/payroll-engine.hourly-eowage.test.ts \
@@ -172,6 +179,7 @@ jobs:
             src/lib/provider-leave.test.ts \
             src/lib/provider-pattern.test.ts \
             src/lib/reconciliation/parsePaymentReport.test.ts \
+            src/lib/reconciliation/clinic-report.test.ts \
             src/lib/resign-cutoff.test.ts \
             src/lib/resign-full-settlement.test.ts \
             src/lib/roster-diff.test.ts \

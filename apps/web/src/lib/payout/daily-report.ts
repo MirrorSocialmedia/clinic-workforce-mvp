@@ -14,7 +14,7 @@
  *   - 日子 = paidAt 嘅 HK 日
  *   - SP 筆數 = CONFIRMED SpSubsidy，按 bill billTime HK 日
  *   - 醫生分成 = Σ(醫生收入淨額 × 該月該店拆帳%)（pickCommission）——
- *     ⚠️ 未扣 Lab／Implant／Invisalign 成本、未計 SP 補貼／轉介／調整（呢啲係月結先有）
+ *     ⚠️ 未扣 Lab／植牙成本、未計 SP 補貼／轉介／調整（呢啲係月結先有）
  * ★★★ 純讀，唔寫任何金額。
  */
 import { prisma } from '@/lib/prisma'

@@ -384,6 +384,9 @@ model Provider {
   id              String   @id @default(cuid())
   name            String
   shortName       String?
+  /// ★ cwm-chequerec-20261005：中文全名（例「何嘉俊」）— 同姓醫生（Dr.Ho／Dr.Ho Pak Hei）靠佢分；
+  ///   唔必填（老闆拍板）；顯示一律「name · nameZh」（lib/provider-label.ts）。支票抬頭另外設（ChequePayee）。
+  nameZh          String?
   phone           String?
   color           String?
   // ★ cwm-apricotacct-20260913 I 章：apricotId 已剷走 — 唯一來源係 ApricotPractitioner 表（可多帳號）。
@@ -408,6 +411,8 @@ model Provider {
   weeklyPatterns  ProviderWeeklyPattern[]
   holds           ProviderHold[]
   apricotAccounts ApricotPractitioner[]
+  /// ★ cwm-reconclinic-20261006：Apricot 全店月報 Practitioner 欄嘅名（例「Dr. Ho Ka Chun」）
+  reportNames     ProviderReportName[]
 
   @@index([companyId, isActive])
 }
@@ -2281,4 +2286,18 @@ model Cheque {
   @@unique([accountId, chequeNo])
   @@index([sourceType, sourceId])
   @@index([periodMonth])
+}
+
+/// ★ cwm-reconclinic-20261006：Apricot 全店付款月報「Practitioner」欄名 → 醫生。
+///   第一次上載時由單號（Transaction Code ↔ ApricotBill.code）自動建議，老闆確認一次就記住。
+///   一個醫生可以有幾個名；同一個名（正規化後）唔可以屬兩個醫生（nameNorm 係主鍵）。
+model ProviderReportName {
+  nameNorm   String   @id // 細階、去頭尾空白、壓縮空格
+  name       String // 報表原文（顯示用）
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([providerId])
 }

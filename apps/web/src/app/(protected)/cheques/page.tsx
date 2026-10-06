@@ -22,6 +22,8 @@ interface Row {
   label: string; detail: string; amount: number; blocker: string | null
   cheque: { id: string; chequeNo: string; status: string; confirmed: boolean; chequeDate: string } | null
   lab?: { labId: string; statementRef: string | null; note: string | null; systemCost: number }
+  /** ★ cwm-chequerec-20261005：醫生未生成月結（灰色佔位，唔計數） */
+  missing?: boolean
 }
 interface Issued { id: string; chequeNo: string; sourceType: string; payeeName: string; amount: number; chequeDate: string; status: string; confirmed: boolean; voidReason: string | null }
 interface Layout { id: string; name: string; fields: LayoutFields; offsetXmm: number; offsetYmm: number; printerMode: PrinterMode }
@@ -130,7 +132,7 @@ export default function ChequeCenterPage() {
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold">支票打印中心</h1>
-          <div className="text-sm text-muted-foreground">只限老闆 · <Link href="/cheques/settings" className="underline">支票設定</Link> · <Link href="/cheques/printer" className="underline">打印機同校準</Link></div>
+          <div className="text-sm text-muted-foreground">只限老闆 · <Link href="/cheques/records" className="underline">支票紀錄</Link> · <Link href="/cheques/settings" className="underline">支票設定</Link> · <Link href="/cheques/printer" className="underline">打印機同校準</Link></div>
         </div>
         <PrinterBadge state={printer.state} onConnect={() => { printer.connect().catch(e => setErr(e?.message || '連接失敗')) }} />
       </div>
@@ -157,7 +159,7 @@ export default function ChequeCenterPage() {
           {tabs.map(([k, label]) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
               className={`px-4 py-2 text-sm border-l first:border-l-0 ${tab === k ? 'bg-brand text-white' : ''}`}>
-              {label} {data ? data[k].length : ''}
+              {label} {data ? data[k].filter(r => !r.missing).length : ''}
             </button>
           ))}
         </div>
@@ -178,8 +180,8 @@ export default function ChequeCenterPage() {
                 <input type="checkbox" checked={picked.has(rowKey(r)) && issuable(r)} disabled={!issuable(r)} onChange={() => toggle(r)} aria-label={`揀 ${r.label}`} />
                 <span><b className="font-medium">{r.payee ?? '—'}</b><br /><span className="text-xs text-slate-500">{r.label}</span></span>
                 <span className="col-start-2 md:col-start-auto text-slate-600">{r.detail}</span>
-                <span className="col-start-2 md:col-start-auto md:text-right font-mono">{money(r.amount)}</span>
-                <span className="col-start-2 md:col-start-auto"><ChequeChip c={r.cheque} /></span>
+                <span className="col-start-2 md:col-start-auto md:text-right font-mono">{r.missing ? '—' : money(r.amount)}</span>
+                <span className="col-start-2 md:col-start-auto">{r.missing ? <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">未生成月結</span> : <ChequeChip c={r.cheque} />}</span>
                 <span className="col-start-2 md:col-start-auto text-xs text-amber-700">{r.blocker ?? fitErr.get(rowKey(r)) ?? ''}</span>
               </div>
             ))}
@@ -381,7 +383,7 @@ function PrintSession({ rows, layout, accountId, accountLabel, month, chequeDate
                 <div className="text-3xl font-bold font-mono my-1">#{phase.cheque.chequeNo}</div>
                 <div>{phase.content.payee} · <span className="font-mono">HK${money(phase.row.amount)}</span></div>
               </div>
-              <ChequePreview fields={layout.fields} items={layoutItems(layout.fields, phase.content, off, layout.printerMode)} mode={layout.printerMode} offset={off} width={680} />
+              <ChequePreview fields={layout.fields} items={layoutItems(layout.fields, phase.content, { x: 0, y: 0 }, layout.printerMode)} mode={layout.printerMode} width={680} />
               <div className="text-sm font-semibold">印好之後，#{phase.cheque.chequeNo} 印成點？</div>
               <div className="flex gap-3">
                 <button type="button" disabled={busy} onClick={good} className="flex-1 h-12 rounded-lg bg-green-700 text-white font-bold disabled:opacity-50">印得好，{queue.length ? '下一張' : '完成'}</button>

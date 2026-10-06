@@ -104,7 +104,7 @@ const STATUSES = ['PENDING', 'PRICED', 'DONE', 'REDO'] as const
 const CATEGORY_LABELS: Record<string, string> = {
   LAB: 'LAB', // ★ 2026-08-22：改 label（唔再係「牙醫化驗」）
   IMPLANT: '植牙',
-  INVISALIGN: '隱形矯正',
+  INVISALIGN: '隱形矯正（舊）', // ★ cwm-invismerge-20261006：已併入 LAB，只剩已鎖定舊資料
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -171,6 +171,20 @@ export default function CostEntryPage() {
   const [debouncedQ, setDebouncedQ] = useState('')
   // ★ cwm-costentry-20260827 §3：作廢行預設收起
   const [showVoided, setShowVoided] = useState(false)
+
+  // ★ cwm-costdetail-20261006：醫生月結預覽／成本異常「去成本錄入 ›」帶篩選開呢頁
+  //   ?providerId=&clinicId=&month=YYYY-MM&dateMode=ordered|received&q=病人編號（掛載後讀一次，避免 SSR hydration 唔一致）
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const month = sp.get('month')
+    if (month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month)) setFilterPeriodMonth(month)
+    if (sp.get('providerId')) setFilterProviderId(sp.get('providerId')!)
+    if (sp.get('clinicId')) setFilterClinicId(sp.get('clinicId')!)
+    const dm = sp.get('dateMode')
+    if (dm === 'ordered' || dm === 'received') setDateMode(dm)
+    const q = sp.get('q')?.trim()
+    if (q) { setSearchQ(q); setDebouncedQ(q) }
+  }, [])
 
   const [userRole, setUserRole] = useState('')
   const [grant, setGrant] = useState<string[]>([])

@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
         select: { apricotId: true, name: true },
         orderBy: { apricotId: 'asc' },
       },
+      // ★ cwm-reconclinic-20261006：Apricot 全店報表 Practitioner 名（月報對數認醫生）
+      reportNames: { select: { name: true }, orderBy: { createdAt: 'asc' } },
     },
   })
   // Map to flat clinicIds for frontend
@@ -31,6 +33,7 @@ export async function GET(req: NextRequest) {
     ...p,
     clinicIds: p.clinics.map(c => c.clinicId),
     apricotAccounts: p.apricotAccounts.map(({ apricotId, name: acctName }) => ({ apricotId, name: acctName })),
+    reportNames: p.reportNames.map(r => r.name),
   }))
   // Remove nested clinics from output
   const output = result.map(({ clinics, ...rest }) => rest)
@@ -50,7 +53,7 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
-  const { name, shortName, phone, color, apricotAccounts, apricotUserId, companyId, sortOrder, clinicIds, showInCostEntry } = body
+  const { name, shortName, nameZh, phone, color, apricotAccounts, apricotUserId, companyId, sortOrder, clinicIds, showInCostEntry } = body
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'name 必填' }, { status: 400 })
@@ -89,6 +92,8 @@ export async function POST(req: NextRequest) {
         data: {
           name: name.trim(),
           shortName: shortName?.trim() || null,
+          // ★ cwm-chequerec-20261005：中文全名（唔必填；冇傳 = 唔郁，空字串 = 清空）
+          ...(nameZh !== undefined ? { nameZh: typeof nameZh === 'string' && nameZh.trim() ? nameZh.trim().slice(0, 50) : null } : {}),
           phone: phone?.trim() || null,
           color,
           apricotUserId: apricotUserId?.trim() || null,
@@ -128,7 +133,7 @@ export async function POST(req: NextRequest) {
         entity: 'Provider',
         entityId: provider.id,
         notes: `新增醫生：${provider.name}`,
-        afterJson: JSON.stringify({ id: provider.id, name: provider.name, apricotAccounts: accounts }),
+        afterJson: JSON.stringify({ id: provider.id, name: provider.name, nameZh: provider.nameZh, apricotAccounts: accounts }),
       },
     }).catch(e => console.error('[providers] audit failed', e))
 

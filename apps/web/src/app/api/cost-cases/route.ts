@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { jsonNoStore } from '@/lib/api-response'
-import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, todayHK } from '@/lib/hk-date'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 import { normPatientCode } from '@/lib/cost-entry/patient-code'
+import { CostGuardError, parseMoney, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -250,7 +252,7 @@ export async function GET(req: NextRequest) {
 }
 
 // ============================================================
-// POST /api/cost-cases — Create a cost case (LAB / INVISALIGN)
+// POST /api/cost-cases — Create a cost case (LAB；隱形矯正已併入 LAB，cwm-invismerge-20261006)
 // Roles: OWNER, MANAGER
 // Body: { providerId, clinicId, category, patientCode, patientName?,
 //         orderedAt, itemType?, labId?, labOrderNo?, dsaName?,
@@ -278,7 +280,10 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  if (!['LAB', 'INVISALIGN'].includes(category)) {
+  if (category === 'INVISALIGN') {
+    return NextResponse.json({ error: '隱形矯正已併入 LAB：類別揀 LAB，項目揀 Invisalign' }, { status: 400 })
+  }
+  if (category !== 'LAB') {
     return NextResponse.json({ error: 'IMPLANT 請用 POST /api/cost-cases/implant' }, { status: 400 })
   }
 
@@ -294,6 +299,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
   }
 
+  // ★ cwm-costguard-20261006：金額、日期、診所範圍、已鎖月份（詳見 lib/cost-entry/guards.ts）
+  let baseCostNum: number | null
+  try {
+    baseCostNum = parseMoney(baseCost)
+    const od = parseDay(orderedAt, '落單')!
+    checkCostDates(od, parseDay(receivedAt, '到貨'), todayHK())
+    assertClinicAllowed(session, clinicId)
+  } catch (e) {
+    if (e instanceof CostGuardError) return NextResponse.json({ error: e.message }, { status: e.status })
+    throw e
+  }
+
   // ★ cwm-implantdate-20260913：IMPLANT 強制跟落單日；LAB/INVISALIGN 維持跟到貨日（未到貨 = null）。
   //   （2026-08-27 拍板①嘅「跟到貨日」只保留畀 LAB/INVISALIGN：落單 7/25、到貨 8/5 → 計 8 月；
   //    未到貨（receivedAt null）→ periodMonth = null → 唔入任何月結，等補咗到貨日先計。）
@@ -301,16 +318,12 @@ export async function POST(req: NextRequest) {
   //      呢個 IMPLANT branch 係 defensive（MD A3 要求三 route 導出邏輯統一）。
   const { receivedAt: effectiveReceivedAt, periodMonth } = deriveCostPeriod(category, orderedAt, receivedAt)
 
-  // ★ cwm-labdoc P2 §13（F-26）：目標月（醫生×診所×月）已 LOCKED → 唔好再入
-  //   口徑同 PUT 守衛③一致（cwm-costlock-scope-20260913：PayoutRun = 醫生 × 診所 × 月）
-  if (periodMonth) {
-    const locked = await prisma.payoutRun.findFirst({
-      where: { providerId, clinicId, periodMonth, status: 'LOCKED' },
-      select: { id: true },
-    })
-    if (locked) {
-      return NextResponse.json({ error: `${periodMonth} 月已出月結（LOCKED）— 唔可以再入新成本` }, { status: 409 })
-    }
+  // ★ cwm-labdoc P2 §13（F-26）＋ cwm-costguard-20261006：目標月（醫生×診所×月）已 LOCKED → 409 零寫入
+  //   （P2 F-26 同 main 守衛係同一個檢查 — lockedRunFor = findFirst(醫生×診所×月, LOCKED)，
+  //    query 同 P2 原內聯版一致；periodMonth null = 未到貨唔屬任何月結 → lockedRunFor 自動 skip；
+  //    口徑同 PUT 守衛③（cwm-costlock-scope-20260913）；競態窗口由下方 writeInPeriod 期間鎖兜底）
+  if (await lockedRunFor(prisma, providerId, clinicId, periodMonth)) {
+    return NextResponse.json({ error: lockedMonthMessage(periodMonth!) }, { status: 409 })
   }
 
   // ★ Q2: Look up discount from LabMonthlyDiscount table (ignore body discountPct)
@@ -327,7 +340,6 @@ export async function POST(req: NextRequest) {
   // ★ labOther（Others）冇折扣 —— 要折扣就正式建一個 Lab
 
   // Compute finalCost
-  const baseCostNum = baseCost != null ? Number(baseCost) : null
   let finalCostNum: number | null = null
   if (baseCostNum != null && discountPctNum != null) {
     finalCostNum = Number((baseCostNum * (100 - discountPctNum) / 100).toFixed(2))
@@ -338,7 +350,10 @@ export async function POST(req: NextRequest) {
   // If no baseCost, status stays PENDING
   const status = baseCostNum != null ? 'PRICED' : 'PENDING'
 
-  const caseData = await prisma.costCase.create({
+  let caseData: any
+  try {
+    // ★ cwm-payaudit-20261006：期間鎖 —— 同「鎖月結」一前一後，唔會入咗已鎖月份又唔計錢
+    caseData = await writeInPeriod(prisma, { providerId, clinicId, periodMonth }, (tx: any) => tx.costCase.create({
     data: {
       providerId,
       clinicId,
@@ -371,7 +386,11 @@ export async function POST(req: NextRequest) {
     include: {
       lab: { select: { id: true, name: true } },
     },
-  })
+  }))
+  } catch (e) {
+    if (e instanceof PeriodLockedError) return NextResponse.json({ error: lockedMonthMessage(e.periodMonth) }, { status: 409 })
+    throw e
+  }
 
   // Audit log
   await prisma.auditLog.create({

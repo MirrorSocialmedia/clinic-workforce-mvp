@@ -197,6 +197,13 @@ function makeFake(state: State) {
       },
     },
     auditLog: { create: async (a: any) => state.audits.push(a.data) },
+    // ★ merge cwm-payaudit-20261006（main 側）：PUT tx 內 SELECT…FOR UPDATE 再驗＋期間 advisory lock —
+    //   fake 模擬（$executeRaw = no-op；$queryRaw 回目前 fake 行嘅 lockedByRunId）
+    $executeRaw: async () => 0,
+    $queryRaw: async (_t: unknown, ...values: any[]) => {
+      const c = state.costs[values[0]]
+      return c ? [{ lockedByRunId: c.lockedByRunId ?? null }] : []
+    },
     $transaction: async (fn: any, _opts?: any) => {
       const snap = JSON.stringify({ costs: state.costs, docs: state.docs, lines: state.lines, audits: state.audits })
       try {
@@ -220,7 +227,7 @@ function makeFake(state: State) {
   }
 }
 
-const KEYS = ['user', 'clinic', 'provider', 'labMonthlyDiscount', 'payoutRun', 'costCase', 'labDocumentLine', 'labDocument', 'auditLog', '$transaction'] as const
+const KEYS = ['user', 'clinic', 'provider', 'labMonthlyDiscount', 'payoutRun', 'costCase', 'labDocumentLine', 'labDocument', 'auditLog', '$transaction', '$queryRaw', '$executeRaw'] as const
 const saved: Record<string, unknown> = {}
 for (const k of KEYS) saved[k] = (prisma as any)[k]
 after(() => {

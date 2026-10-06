@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Upload, FileSpreadsheet, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react'
 import { RequireRole } from '@/components/RequireRole'
 import { todayHK } from '@/lib/hk-date'
+import { ClinicMappingPanel, ClinicWideSummary, type ClinicWideResult, type PractitionerResolution } from '@/components/reconciliation/ClinicWide'
 
 interface ReconciliationRecord {
   id: string
@@ -46,6 +47,10 @@ interface ParsePreview {
   rowCount: number
   // ★ MD-AC1: 日期解析唔到嘅跳過行數
   skipped: number
+  // ★ cwm-reconclinic-20261006：全店報表（逐行 Practitioner）
+  mode?: 'CLINIC'
+  clinic?: string
+  practitioners?: PractitionerResolution[]
 }
 
 export default function ReconciliationPage() {
@@ -72,6 +77,8 @@ function ReconciliationPageInner() {
   const [parsePreview, setParsePreview] = useState<ParsePreview | null>(null)
   const [selectedProviderId, setSelectedProviderId] = useState<string>('')
   const [previewFile, setPreviewFile] = useState<File | null>(null)
+  // ★ cwm-reconclinic-20261006：全店對數結果卡
+  const [clinicResult, setClinicResult] = useState<ClinicWideResult | null>(null)
 
   useEffect(() => {
     loadProviders()
@@ -115,6 +122,8 @@ function ReconciliationPageInner() {
         body: formData,
       })
       setParsePreview(res)
+      // ★ cwm-reconclinic-20261006：全店報表唔使揀醫生（逐個名對應）
+      if (res.mode === 'CLINIC') return
 
       // Auto-select provider by matching shortName from "(CODE)" in practitioner name
       const code = res.meta.practitioner.match(/\(([^)]+)\)\s*$/)?.[1]?.trim()
@@ -167,6 +176,32 @@ function ReconciliationPageInner() {
       setSelectedProviderId('')
     }
   }, [previewFile, selectedProviderId])
+
+  // ★ cwm-reconclinic-20261006：全店報表上載（帶名 → 醫生對應）
+  const handleClinicUpload = useCallback(async (mapping: Record<string, string>, remember: boolean) => {
+    if (!previewFile) return
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', previewFile)
+      formData.append('mapping', JSON.stringify(mapping))
+      formData.append('remember', remember ? '1' : '0')
+      const res: ClinicWideResult & { success: boolean } = await apiFetch('/api/reconciliation/upload', { method: 'POST', body: formData })
+      setClinicResult(res)
+      setParsePreview(null)
+      setPreviewFile(null)
+      loadRecords()
+    } catch (e: any) {
+      if (e.status === 409 && e.body?.code === 'NEEDS_MAPPING') {
+        // 期間有人改咗對應 → 用最新資料再揀
+        setParsePreview(prev => (prev ? { ...prev, practitioners: e.body.practitioners } : prev))
+      }
+      setUploadError(e.message || '上載失敗')
+    } finally {
+      setUploading(false)
+    }
+  }, [previewFile]) // eslint-disable-line react-hooks/exhaustive-deps -- loadRecords 每次 render 新建，用最新即可
 
   const handleCancelPreview = useCallback(() => {
     setParsePreview(null)
@@ -310,6 +345,12 @@ function ReconciliationPageInner() {
               </span>
             )}
           </>
+        ) : parsePreview.mode === 'CLINIC' && parsePreview.practitioners ? (
+          <ClinicMappingPanel
+            key={parsePreview.practitioners.map(p => p.nameNorm + (p.providerId ?? '')).join('|')}
+            clinic={parsePreview.clinic ?? parsePreview.meta.clinic} month={parsePreview.meta.month}
+            practitioners={parsePreview.practitioners} providers={providers} busy={uploading}
+            onSubmit={handleClinicUpload} onCancel={handleCancelPreview} />
         ) : (
           /* H1b: Parse preview — show practitioner + provider select */
           <div className="flex flex-wrap items-center gap-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
@@ -357,6 +398,9 @@ function ReconciliationPageInner() {
           </div>
         )}
       </div>
+
+      {uploadError && parsePreview?.mode === 'CLINIC' && <div className="text-sm text-red-600 mb-3">{uploadError}</div>}
+      {clinicResult && <ClinicWideSummary r={clinicResult} onClose={() => setClinicResult(null)} />}
 
       {/* Records table */}
       {loading ? (

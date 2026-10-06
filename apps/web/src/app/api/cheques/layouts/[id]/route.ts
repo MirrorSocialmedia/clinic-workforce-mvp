@@ -24,9 +24,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const before = await prisma.chequeLayout.findUnique({ where: { id: params.id } })
     if (!before) return jsonNoStore({ error: '搵唔到呢個版面' }, { status: 404 })
     const b = await req.json().catch(() => ({} as any))
+    const fields = b?.fields ? normalizeFields(b.fields) : null
+    if (b?.fields && !fields) return jsonNoStore({ error: '版面資料格式唔啱，請重新載入' }, { status: 400 })
     const data = {
       name: typeof b?.name === 'string' && b.name.trim() ? b.name.trim().slice(0, 30) : before.name,
-      fieldsJson: b?.fields ? JSON.stringify(normalizeFields(b.fields)) : before.fieldsJson,
+      fieldsJson: fields ? JSON.stringify(fields) : before.fieldsJson,
       offsetXmm: b?.offsetXmm !== undefined ? clampOff(b.offsetXmm) : before.offsetXmm,
       offsetYmm: b?.offsetYmm !== undefined ? clampOff(b.offsetYmm) : before.offsetYmm,
       printerMode: b?.printerMode === 'TEXT' || b?.printerMode === 'ESCP' ? b.printerMode : before.printerMode,

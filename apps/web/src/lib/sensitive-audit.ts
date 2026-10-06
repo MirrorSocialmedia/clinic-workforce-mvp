@@ -65,6 +65,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'CHEQUE_RELEASE', label: '支票送唔到打印機・退號' },
   { action: 'CHEQUE_SETTING_UPDATE', label: '支票設定（戶口／版面／抬頭）' },
   { action: 'LAB_CHEQUE_AMOUNT_UPDATE', label: 'Lab 月結金額（支票用）' },
+  { action: 'CHEQUE_RECORDS_EXPORT', label: '匯出支票紀錄（Excel）' }, // ★ cwm-chequerec-20261005
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },
   { action: 'EMPLOYEE_RESIGN_SETTLE', label: '離職結算確認（寫入薪金／時間帳戶扣除）' },
@@ -128,8 +129,10 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'REFERRAL_COMPLETE', label: '轉介草稿補上帳單' },
   { action: 'REFERRAL_UPDATE', label: '更新轉介' },
   { action: 'SP_SUBSIDY_CONFIRM', label: '確認 SP 補貼' },
+  { action: 'SP_SUBSIDY_BULK_CONFIRM', label: '批量確認 SP 補貼' },
   { action: 'SP_SUBSIDY_SKIP', label: '跳過 SP 補貼' },
   { action: 'SP_SUBSIDY_RESET', label: '取消確認 SP 補貼' },
+  { action: 'SP_SUBSIDY_SCAN', label: '掃描 2人SP 候選' },
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },

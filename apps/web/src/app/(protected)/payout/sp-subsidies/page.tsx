@@ -8,7 +8,7 @@
  * S4: reset 掣 + S5: 已確認完整資訊 + §七: 按醫生×診所分組
  * S6: 返回連結 + S8: 排序選擇
  */
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { todayHK } from '@/lib/hk-date'
 import { Button } from '@/components/ui/button'
@@ -55,6 +55,12 @@ export default function SpSubsidiesPage() {
   const [scanning, setScanning] = useState(false)
   const [scanningMonth, setScanningMonth] = useState('')
   const [confirming, setConfirming] = useState<string | null>(null)
+  // ★ cwm-spbulk-20261006：批量確認 —— 有 2P1K 標記嘅預先勾；需覆核嘅唔預先勾（要逐筆睇過先剔）
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const seenRef = useRef<Set<string>>(new Set()) // 已經見過嘅（之後重新載入唔會再自動勾返用戶取消咗嘅）
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkResult, setBulkResult] = useState<BulkResultView | null>(null)
 
   // R3: 篩選 state
   const currentMonth = todayHK().slice(0, 7) // '2026-08'  // ★ cwm-consist S6 TZ-05b：HK 視角當月（舊版 toISOString = UTC slice，00:00–07:59 HK 會差月）
@@ -68,6 +74,15 @@ export default function SpSubsidiesPage() {
   // S8: 排序 state
   const [sortBy, setSortBy] = useState<'review' | 'date' | 'amount'>('review')
 
+  // ★ cwm-sppreview-20261006：月結預覽「去 2人SP 確認」帶 ?month=&provider=<醫生名>&clinic=<診所名>（掛載後讀一次，避免 SSR hydration 唔一致）
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const m = sp.get('month')
+    if (m && /^\d{4}-(0[1-9]|1[0-2])$/.test(m)) { setMonth(m); setScanningMonth(m) }
+    if (sp.get('provider')) setFilterProvider(sp.get('provider')!)
+    if (sp.get('clinic')) setFilterClinic(sp.get('clinic')!)
+  }, [])
+
   useEffect(() => {
     loadSubsidies()
   }, [month])
@@ -75,7 +90,17 @@ export default function SpSubsidiesPage() {
   async function loadSubsidies() {
     try {
       const res = await apiFetch<any>(`/api/sp-subsidies?periodMonth=${month}`)
-      setSubsidies((res as any).subsidies || [])
+      const list: SpSubsidy[] = (res as any).subsidies || []
+      setSubsidies(list)
+      const pending = list.filter(s => s.status === 'PENDING')
+      // 第一次見到嘅先決定預設（updater 要 pure：StrictMode 會行兩次，唔可以喺入面改 ref）
+      const fresh = pending.filter(s => !seenRef.current.has(s.id))
+      fresh.forEach(s => seenRef.current.add(s.id))
+      const autoPick = fresh.filter(s => !s.needsReview).map(s => s.id)
+      setSelected(prev => {
+        const pendingIds = new Set(pending.map(s => s.id))
+        return new Set([...Array.from(prev).filter(id => pendingIds.has(id)), ...autoPick])
+      })
     } catch (e) {
       console.error('Failed to load SP subsidies', e)
     } finally {
@@ -148,6 +173,36 @@ export default function SpSubsidiesPage() {
     }
   }
 
+  async function handleBulkConfirm(rows: SpSubsidy[]) {
+    if (bulkBusy || rows.length === 0) return
+    setBulkBusy(true)
+    try {
+      const res = await apiFetch<any>('/api/sp-subsidies/bulk-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: rows.map(s => ({ id: s.id, amount: Number(s.amount) })) }),
+      })
+      const r = res as BulkResultView
+      setBulkResult(r)
+      setBulkOpen(false)
+      // 冇確認到嘅（例如金額變咗）取消剔 —— 要人重新睇過先揀
+      setSelected(prev => { const n = new Set(prev); r.rejected.forEach(x => n.delete(x.id)); return n })
+      await loadSubsidies()
+    } catch (e: any) {
+      alert(`批量確認失敗: ${e.message}`)
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  function toggle(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
   // R3: 篩選邏輯
   const filtered = useMemo(() => subsidies.filter(s => {
     if (month && s.periodMonth !== month) return false
@@ -214,6 +269,76 @@ export default function SpSubsidiesPage() {
     }
     return [...map.values()].sort((a, b) => b.total - a.total)
   }, [filteredConfirmed])
+
+  // ★ cwm-spbulk：底部條只計睇得到（篩選後）而又揀咗嘅待確認
+  const selectedRows = filteredPending.filter(s => selected.has(s.id))
+  const selectedTotal = round2(selectedRows.reduce((a, s) => a + Number(s.amount), 0))
+  const selectedReview = selectedRows.filter(s => s.needsReview).length
+  const allVisibleSelected = filteredPending.length > 0 && selectedRows.length === filteredPending.length
+  const pendingMarked = filteredPending.filter(s => !s.needsReview)
+  const pendingReview = filteredPending.filter(s => s.needsReview)
+
+  function toggleAll() {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (allVisibleSelected) filteredPending.forEach(s => next.delete(s.id))
+      else filteredPending.forEach(s => next.add(s.id))
+      return next
+    })
+  }
+
+  function renderPendingRow(s: SpSubsidy) {
+    return (
+      <div key={s.id} className={`flex justify-between items-center gap-3 border rounded p-3 ${s.needsReview ? 'border-amber-400 border-2' : selected.has(s.id) ? 'bg-green-50/60' : ''}`}>
+        <input type="checkbox" className="w-5 h-5 shrink-0" checked={selected.has(s.id)} onChange={() => toggle(s.id)}
+          aria-label={`揀 帳單 ${s.billCode ?? s.id}`} disabled={bulkBusy} />
+        <div className="text-sm flex-1">
+          <div className="font-medium">
+            {s.itemDes}
+            {s.providerName && <> · {s.providerName}</>}
+            {s.clinicName && <> · {s.clinicName}</>}
+          </div>
+          {(s.billCode || s.billTime) && (
+            <div className="text-gray-500">
+              帳單 {s.billCode ?? '—'} · {s.billTime ? new Date(s.billTime).toLocaleDateString('zh-HK') : '—'}
+            </div>
+          )}
+          <div className="text-gray-500">
+            原價 ${s.listPrice} → 優惠價 ${s.actualPrice} × {s.headcount}人 ({s.splitPercent}%)
+          </div>
+          <div className="text-gray-500">
+            月份: {s.periodMonth} | 來源: {s.source}
+            {/* S1: hasMarker 顯示 */}
+            {' · '}{s.hasMarker ? '✅ 2P1K 標記' : '⚠️ 冇標記（金額吻合）'}
+          </div>
+          {/* R2: needsReview 原因 */}
+          {s.needsReview && (
+            <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              ⚠️ 需要覆核：{spReviewReason(s)}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="font-bold text-green-700">${s.amount}</span>
+          <Button
+            size="sm"
+            onClick={() => handleConfirm(s.id)}
+            disabled={confirming === s.id || bulkBusy}
+          >
+            <Check className="w-3 h-3" /> {confirming === s.id ? '確認中...' : '確認'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleSkip(s.id)}
+            disabled={bulkBusy}
+          >
+            <X className="w-3 h-3" /> 跳過
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   if (loading) return <div className="p-6">載入中...</div>
 
@@ -301,62 +426,63 @@ export default function SpSubsidiesPage() {
         </p>
       </Card>
 
-      {/* Pending list — R2: needsReview 琥珀邊框 */}
+      {/* ★ cwm-spbulk：批量確認結果 */}
+      {bulkResult && <BulkResultCard r={bulkResult} onClose={() => setBulkResult(null)} />}
+
+      {/* Pending list — R2: needsReview 琥珀邊框；★ cwm-spbulk：剔格 + 底部批量確認 */}
       <Card className="p-4 mb-6">
-        <h2 className="font-semibold mb-3 text-orange-700">待確認 ({filteredPending.length})</h2>
+        <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+          <label className="flex items-center gap-2 font-semibold text-orange-700">
+            <input type="checkbox" className="w-5 h-5" checked={allVisibleSelected} onChange={toggleAll}
+              disabled={filteredPending.length === 0 || bulkBusy} aria-label="全選待確認" />
+            待確認 ({filteredPending.length}) · 全選
+          </label>
+          {filteredPending.length > 0 && (
+            <span className="text-xs text-gray-500">撳「全選」會連需覆核嘅都揀埋，確認前會再提一次</span>
+          )}
+        </div>
         {filteredPending.length === 0 && (
           <p className="text-gray-500 text-sm">暫無待確認補貼</p>
         )}
-        <div className="space-y-2">
-          {filteredPending.map(s => (
-            <div key={s.id} className={`flex justify-between items-center border rounded p-3 ${s.needsReview ? 'border-amber-400 border-2' : ''}`}>
-              <div className="text-sm">
-                <div className="font-medium">
-                  {s.itemDes}
-                  {s.providerName && <> · {s.providerName}</>}
-                  {s.clinicName && <> · {s.clinicName}</>}
-                </div>
-                {(s.billCode || s.billTime) && (
-                  <div className="text-gray-500">
-                    帳單 {s.billCode ?? '—'} · {s.billTime ? new Date(s.billTime).toLocaleDateString('zh-HK') : '—'}
-                  </div>
-                )}
-                <div className="text-gray-500">
-                  原價 ${s.listPrice} → 優惠價 ${s.actualPrice} × {s.headcount}人 ({s.splitPercent}%)
-                </div>
-                <div className="text-gray-500">
-                  月份: {s.periodMonth} | 來源: {s.source}
-                  {/* S1: hasMarker 顯示 */}
-                  {' · '}{s.hasMarker ? '✅ 2P1K 標記' : '⚠️ 冇標記（金額吻合）'}
-                </div>
-                {/* R2: needsReview 原因 */}
-                {s.needsReview && (
-                  <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                    ⚠️ 需要覆核：{spReviewReason(s)}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="font-bold text-green-700">${s.amount}</span>
-                <Button
-                  size="sm"
-                  onClick={() => handleConfirm(s.id)}
-                  disabled={confirming === s.id}
-                >
-                  <Check className="w-3 h-3" /> {confirming === s.id ? '確認中...' : '確認'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleSkip(s.id)}
-                >
-                  <X className="w-3 h-3" /> 跳過
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
+        {sortBy === 'review' ? (
+          <>
+            {pendingMarked.length > 0 && (
+              <>
+                <div className="text-sm font-semibold text-green-800 mb-2">✓ 有 2P1K 標記（{pendingMarked.length}）— 已預先勾選</div>
+                <div className="space-y-2 mb-4">{pendingMarked.map(renderPendingRow)}</div>
+              </>
+            )}
+            {pendingReview.length > 0 && (
+              <>
+                <div className="text-sm font-semibold text-amber-800 mb-2">⚠ 需覆核（{pendingReview.length}）— 冇預先勾，要逐筆睇過先剔</div>
+                <div className="space-y-2">{pendingReview.map(renderPendingRow)}</div>
+              </>
+            )}
+          </>
+        ) : (
+          <div className="space-y-2">{filteredPending.map(renderPendingRow)}</div>
+        )}
       </Card>
+
+      {selectedRows.length > 0 && (
+        <div className="sticky bottom-3 z-20 mb-6 flex flex-wrap justify-between items-center gap-3 rounded-lg bg-slate-800 text-white px-4 py-3 shadow-lg" role="region" aria-label="批量確認">
+          <span>
+            已揀 <b>{selectedRows.length}</b> 筆 · 合共 <b>${selectedTotal}</b>
+            <span className="text-slate-300 text-sm"> · 其中需覆核 {selectedReview} 筆</span>
+          </span>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setSelected(prev => { const n = new Set(prev); selectedRows.forEach(s => n.delete(s.id)); return n })}
+              disabled={bulkBusy} className="h-10 px-3 rounded border border-slate-500 text-sm">清除選擇</button>
+            <button type="button" onClick={() => setBulkOpen(true)} disabled={bulkBusy}
+              className="h-10 px-4 rounded bg-teal-600 hover:bg-teal-700 font-semibold disabled:opacity-50">✓ 確認已揀 {selectedRows.length} 筆</button>
+          </div>
+        </div>
+      )}
+
+      {bulkOpen && (
+        <BulkConfirmDialog rows={selectedRows} month={month} busy={bulkBusy}
+          onCancel={() => setBulkOpen(false)} onConfirm={() => handleBulkConfirm(selectedRows)} />
+      )}
 
       {/* Confirmed list — S5: 完整資訊 + §七: 按醫生×診所分組 */}
       <Card className="p-4 mb-6">
@@ -457,6 +583,101 @@ export default function SpSubsidiesPage() {
           ))}
         </div>
       </Card>
+    </div>
+  )
+}
+
+// ─── ★ cwm-spbulk-20261006：批量確認 ─────────────────────────────────────
+
+interface BulkResultView {
+  confirmed: Array<{ id: string; amount: number }>
+  already: string[]
+  rejected: Array<{ id: string; reason: 'AMOUNT_CHANGED' | 'LOCKED' | 'MONTH_LOCKED' | 'NOT_FOUND' | 'NOT_PENDING'; billCode?: string | null; providerName?: string | null; amount?: number; expected: number }>
+}
+
+function round2(n: number) { return Math.round(n * 100) / 100 }
+
+function BulkConfirmDialog({ rows, month, busy, onCancel, onConfirm }: {
+  rows: SpSubsidy[]; month: string; busy: boolean; onCancel: () => void; onConfirm: () => void
+}) {
+  const total = round2(rows.reduce((a, s) => a + Number(s.amount), 0))
+  const review = rows.filter(s => s.needsReview).length
+  const byDoc = useMemo(() => {
+    const m = new Map<string, { n: number; rev: number; amt: number }>()
+    for (const s of rows) {
+      const k = s.providerName ?? '未知'
+      const g = m.get(k) ?? { n: 0, rev: 0, amt: 0 }
+      g.n++; if (s.needsReview) g.rev++; g.amt = round2(g.amt + Number(s.amount))
+      m.set(k, g)
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1].amt - a[1].amt)
+  }, [rows])
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto" role="dialog" aria-modal="true" aria-label="確認已揀SP補貼">
+      <div className="bg-white rounded-xl w-full max-w-xl p-6 mt-16 flex flex-col gap-4">
+        <div className="text-xl font-bold">確認 {rows.length} 筆 2人SP補貼？</div>
+        <div className="text-sm text-gray-600">{month} · 合共 <b className="text-gray-900">${total}</b></div>
+        <div className="border rounded overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-600">
+              <tr><th className="text-left p-2">醫生</th><th className="text-right p-2">筆數</th><th className="text-right p-2">需覆核</th><th className="text-right p-2">金額</th></tr>
+            </thead>
+            <tbody>
+              {byDoc.map(([doc, g]) => (
+                <tr key={doc} className="border-t">
+                  <td className="p-2 font-medium">{doc}</td>
+                  <td className="p-2 text-right tabular-nums">{g.n}</td>
+                  <td className={`p-2 text-right tabular-nums ${g.rev ? 'text-amber-700 font-semibold' : 'text-gray-500'}`}>{g.rev}</td>
+                  <td className="p-2 text-right tabular-nums font-semibold">${g.amt}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {review > 0 && (
+          <div className="bg-amber-50 border border-amber-400 rounded p-3 text-sm text-amber-900">
+            ⚠ 其中 <b>{review} 筆需覆核</b>（冇 2P1K 備註或者金額唔啱）。如果未逐筆核對，請返去取消剔。
+          </div>
+        )}
+        <div className="text-xs text-gray-500">確認咗嘅會計入醫生月結。已鎖定月結、或者喺你睇完之後金額有變嘅，系統唔會確認，會逐筆話返你知。</div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={busy}>返回</Button>
+          <Button onClick={onConfirm} disabled={busy}>{busy ? '確認中…' : `確認 ${rows.length} 筆（$${total}）`}</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const REJECT_LABEL: Record<string, (r: BulkResultView['rejected'][number]) => string> = {
+  AMOUNT_CHANGED: r => `金額由 $${r.expected} 變咗 $${r.amount}（有人重新掃描），請睇過再確認`,
+  LOCKED: () => '呢個月結已經鎖定，改唔到',
+  MONTH_LOCKED: () => '該月月結已經鎖定（呢筆係鎖完先掃到），確認咗都唔會計入；請用手動調整喺下期補',
+  NOT_FOUND: () => '呢筆已經唔存在（可能已刪除）',
+  NOT_PENDING: () => '已經被跳過，冇確認',
+}
+
+function BulkResultCard({ r, onClose }: { r: BulkResultView; onClose: () => void }) {
+  const total = round2(r.confirmed.reduce((a, c) => a + c.amount, 0))
+  return (
+    <div className="mb-4 flex flex-col gap-2" role="status" aria-label="批量確認結果">
+      <div className="flex justify-between items-start bg-green-50 border border-green-300 rounded p-3">
+        <div>
+          <div className="font-semibold text-green-800">✓ 已確認 {r.confirmed.length} 筆 · ${total}</div>
+          <div className="text-xs text-gray-600">已移去「已確認」，個別仍然可以「取消確認」。{r.already.length > 0 && ` ${r.already.length} 筆本身已確認，冇重複寫。`}</div>
+        </div>
+        <button type="button" onClick={onClose} className="text-xs text-gray-500 underline">收埋</button>
+      </div>
+      {r.rejected.length > 0 && (
+        <div className="bg-amber-50 border border-amber-400 rounded p-3 text-sm">
+          <div className="font-semibold text-amber-800 mb-1">⚠ {r.rejected.length} 筆冇確認</div>
+          <ul className="space-y-0.5 text-gray-700">
+            {r.rejected.map(x => (
+              <li key={x.id}>帳單 {x.billCode ?? '—'}{x.providerName ? ` · ${x.providerName}` : ''} —— {REJECT_LABEL[x.reason]?.(x) ?? x.reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

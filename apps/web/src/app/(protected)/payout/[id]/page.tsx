@@ -186,6 +186,8 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
 
   if (loading) return <div className="p-6">載入中...</div>
   if (!run) return <div className="p-6">搵唔到月結單</div>
+  // ★ cwm-invismerge-20261006：工廠總覽只喺有舊 Invisalign 數先出嗰欄
+  const showInvisCol = !!vendorSummary?.vendors.some(v => v.invisalignCost !== 0)
 
   const { provider, periodMonth } = run
   const name = provider?.shortName || provider?.name || '未知醫生'
@@ -341,7 +343,7 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
               ))}
             </div>
           )}
-          <div className="flex justify-between font-semibold"><span>Implant 成本</span><span>-${run.implantCost.toFixed(2)}</span></div>
+          <div className="flex justify-between font-semibold"><span>植牙成本</span><span>-${run.implantCost.toFixed(2)}</span></div>
           {(vendorMap.IMPLANT ?? []).length > 0 && (
             <div style={{ paddingLeft: 14, margin: '2px 0 8px', borderLeft: '2px solid #fecaca' }}>
               {(vendorMap.IMPLANT ?? []).map((v) => (
@@ -351,7 +353,9 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
               ))}
             </div>
           )}
-          <div className="flex justify-between font-semibold"><span>Invisalign 成本</span><span>-${run.invisalignCost.toFixed(2)}</span></div>
+          {/* ★ cwm-invismerge-20261006：隱形矯正已併入 LAB —— 舊月結單有數先顯示 */}
+          {(run.invisalignCost !== 0 || (vendorMap.INVISALIGN ?? []).length > 0) && (<>
+          <div className="flex justify-between font-semibold"><span>Invisalign 成本（舊類別）</span><span>-${run.invisalignCost.toFixed(2)}</span></div>
           {(vendorMap.INVISALIGN ?? []).length > 0 && (
             <div style={{ paddingLeft: 14, margin: '2px 0 8px', borderLeft: '2px solid #fecaca' }}>
               {(vendorMap.INVISALIGN ?? []).map((v) => (
@@ -361,6 +365,7 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
               ))}
             </div>
           )}
+          </>)}
         </div>
       </Card>
 
@@ -460,8 +465,8 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
                 <tr className="text-left border-b">
                   <th className="py-1">工廠</th>
                   <th className="py-1 text-right">Lab</th>
-                  <th className="py-1 text-right">Implant</th>
-                  <th className="py-1 text-right">Invisalign</th>
+                  <th className="py-1 text-right">植牙</th>
+                  {showInvisCol && <th className="py-1 text-right">Invisalign（舊）</th>}
                   <th className="py-1 text-right">合計</th>
                   <th className="py-1 text-right">單數</th>
                 </tr>
@@ -472,7 +477,7 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
                     <td className="py-1">{v.vendor}</td>
                     <td className="py-1 text-right">{v.labCost > 0 ? `$${v.labCost.toFixed(2)}` : '—'}</td>
                     <td className="py-1 text-right">{v.implantCost > 0 ? `$${v.implantCost.toFixed(2)}` : '—'}</td>
-                    <td className="py-1 text-right">{v.invisalignCost > 0 ? `$${v.invisalignCost.toFixed(2)}` : '—'}</td>
+                    {showInvisCol && <td className="py-1 text-right">{v.invisalignCost > 0 ? `$${v.invisalignCost.toFixed(2)}` : '—'}</td>}
                     <td className="py-1 text-right font-semibold">${v.total.toFixed(2)}</td>
                     <td className="py-1 text-right">{v.caseCount}</td>
                   </tr>
@@ -481,7 +486,7 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
                   <td className="py-1">合計</td>
                   <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.labCost, 0).toFixed(2)}</td>
                   <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.implantCost, 0).toFixed(2)}</td>
-                  <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.invisalignCost, 0).toFixed(2)}</td>
+                  {showInvisCol && <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.invisalignCost, 0).toFixed(2)}</td>}
                   <td className="py-1 text-right">${vendorSummary.vendors.reduce((a, v) => a + v.total, 0).toFixed(2)}</td>
                   <td className="py-1 text-right">{vendorSummary.vendors.reduce((a, v) => a + v.caseCount, 0)}</td>
                 </tr>

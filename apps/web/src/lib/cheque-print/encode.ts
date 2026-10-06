@@ -41,7 +41,7 @@ export function encodeEscp(items: PrintItem[], rasters: Record<string, RasterBan
         const n = r.columns.length / 3
         out.push(ESC, 0x2a, 39, n & 0xff, (n >> 8) & 0xff, ...Array.from(r.columns))
       } else {
-        out.push(ESC, it.cpi === 12 ? 0x4d : 0x50) // ESC M = 12 cpi；ESC P = 10 cpi
+        out.push(ESC, it.cpi === 15 ? 0x67 : it.cpi === 12 ? 0x4d : 0x50) // ESC g = 15 cpi；ESC M = 12；ESC P = 10
         out.push(...ascii(it.text))
       }
       out.push(0x0d)
@@ -85,13 +85,21 @@ export function plainTestPage(): Uint8Array {
   return textBytes(lines.join('\r\n') + '\r\n')
 }
 
-/** 第 2 步：ESC/P 格仔（每 10mm 一個 +）。印到整齊格仔 = 打印機識 ESC/P；印出亂碼 = 唔識，用 TEXT 模式 */
-export function escpGridPage(paper: { w: number; h: number }): Uint8Array {
+/**
+ * 第 2 步／對位：ESC/P 格仔（每 10mm 一個 +，左邊同頂行有 mm 數）。
+ * 傳打印機起點偏移入嚟，印出嚟嘅數字就係「支票座標」：疊落支票就讀到每個欄位應該喺幾多 mm。
+ * 印到整齊格仔 = 打印機識 ESC/P；印出亂碼 = 唔識，用 TEXT 模式。
+ */
+export function escpGridPage(paper: { w: number; h: number }, off: { x: number; y: number } = { x: 0, y: 0 }): Uint8Array {
   const items: PrintItem[] = []
-  for (let y = 0; y <= paper.h; y += 10) {
-    for (let x = 0; x <= paper.w - 10; x += 10) items.push({ key: `g${x}_${y}`, x, y, text: x === 0 ? `+${y}` : '+', cpi: 10 })
+  const x0 = Math.max(0, Math.ceil(-off.x / 10) * 10)
+  const y0 = Math.max(0, Math.ceil(-off.y / 10) * 10)
+  for (let y = y0; y <= paper.h; y += 10) {
+    for (let x = x0; x <= paper.w - 5; x += 10) {
+      const label = y === y0 ? `+${x}` : x === x0 ? `+${y}` : '+'
+      items.push({ key: `g${x}_${y}`, x: x + off.x, y: y + off.y, text: label, cpi: 15 })
+    }
   }
-  items.push({ key: 'title', x: 20, y: 4, text: 'CHEQUE PRINTER TEST 2 - ESC/P GRID 10MM', cpi: 12 })
   return encodeEscp(items)
 }
 

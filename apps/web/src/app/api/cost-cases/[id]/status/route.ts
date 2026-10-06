@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { requirePerm, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
+import { CostGuardError, assertClinicAllowed } from '@/lib/cost-entry/guards'
 
 // ============================================================
 // PATCH /api/cost-cases/:id/status — 成本個案「已完成」綠剔（2026-09-02 cwm-costnote）
@@ -39,12 +40,16 @@ export async function PATCH(
   if (existing.status === 'VOID') {
     return jsonNoStore({ error: '已作廢個案唔可以改狀態' }, { status: 400 })
   }
+  // ★ cwm-costguard-20261006：MANAGER 只可以改所屬診所
+  try { assertClinicAllowed(session, existing.clinicId) } catch (e) {
+    if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+    throw e
+  }
 
-  const updated = await prisma.costCase.update({
-    where: { id },
-    data: { status },
-    select: { id: true, status: true },
-  })
+  // ★ cwm-payaudit-20261006：條件寫入 —— 同時有人作廢，舊寫法會將 VOID 蓋返做 DONE（成本「復活」再計入月結）
+  const res = await prisma.costCase.updateMany({ where: { id, status: { not: 'VOID' } }, data: { status } })
+  if (res.count === 0) return jsonNoStore({ error: '已作廢個案唔可以改狀態' }, { status: 400 })
+  const updated = { id, status }
 
   await prisma.auditLog.create({
     data: {

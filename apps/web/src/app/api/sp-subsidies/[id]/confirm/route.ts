@@ -1,10 +1,11 @@
 /**
  * POST /api/sp-subsidies/[id]/confirm — Confirm SP subsidy (OWNER / provider_payout)
  * // ownership-ok: provider_payout 權限限制
+ * ★ cwm-spbulk-20261006：改用 setSpStatus（條件寫入：未鎖定先寫；已經係已確認 = no-op，唔重複寫 audit）
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { prisma } from '@/lib/prisma'
+import { setSpStatus, spStatusResponse } from '@/lib/payout/sp-status'
 
 export async function POST(
   req: NextRequest,
@@ -13,49 +14,7 @@ export async function POST(
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
 
-  const subsidy = await prisma.spSubsidy.findUnique({
-    where: { id: params.id },
-  })
-  if (!subsidy) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
-
-  // Check if locked
-  if (subsidy.lockedByRunId) {
-    return NextResponse.json(
-      { error: '該補貼已鎖定喺月結單中，無法修改' },
-      { status: 409 },
-    )
-  }
-
-  const updated = await prisma.spSubsidy.update({
-    where: { id: params.id },
-    data: { status: 'CONFIRMED', confirmedBy: auth.session!.userId },
-  })
-
-  // Audit
-  await prisma.auditLog.create({
-    data: {
-      actorId: auth.session!.userId,
-      action: 'SP_SUBSIDY_CONFIRM',
-      entity: 'SpSubsidy',
-      entityId: params.id,
-      notes: `確認 SP 補貼：${updated.itemDes} ${updated.periodMonth} $${Number(updated.amount)}`,
-      afterJson: JSON.stringify({
-        providerId: updated.providerId,
-        periodMonth: updated.periodMonth,
-        amount: Number(updated.amount),
-      }),
-    },
-  }).catch((e: any) => console.error('[sp-subsidies] confirm audit failed', e))
-
-  return NextResponse.json({
-    subsidy: {
-      ...updated,
-      listPrice: Number(updated.listPrice),
-      actualPrice: Number(updated.actualPrice),
-      splitPercent: Number(updated.splitPercent),
-      amount: Number(updated.amount),
-    },
-  })
+  const r = await setSpStatus(params.id, 'CONFIRMED', auth.session!.userId)
+  const { body, status } = spStatusResponse(r)
+  return NextResponse.json(body, { status })
 }

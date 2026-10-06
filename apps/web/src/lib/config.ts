@@ -247,6 +247,9 @@ export const CONFIG = {
     'PUT /api/cheques/payees': ['OWNER'],
     'PUT /api/cheques/layouts/:id': ['OWNER'],
     'GET /api/cheques/center': ['OWNER'],
+    // ★ cwm-chequerec-20261005：支票紀錄（連作廢）＋ Excel 匯出 —— 只限老闆
+    'GET /api/cheques/records': ['OWNER'],
+    'GET /api/cheques/records/export': ['OWNER'],
     'PUT /api/cheques/lab-amounts': ['OWNER'],
     'POST /api/cheques/issue': ['OWNER'],
     'PATCH /api/cheques/:id': ['OWNER'],
@@ -429,6 +432,7 @@ export const CONFIG = {
     'GET /api/payout-runs/daily': ['OWNER'], // ★ cwm-dailyrev-20261003: 每日大數（同月結單同一權限）
     'GET /api/payout-runs/:id/vendor-summary': ['OWNER'], // ★ 2026-08-26: 工廠總覽（跨醫生）
     'POST /api/payout-runs/clinics': ['OWNER'],
+    'GET /api/payout-runs/stale-costs': ['OWNER'], // ★ cwm-costdetail-20261006: 成本異常（落單超過 2 個月未到貨）
     'GET /api/provider-referrals': ['OWNER'],
     'POST /api/provider-referrals': ['OWNER'],
     'PUT /api/provider-referrals/:id': ['OWNER'],
@@ -440,6 +444,7 @@ export const CONFIG = {
     'GET /api/sp-subsidies': ['OWNER'],
     'POST /api/sp-subsidies/scan': ['OWNER'],
     'POST /api/sp-subsidies/:id/confirm': ['OWNER'],
+    'POST /api/sp-subsidies/bulk-confirm': ['OWNER'],
     'POST /api/sp-subsidies/:id/skip': ['OWNER'],
     'POST /api/sp-subsidies/:id/reset': ['OWNER'],
     // ★ MD-E: 月報對數
@@ -747,6 +752,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/payout-runs/daily': ['provider_payout'], // ★ cwm-dailyrev-20261003
   'GET /api/payout-runs/:id/vendor-summary': ['provider_payout'], // ★ 2026-08-26: 工廠總覽（同月結單同一權限，MD §3.3）
   'POST /api/payout-runs/clinics': ['provider_payout'],
+  'GET /api/payout-runs/stale-costs': ['provider_payout'], // ★ cwm-costdetail-20261006（同月結頁同一權限）
   'GET /api/provider-referrals': ['provider_payout'],
   'POST /api/provider-referrals': ['provider_payout'],
   'PUT /api/provider-referrals/:id': ['provider_payout'],
@@ -758,6 +764,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/sp-subsidies': ['provider_payout'],
   'POST /api/sp-subsidies/scan': ['provider_payout'],
   'POST /api/sp-subsidies/:id/confirm': ['provider_payout'],
+  'POST /api/sp-subsidies/bulk-confirm': ['provider_payout'],
   'POST /api/sp-subsidies/:id/skip': ['provider_payout'],
   'POST /api/sp-subsidies/:id/reset': ['provider_payout'],
   // ★ MD-E: 月報對數

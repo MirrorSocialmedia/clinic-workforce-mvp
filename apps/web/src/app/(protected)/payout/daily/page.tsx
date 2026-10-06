@@ -219,7 +219,7 @@ export default function DailyRevenuePage() {
 
           <div className="px-4 py-3 text-xs text-gray-500 space-y-1 border-t">
             <div>TOTAL = 店舖營收（只計計入營收嘅付款方式）；灰字欄唔計。顏色同醫生月結 Excel 一樣：藍字 = 系統帶入，黑字粗體 = 合計，黃底 = 最終金額。</div>
-            <div>醫生分成 = 收入淨額 × 拆帳比例；<b>未扣 Lab／Implant／Invisalign 成本，未計 SP 補貼／轉介／調整</b> —— 實際應付以月結單為準。</div>
+            <div>醫生分成 = 收入淨額 × 拆帳比例；<b>未扣 Lab／植牙成本，未計 SP 補貼／轉介／調整</b> —— 實際應付以月結單為準。</div>
             {report.missingCommission.length > 0 && <div className="text-amber-700">未設拆帳（分成冇計）：{report.missingCommission.join('、')}</div>}
           </div>
         </Card>
