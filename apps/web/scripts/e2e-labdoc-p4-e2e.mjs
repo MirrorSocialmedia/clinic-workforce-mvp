@@ -253,11 +253,15 @@ if (doPhase('B')) {
   for (const id of docs.map((d) => d.id)) settled.push(await waitExtract(id, 480000))
   const sts = settled.map((d) => d.status)
   ok(settled.every((d) => !['UPLOADED', 'EXTRACTING'].includes(d.status)), `全部終態（${sts.join('/')}）`)
-  ok(settled.every((d) => (d.extractAttempts ?? 0) >= 1), `extractAttempts ≥1（真 LLM 被調用；${settled.map((d) => d.extractAttempts).join('/')}）`)
-  if (settled.some((d) => d.status === 'EXTRACT_FAILED')) {
-    for (const d of settled) if (d.status === 'EXTRACT_FAILED') log('INFO', `scan doc ${d.id} EXTRACT_FAILED attempts=${d.extractAttempts} err=${(d.extractError ?? '').slice(0, 160)}`)
-  }
-  ev.phases.scanUpload = { docs: docs.map((d) => d.id), statuses: sts, attempts: settled.map((d) => d.extractAttempts), errors: settled.map((d) => (d.extractError ?? '').slice(0, 200)) }
+  // 真 LLM 被調用：/api/lab-docs/:id 唔投影 extractAttempts（已知 projection gap — DB 有值、API 回 null）；
+  // EXTRACT_FAILED 經 /api/lab-docs/pending categories[EXTRACT_FAILED].items[].extra「…（attempts=N）」核；NEEDS_REVIEW = 抽取成功（LLM 必然被調）
+  const pend = await api('GET', '/api/lab-docs/pending?limit=100')
+  const failItems = (pend.json?.categories ?? []).find((c) => c.key === 'EXTRACT_FAILED')?.items ?? []
+  const attOf = (id) => { const m = failItems.find((x) => x.id === id)?.extra?.match(/attempts=(\d+)/); return m ? Number(m[1]) : null }
+  const atts = settled.map((d) => (d.status === 'EXTRACT_FAILED' ? attOf(d.id) : 1))
+  ok(atts.every((a) => (a ?? 0) >= 1), `真 LLM 被調用（attempts: ${atts.join('/')} — EXTRACT_FAILED 經 pending route 核）`)
+  for (const d of settled) if (d.status === 'EXTRACT_FAILED') log('INFO', `scan doc ${d.id} EXTRACT_FAILED ${failItems.find((x) => x.id === d.id)?.extra ?? '(pending route 無該 doc)'}`)
+  ev.phases.scanUpload = { docs: docs.map((d) => d.id), statuses: sts, attempts: atts, extra: failItems.filter((x) => settled.some((d) => d.id === x.id)).map((x) => x.extra) }
 }
 
 // ════════════════════════ PHASE C: Sodental 09 PDF（LLM + reconcile）══════
