@@ -430,6 +430,9 @@ export const CONFIG = {
     'GET /api/payout-runs/:id/export': ['OWNER'], // ★ AA3: Excel 匯出
     'GET /api/payout-runs/clinic-report': ['OWNER'], // ★ cwm-payoutxlsx C: 全店月報（MD 坑⑧）
     'GET /api/payout-runs/daily': ['OWNER'], // ★ cwm-dailyrev-20261003: 每日大數（同月結單同一權限）
+    'GET /api/payout-runs/daily/check': ['OWNER'], // ★ cwm-dailycheck-20261006: 每日大數護士核對
+    'POST /api/payout-runs/daily/check': ['OWNER'],
+    'POST /api/payout-runs/daily/check/revoke': ['OWNER'],
     'GET /api/payout-runs/:id/vendor-summary': ['OWNER'], // ★ 2026-08-26: 工廠總覽（跨醫生）
     'POST /api/payout-runs/clinics': ['OWNER'],
     'GET /api/payout-runs/stale-costs': ['OWNER'], // ★ cwm-costdetail-20261006: 成本異常（落單超過 2 個月未到貨）
@@ -706,6 +709,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/payout-runs/:id/export': ['provider_payout'], // ★ AA3
   'GET /api/payout-runs/clinic-report': ['provider_payout'], // ★ cwm-payoutxlsx C: 全店月報（同單張匯出同一套權限）
   'GET /api/payout-runs/daily': ['provider_payout'], // ★ cwm-dailyrev-20261003
+  'GET /api/payout-runs/daily/check': ['provider_payout'], // ★ cwm-dailycheck-20261006
+  'POST /api/payout-runs/daily/check': ['provider_payout'],
+  'POST /api/payout-runs/daily/check/revoke': ['provider_payout'],
   'GET /api/payout-runs/:id/vendor-summary': ['provider_payout'], // ★ 2026-08-26: 工廠總覽（同月結單同一權限，MD §3.3）
   'POST /api/payout-runs/clinics': ['provider_payout'],
   'GET /api/payout-runs/stale-costs': ['provider_payout'], // ★ cwm-costdetail-20261006（同月結頁同一權限）

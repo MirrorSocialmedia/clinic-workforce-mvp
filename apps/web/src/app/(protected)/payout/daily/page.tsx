@@ -15,6 +15,7 @@ import { Card } from '@/components/ui/card'
 import { ArrowLeft, Download } from 'lucide-react'
 import { todayHK, addDaysStr } from '@/lib/hk-date'
 import type { DailyReport, DailyRow } from '@/lib/payout/daily-report'
+import { DailyCheckPanel } from '@/components/payout/DailyCheckPanel'
 
 const SECTION = '#1F4E79'
 const BLUE = '#0000ff'
@@ -39,6 +40,8 @@ export default function DailyRevenuePage() {
   const [report, setReport] = useState<DailyReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // ★ cwm-dailycheck-20261006：每次重新攞到報表 → 護士核對狀態都重新攞（同一份數）
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     Promise.all([apiFetch<any>('/api/clinics'), apiFetch<any>('/api/providers')])
@@ -66,7 +69,7 @@ export default function DailyRevenuePage() {
     setLoading(true)
     setError('')
     apiFetch<DailyReport>(`/api/payout-runs/daily?${query}`)
-      .then(r => { if (!cancelled) setReport(r) })
+      .then(r => { if (!cancelled) { setReport(r); setReloadKey(k => k + 1) } })
       .catch(e => { if (!cancelled) { setReport(null); setError(e.message) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -129,6 +132,15 @@ export default function DailyRevenuePage() {
 
       {error && <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">⚠️ {error}</div>}
       {loading && <div className="p-6 text-gray-500">載入中...</div>}
+
+      {/* ★ cwm-dailycheck-20261006：護士核對（揀咗診所、全部醫生先有；每店每日一次） */}
+      {report && !loading && report.mode === 'byDoctor' && clinicId && (
+        <DailyCheckPanel clinicId={clinicId}
+          clinicLabel={clinics.find(c => c.id === clinicId)?.shortName || clinics.find(c => c.id === clinicId)?.name || ''}
+          from={report.from} to={report.to} reloadKey={reloadKey}
+          currentRows={report.rows.map(r => ({ key: r.key, label: r.label, storeTotal: r.storeTotal }))}
+          onPickDate={d => { setFrom(d); setTo('') }} />
+      )}
 
       {report && !loading && (
         <Card className="overflow-hidden mb-4">
