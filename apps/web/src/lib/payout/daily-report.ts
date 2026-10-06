@@ -60,6 +60,8 @@ export interface DailyReport {
   missingCommission: string[]
   /** 單一醫生 + 單一診所 + 單一月份先有一個固定 % */
   percent: number | null
+  /** ★ cwm-dailycheck-20261006：逐醫生模式 —— 逐日店舖營收 TOTAL（同 A 區 Total 同一口徑；護士核對用） */
+  dayStoreTotals?: Record<string, number>
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
@@ -331,7 +333,17 @@ export async function loadDailyReport(opts: {
     k => spCount.get(k) ?? 0,
   )
   agg.rows.sort((a, b) => b.storeTotal - a.storeTotal || a.label.localeCompare(b.label))
+  // ★ cwm-dailycheck-20261006：逐日店舖營收（同 aggregateDaily 一樣：groupOf 有行 + countAsIncome）
+  const dayRaw = new Map<string, number>()
+  for (const a of allocs) {
+    if (!groupOf(a) || !a.countAsIncome || !a.method.trim()) continue
+    const d = toHKDateStr(a.paidAt)
+    dayRaw.set(d, (dayRaw.get(d) ?? 0) + a.amount)
+  }
+  const dayStoreTotals: Record<string, number> = {}
+  for (const d of days) dayStoreTotals[d] = round2(dayRaw.get(d) ?? 0)
   return {
+    dayStoreTotals,
     mode: 'byDoctor', from, to,
     title: `${clinicLabel} · ${rangeLabel}`,
     ...agg,
