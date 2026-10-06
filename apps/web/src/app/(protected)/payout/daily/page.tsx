@@ -92,7 +92,11 @@ export default function DailyRevenuePage() {
     setFrom(`${today.slice(0, 7)}-01`); setTo(today)
   }
 
-  const th: React.CSSProperties = { border: '1px solid #d9dee4', padding: '7px 9px', background: '#f3f5f8', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12, textTransform: 'none', letterSpacing: 'normal' }
+  // ★ cwm-dailysticky-20261006：表頭向下捲時釘住（sticky 要配合下面 TABLE_BOX 做捲動框；
+  //   border-collapse 下 sticky 格嘅邊框唔跟住格畫：底線用 inset 陰影補，top:-1 遮住頂邊 1px 縫，唔會見到後面捲過嘅字）
+  const th: React.CSSProperties = { border: '1px solid #d9dee4', padding: '7px 9px', background: '#f3f5f8', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12, textTransform: 'none', letterSpacing: 'normal', position: 'sticky', top: -1, zIndex: 1, boxShadow: 'inset 0 -1px 0 #d9dee4' }
+  // 捲動框：橫向（付款方式多）＋直向（一個月 30 行）都喺框內捲，表頭先釘得住
+  const TABLE_BOX: React.CSSProperties = { overflow: 'auto', maxHeight: '70vh' }
   const td = (color: string, extra: React.CSSProperties = {}): React.CSSProperties => ({
     border: '1px solid #d9dee4', padding: '7px 9px', textAlign: 'right', whiteSpace: 'nowrap',
     fontVariantNumeric: 'tabular-nums', color, ...extra,
@@ -163,7 +167,7 @@ export default function DailyRevenuePage() {
           <div style={{ background: SECTION, color: '#fff', fontWeight: 700, fontSize: 13, padding: '6px 16px' }}>
             {report.mode === 'byDoctor' ? 'A  逐醫生收款' : 'A  逐日收款'}
           </div>
-          <div className="overflow-x-auto">
+          <div style={TABLE_BOX}>
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
               <thead>
                 <tr>
@@ -208,7 +212,7 @@ export default function DailyRevenuePage() {
           <div style={{ background: SECTION, color: '#fff', fontWeight: 700, fontSize: 13, padding: '6px 16px', marginTop: 16 }}>
             B  醫生收入及分成（未扣成本）
           </div>
-          <div className="overflow-x-auto">
+          <div style={TABLE_BOX}>
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
               <thead>
                 <tr>

@@ -3,7 +3,8 @@ import { NextRequest } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { basePrisma as prisma } from '@/lib/prisma'  // cwm-consist S6 CA-09b：shared client（舊 new PrismaClient() 每 request 開新 connection）
-import { toHKDateStr } from '@/lib/hk-date'
+import { toHKDateStr, getMonthRange } from '@/lib/hk-date'
+import { findPayRuleForMonth, rosterDiffApplies } from '@/lib/pay-rule-for-month'
 import { computeRosterHours, rosterDiffNoteFilter } from '@/lib/roster-hours'
 
 export async function GET(req: NextRequest) {
@@ -22,16 +23,15 @@ export async function GET(req: NextRequest) {
   // ★ cwm-attexempt-20260914 C2：免考勤員工（會計）冇更表冇打卡，「應返工時」唔適用
   if (employee.attendanceExempt) return jsonNoStore({ applicable: false })
 
-  // ★ 只有月薪員工有「應返工時」概念（時薪係返幾多鐘出幾多錢）
-  const payRule = await prisma.payRule.findFirst({
-    where: { employeeId: employee.id, isActive: true },
-    orderBy: { effectiveFrom: 'desc' },
-    select: { payType: true },
-  })
-  if (payRule?.payType !== 'MONTHLY') return jsonNoStore({ applicable: false })
-
   const month = new URL(req.url).searchParams.get('month')
     ?? toHKDateStr(new Date()).slice(0, 7)
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return jsonNoStore({ error: 'month 格式要 YYYY-MM' }, { status: 400 })
+
+  // ★ 只有月薪員工有「應返工時」概念（時薪係返幾多鐘出幾多錢）
+  // ★ cwm-tbmonthrule-20261006：睇【嗰個月】生效嘅規則（同確認計糧同一揀法）—— 兼職轉全職，兼職月份唔適用
+  const { start: ms, end: me } = getMonthRange(new Date(`${month}-01T00:00:00+08:00`))
+  const payRule = await findPayRuleForMonth(prisma, employee.id, ms, me)
+  if (!rosterDiffApplies(payRule, employee.attendanceExempt)) return jsonNoStore({ applicable: false })
 
   // ★ 出咗糧就顯示已入帳嗰筆，否則即時計
   const settled = await prisma.timeBankEntry.findFirst({
