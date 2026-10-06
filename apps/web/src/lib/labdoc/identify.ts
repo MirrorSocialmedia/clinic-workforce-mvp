@@ -277,19 +277,28 @@ function clinicSources(result: LabDocResult): ClinicSources {
  * §6.2 識別診所（只讀；alias 學習喺 §7.1 確認時 — CHUNK 3）。
  * 順序：CUSTOMER_NO → CLINIC_ALIAS → ADDRESS → SHORT_CODE → NAME（地區名）→ MANUAL。
  * 「只有一間中先揀」= ADDRESS/SHORT_CODE/NAME 多間中 → 落回下一步／MANUAL。
+ * ★ P3：核心收埋做 identifyClinicFromSources（月結單 section 級識別重用 — §8.1）。
  */
 export async function identifyClinic(
   prisma: any,
   result: LabDocResult,
   opts: { labId: string | null },
 ): Promise<ClinicIdentifyResult> {
-  const src = clinicSources(result)
+  return identifyClinicFromSources(prisma, opts.labId, clinicSources(result))
+}
+
+/** §6.2 核心：explicit sources（document 級 clinicSources／P3 section 級 sectionSources 共用）。 */
+export async function identifyClinicFromSources(
+  prisma: any,
+  labId: string | null,
+  src: ClinicSources,
+): Promise<ClinicIdentifyResult> {
   const manual: ClinicIdentifyResult = { clinicId: null, clinicBasis: 'MANUAL', evidence: null, providerIdFromCustomerNo: null }
 
   // 1) CUSTOMER_NO（需要 labId — 冇 lab 冇得比 LabCustomerNo）
-  if (src.customerNoRaw && opts.labId) {
+  if (src.customerNoRaw && labId) {
     const c = await prisma.labCustomerNo.findFirst({
-      where: { labId: opts.labId, customerNo: normCustomerNo(src.customerNoRaw) },
+      where: { labId, customerNo: normCustomerNo(src.customerNoRaw) },
       select: { clinicId: true, providerId: true },
     })
     if (c) {
@@ -402,6 +411,7 @@ function providerWordsContained(pName: string, normRaw: string): boolean {
  * §6.3 識別醫生（只讀；ProviderNameAlias 學習喺確認時 — CHUNK 3）。
  * 順序：CUSTOMER_NO（§6.2.1 帶出）→ DOCTOR_ALIAS → NAME（相等／英文名全字包含；只有一個 active provider 中）→ MANUAL。
  * INVOICE 冇醫生名 → MANUAL（確認時必填 — CHUNK 3）。
+ * ★ P3：核心收埋做 identifyProviderFromSources（月結單 section 級識別重用 — §8.1）。
  */
 export async function identifyProvider(
   prisma: any,
@@ -409,11 +419,24 @@ export async function identifyProvider(
   opts: { customerNoProviderId: string | null; customerNoRaw: string | null },
 ): Promise<ProviderIdentifyResult> {
   const doctorRaw = result.billTo.doctorRaw ?? result.sections[0]?.doctorRaw ?? null
+  return identifyProviderFromSources(prisma, {
+    doctorRaw,
+    customerNoProviderId: opts.customerNoProviderId,
+    customerNoRaw: opts.customerNoRaw,
+  })
+}
+
+/** §6.3 核心：explicit doctorRaw（document 級／P3 section 級共用）。 */
+export async function identifyProviderFromSources(
+  prisma: any,
+  sources: { doctorRaw: string | null; customerNoProviderId: string | null; customerNoRaw: string | null },
+): Promise<ProviderIdentifyResult> {
+  const doctorRaw = sources.doctorRaw
   const manual: ProviderIdentifyResult = { providerId: null, providerBasis: 'MANUAL', evidence: doctorRaw ? doctorRaw.slice(0, 120) : null }
 
   // 1) CUSTOMER_NO（§6.2.1 帶出嘅 providerId）
-  if (opts.customerNoProviderId) {
-    return { providerId: opts.customerNoProviderId, providerBasis: 'CUSTOMER_NO', evidence: (doctorRaw ?? opts.customerNoRaw ?? '').slice(0, 120) }
+  if (sources.customerNoProviderId) {
+    return { providerId: sources.customerNoProviderId, providerBasis: 'CUSTOMER_NO', evidence: (doctorRaw ?? sources.customerNoRaw ?? '').slice(0, 120) }
   }
   if (!doctorRaw) return manual
 
@@ -444,6 +467,77 @@ export async function identifyProvider(
     return { providerId: hits[0].id, providerBasis: 'NAME', evidence: doctorRaw.slice(0, 120) }
   }
   return manual
+}
+
+// ------------------------------------------------------------------
+// ★ P3 §8.1：月結單 section 級識別（診所＋醫生；§6.2/§6.3 同一規則逐段跑）
+// ------------------------------------------------------------------
+
+/** section 級 clinic sources（§6.2：「billTo.nameRaw 或 section.clinicRaw」；customerNo 逐段優先）。 */
+export function sectionSources(
+  result: LabDocResult,
+  section: { clinicRaw: string | null; customerNoRaw: string | null; addressRaw: string | null },
+): ClinicSources {
+  const b = result.billTo
+  const names = [section.clinicRaw, b.nameRaw].filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+  return {
+    customerNoRaw: section.customerNoRaw ?? b.customerNoRaw ?? null,
+    nameCandidates: [...new Set(names)],
+    addressRaw: section.addressRaw ?? b.addressRaw ?? null,
+    shortCodeRaw: b.shortCodeRaw ?? null,
+  }
+}
+
+export interface SectionIdentifyResult {
+  clinicId: string | null
+  clinicBasis: ClinicBasis
+  clinicEvidence: string | null
+  providerId: string | null
+  providerBasis: ProviderBasis
+  providerEvidence: string | null
+  /** 兩邊都識別到 */
+  complete: boolean
+}
+
+/**
+ * §8.1：逐段識別診所＋醫生（只讀；alias 學習喺 assign 時 — POST /sections/:sid/assign）。
+ * 任何一邊未識別 → 分段 NEEDS_ASSIGN（runner 落 section status）。
+ */
+export async function identifyStatementSection(
+  prisma: any,
+  result: LabDocResult,
+  opts: { labId: string | null; section: { clinicRaw: string | null; doctorRaw: string | null; customerNoRaw: string | null; addressRaw: string | null } },
+): Promise<SectionIdentifyResult> {
+  const src = sectionSources(result, opts.section)
+  const clinic = await identifyClinicFromSources(prisma, opts.labId, src)
+  const provider = await identifyProviderFromSources(prisma, {
+    doctorRaw: opts.section.doctorRaw,
+    customerNoProviderId: clinic.providerIdFromCustomerNo,
+    customerNoRaw: src.customerNoRaw,
+  })
+  return {
+    clinicId: clinic.clinicId,
+    clinicBasis: clinic.clinicBasis,
+    clinicEvidence: clinic.evidence,
+    providerId: provider.providerId,
+    providerBasis: provider.providerBasis,
+    providerEvidence: provider.evidence,
+    complete: clinic.clinicId !== null && provider.providerId !== null,
+  }
+}
+
+/** §8.1：statementMonth fallback — section 行最遲日期嘅月份（無日期行 → null）。回 'YYYY-MM'。 */
+export function latestStatementLineMonth(
+  result: LabDocResult,
+): string | null {
+  let latest: string | null = null
+  for (const s of result.sections) {
+    for (const l of s.lines) {
+      if (!l.date) continue
+      if (!latest || l.date > latest) latest = l.date
+    }
+  }
+  return latest ? latest.slice(0, 7) : null
 }
 
 // ------------------------------------------------------------------

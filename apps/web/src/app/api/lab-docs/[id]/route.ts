@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
+import { findStatementSectionDuplicate } from '@/lib/labdoc/statement-sections'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 
@@ -39,6 +40,11 @@ export async function GET(
       lines: {
         orderBy: [{ groupIndex: 'asc' }, { lineIndex: 'asc' }],
         include: { costCase: { select: { id: true, itemType: true, itemTypeOther: true, baseCost: true, status: true, providerId: true } } },
+      },
+      // ★ P3 §8.1：月結單分段＋行（含逐段重複擋實時計算）
+      sections: {
+        orderBy: { sectionIndex: 'asc' },
+        include: { lines: { orderBy: { lineIndex: 'asc' } } },
       },
       pages: {
         orderBy: { sortOrder: 'asc' },
@@ -148,6 +154,80 @@ export async function GET(
         : null,
     })),
     groupCount: doc.lines.reduce((m, l) => Math.max(m, l.groupIndex + 1), 0),
+    // ★ P3 §8.1：月結單分段（含逐段重複擋：同 Lab＋診所＋醫生＋月有另一份活動月結單 → duplicate 提示＋「取代舊版」）
+    sections: doc.kind === 'STATEMENT'
+      ? await Promise.all(
+          doc.sections.map(async (s) => {
+            const dup =
+              s.clinicId && s.providerId && doc.status !== 'VOID' && doc.status !== 'SUPERSEDED'
+                ? await findStatementSectionDuplicate(prisma, {
+                    labId: doc.labId,
+                    clinicId: s.clinicId,
+                    providerId: s.providerId,
+                    statementMonth: doc.statementMonth,
+                    selfDocId: doc.id,
+                  })
+                : null
+            return {
+              id: s.id,
+              sectionIndex: s.sectionIndex,
+              pageFrom: s.pageFrom,
+              pageTo: s.pageTo,
+              clinicRaw: s.clinicRaw,
+              doctorRaw: s.doctorRaw,
+              customerNoRaw: s.customerNoRaw,
+              clinicId: s.clinicId,
+              providerId: s.providerId,
+              clinicBasis: s.clinicBasis,
+              providerBasis: s.providerBasis,
+              statedTotal: s.statedTotal == null ? null : Number(s.statedTotal),
+              statedCurrent: s.statedCurrent == null ? null : Number(s.statedCurrent),
+              systemTotal: s.systemTotal == null ? null : Number(s.systemTotal),
+              status: s.status,
+              confirmedBy: s.confirmedBy,
+              confirmedAt: s.confirmedAt,
+              note: s.note,
+              // §8.1：重複擋（UI 顯示「{月} {診所} {醫生} 嘅月結單已經喺 {date} 上傳」＋「取代舊版」）
+              duplicate: dup
+                ? {
+                    docId: dup.docId,
+                    uploadedAt: new Date(dup.uploadedAt.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10),
+                    uploadedBy: dup.uploadedBy,
+                  }
+                : null,
+              lines: s.lines.map((l) => ({
+                id: l.id,
+                lineIndex: l.lineIndex,
+                lineType: l.lineType,
+                docNoRaw: l.docNoRaw,
+                docNo: l.docNo,
+                date: l.date,
+                patientRaw: l.patientRaw,
+                patientCode: l.patientCode,
+                labCaseRef: l.labCaseRef,
+                description: l.description,
+                toothRaw: l.toothRaw,
+                qty: l.qty == null ? null : Number(l.qty),
+                unitPrice: l.unitPrice == null ? null : Number(l.unitPrice),
+                amount: Number(l.amount),
+                agingBucket: l.agingBucket,
+                matchedDocumentId: l.matchedDocumentId,
+                matchedLineId: l.matchedLineId,
+                matchBasis: l.matchBasis,
+                result: l.result,
+                resolution: l.resolution,
+                resolutionNote: l.resolutionNote,
+                resolvedBy: l.resolvedBy,
+                resolvedAt: l.resolvedAt,
+                followUpClosedAt: l.followUpClosedAt,
+                followUpClosedBy: l.followUpClosedBy,
+              })),
+            }
+          }),
+        )
+      : [],
+    // §8.1：statementMonth 係行最遲日期推斷（AI／預選都冇）→ UI 標黃
+    statementMonthFromLines: doc.readIssues.includes('STATEMENT_MONTH_FROM_LINES'),
   })
 }
 
@@ -173,6 +253,14 @@ export async function DELETE(
     return NextResponse.json({ error: '冇任何診所範圍，唔可以作廢單據' }, { status: 403 })
   }
 
+  // §11：作廢 invoice = lab_invoice；月結單 = lab_statement（先查 kind 再定權限）
+  const doc0 = await prisma.labDocument.findUnique({ where: { id }, select: { id: true, kind: true } })
+  if (!doc0) return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
+  const needPerm = doc0.kind === 'STATEMENT' ? 'lab_statement' : 'lab_invoice'
+  if (!(perms ?? []).includes(needPerm)) {
+    return jsonNoStore({ error: `需要 ${needPerm} 權限` }, { status: 403 })
+  }
+
   let body: any
   try {
     body = await req.json()
@@ -189,8 +277,8 @@ export async function DELETE(
   if (scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
     return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
   }
-  if (doc.kind !== 'INVOICE') {
-    return NextResponse.json({ error: '月結單作廢屬 P3 範圍' }, { status: 400 })
+  if (doc.kind !== 'INVOICE' && doc.kind !== 'STATEMENT') {
+    return NextResponse.json({ error: '單據類型唔支援作廢' }, { status: 400 })
   }
   if (doc.status === 'VOID') {
     return NextResponse.json({ error: '單據已經作廢咗' }, { status: 400 })

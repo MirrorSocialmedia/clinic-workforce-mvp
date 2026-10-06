@@ -474,6 +474,19 @@ export const CONFIG = {
     //   P2 CHUNK 5：待處理 resolve（§11 per-doc；lab_statement）
     'POST /api/lab-docs/:id/review-amount': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/payee': ['OWNER', 'MANAGER'],
+    //   P3 §8：月結單對數（全部 lab_statement）— runtime key（cuid → :id）＋
+    //   check-rbac-matrix.sh 字面 dead key（greedy \[.*\] 收埋多參數 — 跟 :id/save 先例）
+    'POST /api/lab-docs/:id/supersede': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/assign': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/reconcile': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/confirm': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/lines/:id/close-followup': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/assign': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/reconcile': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/confirm': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/resolve': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/close-followup': ['OWNER', 'MANAGER'],
     //   候選 route：normalizeRoute 唔將 1–2 位 group index 變 :id → 逐個登記 0–10
     //   （>10 分組 = matrix miss → 403 fail-closed；decision log）
     'GET /api/lab-docs/:id/groups/0/candidates': ['OWNER', 'MANAGER'],
@@ -785,6 +798,18 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   //   P2 CHUNK 5：待處理 resolve（§11 per-doc = lab_statement）
   'POST /api/lab-docs/:id/review-amount': ['lab_statement'],
   'POST /api/lab-docs/:id/payee': ['lab_statement'],
+  // ★ cwm-labdoc P3 §8：月結單對數 = lab_statement（§10.2：識別、處理差異、確認、取代舊版）
+  'POST /api/lab-docs/:id/supersede': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/assign': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/reconcile': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/confirm': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/lines/:id/close-followup': ['lab_statement'],
+  'POST /api/lab-docs/:id/assign': ['lab_statement'],
+  'POST /api/lab-docs/:id/reconcile': ['lab_statement'],
+  'POST /api/lab-docs/:id/confirm': ['lab_statement'],
+  'POST /api/lab-docs/:id/resolve': ['lab_statement'],
+  'POST /api/lab-docs/:id/close-followup': ['lab_statement'],
   // ★ cwm-labdoc P2 §7：確認／對成本 = lab_invoice
   'PUT /api/lab-docs/:id/header': ['lab_invoice'],
   'POST /api/lab-docs/:id/new-case': ['lab_invoice'],

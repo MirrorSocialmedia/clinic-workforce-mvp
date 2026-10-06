@@ -27,7 +27,13 @@ import { extractLabDocViaWaInbox, type LabDocExtractRequest, type LabDocKind } f
 import { labDocResultSchema, type LabDocResult } from './schema'
 import { filterSensitiveNumbers } from './sensitive-filter'
 import { checkExtracted } from './validate-extract'
-import { identifyDocument } from './identify'
+import { identifyDocument, identifyStatementSection, latestStatementLineMonth } from './identify'
+import {
+  createStatementSections,
+  findStatementSectionDuplicate,
+  resolveStatementMonth,
+  sectionDuplicateIssue,
+} from './statement-sections'
 import { buildPageKey, readEncrypted } from './storage'
 import { normPatientCode } from '../cost-entry/patient-code'
 
@@ -457,6 +463,28 @@ async function finishSuccess(
   const normLinePatientCode = (raw: string | null): string | null =>
     normPatientCode(raw, clinicRow?.shortName ?? null)
 
+  // ★ P3 §8.1：STATEMENT — 逐段識別＋shortName（transaction 前讀操作；結果落 headerData/sections）
+  const finalLabId = identified.labId ?? doc.labId
+  let sectionIdents: Array<import('./identify').SectionIdentifyResult> = []
+  let sectionClinicShortNames: Array<string | null> = []
+  if (filtered.kind === 'STATEMENT') {
+    sectionIdents = await Promise.all(
+      filtered.sections.map((s) =>
+        identifyStatementSection(prisma, filtered, {
+          labId: finalLabId,
+          section: s,
+        }),
+      ),
+    )
+    // 逐段 clinic shortName（patientCode 正規化用）
+    const secClinicIds = [...new Set(sectionIdents.map((i) => i.clinicId).filter((v): v is string => !!v))]
+    const secClinics = secClinicIds.length
+      ? await prisma.clinic.findMany({ where: { id: { in: secClinicIds } }, select: { id: true, shortName: true } })
+      : []
+    const snById = new Map(secClinics.map((c: any) => [c.id, c.shortName]))
+    sectionClinicShortNames = sectionIdents.map((i) => (i.clinicId ? (snById.get(i.clinicId) ?? null) : null))
+  }
+
   const headerData: Record<string, unknown> = {
     status: 'NEEDS_REVIEW',
     version: { increment: 1 }, // §7.1 樂觀鎖：每次寫 +1（讀單寫頭部 = 寫）
@@ -488,7 +516,31 @@ async function finishSuccess(
   const ord = ymdToDate(filtered.orderReceivedDate)
   if (ord) headerData.orderReceivedDate = ord
   if (filtered.kind === 'STATEMENT') {
-    headerData.statementMonth = filtered.statementMonth ?? doc.statementMonth
+    // ★ P3 §8.1：statementMonth：AI → 上傳時預選 → section 行最遲月份（＋標黃）
+    const sm = resolveStatementMonth({
+      aiMonth: filtered.statementMonth,
+      preselected: doc.statementMonth,
+      latestLineMonth: latestStatementLineMonth(filtered),
+    })
+    if (sm.month) headerData.statementMonth = sm.month
+    if (sm.source === 'LINES') readIssues.push('STATEMENT_MONTH_FROM_LINES')
+    // 重複偵測（同 Lab＋診所＋醫生＋月）→ readIssues 機器標記（UI 提示「取代舊版」）
+    for (let si = 0; si < sectionIdents.length; si++) {
+      const i = sectionIdents[si]
+      if (!i.complete) continue
+      const dup = await findStatementSectionDuplicate(prisma, {
+        labId: finalLabId,
+        clinicId: i.clinicId,
+        providerId: i.providerId,
+        statementMonth: sm.month,
+        selfDocId: docId,
+      })
+      if (dup) readIssues.push(sectionDuplicateIssue(si, dup))
+    }
+    // §3.4：分段齊（無 NEEDS_ASSIGN）→ IN_PROGRESS；否則 NEEDS_REVIEW（headerData 內預設）
+    if (sectionIdents.length > 0 && sectionIdents.every((i) => i.complete)) {
+      headerData.status = 'IN_PROGRESS'
+    }
     headerData.statementKind = labProfile?.statementKind ?? null
   }
 
@@ -531,6 +583,17 @@ async function finishSuccess(
             })
           })
           if (creates.length > 0) await tx.labDocumentLine.createMany({ data: creates })
+        }
+        if (filtered.kind === 'STATEMENT') {
+          // 重讀場景兜底：清舊分段（行 cascade）再重建
+          await tx.labStatementLine.deleteMany({ where: { section: { documentId: docId } } })
+          await tx.labStatementSection.deleteMany({ where: { documentId: docId } })
+          await createStatementSections(tx, docId, {
+            sections: filtered.sections,
+            idents: sectionIdents,
+            clinicShortNames: sectionClinicShortNames,
+            normPatientCode: (raw, shortName) => normPatientCode(raw, shortName),
+          })
         }
         await tx.labDocument.update({ where: { id: docId }, data: headerData })
       },
