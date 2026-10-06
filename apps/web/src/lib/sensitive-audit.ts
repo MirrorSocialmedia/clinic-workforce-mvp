@@ -160,6 +160,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_DOC_CASE_CREATE', label: 'Lab 成本個案建立' },
   { action: 'LAB_DOC_AMOUNT_REVIEW', label: '人手改數覆核' },
   { action: 'LAB_DOC_PAYEE', label: 'Lab 收款人記住／標記可疑' },
+  // ★ cwm-labdoc P4：Lab 設定＋alias 管理（§12.6/§10.4；before/after 只係設定值＋alias 清單，零病人姓名）
+  { action: 'LAB_PROFILE_UPDATE', label: 'Lab 設定改動（月結單類型／單號類型／讀單提示／收款人）' },
+  { action: 'LAB_ALIAS_DELETE', label: 'Lab 別名／客戶編號刪除' },
   { action: 'LAB_ALIAS_LEARN', label: 'Lab alias 學習' },
   { action: 'LAB_ALIAS_DELETE', label: 'Lab alias 刪除' },
   { action: 'LAB_PROFILE_UPDATE', label: 'Lab 設定更新' },

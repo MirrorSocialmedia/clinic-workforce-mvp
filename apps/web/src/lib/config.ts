@@ -487,6 +487,12 @@ export const CONFIG = {
     'POST /api/lab-docs/:id/confirm': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/resolve': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/close-followup': ['OWNER', 'MANAGER'],
+    //   P4：Lab 設定＋收尾（§12.6/§10.4 — 全部 lab_statement；EMPLOYEE 經 RBAC_PERM_OVERRIDES 放行）
+    'GET /api/lab-profiles/:id': ['OWNER', 'MANAGER'],
+    'PUT /api/lab-profiles/:id': ['OWNER', 'MANAGER'],
+    'GET /api/lab-aliases': ['OWNER', 'MANAGER'],
+    'DELETE /api/lab-aliases/:id': ['OWNER', 'MANAGER'],
+    'GET /api/lab-docs/stats': ['OWNER', 'MANAGER'],
     //   候選 route：normalizeRoute 唔將 1–2 位 group index 變 :id → 逐個登記 0–10
     //   （>10 分組 = matrix miss → 403 fail-closed；decision log）
     'GET /api/lab-docs/:id/groups/0/candidates': ['OWNER', 'MANAGER'],
@@ -810,6 +816,12 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/lab-docs/:id/confirm': ['lab_statement'],
   'POST /api/lab-docs/:id/resolve': ['lab_statement'],
   'POST /api/lab-docs/:id/close-followup': ['lab_statement'],
+  // ★ cwm-labdoc P4：Lab 設定＋收尾（§12.6/§10.4/§11）
+  'GET /api/lab-profiles/:id': ['lab_statement'],
+  'PUT /api/lab-profiles/:id': ['lab_statement'],
+  'GET /api/lab-aliases': ['lab_statement'],
+  'DELETE /api/lab-aliases/:id': ['lab_statement'],
+  'GET /api/lab-docs/stats': ['lab_statement'],
   // ★ cwm-labdoc P2 §7：確認／對成本 = lab_invoice
   'PUT /api/lab-docs/:id/header': ['lab_invoice'],
   'POST /api/lab-docs/:id/new-case': ['lab_invoice'],
