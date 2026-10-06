@@ -157,14 +157,14 @@ export async function findStatementSectionDuplicate(
       },
     },
     select: {
-      document: { select: { id: true, status: true, uploadedAt: true, uploadedBy: true } },
+      document: { select: { id: true, status: true, createdAt: true, uploadedBy: true } },
     },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { document: { createdAt: 'asc' } }, // ★ section 表冇 createdAt — 排序經 document.createdAt（E2E-2 regression）
   })
   if (!hit) return null
   return {
     docId: hit.document.id,
-    uploadedAt: hit.document.uploadedAt,
+    uploadedAt: hit.document.createdAt,
     uploadedBy: hit.document.uploadedBy,
   }
 }

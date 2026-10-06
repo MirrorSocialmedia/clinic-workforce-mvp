@@ -189,7 +189,7 @@ test('findStatementSectionDuplicate：命中 → 舊 doc（排除自己／VOID�
     labStatementSection: {
       findFirst: async (args: any) => {
         captured = args
-        return { document: { id: dup.docId, status: 'NEEDS_REVIEW', uploadedAt: dup.uploadedAt, uploadedBy: dup.uploadedBy } }
+        return { document: { id: dup.docId, status: 'NEEDS_REVIEW', createdAt: dup.uploadedAt, uploadedBy: dup.uploadedBy } }
       },
     },
   }
@@ -198,6 +198,8 @@ test('findStatementSectionDuplicate：命中 → 舊 doc（排除自己／VOID�
   assert.equal(captured.where.document.id.not, 'self-1')
   assert.deepEqual(captured.where.document.status.notIn, ['VOID', 'SUPERSEDED', 'DUPLICATE'])
   assert.equal(captured.where.document.kind, 'STATEMENT')
+  // ★ regression（E2E-2 實測）：section 表冇 createdAt — orderBy 必經 document.uploadedAt
+  assert.deepEqual(captured.orderBy, { document: { createdAt: 'asc' } })
 })
 
 test('findStatementSectionDuplicate：無命中 → null', async () => {
