@@ -14,9 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-
-export const ALIAS_TYPES = ['LabAlias', 'LabCustomerNo', 'ClinicNameAlias', 'ProviderNameAlias'] as const
-export type AliasType = (typeof ALIAS_TYPES)[number]
+import { ALIAS_TYPES, type AliasType } from '@/lib/labdoc/alias-types'
 
 const LAB_ID_RE = /^[a-z0-9]{25}$/
 const MAX_LIMIT = 500

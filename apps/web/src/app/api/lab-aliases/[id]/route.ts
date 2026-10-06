@@ -12,7 +12,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { labdocAudit } from '@/lib/labdoc/audit'
-import { ALIAS_TYPES, type AliasType } from '../route'
+import { ALIAS_TYPES, type AliasType } from '@/lib/labdoc/alias-types'
 
 const ID_RE = /^[a-z0-9]{25}$/
 
