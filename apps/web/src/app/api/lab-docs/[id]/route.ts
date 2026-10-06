@@ -168,6 +168,30 @@ export async function GET(
                     selfDocId: doc.id,
                   })
                 : null
+            // ★ P3 §8.5 折扣證據監察：Σ 相關成本 finalCost vs statedTotal；唔等而因 discountPct 有值 → 紅提示＋連結
+            const matchedLineIds = s.lines.map((l) => l.matchedLineId).filter((x): x is string => !!x)
+            let costEvidence: {
+              totalFinalCost: number | null
+              discountCosts: Array<{ id: string; itemType: string | null; discountPct: number }>
+              flag: boolean
+            } = { totalFinalCost: null, discountCosts: [], flag: false }
+            if (matchedLineIds.length > 0) {
+              const dl = await prisma.labDocumentLine.findMany({ where: { id: { in: matchedLineIds } }, select: { costCaseId: true } })
+              const ccIds = [...new Set(dl.map((x) => x.costCaseId).filter((x): x is string => !!x))]
+              if (ccIds.length > 0) {
+                const ccs = await prisma.costCase.findMany({
+                  where: { id: { in: ccIds }, status: { not: 'VOID' } },
+                  select: { id: true, itemType: true, finalCost: true, discountPct: true },
+                })
+                const totalFinalCost = Math.round(ccs.reduce((sum, c) => sum + (c.finalCost == null ? 0 : Number(c.finalCost)), 0) * 100) / 100
+                const discountCosts = ccs
+                  .filter((c) => c.discountPct != null)
+                  .map((c) => ({ id: c.id, itemType: c.itemType, discountPct: Number(c.discountPct) }))
+                const stated = s.statedTotal != null ? Number(s.statedTotal) : s.statedCurrent != null ? Number(s.statedCurrent) : null
+                const flag = stated != null && Math.abs(totalFinalCost - stated) > 0.01 && discountCosts.length > 0
+                costEvidence = { totalFinalCost, discountCosts, flag }
+              }
+            }
             return {
               id: s.id,
               sectionIndex: s.sectionIndex,
@@ -187,6 +211,9 @@ export async function GET(
               confirmedBy: s.confirmedBy,
               confirmedAt: s.confirmedAt,
               note: s.note,
+              resultJson: s.resultJson,
+              // §8.5：折扣證據（紅提示）
+              costEvidence,
               // §8.1：重複擋（UI 顯示「{月} {診所} {醫生} 嘅月結單已經喺 {date} 上傳」＋「取代舊版」）
               duplicate: dup
                 ? {
