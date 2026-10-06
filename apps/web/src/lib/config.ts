@@ -713,7 +713,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/cost-cases': ['cost_entry'],
   // ★ 2026-08-22：成本錄入要揀 Lab／材料／折扣 —— GET 只讀
   //   （寫入端 = provider_payout override + OWNER role 表，一齊都唔放寬）
-  'GET /api/labs': ['cost_entry'],
+  'GET /api/labs': ['cost_entry', 'lab_statement'], // ★ cwm-labdoc P4：設定頁（§12.6）要 Lab 清單（lab 名唔係敏感數據；labdoc B16 全集團口徑）
   'GET /api/lab-discounts': ['cost_entry'],
   'GET /api/material-items': ['cost_entry'],
   // ★ 2026-08-22：成本錄入「負責同事」picker（淨返 id + user.name）

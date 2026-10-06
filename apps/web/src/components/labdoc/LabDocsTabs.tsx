@@ -10,7 +10,8 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ShieldAlert } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { ShieldAlert, Settings2 } from 'lucide-react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import InvoiceList from './InvoiceList'
@@ -60,6 +61,10 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
     hasPermission(me.role, 'lab_invoice', me.grant, me.deny) ||
     hasPermission(me.role, 'lab_statement', me.grant, me.deny)
 
+  // §12.6：設定頁入口 — 只 lab_statement 用戶見到
+  const canSettings = hasPermission(me.role, 'lab_statement', me.grant, me.deny)
+  const router = useRouter()
+
   if (!allowed) {
     return (
       <div className="max-w-md mx-auto flex flex-col items-center justify-center gap-3 py-20 text-center">
@@ -99,6 +104,14 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
         <button className={tabCls(tab === 'pending')} onClick={() => onTabChange('pending')}>
           待處理{pendingTotal !== null && pendingTotal > 0 ? `（${pendingTotal}）` : ''}
         </button>
+        {canSettings && (
+          <button
+            className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium bg-card border text-muted-foreground hover:bg-accent"
+            onClick={() => router.push('/lab-docs/settings')}
+          >
+            <Settings2 size={14} /> 設定
+          </button>
+        )}
       </div>
 
       {tab === 'invoices' ? (
