@@ -20,16 +20,16 @@ const HK = 'Asia/Hong_Kong'
 const ts = (s) => new Date(`${s}T12:00:00+08:00`)
 
 async function main() {
-  // ── 診所 ─────────────────────────────────────────────────────
+  // ── 診所（apricotClinicId = Apricot 24 位 hex ObjectId — sync.ts guard）──────────
   const tw = await prisma.clinic.upsert({
     where: { id: 'dailyv2tw000000000000000001' },
-    update: { name: 'TW 診所', shortName: 'TW', apricotClinicId: 'TW' },
-    create: { id: 'dailyv2tw000000000000000001', name: 'TW 診所', shortName: 'TW', apricotClinicId: 'TW' },
+    update: { name: 'TW 診所', shortName: 'TW', apricotClinicId: '66554433221100ffeeddcc01' },
+    create: { id: 'dailyv2tw000000000000000001', name: 'TW 診所', shortName: 'TW', apricotClinicId: '66554433221100ffeeddcc01' },
   })
   const tw2 = await prisma.clinic.upsert({
     where: { id: 'dailyv2tw2000000000000000002' },
-    update: { name: 'TW2 診所（跨店測試）', shortName: 'TW2', apricotClinicId: 'TW2' },
-    create: { id: 'dailyv2tw2000000000000000002', name: 'TW2 診所（跨店測試）', shortName: 'TW2', apricotClinicId: 'TW2' },
+    update: { name: 'TW2 診所（跨店測試）', shortName: 'TW2', apricotClinicId: '66554433221100ffeeddcc02' },
+    create: { id: 'dailyv2tw2000000000000000002', name: 'TW2 診所（跨店測試）', shortName: 'TW2', apricotClinicId: '66554433221100ffeeddcc02' },
   })
 
   // ── 醫生 + Apricot 帳號 ──────────────────────────────────────
@@ -58,6 +58,8 @@ async function main() {
   // MD ⑤ 驗收：Master $7,980 → 手續費 $159.60（2%）、淨額 $7,820.40
   // MD ④ 驗收：謝德輝 Master $4,000、何嘉俊 Master $3,980
   const paidAt = ts('2026-05-10')
+  const TW_EXT = '66554433221100ffeeddcc01' // 同上面 Clinic.apricotClinicId
+  await prisma.paymentAllocation.deleteMany({ where: { clinicExtId: { in: ['TW', 'TW2', TW_EXT] } } }) // 冪等：清舊格式
   const allocs = [
     { paymentExtId: 'dv-p-0510-1', billExtId: 'dv-b-0510-1', providerExtId: 'tw-xdh-001', methodNorm: 'Master', amount: 4000, fee: 2, net: 3920 },
     { paymentExtId: 'dv-p-0510-2', billExtId: 'dv-b-0510-2', providerExtId: 'tw-hjj-001', methodNorm: 'Master', amount: 3980, fee: 2, net: 3900.4 },
@@ -70,7 +72,7 @@ async function main() {
       create: {
         paymentExtId: a.paymentExtId, billExtId: a.billExtId, providerExtId: a.providerExtId, methodNorm: a.methodNorm,
         amount: a.amount, netAmount: a.net, feePercentUsed: a.fee,
-        clinicExtId: 'TW',
+        clinicExtId: TW_EXT,
         paidAt,
         periodMonth: '2026-05',
         countAsIncome: true,

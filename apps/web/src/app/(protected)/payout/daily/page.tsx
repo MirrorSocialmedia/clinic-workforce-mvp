@@ -8,13 +8,15 @@
  * 顏色跟 Excel：藍字 = 系統帶入，黑字粗體 = 合計，灰字 = 唔計，黃底 = 最終金額。
  * 數字同 Excel 匯出同一個 API（/api/payout-runs/daily），唔准前端自己計。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { ArrowLeft, Download } from 'lucide-react'
+import { ArrowLeft, Download, RefreshCw } from 'lucide-react'
 import { todayHK, addDaysStr } from '@/lib/hk-date'
 import type { DailyReport, DailyRow } from '@/lib/payout/daily-report'
+import { useApricotJobPoll } from '@/lib/use-apricot-job-poll'
+import { hasPermission } from '@/lib/permissions'
 import { DailyCheckPanel } from '@/components/payout/DailyCheckPanel'
 
 const SECTION = '#1F4E79'
@@ -37,6 +39,20 @@ const monthRange = (ym: string): { from: string; to: string } => {
   return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, '0')}` }
 }
 
+// ★ cwm-dailyv2-20261007 ②：ISO → HK 顯示值（同步狀態欄用；純函數無 prisma）
+const hkDayOf = (iso: unknown): string | undefined => {
+  const d = iso ? new Date(iso as string) : null
+  return d && !isNaN(d.getTime())
+    ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+    : undefined
+}
+const hhmmOf = (iso: unknown): string | undefined => {
+  const d = iso ? new Date(iso as string) : null
+  return d && !isNaN(d.getTime())
+    ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit', hour12: false }).format(d)
+    : undefined
+}
+
 export default function DailyRevenuePage() {
   const today = todayHK()
   const [from, setFrom] = useState(today)
@@ -50,6 +66,7 @@ export default function DailyRevenuePage() {
   const [error, setError] = useState('')
   // ★ cwm-dailycheck-20261006：每次重新攞到報表 → 護士核對狀態都重新攞（同一份數）
   const [reloadKey, setReloadKey] = useState(0)
+  const [refreshTick, setRefreshTick] = useState(0) // ★ cwm-dailyv2-20261007 ②：同步完後重新拉報表
 
   useEffect(() => {
     Promise.all([apiFetch<any>('/api/clinics'), apiFetch<any>('/api/providers')])
@@ -76,14 +93,18 @@ export default function DailyRevenuePage() {
 
   // ★ cwm-dailyv2-20261007 ③：KIOSK（店舖帳號）— /api/me 攞 role/clinicIds：
   //   只顯示自己店（單一店自動鎖）、隱醫生 dropdown、Excel 匯出、B 區、分成
-  const [me, setMe] = useState<{ role: string; clinicIds: string[] } | null>(null)
+  const [me, setMe] = useState<{ role: string; clinicIds: string[]; grant: string[]; deny: string[] } | null>(null)
   useEffect(() => {
     fetch('/api/me', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.user) setMe({ role: d.user.role, clinicIds: d.user.clinicIds ?? [] }) })
+      .then(d => { if (d?.user) setMe({ role: d.user.role, clinicIds: d.user.clinicIds ?? [], grant: d.user.grant ?? [], deny: d.user.deny ?? [] }) })
       .catch(() => {})
   }, [])
   const isKiosk = me?.role === 'KIOSK'
+  // ★ cwm-dailyv2-20261007 ②：同步掣只俾有 apricot_sync 權限先顯示（server 端 RBAC：
+  //   POST /api/apricot/sync = OWNER + apricot_sync override）。判斷用全站同一套 hasPermission
+  //   （ROLE_DEFAULTS ∪ grant − deny；OWNER 預設有晒）。KIOSK 一律唔顯示。
+  const hasApricotSync = !!me && hasPermission(me.role, 'apricot_sync', me.grant, me.deny)
   const myClinics = isKiosk ? clinics.filter(c => me!.clinicIds.includes(c.id)) : clinics
   const kioskLockedClinicId = isKiosk && myClinics.length === 1 ? myClinics[0].id : ''
   const activeClinicId = kioskLockedClinicId || clinicId
@@ -105,7 +126,93 @@ export default function DailyRevenuePage() {
       .catch(e => { if (!cancelled) { setReport(null); setError(e.message) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [query, from, clinicId, providerId])
+  }, [query, from, clinicId, providerId, refreshTick])
+
+  // ★ cwm-dailyv2-20261007 ②：Apricot 同步（重拉 bills/payments 入 DB）—— 复用 /api/apricot/sync job 體系：
+  //   POST { clinicId, from, to }（唔帶 force — MD ②：force 有 7 日限制 + 逐張單 call）→ jobId；
+  //   409 = 已有 job 進行中 → 顯示提示並跟住嗰個 jobId（唔開第二個 job）。
+  //   poll 用共用 useApricotJobPoll（同 /apricot-sync 頁共用，每 2s，latestRef 防舊回應）。
+  const [syncState, setSyncState] = useState<null | {
+    status: 'running' | 'done' | 'failed' | 'cancelled'
+    currentStep?: string | null
+    done?: number
+    total?: number
+    error?: string
+    existing?: boolean         // 409：跟住人哋嘅 job
+    clinicName?: string | null // 409：嗰個 job 嘅診所名（apricotClinicId 映返 name）
+    from?: string | null       // HK 日（自己 job = 表單值；409 job = 由 poll 回傳嘅 job.fromDate 攞）
+    to?: string | null
+    endedAtHm?: string | null  // 完成時間 hh:mm（MD ② DONE 格式）
+  }>(null)
+  const { start: startSyncPoll, stop: stopSyncPoll } = useApricotJobPoll({
+    onJob: job => setSyncState(s => ({
+      ...(s ?? { status: 'running' }),
+      status: 'running',
+      currentStep: job.currentStep,
+      done: job.doneClinics,
+      total: job.totalClinics,
+      // 自己 job：from/to 已用表單值填咗；409 跟住嘅 job：由 job 回傳嘅 fromDate/toDate 攞
+      from: s?.from || hkDayOf(job.fromDate),
+      to: s?.to || hkDayOf(job.toDate),
+    })),
+    onTerminal: job => {
+      if (job.status === 'DONE') {
+        setSyncState(s => ({
+          ...(s ?? { status: 'done' }),
+          status: 'done',
+          currentStep: job.currentStep,
+          done: job.doneClinics,
+          total: job.totalClinics,
+          from: s?.from || hkDayOf(job.fromDate),
+          to: s?.to || hkDayOf(job.toDate),
+          endedAtHm: hhmmOf(job.endedAt),
+        }))
+        setRefreshTick(t => t + 1) // 同步完 → 重新拉報表
+      } else {
+        // MD ②：FAILED／CANCELLED 都係紅字顯示 errorMessage，掣恢復可以撳
+        setSyncState(s => ({ ...(s ?? { status: 'failed' }), status: job.status === 'FAILED' ? 'failed' : 'cancelled', error: job.errorMessage || '' }))
+      }
+    },
+  })
+
+  // MD ②：換診所要清 poll + 狀態（unmount 由 hook 自己清）
+  useEffect(() => { stopSyncPoll(); setSyncState(null) }, [activeClinicId, stopSyncPoll])
+
+  const startSync = useCallback(async () => {
+    if (!activeClinicId || !from) return
+    stopSyncPoll()
+    // ★ MD ②：payload 格式照抄 /apricot-sync 頁（HK 日 + T00:00:00+08:00 / T23:59:59+08:00），唔傳 force
+    const body = { clinicId: activeClinicId, from: `${from}T00:00:00+08:00`, to: `${to || from}T23:59:59+08:00` }
+    setSyncState({ status: 'running', from, to: to || from })
+    try {
+      const res = await fetch('/api/apricot/sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify(body),
+      })
+      const data = await res.json().catch(() => ({} as any))
+      if (!res.ok) {
+        if (res.status === 409 && data.jobId) {
+          // MD ②：409 → 「另一個同步進行中（{診所} {日期}）」，改為 poll 嗰個 jobId，完咗先可以再撳
+          const ext = (data.running?.clinicExtId as string | null) ?? null
+          const c = clinics.find(x => x.apricotClinicId === ext)
+          setSyncState({
+            status: 'running', existing: true,
+            clinicName: c ? (c.shortName || c.name) : (ext || null),
+            from: null, to: null, // 嗰個 job 嘅日期範圍由第一輪 poll 回傳（job 有 fromDate/toDate）
+          })
+          startSyncPoll(data.jobId)
+          return
+        }
+        // 400／403／5xx → 顯示錯誤，掣恢復可以撳
+        setSyncState({ status: 'failed', error: data.error || `HTTP ${res.status}` })
+        return
+      }
+      if (data.jobId) startSyncPoll(data.jobId)
+      else setSyncState({ status: 'failed', error: '伺服器未回傳 job id' })
+    } catch (e: any) {
+      setSyncState({ status: 'failed', error: e?.message || '同步失敗' })
+    }
+  }, [activeClinicId, from, to, clinics, startSyncPoll, stopSyncPoll])
 
   const quick = (kind: 'today' | 'week' | 'month') => {
     if (kind === 'today') { setFrom(today); setTo(''); return }
@@ -179,6 +286,14 @@ export default function DailyRevenuePage() {
             <Button variant="outline" onClick={() => quick('week')}>今個星期</Button>
             <Button variant="outline" onClick={() => quick('month')}>今個月</Button>
           </div>
+          {/* ★ cwm-dailyv2-20261007 ②：Apricot 同步 — KIOSK 一律唔顯示；非 OWNER 要 apricot_sync 權限先顯示 */}
+          {!isKiosk && hasApricotSync && (
+          <Button variant="outline" title={!activeClinicId ? '先揀診所' : '重新同 Apricot 拉 bills/payments 入 DB'}
+            disabled={!activeClinicId || !from || syncState?.status === 'running'}
+            onClick={startSync}>
+            <RefreshCw size={14} className={`mr-1 ${syncState?.status === 'running' ? 'animate-spin' : ''}`} /> 同步 Apricot
+          </Button>
+          )}
           <div className="flex-1" />
           {!isKiosk && (
           <a href={report ? `/api/payout-runs/daily?${query}&format=xlsx` : undefined} aria-disabled={!report}>
@@ -187,6 +302,33 @@ export default function DailyRevenuePage() {
           )}
         </div>
         {!clinicId && !providerId && <div className="text-xs text-amber-700 mt-2">「全部診所」要揀醫生先睇到（逐日）；或者揀一間診所睇逐醫生。</div>}
+        {/* ★ cwm-dailyv2-20261007 ②：同步狀態欄（MD ②：RUNNING 轉圈+步驟；DONE 「✓ 已同步 {from}–{to}（hh:mm）」；
+            FAILED／CANCELLED 紅字 errorMessage；409 「另一個同步進行中（{診所} {日期}）」） */}
+        {syncState && (
+          <div className={`mt-2 text-xs flex items-center gap-2 ${
+            syncState.status === 'done' ? 'text-green-700' : syncState.status === 'running' ? 'text-blue-700' : 'text-red-700'
+          }`}>
+            {syncState.status === 'running' && (
+              <><RefreshCw size={12} className="animate-spin" />
+                {syncState.existing
+                  ? <>
+                      另一個同步進行中
+                      {`（${syncState.clinicName ?? ''}${syncState.from ? ` ${syncState.from}${syncState.to && syncState.to !== syncState.from ? `–${syncState.to}` : ''}` : ''}）`}
+                    </>
+                  : <>同步中…{syncState.currentStep ? ` ${syncState.currentStep}` : ''}</>}
+                {syncState.total != null ? `（${syncState.done ?? 0}/${syncState.total}）` : ''}
+              </>
+            )}
+            {syncState.status === 'done' && (
+              <>✓ 已同步 {syncState.from ?? ''}{syncState.to && syncState.to !== syncState.from ? `–${syncState.to}` : ''}{syncState.endedAtHm ? `（${syncState.endedAtHm}）` : ''} — 報表已重新載入</>
+            )}
+            {syncState.status === 'failed' && <>✗ 同步失敗{syncState.error ? `：${syncState.error}` : ''}（可重新撳同步）</>}
+            {syncState.status === 'cancelled' && <>同步已停止{syncState.error ? `：${syncState.error}` : ''}</>}
+            {syncState.status !== 'running' && (
+              <button type="button" className="underline text-gray-500" onClick={() => setSyncState(null)}>隱藏</button>
+            )}
+          </div>
+        )}
       </Card>
 
       {error && <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">⚠️ {error}</div>}

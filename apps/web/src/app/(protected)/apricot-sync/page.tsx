@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { RefreshCw, Database, Loader2, Square, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { RequireRole } from '@/components/RequireRole'
+import { useApricotJobPoll } from '@/lib/use-apricot-job-poll'
 
 interface PerClinicStatus {
   clinicId: string
@@ -123,7 +124,6 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
 
   // ★ MD-Q: Job progress state
   const [activeJob, setActiveJob] = useState<SyncJob | null>(null)
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ★ cwm-syncstuck-20260918 E3-2: 409 時顯示舊 job 資料 + 「強制中止並重試」
   const [blockedJob, setBlockedJob] = useState<{ jobId: string; running: RunningJobInfo } | null>(null)
@@ -196,50 +196,26 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
     toast.info(`已為 ${c.name} 填好 ${revenueMonth} 日期範圍，撳「開始同步」`)
   }
 
-  // ★ MD-Q: Poll job progress
-  const pollJob = useCallback(async (jobId: string) => {
-    try {
-      const res = await fetch(`/api/apricot/sync/jobs/${jobId}`, { credentials: 'include', cache: 'no-store' })
-      if (!res.ok) return
-      const data = await res.json()
-      if (data.job) {
-        setActiveJob(data.job)
+  // ★ MD-Q: Poll job progress（★ cwm-dailyv2-20261007 ②：抽出共用 hook，同 /payout/daily 頁共用，唔抄兩份）
+  const { start: startJobPoll } = useApricotJobPoll({
+    onJob: job => setActiveJob(job as SyncJob),
+    onTerminal: job => {
+      setActiveJob(job as SyncJob)
+      setSyncing(false)
 
-        // Terminal states: stop polling
-        if (['DONE', 'FAILED', 'CANCELLED'].includes(data.job.status)) {
-          setSyncing(false)
-          if (pollTimerRef.current) {
-            clearInterval(pollTimerRef.current)
-            pollTimerRef.current = null
-          }
+      // ★ cwm-syncstuck-20260918 E3-2：被擋嗰個舊 job 收工咗 → 收走「未開到新 job」橫幅
+      setBlockedJob(prev => (prev && prev.jobId === job.id ? null : prev))
 
-          // ★ cwm-syncstuck-20260918 E3-2：被擋嗰個舊 job 收工咗 → 收走「未開到新 job」橫幅
-          setBlockedJob(prev => (prev && prev.jobId === jobId ? null : prev))
-
-          if (data.job.status === 'DONE') {
-            toast.success('同步完成')
-            fetchStatus()
-          } else if (data.job.status === 'FAILED') {
-            toast.error(`同步失敗: ${data.job.errorMessage || '未知錯誤'}`)
-          } else if (data.job.status === 'CANCELLED') {
-            toast.info('同步已停止')
-          }
-        }
+      if (job.status === 'DONE') {
+        toast.success('同步完成')
+        fetchStatus()
+      } else if (job.status === 'FAILED') {
+        toast.error(`同步失敗: ${job.errorMessage || '未知錯誤'}`)
+      } else if (job.status === 'CANCELLED') {
+        toast.info('同步已停止')
       }
-    } catch (e) {
-      console.error('[apricot-sync] poll job failed', e)
-    }
-  }, [fetchStatus])
-
-  // ★ MD-Q: Stop polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current)
-        pollTimerRef.current = null
-      }
-    }
-  }, [])
+    },
+  })
 
   // ★ cwm-syncstuck-20260918 E3-2：抽出 sync body —— 「強制中止並重試」要原封不動重發
   const buildSyncBody = () => ({
@@ -268,9 +244,7 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
         if (res.status === 409 && data.jobId) {
           // 已有 job 進行中，直接開始 poll
           setActiveJob(null)
-          pollJob(data.jobId)
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-          pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
+          startJobPoll(data.jobId)
           // ★ cwm-syncstuck-20260918 E3-2：409 帶住舊 job 快照 → 顯示資料 + 強制中止並重試
           setBlockedJob({ jobId: data.jobId, running: data.running || { clinicExtId: null, totalClinics: 0, doneClinics: 0, currentStep: null, cancelRequested: false, startedAt: '' } })
           toast.info('已有同步任務進行中，顯示進度...')
@@ -283,9 +257,7 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
       if (data.jobId) {
         setBlockedJob(null)
         // ★ MD-Q: 即刻開始 poll
-        pollJob(data.jobId)
-        if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-        pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
+        startJobPoll(data.jobId)
         toast.info('同步已開始，請留意進度...')
       }
     } catch (e: any) {
@@ -371,9 +343,7 @@ function ApricotSyncPageInner({ myRole }: { myRole: string }) {
       const data = await res.json()
       if (data.jobId) {
         setBlockedJob(null)
-        pollJob(data.jobId)
-        if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-        pollTimerRef.current = setInterval(() => pollJob(data.jobId), 2000)
+        startJobPoll(data.jobId)
         toast.success('舊 job 已中止，新同步已開始')
       }
       setSyncing(false)
