@@ -35,8 +35,8 @@ trace_id: pvcheck-20261007-2 ｜ Kairo: muxv9d37wgbqc（s1–s4 CTO，s5/s6 revi
 4. ✅ A4：`src/lib/payout/daily-review-local.ts` applyLocalCheck（純函數、import type only、tsc=0）
 5. ✅ B：providerId/providerLabel props + href + daily/page.tsx 讀 providerId（tsc=0 / lint:hooks=0）
 6. ✅ C：`daily-review-local.test.ts`（5/5 pass）+ ci.yml 清單
-7. gates（tsc / lint:hooks / run-guards @ repo root / pnpm test 新檔）
-8. D 區 7 項 curl 實測（3010，OWNER 帳號）
+7. ✅ gates 全綠（見下）
+8. ✅ D 區 7 項 curl 實測全過（見下）；DB 已還原 fresh seed 狀態
 
 ### 進度日誌
 - 21:1x gen2 收工單；環境核活（DB 空庫、3010 活、worktree 淨 @ b7f92c99）
@@ -46,3 +46,27 @@ trace_id: pvcheck-20261007-2 ｜ Kairo: muxv9d37wgbqc（s1–s4 CTO，s5/s6 revi
 - 22:1x A 綠：DailyReviewRow 就地核對（UN/CHANGED 掣、未來日無掣、單行展開、逐日 GET nurses、409 雙分支、400 重取名單、applyLocalCheck+onChecked 局部更新、justChecked 篩選保留行）；payout/page.tsx 接 onChecked；tsc=0、lint:hooks=0
 - 22:3x B 綠：DailyReviewRow href 加 providerId、掣文字「去每日大數核對 → 謝德輝 · TW · 9 月（新分頁）→」；payout/page.tsx 傳 selectedProvider+name；daily/page.tsx deep-link 加讀 providerId（deepLinked 現有行為保留）；tsc=0、lint:hooks=0
 - 22:5x C 綠：daily-review-local.test.ts 5 項（UNCHECKED→CHECKED / CHANGED→CHECKED / 最後一日 needsAck=false / 缺日期原樣 / immutability）；ci.yml 測試清單已加；payout 五個 sibling test 檔 17/17 綠
+
+### gates（repo root + apps/web）
+- `npx tsc --noEmit` = 0
+- `pnpm lint:hooks` = 0
+- `bash scripts/run-guards.sh`（repo root）= ✅ 全部守門通過（exit 0；假期檢查連唔到 DB 自動 skip）
+- `pnpm test`（全量 1067 tests）：新檔 daily-review-local 5/5 pass；37 fail 全部係已知環境依賴（apricot sync-availability×3 / backfill-appointments / payroll-snapshot-asof-write / payroll-run-snapshot-route / payroll-engine.hourly-eowage「HKPublicHoliday 空+冇 DATABASE_URL」/ external staff-id contract）— 同我 diff 零 import 交集，CI 走 curated subset 唔收呢啲檔
+- ci.yml 測試清單已加 `src/lib/payout/daily-review-local.test.ts`
+
+### D 區 7 項實測（3010 live，OWNER 95000000/owner-pv-2026，curl+cookie）
+1. ✅ 09-07 核對：preview UNCHECKED（counts unchecked=8、needsAck=true）；GET /check 單日返 nurses=[TW 護士陳]（逐日）+ canCheck=true；細表/掣 disabled 邏輯喺碼（`!nurseId || !ticked || canCheck===false`）
+2. ✅ 確認後：POST 200 → 再 preview：unchecked 8→7、09-07 CHECKED（TW 護士陳 · checkedAt · $7,000）= 頂部 pill（✓ 1 日已核對）+ 底部「N 日未核對」即時更新（onChecked → setPreviewData spread，needsAck 未變 true）
+3. ✅ 每日大數 09-07：同一筆記錄 — check id 相同（cmuy5m1ov…9l0j9）、同護士、同金額 $7,000；daily report totals.storeTotal=$7,000
+4. ✅ 人手加 09-07 Cash $500 → preview：09-07 CHANGED（核對時 $7,000／而家 $7,500）；stale POST（7000）→ 409「數字啱啱變咗（而家 $7500，畫面 $7000）」；recheck POST（7500）→ 200 新記錄；AuditLog：「每日大數核對：2026-09-07 · 護士 TW 護士陳 · $7500（重新核對，之前 $7000）」；舊記錄 revoked（reason：核對後數字有變，重新核對）
+5. ✅ 兩 tab 同時 POST 09-09：tabA 200 / tabB 409「呢日啱啱已經有人核對咗，請重新整理」；DB 只 1 條 active（409 分支碼：提示「其他人已核對」+ onRecompute()）
+6. ✅ 其餘 6 日全核對 → counts {checked:8, changed:0, unchecked:0}、**needsAck=false**（底部「我知道…」剔格消失、「確認並鎖定」解禁 — UI 靠 needsAck）
+7. ✅ deep link：`/payout/daily?clinicId=TW&providerId=謝德輝&from=2026-09-01&to=2026-09-30` → page 200 + 底層 query mode=byDay（謝德輝 09 逐日表）；daily/page.tsx 已讀 providerId（deepLinked 行為保留）
+- 附加 A1：2026-10 預視 — 10-01~06 UNCHECKED（有掣）、10-08/09 UNCHECKED（未來日無掣：`date > todayHK()`）；server 兜底 POST 10-08 → 400「未到嘅日子唔可以核對」
+- 附加 A6：KIOSK login 通；KIOSK@TW canCheck=true、KIOSK@HC canCheck=false（→ 唔出【核對】掣）
+- ⚠ 實測後 DB 已還原 fresh seed 狀態（delete 10 checks + D4 extra payment）：2026-09 = 8 UNCHECKED + 1 NONE，reviewer 可直接重跑 D 區
+
+### 完成總結
+- 5 commits：f0b533f4 progress / b64a5701 seed / 1068bcc2 A4 / b60a6bcd A / d1528b87 B / ed1ca416 C（共 6 個連 progress）
+- 範圍守住：無 DB migration、無新 route、client 零 prisma（daily-review 只 import type、applyLocalCheck 新檔）
+- 備註：MD B4「可選加強」（每日大數逐日表 date link tooltip）唔做 — MD 明寫可選、D 區唔驗
