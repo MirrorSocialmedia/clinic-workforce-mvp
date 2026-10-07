@@ -558,7 +558,10 @@ function PayoutRunsPageInner() {
                 {/* ★ cwm-dailyreview-20261006：每日收款＋護士核對狀態 */}
                 <DailyReviewRow review={previewData.dailyReview} clinicId={selectedClinic} month={selectedMonth}
                   clinicLabel={allClinics.find(c => c.id === selectedClinic)?.shortName || allClinics.find(c => c.id === selectedClinic)?.name || ''}
-                  onRecompute={handlePreview} busy={previewLoading} />
+                  providerId={selectedProvider}
+                  providerLabel={providers.find(p => p.id === selectedProvider)?.name || ''}
+                  onRecompute={handlePreview} busy={previewLoading}
+                  onChecked={next => setPreviewData((p: any) => (p ? { ...p, dailyReview: next } : p))} />
                 <div className="flex justify-between"><span>收入（扣手續費後）</span><span>${previewData.preview.grossAmount?.toFixed(2)}</span></div>
                 {/* ★ cwm-costdetail-20261006：成本可撳開 —— 已計入＋當月未計入提醒 */}
                 <CostDetailRow label="Lab 成本" amount={previewData.preview.labCost ?? 0} detail={previewData.costDetail?.LAB}

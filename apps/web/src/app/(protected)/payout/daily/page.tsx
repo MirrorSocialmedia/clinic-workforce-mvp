@@ -97,6 +97,9 @@ export default function DailyRevenuePage() {
     if (f && re.test(f)) setFrom(f)
     if (t && re.test(t)) setTo(t)
     if (c) { setClinicId(c); deepLinked.current = true }
+    // ★ cwm-pvcheck-20261007 B：加讀 ?providerId=（醫生下拉 async 載入，state 先設冇問題：名單到咗會顯示返正確名）
+    const p = sp.get('providerId')
+    if (p) setProviderId(p)
   }, [])
 
   // ★ cwm-dailyv2-20261007 ③：KIOSK（店舖帳號）— /api/me 攞 role/clinicIds：
