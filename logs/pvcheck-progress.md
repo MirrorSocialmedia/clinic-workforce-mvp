@@ -34,7 +34,7 @@ trace_id: pvcheck-20261007-2 ｜ Kairo: muxv9d37wgbqc（s1–s4 CTO，s5/s6 revi
 3. ✅ A：DailyReviewRow 核對掣 + 行內表 + 409 + justChecked filter（tsc=0 / lint:hooks=0）
 4. ✅ A4：`src/lib/payout/daily-review-local.ts` applyLocalCheck（純函數、import type only、tsc=0）
 5. ✅ B：providerId/providerLabel props + href + daily/page.tsx 讀 providerId（tsc=0 / lint:hooks=0）
-6. C：`daily-review-local.test.ts` + ci.yml 清單
+6. ✅ C：`daily-review-local.test.ts`（5/5 pass）+ ci.yml 清單
 7. gates（tsc / lint:hooks / run-guards @ repo root / pnpm test 新檔）
 8. D 區 7 項 curl 實測（3010，OWNER 帳號）
 
@@ -45,3 +45,4 @@ trace_id: pvcheck-20261007-2 ｜ Kairo: muxv9d37wgbqc（s1–s4 CTO，s5/s6 revi
 - 21:5x A4 綠：applyLocalCheck 純函數（CHECKED 套用 + counts/needsAck 重計 + immutability + 缺日期原樣返回）；tsc --noEmit=0
 - 22:1x A 綠：DailyReviewRow 就地核對（UN/CHANGED 掣、未來日無掣、單行展開、逐日 GET nurses、409 雙分支、400 重取名單、applyLocalCheck+onChecked 局部更新、justChecked 篩選保留行）；payout/page.tsx 接 onChecked；tsc=0、lint:hooks=0
 - 22:3x B 綠：DailyReviewRow href 加 providerId、掣文字「去每日大數核對 → 謝德輝 · TW · 9 月（新分頁）→」；payout/page.tsx 傳 selectedProvider+name；daily/page.tsx deep-link 加讀 providerId（deepLinked 現有行為保留）；tsc=0、lint:hooks=0
+- 22:5x C 綠：daily-review-local.test.ts 5 項（UNCHECKED→CHECKED / CHANGED→CHECKED / 最後一日 needsAck=false / 缺日期原樣 / immutability）；ci.yml 測試清單已加；payout 五個 sibling test 檔 17/17 綠
