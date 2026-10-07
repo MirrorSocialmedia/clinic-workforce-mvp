@@ -74,16 +74,29 @@ export default function DailyRevenuePage() {
     if (c) { setClinicId(c); deepLinked.current = true }
   }, [])
 
+  // ★ cwm-dailyv2-20261007 ③：KIOSK（店舖帳號）— /api/me 攞 role/clinicIds：
+  //   只顯示自己店（單一店自動鎖）、隱醫生 dropdown、Excel 匯出、B 區、分成
+  const [me, setMe] = useState<{ role: string; clinicIds: string[] } | null>(null)
+  useEffect(() => {
+    fetch('/api/me', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.user) setMe({ role: d.user.role, clinicIds: d.user.clinicIds ?? [] }) })
+      .catch(() => {})
+  }, [])
+  const isKiosk = me?.role === 'KIOSK'
+  const myClinics = isKiosk ? clinics.filter(c => me!.clinicIds.includes(c.id)) : clinics
+  const kioskLockedClinicId = isKiosk && myClinics.length === 1 ? myClinics[0].id : ''
+  const activeClinicId = kioskLockedClinicId || clinicId
   const query = useMemo(() => {
     const q = new URLSearchParams({ from })
     if (to && to !== from) q.set('to', to)
-    if (clinicId) q.set('clinicId', clinicId)
-    if (providerId) q.set('providerId', providerId)
+    if (activeClinicId) q.set('clinicId', activeClinicId)
+    if (!isKiosk && providerId) q.set('providerId', providerId)
     return q.toString()
-  }, [from, to, clinicId, providerId])
+  }, [from, to, activeClinicId, providerId, isKiosk])
 
   useEffect(() => {
-    if (!from || (!clinicId && !providerId)) { setReport(null); return }
+    if (!from || (!activeClinicId && !providerId)) { setReport(null); return }
     let cancelled = false
     setLoading(true)
     setError('')
@@ -146,26 +159,32 @@ export default function DailyRevenuePage() {
               }} className="h-10 px-2 border rounded-md text-sm" />
           </label>
           <label className="flex flex-col gap-1 text-xs text-gray-600">診所
-            <select value={clinicId} onChange={e => setClinicId(e.target.value)} className="h-10 px-2 border rounded-md text-sm min-w-[140px]">
-              <option value="">全部診所{providerId ? '' : '（要揀醫生）'}</option>
-              {clinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
+            <select value={activeClinicId} onChange={e => setClinicId(e.target.value)}
+              disabled={isKiosk && myClinics.length <= 1}
+              className="h-10 px-2 border rounded-md text-sm min-w-[140px]">
+              {!isKiosk && <option value="">全部診所{providerId ? '' : '（要揀醫生）'}</option>}
+              {myClinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
             </select>
           </label>
+          {!isKiosk && (
           <label className="flex flex-col gap-1 text-xs text-gray-600">醫生
             <select value={providerId} onChange={e => setProviderId(e.target.value)} className="h-10 px-2 border rounded-md text-sm min-w-[160px]">
               <option value="">全部醫生（逐醫生）</option>
               {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
+          )}
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => quick('today')}>今日</Button>
             <Button variant="outline" onClick={() => quick('week')}>今個星期</Button>
             <Button variant="outline" onClick={() => quick('month')}>今個月</Button>
           </div>
           <div className="flex-1" />
+          {!isKiosk && (
           <a href={report ? `/api/payout-runs/daily?${query}&format=xlsx` : undefined} aria-disabled={!report}>
             <Button variant="outline" disabled={!report}><Download size={14} className="mr-1" /> 匯出 Excel</Button>
           </a>
+          )}
         </div>
         {!clinicId && !providerId && <div className="text-xs text-amber-700 mt-2">「全部診所」要揀醫生先睇到（逐日）；或者揀一間診所睇逐醫生。</div>}
       </Card>
@@ -173,10 +192,11 @@ export default function DailyRevenuePage() {
       {error && <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">⚠️ {error}</div>}
       {loading && <div className="p-6 text-gray-500">載入中...</div>}
 
-      {/* ★ cwm-dailycheck-20261006：護士核對（揀咗診所、全部醫生先有；每店每日一次） */}
-      {report && !loading && report.mode === 'byDoctor' && clinicId && (
-        <DailyCheckPanel clinicId={clinicId}
-          clinicLabel={clinics.find(c => c.id === clinicId)?.shortName || clinics.find(c => c.id === clinicId)?.name || ''}
+      {/* ★ cwm-dailycheck-20261006：護士核對（揀咗診所、全部醫生先有；每店每日一次）
+          ★ cwm-dailyv2-20261007 ③：KIOSK 用 activeClinicId（單一店自動鎖） */}
+      {report && !loading && report.mode === 'byDoctor' && activeClinicId && (
+        <DailyCheckPanel clinicId={activeClinicId}
+          clinicLabel={clinics.find(c => c.id === activeClinicId)?.shortName || clinics.find(c => c.id === activeClinicId)?.name || ''}
           from={report.from} to={report.to} reloadKey={reloadKey}
           currentRows={report.rows.map(r => ({ key: r.key, label: r.label, storeTotal: r.storeTotal }))}
           onPickDate={d => { setFrom(d); setTo('') }} />
@@ -251,6 +271,8 @@ export default function DailyRevenuePage() {
             </table>
           </div>
 
+          {/* ★ cwm-dailyv2-20261007 ③：KIOSK 唔顯示 B 區（醫生收入及分成） */}
+          {!isKiosk && (<>
           <div style={{ background: SECTION, color: '#fff', fontWeight: 700, fontSize: 13, padding: '6px 16px', marginTop: 16 }}>
             B  醫生收入及分成（未扣成本）
           </div>
@@ -285,11 +307,12 @@ export default function DailyRevenuePage() {
               </tbody>
             </table>
           </div>
+          </>)}
 
           <div className="px-4 py-3 text-xs text-gray-500 space-y-1 border-t">
             <div>TOTAL = 店舖營收（只計計入營收嘅付款方式）；灰字欄唔計。顏色同醫生月結 Excel 一樣：藍字 = 系統帶入，黑字粗體 = 合計，黃底 = 最終金額。</div>
-            <div>醫生分成 = 收入淨額 × 拆帳比例；<b>未扣 Lab／植牙成本，未計 SP 補貼／轉介／調整</b> —— 實際應付以月結單為準。</div>
-            {report.missingCommission.length > 0 && <div className="text-amber-700">未設拆帳（分成冇計）：{report.missingCommission.join('、')}</div>}
+            {!isKiosk && <div>醫生分成 = 收入淨額 × 拆帳比例；<b>未扣 Lab／植牙成本，未計 SP 補貼／轉介／調整</b> —— 實際應付以月結單為準。</div>}
+            {!isKiosk && report.missingCommission.length > 0 && <div className="text-amber-700">未設拆帳（分成冇計）：{report.missingCommission.join('、')}</div>}
           </div>
         </Card>
       )}
