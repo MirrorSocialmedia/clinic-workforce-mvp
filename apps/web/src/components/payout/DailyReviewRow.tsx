@@ -27,7 +27,7 @@ const dayLabel = (d: string) => `${d.slice(5)}（${WEEK[new Date(`${d}T12:00:00+
 const hhmm = (iso: string) => new Date(iso).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 const RANK: Record<string, number> = { CHANGED: 0, UNCHECKED: 1, CHECKED: 2, NONE: 3 }
 
-export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompute, busy, onChecked }: {
+export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompute, busy, onChecked, providerId, providerLabel }: {
   review: DailyReview | undefined
   clinicId: string
   clinicLabel: string
@@ -36,6 +36,9 @@ export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompu
   busy: boolean
   /** ★ pvcheck A4：核對成功後傳新 DailyReview 上層局部更新（頂部 pills + 底部 N 日提示即時變） */
   onChecked?: (next: DailyReview) => void
+  /** ★ pvcheck B：「去每日大數核對」帶醫生 — href 加 providerId，掣文字加細字「→ 醫生 · 診所 · M 月」 */
+  providerId?: string
+  providerLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const [onlyOpen, setOnlyOpen] = useState(true)
@@ -83,7 +86,10 @@ export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompu
     ? sorted.filter(d => d.status === 'CHANGED' || d.status === 'UNCHECKED' || justChecked.has(d.date))
     : sorted
   const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate()
-  const href = `/payout/daily?${new URLSearchParams({ clinicId, from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` })}`
+  // ★ pvcheck B：帶醫生 deep link（doctor + clinic + month 一次過）
+  const linkParams = new URLSearchParams({ clinicId, from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` })
+  if (providerId) linkParams.set('providerId', providerId)
+  const href = `/payout/daily?${linkParams}`
 
 
   // ── 送出（A3）────────────────────────────────────────────────
@@ -228,7 +234,7 @@ export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompu
             </div>
           ))}
           <div className="flex flex-wrap justify-end gap-2 pt-1">
-            <a href={href} target="_blank" rel="noopener noreferrer" className="h-8 inline-flex items-center px-3 rounded border border-teal-700 text-teal-800 text-xs hover:bg-teal-50">去每日大數核對（新分頁）→</a>
+            <a href={href} target="_blank" rel="noopener noreferrer" className="h-8 inline-flex items-center px-3 rounded border border-teal-700 text-teal-800 text-xs hover:bg-teal-50">去每日大數核對{providerLabel && <small className="ml-1 font-normal">→ {providerLabel} · {clinicLabel} · {Number(month.slice(5, 7))} 月</small>}（新分頁）→</a>
             <button type="button" onClick={onRecompute} disabled={busy} className="h-8 px-3 rounded border bg-white text-xs disabled:opacity-50">{busy ? '計算中…' : '↻ 重新計算'}</button>
           </div>
         </div>
