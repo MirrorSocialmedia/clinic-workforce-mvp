@@ -74,6 +74,37 @@ describe('aggregateDaily', () => {
     assert.equal(totals.storeTotal, 1600)
     assert.equal(totals.share, 500)
   })
+  it('⑤ byMethodNet/storeNet：storeNet = B 區收入淨額合計（只計營收方式時同口徑）', () => {
+    const { rows, totals } = aggregateDaily(
+      [A({ method: 'CASH', amount: 1000, net: 980 }), A({ method: 'VISA', amount: 2000, net: 1960 })],
+      [{ key: '2026-09-22', label: '22/09（二）' }],
+      () => '2026-09-22', () => 40, () => 0,
+    )
+    assert.equal(totals.storeTotal, 3000)
+    assert.equal(totals.storeNet, 2940)
+    assert.equal(totals.doctorNet, 2940) // ★ 同 B 區收入淨額合計同一口徑
+    assert.equal(rows[0].byMethodNet['CASH|1|1'], 980)
+    assert.equal(rows[0].byMethodNet['VISA|1|1'], 1960)
+    assert.equal(rows[0].storeNet, 2940)
+  })
+
+  it('⑤ storeNet 唔計 Free SP（只係醫生收入唔係店舖營收），B 區淨額會計', () => {
+    const { totals } = aggregateDaily(
+      [A({ method: 'CASH', amount: 1000, net: 980 }), A({ method: 'FREE_SP', amount: 300, net: 300, countAsIncome: false })],
+      [], () => 'g1', () => 40, () => 0,
+    )
+    assert.equal(totals.storeNet, 980)
+    assert.equal(totals.doctorNet, 1280)
+  })
+
+  it('⑤ 不計營收欄（Credit）：byMethodNet 有數但唔入 storeNet', () => {
+    const { totals } = aggregateDaily(
+      [A({ method: 'CASH', amount: 1000, net: 980 }), A({ method: 'CREDIT', amount: 500, net: 500, countAsIncome: false })],
+      [], () => 'g1', () => 40, () => 0,
+    )
+    assert.equal(totals.byMethodNet['CREDIT|0|0'], 500)
+    assert.equal(totals.storeNet, 980)
+  })
 })
 
 describe('buildDailySheet', () => {
@@ -86,12 +117,21 @@ describe('buildDailySheet', () => {
     const report: DailyReport = { mode: 'byDay', from: '2026-09-22', to: '2026-09-22', title: '王醫生 · 旺角 · 2026-09-22（二）', ...agg, missingCommission: [], percent: 40 }
     const wb = new ExcelJS.Workbook()
     const ws = buildDailySheet(wb, report)
-    // 行 3 = A 標題、4 = header、5 = 22/09、6 = Total；欄 B=Cash C=Credit D=TOTAL
+    // 行 3 = A 標題、4 = header、5 = 22/09、6 = Total、7 = 手續費、8 = 淨額（★ cwm-dailyv2 ⑤）；欄 B=Cash C=Credit D=TOTAL
     assert.equal(ws.getCell(4, 4).value, 'TOTAL')
     assert.deepEqual(ws.getCell(5, 4).value, { formula: 'SUM(B5)', result: 1000 })
     assert.deepEqual(ws.getCell(6, 4).value, { formula: 'SUM(D5:D5)', result: 1000 })
-    // B 區：行 8 標題、9 header、10 data、11 Total；E = 分成
-    assert.equal(ws.getCell(10, 5).value, 400)
-    assert.deepEqual(ws.getCell(11, 5).value, { formula: 'SUM(E10:E10)', result: 400 })
+    // ⑤ 手續費行 = Total − 淨額（公式；result 雙寫 — ExcelJS read path 會撳 falsy result，
+    //    XML 實證有 <v>0</v>，所以 formula 斷言 + 唔要求 result 字段）
+    assert.equal(ws.getCell(7, 1).value, '手續費')
+    assert.equal((ws.getCell(7, 2).value as any).formula, 'B6-B8')
+    assert.equal((ws.getCell(7, 4).value as any).formula, 'D6-D8')
+    // ⑤ 淨額行：黑粗靜態數；TOTAL = SUM 計營收欄
+    assert.equal(ws.getCell(8, 1).value, '已扣手續費（淨額）')
+    assert.equal(ws.getCell(8, 2).value, 1000)
+    assert.deepEqual(ws.getCell(8, 4).value, { formula: 'SUM(B8)', result: 1000 })
+    // B 區：行 10 標題、11 header、12 data、13 Total；E = 分成
+    assert.equal(ws.getCell(12, 5).value, 400)
+    assert.deepEqual(ws.getCell(13, 5).value, { formula: 'SUM(E12:E12)', result: 400 })
   })
 })

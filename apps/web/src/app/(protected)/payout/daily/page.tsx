@@ -205,6 +205,23 @@ export default function DailyRevenuePage() {
                   <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeTotal) || '$0.00'}</td>
                   <td style={td('#000', { fontWeight: 700, textAlign: 'center' })}>{report.totals.spCount}</td>
                 </tr>
+                {/* ★ cwm-dailyv2-20261007 ⑤：手續費＋已扣手續費（淨額）—— 同 B 區同一口徑（totals 帶好） */}
+                <tr>
+                  <td style={td(GRAY, { textAlign: 'left', fontStyle: 'italic' })}>手續費</td>
+                  {report.methods.map(m => (
+                    <td key={m.key} style={td(GRAY)}>{money(Math.round(((report.totals.byMethod[m.key] ?? 0) - (report.totals.byMethodNet[m.key] ?? 0)) * 100) / 100)}</td>
+                  ))}
+                  <td style={td(GRAY)}>{money(Math.round((report.totals.storeTotal - report.totals.storeNet) * 100) / 100)}</td>
+                  <td style={td(GRAY)}>{''}</td>
+                </tr>
+                <tr>
+                  <td style={td('#000', { textAlign: 'left', fontWeight: 700 })}>已扣手續費（淨額）</td>
+                  {report.methods.map(m => (
+                    <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? '#000' : GRAY, { fontWeight: 700 })}>{money(report.totals.byMethodNet[m.key])}</td>
+                  ))}
+                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeNet) || '$0.00'}</td>
+                  <td style={td(GRAY)}>{''}</td>
+                </tr>
               </tbody>
             </table>
           </div>
