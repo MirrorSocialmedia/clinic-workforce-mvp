@@ -162,6 +162,7 @@ jobs:
             src/lib/payout/sp-status.test.ts \
             src/lib/payout/sp-review.test.ts \
             src/lib/payout/daily-check.test.ts \
+            src/lib/payout/daily-cell-check.test.ts \
             src/lib/payout/daily-review.test.ts \
             src/lib/punch-day-summary.test.ts \
             src/lib/cost-entry/guards.test.ts \

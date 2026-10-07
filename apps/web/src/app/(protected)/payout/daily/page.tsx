@@ -17,6 +17,7 @@ import { todayHK, addDaysStr } from '@/lib/hk-date'
 import type { DailyReport, DailyRow } from '@/lib/payout/daily-report'
 import { useApricotJobPoll } from '@/lib/use-apricot-job-poll'
 import { hasPermission } from '@/lib/permissions'
+import { cellState, cellTickable } from '@/lib/payout/daily-cell-state' // ★ ④：純函數（零 prisma，client 可用）
 import { DailyCheckPanel } from '@/components/payout/DailyCheckPanel'
 
 const SECTION = '#1F4E79'
@@ -68,6 +69,13 @@ export default function DailyRevenuePage() {
   const [reloadKey, setReloadKey] = useState(0)
   const [refreshTick, setRefreshTick] = useState(0) // ★ cwm-dailyv2-20261007 ②：同步完後重新拉報表
 
+  // ★ cwm-dailyv2-20261007 ④：逐格 tick —— 只喺「逐醫生模式 + 單日」（揀咗診所、to 空或 to==from）顯示。
+  //   cellChecks: rowKey|colKey → { amount, checkedName, checkedAt }（GET /api/payout-runs/daily/cell-check）
+  const [cellChecks, setCellChecks] = useState<Record<string, { amount: number; checkedName: string; checkedAt: string }> | null>(null)
+  const [cellBusy, setCellBusy] = useState<string | null>(null)
+  const [cellReloadKey, setCellReloadKey] = useState(0)
+  // cellDate 喺 activeClinicId 定義之後先算（見下）
+
   useEffect(() => {
     Promise.all([apiFetch<any>('/api/clinics'), apiFetch<any>('/api/providers')])
       .then(([c, p]) => {
@@ -108,6 +116,8 @@ export default function DailyRevenuePage() {
   const myClinics = isKiosk ? clinics.filter(c => me!.clinicIds.includes(c.id)) : clinics
   const kioskLockedClinicId = isKiosk && myClinics.length === 1 ? myClinics[0].id : ''
   const activeClinicId = kioskLockedClinicId || clinicId
+  // ★ cwm-dailyv2-20261007 ④：tick 只喺「逐醫生模式 + 單日」（to 空或 to==from）生效
+  const cellDate = report && report.mode === 'byDoctor' && activeClinicId && (!to || to === from) ? from : null
   const query = useMemo(() => {
     const q = new URLSearchParams({ from })
     if (to && to !== from) q.set('to', to)
@@ -177,6 +187,103 @@ export default function DailyRevenuePage() {
 
   // MD ②：換診所要清 poll + 狀態（unmount 由 hook 自己清）
   useEffect(() => { stopSyncPoll(); setSyncState(null) }, [activeClinicId, stopSyncPoll])
+
+  // ★ cwm-dailyv2-20261007 ④：拉回該店該日嘅 tick 紀錄（報表重新載入／同步完／換诊所換日都重拉）
+  useEffect(() => {
+    if (!cellDate || !activeClinicId) { setCellChecks(null); return }
+    let cancelled = false
+    setCellChecks(null)
+    apiFetch<{ cells: { rowKey: string; colKey: string; amount: number; checkedName: string; checkedAt: string }[] }>(
+      `/api/payout-runs/daily/cell-check?clinicId=${activeClinicId}&date=${cellDate}`
+    )
+      .then(d => {
+        if (cancelled) return
+        const m: Record<string, { amount: number; checkedName: string; checkedAt: string }> = {}
+        for (const c of d.cells) m[`${c.rowKey}|${c.colKey}`] = { amount: c.amount, checkedName: c.checkedName, checkedAt: c.checkedAt }
+        setCellChecks(m)
+      })
+      .catch(() => { if (!cancelled) setCellChecks(null) })
+    return () => { cancelled = true }
+  }, [cellDate, activeClinicId, reloadKey, refreshTick, cellReloadKey])
+
+  // ★ ④：剔格 —— OPEN→tick、OK→取消、CHANGED→用新金額覆寫、STALE→取消（server 重算金額，唔信前端）
+  const toggleCell = useCallback(async (rowKey: string, colKey: string, st: 'OPEN' | 'OK' | 'CHANGED' | 'STALE') => {
+    if (!cellDate || !activeClinicId || cellBusy) return
+    const target = st === 'OPEN' || st === 'CHANGED'
+    setCellBusy(`${rowKey}|${colKey}`)
+    try {
+      await apiFetch('/api/payout-runs/daily/cell-check', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clinicId: activeClinicId, date: cellDate, rowKey, colKey, checked: target }),
+      })
+      setCellReloadKey(k => k + 1)
+    } catch (e: any) {
+      alert(e?.message || '逐格核對失敗')
+    } finally { setCellBusy(null) }
+  }, [cellDate, activeClinicId, cellBusy])
+
+  // ★ ④：DailyCheckPanel 提示「逐格已對 n/總有數格」（全部對晒先綠字）
+  const cellProgress = useMemo(() => {
+    if (!cellDate || !report || !cellChecks || report.mode !== 'byDoctor') return null
+    let total = 0
+    let done = 0
+    for (const r of report.rows) {
+      for (const m of report.methods) {
+        const v = r.byMethod[m.key]
+        if (!cellTickable(v)) continue
+        total++
+        const rec = cellChecks[`${r.key}|${m.key}`]
+        if (rec && cellState(v ?? 0, rec.amount) === 'OK') done++
+      }
+    }
+    return { done, total }
+  }, [cellDate, report, cellChecks])
+
+  // ★ ④：格仔右上角嘅細 checkbox（14px）。只喺 cellDate 生效時渲染；TOTAL 欄／Total 行／SP 欄唔會 call 呢度。
+  //   「有數先有格」：冇數又冇 tick 紀錄 → 唔出 checkbox（MD ④）。
+  const cellTick = (r: DailyRow, m: { key: string }): { node: React.ReactNode; tdExtra: React.CSSProperties } | null => {
+    if (!cellDate || !cellChecks) return null
+    const v = r.byMethod[m.key]
+    const rec = cellChecks[`${r.key}|${m.key}`]
+    if (!cellTickable(v) && !rec) return null
+    const st = cellState(v ?? 0, rec?.amount ?? null)
+    const ck = `${r.key}|${m.key}`
+    const busy = cellBusy === ck
+    let title = '剔 = 呢格已對'
+    let mark: React.ReactNode = null
+    let boxStyle: React.CSSProperties = { background: '#fff', borderColor: '#9ca3af' }
+    let tdExtra: React.CSSProperties = {}
+    if (st === 'OK' && rec) {
+      title = `${rec.checkedName} ${hhmmOf(rec.checkedAt) ?? ''}`.trim()
+      mark = <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>
+      boxStyle = { background: '#16a34a', borderColor: '#15803d' }
+      tdExtra = { background: '#e8f5e9' }
+    } else if (st === 'CHANGED' && rec) {
+      title = `核對後有變（核對時 $${rec.amount}）— 撳返 = 用新金額覆寫`
+      mark = <span style={{ width: 8, height: 3, background: '#dc2626', display: 'block' }} />
+      boxStyle = { background: '#fff', borderColor: '#dc2626' }
+      tdExtra = { boxShadow: 'inset 0 0 0 1.5px #dc2626' }
+    } else if (st === 'STALE' && rec) {
+      title = `已 tick 但而家冇數（tick 時 $${rec.amount}）— 撳 = 取消 tick`
+      mark = <span style={{ color: '#dc2626', fontSize: 10, lineHeight: 1 }}>×</span>
+      boxStyle = { background: '#fee2e2', borderColor: '#dc2626' }
+      tdExtra = { boxShadow: 'inset 0 0 0 1.5px #dc2626' }
+    }
+    return {
+      tdExtra,
+      node: (
+        <button
+          type="button" role="checkbox" aria-checked={st === 'OK' ? 'true' : st === 'CHANGED' ? 'mixed' : 'false'}
+          title={title} disabled={busy} onClick={() => toggleCell(r.key, m.key, st)}
+          className="absolute top-1 right-1 w-[14px] h-[14px] rounded-[3px] border flex items-center justify-center disabled:opacity-50"
+          style={boxStyle}
+          aria-label={`逐格核對 ${r.label} ${m.key}`}
+        >
+          {mark}
+        </button>
+      ),
+    }
+  }
 
   const startSync = useCallback(async () => {
     if (!activeClinicId || !from) return
@@ -341,6 +448,7 @@ export default function DailyRevenuePage() {
           clinicLabel={clinics.find(c => c.id === activeClinicId)?.shortName || clinics.find(c => c.id === activeClinicId)?.name || ''}
           from={report.from} to={report.to} reloadKey={reloadKey}
           currentRows={report.rows.map(r => ({ key: r.key, label: r.label, storeTotal: r.storeTotal }))}
+          cellProgress={cellProgress}
           onPickDate={d => { setFrom(d); setTo('') }} />
       )}
 
@@ -377,9 +485,17 @@ export default function DailyRevenuePage() {
                         ? <button type="button" className="hover:underline" style={{ color: BLUE }} onClick={() => setProviderId(r.key)}>{r.label}</button>
                         : r.label}
                     </td>
-                    {report.methods.map(m => (
-                      <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? BLUE : GRAY)}>{money(r.byMethod[m.key])}</td>
-                    ))}
+                    {report.methods.map(m => {
+                      // ★ cwm-dailyv2-20261007 ④：有數嘅格右上角細 checkbox（逐醫生+單日先有；cellTick 內部判斷）
+                      const t = cellTick(r, m)
+                      return (
+                        <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? BLUE : GRAY, t?.tdExtra)}>
+                          <div className="relative" style={{ minHeight: 20, paddingRight: t ? 18 : 0 }}>
+                            {money(r.byMethod[m.key])}{t?.node}
+                          </div>
+                        </td>
+                      )
+                    })}
                     <td style={td('#000')}>{money(r.storeTotal)}</td>
                     <td style={td(BLUE, { textAlign: 'center' })}>{r.spCount || ''}</td>
                   </tr>

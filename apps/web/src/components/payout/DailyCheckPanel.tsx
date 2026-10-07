@@ -20,7 +20,7 @@ const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDi
 const signed = (n: number) => (n >= 0 ? '+' : '−') + money(Math.abs(n))
 const hhmm = (iso: string) => new Date(iso).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 
-export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, reloadKey, onPickDate }: {
+export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, reloadKey, onPickDate, cellProgress }: {
   clinicId: string
   clinicLabel: string
   from: string
@@ -29,6 +29,8 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
   currentRows: Array<{ key: string; label: string; storeTotal: number }>
   reloadKey: number
   onPickDate: (date: string) => void
+  /** ★ cwm-dailyv2-20261007 ④：逐格 tick 進度（只係提示，唔擋「確認核對」）；null = 非單日/冇格 */
+  cellProgress?: { done: number; total: number } | null
 }) {
   const [data, setData] = useState<CheckData | null>(null)
   const [error, setError] = useState('')
@@ -39,6 +41,12 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
   const [reason, setReason] = useState('')
   const [onlyOpen, setOnlyOpen] = useState(true)
   const single = from === to
+  // ★ cwm-dailyv2-20261007 ④：「逐格已對 n/總有數格」— 全部對晒先綠字
+  const cellHint = cellProgress && cellProgress.total > 0 ? (
+    <div className={`text-xs ${cellProgress.done === cellProgress.total ? 'text-green-700 font-semibold' : 'text-gray-500'}`}>
+      逐格已對 {cellProgress.done}/{cellProgress.total}{cellProgress.done === cellProgress.total ? ' ✓' : ''}
+    </div>
+  ) : null
 
   async function load() {
     setError('')
@@ -150,6 +158,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
         {form('確認核對')}
         {!data.canCheck && <div className="text-xs text-red-700">店舖帳號只可以核對自己間店。</div>}
         <div className="text-xs text-gray-500">確認後記低：護士、核對時間、操作人、核對時嘅金額。之後數字變咗，會自動標「要重新核對」。</div>
+        {cellHint}
       </div>
     )
   }
@@ -178,6 +187,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
           <div className="text-sm text-red-900">變咗嘅醫生：{diffs.map(d => `${d.label} ${money(d.was)} → ${money(d.now)}`).join('；')}</div>
         )}
         {form('重新核對')}
+        {cellHint}
       </div>
     )
   }
@@ -193,6 +203,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
           <button type="button" onClick={() => setRevoking(true)} className="h-9 px-3 rounded-md border bg-white text-sm">取消核對</button>
         )}
       </div>
+      {cellHint}
       {revoking && (
         <div className="flex flex-wrap gap-2 items-end">
           <label className="flex flex-col gap-1 text-sm text-gray-700 flex-1 min-w-[240px]">原因（必填，入審計紀錄）
