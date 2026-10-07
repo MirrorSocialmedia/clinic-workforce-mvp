@@ -51,12 +51,14 @@ export function useApricotJobPoll(handlers: {
 
   const stop = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    latestRef.current = null // ★ cwm-premerge-fix-20261008：清 ref — 換診所/unmount 時 stop() 後，in-flight 嘅 late response 唔再當 latest（原先只清 timer，遲返嚟嘅回應照樣更新畫面 → 卡死「同步中…」）
   }, [])
 
   const tick = useCallback(async (jobId: string) => {
     if (latestRef.current !== jobId) return // 已換 job / 已停 — 呢個回應算 stale
     try {
       const res = await fetch(`/api/apricot/sync/jobs/${jobId}`, { credentials: 'include', cache: 'no-store' })
+      if (latestRef.current !== jobId) return // ★ cwm-premerge-fix-20261008：fetch 途中 stop()（換診所/unmount）→ latestRef 已 null 或指向新 jobId → 遲到回應直接丟
       if (!res.ok) return
       const d = await res.json()
       const job = d?.job as ApricotJobSnapshot | undefined
