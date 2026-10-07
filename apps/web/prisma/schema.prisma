@@ -2321,3 +2321,19 @@ model DailyRevenueCheck {
 
   @@index([clinicId, date])
 }
+
+/// ★ cwm-dailyv2-20261007：每日大數逐格核對（醫生 × 付款方式）
+model DailyRevenueCellCheck {
+  id          String   @id @default(cuid())
+  clinicId    String
+  date        String   // YYYY-MM-DD（香港日）—— 同 DailyRevenueCheck 一樣用字串
+  rowKey      String   // DailyRow.key（providerId 或 'ext:<apricotId>'）
+  colKey      String   // DailyMethod.key（同表頭同一個 colKey）
+  amount      Decimal  @db.Decimal(12, 2) // tick 嗰陣嘅金額快照
+  checkedBy   String   // 登入帳號 userId
+  checkedName String   // 快照：店舖帳號就寫揀咗嘅護士名，冇揀就寫帳號名
+  checkedAt   DateTime @default(now())
+
+  @@unique([clinicId, date, rowKey, colKey])
+  @@index([clinicId, date])
+}
