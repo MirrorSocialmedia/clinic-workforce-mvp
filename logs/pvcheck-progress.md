@@ -70,3 +70,45 @@ trace_id: pvcheck-20261007-2 ｜ Kairo: muxv9d37wgbqc（s1–s4 CTO，s5/s6 revi
 - 5 commits：f0b533f4 progress / b64a5701 seed / 1068bcc2 A4 / b60a6bcd A / d1528b87 B / ed1ca416 C（共 6 個連 progress）
 - 範圍守住：無 DB migration、無新 route、client 零 prisma（daily-review 只 import type、applyLocalCheck 新檔）
 - 備註：MD B4「可選加強」（每日大數逐日表 date link tooltip）唔做 — MD 明寫可選、D 區唔驗
+
+## hotfix1（2026-10-07 22:0x 開工 — trace pvcheck-20261007-hotfix1）
+
+### 背景
+- Reviewer（`logs/pvcheck-review.md`，22:1x）APPROVE 整單，唯一 major = **F1**：409「其他人已核對」notice 實際 invisible
+- 症狀：`DailyReviewRow.submitCheck` 409 else 分支 `setNotice('其他人已核對')` + `setCheckDate(null)` + `onRecompute()` 同一 React batch（React 18 auto batching）→ `onRecompute=handlePreview` 第一行 `setPreviewLoading(true)`（busy=true）同 commit → 舊 `useEffect(if (busy) { setJustChecked(new Set()); setNotice('') })` 同幀清走 notice → 提示只渲染 ~1 幀，用戶睇唔到（MD D5 要求提示「其他人已核對」）。數據流正確（recompute 攞返真實狀態、DB 只 1 active，reviewer ⑤ 實測）
+- F2（canCheck 初值 null）skip：Reviewer 註實戰 KIOSK 入唔到 /payout（nav gate OWNER+provider_payout），純 defense-in-depth
+
+### 修法（Reviewer 建議 falling edge，CEO 同意）
+- `DailyReviewRow.tsx` busy effect 由「busy=true 即清」改 **busy falling edge（true→false 先清）**：`const prevBusy = useRef(busy)` + `if (prevBusy.current && !busy) { setJustChecked(new Set()); setNotice('') }`
+- 副作用核對：
+  ① notice 而家留低經過 recompute，直到 recompute 完成（busy→false）先清 — 可接受，用戶先睇到提示
+  ② justChecked 清嘅時序由「recompute 開始」變「recompute 完成（data 已變）」— 啱返 MD A5 口徑「review data 變先清」（recompute 期間舊 data 仲顯示，highlight 仲準確；新 data 到先清）
+- 初值路徑核對：`useRef(busy)` 用首 render 值 → 首 effect run `prev===busy` 必無 edge；就算首載 busy=true 起始都唔會誤清（實際上 `previewLoading` 初值 false，且 DailyReviewRow 要 `previewData.preview` 先 mount，mount 時 busy 已 false）；`setCheckDate(null)` 嗰行（409 分支）唔受影響
+- 順手 F3（minor）：護士名單 GET 失敗只「載入中…/錯誤」無 retry → 加「重試」小掣（`setNurseKey(k+1)` 同一 400 重 GET 機制；GET 失敗態 = `nurses===null && canCheck===null && checkError`，而 GET 失敗會令 loading 文案誤顯示「載入中…」→ 失敗態改顯示錯誤+重試；standalone checkError 行加 `nurses !== null` 條件防雙重顯示）。<20 行，trivial，做
+
+### 改動（DailyReviewRow.tsx 單檔，+19/−4；另 progress log）
+- **F1（major）**：line 81 `const prevBusy = useRef(busy)` + line 82-85 effect 改 falling edge：`if (prevBusy.current && !busy) { setJustChecked(new Set()); setNotice('') }`（舊 line 78 `if (busy) {...}` 删）。副作用①②已喺上段核對；`setCheckDate(null)`（line 118 成功路徑 / line 129 409 路徑）未改
+- **F3（minor，順手做，+8 行）**：護士名單 GET 失敗態（`nurses===null && canCheck===null && checkError`）由誤顯「載入中…」改為錯誤＋【重試】小掣（line 178-181，`setNurseKey(k=>k+1)` 同 400 重 GET 機制）；standalone checkError 行（line 213）加 `nurses !== null` 條件防雙重顯示。400/409 舊路徑行為不變（400 仍由 effect reset checkError）
+- 未改：F2 skip（Reviewer 註：KIOSK 實戰入唔到 /payout，純 defense-in-depth）；其他任何嘢
+
+### gates（全綠，改動後實跑）
+- `npx tsc --noEmit`（apps/web）= 0
+- `pnpm lint:hooks`（apps/web）= 0
+- `bash scripts/run-guards.sh`（repo root）= exit 0 全部守門通過
+- `npx tsx --test src/lib/payout/daily-review-local.test.ts` = 5/5 pass
+
+### F1 live 驗證（3010，22:2x HKT）
+**口徑**：UI notice 係 client-side（React state），curl 睇唔到 → 驗證 = ① 409 並發 API 重跑（數據流）＋ ② 代碼層 falling edge 邏輯；**UI 可見性由老細驗收時兩 tab 實測**
+
+**① 409 並發重跑（5 輪，每輪先 DELETE 09-07 check 還 fresh → 兩 curl 同時 POST）**：
+5/5 輪全部 = 一邊 `200 {"ok":true,"id":...}` ＋ 另一邊 `409 「呢日啱啱已經有人核對咗，請重新整理」（P2002 分支 = 正正觸發 line 128 setNotice('其他人已核對') 嗰支）`；每輪 DB `DailyRevenueCheck` 09-07 **active = 1**（id 逐輪換：cmuy7ao510…/7ao7c…/7ao9i…/7aobn…/7aodt…）。⚠ 期間另觀察到預存在嘅 intermittent 401（見下）
+**驗證後 DB 已還原 fresh seed**（DELETE 剩低 check → `count(*)=0`；preview 復核：8 UNCHECKED + 1 NONE、needsAck=true、doctorTotal=29800 — 同 reviewer 開場狀態一致，老細可直接兩 tab 實測）
+
+**② 代碼層（改動後行號）**：409 分支 line 128-130 = `setNotice('其他人已核對')` → `setCheckDate(null)` → `onRecompute()`（= `handlePreview`，payout/page.tsx:276 第一行 `setPreviewLoading(true)` → busy=true，同 React batch）。新 effect line 82-85：`if (prevBusy.current && !busy)` — busy false→true（recompute 開始）時 `prev=false` → **唔會清**（舊版 `if (busy)` 正正係呢個時機清走 notice）；notice 保留至 busy true→false（recompute 完成、`setPreviewData` 同 batch 落新 data）先清 — 用戶喺成個 recompute 期間都睇到「其他人已核對」。初值路徑：`useRef(busy)` 首 render 值 → 首 effect run `prev===busy` 必無 edge（首載 busy=true 起始都唔會誤清；實際上 `previewLoading` 初值 false 且 DailyReviewRow 要 `previewData.preview` 先 mount）
+**bundle 核**：3010  served chunk（`app/(protected)/payout/page.js`，1.06MB）含 `prevBusy.current && !busy` ×1 ＋ 「重試」；舊 pattern `if (busy) { setJustChecked` = 0 → dev server 已 hot reload 呢單新 build
+
+### ⚠ 附加觀察（預存在、本單唔修、建議開另單）
+**dev server 並發請求 intermittent 401**：同一有效 session cookie 兩並發請求，偶爾一邊 `401 Unauthorized`（require-auth.ts line 92/155 口徑；JWT verify 係純函數 deterministic，疑向 Prisma 並發/路徑）。重現：兩並發 `GET /api/me` → 1×200+1×401；本次 POST 測試 4/13 並發對出現（reviewer 早段 22:0x 並發測試冇撞到，屬 intermittent）。本 hotfix 只改 client 組件（diff 零 server 代碼），與之無關。影響：兩 tab 實測時若輸家撞 401，UI 會行通用 `setCheckError(msg)` 顯示「Unauthorized」而非「其他人已核對」notice（數據流唔受影響，DB 仍 1 active）— 老細實測撞到低頻 401 時重撳一次即可
+
+### 完成
+- commit：`fix(pvcheck): F1 409「其他人已核對」notice 改 busy falling edge 先清` ＋ `fix(pvcheck): F3 護士名單 GET 失敗加重試掣`（2 小 commit）＋ push

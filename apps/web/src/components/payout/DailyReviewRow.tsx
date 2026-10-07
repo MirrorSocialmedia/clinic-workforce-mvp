@@ -68,14 +68,20 @@ export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkDate, nurseKey, clinicId])
 
-  // ★ A5：收起再開，或者重新計算（busy）→ 清空 justChecked
+  // ★ A5：收起再開 → 清空 justChecked
   const prevOpen = useRef(open)
   useEffect(() => {
     if (open && !prevOpen.current) setJustChecked(new Set())
     prevOpen.current = open
   }, [open])
+  // ★ A5 + hotfix1 F1：busy falling edge（true→false = 重新計算完成、data 已變）先清 justChecked/notice。
+  //   舊版 busy=true 即清 → 同 409「其他人已核對」分支 setNotice+onRecompute() 同一 React batch，
+  //   notice 同幀被清（用戶睇唔到提示）；而家 recompute 期間保留，完成（data 已變）先清，啱 MD A5「review data 變先清」口徑。
+  //   初值路徑：useRef(busy) = 首 render 值 → 首 effect run prev===busy 無 edge，首載 busy=true 起始都唔會誤清。
+  const prevBusy = useRef(busy)
   useEffect(() => {
-    if (busy) { setJustChecked(new Set()); setNotice('') }
+    if (prevBusy.current && !busy) { setJustChecked(new Set()); setNotice('') }
+    prevBusy.current = busy
   }, [busy])
 
   if (!review) return null
