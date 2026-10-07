@@ -30,7 +30,7 @@ trace_id: pvcheck-20261007-2 ｜ Kairo: muxv9d37wgbqc（s1–s4 CTO，s5/s6 revi
 
 ### 計劃（按序，每綠 commit+push）
 1. ✅ progress 檔（呢段）+ commit
-2. seed：`prisma/seed-pvcheck-dev-20261007.mjs`（TW+HC 2 店、謝德輝+何嘉俊、2026-09 多日 bills/payments 令 09 月預視出日行 + 2026-10 幾日（驗「未來日期無掣」）、OWNER/KIOSK/EMPLOYEE nurse）→ 跑 + 驗證
+2. ✅ seed：`prisma/seed-pvcheck-dev-20261007.mjs` — 跑通 + live 驗證（preview API：8 UNCHECKED + 1 NONE；check API GET/POST/409/revoke 全通）
 3. A：DailyReviewRow 核對掣 + 行內表 + 409 + justChecked filter
 4. A4：`src/lib/payout/daily-review-local.ts` applyLocalCheck（純函數）+ onChecked 局部更新
 5. B：providerId/providerLabel props + href + daily/page.tsx 讀 providerId
@@ -41,3 +41,4 @@ trace_id: pvcheck-20261007-2 ｜ Kairo: muxv9d37wgbqc（s1–s4 CTO，s5/s6 revi
 ### 進度日誌
 - 21:1x gen2 收工單；環境核活（DB 空庫、3010 活、worktree 淨 @ b7f92c99）
 - 21:1x 錨點重校完成（上表）；progress 檔 commit
+- 21:3x seed 綠：TW 09-02~08 $7,000/日、09-09 $1,000、09-10 NONE；10-01~06 有數、10-08/09 未來；ProviderCommission 40%（preview 必需）；OWNER/KIOSK/EMPLOYEE 帳號 login 通；check API 200/409/400/revoke 實測 OK（09-08 smoke 後已 revoke，8 日全返 UNCHECKED）
