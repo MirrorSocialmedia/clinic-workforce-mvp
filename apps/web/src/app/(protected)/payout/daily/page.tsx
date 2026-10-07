@@ -29,6 +29,14 @@ function weekStartOf(d: string): string {
   return addDaysStr(d, dow === 0 ? -6 : 1 - dow)
 }
 
+// ★ cwm-dailyv2-20261007 ①：月份 → 首日/末日。計法同 lib/payout/daily-review.ts 嘅 monthDays() 一樣，
+//   但唔 import 嗰個檔（佢 import loadDailyReport → prisma，client bundle 會爆）
+const monthRange = (ym: string): { from: string; to: string } => {
+  const [y, m] = ym.split('-').map(Number)
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, '0')}` }
+}
+
 export default function DailyRevenuePage() {
   const today = todayHK()
   const [from, setFrom] = useState(today)
@@ -92,6 +100,14 @@ export default function DailyRevenuePage() {
     setFrom(`${today.slice(0, 7)}-01`); setTo(today)
   }
 
+  // ★ cwm-dailyv2-20261007 ①：月份格顯示值由 from/to 推返出嚟 ——
+  //   只有「from = 某月 1 號 且 to = 同月最後一日」先顯示嗰個月；撳「今日」/手改日期會自動清空，唔誤導
+  const monthValue = (() => {
+    if (!/^\d{4}-\d{2}-01$/.test(from)) return ''
+    const ym = from.slice(0, 7)
+    return to === monthRange(ym).to ? ym : ''
+  })()
+
   // ★ cwm-dailysticky-20261006：表頭向下捲時釘住（sticky 要配合下面 TABLE_BOX 做捲動框；
   //   border-collapse 下 sticky 格嘅邊框唔跟住格畫：底線用 inset 陰影補，top:-1 遮住頂邊 1px 縫，唔會見到後面捲過嘅字）
   const th: React.CSSProperties = { border: '1px solid #d9dee4', padding: '7px 9px', background: '#f3f5f8', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12, textTransform: 'none', letterSpacing: 'normal', position: 'sticky', top: -1, zIndex: 1, boxShadow: 'inset 0 -1px 0 #d9dee4' }
@@ -119,6 +135,15 @@ export default function DailyRevenuePage() {
           </label>
           <label className="flex flex-col gap-1 text-xs text-gray-600">至（選填 — 揀範圍）
             <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} className="h-10 px-2 border rounded-md text-sm" />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-gray-600">月份
+            <input type="month" value={monthValue}
+              onChange={e => {
+                const ym = e.target.value
+                if (!/^\d{4}-\d{2}$/.test(ym)) return
+                const r = monthRange(ym)
+                setFrom(r.from); setTo(r.to)
+              }} className="h-10 px-2 border rounded-md text-sm" />
           </label>
           <label className="flex flex-col gap-1 text-xs text-gray-600">診所
             <select value={clinicId} onChange={e => setClinicId(e.target.value)} className="h-10 px-2 border rounded-md text-sm min-w-[140px]">
