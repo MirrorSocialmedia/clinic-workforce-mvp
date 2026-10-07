@@ -8,7 +8,7 @@
 // ============================================================
 import { prisma } from '@/lib/prisma'
 import { loadDailyReport } from './daily-report'
-import { kioskClinicAllowed } from './daily-check'
+import { kioskClinicAllowed, nurseOptions } from './daily-check'
 
 export class DailyCellCheckError extends Error {
   constructor(message: string, public status = 400) { super(message) }
@@ -59,14 +59,14 @@ export async function setCellCheck(input: {
   const actor = await prisma.user.findUnique({ where: { id: actorId }, select: { name: true, fullName: true } })
   const actorName = actor?.name || actor?.fullName || actorId
 
-  // 護士名（KIOSK 可揀）—— 員工唔屬於有效範圍都只係忽略，用回帳號名
+  // 護士名（KIOSK 可揀）— ★ cwm-premerge-fix-20261008：照整店護士核對口徑校驗（nurseOptions 該店該日）
+  //   唔喺名單 → 400（原先任何員工 ID 都會用佢個名做「核對人」）
   let nurseName: string | null = null
   if (input.nurseEmployeeId) {
-    const emp = await prisma.employee.findUnique({
-      where: { id: input.nurseEmployeeId },
-      select: { user: { select: { name: true, fullName: true } } },
-    })
-    nurseName = emp?.user?.name || emp?.user?.fullName || null
+    const nurses = await nurseOptions(clinicId, date)
+    const nurse = nurses.find(n => n.employeeId === input.nurseEmployeeId)
+    if (!nurse) throw new DailyCellCheckError('呢位員工唔屬於呢間店，請重新揀')
+    nurseName = nurse.name
   }
   const checkedName = nurseName || actorName
 
