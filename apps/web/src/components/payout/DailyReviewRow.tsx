@@ -172,7 +172,16 @@ export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompu
       <div className="col-span-4 border border-gray-300 rounded-md bg-gray-50 p-3 mt-1 text-sm" role="region" aria-label={`核對 ${d.date}`}>
         <div className="font-semibold mb-2 text-gray-800">核對 {d.date.slice(5)} 全店：{money(d.storeTotal)}</div>
         {nurses === null && canCheck === null ? (
-          <div className="text-xs text-gray-500">載入護士名單…</div>
+          checkError ? (
+            // ★ hotfix1 F3：護士名單 GET 失敗 → 顯示錯誤＋【重試】（nurseKey+1 重新 GET，同 400 機制）
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-red-700">⚠ {checkError}</span>
+              <button type="button" onClick={() => setNurseKey(k => k + 1)} disabled={submitting}
+                className="h-6 px-2 rounded border border-gray-400 bg-white text-xs hover:bg-gray-100 disabled:opacity-50">重試</button>
+            </div>
+          ) : (
+            <div className="text-xs text-gray-500">載入護士名單…</div>
+          )
         ) : (
           <div className="flex flex-wrap gap-3 items-end">
             <label className="flex flex-col gap-1 text-xs text-gray-700">核對護士
@@ -201,7 +210,7 @@ export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompu
               className="h-8 px-3 rounded border bg-white text-xs disabled:opacity-50">取消</button>
           </div>
         )}
-        {checkError && <div className="text-xs text-red-700 mt-2">⚠ {checkError}</div>}
+        {checkError && nurses !== null && <div className="text-xs text-red-700 mt-2">⚠ {checkError}</div>}
         {canCheck === false && <div className="text-xs text-red-700 mt-2">店舖帳號只可以核對自己間店。</div>}
       </div>
     )
