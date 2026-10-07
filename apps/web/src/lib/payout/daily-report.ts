@@ -41,7 +41,9 @@ export interface DailyRow {
   key: string // byDoctor：providerId（或 'ext:<apricotId>'）；byDay：YYYY-MM-DD
   label: string
   byMethod: Record<string, number> // colKey → 收款（未扣手續費）
+  byMethodNet: Record<string, number> // ★ cwm-dailyv2-20261007 ⑤：colKey → 淨額（扣手續費，同 a.net）
   storeTotal: number // TOTAL：店舖營收（countAsIncome）
+  storeNet: number // ★ cwm-dailyv2-20261007 ⑤：TOTAL 淨額（同 storeTotal 同一個過濾條件）
   doctorRaw: number // 醫生收入收款
   doctorNet: number // 醫生收入淨額（扣手續費）
   share: number | null // 醫生分成（未扣成本）；冇拆帳設定 = null
@@ -99,7 +101,7 @@ export function methodsOf(allocs: DailyAlloc[]): DailyMethod[] {
 }
 
 function emptyRow(key: string, label: string): DailyRow {
-  return { key, label, byMethod: {}, storeTotal: 0, doctorRaw: 0, doctorNet: 0, share: 0, spCount: 0 }
+  return { key, label, byMethod: {}, byMethodNet: {}, storeTotal: 0, storeNet: 0, doctorRaw: 0, doctorNet: 0, share: 0, spCount: 0 }
 }
 
 /**
@@ -128,7 +130,8 @@ export function aggregateDaily(
     const doctor = a.countAsIncome || m === 'FREE_SP'
     const k = colKey(m, store, doctor)
     row.byMethod[k] = (row.byMethod[k] ?? 0) + a.amount
-    if (store) row.storeTotal += a.amount
+    row.byMethodNet[k] = (row.byMethodNet[k] ?? 0) + a.net
+    if (store) { row.storeTotal += a.amount; row.storeNet += a.net }
     if (doctor) {
       row.doctorRaw += a.amount
       row.doctorNet += a.net
@@ -140,7 +143,9 @@ export function aggregateDaily(
   const out = [...rows.values()]
   for (const r of out) {
     for (const k of Object.keys(r.byMethod)) r.byMethod[k] = round2(r.byMethod[k])
+    for (const k of Object.keys(r.byMethodNet)) r.byMethodNet[k] = round2(r.byMethodNet[k])
     r.storeTotal = round2(r.storeTotal)
+    r.storeNet = round2(r.storeNet)
     r.doctorRaw = round2(r.doctorRaw)
     r.doctorNet = round2(r.doctorNet)
     if (r.share != null) r.share = round2(shareRaw.get(r.key) ?? 0)
@@ -149,7 +154,9 @@ export function aggregateDaily(
   const totals = emptyRow('total', 'Total')
   for (const r of out) {
     for (const [k, v] of Object.entries(r.byMethod)) totals.byMethod[k] = round2((totals.byMethod[k] ?? 0) + v)
+    for (const [k, v] of Object.entries(r.byMethodNet)) totals.byMethodNet[k] = round2((totals.byMethodNet[k] ?? 0) + v)
     totals.storeTotal = round2(totals.storeTotal + r.storeTotal)
+    totals.storeNet = round2(totals.storeNet + r.storeNet)
     totals.doctorRaw = round2(totals.doctorRaw + r.doctorRaw)
     totals.doctorNet = round2(totals.doctorNet + r.doctorNet)
     // 合計分成 = 有設定嗰啲加埋；冇設定嘅醫生由 missingCommission 列出（頁面提示「部分」）

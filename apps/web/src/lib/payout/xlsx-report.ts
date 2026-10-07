@@ -240,6 +240,15 @@ function setFormula(
   if (o.fmt) cell.numFmt = o.fmt
 }
 
+/** ★ cwm-dailyv2-20261007 ⑤：小計行靜態數字（黑粗／灰粗）—— 無公式來源（逐格淨額唔喺表上），
+ *  黑字規則④例外：呢度無 formula 可寫，用 lib 計好嘅 totals 直接寫。 */
+function setStatic(cell: ExcelJS.Cell, v: number, o: { fmt?: string; gray?: boolean; bold?: boolean } = {}): void {
+  cell.value = v
+  cell.font = mkFont({ color: o.gray ? COLOR_GRAY : COLOR_BLACK, bold: o.bold })
+  cell.border = thinBorder
+  if (o.fmt) cell.numFmt = o.fmt
+}
+
 /** 綠字 = 跨 sheet 連結（規則④）
  *  ★ cwm-reconxlsx-fix-20260910 A（CEO 補充）：同 setFormula，result【必填】+ 雙寫——
  *    封面逐醫生行就係 setLink，唔改一樣會空白。
@@ -1020,7 +1029,40 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
   else setData(atCell, 0, { fmt: MONEY_FMT, gray: true })
   atCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_YELLOW } }
   setData(ws.getCell(row, spCountCol), d.totals.spCount)
-  row += 2
+  // ★ cwm-dailyv2-20261007 ⑤：手續費＋已扣手續費（淨額）—— 同網頁同一份 data（totals）
+  const feeRow = row + 1
+  const netRow = row + 2
+  setLabel(ws.getCell(feeRow, 1), '手續費', { gray: true, italic: true })
+  d.methods.forEach((m, i) => {
+    const c = ws.getCell(feeRow, methodCol(i))
+    const fee = round2((d.totals.byMethod[m.key] ?? 0) - (d.totals.byMethodNet[m.key] ?? 0))
+    if (d.rows.length > 0) setFormula(c, `${colName(methodCol(i))}${row}-${colName(methodCol(i))}${netRow}`, { fmt: MONEY_FMT, gray: true, result: fee })
+    else setData(c, 0, { fmt: MONEY_FMT, gray: true })
+  })
+  {
+    const c = ws.getCell(feeRow, totalCol)
+    const fee = round2(d.totals.storeTotal - d.totals.storeNet)
+    if (d.rows.length > 0) setFormula(c, `${colName(totalCol)}${row}-${colName(totalCol)}${netRow}`, { fmt: MONEY_FMT, gray: true, result: fee })
+    else setData(c, 0, { fmt: MONEY_FMT, gray: true })
+  }
+  ws.getCell(feeRow, spCountCol).value = null
+  ws.getCell(feeRow, spCountCol).border = thinBorder
+  setLabel(ws.getCell(netRow, 1), '已扣手續費（淨額）', { bold: true })
+  d.methods.forEach((m, i) => {
+    const c = ws.getCell(netRow, methodCol(i))
+    if (d.rows.length > 0) setStatic(c, d.totals.byMethodNet[m.key] ?? 0, { fmt: MONEY_FMT, bold: true, gray: !m.storeIncome && !m.doctorIncome })
+    else setData(c, 0, { fmt: MONEY_FMT, gray: true })
+  })
+  {
+    const c = ws.getCell(netRow, totalCol)
+    const parts = d.methods.map((m, i) => (m.storeIncome ? `${colName(methodCol(i))}${netRow}` : null)).filter(Boolean).join(',')
+    if (d.rows.length > 0 && parts) setFormula(c, `SUM(${parts})`, { fmt: MONEY_FMT, bold: true, result: d.totals.storeNet })
+    else setData(c, 0, { fmt: MONEY_FMT, gray: true })
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_YELLOW } }
+  }
+  ws.getCell(netRow, spCountCol).value = null
+  ws.getCell(netRow, spCountCol).border = thinBorder
+  row += 4
 
   // ── B 區：醫生收入及分成 ──
   sectionTitle(ws, row, 'B  醫生收入及分成（未扣成本）', lastCol)

@@ -135,6 +135,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'SP_SUBSIDY_SCAN', label: '掃描 2人SP 候選' },
   { action: 'DAILY_REVENUE_CHECK', label: '每日大數護士核對' },
   { action: 'DAILY_REVENUE_CHECK_REVOKE', label: '取消每日大數核對' },
+  { action: 'DAILY_CELL_CHECK', label: '每日大數逐格核對（醫生×付款方式）' }, // ★ cwm-dailyv2-20261007 ④
+  { action: 'DAILY_CELL_UNCHECK', label: '取消每日大數逐格核對' }, // ★ cwm-dailyv2-20261007 ④
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },

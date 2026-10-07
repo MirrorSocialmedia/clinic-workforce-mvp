@@ -8,13 +8,16 @@
  * 顏色跟 Excel：藍字 = 系統帶入，黑字粗體 = 合計，灰字 = 唔計，黃底 = 最終金額。
  * 數字同 Excel 匯出同一個 API（/api/payout-runs/daily），唔准前端自己計。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { ArrowLeft, Download } from 'lucide-react'
+import { ArrowLeft, Download, RefreshCw } from 'lucide-react'
 import { todayHK, addDaysStr } from '@/lib/hk-date'
 import type { DailyReport, DailyRow } from '@/lib/payout/daily-report'
+import { useApricotJobPoll } from '@/lib/use-apricot-job-poll'
+import { hasPermission } from '@/lib/permissions'
+import { cellState, cellTickable } from '@/lib/payout/daily-cell-state' // ★ ④：純函數（零 prisma，client 可用）
 import { DailyCheckPanel } from '@/components/payout/DailyCheckPanel'
 
 const SECTION = '#1F4E79'
@@ -27,6 +30,28 @@ const money = (n: number | null | undefined): string =>
 function weekStartOf(d: string): string {
   const dow = new Date(`${d}T12:00:00+08:00`).getUTCDay()
   return addDaysStr(d, dow === 0 ? -6 : 1 - dow)
+}
+
+// ★ cwm-dailyv2-20261007 ①：月份 → 首日/末日。計法同 lib/payout/daily-review.ts 嘅 monthDays() 一樣，
+//   但唔 import 嗰個檔（佢 import loadDailyReport → prisma，client bundle 會爆）
+const monthRange = (ym: string): { from: string; to: string } => {
+  const [y, m] = ym.split('-').map(Number)
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, '0')}` }
+}
+
+// ★ cwm-dailyv2-20261007 ②：ISO → HK 顯示值（同步狀態欄用；純函數無 prisma）
+const hkDayOf = (iso: unknown): string | undefined => {
+  const d = iso ? new Date(iso as string) : null
+  return d && !isNaN(d.getTime())
+    ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+    : undefined
+}
+const hhmmOf = (iso: unknown): string | undefined => {
+  const d = iso ? new Date(iso as string) : null
+  return d && !isNaN(d.getTime())
+    ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit', hour12: false }).format(d)
+    : undefined
 }
 
 export default function DailyRevenuePage() {
@@ -42,6 +67,14 @@ export default function DailyRevenuePage() {
   const [error, setError] = useState('')
   // ★ cwm-dailycheck-20261006：每次重新攞到報表 → 護士核對狀態都重新攞（同一份數）
   const [reloadKey, setReloadKey] = useState(0)
+  const [refreshTick, setRefreshTick] = useState(0) // ★ cwm-dailyv2-20261007 ②：同步完後重新拉報表
+
+  // ★ cwm-dailyv2-20261007 ④：逐格 tick —— 只喺「逐醫生模式 + 單日」（揀咗診所、to 空或 to==from）顯示。
+  //   cellChecks: rowKey|colKey → { amount, checkedName, checkedAt }（GET /api/payout-runs/daily/cell-check）
+  const [cellChecks, setCellChecks] = useState<Record<string, { amount: number; checkedName: string; checkedAt: string }> | null>(null)
+  const [cellBusy, setCellBusy] = useState<string | null>(null)
+  const [cellReloadKey, setCellReloadKey] = useState(0)
+  // cellDate 喺 activeClinicId 定義之後先算（見下）
 
   useEffect(() => {
     Promise.all([apiFetch<any>('/api/clinics'), apiFetch<any>('/api/providers')])
@@ -66,16 +99,35 @@ export default function DailyRevenuePage() {
     if (c) { setClinicId(c); deepLinked.current = true }
   }, [])
 
+  // ★ cwm-dailyv2-20261007 ③：KIOSK（店舖帳號）— /api/me 攞 role/clinicIds：
+  //   只顯示自己店（單一店自動鎖）、隱醫生 dropdown、Excel 匯出、B 區、分成
+  const [me, setMe] = useState<{ role: string; clinicIds: string[]; grant: string[]; deny: string[] } | null>(null)
+  useEffect(() => {
+    fetch('/api/me', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.user) setMe({ role: d.user.role, clinicIds: d.user.clinicIds ?? [], grant: d.user.grant ?? [], deny: d.user.deny ?? [] }) })
+      .catch(() => {})
+  }, [])
+  const isKiosk = me?.role === 'KIOSK'
+  // ★ cwm-dailyv2-20261007 ②：同步掣只俾有 apricot_sync 權限先顯示（server 端 RBAC：
+  //   POST /api/apricot/sync = OWNER + apricot_sync override）。判斷用全站同一套 hasPermission
+  //   （ROLE_DEFAULTS ∪ grant − deny；OWNER 預設有晒）。KIOSK 一律唔顯示。
+  const hasApricotSync = !!me && hasPermission(me.role, 'apricot_sync', me.grant, me.deny)
+  const myClinics = isKiosk ? clinics.filter(c => me!.clinicIds.includes(c.id)) : clinics
+  const kioskLockedClinicId = isKiosk && myClinics.length === 1 ? myClinics[0].id : ''
+  const activeClinicId = kioskLockedClinicId || clinicId
+  // ★ cwm-dailyv2-20261007 ④：tick 只喺「逐醫生模式 + 單日」（to 空或 to==from）生效
+  const cellDate = report && report.mode === 'byDoctor' && activeClinicId && (!to || to === from) ? from : null
   const query = useMemo(() => {
     const q = new URLSearchParams({ from })
     if (to && to !== from) q.set('to', to)
-    if (clinicId) q.set('clinicId', clinicId)
-    if (providerId) q.set('providerId', providerId)
+    if (activeClinicId) q.set('clinicId', activeClinicId)
+    if (!isKiosk && providerId) q.set('providerId', providerId)
     return q.toString()
-  }, [from, to, clinicId, providerId])
+  }, [from, to, activeClinicId, providerId, isKiosk])
 
   useEffect(() => {
-    if (!from || (!clinicId && !providerId)) { setReport(null); return }
+    if (!from || (!activeClinicId && !providerId)) { setReport(null); return }
     let cancelled = false
     setLoading(true)
     setError('')
@@ -84,13 +136,204 @@ export default function DailyRevenuePage() {
       .catch(e => { if (!cancelled) { setReport(null); setError(e.message) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [query, from, clinicId, providerId])
+  }, [query, from, clinicId, providerId, refreshTick])
+
+  // ★ cwm-dailyv2-20261007 ②：Apricot 同步（重拉 bills/payments 入 DB）—— 复用 /api/apricot/sync job 體系：
+  //   POST { clinicId, from, to }（唔帶 force — MD ②：force 有 7 日限制 + 逐張單 call）→ jobId；
+  //   409 = 已有 job 進行中 → 顯示提示並跟住嗰個 jobId（唔開第二個 job）。
+  //   poll 用共用 useApricotJobPoll（同 /apricot-sync 頁共用，每 2s，latestRef 防舊回應）。
+  const [syncState, setSyncState] = useState<null | {
+    status: 'running' | 'done' | 'failed' | 'cancelled'
+    currentStep?: string | null
+    done?: number
+    total?: number
+    error?: string
+    existing?: boolean         // 409：跟住人哋嘅 job
+    clinicName?: string | null // 409：嗰個 job 嘅診所名（apricotClinicId 映返 name）
+    from?: string | null       // HK 日（自己 job = 表單值；409 job = 由 poll 回傳嘅 job.fromDate 攞）
+    to?: string | null
+    endedAtHm?: string | null  // 完成時間 hh:mm（MD ② DONE 格式）
+  }>(null)
+  const { start: startSyncPoll, stop: stopSyncPoll } = useApricotJobPoll({
+    onJob: job => setSyncState(s => ({
+      ...(s ?? { status: 'running' }),
+      status: 'running',
+      currentStep: job.currentStep,
+      done: job.doneClinics,
+      total: job.totalClinics,
+      // 自己 job：from/to 已用表單值填咗；409 跟住嘅 job：由 job 回傳嘅 fromDate/toDate 攞
+      from: s?.from || hkDayOf(job.fromDate),
+      to: s?.to || hkDayOf(job.toDate),
+    })),
+    onTerminal: job => {
+      if (job.status === 'DONE') {
+        setSyncState(s => ({
+          ...(s ?? { status: 'done' }),
+          status: 'done',
+          currentStep: job.currentStep,
+          done: job.doneClinics,
+          total: job.totalClinics,
+          from: s?.from || hkDayOf(job.fromDate),
+          to: s?.to || hkDayOf(job.toDate),
+          endedAtHm: hhmmOf(job.endedAt),
+        }))
+        setRefreshTick(t => t + 1) // 同步完 → 重新拉報表
+      } else {
+        // MD ②：FAILED／CANCELLED 都係紅字顯示 errorMessage，掣恢復可以撳
+        setSyncState(s => ({ ...(s ?? { status: 'failed' }), status: job.status === 'FAILED' ? 'failed' : 'cancelled', error: job.errorMessage || '' }))
+      }
+    },
+  })
+
+  // MD ②：換診所要清 poll + 狀態（unmount 由 hook 自己清）
+  useEffect(() => { stopSyncPoll(); setSyncState(null) }, [activeClinicId, stopSyncPoll])
+
+  // ★ cwm-dailyv2-20261007 ④：拉回該店該日嘅 tick 紀錄（報表重新載入／同步完／換诊所換日都重拉）
+  useEffect(() => {
+    if (!cellDate || !activeClinicId) { setCellChecks(null); return }
+    let cancelled = false
+    setCellChecks(null)
+    apiFetch<{ cells: { rowKey: string; colKey: string; amount: number; checkedName: string; checkedAt: string }[] }>(
+      `/api/payout-runs/daily/cell-check?clinicId=${activeClinicId}&date=${cellDate}`
+    )
+      .then(d => {
+        if (cancelled) return
+        const m: Record<string, { amount: number; checkedName: string; checkedAt: string }> = {}
+        for (const c of d.cells) m[`${c.rowKey}|${c.colKey}`] = { amount: c.amount, checkedName: c.checkedName, checkedAt: c.checkedAt }
+        setCellChecks(m)
+      })
+      .catch(() => { if (!cancelled) setCellChecks(null) })
+    return () => { cancelled = true }
+  }, [cellDate, activeClinicId, reloadKey, refreshTick, cellReloadKey])
+
+  // ★ ④：剔格 —— OPEN→tick、OK→取消、CHANGED→用新金額覆寫、STALE→取消（server 重算金額，唔信前端）
+  const toggleCell = useCallback(async (rowKey: string, colKey: string, st: 'OPEN' | 'OK' | 'CHANGED' | 'STALE') => {
+    if (!cellDate || !activeClinicId || cellBusy) return
+    const target = st === 'OPEN' || st === 'CHANGED'
+    setCellBusy(`${rowKey}|${colKey}`)
+    try {
+      await apiFetch('/api/payout-runs/daily/cell-check', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clinicId: activeClinicId, date: cellDate, rowKey, colKey, checked: target }),
+      })
+      setCellReloadKey(k => k + 1)
+    } catch (e: any) {
+      alert(e?.message || '逐格核對失敗')
+    } finally { setCellBusy(null) }
+  }, [cellDate, activeClinicId, cellBusy])
+
+  // ★ ④：DailyCheckPanel 提示「逐格已對 n/總有數格」（全部對晒先綠字）
+  const cellProgress = useMemo(() => {
+    if (!cellDate || !report || !cellChecks || report.mode !== 'byDoctor') return null
+    let total = 0
+    let done = 0
+    for (const r of report.rows) {
+      for (const m of report.methods) {
+        const v = r.byMethod[m.key]
+        if (!cellTickable(v)) continue
+        total++
+        const rec = cellChecks[`${r.key}|${m.key}`]
+        if (rec && cellState(v ?? 0, rec.amount) === 'OK') done++
+      }
+    }
+    return { done, total }
+  }, [cellDate, report, cellChecks])
+
+  // ★ ④：格仔右上角嘅細 checkbox（14px）。只喺 cellDate 生效時渲染；TOTAL 欄／Total 行／SP 欄唔會 call 呢度。
+  //   「有數先有格」：冇數又冇 tick 紀錄 → 唔出 checkbox（MD ④）。
+  const cellTick = (r: DailyRow, m: { key: string }): { node: React.ReactNode; tdExtra: React.CSSProperties } | null => {
+    if (!cellDate || !cellChecks) return null
+    const v = r.byMethod[m.key]
+    const rec = cellChecks[`${r.key}|${m.key}`]
+    if (!cellTickable(v) && !rec) return null
+    const st = cellState(v ?? 0, rec?.amount ?? null)
+    const ck = `${r.key}|${m.key}`
+    const busy = cellBusy === ck
+    let title = '剔 = 呢格已對'
+    let mark: React.ReactNode = null
+    let boxStyle: React.CSSProperties = { background: '#fff', borderColor: '#9ca3af' }
+    let tdExtra: React.CSSProperties = {}
+    if (st === 'OK' && rec) {
+      title = `${rec.checkedName} ${hhmmOf(rec.checkedAt) ?? ''}`.trim()
+      mark = <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>
+      boxStyle = { background: '#16a34a', borderColor: '#15803d' }
+      tdExtra = { background: '#e8f5e9' }
+    } else if (st === 'CHANGED' && rec) {
+      title = `核對後有變（核對時 $${rec.amount}）— 撳返 = 用新金額覆寫`
+      mark = <span style={{ width: 8, height: 3, background: '#dc2626', display: 'block' }} />
+      boxStyle = { background: '#fff', borderColor: '#dc2626' }
+      tdExtra = { boxShadow: 'inset 0 0 0 1.5px #dc2626' }
+    } else if (st === 'STALE' && rec) {
+      title = `已 tick 但而家冇數（tick 時 $${rec.amount}）— 撳 = 取消 tick`
+      mark = <span style={{ color: '#dc2626', fontSize: 10, lineHeight: 1 }}>×</span>
+      boxStyle = { background: '#fee2e2', borderColor: '#dc2626' }
+      tdExtra = { boxShadow: 'inset 0 0 0 1.5px #dc2626' }
+    }
+    return {
+      tdExtra,
+      node: (
+        <button
+          type="button" role="checkbox" aria-checked={st === 'OK' ? 'true' : st === 'CHANGED' ? 'mixed' : 'false'}
+          title={title} disabled={busy} onClick={() => toggleCell(r.key, m.key, st)}
+          className="absolute top-1 right-1 w-[14px] h-[14px] rounded-[3px] border flex items-center justify-center disabled:opacity-50"
+          style={boxStyle}
+          aria-label={`逐格核對 ${r.label} ${m.key}`}
+        >
+          {mark}
+        </button>
+      ),
+    }
+  }
+
+  const startSync = useCallback(async () => {
+    if (!activeClinicId || !from) return
+    stopSyncPoll()
+    // ★ MD ②：payload 格式照抄 /apricot-sync 頁（HK 日 + T00:00:00+08:00 / T23:59:59+08:00），唔傳 force
+    const body = { clinicId: activeClinicId, from: `${from}T00:00:00+08:00`, to: `${to || from}T23:59:59+08:00` }
+    setSyncState({ status: 'running', from, to: to || from })
+    try {
+      const res = await fetch('/api/apricot/sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify(body),
+      })
+      const data = await res.json().catch(() => ({} as any))
+      if (!res.ok) {
+        if (res.status === 409 && data.jobId) {
+          // MD ②：409 → 「另一個同步進行中（{診所} {日期}）」，改為 poll 嗰個 jobId，完咗先可以再撳
+          const ext = (data.running?.clinicExtId as string | null) ?? null
+          const c = clinics.find(x => x.apricotClinicId === ext)
+          setSyncState({
+            status: 'running', existing: true,
+            clinicName: c ? (c.shortName || c.name) : (ext || null),
+            from: null, to: null, // 嗰個 job 嘅日期範圍由第一輪 poll 回傳（job 有 fromDate/toDate）
+          })
+          startSyncPoll(data.jobId)
+          return
+        }
+        // 400／403／5xx → 顯示錯誤，掣恢復可以撳
+        setSyncState({ status: 'failed', error: data.error || `HTTP ${res.status}` })
+        return
+      }
+      if (data.jobId) startSyncPoll(data.jobId)
+      else setSyncState({ status: 'failed', error: '伺服器未回傳 job id' })
+    } catch (e: any) {
+      setSyncState({ status: 'failed', error: e?.message || '同步失敗' })
+    }
+  }, [activeClinicId, from, to, clinics, startSyncPoll, stopSyncPoll])
 
   const quick = (kind: 'today' | 'week' | 'month') => {
     if (kind === 'today') { setFrom(today); setTo(''); return }
     if (kind === 'week') { setFrom(weekStartOf(today)); setTo(today); return }
     setFrom(`${today.slice(0, 7)}-01`); setTo(today)
   }
+
+  // ★ cwm-dailyv2-20261007 ①：月份格顯示值由 from/to 推返出嚟 ——
+  //   只有「from = 某月 1 號 且 to = 同月最後一日」先顯示嗰個月；撳「今日」/手改日期會自動清空，唔誤導
+  const monthValue = (() => {
+    if (!/^\d{4}-\d{2}-01$/.test(from)) return ''
+    const ym = from.slice(0, 7)
+    return to === monthRange(ym).to ? ym : ''
+  })()
 
   // ★ cwm-dailysticky-20261006：表頭向下捲時釘住（sticky 要配合下面 TABLE_BOX 做捲動框；
   //   border-collapse 下 sticky 格嘅邊框唔跟住格畫：底線用 inset 陰影補，top:-1 遮住頂邊 1px 縫，唔會見到後面捲過嘅字）
@@ -120,40 +363,92 @@ export default function DailyRevenuePage() {
           <label className="flex flex-col gap-1 text-xs text-gray-600">至（選填 — 揀範圍）
             <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} className="h-10 px-2 border rounded-md text-sm" />
           </label>
+          <label className="flex flex-col gap-1 text-xs text-gray-600">月份
+            <input type="month" value={monthValue}
+              onChange={e => {
+                const ym = e.target.value
+                if (!/^\d{4}-\d{2}$/.test(ym)) return
+                const r = monthRange(ym)
+                setFrom(r.from); setTo(r.to)
+              }} className="h-10 px-2 border rounded-md text-sm" />
+          </label>
           <label className="flex flex-col gap-1 text-xs text-gray-600">診所
-            <select value={clinicId} onChange={e => setClinicId(e.target.value)} className="h-10 px-2 border rounded-md text-sm min-w-[140px]">
-              <option value="">全部診所{providerId ? '' : '（要揀醫生）'}</option>
-              {clinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
+            <select value={activeClinicId} onChange={e => setClinicId(e.target.value)}
+              disabled={isKiosk && myClinics.length <= 1}
+              className="h-10 px-2 border rounded-md text-sm min-w-[140px]">
+              {!isKiosk && <option value="">全部診所{providerId ? '' : '（要揀醫生）'}</option>}
+              {myClinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
             </select>
           </label>
+          {!isKiosk && (
           <label className="flex flex-col gap-1 text-xs text-gray-600">醫生
             <select value={providerId} onChange={e => setProviderId(e.target.value)} className="h-10 px-2 border rounded-md text-sm min-w-[160px]">
               <option value="">全部醫生（逐醫生）</option>
               {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
+          )}
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => quick('today')}>今日</Button>
             <Button variant="outline" onClick={() => quick('week')}>今個星期</Button>
             <Button variant="outline" onClick={() => quick('month')}>今個月</Button>
           </div>
+          {/* ★ cwm-dailyv2-20261007 ②：Apricot 同步 — KIOSK 一律唔顯示；非 OWNER 要 apricot_sync 權限先顯示 */}
+          {!isKiosk && hasApricotSync && (
+          <Button variant="outline" title={!activeClinicId ? '先揀診所' : '重新同 Apricot 拉 bills/payments 入 DB'}
+            disabled={!activeClinicId || !from || syncState?.status === 'running'}
+            onClick={startSync}>
+            <RefreshCw size={14} className={`mr-1 ${syncState?.status === 'running' ? 'animate-spin' : ''}`} /> 同步 Apricot
+          </Button>
+          )}
           <div className="flex-1" />
+          {!isKiosk && (
           <a href={report ? `/api/payout-runs/daily?${query}&format=xlsx` : undefined} aria-disabled={!report}>
             <Button variant="outline" disabled={!report}><Download size={14} className="mr-1" /> 匯出 Excel</Button>
           </a>
+          )}
         </div>
         {!clinicId && !providerId && <div className="text-xs text-amber-700 mt-2">「全部診所」要揀醫生先睇到（逐日）；或者揀一間診所睇逐醫生。</div>}
+        {/* ★ cwm-dailyv2-20261007 ②：同步狀態欄（MD ②：RUNNING 轉圈+步驟；DONE 「✓ 已同步 {from}–{to}（hh:mm）」；
+            FAILED／CANCELLED 紅字 errorMessage；409 「另一個同步進行中（{診所} {日期}）」） */}
+        {syncState && (
+          <div className={`mt-2 text-xs flex items-center gap-2 ${
+            syncState.status === 'done' ? 'text-green-700' : syncState.status === 'running' ? 'text-blue-700' : 'text-red-700'
+          }`}>
+            {syncState.status === 'running' && (
+              <><RefreshCw size={12} className="animate-spin" />
+                {syncState.existing
+                  ? <>
+                      另一個同步進行中
+                      {`（${syncState.clinicName ?? ''}${syncState.from ? ` ${syncState.from}${syncState.to && syncState.to !== syncState.from ? `–${syncState.to}` : ''}` : ''}）`}
+                    </>
+                  : <>同步中…{syncState.currentStep ? ` ${syncState.currentStep}` : ''}</>}
+                {syncState.total != null ? `（${syncState.done ?? 0}/${syncState.total}）` : ''}
+              </>
+            )}
+            {syncState.status === 'done' && (
+              <>✓ 已同步 {syncState.from ?? ''}{syncState.to && syncState.to !== syncState.from ? `–${syncState.to}` : ''}{syncState.endedAtHm ? `（${syncState.endedAtHm}）` : ''} — 報表已重新載入</>
+            )}
+            {syncState.status === 'failed' && <>✗ 同步失敗{syncState.error ? `：${syncState.error}` : ''}（可重新撳同步）</>}
+            {syncState.status === 'cancelled' && <>同步已停止{syncState.error ? `：${syncState.error}` : ''}</>}
+            {syncState.status !== 'running' && (
+              <button type="button" className="underline text-gray-500" onClick={() => setSyncState(null)}>隱藏</button>
+            )}
+          </div>
+        )}
       </Card>
 
       {error && <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">⚠️ {error}</div>}
       {loading && <div className="p-6 text-gray-500">載入中...</div>}
 
-      {/* ★ cwm-dailycheck-20261006：護士核對（揀咗診所、全部醫生先有；每店每日一次） */}
-      {report && !loading && report.mode === 'byDoctor' && clinicId && (
-        <DailyCheckPanel clinicId={clinicId}
-          clinicLabel={clinics.find(c => c.id === clinicId)?.shortName || clinics.find(c => c.id === clinicId)?.name || ''}
+      {/* ★ cwm-dailycheck-20261006：護士核對（揀咗診所、全部醫生先有；每店每日一次）
+          ★ cwm-dailyv2-20261007 ③：KIOSK 用 activeClinicId（單一店自動鎖） */}
+      {report && !loading && report.mode === 'byDoctor' && activeClinicId && (
+        <DailyCheckPanel clinicId={activeClinicId}
+          clinicLabel={clinics.find(c => c.id === activeClinicId)?.shortName || clinics.find(c => c.id === activeClinicId)?.name || ''}
           from={report.from} to={report.to} reloadKey={reloadKey}
           currentRows={report.rows.map(r => ({ key: r.key, label: r.label, storeTotal: r.storeTotal }))}
+          cellProgress={cellProgress}
           onPickDate={d => { setFrom(d); setTo('') }} />
       )}
 
@@ -190,9 +485,17 @@ export default function DailyRevenuePage() {
                         ? <button type="button" className="hover:underline" style={{ color: BLUE }} onClick={() => setProviderId(r.key)}>{r.label}</button>
                         : r.label}
                     </td>
-                    {report.methods.map(m => (
-                      <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? BLUE : GRAY)}>{money(r.byMethod[m.key])}</td>
-                    ))}
+                    {report.methods.map(m => {
+                      // ★ cwm-dailyv2-20261007 ④：有數嘅格右上角細 checkbox（逐醫生+單日先有；cellTick 內部判斷）
+                      const t = cellTick(r, m)
+                      return (
+                        <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? BLUE : GRAY, t?.tdExtra)}>
+                          <div className="relative" style={{ minHeight: 20, paddingRight: t ? 18 : 0 }}>
+                            {money(r.byMethod[m.key])}{t?.node}
+                          </div>
+                        </td>
+                      )
+                    })}
                     <td style={td('#000')}>{money(r.storeTotal)}</td>
                     <td style={td(BLUE, { textAlign: 'center' })}>{r.spCount || ''}</td>
                   </tr>
@@ -205,10 +508,29 @@ export default function DailyRevenuePage() {
                   <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeTotal) || '$0.00'}</td>
                   <td style={td('#000', { fontWeight: 700, textAlign: 'center' })}>{report.totals.spCount}</td>
                 </tr>
+                {/* ★ cwm-dailyv2-20261007 ⑤：手續費＋已扣手續費（淨額）—— 同 B 區同一口徑（totals 帶好） */}
+                <tr>
+                  <td style={td(GRAY, { textAlign: 'left', fontStyle: 'italic' })}>手續費</td>
+                  {report.methods.map(m => (
+                    <td key={m.key} style={td(GRAY)}>{money(Math.round(((report.totals.byMethod[m.key] ?? 0) - (report.totals.byMethodNet[m.key] ?? 0)) * 100) / 100)}</td>
+                  ))}
+                  <td style={td(GRAY)}>{money(Math.round((report.totals.storeTotal - report.totals.storeNet) * 100) / 100)}</td>
+                  <td style={td(GRAY)}>{''}</td>
+                </tr>
+                <tr>
+                  <td style={td('#000', { textAlign: 'left', fontWeight: 700 })}>已扣手續費（淨額）</td>
+                  {report.methods.map(m => (
+                    <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? '#000' : GRAY, { fontWeight: 700 })}>{money(report.totals.byMethodNet[m.key])}</td>
+                  ))}
+                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeNet) || '$0.00'}</td>
+                  <td style={td(GRAY)}>{''}</td>
+                </tr>
               </tbody>
             </table>
           </div>
 
+          {/* ★ cwm-dailyv2-20261007 ③：KIOSK 唔顯示 B 區（醫生收入及分成） */}
+          {!isKiosk && (<>
           <div style={{ background: SECTION, color: '#fff', fontWeight: 700, fontSize: 13, padding: '6px 16px', marginTop: 16 }}>
             B  醫生收入及分成（未扣成本）
           </div>
@@ -243,11 +565,12 @@ export default function DailyRevenuePage() {
               </tbody>
             </table>
           </div>
+          </>)}
 
           <div className="px-4 py-3 text-xs text-gray-500 space-y-1 border-t">
             <div>TOTAL = 店舖營收（只計計入營收嘅付款方式）；灰字欄唔計。顏色同醫生月結 Excel 一樣：藍字 = 系統帶入，黑字粗體 = 合計，黃底 = 最終金額。</div>
-            <div>醫生分成 = 收入淨額 × 拆帳比例；<b>未扣 Lab／植牙成本，未計 SP 補貼／轉介／調整</b> —— 實際應付以月結單為準。</div>
-            {report.missingCommission.length > 0 && <div className="text-amber-700">未設拆帳（分成冇計）：{report.missingCommission.join('、')}</div>}
+            {!isKiosk && <div>醫生分成 = 收入淨額 × 拆帳比例；<b>未扣 Lab／植牙成本，未計 SP 補貼／轉介／調整</b> —— 實際應付以月結單為準。</div>}
+            {!isKiosk && report.missingCommission.length > 0 && <div className="text-amber-700">未設拆帳（分成冇計）：{report.missingCommission.join('、')}</div>}
           </div>
         </Card>
       )}

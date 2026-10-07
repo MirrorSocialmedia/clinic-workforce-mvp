@@ -5,7 +5,7 @@
 //   重新核對、取消 = 舊紀錄標 revokedAt（唔刪）；同一店同一日只得一條有效（DB partial unique index）。
 // ============================================================
 import { prisma } from '@/lib/prisma'
-import { loadDailyReport } from './daily-report'
+import { loadDailyReport, type DailyReport } from './daily-report'
 import { todayHK, hkDateStart, hkDateEnd } from '@/lib/hk-date'
 
 export type CheckStatus = 'UNCHECKED' | 'CHECKED' | 'CHANGED'
@@ -37,6 +37,47 @@ export function kioskClinicAllowed(session: { role: string; clinics?: string[] |
     return mine.length === 0 || mine.includes(clinicId)
   }
   return true
+}
+
+/**
+ * ★ cwm-dailyv2-20261007 ③：KIOSK（店舖帳號）每日大數收窄 —— role 判斷全部喺呢度，
+ *   route 唔准寫死角色（check-role-hardcode-api.sh）。
+ *
+ * 非 KIOSK：原樣通過（scopeClinics=null 代表「跟 route 原有 scope 邏輯」）。
+ * KIOSK（店舖公開裝置，護士只核對收款，唔應該見到醫生拆帳）：
+ *   - format=xlsx → 403（Excel 有分成）
+ *   - 一定要 clinicId ∈ session.clinics → 否則 403
+ *   - 強制逐醫生（providerId 忽略）
+ *   - scopeClinics 明確收窄到 [clinicId]（KIOSK 冇 Employee 記錄，getOwnHomeClinicId 會回 null → [] → 全 403）
+ */
+export function kioskDailyScope(
+  session: { role: string; clinics?: string[] | null },
+  q: { clinicId: string | null; providerId: string | null; format?: string | null },
+): { ok: false; status: number; error: string }
+  | { ok: true; kiosk: boolean; clinicId: string | null; providerId: string | null; scopeClinics: string[] | null } {
+  if (session.role !== 'KIOSK') {
+    return { ok: true, kiosk: false, clinicId: q.clinicId, providerId: q.providerId, scopeClinics: null }
+  }
+  if (q.format === 'xlsx') return { ok: false, status: 403, error: '店舖帳號唔可以匯出 Excel' }
+  const mine = session.clinics ?? []
+  if (!q.clinicId || !mine.includes(q.clinicId)) {
+    return { ok: false, status: 403, error: '店舖帳號只可以睇自己間店' }
+  }
+  return { ok: true, kiosk: true, clinicId: q.clinicId, providerId: null, scopeClinics: [q.clinicId] }
+}
+
+/**
+ * ★ cwm-dailyv2-20261007 ③：KIOSK 回應縮窄 —— 剷走醫生分成／拆帳 %（B 區），
+ *   只保留 A 區同 dayStoreTotals。API 層就剔咗，前端再隱 B 區係雙重保險。
+ */
+export function stripKioskReport(report: DailyReport): DailyReport {
+  return {
+    ...report,
+    percent: null,
+    missingCommission: [],
+    rows: report.rows.map(r => ({ ...r, share: null })),
+    totals: { ...report.totals, share: null },
+  }
 }
 
 /** 純函數：而家金額 vs 核對時金額 */
