@@ -132,8 +132,9 @@ export default function DailyRevenuePage() {
   // ★ cwm-dailyv3-20261010 §8：預設診所 —— KIOSK 用 myClinics[0]（綁多店時 cl[0] 可能唔屬佢 → 避免 403 閃）；
   //   非 KIOSK 同舊行為一樣（clinics[0]）。deep-link（?clinicId=）唔會覆蓋。
   useEffect(() => {
-    // me 未載完唔好搶先 set：KIOSK 要多等 myClinics（綁定店清單），否則綁多店時會先設到非己店 → 403 閃
-    if (!me || !clinics.length || deepLinked.current || clinicId) return
+    // KIOSK 要等 me（myClinics 綁定店清單）先 set，否則綁多店時會先設到非己店 → 403 閃；非 KIOSK 唔需要 me（clinics[0] 就夠）
+    if (!clinics.length || deepLinked.current || clinicId) return
+    if (isKiosk && !me) return // 只 KIOSK 需要等 me（myClinics）
     const first = (isKiosk ? myClinics : clinics)[0] // eslint-disable-line react-hooks/exhaustive-deps
     if (first) setClinicId(first.id)
   }, [clinics, me, isKiosk, clinicId])
@@ -287,7 +288,7 @@ export default function DailyRevenuePage() {
     return { done, total }
   }, [cellMode, cellSingleDate, report, cellChecks, providerId])
 
-  // ★ ④：格仔右上角嘅細 checkbox（14px）。只喺 cellDate 生效時渲染；TOTAL 欄／Total 行／SP 欄唔會 call 呢度。
+  // ★ ④：格仔右上角嘅細 checkbox（14px）。只喺 cellMode 生效時渲染；TOTAL 欄／Total 行／SP 欄唔會 call 呢度。
   //   「有數先有格」：冇數又冇 tick 紀錄 → 唔出 checkbox（MD ④）。
   const cellTick = (r: DailyRow, m: { key: string }): { node: React.ReactNode; tdExtra: React.CSSProperties } | null => {
     if (!cellMode || !cellChecks) return null

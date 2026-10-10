@@ -71,7 +71,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
   // ─── 範圍：逐日一覽 ───────────────────────────────────────────
   if (!single) {
     const n = (s: string) => data.days.filter(d => d.status === s).length
-    const rows = onlyOpen ? data.days.filter(d => d.status !== 'CHECKED') : data.days
+    const rows = onlyOpen ? data.days.filter(d => d.status !== 'CHECKED' || justChecked.has(d.date)) : data.days
     return (
       <div className="border rounded-lg mb-4 overflow-hidden bg-white" role="region" aria-label="護士核對一覽">
         <div className="flex flex-wrap justify-between items-center gap-2 px-4 py-3">
