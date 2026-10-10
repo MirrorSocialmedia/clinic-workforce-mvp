@@ -392,3 +392,25 @@ Excel 9 月單 Lab 重發：
 5. 🟡 項目跟手做。
 
 模擬腳本（01–23）同假 LLM 喺 session scratchpad，冇入 repo；要嘅話可以整理做 `scripts/e2e/labdoc-sim/`。
+
+---
+
+## 7. 修正狀態（同日，`cwm-labdoc/p4` commit `a6aebba`、`7523f9f`）
+
+**全部項目已修好**，每項都喺本機真 stack 重跑模擬核實過（回歸腳本 30／40）：
+
+- R1：畫面已做：
+  - `/lab-docs/invoices/[id]`、`/lab-docs/statements/[id]`、`/sections/[sid]`；
+  - 月結單分頁；
+  - 待處理直接跳去單據／分段；
+  - 成本錄入「單」icon。
+  - Playwright 撳過完整流程：確認 → 新增成本 → RECONCILED；預選成本 → 填入＋到貨；分段處理 → 確認。
+- R2～R7、O1～O8、Y1～Y9：逐項回歸通過。
+- 另外修好兩個模擬途中先發現嘅問題：
+  - 分組儲存中途 400 都會 commit 咗前面嘅動作；
+  - truncated 分頁重讀永遠行唔到。
+  - 兩個都已經有測試。
+- 測試：
+  - labdoc 單元測試 407 項（之前冇入 CI，而家已加入）；
+  - tsc、lint、deploy guards 全過。
+- 施工單升 v1.3，記低行為改動。
