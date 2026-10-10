@@ -47,7 +47,8 @@ export function kioskClinicAllowed(session: { role: string; clinics?: string[] |
  * KIOSK（店舖公開裝置，護士只核對收款，唔應該見到醫生拆帳）：
  *   - format=xlsx → 403（Excel 有分成）
  *   - 一定要 clinicId ∈ session.clinics → 否則 403
- *   - 強制逐醫生（providerId 忽略）
+ *   - ★ cwm-kioskdoc-20261010：可以揀醫生（逐日睇＋逐格 tick）—— clinicId 仍然鎖死自己店，
+ *     所以只會見到嗰位醫生喺呢間店嘅收款；分成照樣由 stripKioskReport 剷走
  *   - scopeClinics 明確收窄到 [clinicId]（KIOSK 冇 Employee 記錄，getOwnHomeClinicId 會回 null → [] → 全 403）
  */
 export function kioskDailyScope(
@@ -63,7 +64,7 @@ export function kioskDailyScope(
   if (!q.clinicId || !mine.includes(q.clinicId)) {
     return { ok: false, status: 403, error: '店舖帳號只可以睇自己間店' }
   }
-  return { ok: true, kiosk: true, clinicId: q.clinicId, providerId: null, scopeClinics: [q.clinicId] }
+  return { ok: true, kiosk: true, clinicId: q.clinicId, providerId: q.providerId, scopeClinics: [q.clinicId] }
 }
 
 /**
