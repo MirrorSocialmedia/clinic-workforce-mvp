@@ -1,0 +1,42 @@
+// ★ cwm-labdoc：月結單「改返」— 改分段診所／醫生、解除指派、改 Lab／月份 之前嘅守門＋清配對
+//
+// 配對（result／matched*）同差異處理（resolution）都係基於「Lab＋診所＋醫生＋月」計出嚟；
+// 呢四樣任何一樣改咗，舊配對就唔再成立 → 清走，再自動重新配對。
+// 例外：STATEMENT_WINS（以月結單為準）已經改咗系統 invoice／成本，清 resolution 都還原唔到 → 擋。
+
+import { Prisma } from '@prisma/client'
+
+/** 有冇行已經「以月結單為準」改咗系統（改咗就唔可以再改分段基礎）。 */
+export async function sectionsWithSystemChange(client: any, sectionIds: string[]): Promise<number> {
+  if (sectionIds.length === 0) return 0
+  return client.labStatementLine.count({
+    where: { sectionId: { in: sectionIds }, resolution: 'STATEMENT_WINS' },
+  })
+}
+
+export const SYSTEM_CHANGE_BLOCK_MSG =
+  '呢段已經有行用咗「以月結單為準」改咗系統 invoice／成本 — 唔可以再改診所／醫生／Lab／月份（要改請先作廢呢份月結單再重新上傳）'
+
+/** 清走分段所有行嘅配對＋差異處理，分段結果歸零（要喺 transaction 入面行）。 */
+export async function resetSectionMatching(tx: any, sectionIds: string[]): Promise<void> {
+  if (sectionIds.length === 0) return
+  await tx.labStatementLine.updateMany({
+    where: { sectionId: { in: sectionIds } },
+    data: {
+      result: 'PENDING',
+      matchBasis: null,
+      matchedDocumentId: null,
+      matchedLineId: null,
+      resolution: null,
+      resolutionNote: null,
+      resolvedBy: null,
+      resolvedAt: null,
+      followUpClosedAt: null,
+      followUpClosedBy: null,
+    },
+  })
+  await tx.labStatementSection.updateMany({
+    where: { id: { in: sectionIds } },
+    data: { systemTotal: null, resultJson: Prisma.DbNull },
+  })
+}

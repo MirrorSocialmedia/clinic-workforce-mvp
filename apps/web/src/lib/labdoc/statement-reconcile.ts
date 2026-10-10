@@ -30,7 +30,7 @@ export interface ReconcileArgs {
 }
 
 export type ReconcileFailure =
-  | { ok: false; code: 'NOT_FOUND' | 'NOT_STATEMENT' | 'NEEDS_ASSIGN' | 'NO_MONTH'; message: string }
+  | { ok: false; code: 'NOT_FOUND' | 'NOT_STATEMENT' | 'NEEDS_ASSIGN' | 'NO_MONTH' | 'NO_LAB'; message: string }
 
 export interface ReconcileSuccess {
   ok: true
@@ -145,7 +145,8 @@ export async function reconcileSection(
   if (!section.clinicId || !section.providerId) {
     return { ok: false, code: 'NEEDS_ASSIGN', message: '分段未指派診所／醫生' }
   }
-  if (!doc.statementMonth) return { ok: false, code: 'NO_MONTH', message: '文件無 statementMonth' }
+  if (!doc.labId) return { ok: false, code: 'NO_LAB', message: '月結單未揀 Lab — 返月結單頁撳「改 Lab／月份」揀咗先' }
+  if (!doc.statementMonth) return { ok: false, code: 'NO_MONTH', message: '月結單未揀月份 — 返月結單頁撳「改 Lab／月份」揀咗先' }
 
   const profile = await client.labProfile.findUnique({ where: { labId: doc.labId } })
   const ctx: SectionCtx = {
@@ -339,7 +340,7 @@ export async function autoReconcileIfReady(
   }
   try {
     const r = await reconcileSection(client, { sectionId, actorId, source, ipAddress: null, userAgent: null })
-    if (!r.ok && r.code !== 'NEEDS_ASSIGN' && r.code !== 'NO_MONTH') {
+    if (!r.ok && r.code !== 'NEEDS_ASSIGN' && r.code !== 'NO_MONTH' && r.code !== 'NO_LAB') {
       console.error(`${logPrefix} autoReconcile failed (${r.code})`, r.message)
     }
     return r

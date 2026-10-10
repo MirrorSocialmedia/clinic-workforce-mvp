@@ -483,6 +483,7 @@ export const CONFIG = {
     //   P3 §8：月結單對數（全部 lab_statement）— runtime key（cuid → :id）＋
     //   check-rbac-matrix.sh 字面 dead key（greedy \[.*\] 收埋多參數 — 跟 :id/save 先例）
     'POST /api/lab-docs/:id/supersede': ['OWNER', 'MANAGER'],
+    'PUT /api/lab-docs/:id/statement-header': ['OWNER', 'MANAGER'], // 月結單人手揀 Lab／月份
     'POST /api/lab-docs/:id/sections/:id/assign': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/sections/:id/reconcile': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/sections/:id/confirm': ['OWNER', 'MANAGER'],
@@ -796,6 +797,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/lab-docs/:id/payee': ['lab_statement'],
   // ★ cwm-labdoc P3 §8：月結單對數 = lab_statement（§10.2：識別、處理差異、確認、取代舊版）
   'POST /api/lab-docs/:id/supersede': ['lab_statement'],
+  'PUT /api/lab-docs/:id/statement-header': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/assign': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/reconcile': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/confirm': ['lab_statement'],
