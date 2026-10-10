@@ -11,7 +11,9 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download, CalendarDays } from 'lucide-react'
+import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download, CalendarDays, RefreshCw } from 'lucide-react'
+import { useApricotSync, ApricotSyncStatus } from '@/components/payout/ApricotSync'
+import { todayHK } from '@/lib/hk-date'
 import { hasPermission } from '@/lib/permissions'
 import { CostDetailRow } from '@/components/payout/CostDetailRow'
 import { SpReviewRow } from '@/components/payout/SpReviewRow'
@@ -80,6 +82,12 @@ function PayoutRunsPageInner() {
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
   const canPayout = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
+  // ★ cwm-syncshared-20261010：Apricot 同步（揀咗診所＋月份）—— 同每日大數頁共用；要 apricot_sync 權限（店舖帳號有權限都得）
+  const canSync = userRole ? hasPermission(userRole, 'apricot_sync', grant, deny) : false
+
+  const { syncState, setSyncState, start: startSync, reset: resetSync } = useApricotSync({ clinics: allClinics })
+  // 換診所／月份 → 清同步狀態（唔好將上一間店嘅「已同步」留喺度誤導）
+  useEffect(() => { resetSync() }, [selectedClinic, selectedMonth, resetSync])
 
   // Preview modal
   const [showPreview, setShowPreview] = useState(false)
@@ -485,7 +493,24 @@ function PayoutRunsPageInner() {
             >
               <Download size={14} className="mr-1" /> 月度收入報表
             </Button>
+            {canSync && (
+              <Button
+                variant="outline"
+                title={!selectedClinic ? '先揀診所' : '同步呢間店呢個月（至今日）嘅 Apricot 收款'}
+                disabled={!selectedClinic || !selectedMonth || syncState?.status === 'running'}
+                onClick={() => {
+                  // 範圍 = 揀咗嘅月份 1 號 → 月尾（未到月尾就到今日）
+                  const [y, m] = selectedMonth.split('-').map(Number)
+                  const last = `${selectedMonth}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`
+                  const today = todayHK()
+                  void startSync(selectedClinic, `${selectedMonth}-01`, last < today ? last : today)
+                }}
+              >
+                <RefreshCw size={14} className={`mr-1 ${syncState?.status === 'running' ? 'animate-spin' : ''}`} /> 同步 Apricot
+              </Button>
+            )}
           </div>
+          <ApricotSyncStatus state={syncState} onHide={() => setSyncState(null)} doneNote="之後撳「預覽」會用最新收款" />
 
           {/* 「有收入但未生成」提示 */}
           {selectedProvider && selectedMonth && uncoveredClinics.length > 0 && (
