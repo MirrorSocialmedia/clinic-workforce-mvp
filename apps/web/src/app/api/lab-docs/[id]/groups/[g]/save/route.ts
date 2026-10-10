@@ -36,7 +36,7 @@ import {
   ReceivedMonthLockedError,
   CostInvalidError,
 } from '@/lib/labdoc/cost-actions'
-import { acquireWriteLog, completeWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
+import { acquireWriteLog, completeWriteLog, releaseWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
 import { round2 } from '@/lib/labdoc/reconcile'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
@@ -96,7 +96,7 @@ function parseActions(raw: unknown): { actions: InLineAction[] } | { error: stri
     // 動作級驗證
     if (r.action === 'MATCH' && costCaseId === null) return { error: 'MATCH 要帶 costCaseId' }
     if (r.action === 'IGNORE' && ignoreReason === null) return { error: 'IGNORE 要帶 ignoreReason（1–60 字）' }
-    if (r.action === 'UNMATCH' && costCaseId === null) return { error: 'UNMATCH 要帶 costCaseId（而家連住嗰筆）' }
+    // UNMATCH 冇 costCaseId = 候選 defaults 嘅「未剔」（行冇連 → no-op；行連緊 → 解除而家嗰筆）
     out.push({ lineId: r.lineId, action: r.action, costCaseId, linkType, ignoreReason, receivedAt })
   }
   return { actions: out }
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   const { id, g } = params
   if (!DOC_ID_RE.test(id)) return NextResponse.json({ error: '單據 ID 格式錯誤' }, { status: 400 })
   const groupIndex = Number(g)
-  if (!Number.isInteger(groupIndex) || groupIndex < 0 || groupIndex > 10) {
+  if (!Number.isInteger(groupIndex) || groupIndex < 0 || groupIndex > 99) {
     return NextResponse.json({ error: '分組編號格式錯誤' }, { status: 400 })
   }
 
@@ -153,6 +153,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     }
   }
 
+  // R6（2026-10-10 模擬）：揀錯候選再「改做」會靜靜改大／改細另一筆成本 → 差額大過 50% 要再確認
+  const confirmLargePriceChange = body.confirmLargePriceChange === true
+
   // —— 載入文件 ——
   const doc = await prisma.labDocument.findUnique({ where: { id }, include: { lines: { where: { groupIndex } } } })
   if (!doc || doc.id !== id) return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
@@ -188,6 +191,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       receivedAt: a.receivedAt,
     })),
     priceUpdates: priceUpdates.map((p) => p.costCaseId),
+    confirmLargePriceChange,
   })
   const acquired = await acquireWriteLog(idempotencyKey, ROUTE_TAG, requestHash, session.userId)
   if (acquired.kind === 'replay') {
@@ -200,8 +204,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     )
   }
 
+  let committed = false
   try {
-    const runTx = async (tx: any) => {
+    const runTxInner = async (tx: any) => {
         // —— version 樂觀鎖 ——
         const claim = await tx.labDocument.updateMany({
           where: { id: doc.id, version },
@@ -278,6 +283,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
             savedLines.push({ lineId: a.lineId, status: 'IGNORED', costCaseId: null, linkType: null })
           } else {
             // UNMATCH
+            if (a.costCaseId === null) {
+              if (line.status !== 'MATCHED' || !line.costCaseId) continue // 「未剔」→ 冇嘢做
+              a.costCaseId = line.costCaseId as string
+            }
             const cc = await tx.costCase.findUnique({
               where: { id: a.costCaseId as string },
               select: { id: true, lockedByRunId: true, status: true, labId: true, clinicId: true },
@@ -366,6 +375,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
             return { fail: { status: 409, error: '成本已出月結 — 唔可以改價（要喺月結單期內處理）' } }
           }
           const linkedSum = round2(await computeLinkedSumDb(tx, { costCaseId: cc.id, pendingAmounts: [] }))
+          const cur = await tx.costCase.findUnique({ where: { id: cc.id }, select: { baseCost: true, itemType: true } })
+          const curBase = cur?.baseCost == null ? null : Number(cur.baseCost)
+          if (!confirmLargePriceChange && curBase !== null && curBase > 0 && Math.abs(linkedSum - curBase) / curBase > 0.5) {
+            return {
+              fail: {
+                status: 409,
+                error: `成本「${cur?.itemType ?? ''}」會由 $${curBase} 改做 $${linkedSum}（差超過一半）— 請確認揀啱成本`,
+                code: 'PRICE_CHANGE_CONFIRM',
+                preview: { costCaseId: cc.id, itemType: cur?.itemType ?? null, baseCost: curBase, newAmount: linkedSum },
+              },
+            }
+          }
           const lineIds = (await tx.labDocumentLine.findMany({
             where: { costCaseId: cc.id, status: 'MATCHED', documentId: doc.id },
             select: { id: true },
@@ -388,6 +409,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
         return { ok: { status, savedLines } }
     }
+    // fail 一定要 throw — 唔 throw 嘅話 transaction 會 commit 咗前面嘅行動作（2026-10-10 模擬發現）
+    const runTx = async (tx: any) => {
+      const r = await runTxInner(tx)
+      if ('fail' in r && r.fail) throw new TxFail(r.fail as { status: number; error: string })
+      return r
+    }
     // §7.8：撞 serialization error 重試 2 次（Prisma P2010 + PGSQL 40001 — 2026-10-05 實測）
     let result: any
     for (let serAttempt = 0; ; serAttempt++) {
@@ -395,15 +422,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
         result = await prisma.$transaction(runTx, { isolationLevel: 'Serializable', timeout: 60_000 })
         break
       } catch (e: any) {
-        const isSerialization = e?.code === 'P2010' && e?.meta?.code === '40001'
+        const isSerialization = (e?.code === 'P2010' && e?.meta?.code === '40001') || e?.code === 'P2034'
         if (isSerialization && serAttempt < 2) continue
         throw e
       }
     }
 
-    if ('fail' in result) {
-      return NextResponse.json({ error: (result as any).fail.error }, { status: (result as any).fail.status })
-    }
+    committed = true
     const { status, savedLines } = (result as any).ok
     const resp = {
       docId: doc.id,
@@ -415,6 +440,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     await completeWriteLog(idempotencyKey, resp)
     return jsonNoStore(resp)
   } catch (e: any) {
+    // transaction 未 commit（throw 喺 $transaction 入面 = rollback）→ 釋放 key，准同 key 重試
+    if (!committed) await releaseWriteLog(idempotencyKey).catch(() => {})
+    if (e instanceof TxFail) {
+      const { status, ...rest } = e.fail
+      return NextResponse.json(rest, { status })
+    }
+    if (e?.code === 'P2034' || (e?.code === 'P2010' && e?.meta?.code === '40001')) {
+      return NextResponse.json({ error: '啱啱有人同時改緊相關成本 — 請重新載入再試' }, { status: 409 })
+    }
     if (e instanceof SaveClaimError) return NextResponse.json({ error: e.message }, { status: 409 })
     if (e instanceof LineTakenError) {
       return NextResponse.json({ error: '行已連咗其他成本（同時被改）— 請重新載入再試' }, { status: 409 })
@@ -432,6 +466,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     if (e instanceof CostInvalidError) return NextResponse.json({ error: e.message }, { status: 400 })
     console.error('[labdoc] group save failed', { docId: id, groupIndex, err: e?.message })
     return NextResponse.json({ error: '儲存失敗，請重試' }, { status: 500 })
+  }
+}
+
+class TxFail extends Error {
+  constructor(public fail: { status: number; error: string; [k: string]: unknown }) {
+    super(fail.error)
+    this.name = 'TxFail'
   }
 }
 

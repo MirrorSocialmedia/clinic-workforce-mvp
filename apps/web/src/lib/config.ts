@@ -466,6 +466,7 @@ export const CONFIG = {
     'POST /api/lab-docs/:id/retry': ['OWNER', 'MANAGER'],
     //   P2：確認頭部（§7.1）＋候選成本（§6.5/§7.3）
     'PUT /api/lab-docs/:id/header': ['OWNER', 'MANAGER'],
+    'PUT /api/lab-docs/:id/manual': ['OWNER', 'MANAGER'], // §11 人手輸入（同 header handler）
     'POST /api/lab-docs/:id/new-case': ['OWNER', 'MANAGER'],
     'DELETE /api/lab-docs/:id': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/merge': ['OWNER', 'MANAGER'],
@@ -493,37 +494,16 @@ export const CONFIG = {
     'GET /api/lab-aliases': ['OWNER', 'MANAGER'],
     'DELETE /api/lab-aliases/:id': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs/stats': ['OWNER', 'MANAGER'],
-    //   候選 route：normalizeRoute 唔將 1–2 位 group index 變 :id → 逐個登記 0–10
-    //   （>10 分組 = matrix miss → 403 fail-closed；decision log）
-    'GET /api/lab-docs/:id/groups/0/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/1/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/2/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/3/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/4/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/5/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/6/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/7/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/8/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/9/candidates': ['OWNER', 'MANAGER'],
-    'GET /api/lab-docs/:id/groups/10/candidates': ['OWNER', 'MANAGER'],
-    //   §7.8 儲存分組（同候選：逐個登記 0–10）
-    'POST /api/lab-docs/:id/groups/0/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/1/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/2/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/3/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/4/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/5/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/6/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/7/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/8/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/9/save': ['OWNER', 'MANAGER'],
-    'POST /api/lab-docs/:id/groups/10/save': ['OWNER', 'MANAGER'],
+    //   候選／儲存 route：normalizeRoute 將 /groups/<1–2 位數字> 正規化做 /groups/:g（分組 0–99）
+    //   （舊做法逐個登記 0–10 → 第 11 組起 403；2026-10-10 模擬發現 12 組 invoice 對唔到）
+    'GET /api/lab-docs/:id/groups/:g/candidates': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/groups/:g/save': ['OWNER', 'MANAGER'],
     //   註：check-rbac-matrix.sh 嘅 grep 正規化（greedy \[.*\]）將 [id]/groups/[g] 收埋 → 要求字面 key
     //   "/api/lab-docs/:id/save"（runtime normalizeRoute 唔會產出 — dead key，只係過守門用，跟 candidates 先例）
     'POST /api/lab-docs/:id/save': ['OWNER', 'MANAGER'],
     //   註：check-rbac-matrix.sh 嘅 grep 正規化（greedy \[.*\]）將 [id]/groups/[g] 收埋 → 要求字面 key
     //   "/api/lab-docs/:id/candidates"（runtime normalizeRoute 唔會產出 — dead key，只係過守門用，
-    //   跟 P1 files/:id 先例）；真正 runtime key = 上面 groups/0–10 十一條
+    //   跟 P1 files/:id 先例）；真正 runtime key = 上面 groups/:g
     'GET /api/lab-docs/:id/candidates': ['OWNER', 'MANAGER'],
     //   頁圖 route：normalizeRoute 唔會將 1–2 位頁碼變 :id → 逐頁登記（1–30 = PDF_MAX_PAGES）
     'GET /api/lab-docs/files/:id/pages/1': ['OWNER', 'MANAGER'],
@@ -824,32 +804,13 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/lab-docs/stats': ['lab_statement'],
   // ★ cwm-labdoc P2 §7：確認／對成本 = lab_invoice
   'PUT /api/lab-docs/:id/header': ['lab_invoice'],
+  'PUT /api/lab-docs/:id/manual': ['lab_invoice'],
   'POST /api/lab-docs/:id/new-case': ['lab_invoice'],
   'DELETE /api/lab-docs/:id': ['lab_invoice'],
   'POST /api/lab-docs/merge': ['lab_invoice'],
-  // 候選 route：同 RBAC_MATRIX 一樣要逐個 group index 登記（normalizeRoute 唔會將 1–2 位數字變 :id）
-  'GET /api/lab-docs/:id/groups/0/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/1/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/2/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/3/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/4/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/5/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/6/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/7/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/8/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/9/candidates': ['lab_invoice'],
-  'GET /api/lab-docs/:id/groups/10/candidates': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/0/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/1/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/2/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/3/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/4/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/5/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/6/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/7/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/8/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/9/save': ['lab_invoice'],
-  'POST /api/lab-docs/:id/groups/10/save': ['lab_invoice'],
+  // 候選／儲存 route：normalizeRoute 將 /groups/<n> 正規化做 /groups/:g
+  'GET /api/lab-docs/:id/groups/:g/candidates': ['lab_invoice'],
+  'POST /api/lab-docs/:id/groups/:g/save': ['lab_invoice'],
   'GET /api/lab-docs/files/:id/pages/1': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/files/:id/pages/2': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/files/:id/pages/3': ['lab_invoice', 'lab_statement'],

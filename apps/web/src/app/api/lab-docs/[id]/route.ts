@@ -11,6 +11,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { findStatementSectionDuplicate } from '@/lib/labdoc/statement-sections'
+import { monthBounds } from '@/lib/labdoc/statement-reconcile'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 
@@ -166,8 +167,26 @@ export async function GET(
                     providerId: s.providerId,
                     statementMonth: doc.statementMonth,
                     selfDocId: doc.id,
+                    selfCreatedAt: doc.createdAt,
                   })
                 : null
+            // §8.3「有新 invoice，可以重新配對」：上次配對之後先確認嘅系統 invoice（同 Lab＋診所＋醫生＋日期窗）
+            let newInvoicesSinceRun = 0
+            const runAt = (s.resultJson as any)?.runAt ? new Date((s.resultJson as any).runAt) : null
+            if (runAt && s.status !== 'CONFIRMED' && s.clinicId && s.providerId && doc.labId && doc.statementMonth) {
+              const mb = monthBounds(doc.statementMonth)
+              newInvoicesSinceRun = await prisma.labDocument.count({
+                where: {
+                  kind: 'INVOICE',
+                  status: { in: ['CONFIRMED', 'PARTIAL', 'RECONCILED'] },
+                  labId: doc.labId,
+                  clinicId: s.clinicId,
+                  providerId: s.providerId,
+                  docDate: { gte: mb.from, lte: mb.to },
+                  confirmedAt: { gt: runAt },
+                },
+              })
+            }
             // ★ P3 §8.5 折扣證據監察：Σ 相關成本 finalCost vs statedTotal；唔等而因 discountPct 有值 → 紅提示＋連結
             const matchedLineIds = s.lines.map((l) => l.matchedLineId).filter((x): x is string => !!x)
             let costEvidence: {
@@ -214,6 +233,7 @@ export async function GET(
               resultJson: s.resultJson,
               // §8.5：折扣證據（紅提示）
               costEvidence,
+              newInvoicesSinceRun,
               // §8.1：重複擋（UI 顯示「{月} {診所} {醫生} 嘅月結單已經喺 {date} 上傳」＋「取代舊版」）
               duplicate: dup
                 ? {

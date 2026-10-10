@@ -170,7 +170,7 @@ export async function getCandidatesForGroup(
     if (rows.length > 0) {
       const ids = rows.map((r) => r.id)
       const [providers, clinics, links] = await Promise.all([
-        prisma.provider.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }),
+        prisma.provider.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.providerId))] } }, select: { id: true, name: true } }),
         prisma.clinic.findMany({ where: { id: { in: rows.map((r) => r.clinicId) } }, select: { id: true, name: true } }),
         prisma.labDocumentLine.findMany({
           where: { costCaseId: { in: ids }, status: 'MATCHED' },

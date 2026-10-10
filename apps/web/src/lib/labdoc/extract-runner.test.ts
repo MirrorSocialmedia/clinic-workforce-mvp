@@ -293,6 +293,14 @@ const fakes: Record<string, Any> = {
       const tx: Any = {
         labDocumentLine: realUpdate,
         labDocument: {
+          updateMany: async ({ where }: Any) => {
+            if (where.id === state.p2002ForDocId) {
+              const e: Any = new Error('Unique constraint failed')
+              e.code = 'P2002'
+              throw e
+            }
+            return { count: 0 }
+          },
           update: async ({ where, data }: Any) => {
             if (where.id === state.p2002ForDocId) {
               const e: Any = new Error('Unique constraint failed')

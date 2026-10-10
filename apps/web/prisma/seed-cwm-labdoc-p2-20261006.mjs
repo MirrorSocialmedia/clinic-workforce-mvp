@@ -13,7 +13,14 @@
  *   P2 嘅 fresh DB cwm_labdoc_p2 冇任何 lab/clinic/provider — 識別鏈（§6.1–6.3）
  *   同 T9 dedup（partial unique index 要 labId 非 null）都係死嘅。
  *
+ * ⚠ 2026-10-10 修（模擬發現）：
+ *   - Lab 改用 name upsert（正式庫已有同名 Lab、id 唔同 → 舊 ON CONFLICT (id) 撞 Lab_name_key 直接 crash）；
+ *     profile／alias 用返 DB 實際 lab id。
+ *   - 第 3–5 步（測試診所／醫生／HUI LOK alias）只係 e2e fixture — 預設唔跑；
+ *     要 LABDOC_SEED_FIXTURES=1 先寫（正式庫千祈唔好開）。
+ *
  * Run: DATABASE_URL="postgresql://..." node prisma/seed-cwm-labdoc-p2-20261006.mjs
+ *      e2e／fresh DB：LABDOC_SEED_FIXTURES=1 DATABASE_URL=... node prisma/seed-cwm-labdoc-p2-20261006.mjs
  *   （DATABASE_URL 可以帶 ?schema=public — 此處會剷走 query 部分俾 pg）
  */
 import pg from 'pg'
@@ -110,16 +117,18 @@ function normClinicName(s) {
 const client = new pg.Client({ connectionString: DATABASE_URL })
 await client.connect()
 
-// 1. Labs
+// 1. Labs（按 name upsert — 已有同名 Lab 就用佢嘅 id，唔郁 sortOrder）
 for (const lab of LABS) {
   const r = await client.query(
     `INSERT INTO "Lab" (id, name, "isActive", "sortOrder", "createdAt", "updatedAt")
      VALUES ($1, $2, true, $3, now(), now())
-     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, "sortOrder" = EXCLUDED."sortOrder"
+     ON CONFLICT (name) DO UPDATE SET "updatedAt" = "Lab"."updatedAt"
      RETURNING id`,
     [lab.id, lab.name, lab.sortOrder],
   )
-  console.log(`Lab ${lab.name}: ${r.rowCount ? '已建' : '已存在'}（${r.rows[0].id}）`)
+  const dbId = r.rows[0].id
+  console.log(`Lab ${lab.name}: ${dbId === lab.id ? '已建／seed id' : '已存在'}（${dbId}）`)
+  lab.id = dbId
 }
 
 // 2. LabProfile + LabAlias
@@ -151,7 +160,15 @@ for (const lab of LABS) {
   }
 }
 
-// 3. Clinics
+const FIXTURES = process.env.LABDOC_SEED_FIXTURES === '1'
+if (!FIXTURES) {
+  console.log('（略過第 3–5 步：測試診所／醫生／HUI LOK alias — e2e 先要 LABDOC_SEED_FIXTURES=1）')
+  await client.end()
+  console.log('seed-cwm-labdoc-p2-20261006: done（只 Lab／profile／alias）')
+  process.exit(0)
+}
+
+// 3. Clinics（只 e2e fixture）
 for (const c of CLINICS) {
   const r = await client.query(
     `INSERT INTO "Clinic" (id, name, "shortName", address, "addressEn", "createdAt", "updatedAt")

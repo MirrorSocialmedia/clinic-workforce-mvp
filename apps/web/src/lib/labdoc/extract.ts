@@ -306,7 +306,7 @@ export async function runLabDocExtract(docId: string, opts: RunOpts = {}): Promi
       console.error('[labdoc/extract] unexpected error', { docId, err: String(e?.message ?? e) })
       // 最後防线：留低 EXTRACTING 嘅話 sweep 5 分鐘後先救 — 直接記失敗
       prisma.labDocument
-        .update({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected' } })
+        .updateMany({ where: { id: docId, status: 'EXTRACTING' }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected' } })
         .catch(() => undefined)
     }),
   )
@@ -319,7 +319,7 @@ export function runExtractionAfterClaim(docId: string, opts: RunOpts = {}): void
     runClaimed(docId, opts).catch((e) => {
       console.error('[labdoc/extract] unexpected error', { docId, err: String(e?.message ?? e) })
       prisma.labDocument
-        .updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected', version: { increment: 1 } } })
+        .updateMany({ where: { id: docId, status: 'EXTRACTING' }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected', version: { increment: 1 } } })
         .catch(() => undefined)
     }),
   )
@@ -359,6 +359,7 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
 
     let plan = await planCalls(pages, mode, kind)
 
+    let noRetry = false
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const parts: LabDocResult[] = []
       let fail: string | null = null
@@ -372,7 +373,9 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
           images: call.images,
         }
         const { outcome, nullReason } = await extractLabDocViaWaInbox(req, { maxAttempts: 3 })
-        if (nullReason) {
+        // nullReason 'llm' = W 側 200 但 result null（附 outcome.reason）→ 交俾下面 outcome.result === null 分支
+        //（2026-10-10 修：之前喺度就 break，truncated 分頁重讀永遠行唔到，extractError 只得 'llm'）
+        if (nullReason && !(nullReason === 'llm' && outcome)) {
           fail = nullReason
           break
         }
@@ -390,6 +393,8 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
             continue outer
           }
           fail = `llm:${reason}`
+          // 已係最細粒度仲 truncated → 原樣重試冇用（§5.2 reason 表）→ 唔再試
+          if (reason === 'truncated') noRetry = true
           break
         }
         const parsed = labDocResultSchema.safeParse(outcome.result)
@@ -408,14 +413,17 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
 
       // §5.1.4：失敗記 extractError + attempts++
       // updateMany（唔係 update）：doc 喺途被刪（merge/split/手動）→ 0 行靜默，唔係 P2025 轟炸
-      await prisma.labDocument.updateMany({
-        where: { id: docId },
+      // status 條件：讀單途中被作廢／合併（VOID）→ 0 行，唔再郁（2026-10-10 模擬：作廢後讀完會翻生）
+      const still = await prisma.labDocument.updateMany({
+        where: { id: docId, status: 'EXTRACTING' },
         data: { extractAttempts: { increment: 1 }, extractError: fail.slice(0, 200), version: { increment: 1 } },
       })
+      if (still.count === 0) return
+      if (noRetry) break
       if (attempt < maxAttempts) await sleep(retryDelayMs)
     }
     // = 3 → EXTRACT_FAILED（sweep 唔會再自動試；人手 retry 先重置 attempts）
-    await prisma.labDocument.updateMany({ where: { id: docId }, data: { status: 'EXTRACT_FAILED', version: { increment: 1 } } })
+    await prisma.labDocument.updateMany({ where: { id: docId, status: 'EXTRACTING' }, data: { status: 'EXTRACT_FAILED', version: { increment: 1 } } })
   } finally {
     clearInterval(hb)
   }
@@ -423,7 +431,7 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
 
 async function failFinal(docId: string, reason: string): Promise<void> {
   await prisma.labDocument.updateMany({
-    where: { id: docId },
+    where: { id: docId, status: 'EXTRACTING' },
     data: { status: 'EXTRACT_FAILED', extractError: reason, extractAttempts: { increment: 1 }, version: { increment: 1 } },
   })
 }
@@ -549,8 +557,8 @@ async function finishSuccess(
   // §5.1.6：寫 docNo 撞 partial unique index（Prisma P2002）→ DUPLICATE + duplicateOfId。
   // 先做一次預查（常見路徑）；真並發撞由 P2002 catch 兜住。
   if (identified.duplicateOfId) {
-    await prisma.labDocument.update({
-      where: { id: docId },
+    await prisma.labDocument.updateMany({
+      where: { id: docId, status: 'EXTRACTING' },
       data: { ...headerData, status: 'DUPLICATE', duplicateOfId: identified.duplicateOfId },
     })
     return
@@ -559,6 +567,9 @@ async function finishSuccess(
   try {
     await prisma.$transaction(
       async (tx: any) => {
+        // 先條件寫頭部：讀單途中被作廢／合併（唔再係 EXTRACTING）→ 放棄（唔建行、唔翻生）
+        const claimed = await tx.labDocument.updateMany({ where: { id: docId, status: 'EXTRACTING' }, data: headerData })
+        if (claimed.count === 0) throw new ExtractAbandoned()
         // 重讀場景兜底：行應該唔存在（只有成功先建過行，而成功後唔會再入呢度）
         await tx.labDocumentLine.deleteMany({ where: { documentId: docId } })
         if (filtered.kind === 'INVOICE') {
@@ -597,11 +608,11 @@ async function finishSuccess(
             normPatientCode: (raw, shortName) => normPatientCode(raw, shortName),
           })
         }
-        await tx.labDocument.update({ where: { id: docId }, data: headerData })
       },
       { timeout: 30_000 },
     )
   } catch (e: any) {
+    if (e instanceof ExtractAbandoned) return
     if (e?.code === 'P2002') {
       // 並發：另一張同 Lab＋單號先寫入（partial unique index 兜住）
       const winner = await prisma.labDocument.findFirst({
@@ -614,8 +625,8 @@ async function finishSuccess(
         select: { id: true },
         orderBy: { createdAt: 'asc' },
       })
-      await prisma.labDocument.update({
-        where: { id: docId },
+      await prisma.labDocument.updateMany({
+        where: { id: docId, status: 'EXTRACTING' },
         data: { ...headerData, status: 'DUPLICATE', duplicateOfId: winner?.id ?? null },
       })
       return
@@ -631,6 +642,9 @@ async function finishSuccess(
     }
   }
 }
+
+/** 讀單途中文件已唔係 EXTRACTING（作廢／合併）→ 放棄寫入。 */
+class ExtractAbandoned extends Error {}
 
 function unionStrings(arr: string[]): string[] {
   return [...new Set(arr.filter((s): s is string => typeof s === 'string'))]

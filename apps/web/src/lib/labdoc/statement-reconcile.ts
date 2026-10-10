@@ -183,7 +183,7 @@ export async function reconcileSection(
     })),
   }))
 
-  // 3. 之前已確認分段 MATCHED 過嘅單號（C 型用）
+  // 3. 之前已確認分段 MATCHED／已處理過嘅單號（C 型用）
   let previouslyMatchedDocNos = new Set<string>()
   if (ctx.kind === 'OUTSTANDING') {
     const prevSections = await client.labStatementSection.findMany({
@@ -193,7 +193,13 @@ export async function reconcileSection(
         providerId: section.providerId,
         document: { kind: 'STATEMENT', labId: doc.labId, statementMonth: { lt: doc.statementMonth }, id: { not: doc.id } },
       },
-      include: { lines: { where: { result: 'MATCHED', docNo: { not: null } }, select: { docNo: true } } },
+      // 之前「已處理」都算（2026-10-10 修：上線前舊欠款上月已 INVOICE_WINS／NOT_OURS，下月唔使再逐行處理）
+      include: {
+        lines: {
+          where: { docNo: { not: null }, OR: [{ result: { in: ['MATCHED', 'PREVIOUSLY_MATCHED'] } }, { resolution: { not: null } }] },
+          select: { docNo: true },
+        },
+      },
     })
     previouslyMatchedDocNos = new Set(prevSections.flatMap((s: any) => s.lines.map((l: any) => l.docNo).filter(Boolean)))
   }

@@ -17,6 +17,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
+import { sectionDuplicateBlock } from '@/lib/labdoc/statement-sections'
 import { labdocAudit } from '@/lib/labdoc/audit'
 
 const SECTION_ID_RE = /^[a-z0-9]{25}$/
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   const doc = await prisma.labDocument.findUnique({
     where: { id: params.id },
-    select: { id: true, kind: true, status: true, statementMonth: true, labId: true },
+    select: { id: true, kind: true, status: true, statementMonth: true, labId: true, createdAt: true },
   })
   if (!doc || doc.status === 'VOID') {
     return jsonNoStore({ error: '單據唔存在或已作廢' }, { status: 404 })
@@ -70,6 +71,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   if (!doc.statementMonth) {
     return jsonNoStore({ error: '文件無 statementMonth，先完成識別' }, { status: 400 })
   }
+  // §8.1：重複分段唔准確認（要先取代舊版）— 2026-10-10 模擬：兩份同月月結單都確認咗
+  const dupMsg = await sectionDuplicateBlock(prisma, doc, section)
+  if (dupMsg) return jsonNoStore({ error: dupMsg, code: 'SECTION_DUPLICATE' }, { status: 409 })
 
   const profile = doc.labId ? await prisma.labProfile.findUnique({ where: { labId: doc.labId } }) : null
   const stmtKind = profile?.statementKind === 'DETAIL' || profile?.statementKind === 'OUTSTANDING' ? profile.statementKind : 'INVOICE_LIST'

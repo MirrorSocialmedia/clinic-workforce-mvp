@@ -141,6 +141,8 @@ export async function findStatementSectionDuplicate(
     providerId: string | null
     statementMonth: string | null
     selfDocId: string
+    /** 只當「早過自己上傳」嘅為重複（後上傳嗰份先係重複；原本嗰份唔使擋） */
+    selfCreatedAt?: Date | null
   },
 ): Promise<StatementDuplicate | null> {
   if (!args.labId || !args.clinicId || !args.providerId || !args.statementMonth) return null
@@ -150,6 +152,7 @@ export async function findStatementSectionDuplicate(
       providerId: args.providerId,
       document: {
         id: { not: args.selfDocId },
+        ...(args.selfCreatedAt ? { createdAt: { lt: args.selfCreatedAt } } : {}),
         kind: 'STATEMENT',
         labId: args.labId,
         statementMonth: args.statementMonth,
@@ -173,4 +176,26 @@ export async function findStatementSectionDuplicate(
 export function sectionDuplicateIssue(si: number, dup: StatementDuplicate): string {
   const hkDay = new Date(dup.uploadedAt.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10)
   return `SECTION_DUPLICATE:si=${si};doc=${dup.docId};date=${hkDay}`
+}
+
+/**
+ * §8.1 擋重複分段（confirm／resolve 用）：有早過自己上傳、仲生效嘅同 Lab＋診所＋醫生＋月月結單 → 回錯誤訊息；
+ * 要先「取代舊版」（supersede）。冇重複 → null。
+ */
+export async function sectionDuplicateBlock(
+  prisma: any,
+  doc: { id: string; labId: string | null; statementMonth: string | null; createdAt: Date },
+  section: { clinicId: string | null; providerId: string | null },
+): Promise<string | null> {
+  const dup = await findStatementSectionDuplicate(prisma, {
+    labId: doc.labId,
+    clinicId: section.clinicId,
+    providerId: section.providerId,
+    statementMonth: doc.statementMonth,
+    selfDocId: doc.id,
+    selfCreatedAt: doc.createdAt,
+  })
+  if (!dup) return null
+  const hkDay = new Date(dup.uploadedAt.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10)
+  return `${doc.statementMonth} 呢段（同 Lab、診所、醫生）嘅月結單已經喺 ${hkDay} 上傳 — 要先「取代舊版」先可以處理`
 }

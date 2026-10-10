@@ -111,13 +111,15 @@ async function clearDocPII(documentId: string): Promise<number> {
     cleared += lines.count
 
     // P3：LabStatementLine（P1 未建表 — 不存在就 skip，唔會 throw）
+    // ⚠ LabStatementLine 冇 documentId 欄 — 經 section 搵（2026-10-10 真 DB 實測：舊 SQL 42703 令成個 tx rollback）
     const t = (await tx.$queryRaw`
       SELECT to_regclass('"LabStatementLine"') IS NOT NULL AS "exists"
     `) as Array<{ exists: boolean }>
     if (t.length > 0 && t[0].exists) {
       const n = await tx.$executeRaw`
         UPDATE "LabStatementLine" SET "patientRaw" = NULL
-        WHERE "documentId" = ${documentId} AND "patientRaw" IS NOT NULL
+        WHERE "sectionId" IN (SELECT "id" FROM "LabStatementSection" WHERE "documentId" = ${documentId})
+          AND "patientRaw" IS NOT NULL
       `
       cleared += Number(n)
     }

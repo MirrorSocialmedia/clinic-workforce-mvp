@@ -683,7 +683,7 @@ test('auth／格式：401 / 403 / 404 / 400', async () => {
   reset(state)
   // 400：壞 doc id / 壞 group / 壞 version / 冇 lines / lineId 唔屬分組
   assert.strictEqual((await POST(makeReq('http://x/api/lab-docs/bad/groups/0/save', tokenFor(OWNER, 'OWNER'), body) as any, { params: { id: 'bad', g: '0' } } as any)).status, 400)
-  assert.strictEqual((await POST(makeReq(URL_0, tokenFor(OWNER, 'OWNER'), body) as any, { params: { id: DOC_ID, g: '99' } } as any)).status, 400)
+  assert.strictEqual((await POST(makeReq(URL_0, tokenFor(OWNER, 'OWNER'), body) as any, { params: { id: DOC_ID, g: '100' } } as any)).status, 400) // 分組 0–99
   assert.strictEqual((await POST(makeReq(URL_0, tokenFor(OWNER, 'OWNER'), { ...body, version: 'x' }) as any, { params: { id: DOC_ID, g: '0' } } as any)).status, 400)
   assert.strictEqual((await POST(makeReq(URL_0, tokenFor(OWNER, 'OWNER'), { ...body, lines: [] }) as any, { params: { id: DOC_ID, g: '0' } } as any)).status, 400)
   assert.strictEqual((await POST(makeReq(URL_0, tokenFor(OWNER, 'OWNER'), { ...body, lines: [{ lineId: 'x'.repeat(25), action: 'IGNORE', ignoreReason: 'no' }] }) as any, { params: { id: DOC_ID, g: '0' } } as any)).status, 400)
@@ -800,7 +800,7 @@ test('T7：save 中途成本被鎖 → 409＋全部 rollback（行冇變、冇 a
   assert.strictEqual(state.doc.version, 1)
 })
 
-test('§7.8 serialization error：1 次重試後成功；3 次 fail → 500', async () => {
+test('§7.8 serialization error：1 次重試後成功；3 次 fail → 409（請重新載入）', async () => {
   {
     const state = baseState({ serFailTimes: 1 })
     reset(state)
@@ -826,7 +826,7 @@ test('§7.8 serialization error：1 次重試後成功；3 次 fail → 500', as
       }) as any,
       { params: { id: DOC_ID, g: '0' } } as any,
     )
-    assert.strictEqual(r.status, 500)
+    assert.strictEqual(r.status, 409)
     assert.strictEqual(state.lines.find((l) => l.id === LINE_A)!.status, 'UNMATCHED')
   }
 })

@@ -26,7 +26,9 @@ import { normPatientCode } from '@/lib/cost-entry/patient-code'
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const MAX_MONEY = 1_000_000
-const CONFIRMABLE = new Set(['NEEDS_REVIEW', 'CONFIRMED', 'PARTIAL', 'RECONCILED'])
+// EXTRACT_FAILED = 人手輸入（§11 PUT /manual 同一個 handler）：讀單失敗／LLM 停機時，人手填頭部＋行（行冇 lineId = 新增）；
+//   AI 原值係空 → manualAmountEdit = true → 入「人手改數待覆核」（2026-10-10 修：之前讀單失敗嘅單永遠入唔到系統）
+const CONFIRMABLE = new Set(['NEEDS_REVIEW', 'CONFIRMED', 'PARTIAL', 'RECONCILED', 'EXTRACT_FAILED'])
 const DOC_NO_KINDS = new Set(['INVOICE_NO', 'CASE_NO'])
 
 const BAD: unique symbol = Symbol('bad')
@@ -392,6 +394,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       // —— manualAmountEdit（任何金額/總數同 AI 原值唔同；一旦 true 唔會除）——
       const manualAmountEdit =
         doc.manualAmountEdit ||
+        doc.status === 'EXTRACT_FAILED' || // 人手輸入（冇 AI 原值）→ 一律要覆核
         computeManualAmountEdit(
           ej,
           {

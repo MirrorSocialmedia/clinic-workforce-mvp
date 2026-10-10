@@ -14,7 +14,8 @@ import { jsonNoStore } from '@/lib/api-response'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { ALIAS_TYPES, type AliasType } from '@/lib/labdoc/alias-types'
 
-const ID_RE = /^[a-z0-9]{25}$/
+// cuid 25 字；seed alias 用固定 id（labdocseed…，可以長過 25）— 2026-10-10 修：之前 seed alias 刪唔到
+const ID_RE = /^[a-z0-9]{20,64}$/
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const { id } = params

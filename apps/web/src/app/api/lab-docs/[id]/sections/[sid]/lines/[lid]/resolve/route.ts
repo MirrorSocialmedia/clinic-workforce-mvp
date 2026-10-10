@@ -24,6 +24,7 @@ import { monthBounds, saveSectionTotals } from '@/lib/labdoc/statement-reconcile
 import { gradeLinePair, type LineType } from '@/lib/labdoc/statement-match'
 import { applyPriceUpdate, computeLinkedSumDb, PriceLockedError } from '@/lib/labdoc/cost-actions'
 import { round2 } from '@/lib/labdoc/reconcile'
+import { sectionDuplicateBlock } from '@/lib/labdoc/statement-sections'
 
 const ID_RE = /^[a-z0-9]{25}$/
 const SYSTEM_DOC_STATUSES = ['CONFIRMED', 'PARTIAL', 'RECONCILED']
@@ -76,23 +77,45 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   // —— 載入（防 IDOR）——
   const doc = await prisma.labDocument.findUnique({
     where: { id: params.id },
-    select: { id: true, kind: true, status: true, labId: true, statementMonth: true, version: true },
+    select: { id: true, kind: true, status: true, labId: true, statementMonth: true, version: true, createdAt: true },
   })
   if (!doc || doc.status === 'VOID' || doc.kind !== 'STATEMENT') {
     return jsonNoStore({ error: '單據唔存在或唔係月結單' }, { status: 404 })
   }
   const section = await prisma.labStatementSection.findFirst({
     where: { id: params.sid, documentId: doc.id },
-    select: { id: true, clinicId: true, providerId: true, statedTotal: true, statedCurrent: true, resultJson: true },
+    select: { id: true, clinicId: true, providerId: true, statedTotal: true, statedCurrent: true, resultJson: true, status: true },
   })
   if (!section) return jsonNoStore({ error: '分段唔屬於呢張單' }, { status: 404 })
   const line = await prisma.labStatementLine.findFirst({
     where: { id: params.lid, sectionId: section.id },
   })
   if (!line) return jsonNoStore({ error: '行唔屬於呢個分段' }, { status: 404 })
+  // 改處理（2026-10-10 修）：分段未確認、而之前揀嘅係冇改系統嘅 INVOICE_WINS／NOT_OURS → 准改；
+  // STATEMENT_WINS 已改咗系統 invoice／成本 → 唔准（要人手改返 invoice 再 MANUAL_PAIRED）
   if (line.resolution && resolution !== 'MANUAL_PAIRED') {
-    return jsonNoStore({ error: '行已經處理過（可改配 MANUAL_PAIRED）' }, { status: 409 })
+    const changeable = section.status !== 'CONFIRMED' && (line.resolution === 'INVOICE_WINS' || line.resolution === 'NOT_OURS')
+    if (!changeable) {
+      return jsonNoStore(
+        {
+          error:
+            section.status === 'CONFIRMED'
+              ? '分段已確認 — 唔可以再改處理'
+              : '呢行揀咗「月結單為準」並已改咗系統 — 唔可以直接改（可改配 MANUAL_PAIRED）',
+        },
+        { status: 409 },
+      )
+    }
   }
+  if (section.status === 'CONFIRMED') {
+    return jsonNoStore({ error: '分段已確認 — 唔可以再改處理' }, { status: 409 })
+  }
+  if (doc.status === 'SUPERSEDED') {
+    return jsonNoStore({ error: '呢張月結單已被取代 — 請喺新版處理' }, { status: 409 })
+  }
+  // §8.1：重複分段唔准處理（STATEMENT_WINS 會改系統）— 要先取代舊版
+  const dupMsg = await sectionDuplicateBlock(prisma, doc, section)
+  if (dupMsg) return jsonNoStore({ error: dupMsg, code: 'SECTION_DUPLICATE' }, { status: 409 })
   if (!doc.statementMonth || !doc.labId) {
     return jsonNoStore({ error: '文件無 statementMonth／labId — 無法處理差異' }, { status: 400 })
   }
@@ -139,9 +162,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     resolution === 'STATEMENT_WINS' ? 'MATCHED' : resolution === 'MANUAL_PAIRED' ? undefined : line.result
 
   // —— tx：寫系統（STATEMENT_WINS）／寫行／重算 section ——
-  let txResult: any
-  try {
-  txResult = await prisma.$transaction(async (tx: any) => {
+  const resolveTx = async (tx: any): Promise<any> => {
     let adjustBefore: Record<string, unknown> | null = null
     let adjustAfter: Record<string, unknown> | null = null
     let costPreview: { itemType: string | null; baseCost: number | null; newLinkedSum: number; locked: boolean } | null = null
@@ -155,17 +176,50 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       if (!sysDoc || sysDoc.kind !== 'INVOICE') {
         return { fail: { status: 400, error: '配對到嘅系統 invoice 已唔存在' } as const }
       }
-      const targetLine = line.matchedLineId ? sysDoc.lines.find((l: any) => l.id === line.matchedLineId) : null
+      let targetLine = line.matchedLineId ? sysDoc.lines.find((l: any) => l.id === line.matchedLineId) : null
       if (line.matchedLineId && !targetLine) {
         return { fail: { status: 400, error: '配對到嘅系統行已唔存在 — 重跑配對' } as const }
+      }
+      // 單號型／欠款型（整張單配對，冇 matchedLineId）：月結單金額 = 成張 invoice。
+      // 要落到某一行先改得（同埋先行到成本鏈）— 只得一行就用嗰行；多行要 systemLineId 揀（2026-10-10 修：
+      // 舊做法只改 doc total，行同成本都冇改，invoice 變成 total ≠ Σ 行）。
+      const docLevel = !line.matchedLineId
+      if (docLevel) {
+        const live = (sysDoc.lines as any[]).filter((l) => l.status !== 'IGNORED')
+        if (systemLineId) {
+          targetLine = (sysDoc.lines as any[]).find((l) => l.id === systemLineId) ?? null
+          if (!targetLine) return { fail: { status: 400, error: 'systemLineId 唔屬於配對到嘅 invoice' } as const }
+        } else if (live.length === 1) {
+          targetLine = live[0]
+        } else {
+          return {
+            fail: {
+              status: 400,
+              error: `呢張 invoice 有 ${live.length} 行 — 請揀要改邊一行（systemLineId）`,
+              code: 'PICK_SYSTEM_LINE',
+              lines: live.map((l) => ({ id: l.id, description: l.description, amount: Number(l.amount) })),
+            },
+          } as const
+        }
       }
 
       const oldLine = targetLine
         ? { qty: numOr0(targetLine.qty), unitPrice: numOr0(targetLine.unitPrice), amount: Number(targetLine.amount) }
         : null
-      const newLineAmount = Number(line.amount)
+      // 整張單配對：揀中嗰行新額 = 月結單金額 − 其他行（唔計忽略行）
+      const othersSum = docLevel
+        ? round2((sysDoc.lines as any[]).filter((l) => l.id !== targetLine.id && l.status !== 'IGNORED').reduce((a, l) => a + Number(l.amount), 0))
+        : 0
+      const newLineAmount = round2(Number(line.amount) - othersSum)
+      if (docLevel && newLineAmount < 0) {
+        return { fail: { status: 400, error: '月結單金額細過 invoice 其他行合計 — 請用 MANUAL_PAIRED 或人手改 invoice' } as const }
+      }
       const newQty = line.qty === null || line.qty === undefined ? null : Number(line.qty)
-      const newUnitPrice = line.unitPrice === null || line.unitPrice === undefined ? null : Number(line.unitPrice)
+      let newUnitPrice = line.unitPrice === null || line.unitPrice === undefined ? null : Number(line.unitPrice)
+      // 月結單冇單價（單號型）而原行 qty×單價 = 金額 → 單價跟住改，保持行內一致
+      if (docLevel && newUnitPrice === null && oldLine && oldLine.qty > 0 && Math.abs(oldLine.qty * oldLine.unitPrice - oldLine.amount) <= 0.01) {
+        newUnitPrice = round2(newLineAmount / oldLine.qty)
+      }
 
       // —— 成本鏈（§8.3：行已連成本）——
       let priceUpdateApplied = false
@@ -183,7 +237,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
           }
           if (locked) {
             // 已鎖：唔改價；改額後 linkedSum 唔等 → 自動入 LOCKED_ADJUST 待處理（下期調整）
-            costPreview = { itemType: cc.itemType ?? null, baseCost: cc.baseCost == null ? null : Number(cc.baseCost), newLinkedSum: 0, locked: true }
+            const lockedSum = round2(
+              await computeLinkedSumDb(tx, { costCaseId: cc.id, pendingAmounts: [newLineAmount - (oldLine ? oldLine.amount : 0)] }),
+            )
+            costPreview = { itemType: cc.itemType ?? null, baseCost: cc.baseCost == null ? null : Number(cc.baseCost), newLinkedSum: lockedSum, locked: true }
           } else {
             // 未鎖：§7.5 改做 $linkedSum（linkedSum = 所有 MATCHED 行 ＋ 今次要連嘅行新額）
             const newLinkedSum = round2(
@@ -243,14 +300,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
             data: { total: Number(sysDoc.total) + (newLineAmount - oldAmount) },
           })
         }
-      } else if (sysDoc.total !== null && sysDoc.total !== undefined) {
-        // INVOICE_LIST：整張 = 行金額
-        await tx.labDocument.update({ where: { id: sysDoc.id }, data: { total: newLineAmount } })
       }
 
       adjustAfter = {
         line: { qty: targetLine ? (newQty ?? numOr0(targetLine.qty)) : null, unitPrice: targetLine ? (newUnitPrice ?? numOr0(targetLine.unitPrice)) : null, amount: targetLine ? newLineAmount : null },
-        docTotal: sysDoc.total == null ? null : (targetLine ? Number(sysDoc.total) + (newLineAmount - oldAmount) : newLineAmount),
+        docTotal: sysDoc.total == null ? null : Number(sysDoc.total) + (newLineAmount - oldAmount),
         cost: priceUpdateApplied ? costAfter : costBefore && costBefore.lockedByRunId ? { ...costBefore, adjustedInNextPeriod: true } : null,
       }
     }
@@ -375,8 +429,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       costPreview,
       lineResult: manualResult,
     }
+  }
+  let txResult: any
+  try {
+  txResult = await prisma.$transaction(async (tx: any) => {
+    const r = await resolveTx(tx)
+    if ('fail' in r) throw new ResolveFail(r.fail) // fail 一定 rollback（唔好 commit 咗一半）
+    return r
   }, { timeout: 60_000 })
   } catch (e) {
+    if (e instanceof ResolveFail) {
+      const { status, ...rest } = e.fail
+      return jsonNoStore(rest, { status })
+    }
     if (e instanceof PriceLockedError) {
       return jsonNoStore({ error: '成本已出月結 — 唔可以改價（要喺月結單期內處理）' }, { status: 409 })
     }
@@ -388,7 +453,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   }
   if ('costPreview' in txResult && !('saved' in txResult)) {
     // 零寫入：成本改價預覽（UI 顯示「成本 {項目} 會由 $X 改做 $Y」，確認後 costAdjustConfirmed=true 重試）
-    return NextResponse.json({ ok: true, needsCostConfirm: true, costPreview: txResult.costPreview })
+    // ok:false — 呢個只係預覽，未寫（前端唔好當成功）
+    return NextResponse.json({ ok: false, needsCostConfirm: true, costPreview: txResult.costPreview })
   }
 
   // —— audit（tx 後）——
@@ -432,6 +498,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     section: { id: section.id, status: txResult.saved.status, systemTotal: txResult.saved.systemTotal },
     ...(txResult.costPreview ? { costPreview: txResult.costPreview } : {}),
   })
+}
+
+class ResolveFail extends Error {
+  constructor(public fail: { status: number; error: string; [k: string]: unknown }) {
+    super(fail.error)
+  }
 }
 
 function numOr0(v: unknown): number {

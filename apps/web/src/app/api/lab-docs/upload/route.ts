@@ -252,6 +252,9 @@ export async function POST(req: NextRequest) {
     const documents = await prisma.$transaction(
       async (tx) => {
         const out: Array<{ id: string; status: string }> = []
+        // §8.1：月結單「多個檔＝一份」— 多張相／多個 PDF 合成一張單據（頁按上傳次序）
+        let stmtDoc: { id: string; status: string } | null = null
+        let stmtSort = 0
         for (const pf of prepared) {
           await tx.labFile.create({
             data: {
@@ -279,6 +282,7 @@ export async function POST(req: NextRequest) {
                   status: 'UPLOADED',
                   labId,
                   uploadedBy: session.userId,
+                  createdAt: uploadedAt, // 同一批 = 同一個 createdAt（§7.11 合併靠呢個判斷）
                 },
               })
               await tx.labDocumentPage.create({
@@ -286,6 +290,17 @@ export async function POST(req: NextRequest) {
               })
               out.push({ id: doc.id, status: doc.status })
             }
+          } else if (kind === 'STATEMENT' && prepared.length > 1) {
+            if (!stmtDoc) {
+              const doc = await tx.labDocument.create({
+                data: { kind, status: 'UPLOADED', labId, statementMonth: statementMonth || null, uploadedBy: session.userId, createdAt: uploadedAt },
+              })
+              stmtDoc = { id: doc.id, status: doc.status }
+              out.push(stmtDoc)
+            }
+            await tx.labDocumentPage.createMany({
+              data: pf.pagesJson.map((p) => ({ documentId: stmtDoc!.id, fileId: pf.fileId, pageNo: p.page, sortOrder: stmtSort++ })),
+            })
           } else {
             const doc = await tx.labDocument.create({
               data: {
@@ -294,6 +309,7 @@ export async function POST(req: NextRequest) {
                 labId,
                 statementMonth: kind === 'STATEMENT' ? statementMonth || null : null,
                 uploadedBy: session.userId,
+                createdAt: uploadedAt, // 同一批 = 同一個 createdAt（§7.11 合併靠呢個判斷）
               },
             })
             await tx.labDocumentPage.createMany({

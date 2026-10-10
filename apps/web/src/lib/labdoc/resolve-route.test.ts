@@ -158,7 +158,7 @@ function makeFake(state: St) {
       },
     },
     labStatementSection: {
-      findFirst: async () => ({ ...state.section }),
+      findFirst: async ({ where }: any) => (where?.document ? null : { ...state.section }), // where.document = §8.1 重複查詢
       updateMany: async ({ where, data }: any) => {
         if (where.id === state.section.id && where.documentId === state.doc.id) {
           Object.assign(state.section, data)
@@ -230,10 +230,18 @@ test('INVOICE_WINS：200、result 唔變、入跟進（followUpClosedAt=null）�
   assert.ok(st.audits.find((a) => a.action === 'LAB_STATEMENT_RESOLVE'))
 })
 
-test('INVOICE_WINS 已處理行 → 409（只 MANUAL_PAIRED 可再改）', async () => {
-  const st = mkState({ line: { ...mkState().line, resolution: 'INVOICE_WINS', resolvedAt: new Date() } })
+test('改處理：分段未確認 INVOICE_WINS → NOT_OURS 准改；已確認／STATEMENT_WINS → 409', async () => {
+  let st = mkState({ line: { ...mkState().line, resolution: 'INVOICE_WINS', resolvedAt: new Date() } })
   reset(st)
-  const r = await POST(makeReq(tokenFor(OWNER, 'OWNER'), { resolution: 'INVOICE_WINS' }, PATH) as any, { params: { id: DOC_ID, sid: SEC_ID, lid: LINE_ID } } as any)
+  let r = await POST(makeReq(tokenFor(OWNER, 'OWNER'), { resolution: 'NOT_OURS', note: '唔係我哋' }, PATH) as any, { params: { id: DOC_ID, sid: SEC_ID, lid: LINE_ID } } as any)
+  assert.strictEqual(r.status, 200)
+  st = mkState({ line: { ...mkState().line, resolution: 'INVOICE_WINS', resolvedAt: new Date() }, section: { ...mkState().section, status: 'CONFIRMED' } })
+  reset(st)
+  r = await POST(makeReq(tokenFor(OWNER, 'OWNER'), { resolution: 'NOT_OURS', note: 'x' }, PATH) as any, { params: { id: DOC_ID, sid: SEC_ID, lid: LINE_ID } } as any)
+  assert.strictEqual(r.status, 409)
+  st = mkState({ line: { ...mkState().line, resolution: 'STATEMENT_WINS', resolvedAt: new Date() } })
+  reset(st)
+  r = await POST(makeReq(tokenFor(OWNER, 'OWNER'), { resolution: 'INVOICE_WINS' }, PATH) as any, { params: { id: DOC_ID, sid: SEC_ID, lid: LINE_ID } } as any)
   assert.strictEqual(r.status, 409)
 })
 
@@ -279,6 +287,29 @@ test('STATEMENT_WINS 行級（無成本）：改系統行 amount＋doc total 差
   assert.strictEqual(st.section.status, 'OK')
   assert.strictEqual(st.section.systemTotal, 250)
   assert.strictEqual(st.line.resolution, 'STATEMENT_WINS')
+})
+
+test('STATEMENT_WINS 整張單配對（單號型，冇 matchedLineId）：單行 invoice → 改嗰行＋total，唔係淨改 total', async () => {
+  const st = mkState()
+  st.sysDoc.lines[0].costCaseId = null
+  st.line = { ...st.line, matchedLineId: null, qty: null, unitPrice: null, description: null }
+  reset(st)
+  const r = await POST(makeReq(tokenFor(OWNER, 'OWNER'), { resolution: 'STATEMENT_WINS', note: '月結單啱' }, PATH) as any, { params: { id: DOC_ID, sid: SEC_ID, lid: LINE_ID } } as any)
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(st.sysLineWrites.length, 1, '系統行有改')
+  assert.strictEqual(st.sysLineWrites[0].amount, 250)
+  assert.strictEqual(st.sysDocUpdates[0].total, 250)
+})
+
+test('STATEMENT_WINS 整張單配對＋多行 invoice 冇 systemLineId → 400 要揀行', async () => {
+  const st = mkState()
+  st.sysDoc.lines.push({ ...st.sysDoc.lines[0], id: 'z'.repeat(25), amount: 50, costCaseId: null })
+  st.line = { ...st.line, matchedLineId: null, qty: null, unitPrice: null }
+  reset(st)
+  const r = await POST(makeReq(tokenFor(OWNER, 'OWNER'), { resolution: 'STATEMENT_WINS', note: 'x' }, PATH) as any, { params: { id: DOC_ID, sid: SEC_ID, lid: LINE_ID } } as any)
+  assert.strictEqual(r.status, 400)
+  assert.strictEqual((await r.json()).code, 'PICK_SYSTEM_LINE')
+  assert.strictEqual(st.sysLineWrites.length, 0)
 })
 
 test('STATEMENT_WINS 行級＋未鎖成本＋金額變 → needsCostConfirm 預覽（零寫入）', async () => {

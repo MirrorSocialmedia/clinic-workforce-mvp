@@ -11,7 +11,7 @@
 import assert from 'node:assert'
 import { test, before, after } from 'node:test'
 import { prisma } from '../prisma'
-import { acquireWriteLog, completeWriteLog, stableRequestHash } from './write-log'
+import { acquireWriteLog, completeWriteLog, releaseWriteLog, stableRequestHash } from './write-log'
 
 const KEYS = ['labDocWriteLog', '$transaction'] as const
 const saved: Record<string, unknown> = {}
@@ -42,6 +42,14 @@ function install() {
       if (!row) throw { code: 'P2025' }
       Object.assign(row, data)
       return row
+    },
+    deleteMany: async ({ where }: any) => {
+      const row = store.get(where.idempotencyKey)
+      if (row && (!where.status || row.status === where.status)) {
+        store.delete(where.idempotencyKey)
+        return { count: 1 }
+      }
+      return { count: 0 }
     },
   }
   for (const k of KEYS) {
@@ -100,6 +108,17 @@ test('T4 相鄰：並發 P2002（對方快咗寫）→ 重讀判定 replay', asy
   const r = await acquireWriteLog('key-3', '/save', H1, 'u')
   assert.strictEqual(r.kind, 'replay')
   if (r.kind === 'replay') assert.deepStrictEqual(r.response, { n: 1 })
+})
+
+test('releaseWriteLog：確定冇寫入 → 同 key 可以再 acquire；DONE 行唔會被刪', async () => {
+  install()
+  await acquireWriteLog('key-4', '/save', H1, 'u')
+  await releaseWriteLog('key-4')
+  assert.deepStrictEqual(await acquireWriteLog('key-4', '/save', H1, 'u'), { kind: 'acquired' })
+  await completeWriteLog('key-4', { ok: 1 })
+  await releaseWriteLog('key-4')
+  const r = await acquireWriteLog('key-4', '/save', H1, 'u')
+  assert.strictEqual(r.kind, 'replay')
 })
 
 test('stableRequestHash：key 順序唔敏感', () => {

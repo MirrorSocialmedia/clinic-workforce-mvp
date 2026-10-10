@@ -102,8 +102,9 @@ function mkDoc(over: Record<string, unknown> = {}): any {
   }
 }
 
+const fakeRef: { current: any } = { current: null }
 function makeFake(state: State) {
-  return {
+  return (fakeRef.current = {
     user: {
       findUnique: async ({ where }: any) =>
         where.id === OWNER
@@ -113,6 +114,8 @@ function makeFake(state: State) {
             : null,
     },
     labDocument: {
+      update: async ({ data }: any) => Object.assign(state.doc, data),
+      updateMany: async () => ({ count: 1 }),
       findUnique: async ({ where, include }: any) => {
         if (!state.doc || where.id !== state.doc.id) return null
         let lines: any[] = [...state.doc.lines]
@@ -141,6 +144,16 @@ function makeFake(state: State) {
     auditLog: {
       create: async (a: any) => state.audits.push(a.data),
     },
+    labDocumentLine: {
+      updateMany: async ({ where, data }: any) => {
+        const l = state.doc?.lines.find((x: any) => x.id === where.id)
+        if (!l || l.status !== 'UNMATCHED') return { count: 0 }
+        Object.assign(l, data)
+        return { count: 1 }
+      },
+      findMany: async ({ where }: any) => (state.doc && where.documentId === state.doc.id ? state.doc.lines.map((l: any) => ({ status: l.status })) : []),
+    },
+    $transaction: async (fn: any) => fn(fakeRef.current),
     labDocWriteLog: {
       findUnique: async ({ where }: any) => state.writeLog.get(where.idempotencyKey) ?? null,
       create: async ({ data }: any) => {
@@ -153,12 +166,16 @@ function makeFake(state: State) {
         if (!row) throw new Error('no write log')
         Object.assign(row, data)
         return row
+      },      deleteMany: async ({ where }: any) => {
+        const row = state.writeLog.get(where.idempotencyKey)
+        if (row && row.status === where.status) state.writeLog.delete(where.idempotencyKey)
+        return { count: row ? 1 : 0 }
       },
     },
-  }
+  })
 }
 
-const KEYS = ['user', 'labDocument', 'clinic', 'provider', 'patientIndex', 'costCase', 'auditLog', 'labDocWriteLog'] as const
+const KEYS = ['user', 'labDocument', 'clinic', 'provider', 'patientIndex', 'costCase', 'auditLog', 'labDocWriteLog', 'labDocumentLine', '$transaction'] as const
 const saved: Record<string, unknown> = {}
 for (const k of KEYS) saved[k] = (prisma as any)[k]
 after(() => {
@@ -237,6 +254,21 @@ test('§7.6 201 成功：預填全對＋audit 無 patientName', async () => {
   // write log DONE
   const wl = state.writeLog.get('new-case-001')!
   assert.strictEqual(wl.status, 'DONE')
+})
+
+test('§7.8 原子：新成本同時連埋分組行；換 key 再撳 → 409（唔會開第二筆）', async () => {
+  const state = baseState()
+  reset(state)
+  const url = 'http://x/api/lab-docs/' + DOC_ID + '/new-case'
+  const r = await POST(makeReq(url, tokenFor(OWNER, 'OWNER'), BODY_OK) as any, { params: { id: DOC_ID } } as any)
+  assert.strictEqual(r.status, 201)
+  const body = await r.json()
+  assert.strictEqual(body.linkedLineIds.length, 2)
+  assert.ok(state.doc.lines.every((l: any) => l.status === 'MATCHED' && l.linkType === 'MAIN'))
+  const r2 = await POST(makeReq(url, tokenFor(OWNER, 'OWNER'), { ...BODY_OK, idempotencyKey: 'new-case-002' }) as any, { params: { id: DOC_ID } } as any)
+  assert.strictEqual(r2.status, 409)
+  assert.strictEqual(state.created.length, 1)
+  assert.ok(!state.writeLog.has('new-case-002'), '驗證失敗會釋放 key')
 })
 
 test('T4 冪等：同 key 同 hash 重放 → 200 replayed（create 只係 1 次）', async () => {

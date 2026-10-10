@@ -14,6 +14,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
+import { reconcileSection } from '@/lib/labdoc/statement-reconcile'
 import { labdocAudit } from '@/lib/labdoc/audit'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
@@ -78,22 +79,71 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = req.headers.get('user-agent') ?? null
 
-  // 單 transaction：舊 SUPERSEDED＋新 version++（optimistic lock）
-  const ok = await prisma.$transaction(async (tx: any) => {
-    const o = await tx.labDocument.updateMany({
-      where: { id: oldDoc.id, status: { notIn: ['VOID', 'SUPERSEDED'] } },
-      data: { status: 'SUPERSEDED', supersededById: newDoc.id },
-    })
-    if (o.count === 0) return false
-    const n = await tx.labDocument.updateMany({
-      where: { id: newDoc.id, version },
-      data: { version: { increment: 1 } },
-    })
-    return n.count > 0
-  }, { timeout: 30_000 })
+  // 單 transaction：舊 SUPERSEDED＋新 version++（optimistic lock）＋帶過舊版已處理嘅差異
+  let carried = 0
+  let newSectionIds: string[] = []
+  try {
+    await prisma.$transaction(async (tx: any) => {
+      const n = await tx.labDocument.updateMany({
+        where: { id: newDoc.id, version },
+        data: { version: { increment: 1 } },
+      })
+      if (n.count === 0) throw new SupersedeConflict()
+      const o = await tx.labDocument.updateMany({
+        where: { id: oldDoc.id, status: { notIn: ['VOID', 'SUPERSEDED'] } },
+        data: { status: 'SUPERSEDED', supersededById: newDoc.id },
+      })
+      if (o.count === 0) throw new SupersedeConflict() // throw = rollback（唔好淨係改咗新單 version）
 
-  if (!ok) {
-    return jsonNoStore({ error: '版本衝突（單據已更新）— 請重讀' }, { status: 409 })
+      // 2026-10-10 修：Lab 重發同一份月結單 → 舊版逐行處理（INVOICE_WINS／NOT_OURS／跟進完成…）帶過去新版，
+      // 唔使重做；對應 key = 同段（診所＋醫生）＋ 單號＋金額＋描述＋數量。
+      const [oldSecs, newSecs] = await Promise.all([
+        tx.labStatementSection.findMany({ where: { documentId: oldDoc.id }, include: { lines: true } }),
+        tx.labStatementSection.findMany({ where: { documentId: newDoc.id }, include: { lines: true } }),
+      ])
+      newSectionIds = newSecs.map((s: any) => s.id)
+      const key = (l: any) => [l.docNoRaw ?? '', Number(l.amount ?? 0).toFixed(2), l.description ?? '', l.qty == null ? '' : Number(l.qty)].join('|')
+      for (const ns of newSecs) {
+        const os = oldSecs.find((x: any) => x.clinicId && x.clinicId === ns.clinicId && x.providerId === ns.providerId)
+        if (!os) continue
+        const pool = new Map<string, any[]>()
+        for (const l of os.lines) {
+          if (!l.resolution) continue
+          const k = key(l)
+          pool.set(k, [...(pool.get(k) ?? []), l])
+        }
+        for (const l of ns.lines) {
+          if (l.resolution) continue
+          const hit = pool.get(key(l))?.shift()
+          if (!hit) continue
+          await tx.labStatementLine.update({
+            where: { id: l.id },
+            data: {
+              resolution: hit.resolution,
+              resolutionNote: hit.resolutionNote,
+              resolvedBy: hit.resolvedBy,
+              resolvedAt: hit.resolvedAt,
+              followUpClosedAt: hit.followUpClosedAt,
+              followUpClosedBy: hit.followUpClosedBy,
+              ...(hit.resolution === 'MANUAL_PAIRED'
+                ? { result: hit.result, matchBasis: hit.matchBasis, matchedDocumentId: hit.matchedDocumentId, matchedLineId: hit.matchedLineId }
+                : {}),
+            },
+          })
+          carried++
+        }
+      }
+    }, { timeout: 30_000 })
+  } catch (e) {
+    if (e instanceof SupersedeConflict) return jsonNoStore({ error: '版本衝突（單據已更新）— 請重讀' }, { status: 409 })
+    throw e
+  }
+
+  // 帶過嘅處理要反映喺分段總數／狀態 → 重跑配對（已有 resolution 嘅行保留）
+  if (carried > 0) {
+    for (const sid of newSectionIds) {
+      await reconcileSection(prisma, { sectionId: sid, actorId: session.userId, source: 'manual', ipAddress: ip, userAgent: ua }).catch(() => undefined)
+    }
   }
 
   await labdocAudit({
@@ -108,5 +158,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     before: { oldDocumentId: oldDoc.id, oldStatus: oldDoc.status },
     after: { newDocumentId: newDoc.id, oldStatus: 'SUPERSEDED', supersededById: newDoc.id, statementMonth: oldDoc.statementMonth },
   })
-  return NextResponse.json({ ok: true, oldDocumentId: oldDoc.id, oldStatus: 'SUPERSEDED', supersededById: newDoc.id })
+  return NextResponse.json({ ok: true, oldDocumentId: oldDoc.id, oldStatus: 'SUPERSEDED', supersededById: newDoc.id, carriedResolutions: carried })
 }
+
+class SupersedeConflict extends Error {}

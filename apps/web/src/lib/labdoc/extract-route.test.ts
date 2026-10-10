@@ -271,6 +271,7 @@ const tx: Any = {
       return rec
     },
     update: fakes.labDocument.update,
+    updateMany: fakes.labDocument.updateMany,
   },
   labDocumentPage: fakes.labDocumentPage,
   labDocumentLine: fakes.labDocumentLine,

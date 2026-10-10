@@ -7,6 +7,8 @@
 //   baseCost = 分組合計（server 由 DB 計）、finalCost = baseCost、
 //   orderedAt = orderReceivedDate ?? docDate（可覆蓋）、source = 'MANUAL'、labInvoiceLinked = true
 // 員工必揀：itemType。
+// §7.8（2026-10-10 修）：開成本＋將分組 UNMATCHED 行 MATCH（MAIN）去新成本喺同一個 transaction —
+//   分組已有 MATCHED 行 → 409（防換 key 再撳開第二筆成本）。
 // 冪等（T4）：write-log.ts（LabDocWriteLog）— 同 key + 同 hash 重放 → 同 response（replayed: true）；
 //   同 key 唔同 hash / IN_PROGRESS → 409。
 // audit：LAB_DOC_CASE_CREATE（after = 新成本主要欄位；🔴 唔記 patientName）。
@@ -19,7 +21,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
-import { acquireWriteLog, completeWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
+import { acquireWriteLog, completeWriteLog, releaseWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
+import { matchLine, recomputeDocStatus, LineTakenError } from '@/lib/labdoc/cost-actions'
 import { prefillNewCase } from '@/lib/labdoc/reconcile'
 import { assertAuditInputClean } from '@/lib/labdoc/audit'
 
@@ -105,49 +108,59 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     )
   }
 
+  // 以下驗證失敗 = 冇寫入 → 釋放 key（同 key 修正後可以再送）
+  const fail = async (error: string, status: number) => {
+    await releaseWriteLog(idempotencyKey).catch(() => {})
+    return NextResponse.json({ error }, { status })
+  }
+
   // —— 載入文件（只要呢個分組嘅行）——
   const doc = await prisma.labDocument.findUnique({
     where: { id },
     include: { lines: { where: { groupIndex }, orderBy: { lineIndex: 'asc' } } },
   })
-  if (!doc) return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
+  if (!doc) return fail('單據唔存在', 404)
   if (scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
-    return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
+    return fail('單據唔存在', 404)
   }
   if (!RECONCILE_READY.has(doc.status)) {
-    return NextResponse.json({ error: `單據狀態 ${doc.status} 未可以新增成本（要先確認頭部）` }, { status: 400 })
+    return fail(`單據狀態 ${doc.status} 未可以新增成本（要先確認頭部）`, 400)
   }
   if (!doc.clinicId) {
-    return NextResponse.json({ error: '先要確認 invoice 診所（新增成本需要診所）' }, { status: 400 })
+    return fail('先要確認 invoice 診所（新增成本需要診所）', 400)
   }
   if (doc.lines.length === 0) {
-    return NextResponse.json({ error: '呢個分組冇行' }, { status: 400 })
+    return fail('呢個分組冇行', 400)
+  }
+  if (doc.lines.some((l) => l.status === 'MATCHED')) {
+    return fail('呢個分組已經連咗成本 — 要改請先解除配對', 409)
   }
 
   // —— 分組 patientCode 一致性 ——
   const groupNorms = [...new Set(doc.lines.map((l) => l.patientCode).filter((c): c is string => !!c))]
   if (groupNorms.length > 0 && !groupNorms.includes(code)) {
-    return NextResponse.json({ error: `分組病人編號（${groupNorms[0]}）同請求（${code}）唔符` }, { status: 400 })
+    return fail(`分組病人編號（${groupNorms[0]}）同請求（${code}）唔符`, 400)
   }
 
   // —— provider（invoice 醫生；可改；必填）——
   const providerId = providerOverride ?? doc.providerId
   if (!providerId) {
-    return NextResponse.json({ error: '要選醫生（invoice 未有醫生；必填）' }, { status: 400 })
+    return fail('要選醫生（invoice 未有醫生；必填）', 400)
   }
   const prov = await prisma.provider.findUnique({ where: { id: providerId }, select: { id: true } })
-  if (!prov) return NextResponse.json({ error: '醫生唔存在' }, { status: 400 })
+  if (!prov) return fail('醫生唔存在', 400)
 
   // —— orderedAt（orderReceivedDate ?? docDate；可覆蓋）——
   const orderedAt =
     orderedAtOverride ??
     (doc.orderReceivedDate ? doc.orderReceivedDate.toISOString().slice(0, 10) : doc.docDate ? doc.docDate.toISOString().slice(0, 10) : null)
   if (!orderedAt) {
-    return NextResponse.json({ error: '冇落單日期（orderReceivedDate/docDate 都係空）— 請傳 orderedAt' }, { status: 400 })
+    return fail('冇落單日期（orderReceivedDate/docDate 都係空）— 請傳 orderedAt', 400)
   }
 
   // —— 分組合計 + labCaseRef + 系統姓名 ——
-  const groupSum = Math.round(doc.lines.reduce((s, l) => s + Number(l.amount || 0), 0) * 100) / 100
+  // 忽略咗嘅行唔計（同 linkedSum 口徑一致）
+  const groupSum = Math.round(doc.lines.filter((l) => l.status !== 'IGNORED').reduce((s, l) => s + Number(l.amount || 0), 0) * 100) / 100
   const labCaseRef = doc.lines.find((l) => l.labCaseRef)?.labCaseRef ?? null
   const pi = await prisma.patientIndex.findFirst({ where: { patientCode: code }, select: { patientName: true } })
 
@@ -168,7 +181,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     })
     const { receivedAt, periodMonth } = deriveCostPeriod('LAB', prefill.orderedAt, null)
 
-    const created = await prisma.costCase.create({
+    const txOut = await prisma.$transaction(async (tx: any) => {
+    const created = await tx.costCase.create({
       data: {
         providerId: prefill.providerId,
         clinicId: prefill.clinicId,
@@ -192,6 +206,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       },
     })
 
+    // —— 同一個 transaction：分組 UNMATCHED 行 → MAIN 連新成本（IGNORED 行唔郁）——
+    const linkedLineIds: string[] = []
+    for (const l of doc.lines) {
+      if (l.status !== 'UNMATCHED') continue
+      await matchLine(tx, { lineId: l.id, costCaseId: created.id, linkType: 'MAIN', actorId: session.userId })
+      linkedLineIds.push(l.id)
+    }
+    const docStatus = await recomputeDocStatus(tx, { docId: doc.id, actorId: session.userId })
+    await tx.labDocument.updateMany({ where: { id: doc.id }, data: { version: { increment: 1 } } })
+
     // —— audit LAB_DOC_CASE_CREATE（🔴 唔記 patientName）——
     const afterObj = {
       id: created.id,
@@ -209,9 +233,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       source: created.source,
       docId: doc.id,
       groupIndex,
+      linkedLineIds,
     }
     assertAuditInputClean({ after: afterObj, notes: `經 Lab 單據 ${doc.docNo ?? '(no docNo)'} 新增成本（分組 ${groupIndex}）` })
-    await prisma.auditLog.create({
+    await tx.auditLog.create({
       data: {
         actorId: session.userId,
         action: 'LAB_DOC_CASE_CREATE',
@@ -223,6 +248,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         notes: `經 Lab 單據 ${doc.docNo ?? '(no docNo)'} 新增成本（分組 ${groupIndex}）`,
       },
     })
+    return { created, linkedLineIds, docStatus }
+    }, { isolationLevel: 'Serializable', timeout: 60_000 })
+    const { created, linkedLineIds, docStatus } = txOut
 
     const resp = {
       case: {
@@ -244,11 +272,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         source: created.source,
         labInvoiceLinked: true,
       },
+      linkedLineIds,
+      docStatus,
     }
     await completeWriteLog(idempotencyKey, resp)
     return NextResponse.json(resp, { status: 201 })
   } catch (e: any) {
-    // 失敗：key 留 IN_PROGRESS（burn 咗 — write-log decision log：防雙寫；前端換新 key 重試）
+    // transaction rollback（成本同行都冇寫）→ 釋放 key
+    await releaseWriteLog(idempotencyKey).catch(() => {})
+    if (e instanceof LineTakenError || e?.code === 'P2034' || (e?.code === 'P2010' && e?.meta?.code === '40001')) {
+      return NextResponse.json({ error: '呢個分組啱啱被人改咗 — 請重新載入' }, { status: 409 })
+    }
     console.error('[labdoc] new-case failed', { docId: id, err: e?.message })
     return NextResponse.json({ error: '新增成本失敗，請重試' }, { status: 500 })
   }

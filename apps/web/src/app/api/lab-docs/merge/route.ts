@@ -18,7 +18,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { runLabDocExtract } from '@/lib/labdoc/extract'
-import { acquireWriteLog, completeWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
+import { acquireWriteLog, completeWriteLog, releaseWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 const KEY_RE = /^[a-zA-Z0-9:_-]{1,128}$/
@@ -70,34 +70,40 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // acquire 之後嘅驗證失敗 = 冇寫入 → 釋放 key（同 key 可以再試）
+  const fail = async (error: string, status: number) => {
+    await releaseWriteLog(idempotencyKey).catch(() => {})
+    return NextResponse.json({ error }, { status })
+  }
+
   // —— 載入 + 守衛 ——
   const docs = await prisma.labDocument.findMany({ where: { id: { in: sourceDocIds as string[] } } })
   if (docs.length !== sourceDocIds.length) {
-    return NextResponse.json({ error: '有單據唔存在' }, { status: 404 })
+    return fail('有單據唔存在', 404)
   }
   for (const doc of docs) {
-    if (doc.kind !== 'INVOICE') return NextResponse.json({ error: '只能合併 invoice' }, { status: 400 })
+    if (doc.kind !== 'INVOICE') return fail('只能合併 invoice', 400)
     if (!MERGEABLE.has(doc.status)) {
-      return NextResponse.json({ error: `單據 ${doc.docNo ?? doc.id} 狀態 ${doc.status} 未可以合併（要未確認）` }, { status: 400 })
+      return fail(`單據 ${doc.docNo ?? doc.id} 狀態 ${doc.status} 未可以合併（要未確認）`, 400)
     }
     if (scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
-      return NextResponse.json({ error: '有單據唔喺你嘅診所範圍' }, { status: 403 })
+      return fail('有單據唔喺你嘅診所範圍', 403)
     }
   }
   // 同時上傳（同一次上傳批次）
   const uploadedAts = new Set(docs.map((d) => d.createdAt.getTime())) // 同時上傳 = 同一批次（createdAt 同值）
   if (uploadedAts.size !== 1) {
-    return NextResponse.json({ error: '只可以合併同一時間上傳嘅單據' }, { status: 400 })
+    return fail('只可以合併同一時間上傳嘅單據', 400)
   }
   // 同一 Lab
   const labIds = new Set(docs.map((d) => d.labId ?? ''))
   if (labIds.size !== 1) {
-    return NextResponse.json({ error: '唔可以合併唔同 Lab 嘅單據' }, { status: 400 })
+    return fail('唔可以合併唔同 Lab 嘅單據', 400)
   }
   // 冇 MATCHED 行
   const matchedCount = await prisma.labDocumentLine.count({ where: { documentId: { in: docs.map((d) => d.id) }, status: 'MATCHED' } })
   if (matchedCount > 0) {
-    return NextResponse.json({ error: '有單據已經對咗數（有配對行）— 唔可以合併' }, { status: 400 })
+    return fail('有單據已經對咗數（有配對行）— 唔可以合併', 400)
   }
 
   // 來源文件（新單據嘅頁要指向同一批 file）
@@ -165,10 +171,10 @@ export async function POST(req: NextRequest) {
     pageCount = created.pageCount
   } catch (e: any) {
     if (e instanceof MergeRaceError) {
-      return NextResponse.json({ error: '有單據嘅狀態啱啱被改咗 — 請重新載入再合併' }, { status: 409 })
+      return fail('有單據嘅狀態啱啱被改咗 — 請重新載入再合併', 409)
     }
     console.error('[labdoc] merge failed', { err: e?.message })
-    return NextResponse.json({ error: '合併失敗，請重試' }, { status: 500 })
+    return fail('合併失敗，請重試', 500) // transaction 已 rollback
   }
 
   // 新文件重新讀單（§5.1 背景工作；未設 LLM → 3 次後 EXTRACT_FAILED）

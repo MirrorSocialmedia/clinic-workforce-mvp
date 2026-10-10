@@ -8,8 +8,9 @@
  * 保守決定（decision log）：
  * - IN_PROGRESS（上次做到一半 / process 死咗）+ 同 hash → 照回 conflict（409）：
  *   唔知上次有冇寫過 DB，重放有雙寫風險；前端換新 key 重試（佢本來就每次開畫面生新 key）。
- * - 400 驗證失敗：key 保留 IN_PROGRESS（burn 咗）— 同一 key 重發 = conflict；
- *   前端修好後用新 key。唔會雙寫，代價係 key 一次性。
+ * - 確定冇寫到 DB 嘅失敗（驗證 400／403／404／409、transaction rollback）→ releaseWriteLog 刪返
+ *   IN_PROGRESS 行，同一 key 可以再試（2026-10-10 模擬：burn key 令網絡重試永遠 409）。
+ *   唔肯定有冇寫（process 死咗、未知 500）→ 照舊留 IN_PROGRESS（防雙寫）。
  */
 import { createHash } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
@@ -81,4 +82,9 @@ export async function completeWriteLog(idempotencyKey: string, response: unknown
     where: { idempotencyKey },
     data: { status: 'DONE', responseJson: response as Prisma.InputJsonValue },
   })
+}
+
+/** 確定冇寫入（驗證失敗／transaction 已 rollback）→ 釋放 key，准同一 key 重試。只刪 IN_PROGRESS。 */
+export async function releaseWriteLog(idempotencyKey: string): Promise<void> {
+  await prisma.labDocWriteLog.deleteMany({ where: { idempotencyKey, status: 'IN_PROGRESS' } })
 }
