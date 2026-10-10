@@ -5,20 +5,13 @@ import { useRouter, useParams } from 'next/navigation'
 import { fmtDateTime } from '@/lib/hk-date'
 import { punchLabel } from '@/lib/punch-label'
 import { BackButton } from '@/components/BackButton'
+import { displayFaceStatus, faceStatusLabel } from '@/lib/face-status'
 
 type FaceStatus = 'PASS' | 'FAIL' | 'NOT_ENROLLED' | 'SKIPPED' | 'NO_FACE' | 'PENDING' | string
 
-function faceBadge(status: FaceStatus | null | undefined) {
-  if (!status) return '—'
-  const map: Record<string, string> = {
-    PASS: '✅ PASS',
-    FAIL: '❌ FAIL',
-    NOT_ENROLLED: '⚪ 未登記',
-    SKIPPED: '⏭️ 略過',
-    NO_FACE: '⚠️ 未拍到',
-    PENDING: '⏳ 待覆核',
-  }
-  return map[status] || status
+// ★ cwm-facemissing-20261010：null 唔再顯示「—」—— 分清人手補卡／驗證中／手機冇回報（lib/face-status）
+function faceBadge(record: { faceStatus: FaceStatus | null | undefined; source?: string | null; createdAt: string }) {
+  return faceStatusLabel(displayFaceStatus({ faceStatus: record.faceStatus as string | null | undefined, source: record.source, createdAt: record.createdAt }))
 }
 
 function fmt(dt: string | Date | null | undefined) {
@@ -112,9 +105,14 @@ export default function AttendanceDetailPage() {
       }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>人臉驗證</h3>
         <div style={{ fontSize: 14 }}>
-          狀態: {faceBadge(record.faceStatus)}{' '}
+          狀態: {faceBadge(record)}{' '}
           {record.faceScore != null && `（分數 ${record.faceScore.toFixed(3)}）`}
         </div>
+        {displayFaceStatus({ faceStatus: record.faceStatus as string | null, source: record.source, createdAt: record.createdAt }) === 'NO_REPORT' && (
+          <div style={{ fontSize: 13, marginTop: 4, color: '#9a3412' }}>
+            打完卡之後手機冇送人臉結果返嚟（可能相機卡住、或者即刻關咗 App）。已列入「臉部覆核」，請向員工確認。
+          </div>
+        )}
         {record.faceReason && (
           <div style={{ fontSize: 13, marginTop: 4 }}>原因: {record.faceReason}</div>
         )}
