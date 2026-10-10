@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ChevronRight, ImageIcon, Loader2 } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ImageIcon, Loader2, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 import { fmtMoney, hkDateTime, statusMeta } from './status-meta'
@@ -104,6 +104,7 @@ export default function StatementDetail({ id }: { id: string }) {
   const [clinics, setClinics] = useState<Array<{ id: string; name: string }>>([])
   const [providers, setProviders] = useState<Array<{ id: string; name: string }>>([])
   const [viewer, setViewer] = useState(false)
+  const [retrying, setRetrying] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -135,6 +136,20 @@ export default function StatementDetail({ id }: { id: string }) {
   const confirmedN = data.sections.filter((s) => s.status === 'CONFIRMED').length
   const cName = (cid: string | null) => (cid ? clinics.find((c) => c.id === cid)?.name ?? '—' : null)
   const pName = (pid: string | null) => (pid ? providers.find((p) => p.id === pid)?.name ?? '—' : null)
+
+  // 讀單失敗 → 原頁再讀（之前要返去「待處理」先撳到）
+  const retry = async () => {
+    setRetrying(true)
+    try {
+      await apiFetch(`/api/lab-docs/${id}/retry`, { method: 'POST' })
+      toast.success('再讀緊…')
+      load()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   const supersede = async (oldId: string) => {
     const reason = window.prompt('取代舊版原因（例：Lab 重發、舊版影漏頁）')
@@ -168,13 +183,18 @@ export default function StatementDetail({ id }: { id: string }) {
 
       <div className="flex flex-wrap gap-2">
         <button onClick={() => setViewer(true)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg border bg-card text-sm"><ImageIcon size={14} />睇原檔</button>
+        {d.status === 'EXTRACT_FAILED' && (
+          <button onClick={retry} disabled={retrying} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand text-white text-sm disabled:opacity-50">
+            {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}再讀
+          </button>
+        )}
       </div>
 
       {d.supersededById && (
         <div className="rounded-xl border bg-muted p-3 text-sm">已被取代 — <Link className="underline" href={`/lab-docs/statements/${d.supersededById}`}>開新版</Link></div>
       )}
       {['UPLOADED', 'EXTRACTING'].includes(d.status) && <div className="rounded-xl border bg-blue-50 p-3 text-sm flex items-center gap-2"><Loader2 size={14} className="animate-spin" />讀緊月結單…</div>}
-      {d.status === 'EXTRACT_FAILED' && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">讀唔到（{d.extractError ?? '讀單失敗'}）— 去「待處理」撳再讀，或者影清楚啲再上傳。</div>}
+      {d.status === 'EXTRACT_FAILED' && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">讀唔到（{d.extractError ?? '讀單失敗'}）— 撳上面「再讀」，或者影清楚啲再上傳。</div>}
       {d.payeeIsNew && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">⚠ 收款人「{d.payeeRaw}」唔喺已知名單 — 付款前同 Lab 確認</div>}
       {data.statementMonthFromLines && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">月份係由行嘅日期推斷 — 請核對</div>}
       {dups.map((dup) => (
