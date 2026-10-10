@@ -33,6 +33,9 @@ RUN apk add --no-cache openssl fontconfig font-noto-cjk
 RUN npm i -g prisma@6.19.3
 RUN addgroup --system --gid 1001 nodejs && \
  adduser --system --uid 1001 nextjs
+# cwm-labdoc：Lab 單據存檔目錄要 nextjs 寫得（named volume 第一次建立時會跟呢個目錄嘅擁有人；
+#   冇呢行 volume 係 root 擁有 → 上傳 EACCES）
+RUN mkdir -p /data/lab-docs && chown nextjs:nodejs /data/lab-docs
 COPY --from=builder /app/apps/web/public ./public
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./.next/static
