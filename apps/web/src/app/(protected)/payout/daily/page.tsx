@@ -109,7 +109,7 @@ export default function DailyRevenuePage() {
   }, [])
 
   // ★ cwm-dailyv2-20261007 ③：KIOSK（店舖帳號）— /api/me 攞 role/clinicIds：
-  //   只顯示自己店（單一店自動鎖）、隱醫生 dropdown、Excel 匯出、B 區、分成
+  //   只顯示自己店（單一店自動鎖）、隱 Excel 匯出、B 區、分成（醫生 dropdown 照開：cwm-kioskdoc-20261010）
   const [me, setMe] = useState<{ role: string; clinicIds: string[]; grant: string[]; deny: string[] } | null>(null)
   useEffect(() => {
     fetch('/api/me', { credentials: 'include' })
@@ -144,8 +144,27 @@ export default function DailyRevenuePage() {
   //   名單同醫生月結頁同一來源（POST /api/payout-runs/clinics → 綁咗呢間店 ＋ 嗰個月有收入／轉介），
   //   日期範圍跨月就逐月攞再合併；攞唔到就照列全部（唔好令人揀唔到醫生）。
   const [clinicProviderIds, setClinicProviderIds] = useState<Set<string> | null>(null)
+  // ★ cwm-kioskdoc-20261010：店舖帳號（KIOSK）冇權 call payout-runs/clinics → 名單改由每日大數本身（逐醫生、
+  //   鎖自己店、同一段日子）攞：有收款嘅醫生先列；Apricot 未綁醫生（ext:）同 Clinic 雜項行唔列
+  const [kioskProviders, setKioskProviders] = useState<{ id: string; name: string }[] | null>(null)
   useEffect(() => {
-    if (!activeClinicId || isKiosk) { setClinicProviderIds(null); return }
+    if (!isKiosk || !activeClinicId || !from) { setKioskProviders(null); return }
+    let cancelled = false
+    const q = new URLSearchParams({ from, clinicId: activeClinicId })
+    if (to && to !== from) q.set('to', to)
+    apiFetch<DailyReport>(`/api/payout-runs/daily?${q}`)
+      .then(r => {
+        if (cancelled) return
+        setKioskProviders(r.mode === 'byDoctor'
+          ? r.rows.filter(x => x.key !== CLINIC_ROW_KEY && !x.key.startsWith('ext:')).map(x => ({ id: x.key, name: x.label }))
+          : [])
+      })
+      .catch(() => { if (!cancelled) setKioskProviders(null) })
+    return () => { cancelled = true }
+  }, [isKiosk, activeClinicId, from, to, refreshTick])
+  useEffect(() => {
+    // 要等 me 先知係咪 KIOSK（未知就 call 會俾店舖帳號一個 403）
+    if (!me || !activeClinicId || isKiosk) { setClinicProviderIds(null); return }
     const months: string[] = []
     for (let m = from.slice(0, 7); m <= (to || from).slice(0, 7) && months.length < 4;) {
       months.push(m)
@@ -160,16 +179,22 @@ export default function DailyRevenuePage() {
       .then(rs => { if (!cancelled) setClinicProviderIds(new Set(rs.flatMap(r => (r.providers ?? []).map(p => p.id)))) })
       .catch(() => { if (!cancelled) setClinicProviderIds(null) })
     return () => { cancelled = true }
-  }, [activeClinicId, from, to, isKiosk])
-  const providerOptions = clinicProviderIds
-    ? providers.filter(p => clinicProviderIds.has(p.id) || p.id === providerId) // 已揀嗰位保留，唔好突然消失
-    : providers
+  }, [activeClinicId, from, to, isKiosk, me])
+  const providerOptions = isKiosk
+    ? [...(kioskProviders ?? []),
+      // 已揀嗰位喺新日子冇收款都保留，唔好突然消失
+      ...(providerId && !(kioskProviders ?? []).some(p => p.id === providerId)
+        ? [{ id: providerId, name: providers.find(p => p.id === providerId)?.name ?? report?.title ?? '已揀醫生' }] : [])]
+    : clinicProviderIds
+      ? providers.filter(p => clinicProviderIds.has(p.id) || p.id === providerId) // 已揀嗰位保留，唔好突然消失
+      : providers
 
   const query = useMemo(() => {
     const q = new URLSearchParams({ from })
     if (to && to !== from) q.set('to', to)
     if (activeClinicId) q.set('clinicId', activeClinicId)
-    if (!isKiosk && providerId) q.set('providerId', providerId)
+    // ★ cwm-kioskdoc-20261010：KIOSK 都帶醫生（server 仍鎖自己店、剷分成）
+    if (providerId && (!isKiosk || activeClinicId)) q.set('providerId', providerId)
     return q.toString()
   }, [from, to, activeClinicId, providerId, isKiosk])
 
@@ -185,7 +210,7 @@ export default function DailyRevenuePage() {
     return () => { cancelled = true }
   }, [query, from, clinicId, providerId, refreshTick])
 
-  // ★ cwm-dailyv2-20261007 ② → cwm-syncshared-20261010：Apricot 同步抽去共用 hook（醫生月結頁都用）
+  // ★ cwm-dailyv2-20261007 ② → cwm-syncshared-20261010：Apricot 同步抽去 components/payout/ApricotSync
   const { syncState, setSyncState, start: startSyncFor, reset: resetSync } = useApricotSync({
     clinics, onDone: () => setRefreshTick(t => t + 1), // 同步完 → 重新拉報表
   })
@@ -403,14 +428,13 @@ export default function DailyRevenuePage() {
               {myClinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
             </select>
           </label>
-          {!isKiosk && (
+          {/* ★ cwm-kioskdoc-20261010：KIOSK 都揀到醫生（只列自己店呢段日子有收款嘅醫生） */}
           <label className="flex flex-col gap-1 text-xs text-gray-600">醫生
             <select value={providerId} onChange={e => setProviderId(e.target.value)} className="h-10 px-2 border rounded-md text-sm min-w-[160px]">
               <option value="">全部醫生（逐醫生）</option>
               {providerOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
-          )}
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => quick('today')}>今日</Button>
             <Button variant="outline" onClick={() => quick('week')}>今個星期</Button>

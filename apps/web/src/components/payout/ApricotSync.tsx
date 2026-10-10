@@ -1,7 +1,7 @@
 'use client'
 
 // ============================================================
-// ★ cwm-syncshared-20261010：Apricot 同步（揀咗診所＋日期範圍）—— 每日大數頁、醫生月結頁共用
+// ★ cwm-syncshared-20261010：Apricot 同步（揀咗診所＋日期範圍）—— 每日大數頁用（醫生月結頁唔放：老闆要求同步只喺每日大數）
 //   由 payout/daily/page.tsx 原封抽出（cwm-dailyv2-20261007 ②），行為不變：
 //   POST /api/apricot/sync { clinicId, from, to }（唔帶 force）→ jobId → useApricotJobPoll 每 2 秒跟；
 //   409 = 已有 job 進行中 → 提示並跟住嗰個 jobId（唔開第二個 job）；完成 → onDone()（頁面重新攞數）。
