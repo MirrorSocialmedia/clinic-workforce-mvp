@@ -29,3 +29,19 @@ test('withTimeout：準時 resolve；逾時掟指定 name；遲到嘅值交俾 o
   assert.strictEqual(late, 9)
   await assert.rejects(withTimeout(Promise.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' })), 50, 'Timeout'), (e: any) => e.name === 'NotAllowedError')
 })
+
+test('cwm-facereviewcut-20261011：覆核「手機冇回報」由生效日開始（舊數唔追究），最多 30 日', async () => {
+  const { noReportReviewWindow, FACE_NO_REPORT_SINCE, faceReviewBadge } = await import('./face-status')
+  // 生效後兩日：下限 = 生效日（唔係 30 日前）
+  const w1 = noReportReviewWindow(new Date('2026-10-13T12:00:00+08:00'))
+  assert.strictEqual(w1.gte.getTime(), FACE_NO_REPORT_SINCE.getTime())
+  assert.strictEqual(w1.lt.getTime(), new Date('2026-10-13T12:00:00+08:00').getTime() - FACE_REPORT_WINDOW_MS)
+  assert.ok(new Date('2026-10-10T21:16:00+08:00') < w1.gte, '10/10 舊數唔入覆核')
+  // 生效後 60 日：下限 = 30 日前
+  const later = new Date('2026-12-20T00:00:00+08:00')
+  assert.strictEqual(noReportReviewWindow(later).gte.getTime(), later.getTime() - 30 * 86400000)
+  // 標籤唔再一律「未通過」
+  assert.strictEqual(faceReviewBadge('NO_REPORT'), '手機冇回報')
+  assert.strictEqual(faceReviewBadge('SKIPPED'), '相機略過')
+  assert.strictEqual(faceReviewBadge('FAIL'), '未通過')
+})

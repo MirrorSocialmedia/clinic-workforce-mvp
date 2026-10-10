@@ -9,6 +9,22 @@
 /** 手機可以寫人臉結果嘅時限（同 api/face/verify-punch 一致） */
 export const FACE_REPORT_WINDOW_MS = 5 * 60 * 1000
 
+/**
+ * ★ cwm-facereviewcut-20261011：「手機冇回報」由幾時開始先入覆核清單。
+ *   #50 上線一次過將過去 30 日嘅舊數全部塞入覆核（99+）—— 老闆：更新前嘅唔追究。
+ *   只影響覆核清單／待辦數；考勤詳情照樣如實顯示「手機冇回報」。
+ */
+export const FACE_NO_REPORT_SINCE = new Date('2026-10-11T00:00:00+08:00')
+const NO_REPORT_LOOKBACK_MS = 30 * 86400000
+
+/** 覆核清單收「手機冇回報」嘅 createdAt 範圍：[max(生效日, 30 日前), now − 5 分鐘) */
+export function noReportReviewWindow(now: Date = new Date()): { gte: Date; lt: Date } {
+  return {
+    gte: new Date(Math.max(FACE_NO_REPORT_SINCE.getTime(), now.getTime() - NO_REPORT_LOOKBACK_MS)),
+    lt: new Date(now.getTime() - FACE_REPORT_WINDOW_MS),
+  }
+}
+
 export type DisplayFaceStatus = string | 'NO_REPORT' | 'MANUAL' | 'REPORTING'
 
 export function displayFaceStatus(
@@ -35,3 +51,12 @@ export const FACE_STATUS_LABEL: Record<string, string> = {
 }
 
 export const faceStatusLabel = (s: DisplayFaceStatus): string => FACE_STATUS_LABEL[s] ?? s
+
+/** 覆核卡上嘅短標籤（待辦頁、覆核頁共用） */
+export const FACE_REVIEW_BADGE: Record<string, string> = {
+  FAIL: '未通過',
+  NO_FACE: '未拍到人臉',
+  SKIPPED: '相機略過',
+  NO_REPORT: '手機冇回報',
+}
+export const faceReviewBadge = (s: string): string => FACE_REVIEW_BADGE[s] ?? s
