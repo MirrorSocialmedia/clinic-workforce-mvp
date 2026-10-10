@@ -218,6 +218,7 @@ function AuditLogsPageInner() {
     'TIMEBANK_CONVERT': 'OT換假',
     'TIMEBANK_ABSENT_DEDUCT': '缺勤扣OT',
     'TIMEBANK_REST_TO_ACCOUNT': '休息日轉時間帳戶',
+    'TIMEBANK_OT_BACKPAY': '補回少計 OT', // ★ cwm-otbackpay-20261010
     // Expense
     'EXPENSE_CREATE': '新增雜項費用',
     'EXPENSE_DELETE': '取消雜項費用',

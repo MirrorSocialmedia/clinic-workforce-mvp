@@ -13,7 +13,7 @@ import { toHKDateStr, getMonthRange } from './hk-date'
 
 /** ★ 入帳嘅實體 entry type —— ⚠️ RESTDAY_GRANT 唔喺度（假期發放，另一本帳） */
 export const TB_LEDGER_ENTRY_TYPES = [
-  'MAKEUP', 'LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF',
+  'MAKEUP', 'LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF', 'OT_BACKPAY',
 ] as const
 
 export interface LedgerLine {
@@ -115,6 +115,7 @@ function ledgerLabel(e: any): string {
     case 'INIT_ADJUST': return '初始化調整'
     case 'REST_TO_ACCOUNT': return '休息日轉入'
     case 'ROSTER_DIFF': return '編更差額'
+    case 'OT_BACKPAY': return '補回 OT'
     default: return e.type
   }
 }
