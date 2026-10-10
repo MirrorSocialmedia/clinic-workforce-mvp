@@ -22,6 +22,16 @@ ENV DATABASE_URL="postgresql://build:build@build:5432/build" \
 # ⚠️ 2026-10-04：唔好用 `RUN --mount=type=cache`（BuildKit 專用）—— production server 用舊式 builder，
 #   會報「the --mount option requires BuildKit」令 deploy 停喺 build。依賴層 cache（上面）兩種 builder 都得。
 RUN pnpm build
+# ★ cwm-labdoc：pdfjs／@napi-rs/canvas 係 runtime 原生 import（webpackIgnore）→ Next standalone 打包跟唔齊
+#   （2026-10-10 生產：Cannot find module …/pdfjs-dist/legacy/build/pdf.worker.mjs；修完 worker 再撞
+#   @napi-rs/canvas「Cannot find native binding」）→ 喺 builder 抄一份完整（跟 symlink 抄真檔）俾 runner 用。
+RUN mkdir -p /labdoc-modules/@napi-rs \
+ && cp -rL node_modules/pdfjs-dist /labdoc-modules/pdfjs-dist \
+ && rm -rf /labdoc-modules/pdfjs-dist/web /labdoc-modules/pdfjs-dist/types /labdoc-modules/pdfjs-dist/build /labdoc-modules/pdfjs-dist/image_decoders \
+ && find /labdoc-modules -name '*.map' -delete \
+ && cp -rL node_modules/@napi-rs/canvas /labdoc-modules/@napi-rs/canvas \
+ && for d in node_modules/.pnpm/node_modules/@napi-rs/canvas-*; do [ -e "$d" ] && cp -rL "$d" /labdoc-modules/@napi-rs/; done; \
+ ls /labdoc-modules/@napi-rs
 
 # Stage 2: Runner
 FROM node:22-alpine AS runner
@@ -40,6 +50,13 @@ COPY --from=builder /app/apps/web/public ./public
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./.next/static
 COPY --from=builder /app/apps/web/prisma ./apps/web/prisma
+# ★ cwm-labdoc：完整 pdfjs-dist／@napi-rs/canvas（＋平台 binary）蓋過 standalone 嘅不完整版本
+#   （standalone 入面可能係 symlink → 先刪再抄；rm 只會刪 link 本身）。最後自檢：載唔到就 build 失敗。
+COPY --from=builder /labdoc-modules /tmp/labdoc-modules
+RUN cd /tmp/labdoc-modules && for p in pdfjs-dist @napi-rs/*; do \
+      rm -rf "/app/node_modules/$p"; mkdir -p "$(dirname "/app/node_modules/$p")"; cp -r "$p" "/app/node_modules/$p"; \
+    done && rm -rf /tmp/labdoc-modules \
+ && cd /app && node -e "require('@napi-rs/canvas'); import('pdfjs-dist/legacy/build/pdf.worker.mjs').then(() => import('pdfjs-dist/legacy/build/pdf.mjs')).then(() => console.log('labdoc deps OK')).catch((e) => { console.error(e); process.exit(1) })"
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
