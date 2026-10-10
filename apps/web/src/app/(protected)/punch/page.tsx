@@ -1,5 +1,6 @@
 'use client'
 
+import { withTimeout } from '@/lib/with-timeout'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -374,7 +375,8 @@ export default function PunchPage() {
         runFaceVerify(rec.id)
       } else {
         const fd = new FormData(); fd.append('punchId', rec.id)
-        fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+        // ★ cwm-facemissing-20261010：未登記人臉嘅員工 —— 呢個請求冇 await、隨即倒數跳頁；keepalive 確保送得完
+        fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true }).catch(() => {})
       }
     }
   }
@@ -481,7 +483,13 @@ export default function PunchPage() {
     let lastErr: any
     for (let i = 0; i < tries; i++) {
       try {
-        return await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+        // ★ cwm-facemissing-20261010：部分手機（尤其 iOS 加咗落主畫面嘅 App）getUserMedia 會永遠唔返 →
+        //   之前冇時限 → 一直卡住、冇送結果、員工關 App → faceStatus 永遠 null（Winkie／Wendy 48/48）
+        return await withTimeout(
+          navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }),
+          10000, 'Timeout',
+          late => late.getTracks().forEach(t => t.stop()), // 遲到先開到嘅鏡頭即刻關
+        )
       } catch (e: any) {
         lastErr = e
         if (e?.name !== 'NotReadableError' && e?.name !== 'AbortError') throw e // 權限拒絕等不重試
@@ -493,6 +501,20 @@ export default function PunchPage() {
 
   // ★ runFaceVerify 全身替換: 8秒死線 + 三種了結(sent / no_face / skipped)
   const runFaceVerify = async (punchId: string) => {
+    // ★ cwm-facemissing-20261010：總死線 —— 無論邊步卡住，60 秒（正常流程最多 ~35 秒，留位畀慢網上載）都一定送「略過」＋放行倒數，唔會冇結果
+    let settled = false
+    const watchdog = setTimeout(() => {
+      if (settled) return
+      settled = true
+      const wfd = new FormData()
+      wfd.append('punchId', punchId)
+      wfd.append('result', 'SKIPPED')
+      wfd.append('reason', 'face_watchdog_60s')
+      fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: wfd, keepalive: true }).catch(() => {})
+      setFaceHint('臉部驗證逾時，已略過')
+      setTimeout(() => setFaceHint(null), 1500)
+      setFaceDone(true)
+    }, 60000)
     let outcome: 'sent' | 'no_face' | 'skipped' = 'skipped'
     let fd_reason: string = ''
     let noFaceEvidence: Blob | null = null
@@ -504,7 +526,7 @@ export default function PunchPage() {
       try {
         faceVideoRef.current.srcObject = stream
         stage = 'play'
-        await faceVideoRef.current.play()
+        await withTimeout(faceVideoRef.current.play(), 6000, 'Timeout') // ★ cwm-facemissing：play() 都會卡死
         stage = 'cap'
 
         let blob: Blob | null = null
@@ -593,6 +615,11 @@ export default function PunchPage() {
       )
     }
 
+    // ★ cwm-facemissing-20261010：守門狗已經報咗「略過」就唔再送（伺服器只收第一個結果）
+    clearTimeout(watchdog)
+    if (settled) return
+    settled = true
+
     if (outcome === 'sent') {
       setFaceHint(null)
     } else {
@@ -609,8 +636,8 @@ export default function PunchPage() {
         fd.append('punchId', punchId)
         fd.append('result', 'SKIPPED')
         if (fd_reason) fd.append('reason', fd_reason)
-        // ★ 2026-08-05：keepalive 有 64KB body 上限（同上）。
-        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd })
+        // ★ cwm-facemissing-20261010：冇相嘅細 body（遠低於 keepalive 64KB 上限）→ keepalive，關 App／轉頁都送得完
+        await fetch('/api/face/verify-punch', { method: 'POST', credentials: 'include', body: fd, keepalive: true })
       }
       setFaceHint(outcome === 'no_face' ? '未拍攝到人臉' : '臉部驗證略過')
       setTimeout(() => setFaceHint(null), 1500)

@@ -149,6 +149,7 @@ jobs:
             src/lib/payout/draft-report.test.ts \
             src/lib/pay-rule-for-month.test.ts \
             src/lib/timebank-ot-backpay.test.ts \
+            src/lib/face-status.test.ts \
             src/lib/roster-hours.resign.test.ts \
             src/lib/patient-search.test.ts \
             src/lib/apricot/source-pure.test.ts \
