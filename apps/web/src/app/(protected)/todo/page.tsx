@@ -7,6 +7,7 @@ import { toHKDateStr } from '@/lib/hk-date'
 import { useTodoCount } from '@/lib/use-todo-count'
 import { notifyDataChanged, useLiveRefresh } from '@/lib/live-refresh'
 import { ProbationDueCard } from '@/components/dashboard/ProbationDueCard'
+import { faceReviewBadge } from '@/lib/face-status'
 
 /* ── Types ── */
 
@@ -457,10 +458,10 @@ export default function TodoPage() {
             {reviews.map(r => (
               <Card
                 key={r.id}
-                className={r.faceStatus === 'NO_FACE' ? 'border-orange-300' : 'border-red-300'}
+                className={r.faceStatus === 'NO_FACE' || r.faceStatus === 'NO_REPORT' ? 'border-orange-300' : r.faceStatus === 'SKIPPED' ? 'border-gray-300' : 'border-red-300'}
               >
                 <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
                     {r.faceFramePath ? (
                       <img
                         src={`/api/face/review/${r.id}`}
@@ -476,32 +477,36 @@ export default function TodoPage() {
                       <div className="flex items-center gap-2">
                         <span className="font-semibold">{r.employeeName}</span>
                         <span
-                          className={`text-xs px-1.5 py-0.5 rounded ${
-                            r.faceStatus === 'NO_FACE'
+                          className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${
+                            r.faceStatus === 'NO_FACE' || r.faceStatus === 'NO_REPORT'
                               ? 'bg-orange-100 text-orange-700'
+                              : r.faceStatus === 'SKIPPED'
+                              ? 'bg-gray-100 text-gray-700'
                               : 'bg-red-100 text-red-700'
                           }`}
                         >
-                          {r.faceStatus === 'NO_FACE' ? '未拍攝' : '未通過'}
+                          {faceReviewBadge(r.faceStatus)}
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground mt-1">
                         {r.clinicName} · {new Date(r.punchTime).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })}
                       </div>
+                      {r.faceStatus === 'NO_REPORT' && <div className="text-xs text-muted-foreground mt-0.5">打卡後手機冇送人臉結果，請向員工確認</div>}
+                      {r.faceStatus === 'SKIPPED' && <div className="text-xs text-muted-foreground mt-0.5">相機失敗時已放行，請向員工確認</div>}
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {r.faceScore != null && `分數: ${r.faceScore.toFixed(4)}`}
                         {r.faceLiveness != null && ` | 活體: ${r.faceLiveness.toFixed(4)}`}
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 w-full sm:w-auto">
                       <button
-                        className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                        className="flex-1 sm:flex-none px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
                         onClick={() => handleReviewAction(r.id, 'confirm')}
                       >
                         確認本人
                       </button>
                       <button
-                        className="px-4 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                        className="flex-1 sm:flex-none px-4 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
                         onClick={() => handleReviewAction(r.id, 'flag')}
                       >
                         有疑點
