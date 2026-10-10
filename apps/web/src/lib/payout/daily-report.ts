@@ -20,10 +20,16 @@
 import { prisma } from '@/lib/prisma'
 import { hkDateStart, hkDateEnd, toHKDateStr, addDaysStr } from '@/lib/hk-date'
 import { resolveApricotAccounts } from '@/lib/apricot-accounts'
+import { resolveMethodRule } from '@/lib/apricot/allocate'
 import { ACTIVE_ALLOCATION, pickCommission } from '@/lib/payout/engine'
+import { loadManualClinicMiscRange } from '@/lib/payout/clinic-misc'
 import { METHOD_ORDER, METHOD_LABELS, colKey, methodOf, round2 } from '@/lib/payout/report-data'
 
 export const DAILY_MAX_DAYS = 62
+
+/** ★ cwm-dailyv3-20261010：Clinic 雜項行（逐醫生模式專用；B 區／missingCommission 都跳過佢） */
+export const CLINIC_ROW_KEY = '__clinic__'
+export const CLINIC_ROW_LABEL = 'Clinic 雜項（唔計醫生）'
 
 export interface DailyAlloc {
   method: string
@@ -33,6 +39,8 @@ export interface DailyAlloc {
   paidAt: Date
   providerExtId: string | null
   clinicExtId: string
+  /** ★ cwm-dailyv3：Clinic 雜項（CLINIC 帳號／人手 MiscIncome）——計店舖營收、唔計醫生收入/分成 */
+  isClinic?: boolean
 }
 
 export interface DailyMethod { key: string; label: string; storeIncome: boolean; doctorIncome: boolean }
@@ -41,7 +49,9 @@ export interface DailyRow {
   key: string // byDoctor：providerId（或 'ext:<apricotId>'）；byDay：YYYY-MM-DD
   label: string
   byMethod: Record<string, number> // colKey → 收款（未扣手續費）
+  byMethodNet: Record<string, number> // ★ cwm-dailyv2-20261007 ⑤：colKey → 淨額（扣手續費，同 a.net）
   storeTotal: number // TOTAL：店舖營收（countAsIncome）
+  storeNet: number // ★ cwm-dailyv2-20261007 ⑤：TOTAL 淨額（同 storeTotal 同一個過濾條件）
   doctorRaw: number // 醫生收入收款
   doctorNet: number // 醫生收入淨額（扣手續費）
   share: number | null // 醫生分成（未扣成本）；冇拆帳設定 = null
@@ -60,6 +70,8 @@ export interface DailyReport {
   missingCommission: string[]
   /** 單一醫生 + 單一診所 + 單一月份先有一個固定 % */
   percent: number | null
+  /** ★ cwm-dailycheck-20261006：逐醫生模式 —— 逐日店舖營收 TOTAL（同 A 區 Total 同一口徑；護士核對用） */
+  dayStoreTotals?: Record<string, number>
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
@@ -85,19 +97,55 @@ export function methodsOf(allocs: DailyAlloc[]): DailyMethod[] {
     if (rb !== -1) return 1
     return (first.get(a) ?? 0) - (first.get(b) ?? 0)
   })
+  // ★ cwm-dailyv3-20261010 §2：只有同一方法出現兩個 colKey（月中規則改咗旗）先加括號分辨；
+  //   否則淨方法名（灰字已代表唔計）
+  const dupMethods = new Set(seen.map(methodOf).filter((m, i, a) => a.indexOf(m) !== i))
   return seen.map(k => {
     const [m, s, d] = k.split('|')
     return {
       key: k,
-      label: (METHOD_LABELS[m] || m) + (d === '0' ? '（不計醫生收入）' : s === '0' ? '（不計店舖營收）' : ''),
+      label: (METHOD_LABELS[m] || m) + (dupMethods.has(m) ? (d === '0' ? '（不計醫生收入）' : s === '0' ? '（不計店舖營收）' : '') : ''),
       storeIncome: s === '1',
       doctorIncome: d === '1',
     }
   })
 }
 
+/** ★ cwm-dailyv3：逐醫生排序 —— Clinic 雜項行永遠排最後（Total 之前），唔參與 storeTotal 排序 */
+export function sortDoctorRows(rows: DailyRow[]): DailyRow[] {
+  const clinic = rows.find(r => r.key === CLINIC_ROW_KEY)
+  const rest = rows.filter(r => r.key !== CLINIC_ROW_KEY)
+  rest.sort((a, b) => b.storeTotal - a.storeTotal || a.label.localeCompare(b.label))
+  return clinic ? [...rest, clinic] : rest
+}
+
+/** ★ cwm-dailyv3：冇拆帳設定嘅醫生名（分成顯示「—」）；Clinic 雜項行 doctorRaw=0 唔會列 */
+export function missingCommissionOf(rows: DailyRow[]): string[] {
+  return rows.filter(r => r.share == null && r.doctorRaw > 0).map(r => r.label)
+}
+
+/**
+ * ★ cwm-dailyv3：逐日店舖營收 TOTAL（同 A 區 Total 同一口徑：groupOf 有行 + countAsIncome）。
+ *   雜項行 groupOf 有行 → 自動計入（loadCheckStates／createCheck 全店總數包含雜項）。
+ */
+export function dayStoreTotalsOf(
+  allocs: DailyAlloc[],
+  days: string[],
+  groupOf: (a: DailyAlloc) => string | null,
+): Record<string, number> {
+  const dayRaw = new Map<string, number>()
+  for (const a of allocs) {
+    if (!groupOf(a) || !a.countAsIncome || !a.method.trim()) continue
+    const d = toHKDateStr(a.paidAt)
+    dayRaw.set(d, (dayRaw.get(d) ?? 0) + a.amount)
+  }
+  const out: Record<string, number> = {}
+  for (const d of days) out[d] = round2(dayRaw.get(d) ?? 0)
+  return out
+}
+
 function emptyRow(key: string, label: string): DailyRow {
-  return { key, label, byMethod: {}, storeTotal: 0, doctorRaw: 0, doctorNet: 0, share: 0, spCount: 0 }
+  return { key, label, byMethod: {}, byMethodNet: {}, storeTotal: 0, storeNet: 0, doctorRaw: 0, doctorNet: 0, share: 0, spCount: 0 }
 }
 
 /**
@@ -126,7 +174,13 @@ export function aggregateDaily(
     const doctor = a.countAsIncome || m === 'FREE_SP'
     const k = colKey(m, store, doctor)
     row.byMethod[k] = (row.byMethod[k] ?? 0) + a.amount
-    if (store) row.storeTotal += a.amount
+    row.byMethodNet[k] = (row.byMethodNet[k] ?? 0) + a.net
+    if (store) { row.storeTotal += a.amount; row.storeNet += a.net }
+    if (a.isClinic) {
+      // ★ cwm-dailyv3：Clinic 雜項 —— 店舖營收照加；醫生收入/分成唔加（share 設 null → B 區唔出呢行）
+      row.share = null
+      continue
+    }
     if (doctor) {
       row.doctorRaw += a.amount
       row.doctorNet += a.net
@@ -138,7 +192,9 @@ export function aggregateDaily(
   const out = [...rows.values()]
   for (const r of out) {
     for (const k of Object.keys(r.byMethod)) r.byMethod[k] = round2(r.byMethod[k])
+    for (const k of Object.keys(r.byMethodNet)) r.byMethodNet[k] = round2(r.byMethodNet[k])
     r.storeTotal = round2(r.storeTotal)
+    r.storeNet = round2(r.storeNet)
     r.doctorRaw = round2(r.doctorRaw)
     r.doctorNet = round2(r.doctorNet)
     if (r.share != null) r.share = round2(shareRaw.get(r.key) ?? 0)
@@ -147,7 +203,9 @@ export function aggregateDaily(
   const totals = emptyRow('total', 'Total')
   for (const r of out) {
     for (const [k, v] of Object.entries(r.byMethod)) totals.byMethod[k] = round2((totals.byMethod[k] ?? 0) + v)
+    for (const [k, v] of Object.entries(r.byMethodNet)) totals.byMethodNet[k] = round2((totals.byMethodNet[k] ?? 0) + v)
     totals.storeTotal = round2(totals.storeTotal + r.storeTotal)
+    totals.storeNet = round2(totals.storeNet + r.storeNet)
     totals.doctorRaw = round2(totals.doctorRaw + r.doctorRaw)
     totals.doctorNet = round2(totals.doctorNet + r.doctorNet)
     // 合計分成 = 有設定嗰啲加埋；冇設定嘅醫生由 missingCommission 列出（頁面提示「部分」）
@@ -238,6 +296,11 @@ export async function loadDailyReport(opts: {
 
   // ─── 帳號 → 醫生（byDoctor 分組 + 拆帳% 用）────────────────────
   const accounts = await resolveApricotAccounts(prisma, [...new Set(allocs.map(a => a.providerExtId).filter(Boolean) as string[])])
+  // ★ cwm-dailyv3：CLINIC 帳號 → isClinic（收埋入雜項行；計店舖營收、唔計醫生收入/分成）
+  for (const a of allocs) {
+    const acc = a.providerExtId ? accounts.get(a.providerExtId) : null
+    if (acc?.kind === 'CLINIC') a.isClinic = true
+  }
   const providerIdOf = (a: DailyAlloc): string | null => {
     if (provider) return provider.id
     const acc = a.providerExtId ? accounts.get(a.providerExtId) : null
@@ -311,18 +374,44 @@ export async function loadDailyReport(opts: {
     }
   }
 
-  // ① 逐醫生（未綁醫生嘅 PROVIDER 帳號用 Apricot 名獨立一行；CLINIC 帳號 = 診所雜項，唔入）
+  // ① 逐醫生（未綁醫生嘅 PROVIDER 帳號用 Apricot 名獨立一行）
+  // ★ cwm-dailyv3：人手錄入嘅 Clinic 雜項（MiscIncome）收埋入 '__clinic__' 行 ——
+  //   計法同全店月報一樣：費率 resolveMethodRule(methodNorm, incomeAt, rules)，
+  //   countAsIncome = rule.countAsIncome（needsReview 兜底 true，跟 clinic-report 口徑），
+  //   net = amount × (1 − feePercent/100) 逐筆 round2。
+  //   ⚠️ Apricot CLINIC 帳號嗰批已經喺上面 paymentAllocation 讀咗，唔好再 call loadApricotClinicMisc（雙計）。
+  if (opts.clinicId) {
+    const manual = await loadManualClinicMiscRange(clinics[0].id, from, to)
+    const allRules = await prisma.paymentMethodRule.findMany()
+    for (const r of manual) {
+      const rule = resolveMethodRule(r.methodNorm, r.incomeAt, allRules)
+      const feePct = rule.needsReview ? 0 : Number(rule.feePercent)
+      allocs.push({
+        method: r.methodNorm,
+        amount: Number(r.amount),
+        net: round2(Number(r.amount) * (1 - feePct / 100)),
+        countAsIncome: rule.countAsIncome,
+        paidAt: r.incomeAt,
+        providerExtId: null,
+        clinicExtId: clinics[0].apricotClinicId as string,
+        isClinic: true,
+      })
+    }
+  }
   const groupOf = (a: DailyAlloc): string | null => {
+    if (a.isClinic) return CLINIC_ROW_KEY
     const pid = providerIdOf(a)
     if (pid) return pid
     const acc = a.providerExtId ? accounts.get(a.providerExtId) : null
-    if (acc?.kind === 'CLINIC') return null
+    if (acc?.kind === 'CLINIC') return CLINIC_ROW_KEY // ★ cwm-dailyv3：CLINIC 帳號 → 雜項行（逐醫生模式）
     return `ext:${a.providerExtId}`
   }
   const keys = [...new Set(allocs.map(groupOf).filter(Boolean) as string[])]
-  const labelOf = (k: string) => k.startsWith('ext:')
-    ? `（未綁）${accounts.get(k.slice(4))?.name ?? k.slice(4)}`
-    : (providerName.get(k) ?? k)
+  const labelOf = (k: string) => k === CLINIC_ROW_KEY
+    ? CLINIC_ROW_LABEL
+    : k.startsWith('ext:')
+      ? `（未綁）${accounts.get(k.slice(4))?.name ?? k.slice(4)}`
+      : (providerName.get(k) ?? k)
   const agg = aggregateDaily(
     allocs,
     keys.map(k => ({ key: k, label: labelOf(k) })),
@@ -330,12 +419,15 @@ export async function loadDailyReport(opts: {
     percentOf,
     k => spCount.get(k) ?? 0,
   )
-  agg.rows.sort((a, b) => b.storeTotal - a.storeTotal || a.label.localeCompare(b.label))
+  agg.rows = sortDoctorRows(agg.rows)
+  // ★ cwm-dailycheck-20261006：逐日店舖營收（同 aggregateDaily 一樣：groupOf 有行 + countAsIncome；含雜項）
+  const dayStoreTotals = dayStoreTotalsOf(allocs, days, groupOf)
   return {
+    dayStoreTotals,
     mode: 'byDoctor', from, to,
     title: `${clinicLabel} · ${rangeLabel}`,
     ...agg,
-    missingCommission: agg.rows.filter(r => r.share == null && r.doctorRaw > 0).map(r => r.label),
+    missingCommission: missingCommissionOf(agg.rows),
     percent: null,
   }
 }

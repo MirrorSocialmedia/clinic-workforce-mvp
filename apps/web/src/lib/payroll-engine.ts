@@ -30,7 +30,7 @@ import { employedFromWhere } from './employment-scope'
  * ★ Bump this version whenever calculateTimeBank logic changes.
  *   TimeBank cache entries with mismatched versions are auto-invalidated.
  */
-export const TIMEBANK_ENGINE_VERSION = 9 // v9: 午飯扣減人手調整 [2026-09-30]；v8: S3b 按月規則 + S4B 凍結期末接駁 + degraded 向上傳（H1-6／E-1）；v7: 時薪路徑 deductLunch gate [cwm-lunchgate-20260902]
+export const TIMEBANK_ENGINE_VERSION = 10 // v10: 時薪月份唔計 OT／遲到早退（按嗰個月規則）[cwm-tbmonthrule-20261006]；v9: 午飯扣減人手調整 [2026-09-30]；v8: S3b 按月規則 + S4B 凍結期末接駁 + degraded 向上傳（H1-6／E-1）；v7: 時薪路徑 deductLunch gate [cwm-lunchgate-20260902]
 
 // ★ 2026-08-09: Module-level flag — EARLY_IN_OT catch log-once
 const earlyInOtWarnedSet = new Set<string>()
@@ -1775,7 +1775,10 @@ export async function calculateTimeBank(
   monthDate: Date,
   config: { negative_carry?: string },
   db: any,
-  depth = 0
+  depth = 0,
+  // ★ cwm-otbackpay-20261010：只俾「補回 OT」核數用 —— 強制當月每日 OT 門檻（例如 0 = 不限）。
+  //   正常計糧／帳本一律唔傳（行為不變）；唔影響上月結轉（getCarriedFrom 唔帶 override）。
+  overrides?: { otMinMinutes?: number },
 ): Promise<{
   otMinutes: number
   earlyInOtMinutes: number
@@ -1823,11 +1826,16 @@ export async function calculateTimeBank(
   let lunchEnabled = false
   let lunchDefault = 60
   let lunchMin = 30
+  // ★ cwm-tbmonthrule-20261006：嗰個月係時薪（兼職）→ 唔設時間帳戶：唔計更表／打卡推導嘅 OT、遲到、早退
+  //   （時薪係返幾多鐘出幾多錢，再入時間帳戶 = 重複計）。實體 entry（換假、初始化調整等）照計，帳本照加得埋。
+  //   實例：9 月兼職、10 月轉全職 —— 舊版當 9 月月薪計，OT +335、遲到早退、編更差額全部入咗帳。
+  let hourlyMonth = false
   try {
     // ★ cwm-consist S3b（CA-10）：同底薪同用 findPayRuleForMonth（見 timeBankCacheKey 注）
     const rule = await findPayRuleForMonth(db, employeeId, monthStart, monthEnd)
     if (rule?.configJson) {
       const cfg = typeof rule.configJson === 'string' ? JSON.parse(rule.configJson) : rule.configJson
+      hourlyMonth = cfg?.base_type === 'hourly'
       otMinMinutes = cfg?.modifiers?.overtime?.ot_min_minutes ?? 0
       otRoundMinutes = cfg?.modifiers?.overtime?.ot_round_minutes ?? 0
       const lunch = cfg?.modifiers?.lunch_break ?? {}
@@ -1842,6 +1850,7 @@ export async function calculateTimeBank(
     otMinMinutes = 0
     otRoundMinutes = 0
   }
+  if (overrides?.otMinMinutes != null) otMinMinutes = overrides.otMinMinutes
 
   // Previous month carry — recursive backfill (pass depth to prevent infinite recursion)
   // ★ 傳同一份 config，否則過往月份的 OT 門檻／午休設定全部失效
@@ -1850,9 +1859,10 @@ export async function calculateTimeBank(
   if (carryFlags.degraded) degraded = true
 
   // Grab ALL effective punches (CLOCK_IN + CLOCK_OUT) with corrections applied
-  const effectivePunches = await getEffectivePunches(monthStart, monthEnd, { employeeId, db })
+  // ★ cwm-tbmonthrule-20261006：時薪月份唔讀更表／打卡 → 推導行全部 0（見上 hourlyMonth）
+  const effectivePunches = hourlyMonth ? [] : await getEffectivePunches(monthStart, monthEnd, { employeeId, db })
 
-  const shifts = await db.shift.findMany({
+  const shifts = hourlyMonth ? [] : await db.shift.findMany({
     where: {
       employeeId,
       date: { gte: monthStart, lte: monthEnd },
@@ -2146,7 +2156,8 @@ export async function calculateTimeBank(
   try {
     // ★ 2026-08-08: EARLY_IN_OT 唔入 ADJUST_TYPES（物理隔離，唔好同錢線撞）
     // ★ ROSTER_DIFF：編更差額，計糧生成時寫入、退回時刪除
-    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF']
+    // ★ cwm-otbackpay-20261010：OT_BACKPAY = 補回之前月份少計嘅 OT（記喺補回嗰個月，唔改已出糧月份）
+    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF', 'OT_BACKPAY']
     const convertEntries = await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
     })

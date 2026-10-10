@@ -148,6 +148,10 @@ jobs:
             src/lib/my-nav.test.ts \
             src/lib/payout-xlsx-engine-parity.test.ts \
             src/lib/payout/daily-report.test.ts \
+            src/lib/payout/draft-report.test.ts \
+            src/lib/pay-rule-for-month.test.ts \
+            src/lib/timebank-ot-backpay.test.ts \
+            src/lib/face-status.test.ts \
             src/lib/roster-hours.resign.test.ts \
             src/lib/patient-search.test.ts \
             src/lib/apricot/source-pure.test.ts \
@@ -161,6 +165,11 @@ jobs:
             src/lib/payout/cost-detail.test.ts \
             src/lib/payout/sp-status.test.ts \
             src/lib/payout/sp-review.test.ts \
+            src/lib/payout/daily-check.test.ts \
+            src/lib/payout/daily-cell-check.test.ts \
+            src/lib/payout/daily-review.test.ts \
+            src/lib/payout/daily-review-local.test.ts \
+            src/lib/punch-day-summary.test.ts \
             src/lib/cost-entry/guards.test.ts \
             src/lib/payroll-engine.bonus-makeup.test.ts \
             src/lib/payroll-engine.bonus-rules.test.ts \

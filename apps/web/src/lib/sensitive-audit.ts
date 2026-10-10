@@ -27,6 +27,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'TIMEBANK_CONVERT', label: '時間帳戶兌換' },
   { action: 'TIMEBANK_ABSENT_DEDUCT', label: '缺勤扣OT鐘' },
   { action: 'TIMEBANK_REST_TO_ACCOUNT', label: '休息日還鐘' },
+  { action: 'TIMEBANK_OT_BACKPAY', label: '補回之前月份少計嘅 OT' }, // ★ cwm-otbackpay-20261010
   { action: 'LEAVE_INIT', label: '初始化假期額度' },
   { action: 'LEAVE_ADD', label: '增加假期額度' },
   { action: 'LEAVE_BALANCE_ADJUST', label: '校正假期餘額' },
@@ -133,6 +134,10 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'SP_SUBSIDY_SKIP', label: '跳過 SP 補貼' },
   { action: 'SP_SUBSIDY_RESET', label: '取消確認 SP 補貼' },
   { action: 'SP_SUBSIDY_SCAN', label: '掃描 2人SP 候選' },
+  { action: 'DAILY_REVENUE_CHECK', label: '每日大數護士核對' },
+  { action: 'DAILY_REVENUE_CHECK_REVOKE', label: '取消每日大數核對' },
+  { action: 'DAILY_CELL_CHECK', label: '每日大數逐格核對（醫生×付款方式）' }, // ★ cwm-dailyv2-20261007 ④
+  { action: 'DAILY_CELL_UNCHECK', label: '取消每日大數逐格核對' }, // ★ cwm-dailyv2-20261007 ④
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },

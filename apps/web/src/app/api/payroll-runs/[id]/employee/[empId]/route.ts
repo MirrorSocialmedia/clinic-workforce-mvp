@@ -8,6 +8,7 @@ import { runWithAudit } from '@/lib/audit-context'
 import { getMonthRange, periodMonthKey } from '@/lib/hk-date'
 import { PAY_RULE_LATEST } from '@/lib/pay-rule-latest'
 import { computeRosterHours } from '@/lib/roster-hours'
+import { findPayRuleForMonth, rosterDiffApplies } from '@/lib/pay-rule-for-month'
 // ★ cwm-tbledger-20260909 S5（F 章）：時間帳戶明細統一讀共用 ledger builder（同員工總覽同一把尺）
 import { buildTimeBankLedger, type LedgerMonth } from '@/lib/timebank-ledger'
 
@@ -150,10 +151,13 @@ export async function GET(
   //   帳本行齊晒：推導行（原始遲到/早退，同糧單七種一致）＋實體行（RESTDAY_GRANT 唔喺 ledger，
   //   假期另一本帳）＋informational 0 分行（遲到/早退補鐘已抵銷）＋RECONCILE 未分類差額。
   let ledger: LedgerMonth | null = null
+  // ★ cwm-tbmonthrule-20261006：時薪／月薪要睇【呢張糧單嗰個月】生效嘅規則（同確認計糧同一揀法），
+  //   唔係最新規則 —— 兼職轉全職嘅員工，兼職月份唔設時間帳戶、唔計編更差額。
+  const monthRule = (await findPayRuleForMonth(prisma, params.empId, periodStart, periodEnd)) ?? item.employee.payRules?.[0]
   try {
     // ★ 補丁A：時薪唔設時間帳戶 → ledger 維持 null（UI 卡片 fallback 返 detailJson、新行唔渲染）。
     //   時薪員工冇 TimeBankEntry，live build 會回全 0 帳本，誤畫「兩清」卡。
-    const cfg = payRules[0]?.configJson ? (JSON.parse(payRules[0].configJson) as any) : {}
+    const cfg = monthRule?.configJson ? (JSON.parse(monthRule.configJson) as any) : {}
     if (cfg?.base_type !== 'hourly') {
       const snap = await prisma.timeBankLedgerSnapshot.findUnique({
         where: { employeeId_periodMonth: { employeeId: params.empId, periodMonth: pmKey } },
@@ -188,7 +192,7 @@ export async function GET(
   //   只回傳俾頁面顯示，一行 DB 都唔寫。帳本已有 ROSTER_DIFF（已確認／凍結）就唔再預覽。
   let rosterDiffPreview: { minutes: number; projectedClosing: number } | null = null
   if (item.run.status === 'DRAFT' && ledger && !ledger.frozen
-    && item.employee.payRules?.[0]?.payType === 'MONTHLY' && item.employee.attendanceExempt !== true
+    && rosterDiffApplies(monthRule, item.employee.attendanceExempt)
     && !ledger.lines.some(l => l.type === 'ROSTER_DIFF')) {
     const m = Math.round(rosterDiffMinutes)
     if (m !== 0) rosterDiffPreview = { minutes: m, projectedClosing: ledger.closing + m }
@@ -205,7 +209,7 @@ export async function GET(
     })
     if (rs && rs.periodMonth === pmKey) {
       const rosterPosted = ledger.lines.some(l => l.type === 'ROSTER_DIFF')
-      const applyRoster = !rosterPosted && item.employee.payRules?.[0]?.payType === 'MONTHLY' && item.employee.attendanceExempt !== true
+      const applyRoster = !rosterPosted && rosterDiffApplies(monthRule, item.employee.attendanceExempt)
       const nowMinutes = ledger.closing + (applyRoster ? Math.round(rosterDiffMinutes) : 0)
       resignTbCheck = { settledMinutes: Number(rs.tbMinutes), nowMinutes }
     }

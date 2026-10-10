@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PWAPrompt from '@/components/PWAPrompt'
 import EmployeeMobileLayout from '@/components/EmployeeMobileLayout'
-import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard, Receipt, Printer } from 'lucide-react'
+import { LayoutDashboard, Calendar, ClipboardList, Palmtree, Bell, Smartphone, Monitor, BarChart3, Building2, FileText, Wallet, Users, ShieldCheck, KeyRound, UserCircle, Stethoscope, CreditCard, Receipt, Printer, CalendarDays } from 'lucide-react'
 import AdminMobileNav from '@/components/AdminMobileNav'
 import { hasPermission, MGMT_PERMS } from '@/lib/permissions'
 import { MY_NAV } from '@/lib/my-nav'
@@ -204,6 +204,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     //   ⚠️ roles 唔可以加 'EMPLOYEE' — filter ① role 白名單會繞過 perm 檢查
     { path: '/lab-docs', label: 'Lab 單據', icon: Receipt, roles: ['OWNER', 'MANAGER'], perm: ['lab_invoice', 'lab_statement'] },
     { path: '/payout', label: '醫生月結', icon: Receipt, roles: ['OWNER'], perm: 'provider_payout' },
+    { path: '/payout/daily', label: '每日大數核對', icon: CalendarDays, roles: ['KIOSK'] }, // ★ cwm-dailyv2-20261007 ③：KIOSK 專用入口（無 perm — KIOSK bar filter 特判 roles；OWNER 繼續用 /payout 頁內 capsule，唔會見到呢項）
     // ★ cwm-chequeprint-20261005：支票打印 —— 老闆拍板只俾老闆用（同 API RBAC 一致，冇 perm 放行）
     { path: '/cheques', label: '支票打印', icon: Printer, roles: ['OWNER'] },
   ]
@@ -237,14 +238,16 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
     // ★ 2026-08-22：KIOSK 可 grant 權限（成本錄入／醫生月結／時間表／同步）
     // 重用 navItems + hasPermission（同一套判斷），唔好另寫清單
+    // ★ cwm-dailyv2-20261007 ③：+每日大數核對（無 perm 嘅 KIOSK 專用項 — 按 roles 顯示）
     const KIOSK_PATHS = ['/provider-schedule', '/provider-availability',
-      '/cost-entry', '/payout', '/apricot-sync', '/reconciliation']
-    const kioskLinks = navItems.filter(item =>
-      KIOSK_PATHS.includes(item.path) &&
-      (Array.isArray(item.perm) ? item.perm : [item.perm])
+      '/cost-entry', '/payout', '/apricot-sync', '/reconciliation', '/payout/daily']
+    const kioskLinks = navItems.filter(item => {
+      if (!KIOSK_PATHS.includes(item.path)) return false
+      if (!item.perm) return (item.roles as string[]).includes('KIOSK') // ★ ③：無 perm 嘅 KIOSK 專用項
+      return (Array.isArray(item.perm) ? item.perm : [item.perm])
         .filter(Boolean)
-        .some(p => hasPermission(user.role, p as any, grant, deny)),
-    )
+        .some(p => hasPermission(user.role, p as any, grant, deny))
+    })
 
     // 雙態 bar：QR 全螢幕 = fixed 透明浮層（唔破壞全黑畫面）；其餘 = sticky 自然佔位
     const barStyle: React.CSSProperties = onQr

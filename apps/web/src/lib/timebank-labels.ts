@@ -7,6 +7,7 @@ export const TIMEBANK_TYPE_LABEL: Record<string, string> = {
   LEAVE_CONVERT: '換假',
   LEAVE_SWAP_BACK: '換回',
   ROSTER_DIFF: '編更差額',
+  OT_BACKPAY: '補回OT', // ★ cwm-otbackpay-20261010
   REST_TO_ACCOUNT: '休息日轉帳戶',
 }
 

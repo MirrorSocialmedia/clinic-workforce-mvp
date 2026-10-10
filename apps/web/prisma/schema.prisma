@@ -2364,3 +2364,39 @@ model ProviderReportName {
 
   @@index([providerId])
 }
+
+/// ★ cwm-dailycheck-20261006：每日大數 —— 護士核對（每店每日一次；店舖帳號喺店內做）
+///   核對時記低金額（店舖營收 TOTAL）同逐醫生金額快照；之後數字變咗 → 畫面標「要重新核對」。
+///   重新核對 / 取消 = 舊紀錄標 revokedAt（唔刪，保留歷史）；同一店同一日只可以有一條有效（partial unique index）。
+model DailyRevenueCheck {
+  id              String    @id @default(cuid())
+  clinicId        String
+  date            String // YYYY-MM-DD（香港日）
+  nurseEmployeeId String
+  nurseName       String // 快照（員工改名唔影響紀錄）
+  amount          Decimal   @db.Decimal(12, 2) // 核對時店舖營收 TOTAL
+  byProviderJson  Json // 核對時逐醫生 { key, label, amount }[]
+  checkedBy       String // 操作嘅登入帳號（店舖帳號／老闆）
+  checkedAt       DateTime  @default(now())
+  revokedAt       DateTime?
+  revokedBy       String?
+  revokeReason    String?
+
+  @@index([clinicId, date])
+}
+
+/// ★ cwm-dailyv2-20261007：每日大數逐格核對（醫生 × 付款方式）
+model DailyRevenueCellCheck {
+  id          String   @id @default(cuid())
+  clinicId    String
+  date        String   // YYYY-MM-DD（香港日）—— 同 DailyRevenueCheck 一樣用字串
+  rowKey      String   // DailyRow.key（providerId 或 'ext:<apricotId>'）
+  colKey      String   // DailyMethod.key（同表頭同一個 colKey）
+  amount      Decimal  @db.Decimal(12, 2) // tick 嗰陣嘅金額快照
+  checkedBy   String   // 登入帳號 userId
+  checkedName String   // 快照：店舖帳號就寫揀咗嘅護士名，冇揀就寫帳號名
+  checkedAt   DateTime @default(now())
+
+  @@unique([clinicId, date, rowKey, colKey])
+  @@index([clinicId, date])
+}

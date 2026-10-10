@@ -13,6 +13,7 @@ import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { loadDailyReport, DailyReportError } from '@/lib/payout/daily-report'
+import { kioskDailyScope, stripKioskReport } from '@/lib/payout/daily-check'
 import { buildDailySheet } from '@/lib/payout/xlsx-report'
 
 export async function GET(req: NextRequest) {
@@ -21,12 +22,23 @@ export async function GET(req: NextRequest) {
   const { session, scope } = auth
 
   const sp = new URL(req.url).searchParams
+  // ★ cwm-dailyv2-20261007 ③：KIOSK 收窄（clinicId∈session.clinics、強制逐醫生、剷 B 區、xlsx 403）
+  //   —— role 判斷全部喺 lib（kioskDailyScope），route 唔寫死角色
+  const scoped = kioskDailyScope(session, {
+    clinicId: sp.get('clinicId') || null,
+    providerId: sp.get('providerId') || null,
+    format: sp.get('format'),
+  })
+  if (!scoped.ok) return jsonNoStore({ error: scoped.error }, { status: scoped.status })
+
   // ─── scope guard（同 clinic-report fail-closed）──────────────────
-  let scopeClinics: string[] | null = null
-  if (scope === 'my-clinics') scopeClinics = session.clinics ?? []
-  else if (scope === 'self') {
-    const home = await getOwnHomeClinicId(session.userId)
-    scopeClinics = home ? [home] : []
+  let scopeClinics: string[] | null = scoped.scopeClinics
+  if (scopeClinics === null) {
+    if (scope === 'my-clinics') scopeClinics = session.clinics ?? []
+    else if (scope === 'self') {
+      const home = await getOwnHomeClinicId(session.userId)
+      scopeClinics = home ? [home] : []
+    }
   }
 
   let report
@@ -34,14 +46,15 @@ export async function GET(req: NextRequest) {
     report = await loadDailyReport({
       from: sp.get('from') ?? '',
       to: sp.get('to'),
-      clinicId: sp.get('clinicId') || null,
-      providerId: sp.get('providerId') || null,
+      clinicId: scoped.clinicId,
+      providerId: scoped.providerId,
       scopeClinics,
     })
   } catch (e) {
     if (e instanceof DailyReportError) return jsonNoStore({ error: e.message }, { status: e.status })
     throw e
   }
+  if (scoped.kiosk) report = stripKioskReport(report)
 
   if (sp.get('format') !== 'xlsx') return jsonNoStore(report)
 
