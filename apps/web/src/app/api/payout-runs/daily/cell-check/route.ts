@@ -1,6 +1,7 @@
 /**
  * ★ cwm-dailyv2-20261007 ④：每日大數 —— 逐格「已對」tick（醫生 × 付款方式）
- * GET  ?clinicId=&date=  → { cells: { rowKey, colKey, amount, checkedName, checkedAt }[] }
+ * GET  ?clinicId=&from=&to= 或 ?clinicId=&date=（單日 = from=to=date）
+ *   → { cells: { date, rowKey, colKey, amount, checkedName, checkedAt }[] }（★ cwm-dailyv3-20261010 §5a：日期範圍，上限 62 日）
  * POST { clinicId, date, rowKey, colKey, checked: boolean, nurseEmployeeId? }
  *   checked=true  → 伺服器重新計該格金額（唔信前端），0/搵唔到 → 400「呢格冇數」，upsert
  *   checked=false → deleteMany（idempotent）
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { loadCellChecks, setCellCheck, kioskClinicAllowed, DailyCellCheckError } from '@/lib/payout/daily-cell-check'
+import { loadCellChecks, setCellCheck, validateCellRange, kioskClinicAllowed, DailyCellCheckError } from '@/lib/payout/daily-cell-check'
 import { DailyReportError } from '@/lib/payout/daily-report'
 
 function fail(e: unknown) {
@@ -26,11 +27,19 @@ export async function GET(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
   const sp = new URL(req.url).searchParams
   const clinicId = sp.get('clinicId') ?? ''
+  // ★ cwm-dailyv3-20261010 §5a：日期範圍（from/to）；date= 照舊支援（= from = to = date）
   const date = sp.get('date') ?? ''
-  if (!clinicId || !date) return jsonNoStore({ error: 'clinicId、date 必填' }, { status: 400 })
+  const fromQ = sp.get('from') ?? ''
+  const toQ = sp.get('to') ?? ''
+  const from = fromQ || (date ? date : '')
+  const to = toQ || from
+  if (!clinicId) return jsonNoStore({ error: 'clinicId 必填' }, { status: 400 })
+  if (!from) return jsonNoStore({ error: 'date 或 from 必填' }, { status: 400 })
+  const range = validateCellRange(from, to)
+  if (!range.ok) return jsonNoStore({ error: range.error }, { status: 400 })
   if (!kioskClinicAllowed(auth.session!, clinicId)) return jsonNoStore({ error: '店舖帳號只可以核對自己間店' }, { status: 403 })
   try {
-    const cells = await loadCellChecks(clinicId, date)
+    const cells = await loadCellChecks(clinicId, range.from, range.to)
     return jsonNoStore({ cells })
   } catch (e) { return fail(e) }
 }
