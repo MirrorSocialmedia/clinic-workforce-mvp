@@ -1775,7 +1775,10 @@ export async function calculateTimeBank(
   monthDate: Date,
   config: { negative_carry?: string },
   db: any,
-  depth = 0
+  depth = 0,
+  // ★ cwm-otbackpay-20261010：只俾「補回 OT」核數用 —— 強制當月每日 OT 門檻（例如 0 = 不限）。
+  //   正常計糧／帳本一律唔傳（行為不變）；唔影響上月結轉（getCarriedFrom 唔帶 override）。
+  overrides?: { otMinMinutes?: number },
 ): Promise<{
   otMinutes: number
   earlyInOtMinutes: number
@@ -1847,6 +1850,7 @@ export async function calculateTimeBank(
     otMinMinutes = 0
     otRoundMinutes = 0
   }
+  if (overrides?.otMinMinutes != null) otMinMinutes = overrides.otMinMinutes
 
   // Previous month carry — recursive backfill (pass depth to prevent infinite recursion)
   // ★ 傳同一份 config，否則過往月份的 OT 門檻／午休設定全部失效
@@ -2152,7 +2156,8 @@ export async function calculateTimeBank(
   try {
     // ★ 2026-08-08: EARLY_IN_OT 唔入 ADJUST_TYPES（物理隔離，唔好同錢線撞）
     // ★ ROSTER_DIFF：編更差額，計糧生成時寫入、退回時刪除
-    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF']
+    // ★ cwm-otbackpay-20261010：OT_BACKPAY = 補回之前月份少計嘅 OT（記喺補回嗰個月，唔改已出糧月份）
+    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF', 'OT_BACKPAY']
     const convertEntries = await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
     })
