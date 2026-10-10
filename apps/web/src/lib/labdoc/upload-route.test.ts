@@ -159,6 +159,11 @@ const tx: Any = {
       state.createdPages += args.data.length
       return { count: args.data.length }
     },
+    // P2 §7.11（D9）拆頁路徑：逐頁 create
+    create: async (_args: Any) => {
+      state.createdPages += 1
+      return { id: nextId('pg') }
+    },
   },
 }
 
@@ -237,6 +242,8 @@ function form(kind = 'INVOICE', key = 'key-1', files: [Buffer, string][] = [[PDF
   const f = new FormData()
   f.append('kind', kind)
   f.append('idempotencyKey', key)
+  // ★ cwm-labdoc P2 §7.11（D9）：P2 起 invoice 預設拆頁（每頁一張）— P1 測試全部明確用「全部一張」
+  f.append('splitPdfPages', 'false')
   for (const [buf, name] of files) f.append('files', new File([new Uint8Array(buf)], name, { type: 'application/pdf' }))
   return f
 }
@@ -460,5 +467,67 @@ describe('上傳 API — batch 內重複', () => {
     assert.equal(res.status, 409)
     assert.match((await res.json()).error, /batch/)
     assert.equal(state.createdDocs.length, 0)
+  })
+})
+
+// ★ cwm-labdoc P2 §7.11（D9）：invoice 預設拆頁（每頁一張單據）；splitPdfPages=false = P1 行為；STATEMENT 永遠一張
+describe('P2 §7.11（D9）：拆頁上傳', () => {
+  const owner = token('u-owner-0000000000000000000', 'OWNER')
+
+  it('INVOICE 預設（唔傳 splitPdfPages）→ 2 頁 fixture = 2 張單據（各 1 頁）、共用同一 file', async () => {
+    const f = new FormData()
+    f.append('kind', 'INVOICE')
+    f.append('idempotencyKey', 'k-split-default')
+    f.append('files', new File([new Uint8Array(PDF_BUF)], 'a.pdf', { type: 'application/pdf' }))
+    const res = await POST(makeReq(owner, f) as any)
+    assert.equal(res.status, 201)
+    const body = await res.json()
+    assert.equal(body.documents.length, 2, '預設拆頁：每頁一張')
+    assert.equal(state.createdDocs.length, 2)
+    assert.equal(state.createdFiles.length, 1, '同一個 file 共用')
+    assert.equal(state.createdPages, 2)
+  })
+
+  it('INVOICE splitPdfPages=false → 1 張單據 2 頁（P1 行為）', async () => {
+    const res = await POST(makeReq(owner, form('INVOICE', 'k-split-off')) as any)
+    assert.equal(res.status, 201)
+    const body = await res.json()
+    assert.equal(body.documents.length, 1)
+    assert.equal(state.createdDocs.length, 1)
+    assert.equal(state.createdPages, 2)
+  })
+
+  it('STATEMENT 永遠 1 張（就算 splitPdfPages=true）', async () => {
+    const f = new FormData()
+    f.append('kind', 'STATEMENT')
+    f.append('idempotencyKey', 'k-stmt-split')
+    f.append('statementMonth', '2026-09')
+    f.append('splitPdfPages', 'true')
+    f.append('files', new File([new Uint8Array(PDF_BUF)], 'a.pdf', { type: 'application/pdf' }))
+    const res = await POST(makeReq(owner, f) as any)
+    assert.equal(res.status, 201)
+    const body = await res.json()
+    assert.equal(body.documents.length, 1, 'STATEMENT 唔拆')
+    assert.equal(state.createdPages, 2)
+    assert.equal(state.createdDocs[0].statementMonth, '2026-09')
+  })
+
+  it('T8 重複偵測同拆頁兼容：拆頁上傳後再上同一 PDF → 409 duplicateOf（指第一張拆出單據）', async () => {
+    const f1 = new FormData()
+    f1.append('kind', 'INVOICE')
+    f1.append('idempotencyKey', 'k-split-dup-1')
+    f1.append('files', new File([new Uint8Array(PDF_BUF)], 'a.pdf', { type: 'application/pdf' }))
+    const r1 = await POST(makeReq(owner, f1) as any)
+    assert.equal(r1.status, 201)
+    const firstDocId = (await r1.json()).documents[0].id
+
+    const f2 = new FormData()
+    f2.append('kind', 'INVOICE')
+    f2.append('idempotencyKey', 'k-split-dup-2')
+    f2.append('files', new File([new Uint8Array(PDF_BUF)], 'a.pdf', { type: 'application/pdf' }))
+    const r2 = await POST(makeReq(owner, f2) as any)
+    assert.equal(r2.status, 409)
+    assert.equal((await r2.json()).duplicateOf, firstDocId)
+    assert.equal(state.createdDocs.length, 2, '重複唔可以多單據')
   })
 })

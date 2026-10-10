@@ -3,10 +3,10 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { jsonNoStore } from '@/lib/api-response'
-import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, todayHK } from '@/lib/hk-date'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
+import { normPatientCode } from '@/lib/cost-entry/patient-code'
 import { CostGuardError, parseMoney, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
-import { todayHK } from '@/lib/hk-date'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -180,6 +180,32 @@ export async function GET(req: NextRequest) {
     : []
   const providerById = new Map(providerRows.map(p => [p.id, p]))
 
+  // ★ cwm-labdoc P2 §13：labDocs — 每筆成本已連邊幾張 Lab 單（MATCHED 行）
+  const caseIds = cases.map(c => c.id)
+  const matchedLines = caseIds.length > 0
+    ? await prisma.labDocumentLine.findMany({
+        where: { costCaseId: { in: caseIds }, status: 'MATCHED' },
+        select: { costCaseId: true, documentId: true },
+      })
+    : []
+  const linkedDocIds = [...new Set(matchedLines.map(l => l.documentId))]
+  const linkedDocRows = linkedDocIds.length > 0
+    ? await prisma.labDocument.findMany({
+        where: { id: { in: linkedDocIds } },
+        select: { id: true, docNo: true, kind: true, status: true },
+      })
+    : []
+  const linkedDocById = new Map(linkedDocRows.map(d => [d.id, d]))
+  const labDocsByCase = new Map<string, Array<{ id: string; docNo: string | null; kind: string; status: string }>>()
+  for (const l of matchedLines) {
+    if (!l.costCaseId) continue
+    const d = linkedDocById.get(l.documentId)
+    if (!d) continue
+    const arr = labDocsByCase.get(l.costCaseId) ?? []
+    if (!arr.some(x => x.id === d.id)) arr.push({ id: d.id, docNo: d.docNo, kind: d.kind, status: d.status })
+    labDocsByCase.set(l.costCaseId, arr)
+  }
+
   // Serialize Decimal fields for JSON
   const serializedCases = cases.map(c => ({
     ...c,
@@ -188,6 +214,9 @@ export async function GET(req: NextRequest) {
     finalCost: c.finalCost ? Number(c.finalCost) : null,
     // ★ C1/D1
     provider: providerById.get(c.providerId) ?? null,
+    // ★ cwm-labdoc P2 §13
+    labInvoiceLinked: c.labInvoiceLinked ?? false,
+    labDocs: labDocsByCase.get(c.id) ?? [],
     materials: c.materials.map(m => ({
       ...m,
       materialName: materialRowById.get(m.materialItemId)?.name ?? null,
@@ -258,6 +287,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'IMPLANT 請用 POST /api/cost-cases/implant' }, { status: 400 })
   }
 
+  // ★ cwm-labdoc P2 §13：clinic FK（順帶攞 shortName 算 patientCodeNorm）
+  const clinicRow = await prisma.clinic.findUnique({ where: { id: clinicId }, select: { id: true, shortName: true } })
+  if (!clinicRow) {
+    return NextResponse.json({ error: '診所唔存在' }, { status: 400 })
+  }
+  const patientCodeNorm = normPatientCode(patientCode, clinicRow.shortName)
+
   // ★ 2026-09-02 cwm-costnote：備註最多 200 字（前端 maxLength 繞得過，後端兜底）
   if (note != null && String(note).length > 200) {
     return NextResponse.json({ error: '備註最多 200 字' }, { status: 400 })
@@ -282,7 +318,10 @@ export async function POST(req: NextRequest) {
   //      呢個 IMPLANT branch 係 defensive（MD A3 要求三 route 導出邏輯統一）。
   const { receivedAt: effectiveReceivedAt, periodMonth } = deriveCostPeriod(category, orderedAt, receivedAt)
 
-  // ★ cwm-costguard-20261006：該醫生 × 診所 × 月已鎖定 → 擋（之前會靜靜入咗已鎖月份，唔計入任何月結）
+  // ★ cwm-labdoc P2 §13（F-26）＋ cwm-costguard-20261006：目標月（醫生×診所×月）已 LOCKED → 409 零寫入
+  //   （P2 F-26 同 main 守衛係同一個檢查 — lockedRunFor = findFirst(醫生×診所×月, LOCKED)，
+  //    query 同 P2 原內聯版一致；periodMonth null = 未到貨唔屬任何月結 → lockedRunFor 自動 skip；
+  //    口徑同 PUT 守衛③（cwm-costlock-scope-20260913）；競態窗口由下方 writeInPeriod 期間鎖兜底）
   if (await lockedRunFor(prisma, providerId, clinicId, periodMonth)) {
     return NextResponse.json({ error: lockedMonthMessage(periodMonth!) }, { status: 409 })
   }
@@ -320,6 +359,7 @@ export async function POST(req: NextRequest) {
       clinicId,
       category,
       patientCode,
+      patientCodeNorm,
       patientName: patientName || null,
       orderedAt: new Date(orderedAt),
       itemType: itemType || null,

@@ -467,6 +467,49 @@ export const CONFIG = {
     'POST /api/lab-docs/upload': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs/:id': ['OWNER', 'MANAGER'],
+    //   P2：再讀（§11；EMPLOYEE 經 RBAC_PERM_OVERRIDES 嘅 lab_invoice 放行）
+    'POST /api/lab-docs/:id/retry': ['OWNER', 'MANAGER'],
+    //   P2：確認頭部（§7.1）＋候選成本（§6.5/§7.3）
+    'PUT /api/lab-docs/:id/header': ['OWNER', 'MANAGER'],
+    'PUT /api/lab-docs/:id/manual': ['OWNER', 'MANAGER'], // §11 人手輸入（同 header handler）
+    'POST /api/lab-docs/:id/new-case': ['OWNER', 'MANAGER'],
+    'DELETE /api/lab-docs/:id': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/merge': ['OWNER', 'MANAGER'],
+    //   P2 CHUNK 5：待處理 7 類別（§9）— 列表（lab_invoice 或 lab_statement 睇到；類別級再過濾）
+    'GET /api/lab-docs/pending': ['OWNER', 'MANAGER'],
+    //   P2 CHUNK 5：待處理 resolve（§11 per-doc；lab_statement）
+    'POST /api/lab-docs/:id/review-amount': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/payee': ['OWNER', 'MANAGER'],
+    //   P3 §8：月結單對數（全部 lab_statement）— runtime key（cuid → :id）＋
+    //   check-rbac-matrix.sh 字面 dead key（greedy \[.*\] 收埋多參數 — 跟 :id/save 先例）
+    'POST /api/lab-docs/:id/supersede': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/assign': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/reconcile': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/confirm': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/lines/:id/close-followup': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/assign': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/reconcile': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/confirm': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/resolve': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/close-followup': ['OWNER', 'MANAGER'],
+    //   P4：Lab 設定＋收尾（§12.6/§10.4 — 全部 lab_statement；EMPLOYEE 經 RBAC_PERM_OVERRIDES 放行）
+    'GET /api/lab-profiles/:id': ['OWNER', 'MANAGER'],
+    'PUT /api/lab-profiles/:id': ['OWNER', 'MANAGER'],
+    'GET /api/lab-aliases': ['OWNER', 'MANAGER'],
+    'DELETE /api/lab-aliases/:id': ['OWNER', 'MANAGER'],
+    'GET /api/lab-docs/stats': ['OWNER', 'MANAGER'],
+    //   候選／儲存 route：normalizeRoute 將 /groups/<1–2 位數字> 正規化做 /groups/:g（分組 0–99）
+    //   （舊做法逐個登記 0–10 → 第 11 組起 403；2026-10-10 模擬發現 12 組 invoice 對唔到）
+    'GET /api/lab-docs/:id/groups/:g/candidates': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/groups/:g/save': ['OWNER', 'MANAGER'],
+    //   註：check-rbac-matrix.sh 嘅 grep 正規化（greedy \[.*\]）將 [id]/groups/[g] 收埋 → 要求字面 key
+    //   "/api/lab-docs/:id/save"（runtime normalizeRoute 唔會產出 — dead key，只係過守門用，跟 candidates 先例）
+    'POST /api/lab-docs/:id/save': ['OWNER', 'MANAGER'],
+    //   註：check-rbac-matrix.sh 嘅 grep 正規化（greedy \[.*\]）將 [id]/groups/[g] 收埋 → 要求字面 key
+    //   "/api/lab-docs/:id/candidates"（runtime normalizeRoute 唔會產出 — dead key，只係過守門用，
+    //   跟 P1 files/:id 先例）；真正 runtime key = 上面 groups/:g
+    'GET /api/lab-docs/:id/candidates': ['OWNER', 'MANAGER'],
     //   頁圖 route：normalizeRoute 唔會將 1–2 位頁碼變 :id → 逐頁登記（1–30 = PDF_MAX_PAGES）
     'GET /api/lab-docs/files/:id/pages/1': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs/files/:id/pages/2': ['OWNER', 'MANAGER'],
@@ -655,7 +698,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/cost-cases': ['cost_entry'],
   // ★ 2026-08-22：成本錄入要揀 Lab／材料／折扣 —— GET 只讀
   //   （寫入端 = provider_payout override + OWNER role 表，一齊都唔放寬）
-  'GET /api/labs': ['cost_entry'],
+  'GET /api/labs': ['cost_entry', 'lab_statement'], // ★ cwm-labdoc P4：設定頁（§12.6）要 Lab 清單（lab 名唔係敏感數據；labdoc B16 全集團口徑）
   'GET /api/lab-discounts': ['cost_entry'],
   'GET /api/material-items': ['cost_entry'],
   // ★ 2026-08-22：成本錄入「負責同事」picker（淨返 id + user.name）
@@ -743,6 +786,41 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/lab-docs/upload': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/:id': ['lab_invoice', 'lab_statement'],
+  // ★ cwm-labdoc P2：再讀 = lab_invoice（§11）
+  'POST /api/lab-docs/:id/retry': ['lab_invoice'],
+  // ★ cwm-labdoc P2 CHUNK 5：待處理（§9）— 列表 = lab_invoice 或 lab_statement；
+  //   resolve = lab_statement（AMOUNT_REVIEW／NEW_PAYEE）
+  'GET /api/lab-docs/pending': ['lab_invoice', 'lab_statement'],
+  //   P2 CHUNK 5：待處理 resolve（§11 per-doc = lab_statement）
+  'POST /api/lab-docs/:id/review-amount': ['lab_statement'],
+  'POST /api/lab-docs/:id/payee': ['lab_statement'],
+  // ★ cwm-labdoc P3 §8：月結單對數 = lab_statement（§10.2：識別、處理差異、確認、取代舊版）
+  'POST /api/lab-docs/:id/supersede': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/assign': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/reconcile': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/confirm': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/lines/:id/close-followup': ['lab_statement'],
+  'POST /api/lab-docs/:id/assign': ['lab_statement'],
+  'POST /api/lab-docs/:id/reconcile': ['lab_statement'],
+  'POST /api/lab-docs/:id/confirm': ['lab_statement'],
+  'POST /api/lab-docs/:id/resolve': ['lab_statement'],
+  'POST /api/lab-docs/:id/close-followup': ['lab_statement'],
+  // ★ cwm-labdoc P4：Lab 設定＋收尾（§12.6/§10.4/§11）
+  'GET /api/lab-profiles/:id': ['lab_statement'],
+  'PUT /api/lab-profiles/:id': ['lab_statement'],
+  'GET /api/lab-aliases': ['lab_statement'],
+  'DELETE /api/lab-aliases/:id': ['lab_statement'],
+  'GET /api/lab-docs/stats': ['lab_statement'],
+  // ★ cwm-labdoc P2 §7：確認／對成本 = lab_invoice
+  'PUT /api/lab-docs/:id/header': ['lab_invoice'],
+  'PUT /api/lab-docs/:id/manual': ['lab_invoice'],
+  'POST /api/lab-docs/:id/new-case': ['lab_invoice'],
+  'DELETE /api/lab-docs/:id': ['lab_invoice'],
+  'POST /api/lab-docs/merge': ['lab_invoice'],
+  // 候選／儲存 route：normalizeRoute 將 /groups/<n> 正規化做 /groups/:g
+  'GET /api/lab-docs/:id/groups/:g/candidates': ['lab_invoice'],
+  'POST /api/lab-docs/:id/groups/:g/save': ['lab_invoice'],
   'GET /api/lab-docs/files/:id/pages/1': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/files/:id/pages/2': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs/files/:id/pages/3': ['lab_invoice', 'lab_statement'],

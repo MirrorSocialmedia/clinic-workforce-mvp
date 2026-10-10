@@ -154,6 +154,23 @@ crontab -l
 - **restore drill**：`scripts/restore-drill.sh` 已內含 labdoc 段（隨機抽 5 個 LabFile → 由備份源拉返 → 解密 → 比 sha256）。本地 drill：`LAB_DOC_BACKUP_SOURCE=<本地備份目錄> LAB_DOC_PSQL='psql -h 127.0.0.1 -p 15532 -U cw_dev -d cwm_labdoc' LAB_DOC_ENC_KEY=... bash scripts/restore-drill.sh`（需要 host node ≥18）。
 - **容量**：每日約 30 張 × 0.6 MB ≈ 18 MB/日 ≈ 6.5 GB/年 ≈ 45 GB/7 年——`README-CRONTAB.md` 嘅 disk-alert（08:00，>85%）照用；`/api/lab-docs/stats`（P4）會回總容量。
 
+### Lab 單據 deploy 補充（cwm-labdoc P4：設定頁＋stats）
+
+- **migration**：P4 **冇新 migration**（LabProfile／LabAlias／LabCustomerNo 等表 P1–P3 已建）——正常 `docker compose exec web npx prisma migrate deploy`（idempotent，無事就做住）。
+- **env 清單**（`.env.production`；以下只係名＋口徑，**唔含真值**）：
+  | Env | 用途 | 口徑 |
+  |---|---|---|
+  | `LAB_DOC_DIR` | 加密檔目錄 | 生產 = `/data/lab-docs`（volume `lab_docs`） |
+  | `LAB_DOC_ENC_KEY` | 原檔 AES-256-GCM 主 key | `openssl rand -base64 32`；🔴 離線另存一份 |
+  | `LAB_DOC_ENC_KID`／`LAB_DOC_ENC_KEYS_OLD` | 現行/舊 kid | 預設 `k1`；換 key 流程同上段 |
+  | `LAB_DOC_VOLUME_PATH` | backup.sh rclone 用 | host 上 volume 實際路徑（`docker volume inspect` 為準） |
+  | `WA_INBOX_LABDOC_URL` | 月結單/到貨單 AI 讀單端點（P2+） | 生產 = `https://<APP_HOST>/api/internal/labdoc-extract`（wa-inbox 服務）；dev = 隔離 wa-inbox 實例 |
+  | `INTERNAL_LLM_SECRET` | wa-inbox 同 app 之間信封 key | base64 ≥32 bytes；**兩邊同一條 key**（`openssl rand -base64 48`） |
+  | `INTERNAL_LLM_KID` | 信封 kid | 預設 `k1` |
+  | `APRICOT_CRON_KEY` | purge/sweep cron 守門（x-cron-key） | 同 clinical-index 同一條（container env，唔硬編碼入 crontab） |
+- **cron 依賴**：purge 每晚 **03:30**（P4 起對齊 spec §4.4；P1 文檔曾寫 03:45 屬偏差已修）／讀單 heartbeat sweep 每 5 分鐘／disk-alert 08:00（>85%）——全部見 `scripts/README-CRONTAB.md` §6。
+- **設定頁＋stats（P4 新 UI/API）**：冇新 env、冇新 volume；deploy 後開 `lab_statement` session 驗證：`/lab-docs/settings` 出卡＋容量統計、`GET /api/lab-docs/stats` 200。
+
 ## 日誌管理
 
 ```bash

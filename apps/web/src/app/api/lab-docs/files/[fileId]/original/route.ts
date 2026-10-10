@@ -49,9 +49,10 @@ export async function GET(
   }
 
   // 已到期 → 410（§4.3）
-  if (file.purgedAt) {
+  // 過咗 purgeAt（月度 job 未跑）都當已到期
+  if (file.purgedAt || (file.purgeAt && file.purgeAt.getTime() <= Date.now())) {
     return NextResponse.json(
-      { error: `原檔已按保留政策（7 年）於 ${hkDate(file.purgedAt)} 刪除` },
+      { error: `原檔已按保留政策（7 年）於 ${hkDate(file.purgedAt ?? file.purgeAt)} 刪除` },
       { status: 410 },
     )
   }

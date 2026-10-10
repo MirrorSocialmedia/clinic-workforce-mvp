@@ -2041,9 +2041,9 @@ model LabDocument {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  pages LabDocumentPage[]
-  lines LabDocumentLine[]
-  // ★ P3 先加：sections LabStatementSection[]（20261012000000_labdoc_statement）
+  pages    LabDocumentPage[]
+  lines    LabDocumentLine[]
+  sections LabStatementSection[]
   // raw SQL（migration 20261005000000_labdoc_core 管住 — Prisma 唔支援 partial index WHERE 子句）：
   // CREATE UNIQUE INDEX "LabDocument_invoice_docNo_active" ON "LabDocument"("labId","docNo")
   //   WHERE "kind"='INVOICE' AND "docNoKind"='INVOICE_NO' AND "docNo" IS NOT NULL
@@ -2084,6 +2084,69 @@ model LabDocumentLine {
   @@unique([documentId, groupIndex, lineIndex])
   @@index([costCaseId])
   @@index([patientCode])
+}
+
+/// 月結單分段（診所＋醫生）
+model LabStatementSection {
+  id            String             @id @default(cuid())
+  documentId    String
+  document      LabDocument        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sectionIndex  Int
+  pageFrom      Int?
+  pageTo        Int?
+  clinicRaw     String?
+  doctorRaw     String?
+  customerNoRaw String?
+  clinicId      String?
+  providerId    String?
+  clinicBasis   String?
+  providerBasis String?
+  statedTotal   Decimal?           @db.Decimal(12, 2) // 呢段喺月結單上嘅總數
+  statedCurrent Decimal?           @db.Decimal(12, 2) // OUTSTANDING：本月（Current Mth）
+  systemTotal   Decimal?           @db.Decimal(12, 2) // 最近一次配對計出嚟
+  status        String             @default("PENDING") // PENDING | NEEDS_ASSIGN | DIFF | OK | CONFIRMED
+  confirmedBy   String?
+  confirmedAt   DateTime?
+  note          String? // ≤200
+  resultJson    Json? // §8.2.5：最近一次 reconcile 結果快照（virtualLines／notOnStatement／counts／runAt）
+  lines         LabStatementLine[]
+
+  @@unique([documentId, sectionIndex])
+  @@index([clinicId, providerId])
+}
+
+model LabStatementLine {
+  id                String              @id @default(cuid())
+  sectionId         String
+  section           LabStatementSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  lineIndex         Int
+  lineType          String              @default("INVOICE") // INVOICE | CREDIT | PAYMENT | CHARGE | BF
+  docNoRaw          String?
+  docNo             String?
+  date              DateTime?           @db.Date
+  patientRaw        String? // B8 到期清走
+  patientCode       String?
+  labCaseRef        String?
+  description       String?
+  toothRaw          String?
+  qty               Decimal?            @db.Decimal(10, 2)
+  unitPrice         Decimal?            @db.Decimal(12, 2)
+  amount            Decimal             @db.Decimal(12, 2)
+  agingBucket       String? // CURRENT | D31_90 | D91_365 | OVER_1Y（OUTSTANDING）
+  matchedDocumentId String?
+  matchedLineId     String? // DETAIL：對到嘅 LabDocumentLine
+  matchBasis        String? // DOC_NO | FALLBACK | MANUAL
+  result            String              @default("PENDING")
+  // PENDING | MATCHED | QTY_DIFF | PRICE_DIFF | AMOUNT_DIFF | MISSING_IN_SYSTEM | PREVIOUSLY_MATCHED | NEEDS_MANUAL | NOT_APPLICABLE
+  resolution        String? // INVOICE_WINS | STATEMENT_WINS | MANUAL_PAIRED | NOT_OURS
+  resolutionNote    String?
+  resolvedBy        String?
+  resolvedAt        DateTime?
+  followUpClosedAt  DateTime? // INVOICE_WINS 跟進完成
+  followUpClosedBy  String?
+
+  @@unique([sectionId, lineIndex])
+  @@index([matchedDocumentId])
 }
 
 /// 每間 Lab 嘅單據設定（§2.3 seed）

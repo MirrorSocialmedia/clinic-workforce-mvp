@@ -5,6 +5,8 @@ import { lockPeriod } from '@/lib/payout/period-lock'
 import { jsonNoStore } from '@/lib/api-response'
 import { resolveMaterials } from '@/lib/cost-entry/resolve-materials'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
+import { normPatientCode } from '@/lib/cost-entry/patient-code'
+import { recomputeDocStatus, unmatchAllForCost } from '@/lib/labdoc/cost-actions'
 import { CostGuardError, parseMoney, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
 import { todayHK } from '@/lib/hk-date'
 
@@ -196,6 +198,8 @@ export async function PUT(
     })
     discountPctNum = d ? Number(d.discountPct) : null
   }
+  // ★ cwm-labdoc P2 §13（B4）：已連 Lab invoice → 唔套月度折扣（discountPct 跟 null）
+  if (existing.labInvoiceLinked) discountPctNum = null
 
   // ★ cwm-payoutcost-20260908 C2：材料明細可改（IMPLANT 專用）
   //   effectiveCategory 要用【改完之後】嗰個
@@ -262,10 +266,14 @@ export async function PUT(
       : (existing.baseCost ? Number(existing.baseCost) : null)
     // ★ 2026-08-27：periodMonth null（未到貨）→ 冇月度折扣，finalCost = baseCost；
     //   個案仲喺月份入面先 fallback 去 existing 快照（防表行缺漏靜靜變零折扣）
+    // ★ cwm-labdoc P2 §13（B4）：已連 Lab invoice → 唔套折扣（null）
+    // ★ cwm-costguard-20261006：到貨月變咗（monthChanged）→ 折扣要跟新月份
     const dp = effectivePeriodMonth
-      ? ((labId !== undefined || monthChanged)
-        ? discountPctNum
-        : (existing.discountPct ? Number(existing.discountPct) : discountPctNum))
+      ? (existing.labInvoiceLinked
+        ? null
+        : ((labId !== undefined || monthChanged)
+          ? discountPctNum
+          : (existing.discountPct ? Number(existing.discountPct) : discountPctNum)))
       : null
 
     if (bc != null && dp != null) {
@@ -304,6 +312,9 @@ export async function PUT(
   //   PUT 唔傳 labId = discountPct 欄保持原值（唔郁）
   // ★ P2-3：植牙材料有改時上面 `data.discountPct = null` 已經寫咗 null，唔准俾呢行蓋返（坑①後蓋前；UI 觸發唔到，直接打 API 送 materials+labId 就中）
   if (!resolvedMaterials && (labId !== undefined || monthChanged) && discountPctNum !== (existing.discountPct ? Number(existing.discountPct) : null)) data.discountPct = discountPctNum
+  // ★ cwm-labdoc P2 §13（B4）：已連 Lab invoice → discountPct 欄明確寫 null（清舊快照；
+  //   放喺上面 labId 同步之後確保唔會俾蓋返）
+  if (existing.labInvoiceLinked) data.discountPct = null
   // ★ cwm-costguard-20261006：舊值 null 時之前 `null !== undefined` 永遠當有改 → 統一做 number | null 先比
   const oldFinalCost = existing.finalCost != null ? existing.finalCost.toNumber() : null
   if (finalCost !== oldFinalCost) data.finalCost = finalCost != null ? finalCost : null
@@ -347,12 +358,32 @@ export async function PUT(
     && existing.category === 'IMPLANT' && category !== 'IMPLANT'
     && existing.materials.length > 0
 
+  // ★ cwm-labdoc P2 §13：patientCode／clinicId 改 → 重算 patientCodeNorm（用（新）診所 shortName）
+  const patientCodeChanged = patientCode !== undefined && patientCode !== existing.patientCode
+  const clinicChanged = clinicId !== undefined && clinicId !== existing.clinicId
+  if (patientCodeChanged || clinicChanged) {
+    const targetClinicId = clinicChanged ? clinicId : existing.clinicId
+    const clinicRow = targetClinicId
+      ? await prisma.clinic.findUnique({ where: { id: targetClinicId }, select: { id: true, shortName: true } })
+      : null
+    if (clinicChanged && !clinicRow) {
+      return jsonNoStore({ error: '診所唔存在' }, { status: 400 })
+    }
+    data.patientCodeNorm = normPatientCode(
+      patientCodeChanged ? (patientCode as string) : existing.patientCode,
+      clinicRow?.shortName ?? null,
+    )
+  }
+  // ★ cwm-labdoc P2 §13（B4 方向）：baseCost／材料寫入 → labInvoiceLinked = true
+  if (baseCost !== undefined || resolvedMaterials) data.labInvoiceLinked = true
+
   // ★ C2：材料要「刪晒再建」—— CostCaseMaterial 冇業務主鍵，diff 更新冇著數，
   //   而且 onDelete: Cascade 只綁 costCase，刪行要自己做 → 一齊成功一齊失敗
   // ★ P2-5：離 IMPLANT case 都入同一個 transaction（原子：唔會「category 改咗但材料行未清」）
-  // ★ cwm-payaudit-20261006：上面「未鎖定」係先讀後寫 —— 兩步之間月結鎖咗，舊寫法照改已鎖定嘅成本。
+  // ★ cwm-payaudit-20261006（main）：上面「未鎖定」係先讀後寫 —— 兩步之間月結鎖咗，舊寫法照改已鎖定嘅成本。
   //   而家喺 transaction 入面 SELECT … FOR UPDATE 鎖住呢行再驗一次（鎖月結嘅 updateMany 會等我哋），
-  //   會改到錢嘅再查一次目標月份有冇鎖。
+  //   會改到錢嘅再攞同一把 advisory lock（lockPeriod）＋查一次目標月份有冇鎖。
+  // ★ cwm-labdoc P2 §13：寫入用條件寫 lockedByRunId = null（0 行 = 剛好被月結鎖咗 → 409）＋ audit 入 transaction
   let updated: any
   try {
     updated = await prisma.$transaction(async tx => {
@@ -366,89 +397,83 @@ export async function PUT(
           throw new CostGuardError(409, lockedMonthMessage(targetMonth!))
         }
       }
+      // P2-5：離 IMPLANT 只刪唔建；材料有改：刪晒再建。
+      // ⚠ 只喺【材料有實質改動／離 IMPLANT】先動材料行 — 其他欄位嘅 PUT 唔可以刪材料（gen3 WIP bug：無條件 deleteMany 會食 IMPLANT 材料）
       if (resolvedMaterials || isImplantToOther) {
-        // P2-5：離 IMPLANT 只刪唔建；材料有改：刪晒再建
         await tx.costCaseMaterial.deleteMany({ where: { costCaseId: id } })
         if (resolvedMaterials) {
           await tx.costCaseMaterial.createMany({
             data: resolvedMaterials!.materialData.map(m => ({ ...m, costCaseId: id })),
           })
         }
-        return await tx.costCase.update({
-          where: { id },
-          data,
-          include: { lab: { select: { id: true, name: true } }, materials: true },
-        })
       }
-      return await tx.costCase.update({
+      const r = await tx.costCase.updateMany({ where: { id, lockedByRunId: null }, data })
+      if (r.count === 0) throw new LockedNowError()
+      const upd = await tx.costCase.findUnique({
         where: { id },
-        data,
-        include: {
-          lab: { select: { id: true, name: true } },
-        },
+        include: { lab: { select: { id: true, name: true } }, materials: true },
       })
-    })
-  } catch (e) {
+      if (!upd) throw new LockedNowError()
+      // ★ cwm-labdoc P2 §13：audit 入 transaction（同寫入同 atom）
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'COST_CASE_UPDATE',
+          entity: 'CostCase',
+          entityId: id,
+        clinicId: existing.clinicId,
+        beforeJson: JSON.stringify({
+          baseCost: existing.baseCost ? Number(existing.baseCost) : null,
+          finalCost: existing.finalCost ? Number(existing.finalCost) : null,
+          status: existing.status,
+          providerId: existing.providerId,
+          clinicId: existing.clinicId,
+          category: existing.category,
+          redoAt: existing.redoAt,
+          redoReason: existing.redoReason,
+          note: existing.note,
+          materials: existing.materials.map(m => ({
+            materialItemId: m.materialItemId, qty: m.qty,
+            unitPriceUsed: Number(m.unitPriceUsed), subtotal: Number(m.subtotal),
+          })),
+        }),
+        afterJson: JSON.stringify({
+          baseCost: upd.baseCost ? Number(upd.baseCost) : null,
+          finalCost: upd.finalCost ? Number(upd.finalCost) : null,
+          status: upd.status,
+          providerId: upd.providerId,
+          clinicId: upd.clinicId,
+          category: upd.category,
+          redoAt: upd.redoAt,
+          redoReason: upd.redoReason,
+          note: upd.note,
+          materials: (resolvedMaterials
+            ? resolvedMaterials.materialData
+            : (upd.materials ?? existing.materials)
+          ).map(m => ({
+            materialItemId: m.materialItemId, qty: m.qty,
+            unitPriceUsed: Number(m.unitPriceUsed), subtotal: Number(m.subtotal),
+          })),
+        }),
+        notes: `更新成本記錄: ${existing.category} ${existing.patientCode}`
+          + (resolvedMaterials
+              ? `｜材料 ${existing.materials.length} → ${resolvedMaterials.materialData.length} 項，成本 $${existing.baseCost ?? 0} → $${resolvedMaterials.totalBaseCost}`
+                + (resolvedMaterials.auditRecords.length > 0 ? ` [${resolvedMaterials.auditRecords.length} 項單價異常]` : '')
+              : isImplantToOther
+                ? `｜材料 ${existing.materials.length} → 0 項（category 轉出 IMPLANT，舊行一併清走）`
+                : ''),
+      },
+    } as any)
+    return upd
+  })
+  } catch (e: any) {
     if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+    if (e instanceof LockedNowError) {
+      return jsonNoStore({ error: '成本已出月結，唔可以改' }, { status: 409 })
+    }
     throw e
   }
 
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      actorId: session.userId,
-      action: 'COST_CASE_UPDATE',
-      entity: 'CostCase',
-      entityId: id,
-      clinicId: existing.clinicId,
-      beforeJson: JSON.stringify({
-        baseCost: existing.baseCost ? Number(existing.baseCost) : null,
-        finalCost: existing.finalCost ? Number(existing.finalCost) : null,
-        status: existing.status,
-        // ★ 2026-08-25：拆帳歸屬 / 成本分類欄入 audit（拍板③）
-        providerId: existing.providerId,
-        clinicId: existing.clinicId,
-        category: existing.category,
-        // ★ 2026-08-25：重做欄（拍板①）
-        redoAt: existing.redoAt,
-        redoReason: existing.redoReason,
-        // ★ 2026-09-02 cwm-costnote：備註
-        note: existing.note,
-        // ★ C2：材料前後對比
-        materials: existing.materials.map(m => ({
-          materialItemId: m.materialItemId, qty: m.qty,
-          unitPriceUsed: Number(m.unitPriceUsed), subtotal: Number(m.subtotal),
-        })),
-      }),
-      afterJson: JSON.stringify({
-        baseCost: updated.baseCost ? Number(updated.baseCost) : null,
-        finalCost: updated.finalCost ? Number(updated.finalCost) : null,
-        status: updated.status,
-        providerId: updated.providerId,
-        clinicId: updated.clinicId,
-        category: updated.category,
-        redoAt: updated.redoAt,
-        redoReason: updated.redoReason,
-        note: updated.note,
-        // ★ C2：材料有改用新數，冇改用 existing（updated.materials 只喺 transaction 路徑先有）
-        // ★ P2-5：離 IMPLANT case 入 tx → updated.materials = []（清完）；非 tx 路徑 undefined → 落回 existing
-        materials: (resolvedMaterials
-            ? resolvedMaterials.materialData
-            : ((updated as { materials?: typeof existing.materials }).materials ?? existing.materials)
-          ).map(m => ({
-          materialItemId: m.materialItemId, qty: m.qty,
-          unitPriceUsed: Number(m.unitPriceUsed), subtotal: Number(m.subtotal),
-        })),
-      }),
-      notes: `更新成本記錄: ${existing.category} ${existing.patientCode}`
-        + (resolvedMaterials
-            ? `｜材料 ${existing.materials.length} → ${resolvedMaterials.materialData.length} 項，成本 $${existing.baseCost ?? 0} → $${resolvedMaterials.totalBaseCost}`
-              + (resolvedMaterials.auditRecords.length > 0 ? ` [${resolvedMaterials.auditRecords.length} 項單價異常]` : '')
-            : isImplantToOther
-              ? `｜材料 ${existing.materials.length} → 0 項（category 轉出 IMPLANT，舊行一併清走）`
-              : ''),
-    },
-  } as any)
 
   // ★ cwm-payoutcost-20260908 C2 §7：改咗成本，但該月已經有月結單（未鎖定）
   //   → 出警告。唔擋 —— 鎖咗嘅單上面 lockedByRunId 已經 409，未鎖嘅重新生成就得。
@@ -514,33 +539,69 @@ export async function DELETE(
     throw e
   }
 
-  // ★ cwm-payaudit-20261006：條件寫入 —— 讀完之後先被鎖／已經被人作廢，唔再寫（唔重複 audit）
-  const res = await prisma.costCase.updateMany({
-    where: { id, lockedByRunId: null, status: { not: 'VOID' } },
-    data: { status: 'VOID' },
-  })
-  if (res.count === 0) {
-    return jsonNoStore({ error: '呢筆成本啱啱已經被鎖定或者作廢，請重新整理' }, { status: 409 })
+  // ★ cwm-labdoc P2 §7.9：同一 transaction 解除晒配對行（包括 void 單度嘅配對行），再 void
+  // ★ cwm-payaudit-20261006（main）：條件寫入 — 讀完之後先被鎖／已經被人作廢，唔再寫（唔重複 audit；
+  //   0 行 → throw → 成個 tx 回滾，連解除配對一併滾返，冇中間狀態）
+  let result: { updated: any; releasedLines: string[]; releasedDocs: string[] }
+  try {
+    result = await prisma.$transaction(async tx => {
+      // 單一來源：unmatchAllForCost（行 → UNMATCHED + audit LAB_DOC_LINE_UNMATCH（notes「作廢成本」））
+      const unmatch = await unmatchAllForCost(tx, {
+        costCaseId: id,
+        actorId: session.userId,
+        clinicId: existing.clinicId,
+        notes: '作廢成本',
+      })
+      const res = await tx.costCase.updateMany({
+        where: { id, lockedByRunId: null, status: { not: 'VOID' } },
+        data: { status: 'VOID' },
+      })
+      if (res.count === 0) throw new CostGuardError(409, '呢筆成本啱啱已經被鎖定或者作廢，請重新整理')
+
+      // 受影響文件狀態重算（reconcile 單一來源；audit 由 recomputeDocStatus 寫）
+      for (const docId of unmatch.docIds) {
+        await recomputeDocStatus(tx, { docId, actorId: session.userId })
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actorId: session.userId,
+          action: 'COST_CASE_VOID',
+          entity: 'CostCase',
+          entityId: id,
+          clinicId: existing.clinicId,
+          beforeJson: JSON.stringify({
+            status: existing.status,
+            baseCost: existing.baseCost ? Number(existing.baseCost) : null,
+            finalCost: existing.finalCost ? Number(existing.finalCost) : null,
+          }),
+          afterJson: JSON.stringify({ status: 'VOID' }),
+          notes: `作廢成本記錄: ${existing.category} ${existing.patientCode} (${existing.periodMonth})${unmatch.lineIds.length > 0 ? `（已解除 ${unmatch.lineIds.length} 條配對）` : ''}`,
+        },
+      } as any)
+
+      const updated = await tx.costCase.findUnique({ where: { id } })
+      return {
+        updated,
+        releasedLines: unmatch.lineIds,
+        releasedDocs: unmatch.docIds,
+      }
+    })
+  } catch (e) {
+    if (e instanceof CostGuardError) return jsonNoStore({ error: e.message }, { status: e.status })
+    throw e
   }
-  const updated = await prisma.costCase.findUnique({ where: { id } })
 
-  // Audit log
-  await prisma.auditLog.create({
-    data: {
-      actorId: session.userId,
-      action: 'COST_CASE_VOID',
-      entity: 'CostCase',
-      entityId: id,
-      clinicId: existing.clinicId,
-      beforeJson: JSON.stringify({
-        status: existing.status,
-        baseCost: existing.baseCost ? Number(existing.baseCost) : null,
-        finalCost: existing.finalCost ? Number(existing.finalCost) : null,
-      }),
-      afterJson: JSON.stringify({ status: 'VOID' }),
-      notes: `作廢成本記錄: ${existing.category} ${existing.patientCode} (${existing.periodMonth})`,
-    },
-  } as any)
+  return jsonNoStore({
+    case: result.updated,
+    releasedLines: result.releasedLines,
+    releasedDocs: result.releasedDocs,
+  })
+}
 
-  return jsonNoStore({ case: updated })
+class LockedNowError extends Error {
+  constructor() {
+    super('成本已出月結，唔可以改')
+    this.name = 'LockedNowError'
+  }
 }

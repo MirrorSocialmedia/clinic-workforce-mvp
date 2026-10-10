@@ -45,6 +45,8 @@ interface CostCase {
   // ★ 2026-08-25：重做（拍板①）
   redoAt: string | null
   redoReason: string | null
+  // ★ cwm-labdoc §12.7：連咗 Lab invoice（唔套月度折扣 B4）
+  labInvoiceLinked?: boolean
 }
 
 interface CleanPatient {
@@ -514,7 +516,9 @@ export default function CostEntryPage() {
   }, [costForm.labId, costForm.orderedAt, pickerMode, pickerStep, costForm.category])
 
   const handleDelete = async (id: string) => {
-    if (!confirm('確定要作廢呢筆記錄？')) return
+    // ★ cwm-labdoc §7.9：連咗 invoice 嘅成本作廢 → invoice 行會解除配對，張單返去「已確認」
+    const linked = cases.find((r) => r.id === id)?.labInvoiceLinked
+    if (!confirm(linked ? '確定要作廢呢筆記錄？\n\n呢筆連咗 Lab invoice — 作廢後 invoice 嘅行會解除配對，要喺 Lab 單據再對過。' : '確定要作廢呢筆記錄？')) return
     try {
       await apiFetch(`/api/cost-cases/${id}`, { method: 'DELETE' })
       loadCases()
@@ -1299,6 +1303,9 @@ export default function CostEntryPage() {
                   <td className="p-2" style={vStyle}>
                     <Badge variant="secondary" className="text-xs">{CATEGORY_LABELS[c.category] || c.category}</Badge>
                     {c.itemType && <span className="ml-1 text-gray-500">{c.itemType}</span>}
+                    {c.labInvoiceLinked && (
+                      <span title="已連 Lab invoice（唔套月度折扣）" className="ml-1 px-1 rounded bg-blue-100 text-blue-700 text-[10px] font-medium">單</span>
+                    )}
                   </td>
                   {/* ★ 2026-09-10 cwm-payrollui 拍板①：75px 窄化（th 同寬） */}
                   <td className="p-2 w-[75px] max-w-[75px]" style={vStyle}>
@@ -1880,7 +1887,7 @@ export default function CostEntryPage() {
                         <div>
                           <label className="block text-sm mb-1">折扣 % <span className="text-xs text-gray-400">（由工場折扣設定自動帶入）</span></label>
                           <div className="px-3 py-2 border rounded bg-muted text-sm">
-                            {labDiscountPct != null
+                            {editingCase?.labInvoiceLinked ? '已連 invoice，唔套月度折扣' : labDiscountPct != null
                               ? `${labDiscountPct}%（${labs.find(l => l.id === costForm.labId)?.name ?? '—'} · ${labDiscountPeriodMonth}）`
                               : '—（該工場今個月冇折扣設定）'}
                           </div>

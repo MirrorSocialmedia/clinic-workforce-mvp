@@ -252,9 +252,17 @@ function buildTextPdf(lines1, lines2, fontBuf) {
   return { buf: buildPdf(objects), codes, baseFont }
 }
 
+// ★ cwm-labdoc P2（CHUNK 5 E2E 1 / T9）：兩頁加 lab/doctor 頭 —
+//   Lab: SODENTAL COMPANY LIMITED → §6.1 ALIAS 命中（NAME_EN 'sodental'）→ labId 非 null
+//     （partial unique index 要求 labId 非 null，T9 dedup 先會生效）
+//   Doctor: Dr Esmond Tong → §6.3 NAME 命中（≥2 英文字包含）
+//   兩頁 Invoice No 完全相同（去掉 "(continued)"）→ D9 拆頁後兩張單同 docNo → T9：一 NEEDS_REVIEW 一 DUPLICATE
+//   ⚠ 字符集限制：subset ttf 只覆蓋原有 ASCII 字符集 — 新增行只用已有字符（F/W 等唔喺內， clinic 行加唔到）
 const page1Lines = [
   'SAMPLE DENTAL LAB INVOICE - TEXT LAYER PAGE 1',
   '',
+  'Lab: SODENTAL COMPANY LIMITED',
+  'Doctor: Dr Esmond Tong',
   'Invoice No: TXT-2026-0001',
   'Date: 2026-09-10',
   'Patient: TEST PATIENT A   Ref: 1001',
@@ -274,7 +282,9 @@ const page1Lines = [
 const page2Lines = [
   'SAMPLE DENTAL LAB INVOICE - TEXT LAYER PAGE 2',
   '',
-  'Invoice No: TXT-2026-0001 (continued)',
+  'Lab: SODENTAL COMPANY LIMITED',
+  'Doctor: Dr Esmond Tong',
+  'Invoice No: TXT-2026-0001',
   'Patient: TEST PATIENT C   Ref: 1003',
   '',
   'Item                          Qty   Price   Amount',

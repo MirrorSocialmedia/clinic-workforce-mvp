@@ -10,13 +10,15 @@
  */
 
 import { useEffect, useState } from 'react'
-import { ShieldAlert } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { ShieldAlert, Settings2 } from 'lucide-react'
 import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import InvoiceList from './InvoiceList'
 import ArchiveList from './ArchiveList'
+import PendingList from './PendingList'
 
-export type LabDocTab = 'invoices' | 'archive'
+export type LabDocTab = 'invoices' | 'statements' | 'archive' | 'pending'
 
 export interface LabDocsMe {
   role: string
@@ -35,6 +37,8 @@ interface Props {
 export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Props) {
   const [clinicNames, setClinicNames] = useState<Record<string, string>>({})
   const [providerNames, setProviderNames] = useState<Record<string, string>>({})
+  // §12.1：待處理分頁 badge = 用戶有權處理嘅總數（API 已按權限過濾）
+  const [pendingTotal, setPendingTotal] = useState<number | null>(null)
 
   // 名稱對照（graceful：失敗就「未識別」）
   useEffect(() => {
@@ -45,6 +49,10 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
     apiFetch<{ providers: Array<{ id: string; name: string }> }>('/api/providers')
       .then((d) => alive && setProviderNames(Object.fromEntries((d.providers || []).map((p) => [p.id, p.name]))))
       .catch(() => { /* graceful */ })
+    // 待處理 badge（graceful：失敗 = 冇 badge，唔阻頁面）
+    apiFetch<{ total: number }>('/api/lab-docs/pending')
+      .then((d) => alive && setPendingTotal(d?.total ?? 0))
+      .catch(() => { /* graceful */ })
     return () => { alive = false }
   }, [])
 
@@ -52,6 +60,10 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
   const allowed =
     hasPermission(me.role, 'lab_invoice', me.grant, me.deny) ||
     hasPermission(me.role, 'lab_statement', me.grant, me.deny)
+
+  // §12.6：設定頁入口 — 只 lab_statement 用戶見到
+  const canSettings = hasPermission(me.role, 'lab_statement', me.grant, me.deny)
+  const router = useRouter()
 
   if (!allowed) {
     return (
@@ -78,21 +90,39 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
     <div className="max-w-5xl mx-auto p-4 space-y-4">
       <div>
         <h1 className="text-xl font-bold">Lab 單據</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">到貨單上傳同檔案庫（存底 7 年）</p>
+        <p className="text-sm text-muted-foreground mt-0.5">到貨單、月結單對數同檔案庫（存底 7 年）</p>
       </div>
 
       {/* 分頁（§12.1：P1 = 到貨單｜檔案庫）— archive route 上撳「到貨單」= 跳 /lab-docs（page 層處理） */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <button className={tabCls(tab === 'invoices')} onClick={() => onTabChange('invoices')}>
           到貨單
+        </button>
+        <button className={tabCls(tab === 'statements')} onClick={() => onTabChange('statements')}>
+          月結單
         </button>
         <button className={tabCls(tab === 'archive')} onClick={() => onTabChange('archive')}>
           檔案庫
         </button>
+        <button className={tabCls(tab === 'pending')} onClick={() => onTabChange('pending')}>
+          待處理{pendingTotal !== null && pendingTotal > 0 ? `（${pendingTotal}）` : ''}
+        </button>
+        {canSettings && (
+          <button
+            className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium bg-card border text-muted-foreground hover:bg-accent"
+            onClick={() => router.push('/lab-docs/settings')}
+          >
+            <Settings2 size={14} /> 設定
+          </button>
+        )}
       </div>
 
       {tab === 'invoices' ? (
         <InvoiceList clinicNames={clinicNames} providerNames={providerNames} />
+      ) : tab === 'statements' ? (
+        <InvoiceList key="stmt" kind="STATEMENT" clinicNames={clinicNames} providerNames={providerNames} />
+      ) : tab === 'pending' ? (
+        <PendingList me={me} clinicNames={clinicNames} />
       ) : (
         <ArchiveList clinicNames={clinicNames} providerNames={providerNames} />
       )}

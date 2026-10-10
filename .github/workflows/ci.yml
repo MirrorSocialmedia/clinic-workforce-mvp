@@ -115,8 +115,10 @@ jobs:
           # 另：prisma/test-seed.mjs 硬編 5432（唔喺 test glob，CI 唔會跑 — 記此備忘）。
           # t623（S2-9 llm-proxy contract）經 CWM_TEST_DATABASE_URL 跑真 DB，自管數據行（零殘留 assert）。
           # ⚠️ 新增 src/lib test 檔要手動補呢個 list。
+          # src/lib/labdoc/** 全收（fake prisma，零環境依賴；2026-10-10 前漏咗冇入 CI）。
           TZ=UTC npx tsx --test \
             'src/app/api/external/**/*.test.ts' \
+            'src/lib/labdoc/**/*.test.ts' \
             src/lib/apricot/account.test.ts \
             src/lib/apricot/availability.test.ts \
             src/lib/apricot/normalize.test.ts \

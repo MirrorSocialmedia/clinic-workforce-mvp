@@ -46,6 +46,8 @@ function normalizeRoute(url: URL, method: string): string {
   // ★ 順序重要：日期段一定要排喺純數字 regex 之前，
   // 否則 /\d{3,}/ 會咬走 "2026" 令 /api/daily-hash/2026-07-25 變 /:id-07-25
   path = path.replace(/\/\d{4}-\d{2}-\d{2}(?=\/|$)/g, '/:date')
+  // labdoc 分組 index（0–99）→ /groups/:g（一條 key 包晒；唔再逐個登記 0–10）
+  path = path.replace(/\/groups\/\d{1,2}(?=\/|$)/g, '/groups/:g')
   // ★ UUID 有 dash，唔會被 {20,} 命中，要獨立處理（目前全部 model 用 cuid，此條為將來防呆）
   path = path
     .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi, '/:id')
