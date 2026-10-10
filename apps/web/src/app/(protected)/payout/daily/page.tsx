@@ -8,17 +8,22 @@
  * 顏色跟 Excel：藍字 = 系統帶入，黑字粗體 = 合計，灰字 = 唔計，黃底 = 最終金額。
  * 數字同 Excel 匯出同一個 API（/api/payout-runs/daily），唔准前端自己計。
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ArrowLeft, Download, RefreshCw } from 'lucide-react'
 import { todayHK, addDaysStr } from '@/lib/hk-date'
 import type { DailyReport, DailyRow } from '@/lib/payout/daily-report'
+// ★ cwm-dailyv3：Clinic 雜項行 key（與 lib/payout/daily-report.ts 嘅 CLINIC_ROW_KEY 同一個字串 —
+//   只可以 import type 唔可以 runtime import（佢 import prisma，會入 client bundle））
+const CLINIC_ROW_KEY = '__clinic__'
 import { useApricotJobPoll } from '@/lib/use-apricot-job-poll'
 import { hasPermission } from '@/lib/permissions'
 import { cellState, cellTickable } from '@/lib/payout/daily-cell-state' // ★ ④：純函數（零 prisma，client 可用）
+import type { DayCheckState } from '@/lib/payout/daily-check' // ★ cwm-dailyv3-20261010 §5b：type-only（佢 import prisma）
 import { DailyCheckPanel } from '@/components/payout/DailyCheckPanel'
+import { InlineDayCheck } from '@/components/payout/InlineDayCheck' // ★ cwm-dailyv3-20261010 §5b：③ 全店核對欄就地核對
 
 const SECTION = '#1F4E79'
 const BLUE = '#0000ff'
@@ -69,12 +74,19 @@ export default function DailyRevenuePage() {
   const [reloadKey, setReloadKey] = useState(0)
   const [refreshTick, setRefreshTick] = useState(0) // ★ cwm-dailyv2-20261007 ②：同步完後重新拉報表
 
-  // ★ cwm-dailyv2-20261007 ④：逐格 tick —— 只喺「逐醫生模式 + 單日」（揀咗診所、to 空或 to==from）顯示。
-  //   cellChecks: rowKey|colKey → { amount, checkedName, checkedAt }（GET /api/payout-runs/daily/cell-check）
+  // ★ cwm-dailyv2-20261007 ④ + cwm-dailyv3-20261010 §5b：逐格 tick —— 兩種有效模式：
+  //   ① 逐醫生 + 單日（揀咗診所、to 空或 to==from）：date=from、rowKey=r.key
+  //   ③ 逐日 + 逐醫生（揀咗診所 + 醫生）：date=r.key（行=日）、rowKey=providerId
+  //   cellChecks map key 統一 `${date}|${rowKey}|${colKey}`（①③ 共用）
   const [cellChecks, setCellChecks] = useState<Record<string, { amount: number; checkedName: string; checkedAt: string }> | null>(null)
   const [cellBusy, setCellBusy] = useState<string | null>(null)
   const [cellReloadKey, setCellReloadKey] = useState(0)
-  // cellDate 喺 activeClinicId 定義之後先算（見下）
+  // ★ cwm-dailyv3-20261010 §5b：③ 右邊「全店核對」欄（GET /check days[]；全店當日總數含雜項）
+  const [dayChecks, setDayChecks] = useState<DayCheckState[] | null>(null)
+  const [dayCanCheck, setDayCanCheck] = useState(false)
+  const [checkReloadKey, setCheckReloadKey] = useState(0)
+  const [inlineCheckDate, setInlineCheckDate] = useState<string | null>(null)
+  // cellMode / cellSingleDate 喺 activeClinicId 定義之後先算（見下）
 
   useEffect(() => {
     Promise.all([apiFetch<any>('/api/clinics'), apiFetch<any>('/api/providers')])
@@ -82,7 +94,7 @@ export default function DailyRevenuePage() {
         const cl = (c.clinics || []).filter((x: any) => x.apricotClinicId)
         setClinics(cl)
         setProviders((p.providers || []).filter((x: any) => x.isActive !== false))
-        if (cl.length && !deepLinked.current) setClinicId(prev => prev || cl[0].id)
+        // ★ cwm-dailyv3-20261010 §8：預設診所唔喺呢度猜（KIOSK 要等 me 先知道自己綁邊幾間）→ 下面 [clinics, me] effect
       })
       .catch(e => setError(e.message))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -117,10 +129,23 @@ export default function DailyRevenuePage() {
   //   （ROLE_DEFAULTS ∪ grant − deny；OWNER 預設有晒）。KIOSK 一律唔顯示。
   const hasApricotSync = !!me && hasPermission(me.role, 'apricot_sync', me.grant, me.deny)
   const myClinics = isKiosk ? clinics.filter(c => me!.clinicIds.includes(c.id)) : clinics
+  // ★ cwm-dailyv3-20261010 §8：預設診所 —— KIOSK 用 myClinics[0]（綁多店時 cl[0] 可能唔屬佢 → 避免 403 閃）；
+  //   非 KIOSK 同舊行為一樣（clinics[0]）。deep-link（?clinicId=）唔會覆蓋。
+  useEffect(() => {
+    // KIOSK 要等 me（myClinics 綁定店清單）先 set，否則綁多店時會先設到非己店 → 403 閃；非 KIOSK 唔需要 me（clinics[0] 就夠）
+    if (!clinics.length || deepLinked.current || clinicId) return
+    if (isKiosk && !me) return // 只 KIOSK 需要等 me（myClinics）
+    const first = (isKiosk ? myClinics : clinics)[0] // eslint-disable-line react-hooks/exhaustive-deps
+    if (first) setClinicId(first.id)
+  }, [clinics, me, isKiosk, clinicId])
   const kioskLockedClinicId = isKiosk && myClinics.length === 1 ? myClinics[0].id : ''
   const activeClinicId = kioskLockedClinicId || clinicId
-  // ★ cwm-dailyv2-20261007 ④：tick 只喺「逐醫生模式 + 單日」（to 空或 to==from）生效
-  const cellDate = report && report.mode === 'byDoctor' && activeClinicId && (!to || to === from) ? from : null
+  // ★ cwm-dailyv3-20261010 §5b：逐格 tick 模式 —— ① 逐醫生+單日 / ③ 逐日+逐醫生（指定診所+醫生）
+  const cellMode: 'single' | 'byDay' | null =
+    report && report.mode === 'byDoctor' && activeClinicId && (!to || to === from) ? 'single'
+    : report && report.mode === 'byDay' && activeClinicId && providerId ? 'byDay'
+    : null
+  const cellSingleDate = cellMode === 'single' ? from : null
   const query = useMemo(() => {
     const q = new URLSearchParams({ from })
     if (to && to !== from) q.set('to', to)
@@ -191,43 +216,62 @@ export default function DailyRevenuePage() {
   // MD ②：換診所要清 poll + 狀態（unmount 由 hook 自己清）
   useEffect(() => { stopSyncPoll(); setSyncState(null) }, [activeClinicId, stopSyncPoll])
 
-  // ★ cwm-dailyv2-20261007 ④：拉回該店該日嘅 tick 紀錄（報表重新載入／同步完／換诊所換日都重拉）
+  // ★ cwm-dailyv2-20261007 ④ + cwm-dailyv3-20261010 §5b：拉回 tick 紀錄（報表重新載入／同步完／換诊所換日都重拉）
+  //   ① 單日：?date=；③ 範圍：?from=&to=（server 回傳每個 cell 帶 date）
   useEffect(() => {
-    if (!cellDate || !activeClinicId) { setCellChecks(null); return }
+    if (!cellMode || !activeClinicId) { setCellChecks(null); return }
     let cancelled = false
     setCellChecks(null)
-    apiFetch<{ cells: { rowKey: string; colKey: string; amount: number; checkedName: string; checkedAt: string }[] }>(
-      `/api/payout-runs/daily/cell-check?clinicId=${activeClinicId}&date=${cellDate}`
+    const q = cellMode === 'single'
+      ? `clinicId=${activeClinicId}&date=${cellSingleDate}`
+      : `clinicId=${activeClinicId}&from=${report!.from}&to=${report!.to}`
+    apiFetch<{ cells: { date: string; rowKey: string; colKey: string; amount: number; checkedName: string; checkedAt: string }[] }>(
+      `/api/payout-runs/daily/cell-check?${q}`
     )
       .then(d => {
         if (cancelled) return
         const m: Record<string, { amount: number; checkedName: string; checkedAt: string }> = {}
-        for (const c of d.cells) m[`${c.rowKey}|${c.colKey}`] = { amount: c.amount, checkedName: c.checkedName, checkedAt: c.checkedAt }
+        for (const c of d.cells) {
+          const date = c.date || cellSingleDate!  // date= 單日回傳同一日
+          m[`${date}|${c.rowKey}|${c.colKey}`] = { amount: c.amount, checkedName: c.checkedName, checkedAt: c.checkedAt }
+        }
         setCellChecks(m)
       })
       .catch(() => { if (!cancelled) setCellChecks(null) })
     return () => { cancelled = true }
-  }, [cellDate, activeClinicId, reloadKey, refreshTick, cellReloadKey])
+  }, [cellMode, cellSingleDate, activeClinicId, report?.from, report?.to, reloadKey, refreshTick, cellReloadKey])
 
-  // ★ ④：剔格 —— OPEN→tick、OK→取消、CHANGED→用新金額覆寫、STALE→取消（server 重算金額，唔信前端）
-  const toggleCell = useCallback(async (rowKey: string, colKey: string, st: 'OPEN' | 'OK' | 'CHANGED' | 'STALE') => {
-    if (!cellDate || !activeClinicId || cellBusy) return
+  // ★ cwm-dailyv3-20261010 §5b：③ 全店核對欄資料（GET /check 逐日狀態；全店總數含雜項）
+  useEffect(() => {
+    if (!cellMode || cellMode !== 'byDay' || !activeClinicId) { setDayChecks(null); setDayCanCheck(false); return }
+    let cancelled = false
+    setDayChecks(null)
+    const q = new URLSearchParams({ clinicId: activeClinicId, from: report!.from, to: report!.to })
+    apiFetch<{ days: DayCheckState[]; canCheck: boolean }>(`/api/payout-runs/daily/check?${q}`)
+      .then(d => { if (!cancelled) { setDayChecks(d.days); setDayCanCheck(d.canCheck) } })
+      .catch(() => { if (!cancelled) setDayChecks(null) })
+    return () => { cancelled = true }
+  }, [cellMode, activeClinicId, report?.from, report?.to, checkReloadKey, reloadKey])
+
+  // ★ ④ + cwm-dailyv3-20261010 §5b：剔格 —— OPEN→tick、OK→取消、CHANGED→用新金額覆寫、STALE→取消（server 重算金額，唔信前端）
+  const toggleCell = useCallback(async (date: string, rowKey: string, colKey: string, st: 'OPEN' | 'OK' | 'CHANGED' | 'STALE') => {
+    if (!activeClinicId || cellBusy) return
     const target = st === 'OPEN' || st === 'CHANGED'
-    setCellBusy(`${rowKey}|${colKey}`)
+    setCellBusy(`${date}|${rowKey}|${colKey}`)
     try {
       await apiFetch('/api/payout-runs/daily/cell-check', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clinicId: activeClinicId, date: cellDate, rowKey, colKey, checked: target }),
+        body: JSON.stringify({ clinicId: activeClinicId, date, rowKey, colKey, checked: target }),
       })
       setCellReloadKey(k => k + 1)
     } catch (e: any) {
       alert(e?.message || '逐格核對失敗')
     } finally { setCellBusy(null) }
-  }, [cellDate, activeClinicId, cellBusy])
+  }, [activeClinicId, cellBusy])
 
-  // ★ ④：DailyCheckPanel 提示「逐格已對 n/總有數格」（全部對晒先綠字）
+  // ★ ④ + cwm-dailyv3-20261010 §5b：DailyCheckPanel 提示「逐格已對 n/總有數格」（全部對晒先綠字）—— ①③ 共用 map key
   const cellProgress = useMemo(() => {
-    if (!cellDate || !report || !cellChecks || report.mode !== 'byDoctor') return null
+    if (!cellMode || !report || !cellChecks) return null
     let total = 0
     let done = 0
     for (const r of report.rows) {
@@ -235,22 +279,26 @@ export default function DailyRevenuePage() {
         const v = r.byMethod[m.key]
         if (!cellTickable(v)) continue
         total++
-        const rec = cellChecks[`${r.key}|${m.key}`]
+        const date = cellMode === 'single' ? cellSingleDate! : r.key
+        const rowKey = cellMode === 'single' ? r.key : providerId
+        const rec = cellChecks[`${date}|${rowKey}|${m.key}`]
         if (rec && cellState(v ?? 0, rec.amount) === 'OK') done++
       }
     }
     return { done, total }
-  }, [cellDate, report, cellChecks])
+  }, [cellMode, cellSingleDate, report, cellChecks, providerId])
 
-  // ★ ④：格仔右上角嘅細 checkbox（14px）。只喺 cellDate 生效時渲染；TOTAL 欄／Total 行／SP 欄唔會 call 呢度。
+  // ★ ④：格仔右上角嘅細 checkbox（14px）。只喺 cellMode 生效時渲染；TOTAL 欄／Total 行／SP 欄唔會 call 呢度。
   //   「有數先有格」：冇數又冇 tick 紀錄 → 唔出 checkbox（MD ④）。
   const cellTick = (r: DailyRow, m: { key: string }): { node: React.ReactNode; tdExtra: React.CSSProperties } | null => {
-    if (!cellDate || !cellChecks) return null
+    if (!cellMode || !cellChecks) return null
+    const date = cellMode === 'single' ? cellSingleDate! : r.key
+    const rowKey = cellMode === 'single' ? r.key : providerId
     const v = r.byMethod[m.key]
-    const rec = cellChecks[`${r.key}|${m.key}`]
+    const rec = cellChecks[`${date}|${rowKey}|${m.key}`]
     if (!cellTickable(v) && !rec) return null
     const st = cellState(v ?? 0, rec?.amount ?? null)
-    const ck = `${r.key}|${m.key}`
+    const ck = `${date}|${rowKey}|${m.key}`
     const busy = cellBusy === ck
     let title = '剔 = 呢格已對'
     let mark: React.ReactNode = null
@@ -277,7 +325,7 @@ export default function DailyRevenuePage() {
       node: (
         <button
           type="button" role="checkbox" aria-checked={st === 'OK' ? 'true' : st === 'CHANGED' ? 'mixed' : 'false'}
-          title={title} disabled={busy} onClick={() => toggleCell(r.key, m.key, st)}
+          title={title} disabled={busy} onClick={() => toggleCell(date, rowKey, m.key, st)}
           className="absolute top-1 right-1 w-[14px] h-[14px] rounded-[3px] border flex items-center justify-center disabled:opacity-50"
           style={boxStyle}
           aria-label={`逐格核對 ${r.label} ${m.key}`}
@@ -286,6 +334,31 @@ export default function DailyRevenuePage() {
         </button>
       ),
     }
+  }
+
+  // ★ cwm-dailyv3-20261010 §5b：③ 右邊「全店核對」欄（SP 筆數之後）—— 核對全店當日總數（含雜項）
+  const dayCheckCell = (r: DailyRow): React.ReactNode => {
+    const date = r.key
+    const dc = dayChecks?.find(x => x.date === date) ?? null
+    if (date > today) return <td style={td(GRAY, { textAlign: 'center' })}>{''}</td> // 未來日留空
+    if (!dc) return <td style={td(GRAY, { textAlign: 'center' })}>— 冇營收</td>
+    if (dc.status === 'CHECKED') return (
+      <td style={td('#15803d', { textAlign: 'center' })}>✓ {dc.check?.nurseName ?? ''}</td>
+    )
+    const btn = (label: string, danger: boolean) => (
+      <button type="button" onClick={() => setInlineCheckDate(inlineCheckDate === date ? null : date)}
+        className={`h-6 px-2 rounded border text-xs bg-white ${danger ? 'border-red-600 text-red-700 hover:bg-red-50' : 'border-green-600 text-green-700 hover:bg-green-50'}`}>{label}</button>
+    )
+    if (dc.status === 'CHANGED') return (
+      <td style={td('#dc2626', { textAlign: 'center' })}>
+        <span className="inline-flex flex-wrap items-center justify-center gap-1">⚠ 有變{dayCanCheck && btn('重新核對', true)}</span>
+      </td>
+    )
+    return (
+      <td style={td('#b45309', { textAlign: 'center' })}>
+        <span className="inline-flex flex-wrap items-center justify-center gap-1">未核對{dayCanCheck && btn('核對', false)}</span>
+      </td>
+    )
   }
 
   const startSync = useCallback(async () => {
@@ -348,6 +421,8 @@ export default function DailyRevenuePage() {
     fontVariantNumeric: 'tabular-nums', color, ...extra,
   })
   const firstCol = report?.mode === 'byDoctor' ? '醫生' : '日期'
+  // ★ cwm-dailyv3：Clinic 雜項行（A 區淺橙底、名唔可以撳；B 區跳過）
+  const isClinicRow = (r: DailyRow) => r.key === CLINIC_ROW_KEY
   const isEmptyRow = (r: DailyRow) => r.storeTotal === 0 && r.doctorRaw === 0 && Object.values(r.byMethod).every(v => v === 0)
 
   return (
@@ -465,6 +540,12 @@ export default function DailyRevenuePage() {
           <div style={{ background: SECTION, color: '#fff', fontWeight: 700, fontSize: 13, padding: '6px 16px' }}>
             {report.mode === 'byDoctor' ? 'A  逐醫生收款' : 'A  逐日收款'}
           </div>
+          {/* ★ cwm-dailyv3-20261010 §5c：④ 指定醫生＋全部診所 —— 唔出剔格／核對欄 */}
+          {report.mode === 'byDay' && providerId && !activeClinicId && (
+            <div className="px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-200">
+              要逐格剔或者核對：先揀診所（核對係逐間店逐日）
+            </div>
+          )}
           <div style={TABLE_BOX}>
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
               <thead>
@@ -475,33 +556,58 @@ export default function DailyRevenuePage() {
                   ))}
                   <th style={th}>TOTAL</th>
                   <th style={th}>SP 筆數</th>
+                  {cellMode === 'byDay' && <th style={th}>全店核對</th>}
                 </tr>
               </thead>
               <tbody>
                 {report.rows.length === 0 && (
-                  <tr><td colSpan={report.methods.length + 3} style={{ ...td(GRAY), textAlign: 'center', padding: 24 }}>呢段日子冇收款</td></tr>
+                  <tr><td colSpan={report.methods.length + 3 + (cellMode === 'byDay' ? 1 : 0)} style={{ ...td(GRAY), textAlign: 'center', padding: 24 }}>呢段日子冇收款</td></tr>
                 )}
                 {report.rows.map(r => (
-                  <tr key={r.key} style={report.mode === 'byDay' && isEmptyRow(r) ? { background: '#f3f4f6' } : undefined}>
-                    <td style={td(BLUE, { textAlign: 'left' })}>
-                      {report.mode === 'byDoctor' && !r.key.startsWith('ext:')
-                        ? <button type="button" className="hover:underline" style={{ color: BLUE }} onClick={() => setProviderId(r.key)}>{r.label}</button>
-                        : r.label}
-                    </td>
-                    {report.methods.map(m => {
-                      // ★ cwm-dailyv2-20261007 ④：有數嘅格右上角細 checkbox（逐醫生+單日先有；cellTick 內部判斷）
-                      const t = cellTick(r, m)
+                  <Fragment key={r.key}>
+                    <tr style={report.mode === 'byDay' && isEmptyRow(r) ? { background: '#f3f4f6' } : isClinicRow(r) ? { background: '#fff7e6' } : undefined}>
+                      <td style={td(BLUE, { textAlign: 'left' })}>
+                        {report.mode === 'byDoctor' && !isClinicRow(r) && !r.key.startsWith('ext:')
+                          ? <button type="button" className="hover:underline" style={{ color: BLUE }} onClick={() => setProviderId(r.key)}>{r.label}</button>
+                          : r.label}
+                      </td>
+                      {report.methods.map(m => {
+                        // ★ cwm-dailyv2-20261007 ④ + cwm-dailyv3-20261010 §5b：有數嘅格右上角細 checkbox（① 單日 / ③ 逐日；cellTick 內部判斷）
+                        const t = cellTick(r, m)
+                        return (
+                          <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? BLUE : GRAY, t?.tdExtra)}>
+                            <div className="relative" style={{ minHeight: 20, paddingRight: t ? 18 : 0 }}>
+                              {money(r.byMethod[m.key])}{t?.node}
+                            </div>
+                          </td>
+                        )
+                      })}
+                      <td style={td('#000')}>{money(r.storeTotal)}</td>
+                      <td style={td(BLUE, { textAlign: 'center' })}>{r.spCount || ''}</td>
+                      {cellMode === 'byDay' && dayCheckCell(r)}
+                    </tr>
+                    {/* ★ cwm-dailyv3-20261010 §5b：撳【核對】→ 嗰行下面插 InlineDayCheck（核對 MM-DD 全店：$x） */}
+                    {cellMode === 'byDay' && inlineCheckDate === r.key && (() => {
+                      const dc = dayChecks?.find(x => x.date === r.key)
+                      if (!dc) return null
                       return (
-                        <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? BLUE : GRAY, t?.tdExtra)}>
-                          <div className="relative" style={{ minHeight: 20, paddingRight: t ? 18 : 0 }}>
-                            {money(r.byMethod[m.key])}{t?.node}
-                          </div>
-                        </td>
+                        <tr>
+                          <td colSpan={report.methods.length + 4} style={{ padding: 12, background: '#f9fafb', border: '1px solid #d9dee4' }}>
+                            <InlineDayCheck
+                              clinicId={activeClinicId}
+                              clinicLabel={clinics.find(c => c.id === activeClinicId)?.shortName || clinics.find(c => c.id === activeClinicId)?.name || ''}
+                              date={r.key}
+                              storeTotal={dc.storeTotal}
+                              status={dc.status === 'CHANGED' ? 'CHANGED' : 'UNCHECKED'}
+                              onSuccess={() => { setInlineCheckDate(null); setCheckReloadKey(k => k + 1) }}
+                              onAlreadyChecked={() => setCheckReloadKey(k => k + 1)}
+                              onClose={() => setInlineCheckDate(null)}
+                            />
+                          </td>
+                        </tr>
                       )
-                    })}
-                    <td style={td('#000')}>{money(r.storeTotal)}</td>
-                    <td style={td(BLUE, { textAlign: 'center' })}>{r.spCount || ''}</td>
-                  </tr>
+                    })()}
+                  </Fragment>
                 ))}
                 <tr>
                   <td style={td('#000', { textAlign: 'left', fontWeight: 700 })}>Total</td>
@@ -510,6 +616,7 @@ export default function DailyRevenuePage() {
                   ))}
                   <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeTotal) || '$0.00'}</td>
                   <td style={td('#000', { fontWeight: 700, textAlign: 'center' })}>{report.totals.spCount}</td>
+                  {cellMode === 'byDay' && <td style={td('#000', { fontWeight: 700 })}>{''}</td>}
                 </tr>
                 {/* ★ cwm-dailyv2-20261007 ⑤：手續費＋已扣手續費（淨額）—— 同 B 區同一口徑（totals 帶好） */}
                 <tr>
@@ -519,6 +626,7 @@ export default function DailyRevenuePage() {
                   ))}
                   <td style={td(GRAY)}>{money(Math.round((report.totals.storeTotal - report.totals.storeNet) * 100) / 100)}</td>
                   <td style={td(GRAY)}>{''}</td>
+                  {cellMode === 'byDay' && <td style={td(GRAY)}>{''}</td>}
                 </tr>
                 <tr>
                   <td style={td('#000', { textAlign: 'left', fontWeight: 700 })}>已扣手續費（淨額）</td>
@@ -527,6 +635,7 @@ export default function DailyRevenuePage() {
                   ))}
                   <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeNet) || '$0.00'}</td>
                   <td style={td(GRAY)}>{''}</td>
+                  {cellMode === 'byDay' && <td style={td(GRAY)}>{''}</td>}
                 </tr>
               </tbody>
             </table>
@@ -549,7 +658,7 @@ export default function DailyRevenuePage() {
                 </tr>
               </thead>
               <tbody>
-                {report.rows.filter(r => report.mode === 'byDoctor' || !isEmptyRow(r)).map(r => (
+                {report.rows.filter(r => !isClinicRow(r) && (report.mode === 'byDoctor' || !isEmptyRow(r))).map(r => (
                   <tr key={r.key}>
                     <td style={td(BLUE, { textAlign: 'left' })}>{r.label}</td>
                     <td style={td(BLUE)}>{money(r.doctorRaw)}</td>

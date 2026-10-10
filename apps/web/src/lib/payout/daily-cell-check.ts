@@ -7,7 +7,8 @@
 //   狀態判斷純函數喺 daily-cell-state.ts（client 同 test 共用，呢度唔 import）。
 // ============================================================
 import { prisma } from '@/lib/prisma'
-import { loadDailyReport } from './daily-report'
+import { addDaysStr } from '@/lib/hk-date'
+import { loadDailyReport, DAILY_MAX_DAYS } from './daily-report'
 import { kioskClinicAllowed, nurseOptions } from './daily-check'
 
 export class DailyCellCheckError extends Error {
@@ -18,6 +19,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const round2 = (n: number) => Math.round(n * 100) / 100
 
 export interface CellCheckCell {
+  /** ★ cwm-dailyv3-20261010 §5a：範圍版 —— 每個 cell 帶 HK 日（單日 GET 就係嗰日） */
+  date: string
   rowKey: string
   colKey: string
   amount: number
@@ -25,16 +28,34 @@ export interface CellCheckCell {
   checkedAt: string
 }
 
-/** GET：某店某日全部 tick 紀錄（前端 map 到格仔） */
-export async function loadCellChecks(clinicId: string, date: string): Promise<CellCheckCell[]> {
-  const rows = await prisma.dailyRevenueCellCheck.findMany({ where: { clinicId, date } })
+/**
+ * ★ cwm-dailyv3-20261010 §5a：GET 由單日改日期範圍（單日 = from === to）。
+ *   每個 cell 回傳 date 欄；前端 map key = `${date}|${rowKey}|${colKey}`，
+ *   ①（單日逐醫生）同 ③（逐日逐醫生）共用。
+ */
+export async function loadCellChecks(clinicId: string, from: string, to: string): Promise<CellCheckCell[]> {
+  const rows = await prisma.dailyRevenueCellCheck.findMany({
+    where: { clinicId, date: { gte: from, lte: to } },
+    orderBy: [{ date: 'asc' }, { id: 'asc' }],
+  })
   return rows.map(r => ({
+    date: r.date,
     rowKey: r.rowKey,
     colKey: r.colKey,
     amount: Number(r.amount),
     checkedName: r.checkedName,
     checkedAt: r.checkedAt.toISOString(),
   }))
+}
+
+/** ★ cwm-dailyv3-20261010 §5a：範圍校驗（route 用）—— 格式 + 起訖 + 上限 62 日 */
+export function validateCellRange(from: string, to: string): { ok: false; error: string } | { ok: true; from: string; to: string } {
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return { ok: false, error: '日期格式要 YYYY-MM-DD' }
+  if (to < from) return { ok: false, error: '「至」唔可以早過開始日期' }
+  let days = 0
+  for (let d = from; d <= to && days <= DAILY_MAX_DAYS; d = addDaysStr(d, 1)) days++
+  if (days > DAILY_MAX_DAYS) return { ok: false, error: `日期範圍最多 ${DAILY_MAX_DAYS} 日` }
+  return { ok: true, from, to }
 }
 
 /**

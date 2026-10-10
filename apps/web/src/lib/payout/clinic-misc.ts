@@ -5,6 +5,7 @@
  *      通用「Clinic」帳號個 clinicId 係 null（佢喺每間店都係同一個 ID），用佢 filter 會全部漏。
  */
 import { prisma } from '@/lib/prisma'
+import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
 import { ACTIVE_ALLOCATION } from '@/lib/payout/engine'
 
 export interface ClinicMiscRow {
@@ -61,6 +62,33 @@ export async function loadManualClinicMisc(
 ): Promise<ClinicMiscRow[]> {
   const rows = await prisma.miscIncome.findMany({
     where: { clinicId, periodMonth },
+    orderBy: [{ incomeAt: 'asc' }, { id: 'asc' }],
+  })
+  return rows.map(r => ({
+    source: 'MANUAL' as const,
+    incomeAt: r.incomeAt,
+    category: r.category,
+    itemName: r.itemName,
+    methodNorm: r.methodNorm,
+    amount: Number(r.amount),
+    note: r.note ?? null,
+    isVoid: r.isVoid,
+  }))
+}
+
+/**
+ * ★ cwm-dailyv3-20261010：人手錄入日期範圍版（每日大數 Clinic 雜項行用）。
+ *   條件：incomeAt 喺 HK 日範圍內 + isVoid=false（void 直接隔離）。
+ *   ⚠️ 只係 manual 呢一part —— Apricot CLINIC 帳號嗰批已經喺 loadDailyReport 由
+ *      paymentAllocation 讀咗，唔好再 call loadApricotClinicMisc，否則雙計。
+ */
+export async function loadManualClinicMiscRange(
+  clinicId: string,
+  from: string,
+  to: string,
+): Promise<ClinicMiscRow[]> {
+  const rows = await prisma.miscIncome.findMany({
+    where: { clinicId, incomeAt: { gte: hkDateStart(from), lte: hkDateEnd(to) }, isVoid: false },
     orderBy: [{ incomeAt: 'asc' }, { id: 'asc' }],
   })
   return rows.map(r => ({

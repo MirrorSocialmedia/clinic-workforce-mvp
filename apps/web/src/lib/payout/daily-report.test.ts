@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import ExcelJS from 'exceljs'
-import { aggregateDaily, methodsOf, dayLabel, daysBetween, type DailyAlloc, type DailyReport } from './daily-report'
+import { aggregateDaily, methodsOf, dayLabel, daysBetween, CLINIC_ROW_KEY, CLINIC_ROW_LABEL, sortDoctorRows, missingCommissionOf, dayStoreTotalsOf, type DailyAlloc, type DailyReport } from './daily-report'
 import { buildDailySheet } from './xlsx-report'
 
 const at = (d: string, hh = '10') => new Date(`${d}T${hh}:00:00+08:00`)
@@ -21,7 +21,8 @@ describe('methodsOf', () => {
       A({ method: 'CASH', amount: 1 }),
       A({ method: 'FREE_SP', amount: 1, countAsIncome: false }),
     ])
-    assert.deepEqual(ms.map(m => m.label), ['Cash', 'Visa', 'Credit（不計醫生收入）', 'Free SP（不計店舖營收）'])
+    // ★ cwm-dailyv3-20261010 §2：冇重複 colKey → 淨方法名（灰色已代表唔計）
+    assert.deepEqual(ms.map(m => m.label), ['Cash', 'Visa', 'Credit', 'Free SP'])
     assert.deepEqual(ms.map(m => [m.storeIncome, m.doctorIncome]), [[true, true], [true, true], [false, false], [false, true]])
   })
 })
@@ -104,6 +105,85 @@ describe('aggregateDaily', () => {
     )
     assert.equal(totals.byMethodNet['CREDIT|0|0'], 500)
     assert.equal(totals.storeNet, 980)
+  })
+})
+
+describe('★ cwm-dailyv3-20261010 §1/§2：Clinic 雜項行＋欄名', () => {
+  // 同 loadDailyReport byDoctor 嘅 groupOf：isClinic → __clinic__ 行，其餘跟醫生
+  const groupDoctor = (a: DailyAlloc): string | null => (a.isClinic ? CLINIC_ROW_KEY : a.providerExtId)
+
+  it('§6.1 雜項行：同醫生 Cash 共用同一 colKey；storeTotal 含雜項；doctorRaw=0、share=null；missingCommission 唔列', () => {
+    const allocs = [
+      A({ method: 'CASH', amount: 4410, net: 4410, providerExtId: 'p1' }),
+      A({ method: 'CASH', amount: 120, net: 120, providerExtId: 'tw-clinic-001', isClinic: true }),
+    ]
+    const { methods, rows, totals } = aggregateDaily(
+      allocs,
+      // 同 loadDailyReport byDoctor：rowsInit 帶好 label（含雜項行）
+      [{ key: 'p1', label: 'P1' }, { key: CLINIC_ROW_KEY, label: CLINIC_ROW_LABEL }],
+      groupDoctor, () => 40, () => 0,
+    )
+    // 同一 colKey 只有一欄 Cash（唔會自己開多一欄）
+    assert.deepEqual(methods.map(m => m.key), ['CASH|1|1'])
+    const clinic = rows.find(r => r.key === CLINIC_ROW_KEY)!
+    assert.ok(clinic)
+    assert.equal(clinic.label, CLINIC_ROW_LABEL)
+    assert.equal(clinic.byMethod['CASH|1|1'], 120)
+    assert.equal(clinic.storeTotal, 120)
+    assert.equal(clinic.storeNet, 120)
+    assert.equal(clinic.doctorRaw, 0)
+    assert.equal(clinic.share, null) // B 區唔出呢行
+    assert.equal(totals.storeTotal, 4530) // 4410 + 120
+    assert.equal(totals.byMethod['CASH|1|1'], 4530)
+    assert.equal(totals.doctorRaw, 4410) // 醫生收入唔含雜項
+    assert.equal(totals.share, 1764) // 4410 × 40%
+    assert.deepEqual(missingCommissionOf(rows), []) // 雜項行 doctorRaw=0 唔會列
+  })
+
+  it('§6.1b 雜項行可以冇拆帳醫生同行：misc share=null 但 missingCommission 只列真醫生', () => {
+    const allocs = [
+      A({ method: 'CASH', amount: 100, providerExtId: 'p1' }), // p1 冇拆帳
+      A({ method: 'CASH', amount: 50, providerExtId: 'tw-clinic-001', isClinic: true }),
+    ]
+    const { rows } = aggregateDaily(allocs, [], groupDoctor, () => null, () => 0)
+    assert.deepEqual(missingCommissionOf(rows), ['p1'])
+  })
+
+  it('§6.2 排序：雜項行排所有醫生之後（唔參與 storeTotal 排序；loadDailyReport byDoctor 先 sort）', () => {
+    // sortDoctorRows 純函數直測（雜項 storeTotal 最大都要最後）
+    assert.deepEqual(sortDoctorRows([
+      { key: CLINIC_ROW_KEY, label: CLINIC_ROW_LABEL, storeTotal: 999 } as any,
+      { key: 'p1', label: 'P1', storeTotal: 500 } as any,
+      { key: 'p2', label: 'P2', storeTotal: 100 } as any,
+    ]).map(r => r.key), ['p1', 'p2', CLINIC_ROW_KEY])
+    // 無雜項行：照樣按 storeTotal 排
+    assert.deepEqual(sortDoctorRows([
+      { key: 'p2', label: 'P2', storeTotal: 100 } as any,
+      { key: 'p1', label: 'P1', storeTotal: 500 } as any,
+    ]).map(r => r.key), ['p1', 'p2'])
+  })
+
+  it('§6.3 欄名：單一 colKey CREDIT → 「Credit」冇括號；同一方法兩 colKey 先有', () => {
+    const single = methodsOf([A({ method: 'CREDIT', amount: 500, countAsIncome: false })])
+    assert.deepEqual(single.map(m => [m.key, m.label]), [['CREDIT|0|0', 'Credit']])
+    const dup = methodsOf([
+      A({ method: 'CREDIT', amount: 500, countAsIncome: true }), // CREDIT|1|1
+      A({ method: 'CREDIT', amount: 300, countAsIncome: false }), // CREDIT|0|0 → 不計醫生收入
+    ])
+    assert.deepEqual(dup.map(m => [m.key, m.label]), [
+      ['CREDIT|1|1', 'Credit'],
+      ['CREDIT|0|0', 'Credit（不計醫生收入）'],
+    ])
+  })
+
+  it('§6.4 dayStoreTotalsOf 包含雜項（groupOf 有行 + countAsIncome）', () => {
+    const allocs = [
+      A({ method: 'CASH', amount: 1000, paidAt: at('2026-10-09') }),
+      A({ method: 'CASH', amount: 120, paidAt: at('2026-10-09'), providerExtId: 'tw-clinic-001', isClinic: true }),
+      A({ method: 'CREDIT', amount: 500, paidAt: at('2026-10-09'), countAsIncome: false }), // 唔計店舖營收
+    ]
+    const out = dayStoreTotalsOf(allocs, ['2026-10-08', '2026-10-09', '2026-10-10'], groupDoctor)
+    assert.deepEqual(out, { '2026-10-08': 0, '2026-10-09': 1120, '2026-10-10': 0 }) // 1000 + 120（Credit 唔計）
   })
 })
 
