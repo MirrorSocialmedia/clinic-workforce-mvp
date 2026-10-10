@@ -13,6 +13,7 @@ import { handleRoute } from '@/lib/api-guard'
 import { jsonNoStore } from '@/lib/api-response'
 import { prisma } from '@/lib/prisma'
 import { loadApricotClinicMisc } from '@/lib/payout/clinic-misc'
+import { payoutClinicLimit } from '@/lib/payout/kiosk-scope'
 
 /** 'YYYY-MM' → [月初 00:00 HK, 下月月初 00:00 HK) */
 function monthBounds(periodMonth: string): [Date, Date] {
@@ -36,7 +37,9 @@ export async function GET(req: NextRequest) {
     const [monthStart, nextMonthStart] = monthBounds(periodMonth)
 
     // 全部診所（包括未綁）— 未綁嗰啲唔好隱藏
+    const kioskLim = payoutClinicLimit(auth.session!) // ★ cwm-kioskpayout-20261010：店舖帳號只見自己店
     const allClinics = await prisma.clinic.findMany({
+      ...(kioskLim ? { where: { id: { in: kioskLim } } } : {}),
       select: { id: true, name: true, shortName: true, apricotClinicId: true },
       orderBy: { name: 'asc' },
     })

@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { setSpStatus, spStatusResponse } from '@/lib/payout/sp-status'
+import { prisma } from '@/lib/prisma'
+import { payoutRecordGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(
   req: NextRequest,
@@ -13,6 +15,10 @@ export async function POST(
 ) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
+
+  // ★ cwm-kioskpayout-20261010：店舖帳號只可以改自己店嘅補貼
+  const denied = await payoutRecordGuard(auth.session!, () => prisma.spSubsidy.findUnique({ where: { id: params.id }, select: { clinicId: true } }))
+  if (denied) return denied
 
   const r = await setSpStatus(params.id, 'CONFIRMED', auth.session!.userId)
   const { body, status } = spStatusResponse(r)

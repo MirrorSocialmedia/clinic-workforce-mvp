@@ -10,6 +10,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { UNNAMED_VENDOR, round2 } from '@/lib/payout/engine'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function GET(
   req: NextRequest,
@@ -21,6 +22,7 @@ export async function GET(
   const id = (await params).id
   const run = await prisma.payoutRun.findUnique({ where: { id } })
   if (!run) return jsonNoStore({ error: '月結單不存在' }, { status: 404 })
+  { const denied = payoutClinicGuard(auth.session!, run.clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   // ★ 跨醫生：冇 providerId；診所口徑跟 run.clinicId
   const where: any = {

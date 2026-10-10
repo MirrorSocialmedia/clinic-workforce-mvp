@@ -6,6 +6,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { parsePaymentReport } from '@/lib/reconciliation/parsePaymentReport'
 import { groupByPractitioner, resolvePractitioners } from '@/lib/reconciliation/clinic-report'
 import { resolveClinic } from '@/lib/reconciliation/resolve-clinic'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
 	const auth = await requireAuth(req, 'POST', req.url)
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
 		// ★ cwm-reconclinic-20261006：全店報表 → 回傳逐個名＋已記住／單號建議嘅醫生
 		if (hasPractitionerColumn && !meta.practitioner.trim()) {
 			const clinic = await resolveClinic(meta.clinic)
+			{ const denied = payoutClinicGuard(auth.session!, clinic.id); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 			const practitioners = await resolvePractitioners(groupByPractitioner(rows))
 			return NextResponse.json({
 				mode: 'CLINIC', meta, clinic: clinic.shortName || clinic.name,

@@ -8,6 +8,7 @@ import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
 import { todayHK } from '@/lib/hk-date'
 import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
 import { dailyReview } from '@/lib/payout/daily-review'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
   if (!providerId || !periodMonth || !clinicId) {
     return NextResponse.json({ error: 'providerId, periodMonth, clinicId 都係必填' }, { status: 400 })
   }
+  { const denied = payoutClinicGuard(auth.session!, clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   // Run gates
   const { errors, warnings } = await runGates(providerId, periodMonth, clinicId)

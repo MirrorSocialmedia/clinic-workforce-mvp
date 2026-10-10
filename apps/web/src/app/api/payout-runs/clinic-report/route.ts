@@ -30,6 +30,7 @@ import { computePayout, runGates, isBeforePayoutStart } from '@/lib/payout/engin
 import { incomeProviderIds } from '@/lib/payout/clinic-income-providers'
 import { loadClinicMisc } from '@/lib/payout/clinic-misc'
 import { buildCoverSheet, buildDoctorSheet, buildMiscSheet, incomeTotalOf } from '@/lib/payout/xlsx-report'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 const PERIOD_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
 
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
   if (scopeClinics && !scopeClinics.includes(clinicId)) {
     return jsonNoStore({ error: 'You do not have access to this clinic' }, { status: 403 })
   }
+  { const denied = payoutClinicGuard(session, clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010：店舖帳號只限自己店
 
   const clinic = await prisma.clinic.findUnique({
     where: { id: clinicId },

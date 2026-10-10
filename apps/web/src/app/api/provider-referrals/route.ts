@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jsonNoStore } from '@/lib/api-response'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { payoutClinicLimit, payoutClinicGuardDraft } from '@/lib/payout/kiosk-scope'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -18,6 +19,9 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status') // 'DRAFT' | 'CONFIRMED' | null
 
   const where: any = {}
+  // ★ cwm-kioskpayout-20261010：店舖帳號只睇自己店（＋未有帳單嘅草稿：未屬任何店）
+  const lim = payoutClinicLimit(auth.session!)
+  if (lim) where.OR = [{ clinicId: { in: lim } }, { clinicId: null }]
   if (fromProviderId) where.fromProviderId = fromProviderId
   if (periodMonth) where.periodMonth = periodMonth
   if (status) where.status = status
@@ -142,6 +146,8 @@ export async function POST(req: NextRequest) {
       if (clinic) clinicId = clinic.id
     }
   }
+
+  { const denied = payoutClinicGuardDraft(auth.session!, clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   // Check if month is locked (for confirmed referrals)
   if (!isDraft && clinicId && periodMonth) {

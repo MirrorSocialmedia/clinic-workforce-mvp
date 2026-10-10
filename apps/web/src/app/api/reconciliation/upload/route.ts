@@ -10,6 +10,7 @@ import { compareReport } from '@/lib/reconciliation/compare'
 import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 import { resolveClinic } from '@/lib/reconciliation/resolve-clinic'
 import { groupByPractitioner, resolvePractitioners, missingProviders, SKIP_PROVIDER, BLANK_PRACTITIONER } from '@/lib/reconciliation/clinic-report'
+import { payoutClinicGuard, payoutClinicLimit } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
 	const auth = await requireAuth(req, 'POST', req.url)
@@ -43,6 +44,13 @@ export async function POST(req: NextRequest) {
 			return NextResponse.json({
 				error: `報表月份（${meta.month}）同你揀嘅月份（${periodMonth}）唔同，請確認上載咗正確嘅檔案`,
 			}, { status: 422 })
+		}
+
+		// ★ cwm-kioskpayout-20261010：店舖帳號只可以上載自己店嘅報表（全店／單一醫生都係）
+		if (payoutClinicLimit(session)) {
+			const own = await resolveClinic(meta.clinic)
+			const denied = payoutClinicGuard(session, own.id)
+			if (denied) return denied
 		}
 
 		// ★ cwm-reconclinic-20261006：全店報表（逐行 Practitioner、頂部冇 Practitioner）→ 逐個醫生對

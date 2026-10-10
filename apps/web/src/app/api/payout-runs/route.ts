@@ -11,6 +11,7 @@ import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
 import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
 import { dailyReview } from '@/lib/payout/daily-review'
 import { todayHK } from '@/lib/hk-date'
+import { payoutClinicGuard, payoutClinicWhere } from '@/lib/payout/kiosk-scope'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -21,7 +22,9 @@ export async function GET(req: NextRequest) {
   const periodMonth = searchParams.get('periodMonth')
   const clinicId = searchParams.get('clinicId')
 
-  const where: any = {}
+  // ★ cwm-kioskpayout-20261010：店舖帳號只睇自己店
+  if (clinicId) { const denied = payoutClinicGuard(auth.session!, clinicId); if (denied) return denied }
+  const where: any = { ...payoutClinicWhere(auth.session!) }
   if (providerId) where.providerId = providerId
   if (periodMonth) where.periodMonth = periodMonth
   if (clinicId) where.clinicId = clinicId
@@ -78,6 +81,7 @@ export async function POST(req: NextRequest) {
   if (!providerId || !periodMonth || !clinicId) {
     return NextResponse.json({ error: 'providerId, periodMonth, clinicId 都係必填' }, { status: 400 })
   }
+  { const denied = payoutClinicGuard(auth.session!, clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   // Check if run already exists (unique ternary key)
   const existing = await prisma.payoutRun.findUnique({

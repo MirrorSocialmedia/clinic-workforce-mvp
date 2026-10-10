@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function GET(
   req: NextRequest,
@@ -22,6 +23,7 @@ export async function GET(
   if (!run) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
+  { const denied = payoutClinicGuard(auth.session!, run.clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   const provider = await prisma.provider.findUnique({
     where: { id: run.providerId },
@@ -78,6 +80,7 @@ export async function DELETE(
   const id = (await params).id
   const run = await prisma.payoutRun.findUnique({ where: { id } })
   if (!run) return jsonNoStore({ error: '月結單不存在' }, { status: 404 })
+  { const denied = payoutClinicGuard(auth.session!, run.clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   if (run.status === 'LOCKED') {
     return jsonNoStore({ error: '已鎖定嘅月結單唔可以刪，請先解鎖' }, { status: 409 })
