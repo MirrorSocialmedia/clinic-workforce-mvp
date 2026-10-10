@@ -7,6 +7,8 @@
  *   magic %PDF-；拒絕加密 PDF；頁數 ≤ 30；pdfjs-dist 逐頁抽文字
  *   （hasTextLayer = 每頁文字 ≥ 20 字）＋ @napi-rs/canvas 渲染顯示圖＋縮圖
  */
+import { loadPdfjs } from './pdfjs'
+
 export const DISPLAY_MAX_EDGE = 1600
 export const THUMB_MAX_EDGE = 320
 export const PDF_MAX_PAGES = 30
@@ -112,7 +114,7 @@ export interface ProcessedPdf {
 
 export async function processPdf(raw: Buffer): Promise<ProcessedPdf> {
   // webpackIgnore：pdfjs + @napi-rs/canvas（native）— runtime 原生載入，同 alpine CI 同路徑
-  const pdfjs = await import(/* webpackIgnore: true */ 'pdfjs-dist/legacy/build/pdf.mjs')
+  const pdfjs = await loadPdfjs()
   const { createCanvas } = await import(/* webpackIgnore: true */ '@napi-rs/canvas')
 
   let doc: any

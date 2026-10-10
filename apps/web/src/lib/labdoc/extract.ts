@@ -37,6 +37,7 @@ import {
 import { autoReconcileIfReady } from './statement-reconcile'
 import { buildPageKey, readEncrypted } from './storage'
 import { normPatientCode } from '../cost-entry/patient-code'
+import { loadPdfjs } from './pdfjs'
 
 /** §5.1：三次失敗先 EXTRACT_FAILED */
 export const LABDOC_MAX_ATTEMPTS = 3
@@ -93,7 +94,7 @@ interface PageRef {
 }
 
 async function extractPdfPageTexts(pdfBuf: Buffer): Promise<string[]> {
-  const pdfjs = await import(/* webpackIgnore: true */ 'pdfjs-dist/legacy/build/pdf.mjs')
+  const pdfjs = await loadPdfjs()
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(pdfBuf), useSystemFonts: true })
   const doc = await loadingTask.promise
   try {
