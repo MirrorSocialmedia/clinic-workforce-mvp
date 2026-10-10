@@ -5,9 +5,11 @@
 //   單日：揀護士 + 剔已核對 → 記低核對時金額；之後數字變咗 → 紅框「要重新核對」
 //   範圍：逐日核對狀態一覽（預設只顯示未核對／有變），撳「睇呢日」跳去單日做核對
 // ============================================================
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
+import { todayHK } from '@/lib/hk-date'
 import type { DayCheckState } from '@/lib/payout/daily-check'
+import { InlineDayCheck } from './InlineDayCheck'
 
 // 唔好 import daily-report（佢 import prisma，會入 client bundle）—— 同 dayLabel 一樣嘅格式
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
@@ -40,7 +42,12 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
   const [revoking, setRevoking] = useState(false)
   const [reason, setReason] = useState('')
   const [onlyOpen, setOnlyOpen] = useState(true)
+  // ★ cwm-dailyv3-20261010 §4：多日列表就地核對 —— 同一時間只開一行（inlineDate）
+  const [inlineDate, setInlineDate] = useState<string | null>(null)
+  const [localReload, setLocalReload] = useState(0) // 核對成功 → 重新 GET 本 panel 狀態
+  const [justChecked, setJustChecked] = useState<Set<string>>(new Set()) // 啱啱核對嘅行留在「只顯示未核對／有變」
   const single = from === to
+  const today = todayHK()
   // ★ cwm-dailyv2-20261007 ④：「逐格已對 n/總有數格」— 全部對晒先綠字
   const cellHint = cellProgress && cellProgress.total > 0 ? (
     <div className={`text-xs ${cellProgress.done === cellProgress.total ? 'text-green-700 font-semibold' : 'text-gray-500'}`}>
@@ -55,8 +62,8 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
       setData(await apiFetch<CheckData>(`/api/payout-runs/daily/check?${q}`))
     } catch (e: any) { setError(e.message); setData(null) }
   }
-  useEffect(() => { setNurseId(''); setTicked(false); setRevoking(false); setReason(''); load() // eslint-disable-line react-hooks/exhaustive-deps
-  }, [clinicId, from, to, reloadKey])
+  useEffect(() => { setNurseId(''); setTicked(false); setRevoking(false); setReason(''); setInlineDate(null); setJustChecked(new Set()); load() // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clinicId, from, to, reloadKey, localReload])
 
   if (error) return <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">⚠️ 護士核對：{error}</div>
   if (!data) return null
@@ -71,6 +78,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
           <b>{clinicLabel} · {from} 至 {to} · 護士核對</b>
           <span className="text-sm text-gray-600">有收款 {data.days.length} 日 · <b className="text-green-700">已核對 {n('CHECKED')}</b> · <b className="text-red-700">有變 {n('CHANGED')}</b> · <b className="text-amber-700">未核對 {n('UNCHECKED')}</b></span>
         </div>
+        <div className="px-4 pb-1 text-xs text-gray-500">逐格剔要揀單日（撳上面「睇呢日 →」）</div>
         <label className="flex items-center gap-2 px-4 pb-2 text-sm"><input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} />只顯示未核對／有變</label>
         <table className="w-full text-sm">
           <thead className="bg-[#1F4E79] text-white">
@@ -78,17 +86,53 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
           </thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-gray-500">{onlyOpen ? '全部已核對 ✓' : '呢段日子冇收款'}</td></tr>}
-            {rows.map(d => (
-              <tr key={d.date} className={`border-t ${d.status === 'CHANGED' ? 'bg-red-50' : d.status === 'UNCHECKED' ? 'bg-amber-50' : ''}`}>
-                <td className="p-2">{dayLabel(d.date).slice(5)}</td>
-                <td className="p-2 text-right tabular-nums">{money(d.storeTotal)}</td>
-                <td className={`p-2 font-semibold ${d.status === 'CHECKED' ? 'text-green-700' : d.status === 'CHANGED' ? 'text-red-700' : 'text-amber-800'}`}>
-                  {d.status === 'CHECKED' ? '✓ 已核對' : d.status === 'CHANGED' ? '⚠ 核對後有變' : '未核對'}
-                </td>
-                <td className="p-2 text-gray-600">{d.check ? `${d.check.nurseName} · ${hhmm(d.check.checkedAt)}${d.status === 'CHANGED' ? `（核對時 ${money(d.check.amount)}）` : ''}` : '—'}</td>
-                <td className="p-2 text-right"><button type="button" onClick={() => onPickDate(d.date)} className="text-blue-700 underline text-xs">睇呢日 →</button></td>
-              </tr>
-            ))}
+            {rows.map(d => {
+              const future = d.date > today // 未到嘅日子唔出掣（client 端 HK 日期字串比較）
+              return (
+                <Fragment key={d.date}>
+                  <tr className={`border-t ${d.status === 'CHANGED' ? 'bg-red-50' : d.status === 'UNCHECKED' ? 'bg-amber-50' : justChecked.has(d.date) ? 'bg-green-50' : ''}`}>
+                    <td className="p-2">{dayLabel(d.date).slice(5)}</td>
+                    <td className="p-2 text-right tabular-nums">{money(d.storeTotal)}</td>
+                    <td className={`p-2 font-semibold ${d.status === 'CHECKED' ? 'text-green-700' : d.status === 'CHANGED' ? 'text-red-700' : 'text-amber-800'}`}>
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        {d.status === 'CHECKED' ? `✓ 已核對${justChecked.has(d.date) ? '（啱啱核對）' : ''}` : d.status === 'CHANGED' ? '⚠ 核對後有變' : '未核對'}
+                        {d.status === 'UNCHECKED' && !future && d.storeTotal > 0 && data.canCheck && (
+                          <button type="button" onClick={() => setInlineDate(inlineDate === d.date ? null : d.date)}
+                            className="h-6 px-2 rounded border border-green-600 text-green-700 text-xs bg-white hover:bg-green-50">核對</button>
+                        )}
+                        {d.status === 'CHANGED' && !future && d.storeTotal > 0 && data.canCheck && (
+                          <button type="button" onClick={() => setInlineDate(inlineDate === d.date ? null : d.date)}
+                            className="h-6 px-2 rounded border border-red-600 text-red-700 text-xs bg-white hover:bg-red-50">重新核對</button>
+                        )}
+                      </span>
+                    </td>
+                    <td className="p-2 text-gray-600">{d.check ? `${d.check.nurseName} · ${hhmm(d.check.checkedAt)}${d.status === 'CHANGED' ? `（核對時 ${money(d.check.amount)}）` : ''}` : '—'}</td>
+                    <td className="p-2 text-right"><button type="button" onClick={() => onPickDate(d.date)} className="text-blue-700 underline text-xs">睇呢日 →</button></td>
+                  </tr>
+                  {/* ★ cwm-dailyv3-20261010 §4：撳【核對】→ 嗰行下面展開 InlineDayCheck（同一時間只開一行） */}
+                  {inlineDate === d.date && (
+                    <tr className="border-t bg-white">
+                      <td colSpan={5} className="p-3">
+                        <InlineDayCheck
+                          clinicId={clinicId}
+                          clinicLabel={clinicLabel}
+                          date={d.date}
+                          storeTotal={d.storeTotal}
+                          status={d.status === 'CHANGED' ? 'CHANGED' : 'UNCHECKED'}
+                          onSuccess={() => {
+                            setJustChecked(s => new Set(s).add(d.date)) // 啱啱核對嗰行留住
+                            setInlineDate(null)
+                            setLocalReload(k => k + 1) // 重新 load 呢個 panel 核對狀態
+                          }}
+                          onAlreadyChecked={() => setLocalReload(k => k + 1)}
+                          onClose={() => setInlineDate(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>
