@@ -244,7 +244,10 @@ function PayoutRunsPageInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ periodMonth: selectedMonth }),
       })
-      setAllClinics(res.allClinics || [])
+      const list = res.allClinics || []
+      setAllClinics(list)
+      // ★ cwm-kioskpayout-20261010：得一間店可揀（例如店舖帳號）→ 自動揀埋，醫生下拉即刻收窄到呢間店
+      if (list.length === 1 && !selectedClinic && !selectedProvider) setSelectedClinic(list[0].id)
     } catch (e) {
       console.error('Failed to load all clinics', e)
     }

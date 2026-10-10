@@ -9,6 +9,7 @@ import { prisma } from '@/lib/prisma'
 import { ACTIVE_ALLOCATION } from '@/lib/payout/engine'
 import { apricotIdsOfProvider } from '@/lib/apricot-accounts'
 import { incomeProviderIds } from '@/lib/payout/clinic-income-providers'
+import { payoutClinicGuard, payoutClinicLimit } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -27,8 +28,12 @@ export async function POST(req: NextRequest) {
   //   對 my-clinics scope 用戶會 filter session.clinics（同本頁 scope 語義唔一致）
   //   → 前端唔好依賴 GET /api/clinics，改由本 route 供 allClinics。
   // ★ cwm-payoutcost-fix-20260908 P1-3：加返 scope —— my-clinics 用戶唔應該見到全部診所
+  // ★ cwm-kioskpayout-20261010：店舖帳號（KIOSK）只列自己綁定嘅店
+  const kioskLim = payoutClinicLimit(session)
   const allClinics = await prisma.clinic.findMany({
-    where: scope === 'my-clinics' && session.clinics?.length
+    where: kioskLim
+      ? { id: { in: kioskLim } }
+      : scope === 'my-clinics' && session.clinics?.length
       ? { id: { in: session.clinics } }
       : undefined,
     select: { id: true, name: true, shortName: true },
@@ -44,6 +49,8 @@ export async function POST(req: NextRequest) {
   // ★ cwm-payoutcost-20260908 A1：反方向 —— 診所 + 月 → 有收入嘅醫生
   //   ⚠️ 只喺「淨傳 clinicId」時行；兩個都傳（= 有 providerId）= 舊行為（醫生 → 診所），唔改語義
   if (clinicId && !providerId) {
+    const denied = payoutClinicGuard(session, clinicId) // ★ cwm-kioskpayout-20261010
+    if (denied) return denied
     return await providersForClinic(clinicId, periodMonth, allClinics)
   }
 
@@ -152,14 +159,16 @@ export async function POST(req: NextRequest) {
   })
   const coveredClinicIds = new Set(existingRuns.map(r => r.clinicId))
 
-  const uncoveredClinics = clinics.filter(c => {
+  // ★ cwm-kioskpayout-20261010：醫生 → 診所：店舖帳號只見自己店（醫生喺別店嘅收入唔列）
+  const kioskClinics = kioskLim ? clinics.filter(c => kioskLim.includes(c.id)) : clinics
+  const uncoveredClinics = kioskClinics.filter(c => {
     if (coveredClinicIds.has(c.id)) return false
     // Only flag as uncovered if they have actual income (ALLOCATION or REFERRAL)
     return c.source === 'ALLOCATION' || c.source === 'REFERRAL'
   })
 
   return NextResponse.json({
-    clinics,
+    clinics: kioskClinics,
     uncoveredClinics,
     allClinics, // ★ A1：順便刷新前端「全部診所」名單
   })

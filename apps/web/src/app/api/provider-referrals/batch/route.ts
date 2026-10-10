@@ -9,6 +9,7 @@ import { lockPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { toHKDateStr } from '@/lib/hk-date'
 import { round2 } from '@/lib/payout/engine'
 import { lockedRunFor } from '@/lib/cost-entry/guards'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
     if (!clinicId) {
       return NextResponse.json({ error: `帳單所屬診所（${bill.clinicExtId}）未對應，請去診所管理設定` }, { status: 400 })
     }
+    { const denied = payoutClinicGuard(auth.session!, clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010：帳單要係自己店
 
     // Validate quantities against bill items
     const billItems = await prisma.apricotBillItem.findMany({

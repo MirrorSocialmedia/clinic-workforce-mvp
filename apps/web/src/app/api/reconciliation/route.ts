@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
+import { payoutClinicGuard, payoutClinicWhere } from '@/lib/payout/kiosk-scope'
 
 export async function GET(req: NextRequest) {
 	const auth = await requireAuth(req, 'GET', req.url)
@@ -16,7 +17,9 @@ export async function GET(req: NextRequest) {
 	//   同一醫生兩間診所嘅對數記錄會互相串門（生產實證：何嘉俊醫生 2026-08）
 	const clinicId = searchParams.get('clinicId')
 
-	const where: { periodMonth?: string; clinicId?: string } = {}
+	// ★ cwm-kioskpayout-20261010：店舖帳號只睇自己店
+	if (clinicId) { const denied = payoutClinicGuard(auth.session!, clinicId); if (denied) return denied }
+	const where: { periodMonth?: string; clinicId?: string | { in: string[] } } = { ...payoutClinicWhere(auth.session!) }
 	if (periodMonth) where.periodMonth = periodMonth
 	if (clinicId) where.clinicId = clinicId
 

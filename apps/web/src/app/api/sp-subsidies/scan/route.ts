@@ -7,6 +7,7 @@ import { handleRoute } from '@/lib/api-guard'
 import { scanSpSubsidies } from '@/lib/payout/engine'
 import { prisma } from '@/lib/prisma'
 import { SP_SCAN_AUDIT, scanAuditEntityId } from '@/lib/payout/sp-review'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -15,6 +16,9 @@ export async function POST(req: NextRequest) {
   return handleRoute('sp-subsidies/scan', async () => {
     const { periodMonth, clinicId } = await req.json().catch(() => ({}))
     if (!periodMonth) return NextResponse.json({ error: 'periodMonth required' }, { status: 400 })
+    // ★ cwm-kioskpayout-20261010：店舖帳號一定要指定自己店（唔指定 = 掃晒全部店）
+    const denied = payoutClinicGuard(auth.session!, clinicId)
+    if (denied) return denied
     const r = await scanSpSubsidies(periodMonth, clinicId)
     // ★ cwm-sppreview-20261006：記低「呢個月掃描過」—— 月結預覽靠佢分「未掃描」同「掃咗但真係冇」
     await prisma.auditLog.create({

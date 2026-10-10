@@ -13,13 +13,15 @@ import { jsonNoStore } from '@/lib/api-response'
 import { handleRoute } from '@/lib/api-guard'
 import { todayHK } from '@/lib/hk-date'
 import { STALE_DAYS, staleCostCases, orphanCostCases, oldUnpricedCostCases } from '@/lib/payout/cost-detail'
+import { payoutClinicLimit } from '@/lib/payout/kiosk-scope'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   return handleRoute('payout-stale-costs', async () => {
     const today = todayHK()
-    const [rows, orphans, unpriced] = await Promise.all([staleCostCases(today, null), orphanCostCases(null), oldUnpricedCostCases(today, null)])
+    const lim = payoutClinicLimit(auth.session!) // ★ cwm-kioskpayout-20261010：店舖帳號只睇自己店（其他 = null 全部）
+    const [rows, orphans, unpriced] = await Promise.all([staleCostCases(today, lim), orphanCostCases(lim), oldUnpricedCostCases(today, lim)])
     return jsonNoStore({ days: STALE_DAYS, rows, orphans, unpriced })
   })
 }

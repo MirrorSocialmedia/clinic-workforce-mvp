@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -70,6 +71,9 @@ export async function GET(req: NextRequest) {
         clinicId = clinic.id
       }
     }
+
+    // ★ cwm-kioskpayout-20261010：店舖帳號只可以查自己店嘅帳單
+    { const denied = payoutClinicGuard(auth.session!, clinicId); if (denied) return denied }
 
     // Check which items already have referral records
     const existing = await prisma.providerReferral.findMany({

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { payoutClinicWhere } from '@/lib/payout/kiosk-scope'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
   const periodMonth = searchParams.get('periodMonth')
   const source = searchParams.get('source')
 
-  const where: any = {}
+  const where: any = { ...payoutClinicWhere(auth.session!) } // ★ cwm-kioskpayout-20261010：店舖帳號只睇自己店
   if (providerId) where.providerId = providerId
   if (periodMonth) where.periodMonth = periodMonth
   if (source) where.source = source

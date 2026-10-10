@@ -4,6 +4,7 @@ import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { createVoidAdjustment } from '@/lib/payout/engine'
 import { lockedRunFor, isMonthStr } from '@/lib/cost-entry/guards'
 import { NextRequest } from 'next/server'
+import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
 	const auth = await requirePerm(req, 'provider_payout')
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest) {
 	if (!providerId || !clinicId || !periodMonth || !reason || amount == null) {
 		return Response.json({ error: 'providerId, clinicId, periodMonth, reason, amount 都係必填' }, { status: 400 })
 	}
+	{ const denied = payoutClinicGuard(session, clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 	const amt = Number(amount)
 	// ★ P3-deploy J4: 金額守衛
 	if (!Number.isFinite(amt)) {

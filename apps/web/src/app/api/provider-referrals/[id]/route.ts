@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { lockedRunFor } from '@/lib/cost-entry/guards'
 import { toHKDateStr } from '@/lib/hk-date'
+import { payoutClinicGuardDraft } from '@/lib/payout/kiosk-scope'
 
 export async function PUT(
   req: NextRequest,
@@ -24,6 +25,7 @@ export async function PUT(
   if (!referral) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
+  { const denied = payoutClinicGuardDraft(auth.session!, referral.clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   // Check if locked
   if (referral.lockedByRunId) {
@@ -113,6 +115,7 @@ export async function PUT(
   const finalStatus = updateData.status ?? referral.status
   const finalClinic = updateData.clinicId ?? referral.clinicId
   const finalMonth = updateData.periodMonth ?? referral.periodMonth
+  { const denied = payoutClinicGuardDraft(auth.session!, finalClinic); if (denied) return denied } // ★ cwm-kioskpayout-20261010：改完都要係自己店
   if (finalStatus === 'CONFIRMED' && finalClinic && finalMonth
     && await lockedRunFor(prisma, referral.fromProviderId, finalClinic, finalMonth)) {
     return NextResponse.json({ error: `${finalMonth} 嘅月結已經鎖定，轉介改咗都唔會計入。請用「手動調整」喺下期補，或者先解鎖該月月結` }, { status: 409 })
@@ -170,6 +173,7 @@ export async function DELETE(
   if (!referral) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
+  { const denied = payoutClinicGuardDraft(auth.session!, referral.clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   // Check if locked
   if (referral.lockedByRunId) {

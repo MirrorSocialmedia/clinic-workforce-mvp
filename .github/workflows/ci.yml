@@ -165,6 +165,7 @@ jobs:
             src/lib/payout/cost-detail.test.ts \
             src/lib/payout/sp-status.test.ts \
             src/lib/payout/sp-review.test.ts \
+            src/lib/payout/kiosk-scope.test.ts \
             src/lib/payout/daily-check.test.ts \
             src/lib/payout/daily-cell-check.test.ts \
             src/lib/payout/daily-review.test.ts \

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { payoutClinicGuardDraft } from '@/lib/payout/kiosk-scope'
 
 export async function POST(
   req: NextRequest,
@@ -20,6 +21,7 @@ export async function POST(
   if (!referral) {
     return NextResponse.json({ error: 'Record not found' }, { status: 404 })
   }
+  { const denied = payoutClinicGuardDraft(auth.session!, referral.clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
   // Check if locked in payout run
   if (referral.lockedByRunId) {

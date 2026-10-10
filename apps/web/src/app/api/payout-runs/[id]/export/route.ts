@@ -20,6 +20,7 @@ import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { loadDoctorSheetData } from '@/lib/payout/report-data'
 import { buildDoctorSheet } from '@/lib/payout/xlsx-report'
+import { payoutRecordGuard } from '@/lib/payout/kiosk-scope'
 
 export async function GET(
   req: NextRequest,
@@ -29,6 +30,9 @@ export async function GET(
   if (isAuthError(auth)) return auth.error
 
   const id = (await params).id
+  // ★ cwm-kioskpayout-20261010：店舖帳號只可以匯出自己店
+  const denied = await payoutRecordGuard(auth.session!, () => prisma.payoutRun.findUnique({ where: { id }, select: { clinicId: true } }))
+  if (denied) return denied
 
   // ★ 共同攞數函數（MD 坑⑥）：同 clinic-report route 同一把尺
   const loaded = await loadDoctorSheetData(id)

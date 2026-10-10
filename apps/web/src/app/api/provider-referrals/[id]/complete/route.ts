@@ -9,6 +9,7 @@ import { lockPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { toHKDateStr } from '@/lib/hk-date'
 import { round2 } from '@/lib/payout/engine'
 import { lockedRunFor } from '@/lib/cost-entry/guards'
+import { payoutClinicGuard, payoutClinicGuardDraft } from '@/lib/payout/kiosk-scope'
 
 export async function POST(
   req: NextRequest,
@@ -25,6 +26,7 @@ export async function POST(
     if (!draft) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     if (draft.status !== 'DRAFT') return NextResponse.json({ error: '只有草稿可以補上帳單' }, { status: 400 })
     if (draft.lockedByRunId) return NextResponse.json({ error: '該轉介已鎖定喺月結單中' }, { status: 409 })
+    { const denied = payoutClinicGuardDraft(auth.session!, draft.clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
 
     // 2. Parse body
     const { billExtId, billCode, refPercent, items } = await req.json()
@@ -43,6 +45,7 @@ export async function POST(
     })
     if (!clinic) return NextResponse.json({ error: `帳單所屬診所（${bill.clinicExtId}）未對應，請去診所管理設定` }, { status: 400 })
 
+    { const denied = payoutClinicGuard(auth.session!, clinic.id); if (denied) return denied } // ★ cwm-kioskpayout-20261010：帳單要係自己店
     const periodMonth = toHKDateStr(bill.billTime).slice(0, 7)
     const pct = Number(refPercent ?? draft.refPercent ?? 2)
     if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return NextResponse.json({ error: '轉介 % 要喺 0 至 100 之間' }, { status: 400 })
