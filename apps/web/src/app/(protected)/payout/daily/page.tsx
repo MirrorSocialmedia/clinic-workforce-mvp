@@ -15,6 +15,9 @@ import { Card } from '@/components/ui/card'
 import { ArrowLeft, Download, RefreshCw } from 'lucide-react'
 import { todayHK, addDaysStr } from '@/lib/hk-date'
 import type { DailyReport, DailyRow } from '@/lib/payout/daily-report'
+// ★ cwm-dailyv3：Clinic 雜項行 key（與 lib/payout/daily-report.ts 嘅 CLINIC_ROW_KEY 同一個字串 —
+//   只可以 import type 唔可以 runtime import（佢 import prisma，會入 client bundle））
+const CLINIC_ROW_KEY = '__clinic__'
 import { useApricotJobPoll } from '@/lib/use-apricot-job-poll'
 import { hasPermission } from '@/lib/permissions'
 import { cellState, cellTickable } from '@/lib/payout/daily-cell-state' // ★ ④：純函數（零 prisma，client 可用）
@@ -348,6 +351,8 @@ export default function DailyRevenuePage() {
     fontVariantNumeric: 'tabular-nums', color, ...extra,
   })
   const firstCol = report?.mode === 'byDoctor' ? '醫生' : '日期'
+  // ★ cwm-dailyv3：Clinic 雜項行（A 區淺橙底、名唔可以撳；B 區跳過）
+  const isClinicRow = (r: DailyRow) => r.key === CLINIC_ROW_KEY
   const isEmptyRow = (r: DailyRow) => r.storeTotal === 0 && r.doctorRaw === 0 && Object.values(r.byMethod).every(v => v === 0)
 
   return (
@@ -482,9 +487,9 @@ export default function DailyRevenuePage() {
                   <tr><td colSpan={report.methods.length + 3} style={{ ...td(GRAY), textAlign: 'center', padding: 24 }}>呢段日子冇收款</td></tr>
                 )}
                 {report.rows.map(r => (
-                  <tr key={r.key} style={report.mode === 'byDay' && isEmptyRow(r) ? { background: '#f3f4f6' } : undefined}>
+                  <tr key={r.key} style={report.mode === 'byDay' && isEmptyRow(r) ? { background: '#f3f4f6' } : isClinicRow(r) ? { background: '#fff7e6' } : undefined}>
                     <td style={td(BLUE, { textAlign: 'left' })}>
-                      {report.mode === 'byDoctor' && !r.key.startsWith('ext:')
+                      {report.mode === 'byDoctor' && !isClinicRow(r) && !r.key.startsWith('ext:')
                         ? <button type="button" className="hover:underline" style={{ color: BLUE }} onClick={() => setProviderId(r.key)}>{r.label}</button>
                         : r.label}
                     </td>
@@ -549,7 +554,7 @@ export default function DailyRevenuePage() {
                 </tr>
               </thead>
               <tbody>
-                {report.rows.filter(r => report.mode === 'byDoctor' || !isEmptyRow(r)).map(r => (
+                {report.rows.filter(r => !isClinicRow(r) && (report.mode === 'byDoctor' || !isEmptyRow(r))).map(r => (
                   <tr key={r.key}>
                     <td style={td(BLUE, { textAlign: 'left' })}>{r.label}</td>
                     <td style={td(BLUE)}>{money(r.doctorRaw)}</td>

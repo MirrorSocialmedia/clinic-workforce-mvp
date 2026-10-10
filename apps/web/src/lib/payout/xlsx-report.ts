@@ -31,6 +31,7 @@
  */
 import ExcelJS from 'exceljs'
 import type { DailyReport } from './daily-report'
+import { CLINIC_ROW_KEY } from './daily-report'
 
 export const MONEY_FMT = '$#,##0.00;($#,##0.00);"-"'
 // ★ cwm-feefmt-20261006：兩個小數位 —— 一個小數位會將 0.235% 顯示成「0.2%」、1.75% 顯示成「1.8%」，誤導
@@ -1071,6 +1072,7 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
   row++
   const bFirst = row
   for (const r of d.rows) {
+    if (r.key === CLINIC_ROW_KEY) continue // ★ cwm-dailyv3：B 區（醫生收入及分成）跳過 Clinic 雜項行
     setData(ws.getCell(row, 1), r.label)
     setData(ws.getCell(row, 2), r.doctorRaw, { fmt: MONEY_FMT })
     setFormula(ws.getCell(row, 3), `B${row}-D${row}`, { fmt: MONEY_FMT, result: round2(r.doctorRaw - r.doctorNet) })
