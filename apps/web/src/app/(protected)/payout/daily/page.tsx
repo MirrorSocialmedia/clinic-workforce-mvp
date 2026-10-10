@@ -132,7 +132,8 @@ export default function DailyRevenuePage() {
   // ★ cwm-dailyv3-20261010 §8：預設診所 —— KIOSK 用 myClinics[0]（綁多店時 cl[0] 可能唔屬佢 → 避免 403 閃）；
   //   非 KIOSK 同舊行為一樣（clinics[0]）。deep-link（?clinicId=）唔會覆蓋。
   useEffect(() => {
-    if (!clinics.length || deepLinked.current || clinicId) return
+    // me 未載完唔好搶先 set：KIOSK 要多等 myClinics（綁定店清單），否則綁多店時會先設到非己店 → 403 閃
+    if (!me || !clinics.length || deepLinked.current || clinicId) return
     const first = (isKiosk ? myClinics : clinics)[0] // eslint-disable-line react-hooks/exhaustive-deps
     if (first) setClinicId(first.id)
   }, [clinics, me, isKiosk, clinicId])
