@@ -18,7 +18,7 @@ import InvoiceList from './InvoiceList'
 import ArchiveList from './ArchiveList'
 import PendingList from './PendingList'
 
-export type LabDocTab = 'invoices' | 'archive' | 'pending'
+export type LabDocTab = 'invoices' | 'statements' | 'archive' | 'pending'
 
 export interface LabDocsMe {
   role: string
@@ -90,13 +90,16 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
     <div className="max-w-5xl mx-auto p-4 space-y-4">
       <div>
         <h1 className="text-xl font-bold">Lab 單據</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">到貨單上傳同檔案庫（存底 7 年）</p>
+        <p className="text-sm text-muted-foreground mt-0.5">到貨單、月結單對數同檔案庫（存底 7 年）</p>
       </div>
 
       {/* 分頁（§12.1：P1 = 到貨單｜檔案庫）— archive route 上撳「到貨單」= 跳 /lab-docs（page 層處理） */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <button className={tabCls(tab === 'invoices')} onClick={() => onTabChange('invoices')}>
           到貨單
+        </button>
+        <button className={tabCls(tab === 'statements')} onClick={() => onTabChange('statements')}>
+          月結單
         </button>
         <button className={tabCls(tab === 'archive')} onClick={() => onTabChange('archive')}>
           檔案庫
@@ -116,6 +119,8 @@ export default function LabDocsTabs({ me, tab, fixedArchive, onTabChange }: Prop
 
       {tab === 'invoices' ? (
         <InvoiceList clinicNames={clinicNames} providerNames={providerNames} />
+      ) : tab === 'statements' ? (
+        <InvoiceList key="stmt" kind="STATEMENT" clinicNames={clinicNames} providerNames={providerNames} />
       ) : tab === 'pending' ? (
         <PendingList me={me} clinicNames={clinicNames} />
       ) : (

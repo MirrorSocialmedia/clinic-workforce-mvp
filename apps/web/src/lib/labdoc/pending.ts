@@ -81,6 +81,8 @@ export interface PendingItem {
   id: string // lineId（UNMATCHED_LINE）或 docId／costCaseId
   refType: 'LINE' | 'DOC' | 'COST'
   docId: string | null // LINE item 帶 docId 方便跳轉
+  /** 月結單類（STATEMENT_DIFF／MISSING_IN_SYSTEM）：分段 id — 直接跳分段頁 */
+  sectionId?: string | null
   labName: string | null
   clinicId: string | null
   providerId: string | null

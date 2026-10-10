@@ -450,7 +450,7 @@ async function finishSuccess(
   // §5.1.5：敏感數字過濾 → 寫 extractedJson（過濾後）
   const { result: filtered, removedFields } = filterSensitiveNumbers(result, { docId })
   // §5.5 系統檢查（對過濾後嘅結果）
-  const checks = checkExtracted(filtered, {
+  let checks = checkExtracted(filtered, {
     docKind: doc.kind as LabDocKind,
     uploadedAt: doc.createdAt,
     statementKind: (labProfile?.statementKind ?? null) as 'DETAIL' | 'INVOICE_LIST' | 'OUTSTANDING' | null,
@@ -461,6 +461,20 @@ async function finishSuccess(
     uploadLabId: doc.labId,
     defaultDocNoKind: labProfile?.defaultDocNoKind ?? null,
   })
+  // 上傳時未揀 Lab → 讀單前冇 profile；識別到 Lab 之後補攞（2026-10-10 修：之前月結單 statementKind 永遠 null，
+  // §5.5 欠款型 currentTotal 檢查同畫面分型都用錯）
+  const effProfile =
+    labProfile ??
+    (identified.labId
+      ? await prisma.labProfile.findUnique({ where: { labId: identified.labId }, select: { extractionHint: true, statementKind: true, defaultDocNoKind: true } })
+      : null)
+  if (!labProfile && effProfile?.statementKind && doc.kind === 'STATEMENT') {
+    checks = checkExtracted(filtered, {
+      docKind: doc.kind as LabDocKind,
+      uploadedAt: doc.createdAt,
+      statementKind: effProfile.statementKind as 'DETAIL' | 'INVOICE_LIST' | 'OUTSTANDING',
+    })
+  }
 
   const readIssues = unionStrings([...filtered.readIssues, ...checks.readIssues, ...removedFields.map((f) => `SENSITIVE_REMOVED:${f}`)])
   const ymdToDate = (s: string | null): Date | undefined => (s ? new Date(`${s}T00:00:00Z`) : undefined)
@@ -551,7 +565,7 @@ async function finishSuccess(
     if (sectionIdents.length > 0 && sectionIdents.every((i) => i.complete)) {
       headerData.status = 'IN_PROGRESS'
     }
-    headerData.statementKind = labProfile?.statementKind ?? null
+    headerData.statementKind = effProfile?.statementKind ?? null
   }
 
   // §5.1.6：寫 docNo 撞 partial unique index（Prisma P2002）→ DUPLICATE + duplicateOfId。

@@ -101,11 +101,20 @@ export default function PendingList({ me, clinicNames }: Props) {
   const visible = (data?.categories ?? []).filter((c) => !activeCat || c.key === activeCat)
 
   // deep-link：按類別去處理（對數流程喺到貨單；已鎖調整喺成本錄入）
-  const deepLink = (key: PendingCategory): { href: string; label: string } => {
+  const deepLink = (key: PendingCategory, it?: { docId: string | null; sectionId?: string | null }): { href: string; label: string } => {
     switch (key) {
       case 'LOCKED_ADJUST':
-        return { href: '/cost-entry', label: '去調整' }
+      case 'NOT_RECEIVED':
+      case 'RECEIVED_NO_INVOICE':
+        return { href: '/cost-entry', label: key === 'LOCKED_ADJUST' ? '去調整' : '去成本' }
+      case 'STATEMENT_DIFF':
+      case 'MISSING_IN_SYSTEM':
+      case 'NOT_ON_STATEMENT':
+        if (it?.docId && it.sectionId) return { href: `/lab-docs/statements/${it.docId}/sections/${it.sectionId}`, label: '去分段' }
+        if (it?.docId) return { href: `/lab-docs/statements/${it.docId}`, label: '去月結單' }
+        return { href: '/lab-docs?tab=statements', label: '去處理' }
       default:
+        if (it?.docId) return { href: `/lab-docs/invoices/${it.docId}`, label: '去對數' }
         return { href: '/lab-docs', label: '去處理' }
     }
   }
@@ -246,8 +255,8 @@ export default function PendingList({ me, clinicNames }: Props) {
                           </button>
                         )}
                         {c.key !== 'AMOUNT_REVIEW' && c.key !== 'NEW_PAYEE' && c.key !== 'EXTRACT_FAILED' && (
-                          <a className={btn} href={deepLink(c.key).href}>
-                            {deepLink(c.key).label}
+                          <a className={btn} href={deepLink(c.key, it).href}>
+                            {deepLink(c.key, it).label}
                           </a>
                         )}
                       </td>

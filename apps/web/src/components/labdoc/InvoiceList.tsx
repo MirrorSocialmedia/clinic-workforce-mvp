@@ -10,9 +10,12 @@
  * - 列表：GET /api/lab-docs?kind=INVOICE（20/頁，新到舊）；手機卡片／電腦表格
  *   卡片：Lab、單號、診所、醫生、總數、狀態 chip、上傳人/時間（§12.1；P1 未讀單 →
  *   診所/醫生/病人數未識別就顯示「未識別」）
+ * - 2026-10-10：kind='STATEMENT' 共用做月結單分頁（多張相／多個 PDF＝一份）；
+ *   撳單據 → 對數頁（/lab-docs/invoices/[id]｜/lab-docs/statements/[id]）
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Camera, ChevronLeft, ChevronRight, FileText, ImagePlus, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
@@ -83,10 +86,14 @@ async function imageToJpeg(file: File): Promise<File> {
   }
 }
 
-export default function InvoiceList({ clinicNames, providerNames }: {
+export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOICE' }: {
   clinicNames: Record<string, string>
   providerNames: Record<string, string>
+  kind?: 'INVOICE' | 'STATEMENT'
 }) {
+  const router = useRouter()
+  const isStmt = kind === 'STATEMENT'
+  const open = (id: string) => router.push(isStmt ? `/lab-docs/statements/${id}` : `/lab-docs/invoices/${id}`)
   const [items, setItems] = useState<ListDoc[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -101,7 +108,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
   const load = useCallback(async (p: number) => {
     setLoading(true)
     try {
-      const data = await apiFetch<ListResp>(`/api/lab-docs?kind=INVOICE&page=${p}`)
+      const data = await apiFetch<ListResp>(`/api/lab-docs?kind=${kind}&page=${p}`)
       setItems(data.items)
       setTotal(data.total)
       setPage(data.page)
@@ -111,7 +118,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [kind])
 
   useEffect(() => {
     load(1)
@@ -147,14 +154,14 @@ export default function InvoiceList({ clinicNames, providerNames }: {
 
       const form = new FormData()
       for (const f of processed) form.append('files', f, f.name)
-      form.append('kind', 'INVOICE')
+      form.append('kind', kind)
       form.append('idempotencyKey', crypto.randomUUID())
 
       const res = await fetch('/api/lab-docs/upload', { method: 'POST', body: form, credentials: 'include' })
       const body = await res.json().catch(() => ({}))
       if (res.status === 201) {
         const n = (body.documents || []).length
-        toast.success(`上傳成功：${n} 單到貨單`)
+        toast.success(isStmt ? '上傳成功：1 份月結單（讀緊）' : `上傳成功：${n} 單到貨單`)
         load(page)
       } else if (res.status === 409 && body.duplicateOf) {
         // §4.2：呢個檔已經喺 {日期} 由 {人} 上傳過 → 「去睇」= 直接開原本嗰張
@@ -179,7 +186,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
 
   const meta = (d: ListDoc) => ({
     lab: d.labName ?? d.labNameRaw ?? '未識別',
-    docNo: d.docNo ?? '未識別',
+    docNo: isStmt ? `${d.statementMonth ?? '月份未識別'} 月結單` : d.docNo ?? '未識別',
     clinic: d.clinicId ? clinicNames[d.clinicId] ?? '未識別' : '未識別',
     doctor: d.providerId ? providerNames[d.providerId] ?? '未識別' : '未識別',
     date: hkDate(d.docDate ?? d.deliveryDate) || hkDateTime(d.uploadedAt),
@@ -196,7 +203,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
           className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-brand text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
         >
           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
-          影 invoice
+          {isStmt ? '影月結單' : '影 invoice'}
         </button>
         <button
           onClick={() => pdfRef.current?.click()}
@@ -224,7 +231,9 @@ export default function InvoiceList({ clinicNames, providerNames }: {
           onChange={(e) => handleFiles(e.target.files, false)}
         />
       </div>
-      <p className="text-xs text-muted-foreground -mt-1">提示：唔好影到支票（§12.1）</p>
+      <p className="text-xs text-muted-foreground -mt-1">
+        {isStmt ? '一份月結單多頁：一次過揀晒全部相（會合成一份）' : '提示：唔好影到支票'}
+      </p>
 
       {/* 隱藏保留：thumb 預取（避免卡片 hover 閃） — 用 list 首項 key 掛住 */}
       {items.slice(0, 3).map((d) => thumb(d) && (
@@ -240,7 +249,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
         ) : items.length === 0 ? (
           <div className="text-center py-10 text-muted-foreground text-sm">
             <FileText size={32} className="mx-auto mb-2 opacity-40" />
-            暫未到貨單
+            {isStmt ? '暫未月結單' : '暫未到貨單'}
           </div>
         ) : (
           items.map((d) => {
@@ -249,7 +258,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
             return (
               <button
                 key={d.id}
-                onClick={() => setViewDoc({ id: d.id, name: d.uploadedByName ?? undefined })}
+                onClick={() => open(d.id)}
                 className={`w-full text-left rounded-xl border bg-card p-3 active:bg-accent ${sm.dimmed ? 'opacity-60' : ''}`}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -298,7 +307,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
             ) : items.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-3 py-10 text-center text-muted-foreground">
-                  暫未到貨單
+                  {isStmt ? '暫未月結單' : '暫未到貨單'}
                 </td>
               </tr>
             ) : (
@@ -308,7 +317,7 @@ export default function InvoiceList({ clinicNames, providerNames }: {
                 return (
                   <tr
                     key={d.id}
-                    onClick={() => setViewDoc({ id: d.id, name: d.uploadedByName ?? undefined })}
+                    onClick={() => open(d.id)}
                     className={`border-b last:border-0 hover:bg-accent/50 cursor-pointer ${sm.dimmed ? 'opacity-60' : ''}`}
                   >
                     <td className="px-3 py-2.5 font-medium">{m.docNo}</td>

@@ -1,12 +1,26 @@
 # 施工單：Lab 單據對數（cwm-labdoc）
 
-> 版本：v1.1（2026-10-04，§5.2 時限修正）· 基準 commit：`58872f9`（branch `claude/qa-agent-workflow-simulation-fee31s`）
+> 版本：v1.3（2026-10-10，端到端模擬後修訂，見下）；v1.1（2026-10-04，§5.2 時限修正）· 基準 commit：`58872f9`（branch `claude/qa-agent-workflow-simulation-fee31s`）
 > 前置文件：
 > - 模擬規格 `docs/simulations/lab-invoice-reconciliation-simulation.md`
 > - QA 模擬報告 `docs/simulations/2026-09-28-lab-invoice-reconciliation-qa-report.md`（下稱「QA 報告」，F-xx 指嗰度嘅 finding）
 > - 設計稿（流程圖＋畫面）：https://claude.ai/artifact/VQteYotkyQbWpKoQ3h8ZKT
 >
 > 呢份係**施工單**：寫明要建乜、點樣算啱。所有「拍板」已由老細確認（§0.2），施工時唔使再問；遇到本單冇講嘅情況，照 §0.4 處理。
+>
+> **v1.3 修訂（2026-10-10，`docs/simulations/2026-10-10-lab-doc-recon-e2e-qa-report.md`）**
+> - §7.5「改做」差額大過現價一半 → API 409 `PRICE_CHANGE_CONFIRM`，前端再確認先送 `confirmLargePriceChange: true`（防揀錯候選靜靜改另一筆成本）。
+> - §7.6 新增成本＝開成本＋將分組 UNMATCHED 行 MAIN 連過去，同一個 transaction；分組已有 MATCHED 行 → 409。
+> - §7.8 任何失敗都 rollback 成個儲存；分組 0–99（RBAC key `/groups/:g/…`）；候選 defaults 嘅 `UNMATCH`（未剔）可以原樣送（no-op）。
+> - §7.11 同一次上傳嘅單據共用 `createdAt`（合併靠呢個判斷同批）；§8.1 月結單多個檔＝一張單據。
+> - §8.1 重複只擋「後上傳」嗰份：confirm／resolve 回 409 `SECTION_DUPLICATE`；取代舊版會將舊版已處理嘅行（同段＋單號＋金額＋描述＋數量）帶過新版。
+> - §8.2 C.2「之前已對」包括之前已確認分段**已處理**（有 resolution）嘅單號 — 上線前舊欠款處理一次就夠。
+> - §8.3 單號型／欠款型（冇 `matchedLineId`）揀 STATEMENT_WINS：invoice 得一行就改嗰行；多行要帶 `systemLineId`（否則 400 `PICK_SYSTEM_LINE`）；成本鏈照 §7.5。分段未確認之前，INVOICE_WINS／NOT_OURS 可以改；預覽回 `ok:false, needsCostConfirm:true`。
+> - §5.1 讀單途中被作廢／合併 → 讀完唔再寫（唔翻生）；`extractError` 記真原因（例 `llm:truncated`）；最細粒度仍 truncated → 唔重試；識別到 Lab 之後先攞 LabProfile（月結單 `statementKind` 唔再係 null）。
+> - §11 `PUT /manual` = 同 `PUT /header` 同一個 handler（header 接受 EXTRACT_FAILED；人手輸入一律 `manualAmountEdit = true`）；解除配對經 group save 嘅 `UNMATCH`，唔另開 `/lines/:lineId/unmatch`。
+> - §4.4 purge 清 `LabStatementLine.patientRaw` 經 section；過咗 `purgeAt` 即刻 410。冪等 key：確定冇寫入就釋放。
+> - §12：`/lab-docs` 加「月結單」分頁；§12.2／§12.3／§12.4 頁面已建；待處理「去處理」直接跳單據／分段；§12.7「單」icon。
+> - seed：`seed-cwm-labdoc-p2-20261006.mjs` Lab 按 name upsert；測試診所／醫生／alias 要 `LABDOC_SEED_FIXTURES=1`（正式庫唔好開）。
 
 ---
 
@@ -816,7 +830,7 @@ ORDER BY
 
 **C. 欠款型（OUTSTANDING）**
 1. `agingBucket = CURRENT`（或者 date 喺 statementMonth）→ 照 A 配對。
-2. 其他 → 搵之前已確認分段有冇 MATCHED 過同一單號 → PREVIOUSLY_MATCHED（灰「之前已對・未付」）；冇 → 照 A 配對，配到 → MATCHED；配唔到 → MISSING_IN_SYSTEM。
+2. 其他 → 搵之前已確認分段有冇 MATCHED 過（或者已處理過，v1.3）同一單號 → PREVIOUSLY_MATCHED（灰「之前已對・未付」）；冇 → 照 A 配對，配到 → MATCHED；配唔到 → MISSING_IN_SYSTEM。
 3. 分段總數比較用 `statedCurrent` vs Σ CURRENT 已配對系統金額。
 
 **共通**
@@ -923,7 +937,7 @@ lab_statement: 'Lab 月結單對數（確認、改系統、Lab 設定）',
 | PUT `/api/lab-docs/:id/header` | lab_invoice | 確認頭部（§7.1） |
 | GET `/api/lab-docs/:id/groups/:g/candidates` | lab_invoice | 病人配對＋候選成本（§6.5、§7.3） |
 | POST `/api/lab-docs/:id/groups/:g/save` | lab_invoice | 儲存分組（§7.8） |
-| POST `/api/lab-docs/:id/lines/:lineId/unmatch` | lab_invoice | 解除配對（§7.9） |
+| ~~POST `/api/lab-docs/:id/lines/:lineId/unmatch`~~ | lab_invoice | v1.3：用 group save `UNMATCH`（§7.9） |
 | POST `/api/lab-docs/merge` | lab_invoice | 合併（§7.11） |
 | POST `/api/lab-docs/:id/void` | lab_invoice（invoice）／lab_statement（月結單） | 作廢 |
 | POST `/api/lab-docs/:id/review-amount` | lab_statement | 人手改數覆核 |

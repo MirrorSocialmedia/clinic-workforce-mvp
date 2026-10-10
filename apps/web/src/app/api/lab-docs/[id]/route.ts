@@ -72,6 +72,49 @@ export async function GET(
     return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
   }
 
+  // §12.4 並排比較：月結單行對到嘅系統 invoice（單號、總數、行）一次過攞
+  const sysDocIds =
+    doc.kind === 'STATEMENT'
+      ? [...new Set(doc.sections.flatMap((s) => s.lines.map((l) => l.matchedDocumentId)).filter((x): x is string => !!x))]
+      : []
+  const sysDocs = sysDocIds.length
+    ? await prisma.labDocument.findMany({
+        where: { id: { in: sysDocIds } },
+        select: {
+          id: true,
+          docNo: true,
+          docDate: true,
+          total: true,
+          status: true,
+          lines: { select: { id: true, description: true, toothRaw: true, qty: true, unitPrice: true, amount: true, status: true, costCaseId: true } },
+        },
+      })
+    : []
+  const sysById = new Map(sysDocs.map((d) => [d.id, d]))
+  // 舊資料 statementKind 可能係 null（讀單時未識別 Lab）→ 用 LabProfile 補
+  const statementKind =
+    doc.statementKind ??
+    (doc.kind === 'STATEMENT' && doc.labId
+      ? (await prisma.labProfile.findUnique({ where: { labId: doc.labId }, select: { statementKind: true } }))?.statementKind ?? null
+      : null)
+  const systemView = (matchedDocumentId: string | null, matchedLineId: string | null) => {
+    const d = matchedDocumentId ? sysById.get(matchedDocumentId) : undefined
+    if (!d) return null
+    const ln = matchedLineId ? d.lines.find((x) => x.id === matchedLineId) : undefined
+    return {
+      docId: d.id,
+      docNo: d.docNo,
+      docDate: d.docDate,
+      total: d.total == null ? null : Number(d.total),
+      docStatus: d.status,
+      line: ln
+        ? { id: ln.id, description: ln.description, toothRaw: ln.toothRaw, qty: ln.qty == null ? null : Number(ln.qty), unitPrice: ln.unitPrice == null ? null : Number(ln.unitPrice), amount: Number(ln.amount), costCaseId: ln.costCaseId }
+        : null,
+      // 單號型揀行用（STATEMENT_WINS 多行要 systemLineId）
+      lines: d.lines.filter((x) => x.status !== 'IGNORED').map((x) => ({ id: x.id, description: x.description, amount: Number(x.amount) })),
+    }
+  }
+
   return jsonNoStore({
     document: {
       id: doc.id,
@@ -94,13 +137,16 @@ export async function GET(
       deliveryDate: doc.deliveryDate,
       orderReceivedDate: doc.orderReceivedDate,
       statementMonth: doc.statementMonth,
-      statementKind: doc.statementKind,
+      statementKind,
       subtotal: doc.subtotal?.toString() ?? null,
       total: doc.total?.toString() ?? null,
       payeeRaw: doc.payeeRaw,
       payeeIsNew: doc.payeeIsNew,
       extractSource: doc.extractSource,
       readIssues: doc.readIssues,
+      // 讀單失敗原因（llm:truncated／timeout…）＋次數 — 畫面提示用（零病人資料）
+      extractError: doc.extractError,
+      extractAttempts: doc.extractAttempts,
       manualAmountEdit: doc.manualAmountEdit,
       amountReviewedBy: doc.amountReviewedBy,
       amountReviewedAt: doc.amountReviewedAt,
@@ -268,6 +314,7 @@ export async function GET(
                 resolvedAt: l.resolvedAt,
                 followUpClosedAt: l.followUpClosedAt,
                 followUpClosedBy: l.followUpClosedBy,
+                system: systemView(l.matchedDocumentId, l.matchedLineId),
               })),
             }
           }),
