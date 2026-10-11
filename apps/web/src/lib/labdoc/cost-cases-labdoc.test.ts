@@ -315,6 +315,32 @@ test('PUT 回歸：labInvoiceLinked=false → 月度折扣照常（8.5% → 457.
   assert.notStrictEqual(state.costs[CC].labInvoiceLinked, true)
 })
 
+test('PUT 2026-10-11：未有價入咗價（冇揀狀態）→ 自動 PRICED；清價 → 返 PENDING；人手揀狀態照跟', async () => {
+  let state = mkState({ costs: { [CC]: baseCost(CC, { status: 'PENDING', baseCost: null, finalCost: null, labInvoiceLinked: false, discountPct: null }) } })
+  reset(state)
+  let r = await PUT(putReq({ baseCost: 400 }) as any, { params: Promise.resolve({ id: CC }) } as any)
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(state.costs[CC].status, 'PRICED')
+
+  state = mkState({ costs: { [CC]: baseCost(CC, { status: 'PRICED', baseCost: 400, finalCost: dec(400), labInvoiceLinked: false, discountPct: null }) } })
+  reset(state)
+  r = await PUT(putReq({ baseCost: null }) as any, { params: Promise.resolve({ id: CC }) } as any)
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(state.costs[CC].status, 'PENDING')
+
+  state = mkState({ costs: { [CC]: baseCost(CC, { status: 'DONE', labInvoiceLinked: false }) } })
+  reset(state)
+  r = await PUT(putReq({ baseCost: 600 }) as any, { params: Promise.resolve({ id: CC }) } as any)
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(state.costs[CC].status, 'DONE', '完成咗嘅唔會俾改價拉返去 PRICED')
+
+  state = mkState({ costs: { [CC]: baseCost(CC, { status: 'PENDING', baseCost: null, finalCost: null, labInvoiceLinked: false, discountPct: null }) } })
+  reset(state)
+  r = await PUT(putReq({ baseCost: 400, status: 'DONE' }) as any, { params: Promise.resolve({ id: CC }) } as any)
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(state.costs[CC].status, 'DONE')
+})
+
 test('PUT §13：patientCode 改 → patientCodeNorm 重算（诊所 shortName 補前綴）', async () => {
   const state = mkState()
   reset(state)
