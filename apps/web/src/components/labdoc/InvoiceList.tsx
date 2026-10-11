@@ -12,6 +12,8 @@
  *   診所/醫生/病人數未識別就顯示「未識別」）
  * - 2026-10-10：kind='STATEMENT' 共用做月結單分頁（多張相／多個 PDF＝一份）；
  *   撳單據 → 對數頁（/lab-docs/invoices/[id]｜/lab-docs/statements/[id]）
+ * - 2026-10-11：篩診所／月份；預設唔顯示已作廢（剔「顯示已作廢」先見）；
+ *   月結單嘅診所／醫生／總數／確認進度由分段計（sectionSummary）
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -42,6 +44,21 @@ export interface ListDoc {
   uploadedByName: string | null
   uploadedAt: string
   duplicateOfId: string | null
+  sectionSummary?: {
+    clinicIds: string[]
+    providerIds: string[]
+    sectionCount: number
+    confirmedCount: number
+    unassignedCount: number
+    total: number | null
+  } | null
+}
+
+/** 名單：兩個以內寫名，多過兩個寫「N 間／N 位醫生」 */
+function nameList(ids: string[], names: Record<string, string>, unit: string): string {
+  if (ids.length === 0) return ''
+  if (ids.length > 2) return `${ids.length} ${unit}`
+  return ids.map((x) => names[x] ?? '未識別').join('、')
 }
 
 interface ListResp {
@@ -114,6 +131,10 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
       .catch(() => {})
   }, [])
   const [viewDoc, setViewDoc] = useState<{ id: string; name?: string } | null>(null)
+  // 篩選：診所、月份（月結單 = 月結單月份；到貨單 = 單據日期月份）、顯示已作廢
+  const [fClinic, setFClinic] = useState('')
+  const [fMonth, setFMonth] = useState('')
+  const [showVoid, setShowVoid] = useState(false)
 
   const photoRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
@@ -121,7 +142,11 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
   const load = useCallback(async (p: number) => {
     setLoading(true)
     try {
-      const data = await apiFetch<ListResp>(`/api/lab-docs?kind=${kind}&page=${p}`)
+      const sp = new URLSearchParams({ kind, page: String(p) })
+      if (!showVoid) sp.set('hideVoid', '1')
+      if (fClinic) sp.set('clinicId', fClinic)
+      if (/^\d{4}-\d{2}$/.test(fMonth)) sp.set('month', fMonth)
+      const data = await apiFetch<ListResp>(`/api/lab-docs?${sp.toString()}`)
       setItems(data.items)
       setTotal(data.total)
       setPage(data.page)
@@ -131,7 +156,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
     } finally {
       setLoading(false)
     }
-  }, [kind])
+  }, [kind, showVoid, fClinic, fMonth])
 
   useEffect(() => {
     load(1)
@@ -198,14 +223,38 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
       ? `/api/lab-docs/files/${d.firstFileId}/pages/${d.firstPageNo}?v=thumb`
       : null
 
-  const meta = (d: ListDoc) => ({
-    lab: d.labName ?? d.labNameRaw ?? '未識別',
-    docNo: isStmt ? `${d.statementMonth ?? '月份未識別'} 月結單` : d.docNo ?? '未識別',
-    clinic: d.clinicId ? clinicNames[d.clinicId] ?? '未識別' : '未識別',
-    doctor: d.providerId ? providerNames[d.providerId] ?? '未識別' : '未識別',
-    date: hkDate(d.docDate ?? d.deliveryDate) || hkDateTime(d.uploadedAt),
-    total: fmtMoney(d.total),
-  })
+  const meta = (d: ListDoc) => {
+    const ss = d.sectionSummary
+    // 月結單：由分段計（單頭通常冇，或者只係其中一段）
+    if (isStmt && ss && ss.sectionCount > 0) {
+      const clinic = nameList(ss.clinicIds, clinicNames, '間診所') || '未揀'
+      const docs = nameList(ss.providerIds, providerNames, '位醫生')
+      const doctor = docs ? (ss.unassignedCount > 0 ? `${docs}（${ss.unassignedCount} 段未揀）` : docs) : '未揀'
+      return {
+        lab: d.labName ?? d.labNameRaw ?? '未識別',
+        docNo: `${d.statementMonth ?? '月份未識別'} 月結單`,
+        clinic,
+        doctor,
+        sections: ss.sectionCount,
+        progress: ss.sectionCount > 1 && ss.confirmedCount < ss.sectionCount && !['VOID', 'SUPERSEDED', 'DUPLICATE'].includes(d.status)
+          ? `${ss.confirmedCount} / ${ss.sectionCount} 段確認`
+          : null,
+        date: hkDate(d.docDate ?? d.deliveryDate) || hkDateTime(d.uploadedAt),
+        total: fmtMoney(ss.total),
+      }
+    }
+    return {
+      lab: d.labName ?? d.labNameRaw ?? '未識別',
+      docNo: isStmt ? `${d.statementMonth ?? '月份未識別'} 月結單` : d.docNo ?? '未識別',
+      clinic: d.clinicId ? clinicNames[d.clinicId] ?? '未識別' : '未識別',
+      doctor: d.providerId ? providerNames[d.providerId] ?? '未識別' : '未識別',
+      sections: 0,
+      progress: null as string | null,
+      date: hkDate(d.docDate ?? d.deliveryDate) || hkDateTime(d.uploadedAt),
+      total: fmtMoney(d.total),
+    }
+  }
+  const clinicOptions = Object.entries(clinicNames).sort((a, b) => a[1].localeCompare(b[1]))
 
   return (
     <div className="space-y-3">
@@ -269,6 +318,22 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
         <img key={`pf-${d.id}`} src={thumb(d)!} alt="" className="hidden" aria-hidden />
       ))}
 
+      {/* 篩選 */}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <select aria-label="診所" className="border rounded-lg px-2 py-1.5 bg-card" value={fClinic} onChange={(e) => setFClinic(e.target.value)}>
+          <option value="">全部診所</option>
+          {clinicOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        </select>
+        <input aria-label="月份" type="month" className="border rounded-lg px-2 py-1 bg-card" value={fMonth} onChange={(e) => setFMonth(e.target.value)} />
+        {(fClinic || fMonth) && (
+          <button className="underline text-muted-foreground" onClick={() => { setFClinic(''); setFMonth('') }}>清除</button>
+        )}
+        <label className="flex items-center gap-1.5 ml-auto text-muted-foreground">
+          <input type="checkbox" checked={showVoid} onChange={(e) => setShowVoid(e.target.checked)} />
+          顯示已作廢
+        </label>
+      </div>
+
       {/* 手機：卡片 */}
       <div className="md:hidden space-y-2">
         {loading ? (
@@ -292,11 +357,12 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="font-medium truncate">{m.docNo}</div>
-                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium flex-shrink-0 ${sm.cls}`}>{sm.label}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium flex-shrink-0 ${sm.cls}`}>{m.progress ?? sm.label}</span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-1 truncate">
                   {m.lab} · {m.clinic}
                   {m.doctor !== '未識別' ? ` · ${m.doctor}` : ''}
+                  {m.sections > 1 ? ` · ${m.sections} 段` : ''}
                 </div>
                 <div className="flex items-center justify-between mt-1.5 text-xs">
                   <span>{m.date}</span>
@@ -352,11 +418,14 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
                     <td className="px-3 py-2.5 font-medium">{m.docNo}</td>
                     <td className="px-3 py-2.5">{m.lab}</td>
                     <td className="px-3 py-2.5">{m.clinic}</td>
-                    <td className="px-3 py-2.5">{m.doctor}</td>
+                    <td className="px-3 py-2.5">
+                      {m.doctor}
+                      {m.sections > 1 && <span className="ml-1.5 px-1.5 rounded bg-blue-50 text-blue-700 text-[11px]">{m.sections} 段</span>}
+                    </td>
                     <td className="px-3 py-2.5 whitespace-nowrap">{m.date}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{m.total}</td>
                     <td className="px-3 py-2.5">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sm.cls}`}>{sm.label}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${sm.cls}`}>{m.progress ?? sm.label}</span>
                     </td>
                     <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                       {d.uploadedByName ?? '—'} {hkDate(d.uploadedAt)}
