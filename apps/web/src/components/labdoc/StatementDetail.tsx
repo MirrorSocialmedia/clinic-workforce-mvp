@@ -82,6 +82,7 @@ export interface StmtResp {
     extractError?: string | null
     version: number
     supersededById: string | null
+    voidReason?: string | null
     uploadedBy: string
     createdAt: string
   }
@@ -164,6 +165,19 @@ export default function StatementDetail({ id }: { id: string }) {
     }
   }
 
+  // ★ 2026-10-11：月結單頁都可以作廢（例：讀單失敗、影錯、上傳重複）— 同 invoice 用同一個 DELETE（要原因）
+  const voidDoc = async () => {
+    const reason = window.prompt('作廢呢份月結單？請寫原因（例：影錯相、重複上傳、會重新上傳）')
+    if (!reason?.trim()) return
+    try {
+      await apiFetch(`/api/lab-docs/${id}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason.trim() }) })
+      toast.success('已作廢')
+      load()
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
   const supersede = async (oldId: string) => {
     const reason = window.prompt('取代舊版原因（例：Lab 重發、舊版影漏頁）')
     if (!reason?.trim()) return
@@ -206,7 +220,11 @@ export default function StatementDetail({ id }: { id: string }) {
         {headerEditable && !headerMissing && !editHeader && (
           <button onClick={() => setEditHeader(true)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg border bg-card text-sm"><Pencil size={14} />改 Lab／月份</button>
         )}
+        {d.status !== 'VOID' && d.status !== 'SUPERSEDED' && !['UPLOADED', 'EXTRACTING'].includes(d.status) && (
+          <button onClick={voidDoc} className="px-3 py-1.5 rounded-lg border bg-card text-sm text-red-600">作廢</button>
+        )}
       </div>
+      {d.status === 'VOID' && <div className="rounded-xl border bg-muted p-3 text-sm">已作廢{d.voidReason ? `：${d.voidReason}` : ''}</div>}
 
       {headerEditable && (headerMissing || editHeader) && (
         <HeaderEditor
