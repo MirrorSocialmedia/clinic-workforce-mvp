@@ -559,6 +559,7 @@ function makeResolveFake(state: ResolveState, users: any[] = [OWNER_USER]) {
     user: { findUnique: async ({ where }: any) => users.find((u) => u.id === where.id) ?? null },
     labDocument: {
       findUnique: async ({ where }: any) => (where.id === state.doc.id ? { ...state.doc } : null),
+      findMany: async () => [],
       updateMany: async ({ where, data }: any) => {
         if (where.id !== state.doc.id) return { count: 0 }
         if (where.version !== undefined && state.doc.version !== where.version) return { count: 0 }

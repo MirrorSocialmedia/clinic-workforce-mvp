@@ -107,6 +107,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return jsonNoStore({ error: '版本衝突（單據已更新）— 請重讀' }, { status: 409 })
   }
 
+  // ★ 2026-10-11：同 Lab、同收款人嘅其他單一齊清（之前要逐張「記住」）
+  const others = await prisma.labDocument.findMany({
+    where: { labId: doc.labId, payeeIsNew: true, status: { not: 'VOID' }, id: { not: params.id } },
+    select: { id: true, payeeRaw: true },
+  })
+  const sameIds = others.filter((o) => normLabName(o.payeeRaw) === rawNorm).map((o) => o.id)
+  if (sameIds.length > 0) {
+    await prisma.labDocument.updateMany({ where: { id: { in: sameIds }, payeeIsNew: true }, data: { payeeIsNew: false, version: { increment: 1 } } })
+  }
+
   await labdocAudit({
     action: 'LAB_DOC_PAYEE',
     entity: 'LabDocument',
@@ -117,7 +127,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     userAgent: ua,
     notes: aliasCreated ? 'remember' : 'already-alias',
     before: { payeeIsNew: true, payeeRaw: doc.payeeRaw },
-    after: { payeeIsNew: false, aliasRawNorm: rawNorm, aliasCreated },
+    after: { payeeIsNew: false, aliasRawNorm: rawNorm, aliasCreated, alsoClearedDocIds: sameIds },
   })
   return NextResponse.json({ ok: true, id: params.id, aliasCreated })
 }

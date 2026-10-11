@@ -107,11 +107,11 @@ test('payeeIsNew：認到 Lab、payeeRaw 唔喺 PAYEE alias → true；喺內 �
     labAlias: {
       findFirst: async (args: any) => {
         if (args.where.kind === 'NAME_EN') return { labId: 'lab-x1' }
-        if (args.where.kind === 'PAYEE') return hasAlias ? { id: 'a1' } : null
+        if (args.where.kind?.in?.includes('PAYEE')) return hasAlias ? { id: 'a1' } : null
         return null
       },
     },
-    lab: { findMany: async () => [] },
+    lab: { findMany: async () => [], findUnique: async () => ({ name: 'Excel Dental Lab' }) },
   })
   const r1 = await identifyLab(mk(false), baseRes({ lab: { nameRaw: 'Excel', nameCnRaw: null, payeeRaw: 'Excel Ltd T/C' } }))
   assert.equal(r1.payeeIsNew, true)
@@ -119,6 +119,29 @@ test('payeeIsNew：認到 Lab、payeeRaw 唔喺 PAYEE alias → true；喺內 �
   assert.equal(r2.payeeIsNew, false)
   const r3 = await identifyLab(mk(false), baseRes({ lab: { nameRaw: 'Excel', nameCnRaw: null, payeeRaw: null } }))
   assert.equal(r3.payeeIsNew, false)
+})
+
+test('payeeIsNew 2026-10-11：收款人 = 呢間 Lab 嘅名（Lab 名稱或者 NAME alias）→ 當已知', async () => {
+  // 「禾呈牙科器材有限公司」正規化 → 「禾呈」；Lab 名 alias NAME_CN「禾呈」→ 已知
+  const viaAlias: any = {
+    labAlias: {
+      findFirst: async (args: any) => {
+        if (args.where.kind === 'NAME_EN') return { labId: 'lab-hc' }
+        if (args.where.kind?.in && args.where.labId === 'lab-hc' && args.where.rawNorm === '禾呈') return { id: 'n1' }
+        return null
+      },
+    },
+    lab: { findMany: async () => [], findUnique: async () => ({ name: 'HC' }) },
+  }
+  const r1 = await identifyLab(viaAlias, baseRes({ lab: { nameRaw: 'HC', nameCnRaw: null, payeeRaw: '禾呈牙科器材有限公司' } }))
+  assert.equal(r1.payeeIsNew, false)
+  // 冇 alias，但 Lab.name 正規化後一樣 → 已知
+  const viaName: any = {
+    labAlias: { findFirst: async (args: any) => (args.where.kind === 'NAME_EN' ? { labId: 'lab-x1' } : null) },
+    lab: { findMany: async () => [], findUnique: async () => ({ name: 'Excel Dental Ltd' }) },
+  }
+  const r2 = await identifyLab(viaName, baseRes({ lab: { nameRaw: 'Excel', nameCnRaw: null, payeeRaw: 'EXCEL DENTAL LTD' } }))
+  assert.equal(r2.payeeIsNew, false)
 })
 
 // ── identifyDocNo ───────────────────────────────────

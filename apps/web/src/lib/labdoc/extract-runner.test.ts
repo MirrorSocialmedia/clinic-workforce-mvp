@@ -244,7 +244,7 @@ const fakes: Record<string, Any> = {
     findFirst: async ({ where }: Any) => {
       const hits = state.aliases.filter(
         (a) =>
-          (!where.kind || a.kind === where.kind) &&
+          (!where.kind || (typeof where.kind === 'string' ? a.kind === where.kind : where.kind.in.includes(a.kind))) &&
           (!where.rawNorm || a.rawNorm === where.rawNorm) &&
           (!where.labId || a.labId === where.labId),
       )
@@ -253,6 +253,7 @@ const fakes: Record<string, Any> = {
   },
   lab: {
     findMany: async () => state.labs.filter((l) => l.isActive),
+    findUnique: async ({ where }: Any) => state.labs.find((l) => l.id === where.id) ?? null,
   },
   labCustomerNo: {
     findFirst: async ({ where }: Any) =>
@@ -536,8 +537,8 @@ describe('runner — 成功路徑', () => {
     // §6.1：'Excel Dental Laboratory' → norm 'excel' ↔ Lab 'Excel' → NAME
     assert.equal(d.labId, 'labexcel0000000000000000001')
     assert.equal(d.labBasis, 'NAME')
-    // §6.1.4：payee 'Excel Ltd' → norm 'excel' 唔喺 PAYEE alias → payeeIsNew
-    assert.equal(d.payeeIsNew, true)
+    // §6.1.4：payee 'Excel Ltd' → norm 'excel'；2026-10-11 起收款人 = Lab 自己個名（Lab「Excel」）當已知
+    assert.equal(d.payeeIsNew, false)
     assert.equal(d.payeeRaw, 'Excel Ltd')
     // §6.4：' inv 260805010 ' → INV260805010；label 無 case → INVOICE_NO
     assert.equal(d.docNo, 'INV260805010')
