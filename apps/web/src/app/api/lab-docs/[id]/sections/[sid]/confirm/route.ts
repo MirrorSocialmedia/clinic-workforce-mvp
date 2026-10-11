@@ -3,7 +3,9 @@
 // 2026-10-11 改：月結單同「成本錄入」對總數（statement-reconcile.ts）。
 // 確認前先用最新成本錄入重新對一次數：
 //  - 總數一致（OK）而且讀數檢查冇問題 → 直接確認
-//  - 有差異（DIFF）或者月結單印嘅總數同行加埋唔啱 → body.reason 必填（≤200 字），寫入 section.note
+//  - 有差異（DIFF）→ body.reason 必填（≤200 字），寫入 section.note
+//  - ★ 2026-10-11：「印嘅總數 vs 行加埋」唔再要原因 — 月結單冇印總數時 AI 會自己加錯一個數出嚟
+//    （HC 9 月 Dr.Tse：行同成本錄入都係 $12,400，AI 作咗個 $11,780），總數一致仲要寫原因只會誤導
 // 寫：CONFIRMED＋confirmedBy/At；audit LAB_STATEMENT_RECONCILE（月結單總數、成本總數、差額、原因）
 // 全部分段 CONFIRMED → 文件 RECONCILED。
 // 權限：lab_statement（§10.2：確認）
@@ -91,14 +93,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   if (!r.ok) {
     return jsonNoStore({ error: r.message, code: r.code }, { status: r.code === 'NOT_FOUND' || r.code === 'CONFIRMED' ? 409 : 400 })
   }
-  const fresh = await prisma.labStatementSection.findUnique({ where: { id: section.id }, select: { resultJson: true } })
-  const rj: any = fresh?.resultJson ?? {}
-  const readBad = rj.readCheck && rj.readCheck.ok === false
-  const needsReason = r.sectionStatus === 'DIFF' || readBad
+  const needsReason = r.sectionStatus === 'DIFF'
   if (needsReason && reason.length === 0) {
-    const why = r.sectionStatus === 'DIFF'
-      ? `月結單 $${r.statementTotal} 同成本錄入 $${r.costTotal} 差 $${Math.abs(r.diff)}`
-      : `月結單印嘅總數 $${rj.readCheck.stated} 同行加埋 $${rj.readCheck.linesSum} 唔啱`
+    const why = `月結單 $${r.statementTotal} 同成本錄入 $${r.costTotal} 差 $${Math.abs(r.diff)}`
     return jsonNoStore({ error: `${why} — 要寫原因先可以確認`, code: 'REASON_REQUIRED', diff: r.diff }, { status: 400 })
   }
 
