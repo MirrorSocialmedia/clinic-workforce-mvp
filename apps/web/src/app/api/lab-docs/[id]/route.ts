@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { statementCostSummary } from '@/lib/labdoc/statement-reconcile'
+import { labDocQueuePositions } from '@/lib/labdoc/queue-position'
 import { findStatementSectionDuplicate } from '@/lib/labdoc/statement-sections'
 import { labdocScope, kioskDocGuard, kioskSectionAllowed, kioskClinics } from '@/lib/labdoc/kiosk-scope'
 
@@ -121,11 +122,15 @@ export async function GET(
     }
   }
 
+  // ★ 2026-10-11：排隊中 → 第幾位
+  const queuePosition = doc.status === 'UPLOADED' ? (await labDocQueuePositions([doc.id])).get(doc.id) ?? null : null
+
   return jsonNoStore({
     document: {
       id: doc.id,
       kind: doc.kind,
       status: doc.status,
+      queuePosition,
       labId: doc.labId,
       labName: doc.lab?.name ?? null,
       labNameRaw: doc.labNameRaw,

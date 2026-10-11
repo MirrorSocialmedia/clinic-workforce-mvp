@@ -12,6 +12,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { labdocScope, kioskDocWhere } from '@/lib/labdoc/kiosk-scope'
 import { statementListSummary } from '@/lib/labdoc/statement-list'
+import { labDocQueuePositions } from '@/lib/labdoc/queue-position'
 
 const PAGE_SIZE = 20
 
@@ -119,6 +120,8 @@ export async function GET(req: NextRequest) {
     ? await prisma.user.findMany({ where: { id: { in: uploaderIds } }, select: { id: true, name: true } })
     : []
   const uploaderName = new Map(uploaders.map((u) => [u.id, u.name]))
+  // ★ 2026-10-11：排隊中（UPLOADED）→ 第幾位
+  const queuePos = await labDocQueuePositions(docs.filter((d) => d.status === 'UPLOADED').map((d) => d.id))
 
   const items = docs.map((d) => {
     const firstPage = d.pages[0]
@@ -156,6 +159,7 @@ export async function GET(req: NextRequest) {
       voidedAt: d.voidedAt,
       uploadedBy: d.uploadedBy,
       uploadedByName: uploaderName.get(d.uploadedBy) ?? null,
+      queuePosition: queuePos.get(d.id) ?? null,
       // 月結單：診所／醫生／總數／確認進度由分段計（單頭通常冇或者只係其中一段）
       sectionSummary: d.kind === 'STATEMENT' ? statementListSummary(d.sections) : null,
       uploadedAt: d.createdAt, // LabDocument 冇 uploadedAt（§3）— 用 createdAt

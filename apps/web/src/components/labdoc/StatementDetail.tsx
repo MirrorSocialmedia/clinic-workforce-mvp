@@ -74,6 +74,7 @@ export interface StmtResp {
   document: {
     id: string
     status: string
+    queuePosition?: number | null
     labId: string | null
     labName: string | null
     labNameRaw: string | null
@@ -254,7 +255,12 @@ export default function StatementDetail({ id }: { id: string }) {
       {d.supersededById && (
         <div className="rounded-xl border bg-muted p-3 text-sm">已被取代 — <Link className="underline" href={`/lab-docs/statements/${d.supersededById}`}>開新版</Link></div>
       )}
-      {['UPLOADED', 'EXTRACTING'].includes(d.status) && <div className="rounded-xl border bg-blue-50 p-3 text-sm flex items-center gap-2"><Loader2 size={14} className="animate-spin" />讀緊月結單…</div>}
+      {['UPLOADED', 'EXTRACTING'].includes(d.status) && (
+        <div className="rounded-xl border bg-blue-50 p-3 text-sm flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin" />
+          {d.status === 'UPLOADED' && d.queuePosition ? `排隊中 · 第 ${d.queuePosition} 位（讀單機一次讀一張，會自動輪到）` : '讀緊月結單…'}
+        </div>
+      )}
       {d.status === 'EXTRACT_FAILED' && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">讀唔到（{d.extractError ?? '讀單失敗'}）— 撳上面「再讀」，或者影清楚啲再上傳。</div>}
       {d.payeeIsNew && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm flex flex-wrap items-center gap-2">

@@ -13,6 +13,10 @@
  *      → 正規化寫欄位同行 → 系統檢查（§5.5）→ 識別（§6）→ NEEDS_REVIEW
  *   6. 寫 docNo 撞 partial unique index（P2002）→ DUPLICATE + duplicateOfId
  *
+ * ★ 2026-10-11 排隊（先到先讀）：上傳／合併／再讀／sweep 一律 kickLabDocQueue() —
+ *   一個 worker 逐張讀（status UPLOADED，按 queuedAt），讀完先拎下一張；讀單機（W）一次只讀一張，
+ *   之前每張單自己搶（429 BUSY 等 6 分鐘就當失敗，次序睇彩數）。等讀單機（busy_exhausted）唔再當失敗，返隊再等。
+ *
  * Sweep（cron 每 5 分鐘，POST /api/internal/labdoc-sweep）：
  *   EXTRACTING AND heartbeatAt < now-5min → 當失敗（attempts++；=3 EXTRACT_FAILED，<3 回 UPLOADED 再讀）
  *   UPLOADED AND createdAt < now-2min → 再觸發
@@ -328,6 +332,58 @@ export function runExtractionAfterClaim(docId: string, opts: RunOpts = {}): void
   )
 }
 
+// ------------------------------------------------------------------
+// ★ 2026-10-11：排隊（先到先讀；一個 process 一個 worker — 部署係單一 node process）
+// ------------------------------------------------------------------
+let queueRunning = false
+let queueKicked = false
+
+/**
+ * 叫醒讀單 worker（單據已經係 UPLOADED）。worker 逐張讀：最早入隊（queuedAt）嗰張先讀，讀完再拎下一張；
+ * 已經有 worker 喺度跑 → 記低「有新單」等佢讀完呢張再睇。
+ */
+export function kickLabDocQueue(opts: RunOpts = {}): void {
+  queueKicked = true
+  if (queueRunning) return
+  queueRunning = true
+  track(
+    drainQueue(opts)
+      .catch((e) => console.error('[labdoc/queue] error', { err: String(e?.message ?? e) }))
+      .finally(() => { queueRunning = false }),
+  )
+}
+
+async function drainQueue(opts: RunOpts): Promise<void> {
+  for (;;) {
+    queueKicked = false
+    // 有單讀緊（例如舊 process 死咗留低）→ 唔好同時讀第二張；sweep 會清死咗嘅再叫醒
+    const busy = await prisma.labDocument.count({ where: { status: 'EXTRACTING' } })
+    if (busy > 0) return
+    const next = await prisma.labDocument.findFirst({
+      where: { status: 'UPLOADED' },
+      orderBy: [{ queuedAt: 'asc' }, { id: 'asc' }],
+      select: { id: true },
+    })
+    if (!next) {
+      if (queueKicked) continue
+      return
+    }
+    const claimed = await prisma.labDocument.updateMany({
+      where: { id: next.id, status: 'UPLOADED' },
+      data: { status: 'EXTRACTING', heartbeatAt: new Date(), version: { increment: 1 } },
+    })
+    if (claimed.count === 0) continue
+    try {
+      await runClaimed(next.id, opts)
+    } catch (e: any) {
+      console.error('[labdoc/extract] unexpected error', { docId: next.id, err: String(e?.message ?? e) })
+      await prisma.labDocument
+        .updateMany({ where: { id: next.id, status: 'EXTRACTING' }, data: { status: 'EXTRACT_FAILED', extractError: 'unexpected', version: { increment: 1 } } })
+        .catch(() => undefined)
+    }
+  }
+}
+
 async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
   const retryDelayMs = opts.retryDelayMs ?? (Number(process.env.LABDOC_RETRY_MS_MS) > 0 ? Number(process.env.LABDOC_RETRY_MS_MS) : LABDOC_RETRY_MS)
   const maxAttempts = opts.maxAttempts ?? LABDOC_MAX_ATTEMPTS
@@ -412,6 +468,15 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
 
       if (!fail) {
         await finishSuccess(docId, doc, parts, mode, labProfile)
+        return
+      }
+
+      // ★ 2026-10-11 排隊：讀單機一直忙 ≠ 張單有問題 → 唔當失敗，返隊（保留位置）等下一輪
+      if (fail === 'busy_exhausted') {
+        await prisma.labDocument.updateMany({
+          where: { id: docId, status: 'EXTRACTING' },
+          data: { status: 'UPLOADED', version: { increment: 1 } },
+        })
         return
       }
 
@@ -722,28 +787,24 @@ export async function runLabDocSweep(now: Date = new Date(), opts: RunOpts = {})
         data: { status: 'UPLOADED', extractAttempts: attempts, extractError: 'stale_heartbeat', version: { increment: 1 } },
       })
       staleBackToUploaded.push(d.id)
-      const p = sleep(opts.retryDelayMs ?? LABDOC_RETRY_MS).then(() => runLabDocExtract(d.id, opts))
-      track(p.catch(() => undefined))
       res.retriggered++
     }
   }
 
-  // UPLOADED AND createdAt < now-2min → 再觸發（EXTRACT_FAILED 唔喺內 — T17：唔會自動再試）
-  // 排除本輪先由 stale 打回 UPLOADED 嘅（已經排咗重讀，唔雙觸發）
+  // UPLOADED AND queuedAt < now-2min → 叫醒排隊 worker（EXTRACT_FAILED 唔喺內 — T17：唔會自動再試）
+  // 排除本輪先由 stale 打回 UPLOADED 嘅（上面已計）
   const uploadCutoff = new Date(now.getTime() - SWEEP_UPLOAD_MS)
   const pending = await prisma.labDocument.findMany({
     where: {
       status: 'UPLOADED',
-      createdAt: { lt: uploadCutoff },
+      queuedAt: { lt: uploadCutoff },
       ...(staleBackToUploaded.length > 0 ? { id: { notIn: staleBackToUploaded } } : {}),
     },
     select: { id: true },
   })
-  for (const d of pending) {
-    const p = runLabDocExtract(d.id, opts).catch(() => undefined)
-    track(p)
-    res.retriggered++
-  }
+  res.retriggered += pending.length
+  // 有嘢排緊 → 叫醒 worker（process 重開之後都靠呢度接返）
+  if (res.retriggered > 0) kickLabDocQueue(opts)
 
   return res
 }

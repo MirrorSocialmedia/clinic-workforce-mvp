@@ -116,6 +116,7 @@ function docMatches(d: DocRow, where: Any): boolean {
   if (where.labId !== undefined && d.labId !== where.labId) return false
   if (where.docNo !== undefined && d.docNo !== where.docNo) return false
   if (where.createdAt?.lt && !(d.createdAt < where.createdAt.lt)) return false
+  if (where.queuedAt?.lt && !(((d as Any).queuedAt ?? d.createdAt) < where.queuedAt.lt)) return false
   if (where.heartbeatAt?.lt && !(d.heartbeatAt === null || d.heartbeatAt < where.heartbeatAt.lt)) return false
   if (where.OR && !where.OR.some((o: Any) => docMatches(d, o))) return false
   return true
@@ -185,6 +186,8 @@ const fakes: Record<string, Any> = {
     },
   },
   labDocument: {
+    // ★ 2026-10-11 排隊 worker：數 EXTRACTING
+    count: async ({ where }: Any) => Object.values(state.docs).filter((d) => docMatches(d, where)).length,
     updateMany: async ({ where, data }: Any) => {
       let n = 0
       for (const d of Object.values(state.docs)) {
@@ -515,7 +518,7 @@ describe('POST /api/lab-docs/:id/retry（§5.1／§11）', () => {
     const res = await call(id, token('u-owner-0000000000000000000', 'OWNER'))
     assert.equal(res.status, 202)
     const body = (await res.json()) as Any
-    assert.equal(body.status, 'EXTRACTING')
+    assert.equal(body.status, 'UPLOADED') // 2026-10-11：入隊（排到隊尾），worker 再讀
     await __drainLabDocExtractions()
     const d = state.docs[id]
     assert.equal(d.status, 'NEEDS_REVIEW')

@@ -44,6 +44,8 @@ export interface ListDoc {
   uploadedByName: string | null
   uploadedAt: string
   duplicateOfId: string | null
+  /** 排隊中（UPLOADED）第幾位 */
+  queuePosition?: number | null
   sectionSummary?: {
     clinicIds: string[]
     providerIds: string[]
@@ -52,6 +54,13 @@ export interface ListDoc {
     unassignedCount: number
     total: number | null
   } | null
+}
+
+/** 排隊中 → 「排隊中 · 第 N 位」；其他照 statusMeta */
+function queueMeta(d: ListDoc) {
+  const sm = statusMeta(d.status)
+  if (d.status === 'UPLOADED' && d.queuePosition) return { ...sm, label: `排隊中 · 第 ${d.queuePosition} 位`, cls: 'bg-teal-50 text-teal-700' }
+  return sm
 }
 
 /** 名單：兩個以內寫名，多過兩個寫「N 間／N 位醫生」 */
@@ -161,6 +170,24 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
   useEffect(() => {
     load(1)
   }, [load])
+
+  // ★ 2026-10-11：有單排緊隊／讀緊 → 每 5 秒刷新（位置會自己減）
+  const busyIds = items.filter((d) => d.status === 'UPLOADED' || d.status === 'EXTRACTING').map((d) => d.id).join(',')
+  useEffect(() => {
+    if (!busyIds) return
+    const t = setTimeout(async () => {
+      try {
+        const sp = new URLSearchParams({ kind, page: String(page) })
+        if (!showVoid) sp.set('hideVoid', '1')
+        if (fClinic) sp.set('clinicId', fClinic)
+        if (/^\d{4}-\d{2}$/.test(fMonth)) sp.set('month', fMonth)
+        const data = await apiFetch<ListResp>(`/api/lab-docs?${sp.toString()}`)
+        setItems(data.items)
+        setTotal(data.total)
+      } catch { /* 下次再試 */ }
+    }, 5000)
+    return () => clearTimeout(t)
+  }, [busyIds, items, kind, page, showVoid, fClinic, fMonth])
 
   const handleFiles = async (files: FileList | null, isPhoto: boolean) => {
     if (!files || files.length === 0) return
@@ -348,7 +375,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
         ) : (
           items.map((d) => {
             const m = meta(d)
-            const sm = statusMeta(d.status)
+            const sm = queueMeta(d)
             return (
               <button
                 key={d.id}
@@ -408,7 +435,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
             ) : (
               items.map((d) => {
                 const m = meta(d)
-                const sm = statusMeta(d.status)
+                const sm = queueMeta(d)
                 return (
                   <tr
                     key={d.id}
