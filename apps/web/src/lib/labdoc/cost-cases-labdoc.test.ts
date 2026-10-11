@@ -311,6 +311,8 @@ test('PUT 回歸：labInvoiceLinked=false → 月度折扣照常（8.5% → 457.
   const body = await r.json()
   assert.strictEqual(body.case.finalCost, 457.5)
   assert.strictEqual(body.case.discountPct, 8.5)
+  // 2026-10-11 修：人手改價唔可以將成本變成「已連 invoice」
+  assert.notStrictEqual(state.costs[CC].labInvoiceLinked, true)
 })
 
 test('PUT §13：patientCode 改 → patientCodeNorm 重算（诊所 shortName 補前綴）', async () => {

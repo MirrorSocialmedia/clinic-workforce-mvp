@@ -47,6 +47,8 @@ interface CostCase {
   redoReason: string | null
   // ★ cwm-labdoc §12.7：連咗 Lab invoice（唔套月度折扣 B4）
   labInvoiceLinked?: boolean
+  /** ★ cwm-labdoc §13：已配對（MATCHED 行）嘅 Lab invoice */
+  labDocs?: Array<{ id: string; docNo: string | null; kind: string; status: string }>
 }
 
 interface CleanPatient {
@@ -1288,8 +1290,8 @@ export default function CostEntryPage() {
                   </td>
                 )
                 return (
-                // ★ 2026-10-11：同 Lab invoice 核對過嘅成本 → 淺綠底
-                <tr key={c.id} className={`border-b ${c.labInvoiceLinked ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}`}>
+                // ★ 2026-10-11：同 Lab invoice 核對過嘅成本（有 MATCHED 行嘅 invoice）→ 淺綠底
+                <tr key={c.id} className={`border-b ${linkedInvoices(c).length > 0 ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}`}>
                   {dateMode === 'received' ? (<>{receivedTd}{orderedTd}</>) : orderedTd}
                   <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
                   {/* ★ 拍板①：全名必顯示 —— 剷走 truncate／max-w，改 whitespace-nowrap */}
@@ -1304,9 +1306,11 @@ export default function CostEntryPage() {
                   <td className="p-2" style={vStyle}>
                     <Badge variant="secondary" className="text-xs">{CATEGORY_LABELS[c.category] || c.category}</Badge>
                     {c.itemType && <span className="ml-1 text-gray-500">{c.itemType}</span>}
-                    {c.labInvoiceLinked && (
-                      <span title="已連 Lab invoice（唔套月度折扣）" className="ml-1 px-1 rounded bg-blue-100 text-blue-700 text-[10px] font-medium">單</span>
-                    )}
+                    {/* ★ 2026-10-11：「單」撳落去開對應 invoice（幾張就幾個） */}
+                    {linkedInvoices(c).map((d) => (
+                      <a key={d.id} href={`/lab-docs/invoices/${d.id}`} title={`已連 Lab invoice ${d.docNo ?? ''}（唔套月度折扣）— 撳去睇`}
+                        className="ml-1 px-1 rounded bg-blue-100 text-blue-700 text-[10px] font-medium hover:bg-blue-200 underline-offset-2 hover:underline">單</a>
+                    ))}
                   </td>
                   {/* ★ 2026-09-10 cwm-payrollui 拍板①：75px 窄化（th 同寬） */}
                   <td className="p-2 w-[75px] max-w-[75px]" style={vStyle}>
@@ -2056,4 +2060,9 @@ function StatementMarkPill({ mark }: {
   return (
     <a href={`/lab-docs/statements/${mark.docId}`} title={m.title} className={`px-1.5 rounded text-[11px] font-medium whitespace-nowrap ${m.cls}`}>{m.text}</a>
   )
+}
+
+// ★ 2026-10-11：「已連 invoice」以真係有 MATCHED 行嘅 invoice 為準（唔睇 labInvoiceLinked 旗 — 舊 bug 人手改價會剔上）；作廢單唔計
+function linkedInvoices(c: CostCase) {
+  return (c.labDocs ?? []).filter((d) => d.kind === 'INVOICE' && d.status !== 'VOID')
 }
