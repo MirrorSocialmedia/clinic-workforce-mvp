@@ -240,7 +240,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     // 重用 navItems + hasPermission（同一套判斷），唔好另寫清單
     // ★ cwm-dailyv2-20261007 ③：+每日大數核對（無 perm 嘅 KIOSK 專用項 — 按 roles 顯示）
     const KIOSK_PATHS = ['/provider-schedule', '/provider-availability',
-      '/cost-entry', '/payout', '/apricot-sync', '/reconciliation', '/payout/daily']
+      '/cost-entry', '/payout', '/apricot-sync', '/reconciliation', '/payout/daily',
+      '/lab-docs'] // ★ 2026-10-11：KIOSK 開咗 Lab 權限就可以喺店舖上傳 Lab 單（只見自己店 — kiosk-scope.ts）
     const kioskLinks = navItems.filter(item => {
       if (!KIOSK_PATHS.includes(item.path)) return false
       if (!item.perm) return (item.roles as string[]).includes('KIOSK') // ★ ③：無 perm 嘅 KIOSK 專用項

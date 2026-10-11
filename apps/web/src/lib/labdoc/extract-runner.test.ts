@@ -52,6 +52,8 @@ interface DocRow {
   payeeRaw: string | null
   payeeIsNew: boolean
   clinicId: string | null
+  /** ★ 2026-10-11：KIOSK 上傳店 */
+  uploadClinicId?: string | null
   clinicBasis: string | null
   clinicEvidence: string | null
   providerId: string | null
@@ -629,6 +631,32 @@ describe('runner — 成功路徑', () => {
     assert.equal(lines.length, 1)
     assert.equal(lines[0].patientCodeRaw, '7159')
     assert.equal(lines[0].patientCode, 'TW007159')
+  })
+
+  it('2026-10-11 KIOSK 上傳：以上傳店為準（UPLOADER）；單上讀到第二間 → UPLOAD_CLINIC_MISMATCH；病人編號用上傳店前綴', async () => {
+    const docId = await seedDoc()
+    state.docs[docId].uploadClinicId = 'clintkw000000000000000001'
+    state.docs[docId].clinicId = 'clintkw000000000000000001'
+    state.customerNos = [
+      { id: 'cn010000000000000000001', labId: 'labexcel0000000000000000001', customerNo: 'EC-101', clinicId: 'clintw0000000000000000001', providerId: 'provho0000000000000000001' },
+    ]
+    state.clinics = [
+      { id: 'clintw0000000000000000001', name: '臻善牙科（大圍）', shortName: 'TW', address: '大圍道1號', addressEn: null },
+      { id: 'clintkw000000000000000001', name: '滙樂牙科（土瓜灣）', shortName: 'TKW', address: null, addressEn: null },
+    ]
+    const r1 = structuredClone(OK_RESULT)
+    r1.groups[0].patientCodeRaw = '7159'
+    __setLabDocExtractFn(async () => ({ outcome: { result: r1, reason: null }, nullReason: null }))
+    await runLabDocExtract(docId, RUN_FAST)
+    await __drainLabDocExtractions()
+
+    const d = state.docs[docId]
+    assert.equal(d.status, 'NEEDS_REVIEW')
+    assert.equal(d.clinicId, 'clintkw000000000000000001')
+    assert.equal(d.clinicBasis, 'UPLOADER')
+    assert.ok((d as any).readIssues.includes('UPLOAD_CLINIC_MISMATCH:clintw0000000000000000001'))
+    const lines = state.lines.filter((l) => l.documentId === docId)
+    assert.equal(lines[0].patientCode, 'TKW007159')
   })
 
   it('§6.2/§6.3 wiring：CLINIC_ALIAS + DOCTOR_ALIAS 命中；字母前綴 patientCode 去前置 0 補 6 位', async () => {

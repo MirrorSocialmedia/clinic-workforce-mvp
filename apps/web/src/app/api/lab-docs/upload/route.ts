@@ -14,12 +14,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash, randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { LabDocProcessError, processUploadFile, type ProcessedFile } from '@/lib/labdoc/process'
 import { assertEncryptionConfigured } from '@/lib/labdoc/crypto'
 import { buildPageKey, buildStorageKey, saveEncrypted } from '@/lib/labdoc/storage'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { runLabDocExtract } from '@/lib/labdoc/extract'
+import { labdocScope, kioskUploadClinic } from '@/lib/labdoc/kiosk-scope'
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024
 const MAX_FILES = 20
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
   // §10.3：所有 labdoc route 用 resolveClinicScope — 有 lab 權限 = 全集團（B16）
   // ⚠️ 唔可用 requireAuth 的 scope（EMPLOYEE 經 perm 放行時係 'self' — 對 labdoc 太窄）
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return NextResponse.json({ error: '冇任何診所範圍，唔可以上傳' }, { status: 403 })
   }
@@ -92,6 +92,13 @@ export async function POST(req: NextRequest) {
   if (kind === 'STATEMENT' && statementMonth && !/^\d{4}-\d{2}$/.test(statementMonth)) {
     return NextResponse.json({ error: '月結單月份格式要 YYYY-MM' }, { status: 400 })
   }
+
+  // ★ 2026-10-11：KIOSK（店舖機）上傳 → 默認嗰間店（幾間店就要喺表單揀）；其他帳號照舊由讀單識別診所
+  const up = kioskUploadClinic(session, ((form.get('clinicId') as string) || '').trim() || null)
+  if ('error' in up) return NextResponse.json({ error: up.error }, { status: 400 })
+  const uploadClinic = up.clinicId
+    ? { clinicId: up.clinicId, uploadClinicId: up.clinicId, clinicBasis: 'UPLOADER' }
+    : {}
 
   // labId 驗證（有傳先查）
   let labId: string | null = null
@@ -282,6 +289,7 @@ export async function POST(req: NextRequest) {
                   status: 'UPLOADED',
                   labId,
                   uploadedBy: session.userId,
+                  ...uploadClinic,
                   createdAt: uploadedAt, // 同一批 = 同一個 createdAt（§7.11 合併靠呢個判斷）
                 },
               })
@@ -293,7 +301,7 @@ export async function POST(req: NextRequest) {
           } else if (kind === 'STATEMENT' && prepared.length > 1) {
             if (!stmtDoc) {
               const doc = await tx.labDocument.create({
-                data: { kind, status: 'UPLOADED', labId, statementMonth: statementMonth || null, uploadedBy: session.userId, createdAt: uploadedAt },
+                data: { kind, status: 'UPLOADED', labId, statementMonth: statementMonth || null, uploadedBy: session.userId, createdAt: uploadedAt, ...uploadClinic },
               })
               stmtDoc = { id: doc.id, status: doc.status }
               out.push(stmtDoc)
@@ -309,6 +317,7 @@ export async function POST(req: NextRequest) {
                 labId,
                 statementMonth: kind === 'STATEMENT' ? statementMonth || null : null,
                 uploadedBy: session.userId,
+                ...uploadClinic,
                 createdAt: uploadedAt, // 同一批 = 同一個 createdAt（§7.11 合併靠呢個判斷）
               },
             })

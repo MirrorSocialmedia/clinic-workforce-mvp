@@ -477,12 +477,18 @@ async function finishSuccess(
     })
   }
 
-  const readIssues = unionStrings([...filtered.readIssues, ...checks.readIssues, ...removedFields.map((f) => `SENSITIVE_REMOVED:${f}`)])
+  // ★ 2026-10-11：KIOSK（店舖機）上傳 → 以上傳店為準；單上讀到第二間診所 → 機器標記俾經理核對
+  const uploadClinicId: string | null = doc.uploadClinicId ?? null
+  const uploadMismatch =
+    uploadClinicId && identified.clinicId && identified.clinicId !== uploadClinicId ? [`UPLOAD_CLINIC_MISMATCH:${identified.clinicId}`] : []
+  const effClinicId = uploadClinicId ?? identified.clinicId
+  const effClinicBasis = uploadClinicId ? 'UPLOADER' : identified.clinicBasis
+  const readIssues = unionStrings([...filtered.readIssues, ...checks.readIssues, ...removedFields.map((f) => `SENSITIVE_REMOVED:${f}`), ...uploadMismatch])
   const ymdToDate = (s: string | null): Date | undefined => (s ? new Date(`${s}T00:00:00Z`) : undefined)
 
   // §6.5：INVOICE 行 patientCode 正規化需要診所 shortName（純數字編號補前綴；§6.5.3）
-  const clinicRow = identified.clinicId
-    ? await prisma.clinic.findUnique({ where: { id: identified.clinicId }, select: { shortName: true } })
+  const clinicRow = effClinicId
+    ? await prisma.clinic.findUnique({ where: { id: effClinicId }, select: { shortName: true } })
     : null
   const normLinePatientCode = (raw: string | null): string | null =>
     normPatientCode(raw, clinicRow?.shortName ?? null)
@@ -501,6 +507,15 @@ async function finishSuccess(
         }),
       ),
     )
+    // KIOSK 上傳：讀唔到診所嘅分段 → 默認上傳店（讀到第二間店嘅分段照留，KIOSK 睇唔到、經理處理）
+    if (uploadClinicId) {
+      for (const i of sectionIdents) {
+        if (i.clinicId) continue
+        i.clinicId = uploadClinicId
+        i.clinicBasis = 'UPLOADER'
+        i.complete = !!i.providerId
+      }
+    }
     // 逐段 clinic shortName（patientCode 正規化用）
     const secClinicIds = [...new Set(sectionIdents.map((i) => i.clinicId).filter((v): v is string => !!v))]
     const secClinics = secClinicIds.length
@@ -522,8 +537,8 @@ async function finishSuccess(
     labNameRaw: filtered.lab.nameRaw,
     payeeRaw: filtered.lab.payeeRaw,
     payeeIsNew: identified.payeeIsNew,
-    clinicId: identified.clinicId,
-    clinicBasis: identified.clinicBasis,
+    clinicId: effClinicId,
+    clinicBasis: effClinicBasis,
     clinicEvidence: identified.clinicEvidence,
     providerId: identified.providerId,
     providerBasis: identified.providerBasis,

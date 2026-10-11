@@ -100,6 +100,19 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
   const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  // ★ 2026-10-11：KIOSK（店舖機）上傳 → 默認嗰間店；幾間店先要揀
+  const [kioskShops, setKioskShops] = useState<Array<{ id: string; name: string }> | null>(null)
+  const [kioskShop, setKioskShop] = useState('')
+  useEffect(() => {
+    apiFetch<{ user: { role: string; clinics?: Array<{ clinicId: string; clinic?: { name?: string; shortName?: string } }> } }>('/api/me')
+      .then((d) => {
+        if (d.user.role !== 'KIOSK') return
+        const shops = (d.user.clinics ?? []).map((c) => ({ id: c.clinicId, name: c.clinic?.name ?? c.clinic?.shortName ?? c.clinicId }))
+        setKioskShops(shops)
+        if (shops.length === 1) setKioskShop(shops[0].id)
+      })
+      .catch(() => {})
+  }, [])
   const [viewDoc, setViewDoc] = useState<{ id: string; name?: string } | null>(null)
 
   const photoRef = useRef<HTMLInputElement>(null)
@@ -155,6 +168,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
       const form = new FormData()
       for (const f of processed) form.append('files', f, f.name)
       form.append('kind', kind)
+      if (kioskShop) form.append('clinicId', kioskShop)
       form.append('idempotencyKey', crypto.randomUUID())
 
       const res = await fetch('/api/lab-docs/upload', { method: 'POST', body: form, credentials: 'include' })
@@ -196,10 +210,25 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
   return (
     <div className="space-y-3">
       {/* 上傳區（§12.1：影 invoice／上傳 PDF） */}
+      {kioskShops && (
+        <div className="flex flex-wrap items-center gap-2 text-sm rounded-xl border bg-card px-3 py-2">
+          <span className="text-muted-foreground">上傳店</span>
+          {kioskShops.length === 1 ? (
+            <><span className="font-medium">{kioskShops[0].name}</span><span className="text-xs text-muted-foreground">由呢部 KIOSK 上傳 · 自動</span></>
+          ) : kioskShops.length === 0 ? (
+            <span className="text-red-600">呢部 KIOSK 未設定店舖，唔可以上傳</span>
+          ) : (
+            <select id="kiosk-shop" className="border rounded px-2 py-1" value={kioskShop} onChange={(e) => setKioskShop(e.target.value)}>
+              <option value="">— 揀店舖 —</option>
+              {kioskShops.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
+        </div>
+      )}
       <div className="flex gap-2">
         <button
           onClick={() => photoRef.current?.click()}
-          disabled={uploading}
+          disabled={uploading || (!!kioskShops && !kioskShop)}
           className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-brand text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
         >
           {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
@@ -207,7 +236,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
         </button>
         <button
           onClick={() => pdfRef.current?.click()}
-          disabled={uploading}
+          disabled={uploading || (!!kioskShops && !kioskShop)}
           className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border bg-card text-sm font-medium hover:bg-accent disabled:opacity-50"
         >
           {uploading ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}

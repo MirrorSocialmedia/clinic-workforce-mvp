@@ -7,6 +7,7 @@ import { hkDateStart, hkDateEnd, todayHK } from '@/lib/hk-date'
 import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 import { normPatientCode } from '@/lib/cost-entry/patient-code'
 import { CostGuardError, parseMoney, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
+import { costStatementMarks, type StatementMark } from '@/lib/labdoc/cost-statement-marks'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -231,6 +232,17 @@ export async function GET(req: NextRequest) {
     })),
   }))
 
+  // ★ 2026-10-11：按 lab 總數標月結核對狀態 — 月結單按到貨月對數，所以只喺「到貨日」＋揀咗月份先計
+  let labStatementMarks: Record<string, StatementMark> = {}
+  if (dateMode === 'received' && periodMonth && !q && !status && !category) {
+    const labIdByName = new Map<string, string>()
+    for (const c of cases) if (c.lab && c.labId) labIdByName.set(c.lab.name, c.labId)
+    const clinicIds: string[] | null =
+      typeof baseWhere.clinicId === 'string' ? [baseWhere.clinicId] : baseWhere.clinicId?.in ? baseWhere.clinicId.in : null
+    const marks = await costStatementMarks(prisma, { month: periodMonth, labIds: [...labIdByName.values()], clinicIds, providerId: providerId || null })
+    for (const [name, id] of labIdByName) if (marks[id]) labStatementMarks[name] = marks[id]
+  }
+
   return jsonNoStore({
     cases: serializedCases,
     summary: {
@@ -247,6 +259,7 @@ export async function GET(req: NextRequest) {
       totalBaseCost: totals._sum.baseCost ? Number(totals._sum.baseCost) : null,
       unpricedCount: unpriced,
       labGroups,
+      labStatementMarks,
     },
   })
 }

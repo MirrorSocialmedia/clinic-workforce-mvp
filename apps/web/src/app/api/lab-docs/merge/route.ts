@@ -15,10 +15,10 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { runLabDocExtract } from '@/lib/labdoc/extract'
 import { acquireWriteLog, completeWriteLog, releaseWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
+import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 const KEY_RE = /^[a-zA-Z0-9:_-]{1,128}$/
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
 
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return NextResponse.json({ error: '冇任何診所範圍，唔可以合併單據' }, { status: 403 })
   }
@@ -53,6 +53,11 @@ export async function POST(req: NextRequest) {
   }
   for (const d of sourceDocIds) {
     if (typeof d !== 'string' || !DOC_ID_RE.test(d)) return NextResponse.json({ error: 'sourceDocIds 格式錯誤' }, { status: 400 })
+  }
+  // ★ KIOSK 只可以合併自己店嘅單
+  for (const d of sourceDocIds as string[]) {
+    const kioskDeny = await kioskDocGuard(session, d)
+    if (kioskDeny) return kioskDeny
   }
   if (new Set(sourceDocIds as string[]).size !== sourceDocIds.length) {
     return NextResponse.json({ error: 'sourceDocIds 有重複' }, { status: 400 })

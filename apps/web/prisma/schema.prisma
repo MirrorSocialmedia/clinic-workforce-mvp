@@ -1999,7 +1999,9 @@ model LabDocument {
   labNameRaw        String?
   labBasis          String? // ALIAS | NAME | MANUAL
   clinicId          String?
-  clinicBasis       String? // CUSTOMER_NO | CLINIC_ALIAS | ADDRESS | SHORT_CODE | NAME | MANUAL
+  clinicBasis       String? // CUSTOMER_NO | CLINIC_ALIAS | ADDRESS | SHORT_CODE | NAME | MANUAL | UPLOADER
+  /// ★ 2026-10-11：KIOSK（店舖機）上傳 → 記低係邊間店上傳；讀單以呢間店為準（單上診所唔同 → 提示）
+  uploadClinicId    String?
   clinicEvidence    String? // 原文片段（≤120 字）
   providerId        String? // INVOICE 用；STATEMENT 每段自己有
   providerBasis     String? // CUSTOMER_NO | DOCTOR_ALIAS | NAME | MANUAL

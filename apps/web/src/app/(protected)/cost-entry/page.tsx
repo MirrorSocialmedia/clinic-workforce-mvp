@@ -1288,7 +1288,8 @@ export default function CostEntryPage() {
                   </td>
                 )
                 return (
-                <tr key={c.id} className="border-b hover:bg-gray-50">
+                // ★ 2026-10-11：同 Lab invoice 核對過嘅成本 → 淺綠底
+                <tr key={c.id} className={`border-b ${c.labInvoiceLinked ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}`}>
                   {dateMode === 'received' ? (<>{receivedTd}{orderedTd}</>) : orderedTd}
                   <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
                   {/* ★ 拍板①：全名必顯示 —— 剷走 truncate／max-w，改 whitespace-nowrap */}
@@ -1426,9 +1427,13 @@ export default function CostEntryPage() {
             {Object.keys(stats.labGroups).length > 0 && (
               <>
                 <span>｜</span>
-                <span>按 lab：{Object.entries(stats.labGroups)
-                  .map(([name, g]) => `${name} $${g.total.toFixed(2)}`)
-                  .join(' · ')}</span>
+                <span className="inline-flex flex-wrap items-center gap-x-1">按 lab：{Object.entries(stats.labGroups).map(([name, g], i) => (
+                  <span key={name} className="inline-flex items-center gap-1">
+                    {i > 0 && <span className="text-gray-400">·</span>}
+                    {name} ${g.total.toFixed(2)}
+                    <StatementMarkPill mark={summary?.labStatementMarks?.[name]} />
+                  </span>
+                ))}</span>
               </>
             )}
             {/* ★ 2026-08-28 cwm-costfix §7.2.4：「全部月份」時後端只回最近 500 筆（take: 500） */}
@@ -2031,5 +2036,24 @@ export default function CostEntryPage() {
       )}
 
     </div>
+  )
+}
+
+// ★ 2026-10-11：按 lab 總數旁邊嘅月結核對標示（API cost-statement-marks.ts；只喺到貨日＋揀咗月份先有）
+function StatementMarkPill({ mark }: {
+  mark?: { status: 'OK' | 'OK_DIFF' | 'CHANGED' | 'PARTIAL' | 'IN_PROGRESS'; docId: string; diff: number; reasons: string[]; changedBy: number; uncoveredTotal: number }
+}) {
+  if (!mark) return null
+  const money = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+  const meta: Record<typeof mark.status, { text: string; cls: string; title: string }> = {
+    OK: { text: '✓ 月結已核對', cls: 'bg-green-100 text-green-700', title: '月結單全部分段已確認，總數一致' },
+    OK_DIFF: { text: `✓ 月結已核對（差 ${money(mark.diff)}）`, cls: 'bg-green-100 text-green-700', title: mark.reasons.length ? `原因：${mark.reasons.join('；')}` : '確認時有差額' },
+    CHANGED: { text: '⚠ 核對後成本有改', cls: 'bg-amber-100 text-amber-800', title: `確認之後成本錄入改咗 ${mark.changedBy > 0 ? '+' : '−'}${money(mark.changedBy)} — 返月結單睇吓` },
+    PARTIAL: { text: `⚠ 有 ${money(mark.uncoveredTotal)} 唔喺月結單`, cls: 'bg-amber-100 text-amber-800', title: '成本錄入有呢間 Lab 嘅成本，但月結單冇嗰位醫生／診所嘅分段' },
+    IN_PROGRESS: { text: '月結對緊', cls: 'bg-slate-100 text-slate-600', title: '月結單未全部分段確認' },
+  }
+  const m = meta[mark.status]
+  return (
+    <a href={`/lab-docs/statements/${mark.docId}`} title={m.title} className={`px-1.5 rounded text-[11px] font-medium whitespace-nowrap ${m.cls}`}>{m.text}</a>
   )
 }
