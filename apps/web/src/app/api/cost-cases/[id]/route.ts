@@ -328,6 +328,10 @@ export async function PUT(
     data.appointmentAt = null
   }
   if (status !== undefined) data.status = status
+  // ★ 2026-10-11：冇人手揀狀態 → 跟價錢自動轉：入咗價 PENDING→PRICED；清咗價 PRICED→PENDING
+  //   （之前要喺編輯框人手揀「已定價」，好多已有價嘅成本仍然顯示「未有價」）
+  else if (existing.status === 'PENDING' && finalCost != null) data.status = 'PRICED'
+  else if (existing.status === 'PRICED' && finalCost == null) data.status = 'PENDING'
   if (providerId !== undefined) data.providerId = providerId
   if (clinicId !== undefined) data.clinicId = clinicId
   if (category !== undefined) data.category = category
