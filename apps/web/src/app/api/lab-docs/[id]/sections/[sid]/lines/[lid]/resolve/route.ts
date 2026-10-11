@@ -92,7 +92,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   }
   const line = await prisma.labStatementLine.findFirst({
     where: { id: params.lid, sectionId: section.id },
-    select: { id: true, resolution: true, lineType: true },
+    select: { id: true, resolution: true, lineType: true, pairMode: true },
   })
   if (!line) return jsonNoStore({ error: '行唔屬於呢個分段' }, { status: 404 })
   const dupMsg = await sectionDuplicateBlock(prisma, doc, section)
@@ -101,9 +101,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   const targets = applyToAll
     ? await prisma.labStatementLine.findMany({
         where: { sectionId: section.id, lineType: { in: COUNTED_TYPES } },
-        select: { id: true, resolution: true },
+        select: { id: true, resolution: true, pairMode: true },
       })
     : [line]
+  // ★ 人手配咗成本嘅行 → 要先撳「未配對到」拆開，先可以標備貨／唔關我哋事
+  if (resolution !== 'CLEAR' && targets.some((t) => t.pairMode === 'MANUAL')) {
+    return jsonNoStore({ error: '有行人手配對咗成本 — 要先撳「未配對到」拆開先可以標記' }, { status: 409 })
+  }
   if (targets.some((t) => t.resolution === 'STATEMENT_WINS')) {
     return jsonNoStore({ error: '有行之前用「以月結單為準」改咗系統 — 唔可以再改標記' }, { status: 409 })
   }

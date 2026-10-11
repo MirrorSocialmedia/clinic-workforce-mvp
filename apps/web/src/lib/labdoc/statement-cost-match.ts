@@ -11,6 +11,8 @@
  *   - $0 行、PAYMENT／BF、舊欠 → NOT_APPLICABLE
  * 第 2 步（只係提示，唔影響狀態）：唔理病人，按金額劃埋 —
  *   一筆成本 = 一行，或者 = 連續幾行加埋（同一個病人通常連住寫）→ 行 MATCHED；剩低嘅行 UNPAIRED、成本列出。
+ *   ★ 2026-10-11：先用人手配對（pairMode MANUAL → pairCostCaseId），再自動劃；
+ *     「未配對到」（pairMode NONE）嘅行唔參與自動劃。
  */
 
 export const EXCLUDE_RESOLUTIONS = new Set(['STOCK', 'NOT_OURS'])
@@ -29,6 +31,9 @@ export interface CostLineIn {
   date: Date | null
   agingBucket: string | null
   resolution: string | null
+  /** MANUAL（人手配咗 pairCostCaseId）｜NONE（未配對到：唔自動劃）｜null */
+  pairMode?: string | null
+  pairCostCaseId?: string | null
 }
 
 export interface CostCaseIn {
@@ -55,8 +60,8 @@ export interface CostMatchOutput {
   notOursTotal: number
   /** 行結果（每行一個） */
   lines: Array<{ id: string; result: CostLineResult; costCaseId: string | null }>
-  /** 劃埋咗嘅組合 */
-  pairs: Array<{ costCaseId: string; lineIds: string[] }>
+  /** 劃埋咗嘅組合（manual = 人手配對） */
+  pairs: Array<{ costCaseId: string; lineIds: string[]; manual?: true }>
   unpairedCostIds: string[]
   /** 成本「未有價」（status PENDING 或者冇 finalCost）嘅筆數 */
   unpricedCount: number
@@ -110,11 +115,28 @@ export function matchStatementToCosts(input: {
   const pairable = counted.filter((l) => Math.abs(l.amount) > EPS)
   const used = new Set<string>()
   const lineCost = new Map<string, string>()
-  const pairs: Array<{ costCaseId: string; lineIds: string[] }> = []
-  const costs = [...input.costs]
-    .filter((c) => c.finalCost != null && Math.abs(c.finalCost) > EPS)
-    .sort((a, b) => (a.receivedAt?.getTime() ?? 0) - (b.receivedAt?.getTime() ?? 0) || a.id.localeCompare(b.id))
+  const pairs: Array<{ costCaseId: string; lineIds: string[]; manual?: true }> = []
   const pairedCost = new Set<string>()
+  // (0) 人手配對（成本要仲喺範圍；唔理而家金額啱唔啱 — 配嗰陣已經驗過）
+  const scopeCostIds = new Set(input.costs.map((c) => c.id))
+  const manualGroups = new Map<string, string[]>()
+  for (const l of pairable) {
+    if (l.pairMode !== 'MANUAL' || !l.pairCostCaseId || !scopeCostIds.has(l.pairCostCaseId)) continue
+    manualGroups.set(l.pairCostCaseId, [...(manualGroups.get(l.pairCostCaseId) ?? []), l.id])
+  }
+  for (const [costCaseId, lineIds] of manualGroups) {
+    for (const lid of lineIds) {
+      used.add(lid)
+      lineCost.set(lid, costCaseId)
+    }
+    pairedCost.add(costCaseId)
+    pairs.push({ costCaseId, lineIds, manual: true })
+  }
+  // 人手配咗（或者成本出咗範圍）／未配對到 → 唔參與自動劃
+  for (const l of pairable) if (l.pairMode === 'MANUAL' || l.pairMode === 'NONE') used.add(l.id)
+  const costs = [...input.costs]
+    .filter((c) => !pairedCost.has(c.id) && c.finalCost != null && Math.abs(c.finalCost) > EPS)
+    .sort((a, b) => (a.receivedAt?.getTime() ?? 0) - (b.receivedAt?.getTime() ?? 0) || a.id.localeCompare(b.id))
   // (a) 一筆成本 = 一行
   for (const c of costs) {
     const hit = pairable.find((l) => !used.has(l.id) && eq(l.amount, c.finalCost!))
