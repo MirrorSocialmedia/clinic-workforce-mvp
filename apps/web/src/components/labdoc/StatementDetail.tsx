@@ -6,12 +6,13 @@
  * - 頭：Lab、月份、頁數、讀法、收款人警告；「睇原檔」
  * - 統計：月結單總數、系統已對、差額、分段確認進度
  * - 分段表：未識別（NEEDS_ASSIGN）排第一 → 即場揀診所／醫生（可剔「記住」寫 alias）
+ * - 揀錯：分段「改」／「解除指派」；Lab／月份讀唔到或者錯 → 「改 Lab／月份」（改完舊配對清走再自動重新配對）
  * - 重複分段 → 「取代舊版」（要原因；舊版已處理嘅差異會帶過嚟）
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ChevronRight, ImageIcon, Loader2, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ImageIcon, Loader2, Pencil, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 import { fmtMoney, hkDateTime, statusMeta } from './status-meta'
@@ -95,6 +96,8 @@ export const SECTION_STATUS: Record<string, { label: string; cls: string }> = {
   CONFIRMED: { label: '已確認', cls: 'bg-emerald-100 text-emerald-700' },
 }
 const KIND_LABEL: Record<string, string> = { DETAIL: '明細型', INVOICE_LIST: '單號型', OUTSTANDING: '欠款型' }
+// 呢兩個狀態先可以改 Lab／月份、改／解除分段指派（後端同一套規則）
+const HEADER_EDITABLE = new Set(['NEEDS_REVIEW', 'IN_PROGRESS'])
 
 export const stated = (s: StmtSection) => (s.statedCurrent ?? s.statedTotal)
 
@@ -105,6 +108,8 @@ export default function StatementDetail({ id }: { id: string }) {
   const [providers, setProviders] = useState<Array<{ id: string; name: string }>>([])
   const [viewer, setViewer] = useState(false)
   const [retrying, setRetrying] = useState(false)
+  const [labs, setLabs] = useState<Array<{ id: string; name: string }>>([])
+  const [editHeader, setEditHeader] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -118,6 +123,7 @@ export default function StatementDetail({ id }: { id: string }) {
     load()
     apiFetch<{ clinics: Array<{ id: string; name: string }> }>('/api/clinics').then((d) => setClinics(d.clinics || [])).catch(() => {})
     apiFetch<{ providers: Array<{ id: string; name: string }> }>('/api/providers').then((d) => setProviders(d.providers || [])).catch(() => {})
+    apiFetch<{ labs: Array<{ id: string; name: string }> }>('/api/labs').then((d) => setLabs(d.labs || [])).catch(() => {})
   }, [load])
   useEffect(() => {
     if (!data || !['UPLOADED', 'EXTRACTING'].includes(data.document.status)) return
@@ -166,6 +172,8 @@ export default function StatementDetail({ id }: { id: string }) {
       toast.error((e as Error).message)
     }
   }
+  const headerEditable = HEADER_EDITABLE.has(d.status) && !d.supersededById && !data.sections.some((s) => s.status === 'CONFIRMED')
+  const headerMissing = !d.labId || !d.statementMonth
   const dups = [...new Map(data.sections.filter((s) => s.duplicate).map((s) => [s.duplicate!.docId, s.duplicate!])).values()]
 
   return (
@@ -188,7 +196,23 @@ export default function StatementDetail({ id }: { id: string }) {
             {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}再讀
           </button>
         )}
+        {headerEditable && !headerMissing && !editHeader && (
+          <button onClick={() => setEditHeader(true)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg border bg-card text-sm"><Pencil size={14} />改 Lab／月份</button>
+        )}
       </div>
+
+      {headerEditable && (headerMissing || editHeader) && (
+        <HeaderEditor
+          docId={id}
+          version={d.version}
+          labId={d.labId}
+          month={d.statementMonth}
+          labs={labs}
+          missing={headerMissing}
+          onCancel={headerMissing ? null : () => setEditHeader(false)}
+          onSaved={() => { setEditHeader(false); load() }}
+        />
+      )}
 
       {d.supersededById && (
         <div className="rounded-xl border bg-muted p-3 text-sm">已被取代 — <Link className="underline" href={`/lab-docs/statements/${d.supersededById}`}>開新版</Link></div>
@@ -221,7 +245,7 @@ export default function StatementDetail({ id }: { id: string }) {
 
       <div className="space-y-2">
         {secs.map((s) => (
-          <SectionRow key={s.id} docId={id} version={d.version} s={s} clinics={clinics} providers={providers} cName={cName} pName={pName} onChanged={load} />
+          <SectionRow key={s.id} docId={id} version={d.version} editable={HEADER_EDITABLE.has(d.status) && !d.supersededById} s={s} clinics={clinics} providers={providers} cName={cName} pName={pName} onChanged={load} />
         ))}
         {secs.length === 0 && !['UPLOADED', 'EXTRACTING'].includes(d.status) && <div className="text-sm text-muted-foreground">冇分段</div>}
       </div>
@@ -231,9 +255,66 @@ export default function StatementDetail({ id }: { id: string }) {
   )
 }
 
-function SectionRow({ docId, version, s, clinics, providers, cName, pName, onChanged }: {
+function HeaderEditor({ docId, version, labId, month, labs, missing, onCancel, onSaved }: {
   docId: string
   version: number
+  labId: string | null
+  month: string | null
+  labs: Array<{ id: string; name: string }>
+  missing: boolean
+  onCancel: (() => void) | null
+  onSaved: () => void
+}) {
+  const [lab, setLab] = useState(labId ?? '')
+  const [m, setM] = useState(month ?? '')
+  const [busy, setBusy] = useState(false)
+  const changed = (lab && lab !== labId) || (m && m !== month)
+
+  const save = async () => {
+    // 之前已經有 Lab＋月份 → 可能已經對過數；改咗要清走舊配對（後端做），先問一句
+    if (labId && month && !window.confirm('改 Lab／月份會清走呢張月結單所有分段嘅配對同差異處理，再自動重新配對。確定？')) return
+    setBusy(true)
+    try {
+      const r = await apiFetch<{ reconciled?: number }>(`/api/lab-docs/${docId}/statement-header`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...(lab && lab !== labId ? { labId: lab } : {}),
+          ...(m && m !== month ? { statementMonth: m } : {}),
+          version,
+        }),
+      })
+      toast.success(r?.reconciled ? `已更新，重新配對咗 ${r.reconciled} 段` : '已更新')
+      onSaved()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`rounded-xl border p-3 text-sm space-y-2 ${missing ? 'border-amber-300 bg-amber-50' : 'bg-card'}`}>
+      {missing && <div>讀單讀唔到{!labId ? ' Lab' : ''}{!labId && !month ? '同' : ''}{!month ? '月份' : ''} — 揀返先可以對數。</div>}
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="border rounded px-2 py-1 bg-background" value={lab} onChange={(e) => setLab(e.target.value)}>
+          <option value="">— Lab —</option>
+          {labs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+        <input type="month" className="border rounded px-2 py-1 bg-background" value={m} onChange={(e) => setM(e.target.value)} />
+        <button onClick={save} disabled={busy || !changed} className="px-3 py-1 rounded-lg bg-brand text-white disabled:opacity-40">
+          {busy ? <Loader2 size={14} className="animate-spin" /> : '儲存'}
+        </button>
+        {onCancel && <button onClick={onCancel} className="px-3 py-1 rounded-lg border">取消</button>}
+      </div>
+    </div>
+  )
+}
+
+function SectionRow({ docId, version, editable, s, clinics, providers, cName, pName, onChanged }: {
+  docId: string
+  version: number
+  editable: boolean
   s: StmtSection
   clinics: Array<{ id: string; name: string }>
   providers: Array<{ id: string; name: string }>
@@ -245,26 +326,43 @@ function SectionRow({ docId, version, s, clinics, providers, cName, pName, onCha
   const [providerId, setProviderId] = useState(s.providerId ?? '')
   const [remember, setRemember] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState(false)
   const st = SECTION_STATUS[s.status] ?? { label: s.status, cls: 'bg-slate-100' }
   const stt = stated(s)
   const diff = stt !== null && s.systemTotal !== null ? Math.round((stt - s.systemTotal) * 100) / 100 : null
   const needsAssign = s.status === 'NEEDS_ASSIGN'
 
+  const assigned = !!s.clinicId || !!s.providerId
+  const changing = (!!s.clinicId && !!clinicId && clinicId !== s.clinicId) || (!!s.providerId && !!providerId && providerId !== s.providerId)
+
   const assign = async () => {
+    if (changing && !window.confirm('改診所／醫生會清走呢段嘅配對同差異處理，再自動重新配對。確定？')) return
     setBusy(true)
-    try {
-      await apiFetch(`/api/lab-docs/${docId}/sections/${s.id}/assign`, {
+    const send = (opts: { remember: boolean; overwrite: boolean }) =>
+      apiFetch(`/api/lab-docs/${docId}/sections/${s.id}/assign`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           clinicId: clinicId || null,
           providerId: providerId || null,
-          rememberClinic: remember && !!clinicId && clinicId !== s.clinicId,
-          rememberProvider: remember && !!providerId && providerId !== s.providerId,
+          rememberClinic: opts.remember && !!clinicId && clinicId !== s.clinicId,
+          rememberProvider: opts.remember && !!providerId && providerId !== s.providerId,
+          overwrite: opts.overwrite,
           version,
         }),
       })
+    try {
+      try {
+        await send({ remember, overwrite: false })
+      } catch (e) {
+        // 之前「記住」咗另一個（例如上次揀錯）→ 問要唔要用新嘅蓋過；唔蓋就淨係改呢段、唔記住
+        const err = e as Error & { status?: number; body?: { error?: string; message?: string } }
+        if (err.status !== 409 || err.body?.error !== 'ALIAS_CONFLICT') throw e
+        const overwrite = window.confirm(`${err.body.message ?? '之前記住咗另一個'}\n\n確定 = 以後都用新揀嘅；取消 = 淨係改呢段，唔記住`)
+        await send({ remember: overwrite, overwrite })
+      }
       toast.success('已指派，自動對緊數')
+      setEditing(false)
       onChanged()
     } catch (e) {
       toast.error((e as Error).message)
@@ -272,6 +370,35 @@ function SectionRow({ docId, version, s, clinics, providers, cName, pName, onCha
       setBusy(false)
     }
   }
+
+  const unassign = async () => {
+    if (!window.confirm('解除呢段嘅診所／醫生？呢段嘅配對同差異處理會清走，要重新指派。')) return
+    setBusy(true)
+    try {
+      await apiFetch(`/api/lab-docs/${docId}/sections/${s.id}/assign`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ unassign: true, version }),
+      })
+      toast.success('已解除指派')
+      setEditing(false)
+      setClinicId('')
+      setProviderId('')
+      onChanged()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setClinicId(s.clinicId ?? '')
+    setProviderId(s.providerId ?? '')
+  }
+  const canEdit = editable && s.status !== 'CONFIRMED'
+  const showPicker = canEdit && (needsAssign || !s.clinicId || !s.providerId || editing)
 
   return (
     <div className="rounded-xl border bg-card p-3">
@@ -287,6 +414,9 @@ function SectionRow({ docId, version, s, clinics, providers, cName, pName, onCha
           <div className="text-muted-foreground">系統 {fmtMoney(s.systemTotal)}{diff ? ` · 差 ${fmtMoney(diff)}` : ''}</div>
         </div>
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${st.cls}`}>{st.label}</span>
+        {canEdit && assigned && !editing && (
+          <button onClick={() => setEditing(true)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground" title="改診所／醫生"><Pencil size={13} />改</button>
+        )}
         {!needsAssign && (
           <Link href={`/lab-docs/statements/${docId}/sections/${s.id}`} className="flex items-center text-sm text-brand">對數<ChevronRight size={14} /></Link>
         )}
@@ -294,7 +424,7 @@ function SectionRow({ docId, version, s, clinics, providers, cName, pName, onCha
       {s.costEvidence?.flag && (
         <div className="mt-2 text-xs text-red-600">有成本仲套緊月度折扣：{s.costEvidence.discountCosts.map((c) => `${c.itemType ?? '—'} ${c.discountPct}%`).join('、')}</div>
       )}
-      {(needsAssign || (!s.clinicId || !s.providerId)) && s.status !== 'CONFIRMED' && (
+      {showPicker && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
           <select className="border rounded px-2 py-1" value={clinicId} onChange={(e) => setClinicId(e.target.value)}>
             <option value="">— 診所 —</option>
@@ -305,7 +435,9 @@ function SectionRow({ docId, version, s, clinics, providers, cName, pName, onCha
             {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />記住（下次自動認）</label>
-          <button onClick={assign} disabled={busy || (!clinicId && !providerId)} className="px-3 py-1 rounded-lg bg-brand text-white disabled:opacity-40">指派</button>
+          <button onClick={assign} disabled={busy || (!clinicId && !providerId) || (clinicId === (s.clinicId ?? '') && providerId === (s.providerId ?? ''))} className="px-3 py-1 rounded-lg bg-brand text-white disabled:opacity-40">指派</button>
+          {assigned && <button onClick={unassign} disabled={busy} className="px-3 py-1 rounded-lg border text-red-600 disabled:opacity-40">解除指派</button>}
+          {editing && <button onClick={cancelEdit} disabled={busy} className="px-3 py-1 rounded-lg border">取消</button>}
         </div>
       )}
     </div>

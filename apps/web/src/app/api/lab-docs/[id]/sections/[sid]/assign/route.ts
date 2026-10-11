@@ -8,6 +8,9 @@
 //   - provider：doctorRaw → upsert ProviderNameAlias
 //   - 已存在 alias 指向唔同目標 → 409 ALIAS_CONFLICT（UI 確認後 overwrite=true 重試）
 // - 兩邊齊 → 分段 PENDING；全部分段齊 → 文件 NEEDS_REVIEW → IN_PROGRESS（§3.4）
+// - 改返（已指派嘅診所／醫生換第二個）→ 舊配對＋差異處理清走再自動重新配對
+// - { unassign: true, version } → 解除指派：診所／醫生清空、分段 NEEDS_ASSIGN、文件 IN_PROGRESS → NEEDS_REVIEW
+// - 已確認分段唔改；有行「以月結單為準」改咗系統 → 擋（statement-reset.ts）
 // 權限：lab_statement（§10.2：月結單分段識別）
 // 版本守衛：doc.version optimistic lock
 // audit：LAB_STATEMENT_SECTION_ASSIGN（SPEC）＋ alias 寫入 LAB_ALIAS_LEARN（SPEC）
@@ -22,6 +25,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { normClinicName, normCustomerNo, normDoctor } from '@/lib/labdoc/identify'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { autoReconcileIfReady } from '@/lib/labdoc/statement-reconcile'
+import { resetSectionMatching, sectionsWithSystemChange, SYSTEM_CHANGE_BLOCK_MSG } from '@/lib/labdoc/statement-reset'
 
 const SECTION_ID_RE = /^[a-z0-9]{25}$/
 const DOC_ID_RE = /^[a-z0-9]{25}$/
@@ -44,6 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     rememberClinic?: boolean
     rememberProvider?: boolean
     overwrite?: boolean
+    unassign?: boolean
     version?: number
   }
   try {
@@ -51,8 +56,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   } catch {
     return jsonNoStore({ error: 'JSON body 缺失' }, { status: 400 })
   }
-  const { clinicId = null, providerId = null, rememberClinic = false, rememberProvider = false, overwrite = false, version } = body
-  if (clinicId === null && providerId === null) {
+  const { clinicId = null, providerId = null, rememberClinic = false, rememberProvider = false, overwrite = false, unassign = false, version } = body
+  if (!unassign && clinicId === null && providerId === null) {
     return jsonNoStore({ error: 'clinicId／providerId 至少要傳一個' }, { status: 400 })
   }
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 0) {
@@ -91,9 +96,58 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   if (scope !== null && newClinicId && !scope.includes(newClinicId)) {
     return jsonNoStore({ error: '診所唔喺你嘅範圍' }, { status: 403 })
   }
+  if (scope !== null && unassign && section.clinicId && !scope.includes(section.clinicId)) {
+    return jsonNoStore({ error: '診所唔喺你嘅範圍' }, { status: 403 })
+  }
+  // 改返／解除：舊配對基於舊診所／醫生 → 要清；「以月結單為準」改過系統嘅還原唔到 → 擋
+  const clinicChanged = clinicId !== null && section.clinicId !== null && clinicId !== section.clinicId
+  const providerChanged = providerId !== null && section.providerId !== null && providerId !== section.providerId
+  const resetMatching = unassign || clinicChanged || providerChanged
+  if (resetMatching && (await sectionsWithSystemChange(prisma, [section.id])) > 0) {
+    return jsonNoStore({ error: SYSTEM_CHANGE_BLOCK_MSG }, { status: 409 })
+  }
 
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = req.headers.get('user-agent') ?? null
+
+  // —— 解除指派 ——
+  if (unassign) {
+    const before = { clinicId: section.clinicId, providerId: section.providerId, status: section.status }
+    const docStatus = await prisma.$transaction(async (tx: any) => {
+      await resetSectionMatching(tx, [section.id])
+      const s = await tx.labStatementSection.updateMany({
+        where: { id: params.sid, documentId: doc.id, status: { not: 'CONFIRMED' } },
+        data: { clinicId: null, providerId: null, clinicBasis: null, providerBasis: null, status: 'NEEDS_ASSIGN' },
+      })
+      if (s.count === 0) throw new Error('VERSION')
+      const documentStatus = doc.status === 'IN_PROGRESS' ? 'NEEDS_REVIEW' : doc.status
+      const d = await tx.labDocument.updateMany({
+        where: { id: doc.id, version },
+        data: { status: documentStatus, version: { increment: 1 } },
+      })
+      if (d.count === 0) throw new Error('VERSION')
+      return documentStatus
+    }, { timeout: 30_000 }).catch((e: Error) => {
+      if (e.message === 'VERSION') return null
+      throw e
+    })
+    if (docStatus === null) {
+      return jsonNoStore({ error: '版本衝突（單據已更新）— 請重讀' }, { status: 409 })
+    }
+    await labdocAudit({
+      action: 'LAB_STATEMENT_SECTION_ASSIGN',
+      entity: 'LabStatementSection',
+      entityId: params.sid,
+      clinicId: section.clinicId,
+      actorId: session.userId,
+      ipAddress: ip,
+      userAgent: ua,
+      notes: `unassign section ${section.sectionIndex}（doc ${doc.id}）`,
+      before,
+      after: { clinicId: null, providerId: null, status: 'NEEDS_ASSIGN', documentStatus: docStatus, matchingReset: true },
+    })
+    return NextResponse.json({ ok: true, id: params.sid, clinicId: null, providerId: null, status: 'NEEDS_ASSIGN', documentStatus: docStatus, aliasesWritten: [] })
+  }
   const aliasesWritten: Array<{ type: string; rawNorm: string; targetId: string; prevTargetId: string | null }> = []
 
   // —— alias 學習（§6.2.7／§6.3.4）——
@@ -169,15 +223,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   const finalProvider = providerId !== null ? providerId : section.providerId
   const complete = finalClinic !== null && finalProvider !== null
   const upd = await prisma.$transaction(async (tx: any) => {
+    if (resetMatching) await resetSectionMatching(tx, [params.sid])
     const s = await tx.labStatementSection.updateMany({
-      where: { id: params.sid, documentId: doc.id },
+      where: { id: params.sid, documentId: doc.id, status: { not: 'CONFIRMED' } },
       data: {
         ...(clinicId !== null ? { clinicId, clinicBasis: 'MANUAL' } : {}),
         ...(providerId !== null ? { providerId, providerBasis: 'MANUAL' } : {}),
         status: complete ? 'PENDING' : section.status,
       },
     })
-    if (s.count === 0) return null
+    if (s.count === 0) throw new Error('VERSION')
     // §3.4：全部分段識別齊 → 文件 NEEDS_REVIEW → IN_PROGRESS
     let documentStatus = doc.status
     if (doc.status === 'NEEDS_REVIEW') {
@@ -190,8 +245,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       where: { id: doc.id, version },
       data: { status: documentStatus, version: { increment: 1 } },
     })
-    return d.count > 0 ? documentStatus : null
-  }, { timeout: 30_000 })
+    // 版本唔啱 → throw 令成個 tx（包括清配對）rollback
+    if (d.count === 0) throw new Error('VERSION')
+    return documentStatus
+  }, { timeout: 30_000 }).catch((e: Error) => {
+    if (e.message === 'VERSION') return null
+    throw e
+  })
 
   if (upd === null) {
     return jsonNoStore({ error: '版本衝突（單據已更新）— 請重讀' }, { status: 409 })
@@ -208,7 +268,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     userAgent: ua,
     notes: `assign section ${section.sectionIndex}（doc ${doc.id}）`,
     before,
-    after: { clinicId: finalClinic, providerId: finalProvider, status: complete ? 'PENDING' : section.status, documentStatus: upd },
+    after: { clinicId: finalClinic, providerId: finalProvider, status: complete ? 'PENDING' : section.status, documentStatus: upd, ...(resetMatching ? { matchingReset: true } : {}) },
   })
   for (const a of aliasesWritten) {
     await labdocAudit({

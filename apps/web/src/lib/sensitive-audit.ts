@@ -172,6 +172,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_ALIAS_DELETE', label: 'Lab alias 刪除' },
   { action: 'LAB_PROFILE_UPDATE', label: 'Lab 設定更新' },
   { action: 'LAB_STATEMENT_SECTION_ASSIGN', label: '月結單分段診所／醫生指派' },
+  { action: 'LAB_STATEMENT_HEADER', label: '月結單人手改 Lab／月份' },
   { action: 'LAB_STATEMENT_RESOLVE', label: '月結單行差異處理' },
   { action: 'LAB_STATEMENT_ADJUST', label: '⚠️ 月結單改數（以月結單為準）' },
   { action: 'LAB_STATEMENT_RECONCILE', label: '月結單對數' },
