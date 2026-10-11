@@ -374,8 +374,9 @@ export async function PUT(
       clinicRow?.shortName ?? null,
     )
   }
-  // ★ cwm-labdoc P2 §13（B4 方向）：baseCost／材料寫入 → labInvoiceLinked = true
-  if (baseCost !== undefined || resolvedMaterials) data.labInvoiceLinked = true
+  // ★ 2026-10-11 修：之前「baseCost／材料寫入 → labInvoiceLinked = true」— 喺成本錄入人手改價都會剔上，
+  //   令冇 invoice 嘅成本變「已連 invoice」（頁面綠底＋「單」字、之後唔再套月度折扣）。
+  //   labInvoiceLinked 只由 invoice 配對設定（cost-actions.recalcLabInvoiceLinked／new-case）。
 
   // ★ C2：材料要「刪晒再建」—— CostCaseMaterial 冇業務主鍵，diff 更新冇著數，
   //   而且 onDelete: Cascade 只綁 costCase，刪行要自己做 → 一齊成功一齊失敗
