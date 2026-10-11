@@ -71,7 +71,7 @@ export const PENDING_CATEGORY_LABELS: Record<PendingCategory, string> = {
   AMOUNT_REVIEW: '人手改數待覆核',
   NEW_PAYEE: '新收款人',
   EXTRACT_FAILED: '讀單失敗',
-  STATEMENT_DIFF: '月結單差異未處理',
+  STATEMENT_DIFF: '月結單同成本錄入唔啱',
   MISSING_IN_SYSTEM: '系統未有單',
   NOT_ON_STATEMENT: '月結單未有',
 }
@@ -79,7 +79,7 @@ export const PENDING_CATEGORY_LABELS: Record<PendingCategory, string> = {
 /** 單一 item 形狀（所有類別共用 — UI／CSV 簡單）。 */
 export interface PendingItem {
   id: string // lineId（UNMATCHED_LINE）或 docId／costCaseId
-  refType: 'LINE' | 'DOC' | 'COST'
+  refType: 'LINE' | 'DOC' | 'COST' | 'SECTION'
   docId: string | null // LINE item 帶 docId 方便跳轉
   /** 月結單類（STATEMENT_DIFF／MISSING_IN_SYSTEM）：分段 id — 直接跳分段頁 */
   sectionId?: string | null

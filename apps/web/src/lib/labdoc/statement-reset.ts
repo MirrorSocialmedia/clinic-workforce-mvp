@@ -17,16 +17,19 @@ export async function sectionsWithSystemChange(client: any, sectionIds: string[]
 export const SYSTEM_CHANGE_BLOCK_MSG =
   '呢段已經有行用咗「以月結單為準」改咗系統 invoice／成本 — 唔可以再改診所／醫生／Lab／月份（要改請先作廢呢份月結單再重新上傳）'
 
-/** 清走分段所有行嘅配對＋差異處理，分段結果歸零（要喺 transaction 入面行）。 */
+/**
+ * 清走分段所有行嘅配對，分段結果歸零（要喺 transaction 入面行）。
+ * 「備貨」／「唔關我哋事」標記同診所、醫生、月份無關 → 保留；其他舊處理清走。
+ */
 export async function resetSectionMatching(tx: any, sectionIds: string[]): Promise<void> {
   if (sectionIds.length === 0) return
   await tx.labStatementLine.updateMany({
     where: { sectionId: { in: sectionIds } },
+    data: { result: 'PENDING', matchBasis: null, matchedDocumentId: null, matchedLineId: null },
+  })
+  await tx.labStatementLine.updateMany({
+    where: { sectionId: { in: sectionIds }, OR: [{ resolution: null }, { resolution: { notIn: ['STOCK', 'NOT_OURS'] } }] },
     data: {
-      result: 'PENDING',
-      matchBasis: null,
-      matchedDocumentId: null,
-      matchedLineId: null,
       resolution: null,
       resolutionNote: null,
       resolvedBy: null,

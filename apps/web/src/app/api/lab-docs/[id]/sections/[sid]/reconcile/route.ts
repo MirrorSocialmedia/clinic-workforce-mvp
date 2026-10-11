@@ -1,7 +1,7 @@
 // ★ cwm-labdoc P3：POST /api/lab-docs/:id/sections/:sid/reconcile — §8.2 跑／重跑配對
 //
-// 分組配對（三型 A/B/C，純函數 statement-match.ts）寫回 LabStatementLine.result／matched*；
-// 已有 resolution 嘅行保留（重跑唔洗重複處理）；section 重算 systemTotal／status OK|DIFF／resultJson。
+// 2026-10-11：同成本錄入對總數（statement-reconcile.ts）；行標記（備貨／唔關我哋事）保留；
+// section 重算 systemTotal（= Σ 成本）／status OK|DIFF／resultJson。
 // 權限：lab_statement（§10.2：處理差異）
 // audit：LAB_STATEMENT_RECONCILE（SPEC：分段結果統計、差額）
 // ownership-ok: labdoc 全集團範圍（B16）；section 必屬呢個 doc（防 IDOR）
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     userAgent: ua,
   })
   if (!r.ok) {
-    const status = r.code === 'NOT_FOUND' ? 404 : 400
+    const status = r.code === 'NOT_FOUND' ? 404 : r.code === 'CONFIRMED' ? 409 : 400
     return jsonNoStore({ error: r.message, code: r.code }, { status })
   }
   return NextResponse.json(r)
