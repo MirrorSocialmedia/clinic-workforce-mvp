@@ -44,6 +44,7 @@ interface DocResp {
     id: string
     kind: string
     status: string
+    queuePosition?: number | null
     labId: string | null
     labName: string | null
     labNameRaw: string | null
@@ -193,7 +194,7 @@ export default function InvoiceDetail({ id }: { id: string }) {
         </div>
       )}
       {['UPLOADED', 'EXTRACTING'].includes(d.status) && (
-        <div className="rounded-xl border bg-blue-50 p-3 text-sm flex items-center gap-2"><Loader2 size={14} className="animate-spin" />讀緊張單…</div>
+        <div className="rounded-xl border bg-blue-50 p-3 text-sm flex items-center gap-2"><Loader2 size={14} className="animate-spin" />{d.status === 'UPLOADED' && d.queuePosition ? `排隊中 · 第 ${d.queuePosition} 位（讀單機一次讀一張，會自動輪到）` : '讀緊張單…'}</div>
       )}
       {d.status === 'EXTRACT_FAILED' && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">

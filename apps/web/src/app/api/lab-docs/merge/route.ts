@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { runLabDocExtract } from '@/lib/labdoc/extract'
+import { kickLabDocQueue } from '@/lib/labdoc/extract'
 import { acquireWriteLog, completeWriteLog, releaseWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
@@ -183,9 +183,8 @@ export async function POST(req: NextRequest) {
   }
 
   // 新文件重新讀單（§5.1 背景工作；未設 LLM → 3 次後 EXTRACT_FAILED）
-  void runLabDocExtract(newDocId).catch((e) => {
-    console.error('[labdoc/merge] 背景讀單失敗', { docId: newDocId, err: String((e as Error)?.message ?? e) })
-  })
+  // ★ 2026-10-11：入隊（先到先讀）
+  kickLabDocQueue()
 
   const resp = {
     document: { id: newDocId, status: 'UPLOADED', pageCount },

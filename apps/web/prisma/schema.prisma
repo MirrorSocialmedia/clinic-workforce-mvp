@@ -2042,6 +2042,8 @@ model LabDocument {
   confirmedAt    DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  // ★ 2026-10-11：讀單排隊（先到先讀）— 入隊時間；人手「再讀」會重新排到隊尾
+  queuedAt       DateTime  @default(now())
 
   pages    LabDocumentPage[]
   lines    LabDocumentLine[]
@@ -2054,6 +2056,7 @@ model LabDocument {
   @@index([kind, status])
   @@index([labId, clinicId, providerId, docDate])
   @@index([labId, statementMonth])
+  @@index([status, queuedAt])
 }
 
 /// INVOICE 嘅行

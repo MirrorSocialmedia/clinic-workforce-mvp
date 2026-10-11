@@ -18,7 +18,7 @@ import { LabDocProcessError, processUploadFile, type ProcessedFile } from '@/lib
 import { assertEncryptionConfigured } from '@/lib/labdoc/crypto'
 import { buildPageKey, buildStorageKey, saveEncrypted } from '@/lib/labdoc/storage'
 import { labdocAudit } from '@/lib/labdoc/audit'
-import { runLabDocExtract } from '@/lib/labdoc/extract'
+import { kickLabDocQueue } from '@/lib/labdoc/extract'
 import { labdocScope, kioskUploadClinic } from '@/lib/labdoc/kiosk-scope'
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024
@@ -367,11 +367,8 @@ export async function POST(req: NextRequest) {
     // 畫面提示「讀單服務未設定，請人手輸入」）；唔會卡上傳回應。
     // INVOICE/STATEMENT 都觸發（§5.1 唔分 kind；月結單對數業務係 §8/P3，但讀單結果 P2 照存 —
     // 見 decision log 2026-10-05 P2-C1 STATEMENT 觸發口徑）。
-    for (const d of documents) {
-      void runLabDocExtract(d.id).catch((e) => {
-        console.error('[labdoc/upload] 背景讀單失敗', { docId: d.id, err: String((e as Error)?.message ?? e) })
-      })
-    }
+    // ★ 2026-10-11：入隊（先到先讀）— 一個 worker 逐張讀，唔再每張單自己搶讀單機
+    if (documents.length > 0) kickLabDocQueue()
 
     return NextResponse.json(response, { status: 201 })
   } catch (e: any) {

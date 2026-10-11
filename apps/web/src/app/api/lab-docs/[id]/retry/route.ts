@@ -5,14 +5,14 @@
 //    （§11：503 只喺「再讀」時回；上傳時嘅背景讀單 fail 靜靜入 EXTRACT_FAILED）
 //  - 人手再讀 = 一輪新嘅 3 次上限：claim 時重置 extractAttempts=0
 //    （sweep 路徑從唔重置 — 防 attempts 永遠清零無限重試）
-//  - claim 條件更新（EXTRACT_FAILED → EXTRACTING）→ 背景執行（同上傳 request 尾 void 做法）
+//  - ★ 2026-10-11：EXTRACT_FAILED → UPLOADED（重新排到隊尾，queuedAt = now）→ 叫醒排隊 worker
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { runExtractionAfterClaim } from '@/lib/labdoc/extract'
+import { kickLabDocQueue } from '@/lib/labdoc/extract'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -49,14 +49,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const claimed = await prisma.labDocument.updateMany({
     where: { id, status: 'EXTRACT_FAILED' },
-    data: { status: 'EXTRACTING', heartbeatAt: new Date(), extractAttempts: 0, extractError: null },
+    data: { status: 'UPLOADED', queuedAt: new Date(), extractAttempts: 0, extractError: null, version: { increment: 1 } },
   })
   if (claimed.count === 0) {
     return NextResponse.json({ error: '呢張單啱啱被改咗，請重新載入' }, { status: 409 })
   }
 
-  // 背景執行（唔等完成）
-  runExtractionAfterClaim(id)
+  // 入隊（唔等完成）
+  kickLabDocQueue()
 
-  return NextResponse.json({ id, status: 'EXTRACTING' }, { status: 202, headers: { 'cache-control': 'no-store' } })
+  return NextResponse.json({ id, status: 'UPLOADED' }, { status: 202, headers: { 'cache-control': 'no-store' } })
 }

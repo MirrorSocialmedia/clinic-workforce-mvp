@@ -30,6 +30,7 @@ import { __setLabDocExtractFn, resetLabdocLlmStats } from './llm-client'
 import {
   runLabDocExtract,
   runLabDocSweep,
+  kickLabDocQueue,
   __drainLabDocExtractions,
   type RunOpts,
 } from './extract'
@@ -169,6 +170,7 @@ function docMatches(d: DocRow, where: Any): boolean {
   if (where.labId !== undefined && d.labId !== where.labId) return false
   if (where.docNo !== undefined && d.docNo !== where.docNo) return false
   if (where.createdAt?.lt && !(d.createdAt < where.createdAt.lt)) return false
+  if (where.queuedAt?.lt && !(((d as Any).queuedAt ?? d.createdAt) < where.queuedAt.lt)) return false
   if (where.heartbeatAt?.lt && !(d.heartbeatAt === null || d.heartbeatAt < where.heartbeatAt.lt)) return false
   if (where.OR && !where.OR.some((o: Any) => docMatches(d, o))) return false
   return true
@@ -188,6 +190,8 @@ function applyData(d: DocRow, data: Any): void {
 // ── fake prisma ─────────────────────────────────────────────
 const fakes: Record<string, Any> = {
   labDocument: {
+    // ★ 2026-10-11 排隊 worker：數 EXTRACTING
+    count: async ({ where }: Any) => Object.values(state.docs).filter((d) => docMatches(d, where)).length,
     updateMany: async ({ where, data }: Any) => {
       let n = 0
       for (const d of Object.values(state.docs)) {
@@ -782,7 +786,47 @@ describe('sweep — §5.1 安全網', () => {
     await __drainLabDocExtractions()
     assert.equal(state.docs[oldUploaded].status, 'NEEDS_REVIEW')
     assert.equal(state.docs[failedOne].status, 'EXTRACT_FAILED') // 原封不動
-    assert.equal(state.docs[freshUploaded].status, 'UPLOADED') // 未夠 2 分鐘
+    // 2026-10-11 排隊：worker 叫醒之後逐張讀晒隊入面嘅單（先到先讀）—
+    // 新嗰張排後 → 同一個單號，舊嗰張先讀到 → 新嗰張變 DUPLICATE（證明次序）
+    assert.equal(state.docs[freshUploaded].status, 'DUPLICATE')
+  })
+})
+
+describe('2026-10-11 排隊 — 先到先讀；等讀單機唔當失敗', () => {
+  it('讀單機一直忙（busy_exhausted）→ 返隊、attempts 唔加；之後讀到 → NEEDS_REVIEW', async () => {
+    const id = await seedDoc()
+    let calls = 0
+    __setLabDocExtractFn(async () => {
+      calls++
+      if (calls === 1) return { outcome: null, nullReason: 'busy_exhausted' }
+      return { outcome: { result: structuredClone(OK_RESULT), reason: null }, nullReason: null }
+    })
+    kickLabDocQueue(RUN_FAST)
+    await __drainLabDocExtractions()
+    assert.equal(calls, 2)
+    assert.equal(state.docs[id].status, 'NEEDS_REVIEW')
+    assert.equal(state.docs[id].extractAttempts, 0, '等候唔計失敗')
+  })
+
+  it('一次只讀一張：同時叫醒幾次都係逐張讀；讀完晒先停', async () => {
+    const a = await seedDoc({ createdAt: new Date(Date.now() - 3_000), queuedAt: new Date(Date.now() - 3_000) } as Any)
+    const b = await seedDoc({ createdAt: new Date(Date.now() - 2_000), queuedAt: new Date(Date.now() - 2_000) } as Any)
+    let inFlight = 0
+    let maxInFlight = 0
+    __setLabDocExtractFn(async () => {
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((r) => setTimeout(r, 5))
+      inFlight--
+      return { outcome: { result: structuredClone({ ...OK_RESULT, docNoRaw: null }), reason: null }, nullReason: null }
+    })
+    kickLabDocQueue(RUN_FAST)
+    kickLabDocQueue(RUN_FAST)
+    kickLabDocQueue(RUN_FAST)
+    await __drainLabDocExtractions()
+    assert.equal(maxInFlight, 1)
+    assert.notEqual(state.docs[a].status, 'UPLOADED')
+    assert.notEqual(state.docs[b].status, 'UPLOADED')
   })
 })
 
