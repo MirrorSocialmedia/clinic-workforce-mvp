@@ -16,6 +16,7 @@ const WEEK = ['日', '一', '二', '三', '四', '五', '六']
 const dayLabel = (d: string) => `${d}（${WEEK[new Date(`${d}T12:00:00+08:00`).getUTCDay()]}）`
 
 interface Nurse { employeeId: string; name: string; onShift: boolean }
+interface CellProg { done: number; total: number }
 interface CheckData { days: DayCheckState[]; nurses: Nurse[] | null; canCheck: boolean }
 
 const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -31,8 +32,10 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
   currentRows: Array<{ key: string; label: string; storeTotal: number }>
   reloadKey: number
   onPickDate: (date: string) => void
-  /** ★ cwm-dailyv2-20261007 ④：逐格 tick 進度（只係提示，唔擋「確認核對」）；null = 非單日/冇格 */
-  cellProgress?: { done: number; total: number } | null
+  /** ★ cwm-dailyv2-20261007 ④ → cwm-storedoc-20261011（方案一）：逐格進度分組（只係提示，唔擋「確認核對」）；null = 非單日/冇格
+   *  store = 店舖營收格；doctorOnly = 只計醫生（Free SP 等）；none = 兩樣都唔計（Credit 等，唔入進度）；
+   *  pendingStore = 未對嘅店舖格名（「林醫生 Cash」），確認前提示用 */
+  cellProgress?: { store: CellProg; doctorOnly: CellProg; none: CellProg; pendingStore: string[] } | null
 }) {
   const [data, setData] = useState<CheckData | null>(null)
   const [error, setError] = useState('')
@@ -48,12 +51,32 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
   const [justChecked, setJustChecked] = useState<Set<string>>(new Set()) // 啱啱核對嘅行留在「只顯示未核對／有變」
   const single = from === to
   const today = todayHK()
-  // ★ cwm-dailyv2-20261007 ④：「逐格已對 n/總有數格」— 全部對晒先綠字
-  const cellHint = cellProgress && cellProgress.total > 0 ? (
-    <div className={`text-xs ${cellProgress.done === cellProgress.total ? 'text-green-700 font-semibold' : 'text-gray-500'}`}>
-      逐格已對 {cellProgress.done}/{cellProgress.total}{cellProgress.done === cellProgress.total ? ' ✓' : ''}
+  // ★ cwm-storedoc-20261011（方案一）：逐格進度分開「店舖營收」（黃）同「只計醫生」（紫）；兩樣都唔計嘅格唔入進度
+  const bar = (p: CellProg, color: string) => (
+    <span className="inline-block w-24 h-2 rounded-full bg-gray-200 overflow-hidden align-middle mx-1.5">
+      <i className="block h-full" style={{ width: `${p.total ? Math.round(p.done / p.total * 100) : 0}%`, background: color }} />
+    </span>
+  )
+  const full = (p: CellProg) => p.total > 0 && p.done === p.total
+  const cellHint = cellProgress && (cellProgress.store.total + cellProgress.doctorOnly.total + cellProgress.none.total) > 0 ? (
+    <div className="text-xs text-gray-600 flex flex-wrap items-center gap-x-4 gap-y-1">
+      <span>逐格已對：</span>
+      {cellProgress.store.total > 0 && (
+        <span className={full(cellProgress.store) ? 'text-green-700 font-semibold' : ''}>
+          <b style={{ color: '#5c4a00' }}>店舖營收</b> {cellProgress.store.done}/{cellProgress.store.total}{bar(cellProgress.store, '#eab308')}{full(cellProgress.store) ? '✓' : ''}
+        </span>
+      )}
+      {cellProgress.doctorOnly.total > 0 && (
+        <span className={full(cellProgress.doctorOnly) ? 'text-green-700 font-semibold' : ''}>
+          <b style={{ color: '#6d28d9' }}>只計醫生</b> {cellProgress.doctorOnly.done}/{cellProgress.doctorOnly.total}{bar(cellProgress.doctorOnly, '#7c3aed')}{full(cellProgress.doctorOnly) ? '✓' : ''}
+        </span>
+      )}
+      {cellProgress.none.total > 0 && (
+        <span className="text-gray-400">兩樣都唔計 {cellProgress.none.done}/{cellProgress.none.total}（記賬用，唔入進度）</span>
+      )}
     </div>
   ) : null
+  const pending = cellProgress?.pendingStore ?? []
 
   async function load() {
     setError('')
@@ -82,7 +105,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
         <label className="flex items-center gap-2 px-4 pb-2 text-sm"><input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} />只顯示未核對／有變</label>
         <table className="w-full text-sm">
           <thead className="bg-[#1F4E79] text-white">
-            <tr><th className="text-left p-2">日期</th><th className="text-right p-2">收款</th><th className="text-left p-2">核對</th><th className="text-left p-2">護士 · 時間</th><th className="p-2"></th></tr>
+            <tr><th className="text-left p-2">日期</th><th className="text-right p-2">店舖營收</th><th className="text-left p-2">核對</th><th className="text-left p-2">護士 · 時間</th><th className="p-2"></th></tr>
           </thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-gray-500">{onlyOpen ? '全部已核對 ✓' : '呢段日子冇收款'}</td></tr>}
@@ -106,7 +129,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
                         )}
                       </span>
                     </td>
-                    <td className="p-2 text-gray-600">{d.check ? `${d.check.nurseName} · ${hhmm(d.check.checkedAt)}${d.status === 'CHANGED' ? `（核對時 ${money(d.check.amount)}）` : ''}` : '—'}</td>
+                    <td className="p-2 text-gray-600">{d.check ? `${d.check.nurseName} · ${hhmm(d.check.checkedAt)}${d.status === 'CHANGED' ? `（核對時 ${money(d.check.amount)}）` : ''}${d.check.uncheckedCells ? ` · 確認時 ${d.check.uncheckedCells} 格未對` : ''}` : '—'}</td>
                     <td className="p-2 text-right"><button type="button" onClick={() => onPickDate(d.date)} className="text-blue-700 underline text-xs">睇呢日 →</button></td>
                   </tr>
                   {/* ★ cwm-dailyv3-20261010 §4：撳【核對】→ 嗰行下面展開 InlineDayCheck（同一時間只開一行） */}
@@ -147,6 +170,8 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
   }
 
   async function submit() {
+    // ★ cwm-storedoc-20261011：未剔晒照准確認（老闆），但要提示；伺服器會記低「確認時有 N 格未對」
+    if (pending.length > 0 && !window.confirm(`仲有 ${pending.length} 格店舖營收未對（${pending.slice(0, 6).join('、')}${pending.length > 6 ? '…' : ''}）。\n都確認核對？（會記低「確認時有 ${pending.length} 格未對」）`)) return
     setBusy(true)
     try {
       await apiFetch('/api/payout-runs/daily/check', {
@@ -167,6 +192,12 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
     } catch (e: any) { alert(e.message || '取消失敗'); await load() } finally { setBusy(false) }
   }
 
+  const pendingWarn = pending.length > 0 ? (
+    <div className="text-xs text-amber-900 bg-amber-100 border border-amber-400 rounded px-2 py-1">
+      ⚠ 仲有 {pending.length} 格店舖營收未對（{pending.slice(0, 6).join('、')}{pending.length > 6 ? '…' : ''}）。都可以確認，但會記低「確認時有 {pending.length} 格未對」。
+    </div>
+  ) : null
+
   const form = (label: string) => (
     <div className="flex flex-wrap gap-4 items-end">
       <label className="flex flex-col gap-1 text-sm text-gray-700">核對護士
@@ -185,7 +216,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
       </label>
       <label className="flex items-center gap-2 text-sm pb-2">
         <input type="checkbox" className="w-5 h-5" checked={ticked} onChange={e => setTicked(e.target.checked)} disabled={busy || !data.canCheck} />
-        已核對：系統收款 <b className="tabular-nums">{money(total)}</b> 同 Apricot 日結／收銀一致
+        已核對：店舖營收 <b className="tabular-nums">{money(total)}</b> 同 Apricot 日結／收銀一致
       </label>
       <button type="button" onClick={submit} disabled={busy || !nurseId || !ticked || !data.canCheck}
         className="h-10 px-4 rounded-md bg-teal-700 text-white text-sm font-semibold disabled:opacity-40 ml-auto">{busy ? '處理中…' : label}</button>
@@ -203,6 +234,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
         {!data.canCheck && <div className="text-xs text-red-700">店舖帳號只可以核對自己間店。</div>}
         <div className="text-xs text-gray-500">確認後記低：護士、核對時間、操作人、核對時嘅金額。之後數字變咗，會自動標「要重新核對」。</div>
         {cellHint}
+        {pendingWarn}
       </div>
     )
   }
@@ -232,6 +264,7 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
         )}
         {form('重新核對')}
         {cellHint}
+        {pendingWarn}
       </div>
     )
   }
@@ -241,7 +274,8 @@ export function DailyCheckPanel({ clinicId, clinicLabel, from, to, currentRows, 
       <div className="flex justify-between items-center flex-wrap gap-2">
         <div className="flex flex-col">
           <b className="text-green-800">✓ 已核對 · {clinicLabel} {from}</b>
-          <span className="text-sm text-gray-700">核對護士 <b>{c.nurseName}</b> · {hhmm(c.checkedAt)} · 核對時金額 <b className="tabular-nums">{money(c.amount)}</b>{c.checkedByName ? ` · 操作：${c.checkedByName}` : ''}</span>
+          <span className="text-sm text-gray-700">核對護士 <b>{c.nurseName}</b> · {hhmm(c.checkedAt)} · 核對時店舖營收 <b className="tabular-nums">{money(c.amount)}</b>{c.checkedByName ? ` · 操作：${c.checkedByName}` : ''}</span>
+          {!!c.uncheckedCells && <span className="text-xs text-amber-800">確認時有 {c.uncheckedCells} 格店舖營收未對</span>}
         </div>
         {!revoking && data.canCheck && (
           <button type="button" onClick={() => setRevoking(true)} className="h-9 px-3 rounded-md border bg-white text-sm">取消核對</button>

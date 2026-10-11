@@ -32,6 +32,7 @@
 import ExcelJS from 'exceljs'
 import type { DailyReport } from './daily-report'
 import { CLINIC_ROW_KEY } from './daily-report'
+import { cellFlagText } from './daily-cell-state'
 
 export const MONEY_FMT = '$#,##0.00;($#,##0.00);"-"'
 // ★ cwm-feefmt-20261006：兩個小數位 —— 一個小數位會將 0.235% 顯示成「0.2%」、1.75% 顯示成「1.8%」，誤導
@@ -982,8 +983,11 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
   const M = d.methods.length
   const methodCol = (i: number): number => 2 + i
   const totalCol = 2 + M
-  const spCountCol = 2 + M + 1
+  // ★ cwm-storedoc-20261011（方案一）：A 區兩個合計欄 —— 店舖營收（黃）＋醫生收入（藍），同畫面一致
+  const docCol = 2 + M + 1
+  const spCountCol = 2 + M + 2
   const lastCol = Math.max(spCountCol, 6)
+  const FILL_BLUE = 'FFDBEAFE'
   setWidths(ws, Array.from({ length: lastCol }, (_, i) => (i === 0 ? 16 : i === spCountCol - 1 ? 9 : 12)))
 
   let row = 1
@@ -995,7 +999,7 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
   // ── A 區 ──
   sectionTitle(ws, row, d.mode === 'byDoctor' ? 'A  逐醫生收款' : 'A  逐日收款', lastCol)
   row++
-  headerRow(ws, row, [d.mode === 'byDoctor' ? '醫生' : '日期', ...d.methods.map(m => m.label), 'TOTAL', 'SP 筆數'], true)
+  headerRow(ws, row, [d.mode === 'byDoctor' ? '醫生' : '日期', ...d.methods.map(m => `${m.label}\n${cellFlagText(m)}`), '店舖營收', '醫生收入', 'SP 筆數'], true)
   row++
   const aFirst = row
   for (const r of d.rows) {
@@ -1016,6 +1020,12 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
     const parts = d.methods.map((m, i) => (m.storeIncome ? `${colName(methodCol(i))}${row}` : null)).filter(Boolean).join(',')
     if (anyIncome && parts) setFormula(tCell, `SUM(${parts})`, { fmt: MONEY_FMT, result: r.storeTotal })
     else { tCell.value = null; tCell.border = thinBorder }
+    // 醫生收入 = 「醫✓」欄合計；Clinic 雜項唔計醫生 →「—」
+    const dCell = ws.getCell(row, docCol)
+    const dParts = d.methods.map((m, i) => (m.doctorIncome && (r.byMethod[m.key] ?? 0) !== 0 ? `${colName(methodCol(i))}${row}` : null)).filter(Boolean).join(',')
+    if (r.key === CLINIC_ROW_KEY) setLabel(dCell, '—', { gray: true })
+    else if (dParts) setFormula(dCell, `SUM(${dParts})`, { fmt: MONEY_FMT, result: r.doctorRaw })
+    else { dCell.value = null; dCell.border = thinBorder }
     const spCell = ws.getCell(row, spCountCol)
     if (r.spCount > 0) setData(spCell, r.spCount)
     else { spCell.value = null; spCell.border = thinBorder }
@@ -1032,6 +1042,10 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
   if (d.rows.length > 0) setFormula(atCell, `SUM(${colName(totalCol)}${aFirst}:${colName(totalCol)}${aLast})`, { fmt: MONEY_FMT, bold: true, result: d.totals.storeTotal })
   else setData(atCell, 0, { fmt: MONEY_FMT, gray: true })
   atCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_YELLOW } }
+  const adCell = ws.getCell(row, docCol)
+  if (d.rows.length > 0) setFormula(adCell, `SUM(${colName(docCol)}${aFirst}:${colName(docCol)}${aLast})`, { fmt: MONEY_FMT, bold: true, result: d.totals.doctorRaw })
+  else setData(adCell, 0, { fmt: MONEY_FMT, gray: true })
+  adCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_BLUE } }
   setData(ws.getCell(row, spCountCol), d.totals.spCount)
   // ★ cwm-dailyv2-20261007 ⑤：手續費＋已扣手續費（淨額）—— 同網頁同一份 data（totals）
   const feeRow = row + 1
@@ -1049,6 +1063,12 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
     if (d.rows.length > 0) setFormula(c, `${colName(totalCol)}${row}-${colName(totalCol)}${netRow}`, { fmt: MONEY_FMT, gray: true, result: fee })
     else setData(c, 0, { fmt: MONEY_FMT, gray: true })
   }
+  {
+    const c = ws.getCell(feeRow, docCol)
+    const fee = round2(d.totals.doctorRaw - d.totals.doctorNet)
+    if (d.rows.length > 0) setFormula(c, `${colName(docCol)}${row}-${colName(docCol)}${netRow}`, { fmt: MONEY_FMT, gray: true, result: fee })
+    else setData(c, 0, { fmt: MONEY_FMT, gray: true })
+  }
   ws.getCell(feeRow, spCountCol).value = null
   ws.getCell(feeRow, spCountCol).border = thinBorder
   setLabel(ws.getCell(netRow, 1), '已扣手續費（淨額）', { bold: true })
@@ -1064,6 +1084,13 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
     else setData(c, 0, { fmt: MONEY_FMT, gray: true })
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_YELLOW } }
   }
+  {
+    const c = ws.getCell(netRow, docCol)
+    const parts = d.methods.map((m, i) => (m.doctorIncome ? `${colName(methodCol(i))}${netRow}` : null)).filter(Boolean).join(',')
+    if (d.rows.length > 0 && parts) setFormula(c, `SUM(${parts})`, { fmt: MONEY_FMT, bold: true, result: d.totals.doctorNet })
+    else setData(c, 0, { fmt: MONEY_FMT, gray: true })
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_BLUE } }
+  }
   ws.getCell(netRow, spCountCol).value = null
   ws.getCell(netRow, spCountCol).border = thinBorder
   row += 4
@@ -1071,7 +1098,7 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
   // ── B 區：醫生收入及分成 ──
   sectionTitle(ws, row, 'B  醫生收入及分成（未扣成本）', lastCol)
   row++
-  headerRow(ws, row, [d.mode === 'byDoctor' ? '醫生' : '日期', '收款（醫生收入）', '手續費', '收入淨額', '醫生分成'], true)
+  headerRow(ws, row, [d.mode === 'byDoctor' ? '醫生' : '日期', '醫生收入（= A 區醫生收入欄）', '手續費', '醫生收入淨額', '醫生分成'], true)
   row++
   const bFirst = row
   for (const r of d.rows) {

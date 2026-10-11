@@ -20,7 +20,7 @@ import type { DailyReport, DailyRow } from '@/lib/payout/daily-report'
 const CLINIC_ROW_KEY = '__clinic__'
 import { useApricotSync, ApricotSyncStatus } from '@/components/payout/ApricotSync'
 import { hasPermission } from '@/lib/permissions'
-import { cellState, cellTickable } from '@/lib/payout/daily-cell-state' // ★ ④：純函數（零 prisma，client 可用）
+import { cellState, cellTickable, cellGroupOf, cellFlagText, cellProgressOf, rowCellProgressOf, type ProgressCell } from '@/lib/payout/daily-cell-state' // ★ ④：純函數（零 prisma，client 可用）
 import type { DayCheckState } from '@/lib/payout/daily-check' // ★ cwm-dailyv3-20261010 §5b：type-only（佢 import prisma）
 import { DailyCheckPanel } from '@/components/payout/DailyCheckPanel'
 import { InlineDayCheck } from '@/components/payout/InlineDayCheck' // ★ cwm-dailyv3-20261010 §5b：③ 全店核對欄就地核對
@@ -272,27 +272,46 @@ export default function DailyRevenuePage() {
   }, [activeClinicId, cellBusy])
 
   // ★ ④ + cwm-dailyv3-20261010 §5b：DailyCheckPanel 提示「逐格已對 n/總有數格」（全部對晒先綠字）—— ①③ 共用 map key
-  const cellProgress = useMemo(() => {
-    if (!cellMode || !report || !cellChecks) return null
-    let total = 0
-    let done = 0
-    for (const r of report.rows) {
-      for (const m of report.methods) {
-        const v = r.byMethod[m.key]
-        if (!cellTickable(v)) continue
-        total++
-        const date = cellMode === 'single' ? cellSingleDate! : r.key
-        const rowKey = cellMode === 'single' ? r.key : providerId
-        const rec = cellChecks[`${date}|${rowKey}|${m.key}`]
-        if (rec && cellState(v ?? 0, rec.amount) === 'OK') done++
-      }
-    }
-    return { done, total }
+  // ★ cwm-storedoc-20261011（方案一）：逐格分組 —— 店舖營收格／只計醫生格（Free SP）／兩樣都唔計（Credit，唔入進度）
+  const cellsOfRow = useCallback((r: DailyRow): ProgressCell[] => {
+    if (!cellMode || !report || !cellChecks) return []
+    const date = cellMode === 'single' ? cellSingleDate! : r.key
+    const rowKey = cellMode === 'single' ? r.key : providerId
+    return report.methods.map(m => ({
+      storeIncome: m.storeIncome, doctorIncome: m.doctorIncome,
+      current: r.byMethod[m.key], checked: cellChecks[`${date}|${rowKey}|${m.key}`]?.amount ?? null,
+    }))
   }, [cellMode, cellSingleDate, report, cellChecks, providerId])
+  // 核對框只喺「全部醫生 · 單日」先有全店意義（指定醫生嗰陣淨係呢位醫生嘅格 → 唔傳）
+  const cellProgress = useMemo(() => {
+    if (cellMode !== 'single' || !report || !cellChecks) return null
+    const p = cellProgressOf(report.rows.flatMap(cellsOfRow))
+    const pendingStore: string[] = []
+    for (const r of report.rows) {
+      cellsOfRow(r).forEach((c, i) => {
+        if (cellGroupOf(c) === 'STORE' && cellTickable(c.current) && cellState(c.current, c.checked) !== 'OK') {
+          pendingStore.push(`${r.label.replace(/醫生$/, '')} ${report.methods[i].label}`)
+        }
+      })
+    }
+    return { ...p, pendingStore }
+  }, [cellMode, report, cellChecks, cellsOfRow])
+  // 每行合計格細字（店 3/3 ✓／醫 4/4 ✓）
+  const rowTickNote = (r: DailyRow, which: 'store' | 'doctor'): React.ReactNode => {
+    if (!cellMode || !cellChecks) return null
+    const p = rowCellProgressOf(cellsOfRow(r))[which]
+    if (p.total === 0) return null
+    const done = p.done === p.total
+    return (
+      <span style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color: done ? '#15803d' : which === 'store' ? '#b45309' : '#6d28d9' }}>
+        {which === 'store' ? '店' : '醫'} {p.done}/{p.total}{done ? ' ✓' : ''}
+      </span>
+    )
+  }
 
   // ★ ④：格仔右上角嘅細 checkbox（14px）。只喺 cellMode 生效時渲染；TOTAL 欄／Total 行／SP 欄唔會 call 呢度。
   //   「有數先有格」：冇數又冇 tick 紀錄 → 唔出 checkbox（MD ④）。
-  const cellTick = (r: DailyRow, m: { key: string }): { node: React.ReactNode; tdExtra: React.CSSProperties } | null => {
+  const cellTick = (r: DailyRow, m: { key: string; storeIncome: boolean; doctorIncome: boolean }): { node: React.ReactNode; tdExtra: React.CSSProperties } | null => {
     if (!cellMode || !cellChecks) return null
     const date = cellMode === 'single' ? cellSingleDate! : r.key
     const rowKey = cellMode === 'single' ? r.key : providerId
@@ -302,15 +321,17 @@ export default function DailyRevenuePage() {
     const st = cellState(v ?? 0, rec?.amount ?? null)
     const ck = `${date}|${rowKey}|${m.key}`
     const busy = cellBusy === ck
-    let title = '剔 = 呢格已對'
+    // ★ cwm-storedoc-20261011：只計醫生（唔入店舖營收）嘅格用紫色 —— 提護士呢格唔喺「確認核對」金額入面
+    const docOnly = cellGroupOf(m) === 'DOCTOR_ONLY'
+    let title = docOnly ? '剔 = 呢格已對（只計醫生收入，唔入店舖營收）' : '剔 = 呢格已對'
     let mark: React.ReactNode = null
-    let boxStyle: React.CSSProperties = { background: '#fff', borderColor: '#9ca3af' }
+    let boxStyle: React.CSSProperties = { background: '#fff', borderColor: docOnly ? '#7c3aed' : '#9ca3af' }
     let tdExtra: React.CSSProperties = {}
     if (st === 'OK' && rec) {
       title = `${rec.checkedName} ${hhmmOf(rec.checkedAt) ?? ''}`.trim()
       mark = <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>
-      boxStyle = { background: '#16a34a', borderColor: '#15803d' }
-      tdExtra = { background: '#e8f5e9' }
+      boxStyle = docOnly ? { background: '#7c3aed', borderColor: '#6d28d9' } : { background: '#16a34a', borderColor: '#15803d' }
+      tdExtra = { background: docOnly ? '#f3e8ff' : '#e8f5e9' }
     } else if (st === 'CHANGED' && rec) {
       title = `核對後有變（核對時 $${rec.amount}）— 撳返 = 用新金額覆寫`
       mark = <span style={{ width: 8, height: 3, background: '#dc2626', display: 'block' }} />
@@ -347,7 +368,7 @@ export default function DailyRevenuePage() {
     if (!Object.values(r.byMethod).some(v => Math.abs(v) > 0.005)) return <td style={td(GRAY, { textAlign: 'center' })}>{''}</td>
     if (!dc) return <td style={td(GRAY, { textAlign: 'center' })}>— 冇營收</td>
     if (dc.status === 'CHECKED') return (
-      <td style={td('#15803d', { textAlign: 'center' })}>✓ {dc.check?.nurseName ?? ''}</td>
+      <td style={td('#15803d', { textAlign: 'center' })}>✓ {dc.check?.nurseName ?? ''}{dc.check?.uncheckedCells ? <span style={{ display: 'block', fontSize: 10.5, color: '#b45309' }}>確認時 {dc.check.uncheckedCells} 格未對</span> : null}</td>
     )
     const btn = (label: string, danger: boolean) => (
       <button type="button" onClick={() => setInlineCheckDate(inlineCheckDate === date ? null : date)}
@@ -498,16 +519,21 @@ export default function DailyRevenuePage() {
                 <tr>
                   <th style={{ ...th, textAlign: 'left' }}>{firstCol}</th>
                   {report.methods.map(m => (
-                    <th key={m.key} style={{ ...th, color: m.storeIncome || m.doctorIncome ? undefined : GRAY }}>{m.label}</th>
+                    <th key={m.key} style={{ ...th, color: m.storeIncome || m.doctorIncome ? undefined : GRAY, verticalAlign: 'bottom' }}>
+                      {m.label}
+                      {/* ★ cwm-storedoc-20261011：計唔計店舖營收／醫生收入（跟付款方式規則） */}
+                      <span style={{ display: 'block', fontSize: 10.5, fontWeight: 700, marginTop: 2, color: cellGroupOf(m) === 'STORE' ? '#15803d' : cellGroupOf(m) === 'DOCTOR_ONLY' ? '#7c3aed' : GRAY }}>{cellFlagText(m)}</span>
+                    </th>
                   ))}
-                  <th style={th}>TOTAL</th>
+                  <th style={{ ...th, background: '#fff8c5', color: '#5c4a00', verticalAlign: 'bottom' }}>店舖營收</th>
+                  <th style={{ ...th, background: '#dbeafe', color: '#1e3a8a', verticalAlign: 'bottom' }}>醫生收入</th>
                   <th style={th}>SP 筆數</th>
                   {cellMode === 'byDay' && <th style={th}>全店核對</th>}
                 </tr>
               </thead>
               <tbody>
                 {report.rows.length === 0 && (
-                  <tr><td colSpan={report.methods.length + 3 + (cellMode === 'byDay' ? 1 : 0)} style={{ ...td(GRAY), textAlign: 'center', padding: 24 }}>呢段日子冇收款</td></tr>
+                  <tr><td colSpan={report.methods.length + 4 + (cellMode === 'byDay' ? 1 : 0)} style={{ ...td(GRAY), textAlign: 'center', padding: 24 }}>呢段日子冇收款</td></tr>
                 )}
                 {report.rows.map(r => (
                   <Fragment key={r.key}>
@@ -528,7 +554,9 @@ export default function DailyRevenuePage() {
                           </td>
                         )
                       })}
-                      <td style={td('#000')}>{money(r.storeTotal)}</td>
+                      <td style={td('#000', { fontWeight: 700 })}>{money(r.storeTotal)}{rowTickNote(r, 'store')}</td>
+                      {/* Clinic 雜項唔計醫生收入 → 「—」 */}
+                      <td style={td(isClinicRow(r) ? GRAY : '#000', { fontWeight: isClinicRow(r) ? 400 : 700 })}>{isClinicRow(r) ? '—' : <>{money(r.doctorRaw)}{rowTickNote(r, 'doctor')}</>}</td>
                       <td style={td(BLUE, { textAlign: 'center' })}>{r.spCount || ''}</td>
                       {cellMode === 'byDay' && dayCheckCell(r)}
                     </tr>
@@ -538,7 +566,7 @@ export default function DailyRevenuePage() {
                       if (!dc) return null
                       return (
                         <tr>
-                          <td colSpan={report.methods.length + 4} style={{ padding: 12, background: '#f9fafb', border: '1px solid #d9dee4' }}>
+                          <td colSpan={report.methods.length + 5} style={{ padding: 12, background: '#f9fafb', border: '1px solid #d9dee4' }}>
                             <InlineDayCheck
                               clinicId={activeClinicId}
                               clinicLabel={clinics.find(c => c.id === activeClinicId)?.shortName || clinics.find(c => c.id === activeClinicId)?.name || ''}
@@ -561,6 +589,7 @@ export default function DailyRevenuePage() {
                     <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? '#000' : GRAY, { fontWeight: 700 })}>{money(report.totals.byMethod[m.key])}</td>
                   ))}
                   <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeTotal) || '$0.00'}</td>
+                  <td style={td('#000', { fontWeight: 700, background: '#dbeafe' })}>{money(report.totals.doctorRaw) || '$0.00'}</td>
                   <td style={td('#000', { fontWeight: 700, textAlign: 'center' })}>{report.totals.spCount}</td>
                   {cellMode === 'byDay' && <td style={td('#000', { fontWeight: 700 })}>{''}</td>}
                 </tr>
@@ -571,6 +600,7 @@ export default function DailyRevenuePage() {
                     <td key={m.key} style={td(GRAY)}>{money(Math.round(((report.totals.byMethod[m.key] ?? 0) - (report.totals.byMethodNet[m.key] ?? 0)) * 100) / 100)}</td>
                   ))}
                   <td style={td(GRAY)}>{money(Math.round((report.totals.storeTotal - report.totals.storeNet) * 100) / 100)}</td>
+                  <td style={td(GRAY)}>{money(Math.round((report.totals.doctorRaw - report.totals.doctorNet) * 100) / 100)}</td>
                   <td style={td(GRAY)}>{''}</td>
                   {cellMode === 'byDay' && <td style={td(GRAY)}>{''}</td>}
                 </tr>
@@ -580,6 +610,7 @@ export default function DailyRevenuePage() {
                     <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? '#000' : GRAY, { fontWeight: 700 })}>{money(report.totals.byMethodNet[m.key])}</td>
                   ))}
                   <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeNet) || '$0.00'}</td>
+                  <td style={td('#000', { fontWeight: 700, background: '#dbeafe' })}>{money(report.totals.doctorNet) || '$0.00'}</td>
                   <td style={td(GRAY)}>{''}</td>
                   {cellMode === 'byDay' && <td style={td(GRAY)}>{''}</td>}
                 </tr>
@@ -597,9 +628,9 @@ export default function DailyRevenuePage() {
               <thead>
                 <tr>
                   <th style={{ ...th, textAlign: 'left' }}>{firstCol}</th>
-                  <th style={th}>收款（醫生收入）</th>
+                  <th style={{ ...th, background: '#dbeafe', color: '#1e3a8a' }}>醫生收入（= A 區藍色欄）</th>
                   <th style={th}>手續費</th>
-                  <th style={th}>收入淨額</th>
+                  <th style={th}>醫生收入淨額</th>
                   <th style={th}>醫生分成{report.percent != null ? `（${report.percent}%）` : ''}</th>
                 </tr>
               </thead>
@@ -626,7 +657,8 @@ export default function DailyRevenuePage() {
           </>)}
 
           <div className="px-4 py-3 text-xs text-gray-500 space-y-1 border-t">
-            <div>TOTAL = 店舖營收（只計計入營收嘅付款方式）；灰字欄唔計。顏色同醫生月結 Excel 一樣：藍字 = 系統帶入，黑字粗體 = 合計，黃底 = 最終金額。</div>
+            <div><b style={{ background: '#fff8c5', padding: '0 3px' }}>店舖營收</b> = 欄名「店✓」嘅付款方式（護士核對、店舖營收卡、全店月報用呢個數）；<b style={{ background: '#dbeafe', padding: '0 3px' }}>醫生收入</b> = 欄名「醫✓」嘅付款方式（醫生月結出糧用，同 B 區一樣）。兩個設定喺「付款方式規則」改。</div>
+            <div>逐格剔：綠格入店舖營收；<span style={{ color: '#7c3aed' }}>紫格</span>只計醫生（唔入「確認核對」金額）；「店✗ 醫✗」嘅格都可以剔，但唔入進度。藍字 = 系統帶入，黑字粗體 = 合計。</div>
             {!isKiosk && <div>醫生分成 = 收入淨額 × 拆帳比例；<b>未扣 Lab／植牙成本，未計 SP 補貼／轉介／調整</b> —— 實際應付以月結單為準。</div>}
             {!isKiosk && report.missingCommission.length > 0 && <div className="text-amber-700">未設拆帳（分成冇計）：{report.missingCommission.join('、')}</div>}
           </div>

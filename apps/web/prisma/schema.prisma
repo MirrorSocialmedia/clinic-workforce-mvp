@@ -2389,6 +2389,8 @@ model DailyRevenueCheck {
   nurseName       String // 快照（員工改名唔影響紀錄）
   amount          Decimal   @db.Decimal(12, 2) // 核對時店舖營收 TOTAL
   byProviderJson  Json // 核對時逐醫生 { key, label, amount }[]
+  /// ★ cwm-storedoc-20261011：確認時全店仲有幾多格店舖營收未對（未剔／剔完有變）；NULL = 舊紀錄
+  uncheckedCells  Int?
   checkedBy       String // 操作嘅登入帳號（店舖帳號／老闆）
   checkedAt       DateTime  @default(now())
   revokedAt       DateTime?
