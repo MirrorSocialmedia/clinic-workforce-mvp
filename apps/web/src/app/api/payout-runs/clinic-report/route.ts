@@ -25,7 +25,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { toHKDateStr } from '@/lib/hk-date'
 import { getOwnHomeClinicId } from '@/lib/scope-helpers'
 import { resolveMethodRule } from '@/lib/apricot/allocate'
-import { loadDoctorSheetData, loadDoctorSheetDataForRun, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT, sumMethodOf, type DoctorSheetLoad } from '@/lib/payout/report-data'
+import { loadDoctorSheetData, loadDoctorSheetDataForRun, METHOD_LABELS, round2, KEY_FREE_SP, KEY_CREDIT, methodOf, type DoctorSheetLoad } from '@/lib/payout/report-data'
 import { computePayout, runGates, isBeforePayoutStart } from '@/lib/payout/engine'
 import { incomeProviderIds } from '@/lib/payout/clinic-income-providers'
 import { loadClinicMisc } from '@/lib/payout/clinic-misc'
@@ -128,6 +128,7 @@ export async function GET(req: NextRequest) {
   const doctorEntries: {
     sheetName: string; sheetLabel: string; status: string; draft: boolean
     totalAmount: number; revenue: number; freeSp: number; credit: number; methodCount: number
+    nonStore: { method: string; label: string; forDoctor: boolean; amount: number }[]
   }[] = []
   // 已鎖定（totalAmount 大→細）先，草稿（同樣大→細）排後
   const sheetLoads: { loaded: DoctorSheetLoad | null; draft: boolean }[] = []
@@ -152,9 +153,16 @@ export async function GET(req: NextRequest) {
     // ★ cwm-coverrevenue-20260914：用返醫生頁同一個 incomeTotalOf，唔重新計（坑②）
     const revenue = round2(loaded.data.days.reduce(
       (s, day) => s + incomeTotalOf(loaded.data.methods, day.byMethod), 0))
-    // ★ cwm-payout P-1：byMethod key 而家係 colKey（方法|s|d）— 淨方法名 match 會漏，用 sumMethodOf
-    const sumMethod = (key: string) => round2(loaded.data.days.reduce(
-      (s, day) => s + sumMethodOf(loaded.data.methods, day.byMethod, key), 0))
+    // ★ cwm-payout P-1：byMethod key 而家係 colKey（方法|s|d）
+    // ★ cwm-doctorflag-20261011：封面備註逐 colKey 計（只取 s=0 欄），唔再用淨方法名合計（sumMethodOf）
+    const nonStore = loaded.data.methods
+      .filter(m => !m.countAsIncome)
+      .map(m => ({
+        method: methodOf(m.key),
+        label: METHOD_LABELS[methodOf(m.key)] || methodOf(m.key),
+        forDoctor: m.countForDoctor,
+        amount: round2(loaded.data.days.reduce((x, day) => x + Number(day.byMethod[m.key] ?? 0), 0)),
+      }))
     doctorEntries.push({
       sheetName: ws.name,
       sheetLabel,
@@ -162,9 +170,11 @@ export async function GET(req: NextRequest) {
       draft,
       totalAmount: Number(loaded.run.totalAmount),
       revenue,
-      freeSp: sumMethod(KEY_FREE_SP),
-      credit: sumMethod(KEY_CREDIT),
+      // ★ cwm-doctorflag-20261011：封面備註只計【唔計店舖營收】嗰啲欄（s=0）；計唔計醫生跟該欄旗
+      freeSp: nonStore.filter(n => n.method === KEY_FREE_SP).reduce((x, n) => x + n.amount, 0),
+      credit: nonStore.filter(n => n.method === KEY_CREDIT).reduce((x, n) => x + n.amount, 0),
       methodCount: loaded.data.methods.length,
+      nonStore,
     })
   }
 
@@ -232,6 +242,7 @@ export async function GET(req: NextRequest) {
       revenue: d.revenue,
       freeSp: d.freeSp,
       credit: d.credit,
+      nonStore: d.nonStore,
       methodCount: d.methodCount,
     })),
     miscSheetName: miscWs.name,

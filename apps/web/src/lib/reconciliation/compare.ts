@@ -81,18 +81,17 @@ export async function compareReport(
 			methodNorm: true,
 			paidAt: true,
 			countAsIncome: true, // ★ cwm-reconkiosk-20260910 A1：純顯示用（識別 CREDIT 等唔計收入方式），唔入任何計算
+			countForDoctor: true, // ★ cwm-doctorflag-20261011：同上，純顯示（月結引擎排走嘅 = countForDoctor=false）
 		},
 	})
 
 	const systemTotal = round2(sum(allocs.map((a) => Number(a.amount))))
 
 	// ★ cwm-reconkiosk-20260910 A1：對數包晒全部 payment，但月結引擎會排走
-	//   countAsIncome=false 而又唔係 FREE_SP 嘅方式（engine.ts:377-382，生產實值 = CREDIT）。
+	//   唔計醫生收入嘅方式（★ cwm-doctorflag-20261011：countForDoctor=false；舊寫死 countAsIncome=false 且唔係 FREE_SP，生產實值 = CREDIT）。
 	//   兩個數本來就唔同 —— 唔講清楚用戶必然以為有一個錯（實證：Dr.Tse 694,940 vs 697,440）。
 	//   ⚠️ 純顯示，【唔准】影響 difference / status。
-	const nonIncomeAllocs = allocs.filter(
-		(a) => !a.countAsIncome && a.methodNorm !== 'FREE_SP',
-	)
+	const nonIncomeAllocs = allocs.filter((a) => !a.countForDoctor)
 	const nonIncomeTotal = round2(sum(nonIncomeAllocs.map((a) => Number(a.amount))))
 	const nonIncomeMethods = [...new Set(nonIncomeAllocs.map((a) => a.methodNorm))].sort()
 	const payoutBasisTotal = round2(systemTotal - nonIncomeTotal)

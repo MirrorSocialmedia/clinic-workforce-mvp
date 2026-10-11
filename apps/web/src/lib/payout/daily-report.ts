@@ -10,7 +10,7 @@
  *   - ACTIVE_ALLOCATION（isVoid=false, isSuperseded=false）
  *   - 欄 = colKey（方法 + 雙旗），排序 METHOD_ORDER，label 括號提示同 Excel
  *   - storeIncome = countAsIncome → TOTAL（店舖營收）
- *   - doctorIncome = countAsIncome || FREE_SP → 醫生收入（收款／淨額）
+ *   - doctorIncome = countForDoctor → 醫生收入（收款／淨額）（★ cwm-doctorflag-20261011：付款方式規則「計醫生收入」，舊：countAsIncome || FREE_SP）
  *   - 日子 = paidAt 嘅 HK 日
  *   - SP 筆數 = CONFIRMED SpSubsidy，按 bill billTime HK 日
  *   - 醫生分成 = Σ(醫生收入淨額 × 該月該店拆帳%)（pickCommission）——
@@ -35,7 +35,8 @@ export interface DailyAlloc {
   method: string
   amount: number
   net: number
-  countAsIncome: boolean
+  countAsIncome: boolean  // 店舖營收
+  countForDoctor: boolean // ★ cwm-doctorflag-20261011：醫生收入
   paidAt: Date
   providerExtId: string | null
   clinicExtId: string
@@ -85,7 +86,7 @@ export function methodsOf(allocs: DailyAlloc[]): DailyMethod[] {
   for (const a of allocs) {
     const m = a.method.trim()
     if (!m) continue
-    const k = colKey(m, a.countAsIncome, a.countAsIncome || m === 'FREE_SP')
+    const k = colKey(m, a.countAsIncome, a.countForDoctor)
     if (!seen.includes(k)) seen.push(k)
   }
   const first = new Map(seen.map((k, i) => [k, i]))
@@ -171,7 +172,7 @@ export function aggregateDaily(
     const m = a.method.trim()
     if (!m) continue
     const store = a.countAsIncome
-    const doctor = a.countAsIncome || m === 'FREE_SP'
+    const doctor = a.countForDoctor
     const k = colKey(m, store, doctor)
     row.byMethod[k] = (row.byMethod[k] ?? 0) + a.amount
     row.byMethodNet[k] = (row.byMethodNet[k] ?? 0) + a.net
@@ -282,13 +283,14 @@ export async function loadDailyReport(opts: {
       clinicExtId: { in: [...clinicByExt.keys()] },
       ...(providerExtIds ? { providerExtId: { in: providerExtIds } } : { providerExtId: { not: null } }),
     },
-    select: { methodNorm: true, amount: true, netAmount: true, countAsIncome: true, paidAt: true, providerExtId: true, clinicExtId: true },
+    select: { methodNorm: true, amount: true, netAmount: true, countAsIncome: true, countForDoctor: true, paidAt: true, providerExtId: true, clinicExtId: true },
   })
   const allocs: DailyAlloc[] = raw.map(a => ({
     method: a.methodNorm,
     amount: Number(a.amount),
     net: Number(a.netAmount),
     countAsIncome: a.countAsIncome,
+    countForDoctor: a.countForDoctor,
     paidAt: a.paidAt,
     providerExtId: a.providerExtId,
     clinicExtId: a.clinicExtId,
@@ -391,6 +393,7 @@ export async function loadDailyReport(opts: {
         amount: Number(r.amount),
         net: round2(Number(r.amount) * (1 - feePct / 100)),
         countAsIncome: rule.countAsIncome,
+        countForDoctor: rule.countForDoctor, // isClinic 行唔計醫生；呢個旗只影響欄位分組（同 Apricot CLINIC 帳號一致）
         paidAt: r.incomeAt,
         providerExtId: null,
         clinicExtId: clinics[0].apricotClinicId as string,

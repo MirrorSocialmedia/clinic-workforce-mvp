@@ -15,6 +15,7 @@ interface PaymentAllocationRow {
   feePercentUsed: number
   netAmount: number
   countAsIncome: boolean
+  countForDoctor: boolean // ★ cwm-doctorflag-20261011
   allocationMode: 'DIRECT' | 'RECON' | 'PRORATA'
   needsReview: boolean
   isVoid?: boolean
@@ -22,7 +23,8 @@ interface PaymentAllocationRow {
 
 interface RuleResult {
   feePercent: number
-  countAsIncome: boolean
+  countAsIncome: boolean  // 店舖營收
+  countForDoctor: boolean // ★ cwm-doctorflag-20261011：醫生收入
   needsReview: boolean
 }
 
@@ -43,12 +45,14 @@ export function resolveMethodRule(methodNorm: string, paidAt: Date, allRules: Pa
     )
 
   if (applicable.length === 0) {
-    return { feePercent: 0, countAsIncome: true, needsReview: true }
+    // 冇規則：兜底同舊口徑（countAsIncome=true → 計醫生）；needsReview 會擋月結生成（engine Gate 3）
+    return { feePercent: 0, countAsIncome: true, countForDoctor: true, needsReview: true }
   }
   const rule = applicable[0]
   return {
     feePercent: Number(rule.feePercent),
     countAsIncome: rule.countAsIncome,
+    countForDoctor: rule.countForDoctor,
     needsReview: false,
   }
 }
@@ -140,6 +144,7 @@ export async function allocatePayment(
       feePercentUsed: rule.feePercent,
       netAmount: computeNet(totalAmt, rule.feePercent),
       countAsIncome: rule.countAsIncome,
+      countForDoctor: rule.countForDoctor,
       allocationMode: 'DIRECT',
       needsReview: rule.needsReview,
     })
@@ -196,6 +201,7 @@ export async function allocatePayment(
               feePercentUsed: rule.feePercent,
               netAmount: computeNet(allocAmt, rule.feePercent),
               countAsIncome: rule.countAsIncome,
+              countForDoctor: rule.countForDoctor,
               allocationMode: 'PRORATA',
               needsReview: rule.needsReview,
             })
@@ -218,6 +224,7 @@ export async function allocatePayment(
             feePercentUsed: rule.feePercent,
             netAmount: computeNet(reconAmt, rule.feePercent),
             countAsIncome: rule.countAsIncome,
+            countForDoctor: rule.countForDoctor,
             allocationMode: 'RECON',
             needsReview: rule.needsReview,
           })
@@ -244,6 +251,7 @@ export async function allocatePayment(
             feePercentUsed: rule.feePercent,
             netAmount: computeNet(allocAmt, rule.feePercent),
             countAsIncome: rule.countAsIncome,
+            countForDoctor: rule.countForDoctor,
             allocationMode: 'PRORATA',
             needsReview: rule.needsReview,
           })
@@ -278,6 +286,7 @@ export async function allocatePayment(
           feePercentUsed: rule.feePercent,
           netAmount: computeNet(allocAmt, rule.feePercent),
           countAsIncome: rule.countAsIncome,
+          countForDoctor: rule.countForDoctor,
           allocationMode: 'PRORATA',
           needsReview: rule.needsReview,
         })
@@ -333,6 +342,7 @@ export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
             feePercentUsed: new Prisma.Decimal(String(a.feePercentUsed)),
             netAmount: new Prisma.Decimal(String(a.netAmount)),
             countAsIncome: a.countAsIncome,
+            countForDoctor: a.countForDoctor,
             allocationMode: a.allocationMode,
             needsReview: a.needsReview,
             isVoid: a.isVoid ?? false,
@@ -351,6 +361,7 @@ export async function upsertAllocations(allocations: PaymentAllocationRow[]) {
             feePercentUsed: new Prisma.Decimal(String(a.feePercentUsed)),
             netAmount: new Prisma.Decimal(String(a.netAmount)),
             countAsIncome: a.countAsIncome,
+            countForDoctor: a.countForDoctor,
             allocationMode: a.allocationMode,
             needsReview: a.needsReview,
             isVoid: a.isVoid ?? false,

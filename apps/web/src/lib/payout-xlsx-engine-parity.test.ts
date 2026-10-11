@@ -38,6 +38,8 @@ type AllocRow = {
   netAmount: number
   feePercentUsed: number
   paidAt: string
+  paymentExtId?: string // ★ cwm-doctorflag-20261011：快照去重用
+  billCode?: string
 }
 
 function alloc(
@@ -92,6 +94,8 @@ function makeFakeDb(run: ReturnType<typeof makeRun>, extraAllocs: AllocRow[], co
           feePercentUsed: a.feePercentUsed,
           paidAt: a.paidAt,
           billExtId: null,
+          countAsIncome: a.countAsIncome, // ★ cwm-doctorflag-20261011：extra 行店舖旗跟返每筆
+          paymentExtId: a.paymentExtId,
         })),
     },
     apricotBill: { findMany: async () => [] },
@@ -327,4 +331,57 @@ test('P-1 §1.5-8：全店月報封面「應付醫生」cached result = 醫生�
     String((v as any).formula).includes(`B${payRow}`),
     `封面公式必須連去醫生頁 B${payRow}：${(v as any).formula}`,
   )
+})
+
+// ── ★ cwm-doctorflag-20261011：規則「計醫生收入」獨立於「計收入（店舖）」 ─────────────
+
+test('doctorflag：「計店舖、唔計醫生」嘅方式 —— A 區 TOTAL 計，F 區（醫生收入）唔計', async () => {
+  const extra = [...EXTRA_A, alloc('OCTOPUS', true, 700, 0)] // countForDoctor=false（extra query），countAsIncome=true
+  const { ws, data } = await buildSheet(makeRun(BREAKDOWN_A, PAYABLE_A), extra)
+  const totalCol = 2 + data.methods.length
+  const oct = data.methods.find(m => m.key.startsWith('OCTOPUS|'))!
+  assert.strictEqual(oct.key, 'OCTOPUS|1|0')
+  assert.match(oct.label, /不計醫生收入/)
+  const dayRow = findLabelRow(ws, '05/08')!
+  assert.strictEqual(cellResult(ws, dayRow, totalCol), r2(STORE_TOTAL_A + 700), 'A 區 TOTAL 要包 OCTOPUS（計店舖）')
+  const netRow = findLabelRow(ws, '收入淨額')!
+  assert.strictEqual(cellResult(ws, netRow, totalCol), GROSS_A, 'F 區醫生收入唔可以包 OCTOPUS')
+})
+
+test('doctorflag：已鎖月結 —— 鎖完先改規則＋重新同步，同一筆唔會喺 A 區出兩次', async () => {
+  const snap = [
+    { ...alloc('CASH', true, 19080, 0), paymentExtId: 'pay-1' },
+    { ...alloc('VISA', true, 306310, 0.02), paymentExtId: 'pay-2' },
+    { ...alloc('FREE_SP', false, 1000, 0), paymentExtId: 'pay-3' },
+  ]
+  // pay-3 FREE_SP 鎖嗰陣計醫生（喺快照）；之後規則改做唔計醫生＋重新同步 → extra query 又撈到同一筆
+  const extra = [...EXTRA_A, { ...alloc('FREE_SP', false, 1000, 0), paymentExtId: 'pay-3' }]
+  const { ws, data } = await buildSheet(makeRun(snap, PAYABLE_A), extra)
+  assert.ok(!data.methods.some(m => m.key === 'FREE_SP|0|0'), '快照已有嘅一筆唔可以再出多一欄')
+  const totalRow = findLabelRow(ws, 'Total')!
+  const fsp = data.methods.find(m => m.key === 'FREE_SP|0|1')!
+  assert.strictEqual(cellResult(ws, totalRow, methodColOf(data, fsp.key)), 1000)
+  const netRow = findLabelRow(ws, '收入淨額')!
+  assert.strictEqual(cellResult(ws, netRow, 2 + data.methods.length), GROSS_A, '已鎖月結醫生收入照快照，唔變')
+})
+
+test('doctorflag：封面「唔計入店舖營收」備註 —— 說明跟實際旗，唔寫死', async () => {
+  const { coverNonStoreNotes } = await import('./payout/xlsx-report')
+  const base = { sheetName: 's', status: 'LOCKED', totalAmount: 0, revenue: 0, freeSp: 0, credit: 0, methodCount: 1 }
+  const notes = coverNonStoreNotes([
+    { ...base, providerName: 'A', nonStore: [
+      { method: 'FREE_SP', label: 'Free SP', forDoctor: false, amount: 300 }, // 老闆改咗：Free SP 唔計醫生
+      { method: 'CREDIT', label: 'Credit', forDoctor: false, amount: 500 },
+      { method: 'OCTOPUS', label: 'Octopus', forDoctor: true, amount: 200 },  // 計醫生、唔計店
+    ] },
+    { ...base, providerName: 'B', nonStore: [{ method: 'FREE_SP', label: 'Free SP', forDoctor: true, amount: 100 }] },
+  ])
+  const by = new Map(notes.map(n => [n.label, n]))
+  assert.strictEqual(by.get('Free SP')!.amount, 400)
+  assert.match(by.get('Free SP')!.note, /部分有計醫生收入/)
+  assert.match(by.get('Credit')!.note, /兩樣都唔計/)
+  assert.match(by.get('Octopus')!.note, /已計入醫生收入/)
+  // 冇 nonStore（舊 caller）→ 舊說明照出
+  const legacy = coverNonStoreNotes([{ ...base, providerName: 'C', freeSp: 50, credit: 20 }])
+  assert.deepStrictEqual(legacy.map(n => [n.label, n.amount]), [['Free SP', 50], ['Credit', 20]])
 })
