@@ -12,8 +12,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
+import { labdocScope } from '@/lib/labdoc/kiosk-scope'
 import {
   PENDING_CATEGORIES,
   PENDING_CATEGORY_PERMS,
@@ -45,7 +45,7 @@ async function main(req: NextRequest): Promise<NextResponse> {
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
 
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return jsonNoStore({ error: '冇任何診所範圍' }, { status: 403 })
   }

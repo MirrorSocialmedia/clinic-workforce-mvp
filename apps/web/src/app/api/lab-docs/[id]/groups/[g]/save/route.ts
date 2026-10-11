@@ -19,7 +19,6 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import {
   matchLine,
@@ -38,6 +37,7 @@ import {
 } from '@/lib/labdoc/cost-actions'
 import { acquireWriteLog, completeWriteLog, releaseWriteLog, stableRequestHash } from '@/lib/labdoc/write-log'
 import { round2 } from '@/lib/labdoc/reconcile'
+import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -113,8 +113,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
+  // ★ KIOSK 只可以處理自己店嘅單（kiosk-scope.ts）
+  const kioskDeny = await kioskDocGuard(session, params.id)
+  if (kioskDeny) return kioskDeny
 
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return NextResponse.json({ error: '冇任何診所範圍，唔可以儲存對數' }, { status: 403 })
   }

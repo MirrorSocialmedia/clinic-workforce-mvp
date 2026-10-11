@@ -7,8 +7,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
+import { labdocScope, kioskDocWhere } from '@/lib/labdoc/kiosk-scope'
 
 const PAGE_SIZE = 20
 
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   const { session, perms } = auth
 
   // §10.3：所有 labdoc route 用 resolveClinicScope — 有 lab 權限 = 全集團（B16）
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return jsonNoStore({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE }) // fail-closed：冇範圍 = 乜都睇唔到
   }
@@ -35,7 +35,10 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, parseInt(sp.get('page') ?? '1', 10) || 1)
 
   const where: Record<string, any> = {}
-  if (scope) where.clinicId = { in: scope }
+  // ★ KIOSK：只列自己店（單據診所／上傳店／月結單分段）；其他有限範圍帳號：按單據診所
+  const kioskWhere = kioskDocWhere(session)
+  if (kioskWhere) Object.assign(where, { AND: [kioskWhere] })
+  else if (scope) where.clinicId = { in: scope }
   if (kind === 'INVOICE' || kind === 'STATEMENT') where.kind = kind
   if (status?.length) where.status = { in: status }
   if (labId) where.labId = labId

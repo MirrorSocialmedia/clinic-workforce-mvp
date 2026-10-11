@@ -15,11 +15,11 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { autoReconcileIfReady } from '@/lib/labdoc/statement-reconcile'
 import { resetSectionMatching, sectionsWithSystemChange, SYSTEM_CHANGE_BLOCK_MSG } from '@/lib/labdoc/statement-reset'
+import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 const MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/
@@ -29,6 +29,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
+  // ★ KIOSK 只可以處理自己店嘅單（kiosk-scope.ts）
+  const kioskDeny = await kioskDocGuard(session, params.id)
+  if (kioskDeny) return kioskDeny
 
   if (!(perms ?? []).includes('lab_statement')) {
     return jsonNoStore({ error: '需要 lab_statement 權限' }, { status: 403 })
@@ -59,7 +62,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return jsonNoStore({ error: 'labId／statementMonth 至少要傳一個' }, { status: 400 })
   }
 
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return jsonNoStore({ error: '冇任何診所範圍' }, { status: 403 })
   }

@@ -13,6 +13,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { ALIAS_TYPES, type AliasType } from '@/lib/labdoc/alias-types'
+import { kioskSettingsDenied } from '@/lib/labdoc/kiosk-scope'
 
 // cuid 25 字；seed alias 用固定 id（labdocseed…，可以長過 25）— 2026-10-10 修：之前 seed alias 刪唔到
 const ID_RE = /^[a-z0-9]{20,64}$/
@@ -25,6 +26,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
+  // ★ KIOSK（店舖機）唔可以改全集團 Lab 設定
+  const kioskDeny = kioskSettingsDenied(session)
+  if (kioskDeny) return kioskDeny
   if (!(perms ?? []).includes('lab_statement')) {
     return jsonNoStore({ error: '需要 lab_statement 權限' }, { status: 403 })
   }

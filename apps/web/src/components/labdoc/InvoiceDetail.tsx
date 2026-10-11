@@ -89,7 +89,7 @@ const HEADER_EDITABLE = new Set(['NEEDS_REVIEW', 'EXTRACT_FAILED', 'CONFIRMED', 
 const RECONCILE_READY = new Set(['CONFIRMED', 'PARTIAL', 'RECONCILED'])
 const BASIS_LABEL: Record<string, string> = {
   NAME: '名稱', ALIAS: '別名', ADDRESS: '地址', CUSTOMER_NO: '客戶編號', SHORT_CODE: '簡稱', CLINIC_ALIAS: '診所別名',
-  PROVIDER_ALIAS: '醫生別名', MANUAL: '人手', PAYEE: '收款人',
+  PROVIDER_ALIAS: '醫生別名', MANUAL: '人手', PAYEE: '收款人', UPLOADER: '上傳店',
 }
 const num = (s: string): number | null => (s.trim() === '' ? null : Number(s))
 const r2 = (n: number) => Math.round(n * 100) / 100
@@ -202,7 +202,16 @@ export default function InvoiceDetail({ id }: { id: string }) {
       )}
       {d.readIssues?.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs space-y-0.5">
-          {d.readIssues.filter((x) => !x.startsWith('SECTION_DUPLICATE') && x !== 'STATEMENT_MONTH_FROM_LINES').map((x, i) => <div key={i}>⚠ {x}</div>)}
+          {d.readIssues.filter((x) => !x.startsWith('SECTION_DUPLICATE') && x !== 'STATEMENT_MONTH_FROM_LINES').map((x, i) => {
+            // KIOSK 上傳：單上診所同上傳店唔同（extract.ts 機器標記）
+            const m = /^UPLOAD_CLINIC_MISMATCH:(.+)$/.exec(x)
+            if (m) {
+              const onDoc = clinics.find((c) => c.id === m[1])?.name ?? '另一間診所'
+              const here = clinics.find((c) => c.id === d.clinicId)?.name ?? '上傳店'
+              return <div key={i}>⚠ 單上診所似係「{onDoc}」，但係由「{here}」KIOSK 上傳 — 請核對</div>
+            }
+            return <div key={i}>⚠ {x}</div>
+          })}
         </div>
       )}
 

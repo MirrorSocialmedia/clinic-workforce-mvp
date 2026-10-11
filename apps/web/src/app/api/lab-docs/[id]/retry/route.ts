@@ -12,17 +12,20 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { runExtractionAfterClaim } from '@/lib/labdoc/extract'
+import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth(req, 'POST', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
+  // ★ KIOSK 只可以處理自己店嘅單（kiosk-scope.ts）
+  const kioskDeny = await kioskDocGuard(session, params.id)
+  if (kioskDeny) return kioskDeny
   const { id } = params
 
   // §10.3 fail-closed（跟 P1 [id] 口徑）：lab 權限 = 全集團；其餘按診所範圍
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return NextResponse.json({ error: '冇任何診所範圍，唔可以再讀單據' }, { status: 403, headers: { 'cache-control': 'no-store' } })
   }

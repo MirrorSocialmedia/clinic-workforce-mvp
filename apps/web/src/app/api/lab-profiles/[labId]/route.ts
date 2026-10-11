@@ -23,6 +23,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { normLabName } from '@/lib/labdoc/identify'
+import { kioskSettingsDenied } from '@/lib/labdoc/kiosk-scope'
 
 const STATEMENT_KINDS = ['DETAIL', 'INVOICE_LIST', 'OUTSTANDING'] as const
 const DOC_NO_KINDS = ['INVOICE_NO', 'CASE_NO'] as const
@@ -121,6 +122,9 @@ async function PUT(req: NextRequest, { params }: { params: { labId: string } }) 
   const auth = await requireAuth(req, 'PUT', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
+  // ★ KIOSK（店舖機）唔可以改全集團 Lab 設定
+  const kioskDeny = kioskSettingsDenied(session)
+  if (kioskDeny) return kioskDeny
   if (!(perms ?? []).includes('lab_statement')) {
     return jsonNoStore({ error: '需要 lab_statement 權限' }, { status: 403 })
   }

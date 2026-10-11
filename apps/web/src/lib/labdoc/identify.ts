@@ -240,7 +240,7 @@ export async function identifyDocNo(
 // §6.2 診所（依次，搵到就停；**唔准**用上傳者主屬店）
 // ------------------------------------------------------------------
 
-export type ClinicBasis = 'CUSTOMER_NO' | 'CLINIC_ALIAS' | 'ADDRESS' | 'SHORT_CODE' | 'NAME' | 'MANUAL'
+export type ClinicBasis = 'CUSTOMER_NO' | 'CLINIC_ALIAS' | 'ADDRESS' | 'SHORT_CODE' | 'NAME' | 'MANUAL' | 'UPLOADER'
 
 export interface ClinicIdentifyResult {
   clinicId: string | null

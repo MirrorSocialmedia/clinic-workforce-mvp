@@ -8,8 +8,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { readEncrypted } from '@/lib/labdoc/storage'
+import { labdocScope, kioskDocWhere } from '@/lib/labdoc/kiosk-scope'
 
 const FILE_ID_RE = /^[a-z0-9]{25}$/
 const PDF_MAX_PAGES = 30 // 同 §4.2 上限
@@ -41,7 +41,7 @@ export async function GET(
   const { session, perms } = auth
 
   // §10.3：所有 labdoc route 用 resolveClinicScope — 有 lab 權限 = 全集團（B16）
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return NextResponse.json({ error: '冇任何診所範圍，唔可以睇檔' }, { status: 403 })
   }
@@ -82,7 +82,7 @@ export async function GET(
   // 有限範圍用戶：檔要屬於範圍內嘅單據先睇到（fail-closed）
   if (scope !== null) {
     const inScope = await prisma.labDocument.count({
-      where: { id: { in: file.pages.map((p) => p.documentId) }, clinicId: { in: scope } },
+      where: { id: { in: file.pages.map((p) => p.documentId) }, ...(kioskDocWhere(session) ?? { clinicId: { in: scope } }) },
     })
     if (inScope === 0) return NextResponse.json({ error: '檔案唔存在' }, { status: 404 })
   }

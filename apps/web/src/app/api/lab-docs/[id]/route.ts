@@ -8,10 +8,10 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
-import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { statementCostSummary } from '@/lib/labdoc/statement-reconcile'
 import { findStatementSectionDuplicate } from '@/lib/labdoc/statement-sections'
+import { labdocScope, kioskDocGuard, kioskSectionAllowed, kioskClinics } from '@/lib/labdoc/kiosk-scope'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 
@@ -22,9 +22,12 @@ export async function GET(
   const auth = await requireAuth(req, 'GET', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
+  // ★ KIOSK 只可以處理自己店嘅單（kiosk-scope.ts）
+  const kioskDeny = await kioskDocGuard(session, params.id)
+  if (kioskDeny) return kioskDeny
 
   // §10.3：所有 labdoc route 用 resolveClinicScope — 有 lab 權限 = 全集團（B16）
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return jsonNoStore({ error: '冇任何診所範圍，唔可以睇單據' }, { status: 403 })
   }
@@ -68,9 +71,12 @@ export async function GET(
   if (!doc) return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
 
   // 有限範圍用戶：單據 clinic 要喺範圍內（clinic 未識別 + 有限範圍 = fail-closed）
-  if (scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
+  // KIOSK 已經由 kioskDocGuard 判斷（上傳店／分段都算）
+  if (kioskClinics(session) === null && scope !== null && !(doc.clinicId && scope.includes(doc.clinicId))) {
     return NextResponse.json({ error: '單據唔存在' }, { status: 404 })
   }
+  // KIOSK 只見自己店（或者未揀診所）嘅月結單分段
+  const visibleSections = doc.sections.filter((s) => kioskSectionAllowed(session, s.clinicId))
 
   // §12.4 並排比較：月結單行對到嘅系統 invoice（單號、總數、行）一次過攞
   const sysDocIds =
@@ -204,7 +210,7 @@ export async function GET(
     // ★ P3 §8.1：月結單分段（含逐段重複擋：同 Lab＋診所＋醫生＋月有另一份活動月結單 → duplicate 提示＋「取代舊版」）
     sections: doc.kind === 'STATEMENT'
       ? await Promise.all(
-          doc.sections.map(async (s) => {
+          visibleSections.map(async (s) => {
             const dup =
               s.clinicId && s.providerId && doc.status !== 'VOID' && doc.status !== 'SUPERSEDED'
                 ? await findStatementSectionDuplicate(prisma, {
@@ -324,7 +330,7 @@ export async function GET(
     // §8.1：statementMonth 係行最遲日期推斷（AI／預選都冇）→ UI 標黃
     statementMonthFromLines: doc.readIssues.includes('STATEMENT_MONTH_FROM_LINES'),
     // 2026-10-11：成份月結單 vs 成本錄入（總覽頂部）
-    costSummary: doc.kind === 'STATEMENT' ? await statementCostSummary(prisma, doc, doc.sections) : null,
+    costSummary: doc.kind === 'STATEMENT' ? await statementCostSummary(prisma, doc, visibleSections) : null,
   })
 }
 
@@ -344,8 +350,11 @@ export async function DELETE(
   const auth = await requireAuth(req, 'DELETE', req.url)
   if (isAuthError(auth)) return auth.error
   const { session, perms } = auth
+  // ★ KIOSK 只可以處理自己店嘅單（kiosk-scope.ts）
+  const kioskDeny = await kioskDocGuard(session, params.id)
+  if (kioskDeny) return kioskDeny
 
-  const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
+  const scope = await labdocScope(session, perms)
   if (scope !== null && scope.length === 0) {
     return NextResponse.json({ error: '冇任何診所範圍，唔可以作廢單據' }, { status: 403 })
   }
