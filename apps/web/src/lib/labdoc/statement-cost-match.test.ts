@@ -94,3 +94,35 @@ test('deriveQty：金額 ÷ 單價', () => {
   assert.equal(deriveQty(null, 300, 500), null)
   assert.equal(deriveQty(4, 300, 500), 4)
 })
+
+// ───────── 2026-10-11：人手配對／未配對到 ─────────
+
+test('人手配對：唔連住嘅兩行（$210 + $190）配一筆 $400；其他照自動劃', () => {
+  const lines = [
+    L(0, 210, { pairMode: 'MANUAL', pairCostCaseId: 'c400' }),
+    L(1, 1100),
+    L(2, 190, { pairMode: 'MANUAL', pairCostCaseId: 'c400' }),
+  ]
+  const r = matchStatementToCosts({ ...base, lines, costs: [C('c400', 400), C('c1100', 1100)] })
+  assert.deepEqual(r.pairs, [
+    { costCaseId: 'c400', lineIds: ['l0', 'l2'], manual: true },
+    { costCaseId: 'c1100', lineIds: ['l1'] },
+  ])
+  assert.deepEqual(r.unpairedCostIds, [])
+  assert.ok(r.lines.every((x) => x.result === 'MATCHED'))
+})
+
+test('未配對到（NONE）：唔再自動劃，就算金額啱', () => {
+  const r = matchStatementToCosts({ ...base, lines: [L(0, 1100, { pairMode: 'NONE' })], costs: [C('a', 1100)] })
+  assert.deepEqual(r.pairs, [])
+  assert.equal(r.lines[0].result, 'UNPAIRED')
+  assert.deepEqual(r.unpairedCostIds, ['a'])
+  assert.equal(r.status, 'OK', '總數照計')
+})
+
+test('人手配對嘅成本出咗範圍（例如改咗醫生）→ 行變未配對，唔會自動劃去其他成本', () => {
+  const lines = [L(0, 400, { pairMode: 'MANUAL', pairCostCaseId: 'gone' })]
+  const r = matchStatementToCosts({ ...base, lines, costs: [C('b', 400)] })
+  assert.deepEqual(r.pairs, [])
+  assert.equal(r.lines[0].result, 'UNPAIRED')
+})

@@ -8,6 +8,7 @@
  * - 左：月結單行（冇印數量 → 金額 ÷ 單價）；每行可以標「備貨」／「唔關我哋事」；成段都係備貨有一鍵
  * - 右：成本錄入（同 Lab、同診所、同醫生、到貨日喺同月）
  * - 按金額劃埋（一筆成本 = 一行或者連續幾行）只係幫你搵差異，唔影響狀態
+ * - 2026-10-11：劃唔到 → 「手動配對成本」（揀幾行配一筆成本，要啱數）；劃錯 → 「未配對到」拆開
  * - 確認：一致直接確認；有差異要寫原因
  */
 
@@ -19,7 +20,7 @@ import { apiFetch } from '@/lib/api-client'
 import { fmtMoney } from './status-meta'
 import { SECTION_STATUS, type StmtLine, type StmtResp } from './StatementDetail'
 
-interface CostSnap { id: string; patientCode: string | null; itemType: string | null; finalCost: number | null; status: string; receivedAt: string | null }
+interface CostSnap { id: string; patientCode: string | null; itemType: string | null; finalCost: number | null; status: string; receivedAt: string | null; note?: string | null }
 interface CostResult {
   mode?: string
   statementTotal?: number
@@ -29,7 +30,7 @@ interface CostResult {
   notOursTotal?: number
   unpricedCount?: number
   readCheck?: { stated: number; linesSum: number; ok: boolean } | null
-  pairs?: Array<{ costCaseId: string; lineIds: string[] }>
+  pairs?: Array<{ costCaseId: string; lineIds: string[]; manual?: boolean }>
   costs?: CostSnap[]
 }
 
@@ -50,6 +51,8 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [reason, setReason] = useState('')
+  // 手動配對面板：由邊行開（預先剔咗）
+  const [pairFrom, setPairFrom] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -215,7 +218,7 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
           <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">月結單（{s.lines.length} 行）</div>
           <div className="divide-y">
             {s.lines.map((l) => (
-              <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} />
+              <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} />
             ))}
             {s.lines.length === 0 && <div className="p-3 text-sm text-muted-foreground">冇行</div>}
           </div>
@@ -252,6 +255,18 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
         </div>
       </div>
 
+      {pairFrom && editable && (
+        <PairPanel
+          docId={id}
+          sid={sid}
+          lines={s.lines}
+          costs={costs.filter((c) => !costToLines.has(c.id))}
+          initial={pairFrom}
+          onClose={() => setPairFrom(null)}
+          onDone={() => { setPairFrom(null); load() }}
+        />
+      )}
+
       {confirmed ? (
         <div className="rounded-xl border bg-card p-3 text-sm">
           ✓ 已確認{s.confirmedAt ? `（${String(s.confirmedAt).slice(0, 10)}）` : ''}{s.note ? ` — 原因：${s.note}` : ''}
@@ -285,13 +300,14 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   )
 }
 
-function LineRow({ docId, sid, l, cost, editable, onChanged }: {
+function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
   docId: string
   sid: string
   l: StmtLine
   cost: CostSnap | null
   editable: boolean
   onChanged: () => void
+  onPair: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState('')
@@ -299,6 +315,26 @@ function LineRow({ docId, sid, l, cost, editable, onChanged }: {
   const counted = COUNTED_TYPES.has(l.lineType) && l.result !== 'NOT_APPLICABLE'
   const marked = l.resolution && MARK_LABEL[l.resolution]
   const q = qtyOf(l)
+  const manual = l.pairMode === 'MANUAL' && !!cost
+  const noAuto = l.pairMode === 'NONE'
+
+  const pairOp = async (op: 'UNPAIR' | 'AUTO') => {
+    setBusy(true)
+    try {
+      await apiFetch(`/api/lab-docs/${docId}/sections/${sid}/pair`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ op, lineId: l.id }),
+      })
+      toast.success(op === 'UNPAIR' ? '已拆開（未配對到）' : '已恢復自動配對')
+      setOpen(false)
+      onChanged()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const mark = async (resolution: 'STOCK' | 'NOT_OURS' | 'CLEAR') => {
     if (resolution === 'NOT_OURS' && !note.trim()) { toast.error('「唔關我哋事」要寫原因'); return }
@@ -342,9 +378,9 @@ function LineRow({ docId, sid, l, cost, editable, onChanged }: {
         ) : !counted ? (
           <span>唔計</span>
         ) : cost ? (
-          <span className="text-green-700">✓ 劃埋 {cost.patientCode ?? ''} {cost.itemType ?? ''} {fmtMoney(cost.finalCost)}</span>
+          <span className="text-green-700">✓ {manual ? '手動劃埋' : '劃埋'} {cost.patientCode ?? ''} {cost.itemType ?? ''} {fmtMoney(cost.finalCost)}</span>
         ) : l.result === 'UNPAIRED' ? (
-          <span className="text-amber-700">成本錄入冇對到呢個金額</span>
+          <span className="text-amber-700">{noAuto ? '未配對到（唔自動劃）' : '成本錄入冇對到呢個金額'}</span>
         ) : null}
         {editable && COUNTED_TYPES.has(l.lineType) && (Math.abs(l.amount) > 0.001 || !!l.resolution) && !open && l.resolution !== 'STATEMENT_WINS' && (
           l.resolution === 'STOCK' || l.resolution === 'NOT_OURS'
@@ -354,10 +390,23 @@ function LineRow({ docId, sid, l, cost, editable, onChanged }: {
       </div>
       {open && (
         <div className="mt-2 rounded-lg bg-muted/40 p-2 space-y-2">
-          <input className="w-full border rounded px-2 py-1" placeholder="原因（唔關我哋事要填；備貨可唔填）" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
+          {cost ? (
+            <div className="text-xs text-muted-foreground">
+              {manual ? '「未配對到」會拆開呢組人手配對。' : '系統劃錯？「未配對到」會拆開成組，嗰啲行之後唔會再自動劃。'}
+            </div>
+          ) : null}
+          {!manual && (
+            <input className="w-full border rounded px-2 py-1" placeholder="原因（唔關我哋事要填；備貨可唔填）" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
+          )}
           <div className="flex flex-wrap gap-2">
-            <button disabled={busy} onClick={() => mark('STOCK')} className="px-3 py-1 rounded-lg bg-brand text-white">備貨（唔屬病人）</button>
-            <button disabled={busy} onClick={() => mark('NOT_OURS')} className="px-3 py-1 rounded-lg border bg-card">唔關我哋事</button>
+            {cost ? (
+              <button disabled={busy} onClick={() => pairOp('UNPAIR')} className="px-3 py-1 rounded-lg border border-brand text-brand font-medium">未配對到（拆開）</button>
+            ) : l.result === 'UNPAIRED' ? (
+              <button disabled={busy} onClick={() => { setOpen(false); onPair() }} className="px-3 py-1 rounded-lg border border-brand text-brand font-medium">手動配對成本</button>
+            ) : null}
+            {!manual && <button disabled={busy} onClick={() => mark('STOCK')} className="px-3 py-1 rounded-lg bg-brand text-white">備貨（唔屬病人）</button>}
+            {!manual && <button disabled={busy} onClick={() => mark('NOT_OURS')} className="px-3 py-1 rounded-lg border bg-card">唔關我哋事</button>}
+            {noAuto && !cost && <button disabled={busy} onClick={() => pairOp('AUTO')} className="px-3 py-1 rounded-lg border bg-card">恢復自動配對</button>}
             <button disabled={busy} onClick={() => setOpen(false)} className="px-3 py-1 rounded-lg border">取消</button>
           </div>
         </div>
@@ -366,3 +415,94 @@ function LineRow({ docId, sid, l, cost, editable, onChanged }: {
   )
 }
 
+
+/** 手動配對：揀幾行（呢段未配對嘅）＋一筆成本（未配對、有價）；要啱數先可以配 */
+function PairPanel({ docId, sid, lines, costs, initial, onClose, onDone }: {
+  docId: string
+  sid: string
+  lines: StmtLine[]
+  costs: CostSnap[]
+  initial: string
+  onClose: () => void
+  onDone: () => void
+}) {
+  const candidates = lines.filter((l) => l.result === 'UNPAIRED' && !l.resolution && l.pairMode !== 'MANUAL')
+  const [picked, setPicked] = useState<Set<string>>(() => new Set([initial]))
+  const [costId, setCostId] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const pricedCosts = costs.filter((c) => c.finalCost != null)
+  const sum = Math.round(candidates.filter((l) => picked.has(l.id)).reduce((t, l) => t + l.amount, 0) * 100) / 100
+  const cost = pricedCosts.find((c) => c.id === costId) ?? null
+  const ok = !!cost && picked.size > 0 && Math.abs(sum - (cost.finalCost ?? 0)) <= 0.01
+
+  const toggle = (lid: string) => setPicked((p) => {
+    const n = new Set(p)
+    if (n.has(lid)) n.delete(lid)
+    else n.add(lid)
+    return n
+  })
+  const submit = async () => {
+    if (!cost || !ok) return
+    setBusy(true)
+    try {
+      await apiFetch(`/api/lab-docs/${docId}/sections/${sid}/pair`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ op: 'PAIR', lineIds: [...picked], costCaseId: cost.id }),
+      })
+      toast.success('已手動配對')
+      onDone()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center" onClick={onClose}>
+      <div className="w-full md:max-w-3xl max-h-[85vh] overflow-y-auto rounded-t-2xl md:rounded-2xl bg-background p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="font-semibold">手動配對成本</div>
+        <div className="grid md:grid-cols-2 gap-3">
+          <div className="space-y-1 min-w-0">
+            <div className="text-xs text-muted-foreground">月結單行（呢段未配對嘅，可以揀幾行）</div>
+            {candidates.map((l) => (
+              <label key={l.id} className="flex items-start gap-2 text-sm py-1">
+                <input type="checkbox" className="mt-1" checked={picked.has(l.id)} onChange={() => toggle(l.id)} />
+                <span className="flex-1 min-w-0">
+                  {l.docNoRaw ? <span className="text-muted-foreground mr-1">{l.docNoRaw}</span> : null}
+                  {l.description ?? '—'}{l.toothRaw ? ` · ${l.toothRaw}` : ''}
+                </span>
+                <span className="tabular-nums">{fmtMoney(l.amount)}</span>
+              </label>
+            ))}
+            {candidates.length === 0 && <div className="text-sm text-muted-foreground">冇未配對嘅行</div>}
+          </div>
+          <div className="space-y-1 min-w-0">
+            <div className="text-xs text-muted-foreground">成本錄入（呢個醫生、呢個月、未配對、有價）</div>
+            {pricedCosts.map((c) => (
+              <label key={c.id} className="flex items-start gap-2 text-sm py-1">
+                <input type="radio" name="pair-cost" className="mt-1" checked={costId === c.id} onChange={() => setCostId(c.id)} />
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium">{c.patientCode ?? '—'}</span> <span className="text-muted-foreground">{c.itemType ?? ''}</span>
+                  {c.receivedAt ? <span className="text-muted-foreground"> · {c.receivedAt.slice(5).replace('-', '/')}</span> : null}
+                  {c.note ? <span className="block text-xs text-muted-foreground truncate">「{c.note}」</span> : null}
+                </span>
+                <span className="tabular-nums">{fmtMoney(c.finalCost)}</span>
+              </label>
+            ))}
+            {pricedCosts.length === 0 && <div className="text-sm text-muted-foreground">冇未配對嘅成本</div>}
+          </div>
+        </div>
+        <div className={`rounded-lg px-3 py-2 text-sm tabular-nums ${!cost ? 'bg-muted' : ok ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'}`}>
+          揀咗 {picked.size} 行：{fmtMoney(sum)}
+          {cost ? <> ・ 成本 {fmtMoney(cost.finalCost)} ・ {ok ? '✓ 啱數' : `差 ${fmtMoney(Math.abs(sum - (cost.finalCost ?? 0)))} — 唔啱數唔可以配對`}</> : ' ・ 揀一筆成本'}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} disabled={busy} className="px-3 py-1.5 rounded-lg border text-sm">取消</button>
+          <button onClick={submit} disabled={busy || !ok} className="px-4 py-1.5 rounded-lg bg-brand text-white text-sm font-medium disabled:opacity-40">配對</button>
+        </div>
+      </div>
+    </div>
+  )
+}

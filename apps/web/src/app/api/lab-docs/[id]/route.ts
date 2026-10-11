@@ -321,6 +321,8 @@ export async function GET(
                 resolvedAt: l.resolvedAt,
                 followUpClosedAt: l.followUpClosedAt,
                 followUpClosedBy: l.followUpClosedBy,
+                pairMode: l.pairMode,
+                pairCostCaseId: l.pairCostCaseId,
                 system: systemView(l.matchedDocumentId, l.matchedLineId),
               })),
             }

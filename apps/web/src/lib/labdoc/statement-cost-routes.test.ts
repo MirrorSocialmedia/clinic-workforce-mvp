@@ -140,10 +140,9 @@ function makeFake(state: St): any {
         }
         return null
       },
-      findMany: async ({ where }: any) => {
-        const s = state.sections.find((x) => x.id === where.sectionId)
-        return (s?.lines ?? []).filter((l: any) => !where.lineType || where.lineType.in.includes(l.lineType)).map((l: any) => ({ ...l }))
-      },
+      findMany: async ({ where }: any) =>
+        state.sections.flatMap((s) => s.lines).filter((l: any) => matchWhere(l, where)).map((l: any) => ({ ...l })),
+      count: async ({ where }: any) => state.sections.flatMap((s) => s.lines).filter((l: any) => matchWhere(l, where)).length,
       updateMany: async ({ where, data }: any) => {
         let count = 0
         for (const s of state.sections) {
@@ -159,6 +158,7 @@ function makeFake(state: St): any {
     },
     costCase: {
       findMany: async ({ where }: any) => state.costs.filter((c) => matchWhere(c, where)).map((c) => ({ ...c })),
+      findFirst: async ({ where }: any) => { const c = state.costs.find((x) => matchWhere(x, where)); return c ? { ...c } : null },
     },
     auditLog: { create: async (a: any) => state.audits.push(a.data) },
   }
@@ -173,7 +173,9 @@ for (const k of KEYS) saved[k] = (prisma as any)[k]
 
 let CONFIRM: any
 let RESOLVE: any
+let PAIR: any
 before(async () => {
+  PAIR = (await import('../../app/api/lab-docs/[id]/sections/[sid]/pair/route')).POST
   CONFIRM = (await import('../../app/api/lab-docs/[id]/sections/[sid]/confirm/route')).POST
   RESOLVE = (await import('../../app/api/lab-docs/[id]/sections/[sid]/lines/[lid]/resolve/route')).POST
 })
@@ -334,4 +336,93 @@ test('resolve：STATEMENT_WINS 行 → 409；已確認 → 409；行唔屬呢段
   assert.strictEqual(bad.status, 404)
   st = mkState()
   assert.strictEqual((await resolveCall(st, 2, { resolution: 'INVOICE_WINS' })).status, 400)
+})
+
+// ───────────── pair（2026-10-11：人手配對／未配對到） ─────────────
+
+const pairCall = (st: St, body: unknown, sid = SEC_ID) => {
+  reset(st)
+  return PAIR(makeReq(owner(), `/api/lab-docs/${DOC_ID}/sections/${sid}/pair`, body) as any, { params: { id: DOC_ID, sid } } as any)
+}
+// 用家個案：$210（INV-26092105）＋ $190（INV-26093005）＝ 成本 $400（「$190 補差價」）；中間隔咗一行 $1,100
+const pairState = () => mkState({
+  sections: [mkSection(SEC_ID, { lines: [mkLine(1, 210, { result: 'UNPAIRED' }), mkLine(2, 1100, { result: 'MATCHED' }), mkLine(3, 190, { result: 'UNPAIRED' })] })],
+  costs: [mkCost('c400', 400), mkCost('c1100', 1100)],
+})
+
+test('pair：$210 + $190 人手配成本 $400 → 兩行 MANUAL、重新對數 MATCHED、audit', async () => {
+  const st = pairState()
+  const r = await pairCall(st, { op: 'PAIR', lineIds: [lid(1), lid(3)], costCaseId: 'c400' })
+  assert.strictEqual(r.status, 200)
+  const [l1, l2, l3] = st.sections[0].lines
+  assert.strictEqual(l1.pairMode, 'MANUAL')
+  assert.strictEqual(l3.pairCostCaseId, 'c400')
+  assert.strictEqual(l1.result, 'MATCHED')
+  assert.strictEqual(l2.result, 'MATCHED')
+  assert.strictEqual(l3.result, 'MATCHED')
+  const pairs = st.sections[0].resultJson.pairs
+  assert.deepStrictEqual(pairs.find((p: any) => p.costCaseId === 'c400'), { costCaseId: 'c400', lineIds: [lid(1), lid(3)], manual: true })
+  assert.deepStrictEqual(st.sections[0].resultJson.unpairedCostIds, [])
+  assert.ok(st.audits.some((a) => a.action === 'LAB_STATEMENT_PAIR'))
+})
+
+test('pair：唔啱數 → 400 AMOUNT_MISMATCH（唔准）；成本唔喺範圍 → 404；成本已配 → 409；$0／付款行 → 400', async () => {
+  let st = pairState()
+  let r = await pairCall(st, { op: 'PAIR', lineIds: [lid(1)], costCaseId: 'c400' })
+  assert.strictEqual(r.status, 400)
+  assert.strictEqual((await r.json()).code, 'AMOUNT_MISMATCH')
+  assert.strictEqual(st.sections[0].lines[0].pairMode, undefined)
+
+  st = pairState()
+  st.costs.push(mkCost('cOther', 400, { providerId: 'q'.repeat(25) }))
+  assert.strictEqual((await pairCall(st, { op: 'PAIR', lineIds: [lid(1), lid(3)], costCaseId: 'cOther' })).status, 404)
+
+  st = pairState()
+  st.sections[0].lines.push(mkLine(4, 400, { result: 'UNPAIRED', pairMode: 'MANUAL', pairCostCaseId: 'c400' }))
+  assert.strictEqual((await pairCall(st, { op: 'PAIR', lineIds: [lid(1), lid(3)], costCaseId: 'c400' })).status, 409)
+
+  st = pairState()
+  st.sections[0].lines.push(mkLine(4, 0, { result: 'NOT_APPLICABLE' }))
+  assert.strictEqual((await pairCall(st, { op: 'PAIR', lineIds: [lid(4)], costCaseId: 'c400' })).status, 400)
+})
+
+test('pair：人手配咗嘅行唔可以直接標備貨（409）；UNPAIR 成組拆開 → NONE、唔再自動劃；AUTO 恢復', async () => {
+  const st = pairState()
+  assert.strictEqual((await pairCall(st, { op: 'PAIR', lineIds: [lid(1), lid(3)], costCaseId: 'c400' })).status, 200)
+  assert.strictEqual((await resolveCall(st, 1, { resolution: 'STOCK' })).status, 409)
+
+  assert.strictEqual((await pairCall(st, { op: 'UNPAIR', lineId: lid(3) })).status, 200)
+  const [l1, , l3] = st.sections[0].lines
+  assert.strictEqual(l1.pairMode, 'NONE')
+  assert.strictEqual(l3.pairMode, 'NONE')
+  assert.strictEqual(l1.pairCostCaseId, null)
+  assert.strictEqual(l1.result, 'UNPAIRED')
+  assert.deepStrictEqual(st.sections[0].resultJson.unpairedCostIds, ['c400'])
+
+  assert.strictEqual((await pairCall(st, { op: 'AUTO', lineId: lid(1) })).status, 200)
+  assert.strictEqual(st.sections[0].lines[0].pairMode, null)
+  assert.strictEqual((await pairCall(st, { op: 'AUTO', lineId: lid(1) })).status, 409, '冇標未配對到 → 409')
+})
+
+test('pair：UNPAIR 系統自動劃錯嘅組 → 拆開，重新對數都唔再劃埋', async () => {
+  const st = pairState()
+  // 先對一次數：$1,100 自動劃埋 c1100
+  assert.strictEqual((await resolveCall(st, 2, { resolution: 'CLEAR' })).status, 200)
+  assert.ok(st.sections[0].resultJson.pairs.some((p: any) => p.costCaseId === 'c1100' && !p.manual))
+  assert.strictEqual((await pairCall(st, { op: 'UNPAIR', lineId: lid(2) })).status, 200)
+  assert.strictEqual(st.sections[0].lines[1].pairMode, 'NONE')
+  assert.strictEqual(st.sections[0].lines[1].result, 'UNPAIRED')
+  assert.ok(st.sections[0].resultJson.unpairedCostIds.includes('c1100'))
+})
+
+test('pair：已確認 → 409；op 唔合法 → 400；lab_invoice only → 403', async () => {
+  let st = pairState()
+  st.sections[0].status = 'CONFIRMED'
+  assert.strictEqual((await pairCall(st, { op: 'PAIR', lineIds: [lid(1), lid(3)], costCaseId: 'c400' })).status, 409)
+  st = pairState()
+  assert.strictEqual((await pairCall(st, { op: 'MERGE', lineId: lid(1) })).status, 400)
+  st = pairState()
+  reset(st)
+  const r = await PAIR(makeReq(tokenFor(INV_ONLY, 'EMPLOYEE', ['lab_invoice']), `/api/lab-docs/${DOC_ID}/sections/${SEC_ID}/pair`, { op: 'AUTO', lineId: lid(1) }) as any, { params: { id: DOC_ID, sid: SEC_ID } } as any)
+  assert.strictEqual(r.status, 403)
 })

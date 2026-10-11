@@ -25,7 +25,8 @@ export async function resetSectionMatching(tx: any, sectionIds: string[]): Promi
   if (sectionIds.length === 0) return
   await tx.labStatementLine.updateMany({
     where: { sectionId: { in: sectionIds } },
-    data: { result: 'PENDING', matchBasis: null, matchedDocumentId: null, matchedLineId: null },
+    // 人手配對／未配對到都係基於呢段嘅成本範圍 → 一齊清
+    data: { result: 'PENDING', matchBasis: null, matchedDocumentId: null, matchedLineId: null, pairMode: null, pairCostCaseId: null },
   })
   await tx.labStatementLine.updateMany({
     where: { sectionId: { in: sectionIds }, OR: [{ resolution: null }, { resolution: { notIn: ['STOCK', 'NOT_OURS'] } }] },

@@ -59,6 +59,9 @@ export interface StmtLine {
   resolution: string | null
   resolutionNote: string | null
   followUpClosedAt: string | null
+  /** MANUAL = 人手配對；NONE = 未配對到（唔自動劃） */
+  pairMode?: string | null
+  pairCostCaseId?: string | null
   system: {
     docId: string
     docNo: string | null

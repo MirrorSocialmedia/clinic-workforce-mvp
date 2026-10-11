@@ -2146,6 +2146,11 @@ model LabStatementLine {
   resolvedAt        DateTime?
   followUpClosedAt  DateTime? // INVOICE_WINS 跟進完成
   followUpClosedBy  String?
+  // ★ 2026-10-11：月結單 ⇄ 成本錄入 人手配對
+  //   MANUAL = 人手將幾行配一筆成本（pairCostCaseId；行加埋要啱數）
+  //   NONE   = 「未配對到」：系統唔再自動將呢行劃埋任何成本
+  pairMode          String?
+  pairCostCaseId    String?
 
   @@unique([sectionId, lineIndex])
   @@index([matchedDocumentId])

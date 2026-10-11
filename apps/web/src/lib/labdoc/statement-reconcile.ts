@@ -101,6 +101,8 @@ export async function reconcileSection(
     date: l.date ?? null,
     agingBucket: l.agingBucket ?? null,
     resolution: l.resolution && KEEP_RESOLUTIONS.has(l.resolution) ? l.resolution : null,
+    pairMode: l.pairMode ?? null,
+    pairCostCaseId: l.pairCostCaseId ?? null,
   }))
 
   // 2. 成本錄入
@@ -109,7 +111,7 @@ export async function reconcileSection(
   if (assigned) {
     costRows = await client.costCase.findMany({
       where: costScopeWhere({ labId: doc.labId, clinicId: section.clinicId, providerId: section.providerId, month: doc.statementMonth }),
-      select: { id: true, patientCode: true, itemType: true, itemTypeOther: true, finalCost: true, status: true, receivedAt: true },
+      select: { id: true, patientCode: true, itemType: true, itemTypeOther: true, finalCost: true, status: true, receivedAt: true, note: true },
       orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
     })
   } else {
@@ -128,6 +130,7 @@ export async function reconcileSection(
     receivedAt: c.receivedAt ?? null,
   }))
 
+  const costNote = new Map<string, string | null>(costRows.map((c) => [c.id, c.note ?? null]))
   const statedTotal = outstanding ? toNum(section.statedCurrent) : toNum(section.statedTotal)
   const m = matchStatementToCosts({ lines: lineIn, costs, outstanding, statementMonth: doc.statementMonth, statedTotal })
 
@@ -155,6 +158,8 @@ export async function reconcileSection(
       finalCost: c.finalCost,
       status: c.status,
       receivedAt: c.receivedAt ? c.receivedAt.toISOString().slice(0, 10) : null,
+      // 成本錄入備註（例如「$190 補差價」）— 人手配對時幫手認
+      note: costNote.get(c.id) ?? null,
     })),
     counts,
     // 舊 invoice 對法嘅欄位（待處理 NOT_ON_STATEMENT 讀）— 新對法冇

@@ -488,6 +488,8 @@ export const CONFIG = {
     'POST /api/lab-docs/:id/sections/:id/reconcile': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/sections/:id/confirm': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/sections/:id/pair': ['OWNER', 'MANAGER'], // 2026-10-11 人手配對成本／未配對到
+    'POST /api/lab-docs/:id/pair': ['OWNER', 'MANAGER'], // check-rbac-matrix.sh 字面 dead key（同上 :id/save 先例）
     'POST /api/lab-docs/:id/sections/:id/lines/:id/close-followup': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/assign': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/reconcile': ['OWNER', 'MANAGER'],
@@ -802,6 +804,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/lab-docs/:id/sections/:id/reconcile': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/confirm': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/pair': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/lines/:id/close-followup': ['lab_statement'],
   'POST /api/lab-docs/:id/assign': ['lab_statement'],
   'POST /api/lab-docs/:id/reconcile': ['lab_statement'],
