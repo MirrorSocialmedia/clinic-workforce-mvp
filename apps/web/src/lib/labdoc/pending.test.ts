@@ -137,6 +137,8 @@ interface GetState {
   docs: any[]
   /** ★ P3：月結單行（STATEMENT_DIFF／MISSING_IN_SYSTEM） */
   stmtLines?: any[]
+  /** ★ 2026-10-11：月結單分段（STATEMENT_DIFF = 分段同成本錄入唔啱） */
+  stmtSections?: any[]
 }
 
 function mkCost(over: Record<string, unknown> = {}): any {
@@ -225,6 +227,12 @@ function makeGetFake(state: GetState, users: any[] = []) {
         state.docs.filter((d) => matchDoc(d, where)).map((d) => ({ ...d, sections: d.sections ?? [] })).slice(0, take ?? 500),
       count: async ({ where }: any) => state.docs.filter((d) => matchDoc(d, where)).length,
     },
+    labStatementSection: {
+      findMany: async ({ where, take }: any) =>
+        (state.stmtSections ?? []).filter((s) => s.status === where.status && matchDoc(s.document, where.document)).slice(0, take ?? 100),
+      count: async ({ where }: any) =>
+        (state.stmtSections ?? []).filter((s) => s.status === where.status && matchDoc(s.document, where.document)).length,
+    },
     // ★ P3：月結單行 fake（按 where.OR／單 where 過濾 result＋resolution＋followUpClosedAt）
     labStatementLine: {
       findMany: async ({ where, take }: any) => {
@@ -267,7 +275,7 @@ const EMP_INV_USER = {
 let savedPrisma: Record<string, any> = {}
 
 before(() => {
-  for (const k of ['user', 'labDocumentLine', 'costCase', 'labDocument', 'labStatementLine', 'labAlias', 'auditLog']) {
+  for (const k of ['user', 'labDocumentLine', 'costCase', 'labDocument', 'labStatementLine', 'labStatementSection', 'labAlias', 'auditLog']) {
     savedPrisma[k] = (prisma as any)[k]
   }
 })
@@ -288,6 +296,7 @@ function installGetFake(state: GetState, users: any[] = [OWNER_USER]) {
   Object.defineProperty(prisma, 'costCase', { value: makeGetFake(state).costCase, configurable: true, writable: true })
   Object.defineProperty(prisma, 'labDocument', { value: makeGetFake(state).labDocument, configurable: true, writable: true })
   Object.defineProperty(prisma, 'labStatementLine', { value: makeGetFake(state).labStatementLine, configurable: true, writable: true })
+  Object.defineProperty(prisma, 'labStatementSection', { value: makeGetFake(state).labStatementSection, configurable: true, writable: true })
 }
 
 // ─── GET /api/lab-docs/pending ──────────────────────────────────────
@@ -393,6 +402,11 @@ test('GET pending（P3 三類）：STATEMENT_DIFF／MISSING_IN_SYSTEM／NOT_ON_S
       { id: 'sd3'.padEnd(25, '0'), docNo: 'INV-11', date: new Date('2026-09-17T00:00:00Z'), amount: 80, description: '已處理', result: 'AMOUNT_DIFF', resolution: 'STATEMENT_WINS', patientCode: null, section: { document: { id: STMT_DOC_1, statementMonth: '2026-09', updatedAt: new Date(), clinicId: CLINIC_A, providerId: null, lab: { name: '禾呈' } } } },
       { id: 'ms1'.padEnd(25, '0'), docNo: 'INV-12', date: new Date('2026-09-18T00:00:00Z'), amount: 60, description: '補牙', result: 'MISSING_IN_SYSTEM', resolution: null, patientCode: 'TW001111', section: { document: { id: STMT_DOC_1, statementMonth: '2026-09', updatedAt: new Date(), clinicId: CLINIC_A, providerId: null, lab: { name: '禾呈' } } } },
     ],
+    stmtSections: [
+      { id: 'sx1'.padEnd(25, '0'), status: 'DIFF', clinicId: CLINIC_A, providerId: null, resultJson: { mode: 'COST', statementTotal: 5670, costTotal: 5000, diff: 670 }, document: { id: STMT_DOC_1, kind: 'STATEMENT', status: 'IN_PROGRESS', statementMonth: '2026-09', updatedAt: new Date(), lab: { name: '禾呈' } } },
+      { id: 'sx2'.padEnd(25, '0'), status: 'OK', clinicId: CLINIC_A, providerId: null, resultJson: { mode: 'COST', statementTotal: 100, costTotal: 100, diff: 0 }, document: { id: STMT_DOC_1, kind: 'STATEMENT', status: 'IN_PROGRESS', statementMonth: '2026-09', updatedAt: new Date(), lab: { name: '禾呈' } } },
+      { id: 'sx3'.padEnd(25, '0'), status: 'DIFF', clinicId: CLINIC_A, providerId: null, resultJson: { mode: 'COST', statementTotal: 1, costTotal: 0, diff: 1 }, document: { id: STMT_DOC_2, kind: 'STATEMENT', status: 'VOID', statementMonth: '2026-09', updatedAt: new Date(), lab: { name: '禾呈' } } },
+    ],
     docs: [
       // M=2026-09 已確認月結單：反向有 INV-1、INV-2
       { id: STMT_DOC_1, kind: 'STATEMENT', status: 'RECONCILED', labId: LAB_A, clinicId: CLINIC_A, providerId: null, statementMonth: '2026-09', docNo: null, docDate: null, total: null, manualAmountEdit: false, amountReviewedAt: null, payeeIsNew: false, updatedAt: new Date(), createdAt: new Date(), lab: { name: '禾呈' }, extractError: null, extractAttempts: 0,
@@ -408,9 +422,13 @@ test('GET pending（P3 三類）：STATEMENT_DIFF／MISSING_IN_SYSTEM／NOT_ON_S
   assert.strictEqual(res.status, 200)
   const body: any = await res.json()
   const byKey = Object.fromEntries(body.categories.map((c: any) => [c.key, c]))
-  assert.strictEqual(byKey.STATEMENT_DIFF.count, 2, 'AMOUNT_DIFF 未處理 + INVOICE_WINS 跟進中（已 STATEMENT_WINS 唔計）')
-  assert.ok(byKey.STATEMENT_DIFF.items.some((i: any) => i.extra === 'INVOICE_WINS 跟進中'))
-  assert.ok(byKey.STATEMENT_DIFF.items.every((i: any) => i.docId === STMT_DOC_1))
+  // 2026-10-11：STATEMENT_DIFF = 分段同成本錄入唔啱（DIFF）；OK 分段同作廢月結單唔計
+  assert.strictEqual(byKey.STATEMENT_DIFF.count, 1)
+  assert.strictEqual(byKey.STATEMENT_DIFF.items[0].refType, 'SECTION')
+  assert.strictEqual(byKey.STATEMENT_DIFF.items[0].sectionId, 'sx1'.padEnd(25, '0'))
+  assert.strictEqual(byKey.STATEMENT_DIFF.items[0].docId, STMT_DOC_1)
+  assert.strictEqual(byKey.STATEMENT_DIFF.items[0].amount, 670)
+  assert.strictEqual(byKey.STATEMENT_DIFF.items[0].extra, '月結單 $5670／成本錄入 $5000')
   assert.strictEqual(byKey.MISSING_IN_SYSTEM.count, 1)
   assert.strictEqual(byKey.MISSING_IN_SYSTEM.items[0].patientCode, 'TW001111')
   assert.strictEqual(byKey.NOT_ON_STATEMENT.count, 1, '只計 M∩M+1（INV-1）')

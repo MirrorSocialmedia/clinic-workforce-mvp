@@ -4,7 +4,8 @@
  * ★ cwm-labdoc §12.3：/lab-docs/statements/[id] — 月結單總覽（電腦優先）
  *
  * - 頭：Lab、月份、頁數、讀法、收款人警告；「睇原檔」
- * - 統計：月結單總數、系統已對、差額、分段確認進度
+ * - 統計（2026-10-11 改）：月結單（唔計備貨）vs 成本錄入（同 Lab、同月、到貨日）、差額、分段確認進度；
+ *   月結單涉及嘅診所有成本、但冇呢位醫生分段 → 提示
  * - 分段表：未識別（NEEDS_ASSIGN）排第一 → 即場揀診所／醫生（可剔「記住」寫 alias）
  * - 揀錯：分段「改」／「解除指派」；Lab／月份讀唔到或者錯 → 「改 Lab／月份」（改完舊配對清走再自動重新配對）
  * - 重複分段 → 「取代舊版」（要原因；舊版已處理嘅差異會帶過嚟）
@@ -32,7 +33,8 @@ export interface StmtSection {
   systemTotal: number | null
   status: string
   confirmedAt: string | null
-  resultJson: { counts?: Record<string, number>; statedTotal?: number | null } | null
+  note: string | null
+  resultJson: { mode?: string; statementTotal?: number; costTotal?: number; diff?: number; stockTotal?: number; counts?: Record<string, number> } | null
   costEvidence: { totalFinalCost: number | null; discountCosts: Array<{ id: string; itemType: string | null; discountPct: number }>; flag: boolean }
   newInvoicesSinceRun: number
   duplicate: { docId: string; uploadedAt: string } | null
@@ -86,6 +88,13 @@ export interface StmtResp {
   pages: Array<{ id: string }>
   sections: StmtSection[]
   statementMonthFromLines: boolean
+  costSummary: {
+    statementTotal: number
+    costTotal: number
+    diff: number
+    stockTotal: number
+    uncovered: Array<{ clinicId: string; providerId: string; total: number; count: number }>
+  } | null
 }
 
 export const SECTION_STATUS: Record<string, { label: string; cls: string }> = {
@@ -99,7 +108,6 @@ const KIND_LABEL: Record<string, string> = { DETAIL: '明細型', INVOICE_LIST: 
 // 呢兩個狀態先可以改 Lab／月份、改／解除分段指派（後端同一套規則）
 const HEADER_EDITABLE = new Set(['NEEDS_REVIEW', 'IN_PROGRESS'])
 
-export const stated = (s: StmtSection) => (s.statedCurrent ?? s.statedTotal)
 
 export default function StatementDetail({ id }: { id: string }) {
   const [data, setData] = useState<StmtResp | null>(null)
@@ -137,8 +145,7 @@ export default function StatementDetail({ id }: { id: string }) {
   const d = data.document
   const sm = statusMeta(d.status)
   const secs = [...data.sections].sort((a, b) => (a.status === 'NEEDS_ASSIGN' ? -1 : 0) - (b.status === 'NEEDS_ASSIGN' ? -1 : 0) || a.sectionIndex - b.sectionIndex)
-  const statedSum = data.sections.reduce((a, s) => a + (stated(s) ?? 0), 0)
-  const sysSum = data.sections.reduce((a, s) => a + (s.systemTotal ?? 0), 0)
+  const cs = data.costSummary
   const confirmedN = data.sections.filter((s) => s.status === 'CONFIRMED').length
   const cName = (cid: string | null) => (cid ? clinics.find((c) => c.id === cid)?.name ?? '—' : null)
   const pName = (pid: string | null) => (pid ? providers.find((p) => p.id === pid)?.name ?? '—' : null)
@@ -231,17 +238,26 @@ export default function StatementDetail({ id }: { id: string }) {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         {[
-          ['月結單總數', fmtMoney(statedSum)],
-          ['系統已對', fmtMoney(sysSum)],
-          ['差額', fmtMoney(Math.round((statedSum - sysSum) * 100) / 100)],
-          ['分段確認', `${confirmedN} / ${data.sections.length}`],
-        ].map(([k, v]) => (
+          ['月結單', cs ? fmtMoney(cs.statementTotal) : '—', cs && cs.stockTotal ? `備貨 ${fmtMoney(cs.stockTotal)} 唔計` : null],
+          ['成本錄入（到貨日）', cs ? fmtMoney(cs.costTotal) : '—', null],
+          ['差額', cs ? (cs.diff ? fmtMoney(cs.diff) : '$0 ✓') : '—', null],
+          ['分段確認', `${confirmedN} / ${data.sections.length}`, null],
+        ].map(([k, v, sub]) => (
           <div key={k} className="rounded-xl border bg-card p-3">
             <div className="text-xs text-muted-foreground">{k}</div>
-            <div className="text-lg font-semibold tabular-nums">{v}</div>
+            <div className={`text-lg font-semibold tabular-nums ${k === '差額' && cs ? (cs.diff ? 'text-amber-700' : 'text-green-700') : ''}`}>{v}</div>
+            {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
           </div>
         ))}
       </div>
+      {cs && cs.uncovered.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm space-y-1">
+          <div>以下醫生喺成本錄入有呢間 Lab 呢個月嘅成本，但月結單冇佢嘅分段（Lab 漏咗？醫生揀錯？）：</div>
+          {cs.uncovered.map((u) => (
+            <div key={`${u.clinicId}|${u.providerId}`} className="tabular-nums">· {cName(u.clinicId) ?? '—'} · {pName(u.providerId) ?? '—'}：{fmtMoney(u.total)}（{u.count} 筆）</div>
+          ))}
+        </div>
+      )}
 
       <div className="space-y-2">
         {secs.map((s) => (
@@ -328,8 +344,8 @@ function SectionRow({ docId, version, editable, s, clinics, providers, cName, pN
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const st = SECTION_STATUS[s.status] ?? { label: s.status, cls: 'bg-slate-100' }
-  const stt = stated(s)
-  const diff = stt !== null && s.systemTotal !== null ? Math.round((stt - s.systemTotal) * 100) / 100 : null
+  const rj = s.resultJson?.mode === 'COST' ? s.resultJson : null
+  const diff = rj?.diff ?? null
   const needsAssign = s.status === 'NEEDS_ASSIGN'
 
   const assigned = !!s.clinicId || !!s.providerId
@@ -410,16 +426,14 @@ function SectionRow({ docId, version, editable, s, clinics, providers, cName, pN
           </div>
         </div>
         <div className="text-right text-sm tabular-nums hidden sm:block">
-          <div>月結 {fmtMoney(stt)}</div>
-          <div className="text-muted-foreground">系統 {fmtMoney(s.systemTotal)}{diff ? ` · 差 ${fmtMoney(diff)}` : ''}</div>
+          <div>月結 {rj ? fmtMoney(rj.statementTotal) : '—'}</div>
+          <div className="text-muted-foreground">成本 {rj ? fmtMoney(rj.costTotal) : '—'}{diff ? ` · 差 ${fmtMoney(diff)}` : ''}</div>
         </div>
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${st.cls}`}>{st.label}</span>
         {canEdit && assigned && !editing && (
           <button onClick={() => setEditing(true)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground" title="改診所／醫生"><Pencil size={13} />改</button>
         )}
-        {!needsAssign && (
-          <Link href={`/lab-docs/statements/${docId}/sections/${s.id}`} className="flex items-center text-sm text-brand">對數<ChevronRight size={14} /></Link>
-        )}
+        <Link href={`/lab-docs/statements/${docId}/sections/${s.id}`} className="flex items-center text-sm text-brand">{needsAssign ? '睇／標備貨' : '對數'}<ChevronRight size={14} /></Link>
       </div>
       {s.costEvidence?.flag && (
         <div className="mt-2 text-xs text-red-600">有成本仲套緊月度折扣：{s.costEvidence.discountCosts.map((c) => `${c.itemType ?? '—'} ${c.discountPct}%`).join('、')}</div>

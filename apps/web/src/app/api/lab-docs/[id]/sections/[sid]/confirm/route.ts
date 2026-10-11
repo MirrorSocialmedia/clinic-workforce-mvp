@@ -1,12 +1,10 @@
-// ★ cwm-labdoc P3：POST /api/lab-docs/:id/sections/:sid/confirm — §8.4 確認分段
+// ★ cwm-labdoc：POST /api/lab-docs/:id/sections/:sid/confirm — 確認月結單分段
 //
-// 條件（全部通過先 CONFIRMED）：
-//  ① 每行 result ∈ {MATCHED, PREVIOUSLY_MATCHED, NOT_APPLICABLE} 或者有 resolution
-//     （*_DIFF／MISSING_IN_SYSTEM／NEEDS_MANUAL／PENDING 未處理 → 擋）
-//  ② §5.5 分段讀數檢查：Σ 行 amount（INVOICE＋CREDIT＋CHARGE；OUTSTANDING 只計 CURRENT）
-//     = statedTotal（OUTSTANDING = statedCurrent）；差超過 $0.01 → 擋
-//     （「月結單讀數唔齊（差 $X），可能有行影唔到」）
-// 寫：CONFIRMED＋confirmedBy/At；audit LAB_STATEMENT_RECONCILE（結果數量、statedTotal、systemTotal、差額）
+// 2026-10-11 改：月結單同「成本錄入」對總數（statement-reconcile.ts）。
+// 確認前先用最新成本錄入重新對一次數：
+//  - 總數一致（OK）而且讀數檢查冇問題 → 直接確認
+//  - 有差異（DIFF）或者月結單印嘅總數同行加埋唔啱 → body.reason 必填（≤200 字），寫入 section.note
+// 寫：CONFIRMED＋confirmedBy/At；audit LAB_STATEMENT_RECONCILE（月結單總數、成本總數、差額、原因）
 // 全部分段 CONFIRMED → 文件 RECONCILED。
 // 權限：lab_statement（§10.2：確認）
 // ownership-ok: labdoc 全集團範圍（B16）；section 必屬呢個 doc（防 IDOR）
@@ -18,14 +16,11 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
 import { sectionDuplicateBlock } from '@/lib/labdoc/statement-sections'
+import { reconcileSection } from '@/lib/labdoc/statement-reconcile'
 import { labdocAudit } from '@/lib/labdoc/audit'
 
 const SECTION_ID_RE = /^[a-z0-9]{25}$/
 const DOC_ID_RE = /^[a-z0-9]{25}$/
-
-const OK_RESULTS = new Set(['MATCHED', 'PREVIOUSLY_MATCHED', 'NOT_APPLICABLE'])
-const AMOUNT_LINE_TYPES = new Set(['INVOICE', 'CREDIT', 'CHARGE'])
-const EPS = 0.01
 
 export async function POST(req: NextRequest, { params }: { params: { id: string; sid: string } }) {
   const auth = await requireAuth(req, 'POST', req.url)
@@ -37,6 +32,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   }
   if (!DOC_ID_RE.test(params.id) || !SECTION_ID_RE.test(params.sid)) {
     return jsonNoStore({ error: 'ID 格式錯誤' }, { status: 400 })
+  }
+  let body: { reason?: unknown } = {}
+  try {
+    body = await req.json()
+  } catch {
+    body = {}
+  }
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+  if (reason.length > 200) {
+    return jsonNoStore({ error: '原因最多 200 字' }, { status: 400 })
   }
 
   const scope = await resolveClinicScope(session, perms ?? [], { companyWide: ['lab_invoice', 'lab_statement'] })
@@ -60,7 +65,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
 
   const section = await prisma.labStatementSection.findFirst({
     where: { id: params.sid, documentId: doc.id },
-    include: { lines: { orderBy: { lineIndex: 'asc' } } },
+    select: { id: true, status: true, clinicId: true, providerId: true },
   })
   if (!section) {
     return jsonNoStore({ error: '分段唔屬於呢張單' }, { status: 404 })
@@ -68,61 +73,37 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   if (section.status === 'CONFIRMED') {
     return jsonNoStore({ error: '分段已經確認' }, { status: 409 })
   }
-  if (!doc.statementMonth) {
-    return jsonNoStore({ error: '文件無 statementMonth，先完成識別' }, { status: 400 })
+  if (scope !== null && section.clinicId && !scope.includes(section.clinicId)) {
+    return jsonNoStore({ error: '診所唔喺你嘅範圍' }, { status: 403 })
   }
-  // §8.1：重複分段唔准確認（要先取代舊版）— 2026-10-10 模擬：兩份同月月結單都確認咗
+  // §8.1：重複分段唔准確認（要先取代舊版）
   const dupMsg = await sectionDuplicateBlock(prisma, doc, section)
   if (dupMsg) return jsonNoStore({ error: dupMsg, code: 'SECTION_DUPLICATE' }, { status: 409 })
 
-  const profile = doc.labId ? await prisma.labProfile.findUnique({ where: { labId: doc.labId } }) : null
-  const stmtKind = profile?.statementKind === 'DETAIL' || profile?.statementKind === 'OUTSTANDING' ? profile.statementKind : 'INVOICE_LIST'
-
-  // ① 每行已解決
-  const unresolved = section.lines.filter(
-    (l) => !OK_RESULTS.has(l.result) && l.resolution === null,
-  )
-  if (unresolved.length > 0) {
-    return jsonNoStore(
-      { error: `仲有 ${unresolved.length} 行未處理`, unresolvedCount: unresolved.length },
-      { status: 400 },
-    )
-  }
-
-  // ② §5.5 分段讀數檢查
-  const stmtMonth = doc.statementMonth
-  const isOutstanding = stmtKind === 'OUTSTANDING'
-  const amountLines = section.lines.filter((l) => {
-    if (!AMOUNT_LINE_TYPES.has(l.lineType)) return false
-    if (isOutstanding) {
-      // CURRENT = AI agingBucket（優先）；整段冇 bucket（AI 未讀 aging）先 fallback 日期
-      const anyBucket = section.lines.some((x) => x.agingBucket != null)
-      if (anyBucket) return l.agingBucket === 'CURRENT'
-      return l.date ? sameMonth(l.date, stmtMonth) : false
-    }
-    return true
-  })
-  const sum = Math.round(amountLines.reduce((s, l) => s + Number(l.amount), 0) * 100) / 100
-  const stated = isOutstanding ? (section.statedCurrent != null ? Number(section.statedCurrent) : null) : section.statedTotal != null ? Number(section.statedTotal) : null
-  if (stated == null) {
-    return jsonNoStore({ error: '分段總數未讀到，先補人工讀數' }, { status: 400 })
-  }
-  const diff = Math.round((sum - stated) * 100) / 100
-  if (Math.abs(diff) > EPS) {
-    return jsonNoStore(
-      { error: `月結單讀數唔齊（差 $${Math.abs(diff)}），可能有行影唔到`, difference: diff },
-      { status: 400 },
-    )
-  }
-
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = req.headers.get('user-agent') ?? null
+
+  // 用最新成本錄入再對一次（成本錄入可能啱啱改過）
+  const r = await reconcileSection(prisma, { sectionId: section.id, actorId: session.userId, source: 'manual', ipAddress: ip, userAgent: ua })
+  if (!r.ok) {
+    return jsonNoStore({ error: r.message, code: r.code }, { status: r.code === 'NOT_FOUND' || r.code === 'CONFIRMED' ? 409 : 400 })
+  }
+  const fresh = await prisma.labStatementSection.findUnique({ where: { id: section.id }, select: { resultJson: true } })
+  const rj: any = fresh?.resultJson ?? {}
+  const readBad = rj.readCheck && rj.readCheck.ok === false
+  const needsReason = r.sectionStatus === 'DIFF' || readBad
+  if (needsReason && reason.length === 0) {
+    const why = r.sectionStatus === 'DIFF'
+      ? `月結單 $${r.statementTotal} 同成本錄入 $${r.costTotal} 差 $${Math.abs(r.diff)}`
+      : `月結單印嘅總數 $${rj.readCheck.stated} 同行加埋 $${rj.readCheck.linesSum} 唔啱`
+    return jsonNoStore({ error: `${why} — 要寫原因先可以確認`, code: 'REASON_REQUIRED', diff: r.diff }, { status: 400 })
+  }
 
   // CONFIRMED（optimistic：已 CONFIRMED 嘅分段唔會再改）
   const updated = await prisma.$transaction(async (tx) => {
     const res = await tx.labStatementSection.updateMany({
       where: { id: section.id, documentId: doc.id, status: { not: 'CONFIRMED' } },
-      data: { status: 'CONFIRMED', confirmedBy: session.userId, confirmedAt: new Date() },
+      data: { status: 'CONFIRMED', confirmedBy: session.userId, confirmedAt: new Date(), ...(needsReason ? { note: reason } : {}) },
     })
     if (res.count === 0) return null
 
@@ -138,11 +119,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return jsonNoStore({ error: '分段已經確認' }, { status: 409 })
   }
 
-  // audit（tx 後）
-  const resultJson: any = section.resultJson ?? {}
-  const counts = resultJson.counts ?? {}
-  const systemTotal = section.systemTotal == null ? null : Number(section.systemTotal)
-  const totalDiff = systemTotal == null ? null : Math.round((systemTotal - stated) * 100) / 100
   labdocAudit({
     action: 'LAB_STATEMENT_RECONCILE',
     entity: 'LabStatementSection',
@@ -154,10 +130,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       sectionId: section.id,
       documentId: doc.id,
       status: 'CONFIRMED',
-      counts,
-      statedTotal: stated,
-      systemTotal,
-      totalDiff,
+      statementTotal: r.statementTotal,
+      costTotal: r.costTotal,
+      totalDiff: r.diff,
+      reason: needsReason ? reason : null,
       docStatusAfter: updated.allConfirmed ? 'RECONCILED' : doc.status,
     },
     ipAddress: ip,
@@ -165,8 +141,4 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   })
 
   return NextResponse.json({ ok: true, sectionId: section.id, status: 'CONFIRMED', documentStatus: updated.allConfirmed ? 'RECONCILED' : doc.status })
-}
-
-function sameMonth(d: Date, ym: string): boolean {
-  return d.getUTCFullYear() === Number(ym.slice(0, 4)) && d.getUTCMonth() + 1 === Number(ym.slice(5, 7))
 }

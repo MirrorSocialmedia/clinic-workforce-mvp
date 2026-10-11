@@ -376,51 +376,42 @@ async function main(req: NextRequest): Promise<NextResponse> {
     })
   }
 
-  // ── ★ P3 STATEMENT_DIFF：月結單行 *_DIFF／NEEDS_MANUAL 未處理；或 INVOICE_WINS 未跟進完成 ──
+  // ── ★ STATEMENT_DIFF（2026-10-11 改）：月結單分段同成本錄入總數唔啱（DIFF）、未確認 ──
   {
-    const where = {
-      OR: [
-        { result: { in: ['QTY_DIFF', 'PRICE_DIFF', 'AMOUNT_DIFF', 'NEEDS_MANUAL'] }, resolution: null },
-        { resolution: 'INVOICE_WINS', followUpClosedAt: null },
-      ],
-      section: { document: stmtWhere() },
-    }
-    const rows = await prisma.labStatementLine.findMany({
+    const where = { status: 'DIFF', document: stmtWhere() }
+    const rows = await prisma.labStatementSection.findMany({
       where,
       select: {
         id: true,
-        docNo: true,
-        date: true,
-        amount: true,
-        description: true,
-        result: true,
-        resolution: true,
-        patientCode: true,
-        section: {
-          select: { id: true, document: { select: { id: true, statementMonth: true, updatedAt: true, clinicId: true, providerId: true, ...labSel } } },
-        },
+        clinicId: true,
+        providerId: true,
+        resultJson: true,
+        document: { select: { id: true, statementMonth: true, updatedAt: true, ...labSel } },
       },
-      orderBy: { section: { document: { updatedAt: 'asc' } } },
+      orderBy: { document: { updatedAt: 'asc' } },
       take: limit,
     })
-    const count = await prisma.labStatementLine.count({ where })
+    const count = await prisma.labStatementSection.count({ where })
     results.set('STATEMENT_DIFF', {
       count,
-      items: rows.map((r) => ({
-        id: r.id,
-        refType: 'LINE' as const,
-        docId: r.section.document.id,
-        sectionId: r.section.id,
-        labName: r.section.document.lab?.name ?? null,
-        clinicId: r.section.document.clinicId,
-        providerId: r.section.document.providerId,
-        docNo: r.docNo,
-        date: toDayStr(r.date),
-        amount: Number(r.amount),
-        patientCode: r.patientCode,
-        days: daysBetween(now, r.section.document.updatedAt),
-        extra: r.resolution === 'INVOICE_WINS' ? 'INVOICE_WINS 跟進中' : `${r.result}${r.description ? `｜${r.description}` : ''}`,
-      })),
+      items: rows.map((r) => {
+        const rj = (r.resultJson ?? {}) as { statementTotal?: number; costTotal?: number; diff?: number }
+        return {
+          id: r.id,
+          refType: 'SECTION' as const,
+          docId: r.document.id,
+          sectionId: r.id,
+          labName: r.document.lab?.name ?? null,
+          clinicId: r.clinicId,
+          providerId: r.providerId,
+          docNo: null,
+          date: r.document.statementMonth,
+          amount: typeof rj.diff === 'number' ? rj.diff : null,
+          patientCode: null,
+          days: daysBetween(now, r.document.updatedAt),
+          extra: typeof rj.statementTotal === 'number' && typeof rj.costTotal === 'number' ? `月結單 $${rj.statementTotal}／成本錄入 $${rj.costTotal}` : null,
+        }
+      }),
     })
   }
 

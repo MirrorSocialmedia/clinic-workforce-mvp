@@ -10,8 +10,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope } from '@/lib/scope-helpers'
 import { jsonNoStore } from '@/lib/api-response'
+import { statementCostSummary } from '@/lib/labdoc/statement-reconcile'
 import { findStatementSectionDuplicate } from '@/lib/labdoc/statement-sections'
-import { monthBounds } from '@/lib/labdoc/statement-reconcile'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 
@@ -216,20 +216,21 @@ export async function GET(
                     selfCreatedAt: doc.createdAt,
                   })
                 : null
-            // §8.3「有新 invoice，可以重新配對」：上次配對之後先確認嘅系統 invoice（同 Lab＋診所＋醫生＋日期窗）
+            // 「成本錄入喺上次對數之後有改動，可以重新對數」（2026-10-11：系統方改為成本錄入）
             let newInvoicesSinceRun = 0
             const runAt = (s.resultJson as any)?.runAt ? new Date((s.resultJson as any).runAt) : null
             if (runAt && s.status !== 'CONFIRMED' && s.clinicId && s.providerId && doc.labId && doc.statementMonth) {
-              const mb = monthBounds(doc.statementMonth)
-              newInvoicesSinceRun = await prisma.labDocument.count({
+              newInvoicesSinceRun = await prisma.costCase.count({
                 where: {
-                  kind: 'INVOICE',
-                  status: { in: ['CONFIRMED', 'PARTIAL', 'RECONCILED'] },
                   labId: doc.labId,
                   clinicId: s.clinicId,
                   providerId: s.providerId,
-                  docDate: { gte: mb.from, lte: mb.to },
-                  confirmedAt: { gt: runAt },
+                  updatedAt: { gt: runAt },
+                  // 而家喺呢個月，或者上次對數時喺呢個月（之後改走咗到貨日）
+                  OR: [
+                    { periodMonth: doc.statementMonth },
+                    { id: { in: (((s.resultJson as any)?.costs ?? []) as Array<{ id: string }>).map((c) => c.id) } },
+                  ],
                 },
               })
             }
@@ -322,6 +323,8 @@ export async function GET(
       : [],
     // §8.1：statementMonth 係行最遲日期推斷（AI／預選都冇）→ UI 標黃
     statementMonthFromLines: doc.readIssues.includes('STATEMENT_MONTH_FROM_LINES'),
+    // 2026-10-11：成份月結單 vs 成本錄入（總覽頂部）
+    costSummary: doc.kind === 'STATEMENT' ? await statementCostSummary(prisma, doc, doc.sections) : null,
   })
 }
 
