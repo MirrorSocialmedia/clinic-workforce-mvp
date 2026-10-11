@@ -41,6 +41,8 @@ import { loadPdfjs } from './pdfjs'
 
 /** §5.1：三次失敗先 EXTRACT_FAILED */
 export const LABDOC_MAX_ATTEMPTS = 3
+/** W 側 429 BUSY（佢讀緊第二張）時等幾多次先當一次失敗 */
+export const LABDOC_BUSY_MAX_ATTEMPTS = 40
 /** §5.1：失敗後 30 秒再試 */
 export const LABDOC_RETRY_MS = 30_000
 /** §5.1：每 20 秒刷 heartbeatAt */
@@ -373,7 +375,8 @@ async function runClaimed(docId: string, opts: RunOpts): Promise<void> {
           text: call.text,
           images: call.images,
         }
-        const { outcome, nullReason } = await extractLabDocViaWaInbox(req, { maxAttempts: 3 })
+        // ★ 2026-10-11：長月結單一份可以讀幾分鐘 → W 側 429 BUSY 等耐啲（≤10s × 40 ≈ 最多 6 分鐘）先當失敗
+        const { outcome, nullReason } = await extractLabDocViaWaInbox(req, { maxAttempts: LABDOC_BUSY_MAX_ATTEMPTS })
         // nullReason 'llm' = W 側 200 但 result null（附 outcome.reason）→ 交俾下面 outcome.result === null 分支
         //（2026-10-10 修：之前喺度就 break，truncated 分頁重讀永遠行唔到，extractError 只得 'llm'）
         if (nullReason && !(nullReason === 'llm' && outcome)) {
