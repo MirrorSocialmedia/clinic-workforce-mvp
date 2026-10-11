@@ -98,7 +98,7 @@ export function InlineDayCheck({ clinicId, clinicLabel, date, storeTotal, status
 
   return (
     <div className="border border-gray-300 rounded-md bg-gray-50 p-3 text-sm" role="region" aria-label={`核對 ${date}`}>
-      <div className="font-semibold mb-2 text-gray-800">核對 {date.slice(5)} 全店：{money(storeTotal)}</div>
+      <div className="font-semibold mb-2 text-gray-800">核對 {date.slice(5)} 全店店舖營收：{money(storeTotal)}</div>
       {nurses === null && canCheck === null ? (
         checkError ? (
           // 護士名單 GET 失敗 → 顯示錯誤＋【重試】（nurseKey+1 重新 GET，同 400 機制）
@@ -128,7 +128,7 @@ export function InlineDayCheck({ clinicId, clinicLabel, date, storeTotal, status
           </label>
           <label className="flex items-center gap-2 text-xs pb-1">
             <input type="checkbox" className="w-4 h-4" checked={ticked} onChange={e => setTicked(e.target.checked)} disabled={submitting || canCheck === false} />
-            已核對：系統收款 <b className="tabular-nums">{money(storeTotal)}</b> 同 Apricot 日結／收銀一致
+            已核對：店舖營收 <b className="tabular-nums">{money(storeTotal)}</b> 同 Apricot 日結／收銀一致
           </label>
           <button type="button" onClick={submitCheck} disabled={submitting || !nurseId || !ticked || canCheck === false}
             className="h-8 px-3 rounded bg-teal-700 text-white text-xs font-semibold disabled:opacity-40">

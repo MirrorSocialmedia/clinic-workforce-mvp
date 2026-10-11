@@ -100,12 +100,18 @@ export function methodsOf(allocs: DailyAlloc[]): DailyMethod[] {
   })
   // ★ cwm-dailyv3-20261010 §2：只有同一方法出現兩個 colKey（月中規則改咗旗）先加括號分辨；
   //   否則淨方法名（灰字已代表唔計）
+  // ★ cwm-storedoc-20261011（方案一）：計唔計店舖／醫生改由欄名下細字（cellFlagText：店✓ 醫✓）表達，
+  //   A 區分開「店舖營收」「醫生收入」兩個合計欄 → 標籤唔再加括號；只有同一方法兩個 colKey（月中改咗旗）先加括號分辨
   const dupMethods = new Set(seen.map(methodOf).filter((m, i, a) => a.indexOf(m) !== i))
   return seen.map(k => {
     const [m, s, d] = k.split('|')
+    const hint = !dupMethods.has(m) ? ''
+      : d === '0' ? '（不計醫生收入）'
+      : s === '0' ? '（不計店舖營收）'
+      : ''
     return {
       key: k,
-      label: (METHOD_LABELS[m] || m) + (dupMethods.has(m) ? (d === '0' ? '（不計醫生收入）' : s === '0' ? '（不計店舖營收）' : '') : ''),
+      label: (METHOD_LABELS[m] || m) + hint,
       storeIncome: s === '1',
       doctorIncome: d === '1',
     }

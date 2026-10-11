@@ -24,6 +24,7 @@ describe('methodsOf', () => {
       A({ method: 'FREE_SP', amount: 1, countAsIncome: false }),
     ])
     // ★ cwm-dailyv3-20261010 §2：冇重複 colKey → 淨方法名（灰色已代表唔計）
+    // ★ cwm-storedoc-20261011：計唔計改由欄名下細字（店✓ 醫✓）表達，標籤唔加括號
     assert.deepEqual(ms.map(m => m.label), ['Cash', 'Visa', 'Credit', 'Free SP'])
     assert.deepEqual(ms.map(m => [m.storeIncome, m.doctorIncome]), [[true, true], [true, true], [false, false], [false, true]])
   })
@@ -199,8 +200,16 @@ describe('buildDailySheet', () => {
     const report: DailyReport = { mode: 'byDay', from: '2026-09-22', to: '2026-09-22', title: '王醫生 · 旺角 · 2026-09-22（二）', ...agg, missingCommission: [], percent: 40 }
     const wb = new ExcelJS.Workbook()
     const ws = buildDailySheet(wb, report)
-    // 行 3 = A 標題、4 = header、5 = 22/09、6 = Total、7 = 手續費、8 = 淨額（★ cwm-dailyv2 ⑤）；欄 B=Cash C=Credit D=TOTAL
-    assert.equal(ws.getCell(4, 4).value, 'TOTAL')
+    // 行 3 = A 標題、4 = header、5 = 22/09、6 = Total、7 = 手續費、8 = 淨額（★ cwm-dailyv2 ⑤）；欄 B=Cash C=Credit D=店舖營收 E=醫生收入
+    // ★ cwm-storedoc-20261011（方案一）：欄名第二行 = 計唔計（店✓ 醫✓）；TOTAL 改名「店舖營收」＋多一欄「醫生收入」
+    assert.equal(ws.getCell(4, 4).value, '店舖營收')
+    assert.equal(ws.getCell(4, 5).value, '醫生收入')
+    assert.equal(ws.getCell(4, 2).value, 'Cash\n店✓ 醫✓')
+    assert.equal(ws.getCell(4, 3).value, 'Credit\n店✗ 醫✗')
+    assert.deepEqual(ws.getCell(5, 5).value, { formula: 'SUM(B5)', result: 1000 })
+    assert.deepEqual(ws.getCell(6, 5).value, { formula: 'SUM(E5:E5)', result: 1000 })
+    assert.equal((ws.getCell(7, 5).value as any).formula, 'E6-E8')
+    assert.deepEqual(ws.getCell(8, 5).value, { formula: 'SUM(B8)', result: 1000 })
     assert.deepEqual(ws.getCell(5, 4).value, { formula: 'SUM(B5)', result: 1000 })
     assert.deepEqual(ws.getCell(6, 4).value, { formula: 'SUM(D5:D5)', result: 1000 })
     // ⑤ 手續費行 = Total − 淨額（公式；result 雙寫 — ExcelJS read path 會撳 falsy result，
@@ -235,5 +244,30 @@ describe('cwm-doctorflag-20261011：醫生收入由規則旗（countForDoctor）
       A({ method: 'FREE_SP', amount: 1, countAsIncome: false, countForDoctor: false }),
     ])
     assert.deepEqual(ms.map(m => [m.storeIncome, m.doctorIncome]), [[true, false], [false, false]])
+  })
+})
+
+describe('cwm-storedoc-20261011：Excel A 區醫生收入欄包「只計醫生」（Free SP），Clinic 雜項出「—」', () => {
+  it('Free SP 入醫生收入唔入店舖營收；雜項行醫生收入「—」', () => {
+    const allocs = [
+      A({ method: 'VISA', amount: 3080, net: 3018.4 }),
+      A({ method: 'FREE_SP', amount: 580, net: 580, countAsIncome: false }),
+      A({ method: 'CASH', amount: 150, net: 150, providerExtId: null, isClinic: true }),
+    ]
+    const agg = aggregateDaily(allocs, [], a => (a.isClinic ? CLINIC_ROW_KEY : 'p1'), () => 50, () => 0)
+    const report: DailyReport = { mode: 'byDoctor', from: '2026-10-11', to: '2026-10-11', title: 't', ...agg, rows: sortDoctorRows(agg.rows), missingCommission: [], percent: 50 }
+    const ws = buildDailySheet(new ExcelJS.Workbook(), report)
+    const M = report.methods.length
+    const storeCol = 2 + M
+    const docCol = 3 + M
+    const fsp = report.methods.findIndex(m => m.key.startsWith('FREE_SP|'))
+    assert.equal(ws.getCell(4, 2 + fsp).value, 'Free SP\n店✗ 醫✓')
+    const docRow = 5
+    assert.equal((ws.getCell(docRow, storeCol).value as any).result, 3080)
+    assert.equal((ws.getCell(docRow, docCol).value as any).result, 3660)
+    assert.equal(ws.getCell(6, docCol).value, '—') // Clinic 雜項
+    assert.equal((ws.getCell(6, storeCol).value as any).result, 150)
+    assert.equal((ws.getCell(7, storeCol).value as any).result, 3230) // Total 店舖
+    assert.equal((ws.getCell(7, docCol).value as any).result, 3660) // Total 醫生
   })
 })

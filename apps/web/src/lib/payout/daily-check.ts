@@ -7,6 +7,7 @@
 import { prisma } from '@/lib/prisma'
 import { loadDailyReport, type DailyReport } from './daily-report'
 import { todayHK, hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { cellProgressOf } from './daily-cell-state'
 
 export type CheckStatus = 'UNCHECKED' | 'CHECKED' | 'CHANGED'
 
@@ -21,6 +22,8 @@ export interface DayCheckState {
     checkedAt: string
     checkedByName: string
     byProvider: Array<{ key: string; label: string; amount: number }>
+    /** ★ cwm-storedoc-20261011：確認時全店仲有幾多格店舖營收未對；null = 舊紀錄 */
+    uncheckedCells: number | null
   }
 }
 
@@ -115,6 +118,7 @@ export async function loadCheckStates(clinicId: string, from: string, to: string
         checkedAt: c.checkedAt.toISOString(),
         checkedByName: userName.get(c.checkedBy) ?? '',
         byProvider: (c.byProviderJson as any[]) ?? [],
+        uncheckedCells: c.uncheckedCells ?? null,
       } : null,
     })
   }
@@ -168,6 +172,15 @@ export async function createCheck(input: {
     throw new DailyCheckError(`數字啱啱變咗（而家 $${amount}，畫面 $${expectedAmount}），請重新整理再核對`, 409)
   }
   const byProvider = report.rows.map(r => ({ key: r.key, label: r.label, amount: r.storeTotal }))
+  // ★ cwm-storedoc-20261011：未剔晒都准確認（老闆），但記低全店仲有幾多格【店舖營收】未對（未剔／剔完有變）
+  //   同頁面同一份 report＋同一套 cellProgressOf（伺服器自己計，唔信前端）
+  const ticks = await prisma.dailyRevenueCellCheck.findMany({ where: { clinicId, date }, select: { rowKey: true, colKey: true, amount: true } })
+  const tickAmt = new Map(ticks.map(t => [`${t.rowKey}|${t.colKey}`, Number(t.amount)]))
+  const prog = cellProgressOf(report.rows.flatMap(r => report.methods.map(m => ({
+    storeIncome: m.storeIncome, doctorIncome: m.doctorIncome,
+    current: r.byMethod[m.key], checked: tickAmt.get(`${r.key}|${m.key}`) ?? null,
+  }))))
+  const uncheckedCells = prog.store.total - prog.store.done
 
   try {
     return await prisma.$transaction(async tx => {
@@ -182,13 +195,13 @@ export async function createCheck(input: {
         })
       }
       const created = await tx.dailyRevenueCheck.create({
-        data: { clinicId, date, nurseEmployeeId, nurseName: nurse.name, amount, byProviderJson: byProvider, checkedBy: actorId },
+        data: { clinicId, date, nurseEmployeeId, nurseName: nurse.name, amount, byProviderJson: byProvider, uncheckedCells, checkedBy: actorId },
       })
       await tx.auditLog.create({
         data: {
           actorId, action: 'DAILY_REVENUE_CHECK', entity: 'DailyRevenueCheck', entityId: created.id, clinicId,
-          notes: `每日大數核對：${date} · 護士 ${nurse.name} · $${amount}${old ? `（重新核對，之前 $${Number(old.amount)}）` : ''}`,
-          afterJson: JSON.stringify({ clinicId, date, nurseEmployeeId, amount }),
+          notes: `每日大數核對：${date} · 護士 ${nurse.name} · $${amount}${uncheckedCells > 0 ? ` · 確認時有 ${uncheckedCells} 格未對` : ''}${old ? `（重新核對，之前 $${Number(old.amount)}）` : ''}`,
+          afterJson: JSON.stringify({ clinicId, date, nurseEmployeeId, amount, uncheckedCells }),
         } as any,
       })
       return created
