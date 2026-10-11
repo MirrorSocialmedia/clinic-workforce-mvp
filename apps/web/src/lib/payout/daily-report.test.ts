@@ -24,7 +24,8 @@ describe('methodsOf', () => {
       A({ method: 'FREE_SP', amount: 1, countAsIncome: false }),
     ])
     // ★ cwm-dailyv3-20261010 §2：冇重複 colKey → 淨方法名（灰色已代表唔計）
-    assert.deepEqual(ms.map(m => m.label), ['Cash', 'Visa', 'Credit', 'Free SP'])
+    // ★ cwm-freesplabel-20261011：「唔計店舖、計醫生」欄係藍字 → 一律加「（不計店舖營收）」（同月結 Excel），否則一行加唔埋 TOTAL
+    assert.deepEqual(ms.map(m => m.label), ['Cash', 'Visa', 'Credit', 'Free SP（不計店舖營收）'])
     assert.deepEqual(ms.map(m => [m.storeIncome, m.doctorIncome]), [[true, true], [true, true], [false, false], [false, true]])
   })
 })

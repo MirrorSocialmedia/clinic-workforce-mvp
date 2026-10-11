@@ -143,8 +143,12 @@ export function DailyReviewRow({ review, clinicId, clinicLabel, month, onRecompu
           </label>
           {notice && <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">{notice}</div>}
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)] gap-2 px-2 text-xs font-semibold text-gray-600">
-            <span>日期</span><span className="text-right">呢位醫生收款</span><span className="text-right">全店收款</span><span>護士核對（每店每日）</span>
+            <span>日期</span><span className="text-right">呢位醫生收入</span><span className="text-right">全店營收</span><span>護士核對（每店每日）</span>
           </div>
+          {/* ★ cwm-freesplabel-20261011：醫生收入包「唔計店舖營收」嘅方式（例如 Free SP）→ 可以大過全店營收，唔係計錯 */}
+          {review.days.some(d => d.doctorRaw > d.storeTotal + 0.005) && (
+            <div className="px-2 text-xs text-gray-500">醫生收入包括唔計店舖營收嘅收款（例如 Free SP），所以有啲日子會大過全店營收；護士核對嘅係全店營收。</div>
+          )}
           {shown.length === 0 && <div className="px-2 text-gray-500 text-xs">{onlyOpen ? '全部已核對 ✓' : '呢個月冇收款'}</div>}
           {shown.map(d => (
             <div key={d.date} className={`grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)] gap-2 px-2 py-1 rounded border items-center ${d.status === 'CHANGED' ? 'bg-red-50 border-red-200' : d.status === 'UNCHECKED' ? 'bg-amber-50 border-amber-200' : justChecked.has(d.date) ? 'bg-green-50 border-green-300' : 'bg-white'}`}>

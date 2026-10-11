@@ -100,12 +100,18 @@ export function methodsOf(allocs: DailyAlloc[]): DailyMethod[] {
   })
   // ★ cwm-dailyv3-20261010 §2：只有同一方法出現兩個 colKey（月中規則改咗旗）先加括號分辨；
   //   否則淨方法名（灰字已代表唔計）
+  // ★ cwm-freesplabel-20261011：「唔計店舖、計醫生」（例如 Free SP）欄係藍字（計醫生收入），
+  //   灰字提示唔到佢唔入 TOTAL → 一行加極都唔等於 TOTAL，睇落似計錯。呢種欄一律加「（不計店舖營收）」
+  //   （同醫生月結 Excel 同一個標籤）；「（不計醫生收入）」照舊只喺撞名先出（老闆 2026-10-07 要求拎走）
   const dupMethods = new Set(seen.map(methodOf).filter((m, i, a) => a.indexOf(m) !== i))
   return seen.map(k => {
     const [m, s, d] = k.split('|')
+    const hint = s === '0' && d === '1' ? '（不計店舖營收）'
+      : dupMethods.has(m) && d === '0' ? '（不計醫生收入）'
+      : ''
     return {
       key: k,
-      label: (METHOD_LABELS[m] || m) + (dupMethods.has(m) ? (d === '0' ? '（不計醫生收入）' : s === '0' ? '（不計店舖營收）' : '') : ''),
+      label: (METHOD_LABELS[m] || m) + hint,
       storeIncome: s === '1',
       doctorIncome: d === '1',
     }
