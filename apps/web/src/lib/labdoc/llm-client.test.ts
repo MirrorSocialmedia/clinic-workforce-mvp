@@ -9,7 +9,7 @@
  *  - 429 BUSY：重試且 **re-seal 新 envelope**（nonce/ts 每次 attempt 都新 — 工單 §1 決定 4）
  *  - 429 耗盡 → busy_exhausted；401/400 → rejected（唔重試）；503/500 → upstream
  *  - env 未設 → not_configured
- *  - timeout：fetch reject TimeoutError → 'timeout'（真 95s 唔實測；常量錨定 95_000）
+ *  - timeout：fetch reject TimeoutError → 'timeout'（真 270s 唔實測；常量錨定 270_000）
  */
 import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -28,7 +28,7 @@ const MOCK_RESULT: any = {
   sections: [], subtotal: 100, total: 100, readIssues: [],
 }
 
-type MockMode = 'ok' | 'mock' | 'null-result' | 'busy-then-ok' | 'busy-always' | '503' | '401' | '400' | '500'
+type MockMode = 'ok' | 'mock' | 'null-result' | 'busy-then-ok' | 'busy-always' | '503' | '401' | '400' | '500' | 'keepalive'
 let mode: MockMode = 'ok'
 let reqCount = 0
 let seenNonces: string[] = []
@@ -65,6 +65,14 @@ before(async () => {
         if (mode === '500') return send(500, { error: 'upstream' })
         if (mode === 'null-result') {
           return send(200, seal(SECRET, 'k1', { result: null, reason: 'breaker_open' }, respContext(env.nonce)))
+        }
+        if (mode === 'keepalive') {
+          // 2026-10-11：W route keep-alive streaming — 先 200＋空格，隔一陣再送 sealed JSON
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-accel-buffering': 'no' })
+          res.write(' ')
+          setTimeout(() => res.write(' '), 30)
+          setTimeout(() => res.end(JSON.stringify(seal(SECRET, 'k1', { result: MOCK_RESULT, reason: null }, respContext(env.nonce)))), 60)
+          return
         }
         const reason = mode === 'mock' ? 'mock' : null
         return send(200, seal(SECRET, 'k1', { result: MOCK_RESULT, reason }, respContext(env.nonce)))
@@ -107,13 +115,22 @@ const REQ = { mode: 'TEXT' as const, kindHint: 'INVOICE' as const, labHint: null
 test('context 錨定 + 200 ok → result（client 95s 常量）', async () => {
   reset()
   assert.equal(M.REQ_CONTEXT_LABDOC, 'labdoc-extract.v1')
-  assert.equal(M.LABDOC_CLIENT_TIMEOUT_MS, 95_000)
+  // 2026-10-11：長月結單 → 預設 270s（> W 側 240s；W route keep-alive streaming 避 Cloudflare 100s）
+  assert.equal(M.LABDOC_CLIENT_TIMEOUT_MS, 270_000)
   const r = await M.extractLabDocViaWaInbox(REQ)
   assert.equal(r.nullReason, null)
   assert.equal(r.outcome?.result?.docNoRaw, 'INV-001')
   assert.equal(r.outcome?.reason, null)
   assert.equal(reqCount, 1)
   assert.equal(M.labdocLlmStats().ok, 1)
+})
+
+test('keep-alive streaming（前置空格，最後先送 sealed JSON）→ 照解到', async () => {
+  reset()
+  mode = 'keepalive'
+  const r = await M.extractLabDocViaWaInbox(REQ)
+  assert.equal(r.nullReason, null)
+  assert.equal(r.outcome?.result?.docNoRaw, 'INV-001')
 })
 
 test('200 + result + reason=mock → 照計成功（§5.2）', async () => {
