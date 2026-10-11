@@ -9,8 +9,10 @@ import { aggregateDaily, methodsOf, dayLabel, daysBetween, CLINIC_ROW_KEY, CLINI
 import { buildDailySheet } from './xlsx-report'
 
 const at = (d: string, hh = '10') => new Date(`${d}T${hh}:00:00+08:00`)
+// ★ cwm-doctorflag-20261011：countForDoctor 預設 = 舊寫死口徑（countAsIncome || FREE_SP）＝ migration backfill
 const A = (o: Partial<DailyAlloc> & { method: string; amount: number }): DailyAlloc => ({
-  net: o.amount, countAsIncome: true, paidAt: at('2026-09-22'), providerExtId: 'p1', clinicExtId: 'c1', ...o,
+  net: o.amount, countAsIncome: true, paidAt: at('2026-09-22'), providerExtId: 'p1', clinicExtId: 'c1',
+  countForDoctor: (o.countAsIncome ?? true) || o.method === 'FREE_SP', ...o,
 })
 
 describe('methodsOf', () => {
@@ -213,5 +215,25 @@ describe('buildDailySheet', () => {
     // B 區：行 10 標題、11 header、12 data、13 Total；E = 分成
     assert.equal(ws.getCell(12, 5).value, 400)
     assert.deepEqual(ws.getCell(13, 5).value, { formula: 'SUM(E12:E12)', result: 400 })
+  })
+})
+
+describe('cwm-doctorflag-20261011：醫生收入由規則旗（countForDoctor）決定，唔再寫死 FREE_SP', () => {
+  it('四種組合：店＋醫／淨店／淨醫／都唔計 —— TOTAL 只計店，醫生收入只計醫', () => {
+    const r = aggregateDaily([
+      A({ method: 'CASH', amount: 1000, net: 1000 }),                                              // 店 ✓ 醫 ✓
+      A({ method: 'OCTOPUS', amount: 200, net: 200, countAsIncome: true, countForDoctor: false }),  // 店 ✓ 醫 ✗
+      A({ method: 'FREE_SP', amount: 300, net: 300, countAsIncome: false, countForDoctor: true }),  // 店 ✗ 醫 ✓
+      A({ method: 'CREDIT', amount: 500, net: 500, countAsIncome: false, countForDoctor: false }),  // 都唔計
+    ], [], () => 'p1', () => null, () => 0)
+    const row = r.rows[0]
+    assert.equal(row.storeTotal, 1200)
+    assert.equal(row.doctorRaw, 1300)
+    assert.equal(row.doctorNet, 1300)
+    const ms = methodsOf([
+      A({ method: 'OCTOPUS', amount: 1, countAsIncome: true, countForDoctor: false }),
+      A({ method: 'FREE_SP', amount: 1, countAsIncome: false, countForDoctor: false }),
+    ])
+    assert.deepEqual(ms.map(m => [m.storeIncome, m.doctorIncome]), [[true, false], [false, false]])
   })
 })

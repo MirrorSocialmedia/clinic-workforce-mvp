@@ -151,16 +151,16 @@ export async function loadDoctorSheetDataForRun(
   // ★ Stage 2：Provider 舊 apricotId 欄已剷走 —— 帳號由 ApricotPractitioner（唯一來源）攞。
   //   冇綁帳號 → extraAllocs 空（舊行為 providerExtId=null 會攞到別行，純 latent bug，唔再重現）。
   const providerApricotIds = provider ? await apricotIdsOfProvider(db, provider.id) : []
-  // ★ 引擎 breakdownJson 含 countAsIncome=true 嘅行 ＋ FREE_SP（★ 2026-08-22：FREE_SP 計醫生收入，
-  //   engine allocWhere 已收埋），CREDIT（countAsIncome=false）唔喺入面 —
-  //   所以 CREDIT 嗰啲 allocation 要另外撈返嚟合併入 A 區（FREE_SP 排除防 double count）。
+  // ★ 引擎 breakdownJson 只含【計醫生收入】嘅行（engine allocWhere：countForDoctor=true）——
+  //   唔計醫生收入嘅（例如 CREDIT）要另外撈返嚟合併入 A 區顯示。
+  // ★ cwm-doctorflag-20261011：條件由寫死「countAsIncome=false AND method≠FREE_SP」改為 countForDoctor=false
+  //   （migration backfill 同一條件 → 舊 run 撈到嘅行完全一樣）；店舖旗跟返每筆自己嘅 countAsIncome。
   const extraWhere: any = {
     providerExtId: { in: providerApricotIds },
     periodMonth: run.periodMonth,
     isVoid: false,
     isSuperseded: false,
-    countAsIncome: false,
-    methodNorm: { not: 'FREE_SP' },
+    countForDoctor: false,
   }
   if (clinic?.apricotClinicId) extraWhere.clinicExtId = clinic.apricotClinicId
   const extraAllocs: any[] = providerApricotIds.length > 0
@@ -169,6 +169,7 @@ export async function loadDoctorSheetDataForRun(
         select: {
           methodNorm: true, amount: true, netAmount: true,
           feePercentUsed: true, paidAt: true, billExtId: true,
+          countAsIncome: true, paymentExtId: true,
         },
       })
     : []
@@ -181,20 +182,26 @@ export async function loadDoctorSheetDataForRun(
   const extraBillCodes = new Map<string, string>(
     extraBills.map(b => [b.extId, b.code] as [string, string]),
   )
-  // ★ cwm-payout P-1：雙旗 — 呢批 query 本身係 countAsIncome=false AND method≠FREE_SP
-  //   → 店舖營收、醫生收入兩樣都唔計（CREDIT 等）
-  const extraRows: any[] = extraAllocs.map(a => ({
-    method: a.methodNorm,
-    rawAmount: Number(a.amount),
-    netAmount: Number(a.netAmount),
-    feePercentUsed: Number(a.feePercentUsed),
-    paidAt: a.paidAt,
-    billCode: extraBillCodes.get(a.billExtId) ?? '',
-    storeIncome: false,
-    doctorIncome: false,
-  }))
+  // ★ cwm-payout P-1：雙旗 — 呢批 query 本身係 countForDoctor=false → 醫生收入唔計；
+  //   店舖營收跟每筆 countAsIncome（cwm-doctorflag-20261011：可以「計店舖、唔計醫生」）
+  // ★ cwm-doctorflag-20261011：已鎖月結 —— 鎖咗之後先改規則＋重新同步，同一筆可能已經喺快照（breakdown）入面
+  //   → 同快照撞（同一付款＋方式＋單號）嘅唔再加，A 區唔會雙計
+  const inSnapshot = new Set(breakdown.map((b: any) => `${b.paymentExtId ?? ''}|${String(b.method ?? '').trim()}|${b.billCode ?? ''}`))
+  const extraRows: any[] = extraAllocs
+    .map(a => ({
+      method: a.methodNorm,
+      rawAmount: Number(a.amount),
+      netAmount: Number(a.netAmount),
+      feePercentUsed: Number(a.feePercentUsed),
+      paidAt: a.paidAt,
+      billCode: extraBillCodes.get(a.billExtId) ?? '',
+      paymentExtId: a.paymentExtId,
+      storeIncome: !!a.countAsIncome,
+      doctorIncome: false,
+    }))
+    .filter(r => !inSnapshot.has(`${r.paymentExtId ?? ''}|${String(r.method ?? '').trim()}|${r.billCode ?? ''}`))
   // ★ cwm-payout P-1：breakdown（engine 快照）行加雙旗 —
-  //   doctorIncome = true（engine allocWhere 只收 countAsIncome || FREE_SP = 計醫生收入嘅行）；
+  //   doctorIncome = true（engine allocWhere 只收計醫生收入嘅行：countForDoctor=true；舊 run = countAsIncome || FREE_SP）；
   //   storeIncome = 快照 countAsIncome（engine 寫入）；舊 run 冇該欄 → fallback 寫死口徑
   const flaggedBreakdown: any[] = breakdown.map(b => ({
     ...b,
@@ -370,7 +377,7 @@ export async function loadDoctorSheetDataForRun(
 
   // ─── 砌 DoctorSheetData（六區 layout，由產生器出） ──────────────
   // ★ 口徑對齊 engine（lib/payout/engine.ts L391-401）：
-  //   醫生收入（F 區 gross）= countAsIncome || FREE_SP — CREDIT 等 countAsIncome=false 嘅方式唔計
+  //   醫生收入（F 區 gross）= countForDoctor（付款方式規則「計醫生收入」，cwm-doctorflag-20261011）
   //   店舖營收（A 區 TOTAL）= countAsIncome（每筆 allocation 自己嘅旗，由付款方式規則決定）
   //   labRows 必傳 LAB + INVISALIGN 兩類（engine profit 要減 invisalignCost）
   //   SP/REF 金額 = 資料庫 amount（base/rate 只作顯示；人手改過加「（已人手調整）」標記）

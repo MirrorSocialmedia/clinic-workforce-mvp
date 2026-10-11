@@ -1419,7 +1419,8 @@ model PaymentAllocation {
   amount         Decimal  @db.Decimal(12, 2)
   feePercentUsed Decimal  @db.Decimal(5, 3)
   netAmount      Decimal  @db.Decimal(12, 2)
-  countAsIncome  Boolean
+  countAsIncome  Boolean // 店舖營收（同步時規則快照）
+  countForDoctor Boolean // ★ cwm-doctorflag-20261011：醫生收入（同步時規則快照；月結 gross 只收 true）
   allocationMode String
   needsReview    Boolean  @default(false)
   isVoid         Boolean  @default(false) // ★ Apricot 作廢（引擎排除）
@@ -1436,7 +1437,9 @@ model PaymentMethodRule {
   method        String
   label         String
   feePercent    Decimal   @default(0) @db.Decimal(5, 3)
-  countAsIncome Boolean   @default(true)
+  countAsIncome Boolean   @default(true) // 計【店舖營收】
+  /// ★ cwm-doctorflag-20261011：計【醫生收入】（月結 gross）—— 取代寫死嘅「countAsIncome || FREE_SP」
+  countForDoctor Boolean  @default(true)
   effectiveFrom DateTime
   effectiveTo   DateTime?
   createdBy     String

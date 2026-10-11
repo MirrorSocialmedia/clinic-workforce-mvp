@@ -21,6 +21,7 @@ interface Rule {
   label: string
   feePercent: number
   countAsIncome: boolean
+  countForDoctor: boolean // ★ cwm-doctorflag-20261011
   effectiveFrom: string
   effectiveTo: string | null
   createdBy: string
@@ -36,6 +37,7 @@ export default function PaymentMethodsPage() {
     label: '',
     feePercent: 0,
     countAsIncome: true,
+    countForDoctor: true,
     effectiveFrom: '2026-01-01',
     effectiveTo: '',
   })
@@ -59,7 +61,7 @@ export default function PaymentMethodsPage() {
 
   const openCreate = () => {
     setEditing(null)
-    setForm({ method: '', label: '', feePercent: 0, countAsIncome: true, effectiveFrom: '2026-01-01', effectiveTo: '' })
+    setForm({ method: '', label: '', feePercent: 0, countAsIncome: true, countForDoctor: true, effectiveFrom: '2026-01-01', effectiveTo: '' })
     setOpen(true)
   }
 
@@ -70,6 +72,7 @@ export default function PaymentMethodsPage() {
       label: rule.label,
       feePercent: rule.feePercent,
       countAsIncome: rule.countAsIncome,
+      countForDoctor: rule.countForDoctor,
       effectiveFrom: rule.effectiveFrom?.slice(0, 10) || '2026-01-01',
       effectiveTo: rule.effectiveTo?.slice(0, 10) || '',
     })
@@ -93,6 +96,7 @@ export default function PaymentMethodsPage() {
           label: form.label,
           feePercent: form.feePercent,
           countAsIncome: form.countAsIncome,
+          countForDoctor: form.countForDoctor,
           effectiveFrom: `${form.effectiveFrom}T00:00:00+08:00`,
           effectiveTo: form.effectiveTo ? `${form.effectiveTo}T23:59:59+08:00` : null,
         }),
@@ -134,7 +138,7 @@ export default function PaymentMethodsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">付款方式規則</h1>
-          <p className="text-sm text-gray-500 mt-1">設定每種付款方式的費率同是否計入收入</p>
+          <p className="text-sm text-gray-500 mt-1">設定每種付款方式的費率、計唔計店舖營收、計唔計醫生收入（出糧）</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -175,8 +179,11 @@ export default function PaymentMethodsPage() {
                     onChange={e => setForm({ ...form, feePercent: parseFloat(e.target.value) || 0 })}
                   />
                 </div>
+              </div>
+              {/* ★ cwm-doctorflag-20261011：兩個旗分開設 */}
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Count as Income</Label>
+                  <Label>計店舖營收</Label>
                   <select
                     value={form.countAsIncome ? 'true' : 'false'}
                     onChange={e => setForm({ ...form, countAsIncome: e.target.value === 'true' })}
@@ -186,7 +193,21 @@ export default function PaymentMethodsPage() {
                     <option value="false">否</option>
                   </select>
                 </div>
+                <div>
+                  <Label>計醫生收入（出糧）</Label>
+                  <select
+                    value={form.countForDoctor ? 'true' : 'false'}
+                    onChange={e => setForm({ ...form, countForDoctor: e.target.value === 'true' })}
+                    className="w-full px-3 py-2 border rounded-md text-sm"
+                  >
+                    <option value="true">是</option>
+                    <option value="false">否</option>
+                  </select>
+                </div>
               </div>
+              <p className="text-xs text-amber-700">
+                改咗之後，要喺「Apricot 同步」重新同步受影響嘅日子先會套用落已有收款；已鎖定嘅月結唔會變。
+              </p>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Effective From</Label>
@@ -228,7 +249,8 @@ export default function PaymentMethodsPage() {
                 <TableHead>Method</TableHead>
                 <TableHead>Label</TableHead>
                 <TableHead>Fee %</TableHead>
-                <TableHead>計收入</TableHead>
+                <TableHead>計店舖營收</TableHead>
+                <TableHead>計醫生收入</TableHead>
                 <TableHead>生效日</TableHead>
                 <TableHead>狀態</TableHead>
                 <TableHead className="text-right">操作</TableHead>
@@ -244,6 +266,13 @@ export default function PaymentMethodsPage() {
                     <TableCell>{rule.feePercent.toFixed(1)}%</TableCell>
                     <TableCell>
                       {rule.countAsIncome ? (
+                        <Badge variant="secondary" className="text-green-700 bg-green-50">✓</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-gray-500">✗</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {rule.countForDoctor ? (
                         <Badge variant="secondary" className="text-green-700 bg-green-50">✓</Badge>
                       ) : (
                         <Badge variant="outline" className="text-gray-500">✗</Badge>
@@ -275,7 +304,7 @@ export default function PaymentMethodsPage() {
               })}
               {methodMap.size === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-gray-400 py-8">
+                  <TableCell colSpan={8} className="text-center text-gray-400 py-8">
                     未有規則，點擊右上角新增
                   </TableCell>
                 </TableRow>
@@ -287,7 +316,9 @@ export default function PaymentMethodsPage() {
 
       <div className="text-xs text-gray-400">
         <p>★ AMEX / UNIONPAY / WECHAT / PAYME 預設唔 seed，需要手動設定費率。</p>
-        <p>★ feePercent = 0 表示無手續費；countAsIncome = false 表示唔計入收入（如 CREDIT、FREE_SP）。</p>
+        <p>★ feePercent = 0 表示無手續費。</p>
+        <p>★ 計店舖營收 = 每日大數 TOTAL／店舖營收／全店月報；計醫生收入 = 醫生月結（出糧）收款。例如 FREE SP：店舖 ✗、醫生 ✓；CREDIT：兩樣 ✗。</p>
+        <p>★ 改完要重新同步受影響日子先會套用落已有收款；已鎖定月結唔變（要解鎖重做先會用新設定）。</p>
       </div>
     </div>
   )

@@ -337,6 +337,7 @@ interface PayoutBreakdownItem {
   feePercentUsed: number
   netAmount: number
   countAsIncome: boolean
+  countForDoctor?: boolean // ★ cwm-doctorflag-20261011（舊 run 快照冇呢欄 → 讀嗰邊當 true：舊 breakdown 只收醫生收入行）
   // ★ AA3: 付款明細加欄
   paidAt: Date | null
   billCode: string | null
@@ -369,8 +370,8 @@ interface PayoutResult {
  * ★ 2026-08-17: 加 clinicId — 所有資料源收窄到該診所。
  *
  * Formula:
- *   ① Gross = Σ(PaymentAllocation.netAmount) excluding isVoid / isSuperseded / countAsIncome=false
- *      + FREE_SP（countAsIncome=false 但計醫生收入）★ 2026-08-22
+ *   ① Gross = Σ(PaymentAllocation.netAmount) excluding isVoid / isSuperseded / countForDoctor=false
+ *      ★ cwm-doctorflag-20261011：countForDoctor = 付款方式規則「計醫生收入」（舊：countAsIncome || FREE_SP）
  *   ② Cost = Lab + Implant + Invisalign (three separate categories)
  *   ③ Profit = Gross − Cost
  *   ④ Salary = Profit × 拆帳%
@@ -411,12 +412,9 @@ export async function computePayout(
     ...ACTIVE_ALLOCATION,
     providerExtId: { in: apricotIds },
     periodMonth,
-    // ★ 2026-08-22：FREE_SP 唔計店舖營收（countAsIncome=false）但計醫生收入
-    //   methodNorm 存 normalized 值（normalize.ts: 'FREE SP' → 'FREE_SP'），精確 match
-    OR: [
-      { countAsIncome: true },
-      { countAsIncome: false, methodNorm: 'FREE_SP' },
-    ],
+    // ★ cwm-doctorflag-20261011：醫生收入由「付款方式規則 → 計醫生收入」決定（同步時快照落每筆 allocation），
+    //   取代寫死嘅「countAsIncome || FREE_SP」（2026-08-22）。migration backfill 用同一條件 → 舊數零改變。
+    countForDoctor: true,
   }
   if (apricotClinicId) allocWhere.clinicExtId = apricotClinicId
 
@@ -522,6 +520,7 @@ export async function computePayout(
     feePercentUsed: Number(a.feePercentUsed),
     netAmount: Number(a.netAmount),
     countAsIncome: a.countAsIncome,
+    countForDoctor: a.countForDoctor,
     // ★ AA3: 新增欄位
     paidAt: a.paidAt,
     billCode: billCodeMap.get(a.billExtId) ?? null,

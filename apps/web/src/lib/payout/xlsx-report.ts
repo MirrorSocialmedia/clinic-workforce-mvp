@@ -144,6 +144,9 @@ export interface CoverSheetData {
     freeSp: number
     /// ★ Credit（店舖營收、醫生收入兩樣都唔計）
     credit: number
+    /// ★ cwm-doctorflag-20261011：唔計店舖營收嘅逐方式合計（按醫生頁 colKey，s=0）＋計唔計醫生收入 ——
+    ///   封面備註說明由呢度 derive（唔再寫死「Free SP 已計醫生、Credit 兩樣都唔計」）。冇（舊 caller）→ 用 freeSp／credit 舊說明
+    nonStore?: { method: string; label: string; forDoctor: boolean; amount: number }[]
     /// ★ 醫生頁 method 欄數（封面計算 A 區 TOTAL 欄 = 2+methodCount 用嚟跨連結；封面自己唔知 M）
     methodCount: number
   }[]
@@ -949,16 +952,16 @@ export function buildCoverSheet(wb: ExcelJS.Workbook, c: CoverSheetData): ExcelJ
   setLabel(ws.getCell(row, 1), '備註 · 唔計入店舖營收', { bold: true })
   for (let i = 2; i <= lastCol; i++) ws.getCell(row, i).border = thinBorder
   row++
-  setLabel(ws.getCell(row, 1), '  Free SP')
-  ws.getCell(row, 2).border = thinBorder
-  setData(ws.getCell(row, 3), round2(c.doctors.reduce((s, d) => s + d.freeSp, 0)), { fmt: MONEY_FMT })
-  setLabel(ws.getCell(row, 4), '唔計店舖營收，已計入醫生收入（已包含喺上面「應付醫生」）', { gray: true, italic: true })
+  // ★ cwm-doctorflag-20261011：逐方式列（Free SP、Credit 必出；其他唔計店舖營收嘅方式有數先出），
+  //   說明跟實際「計唔計醫生收入」（付款方式規則快照）—— 唔再寫死
+  for (const n of coverNonStoreNotes(c.doctors)) {
+    setLabel(ws.getCell(row, 1), `  ${n.label}`)
+    ws.getCell(row, 2).border = thinBorder
+    setData(ws.getCell(row, 3), n.amount, { fmt: MONEY_FMT })
+    setLabel(ws.getCell(row, 4), n.note, { gray: true, italic: true })
+    row++
+  }
   row++
-  setLabel(ws.getCell(row, 1), '  Credit')
-  ws.getCell(row, 2).border = thinBorder
-  setData(ws.getCell(row, 3), round2(c.doctors.reduce((s, d) => s + d.credit, 0)), { fmt: MONEY_FMT })
-  setLabel(ws.getCell(row, 4), '店舖營收、醫生收入兩樣都唔計（記賬用）', { gray: true, italic: true })
-  row += 2
 
   // ★ A8：底部免責句（唔准慳）— 冇佢會令人以為「診所淨收入」係最終盈利
   const disclaimer = ws.getCell(row, 1)
@@ -1103,4 +1106,45 @@ export function buildDailySheet(wb: ExcelJS.Workbook, d: DailyReport): ExcelJS.W
     row++
   }
   return ws
+}
+
+// ★ cwm-doctorflag-20261011：封面「唔計入店舖營收」備註 —— 逐方式金額＋說明（由各醫生頁 colKey 旗 derive）
+const NOTE_DOCTOR = '唔計店舖營收，已計入醫生收入（已包含喺上面「應付醫生」）'
+const NOTE_NEITHER = '店舖營收、醫生收入兩樣都唔計（記賬用）'
+const NOTE_MIXED = '唔計店舖營收；部分有計醫生收入（月內改過付款方式規則，詳見各醫生頁）'
+const NOTE_PLAIN = '唔計店舖營收'
+export function coverNonStoreNotes(doctors: CoverSheetData['doctors']): { label: string; amount: number; note: string }[] {
+  const legacy = doctors.every(d => !d.nonStore)
+  if (legacy) {
+    return [
+      { label: 'Free SP', amount: round2(doctors.reduce((s, d) => s + d.freeSp, 0)), note: NOTE_DOCTOR },
+      { label: 'Credit', amount: round2(doctors.reduce((s, d) => s + d.credit, 0)), note: NOTE_NEITHER },
+    ]
+  }
+  const by = new Map<string, { label: string; amount: number; flags: Set<boolean> }>()
+  const ensure = (method: string, label: string) => {
+    let e = by.get(method)
+    if (!e) { e = { label, amount: 0, flags: new Set() }; by.set(method, e) }
+    return e
+  }
+  ensure('FREE_SP', 'Free SP')
+  ensure('CREDIT', 'Credit')
+  for (const d of doctors) {
+    for (const n of d.nonStore ?? []) {
+      const e = ensure(n.method, n.label)
+      e.amount += n.amount
+      if (Math.abs(n.amount) > 0.005) e.flags.add(n.forDoctor)
+    }
+  }
+  const out: { label: string; amount: number; note: string }[] = []
+  for (const [method, e] of by) {
+    const amount = round2(e.amount)
+    if (method !== 'FREE_SP' && method !== 'CREDIT' && Math.abs(amount) < 0.005) continue
+    const note = e.flags.size === 2 ? NOTE_MIXED
+      : e.flags.has(true) ? NOTE_DOCTOR
+      : e.flags.has(false) ? NOTE_NEITHER
+      : NOTE_PLAIN
+    out.push({ label: e.label, amount, note })
+  }
+  return out
 }

@@ -120,6 +120,7 @@ jobs:
             'src/app/api/external/**/*.test.ts' \
             'src/lib/labdoc/**/*.test.ts' \
             src/lib/apricot/account.test.ts \
+            src/lib/apricot/allocate-doctorflag.test.ts \
             src/lib/apricot/availability.test.ts \
             src/lib/apricot/normalize.test.ts \
             src/lib/apricot/s5-active-statuses.test.ts \
