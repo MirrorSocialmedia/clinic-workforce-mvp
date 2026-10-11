@@ -88,8 +88,10 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   const costById = new Map(costs.map((c) => [c.id, c]))
   const diff = rj.diff ?? null
   const isDiff = s.status === 'DIFF'
-  const readBad = rj.readCheck?.ok === false
-  const needsReason = isDiff || readBad
+  // ★ 2026-10-11：「印嘅總數 vs 行加埋」只喺同成本錄入對唔上（DIFF）先顯示，幫手搵原因；
+  //   總數一致就唔顯示、唔使原因 — 月結單冇印總數時 AI 會自己加錯一個數，總數啱都出警告只會誤導
+  const readBad = isDiff && rj.readCheck?.ok === false
+  const needsReason = isDiff
   const docBlocked = !!s.duplicate || !!data.document.supersededById
   const editable = !confirmed && !docBlocked
 
@@ -274,7 +276,6 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
             <div className="flex-1 min-w-[12rem] text-sm">
               {!costed ? <span className="text-muted-foreground">未對數</span>
                 : isDiff ? <span className="text-amber-700">差 {fmtMoney(Math.abs(diff ?? 0))} — 改好成本錄入再「重新對數」，或者寫原因確認</span>
-                  : readBad ? <span className="text-amber-700">總數一致，但月結單讀數唔齊 — 寫原因確認</span>
                     : <span className="text-green-700">✓ 總數一致</span>}
             </div>
             {needsReason && costed && (
@@ -525,7 +526,7 @@ function ReadCheckNote({ stated, linesSum, lines }: { stated: number; linesSum: 
       <ul className="list-disc pl-5 text-xs space-y-0.5">
         {gap > 0 ? (
           <>
-            <li>如果原檔印嘅總數其實係 {fmtMoney(linesSum)} — 即係總數讀錯咗，寫原因（例：總數讀錯）確認就得。</li>
+            <li>如果原檔冇印總數（例如只係手寫），或者印嘅其實係 {fmtMoney(linesSum)} — 即係呢個總數 AI 讀錯，唔使理，照睇同成本錄入差幾多。</li>
             <li>如果真係 {fmtMoney(stated)} — 即係有行讀多咗或者讀重複，嗰行撳「標記」→「唔關我哋事」（原因：重複讀），再睇同成本錄入差幾多。</li>
           </>
         ) : (

@@ -246,12 +246,14 @@ test('confirm：有差額冇原因 → 400 REASON_REQUIRED；有原因 → CONFI
   assert.strictEqual(st.sections[0].note, 'Lab 下月補單')
 })
 
-test('confirm：總數一致但月結單印嘅總數同行加埋唔啱 → 要原因', async () => {
+test('confirm 2026-10-11：總數同成本錄入一致，AI 讀到嘅「印嘅總數」唔同 → 唔使原因，直接確認', async () => {
+  // HC 9 月 Dr.Tse：月結單冇印總數（只有手寫 $12,400），AI 自己加錯咗個 $11,780
   const st = mkState()
   st.sections[0].statedTotal = 6000
   const r = await confirmCall(st)
-  assert.strictEqual(r.status, 400)
-  assert.strictEqual((await r.json()).code, 'REASON_REQUIRED')
+  assert.strictEqual(r.status, 200)
+  assert.strictEqual(st.sections[0].status, 'CONFIRMED')
+  assert.strictEqual(st.sections[0].resultJson.readCheck.ok, false, '讀數檢查照記低（DIFF 時幫手搵原因）')
 })
 
 test('confirm：兩段 — 第一段確認後文件未 RECONCILED', async () => {
