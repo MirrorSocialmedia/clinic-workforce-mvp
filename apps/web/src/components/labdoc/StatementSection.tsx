@@ -197,11 +197,7 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
           </div>
         </div>
       </div>
-      {readBad && rj.readCheck && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
-          月結單印嘅總數 {fmtMoney(rj.readCheck.stated)}，但讀到嘅行加埋 {fmtMoney(rj.readCheck.linesSum)} — 可能有行讀漏，撳「睇原檔」核對。
-        </div>
-      )}
+      {readBad && rj.readCheck && <ReadCheckNote stated={rj.readCheck.stated} linesSum={rj.readCheck.linesSum} lines={s.lines} />}
       {(rj.unpricedCount ?? 0) > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">有 {rj.unpricedCount} 筆成本仲係「未有價」— 照計佢而家個數（冇數當 $0），確認前睇清楚。</div>
       )}
@@ -503,6 +499,49 @@ function PairPanel({ docId, sid, lines, costs, initial, onClose, onDone }: {
           <button onClick={submit} disabled={busy || !ok} className="px-4 py-1.5 rounded-lg bg-brand text-white text-sm font-medium disabled:opacity-40">配對</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 2026-10-11：讀數檢查講清楚啲 — 印嘅總數 vs 讀到嘅行加埋，差幾多、邊行可疑、點處理。
+ * 多咗：可能有行讀重複／讀多咗（列出金額啱啱等於差額、或者重複出現嘅行）；或者 AI 讀錯咗印嘅總數。
+ * 少咗：可能有行讀漏。
+ */
+function ReadCheckNote({ stated, linesSum, lines }: { stated: number; linesSum: number; lines: StmtLine[] }) {
+  const gap = Math.round((linesSum - stated) * 100) / 100
+  const counted = lines.filter((l) => COUNTED_TYPES.has(l.lineType))
+  const key = (l: StmtLine) => `${l.docNoRaw ?? ''}|${l.description ?? ''}|${l.amount}`
+  const seen = new Map<string, number>()
+  for (const l of counted) seen.set(key(l), (seen.get(key(l)) ?? 0) + 1)
+  const dupes = counted.filter((l) => (seen.get(key(l)) ?? 0) > 1)
+  const exact = gap > 0 ? counted.filter((l) => Math.abs(l.amount - gap) < 0.005) : []
+  const suspects = [...new Map([...dupes, ...exact].map((l) => [l.id, l])).values()].slice(0, 6)
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm space-y-1">
+      <div>
+        月結單上面印嘅總數讀到係 {fmtMoney(stated)}，但逐行加埋係 {fmtMoney(linesSum)}（{gap > 0 ? `多咗 ${fmtMoney(gap)}` : `少咗 ${fmtMoney(-gap)}`}）。撳「睇原檔」核對：
+      </div>
+      <ul className="list-disc pl-5 text-xs space-y-0.5">
+        {gap > 0 ? (
+          <>
+            <li>如果原檔印嘅總數其實係 {fmtMoney(linesSum)} — 即係總數讀錯咗，寫原因（例：總數讀錯）確認就得。</li>
+            <li>如果真係 {fmtMoney(stated)} — 即係有行讀多咗或者讀重複，嗰行撳「標記」→「唔關我哋事」（原因：重複讀），再睇同成本錄入差幾多。</li>
+          </>
+        ) : (
+          <li>可能有行讀漏 — 對住原檔睇吓少咗邊行；成本錄入有嘅話差額會顯示出嚟。</li>
+        )}
+      </ul>
+      {suspects.length > 0 && (
+        <div className="text-xs">
+          可疑嘅行：
+          {suspects.map((l) => (
+            <span key={l.id} className="inline-block mr-2">
+              {l.docNoRaw ?? ''} {l.description ?? ''} {fmtMoney(l.amount)}{(seen.get(key(l)) ?? 0) > 1 ? '（出現咗兩次）' : '（金額啱啱等於差額）'}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

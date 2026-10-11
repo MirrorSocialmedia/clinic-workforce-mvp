@@ -184,13 +184,22 @@ export async function identifyLab(
   return { labId: null, labBasis: null, payeeIsNew: false }
 }
 
-/** §6.1.4：norm(payeeRaw) 唔喺該 Lab 嘅 LabAlias(PAYEE) → true。payeeRaw 為空 = false（無得比）。 */
-async function checkPayeeNew(prisma: any, labId: string, payeeRaw: string | null): Promise<boolean> {
+/**
+ * §6.1.4：norm(payeeRaw) 唔喺該 Lab 嘅 LabAlias(PAYEE) → true。payeeRaw 為空 = false（無得比）。
+ * ★ 2026-10-11：收款人 = 呢間 Lab 自己個名（Lab 名稱，或者已記住嘅 Lab 名 alias，例如「禾呈牙科器材有限公司」→ HC）
+ *   都當已知 — 之前要另外再「記住收款人」，用家以為 set 咗 Lab 名就得。
+ */
+export async function checkPayeeNew(prisma: any, labId: string, payeeRaw: string | null): Promise<boolean> {
   if (!payeeRaw) return false
   const n = normLabName(payeeRaw)
   if (!n) return false
-  const alias = await prisma.labAlias.findFirst({ where: { labId, kind: 'PAYEE', rawNorm: n }, select: { id: true } })
-  return alias === null
+  const alias = await prisma.labAlias.findFirst({
+    where: { labId, kind: { in: ['PAYEE', 'NAME_EN', 'NAME_CN'] }, rawNorm: n },
+    select: { id: true },
+  })
+  if (alias) return false
+  const lab = await prisma.lab.findUnique({ where: { id: labId }, select: { name: true } })
+  return !(lab && normLabName(lab.name) === n)
 }
 
 // ------------------------------------------------------------------

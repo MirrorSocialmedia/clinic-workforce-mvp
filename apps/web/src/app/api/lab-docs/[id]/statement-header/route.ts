@@ -19,6 +19,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { autoReconcileIfReady } from '@/lib/labdoc/statement-reconcile'
 import { resetSectionMatching, sectionsWithSystemChange, SYSTEM_CHANGE_BLOCK_MSG } from '@/lib/labdoc/statement-reset'
+import { checkPayeeNew } from '@/lib/labdoc/identify'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
@@ -70,7 +71,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const doc = await prisma.labDocument.findUnique({
     where: { id: params.id },
     select: {
-      id: true, kind: true, status: true, version: true, labId: true, statementMonth: true, readIssues: true, supersededById: true,
+      id: true, kind: true, status: true, version: true, labId: true, statementMonth: true, readIssues: true, supersededById: true, payeeRaw: true,
       sections: { select: { id: true, status: true, clinicId: true, providerId: true } },
     },
   })
@@ -106,12 +107,15 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     return jsonNoStore({ error: SYSTEM_CHANGE_BLOCK_MSG }, { status: 409 })
   }
 
+  // ★ 2026-10-11：改咗 Lab → 收款人要對新 Lab 再判斷（之前一直留住舊結果）
+  const payeeIsNew = labChanged ? await checkPayeeNew(prisma, labId as string, doc.payeeRaw) : undefined
+
   const ok = await prisma.$transaction(async (tx: any) => {
     if (hadBasis) await resetSectionMatching(tx, sectionIds)
     const d = await tx.labDocument.updateMany({
       where: { id: doc.id, version },
       data: {
-        ...(labChanged ? { labId } : {}),
+        ...(labChanged ? { labId, payeeIsNew } : {}),
         ...(monthChanged ? { statementMonth } : {}),
         ...(monthChanged ? { readIssues: doc.readIssues.filter((x) => x !== 'STATEMENT_MONTH_FROM_LINES') } : {}),
         version: { increment: 1 },

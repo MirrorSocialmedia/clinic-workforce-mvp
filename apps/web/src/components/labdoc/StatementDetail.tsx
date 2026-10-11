@@ -181,6 +181,15 @@ export default function StatementDetail({ id }: { id: string }) {
     }
   }
 
+  // ★ 2026-10-11：月結單頁都可以「記住收款人」（之前只喺待處理清單有）
+  const rememberPayee = async () => {
+    if (!window.confirm(`記住「${d.payeeRaw}」係呢間 Lab 嘅收款人？之後同一個收款人唔會再提示。`)) return
+    try {
+      await apiFetch(`/api/lab-docs/${id}/payee`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: d.version }) })
+      toast.success('已記住收款人'); load()
+    } catch (e) { toast.error((e as Error).message) }
+  }
+
   const supersede = async (oldId: string) => {
     const reason = window.prompt('取代舊版原因（例：Lab 重發、舊版影漏頁）')
     if (!reason?.trim()) return
@@ -247,7 +256,12 @@ export default function StatementDetail({ id }: { id: string }) {
       )}
       {['UPLOADED', 'EXTRACTING'].includes(d.status) && <div className="rounded-xl border bg-blue-50 p-3 text-sm flex items-center gap-2"><Loader2 size={14} className="animate-spin" />讀緊月結單…</div>}
       {d.status === 'EXTRACT_FAILED' && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">讀唔到（{d.extractError ?? '讀單失敗'}）— 撳上面「再讀」，或者影清楚啲再上傳。</div>}
-      {d.payeeIsNew && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm">⚠ 收款人「{d.payeeRaw}」唔喺已知名單 — 付款前同 Lab 確認</div>}
+      {d.payeeIsNew && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm flex flex-wrap items-center gap-2">
+          <span className="flex-1 min-w-[12rem]">⚠ 收款人「{d.payeeRaw}」未記住係 {d.labName ?? '呢間 Lab'} 嘅收款人 — 如果啱，撳「記住」；唔啱（例如銀行戶口名唔同咗）付款前同 Lab 確認</span>
+          {d.labId && <button onClick={rememberPayee} className="px-3 py-1 rounded-lg border bg-card">記住收款人</button>}
+        </div>
+      )}
       {data.statementMonthFromLines && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">月份係由行嘅日期推斷 — 請核對</div>}
       {dups.map((dup) => (
         <div key={dup.docId} className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm flex flex-wrap items-center gap-2">
