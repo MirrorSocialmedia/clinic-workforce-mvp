@@ -13,9 +13,11 @@
  *   一筆成本 = 一行，或者 = 連續幾行加埋（同一個病人通常連住寫）→ 行 MATCHED；剩低嘅行 UNPAIRED、成本列出。
  *   ★ 2026-10-11：先用人手配對（pairMode MANUAL → pairCostCaseId），再自動劃；
  *     「未配對到」（pairMode NONE）嘅行唔參與自動劃。
+ *   ★ 2026-10-11：「計入下個月」（NEXT_MONTH）唔計；上月結轉副本（carriedFromLineId）計入，
+ *     但本月月結單自己都有同一個單號 → 副本唔計（唔會計兩次）。讀數檢查唔計副本（唔係本月單印嘅）。
  */
 
-export const EXCLUDE_RESOLUTIONS = new Set(['STOCK', 'NOT_OURS'])
+export const EXCLUDE_RESOLUTIONS = new Set(['STOCK', 'NOT_OURS', 'NEXT_MONTH'])
 const COUNTED_TYPES = new Set(['INVOICE', 'CREDIT', 'CHARGE'])
 const EPS = 0.01
 /** 連續行配對最多睇幾多行（一個病人通常唔會超過呢個數） */
@@ -34,6 +36,10 @@ export interface CostLineIn {
   /** MANUAL（人手配咗 pairCostCaseId）｜NONE（未配對到：唔自動劃）｜null */
   pairMode?: string | null
   pairCostCaseId?: string | null
+  /** 正規化單號（單號重複檢查用） */
+  docNo?: string | null
+  /** 上月結轉副本 → 來源行 id */
+  carriedFromLineId?: string | null
 }
 
 export interface CostCaseIn {
@@ -58,6 +64,12 @@ export interface CostMatchOutput {
   stockTotal: number
   /** 標咗唔關我哋事嘅金額 */
   notOursTotal: number
+  /** 標咗計入下個月嘅金額 */
+  nextMonthTotal: number
+  /** 上月結轉（計入本月）嘅金額 */
+  carryInTotal: number
+  /** 上月結轉但本月月結單已經有同一個單號 → 唔計嘅副本 */
+  carryDuplicateLineIds: string[]
   /** 行結果（每行一個） */
   lines: Array<{ id: string; result: CostLineResult; costCaseId: string | null }>
   /** 劃埋咗嘅組合（manual = 人手配對） */
@@ -80,6 +92,7 @@ function inStatementMonth(d: Date, month: string): boolean {
 export function lineInScope(l: CostLineIn, all: CostLineIn[], outstanding: boolean, month: string): boolean {
   if (!COUNTED_TYPES.has(l.lineType)) return false
   if (!outstanding) return true
+  if (l.carriedFromLineId) return true // 上月結轉：上個月已經判斷過屬本月
   const anyBucket = all.some((x) => x.agingBucket != null)
   if (anyBucket) return l.agingBucket === 'CURRENT'
   return l.date ? inStatementMonth(l.date, month) : false
@@ -102,10 +115,15 @@ export function matchStatementToCosts(input: {
   statedTotal: number | null
 }): CostMatchOutput {
   const lines = [...input.lines].sort((a, b) => a.lineIndex - b.lineIndex)
-  const scoped = lines.filter((l) => lineInScope(l, lines, input.outstanding, input.statementMonth))
+  // 上月結轉副本：本月月結單（自己嘅行）已經有同一個單號 → 唔計（只計本月單上嗰行）
+  const nativeDocNos = new Set(lines.filter((l) => !l.carriedFromLineId && l.docNo).map((l) => l.docNo as string))
+  const carryDup = new Set(lines.filter((l) => l.carriedFromLineId && l.docNo && nativeDocNos.has(l.docNo)).map((l) => l.id))
+  const scoped = lines.filter((l) => !carryDup.has(l.id) && lineInScope(l, lines, input.outstanding, input.statementMonth))
   const counted = scoped.filter((l) => !(l.resolution && EXCLUDE_RESOLUTIONS.has(l.resolution)))
   const stockTotal = r2(scoped.filter((l) => l.resolution === 'STOCK').reduce((s, l) => s + l.amount, 0))
   const notOursTotal = r2(scoped.filter((l) => l.resolution === 'NOT_OURS').reduce((s, l) => s + l.amount, 0))
+  const nextMonthTotal = r2(scoped.filter((l) => l.resolution === 'NEXT_MONTH').reduce((s, l) => s + l.amount, 0))
+  const carryInTotal = r2(counted.filter((l) => l.carriedFromLineId).reduce((s, l) => s + l.amount, 0))
   const statementTotal = r2(counted.reduce((s, l) => s + l.amount, 0))
   const costTotal = r2(input.costs.reduce((s, c) => s + (c.finalCost ?? 0), 0))
   const diff = r2(statementTotal - costTotal)
@@ -181,7 +199,7 @@ export function matchStatementToCosts(input: {
 
   let readCheck: CostMatchOutput['readCheck'] = null
   if (input.statedTotal != null) {
-    const linesSum = r2(scoped.reduce((s, l) => s + l.amount, 0))
+    const linesSum = r2(scoped.filter((l) => !l.carriedFromLineId).reduce((s, l) => s + l.amount, 0))
     readCheck = { stated: input.statedTotal, linesSum, ok: eq(linesSum, input.statedTotal) }
   }
 
@@ -192,6 +210,9 @@ export function matchStatementToCosts(input: {
     diff,
     stockTotal,
     notOursTotal,
+    nextMonthTotal,
+    carryInTotal,
+    carryDuplicateLineIds: [...carryDup],
     lines: outLines,
     pairs,
     unpairedCostIds: input.costs.filter((c) => !pairedCost.has(c.id)).map((c) => c.id),

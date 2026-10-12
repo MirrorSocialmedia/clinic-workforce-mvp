@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { reconcileSection } from '@/lib/labdoc/statement-reconcile'
+import { reconcileSection, afterCarryChange } from '@/lib/labdoc/statement-reconcile'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
@@ -87,6 +87,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // 單 transaction：舊 SUPERSEDED＋新 version++（optimistic lock）＋帶過舊版已處理嘅差異
   let carried = 0
   let newSectionIds: string[] = []
+  let oldSectionIds: string[] = []
   try {
     await prisma.$transaction(async (tx: any) => {
       const n = await tx.labDocument.updateMany({
@@ -107,18 +108,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         tx.labStatementSection.findMany({ where: { documentId: newDoc.id }, include: { lines: true } }),
       ])
       newSectionIds = newSecs.map((s: any) => s.id)
+      oldSectionIds = oldSecs.map((s: any) => s.id)
       const key = (l: any) => [l.docNoRaw ?? '', Number(l.amount ?? 0).toFixed(2), l.description ?? '', l.qty == null ? '' : Number(l.qty)].join('|')
       for (const ns of newSecs) {
         const os = oldSecs.find((x: any) => x.clinicId && x.clinicId === ns.clinicId && x.providerId === ns.providerId)
         if (!os) continue
         const pool = new Map<string, any[]>()
         for (const l of os.lines) {
-          if (!l.resolution) continue
+          // 上月結轉副本唔帶（新版對數時會自己同步）
+          if (!l.resolution || l.carriedFromLineId) continue
           const k = key(l)
           pool.set(k, [...(pool.get(k) ?? []), l])
         }
         for (const l of ns.lines) {
-          if (l.resolution) continue
+          if (l.resolution || l.carriedFromLineId) continue
           const hit = pool.get(key(l))?.shift()
           if (!hit) continue
           await tx.labStatementLine.update({
@@ -135,6 +138,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
                 : {}),
             },
           })
+          // ★ 2026-10-11：「計入下個月」帶去新版 → 下個月嘅結轉副本（包括已確認嗰啲）改指新版嗰行，
+          //   咁取消新版標記時鎖先查得到（唔會變成兩個月都計）
+          if (hit.resolution === 'NEXT_MONTH') {
+            await tx.labStatementLine.updateMany({ where: { carriedFromLineId: hit.id }, data: { carriedFromLineId: l.id } })
+          }
           carried++
         }
       }
@@ -150,6 +158,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await reconcileSection(prisma, { sectionId: sid, actorId: session.userId, source: 'manual', ipAddress: ip, userAgent: ua }).catch(() => undefined)
     }
   }
+
+  // ★ 2026-10-11：舊版「計入下個月」嘅行唔再係來源（新版帶咗標記就由新版做來源）→ 下個月結轉即刻同步
+  await afterCarryChange(prisma, { sectionIds: [...oldSectionIds, ...newSectionIds] }, session.userId)
 
   await labdocAudit({
     action: 'LAB_STATEMENT_SUPERSEDE',

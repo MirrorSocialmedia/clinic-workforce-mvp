@@ -17,7 +17,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { labdocAudit } from '@/lib/labdoc/audit'
-import { autoReconcileIfReady } from '@/lib/labdoc/statement-reconcile'
+import { autoReconcileIfReady, afterCarryChange, sectionCarryScopes } from '@/lib/labdoc/statement-reconcile'
+import { sectionsCarryLocked, CARRY_LOCKED_MSG } from '@/lib/labdoc/statement-carry'
 import { resetSectionMatching, sectionsWithSystemChange, SYSTEM_CHANGE_BLOCK_MSG } from '@/lib/labdoc/statement-reset'
 import { checkPayeeNew } from '@/lib/labdoc/identify'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
@@ -106,6 +107,12 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (hadBasis && (await sectionsWithSystemChange(prisma, sectionIds)) > 0) {
     return jsonNoStore({ error: SYSTEM_CHANGE_BLOCK_MSG }, { status: 409 })
   }
+  // ★ 2026-10-11：有「計入下個月」已經喺下個月（已確認）計咗 → 唔准改 Lab／月份
+  if (hadBasis && (await sectionsCarryLocked(prisma, sectionIds)) > 0) {
+    return jsonNoStore({ error: CARRY_LOCKED_MSG }, { status: 409 })
+  }
+  // 改之前記低舊範圍（下個月結轉要跟住同步）
+  const oldScopes = hadBasis ? await sectionCarryScopes(prisma, sectionIds) : []
 
   // ★ 2026-10-11：改咗 Lab → 收款人要對新 Lab 再判斷（之前一直留住舊結果）
   const payeeIsNew = labChanged ? await checkPayeeNew(prisma, labId as string, doc.payeeRaw) : undefined
@@ -157,6 +164,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const r = await autoReconcileIfReady(prisma, s.id, session.userId, 'auto', '[labdoc:statement-header]')
     if (r?.ok) reconciled++
   }
+  // ★ 2026-10-11：舊範圍／新範圍嘅下個月結轉即刻同步
+  await afterCarryChange(prisma, { scopes: oldScopes, sectionIds }, session.userId)
   return NextResponse.json({
     ok: true,
     changed: true,

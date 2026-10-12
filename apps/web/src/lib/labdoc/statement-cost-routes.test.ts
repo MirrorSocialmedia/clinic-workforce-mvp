@@ -80,14 +80,15 @@ function mkState(over: Partial<St> = {}): St {
 const matchWhere = (row: any, where: any): boolean => {
   for (const [k, v] of Object.entries(where ?? {})) {
     if (v === undefined) continue
+    const val = row[k] ?? null
     if (v && typeof v === 'object' && !(v instanceof Date)) {
       const o = v as any
-      if ('in' in o && !o.in.includes(row[k])) return false
-      if ('not' in o && row[k] === o.not) return false
-      if ('notIn' in o && o.notIn.includes(row[k])) return false
+      if ('in' in o && !o.in.includes(val)) return false
+      if ('not' in o && val === (o.not ?? null)) return false
+      if ('notIn' in o && o.notIn.includes(val)) return false
       continue
     }
-    if (row[k] !== v) return false
+    if (val !== v) return false
   }
   return true
 }
@@ -123,7 +124,20 @@ function makeFake(state: St): any {
         const s = state.sections.find((x) => x.id === where.id)
         return s ? { ...secOut(s), document: { ...state.doc } } : null
       },
-      findMany: async ({ where }: any) => state.sections.filter((s) => !where?.documentId || s.documentId === where.documentId).map((s) => ({ ...s })),
+      findMany: async ({ where }: any) =>
+        state.sections
+          .filter((s) => !where?.documentId || s.documentId === where.documentId)
+          .filter((s) => !where?.id?.in || where.id.in.includes(s.id))
+          .filter((s) => where?.clinicId === undefined || s.clinicId === where.clinicId)
+          .filter((s) => where?.providerId === undefined || s.providerId === where.providerId)
+          .filter((s) => {
+            const d = where?.document
+            if (!d) return true
+            const doc = state.doc
+            return (!d.kind || doc.kind === d.kind) && (!d.labId || doc.labId === d.labId) &&
+              (!d.statementMonth || doc.statementMonth === d.statementMonth) && (!d.status?.notIn || !d.status.notIn.includes(doc.status))
+          })
+          .map((s) => ({ ...s, document: { ...state.doc } })),
       updateMany: async ({ where, data }: any) => {
         const s = state.sections.find((x) => x.id === where.id)
         if (!s || (where.documentId && s.documentId !== where.documentId)) return { count: 0 }
@@ -141,7 +155,29 @@ function makeFake(state: St): any {
         return null
       },
       findMany: async ({ where }: any) =>
-        state.sections.flatMap((s) => s.lines).filter((l: any) => matchWhere(l, where)).map((l: any) => ({ ...l })),
+        state.sections.flatMap((s) => s.lines.map((l: any) => ({ l, s })))
+          .filter(({ l }: any) => matchWhere(l, where))
+          .map(({ l, s }: any) => ({ ...l, section: { status: s.status } })),
+      aggregate: async ({ where }: any) => {
+        const ls = state.sections.flatMap((s) => s.lines).filter((l: any) => matchWhere(l, where))
+        return { _max: { lineIndex: ls.length ? Math.max(...ls.map((l: any) => l.lineIndex)) : null } }
+      },
+      deleteMany: async ({ where }: any) => {
+        let count = 0
+        for (const s of state.sections) {
+          const keep = s.lines.filter((l: any) => !matchWhere(l, where))
+          count += s.lines.length - keep.length
+          s.lines = keep
+        }
+        return { count }
+      },
+      createMany: async ({ data }: any) => {
+        for (const d of data) {
+          const s = state.sections.find((x) => x.id === d.sectionId)!
+          s.lines.push({ id: `c${String(s.lines.length).padStart(24, '0')}`.slice(0, 25), resolution: null, resolutionNote: null, pairMode: null, pairCostCaseId: null, ...d })
+        }
+        return { count: data.length }
+      },
       count: async ({ where }: any) => state.sections.flatMap((s) => s.lines).filter((l: any) => matchWhere(l, where)).length,
       updateMany: async ({ where, data }: any) => {
         let count = 0
@@ -163,10 +199,11 @@ function makeFake(state: St): any {
     auditLog: { create: async (a: any) => state.audits.push(a.data) },
   }
   fake.$transaction = async (fn: any) => fn(fake)
+  fake.$queryRaw = async () => []
   return fake
 }
 
-const KEYS = ['user', 'labProfile', 'labDocument', 'labStatementSection', 'labStatementLine', 'costCase', 'auditLog', '$transaction'] as const
+const KEYS = ['user', 'labProfile', 'labDocument', 'labStatementSection', 'labStatementLine', 'costCase', 'auditLog', '$transaction', '$queryRaw'] as const
 import { prisma } from '../prisma'
 const saved: Record<string, unknown> = {}
 for (const k of KEYS) saved[k] = (prisma as any)[k]

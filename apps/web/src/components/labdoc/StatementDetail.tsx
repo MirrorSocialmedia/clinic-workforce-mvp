@@ -45,6 +45,7 @@ export interface StmtLine {
   lineIndex: number
   lineType: string
   docNoRaw: string | null
+  docNo?: string | null
   date: string | null
   patientRaw: string | null
   description: string | null
@@ -62,6 +63,9 @@ export interface StmtLine {
   /** MANUAL = 人手配對；NONE = 未配對到（唔自動劃） */
   pairMode?: string | null
   pairCostCaseId?: string | null
+  /** 上月結轉副本（「計入下個月」帶過嚟） */
+  carriedFromLineId?: string | null
+  carriedFromMonth?: string | null
   system: {
     docId: string
     docNo: string | null
